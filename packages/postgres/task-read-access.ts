@@ -2,7 +2,7 @@ import type { Client } from 'pg';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { ownerKey, requireScope, taskIdSchema, type Principal } from '../core/domain.js';
-import { accessContextSchema, agentAccessGrantSchema, securityEnvelopeSchema, taskDataGrantSchema, SECURITY_CONTRACT, POLICY_VERSION } from '../security/contracts.js';
+import { accessContextSchema, agentAccessGrantSchema, securityEnvelopeSchema, taskDataGrantSchema, SECURITY_CONTRACT, POLICY_VERSION,ownerIdentitySchema,type AccessContext } from '../security/contracts.js';
 import { SecurityError } from '../security/errors.js';
 import { postgresBusinessSchema, postgresConstrainReadDeadline } from './runtime-transaction.js';
 import { postgresOntologyReadContext } from './ontology-release.js';
@@ -17,6 +17,9 @@ import { combineEnvelopes, type SecurityEnvelope } from '../security/envelope.js
 import { restrictionsFitRecipient } from '../security/field-restrictions.js';
 import { submissionDigest } from '../security/submission-digest.js';
 import type { ServiceRequest } from '../ontology/execution.js';
+import type {WorkClaim} from '../core/store.js';
+import {postgresWorkerAdmission} from './worker-admission.js';
+import {postgresClaimActive} from './work-claim.js';
 
 const storedLabelSchema=z.strictObject({classification:securityEnvelopeSchema.shape.classification,
   requiredMarkings:securityEnvelopeSchema.shape.requiredMarkings,channels:securityEnvelopeSchema.shape.channels});
@@ -27,7 +30,8 @@ const bindingEvidenceSchema=z.strictObject({object:objectRefSchema,revision:z.nu
   sourceObservation:z.looseObject({programId:z.string().min(1).max(200),programDigest:sha,sourceBindingId:z.string().min(1).max(200)}).optional()});
 const observationSourceSchema=z.looseObject({programId:z.string().min(1).max(200),programDigest:sha,sourceBindingId:z.string().min(1).max(200)});
 type ReadOntology=Awaited<ReturnType<typeof postgresOntologyReadContext>>;
-const snapshots=new WeakMap<Client,{key:string;admission:Awaited<ReturnType<typeof postgresTaskReadGrant>>;ontology:Map<StagedKernelBuilder|undefined,Promise<ReadOntology>>}>();
+export type PostgresTaskReadAdmission=Omit<Awaited<ReturnType<typeof postgresTaskReadGrant>>,'actor'>&{actor:Extract<AccessContext,{actorKind:'agent'|'worker'}>};
+const snapshots=new WeakMap<Client,{key:string;admission:PostgresTaskReadAdmission;ontology:Map<StagedKernelBuilder|undefined,Promise<ReadOntology>>}>();
 const snapshotKey=(principal:Principal,taskId:string,policyDigest:string)=>digest([principal,taskId,policyDigest]);
 function freezeData<T>(input:T):T {
   if(input && typeof input==='object' && !Object.isFrozen(input)) {
@@ -143,7 +147,7 @@ export async function postgresTaskReceiptGrant(client:Client,principal:Principal
 
 /** Recheck admission after an awaited read. The action must additionally apply
  * object/field and recipient policy before exposing protected output. */
-export async function withPostgresTaskReadGrant<T>(client: Client, principal: Principal, taskId: string, policyDigest: string, action: (admission: Awaited<ReturnType<typeof postgresTaskReadGrant>>) => Promise<T>): Promise<T> {
+export async function withPostgresTaskReadGrant<T>(client: Client, principal: Principal, taskId: string, policyDigest: string, action: (admission: PostgresTaskReadAdmission) => Promise<T>): Promise<T> {
   const captured = structuredClone(principal);
   const snapshot=snapshots.get(client);
   if(snapshot) {
@@ -164,7 +168,7 @@ export async function withPostgresTaskReadGrant<T>(client: Client, principal: Pr
  * transaction. Nested helpers keep their role/source/recipient time checks;
  * the outer grant is freshly resolved again after the callback closes. */
 export async function withPostgresTaskReadSnapshot<T>(client:Client,principal:Principal,taskId:string,policyDigest:string,
-  action:(admission:Awaited<ReturnType<typeof postgresTaskReadGrant>>)=>Promise<T>):Promise<T> {
+  action:(admission:PostgresTaskReadAdmission)=>Promise<T>):Promise<T> {
   if(snapshots.has(client))throw new Error('Nested PostgreSQL read snapshots are not supported');
   const captured=structuredClone(principal);
   return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission=>{
@@ -173,6 +177,33 @@ export async function withPostgresTaskReadSnapshot<T>(client:Client,principal:Pr
     try{return await action(snapshot.admission);}
     finally{snapshots.delete(client);}
   });
+}
+
+/** Internal Worker processing snapshot. Its actor is reconstructed from the
+ * current persisted execution authority and original claim, never authenticated
+ * as an Agent. No tasks:read/result permission is manufactured. Only checked
+ * evidence helpers may consume this short-lived scope; the callback performs
+ * no model/provider I/O and may append its own read receipts after reading. */
+export async function withPostgresWorkerReadSnapshot<T>(client:Client,claim:WorkClaim,policyDigest:string,
+  action:(principal:Principal,admission:PostgresTaskReadAdmission)=>Promise<T>):Promise<T>{
+  if(snapshots.has(client))throw new Error('Nested PostgreSQL read snapshots are not supported');
+  const captured=structuredClone(claim),owner=ownerIdentitySchema.parse(captured.owner);
+  if(!await postgresClaimActive(client,captured,policyDigest))throw new SecurityError('ACCESS_REVOKED');
+  const before=await postgresWorkerAdmission(client,owner,captured.job.id,policyDigest);
+  if(before.authority.id!==captured.securityAuthorityId||before.authority.authEpoch!==captured.securityEpoch||before.policyRevision!==captured.securityPolicyRevision)throw new SecurityError('POLICY_CHANGED');
+  const [issuer,tenant,subject]=z.tuple([z.string(),z.string(),z.string()]).parse(JSON.parse(owner));
+  const actor=accessContextSchema.parse({version:SECURITY_CONTRACT,actorKind:'worker',ownerKey:owner,memberId:before.authority.memberId,
+    installationId:before.authority.installationId,clientId:before.clientId,tokenScopes:before.authority.submittedScopes,authEpoch:before.authority.authEpoch,
+    policyVersion:POLICY_VERSION,checkedAt:new Date().toISOString(),taskId:captured.job.id,requestRevision:before.grant.requestRevision,
+    authorityRef:{id:before.authority.id,revision:before.authority.revision},dataGrant:before.authority.dataGrant,claimRef:digest(captured.token)});
+  if(actor.actorKind!=='worker')throw new SecurityError('AUTHORIZATION_REQUIRED');
+  const principal:Principal={issuer,tenant,subject,clientId:before.clientId,scopes:[...before.authority.submittedScopes],access:actor};
+  const admission:PostgresTaskReadAdmission={actor,parent:before.parent,grant:before.grant,policyRevision:before.policyRevision,validUntil:before.validUntil};
+  const snapshot={key:snapshotKey(principal,captured.job.id,policyDigest),admission:freezeData(structuredClone(admission)),ontology:new Map<StagedKernelBuilder|undefined,Promise<ReadOntology>>()};
+  snapshots.set(client,snapshot);let result:T;
+  try{result=await action(freezeData(principal),snapshot.admission);}finally{snapshots.delete(client);}
+  if(!await postgresClaimActive(client,captured,policyDigest)||digest(before)!==digest(await postgresWorkerAdmission(client,owner,captured.job.id,policyDigest)))throw new SecurityError('POLICY_CHANGED');
+  postgresConstrainReadDeadline(client,before.validUntil);return result;
 }
 
 /** Check resource.view against the reviewed security model, as SQLite does.
@@ -418,7 +449,7 @@ async function postgresTaskFieldCandidates(client: Client, principal: Principal,
         classification:policy==='task_sensitive'?'sensitive':'private',requiredMarkings:[...new Set([...(policy==='task_sensitive'?['member_private','personal_data'] as const:['member_private'] as const),...projectionMarkings(ref.type,field)])],
         channels:admission.grant.channels.filter(channel=>!responseOnlyProjection(ref.type,field) || channel!=='registered_model'),lineage:[],lineageComplete:true};
       const current=combineEnvelopes([base,...labels.filter(label=>label.field==='*' || relevant.has(label.field)).map(({field:_field,...label})=>({...base,...label}))]);
-      return restrictionsFitRecipient([current,...(binding.inputEnvelope?[binding.inputEnvelope]:[])],clearance,true);
+      return restrictionsFitRecipient([current,...(binding.inputEnvelope?[binding.inputEnvelope]:[])],clearance,admission.actor.actorKind==='agent');
     });
     const definition=model.object(ref.type);
     if(!fields.includes(definition.primaryKey) || !fields.includes(definition.titleKey))return undefined;

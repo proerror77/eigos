@@ -5676,7 +5676,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "bbe02bbf30534eae3bb1f589fed87660afb12207a4f4b65be7cb001068b1264a",
+      "sourceDigest": "9ea6ff778fb647036e47463e6846c3df09634e15a0cac9fa44ff3867cf759e69",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current identity/task admission and deadlines, frozen request-scoped read snapshots, pinned ontology, roles, labels, direct/retained evidence and current source checks",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
@@ -5843,7 +5843,7 @@
     {
       "id": "postgres-task-output-authorization",
       "file": "packages/postgres/task-output.ts",
-      "sourceDigest": "6ffdca5c0b4d4862b4a7a00a0c14749446abb92547e0d6d05322c19ccd522638",
+      "sourceDigest": "93302b94ec4b18e4b0bb9c2b177c3cc9218100199eab73d5921a98318d6ff694",
       "channels": [
         "internal"
       ],
@@ -5939,7 +5939,7 @@
     {
       "id": "postgres-task-bindings",
       "file": "packages/postgres/task-bindings.ts",
-      "sourceDigest": "bf6bf11714da8c495c7d44820b2d6282e68a01477b4f9057088173cd3596b532",
+      "sourceDigest": "61910bb90f617c7aab9345100630032852d5e44f2bb8b244a580e601eb937f86",
       "channels": [
         "internal"
       ],
@@ -5975,7 +5975,7 @@
     {
       "id": "postgres-task-storage",
       "file": "packages/postgres/task-storage.ts",
-      "sourceDigest": "2bc3cb8210e14e27f3b0aa62e212f2ec2c3c4ae642ae6f051c9fdd0698cfc6dc",
+      "sourceDigest": "cff0ae1de2fbeca03dd835b37e8718a58be91caef39a599d690bbb0116c5cd3d",
       "channels": [
         "internal"
       ],
@@ -6011,7 +6011,7 @@
     {
       "id": "postgres-worker-store",
       "file": "packages/postgres/worker-store.ts",
-      "sourceDigest": "ee1c3a1c42e2b1a2b035335245576ea92ce87a69c8710ed736e49ef900f2d94c",
+      "sourceDigest": "d468577966702c708c002746faa7a25057784c7f118319a076f77ef0fe37f884",
       "channels": [
         "internal"
       ],
@@ -6094,6 +6094,42 @@
       "targetControl": "Reviewed contract-only metadata; observer activation remains unavailable",
       "stage": "S2",
       "sourceDigest": "519462b0dda5f71be4e6e954db3748a2282b075fca48bddda528c6b6cb064781"
+    },
+    {
+      "id": "postgres-task-lineage",
+      "file": "packages/postgres/task-lineage.ts",
+      "sourceDigest": "67e40a152e0ebdef1f5d593911042834784c2601f7d21beb73d323586f3ca4fa",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL retained task influence",
+      "currentControl": "Exact original owner, task and request revision; bounded immutable read envelopes with verified digests; history is evidence only and every use rechecks current permission",
+      "targetControl": "Exact original owner, task and request revision; bounded immutable read envelopes with verified digests; history is evidence only and every use rechecks current permission",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-worker-input",
+      "file": "packages/postgres/worker-input.ts",
+      "sourceDigest": "c4e7f6ebf06c9fa6e59d0e4deb41221d6324321e30511d6191b942ba928b6783",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL authorized Worker model request",
+      "currentControl": "Original claim and persisted Worker actor; current fields, source and retained lineage; exact submission digest and separately registered model clearance; read influence commits before any model call",
+      "targetControl": "Original claim and persisted Worker actor; current fields, source and retained lineage; exact submission digest and separately registered model clearance; read influence commits before any model call",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-worker-output",
+      "file": "packages/postgres/worker-output.ts",
+      "sourceDigest": "81f2dbbb16d6930db85ebbcd66955a265d2b03e51e2c84ede876945598b9b1f5",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL Worker output seals",
+      "currentControl": "Current original claim and validated accumulated influence; exact task/request submission and output content digests; sealed outputs share the checkpoint commit and retain monotone prior restrictions",
+      "targetControl": "Current original claim and validated accumulated influence; exact task/request submission and output content digests; sealed outputs share the checkpoint commit and retain monotone prior restrictions",
+      "stage": "S5"
     }
   ]
 }

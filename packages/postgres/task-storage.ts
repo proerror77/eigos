@@ -77,11 +77,16 @@ export class PostgresTaskStorage {
     return pending;
   }
   private async ledger(owner:string,id:string):Promise<ExecutionLedger>{
-    const q=`"${this.schema}"`,load=async(table:string,condition:string,order='')=>{
-      const rows=await this.query(`SELECT CASE WHEN octet_length(v.body)<=8388608 AND sum(octet_length(v.body)) OVER()<=33554432 THEN v.body END AS body
+    const q=`"${this.schema}"`,load=async(table:'action_intents'|'action_intent_versions'|'action_attempts',condition:string,order='')=>{
+      const current=table==='action_intents';
+      const rows=await this.query(`SELECT ${current?'v.id,v.state,v.business_key,':''} CASE WHEN octet_length(v.body)<=8388608 AND sum(octet_length(v.body)) OVER()<=33554432 THEN v.body END AS body
         FROM ${q}.${table} v JOIN ${q}.action_intents i ON ${condition} WHERE v.owner=$1 AND i.job_id=$2 ${order} LIMIT 2001`,[owner,id]);
       if(rows.rows.length>2000||rows.rows.some(row=>row.body===null))throw new DomainError('CONFLICT','Task execution ledger exceeds its safe read bound');
-      return rows.rows.map(row=>JSON.parse(String(row.body)));
+      return rows.rows.map(row=>{
+        const body=JSON.parse(String(row.body));if(!current)return body;
+        if(body.owner!==owner||body.jobId!==id||body.id!==row.id||body.businessOperationKey!==row.business_key)throw new DomainError('CONFLICT','Stored intent identity is invalid');
+        return {...body,state:String(row.state)};
+      });
     };
     const current=await load('action_intents','i.id=v.id AND i.owner=v.owner');
     const archived=await load('action_intent_versions','i.id=v.intent_id AND i.owner=v.owner');

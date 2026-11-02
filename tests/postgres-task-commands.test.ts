@@ -9,7 +9,11 @@ import {PostgresTaskStorage} from '../packages/postgres/task-storage.js';
 import {postgresProvisionTask} from '../packages/postgres/task-grants.js';
 import {postgresTaskView} from '../packages/postgres/task-view.js';
 import {PostgresTaskCommandService} from '../packages/postgres/task-command-service.js';
-import {postgresTaskProcessingGrant} from '../packages/postgres/task-read-access.js';
+import {postgresTaskProcessingGrant,withPostgresWorkerReadSnapshot} from '../packages/postgres/task-read-access.js';
+import {DomainError,type Principal} from '../packages/core/domain.js';
+import type {TaskServicePort} from '../packages/core/task-service-port.js';
+import {taskProtocolFixture} from './fixtures/task-protocol.js';
+import {randomUUID} from 'node:crypto';
 import {PostgresWorkerStore} from '../packages/postgres/worker-store.js';
 
 test('PostgreSQL task save, grant, projection and operation receipt commit or roll back together',
@@ -22,6 +26,7 @@ test('PostgreSQL task save, grant, projection and operation receipt commit or ro
     f.jobs.security.policies.setRole({subjectKind:'installation',subjectId:installation.id,
       resource:{kind:'objectType',id:'ServiceRequest',version:f.jobs.security.policies.resourceVersion('objectType','ServiceRequest')},role:'Viewer',expiresAt},f.jobs.security.policies.revision());
     f.jobs.security.policies.setRecipient(installation.id,{classification:'sensitive',markings:['member_private','personal_data'],channels:['agent_response'],expiresAt},f.jobs.security.policies.revision());
+    f.jobs.security.policies.setModelChannel('synthetic:mac',{classification:'sensitive',markings:['member_private','personal_data'],expiresAt},f.jobs.security.policies.revision());
     const sqlite=new DatabaseSync(f.database);try{sqlite.prepare('UPDATE security_manager SET expires_at=?').run(Date.now()+3600000);}finally{sqlite.close();}
     target=await importPostgresFixture(f);const t=target,q=`"${t.schema}"`;
     const job=createSubmittedTask(p,{service:'eigos.delegate',goal:'Synthetic command persistence',requestId:'atomic-submit'},f.jobs.definitions.active().ref);
@@ -78,6 +83,13 @@ test('PostgreSQL task save, grant, projection and operation receipt commit or ro
     const receipt=await service.submit(writer,{goal:'Private writer-only goal',requestId:'write-only'});
     assert.equal(receipt.goal,'');assert.equal((receipt as {outputStatus?:string}).outputStatus,'receipt_only');
     assert.deepEqual(receipt.messages,[]);
+    // Older queued records without current delegation must not fill the bounded
+    // candidate page and starve a later authorized task.
+    for(let index=0;index<65;index++){
+      const id=randomUUID(),body=structuredClone(saved);body.id=id;body.delegation!.request.id=id;
+      await t.client.query(`INSERT INTO ${q}.jobs(id,owner,context_id,state,created_at,updated_at,body) VALUES($1,$2,$3,'submitted',$4,$4,$5)`,
+        [id,f.owner,body.contextId,'2000-01-01T00:00:00.000Z',JSON.stringify(body)]);
+    }
     const worker=new PostgresWorkerStore({run:t.run},t.policy);
     const first=await worker.claim(['eigos.delegate'],30000),second=await worker.claim(['eigos.delegate'],30000);
     assert(first);assert(second);assert.notEqual(first.job.id,second.job.id);
@@ -94,7 +106,45 @@ test('PostgreSQL task save, grant, projection and operation receipt commit or ro
     assert.equal((await service.get(p,second.job.id)).state,'canceled');
     await t.client.query(`UPDATE ${q}.work_claims SET expires_at=$1 WHERE job_id=$2`,[Date.now()-1,second.job.id]);
     assert.equal(await worker.renew(second,30000),false,'expired lease cannot be revived');
-    await worker.claim(['eigos.delegate'],30000);
+    const remaining=await worker.claim(['eigos.delegate'],30000);
     assert.equal(Number((await t.client.query(`SELECT count(*) AS n FROM ${q}.work_claims WHERE job_id=$1 AND token=$2`,[second.job.id,second.token])).rows[0].n),0);
+    if(remaining)assert.equal(await worker.finish(remaining,current=>{current.state='paused';}),true);
+    const roundtrip=await service.submit(p,{goal:'Synthetic registered model and sealed response',requestId:'sealed-roundtrip'});
+    const execution=await worker.claim(['eigos.delegate'],30000);assert(execution);assert.equal(execution.job.id,roundtrip.id);
+    await assert.rejects(worker.readRequest(execution,'unregistered-model'),/OUTPUT_NOT_ALLOWED/);
+    const request=await worker.readRequest(execution,'synthetic:mac');assert.equal(request.originalGoal,roundtrip.goal);
+    let escaped:Principal|undefined;
+    await t.run(c=>withPostgresWorkerReadSnapshot(c,execution,t.policy,async principal=>{assert.equal(principal.access?.actorKind,'worker');escaped=structuredClone(principal);}));
+    await assert.rejects(t.run(c=>postgresTaskView(c,escaped!,execution.job.id,t.policy)),/AUTHORIZATION_REQUIRED/);
+    await t.client.query(`UPDATE ${q}.security_model_channels SET body=jsonb_set(body::jsonb,'{expiresAt}',to_jsonb($1::text))::text WHERE id='synthetic:mac'`,[new Date(Date.now()-1).toISOString()]);
+    await assert.rejects(worker.readRequest(execution,'synthetic:mac'),/OUTPUT_NOT_ALLOWED/);
+    await t.client.query(`UPDATE ${q}.security_model_channels SET body=jsonb_set(body::jsonb,'{expiresAt}',to_jsonb($1::text))::text WHERE id='synthetic:mac'`,[expiresAt]);
+    assert.equal(await worker.finish(execution,current=>{current.state='input-required';current.question='Authorized sealed synthetic question';}),true);
+    const delivered=await service.get(p,execution.job.id);assert.equal(delivered.question,'Authorized sealed synthetic question');assert.equal(delivered.outputStatus,'available');
+    // Real HTTP adapters and SQL persistence. The model result here remains
+    // explicitly synthetic; this does not certify native Codex/provider work.
+    const port=new Proxy({} as TaskServicePort,{get(_target,property){
+      if(property==='secured')return true;
+      if(property==='services')return ()=>[{id:'eigos.delegate',name:'Synthetic PostgreSQL command fixture',description:'Scoped protocol and durable Worker checks',requiredInputs:['goal'],tags:[],examples:[],inputModes:['application/json'],outputModes:['application/json']}];
+      const method=Reflect.get(service,property);if(typeof method==='function')return method.bind(service);
+      return async()=>{throw new DomainError('FORBIDDEN','This fixture exposes only connected PostgreSQL task operations');};
+    }});
+    const protocol=await taskProtocolFixture(port,p);
+    try{
+      for(const ingress of ['mcp','a2a'] as const){
+        const goal=`Synthetic ${ingress} to PostgreSQL Worker input`,requestId=`protocol-${ingress}`;
+        let id:string;
+        if(ingress==='mcp')id=(await protocol.job('submit_task',{goal,requestId})).id;
+        else{const response=await protocol.rpc('SendMessage',{message:{messageId:requestId,role:'ROLE_USER',parts:[{text:goal}]},configuration:{returnImmediately:true}});
+          assert(!response.error,JSON.stringify(response));id=response.result.task.id;}
+        const claimed=await worker.claim(['eigos.delegate'],30000);assert(claimed);assert.equal(claimed.job.id,id);
+        assert.equal((await worker.readRequest(claimed,'synthetic:mac')).originalGoal,goal);
+        assert.equal(await worker.renew(claimed,30000),true);
+        assert.equal(await worker.finish(claimed,current=>{current.state='input-required';current.question=`Sealed synthetic ${ingress} response`;}),true);
+        const mcp=await protocol.job('get_task',{taskId:id});assert.equal(mcp.id,id);assert.equal(mcp.question,`Sealed synthetic ${ingress} response`);
+        const a2a=await protocol.rpc('GetTask',{id});assert(!a2a.error,JSON.stringify(a2a));assert.equal(a2a.result.id,id);
+        assert.equal(a2a.result.metadata.question,mcp.question);assert.equal(a2a.result.status.state,'TASK_STATE_INPUT_REQUIRED');
+      }
+    }finally{await protocol.close();}
   }finally{if(target)await target.close();f.close();}
 });

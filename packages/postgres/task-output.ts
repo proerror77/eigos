@@ -5,11 +5,11 @@ import { DomainError, ownerKey, type Principal } from '../core/domain.js';
 import { currentKernelImplementation } from '../ontology/definition-store.js';
 import { objectRefSchema, type ObjectRef } from '../ontology/model.js';
 import { stagedKernelComponents, type StagedKernelBuilder } from '../ontology/seed-definition.js';
-import { MAX_SECURITY_LINEAGE_ITEMS, POLICY_VERSION, SECURITY_CONTRACT, securityEnvelopeSchema } from '../security/contracts.js';
+import { MAX_SECURITY_LINEAGE_ITEMS, securityEnvelopeSchema } from '../security/contracts.js';
 import { combineEnvelopes, requireChannel, type Channel, type SecurityEnvelope } from '../security/envelope.js';
 import { SecurityError, SecurityLineageLimitError } from '../security/errors.js';
 import { assertProjectionOrigin } from '../security/projection-origin.js';
-import { projectedValue, projectionFields, projectionMarkings, responseOnlyProjection } from '../security/projections.js';
+import { projectedValue, projectionFields, responseOnlyProjection } from '../security/projections.js';
 import { reviewedFieldPolicy } from '../security/field-policy.js';
 import { submissionDigest } from '../security/submission-digest.js';
 import { taskContextFields } from '../security/task-context-contract.js';
@@ -18,9 +18,10 @@ import { postgresBusinessSchema, postgresConstrainReadDeadline } from './runtime
 import { postgresTaskContextMembers } from './task-context-membership.js';
 import { postgresTaskCurrentLabels, postgresTaskDirectBindingEvidence, postgresTaskDirectFieldCandidates,
   postgresTaskReadClearance, postgresTaskReadOntology, postgresTaskRetainedBindingEvidence, postgresTaskRetainedFieldCandidates,
-  postgresTaskResourceViewValidUntil, postgresTaskSourceObservationValidUntil, withPostgresTaskReadSnapshot } from './task-read-access.js';
+  postgresTaskResourceViewValidUntil, postgresTaskSourceObservationValidUntil, withPostgresTaskReadSnapshot,withPostgresWorkerReadSnapshot,type PostgresTaskReadAdmission } from './task-read-access.js';
 import type { ServiceRequest } from '../ontology/execution.js';
 import type { ObjectView } from '../ontology/object-store.js';
+import type {WorkClaim} from '../core/store.js';
 import { postgresOntologyDefinitionCompatible } from './ontology-release.js';
 
 type Dependency = SecurityEnvelope['lineage'][number];
@@ -30,6 +31,10 @@ const controls = new Set(['GoalCoverage', 'OutcomeAssessment', 'ExecutionFeedbac
 const key = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);
 
 export interface PostgresTaskReadAuthorization {
+  /** Internal evidence validation only; does not admit any disclosure channel. */
+  validateEvidence(input:SecurityEnvelope):Promise<SecurityEnvelope>;
+  /** Evidence plus the current recipient/model channel clearance. */
+  authorizeEvidence(input:SecurityEnvelope):Promise<SecurityEnvelope>;
   readTaskRoot(): Promise<{ object: ObjectView; envelope: SecurityEnvelope }>;
   readObject(input: ObjectRef, selected?: string[]): Promise<{ object: ObjectView; envelope: SecurityEnvelope }>;
   output(outputId: string, content: unknown): Promise<SecurityEnvelope | undefined>;
@@ -41,11 +46,11 @@ export interface PostgresTaskReadAuthorization {
  * The callback must not mutate the database or use the client concurrently.
  * Authorization objects expire at the callback boundary; current identity,
  * grants and all captured role/source/recipient deadlines are checked at exit. */
-export async function withPostgresTaskReadAuthorization<T>(client: Client, principal: Principal, taskId: string, policyDigest: string,
-  action: (authorization: PostgresTaskReadAuthorization) => Promise<T>, builder?: StagedKernelBuilder): Promise<T> {
+async function withTaskAuthorization<T>(client: Client, principal: Principal, taskId: string, policyDigest: string,
+  action: (authorization: PostgresTaskReadAuthorization) => Promise<T>, builder?: StagedKernelBuilder,processing?:{admission:PostgresTaskReadAdmission;modelChannel?:string}): Promise<T> {
   const captured = structuredClone(principal), owner = ownerKey(captured), q = `"${postgresBusinessSchema(client)}"`;
   let validUntil = Infinity;
-  const authorized = await withPostgresTaskReadSnapshot(client, captured, taskId, policyDigest, async admission => {
+  const authorize = async (admission:PostgresTaskReadAdmission) => {
     const ontology = await postgresTaskReadOntology(client, captured, taskId, policyDigest, builder);
     const model = builder === undefined ? currentKernelImplementation() : stagedKernelComponents(builder).model;
     validUntil = admission.validUntil;
@@ -185,15 +190,25 @@ export async function withPostgresTaskReadAuthorization<T>(client: Client, princ
       return objectEnvelope({owner,ref,revision,fields,channels:admission.grant.channels,
         policy:field=>reviewedFieldPolicy(model,ref.type,field),values,labels});
     };
-    const effectiveEnvelope = async (initial: SecurityEnvelope, channel:Channel='agent_response') => {
+    const currentEnvelope = async (initial:SecurityEnvelope) => {
       await validateEnvelope(initial);
       const current: SecurityEnvelope[] = [];
       for (const dependency of initial.lineage) {
         const row = await raw(dependency.object);
         current.push(await envelopeFor(dependency.object, row.revision, dependency.fields!, row.body.properties));
       }
-      const effective = combineEnvelopes([initial, ...current]);
-      const clearance = await postgresTaskReadClearance(client, captured, taskId, policyDigest);
+      return combineEnvelopes([initial,...current]);
+    };
+    const effectiveEnvelope = async (initial:SecurityEnvelope,channel:Channel=processing?'registered_model':'agent_response') => {
+      const effective=await currentEnvelope(initial);
+      let clearance;
+      if(processing){
+        if(channel!=='registered_model'||!processing.modelChannel)throw new SecurityError('OUTPUT_NOT_ALLOWED');
+        const rows=await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM ${q}.security_model_channels WHERE id=$1 LIMIT 2`,[processing.modelChannel]);
+        if(rows.rowCount!==1||typeof rows.rows[0]?.body!=='string')throw new SecurityError('OUTPUT_NOT_ALLOWED');
+        const value=z.strictObject({classification:z.enum(['private','sensitive']),markings:securityEnvelopeSchema.shape.requiredMarkings,expiresAt:z.iso.datetime({offset:true})}).parse(JSON.parse(rows.rows[0].body));
+        clearance={...value,channels:['registered_model'] as Channel[]};
+      }else clearance=await postgresTaskReadClearance(client,captured,taskId,policyDigest);
       if (!clearance || !clearance.channels.includes(channel) || !admission.grant.channels.includes(channel)) throw new SecurityError('OUTPUT_NOT_ALLOWED');
       requireChannel(effective, channel, clearance);
       validUntil = Math.min(validUntil, Date.parse(clearance.expiresAt));
@@ -203,6 +218,8 @@ export async function withPostgresTaskReadAuthorization<T>(client: Client, princ
     let available = true;
     const assertAvailable = () => { if (!available) throw new SecurityError('AUTHORIZATION_REQUIRED'); };
     const authorization: PostgresTaskReadAuthorization = {
+      async validateEvidence(input) {assertAvailable();const result=await currentEnvelope(securityEnvelopeSchema.parse(input));assertAvailable();return result;},
+      async authorizeEvidence(input) {assertAvailable();const result=await effectiveEnvelope(securityEnvelopeSchema.parse(input));assertAvailable();return result;},
       async readTaskRoot() {
         assertAvailable();
         const ref={type:'ServiceRequest',id:taskId},evidence=await binding(ref);
@@ -308,10 +325,26 @@ export async function withPostgresTaskReadAuthorization<T>(client: Client, princ
     };
     try { return await action(Object.freeze(authorization)); }
     finally { available = false; }
-  });
+  };
+  const authorized=processing?await authorize(processing.admission):await withPostgresTaskReadSnapshot(client,captured,taskId,policyDigest,authorize);
   if (validUntil <= Date.now()) throw new SecurityError('OUTPUT_NOT_ALLOWED');
   postgresConstrainReadDeadline(client,validUntil);
   return authorized;
+}
+
+/** Agent read boundary. Worker contexts cannot enter through this function. */
+export async function withPostgresTaskReadAuthorization<T>(client:Client,principal:Principal,taskId:string,policyDigest:string,
+  action:(authorization:PostgresTaskReadAuthorization)=>Promise<T>,builder?:StagedKernelBuilder):Promise<T>{
+  return withTaskAuthorization(client,principal,taskId,policyDigest,action,builder);
+}
+
+/** Internal Worker evidence boundary. Reads require the separately configured
+ * registered model channel. Validation alone permits no protected disclosure. */
+export async function withPostgresWorkerEvidenceAuthorization<T>(client:Client,claim:WorkClaim,policyDigest:string,
+  action:(authorization:PostgresTaskReadAuthorization,admission:PostgresTaskReadAdmission)=>Promise<T>,builder?:StagedKernelBuilder,modelChannel?:string):Promise<T>{
+  if(modelChannel!==undefined)z.string().min(1).max(200).parse(modelChannel);
+  return withPostgresWorkerReadSnapshot(client,claim,policyDigest,(principal,admission)=>
+    withTaskAuthorization(client,principal,claim.job.id,policyDigest,auth=>action(auth,admission),builder,{admission,modelChannel}));
 }
 
 /** Check an existing worker seal without exposing unsealed task data. */

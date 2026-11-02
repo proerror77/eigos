@@ -1,3 +1,4 @@
+import {postgresTaskReadHistory} from './task-lineage.js';
 import type {Client} from 'pg';
 import {z} from 'zod';
 import {digest} from '../core/delegation.js';
@@ -146,24 +147,7 @@ export class PostgresTaskBindings {
     let inherited:SecurityEnvelope|undefined;
     const evidence=async()=>{
       if(inherited)return inherited;
-      const invalid=await this.query(`WITH grants AS(SELECT issued.body,"${this.schema}".eigos_try_jsonb(issued.body) AS parsed
-        FROM "${this.schema}".security_grants issued WHERE issued.owner=$1 AND issued.kind='task_data'
-          AND EXISTS(SELECT 1 FROM "${this.schema}".security_reads r WHERE r.grant_id=issued.id))
-        SELECT 1 FROM grants g WHERE g.parsed IS NULL OR(
-          EXISTS(SELECT 1 FROM json_each(CASE WHEN jsonb_typeof(g.parsed)='object' THEN g.body::json ELSE '{}'::json END) entry
-            WHERE entry.key='taskId' AND json_typeof(entry.value)='string' AND entry.value#>>'{}'=$2)
-          AND EXISTS(SELECT 1 FROM json_each(CASE WHEN jsonb_typeof(g.parsed)='object' THEN g.body::json ELSE '{}'::json END)
-            WHERE key IN('taskId','requestRevision') GROUP BY key HAVING count(*)>1)) LIMIT 1`,[grant.ownerKey,job.id]);
-      if(invalid.rowCount)throw new SecurityError('POLICY_CHANGED');
-      const history=await this.query(`WITH history AS(SELECT r.body FROM "${this.schema}".security_reads r
-        JOIN "${this.schema}".security_grants issued ON issued.id=r.grant_id WHERE issued.owner=$1 AND issued.kind='task_data'
-          AND "${this.schema}".eigos_try_jsonb(issued.body)->>'taskId'=$2
-          AND CASE WHEN jsonb_typeof("${this.schema}".eigos_try_jsonb(issued.body)->'requestRevision')='number'
-            THEN("${this.schema}".eigos_try_jsonb(issued.body)->>'requestRevision')::numeric END=$3 LIMIT 2001)
-        SELECT CASE WHEN octet_length(body)<=8388608 AND sum(octet_length(body)) OVER()<=8388608 THEN body END AS body FROM history`,[grant.ownerKey,job.id,grant.requestRevision]);
-      if(history.rows.length>2000||history.rows.some(item=>item.body===null))throw new SecurityError('OUTPUT_NOT_ALLOWED');
-      const envelopes=history.rows.map(item=>securityEnvelopeSchema.parse(JSON.parse(String(item.body))));
-      if(envelopes.some(item=>item.ownerKey!==grant.ownerKey))throw new SecurityError('OUTPUT_NOT_ALLOWED');
+      const envelopes=await postgresTaskReadHistory(this.client,grant.ownerKey,job.id,grant.requestRevision);
       inherited=combineEnvelopes([await this.envelope(grant.ownerKey,root,['originalGoal'],grant.channels),...envelopes]);return inherited;
     };
     const members=await postgresOwnedTaskContextMembers(this.client,grant.ownerKey,job.id,grant.requestRevision);
