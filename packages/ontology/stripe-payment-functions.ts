@@ -1,10 +1,13 @@
+import { runGraphProgram, type ProjectionMetadata, type GraphProgram, graphRead, graphRelated } from './graph-program.js';
+import { sourceProofProgram } from './object-evidence.js';
+import { readCommerceObservationProgram } from './commerce-journey-functions.js';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import type { AgentActionContext } from '../core/agent-program.js';
 import type { ObjectRef } from './model.js';
 import { linkSnapshotDigest, type OntologyObjectStore, type ObjectWrite, type LinkWrite, type ReadBudget } from './object-store.js';
-import { sourceProof } from './object-evidence.js';
-import { checkedCommerceObservation, readCommerceObservation } from './commerce-journey-functions.js';
+
+import { checkedCommerceObservation } from './commerce-journey-functions.js';
 import { parseCommerceEntity, type CommerceObservation } from './commerce-journey.js';
 import { stripePaymentObservationSchema, type StripePaymentObservation, type StripePaymentData } from './stripe-payment.js';
 import type { Computation } from './object-functions.js';
@@ -19,37 +22,43 @@ export function stripeTestCaptured(data: StripePaymentData) {
   const c = data.charge;
   return data.status === 'succeeded' && !data.hasPaymentError && data.amountReceived === data.amount.minor && !!c && c.paymentIntentId === data.paymentIntentId && equal(c.amount, data.amount) && c.paid && c.captured && !c.refunded && c.amountRefunded === '0' && !c.disputed && !c.livemode;
 }
-export function readStripePayment(graph: OntologyObjectStore, owner: string, ref: ObjectRef, options: { historical?: boolean; budget?: ReadBudget } = {}): StripePaymentObservation {
+export function readStripePayment(graph: OntologyObjectStore, owner: string, ref: ObjectRef, options: { historical?: boolean; budget?: ReadBudget } = {}): StripePaymentObservation { return runGraphProgram(graph, readStripePaymentProgram(graph, owner, ref, options)); }
+
+export function* readStripePaymentProgram(graph: ProjectionMetadata, owner: string, ref: ObjectRef, options: { historical?: boolean; budget?: ReadBudget } = {}): GraphProgram<StripePaymentObservation> {
   if (ref.type !== 'StripePaymentObservation') return fail('Expected Stripe payment observation');
-  const budget = options.budget ?? { remaining: 5000 }, record = graph.read(owner, ref, budget);
+  const budget = options.budget ?? { remaining: 5000 }, record = (yield* graphRead(owner, ref, budget));
   const s = stripePaymentObservationSchema.parse(record.properties.snapshot), { contentDigest, ...body } = s;
-  const proof = sourceProof(graph, owner, ref, budget), at = options.historical ? Date.parse(s.observedAt) : graph.now();
+  const proof = (yield* sourceProofProgram(graph, owner, ref, budget)), at = options.historical ? Date.parse(s.observedAt) : graph.now();
   if (digest(body) !== contentDigest || !equal(record.properties.data, s.data) || s.ownerDigest !== digest(owner) || !proof || proof.levels.some(l => l !== s.evidenceLevel) || Date.parse(s.observedAt) > at || Date.parse(s.expiresAt) <= at || s.receipts.some(r => Date.parse(r.startedAt) > Date.parse(r.receivedAt) || Date.parse(r.receivedAt) > Date.parse(s.observedAt))) return fail('Stripe payment evidence is unproven, changed or expired');
-  const scopes = graph.related(owner, ref, 'scope', budget), requests = graph.related(owner, ref, 'request', budget), orders = graph.related(owner, ref, 'order', budget);
+  const scopes = (yield* graphRelated(owner, ref, 'scope', budget)), requests = (yield* graphRelated(owner, ref, 'request', budget)), orders = (yield* graphRelated(owner, ref, 'order', budget));
   if (scopes?.length !== 1 || !equal(scopes[0]!.ref, s.scope) || scopes[0]!.properties.configurationDigest !== s.configurationDigest || scopes[0]!.properties.requestRevision !== s.requestRevision || requests?.length !== 1 || requests[0]!.ref.id !== s.requestId || requests[0]!.properties.revision !== s.requestRevision || orders?.length !== 1 || !equal(orders[0]!.ref, s.order)) return fail('Stripe payment is outside its owned request, order or configuration');
   const rawOrder = checkedCommerceObservation(orders[0]!.properties.snapshot);
-  const original = readCommerceObservation(graph, owner, s.order, { at: Date.parse(rawOrder.observedAt), budget });
+  const original = (yield* readCommerceObservationProgram(graph, owner, s.order, { at: Date.parse(rawOrder.observedAt), budget }));
   const order = parseCommerceEntity('CommerceOrderObservation', original.data);
   if (original.contentDigest !== s.orderContentDigest || !equal(original.scope, s.scope) || original.configurationDigest !== s.configurationDigest || original.action !== 'ReadCommerceOrder' || !order.independentRead || order.paymentProvider !== 'stripe_test' || order.state !== 'confirmed' || order.orderId !== s.data.orderId || order.merchantId !== s.data.merchantId || !equal(order.total, s.data.amount) || stripeOrderDigest(original) !== s.data.orderDigest) return fail('Stripe evidence does not match its independently read unpaid order');
   if (!s.receipts.some(r => r.path === '/v1/account' && r.method === 'GET')) return fail('Stripe account readback is missing');
   const last = s.receipts.at(-1)!;
   if (s.data.independentRead !== (s.action === 'ReadStripePayment') || s.data.independentRead && (last.method !== 'GET' || last.path !== `/v1/payment_intents/${s.data.paymentIntentId}`)) return fail('Stripe independent read provenance changed');
-  for (const sibling of graph.related(owner, s.scope, 'stripePayments', budget) ?? []) {
+  for (const sibling of (yield* graphRelated(owner, s.scope, 'stripePayments', budget)) ?? []) {
     if (equal(sibling.ref, ref)) continue;
     const other = stripePaymentObservationSchema.parse(sibling.properties.snapshot);
     const { independentRead: _oldRead, ...oldData } = s.data, { independentRead: _newRead, ...newData } = other.data;
-    if (other.data.paymentIntentId === s.data.paymentIntentId && Date.parse(other.observedAt) <= at && (Date.parse(other.observedAt) > Date.parse(s.observedAt) || other.observedAt === s.observedAt && !equal(oldData, newData)) && sourceProof(graph, owner, sibling.ref, budget)) return fail('A newer or conflicting Stripe observation supersedes this payment state');
+    if (other.data.paymentIntentId === s.data.paymentIntentId && Date.parse(other.observedAt) <= at && (Date.parse(other.observedAt) > Date.parse(s.observedAt) || other.observedAt === s.observedAt && !equal(oldData, newData)) && (yield* sourceProofProgram(graph, owner, sibling.ref, budget))) return fail('A newer or conflicting Stripe observation supersedes this payment state');
   }
   return s;
 }
-export function stripePaymentStatus(graph: OntologyObjectStore, owner: string, ref: ObjectRef, budget?: ReadBudget) {
-  const s = readStripePayment(graph, owner, ref, { budget });
+export function stripePaymentStatus(graph: OntologyObjectStore, owner: string, ref: ObjectRef, budget?: ReadBudget) { return runGraphProgram(graph, stripePaymentStatusProgram(graph, owner, ref, budget)); }
+
+export function* stripePaymentStatusProgram(graph: ProjectionMetadata, owner: string, ref: ObjectRef, budget?: ReadBudget) {
+  const s = (yield* readStripePaymentProgram(graph, owner, ref, { budget }));
   const status = s.data.independentRead && stripeTestCaptured(s.data) ? 'test_paid' : s.action === 'PrepareStripePayment' && s.data.status === 'requires_payment_method' && !s.data.hasPaymentError && s.data.amountReceived === '0' && !s.data.charge ? 'prepared' : s.data.status === 'canceled' || s.data.hasPaymentError ? 'failed' : 'pending';
   return { status, data: s.data, evidenceLevel: s.evidenceLevel, tokenSource: 'stripe_test_helper', bankSettlementVerified: false, realPayment: false };
 }
-export function evaluateStripePaymentFunction(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined {
+export function evaluateStripePaymentFunction(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined { return runGraphProgram(graph, evaluateStripePaymentFunctionProgram(graph, owner, input, budget)); }
+
+export function* evaluateStripePaymentFunctionProgram(graph: ProjectionMetadata, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): GraphProgram<Computation | undefined> {
   if (input.function !== 'stripePaymentStatus') return;
-  try { const value = stripePaymentStatus(graph, owner, input.object, budget); return { status: 'known', value, evidenceRefs: [input.object], evidenceLevels: [value.evidenceLevel] }; }
+  try { const value = (yield* stripePaymentStatusProgram(graph, owner, input.object, budget)); return { status: 'known', value, evidenceRefs: [input.object], evidenceLevels: [value.evidenceLevel] }; }
   catch (error) { return { status: 'unknown', reason: error instanceof DomainError ? error.message : 'Stripe payment evidence validation failed', evidenceRefs: [input.object], evidenceLevels: [] }; }
 }
 export function projectStripePayment(ctx: AgentActionContext, action: string, raw: unknown): ObjectRef {

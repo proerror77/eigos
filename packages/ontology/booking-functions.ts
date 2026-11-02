@@ -1,8 +1,10 @@
+import { runGraphProgram, type ProjectionMetadata, type GraphProgram, graphRead, graphRelated } from './graph-program.js';
+import { sourceProofProgram } from './object-evidence.js';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import type { AgentActionContext } from '../core/agent-program.js';
 import { objectRefSchema, type ObjectRef } from './model.js';
-import { sourceProof } from './object-evidence.js';
+
 import { linkSnapshotDigest, type OntologyObjectStore, type ObjectWrite, type LinkWrite, type ReadBudget } from './object-store.js';
 import { bookingEntitySchemas, bookingSnapshotSchema, bookingDataSchema, bookingPaymentDataSchema, type BookingSnapshot, type BookingSourceResult } from './booking.js';
 import type { Computation } from './object-functions.js';
@@ -15,24 +17,26 @@ export function checkedBookingSnapshot(raw: unknown): BookingSnapshot {
   if (digest(body) !== contentDigest || s.receipt.payloadDigest !== digest(s.payload)) fail('Booking source content changed');
   return s;
 }
-export function readBookingObservation(graph: OntologyObjectStore, owner: string, ref: ObjectRef, options: { historical?: boolean; budget?: ReadBudget; depth?: number } = {}): BookingSnapshot {
+export function readBookingObservation(graph: OntologyObjectStore, owner: string, ref: ObjectRef, options: { historical?: boolean; budget?: ReadBudget; depth?: number } = {}): BookingSnapshot { return runGraphProgram(graph, readBookingObservationProgram(graph, owner, ref, options)); }
+
+export function* readBookingObservationProgram(graph: ProjectionMetadata, owner: string, ref: ObjectRef, options: { historical?: boolean; budget?: ReadBudget; depth?: number } = {}): GraphProgram<BookingSnapshot> {
   if (!Object.hasOwn(bookingEntitySchemas, ref.type) || (options.depth ?? 0) > 40) fail('Expected a bounded booking source observation');
-  const budget = options.budget ?? { remaining: 5000 }, record = graph.read(owner, ref, budget), s = checkedBookingSnapshot(record.properties.snapshot);
-  const at = options.historical ? Date.parse(s.receipt.receivedAt) : graph.now(), proof = sourceProof(graph, owner, ref, budget);
+  const budget = options.budget ?? { remaining: 5000 }, record = (yield* graphRead(owner, ref, budget)), s = checkedBookingSnapshot(record.properties.snapshot);
+  const at = options.historical ? Date.parse(s.receipt.receivedAt) : graph.now(), proof = (yield* sourceProofProgram(graph, owner, ref, budget));
   if (s.payload.type !== ref.type || !same(record.properties.data, s.payload.data) || s.receipt.ownerDigest !== digest(owner) || !proof || proof.levels.some(l => l !== 'synthetic') || Date.parse(s.receipt.startedAt) > Date.parse(s.receipt.receivedAt) || Date.parse(s.receipt.receivedAt) > at || Date.parse(s.payload.expiresAt) <= at) fail('Booking source facts are unproven, changed or expired');
-  const scopes = graph.related(owner, ref, 'scope', budget), requests = graph.related(owner, ref, 'request', budget);
+  const scopes = (yield* graphRelated(owner, ref, 'scope', budget)), requests = (yield* graphRelated(owner, ref, 'request', budget));
   if (scopes?.length !== 1 || !same(scopes[0]!.ref, s.scope) || scopes[0]!.properties.configurationDigest !== s.configurationDigest || scopes[0]!.properties.requestRevision !== s.receipt.requestRevision || requests?.length !== 1 || requests[0]!.ref.id !== s.receipt.requestId || requests[0]!.properties.revision !== s.receipt.requestRevision) fail('Booking source is outside its owned request or configuration');
   const observedData = (value: BookingSnapshot) => { const { independentRead: _read, ...data } = value.payload.data; return data; };
-  for (const otherRecord of graph.related(owner, s.scope, `observed${s.payload.type}`, budget) ?? []) {
+  for (const otherRecord of (yield* graphRelated(owner, s.scope, `observed${s.payload.type}`, budget)) ?? []) {
     if (same(otherRecord.ref, ref)) continue;
     const other = checkedBookingSnapshot(otherRecord.properties.snapshot);
-    if (other.payload.sourceId === s.payload.sourceId && other.receipt.sourceIdentity === s.receipt.sourceIdentity && Date.parse(other.receipt.receivedAt) <= at && sourceProof(graph, owner, otherRecord.ref, budget) && (other.payload.sourceVersion > s.payload.sourceVersion || other.payload.sourceVersion === s.payload.sourceVersion && !same(observedData(other), observedData(s)))) fail('A newer or conflicting provider state supersedes this observation');
+    if (other.payload.sourceId === s.payload.sourceId && other.receipt.sourceIdentity === s.receipt.sourceIdentity && Date.parse(other.receipt.receivedAt) <= at && (yield* sourceProofProgram(graph, owner, otherRecord.ref, budget)) && (other.payload.sourceVersion > s.payload.sourceVersion || other.payload.sourceVersion === s.payload.sourceVersion && !same(observedData(other), observedData(s)))) fail('A newer or conflicting provider state supersedes this observation');
   }
   for (const dependency of s.dependencies) {
-    const original = readBookingObservation(graph, owner, dependency.ref, { historical: true, budget, depth: (options.depth ?? 0) + 1 });
+    const original = (yield* readBookingObservationProgram(graph, owner, dependency.ref, { historical: true, budget, depth: (options.depth ?? 0) + 1 }));
     if (original.contentDigest !== dependency.contentDigest || !same(original.scope, s.scope) || original.receipt.requestId !== s.receipt.requestId) fail('Booking dependency does not match its original task');
     const link = s.payload.type === 'BookingPaymentObservation' ? 'booking' : dependency.ref.type === 'BookingOffers' ? 'offers' : 'original';
-    const linked = graph.related(owner, ref, link, budget);
+    const linked = (yield* graphRelated(owner, ref, link, budget));
     if (linked?.length !== 1 || !same(linked[0]!.ref, dependency.ref)) fail('Booking source dependency relationship changed');
     if (original.payload.type === 'BookingObservation') {
       const agreed = bookingDataSchema.parse(original.payload.data);
@@ -51,8 +55,10 @@ export function readBookingObservation(graph: OntologyObjectStore, owner: string
   } else if (s.payload.type === 'BookingPaymentObservation' && s.payload.data.providerId !== s.receipt.sourceIdentity) fail('Payment source identity changed');
   return s;
 }
-export function bookingObservationStatus(graph: OntologyObjectStore, owner: string, ref: ObjectRef, budget?: ReadBudget) {
-  const s = readBookingObservation(graph, owner, ref, { budget });
+export function bookingObservationStatus(graph: OntologyObjectStore, owner: string, ref: ObjectRef, budget?: ReadBudget) { return runGraphProgram(graph, bookingObservationStatusProgram(graph, owner, ref, budget)); }
+
+export function* bookingObservationStatusProgram(graph: ProjectionMetadata, owner: string, ref: ObjectRef, budget?: ReadBudget) {
+  const s = (yield* readBookingObservationProgram(graph, owner, ref, { budget }));
   if (s.payload.type === 'BookingOffers') return { status: 'known', data: s.payload.data, evidenceLevel: 'synthetic' };
   if (s.payload.type === 'BookingObservation') {
     const b = bookingDataSchema.parse(s.payload.data), independent = b.independentRead && s.receipt.action === 'ReadProviderBooking';
@@ -61,9 +67,11 @@ export function bookingObservationStatus(graph: OntologyObjectStore, owner: stri
   const p = bookingPaymentDataSchema.parse(s.payload.data);
   return { status: p.state, independentRead: s.receipt.action === 'ReadProviderPayment', paid: p.state === 'paid' && !!p.paymentId && !!p.capturedAt && Date.parse(p.capturedAt) <= graph.now() && same(p.amount, p.paidAmount), data: p, evidenceLevel: 'synthetic' };
 }
-export function evaluateBookingFunction(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined {
+export function evaluateBookingFunction(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined { return runGraphProgram(graph, evaluateBookingFunctionProgram(graph, owner, input, budget)); }
+
+export function* evaluateBookingFunctionProgram(graph: ProjectionMetadata, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): GraphProgram<Computation | undefined> {
   if (input.function !== 'bookingObservationStatus') return;
-  try { return { status: 'known', value: bookingObservationStatus(graph, owner, input.object, budget), evidenceRefs: [input.object], evidenceLevels: ['synthetic'] }; }
+  try { return { status: 'known', value: (yield* bookingObservationStatusProgram(graph, owner, input.object, budget)), evidenceRefs: [input.object], evidenceLevels: ['synthetic'] }; }
   catch (error) { return { status: 'unknown', reason: error instanceof DomainError ? error.message : 'Booking source evidence validation failed', evidenceRefs: [input.object], evidenceLevels: [] }; }
 }
 export function projectBookingObservation(ctx: AgentActionContext, action: string, input: Record<string, unknown>, result: BookingSourceResult): ObjectRef {

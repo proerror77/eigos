@@ -1,12 +1,16 @@
+import { runGraphProgram, type ProjectionMetadata, type GraphProgram, graphRead, graphRelated, graphRelationshipDigest, graphSomeOptional } from './graph-program.js';
+import { sourceProofProgram } from './object-evidence.js';
+import { readCommerceObservationProgram } from './commerce-journey-functions.js';
+import { evaluateAgentCatalogFunctionProgram } from './catalog-agent-functions.js';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import type { ObjectRef } from './model.js';
 import type { Computation } from './object-functions.js';
 import type { OntologyObjectStore, ReadBudget } from './object-store.js';
-import { sourceProof } from './object-evidence.js';
+
 import { checkedAgentCatalogObservation, catalogEntityRefs } from './catalog-agent-projection.js';
-import { readCommerceObservation, checkedCommerceObservation } from './commerce-journey-functions.js';
-import { evaluateAgentCatalogFunction } from './catalog-agent-functions.js';
+import { checkedCommerceObservation } from './commerce-journey-functions.js';
+
 import { parseCommerceEntity } from './commerce-journey.js';
 import { productAttributesSchema, productAttributeFunctionSchemas, orderLineSourceAgreementSchema, shipmentExpectedAllocationSchema, deliveryVariantVerificationSchema, type ProductAttributes } from './product-attributes.js';
 
@@ -52,44 +56,46 @@ export function compareProductAttributes(actual: unknown, requested: unknown): {
   return { status: different.length ? 'different' : missing.length ? 'unknown' : 'matches', missing, different };
 }
 
-export function evaluateProductAttributeFunction(graph: OntologyObjectStore, owner: string, raw: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined {
-  if (raw.function === 'orderLineAgreementStatus') return orderLineAgreementStatus(graph, owner, raw.object, budget);
-  if (raw.function === 'shipmentAllocationStatus') return shipmentAllocationStatus(graph, owner, raw.object, budget);
+export function evaluateProductAttributeFunction(graph: OntologyObjectStore, owner: string, raw: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined { return runGraphProgram(graph, evaluateProductAttributeFunctionProgram(graph, owner, raw, budget)); }
+
+export function* evaluateProductAttributeFunctionProgram(graph: ProjectionMetadata, owner: string, raw: { function: string; object: ObjectRef }, budget: ReadBudget): GraphProgram<Computation | undefined> {
+  if (raw.function === 'orderLineAgreementStatus') return (yield* orderLineAgreementStatusProgram(graph, owner, raw.object, budget));
+  if (raw.function === 'shipmentAllocationStatus') return (yield* shipmentAllocationStatusProgram(graph, owner, raw.object, budget));
   if (raw.function !== 'productAttributesMatch') return;
   const input = productAttributeFunctionSchemas[0]!.parse(raw);
   if (!['ProductVariant', 'ProductOffer', 'CommerceProduct'].includes(input.object.type)) throw new DomainError('INVALID_INPUT', 'Product matching requires a variant, product offer or source product observation');
-  const object = graph.read(owner, input.object, budget), refs = [input.object], levels: string[] = [];
+  const object = (yield* graphRead(owner, input.object, budget)), refs = [input.object], levels: string[] = [];
   let attrs: ProductAttributes | undefined;
   let variant = object;
   if (object.ref.type === 'ProductOffer') {
-    const proof = sourceProof(graph, owner, object.ref, budget), variants = graph.related(owner, object.ref, 'productVariant', budget);
+    const proof = (yield* sourceProofProgram(graph, owner, object.ref, budget)), variants = (yield* graphRelated(owner, object.ref, 'productVariant', budget));
     if (!proof || variants?.length !== 1 || object.properties.variantRevision !== variants[0]!.revision) return unknown('Offer evidence or its fixed variant revision is missing or changed', refs);
     if (!object.properties.expiresAt || Date.parse(String(object.properties.expiresAt)) <= graph.now()) return unknown('Product offer validity is unknown or expired', refs);
     variant = variants[0]!; refs.push(variant.ref, ...proof.refs); levels.push(...proof.levels);
   }
   if (variant.ref.type === 'CommerceProduct') {
-    const proof = sourceProof(graph, owner, variant.ref, budget);
+    const proof = (yield* sourceProofProgram(graph, owner, variant.ref, budget));
     if (!proof) return unknown('Product observation is not sealed by a source receipt', refs);
-    let s; try { s = readCommerceObservation(graph, owner, variant.ref, { budget }); } catch { return unknown('Product observation is stale or its source dependencies changed', refs); }
+    let s; try { s = (yield* readCommerceObservationProgram(graph, owner, variant.ref, { budget })); } catch { return unknown('Product observation is stale or its source dependencies changed', refs); }
     attrs = parseCommerceEntity('CommerceProduct', s.data).typedAttributes; refs.push(...proof.refs); levels.push(...proof.levels);
   } else {
     const candidates: ProductAttributes[] = [];
-    for (const observation of graph.related(owner, variant.ref, 'currentCatalogObservation', budget) ?? []) {
-      const proof = sourceProof(graph, owner, observation.ref, budget);
+    for (const observation of (yield* graphRelated(owner, variant.ref, 'currentCatalogObservation', budget)) ?? []) {
+      const proof = (yield* sourceProofProgram(graph, owner, observation.ref, budget));
       if (!proof) return unknown('Current catalog source receipt no longer seals the facts', refs);
-      if (evaluateAgentCatalogFunction(graph, owner, { function: 'catalogObservationStatus', object: observation.ref }, budget)?.status !== 'known') return unknown('Current catalog task, source or request is no longer valid', refs);
+      if ((yield* evaluateAgentCatalogFunctionProgram(graph, owner, { function: 'catalogObservationStatus', object: observation.ref }, budget))?.status !== 'known') return unknown('Current catalog task, source or request is no longer valid', refs);
       const s = checkedAgentCatalogObservation(observation.properties.snapshot);
       if (Date.parse(s.observedAt) > graph.now() || Date.parse(s.expiresAt) <= graph.now()) return unknown('Current catalog observation expired or is in the future', refs);
       const item = s.items.find(item => same(catalogEntityRefs(s, item.variantId).variant, variant.ref));
       if (!item || !same(item.typedAttributes, variant.properties.typedAttributes)) return unknown('Variant attributes no longer match the exact catalog source', refs);
       if (item.typedAttributes) candidates.push(item.typedAttributes); refs.push(observation.ref, ...proof.refs); levels.push(...proof.levels);
     }
-    for (const observation of graph.related(owner, variant.ref, 'currentCommerceProduct', budget) ?? []) {
-      const proof = sourceProof(graph, owner, observation.ref, budget);
+    for (const observation of (yield* graphRelated(owner, variant.ref, 'currentCommerceProduct', budget)) ?? []) {
+      const proof = (yield* sourceProofProgram(graph, owner, observation.ref, budget));
       if (!proof) return unknown('Current commerce product source receipt no longer seals the facts', refs);
-      let s; try { s = readCommerceObservation(graph, owner, observation.ref, { budget }); } catch { return unknown('Current commerce product observation is stale or out of scope', refs); }
+      let s; try { s = (yield* readCommerceObservationProgram(graph, owner, observation.ref, { budget })); } catch { return unknown('Current commerce product observation is stale or out of scope', refs); }
       const data = parseCommerceEntity('CommerceProduct', s.data);
-      const variants = graph.related(owner, observation.ref, 'productVariant', budget);
+      const variants = (yield* graphRelated(owner, observation.ref, 'productVariant', budget));
       if (variants?.length !== 1 || !same(variants[0]!.ref, variant.ref) || !same(data.typedAttributes, variant.properties.typedAttributes)) return unknown('Variant attributes no longer match the current source product', refs);
       if (data.typedAttributes) candidates.push(data.typedAttributes); refs.push(observation.ref, ...proof.refs); levels.push(...proof.levels);
     }
@@ -103,23 +109,24 @@ export function evaluateProductAttributeFunction(graph: OntologyObjectStore, own
 
 /** Contract readback deliberately checks immutable historical observations,
  * rather than interpreting current catalog freshness as the old agreement. */
-function orderLineAgreementStatus(graph: OntologyObjectStore, owner: string, ref: ObjectRef, budget: ReadBudget): Computation {
+
+function* orderLineAgreementStatusProgram(graph: ProjectionMetadata, owner: string, ref: ObjectRef, budget: ReadBudget): GraphProgram<Computation> {
   if (ref.type !== 'OrderLine') throw new DomainError('INVALID_INPUT', 'Agreement status requires an order line');
-  const line = graph.read(owner, ref, budget), parsed = orderLineSourceAgreementSchema.safeParse(line.properties.sourceAgreement), refs = [ref];
+  const line = (yield* graphRead(owner, ref, budget)), parsed = orderLineSourceAgreementSchema.safeParse(line.properties.sourceAgreement), refs = [ref];
   if (!parsed.success) return unknown('This historical line has no explicit source-observation agreement; do not infer or backfill one', refs);
   const agreement = parsed.data;
   if (line.properties.agreedSpecificationRef !== digest(agreement) || line.properties.agreedPriceRef !== agreement.quote.contentDigest) return unknown('Fixed order-line agreement references changed', refs);
-  const receipts = graph.related(owner, ref, 'agreementReceipt', budget);
+  const receipts = (yield* graphRelated(owner, ref, 'agreementReceipt', budget));
   if (receipts?.length !== 1) return unknown('Fixed agreement receipt is missing or ambiguous', refs);
   const receipt = receipts[0]!, subjects = receipt.properties.subjects as { object: ObjectRef; digest: string; linksDigest: string }[] | undefined;
   if (receipt.properties.scope !== 'order' || !receipt.properties.sourceIdentity || !receipt.properties.sourceEventId || receipt.properties.evidenceLevel === 'user_asserted'
-    || !subjects?.some(subject => same(subject.object, ref) && subject.digest === digest(line.properties) && subject.linksDigest === graph.relationshipDigest(owner, ref, budget))) return unknown('Fixed agreement facts or relationships no longer match their original source receipt', refs);
+    || !(yield* graphSomeOptional(subjects, function* (subject){ return same(subject.object, ref) && subject.digest === digest(line.properties) && subject.linksDigest === (yield* graphRelationshipDigest(owner, ref, budget)); }))) return unknown('Fixed agreement facts or relationships no longer match their original source receipt', refs);
   refs.push(receipt.ref);
   const levels = [String(receipt.properties.evidenceLevel)], observations = new Map<string, ReturnType<typeof checkedCommerceObservation>>();
   for (const [field, relationship] of [['product', 'agreedProduct'], ['quote', 'agreedQuote'], ['checkout', 'agreedCheckout'], ['order', 'agreementOrderObservation']] as const) {
-    const pinned = agreement[field], related = graph.related(owner, ref, relationship, budget);
+    const pinned = agreement[field], related = (yield* graphRelated(owner, ref, relationship, budget));
     if (related?.length !== 1 || !same(related[0]!.ref, pinned.object)) return unknown('An original source agreement endpoint changed', refs, levels);
-    const proof = sourceProof(graph, owner, pinned.object, budget);
+    const proof = (yield* sourceProofProgram(graph, owner, pinned.object, budget));
     if (!proof) return unknown('An original source agreement endpoint lost its source proof', refs, levels);
     let observed;
     try { observed = checkedCommerceObservation(related[0]!.properties.snapshot); } catch { return unknown('An original source agreement snapshot is invalid', refs, levels); }
@@ -139,20 +146,20 @@ function orderLineAgreementStatus(graph: OntologyObjectStore, owner: string, ref
     physicalAttributes: 'unknown', grantsAuthority: false, provesDelivery: false }, evidenceRefs: refs, evidenceLevels: [...new Set(levels)] };
 }
 
-function shipmentAllocationStatus(graph: OntologyObjectStore, owner: string, ref: ObjectRef, budget: ReadBudget): Computation {
+function* shipmentAllocationStatusProgram(graph: ProjectionMetadata, owner: string, ref: ObjectRef, budget: ReadBudget): GraphProgram<Computation> {
   if (ref.type !== 'Shipment') throw new DomainError('INVALID_INPUT', 'Package allocation status requires a shipment');
-  const shipment = graph.read(owner, ref, budget), parsed = shipmentExpectedAllocationSchema.safeParse(shipment.properties.expectedAllocation), refs = [ref];
+  const shipment = (yield* graphRead(owner, ref, budget)), parsed = shipmentExpectedAllocationSchema.safeParse(shipment.properties.expectedAllocation), refs = [ref];
   if (!parsed.success) return unknown('This shipment has no fixed expected allocation; actual receipts cannot invent its original plan', refs);
-  const expected = parsed.data, proof = sourceProof(graph, owner, ref, budget), lines = graph.related(owner, ref, 'expectedOrderLine', budget), quotes = graph.related(owner, ref, 'expectedQuote', budget), orders = graph.related(owner, ref, 'order', budget);
+  const expected = parsed.data, proof = (yield* sourceProofProgram(graph, owner, ref, budget)), lines = (yield* graphRelated(owner, ref, 'expectedOrderLine', budget)), quotes = (yield* graphRelated(owner, ref, 'expectedQuote', budget)), orders = (yield* graphRelated(owner, ref, 'order', budget));
   if (!proof || lines?.length !== 1 || quotes?.length !== 1 || orders?.length !== 1 || !same(lines[0]!.ref, expected.orderLine) || !same(quotes[0]!.ref, expected.sourceQuote)) return unknown('The planned package source or exact order-line/quote links changed', refs);
-  const line = lines[0]!, agreement = orderLineSourceAgreementSchema.safeParse(line.properties.sourceAgreement), quoteProof = sourceProof(graph, owner, expected.sourceQuote, budget);
+  const line = lines[0]!, agreement = orderLineSourceAgreementSchema.safeParse(line.properties.sourceAgreement), quoteProof = (yield* sourceProofProgram(graph, owner, expected.sourceQuote, budget));
   if (!agreement.success || !quoteProof || line.properties.agreedSpecificationRef !== expected.agreedSpecificationRef || !same(agreement.data.quote.object, expected.sourceQuote) || agreement.data.quote.contentDigest !== expected.sourceQuoteDigest) return unknown('Planned allocation is not bound to this line\'s original source agreement', refs);
-  const agreementStatus = orderLineAgreementStatus(graph, owner, line.ref, budget);
+  const agreementStatus = (yield* orderLineAgreementStatusProgram(graph, owner, line.ref, budget));
   if (agreementStatus.status !== 'known') return unknown('The package original agreement is not independently sealed', refs);
   const snapshot = checkedCommerceObservation(quotes[0]!.properties.snapshot), quote = parseCommerceEntity('LandedCostQuote', snapshot.data), group = quote.groups.filter(group => group.id === expected.sourceGroupId);
   if (snapshot.contentDigest !== expected.sourceQuoteDigest || group.length !== 1 || group[0]!.variantId !== agreement.data.variantId || group[0]!.destinationDigest !== expected.destinationDigest
     || String(group[0]!.quantity) !== expected.quantity.amount) return unknown('Planned quantity differs from its exact original quote group', refs);
-  const siblings = graph.related(owner, orders[0]!.ref, 'shipments', budget);
+  const siblings = (yield* graphRelated(owner, orders[0]!.ref, 'shipments', budget));
   if (!siblings) return unknown('Planned package coverage exceeds the read bound', refs);
   const plans = siblings.flatMap(sibling => {
     const plan = shipmentExpectedAllocationSchema.safeParse(sibling.properties.expectedAllocation);
@@ -160,17 +167,17 @@ function shipmentAllocationStatus(graph: OntologyObjectStore, owner: string, ref
   });
   if (new Set(plans.map(plan => `${plan.sourceQuoteDigest}:${plan.sourceGroupId}`)).size !== plans.length
     || plans.some(plan => plan.sourceQuoteDigest !== expected.sourceQuoteDigest) || plans.reduce((sum, plan) => sum + Number(plan.quantity.amount), 0) > quote.quantity) return unknown('Planned packages duplicate a group or over-allocate the original order line', refs);
-  const allocations = graph.related(owner, ref, 'allocations', budget);
+  const allocations = (yield* graphRelated(owner, ref, 'allocations', budget));
   if (!allocations) return unknown('Actual allocation coverage exceeds the read bound', refs);
   let received = 0;
   const eventKeys = new Set<string>(), levels = [...proof.levels, ...quoteProof.levels, ...agreementStatus.evidenceLevels]; refs.push(...proof.refs, ...quoteProof.refs, ...agreementStatus.evidenceRefs, line.ref, expected.sourceQuote);
   for (const allocation of allocations) {
     if (allocation.properties.verificationState !== 'accepted') continue;
-    const allocationProof = sourceProof(graph, owner, allocation.ref, budget), allocationLines = graph.related(owner, allocation.ref, 'orderLine', budget), events = graph.related(owner, allocation.ref, 'deliveryEvent', budget);
+    const allocationProof = (yield* sourceProofProgram(graph, owner, allocation.ref, budget)), allocationLines = (yield* graphRelated(owner, allocation.ref, 'orderLine', budget)), events = (yield* graphRelated(owner, allocation.ref, 'deliveryEvent', budget));
     const basis = deliveryVariantVerificationSchema.safeParse(allocation.properties.verificationBasis), quantity = allocation.properties.deliveredQuantity as { amount?: string; unit?: string } | undefined;
     if (!allocationProof || allocationLines?.length !== 1 || !same(allocationLines[0]!.ref, line.ref) || events?.length !== 1 || !basis.success || basis.data.reportedVariantId !== agreement.data.variantId
       || allocation.properties.acceptedSpecificationRef !== expected.agreedSpecificationRef || quantity?.unit !== 'piece' || !/^[1-9]\d{0,3}$/.test(quantity.amount ?? '')) return unknown('Actual allocation lacks matching independent source identity and quantity evidence', refs, levels);
-    const event = events[0]!, eventProof = sourceProof(graph, owner, event.ref, budget), eventKey = String(event.properties.sourceEventKey ?? '');
+    const event = events[0]!, eventProof = (yield* sourceProofProgram(graph, owner, event.ref, budget)), eventKey = String(event.properties.sourceEventKey ?? '');
     if (!eventProof || !eventKey || eventKeys.has(eventKey) || !['delivered', 'partial'].includes(String(event.properties.eventKind)) || !event.properties.occurredAt || !Number.isFinite(Date.parse(String(event.properties.occurredAt))) || Date.parse(String(event.properties.occurredAt)) > graph.now()) return unknown('Actual delivery event is duplicated, unproven or not an accepted receipt', refs, levels);
     eventKeys.add(eventKey); received += Number(quantity!.amount); refs.push(allocation.ref, event.ref, ...allocationProof.refs, ...eventProof.refs); levels.push(...allocationProof.levels, ...eventProof.levels);
   }

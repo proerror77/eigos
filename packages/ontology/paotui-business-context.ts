@@ -1,3 +1,4 @@
+import { runGraphProgram, type ProjectionMetadata, type GraphProgram, graphRead, graphRelationshipDigest } from './graph-program.js';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import { paotuiInputs } from '../capabilities/paotui-current-inputs.js';
@@ -86,10 +87,14 @@ export function projectPaotuiRoute(graph: OntologyObjectStore, owner: string, re
     { kind: 'user', id: digest({ selections: selected }), observedAt: selectedAt ?? messageTime(request) }, links, removeLinks);
 }
 
-export function paotuiObjectSnapshot(graph: OntologyObjectStore, owner: string, ref: ObjectRef): ObjectSnapshot {
-  const value = graph.read(owner, ref);
-  return { ref, revision: value.revision, propertiesDigest: digest(value.properties), linksDigest: graph.relationshipDigest(owner, ref, { remaining: 1000 }) };
+export function paotuiObjectSnapshot(graph: OntologyObjectStore, owner: string, ref: ObjectRef): ObjectSnapshot { return runGraphProgram(graph, paotuiObjectSnapshotProgram(graph, owner, ref)); }
+
+export function* paotuiObjectSnapshotProgram(graph: ProjectionMetadata, owner: string, ref: ObjectRef): GraphProgram<ObjectSnapshot> {
+  const value = (yield* graphRead(owner, ref));
+  return { ref, revision: value.revision, propertiesDigest: digest(value.properties), linksDigest: (yield* graphRelationshipDigest(owner, ref, { remaining: 1000 })) };
 }
-export function matchesPaotuiSnapshot(graph: OntologyObjectStore, owner: string, snapshot: ObjectSnapshot) {
-  try { return same(paotuiObjectSnapshot(graph, owner, snapshot.ref), snapshot); } catch { return false; }
+export function matchesPaotuiSnapshot(graph: OntologyObjectStore, owner: string, snapshot: ObjectSnapshot) { return runGraphProgram(graph, matchesPaotuiSnapshotProgram(graph, owner, snapshot)); }
+
+export function* matchesPaotuiSnapshotProgram(graph: ProjectionMetadata, owner: string, snapshot: ObjectSnapshot) {
+  try { return same((yield* paotuiObjectSnapshotProgram(graph, owner, snapshot.ref)), snapshot); } catch { return false; }
 }

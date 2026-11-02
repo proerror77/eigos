@@ -1,10 +1,12 @@
+import { runGraphProgram, type ProjectionMetadata, type GraphProgram, graphRead, graphRelated } from './graph-program.js';
+import { sourceProofProgram } from './object-evidence.js';
 import type { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { BusinessFactProjection, businessFactsEnabled, sourceEntityRef } from './business-fact-projection.js';
 import { DomainError } from '../core/domain.js';
 import type { AgentActionContext } from '../core/agent-program.js';
 import { objectRefSchema, type ObjectRef } from './model.js';
-import { sourceProof } from './object-evidence.js';
+
 import { linkSnapshotDigest, type OntologyObjectStore, type ReadBudget, type ObjectWrite, type LinkWrite } from './object-store.js';
 import type { Computation } from './object-functions.js';
 import { registrationSnapshotSchema as snapshotSchema, registrationPaymentSchema, registrationInputSchema, registrationOfferSchema, registrationRecordSchema, registrationEntities, type RegistrationData, type RegistrationSnapshot, type RegistrationResult } from './free-booking.js';
@@ -13,25 +15,29 @@ function fail(message: string): never { throw new DomainError('CONFLICT', messag
 export function isFreeRegistration(value: { payment: z.infer<typeof registrationPaymentSchema> }) {
   return value.payment.requirement === 'not_required' && value.payment.total.minor === '0' && value.payment.feesComplete;
 }
-export function readRegistration(graph: OntologyObjectStore, owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 5000 }, options: { historical?: boolean } = {}): RegistrationSnapshot {
+export function readRegistration(graph: OntologyObjectStore, owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 5000 }, options: { historical?: boolean } = {}): RegistrationSnapshot { return runGraphProgram(graph, readRegistrationProgram(graph, owner, ref, budget, options)); }
+
+export function* readRegistrationProgram(graph: ProjectionMetadata, owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 5000 }, options: { historical?: boolean } = {}): GraphProgram<RegistrationSnapshot> {
   if (!Object.hasOwn(registrationEntities, ref.type)) fail('Expected registration source evidence');
-  const object = graph.read(owner, ref, budget), s = snapshotSchema.parse(object.properties.snapshot), { contentDigest, ...body } = s;
+  const object = (yield* graphRead(owner, ref, budget)), s = snapshotSchema.parse(object.properties.snapshot), { contentDigest, ...body } = s;
   const data = registrationEntities[s.payload.type].parse(s.payload.data);
-  const proof = sourceProof(graph, owner, ref, budget), scopeObject = graph.read(owner, s.scope, budget);
-  const scopes = graph.related(owner, ref, 'task', budget), requests = graph.related(owner, ref, 'request', budget);
+  const proof = (yield* sourceProofProgram(graph, owner, ref, budget)), scopeObject = (yield* graphRead(owner, s.scope, budget));
+  const scopes = (yield* graphRelated(owner, ref, 'task', budget)), requests = (yield* graphRelated(owner, ref, 'request', budget));
   if (digest(body) !== contentDigest || s.payload.type !== ref.type || digest(object.properties.data) !== digest(s.payload.data) || s.receipt.payloadDigest !== digest(s.payload) || s.receipt.ownerDigest !== digest(owner) || scopeObject.properties.bindingDigest !== s.configurationDigest || scopeObject.properties.requestRevision !== s.receipt.requestRevision || !proof || proof.levels.some(level => level !== s.evidenceLevel) || scopes?.length !== 1 || digest(scopes[0]!.ref) !== digest(s.scope) || requests?.length !== 1 || requests[0]!.ref.id !== s.receipt.requestId || requests[0]!.properties.revision !== s.receipt.requestRevision) fail('Registration evidence changed or belongs to another participant task');
   const at = options.historical ? Date.parse(s.receipt.receivedAt) : graph.now();
   const request = registrationInputSchema.parse(scopeObject.properties.input);
   if (data.serviceUrl !== request.serviceUrl || data.kind !== request.kind || data.participants !== request.participants || request.startsAt && Date.parse(data.startsAt) !== Date.parse(request.startsAt) || request.endsAt && Date.parse(data.endsAt) !== Date.parse(request.endsAt) || Date.parse(data.endsAt) <= Date.parse(data.startsAt) || s.browserEvidence.pageUrl !== request.serviceUrl || Date.parse(s.payload.expiresAt) <= at || Date.parse(data.observedAt) > at || Date.parse(s.browserEvidence.observedAt) !== Date.parse(data.observedAt) || Date.parse(s.receipt.startedAt) > Date.parse(s.receipt.receivedAt) || Date.parse(data.observedAt) > Date.parse(s.receipt.receivedAt)) fail('Registration source does not match the requested event, time or freshness');
-  for (const other of graph.related(owner, s.scope, `${s.payload.type}Observations`, budget) ?? []) {
+  for (const other of (yield* graphRelated(owner, s.scope, `${s.payload.type}Observations`, budget)) ?? []) {
     if (digest(other.ref) === digest(ref)) continue;
     const newer = snapshotSchema.parse(other.properties.snapshot);
-    if (newer.payload.sourceId === s.payload.sourceId && newer.payload.sourceVersion > s.payload.sourceVersion && Date.parse(newer.receipt.receivedAt) <= at && sourceProof(graph, owner, other.ref, budget)) fail('A newer participant source observation supersedes this state');
+    if (newer.payload.sourceId === s.payload.sourceId && newer.payload.sourceVersion > s.payload.sourceVersion && Date.parse(newer.receipt.receivedAt) <= at && (yield* sourceProofProgram(graph, owner, other.ref, budget))) fail('A newer participant source observation supersedes this state');
   }
   return s;
 }
-export function registrationStatus(graph: OntologyObjectStore, owner: string, ref: ObjectRef, budget?: ReadBudget) {
-  const s = readRegistration(graph, owner, ref, budget);
+export function registrationStatus(graph: OntologyObjectStore, owner: string, ref: ObjectRef, budget?: ReadBudget) { return runGraphProgram(graph, registrationStatusProgram(graph, owner, ref, budget)); }
+
+export function* registrationStatusProgram(graph: ProjectionMetadata, owner: string, ref: ObjectRef, budget?: ReadBudget) {
+  const s = (yield* readRegistrationProgram(graph, owner, ref, budget));
   if (s.payload.type === 'RegistrationOffer') {
     const data = registrationOfferSchema.parse(s.payload.data);
     return { status: 'known', free: isFreeRegistration(data), canSubmit: isFreeRegistration(data) && data.availability === 'available' && !data.alreadyRegistered && !data.requiresAdditionalConsent && Date.parse(data.expiresAt) > graph.now(), data, evidenceLevel: s.evidenceLevel };
@@ -41,9 +47,11 @@ export function registrationStatus(graph: OntologyObjectStore, owner: string, re
   const confirmed = independent && data.state === 'confirmed' && !!data.confirmationReference && !!data.confirmedAt && Date.parse(data.confirmedAt) <= graph.now();
   return { status: data.state, free: isFreeRegistration(data), independentRead: independent, submitted: independent && hasSubmission, confirmed, data, evidenceLevel: s.evidenceLevel };
 }
-export function evaluateRegistrationFunction(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined {
+export function evaluateRegistrationFunction(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined { return runGraphProgram(graph, evaluateRegistrationFunctionProgram(graph, owner, input, budget)); }
+
+export function* evaluateRegistrationFunctionProgram(graph: ProjectionMetadata, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): GraphProgram<Computation | undefined> {
   if (input.function !== 'registrationStatus') return;
-  try { const result = registrationStatus(graph, owner, input.object, budget); return { status: 'known', value: result, evidenceRefs: [input.object], evidenceLevels: [result.evidenceLevel] }; }
+  try { const result = (yield* registrationStatusProgram(graph, owner, input.object, budget)); return { status: 'known', value: result, evidenceRefs: [input.object], evidenceLevels: [result.evidenceLevel] }; }
   catch (error) { return { status: 'unknown', reason: error instanceof DomainError ? error.message : 'Participant source validation failed', evidenceRefs: [input.object], evidenceLevels: [] }; }
 }
 export function projectRegistration(ctx: AgentActionContext, action: string, result: RegistrationResult): ObjectRef {

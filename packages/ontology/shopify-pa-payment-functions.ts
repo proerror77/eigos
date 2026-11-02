@@ -1,8 +1,10 @@
+import { runGraphProgram, type ProjectionMetadata, type GraphProgram, graphRead, graphRelated } from './graph-program.js';
+import { sourceProofProgram } from './object-evidence.js';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import type { AgentActionContext } from '../core/agent-program.js';
 import { objectRefSchema, type ObjectRef } from './model.js';
-import { sourceProof } from './object-evidence.js';
+
 import { linkSnapshotDigest, type OntologyObjectStore, type ObjectWrite, type LinkWrite, type ReadBudget } from './object-store.js';
 import type { Computation } from './object-functions.js';
 import { shopifyPAEntitySchemas, shopifyPASnapshotSchema, shopifyPACheckoutSchema, shopifyPAPaymentSchema, shopifyPAProductsSchema,
@@ -16,30 +18,32 @@ export function checkedShopifyPASnapshot(raw: unknown): ShopifyPASnapshot {
   if (digest(body) !== contentDigest || value.receipt.payloadDigest !== digest(value.payload)) fail('Shopify test source content changed');
   return value;
 }
-export function readShopifyPAObservation(graph: OntologyObjectStore, owner: string, ref: ObjectRef, options: { historical?: boolean; budget?: ReadBudget; depth?: number } = {}): ShopifyPASnapshot {
+export function readShopifyPAObservation(graph: OntologyObjectStore, owner: string, ref: ObjectRef, options: { historical?: boolean; budget?: ReadBudget; depth?: number } = {}): ShopifyPASnapshot { return runGraphProgram(graph, readShopifyPAObservationProgram(graph, owner, ref, options)); }
+
+export function* readShopifyPAObservationProgram(graph: ProjectionMetadata, owner: string, ref: ObjectRef, options: { historical?: boolean; budget?: ReadBudget; depth?: number } = {}): GraphProgram<ShopifyPASnapshot> {
   if (!Object.hasOwn(shopifyPAEntitySchemas, ref.type) || (options.depth ?? 0) > 40) fail('Expected a bounded Shopify test source observation');
-  const budget = options.budget ?? { remaining: 5000 }, record = graph.read(owner, ref, budget), snapshot = checkedShopifyPASnapshot(record.properties.snapshot);
-  const at = options.historical ? Date.parse(snapshot.receipt.receivedAt) : graph.now(), proof = sourceProof(graph, owner, ref, budget);
+  const budget = options.budget ?? { remaining: 5000 }, record = (yield* graphRead(owner, ref, budget)), snapshot = checkedShopifyPASnapshot(record.properties.snapshot);
+  const at = options.historical ? Date.parse(snapshot.receipt.receivedAt) : graph.now(), proof = (yield* sourceProofProgram(graph, owner, ref, budget));
   if (snapshot.payload.type !== ref.type || !same(record.properties.data, snapshot.payload.data) || snapshot.receipt.ownerDigest !== digest(owner)
     || !proof || proof.levels.some(level => level !== 'synthetic') || Date.parse(snapshot.receipt.startedAt) > Date.parse(snapshot.receipt.receivedAt)
     || Date.parse(snapshot.receipt.receivedAt) > at || Date.parse(snapshot.payload.expiresAt) <= at) fail('Shopify test facts are changed, expired or unproven');
-  const scopes = graph.related(owner, ref, 'scope', budget), requests = graph.related(owner, ref, 'request', budget);
+  const scopes = (yield* graphRelated(owner, ref, 'scope', budget)), requests = (yield* graphRelated(owner, ref, 'request', budget));
   if (scopes?.length !== 1 || !same(scopes[0]!.ref, snapshot.scope) || scopes[0]!.properties.configurationDigest !== snapshot.configurationDigest
     || scopes[0]!.properties.requestRevision !== snapshot.receipt.requestRevision || requests?.length !== 1
     || requests[0]!.ref.id !== snapshot.receipt.requestId || requests[0]!.properties.revision !== snapshot.receipt.requestRevision) fail('Checkout evidence belongs to another owned request or source');
   const stableData = (value: ShopifyPASnapshot) => { const { independentRead: _read, ...data } = value.payload.data; return data; };
-  for (const otherRecord of graph.related(owner, snapshot.scope, `observed${snapshot.payload.type}`, budget) ?? []) {
+  for (const otherRecord of (yield* graphRelated(owner, snapshot.scope, `observed${snapshot.payload.type}`, budget)) ?? []) {
     if (same(otherRecord.ref, ref)) continue;
     const other = checkedShopifyPASnapshot(otherRecord.properties.snapshot);
     if (other.payload.sourceId === snapshot.payload.sourceId && other.receipt.sourceIdentity === snapshot.receipt.sourceIdentity
-      && Date.parse(other.receipt.receivedAt) <= at && sourceProof(graph, owner, otherRecord.ref, budget)
+      && Date.parse(other.receipt.receivedAt) <= at && (yield* sourceProofProgram(graph, owner, otherRecord.ref, budget))
       && (other.payload.sourceVersion > snapshot.payload.sourceVersion || other.payload.sourceVersion === snapshot.payload.sourceVersion && !same(stableData(other), stableData(snapshot)))) fail('A newer or conflicting test checkout state supersedes this observation');
   }
   for (const dependency of snapshot.dependencies) {
-    const original = readShopifyPAObservation(graph, owner, dependency.ref, { historical: true, budget, depth: (options.depth ?? 0) + 1 });
+    const original = (yield* readShopifyPAObservationProgram(graph, owner, dependency.ref, { historical: true, budget, depth: (options.depth ?? 0) + 1 }));
     if (original.contentDigest !== dependency.contentDigest || !same(original.scope, snapshot.scope) || original.receipt.requestId !== snapshot.receipt.requestId) fail('Checkout dependency escaped its original task');
     const relation = snapshot.payload.type === 'ShopifyCheckoutPaymentObservation' ? 'checkout' : dependency.ref.type === 'ShopifyPaymentProducts' ? 'products' : 'original';
-    const linked = graph.related(owner, ref, relation, budget);
+    const linked = (yield* graphRelated(owner, ref, relation, budget));
     if (linked?.length !== 1 || !same(linked[0]!.ref, dependency.ref)) fail('Original checkout relationship changed');
     if (original.payload.type === 'ShopifyPaymentCheckoutObservation') {
       const agreed = shopifyPACheckoutSchema.parse(original.payload.data);
@@ -63,10 +67,12 @@ export function readShopifyPAObservation(graph: OntologyObjectStore, owner: stri
   }
   return snapshot;
 }
-export function evaluateShopifyPAFunction(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget?: ReadBudget): Computation | undefined {
+export function evaluateShopifyPAFunction(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget?: ReadBudget): Computation | undefined { return runGraphProgram(graph, evaluateShopifyPAFunctionProgram(graph, owner, input, budget)); }
+
+export function* evaluateShopifyPAFunctionProgram(graph: ProjectionMetadata, owner: string, input: { function: string; object: ObjectRef }, budget?: ReadBudget): GraphProgram<Computation | undefined> {
   if (input.function !== 'shopifyPAPaymentStatus') return;
   try {
-    const snapshot = readShopifyPAObservation(graph, owner, input.object, { budget });
+    const snapshot = (yield* readShopifyPAObservationProgram(graph, owner, input.object, { budget }));
     let value: object = { status: 'known', data: snapshot.payload.data };
     if (snapshot.payload.type === 'ShopifyPaymentCheckoutObservation') {
       const data = shopifyPACheckoutSchema.parse(snapshot.payload.data), independent = data.independentRead && snapshot.receipt.action === 'ReadShopifyPaymentCheckout';

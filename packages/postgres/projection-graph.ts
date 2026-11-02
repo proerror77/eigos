@@ -170,6 +170,9 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     const links:LinkWrite[]=[];for(const row of rows.rows){await this.linkDefinition(String(row.type),String(row.definition_digest));links.push({type:String(row.type),from:ref,to:{type:String(row.to_type),id:String(row.to_id)}});}
     return linkSnapshotDigest(ref,links);
   }
+  async evidencePropertiesDigest(owner:string,ref:ObjectRef,budget:ReadBudget):Promise<string>{
+    this.assertOpen(owner);return digest((await this.raw(ref,budget)).view.properties);
+  }
   private async revision(){const values:unknown[]=[],where=this.owned(values),rows=await this.sql(`SELECT revision FROM ${this.table('revisions')} WHERE ${where}`,values);
     const revision=rows.rowCount?Number(this.one(rows).revision):0;if(!Number.isSafeInteger(revision)||revision<0)throw new DomainError('CONFLICT','Invalid dataset revision');return revision;}
   async query(owner:string,input:ObjectQuery,budget:ReadBudget={remaining:1000},readScope?:string):Promise<OntologyQueryResult>{

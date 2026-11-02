@@ -3304,7 +3304,7 @@
     {
       "id": "source-selection",
       "file": "packages/ontology/ride-estimate-functions.ts",
-      "sourceDigest": "572c383939705a61a6e51ae2967f9686e95dca6a99fb39276f073f3aa8ed7643",
+      "sourceDigest": "52894cc052e2adf6b050476d9fbc77d74f31066bc3de3e1cdaeccc20e0d44073",
       "channels": [
         "model",
         "dispatch",
@@ -3582,7 +3582,7 @@
     {
       "id": "source-evidence-validation",
       "file": "packages/ontology/object-evidence.ts",
-      "sourceDigest": "eb96a85a81a0f0de67ca02f411032d5a863af11af0046f5bc461f1ec473e1b00",
+      "sourceDigest": "499105b2895e52cb2dace7822beaac6fc211acc0a6aceae6bc62790dea4c86c4",
       "channels": [
         "internal"
       ],
@@ -3800,7 +3800,7 @@
     {
       "id": "s5-packages-ontology-customs-policy",
       "file": "packages/ontology/customs-policy.ts",
-      "sourceDigest": "f6167846d964f639bfc676c3f249d0058eef6078439fef9b42f1a8936989164b",
+      "sourceDigest": "7e8daa1296d473db3e4f53deefab3e8512a87783b739026a1d9b4978e759879c",
       "channels": [
         "runtime"
       ],
@@ -4028,7 +4028,7 @@
     {
       "id": "didi-order-test-evidence",
       "file": "packages/ontology/didi-order-test-functions.ts",
-      "sourceDigest": "e2a09e7e6e008dde708d05ae736e8986af2cd04aae6249f518d23a2317507cd3",
+      "sourceDigest": "bfff9dfc3b0852b5b264d7b2a0e4d65e4f08928a3ef6928538675d8fe89bc2ef",
       "channels": [
         "model",
         "artifact"
@@ -4502,7 +4502,7 @@
     {
       "id": "rollinggo-evaluator",
       "file": "packages/ontology/rollinggo-functions.ts",
-      "sourceDigest": "3a17c4c3dfd4fab42ae48d8a5cdfaf6b8fad4fd95054aeb432d5a0cd50dc8cbe",
+      "sourceDigest": "11f12e066c4bd14c91413a9c7315af63a7231d56235de0614bd5d4431ea1e2d3",
       "channels": [
         "worker",
         "ontology"
@@ -4918,7 +4918,7 @@
     {
       "id": "packages-ontology-business-fact-functions",
       "file": "packages/ontology/business-fact-functions.ts",
-      "sourceDigest": "0ee72b1b4c8c2c952e63c4e0ba535fd8976e828422af44f9371a719e12293e95",
+      "sourceDigest": "a3e1758d1307651576750405fad13f27f88de6ef7ac763451f9b6b37e33c2f6f",
       "channels": [
         "sqlite"
       ],
@@ -5903,13 +5903,13 @@
     {
       "id": "ontology-graph-program",
       "file": "packages/ontology/graph-program.ts",
-      "sourceDigest": "1ae3952370b1fa07efd174211a6050480037f844058e21491702697f07698518",
+      "sourceDigest": "dec4dda20511da2c769c99e76ec4ed855fb6fd71e10ade945327e858bd611716",
       "channels": [
         "internal"
       ],
       "content": "Shared synchronous/asynchronous ontology storage program",
-      "currentControl": "Typed sequential storage operations preserve original error handling; no model/provider calls or replay; transaction and authorization belong to the supplied graph port",
-      "targetControl": "Typed sequential storage operations preserve original error handling; no model/provider calls or replay; transaction and authorization belong to the supplied graph port",
+      "currentControl": "Typed sequential storage operations and trusted nested integrity proof scopes preserve original error handling and short circuiting; no model/provider calls or replay; transaction, field/output authorization and private proof access belong to the supplied graph port",
+      "targetControl": "Typed sequential storage operations and trusted nested integrity proof scopes preserve original error handling and short circuiting; no model/provider calls or replay; transaction, field/output authorization and private proof access belong to the supplied graph port",
       "stage": "S5"
     },
     {
@@ -5927,7 +5927,7 @@
     {
       "id": "postgres-projection-graph",
       "file": "packages/postgres/projection-graph.ts",
-      "sourceDigest": "ef1a6ae16762ff349f5f63c9fadfa9da57857e22d70378a2267934f1e16c5be9",
+      "sourceDigest": "063859c6838e9dd36fb520b1954680cf02d3d1ef36efaf1e75dbacfa75aa6b4b",
       "channels": [
         "internal"
       ],

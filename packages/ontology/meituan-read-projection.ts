@@ -1,3 +1,5 @@
+import { runGraphProgram, type ProjectionMetadata, type GraphProgram, graphRead, graphRelated } from './graph-program.js';
+import { sourceProofProgram } from './object-evidence.js';
 import { digest } from '../core/delegation.js';
 import { BusinessFactProjection, businessFactsEnabled, sourceEntityRef } from './business-fact-projection.js';
 import { DomainError } from '../core/domain.js';
@@ -6,7 +8,6 @@ import { meituanReadDefinition } from './meituan-read-definition.js';
 import { linkSnapshotDigest, type OntologyObjectStore, type LinkWrite, type ObjectWrite, type ReadBudget } from './object-store.js';
 import type { ObjectRef } from './model.js';
 import type { Computation } from './object-functions.js';
-import { sourceProof } from './object-evidence.js';
 
 export function checkedMeituanRead(value: unknown): MeituanReadSnapshot {
   const s = meituanSnapshotSchema.parse(value), { contentDigest, ...body } = s;
@@ -62,19 +63,21 @@ export function projectMeituanRead(graph: OntologyObjectStore, owner: string, va
   graph.ingest(owner, { objects: [...objects, receipt], links, removeLinks }, { kind: s.receipt.evidenceKind === 'fixture' ? 'synthetic' : 'provider', id: s.id, observedAt: s.observedAt });
   return ref;
 }
-export function evaluateMeituanRead(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget, active = new Set<string>()): Computation | undefined {
+export function evaluateMeituanRead(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget, active = new Set<string>()): Computation | undefined { return runGraphProgram(graph, evaluateMeituanReadProgram(graph, owner, input, budget, active)); }
+
+export function* evaluateMeituanReadProgram(graph: ProjectionMetadata, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget, active = new Set<string>()): GraphProgram<Computation | undefined> {
   if (input.function !== 'meituanReadStatus') return;
   const unknown = (reason: string): Computation => ({ status: 'unknown', reason, evidenceRefs: [input.object], evidenceLevels: [] });
   if (input.object.type !== 'MeituanReadObservation' || active.has(input.object.id)) return unknown('Meituan observation type or dependency cycle is invalid');
-  const object = graph.read(owner, input.object, budget), proof = sourceProof(graph, owner, input.object, budget);
+  const object = (yield* graphRead(owner, input.object, budget)), proof = (yield* sourceProofProgram(graph, owner, input.object, budget));
   if (!proof) return unknown('Meituan source evidence differs');
   let s; try { s = checkedMeituanRead(object.properties.snapshot); } catch { return unknown('Meituan snapshot is invalid'); }
   if (Date.parse(s.observedAt) > graph.now() || Date.parse(s.expiresAt) <= graph.now()) return unknown('Meituan source expired under local policy');
-  const roots = graph.related(owner, input.object, 'request', budget), scopes = graph.related(owner, input.object, 'scope', budget), dependencies = graph.related(owner, input.object, 'dependencies', budget);
+  const roots = (yield* graphRelated(owner, input.object, 'request', budget)), scopes = (yield* graphRelated(owner, input.object, 'scope', budget)), dependencies = (yield* graphRelated(owner, input.object, 'dependencies', budget));
   if (roots?.length !== 1 || roots[0]!.ref.id !== s.requestId || roots[0]!.properties.revision !== s.requestRevision || scopes?.length !== 1 || digest(scopes[0]!.ref) !== digest(s.scope) || scopes[0]!.properties.configurationDigest !== s.configurationDigest || scopes[0]!.properties.requestRevision !== s.requestRevision || !dependencies || digest(dependencies.map(d => d.ref).sort((a,b) => a.id.localeCompare(b.id))) !== digest([...s.dependencies].sort((a,b) => a.id.localeCompare(b.id)))) return unknown('Meituan observation belongs to another request, scope or source graph');
   for (const dependency of s.dependencies) {
-    const source = checkedMeituanRead(graph.read(owner, dependency, budget).properties.snapshot);
-    if (source.requestId !== s.requestId || source.requestRevision !== s.requestRevision || source.configurationDigest !== s.configurationDigest || evaluateMeituanRead(graph, owner, { function: input.function, object: dependency }, budget, new Set(active).add(s.id))?.status !== 'known') return unknown('Meituan dependency is not current owned source evidence');
+    const source = checkedMeituanRead((yield* graphRead(owner, dependency, budget)).properties.snapshot);
+    if (source.requestId !== s.requestId || source.requestRevision !== s.requestRevision || source.configurationDigest !== s.configurationDigest || (yield* evaluateMeituanReadProgram(graph, owner, { function: input.function, object: dependency }, budget, new Set(active).add(s.id)))?.status !== 'known') return unknown('Meituan dependency is not current owned source evidence');
   }
   return { status: 'known', value: { data: s.data, observedAt: s.observedAt, freshnessPolicyUntil: s.expiresAt, noBusinessWrites: true }, evidenceRefs: [input.object, ...proof.refs], evidenceLevels: proof.levels };
 }

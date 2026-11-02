@@ -1,6 +1,8 @@
+import { runGraphProgram, type ProjectionMetadata, type GraphProgram, graphRead, graphRelated } from './graph-program.js';
+import { sourceProofProgram } from './object-evidence.js';
 import { digest } from '../core/delegation.js';
 import { checkedRollingGo } from './rollinggo.js';
-import { sourceProof } from './object-evidence.js';
+
 import type { Computation } from './object-functions.js';
 import type { ObjectRef } from './model.js';
 import type { OntologyObjectStore, ReadBudget } from './object-store.js';
@@ -9,7 +11,9 @@ export function evaluateRollingGo(
   owner: string,
   input: { function: string; object: ObjectRef },
   budget: ReadBudget,
-): Computation | undefined {
+): Computation | undefined { return runGraphProgram(graph, evaluateRollingGoProgram(graph, owner, input, budget)); }
+
+export function* evaluateRollingGoProgram(graph: ProjectionMetadata, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): GraphProgram<Computation | undefined> {
   if (input.function !== 'rollingGoSearchStatus') return;
   const unknown = (reason: string): Computation => ({
     status: 'unknown',
@@ -19,8 +23,8 @@ export function evaluateRollingGo(
   });
   if (input.object.type !== 'RollingGoSearchObservation')
     return unknown('Not a hotel observation');
-  const record = graph.read(owner, input.object, budget),
-    proof = sourceProof(graph, owner, input.object, budget);
+  const record = (yield* graphRead(owner, input.object, budget)),
+    proof = (yield* sourceProofProgram(graph, owner, input.object, budget));
   if (!proof) return unknown('Hotel source evidence changed');
   let s;
   try {
@@ -28,8 +32,8 @@ export function evaluateRollingGo(
   } catch {
     return unknown('Invalid hotel snapshot');
   }
-  const roots = graph.related(owner, input.object, 'request', budget),
-    scopes = graph.related(owner, input.object, 'scope', budget);
+  const roots = (yield* graphRelated(owner, input.object, 'request', budget)),
+    scopes = (yield* graphRelated(owner, input.object, 'scope', budget));
   if (
     Date.parse(s.observedAt) > graph.now() ||
     Date.parse(s.expiresAt) <= graph.now() ||

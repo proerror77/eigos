@@ -1,7 +1,9 @@
+import { runGraphProgram, type ProjectionMetadata, type GraphProgram, graphRead, graphRelated } from './graph-program.js';
+import { sourceProofProgram } from './object-evidence.js';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import { orderTestSnapshotSchema, orderTestInputSchema, orderTestTypes, type OrderTestSnapshot } from './didi-order-test.js';
-import { sourceProof } from './object-evidence.js';
+
 import { linkSnapshotDigest, type OntologyObjectStore, type ReadBudget } from './object-store.js';
 import type { ObjectRef } from './model.js';
 import type { AgentActionContext } from '../core/agent-program.js';
@@ -16,18 +18,22 @@ export function checkedOrderTestSnapshot(value: unknown): OrderTestSnapshot {
   if (s.receipt.tool !== expected) fail('DiDi test source tool differs from the observation');
   return s;
 }
-export function readOrderTest(graph: OntologyObjectStore, owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 3000 }, historical = false) {
+export function readOrderTest(graph: OntologyObjectStore, owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 3000 }, historical = false) { return runGraphProgram(graph, readOrderTestProgram(graph, owner, ref, budget, historical)); }
+
+export function* readOrderTestProgram(graph: ProjectionMetadata, owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 3000 }, historical = false) {
   if (!(orderTestTypes as readonly string[]).includes(ref.type)) fail('Expected a DiDi order-test observation');
-  const record = graph.read(owner, ref, budget), s = checkedOrderTestSnapshot(record.properties.snapshot), proof = sourceProof(graph, owner, ref, budget);
-  const roots = graph.related(owner, ref, 'request', budget), scopes = graph.related(owner, ref, 'scope', budget);
+  const record = (yield* graphRead(owner, ref, budget)), s = checkedOrderTestSnapshot(record.properties.snapshot), proof = (yield* sourceProofProgram(graph, owner, ref, budget));
+  const roots = (yield* graphRelated(owner, ref, 'request', budget)), scopes = (yield* graphRelated(owner, ref, 'scope', budget));
   if (!proof || roots?.length !== 1 || roots[0]!.ref.id !== s.requestId || roots[0]!.properties.revision !== s.requestRevision || scopes?.length !== 1 || digest(scopes[0]!.ref) !== digest(s.scope) || scopes[0]!.properties.configurationDigest !== s.configurationDigest || scopes[0]!.properties.requestRevision !== s.requestRevision) fail('DiDi order-test source belongs to another task or definition');
   if (!historical && (Date.parse(s.expiresAt) <= graph.now() || Date.parse(s.observedAt) > graph.now())) fail('DiDi order-test observation expired');
   return s;
 }
-export function evaluateOrderTest(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined {
+export function evaluateOrderTest(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined { return runGraphProgram(graph, evaluateOrderTestProgram(graph, owner, input, budget)); }
+
+export function* evaluateOrderTestProgram(graph: ProjectionMetadata, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): GraphProgram<Computation | undefined> {
   if (!['didiOrderTestStatus', 'selectDidiOrderTestPlace', 'didiOrderTestIdentity'].includes(input.function)) return;
   try {
-    const s = readOrderTest(graph, owner, input.object, budget, input.function === 'didiOrderTestIdentity');
+    const s = (yield* readOrderTestProgram(graph, owner, input.object, budget, input.function === 'didiOrderTestIdentity'));
     let value: unknown = { data: s.data, testOnly: true, realOrder: false, realPayment: false, evidenceKind: s.evidenceKind };
     if (input.function === 'didiOrderTestIdentity') {
       if (s.data.kind !== 'created' && s.data.kind !== 'status') fail('Owned order identity is required');
@@ -35,7 +41,7 @@ export function evaluateOrderTest(graph: OntologyObjectStore, owner: string, inp
     }
     if (input.function === 'selectDidiOrderTestPlace') {
       if (s.data.kind !== 'places') fail('Place selection requires a public map observation');
-      const scope = orderTestInputSchema.parse(graph.read(owner, s.scope, budget).properties.input), target = scope[s.data.role];
+      const scope = orderTestInputSchema.parse((yield* graphRead(owner, s.scope, budget)).properties.input), target = scope[s.data.role];
       const matches = s.data.places.filter(p => p.name === target && p.city.replace(/市$/, '') === scope.city.replace(/市$/, ''));
       if (matches.length !== 1) fail('The fixed test endpoint requires one exact source place; no first-result selection');
       value = { placeId: matches[0]!.id };

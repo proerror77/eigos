@@ -1,3 +1,4 @@
+import { runGraphProgram, type ProjectionMetadata, graphRelated } from './graph-program.js';
 import { z } from 'zod';
 import { SHIPPING_RULES } from './shipping-policy.js';
 import { digest } from '../core/delegation.js';
@@ -137,10 +138,12 @@ export function seedCustomsPolicy(graph: OntologyObjectStore, owner: string, sco
   }, { kind: 'provider', id: 'eigos-reviewed-policy-registry', observedAt: CUSTOMS_REFERENCES.map(r => r.capturedAt).sort().at(-1)! });
 }
 
-export function checkedCustomsPolicy(graph: OntologyObjectStore, owner: string, scope: ObjectRef, budget: ReadBudget = { remaining: 1000 }) {
-  const books = graph.related(owner, scope, 'customsRuleSet', budget);
+export function checkedCustomsPolicy(graph: OntologyObjectStore, owner: string, scope: ObjectRef, budget: ReadBudget = { remaining: 1000 }) { return runGraphProgram(graph, checkedCustomsPolicyProgram(graph, owner, scope, budget)); }
+
+export function* checkedCustomsPolicyProgram(graph: ProjectionMetadata, owner: string, scope: ObjectRef, budget: ReadBudget = { remaining: 1000 }) {
+  const books = (yield* graphRelated(owner, scope, 'customsRuleSet', budget));
   if (books?.length !== 1 || digest(books[0]!.ref) !== digest(CUSTOMS_RULE_REF) || !sameProperties(books[0]!.properties,ruleProperties())) throw new DomainError('CONFLICT', 'The current trusted customs rule set is missing or changed');
-  const references = graph.related(owner, CUSTOMS_RULE_REF, 'references', budget) ?? [];
+  const references = (yield* graphRelated(owner, CUSTOMS_RULE_REF, 'references', budget)) ?? [];
   if (references.length !== CUSTOMS_REFERENCES.length || CUSTOMS_REFERENCES.some(expected => !references.some(r => r.ref.id === referenceRef(expected).id && sameProperties(r.properties,referenceProperties(expected))))) throw new DomainError('CONFLICT', 'A customs reference version or source identity changed');
   return { ruleSet: CUSTOMS_RULE_REF, policyDigest: CUSTOMS_POLICY_DIGEST, references: references.map(r => r.ref), coverage: CUSTOMS_RULE_SET.coverage, legalApproval: false as const };
 }

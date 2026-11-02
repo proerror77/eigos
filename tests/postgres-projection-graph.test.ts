@@ -17,6 +17,8 @@ import {postgresBusinessTransaction} from '../packages/postgres/runtime-transact
 import {PostgresProjectionGraph} from '../packages/postgres/projection-graph.js';
 import type {Job} from '../packages/core/domain.js';
 import {digest} from '../packages/core/delegation.js';
+import {sourceProof,sourceProofProgram} from '../packages/ontology/object-evidence.js';
+import {evaluateFunction,evaluateFunctionProgram} from '../packages/ontology/object-functions.js';
 
 test('PostgreSQL shared projection programs preserve SQLite versions, relationships, atomic rollback and complete reads',
   {skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'},async()=>{
@@ -69,6 +71,12 @@ test('PostgreSQL shared projection programs preserve SQLite versions, relationsh
       const target=await PostgresProjectionGraph.create(c,owner,release.ref,undefined,{now:()=>fixed});await target.ingest(owner,placeBatch,source);
       const read=await target.read(owner,place);read.properties.name='Caller mutation';
       assert.equal((await target.read(owner,place)).properties.name,'Synthetic place','returned views cannot mutate a transaction cache');
+      const sourceEvidence=sourceProof(graph,owner,place,{remaining:1000});assert(sourceEvidence);
+      assert.deepEqual(await target.run(metadata=>sourceProofProgram(metadata,owner,place,{remaining:1000})),sourceEvidence,
+        'trusted awaited proof validates the same current properties and relationships');
+      const call={function:'taskOutcomeStatus' as const,object:{type:'ServiceRequest',id}};
+      assert.deepEqual(await target.run(metadata=>evaluateFunctionProgram(metadata,owner,call,{remaining:1000})),
+        evaluateFunction(graph,owner,call,{remaining:1000}),'missing business completion evidence stays unknown');
     });
     await compare();
     const stale:ObjectBatch={objects:[{ref:place,expectedRevision:99,properties:{placeId:place.id,displayTitle:'Stale change',name:'Stale change'}}]};
