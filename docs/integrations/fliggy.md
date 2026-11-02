@@ -11,7 +11,7 @@ Gateway/Worker 使用相同配置：
 - `EIGOS_FLIGGY_MODE=disabled`：默认不注册能力。
 - `EIGOS_FLIGGY_MODE=trial`：明确启用体验查询；不需要用户注册 Key，结果可能受限或隐藏价格，不产生推广归因。
 - `EIGOS_FLIGGY_MODE=key`：正式 Key 配置路径；必须同时设置 `EIGOS_FLIGGY_KEY_FILE` 和 `EIGOS_FLIGGY_KEY_SHA256`。文件需为当前用户拥有、权限不超过 `0600` 的私有普通文件，指纹针对去掉首尾空白后的 Key。Key 不进入模型输入、工具参数、任务结果或日志；轮换需更改指纹并重启两端。
-- 启用时必须设置既有 `EIGOS_PERSONAL_SOURCE_OWNER`，并遵守其 Foundation/JWT/隔离配置；具体安装仍需来源、任务、字段和模型通道授权。配置 Key 不自动授予 PA 调用权限。
+- 启用时必须设置既有 `EIGOS_PERSONAL_SOURCE_OWNER`，并遵守其 Foundation/JWT/隔离配置；具体安装仍需来源、任务、字段和模型通道授权。配置 Key 不自动授予 PA 调用权限。从体验模式切换正式 Key 或轮换凭据后，程序配置摘要发生变化，需按新摘要重新核对来源授权和 Pipeline 验证，不能继承旧连接的验证结论。
 
 本接入使用运营方获准的来源连接；不在客户接入流程收取客户第三方密钥。当前实施不申请账号、签署推广协议、修改正式实例或代用户购买。
 
