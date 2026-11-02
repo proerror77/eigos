@@ -4,7 +4,7 @@ import { digest } from '../core/delegation.js';
 import { businessConditionSchema, quantitySchema, type BusinessCondition } from '../ontology/business-model.js';
 import type { ServiceRequest } from '../ontology/execution.js';
 import type { ObjectRef } from '../ontology/model.js';
-import type { OntologyObjectStore, ObjectView, ReadBudget } from '../ontology/object-store.js';
+import { IncompleteRelationshipRead, type OntologyObjectStore, type ObjectView, type ReadBudget } from '../ontology/object-store.js';
 import type { ConditionCheck } from '../ontology/planning-contract.js';
 import { serviceDomains } from '../ontology/service-domains.js';
 import type { DomainAssessment } from '../ontology/domain-rules.js';
@@ -118,73 +118,78 @@ export function assessConditions(graph: OntologyObjectStore, owner: string, requ
   const budget = { remaining: 1000 };
   return (request.conditions ?? []).filter(c => !phase || c.phase === phase).map(c => {
     const check: ConditionCheck = { conditionId: c.id, phase: c.phase as ConditionCheck['phase'], strength: c.strength, result: 'unknown', reason: 'No compatible evidence for this condition', evidenceRefs: [], evidenceLevels: [] };
-    const expected = c.expected as Record<string, unknown>, rule = c.predicateRef.id;
-    if (rule === 'execution.within_authority') return { ...check, reason: 'Runtime authorization is a separate protected check; a model condition grants no authority' };
-    if (rule === 'geo.query_scope_matches') {
-      const receipts = graph.related(owner, { type: 'ServiceRequest', id: request.id }, 'sourceReceipts', budget);
-      const receipt = receipts?.find(r => r.properties.scope === 'public_locations' && r.properties.evidenceLevel !== 'user_asserted' && r.properties.sourceIdentity && r.properties.contentDigest && r.properties.queryScope && Date.parse(String(r.properties.observedAt)) <= graph.now());
-      return receipt ? { ...check, result: digest(receipt.properties.queryScope) === digest(c.expected) ? 'pass' : 'fail', reason: 'Compared actual source query scope; no delivery destination inferred', evidenceRefs: [receipt.ref], evidenceLevels: [String(receipt.properties.evidenceLevel)] } : check;
-    }
-    const available = scopedObjects(graph, owner, request.id, c.subject.type, budget);
-    if (!available) return { ...check, reason: 'Condition object coverage exceeds the read bound' };
-    const explicit = c.subject.object ?? (subject?.type === c.subject.type ? subject : undefined);
-    const object = explicit ? available.find(o => refEqual(o.ref, explicit)) : available.length === 1 ? available[0] : undefined;
-    if (!object) return { ...check, reason: explicit ? 'Condition subject is not evidenced for this request' : 'Condition requires an unambiguous object of the registered type' };
-    check.subject = object.ref;
-    const apply = (value: ReturnType<OntologyObjectStore['evaluate']>, predicate: (v: unknown) => boolean) => {
-      check.evidenceRefs = value.evidenceRefs; check.evidenceLevels = value.evidenceLevels;
-      if (value.status === 'known') { check.result = predicate(value.value) ? 'pass' : 'fail'; check.reason = 'Registered function evaluated the fixed condition'; }
-      else check.reason = value.reason ?? check.reason;
+    try {
+      const expected = c.expected as Record<string, unknown>, rule = c.predicateRef.id;
+      if (rule === 'execution.within_authority') return { ...check, reason: 'Runtime authorization is a separate protected check; a model condition grants no authority' };
+      if (rule === 'geo.query_scope_matches') {
+        const receipts = graph.related(owner, { type: 'ServiceRequest', id: request.id }, 'sourceReceipts', budget);
+        const receipt = receipts?.find(r => r.properties.scope === 'public_locations' && r.properties.evidenceLevel !== 'user_asserted' && r.properties.sourceIdentity && r.properties.contentDigest && r.properties.queryScope && Date.parse(String(r.properties.observedAt)) <= graph.now());
+        return receipt ? { ...check, result: digest(receipt.properties.queryScope) === digest(c.expected) ? 'pass' : 'fail', reason: 'Compared actual source query scope; no delivery destination inferred', evidenceRefs: [receipt.ref], evidenceLevels: [String(receipt.properties.evidenceLevel)] } : check;
+      }
+      const available = scopedObjects(graph, owner, request.id, c.subject.type, budget);
+      if (!available) return { ...check, reason: 'Condition object coverage exceeds the read bound' };
+      const explicit = c.subject.object ?? (subject?.type === c.subject.type ? subject : undefined);
+      const object = explicit ? available.find(o => refEqual(o.ref, explicit)) : available.length === 1 ? available[0] : undefined;
+      if (!object) return { ...check, reason: explicit ? 'Condition subject is not evidenced for this request' : 'Condition requires an unambiguous object of the registered type' };
+      check.subject = object.ref;
+      const apply = (value: ReturnType<OntologyObjectStore['evaluate']>, predicate: (v: unknown) => boolean) => {
+        check.evidenceRefs = value.evidenceRefs; check.evidenceLevels = value.evidenceLevels;
+        if (value.status === 'known') { check.result = predicate(value.value) ? 'pass' : 'fail'; check.reason = 'Registered function evaluated the fixed condition'; }
+        else check.reason = value.reason ?? check.reason;
+        return check;
+      };
+      const evaluate = (input: unknown) => graph.evaluate(owner, input, budget);
+      const domain = serviceDomains.find(d => rule === `domain.${d.id}.eligible` || rule === `domain.${d.id}.complete`);
+      if (domain) {
+        const requirements = graph.related(owner, object.ref, 'requirements', budget);
+        if (requirements?.length !== 1 || !refEqual(requirements[0]!.ref, c.expected as ObjectRef)) return { ...check, reason: 'The domain condition refers to different fixed requirements' };
+        const value = evaluate({ function: c.phase === 'result' ? domain.outcomeFunction : domain.eligibleFunction, object: object.ref });
+        const status = (value.value as DomainAssessment | undefined)?.status;
+        if (value.status === 'unknown' || status === 'unknown') return { ...check, reason: value.reason ?? 'Domain evidence is incomplete; no business completion established', evidenceRefs: value.evidenceRefs, evidenceLevels: value.evidenceLevels };
+        return apply(value, () => status === 'satisfied');
+      }
+      if (rule === 'offer.total_within_budget') return apply(evaluate({ function: 'withinBudget', object: object.ref, budget: expected.amount, priceBasis: expected.priceBasis }), v => v === 'pass');
+      if (rule === 'goods.attributes_match' || rule === 'errand.quote_matches') {
+        return apply(evaluate({ function: rule === 'goods.attributes_match' ? 'productAttributesMatch' : 'errandQuoteMatches', object: object.ref, constraints: c.expected }), v => !!v && typeof v === 'object' && (v as { matches?: boolean }).matches === true);
+      }
+      if (rule === 'parcel.quote_matches_request') {
+        const value = evaluate({ function: 'deliveryQuoteMatches', object: object.ref, request: { type: 'ServiceRequest', id: request.id }, serviceLevel: expected.serviceLevel });
+        const parcel = graph.related(owner, object.ref, 'parcel', budget), route = graph.related(owner, object.ref, 'route', budget);
+        return apply(value, v => v === 'pass' && sameQuantity(object.properties.quotedWeight, expected.weight) && (!expected.parcel || parcel?.length === 1 && refEqual(parcel[0]!.ref, expected.parcel as ObjectRef)) && (!expected.route || route?.length === 1 && refEqual(route[0]!.ref, expected.route as ObjectRef)));
+      }
+      if (rule === 'reservation.slot_matches_request') return apply(evaluate({ function: 'slotAvailability', object: object.ref, venue: expected.venue, startsAt: expected.startsAt, timeZone: expected.timeZone, partySize: expected.partySize }), v => v === 'pass');
+      if (rule === 'reservation.confirmation_effective') {
+        const value = evaluate({ function: 'reservationStatus', object: object.ref });
+        if (value.status === 'known' && ['pending', 'requested', 'held'].includes(String(value.value))) return { ...check, reason: 'Provider has not confirmed an effective reservation', evidenceRefs: value.evidenceRefs, evidenceLevels: value.evidenceLevels };
+        return apply(value, v => v === 'confirmed');
+      }
+      if (rule === 'delivery.receipt_matches_request') {
+        const value = evaluate({ function: 'remainingQuantity', object: object.ref });
+        if (value.status !== 'known') return apply(value, () => false);
+        if (!sameQuantity(object.properties.quantityOrdered, expected.quantity) || (value.value as { amount: string }).amount !== '0') return apply(value, () => false);
+        return { ...check, reason: 'Quantity is covered, but exact destination and deadline still require delivery evidence', evidenceRefs: value.evidenceRefs, evidenceLevels: value.evidenceLevels };
+      }
+      const validity = object.ref.type === 'ProductOffer' ? evaluate({ function: 'offerFreshness', object: object.ref }) : evaluate({ function: 'remainingQuantity', object: object.ref });
+      if (validity.status !== 'known' || validity.value === false) return { ...check, reason: 'Current source evidence is unavailable', evidenceRefs: validity.evidenceRefs, evidenceLevels: validity.evidenceLevels };
+      if (rule === 'goods.variant_matches') {
+        const variants = graph.related(owner, object.ref, 'productVariant', budget);
+        if (object.ref.type === 'ProductOffer' && object.properties.variantRevision !== variants?.[0]?.revision) return { ...check, reason: 'Quoted product specification version changed' };
+        return variants?.length === 1 ? apply(validity, () => refEqual(variants[0]!.ref, c.expected as ObjectRef)) : check;
+      }
+      if (rule === 'goods.capacity_covers_quantity') {
+        const offered = quantity(object.properties.offeredQuantity), needed = quantity(c.expected);
+        if (!offered || !needed || object.properties.capacity === undefined || object.properties.capacity === 'unknown' || !object.properties.capacityObservationRef) return check;
+        return apply(validity, () => object.properties.capacity === 'confirmed' && offered.dimension === needed.dimension && offered.amount >= needed.amount);
+      }
+      if (rule === 'delivery.commitment_covers_deadline') {
+        if (!object.properties.deliveryCommitment) return { ...check, reason: 'An arrival estimate is not a delivery commitment' };
+        return apply(validity, () => Date.parse(String(object.properties.deliveryCommitment)) <= Date.parse(String(expected.at)));
+      }
       return check;
-    };
-    const evaluate = (input: unknown) => graph.evaluate(owner, input, budget);
-    const domain = serviceDomains.find(d => rule === `domain.${d.id}.eligible` || rule === `domain.${d.id}.complete`);
-    if (domain) {
-      const requirements = graph.related(owner, object.ref, 'requirements', budget);
-      if (requirements?.length !== 1 || !refEqual(requirements[0]!.ref, c.expected as ObjectRef)) return { ...check, reason: 'The domain condition refers to different fixed requirements' };
-      const value = evaluate({ function: c.phase === 'result' ? domain.outcomeFunction : domain.eligibleFunction, object: object.ref });
-      const status = (value.value as DomainAssessment | undefined)?.status;
-      if (value.status === 'unknown' || status === 'unknown') return { ...check, reason: value.reason ?? 'Domain evidence is incomplete; no business completion established', evidenceRefs: value.evidenceRefs, evidenceLevels: value.evidenceLevels };
-      return apply(value, () => status === 'satisfied');
+    } catch (error) {
+      if (!(error instanceof IncompleteRelationshipRead)) throw error;
+      return { ...check, result: 'unknown', reason: error.message, evidenceRefs: [], evidenceLevels: [] };
     }
-    if (rule === 'offer.total_within_budget') return apply(evaluate({ function: 'withinBudget', object: object.ref, budget: expected.amount, priceBasis: expected.priceBasis }), v => v === 'pass');
-    if (rule === 'goods.attributes_match' || rule === 'errand.quote_matches') {
-      return apply(evaluate({ function: rule === 'goods.attributes_match' ? 'productAttributesMatch' : 'errandQuoteMatches', object: object.ref, constraints: c.expected }), v => !!v && typeof v === 'object' && (v as { matches?: boolean }).matches === true);
-    }
-    if (rule === 'parcel.quote_matches_request') {
-      const value = evaluate({ function: 'deliveryQuoteMatches', object: object.ref, request: { type: 'ServiceRequest', id: request.id }, serviceLevel: expected.serviceLevel });
-      const parcel = graph.related(owner, object.ref, 'parcel', budget), route = graph.related(owner, object.ref, 'route', budget);
-      return apply(value, v => v === 'pass' && sameQuantity(object.properties.quotedWeight, expected.weight) && (!expected.parcel || parcel?.length === 1 && refEqual(parcel[0]!.ref, expected.parcel as ObjectRef)) && (!expected.route || route?.length === 1 && refEqual(route[0]!.ref, expected.route as ObjectRef)));
-    }
-    if (rule === 'reservation.slot_matches_request') return apply(evaluate({ function: 'slotAvailability', object: object.ref, venue: expected.venue, startsAt: expected.startsAt, timeZone: expected.timeZone, partySize: expected.partySize }), v => v === 'pass');
-    if (rule === 'reservation.confirmation_effective') {
-      const value = evaluate({ function: 'reservationStatus', object: object.ref });
-      if (value.status === 'known' && ['pending', 'requested', 'held'].includes(String(value.value))) return { ...check, reason: 'Provider has not confirmed an effective reservation', evidenceRefs: value.evidenceRefs, evidenceLevels: value.evidenceLevels };
-      return apply(value, v => v === 'confirmed');
-    }
-    if (rule === 'delivery.receipt_matches_request') {
-      const value = evaluate({ function: 'remainingQuantity', object: object.ref });
-      if (value.status !== 'known') return apply(value, () => false);
-      if (!sameQuantity(object.properties.quantityOrdered, expected.quantity) || (value.value as { amount: string }).amount !== '0') return apply(value, () => false);
-      return { ...check, reason: 'Quantity is covered, but exact destination and deadline still require delivery evidence', evidenceRefs: value.evidenceRefs, evidenceLevels: value.evidenceLevels };
-    }
-    const validity = object.ref.type === 'ProductOffer' ? evaluate({ function: 'offerFreshness', object: object.ref }) : evaluate({ function: 'remainingQuantity', object: object.ref });
-    if (validity.status !== 'known' || validity.value === false) return { ...check, reason: 'Current source evidence is unavailable', evidenceRefs: validity.evidenceRefs, evidenceLevels: validity.evidenceLevels };
-    if (rule === 'goods.variant_matches') {
-      const variants = graph.related(owner, object.ref, 'productVariant', budget);
-      if (object.ref.type === 'ProductOffer' && object.properties.variantRevision !== variants?.[0]?.revision) return { ...check, reason: 'Quoted product specification version changed' };
-      return variants?.length === 1 ? apply(validity, () => refEqual(variants[0]!.ref, c.expected as ObjectRef)) : check;
-    }
-    if (rule === 'goods.capacity_covers_quantity') {
-      const offered = quantity(object.properties.offeredQuantity), needed = quantity(c.expected);
-      if (!offered || !needed || object.properties.capacity === undefined || object.properties.capacity === 'unknown' || !object.properties.capacityObservationRef) return check;
-      return apply(validity, () => object.properties.capacity === 'confirmed' && offered.dimension === needed.dimension && offered.amount >= needed.amount);
-    }
-    if (rule === 'delivery.commitment_covers_deadline') {
-      if (!object.properties.deliveryCommitment) return { ...check, reason: 'An arrival estimate is not a delivery commitment' };
-      return apply(validity, () => Date.parse(String(object.properties.deliveryCommitment)) <= Date.parse(String(expected.at)));
-    }
-    return check;
   });
 }
 export function hardConditionsPass(checks: ConditionCheck[], phase: 'precondition' | 'result') { return checks.filter(c => c.strength === 'hard' && c.phase === phase).every(c => c.result === 'pass'); }
