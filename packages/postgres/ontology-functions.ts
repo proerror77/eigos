@@ -113,7 +113,7 @@ export async function postgresEvaluateAuthorizedFunction(client:Client,principal
     const call=functionCallSchema.parse(basic),ontology=await postgresTaskReadOntology(client,p,taskId,policy,builder);
     const definition=ontology.model.function(call.function);
     if(!definition.inputTypes.some(type=>ontology.model.implements(call.object.type,type)))throw new DomainError('INVALID_INPUT','Function requires its registered object type');
-    const storage=options.graph??await PostgresProjectionGraph.create(client,owner,ontology.ref,builder);
+    const storage=options.graph??await PostgresProjectionGraph.create(client,owner,ontology.ref,builder,{readOnly:true});
     if(digest(storage.releaseRef)!==digest(ontology.ref))throw new SecurityError('POLICY_CHANGED');
     const graph=new FunctionGraph(client,p,taskId,admission.grant.requestRevision,policy,calculation,storage,builder);
     await graph.requireObject(call.object);

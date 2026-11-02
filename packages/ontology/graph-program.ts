@@ -1,3 +1,6 @@
+import type { PlanningReadReceipt } from './planning-contract.js';
+import type { ServiceRequest } from './execution.js';
+import type { ActionDiscoveryQuery, ActionDiscoveryPage } from '../core/action-bindings.js';
 import type { OntologyObjectStore } from './object-store.js';
 import { withIntegrity } from '../security/context.js';
 
@@ -8,14 +11,21 @@ export type ProjectionMetadata=Pick<OntologyObjectStore,'model'|'now'|'releaseRe
   readonly security?:unknown;
 };
 export type SyncGraphStorage=Pick<OntologyObjectStore,OperationName> & Partial<Pick<OntologyObjectStore,PlanningOperationName>>;
-export type PlanningGraphStorage={ [K in PlanningOperationName]?:(...args:Parameters<OntologyObjectStore[K]>)=>ReturnType<OntologyObjectStore[K]>|Promise<ReturnType<OntologyObjectStore[K]>> };
+export type PlanningGraphStorage={ [K in PlanningOperationName]?:(...args:Parameters<OntologyObjectStore[K]>)=>ReturnType<OntologyObjectStore[K]>|Promise<ReturnType<OntologyObjectStore[K]>> } & {
+  call?:(tool:string,input:unknown,options?:{origin:'worker_context';maxOutputBytes:number})=>unknown;
+  recordRead?:(receipt:PlanningReadReceipt)=>void|Promise<void>;
+  discoverActions?:(owner:string,request:ServiceRequest,query:ActionDiscoveryQuery)=>ActionDiscoveryPage|Promise<ActionDiscoveryPage>;
+};
 export type GraphStorage={
   [K in OperationName]:(...args:Parameters<OntologyObjectStore[K]>)=>ReturnType<OntologyObjectStore[K]>|Promise<ReturnType<OntologyObjectStore[K]>>;
 } & { planning?:PlanningGraphStorage } & {
   /** Only a trusted proof program can enter this internal validation scope. */
   withGraphIntegrity?<T>(action:()=>Promise<T>):Promise<T>;
 };
-type StorageOperation={ [K in OperationName|PlanningOperationName]:{method:K;args:Parameters<OntologyObjectStore[K]>} }[OperationName|PlanningOperationName];
+type StorageOperation={ [K in OperationName|PlanningOperationName]:{method:K;args:Parameters<OntologyObjectStore[K]>} }[OperationName|PlanningOperationName]
+  |{method:'planningCall';tool:string;input:unknown;options?:{origin:'worker_context';maxOutputBytes:number}}
+  |{method:'planningRead';receipt:PlanningReadReceipt}
+  |{method:'discoverActions';owner:string;request:ServiceRequest;query:ActionDiscoveryQuery};
 type Operation=StorageOperation|{method:'integrity';program:GraphProgram<unknown>};
 export type GraphProgram<T>=Generator<Operation,T,unknown>;
 
@@ -80,8 +90,18 @@ export function* graphVirtualMembership(...args:Parameters<OntologyObjectStore['
 export function* graphPipelineChanges(...args:Parameters<OntologyObjectStore['pipelineChanges']>):GraphProgram<ReturnType<OntologyObjectStore['pipelineChanges']>> {
   return (yield {method:'pipelineChanges',args}) as ReturnType<OntologyObjectStore['pipelineChanges']>;
 }
+export function* graphPlanningCall(tool:string,input:unknown,options?:{origin:'worker_context';maxOutputBytes:number}):GraphProgram<unknown> {
+  return yield {method:'planningCall',tool,input,options};
+}
+export function* graphRecordPlanningRead(receipt:PlanningReadReceipt):GraphProgram<void> {yield {method:'planningRead',receipt};}
+export function* graphDiscoverActions(owner:string,request:ServiceRequest,query:ActionDiscoveryQuery):GraphProgram<ActionDiscoveryPage> {
+  return (yield {method:'discoverActions',owner,request,query}) as ActionDiscoveryPage;
+}
 function perform(graph:GraphStorage,operation:StorageOperation,planning:PlanningGraphStorage|undefined):unknown {
   switch(operation.method) {
+    case 'planningCall':if(!planning?.call)throw new Error('Planning read dispatch is unavailable');return planning.call(operation.tool,operation.input,operation.options);
+    case 'planningRead':if(!planning?.recordRead)throw new Error('Planning receipt persistence is unavailable');return planning.recordRead(operation.receipt);
+    case 'discoverActions':if(!planning?.discoverActions)throw new Error('Action discovery is unavailable');return planning.discoverActions(operation.owner,operation.request,operation.query);
     case 'revision':if(!planning?.revision)throw new Error('Graph does not support revision');return planning.revision(...operation.args);
     case 'evaluate':if(!planning?.evaluate)throw new Error('Graph does not support evaluate');return planning.evaluate(...operation.args);
     case 'virtualMembership':if(!planning?.virtualMembership)throw new Error('Graph does not support virtualMembership');return planning.virtualMembership(...operation.args);
@@ -100,13 +120,13 @@ function perform(graph:GraphStorage,operation:StorageOperation,planning:Planning
 
 /** Run the existing synchronous graph API without changing its transaction
  * boundaries. A promise cannot silently pass through synchronous projection. */
-export function runGraphProgram<T>(graph:SyncGraphStorage,program:GraphProgram<T>):T {
+export function runGraphProgram<T>(graph:SyncGraphStorage,program:GraphProgram<T>,planning:PlanningGraphStorage=graph):T {
   let step=program.next();
   while(!step.done) {
     let value:unknown;
     try {
       const operation=step.value;
-      value=operation.method==='integrity'?withIntegrity(()=>runGraphProgram(graph,operation.program)):perform(graph,operation,graph);
+      value=operation.method==='integrity'?withIntegrity(()=>runGraphProgram(graph,operation.program,planning)):perform(graph,operation,planning);
       if(value && (typeof value==='object'||typeof value==='function') && 'then' in value && typeof value.then==='function')throw new Error('Synchronous graph program received asynchronous storage');
     } catch(error) {step=program.throw(error);continue;}
     step=program.next(value);

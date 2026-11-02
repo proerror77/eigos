@@ -24,6 +24,13 @@ const changeSchema = z.strictObject({ id: z.string().min(1).max(200), componentI
   object: objectRefSchema, reason: z.enum(['changed', 'conflicted', 'stale', 'restored']), fields: z.array(z.string().min(1).max(200)).max(200),
   semanticRevision: z.number().int().positive().safe(), at: z.iso.datetime({ offset: true }) });
 
+/** Same scope fingerprint used by the synchronous secured model reader. */
+export function postgresPlanningAccessDigest(admission:PostgresTaskReadAdmission){
+  return digest({installation:admission.actor.installationId,epoch:admission.actor.authEpoch,
+    grant:{id:admission.grant.id,revision:admission.grant.revision},policyRevision:admission.policyRevision,
+    operation:admission.actor.actorKind==='worker'?'task.process':'task.query'});
+}
+
 /** Host-only reader for the shared planning programs. It has no business write,
  * private proof or provider operations, and expires with its admitted callback. */
 class PlanningReadGraph implements GraphStorage, ProjectionMetadata {
@@ -98,7 +105,8 @@ class PlanningReadGraph implements GraphStorage, ProjectionMetadata {
     const result = await postgresEvaluateAuthorizedFunction(this.client, this.principal, this.taskId, this.admission.grant.requestRevision,
       input, this.policy, this.auth, this.builder, { graph: this.storage, budget });
     this.capture(result.envelope);
-    return { ...result.computation, functionRef: result.functionRef, model: this.model.ref };
+    return { ...result.computation, functionRef: result.functionRef, model: { id: this.model.ref.id, version: 'authorized.v2',
+      digest: digest({ functionRef: result.functionRef, access: postgresPlanningAccessDigest(this.admission) }) } };
   }
   private async revision(owner: string) {
     this.active(owner);
@@ -154,7 +162,7 @@ export async function withPostgresPlanningReadGraph<T>(client: Client, principal
   auth: PostgresTaskReadAuthorization, admission: PostgresTaskReadAdmission,
   action: (graph: PlanningReadGraph) => Promise<T>, builder?: StagedKernelBuilder): Promise<T> {
   const ontology = await postgresTaskReadOntology(client, principal, taskId, policy, builder);
-  const storage = await PostgresProjectionGraph.create(client, ownerKey(principal), ontology.ref, builder);
+  const storage = await PostgresProjectionGraph.create(client, ownerKey(principal), ontology.ref, builder, { readOnly: true });
   const graph = new PlanningReadGraph(client, structuredClone(principal), taskId, policy, auth, admission, storage, builder);
   try { const result = await action(graph); await graph.authorize(); return result; }
   finally { graph.close(); }

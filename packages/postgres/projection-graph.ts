@@ -46,19 +46,23 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
   private readonly objects=new Map<string,RawObject|undefined>();
   private readonly deleted=new Map<string,{ref:ObjectRef;revision:number;deletedAt:string}|undefined>();
   private objectBytes=0;
+  private readRevision:number|undefined;
+  private readonly readRows=new Map<string,{value:QueryResult<QueryResultRow>;bytes:number}>();
+  private readRowBytes=0;
   private constructor(private readonly client:Client,private readonly owner:string,
-    release:Awaited<ReturnType<typeof postgresOntologyRelease>>,private readonly builder:StagedKernelBuilder|undefined,now:()=>number) {
+    release:Awaited<ReturnType<typeof postgresOntologyRelease>>,private readonly builder:StagedKernelBuilder|undefined,now:()=>number,private readonly readOnly=false) {
     this.schema=postgresBusinessSchema(client);this.token=postgresBusinessToken(client);
     this.model=release.model;this.releaseRef=release.ref;this.ontologyId=release.ref.ontologyId;
     this.scoped=this.ontologyId!=='eigos.business';this.now=now;
   }
-  static async create(client:Client,owner:string,input:OntologyReleaseRef,builder?:StagedKernelBuilder,options:{admin?:boolean;now?:()=>number}={}) {
+  static async create(client:Client,owner:string,input:OntologyReleaseRef,builder?:StagedKernelBuilder,options:{admin?:boolean;now?:()=>number;readOnly?:boolean}={}) {
     ownerIdentitySchema.parse(owner);const ref=ontologyReleaseRefSchema.parse(input),token=postgresBusinessToken(client);
     if(options.admin!==undefined && typeof options.admin!=='boolean')throw new Error('Invalid ontology administration context');
+    if(options.readOnly!==undefined && typeof options.readOnly!=='boolean')throw new Error('Invalid read-only projection context');
     await postgresAssertOntologyAccess(client,owner,ref.ontologyId,options.admin??false);
     const release=await postgresOntologyRelease(client,ref,builder);
     if(postgresBusinessToken(client)!==token)throw new SecurityError('AUTHORIZATION_REQUIRED');
-    return new PostgresProjectionGraph(client,owner,release,builder,options.now??Date.now);
+    return new PostgresProjectionGraph(client,owner,release,builder,options.now??Date.now,options.readOnly??false);
   }
   private assertOpen(owner=this.owner) {
     if(owner!==this.owner)throw new DomainError('FORBIDDEN','Projection belongs to another owner');
@@ -72,7 +76,21 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     values.push(this.owner);clauses.push(`${prefix}owner=$${values.length}`);return clauses.join(' AND ');
   }
   private async sql<R extends QueryResultRow=Record<string,unknown>>(text:string,values:unknown[]=[]){
-    this.assertOpen();const result=await this.client.query<R>(text,values);this.assertOpen();return result;
+    this.assertOpen();
+    // Raw rows stay private. Checked projection and work-budget accounting still
+    // run for each logical read. Only an explicitly read-only graph can retain
+    // these rows, and every hit rechecks this exact transaction's token.
+    const key=this.readOnly?digest([text,values]):undefined,cached=key&&this.readRows.get(key);
+    if(cached)return {...cached.value,rows:structuredClone(cached.value.rows)} as QueryResult<R>;
+    const result=await this.client.query<R>(text,values);this.assertOpen();
+    if(key){
+      const bytes=Buffer.byteLength(JSON.stringify(result.rows,(_key,value)=>typeof value==='bigint'?value.toString():value));
+      if(bytes<=4194304){
+        while(this.readRows.size>=128||this.readRowBytes+bytes>8388608){const first=this.readRows.keys().next().value;if(first===undefined)break;this.readRowBytes-=this.readRows.get(first)!.bytes;this.readRows.delete(first);}
+        this.readRows.set(key,{value:{...result,rows:structuredClone(result.rows)},bytes});this.readRowBytes+=bytes;
+      }
+    }
+    return result;
   }
   private one<R extends QueryResultRow>(result:QueryResult<R>):R {
     const row=result.rows[0];if(result.rowCount!==1||result.rows.length!==1||!row)throw new DomainError('CONFLICT','Unexpected projection row count');return row;
@@ -183,8 +201,8 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
   async evidencePropertiesDigest(owner:string,ref:ObjectRef,budget:ReadBudget):Promise<string>{
     this.assertOpen(owner);return digest((await this.raw(ref,budget)).view.properties);
   }
-  private async revision(){const values:unknown[]=[],where=this.owned(values),rows=await this.sql(`SELECT revision FROM ${this.table('revisions')} WHERE ${where}`,values);
-    const revision=rows.rowCount?Number(this.one(rows).revision):0;if(!Number.isSafeInteger(revision)||revision<0)throw new DomainError('CONFLICT','Invalid dataset revision');return revision;}
+  private async revision(){this.assertOpen();if(this.readOnly && this.readRevision!==undefined)return this.readRevision;const values:unknown[]=[],where=this.owned(values),rows=await this.sql(`SELECT revision FROM ${this.table('revisions')} WHERE ${where}`,values);
+    const revision=rows.rowCount?Number(this.one(rows).revision):0;if(!Number.isSafeInteger(revision)||revision<0)throw new DomainError('CONFLICT','Invalid dataset revision');if(this.readOnly)this.readRevision=revision;return revision;}
   async query(owner:string,input:ObjectQuery,budget:ReadBudget={remaining:1000},readScope?:string):Promise<OntologyQueryResult>{
     return this.queryRows(owner,input,budget,readScope);
   }
@@ -300,7 +318,7 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     return new Set(rows.rows.map(row=>JSON.stringify([row.type,row.id])));
   }
   async ingest(owner:string,input:ObjectBatch,provenance:ObjectSource):Promise<void>{
-    this.assertOpen(owner);
+    this.assertOpen(owner);if(this.readOnly)throw new SecurityError('AUTHORIZATION_REQUIRED');
     if(Buffer.byteLength(JSON.stringify(input))>1000000)fail('Ontology import byte limit exceeded');
     const batch=ontologyBatchSchema.parse(structuredClone(input)),source=ontologySourceSchema.parse(structuredClone(provenance));
     if(batch.objects.some(object=>isVirtualRef(object.ref))||[...batch.links,...batch.removeLinks].some(link=>isVirtualRef(link.from)||isVirtualRef(link.to)||networkLinkIds.has(link.type)))throw new DomainError('FORBIDDEN','Network facts must remain in the authorized network read view');

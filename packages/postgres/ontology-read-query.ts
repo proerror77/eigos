@@ -15,7 +15,7 @@ import type { SecurityEnvelope } from '../security/envelope.js';
 import { secureQuerySchema } from '../security/view-contracts.js';
 import { PostgresProjectionGraph } from './projection-graph.js';
 import { postgresBusinessSchema, postgresConstrainReadDeadline } from './runtime-transaction.js';
-import { withPostgresTaskReadGrant, postgresTaskReadOntology, postgresTaskResourceViewValidUntil } from './task-read-access.js';
+import { withPostgresTaskReadGrant, postgresTaskReadOntology, postgresTaskQuerySelection, postgresTaskResourceViewValidUntil } from './task-read-access.js';
 import type { PostgresTaskReadAuthorization, PostgresDerivedRead } from './task-output.js';
 
 const hidden = (error: unknown) => error instanceof SecurityError && ['AUTHORIZATION_REQUIRED', 'INSUFFICIENT_ACCESS', 'OUTPUT_NOT_ALLOWED'].includes(error.reason)
@@ -60,14 +60,9 @@ export async function postgresQueryAuthorizedObjects(client:Client,principal:Pri
       target = nav.viewType ?? nav.other.type;
     } else target = query.type;
     await requireResource(model.isInterface(target) ? 'interface' : 'objectType', target);
-    const rows = await client.query(`SELECT DISTINCT b.type,b.object_id FROM ${q}.security_bindings b
-      JOIN ${q}.security_grants issued ON issued.id=b.grant_id
-      WHERE b.owner=$1 AND b.task_id=$2 AND b.request_revision=$3
-        AND issued.installation_id=$4 AND issued.kind='task_data' LIMIT 2001`,
-    [owner, args.taskId, admission.grant.requestRevision, admission.actor.installationId]);
-    if (rows.rows.length > 2000) throw new DomainError('CONFLICT', 'Task object boundary exceeds the supported query budget');
+    const selection=await postgresTaskQuerySelection(client,p,args.taskId,policyDigest);
     const types = new Set(model.concreteTypes(target)), visible: ObjectRef[] = [];
-    for (const row of rows.rows) {
+    for (const row of selection.rows) {
       if (!types.has(String(row.type)) || 'object' in query && (row.type !== query.object.type || row.object_id !== query.object.id)) continue;
       const ref = objectRefSchema.parse({ type: row.type, id: row.object_id });
       const definition = model.object(ref.type), fields = [...new Set([definition.primaryKey, definition.titleKey,
@@ -77,12 +72,7 @@ export async function postgresQueryAuthorizedObjects(client:Client,principal:Pri
     }
     // Match SQLite's opaque, installation/grant/policy-bound cursor contract.
     // The public token never reveals owner, model digest or hidden row position.
-    const bindings = await client.query(`SELECT type,object_id,object_revision FROM ${q}.security_bindings
-      WHERE grant_id=$1 ORDER BY type COLLATE "C",object_id COLLATE "C"`, [admission.grant.id]);
-    if (bindings.rows.length > 2000) throw new DomainError('CONFLICT', 'Task object boundary exceeds the supported query budget');
-    const revision = parseInt(digest([admission.policyRevision, admission.grant.id, bindings.rows.map(row => ({
-      type: row.type, object_id: row.object_id, object_revision: z.number().int().positive().safe().parse(Number(row.object_revision)),
-    }))]).slice(0, 12), 16);
+    const revision=selection.revision;
     const queryDigest = digest({ ...query, cursor: undefined,...(options.readScope?{readScope:options.readScope}:{}) }), context = digest([admission.actor.installationId,
       admission.actor.authEpoch, admission.grant.id, admission.grant.revision, admission.policyRevision, queryDigest, revision]);
     let after: ObjectRef | undefined;
@@ -96,7 +86,7 @@ export async function postgresQueryAuthorizedObjects(client:Client,principal:Pri
       after = objectRefSchema.parse(JSON.parse(cursor.rows[0].body));
       }
     }
-    const graph = options.graph??await PostgresProjectionGraph.create(client,owner,ontology.ref,builder);
+    const graph = options.graph??await PostgresProjectionGraph.create(client,owner,ontology.ref,builder,{readOnly:true});
     if(digest(graph.releaseRef)!==digest(ontology.ref))throw new SecurityError('POLICY_CHANGED');
     const result = await graph.queryVisible(owner, { ...query, cursor: undefined }, budget, context, {
       refs: visible, revision, after,

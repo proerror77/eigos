@@ -3022,7 +3022,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "c6bda564a5df502559b568b4da067f6f469197a9b512591e79173f0143333ff0",
+      "sourceDigest": "72a54932022a8ac2352e5f3b726d854290492a8940ed688376716b801795db7f",
       "channels": [
         "model",
         "query"
@@ -4208,7 +4208,7 @@
     {
       "id": "native-model-mcp",
       "file": "packages/coordinator/ontology-mcp.ts",
-      "sourceDigest": "18a132241cd7ce0722d6b0a083162c02a8f67da8f37f8d017337184d0f5851ff",
+      "sourceDigest": "39bfb63eabcbbf92f683250c66b463e40d8f4c7c7a8b040f8601dc7e5938e1e4",
       "channels": [
         "model"
       ],
@@ -4991,7 +4991,7 @@
     {
       "id": "packages-coordinator-requested-facts",
       "file": "packages/coordinator/requested-facts.ts",
-      "sourceDigest": "bdb9c06fea636a32c88a7fdd800328885c800e92f9faf40792ed2c50985fcc56",
+      "sourceDigest": "716a6b5443210a98417d86b94c7e84dd7af0b42d5fba0a9002f55a5112bfb108",
       "channels": [
         "sqlite",
         "registered_model"
@@ -5676,7 +5676,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "c047412ab203c4b2166df590ecc6480bf82395fa356ba1605dbb485ff448caed",
+      "sourceDigest": "12f0db57365b8b28194adbc623e4869f40b83dd74b6dca9e5aef91693e6665e7",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current identity/task admission and deadlines, frozen request-scoped read snapshots, pinned ontology, roles, labels, direct/retained evidence and current source checks",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
@@ -5843,7 +5843,7 @@
     {
       "id": "postgres-task-output-authorization",
       "file": "packages/postgres/task-output.ts",
-      "sourceDigest": "3869d16a02b793499d8776bf14541e13f9fafc71e1763e7d5b871ed99dcef272",
+      "sourceDigest": "92f5be184d30cd77a880136d8a867e99591018ab939929b3a1a92d01191225a2",
       "channels": [
         "internal"
       ],
@@ -5903,7 +5903,7 @@
     {
       "id": "ontology-graph-program",
       "file": "packages/ontology/graph-program.ts",
-      "sourceDigest": "396b703d7d06151e697fbd978eaff401cb855c933c91a8584955503c8ec983d3",
+      "sourceDigest": "7e78668b1d82844f01ff162b71125b006ebef3e8b5e8df300ca51c52f9bd839c",
       "channels": [
         "internal"
       ],
@@ -5927,7 +5927,7 @@
     {
       "id": "postgres-projection-graph",
       "file": "packages/postgres/projection-graph.ts",
-      "sourceDigest": "32aa5d3e92857ee1b000bbe5c5c9e0a303b896b3bc94d9b417f54350cefca780",
+      "sourceDigest": "f94c6a507a156923b519194c41a118e00226b597ddd97629ecdbefd561267647",
       "channels": [
         "internal"
       ],
@@ -6254,7 +6254,7 @@
     {
       "id": "postgres-ontology-read-query",
       "file": "packages/postgres/ontology-read-query.ts",
-      "sourceDigest": "afa6774fb6bd1974c77e48047015974be5966da08909e6a19a40107b3114c59c",
+      "sourceDigest": "0ca1762234ab712bce93b7d860d4ca9aa32631ef9dd9f1544b33f50a008c1c97",
       "channels": [
         "internal"
       ],
@@ -6266,7 +6266,7 @@
     {
       "id": "postgres-ontology-functions",
       "file": "packages/postgres/ontology-functions.ts",
-      "sourceDigest": "ef5c6fd3e99b38854db273fcf598aceca1b8e9f461df4afc7d4c9f6f7953ea6f",
+      "sourceDigest": "bf5bc7fd3594ea06907db7dd92ed1fb3c6d82bcb6750c956f7e20ef5fd777c52",
       "channels": [
         "internal"
       ],
@@ -6302,13 +6302,25 @@
     {
       "id": "postgres-planning-read-graph",
       "file": "packages/postgres/planning-read-graph.ts",
-      "sourceDigest": "14a3e53394681c3049b9cd40b884c2a0c2ced8f4f213734da8cff832f29f73f1",
+      "sourceDigest": "14f56b87f42439d90af75f010175438202563f97437ecb95c9a7319587252bdf",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL original-task planning context graph",
       "currentControl": "Fresh admitted processing-only Worker or Agent snapshot; bounded current binding, field, role, source and model checks; shared task instructions/context/conditions and field-removal notices, no private proof or writes, graph expires at callback exit",
       "targetControl": "Fresh admitted processing-only Worker or Agent snapshot; bounded current binding, field, role, source and model checks; shared task instructions/context/conditions and field-removal notices, no private proof or writes, graph expires at callback exit",
+      "stage": "S5"
+    },
+    {
+      "id": "planning-session-program",
+      "file": "packages/coordinator/planning-program.ts",
+      "sourceDigest": "5a9af551d6b9afaf37a163486b1aa38f2b39b77e15c0aeb2865fd5f4f213e8ff",
+      "channels": [
+        "internal"
+      ],
+      "content": "Shared original-task planning state and checked read program",
+      "currentControl": "One bounded receipt, context, instruction, proposal and snapshot program for synchronous and asynchronous storage; host-provided current authority metadata only, actual read/receipt effects, fork/adopt after commit, no business or provider execution authority",
+      "targetControl": "One bounded receipt, context, instruction, proposal and snapshot program for synchronous and asynchronous storage; host-provided current authority metadata only, actual read/receipt effects, fork/adopt after commit, no business or provider execution authority",
       "stage": "S5"
     }
   ]

@@ -69,6 +69,9 @@ test('PostgreSQL shared projection programs preserve SQLite versions, relationsh
     graph.ingest(owner,placeBatch,source);
     await postgresBusinessTransaction(client,schema,authority,async c=>{
       const target=await PostgresProjectionGraph.create(c,owner,release.ref,undefined,{now:()=>fixed});await target.ingest(owner,placeBatch,source);
+      const readonly=await PostgresProjectionGraph.create(c,owner,release.ref,undefined,{now:()=>fixed,readOnly:true});
+      assert.equal((await readonly.read(owner,place)).properties.name,'Synthetic place');
+      await assert.rejects(readonly.ingest(owner,placeBatch,source),/AUTHORIZATION_REQUIRED/);
       const read=await target.read(owner,place);read.properties.name='Caller mutation';
       assert.equal((await target.read(owner,place)).properties.name,'Synthetic place','returned views cannot mutate a transaction cache');
       const sourceEvidence=sourceProof(graph,owner,place,{remaining:1000});assert(sourceEvidence);

@@ -6,6 +6,7 @@ import { securityFixture } from './fixtures/security.js';
 import { importPostgresFixture } from './fixtures/postgres-business.js';
 import { PostgresTaskCommandService } from '../packages/postgres/task-command-service.js';
 import { PostgresWorkerStore } from '../packages/postgres/worker-store.js';
+import { postgresTaskQuerySelection } from '../packages/postgres/task-read-access.js';
 import { withPostgresPlanningReadGraph } from '../packages/postgres/planning-read-graph.js';
 import { runGraphProgramAsync } from '../packages/ontology/graph-program.js';
 import { readTaskContextProgram, assertTaskContextCurrentProgram, readTaskInstructionsProgram } from '../packages/coordinator/task-context.js';
@@ -25,7 +26,7 @@ test('a processing-only PostgreSQL Worker reconstructs the original graph contex
         sourceBindingIds: [], channels: ['agent_response', 'registered_model'], expiresAt });
       f.jobs.security.policies.setRecipient(installation.id, { classification: 'sensitive', markings: ['member_private', 'personal_data'], channels: ['agent_response'], expiresAt }, f.jobs.security.policies.revision());
       f.jobs.security.policies.setRole({ subjectKind: 'installation', subjectId: installation.id, role: 'Viewer',
-        resource: { kind: 'namespace', id: f.jobs.ontology.model.ref.id, version: f.jobs.ontology.model.ref.digest }, expiresAt }, f.jobs.security.policies.revision());
+        resource: { kind: 'namespace', id: f.jobs.ontology.model.ref.id, version: f.jobs.ontology.model.ref.digest }, invokeFunctions: ['taskOutcomeStatus'], expiresAt }, f.jobs.security.policies.revision());
       f.jobs.security.policies.setModelChannel('synthetic:planning-context', { classification: 'sensitive', markings: ['member_private', 'personal_data'], expiresAt }, f.jobs.security.policies.revision());
       const p = { ...f.principal, scopes: ['tasks:write'], access: f.coordinator.authenticate({ ...f.principal, scopes: ['tasks:write'] }, installation.token) };
       target = await importPostgresFixture(f); const t = target;
@@ -42,7 +43,7 @@ test('a processing-only PostgreSQL Worker reconstructs the original graph contex
           [claim.owner, `eigos.worker.finish:${t.authority.digest}`, digest([claim.job.id, claim.token])])).rowCount, 1);
       }).catch(error => { heartbeatFailure = error; }).finally(() => { heartbeat = undefined; }); }, 5000); timer.unref();
       let escaped: Parameters<Parameters<typeof withPostgresPlanningReadGraph>[6]>[0] | undefined;
-      await worker.readEvidence(claim, 'synthetic:planning-context', (auth, admission, principal, client) =>
+      const context = await worker.readEvidence(claim, 'synthetic:planning-context', (auth, admission, principal, client) =>
         withPostgresPlanningReadGraph(client, principal, task.id, t.policy, auth, admission, async graph => {
           escaped = graph;
           assert.equal(principal.access?.actorKind, 'worker'); assert(!principal.scopes.includes('tasks:read'));
@@ -53,15 +54,34 @@ test('a processing-only PostgreSQL Worker reconstructs the original graph contex
           assert.deepEqual(context.data.sourceChanges, [change]);
           assert.equal(context.context.requestId, task.id); assert.equal(context.context.instructionCount, 1);
           assert(context.instructionRefs.length); assert(graph.evidence()!.lineage.length);
-          await runGraphProgramAsync(graph, assertTaskContextCurrentProgram(graph, claim.owner, context.context));
-          const instructions = await runGraphProgramAsync(graph, readTaskInstructionsProgram(graph, claim.owner, task.id, 1, { limit: 1 }));
-          assert.equal(instructions.items[0]!.properties.text, goal);
+          const selection = await postgresTaskQuerySelection(client, principal, task.id, t.policy), size = selection.rows.length, revision = selection.revision;
+          selection.rows.length = 0; selection.revision = 0;
+          const again = await postgresTaskQuerySelection(client, principal, task.id, t.policy);
+          assert.equal(again.rows.length, size); assert.equal(again.revision, revision);
           assert.deepEqual(await runGraphProgramAsync(graph, assessConditionsProgram(graph, claim.owner, context.data.request)), []);
           await assert.rejects(graph.read(claim.owner, { type: 'ServiceRequest', id: other.id }), /AUTHORIZATION_REQUIRED/);
           assert.throws(() => graph.ingest(), /AUTHORIZATION_REQUIRED/); assert.throws(() => graph.readPrivate(), /AUTHORIZATION_REQUIRED/);
           assert.throws(() => graph.planning.virtualMembership(claim.owner, { id: 'different-task', revision: 1 }, { type: 'ServiceRequest', id: task.id }), /AUTHORIZATION_REQUIRED/);
+          return context;
         }));
       await assert.rejects(escaped!.read(claim.owner, { type: 'ServiceRequest', id: task.id }), /AUTHORIZATION_REQUIRED/);
+      // Native tools own separate snapshots; a preceding call cannot lend its
+      // identity projection lifetime or cached permission to a later RPC.
+      await worker.readEvidence(claim, 'synthetic:planning-context', (auth, admission, principal, client) =>
+        withPostgresPlanningReadGraph(client, principal, task.id, t.policy, auth, admission, graph =>
+          runGraphProgramAsync(graph, assertTaskContextCurrentProgram(graph, claim.owner, context.context))));
+      await worker.readEvidence(claim, 'synthetic:planning-context', (auth, admission, principal, client) =>
+        withPostgresPlanningReadGraph(client, principal, task.id, t.policy, auth, admission, async graph => {
+          const instructions = await runGraphProgramAsync(graph, readTaskInstructionsProgram(graph, claim.owner, task.id, 1, { limit: 1 }));
+          assert.equal(instructions.items[0]!.properties.text, goal);
+        }));
+      await worker.readEvidence(claim, 'synthetic:planning-context', (auth, admission, principal, client) =>
+        withPostgresPlanningReadGraph(client, principal, task.id, t.policy, auth, admission, async graph => {
+          const value = await graph.evaluate(claim.owner, { function: 'taskOutcomeStatus', object: { type: 'ServiceRequest', id: task.id } });
+          assert.equal(value.status, 'unknown'); assert.equal(value.functionRef.id, 'taskOutcomeStatus');
+          assert.equal(value.model.version, 'authorized.v2'); assert.equal(value.model.id, graph.model.ref.id);
+          assert.notEqual(value.model.digest, graph.model.ref.digest);
+        }));
       await t.client.query(`INSERT INTO ${q}.security_labels(owner,type,object_id,field,body) VALUES($1,$2,$3,$4,$5)`,
         [claim.owner, change.object.type, change.object.id, 'requestedDeliverable', JSON.stringify({ classification: 'internal', requiredMarkings: [], channels: ['agent_response'] })]);
       await worker.readEvidence(claim, 'synthetic:planning-context', (auth, admission, principal, client) =>

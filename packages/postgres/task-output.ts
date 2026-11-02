@@ -76,6 +76,8 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
     const objects = new Map<string, { bytes: number; value: { revision: number; definitionDigest: string; body: z.infer<typeof bodySchema> } }>();
     let objectBytes = 0;
     let nodes = 0;
+    let modelClearance: {classification:'private'|'sensitive';markings:SecurityEnvelope['requiredMarkings'];expiresAt:string}|undefined;
+    const tombstones = new Map<string,boolean>();
     const raw = async (ref: ObjectRef) => {
       const objectKey = key(ref), cached = objects.get(objectKey);
       if (cached) return structuredClone(cached.value);
@@ -233,10 +235,12 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
       let clearance;
       if(processing){
         if(channel!=='registered_model'||!processing.modelChannel)throw new SecurityError('OUTPUT_NOT_ALLOWED');
-        const rows=await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM ${q}.security_model_channels WHERE id=$1 LIMIT 2`,[processing.modelChannel]);
-        if(rows.rowCount!==1||typeof rows.rows[0]?.body!=='string')throw new SecurityError('OUTPUT_NOT_ALLOWED');
-        const value=z.strictObject({classification:z.enum(['private','sensitive']),markings:securityEnvelopeSchema.shape.requiredMarkings,expiresAt:z.iso.datetime({offset:true})}).parse(JSON.parse(rows.rows[0].body));
-        clearance={...value,channels:['registered_model'] as Channel[]};
+        if(!modelClearance){
+          const rows=await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM ${q}.security_model_channels WHERE id=$1 LIMIT 2`,[processing.modelChannel]);
+          if(rows.rowCount!==1||typeof rows.rows[0]?.body!=='string')throw new SecurityError('OUTPUT_NOT_ALLOWED');
+          modelClearance=z.strictObject({classification:z.enum(['private','sensitive']),markings:securityEnvelopeSchema.shape.requiredMarkings,expiresAt:z.iso.datetime({offset:true})}).parse(JSON.parse(rows.rows[0].body));
+        }
+        clearance={...modelClearance,channels:['registered_model'] as Channel[]};
       }else clearance=await postgresTaskReadClearance(client,captured,taskId,policyDigest);
       if (!clearance || !clearance.channels.includes(channel) || !admission.grant.channels.includes(channel)) throw new SecurityError('OUTPUT_NOT_ALLOWED');
       requireChannel(effective, channel, clearance);
@@ -253,8 +257,12 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
       if(!evidence)throw new SecurityError('AUTHORIZATION_REQUIRED');
       const row=await raw(ref),graph=ontology.model;
       if(row.revision!==evidence.revision||!graph.hasType(ref.type)||graph.isInterface(ref.type))throw new SecurityError('POLICY_CHANGED');
-      const tombstone=await client.query(`SELECT 1 FROM ${q}.ontology_tombstones WHERE ontology_id=$1 AND owner=$2 AND type=$3 AND id=$4 LIMIT 1`,[ontology.ref.ontologyId,owner,ref.type,ref.id]);
-      if(tombstone.rowCount)throw new DomainError('NOT_FOUND','Ontology object was tombstoned');
+      const objectKey=key(ref);let deleted=tombstones.get(objectKey);
+      if(deleted===undefined){
+        const tombstone=await client.query(`SELECT 1 FROM ${q}.ontology_tombstones WHERE ontology_id=$1 AND owner=$2 AND type=$3 AND id=$4 LIMIT 1`,[ontology.ref.ontologyId,owner,ref.type,ref.id]);
+        deleted=!!tombstone.rowCount;if(tombstones.size>=512)tombstones.delete(tombstones.keys().next().value!);tombstones.set(objectKey,deleted);
+      }
+      if(deleted)throw new DomainError('NOT_FOUND','Ontology object was tombstoned');
       const expected=graph.fingerprint(ref.type);
       if(row.definitionDigest!==expected&&!await postgresOntologyDefinitionCompatible(client,ontology.ref,{
         kind:'object',id:ref.type,storedDigest:row.definitionDigest,currentDigest:expected,properties:row.body.properties,

@@ -77,7 +77,7 @@ export async function openOntologyMcp(session: NativePlanningSession, signal: Ab
   let toolAttempts = 0, readAttempts = 0;
   const rejections: {tool:string;stage:'authority'|'tool'|'model_output';code:string;origins:string[]}[]=[];
   const diagnosticFiles=new Set(['packages/core/store','packages/coordinator/ontology-mcp','packages/coordinator/planning-session',
-    'packages/coordinator/task-context','packages/security/store','packages/security/policy-store','packages/security/model']);
+    'packages/coordinator/task-context','packages/coordinator/planning-program','packages/security/store','packages/security/policy-store','packages/security/model']);
   const reject=(name:string,stage:'authority'|'tool'|'model_output',error:unknown)=>{
     const code=error instanceof SecurityError?error.reason:error instanceof DomainError?error.code:'REJECTED';
     const origins=error instanceof Error?[...new Set((error.stack??'').split('\n').slice(1,17).flatMap(line=>{

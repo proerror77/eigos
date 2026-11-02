@@ -1,7 +1,7 @@
 import type { Client } from 'pg';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
-import { ownerKey, requireScope, taskIdSchema, type Principal } from '../core/domain.js';
+import { DomainError, ownerKey, requireScope, taskIdSchema, type Principal } from '../core/domain.js';
 import { accessContextSchema, agentAccessGrantSchema, securityEnvelopeSchema, taskDataGrantSchema, SECURITY_CONTRACT, POLICY_VERSION,ownerIdentitySchema,type AccessContext } from '../security/contracts.js';
 import { SecurityError } from '../security/errors.js';
 import { postgresBusinessSchema, postgresConstrainReadDeadline,postgresRequireLeaseAtCommit } from './runtime-transaction.js';
@@ -32,6 +32,7 @@ const observationSourceSchema=z.looseObject({programId:z.string().min(1).max(200
 type ReadOntology=Awaited<ReturnType<typeof postgresOntologyReadContext>>;
 export type PostgresTaskReadAdmission=Omit<Awaited<ReturnType<typeof postgresTaskReadGrant>>,'actor'>&{actor:Extract<AccessContext,{actorKind:'agent'|'worker'}>};
 type ReadSnapshot={key:string;admission:PostgresTaskReadAdmission;ontology:Map<StagedKernelBuilder|undefined,Promise<ReadOntology>>;
+  selection?:Promise<{rows:{type:string;object_id:string}[];revision:number}>;
   roles?:Promise<z.infer<typeof roleSchema>[]>;clearance?:Promise<z.infer<typeof recipientSchema>|undefined>;
   labels?:Map<string,Promise<{revision:number;values:({field:string}&z.infer<typeof storedLabelSchema>)[]}>>};
 const snapshots=new WeakMap<Client,ReadSnapshot>();
@@ -466,6 +467,30 @@ export async function postgresTaskSourceObservationValidUntil(client: Client, pr
 export async function postgresTaskSourceObservationAllowed(client: Client, principal: Principal, taskId: string, policyDigest: string,
   input: ObjectRef, builder?: StagedKernelBuilder):Promise<boolean> {
   return (await postgresTaskSourceObservationValidUntil(client,principal,taskId,policyDigest,input,builder))>Date.now();
+}
+
+/** Immutable candidate inventory for this exact admitted SQL snapshot only.
+ * Every query still rechecks its selected object/field/source/model evidence.
+ * The cache expires with the callback, never with the pooled connection. */
+export async function postgresTaskQuerySelection(client:Client,principal:Principal,taskId:string,policyDigest:string){
+  const captured=structuredClone(principal);
+  return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission=>{
+    const load=async()=>{
+      const q=`"${postgresBusinessSchema(client)}"`;
+      const rows=await client.query<{type:string;object_id:string}>(`SELECT DISTINCT b.type,b.object_id FROM ${q}.security_bindings b
+        JOIN ${q}.security_grants issued ON issued.id=b.grant_id WHERE b.owner=$1 AND b.task_id=$2 AND b.request_revision=$3
+        AND issued.installation_id=$4 AND issued.kind='task_data' LIMIT 2001`,[ownerKey(captured),taskId,admission.grant.requestRevision,admission.actor.installationId]);
+      const bindings=await client.query(`SELECT type,object_id,object_revision FROM ${q}.security_bindings
+        WHERE grant_id=$1 ORDER BY type COLLATE "C",object_id COLLATE "C" LIMIT 2001`,[admission.grant.id]);
+      if(rows.rows.length>2000||bindings.rows.length>2000||Buffer.byteLength(JSON.stringify([rows.rows,bindings.rows]))>8388608)throw new DomainError('CONFLICT','Task object boundary exceeds the supported query budget');
+      const revision=parseInt(digest([admission.policyRevision,admission.grant.id,bindings.rows.map(row=>({
+        type:row.type,object_id:row.object_id,object_revision:z.number().int().positive().safe().parse(Number(row.object_revision)),
+      }))]).slice(0,12),16);
+      return freezeData({rows:rows.rows,revision});
+    };
+    const snapshot=snapshots.get(client),pending=snapshot?(snapshot.selection??=load()):load();
+    return structuredClone(await pending);
+  });
 }
 
 /** Internal candidate fields for a binding, not permission to disclose.

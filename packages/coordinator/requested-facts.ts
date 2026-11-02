@@ -1,3 +1,4 @@
+import { graphMap, type GraphProgram } from '../ontology/graph-program.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -19,10 +20,26 @@ export interface RequestedFactResult {
   missingFields: string[]; evaluations?: Computation[]; hasMore: boolean; continuation?: ObjectQuery;
 }
 
-/** Batch only within this synchronous read. A later decision rechecks authority
+export interface RequestedFactsResult {
+  facts: RequestedFactResult[];
+  reads: { requested: number; performed: number; reused: number };
+  needsRefresh: string[]; needsContinuation: string[]; sourceCalls: 0;
+}
+
+/** Batch only within this read. A later decision rechecks authority
  * and current data; no old permission, receipt or provider response is reused. */
 export function readRequestedFacts(requests: RequestedFacts, query: (input: ObjectQuery) => OntologyQueryResult,
-  evaluate: (object: ObjectView) => Computation) {
+  evaluate: (object: ObjectView) => Computation): RequestedFactsResult {
+  const program = readRequestedFactsProgram(requests, function* (input) { return query(input); }, function* (object) { return evaluate(object); });
+  // The synchronous adapters above yield no storage operations. New effects
+  // must be handled explicitly rather than letting a Promise escape as data.
+  const result = program.next();
+  if (!result.done) throw new Error('Synchronous fact read yielded an unhandled storage operation');
+  return result.value;
+}
+
+export function* readRequestedFactsProgram(requests: RequestedFacts, query: (input: ObjectQuery) => GraphProgram<OntologyQueryResult>,
+  evaluate: (object: ObjectView) => GraphProgram<Computation>): GraphProgram<RequestedFactsResult> {
   const normalized = requests.map(request => ({ ...request, query: { ...request.query,
     ...(request.query.select || request.requiredFields?.length ? { select: [...new Set([...(request.query.select ?? []), ...(request.requiredFields ?? [])])] } : {}),
   } }));
@@ -34,16 +51,16 @@ export function readRequestedFacts(requests: RequestedFacts, query: (input: Obje
     return key;
   });
   const evaluated = new Map<string, Computation>();
-  const facts: RequestedFactResult[] = normalized.map((request, index) => {
+  const facts: RequestedFactResult[] = yield* graphMap(normalized, function* (request, index) {
     const group = groups.get(keys[index]!)!;
-    group.result ??= query(group.query);
+    group.result ??= yield* query(group.query);
     const result = group.result;
     const items = result.items.map(item => ({ ...item, properties: request.query.select
       ? Object.fromEntries(request.query.select.filter(name => Object.hasOwn(item.properties, name)).map(name => [name, item.properties[name]])) : item.properties }));
     const missingFields = [...new Set((request.requiredFields ?? []).filter(name => !items.length || items.some(item => !Object.hasOwn(item.properties, name))))];
-    const evaluations = request.evaluate ? items.map(item => {
+    const evaluations = request.evaluate ? yield* graphMap(items, function* (item) {
       const key = digest([item.ref, item.revision]);
-      if (!evaluated.has(key)) { const { value: _value, ...check } = evaluate(item); evaluated.set(key, check); }
+      if (!evaluated.has(key)) { const { value: _value, ...check } = yield* evaluate(item); evaluated.set(key, check); }
       return evaluated.get(key)!;
     }) : undefined;
     const status = result.page.hasMore ? 'incomplete' : !items.length || missingFields.length ? 'missing' : evaluations?.some(value => value.status !== 'known') ? 'refresh_required' : 'present';
