@@ -5,7 +5,7 @@ import { ContentTypeNotSupportedError, ExtendedAgentCardNotConfiguredError, Push
 import { z } from 'zod';
 import type { Config } from '../../packages/core/config.js';
 import { DomainError, ownerKey, submitSchema, versionedReplySchema, resumeTaskSchema, type Job, type JobState, type Principal } from '../../packages/core/domain.js';
-import { TaskService } from '../../packages/core/tasks.js';
+import type { GatewayTaskService } from './task-service.js';
 import { taskSummary } from '../../packages/core/task-summary.js';
 import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
 import type { TaskView } from '../../packages/security/task-service.js';
@@ -58,7 +58,7 @@ function toTask(job: Job, historyLength?: number): Task {
   });
 }
 
-export function agentCard(c: Config, services: ReturnType<TaskService['services']>): AgentCard {
+export function agentCard(c: Config, services: ReturnType<GatewayTaskService['services']>): AgentCard {
   return AgentCard.fromJSON({
     name: 'EIGOS', version: '0.1.0',
     description: PA_DISCOVERY_GUIDANCE + ' ' + (c.EIGOS_SECURITY_MODE === 'foundation' ? 'Task-scoped delegated execution. Installation grants, resources, task data, sources and output channels are checked separately. Replies require expectedRevision from current Task metadata. Connecting never authorizes a source, purchase, message or payment.' : 'Delegate only tasks matching the enabled skills below. EIGOS preserves task identity, asks for missing inputs and returns service-specific deliverables. Replies and corrections require expectedRevision from the current Task metadata. SendMessage metadata.taskOperation=amend corrects an open read-only task; resume continues a technical pause using data.expectedRevision without an answer. metadata.internalState=paused is a technical pause, not missing owner input. Connecting this agent does not authorize purchases, sending or payments. No general shopping or coffee ordering capability is currently available.'),
@@ -86,7 +86,7 @@ export function agentCard(c: Config, services: ReturnType<TaskService['services'
 }
 
 export class A2AGateway implements A2ARequestHandler {
-  constructor(private tasks: TaskService, private card: AgentCard, private messaging?: AgentMessagingService) {}
+  constructor(private tasks: GatewayTaskService, private card: AgentCard, private messaging?: AgentMessagingService) {}
   async getAgentCard(): Promise<AgentCard> { return this.card; }
 
   private principal(ctx: ServerCallContext, tenant?: string): Principal {
@@ -97,8 +97,8 @@ export class A2AGateway implements A2ARequestHandler {
     return ctx.user.principal;
   }
 
-  private adapt<T>(action: () => T, cancel = false): T {
-    try { return action(); } catch (error) {
+  private async adapt<T>(action: () => T | Promise<T>, cancel = false): Promise<T> {
+    try { return await action(); } catch (error) {
       if (error instanceof SecurityError) {
         const response = securityErrorResponse(error, this.card.supportedInterfaces[0]?.url);
         throw new RequestMalformedError({ message: response.message, metadata: {
@@ -139,7 +139,7 @@ export class A2AGateway implements A2ARequestHandler {
           ...(error.code === 'MESSAGING_AUTHORIZATION_REQUIRED' && this.messaging.permissionsUrl ? { permissions_url: this.messaging.permissionsUrl } : {}) } }] });
       }
     }
-    const job = this.adapt(() => {
+    return this.adapt(async () => {
       const p = this.principal(ctx, params.tenant);
       const message = params.message;
       if (!message || message.role !== Role.ROLE_USER || !message.messageId) throw new RequestMalformedError('A user message with messageId is required');
@@ -163,42 +163,41 @@ export class A2AGateway implements A2ARequestHandler {
       if (message.taskId) {
         if (input && typeof input === 'object' && 'action' in input && input.action === 'approve_external_draft') {
           const permit = externalDraftPermitSchema.parse({ ...input, requestId: message.messageId });
-          job = this.tasks.authorize(p, message.taskId, permit, message.contextId || undefined);
+          job = await this.tasks.authorize(p, message.taskId, permit, message.contextId || undefined);
         } else if (input && typeof input === 'object' && 'action' in input && input.action === 'select_payment_route') {
           const route = paPaymentRouteSchema.parse({ ...input, taskId: message.taskId, requestId: message.messageId });
-          job = this.tasks.selectPaymentRoute(p, route, message.contextId || undefined);
+          job = await this.tasks.selectPaymentRoute(p, route, message.contextId || undefined);
         } else if (input && typeof input === 'object' && 'action' in input && input.action === 'report_payment_result') {
           const report = paPaymentReportSchema.parse({ ...input, taskId: message.taskId, requestId: message.messageId });
-          job = this.tasks.reportPayment(p, report, message.contextId || undefined);
+          job = await this.tasks.reportPayment(p, report, message.contextId || undefined);
         } else if (message.metadata?.taskOperation === 'resume') {
           const resume = resumeTaskSchema.parse({ ...(input as object), taskId: message.taskId, requestId: message.messageId });
-          job = this.tasks.resume(p, resume, message.contextId || undefined);
+          job = await this.tasks.resume(p, resume, message.contextId || undefined);
         } else {
           const answer = versionedReplySchema.parse({ ...(input as object), taskId: message.taskId, requestId: message.messageId });
-          job = message.metadata?.taskOperation === 'amend' ? this.tasks.amend(p, answer, message.contextId || undefined) : this.tasks.reply(p, answer, message.contextId || undefined);
+          job = message.metadata?.taskOperation === 'amend' ? await this.tasks.amend(p, answer, message.contextId || undefined) : await this.tasks.reply(p, answer, message.contextId || undefined);
         }
       } else {
         const data = submitSchema.parse({ ...(input as object), requestId: message.messageId });
-        job = this.tasks.submit(p, { ...data, requestId: message.messageId }, message.contextId || undefined);
+        job = await this.tasks.submit(p, { ...data, requestId: message.messageId }, message.contextId || undefined);
       }
-      return job;
+      if ((job.state === 'working' || job.state === 'submitted') && !params.configuration?.returnImmediately) {
+        return toTask(await this.tasks.wait(p, job.id), params.configuration?.historyLength);
+      }
+      return toTask(job, params.configuration?.historyLength);
     });
-    if ((job.state === 'working' || job.state === 'submitted') && !params.configuration?.returnImmediately) {
-      return toTask(await this.tasks.wait(this.principal(ctx, params.tenant), job.id), params.configuration?.historyLength);
-    }
-    return toTask(job, params.configuration?.historyLength);
   }
 
   async getTask(params: GetTaskRequest, ctx: ServerCallContext): Promise<Task> {
-    return this.adapt(() => toTask(this.tasks.get(this.principal(ctx, params.tenant), params.id), params.historyLength));
+    return this.adapt(async () => toTask(await this.tasks.get(this.principal(ctx, params.tenant), params.id), params.historyLength));
   }
 
   async cancelTask(params: CancelTaskRequest, ctx: ServerCallContext): Promise<Task> {
-    return this.adapt(() => toTask(this.tasks.cancel(this.principal(ctx, params.tenant), params.id)), true);
+    return this.adapt(async () => toTask(await this.tasks.cancel(this.principal(ctx, params.tenant), params.id)), true);
   }
 
   async listTasks(params: ListTasksRequest, ctx: ServerCallContext): Promise<ListTasksResponse> {
-    return this.adapt(() => {
+    return this.adapt(async () => {
       const principal = this.principal(ctx, params.tenant);
       if (params.pageToken && !/^\d{1,7}$/.test(params.pageToken)) throw new RequestMalformedError('Invalid page token');
       const limit = params.pageSize ?? 50;
@@ -206,10 +205,10 @@ export class A2AGateway implements A2ARequestHandler {
       const state = (Object.entries(states) as [JobState, TaskState][]).find(([, value]) => value === params.status)?.[0];
       if (params.status !== TaskState.TASK_STATE_UNSPECIFIED && !state) {
         // This gateway never produces other states. Still validate pagination and identity.
-        this.tasks.list(principal, { limit, offset });
+        await this.tasks.list(principal, { limit, offset });
         return { tasks: [], nextPageToken: '', pageSize: limit, totalSize: 0 };
       }
-      const found = this.tasks.list(principal, { limit, offset, state, contextId: params.contextId, updatedAfter: params.statusTimestampAfter });
+      const found = await this.tasks.list(principal, { limit, offset, state, contextId: params.contextId, updatedAfter: params.statusTimestampAfter });
       return {
         tasks: found.jobs.map(job => {
           const task = toTask(job, params.historyLength);

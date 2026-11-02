@@ -2886,7 +2886,7 @@
     {
       "id": "mcp",
       "file": "apps/gateway/mcp.ts",
-      "sourceDigest": "41452fa3c00320f280e97b213644a24ea87bd5803375cad4b97777ab7c3d3a32",
+      "sourceDigest": "0e7ccb1bf5a983c98959b73188df06d587d21c94913366da49c79808a1f3bb5d",
       "channels": [
         "mcp"
       ],
@@ -2898,7 +2898,7 @@
     {
       "id": "a2a",
       "file": "apps/gateway/a2a.ts",
-      "sourceDigest": "258348b96e23ff59ea199f4ea13ebc3f8abc3e8c4887c699f30a0de987cdbd57",
+      "sourceDigest": "8f013edd68a8a1b4c9d384f78087de5c85b7b133082fba3741492c9943729c8a",
       "channels": [
         "a2a"
       ],
