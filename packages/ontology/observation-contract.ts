@@ -54,7 +54,8 @@ export interface ObservationContract {
  * account IDs, native IDs, input values, target values and proofs stay internal. */
 export interface ObservationContractView {
   id: string; revision: number; revocationRevision: number; status: 'configured' | 'revoked' | 'expired';
-  monitoring: false; targetIdentity: 'unverified'; activation: 'observer_not_installed';
+  monitoring: boolean; targetIdentity: 'unverified' | 'verified'; activation: 'observer_not_installed' | 'observer_installed';
+  runtime?: { state: 'active' | 'paused' | 'ended' | 'revoked'; health: 'pending' | 'fresh' | 'stale' | 'unavailable' | 'conflicted'; reason?: string; lastObservedAt?: string; pendingChanges: number };
   sourcePermission: 'current' | 'unavailable'; startsAt: string; until: string; nextDueAt: string | null;
   maxStalenessMs: number; strategy: PrepareObservation['strategy'];
   perReadBudget: PrepareObservation['perReadBudget']; lifetimeBudget: PrepareObservation['lifetimeBudget']; usage: ObservationUsage;

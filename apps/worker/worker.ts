@@ -12,6 +12,7 @@ import type { RecoveryWork } from '../../packages/security/recovery.js';
 import { partialGoalArtifact } from '../../packages/coordinator/goal-program.js';
 
 export interface WorkerOptions {
+  observation?: { maintain(): void; run(claim: WorkClaim, signal: AbortSignal): Promise<void>; fail(claim: WorkClaim, reason: string): boolean };
   coordinator: Pick<Coordinator, 'run'> & Partial<Pick<Coordinator, 'releaseModelContext' | 'closeModelContexts' | 'claimRecovery' | 'recover'>>;
   pollMs?: number;
   leaseMs?: number;
@@ -60,6 +61,7 @@ export class Worker {
 
   tick(): void {
     if (this.stopping) return;
+    this.options.observation?.maintain();
     const services = ['eigos.delegate'];
     while (this.running.size < 2) {
       const claim = this.store.claim(services, this.leaseMs);
@@ -117,6 +119,11 @@ export class Worker {
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     run.done = Promise.resolve().then(async () => {
       if (controller.signal.aborted) throw new Error('Execution interrupted');
+      if (claim.observationRuntimeId) {
+        if (this.options.observation) await this.options.observation.run(claim, controller.signal);
+        else this.store.finish(claim, current => { this.store.watchContracts.pause(owner, job.id, 'observer_unavailable'); current.state = 'paused'; });
+        return;
+      }
       scope=this.store.security.enabled ? this.store.security.workerScope(owner,job.id,claim.securityAuthorityId!,claim.token) : undefined;
       if (scope) {
         // Interruption stops execution, not the fenced recovery write. Retain
@@ -153,6 +160,9 @@ export class Worker {
       };
       if(scope) await withAuthorization(scope,execute); else await execute();
     }).catch(error => {
+      if (claim.observationRuntimeId) {
+        this.options.observation?.fail(claim, 'worker_interrupted'); return;
+      }
       writebackDeadline = Date.now() + RECOVERY_WRITEBACK_MS;
       return inScope(() => {
         try {
@@ -207,7 +217,7 @@ export class Worker {
       catch (error) { failures.push({phase:'claim_cleanup',error}); throw error; }
       finally {
         this.running.delete(job.id);
-        try { await this.options.coordinator.releaseModelContext?.(claim); }
+        try { if (!claim.observationRuntimeId) await this.options.coordinator.releaseModelContext?.(claim); }
         catch (error) { failures.push({phase:'model_context_cleanup',error}); throw error; }
       }
     }));

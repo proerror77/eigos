@@ -5,6 +5,7 @@ import { assertSourceProxy } from '../../packages/core/private-source-proxy.js';
 import { JobStore } from '../../packages/core/store.js';
 import { CodexExecutor, type Executor } from '../../packages/capabilities/executor.js';
 import { Worker } from './worker.js';
+import { ObservationRuntime } from '../../packages/coordinator/observation-runtime.js';
 
 export function createWorker(config: Config, overrides: {
   reasoner?: Reasoner; store?: JobStore; executor?: Executor;
@@ -33,7 +34,7 @@ export function createWorker(config: Config, overrides: {
       bookingSandbox: config.EIGOS_BOOKING_SANDBOX_URL ? { endpoint: config.EIGOS_BOOKING_SANDBOX_URL, tokenFile: config.EIGOS_BOOKING_SANDBOX_TOKEN_FILE! } : undefined,
       commerceSandbox: config.EIGOS_COMMERCE_SANDBOX_URL ? { endpoint: config.EIGOS_COMMERCE_SANDBOX_URL, tokenFile: config.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE!, auditDirectory: config.EIGOS_COMMERCE_SANDBOX_AUDIT_DIR } : undefined,
       sandbox: config.EIGOS_SANDBOX_PROVIDER_URL ? { endpoint: config.EIGOS_SANDBOX_PROVIDER_URL, tokenFile: config.EIGOS_SANDBOX_TOKEN_FILE! } : undefined });
-    const worker = new Worker(store, { coordinator: new Coordinator(store, overrides.reasoner ?? new CodexReasoner(model), catalog,
+    const worker = new Worker(store, { observation: new ObservationRuntime(store, catalog), coordinator: new Coordinator(store, overrides.reasoner ?? new CodexReasoner(model), catalog,
       { allowSandbox: config.EIGOS_ACTION_SANDBOX === 'true', allowExternalDrafts: !!config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length, maxTaskMs: config.EIGOS_TASK_MAX_MS ?? 86400000 }), ...overrides.timing });
     worker.start();
     return { worker, close: async () => { await worker.close(); if (!overrides.store) store.close(); } };

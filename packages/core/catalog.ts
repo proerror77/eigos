@@ -308,6 +308,11 @@ export class ExecutionCatalog {
     return { capabilityRef: structuredClone(capability.ref), configurationDigest: program.configurationDigest,
       environment: capability.environment ?? 'local', actionIds: [...program.actionIds] };
   }
+  observationAdapter(ref: Ref, owner: string) {
+    const program = this.programs.get(key(ref));
+    if (!program || !program.permitted(owner)) return;
+    return program.sourceObserver;
+  }
 
   capability(ref: Ref): ServiceCapability {
     const definition = this.services.get(key(ref));
