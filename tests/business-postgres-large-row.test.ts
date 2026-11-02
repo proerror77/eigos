@@ -10,6 +10,7 @@ import { JobStore } from '../packages/core/store.js';
 import { installRuntimeAuthority, runtimeAuthorityDigest, type RuntimeAuthority } from '../packages/core/runtime-authority.js';
 import { planBusinessSnapshot } from '../packages/postgres/business-snapshot.js';
 import { importBusinessSnapshot } from '../packages/postgres/business-import.js';
+import { verifyBusinessSnapshot } from '../packages/postgres/business-verify.js';
 
 const enabled = process.env.EIGOS_TEST_RELAY_POSTGRES === '1' && process.env.EIGOS_TEST_LARGE_ROW === '1';
 test('business migration preserves a synthetic 42 MiB task body without loading a whole table at once', { skip: !enabled }, async () => {
@@ -35,6 +36,8 @@ test('business migration preserves a synthetic 42 MiB task body without loading 
     await client.connect(); connected = true;
     const receipt = await importBusinessSnapshot(client, { snapshot:path, schema, expectedFileDigest:plan.fileDigest, expectedAuthorityDigest:authorityDigest, expectedPolicyDigest:policy, maxDatabaseBytes:1_000_000_000 }); imported = true;
     assert.equal(receipt.status, 'imported-not-activated');
+    const verified=await verifyBusinessSnapshot(client,{snapshot:path,schema,expectedFileDigest:plan.fileDigest,expectedAuthorityDigest:authorityDigest,expectedPolicyDigest:policy});
+    assert.equal(verified.status,'verified-at-snapshot');assert.deepEqual(verified.tables,receipt.tables);
     const result = await client.query(`SELECT octet_length(body)::bigint AS bytes FROM "${schema}".jobs WHERE id='large-task'`);
     assert.equal(result.rows[0].bytes, String(Buffer.byteLength(body)));
   } finally {

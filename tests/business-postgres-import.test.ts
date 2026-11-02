@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -10,6 +10,7 @@ import { JobStore } from '../packages/core/store.js';
 import { installRuntimeAuthority, runtimeAuthorityDigest, type RuntimeAuthority } from '../packages/core/runtime-authority.js';
 import { planBusinessSnapshot } from '../packages/postgres/business-snapshot.js';
 import { importBusinessSnapshot } from '../packages/postgres/business-import.js';
+import { verifyBusinessSnapshot } from '../packages/postgres/business-verify.js';
 
 const enabled = process.env.EIGOS_TEST_RELAY_POSTGRES === '1';
 test('business snapshot import preserves data, authority, uniqueness, triggers and identity high-water marks', { skip: !enabled }, async () => {
@@ -53,6 +54,86 @@ test('business snapshot import preserves data, authority, uniqueness, triggers a
     assert.equal((await client.query('SELECT 1 FROM pg_namespace WHERE nspname=$1',[budgetSchema])).rowCount, 0);
     const result = await importBusinessSnapshot(client, options); imported = true;
     assert.equal(result.status, 'imported-not-activated'); assert.equal(result.sourceFileDigest, plan.fileDigest);
+    const verified=await verifyBusinessSnapshot(client,options);
+    assert.equal(verified.status,'verified-at-snapshot');assert.equal(verified.runtimeActivated,false);assert(Number.isFinite(Date.parse(verified.transactionStartedAt)));assert.deepEqual(verified.tables,result.tables);
+    await client.query('BEGIN');
+    try {await assert.rejects(verifyBusinessSnapshot(client,options),/idle, non-pipelined/);assert.equal(client.getTransactionStatus(),'T');}
+    finally {await client.query('ROLLBACK');}
+    await assert.rejects(verifyBusinessSnapshot(client,{...options,expectedFileDigest:'0'.repeat(64)}),/changed after review/);
+    const forgedReceipt=new Proxy(client,{get(target,property){
+      if(property==='query')return async(sql:unknown,values?:unknown)=>{
+        const result=await (target.query as (...args:any[])=>Promise<any>).call(target,sql,values);
+        if(typeof sql==='string' && sql.includes('.eigos_migration_receipt WHERE'))result.rows[0].body={...result.rows[0].body,sourceFileDigest:'0'.repeat(64)};
+        return result;
+      };
+      const value=Reflect.get(target,property,target);return typeof value==='function'?value.bind(target):value;
+    }});
+    await assert.rejects(verifyBusinessSnapshot(forgedReceipt,options),/receipt does not match/);
+    const lostBoundary=new Proxy(client,{get(target,property){
+      if(property==='query')return async(sql:unknown,values?:unknown)=>{
+        const result=await (target.query as (...args:any[])=>Promise<any>).call(target,sql,values);
+        if(typeof sql==='string' && sql.includes("current_setting('eigos.verification_nonce',true)"))result.rows[0].nonce='different-transaction';
+        return result;
+      };
+      const value=Reflect.get(target,property,target);return typeof value==='function'?value.bind(target):value;
+    }});
+    await assert.rejects(verifyBusinessSnapshot(lostBoundary,options),/transaction boundary was lost/);
+    const other=new pg.Client({ ssl: local ? false : { ca: readFileSync(ca!, 'utf8'), rejectUnauthorized: true }, connectionTimeoutMillis: 15000 });await other.connect();
+    try {
+      let changed=false;
+      const concurrent=new Proxy(client,{get(target,property){
+        if(property==='query')return async(sql:unknown,values?:unknown)=>{
+          const result=await (target.query as (...args:any[])=>Promise<any>).call(target,sql,values);
+          if(!changed && typeof sql==='object' && sql && 'text' in sql && String(sql.text).startsWith('FETCH FORWARD')){
+            changed=true;await other.query(`UPDATE "${schema}".migration_binary_probe SET value=7 WHERE id='fixture'`);
+          }
+          return result;
+        };
+        const value=Reflect.get(target,property,target);return typeof value==='function'?value.bind(target):value;
+      }});
+      assert.equal((await verifyBusinessSnapshot(concurrent,options)).status,'verified-at-snapshot');assert(changed);
+      await assert.rejects(verifyBusinessSnapshot(client,options),/readback mismatch/);
+      await other.query(`UPDATE "${schema}".migration_binary_probe SET value=9007199254740993 WHERE id='fixture'`);
+    } finally {await other.end();}
+    const backup=join(dir,'snapshot-before-concurrent-change.sqlite');copyFileSync(path,backup);
+    try {
+      let changed=false;
+      const changingSource=new Proxy(client,{get(target,property){
+        if(property==='query')return async(sql:unknown,values?:unknown)=>{
+          const result=await (target.query as (...args:any[])=>Promise<any>).call(target,sql,values);
+          if(!changed && typeof sql==='object' && sql && 'text' in sql && String(sql.text).startsWith('FETCH FORWARD')){
+            changed=true;const changedDb=new DatabaseSync(path);
+            try {changedDb.prepare("UPDATE migration_binary_probe SET value=7 WHERE id='fixture'").run();} finally {changedDb.close();}
+          }
+          return result;
+        };
+        const value=Reflect.get(target,property,target);return typeof value==='function'?value.bind(target):value;
+      }});
+      await assert.rejects(verifyBusinessSnapshot(changingSource,options),/snapshot changed during verification/);assert(changed);
+    } finally {copyFileSync(backup,path);rmSync(backup,{force:true});}
+    await client.query(`UPDATE "${schema}".migration_binary_probe SET value=7 WHERE id='fixture'`);
+    await assert.rejects(verifyBusinessSnapshot(client,options),/readback mismatch/);
+    await client.query(`UPDATE "${schema}".migration_binary_probe SET value=9007199254740993 WHERE id='fixture'`);
+    await client.query(`UPDATE "${schema}".migration_binary_probe SET payload=decode(repeat('ff',1024),'hex') WHERE id='fixture'`);
+    let sawBoundedRejection=false;
+    const boundedRead=new Proxy(client,{get(target,property){
+      if(property==='query')return async(sql:unknown,values?:unknown)=>{
+        const result=await (target.query as (...args:any[])=>Promise<any>).call(target,sql,values);
+        if(typeof sql==='object' && sql && 'text' in sql && String(sql.text).startsWith('FETCH FORWARD'))for(const row of result.rows as unknown[][])
+          if(row.at(-1)===false){sawBoundedRejection=true;assert(row.slice(0,-1).every(value=>value===null));}
+        return result;
+      };
+      const value=Reflect.get(target,property,target);return typeof value==='function'?value.bind(target):value;
+    }});
+    await assert.rejects(verifyBusinessSnapshot(boundedRead,options),/exceeds its reviewed bound/);assert(sawBoundedRejection);
+    await client.query(`UPDATE "${schema}".migration_binary_probe SET payload=decode('00ff','hex') WHERE id='fixture'`);
+    await client.query(`ALTER TABLE "${schema}".migration_binary_probe ADD COLUMN unreviewed TEXT`);
+    await assert.rejects(verifyBusinessSnapshot(client,options),/columns differ/);
+    await client.query(`ALTER TABLE "${schema}".migration_binary_probe DROP COLUMN unreviewed`);
+    await client.query(`CREATE TABLE "${schema}".unreviewed_table(id INTEGER)`);
+    await assert.rejects(verifyBusinessSnapshot(client,options),/table inventory differs/);
+    await client.query(`DROP TABLE "${schema}".unreviewed_table`);
+    assert.equal((await verifyBusinessSnapshot(client,options)).status,'verified-at-snapshot');
     const lockedAuthority = await client.query(`SELECT * FROM "${schema}".eigos_lock_runtime_authority()`);
     assert.equal(lockedAuthority.rows[0].id, authority.id); assert.equal(lockedAuthority.rows[0].configuration_digest, authorityDigest);
     const functionSecurity = await client.query("SELECT p.prosecdef, EXISTS (SELECT 1 FROM pg_catalog.aclexplode(COALESCE(p.proacl,pg_catalog.acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE') AS public_exec FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1 AND p.proname='eigos_lock_runtime_authority'", [schema]);
