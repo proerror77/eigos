@@ -1,3 +1,4 @@
+import { isAsyncNativePlanningSession, type NativePlanningSession } from './native-planning-session.js';
 import { authorizationScope, withAuthorization } from '../security/context.js';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
@@ -7,7 +8,7 @@ import { toNodeHandler } from '@modelcontextprotocol/node';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
-import { planningToolSchemas, type OntologyPlanningSession } from './planning-session.js';
+import { planningToolSchemas } from './planning-session.js';
 import type { NativeMcpConnection } from '../capabilities/executor.js';
 import { objectRefSchema } from '../ontology/model.js';
 import { NativeModelTrace } from '../capabilities/native-model-timing.js';
@@ -61,15 +62,16 @@ function nativeArguments(name: string, raw: unknown): unknown {
 }
 
 /** A native MCP endpoint owned by one Worker model session, never a public gateway. */
-export async function openOntologyMcp(session: OntologyPlanningSession, signal: AbortSignal, onBudgetExceeded?: () => void, finalSchema?: object, modelChannelId?: string) {
+export async function openOntologyMcp(session: NativePlanningSession, signal: AbortSignal, onBudgetExceeded?: () => void, finalSchema?: object, modelChannelId?: string) {
   signal.throwIfAborted();
   const trace = new NativeModelTrace();
   const authority = authorizationScope();
   const authorized = <T>(action: () => T): T => authority ? withAuthorization(authority, action) : action();
   const finalDecision = finalSchema ? z.fromJSONSchema(finalSchema as Parameters<typeof z.fromJSONSchema>[0]) : undefined;
   const sessionId = randomUUID(), token = randomBytes(32).toString('base64url');
-  const authorizedFunctions = session.graph.security ? session.catalog().functions.map(fn => fn.id) : undefined;
-  const offered = session.catalog().tools.map(tool => tool.name as keyof typeof planningToolSchemas).filter(name => name !== 'evaluate_ontology' || !authorizedFunctions || authorizedFunctions.length > 0);
+  const catalogue=await session.catalog();
+  const authorizedFunctions = session.graph.security ? catalogue.functions.map(fn => fn.id) : undefined;
+  const offered = catalogue.tools.map(tool => tool.name as keyof typeof planningToolSchemas).filter(name => name !== 'evaluate_ontology' || !authorizedFunctions || authorizedFunctions.length > 0);
   let decision: { output: unknown; digest: string; receiptIds: string[] } | undefined;
   let closed = false;
   let toolAttempts = 0, readAttempts = 0;
@@ -86,9 +88,20 @@ export async function openOntologyMcp(session: OntologyPlanningSession, signal: 
     return code;
   };
   const active = () => { signal.throwIfAborted(); if (closed) throw new Error('Ontology MCP session closed'); };
-  const respond = (name: string, action: () => unknown): CallToolResult => {
+  const respond = (name: string, action: () => unknown): CallToolResult|Promise<CallToolResult> => {
     const span = trace.start('server_tool', name); let failed = false;
     let stage:'authority'|'tool'|'model_output'='authority';
+    if(isAsyncNativePlanningSession(session))return(async()=>{
+      try{
+        active();
+        const result=await session.runNativeRead(async()=>{
+          active();stage='tool';const value=await action();stage='model_output';
+          await session.authorizeModel(modelChannelId);active();return value;
+        });
+        return {content:[{type:'text',text:JSON.stringify(result)}],structuredContent:{result}};
+      }catch(error){failed=true;const code=reject(name,stage,error);return {isError:true,content:[{type:'text',text:JSON.stringify({error:code,message:error instanceof SecurityError?error.reason:error instanceof Error?error.message:'Ontology request rejected'})}]};}
+      finally{trace.end(span,failed?'failed':'completed');}
+    })();
     try {
       active(); const result = authorized(() => {
         const read = () => { authority?.assertCurrent(); stage='tool'; const value = action(); stage='model_output'; session.authorizeModel(modelChannelId); return value; };
@@ -111,9 +124,11 @@ export async function openOntologyMcp(session: OntologyPlanningSession, signal: 
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     }, (args: unknown) => respond(name, () => {
       if (decision) throw new Error('This decision has already been submitted');
-      const result = session.call(name, nativeArguments(name, args)), receipt = session.lastReceipt();
-      if (!receipt) throw new Error('Ontology call produced no receipt');
-      return { result, receipt: { id: receipt.id, tool: receipt.tool, status: receipt.status, inputDigest: receipt.inputDigest, outputDigest: receipt.outputDigest }, budget: session.readBudget() };
+      const finish=(result:unknown)=>{
+        const receipt=session.lastReceipt();if(!receipt)throw new Error('Ontology call produced no receipt');
+        return {result,receipt:{id:receipt.id,tool:receipt.tool,status:receipt.status,inputDigest:receipt.inputDigest,outputDigest:receipt.outputDigest},budget:session.readBudget()};
+      };
+      return isAsyncNativePlanningSession(session)?session.call(name,nativeArguments(name,args)).then(finish):finish(session.call(name,nativeArguments(name,args)));
     }));
     server.registerTool('submit_decision', {
       description: 'Submit this model session\'s final structured decision and successful Ontology receipt IDs. The Worker separately validates and authorizes execution.',
@@ -125,13 +140,12 @@ export async function openOntologyMcp(session: OntologyPlanningSession, signal: 
       if (validation && !validation.success) throw new Error('Invalid final decision: ' + validation.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ').slice(0, 1600));
       const candidate = { output, digest: digest(output), receiptIds: args.receiptIds };
       if (!session.usesTaskContext() && (!session.receipts().some(r => r.tool === 'describe_ontology' && r.status === 'ok') || !session.receipts().some(r => r.tool === 'query_ontology' && r.status === 'ok'))) throw new Error('The model skipped required ontology reads');
-      session.acceptReceipts(args.receiptIds);
-      if (decision) {
-        if (digest(candidate) !== digest(decision)) throw new Error('A different decision was already submitted');
-      } else {
-        decision = candidate;
-      }
-      return { decisionDigest: decision.digest, sessionId, taskId: session.request.id, execution: 'not_dispatched' };
+      const commit=()=>{
+        if(decision){if(digest(candidate)!==digest(decision))throw new Error('A different decision was already submitted');}else decision=candidate;
+        return {decisionDigest:decision.digest,sessionId,taskId:session.request.id,execution:'not_dispatched'};
+      };
+      if(isAsyncNativePlanningSession(session))return session.acceptReceipts(args.receiptIds).then(commit);
+      session.acceptReceipts(args.receiptIds);return commit();
     }));
     return server;
   };
@@ -144,7 +158,7 @@ export async function openOntologyMcp(session: OntologyPlanningSession, signal: 
     const span = phase ? trace.start(phase, phase === 'tool_request' ? typeof req.body.params?.name === 'string' ? req.body.params.name : 'other' : undefined) : undefined;
     res.once('finish', () => trace.end(span, res.statusCode >= 400 ? 'failed' : 'completed', res.statusCode));
     res.once('close', () => trace.end(span, 'interrupted'));
-    try { authorized(() => { authority?.assertCurrent(); session.authorizeModel(modelChannelId); }); }
+    try { await authorized(() => { authority?.assertCurrent(); return session.authorizeModel(modelChannelId); }); }
     catch(error) { reject(String(req.body?.params?.name??'other'),'authority',error);res.status(403).json({error:'session_authority_ended'}); return; }
     if (req.body?.method === 'tools/call') {
       toolAttempts++;

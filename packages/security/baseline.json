@@ -4208,7 +4208,7 @@
     {
       "id": "native-model-mcp",
       "file": "packages/coordinator/ontology-mcp.ts",
-      "sourceDigest": "900ba08c6debca32f59e7f8a41a1179fbe8d3df7291e076dfff240093852c964",
+      "sourceDigest": "18a132241cd7ce0722d6b0a083162c02a8f67da8f37f8d017337184d0f5851ff",
       "channels": [
         "model"
       ],
@@ -6273,6 +6273,18 @@
       "content": "PostgreSQL registered read-only calculation runtime",
       "currentControl": "Separate current function viewing and invocation; original owned task/release and bounded checked graph; no business writes, private source bodies only inside trusted proof frames, incomplete reads become unknown; all actual inputs and derived access restrictions remain in output influence",
       "targetControl": "Separate current function viewing and invocation; original owned task/release and bounded checked graph; no business writes, private source bodies only inside trusted proof frames, incomplete reads become unknown; all actual inputs and derived access restrictions remain in output influence",
+      "stage": "S5"
+    },
+    {
+      "id": "native-async-planning-session",
+      "file": "packages/coordinator/native-planning-session.ts",
+      "sourceDigest": "06e64c7b9c0f052ad6ef2f7c40d77bc9cca0ee3a825c3e2ecd47b443872e82bb",
+      "channels": [
+        "internal"
+      ],
+      "content": "Awaitable native planning transport contract",
+      "currentControl": "Storage-backed sessions own serialized authorized RPCs; transport awaits data, egress and receipt acceptance before delivering or freezing decisions; legacy SQLite snapshots remain synchronous and no execution authority is issued",
+      "targetControl": "Storage-backed sessions own serialized authorized RPCs; transport awaits data, egress and receipt acceptance before delivering or freezing decisions; legacy SQLite snapshots remain synchronous and no execution authority is issued",
       "stage": "S5"
     }
   ]

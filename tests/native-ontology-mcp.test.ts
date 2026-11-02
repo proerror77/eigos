@@ -11,15 +11,17 @@ import { reasonWithOntology } from '../packages/coordinator/reasoning-loop.js';
 import { backend, owner, evidence } from './backend-fixture.js';
 import {SecurityError} from '../packages/security/store.js';
 import type {PlanningReadReceipt} from '../packages/ontology/planning-contract.js';
+import type {AsyncNativePlanningSession,NativePlanningSession} from '../packages/coordinator/native-planning-session.js';
+import {setTimeout as delay} from 'node:timers/promises';
 
-async function fixture(finalSchema?: object,onRead?:(receipt:PlanningReadReceipt)=>void) {
+async function fixture(finalSchema?: object,onRead?:(receipt:PlanningReadReceipt)=>void,adapt?:(session:OntologyPlanningSession)=>NativePlanningSession) {
   const b = backend(createExecutionCatalog()), job = b.submit(), other = b.submit({ requestId: 'another-owned-task' });
   let authorized = true;
   const abort = new AbortController();
   const session = new OntologyPlanningSession(b.store.ontology, owner, job.delegation!.request, [], () => {
     if (!authorized) throw new DomainError('FORBIDDEN', 'Claim expired');
   }, onRead, 'request', [], { taskContext: { purpose: 'grounding' } });
-  const mcp = await openOntologyMcp(session, abort.signal, undefined, finalSchema);
+  const mcp = await openOntologyMcp(adapt?adapt(session):session, abort.signal, undefined, finalSchema);
   const client = new Client({ name: 'native-protocol-test', version: '1' });
   const transport = new StreamableHTTPClientTransport(new URL(mcp.connection.url), { requestInit: { headers: { Authorization: `Bearer ${mcp.connection.token}` } } });
   await client.connect(transport);
@@ -27,6 +29,33 @@ async function fixture(finalSchema?: object,onRead?:(receipt:PlanningReadReceipt
     close: async () => { await client.close(); await transport.close(); await mcp.close(); b.store.close(); } };
 }
 const value = (response: Awaited<ReturnType<Client['callTool']>>) => (response.structuredContent as { result: any }).result;
+
+test('native MCP awaits asynchronous storage and receipt acceptance before delivering data or freezing a decision',async()=>{
+  let active=false,allowAcceptance=false,authorizations=0;
+  const f=await fixture(undefined,undefined,legacy=>{
+    // Synthetic transport contract only. The real PostgreSQL session has its
+    // own claim, model-channel, read influence and transaction acceptance gates.
+    const session:AsyncNativePlanningSession={asynchronous:true,graph:{security:true},request:legacy.request,
+      usesTaskContext:()=>legacy.usesTaskContext(),receipts:()=>legacy.receipts(),lastReceipt:()=>legacy.lastReceipt(),readBudget:()=>legacy.readBudget(),
+      async catalog(){await delay(5);return legacy.catalog();},
+      async authorizeModel(){await delay(5);authorizations++;},
+      async call(...args){assert(active);await delay(5);return legacy.call(...args);},
+      async acceptReceipts(ids){assert(active);await delay(5);if(!allowAcceptance)throw new SecurityError('POLICY_CHANGED');legacy.acceptReceipts(ids);},
+      async runNativeRead(action){assert.equal(active,false);active=true;try{return await action();}finally{active=false;}},
+    };return session;
+  });
+  try{
+    const response=await f.client.callTool({name:'read_task_context',arguments:{}});assert(!response.isError,JSON.stringify(response));
+    const read=value(response);assert.equal(read.receipt.status,'ok');assert.equal(read.result.data.requestRef.id,f.job.id);
+    assert.equal(read.receipt.id,f.session.lastReceipt()!.id);assert(authorizations>0);assert.equal(active,false);
+    const args={receiptIds:[read.receipt.id],decisionJson:JSON.stringify({requestRevision:1,message:'Synthetic awaited decision'})};
+    const rejected=await f.client.callTool({name:'submit_decision',arguments:args});assert.equal(rejected.isError,true);
+    assert.throws(()=>f.mcp.result(),/did not submit/);assert.equal(active,false);
+    allowAcceptance=true;
+    const accepted=await f.client.callTool({name:'submit_decision',arguments:args});assert(!accepted.isError,JSON.stringify(accepted));
+    assert.deepEqual(f.mcp.result().receiptIds,args.receiptIds);assert.equal(active,false);
+  }finally{await f.close();}
+});
 
 test('a failed receipt write is not a successful native read or consumed context budget',async()=>{
  const secret='private-native-credential-and-home-path';
