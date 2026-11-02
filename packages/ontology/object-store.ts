@@ -530,7 +530,13 @@ export class OntologyObjectStore {
         }
       }
       if (p.derived) {
-        const computation = guard ? guard.infer(owner, p.derived, () => deriveProperty(this, owner, object.ref, p.derived!, budget)) : deriveProperty(this, owner, object.ref, p.derived, budget);
+        let computation: ReturnType<typeof deriveProperty>;
+        try {
+          computation = guard ? guard.infer(owner, p.derived, () => deriveProperty(this, owner, object.ref, p.derived!, budget)) : deriveProperty(this, owner, object.ref, p.derived, budget);
+        } catch (error) {
+          if (!(error instanceof IncompleteRelationshipRead)) throw error;
+          computation = { status: 'unknown', reason: error.message, evidenceRefs: [], evidenceLevels: [] };
+        }
         if (computation.status === 'known') properties[name] = computation.value;
         derived[name] = { status: computation.status, reason: computation.reason, functionRef: { id: p.derived, version: this.model.function(p.derived).version }, evidenceRefs: computation.evidenceRefs, evidenceLevels: computation.evidenceLevels };
       } else {

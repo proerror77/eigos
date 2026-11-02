@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { A2ARequestHandler, ServerCallContext, User } from '@a2a-js/sdk/server';
 import { ContentTypeNotSupportedError, ExtendedAgentCardNotConfiguredError, PushNotificationNotSupportedError, RequestMalformedError, TaskNotCancelableError, TaskNotFoundError, UnsupportedOperationError } from '@a2a-js/sdk/errors';
 import { z } from 'zod';
+import { prepareObservationSchema } from '../../packages/ontology/observation-contract.js';
 import type { Config } from '../../packages/core/config.js';
 import { DomainError, ownerKey, submitSchema, versionedReplySchema, resumeTaskSchema, type Job, type JobState, type Principal } from '../../packages/core/domain.js';
 import type { GatewayTaskService } from './task-service.js';
@@ -51,7 +52,7 @@ function toTask(job: Job, historyLength?: number): Task {
     artifacts: job.artifact ? [{ artifactId: job.artifact.id, name: job.artifact.name, parts: job.artifact.data.markdown
       ? [{ text: job.artifact.data.markdown, mediaType: 'text/markdown' }, { data: job.artifact.data, mediaType: 'application/json' }]
       : [{ data: job.artifact.data, mediaType: 'application/json' }] }] : [],
-    metadata: safe ? {service:job.service,view:safe.view,revision:safe.revision,internalState:safe.state,outputStatus:safe.outputStatus,...(safe.authorityId?{authorityId:safe.authorityId}:{}),...(safe.accepted?{accepted:true}:{}),...(safe.attachments?{attachments:safe.attachments}:{}),...(safe.authorization?{authorization:safe.authorization}:{}),...(safe.recovery?{recovery:safe.recovery}:{}),...(safe.payment?{payment:safe.payment}:{}),...(safe.question?{question:safe.question}:{}),...(safe.error?{error:safe.error}:{})} : { view: summary.view, service: summary.service, revision: summary.revision, ...(summary.authorityId?{authorityId:summary.authorityId}:{}), internalState: summary.state, counts: summary.counts,
+    metadata: safe ? {service:job.service,view:safe.view,revision:safe.revision,internalState:safe.state,outputStatus:safe.outputStatus,...(safe.observation?{observation:safe.observation}:{}),...(safe.authorityId?{authorityId:safe.authorityId}:{}),...(safe.accepted?{accepted:true}:{}),...(safe.attachments?{attachments:safe.attachments}:{}),...(safe.authorization?{authorization:safe.authorization}:{}),...(safe.recovery?{recovery:safe.recovery}:{}),...(safe.payment?{payment:safe.payment}:{}),...(safe.question?{question:safe.question}:{}),...(safe.error?{error:safe.error}:{})} : { view: summary.view, service: summary.service, revision: summary.revision, ...(summary.authorityId?{authorityId:summary.authorityId}:{}), internalState: summary.state, counts: summary.counts,
       ...(summary.latestInput ? { latestInput: summary.latestInput } : {}),
       ...(summary.memberUsage ? { memberUsage: summary.memberUsage } : {}), ...(summary.delegation ? { delegation: summary.delegation } : {}),
       ...(summary.afterSales ? { afterSales: summary.afterSales } : {}), ...(summary.question ? { question: summary.question } : {}), ...(summary.error ? { error: summary.error } : {}) },
@@ -161,7 +162,12 @@ export class A2AGateway implements A2ARequestHandler {
       let job: Job;
       if (message.metadata?.taskOperation !== undefined && !['reply', 'amend', 'resume'].includes(String(message.metadata.taskOperation))) throw new RequestMalformedError('Unknown task continuation operation');
       if (message.taskId) {
-        if (input && typeof input === 'object' && 'action' in input && input.action === 'approve_external_draft') {
+        if (input && typeof input === 'object' && 'action' in input && input.action === 'prepare_observation_contract') {
+          if (message.metadata?.taskOperation !== undefined) throw new RequestMalformedError('Observation preparation is a separate delegation, not a continuation operation');
+          if ('originalTaskId' in input && input.originalTaskId !== message.taskId) throw new RequestMalformedError('Original task reference does not match');
+          const observation = prepareObservationSchema.parse({ ...input, originalTaskId: message.taskId, requestId: message.messageId });
+          job = await this.tasks.prepareObservationContract(p, observation, message.contextId || undefined);
+        } else if (input && typeof input === 'object' && 'action' in input && input.action === 'approve_external_draft') {
           const permit = externalDraftPermitSchema.parse({ ...input, requestId: message.messageId });
           job = await this.tasks.authorize(p, message.taskId, permit, message.contextId || undefined);
         } else if (input && typeof input === 'object' && 'action' in input && input.action === 'select_payment_route') {

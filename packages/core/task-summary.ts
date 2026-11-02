@@ -6,12 +6,14 @@ import { requestLocations } from './location-context.js';
  * histories stay in the task ledger; the completed artifact is returned intact. */
 export function taskSummary(job: Job) {
   const d = job.delegation, latestInput = job.messages.findLast(message => message.role === 'user');
+  const observation = 'view' in job && job.view === 'eigos.task.v2' ? job.observation : undefined;
   const simulation = d?.agent?.plans.find(plan => plan.id === d.agent?.pendingPlanId && plan.quote);
   return {
     view: 'summary' as const,
     id: job.id, contextId: job.contextId, service: job.service, goal: job.goal, deliverable: job.deliverable,
     ...(job.authorityId ? { authorityId: job.authorityId } : {}),
     state: job.state, revision: job.revision, createdAt: job.createdAt, updatedAt: job.updatedAt,
+    ...(observation ? { observation } : {}),
     question: job.question, error: job.error, artifact: job.artifact, memberUsage: job.memberUsage, afterSales: job.afterSales,
     latestInput: latestInput ? { id: latestInput.id, text: latestInput.text, receivedAt: latestInput.at } : undefined,
     counts: { messages: job.messages.length, modelRuns: job.runs?.length ?? 0 },

@@ -2886,7 +2886,7 @@
     {
       "id": "mcp",
       "file": "apps/gateway/mcp.ts",
-      "sourceDigest": "0e7ccb1bf5a983c98959b73188df06d587d21c94913366da49c79808a1f3bb5d",
+      "sourceDigest": "52c9f4ca9616be93c865e8064073101bbc8312192d63dbfc6824ff59796e112c",
       "channels": [
         "mcp"
       ],
@@ -2898,7 +2898,7 @@
     {
       "id": "a2a",
       "file": "apps/gateway/a2a.ts",
-      "sourceDigest": "8f013edd68a8a1b4c9d384f78087de5c85b7b133082fba3741492c9943729c8a",
+      "sourceDigest": "9d0163f1eb1bc24783f6c9a6d04f422017750c7b0f3bc8173a4742b640cff994",
       "channels": [
         "a2a"
       ],
@@ -2910,7 +2910,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "9d6a76bb0532307d63115dffc0aeb073c63b95b3d5a44d1b4fbd4601b5983206",
+      "sourceDigest": "b56c1a416a21885ad172d1dd804352ea58a6cea1ffbb04d5ce9c3dc3bf8fedd5",
       "channels": [
         "http",
         "mcp",
@@ -2924,7 +2924,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "a4c7ea9feb13d16c048424a3489fc54871fa47aaba3d79d7bd7b7a56dcd412e6",
+      "sourceDigest": "917868d5d1073c3014243c230ffe7add96364db1f49274f15c5fbcf6a4ca51ba",
       "channels": [
         "sqlite",
         "idempotency"
@@ -2937,7 +2937,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "d67d197e2fd0d4dfedf39eab548d9b58dc0d4cbdb54623c01fd1e2585e532c97",
+      "sourceDigest": "df84880f8fd92a534c790fbcaec1c4a43d3c00078df4e785af9e03a641d96a90",
       "channels": [
         "query",
         "function"
@@ -3402,7 +3402,7 @@
     {
       "id": "security-principal",
       "file": "packages/core/domain.ts",
-      "sourceDigest": "59765c03d969740ba2e2973bf37516237a69f42f6121add31e16e79674ac398e",
+      "sourceDigest": "6648fc927a8735cc4bf5ea2e6ce8ff30a976050a53b114407dda300b7110c662",
       "channels": [
         "authorization_control"
       ],
@@ -3510,7 +3510,7 @@
     {
       "id": "security-task-view",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "f9de8353040e7be5e10a68b5382e35e9ecd9462627d50150d48a7d0a00681c5d",
+      "sourceDigest": "c2485bf39a3d9e4e5271aeada1afce307c0de676caae7311ae6727c0be18fd5d",
       "channels": [
         "http-mcp-a2a"
       ],
@@ -4066,7 +4066,7 @@
     {
       "id": "fixed-scope-message-references",
       "file": "packages/core/delegation.ts",
-      "sourceDigest": "7dd3695f2accb7d9f5084c9e1a712fc68b1eb69b19b35b67998814b34ae36a25",
+      "sourceDigest": "86a7545dbbb0b7b6ddde2ae0129cf73d96090e5ff577665d517450ab8675d929",
       "channels": [
         "model",
         "artifact"
@@ -4351,7 +4351,7 @@
     {
       "id": "runtime-consolidation",
       "file": "packages/core/consolidation.ts",
-      "sourceDigest": "e1b72b9bd578707a4c571b8bae0d38327ac8f83616953ee56a62450c5d2836ab",
+      "sourceDigest": "851b33cbfa742d41860ad9dc72cdf742f5f659c0070207f87ec432bce07f169e",
       "channels": [
         "operator_cli"
       ],
@@ -6055,6 +6055,45 @@
       "currentControl": "Ready operations cancel before dispatch; read/local replies stop; uncertain external effects retain original operation identity for audit without replay",
       "targetControl": "Ready operations cancel before dispatch; read/local replies stop; uncertain external effects retain original operation identity for audit without replay",
       "stage": "S5"
+    },
+    {
+      "id": "observation-contract-schema",
+      "file": "packages/ontology/observation-contract.ts",
+      "channels": [
+        "task_control_input",
+        "task_metadata"
+      ],
+      "content": "Explicit bounded observation declaration; expected target identity and source input are not source truth",
+      "currentControl": "Strict owner-free PA input, explicit horizons/limits, read-only declared action; identity remains unverified",
+      "targetControl": "Reviewed contract-only metadata; observer activation remains unavailable",
+      "stage": "S2",
+      "sourceDigest": "b02321a4565f09221d0a0f52744f8ee6f420c47e3018871edb9cf49a99cf385f"
+    },
+    {
+      "id": "observation-contract-storage",
+      "file": "packages/core/observation-store.ts",
+      "channels": [
+        "sqlite_private"
+      ],
+      "content": "Inactive guardian contract, lifetime caps and append-only revocation audit",
+      "currentControl": "Owner-scoped shared business transactions, immutable declaration digest, CAS revocation, bounded indexed capacity",
+      "targetControl": "Reviewed contract-only metadata; observer activation remains unavailable",
+      "stage": "S2",
+      "sourceDigest": "5f2affa8113a9c36d4a404c576d40310e9e332d0fbd3db648a6e1e61dfd00b41"
+    },
+    {
+      "id": "observation-task-boundary",
+      "file": "packages/core/observation-tasks.ts",
+      "channels": [
+        "mcp",
+        "a2a",
+        "task_metadata"
+      ],
+      "content": "Separate inactive guardian for a completed task; current source/field/reference checks",
+      "currentControl": "Current original-task authority and published mapping; fresh control-only task grant, no inherited data or execution authority",
+      "targetControl": "Reviewed contract-only metadata; observer activation remains unavailable",
+      "stage": "S2",
+      "sourceDigest": "519462b0dda5f71be4e6e954db3748a2282b075fca48bddda528c6b6cb064781"
     }
   ]
 }

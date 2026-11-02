@@ -3,7 +3,7 @@ import type { TaskService } from './tasks.js';
 type TaskOperation = 'describeOntology' | 'queryOntology' | 'evaluateOntology' | 'checkAccess'
   | 'usage' | 'submit' | 'get' | 'getAfterWait' | 'wait' | 'list' | 'reply' | 'amend' | 'resume'
   | 'authorize' | 'selectPaymentRoute' | 'reportPayment' | 'cancel' | 'reconcile'
-  | 'revokeAuthorization' | 'requestRemediation';
+  | 'revokeAuthorization' | 'requestRemediation' | 'prepareObservationContract';
 type AwaitableOperation<F> = F extends (...args: infer A) => infer R
   ? (...args: A) => R | Promise<Awaited<R>> : never;
 

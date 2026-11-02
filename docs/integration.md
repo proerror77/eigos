@@ -2,6 +2,8 @@
 
 MCP 与 A2A 共用任务、身份、权限和执行状态。先发现当前实例的接口与能力，再提交明确目标；服务配置和业务授权分别检查。
 
+Foundation 还支持显式准备[长期观察合同](guides/observation-contracts.md)：MCP 使用 `prepare_observation_contract`，A2A 向原任务发送同名 action 的结构化请求，返回独立的暂停守护任务。当前阶段仅保存合同、回读和撤销，`monitoring:false`；不能通过普通恢复启动监测。原任务继续保持完成。
+
 显式启用[个人 Agent 通信](guides/agent-communication.md)后，同一入口还可通过独立通信许可和 Relay 收发 PA 消息。普通通信返回消息回执，不创建业务任务；明确服务委托继续沿用本文的原任务链。手机接入不要求安装常驻连接器。
 
 客户从当前实例的 `/connect` 开始，取得公开连接配置、完整 `eigos-delegate` Skill 和只读检查指令。PA 可读取 `/connect/agent.json`；OAuth 发现、登记发现和 Agent Card 均指向同一接入说明。MCP 或 A2A 接通一种即可，Skill 另按宿主规则安装并启用。详见[客户 PA 接入](guides/agent-onboarding.md#客户-pa-接入与自然触发)。

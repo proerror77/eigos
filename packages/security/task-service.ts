@@ -12,6 +12,7 @@ import {SOURCE_AUTHORIZATION_MESSAGE,SOURCE_AUTHORIZATION_RENEWED_MESSAGE} from 
 
 /** Strict construction, never a spread of Job/delegation/RunEvidence. */
 export interface TaskView extends Pick<Job, 'id' | 'contextId' | 'service' | 'state' | 'goal' | 'messages' | 'createdAt' | 'updatedAt'> {
+  observation?: import('../ontology/observation-contract.js').ObservationContractView;
   authorityId?: string;
   revision?: number; view: 'eigos.task.v2'; question?: string; artifact?: Job['artifact']; error?: string; accepted?:true;
   outputStatus: 'available' | 'restricted' | 'receipt_only';
@@ -40,7 +41,7 @@ export class TaskSecurity {
     });
     if (personalInputs.length) requireScope(p, 'tasks:read');
     if (previous) security.revokeGrant(actor.ownerKey, previous.id, previous.revision);
-    const sourceRules = security.policies.sources(actor.ownerKey, actor.installationId).flatMap(s => s.outputTypes.flatMap(type => {
+    const sourceRules = job.delegation.observationContract ? [] : security.policies.sources(actor.ownerKey, actor.installationId).flatMap(s => s.outputTypes.flatMap(type => {
       const resource = parent.resources.find(r => r.type === type);
       return resource ? [{ programId: s.programId, programDigest: s.programDigest, sourceBindingId: s.bindingId, type, fields: resource.fields }] : [];
     }));
@@ -52,7 +53,7 @@ export class TaskSecurity {
       taskId: job.id, requestRevision: job.delegation.request.revision, purpose: previous?.purpose ?? 'delegated_task',
       operations: previous ? [...new Set([...previous.operations, ...(replacePersonalInputs && personalInputs.length ? ['member_asset.read' as const] : [])])] : ['task.process', ...(personalInputs.length ? ['member_asset.read'] : []), ...(p.scopes.includes('tasks:read') ? ['task.query','task.result.read',...(parent.channels.includes('controlled_download')?['artifact.export']:[])] : [])],
       inputs: replacePersonalInputs ? personalInputs : previous?.inputs ?? personalInputs, outputs: previous?.outputs ?? sourceRules, channels: previous?.channels ?? parent.channels });
-    security.attachTaskAuthority({ version: SECURITY_CONTRACT, id: randomUUID(), revision: 1, ownerKey: actor.ownerKey, memberId: actor.memberId, installationId: actor.installationId,
+    if (!job.delegation.observationContract) security.attachTaskAuthority({ version: SECURITY_CONTRACT, id: randomUUID(), revision: 1, ownerKey: actor.ownerKey, memberId: actor.memberId, installationId: actor.installationId,
       taskId: job.id, requestRevision: grant.requestRevision, agentGrant: grant.parentGrant, dataGrant: { id: grant.id, revision: grant.revision },
       submittedScopes: [...new Set(p.scopes)], authEpoch: actor.authEpoch, policyVersion: POLICY_VERSION, issuedAt: at, expiresAt: grant.expiresAt });
   }
@@ -139,6 +140,19 @@ export class TaskSecurity {
           nextAction:renewed?'resume_original_task':'review_source_authorization',reviewPath:'/members/permissions'};
       }
       if (root.fields.includes('originalGoal')) base.goal=String(graph.read(actor.ownerKey,{type:'ServiceRequest',id:job.id}).properties.originalGoal ?? '');
+      if (job.delegation?.observationContract) {
+        const contract=this.store.watchContracts.get(actor.ownerKey,job.id),pins=contract.pins,declaration=contract.declaration;
+        if(contract.digest!==job.delegation.observationContract.digest || pins.installationId!==actor.installationId)throw new SecurityError('AUTHORIZATION_REQUIRED');
+        const parent=security.agentGrant(actor.installationId);
+        const permitted=pins.parentGrant.id===parent.id && pins.parentGrant.revision===parent.revision && Date.parse(pins.expiresAt)>security.now()
+          && security.policies.resourceAllowed(scope,'objectType',declaration.target.object.type)
+          && security.policies.resourceAllowed(scope,'actionType',declaration.read.action,'action.execute')
+          && declaration.target.fields.every(field=>parent.resources.some(resource=>resource.type===declaration.target.object.type && resource.fields.includes(field)) && security.policies.fieldPolicy(declaration.target.object.type,field)!=='internal_only')
+          && security.policies.sources(actor.ownerKey,actor.installationId).some(source=>source.bindingId===pins.sourceBindingId && source.programId===pins.programRef.id
+            && source.programDigest===pins.configurationDigest && source.operations.includes(declaration.read.action) && source.outputTypes.includes(declaration.target.object.type));
+        base.observation=this.store.watchContracts.view(actor.ownerKey,job.id,permitted?'current':'unavailable');
+        return base;
+      }
       const allowed=(id:string,content:unknown)=>{
         const envelope=security.policies.output(actor.ownerKey,job.id,id,content);
         if (!envelope) return false;

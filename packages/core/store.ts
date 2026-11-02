@@ -1,4 +1,5 @@
 import { projectCapabilityCatalog } from '../ontology/capability-catalog.js';
+import { ObservationContractStore } from './observation-store.js';
 import { personalSourceAdmitted, sourceOwner, type PersonalSource } from './personal-source.js';
 import { didiSourceOwner, type DidiMemberConnection } from './didi-source.js';
 import { initializeMemberSources, MemberSourceVault } from './member-source.js';
@@ -71,6 +72,7 @@ export class JobStore {
   private ontologyCatalog?: ExecutionCatalog;
   readonly definitions: DefinitionStore;
   readonly pipelineFacts: PipelineFactStore;
+  readonly watchContracts: ObservationContractStore;
   private readonly baseOntology: OntologyObjectStore;
   private readonly ontologyViews = new Map<string, OntologyObjectStore>();
   readonly databasePath: string;
@@ -179,6 +181,7 @@ export class JobStore {
       const source = this.db.prepare("SELECT 1 FROM preparation_contexts WHERE owner=? AND job_id=? AND key='network-inquiry-source@1'").get(owner, requestId);
       return source ? createTaskNetworkOntologyReader(this, owner, requestId, this.ontologyCatalog) : undefined;
     });
+    this.watchContracts = new ObservationContractStore(this.db, options.securityNow ?? Date.now);
     initializeMemberSources(this.db);
     } catch(error) { this.db.close(); throw error; }
   }
@@ -1037,6 +1040,7 @@ export class JobStore {
         if (original.authorityId !== job.authorityId) throw new DomainError('CONFLICT', 'Task authority is immutable');
         if (digest(original.delegation?.ontologyRelease ?? null) !== digest(job.delegation?.ontologyRelease ?? null)) throw new DomainError('CONFLICT', 'A task\'s ontology release is immutable');
         if (digest(original.delegation?.callerAction ?? null) !== digest(job.delegation?.callerAction ?? null)) throw new DomainError('CONFLICT', 'Authenticated caller action evidence is immutable');
+        if (digest(original.delegation?.observationContract ?? null) !== digest(job.delegation?.observationContract ?? null)) throw new DomainError('CONFLICT', 'Observation delegation is immutable');
       }
       synchronizeTaskOutcome(job);
       const saved = this.db.prepare(`INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?)
