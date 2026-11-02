@@ -1,6 +1,8 @@
+import {taskScopedServices} from '../core/service-metadata.js';
 import { postgresDescribeOntology } from './ontology-metadata.js';
 import { postgresQueryOntology } from './ontology-query.js';
 import { postgresEvaluateOntology } from './ontology-functions.js';
+import {postgresCheckAccess} from './access-check.js';
 import { z } from 'zod';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DomainError, ownerKey, taskIdSchema, type Principal } from '../core/domain.js';
@@ -17,7 +19,10 @@ import { postgresTaskView } from './task-view.js';
 
 /** Read side of the shared task service. Every poll opens a new fenced read;
  * long polling never holds a transaction or lends a previous read's authority. */
-export class PostgresTaskReadService implements Pick<TaskServicePort,'get'|'getAfterWait'|'wait'|'list'|'describeOntology'|'queryOntology'|'evaluateOntology'> {
+export class PostgresTaskReadService implements Pick<TaskServicePort,'get'|'getAfterWait'|'wait'|'list'|'describeOntology'|'queryOntology'|'evaluateOntology'|'checkAccess'|'secured'|'services'|'usage'> {
+  get secured(){return true;}
+  services(){return taskScopedServices();}
+  usage(_principal:Principal):never{throw new DomainError('FORBIDDEN','Foundation usage is not an authorized task projection');}
   private stopping=false;
   private readonly waitTimeoutMs:number;
   constructor(private readonly database:Pick<PostgresDatabase,'run'>,private readonly policyDigest:string,
@@ -40,6 +45,10 @@ export class PostgresTaskReadService implements Pick<TaskServicePort,'get'|'getA
     if(reader||context)throw new DomainError('FORBIDDEN','Use the task-scoped foundation read contract');
     const p=structuredClone(principal),args=structuredClone(input);
     return this.database.run(client=>postgresEvaluateOntology(client,p,args,this.policyDigest,this.builder));
+  }
+  async checkAccess(principal:Principal,input:unknown){
+    const p=structuredClone(principal),args=structuredClone(input);
+    return this.database.run(client=>postgresCheckAccess(client,p,args,this.policyDigest,this.builder));
   }
   async get(principal:Principal,taskId:string) {
     const p=structuredClone(principal),id=taskIdSchema.parse(taskId);

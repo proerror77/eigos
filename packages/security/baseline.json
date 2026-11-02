@@ -2910,7 +2910,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "0420c78228cab6189dfd8a7464c369d79231951fd24827128d681f5f84f75df5",
+      "sourceDigest": "df40c24b559e6d6af04b87bdc14e759b0b5dc6318ada4cffc491df7b10768a1b",
       "channels": [
         "http",
         "mcp",
@@ -2950,7 +2950,7 @@
     {
       "id": "member-ui",
       "file": "apps/gateway/members/routes.ts",
-      "sourceDigest": "e0735bb1e2d80ed0a1209b8ed8a92991c24ca0507e1f81a9f72fbda5af07bd6a",
+      "sourceDigest": "fef6ffd010f8a7e3acc7e59f6bc3535b1aa000cf226c4bdafc051702dc583d7a",
       "channels": [
         "member_ui"
       ],
@@ -2998,7 +2998,7 @@
     {
       "id": "agent-routes",
       "file": "apps/gateway/members/agent-routes.ts",
-      "sourceDigest": "75e693e11048db0ce291b6acc75a5b1a3d8db792726b1b348e19342921f157fc",
+      "sourceDigest": "bd4a8952edcb2125b603a4cb2992f71a5daa1192d19fcc933ed39e542280aa91",
       "channels": [
         "http"
       ],
@@ -5676,7 +5676,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "12f0db57365b8b28194adbc623e4869f40b83dd74b6dca9e5aef91693e6665e7",
+      "sourceDigest": "ffd5572fad0bc8f75874b807643c2b2ce4ecf3c604af1ca4532088791999c22d",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current identity/task admission and deadlines, frozen request-scoped read snapshots, pinned ontology, roles, labels, direct/retained evidence and current source checks",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
@@ -5843,7 +5843,7 @@
     {
       "id": "postgres-task-output-authorization",
       "file": "packages/postgres/task-output.ts",
-      "sourceDigest": "92f5be184d30cd77a880136d8a867e99591018ab939929b3a1a92d01191225a2",
+      "sourceDigest": "9f4c81228b18a6a134df48a3809b16c3d4cbda75853bb16d6f90ffadb2b15ac9",
       "channels": [
         "internal"
       ],
@@ -5891,7 +5891,7 @@
     {
       "id": "postgres-task-read-service",
       "file": "packages/postgres/task-read-service.ts",
-      "sourceDigest": "68c4ba1ba04e7a40ee7e8f7ffbb51ac43ce1070887d1d8745ca4309536c38744",
+      "sourceDigest": "c48823bc73cb25b8a0637339bc08506896e5c6966bf8430a22bcc7458a0938a2",
       "channels": [
         "internal"
       ],
@@ -6386,7 +6386,7 @@
     {
       "id": "postgres-membership-database",
       "file": "packages/postgres/members-database.ts",
-      "sourceDigest": "848115e1ccc070f60025856a808f61d64cd97f1fe4f6db71a90675b69ad38880",
+      "sourceDigest": "31d165213f17bcf795e2d0e88683f4ab2b54d8264aa9c99047ec5d2c9a0d475a",
       "channels": [
         "internal"
       ],
@@ -6417,6 +6417,78 @@
       "content": "PostgreSQL registration and installation authority",
       "currentControl": "Original registration and bearer hash bindings, stable native installation, one-use invitation and freshness/expiry, awaited revocation fence; no provider tokens or business grants",
       "targetControl": "Original registration and bearer hash bindings, stable native installation, one-use invitation and freshness/expiry, awaited revocation fence; no provider tokens or business grants",
+      "stage": "S5"
+    },
+    {
+      "id": "member-async-http-ports",
+      "file": "packages/members/ports.ts",
+      "sourceDigest": "6151cdb1fd9fff78cd03b2281ec2ad81346e598b4b0e9d3c9917aeef586e52c6",
+      "channels": [
+        "internal"
+      ],
+      "content": "Awaitable member, installation and permission HTTP ports",
+      "currentControl": "Await current reads and mutations before responses; exact session and CSRF boundaries; explicit atomic permission review owned by storage, legacy synchronous transaction never receives async work",
+      "targetControl": "Await current reads and mutations before responses; exact session and CSRF boundaries; explicit atomic permission review owned by storage, legacy synchronous transaction never receives async work",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-authority-publisher",
+      "file": "packages/postgres/authority-publisher.ts",
+      "sourceDigest": "88c3ae133506959a3f21d57325cacd29bfdfb5367ba91d940cee2adbbe23e85d",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL current membership eligibility and revocation publisher",
+      "currentControl": "Trusted persisted member facts and actual bearer binding; same 60s lease/30s refresh and original manager token; independent unchanged ACTIVE timestamp renewal, transactional deny/restore fences, first failure and bounded acknowledgement; no grant issuance or denial revival",
+      "targetControl": "Trusted persisted member facts and actual bearer binding; same 60s lease/30s refresh and original manager token; independent unchanged ACTIVE timestamp renewal, transactional deny/restore fences, first failure and bounded acknowledgement; no grant issuance or denial revival",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-action-journal",
+      "file": "packages/postgres/action-journal.ts",
+      "sourceDigest": "f5a9b1735cb23c07bd5bb83537628ea5a860b6e43de31805a3c827c5953809ee",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL original action, budget, attempt and observation journal",
+      "currentControl": "Original task/claim/attempt identity, durable dispatch before external I/O, exact permit and cumulative budget, audit receipt survives lease loss; only same-transaction verified mapper acceptance advances state; no automatic replay",
+      "targetControl": "Original task/claim/attempt identity, durable dispatch before external I/O, exact permit and cumulative budget, audit receipt survives lease loss; only same-transaction verified mapper acceptance advances state; no automatic replay",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-action-authorization",
+      "file": "packages/postgres/action-authorization.ts",
+      "sourceDigest": "79d1950b515bc16bc9c768458b98b4c4a85ecc4a7da22d5b436018c07cc5de67",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL current plan, source and action admission",
+      "currentControl": "Current task/claim/roles/source/output grants, sealed plan and actual receipts, immutable input/configuration, exact permits and original trusted response; required missing program, result and grounding semantic ports fail closed",
+      "targetControl": "Current task/claim/roles/source/output grants, sealed plan and actual receipts, immutable input/configuration, exact permits and original trusted response; required missing program, result and grounding semantic ports fail closed",
+      "stage": "S5"
+    },
+    {
+      "id": "task-scoped-service-metadata",
+      "file": "packages/core/service-metadata.ts",
+      "sourceDigest": "21fa7853af3506dcf2023ad23e4734b9e7028c64876cdf8fbb91023138ac2418",
+      "channels": [
+        "internal"
+      ],
+      "content": "Shared foundation task service discovery metadata",
+      "currentControl": "The same public delegation description for SQLite and PostgreSQL; no execution, source, data or delivery authority",
+      "targetControl": "The same public delegation description for SQLite and PostgreSQL; no execution, source, data or delivery authority",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-permission-check",
+      "file": "packages/postgres/access-check.ts",
+      "sourceDigest": "b57b27f1e42f1fc00e1278ec1c3e1961ce5c1f21aa8be66e0c8fed58b2144475",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL task permission metadata and action readiness",
+      "currentControl": "Current original signed Agent/task grant/policy and exact operation; fields-only binding scope and separate resource/function/action/export reasons; no output channel, value disclosure, grant, claim or dispatch authority",
+      "targetControl": "Current original signed Agent/task grant/policy and exact operation; fields-only binding scope and separate resource/function/action/export reasons; no output channel, value disclosure, grant, claim or dispatch authority",
       "stage": "S5"
     }
   ]

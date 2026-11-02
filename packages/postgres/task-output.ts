@@ -20,7 +20,7 @@ import { postgresBusinessSchema, postgresConstrainReadDeadline } from './runtime
 import { postgresTaskContextMembers } from './task-context-membership.js';
 import { postgresTaskCurrentLabels, postgresTaskDirectBindingEvidence, postgresTaskDirectFieldCandidates,
   postgresTaskReadClearance, postgresTaskReadOntology, postgresTaskRetainedBindingEvidence, postgresTaskRetainedFieldCandidates,
-  postgresTaskResourceViewValidUntil, postgresTaskResourcePermissionValidUntil, postgresTaskSourceObservationValidUntil, withPostgresTaskReadSnapshot,withPostgresWorkerReadSnapshot,type PostgresTaskReadAdmission } from './task-read-access.js';
+  postgresTaskResourceViewValidUntil, postgresTaskResourcePermissionValidUntil, postgresTaskSourceObservationValidUntil, withPostgresTaskReadSnapshot,withPostgresWorkerReadSnapshot,withPostgresTaskPermissionSnapshot,type PostgresTaskReadAdmission } from './task-read-access.js';
 import type { ServiceRequest } from '../ontology/execution.js';
 import type { ObjectView } from '../ontology/object-store.js';
 import type { Computation } from '../ontology/object-functions.js';
@@ -34,6 +34,9 @@ const controls = new Set(['GoalCoverage', 'OutcomeAssessment', 'ExecutionFeedbac
 const key = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);
 
 export interface PostgresTaskReadAuthorization {
+  /** Callback-scoped permission metadata only. It exposes no value, envelope,
+   * recipient clearance, private proof, or authority to deliver an output. */
+  bindingMetadata(input:ObjectRef):Promise<{fields:string[]}|undefined>;
   /** Internal evidence validation only; does not admit any disclosure channel. */
   validateEvidence(input:SecurityEnvelope):Promise<SecurityEnvelope>;
   /** Evidence plus the current recipient/model channel clearance. */
@@ -63,7 +66,7 @@ export interface PostgresFunctionReadAuthorization extends PostgresTaskReadAutho
  * Authorization objects expire at the callback boundary; current identity,
  * grants and all captured role/source/recipient deadlines are checked at exit. */
 async function withTaskAuthorization<T>(client: Client, principal: Principal, taskId: string, policyDigest: string,
-  action: (authorization: PostgresTaskReadAuthorization) => Promise<T>, builder?: StagedKernelBuilder,processing?:{admission:PostgresTaskReadAdmission;modelChannel?:string}): Promise<T> {
+  action: (authorization: PostgresTaskReadAuthorization) => Promise<T>, builder?: StagedKernelBuilder,processing?:{admission:PostgresTaskReadAdmission;modelChannel?:string},permissionAdmission?:PostgresTaskReadAdmission): Promise<T> {
   const captured = structuredClone(principal), owner = ownerKey(captured), q = `"${postgresBusinessSchema(client)}"`;
   let validUntil = Infinity;
   const authorize = async (admission:PostgresTaskReadAdmission) => {
@@ -334,6 +337,7 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
         return { object: { ref, revision: row.revision, createdAt, source, properties:{...properties,...technical},...(Object.keys(derived).length?{derived}:{}) }, envelope };
     }
     const authorization: PostgresTaskReadAuthorization = {
+      async bindingMetadata(input){assertAvailable();const result=await binding(input);assertAvailable();return result?{fields:[...result.fields]}:undefined;},
       async validateEvidence(input) {assertAvailable();const result=await currentEnvelope(securityEnvelopeSchema.parse(input));assertAvailable();return result;},
       async authorizeEvidence(input) {assertAvailable();const result=await effectiveEnvelope(securityEnvelopeSchema.parse(input));assertAvailable();return result;},
       async withFunction(id,action) {
@@ -423,7 +427,7 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
     try { return await action(Object.freeze(authorization)); }
     finally { available = false; }
   };
-  const authorized=processing?await authorize(processing.admission):await withPostgresTaskReadSnapshot(client,captured,taskId,policyDigest,authorize);
+  const authorized=processing?await authorize(processing.admission):permissionAdmission?await authorize(permissionAdmission):await withPostgresTaskReadSnapshot(client,captured,taskId,policyDigest,authorize);
   if (validUntil <= Date.now()) throw new SecurityError('OUTPUT_NOT_ALLOWED');
   postgresConstrainReadDeadline(client,validUntil);
   return authorized;
@@ -433,6 +437,16 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
 export async function withPostgresTaskReadAuthorization<T>(client:Client,principal:Principal,taskId:string,policyDigest:string,
   action:(authorization:PostgresTaskReadAuthorization)=>Promise<T>,builder?:StagedKernelBuilder):Promise<T>{
   return withTaskAuthorization(client,principal,taskId,policyDigest,action,builder);
+}
+
+export type PostgresTaskPermissionAuthorization=Pick<PostgresTaskReadAuthorization,'bindingMetadata'|'artifacts'>;
+/** Internal permission-check scope. Only fields and controlled artifact
+ * metadata reach this callback; value readers and disclosure methods do not. */
+export async function withPostgresTaskPermissionAuthorization<T>(client:Client,principal:Principal,taskId:string,policyDigest:string,
+  operation:'task.query'|'task.result.read'|'task.process',action:(authorization:PostgresTaskPermissionAuthorization,admission:PostgresTaskReadAdmission)=>Promise<T>,builder?:StagedKernelBuilder):Promise<T>{
+  const captured=structuredClone(principal);
+  return withPostgresTaskPermissionSnapshot(client,captured,taskId,policyDigest,operation,admission=>
+    withTaskAuthorization(client,captured,taskId,policyDigest,auth=>action(Object.freeze({bindingMetadata:auth.bindingMetadata,artifacts:auth.artifacts}),admission),builder,undefined,admission));
 }
 
 /** Internal Worker evidence boundary. Reads require the separately configured

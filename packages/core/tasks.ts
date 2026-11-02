@@ -1,3 +1,4 @@
+import {taskScopedServices} from './service-metadata.js';
 import {assertTechnicalResume,assertTechnicalResumeState,applyTechnicalResume} from './technical-resume.js';
 import {runReplyProgram,replyTransition,assertReplyTaskContext} from './reply-program.js';
 import { createSubmittedTask } from './task-submission.js';
@@ -81,7 +82,7 @@ export class TaskService {
   }
 
   services() {
-    if (this.security) return [{id:'eigos.delegate',name:'Task-scoped EIGOS execution',description:'Delegate within the current installation and task grants. Resources, source operations, model processing and delivery channels require independent permission.',requiredInputs:['goal'],tags:['delegation'],examples:[],inputModes:['text/plain','application/json'],outputModes:['application/json','text/markdown']}];
+    if (this.security) return taskScopedServices();
     return [this.options.catalog.delegationService(), ...(this.options.catalog.hasRemediation() ? [{ id: 'eigos.aftersales', name: 'Owned service after-sales', description: 'Separate linked after-sales task for owned sandbox operations only. No real order, payment, cancellation or refund.', requiredInputs: ['originalTaskId', 'action', 'reason'], tags: ['aftersales'], examples: [], inputModes: ['application/json'], outputModes: ['application/json'] }] : [])];
   }
 

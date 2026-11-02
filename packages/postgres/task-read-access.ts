@@ -121,8 +121,9 @@ export async function withPostgresAgentMetadata<T>(client:Client,principal:Princ
   return result;
 }
 
-async function postgresTaskGrant(client: Client, principal: Principal, taskId: string, policyDigest: string,mode:'read'|'process'|'receipt') {
-  const id=taskIdSchema.parse(taskId),base=mode==='read'?await postgresAgentReadAdmission(client,principal,policyDigest):await postgresAgentWriteAdmission(client,principal,policyDigest);
+async function postgresTaskGrant(client: Client, principal: Principal, taskId: string, policyDigest: string,mode:'read'|'process'|'receipt'|'check_query'|'check_result'|'check_process') {
+  const checking=mode.startsWith('check_');
+  const id=taskIdSchema.parse(taskId),base=mode==='read'||checking?await postgresAgentReadAdmission(client,principal,policyDigest):await postgresAgentWriteAdmission(client,principal,policyDigest);
   const {actor,parent}=base,owner=ownerKey(principal),q=`"${postgresBusinessSchema(client)}"`,now=Date.now();
   const rows = await client.query(`SELECT d.revision,d.state,d.expires_at,CASE WHEN octet_length(d.body)<=1048576 THEN d.body END AS body
     FROM ${q}.security_grants d JOIN ${q}.jobs j ON j.id=$1 AND j.owner=d.owner
@@ -145,7 +146,9 @@ async function postgresTaskGrant(client: Client, principal: Principal, taskId: s
   const grantRow = rows.rows[0], grant = taskDataGrantSchema.parse({ ...JSON.parse(String(grantRow.body)),revision:Number(grantRow.revision),status:grantRow.state });
   if (grant.ownerKey !== owner || grant.memberId !== actor.memberId || grant.installationId !== actor.installationId || grant.taskId !== id
     || grant.parentGrant.id !== parent.id || grant.parentGrant.revision !== parent.revision || grant.purpose !== 'delegated_task'
-    || (mode==='read'?!grant.operations.includes('task.result.read'):mode==='process'&&!grant.operations.includes('task.process'))
+    || (mode==='read'||mode==='check_result'? !grant.operations.includes('task.result.read')
+      :mode==='process'||mode==='check_process'? !grant.operations.includes('task.process')
+      :mode==='check_query'&&!grant.operations.includes('task.query'))
     || grant.inputs.length > 0 && !grant.operations.includes('member_asset.read')
     || mode==='read'&&(!grant.channels.includes('agent_response')||!parent.channels.includes('agent_response'))) throw new SecurityError('AUTHORIZATION_REQUIRED');
   const validUntil=Math.min(base.validUntil,Number(grantRow.expires_at),Date.parse(grant.expiresAt));
@@ -161,6 +164,22 @@ export async function postgresTaskProcessingGrant(client:Client,principal:Princi
 }
 export async function postgresTaskReceiptGrant(client:Client,principal:Principal,taskId:string,policyDigest:string) {
   return postgresTaskGrant(client,principal,taskId,policyDigest,'receipt');
+}
+
+/** Permission metadata is not result delivery. Match the source operation's
+ * exact task grant without manufacturing agent_response or result permission.
+ * Public checks still require the current signed Agent and tasks:read. */
+export async function withPostgresTaskPermissionSnapshot<T>(client:Client,principal:Principal,taskId:string,policyDigest:string,
+  operation:'task.query'|'task.result.read'|'task.process',action:(admission:PostgresTaskReadAdmission)=>Promise<T>):Promise<T>{
+  if(snapshots.has(client))throw new Error('Nested PostgreSQL permission snapshots are not supported');
+  const captured=structuredClone(principal),mode=operation==='task.query'?'check_query':operation==='task.result.read'?'check_result':'check_process';
+  const before=await postgresTaskGrant(client,captured,taskId,policyDigest,mode);
+  const snapshot={key:snapshotKey(captured,taskId,policyDigest),admission:freezeData(structuredClone(before)),ontology:new Map<StagedKernelBuilder|undefined,Promise<ReadOntology>>()};
+  snapshots.set(client,snapshot);let result:T;
+  try{result=await action(snapshot.admission);}finally{snapshots.delete(client);}
+  const after=await postgresTaskGrant(client,captured,taskId,policyDigest,mode);
+  if(digest(before)!==digest(after))throw new SecurityError('POLICY_CHANGED');
+  postgresConstrainReadDeadline(client,before.validUntil);return result;
 }
 
 /** Recheck admission after an awaited read. The action must additionally apply

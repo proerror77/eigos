@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { chmodSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -253,4 +254,137 @@ test('PostgreSQL membership discards an uncertain commit without retrying the mu
     assert.equal(commitCalls, 1); assert.equal(evictions, 1);
     assert.equal((await f.members.get(f.alice.id)).displayName, 'Committed before lost reply', 'Caller must inspect state instead of blindly retrying');
   } finally { await database.close(); }
+}));
+
+test('PostgreSQL membership evicts an uncertain BEGIN before allowing any mutation', { skip: !enabled }, async () => use(async f => {
+  const pool=new pg.Pool({max:1});let evictions=0,calls=0,backend:number|undefined;
+  const wrapped={connect:async()=>{
+    const client=await pool.connect(),query=client.query.bind(client),release=client.release.bind(client);
+    backend=Number((await query('SELECT pg_backend_pid() AS pid')).rows[0].pid);
+    client.query=(async(sql:string,values?:unknown[])=>{const result=await query(sql,values);if(sql.startsWith('BEGIN '))throw new Error('Synthetic lost BEGIN reply');return result;}) as typeof client.query;
+    client.release=(error?:Error|boolean)=>{if(error)evictions++;release(error);};return client;
+  },end:()=>pool.end()};
+  const database=new PostgresMembershipDatabase(wrapped as Pick<pg.Pool,'connect'|'end'>,f.schema,f.source);
+  try{
+    await assert.rejects(database.run(async client=>{calls++;await client.query("UPDATE members SET display_name='Must never run'");}),/start outcome is unknown/);
+    assert.equal(calls,0);assert.equal(evictions,1);
+    const replacement=await pool.connect();try{assert.notEqual(Number((await replacement.query('SELECT pg_backend_pid() AS pid')).rows[0].pid),backend);assert.equal(replacement.getTransactionStatus(),'I');}finally{replacement.release();}
+    assert.equal((await f.members.get(f.alice.id)).displayName,profile.displayName);
+  }finally{await database.close();}
+}));
+
+
+function instrumentPool(pool: pg.Pool, hooks: {
+  acquired?: (client: pg.PoolClient) => Promise<void>;
+  replied?: (text: unknown) => Promise<void>;
+} = {}) {
+  const stats = { evictions: 0, commits: 0 };
+  const wrapped: Pick<pg.Pool, 'connect' | 'end'> = {
+    connect: new Proxy(pool.connect.bind(pool), { apply(fn, self, args) {
+      return Promise.resolve(Reflect.apply(fn, self, args)).then(async (client: pg.PoolClient) => {
+        const query = client.query, release = client.release;
+        client.query = new Proxy(query, { apply(method, target, values) {
+          return Promise.resolve(Reflect.apply(method, target, values)).then(async result => {
+            if (values[0] === 'COMMIT') stats.commits++;
+            await hooks.replied?.(values[0]); return result;
+          });
+        } });
+        client.release = error => {
+          if (error) stats.evictions++;
+          client.query = query; client.release = release; release.call(client, error);
+        };
+        await hooks.acquired?.(client); return client;
+      });
+    } }),
+    end: () => pool.end(),
+  };
+  return { wrapped, stats };
+}
+
+const acknowledgementTimeout = (error: unknown) => error instanceof Error && /acknowledgement timed out after 10000 ms/.test(error.message);
+
+test('PostgreSQL membership evicts a non-idle preflight connection without running the callback', { skip: !enabled }, async () => use(async f => {
+  const pool = new pg.Pool({ max: 1 }); let originalBackend = 0, callbacks = 0;
+  const { wrapped, stats } = instrumentPool(pool, { acquired: async client => {
+    originalBackend = Number((await client.query('SELECT pg_backend_pid() AS pid')).rows[0].pid);
+    await client.query('BEGIN');
+  } });
+  const database = new PostgresMembershipDatabase(wrapped, f.schema, f.source);
+  try {
+    await assert.rejects(database.run(async () => { callbacks++; }), /idle, non-pipelined client/);
+    assert.equal(callbacks, 0); assert.equal(stats.evictions, 1);
+    const replacement = await pool.connect();
+    try { assert.equal(replacement.getTransactionStatus(), 'I'); assert.notEqual(Number((await replacement.query('SELECT pg_backend_pid() AS pid')).rows[0].pid), originalBackend); }
+    finally { replacement.release(); }
+    assert.equal((await f.members.get(f.alice.id)).displayName, profile.displayName);
+  } finally { await database.close(); }
+}));
+
+test('PostgreSQL membership bounds SQL, lock and idle waits without changing its six-table boundary', { skip: !enabled, timeout: 15000 }, async () => use(async f => {
+  const settings = await f.database.run(async client => ({
+    statement: (await client.query("SELECT current_setting('statement_timeout') AS value")).rows[0].value,
+    lock: (await client.query("SELECT current_setting('lock_timeout') AS value")).rows[0].value,
+    idle: (await client.query("SELECT current_setting('idle_in_transaction_session_timeout') AS value")).rows[0].value,
+  }));
+  assert.deepEqual(settings, { statement: '10s', lock: '5s', idle: '10s' });
+  await f.admin.query('BEGIN');
+  try {
+    await f.admin.query(`LOCK TABLE "${f.schema}".members IN ACCESS EXCLUSIVE MODE`);
+    let callbacks = 0;
+    await assert.rejects(f.database.run(async () => { callbacks++; }), error => error instanceof Error && 'code' in error && error.code === '55P03');
+    assert.equal(callbacks, 0, 'The original member tables must be locked before callback admission');
+  } finally { await f.admin.query('ROLLBACK'); }
+  assert.equal((await f.members.get(f.alice.id)).displayName, profile.displayName);
+}));
+
+test('PostgreSQL membership watchdog rejects a late-acquired connection before BEGIN', { skip: !enabled, timeout: 20000 }, async () => use(async f => {
+  const pool = new pg.Pool({ max: 1 }); let releaseConnection!: () => void, arrived!: () => void, backend = 0, callbacks = 0;
+  const gate = new Promise<void>(resolve => { releaseConnection = resolve; }), entered = new Promise<void>(resolve => { arrived = resolve; });
+  const { wrapped, stats } = instrumentPool(pool, { acquired: async client => {
+    backend = Number((await client.query('SELECT pg_backend_pid() AS pid')).rows[0].pid); arrived(); await gate;
+  } });
+  const database = new PostgresMembershipDatabase(wrapped, f.schema, f.source);
+  try {
+    const pending = database.run(async () => { callbacks++; }); await entered;
+    await assert.rejects(pending, acknowledgementTimeout); assert.equal(callbacks, 0);
+    releaseConnection(); await delay(50); assert.equal(stats.evictions, 1); assert.equal(stats.commits, 0);
+    const replacement = await pool.connect();
+    try { assert.equal(replacement.getTransactionStatus(), 'I'); assert.notEqual(Number((await replacement.query('SELECT pg_backend_pid() AS pid')).rows[0].pid), backend); }
+    finally { replacement.release(); }
+  } finally { releaseConnection(); await database.close(); }
+}));
+
+test('PostgreSQL membership watchdog rolls back a stalled callback and never adopts its late return', { skip: !enabled, timeout: 20000 }, async () => use(async f => {
+  const pool = new pg.Pool({ max: 1 }), { wrapped, stats } = instrumentPool(pool);
+  const database = new PostgresMembershipDatabase(wrapped, f.schema, f.source);
+  let entered!: () => void, releaseCallback!: () => void, lateCallbacks = 0, adopted = false;
+  const reached = new Promise<void>(resolve => { entered = resolve; }), gate = new Promise<void>(resolve => { releaseCallback = resolve; });
+  try {
+    const pending = database.run(async client => {
+      await client.query("UPDATE members SET display_name='Uncommitted before timeout' WHERE id=$1", [f.alice.id]);
+      entered(); await gate; lateCallbacks++; return 'late callback result';
+    });
+    void pending.then(() => { adopted = true; }, () => {}); await reached;
+    await assert.rejects(pending, acknowledgementTimeout); assert.equal(stats.evictions, 1); assert.equal(stats.commits, 0);
+    assert.equal((await f.members.get(f.alice.id)).displayName, profile.displayName);
+    releaseCallback(); await delay(50); assert.equal(lateCallbacks, 1); assert.equal(adopted, false); assert.equal(stats.commits, 0);
+    assert.equal((await f.members.get(f.alice.id)).displayName, profile.displayName);
+  } finally { releaseCallback(); await database.close(); }
+}));
+
+test('PostgreSQL membership watchdog preserves its timeout after a committed reply arrives late and never retries', { skip: !enabled, timeout: 20000 }, async () => use(async f => {
+  const pool = new pg.Pool({ max: 1 }); let hold = true, entered!: () => void, releaseAck!: () => void, callbacks = 0, adopted = false;
+  const reached = new Promise<void>(resolve => { entered = resolve; }), gate = new Promise<void>(resolve => { releaseAck = resolve; });
+  const { wrapped, stats } = instrumentPool(pool, { replied: async text => { if (text === 'COMMIT' && hold) { hold = false; entered(); await gate; } } });
+  const database = new PostgresMembershipDatabase(wrapped, f.schema, f.source); let timeout: unknown;
+  try {
+    const pending = database.run(async client => { callbacks++; await client.query("UPDATE members SET display_name='Committed before timeout' WHERE id=$1", [f.alice.id]); return 'late committed result'; });
+    void pending.then(() => { adopted = true; }, () => {}); await reached;
+    try { await pending; assert.fail('The missing acknowledgement must time out'); } catch (error) { timeout = error; }
+    assert(acknowledgementTimeout(timeout)); assert.equal(callbacks, 1); assert.equal(stats.commits, 1); assert.equal(stats.evictions, 1);
+    assert.equal((await f.members.get(f.alice.id)).displayName, 'Committed before timeout', 'Unknown COMMIT requires persisted-state inspection');
+    releaseAck(); await delay(50); assert.equal(adopted, false); assert.equal(callbacks, 1); assert.equal(stats.commits, 1);
+    await assert.rejects(pending, error => error === timeout, 'The late reply cannot replace the original timeout error');
+    assert.equal((await database.run(client => client.query('SELECT display_name FROM members WHERE id=$1', [f.alice.id]))).rows[0].display_name, 'Committed before timeout');
+  } finally { releaseAck(); await database.close(); }
 }));
