@@ -7,7 +7,7 @@ import pg from 'pg';
 import { securityFixture } from './fixtures/security.js';
 import { installPostgresAuthorityLock } from '../packages/postgres/authority-lock.js';
 import { postgresBusinessTransaction } from '../packages/postgres/runtime-transaction.js';
-import { createStagedPostgresTaskReader, postgresTaskFieldClassification, postgresTaskReadClearance, postgresTaskReadGrant, postgresTaskReadOntology, postgresTaskResourceViewAllowed, withPostgresTaskReadGrant } from '../packages/postgres/task-read-access.js';
+import { createStagedPostgresTaskReader, postgresTaskFieldClassification, postgresTaskReadClearance, postgresTaskReadGrant, postgresTaskReadOntology, postgresTaskResourceViewAllowed, withPostgresTaskReadGrant, withPostgresTaskReadSnapshot } from '../packages/postgres/task-read-access.js';
 import { POLICY_VERSION, SECURITY_CONTRACT } from '../packages/security/contracts.js';
 import { StagedKernelBuilder } from '../packages/ontology/seed-definition.js';
 import { sourceMatchesObservation } from '../packages/security/source-policy.js';
@@ -16,6 +16,14 @@ import { postgresTaskContextMembers } from '../packages/postgres/task-context-me
 import { postgresTaskContextBindingCandidate } from '../packages/postgres/task-context-binding.js';
 import { digest } from '../packages/core/delegation.js';
 import { submissionDigest } from '../packages/security/submission-digest.js';
+import { postgresTaskAuthorizeOutput, withPostgresTaskReadAuthorization, type PostgresTaskReadAuthorization } from '../packages/postgres/task-output.js';
+import { postgresTaskView } from '../packages/postgres/task-view.js';
+import { TaskSecurity } from '../packages/security/task-service.js';
+import { DomainError } from '../packages/core/domain.js';
+import type { TaskServicePort } from '../packages/core/task-service-port.js';
+import { PostgresTaskReadService } from '../packages/postgres/task-read-service.js';
+import { PostgresDatabase } from '../packages/postgres/database.js';
+import { taskProtocolFixture } from './fixtures/task-protocol.js';
 
 test('PostgreSQL task read admission preserves identity, revocation and grant fences', {skip:process.env.EIGOS_TEST_PG_LOCAL !== '1'}, async () => {
   // Remote setup and large-row validation may outlast the synthetic lease;
@@ -38,6 +46,10 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
   const readGrant=JSON.parse(String(stored.body)); readGrant.operations.push('task.result.read'); readGrant.channels.push('agent_response');
   readGrant.outputs.push({programId:'brief.prepare',programDigest:'b'.repeat(64),sourceBindingId:'synthetic-source',type:'Place',fields:['placeId','name']});
   sqlite.prepare('UPDATE security_grants SET body=? WHERE id=?').run(JSON.stringify(readGrant),task.grant.id);
+  // This fixture promotes its synthetic processing-only grant to a read grant;
+  // its root seal must admit the response channel as a real read grant does.
+  sqlite.prepare("UPDATE security_bindings SET body=json_set(body,'$.envelope.channels',json(?)) WHERE grant_id=? AND type='ServiceRequest' AND object_id=?")
+    .run(JSON.stringify(['agent_response','registered_model']),task.grant.id,task.job.id);
   // Preserve a realistic order: two prior task grants precede the current one.
   sqlite.prepare('UPDATE security_grants SET rowid=100 WHERE id=?').run(task.grant.id);
   const priorIds=[randomUUID(),randomUUID()];
@@ -50,10 +62,10 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await client.query(`CREATE SCHEMA "${schema}"; CREATE TABLE "${schema}".runtime_authority(slot BIGINT PRIMARY KEY,id TEXT,revision BIGINT,configuration_digest TEXT)`);
     await client.query(`INSERT INTO "${schema}".runtime_authority VALUES(1,$1,$2,$3)`,[authority.id,authority.revision,authority.digest]); await installPostgresAuthorityLock(client,schema);
     await client.query(`CREATE FUNCTION "${schema}".eigos_try_jsonb(value TEXT) RETURNS JSONB LANGUAGE plpgsql IMMUTABLE STRICT AS $$ BEGIN RETURN value::jsonb; EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range OR untranslatable_character THEN RETURN NULL; END $$`);
-    for(const table of ['jobs','security_settings','security_manager','security_subjects','security_fences','security_grants','security_policy','security_policy_definitions','security_roles','security_recipients','security_sources','security_object_origins','security_labels','security_bindings','ontology_objects','ontology_links','ontology_definition_releases','ontology_definition_release_aliases','ontology_definition_bootstrap','ontology_namespaces','ontology_task_read_projections']) {
+    for(const table of ['jobs','security_settings','security_manager','security_subjects','security_fences','security_grants','security_policy','security_policy_definitions','security_roles','security_recipients','security_sources','security_object_origins','security_labels','security_bindings','security_outputs','security_private_views','security_artifacts','action_intents','action_observations','ontology_objects','ontology_links','ontology_object_versions','ontology_tombstones','ontology_definition_releases','ontology_definition_fingerprints','ontology_definition_release_aliases','ontology_definition_bootstrap','ontology_namespaces','ontology_task_read_projections']) {
       const cols=sqlite.prepare(`PRAGMA table_info("${table}")`).all();
-      const rowIdentity=table==='security_grants';
-      await client.query(`CREATE TABLE "${schema}"."${table}" (${cols.map(c=>`"${c.name}" ${String(c.type).toUpperCase()==='INTEGER'?'BIGINT':'TEXT'}`).join(',')}${rowIdentity?',"__eigos_rowid" BIGINT NOT NULL':''})`);
+      const rowIdentity=table==='security_grants' || table==='action_observations';
+      await client.query(`CREATE TABLE "${schema}"."${table}" (${cols.map(c=>`"${c.name}" ${String(c.type).toUpperCase()==='INTEGER'?'BIGINT':String(c.type).toUpperCase()==='BLOB'?'BYTEA':'TEXT'}`).join(',')}${rowIdentity?',"__eigos_rowid" BIGINT NOT NULL':''})`);
       const select=rowIdentity?`SELECT rowid AS __eigos_rowid,* FROM "${table}" ORDER BY rowid`:`SELECT * FROM "${table}"`;
       for(const row of sqlite.prepare(select).iterate()) {
         const values=cols.map(c=>row[String(c.name)]);if(rowIdentity)values.push(row.__eigos_rowid);
@@ -66,6 +78,12 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await assert.rejects(postgresBusinessTransaction(client,schema,authority,c=>postgresTaskReadOntology(c,principal,task.job.id,policy,staged)),/not ready/);
     for(let stage=0;stage<StagedKernelBuilder.stages;stage++)staged.step(stage);
     const stagedReader=createStagedPostgresTaskReader(staged);
+    await postgresBusinessTransaction(client,schema,authority,c=>withPostgresTaskReadSnapshot(c,principal,task.job.id,policy,async admission=>{
+      assert(Object.isFrozen(admission));assert(Object.isFrozen(admission.parent.resources[0]!.fields));
+      assert.throws(()=>admission.parent.resources[0]!.fields.push('not_granted'),TypeError);
+      await assert.rejects(withPostgresTaskReadGrant(c,{...principal,subject:'another-owner'},task.job.id,policy,async()=>true),/AUTHORIZATION_REQUIRED/);
+      await assert.rejects(withPostgresTaskReadSnapshot(c,principal,task.job.id,policy,async()=>true),/Nested PostgreSQL read snapshots/);
+    }));
     const contextObjects=[
       {type:'RequestSpecification',id:'synthetic-spec',properties:{requestRevision:1}},
       {type:'RequestInstruction',id:'synthetic-instruction',properties:{introducedRevision:1}},
@@ -162,9 +180,10 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     assert.equal(sqliteContext(actionRef),undefined);assert.equal(await contextCandidate(actionRef),undefined);
     sqlite.prepare('UPDATE ontology_objects SET body=? WHERE owner=? AND type=? AND id=?').run(actionBody,f.owner,actionRef.type,actionRef.id);
     await client.query(`UPDATE "${schema}".ontology_objects SET body=$1 WHERE owner=$2 AND type=$3 AND id=$4`,[actionBody,f.owner,actionRef.type,actionRef.id]);
-    const place={type:'Place',id:'retained-place'},placeBody=JSON.stringify({source:{kind:'provider',id:'synthetic-source'},properties:{placeId:'retained-place',name:'Synthetic',address:'private'}});
-    sqlite.prepare('INSERT INTO ontology_objects(owner,type,id,revision,definition_digest,body) VALUES(?,?,?,?,?,?)').run(f.owner,place.type,place.id,1,'a'.repeat(64),placeBody);
-    await client.query(`INSERT INTO "${schema}".ontology_objects(owner,type,id,revision,definition_digest,body) VALUES($1,$2,$3,1,$4,$5)`,[f.owner,place.type,place.id,'a'.repeat(64),placeBody]);
+    const place={type:'Place',id:'retained-place'},placeDefinition=f.jobs.ontology.model.fingerprint('Place');
+    const placeBody=JSON.stringify({createdAt:new Date().toISOString(),source:{kind:'provider',id:'synthetic-source',observedAt:new Date().toISOString(),readContext:{query:{type:'ServiceRequest',id:task.job.id},collection:'places',observation:{type:'Place',id:'private-observation'}}},properties:{placeId:'retained-place',name:'Synthetic',address:'private'}});
+    sqlite.prepare('INSERT INTO ontology_objects(owner,type,id,revision,definition_digest,body) VALUES(?,?,?,?,?,?)').run(f.owner,place.type,place.id,1,placeDefinition,placeBody);
+    await client.query(`INSERT INTO "${schema}".ontology_objects(owner,type,id,revision,definition_digest,body) VALUES($1,$2,$3,1,$4,$5)`,[f.owner,place.type,place.id,placeDefinition,placeBody]);
     const retainedBase={object:place,revision:1,fields:['placeId','name','address'],sourceBindingId:'synthetic-source',envelope:rootBinding.envelope};
     const earlier={...retainedBase,fields:['placeId']};
     for(const [index,value] of [earlier,retainedBase].entries()){
@@ -179,18 +198,119 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     const privatePolicy=f.jobs.security.policies as unknown as {retainedBinding:(scope:unknown,item:{type:string;id:string},historical:boolean)=>unknown};
     const sqliteRetained=(item:{type:string;id:string},historical=false)=>f.jobs.security.withAgent(principal,task.job.id,'task.result.read',scope=>privatePolicy.retainedBinding(scope,item,historical));
     const retainedPlace=await retained(place);assert.deepEqual(retainedPlace,sqliteRetained(place));assert.deepEqual(retainedPlace?.fields,['placeId','name']);
+    const deliverable={message:'Synthetic sealed result'},outputId='synthetic-output';
+    const outputEnvelope={...metadataEnvelope,submission,lineage:[{object:place,revision:1,fields:['placeId','name'],contentDigest:digest({placeId:place.id,name:'Synthetic'})}]};
+    sqlite.prepare('INSERT INTO security_outputs(owner,task_id,output_id,content_digest,body) VALUES(?,?,?,?,?)').run(f.owner,task.job.id,outputId,digest(deliverable),JSON.stringify(outputEnvelope));
+    await client.query(`INSERT INTO "${schema}".security_outputs(owner,task_id,output_id,content_digest,body) VALUES($1,$2,$3,$4,$5)`,[f.owner,task.job.id,outputId,digest(deliverable),JSON.stringify(outputEnvelope)]);
+    const sqliteOutput=()=>f.jobs.security.withAgent(principal,task.job.id,'task.result.read',scope=>{
+      const envelope=f.jobs.security.policies.output(f.owner,task.job.id,outputId,deliverable);
+      if(!envelope)return undefined;
+      try {f.jobs.security.policies.requireRecipient(scope,envelope,'agent_response');return envelope;}catch{return undefined;}
+    });
+    const authorizedOutput=(value:unknown=deliverable)=>postgresBusinessTransaction(client,schema,authority,c=>postgresTaskAuthorizeOutput(c,principal,task.job.id,policy,outputId,value,staged));
+    assert(sqliteOutput());assert.deepEqual(await authorizedOutput(),sqliteOutput());
+    assert.equal(await authorizedOutput({message:'Altered result'}),undefined);
+    const historicalContent={message:'Synthetic historical metadata dependency'},historicalEnvelope={...metadataEnvelope,submission,lineage:[{object:capRef,revision:1,fields:['id','name'],contentDigest:digest({})}]};
+    sqlite.prepare('INSERT INTO security_outputs(owner,task_id,output_id,content_digest,body) VALUES(?,?,?,?,?)').run(f.owner,task.job.id,'historical-output',digest(historicalContent),JSON.stringify(historicalEnvelope));
+    await client.query(`INSERT INTO "${schema}".security_outputs(owner,task_id,output_id,content_digest,body) VALUES($1,$2,'historical-output',$3,$4)`,[f.owner,task.job.id,digest(historicalContent),JSON.stringify(historicalEnvelope)]);
+    sqlite.prepare("DELETE FROM ontology_links WHERE owner=? AND type='CapabilityRequest' AND from_id=? AND to_id=?").run(f.owner,capRef.id,task.job.id);
+    await client.query(`DELETE FROM "${schema}".ontology_links WHERE owner=$1 AND type='CapabilityRequest' AND from_id=$2 AND to_id=$3`,[f.owner,capRef.id,task.job.id]);
+    assert(sqliteContext(capRef)===undefined);
+    const historicalSqlite=f.jobs.security.withAgent(principal,task.job.id,'task.result.read',scope=>{
+      const envelope=f.jobs.security.policies.output(f.owner,task.job.id,'historical-output',historicalContent);
+      if(envelope)f.jobs.security.policies.requireRecipient(scope,envelope,'agent_response');return envelope;
+    });
+    assert(historicalSqlite);
+    assert.deepEqual(await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskAuthorizeOutput(c,principal,task.job.id,policy,'historical-output',historicalContent,staged)),historicalSqlite);
+    await assert.rejects(postgresBusinessTransaction(client,schema,authority,c=>withPostgresTaskReadAuthorization(c,principal,task.job.id,policy,auth=>auth.readObject(capRef),staged)),/AUTHORIZATION_REQUIRED/);
+    sqlite.prepare('INSERT INTO ontology_links(owner,type,from_type,from_id,to_type,to_id,definition_digest) VALUES(?,?,?,?,?,?,?)').run(f.owner,'CapabilityRequest',capRef.type,capRef.id,'ServiceRequest',task.job.id,'a'.repeat(64));
+    await client.query(`INSERT INTO "${schema}".ontology_links(owner,type,from_type,from_id,to_type,to_id,definition_digest) VALUES($1,'CapabilityRequest',$2,$3,'ServiceRequest',$4,$5)`,[f.owner,capRef.type,capRef.id,task.job.id,'a'.repeat(64)]);
+    const readObject=(ref:{type:string;id:string},fields?:string[])=>postgresBusinessTransaction(client,schema,authority,c=>withPostgresTaskReadAuthorization(c,principal,task.job.id,policy,auth=>auth.readObject(ref,fields),staged));
+    const visiblePlace=await readObject(place);assert.deepEqual(visiblePlace.object.properties,{placeId:place.id,name:'Synthetic'});assert.equal(visiblePlace.object.source.readContext,undefined);
+    await assert.rejects(readObject(place,['address']),/INSUFFICIENT_ACCESS/);
+    const visibleRequest=await readObject({type:'ServiceRequest',id:task.job.id},['originalGoal']);
+    assert.equal(visibleRequest.object.properties.originalGoal,task.job.goal);
+    let escaped:PostgresTaskReadAuthorization|undefined;
+    await postgresBusinessTransaction(client,schema,authority,c=>withPostgresTaskReadAuthorization(c,principal,task.job.id,policy,async auth=>{escaped=auth;},staged));
+    await assert.rejects(escaped!.output(outputId,deliverable),/AUTHORIZATION_REQUIRED/);
+    const sqliteTask=new TaskSecurity(f.jobs),pgTask=()=>postgresBusinessTransaction(client,schema,authority,c=>postgresTaskView(c,principal,task.job.id,policy,staged));
+    const currentView=await pgTask();assert.equal(currentView.authorityId,authority.id);
+    const {authorityId:_authority,...withoutAuthority}=currentView;
+    assert.deepEqual(withoutAuthority,sqliteTask.get(principal,task.job.id));
+    const pool=new pg.Pool({...process.env.EIGOS_TEST_PG_CA_FILE?{ssl:{ca:readFileSync(process.env.EIGOS_TEST_PG_CA_FILE,'utf8'),rejectUnauthorized:true}}:{},max:2});
+    const database=new PostgresDatabase(pool,schema,authority),reads=new PostgresTaskReadService(database,policy,staged,{waitTimeoutMs:1});
+    // This isolated server exposes the persisted read side only; task commands
+    // are deliberately denied until their PostgreSQL runtime is connected.
+    const readPort=new Proxy({} as TaskServicePort,{get(_target,property){
+      if(property==='secured')return true;
+      if(property==='services')return ()=>[{id:'eigos.delegate',name:'Synthetic persisted reads',description:'Synthetic protocol fixture',requiredInputs:['goal'],tags:[],examples:[],inputModes:['application/json'],outputModes:['application/json']}];
+      const method=Reflect.get(reads,property);
+      if(typeof method==='function')return method.bind(reads);
+      return async()=>{throw new DomainError('FORBIDDEN','This isolated fixture tests persisted reads only');};
+    }});
+    const protocol=await taskProtocolFixture(readPort,principal);
+    try {
+      const mcpRead=await protocol.job('get_task',{taskId:task.job.id});assert.equal(mcpRead.id,task.job.id);assert.equal(mcpRead.goal,task.job.goal);
+      const a2aRead=await protocol.rpc('GetTask',{id:task.job.id});assert(!a2aRead.error,JSON.stringify(a2aRead));assert.equal(a2aRead.result.id,task.job.id);assert.equal(a2aRead.result.metadata.view,'eigos.task.v2');
+      const list=await protocol.rpc('ListTasks',{pageSize:10});assert(!list.error,JSON.stringify(list));assert.equal(list.result.totalSize,1);assert.equal(list.result.tasks[0].id,task.job.id);
+      const mcpList=await protocol.call('list_tasks',{limit:10});assert(!mcpList.isError,JSON.stringify(mcpList));assert.equal((mcpList.structuredContent as {result:{total:number}}).result.total,1);
+      await assert.rejects(reads.get({...principal,subject:'different-owner'},task.job.id),/AUTHORIZATION_REQUIRED/);
+      await assert.rejects(reads.wait(principal,task.job.id),/Blocking task wait interrupted/);
+      assert.equal((await reads.getAfterWait(principal,task.job.id,0)).state,task.job.state);
+    } finally {await protocol.close();await reads.close();await database.close();}
+    const deniedRoot={...rootBinding,envelope:{...rootBinding.envelope,channels:['registered_model']}};
+    await client.query(`UPDATE "${schema}".security_bindings SET body=$1 WHERE grant_id=$2 AND type='ServiceRequest' AND object_id=$3`,[JSON.stringify(deniedRoot),task.grant.id,task.job.id]);
+    await assert.rejects(pgTask(),/OUTPUT_NOT_ALLOWED/);
+    await client.query(`UPDATE "${schema}".security_bindings SET body=$1 WHERE grant_id=$2 AND type='ServiceRequest' AND object_id=$3`,[JSON.stringify(rootBinding),task.grant.id,task.job.id]);
+    const taskBody=String(sqlite.prepare('SELECT body FROM jobs WHERE owner=? AND id=?').get(f.owner,task.job.id)!.body);
+    const completed=JSON.parse(taskBody),artifact={id:randomUUID(),name:'result.json',data:{goal:task.job.goal,deliverable:'Synthetic sealed result',execution:'completed',result:{securityEvidenceRefs:[place],privateMarker:'PRIVATE_UNPROJECTED_RESULT'}}};
+    completed.state='completed';completed.artifact=artifact;completed.error='PRIVATE_RUNTIME_DIAGNOSTIC';completed.delegation.acceptance={accepted:true};
+    sqlite.prepare('UPDATE jobs SET state=?,body=? WHERE owner=? AND id=?').run('completed',JSON.stringify(completed),f.owner,task.job.id);
+    await client.query(`UPDATE "${schema}".jobs SET state='completed',body=$1 WHERE owner=$2 AND id=$3`,[JSON.stringify(completed),f.owner,task.job.id]);
+    sqlite.prepare('INSERT INTO security_outputs(owner,task_id,output_id,content_digest,body) VALUES(?,?,?,?,?)').run(f.owner,task.job.id,'artifact',digest(artifact),JSON.stringify(outputEnvelope));
+    await client.query(`INSERT INTO "${schema}".security_outputs(owner,task_id,output_id,content_digest,body) VALUES($1,$2,'artifact',$3,$4)`,[f.owner,task.job.id,digest(artifact),JSON.stringify(outputEnvelope)]);
+    const {authorityId:_completedAuthority,...completedView}=await pgTask();
+    assert.deepEqual(completedView,sqliteTask.get(principal,task.job.id));assert.equal(completedView.accepted,true);assert(completedView.artifact);
+    assert(!JSON.stringify(completedView).includes('PRIVATE_'));
+    await client.query(`UPDATE "${schema}".security_outputs SET content_digest=$1 WHERE owner=$2 AND task_id=$3 AND output_id='artifact'`,['0'.repeat(64),f.owner,task.job.id]);
+    const deniedView=await pgTask();assert.equal(deniedView.id,task.job.id);assert.equal(deniedView.outputStatus,'restricted');assert.equal(deniedView.artifact,undefined);assert.equal(deniedView.accepted,undefined);
+    sqlite.prepare('UPDATE jobs SET state=?,body=? WHERE owner=? AND id=?').run(task.job.state,taskBody,f.owner,task.job.id);
+    await client.query(`UPDATE "${schema}".jobs SET state=$1,body=$2 WHERE owner=$3 AND id=$4`,[task.job.state,taskBody,f.owner,task.job.id]);
+    const sourceRows=await client.query(`SELECT body FROM "${schema}".security_sources WHERE owner=$1 AND installation_id=$2`,[f.owner,installation.id]);
+    assert.equal(sourceRows.rowCount,1);
+    const shortSource={...JSON.parse(String(sourceRows.rows[0].body)),expiresAt:new Date(Date.now()+1000).toISOString()};
+    await client.query(`UPDATE "${schema}".security_sources SET body=$1 WHERE owner=$2 AND installation_id=$3`,[JSON.stringify(shortSource),f.owner,installation.id]);
+    const originalQuery=client.query,originalNow=Date.now,at=Date.now();let sourceSeen=false,recipientSeen=false,finalChecks=0;
+    client.query=(async (...args:unknown[])=>{
+      const result=await Reflect.apply(originalQuery,client,args),sql=String(args[0]);
+      if(sql.includes('.security_sources'))sourceSeen=true;
+      if(sourceSeen && sql.includes('.security_recipients'))recipientSeen=true;
+      if(recipientSeen && sql.includes('.security_grants d JOIN') && ++finalChecks===1)Date.now=()=>at+2000;
+      return result;
+    }) as typeof client.query;
+    Date.now=()=>at;
+    try {assert.equal(await authorizedOutput(),undefined);assert.equal(finalChecks,1,'Expiry advances only at the outer final admission check');}
+    finally {Date.now=originalNow;client.query=originalQuery;}
+    await client.query(`UPDATE "${schema}".security_sources SET body=$1 WHERE owner=$2 AND installation_id=$3`,[sourceRows.rows[0].body,f.owner,installation.id]);
+    const changedPlace=JSON.stringify({...JSON.parse(placeBody),properties:{...JSON.parse(placeBody).properties,name:'Changed source fact'}});
+    sqlite.prepare('UPDATE ontology_objects SET body=? WHERE owner=? AND type=? AND id=?').run(changedPlace,f.owner,place.type,place.id);
+    await client.query(`UPDATE "${schema}".ontology_objects SET body=$1 WHERE owner=$2 AND type=$3 AND id=$4`,[changedPlace,f.owner,place.type,place.id]);
+    assert.equal(sqliteOutput(),undefined);assert.equal(await authorizedOutput(),undefined);
+    sqlite.prepare('UPDATE ontology_objects SET body=? WHERE owner=? AND type=? AND id=?').run(placeBody,f.owner,place.type,place.id);
+    await client.query(`UPDATE "${schema}".ontology_objects SET body=$1 WHERE owner=$2 AND type=$3 AND id=$4`,[placeBody,f.owner,place.type,place.id]);
     const retainedFields=()=>postgresBusinessTransaction(client,schema,authority,c=>stagedReader.retainedFieldCandidates(c,principal,task.job.id,policy,place));
     assert.deepEqual((await retainedFields())?.fields,['placeId','name']);
     const recipientRow=sqlite.prepare('SELECT body FROM security_recipients WHERE installation_id=?').get(installation.id)!;
     await client.query(`UPDATE "${schema}".security_recipients SET body=$1 WHERE installation_id=$2`,[JSON.stringify({...recipient,channels:['registered_model']}),installation.id]);
     assert.equal(await retainedFields(),undefined);
+    assert.equal(await authorizedOutput(),undefined);
     await client.query(`UPDATE "${schema}".security_recipients SET body=$1 WHERE installation_id=$2`,[recipientRow.body,installation.id]);
     const retainedSource=()=>postgresBusinessTransaction(client,schema,authority,c=>stagedReader.sourceObservationAllowed(c,principal,task.job.id,policy,place));
     assert.equal(sourceMatchesObservation(f.jobs.security.policies.sources(f.owner,installation.id),retainedOrigin,place.type),true);
     assert.equal(await retainedSource(),true);
     sqlite.prepare("UPDATE security_sources SET state='revoked' WHERE owner=? AND installation_id=?").run(f.owner,installation.id);
     await client.query(`UPDATE "${schema}".security_sources SET state='revoked' WHERE owner=$1 AND installation_id=$2`,[f.owner,installation.id]);
-    assert.equal(sourceMatchesObservation(f.jobs.security.policies.sources(f.owner,installation.id),retainedOrigin,place.type),false);assert.equal(await retainedSource(),false);
+    assert.equal(sourceMatchesObservation(f.jobs.security.policies.sources(f.owner,installation.id),retainedOrigin,place.type),false);assert.equal(await retainedSource(),false);assert.equal(sqliteOutput(),undefined);assert.equal(await authorizedOutput(),undefined);
     sqlite.prepare("UPDATE security_sources SET state='active' WHERE owner=? AND installation_id=?").run(f.owner,installation.id);
     await client.query(`UPDATE "${schema}".security_sources SET state='active' WHERE owner=$1 AND installation_id=$2`,[f.owner,installation.id]);
     const foreignGrant=randomUUID(),foreignInstallation=randomUUID();
@@ -205,7 +325,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     const storedJob=String(sqlite.prepare('SELECT body FROM jobs WHERE owner=? AND id=?').get(f.owner,task.job.id)!.body),retainedChangedJob=JSON.parse(storedJob);retainedChangedJob.delegation.request.originalGoal='different synthetic goal';
     sqlite.prepare('UPDATE jobs SET body=? WHERE owner=? AND id=?').run(JSON.stringify(retainedChangedJob),f.owner,task.job.id);
     await client.query(`UPDATE "${schema}".jobs SET body=$1 WHERE owner=$2 AND id=$3`,[JSON.stringify(retainedChangedJob),f.owner,task.job.id]);
-    assert.equal(sqliteRetained(place),undefined);assert.equal(await retained(place),undefined);assert.equal(await retainedSource(),false);assert.equal(await retainedFields(),undefined);
+    assert.equal(sqliteRetained(place),undefined);assert.equal(await retained(place),undefined);assert.equal(await retainedSource(),false);assert.equal(await retainedFields(),undefined);assert.equal(await authorizedOutput(),undefined);
     sqlite.prepare('UPDATE jobs SET body=? WHERE owner=? AND id=?').run(storedJob,f.owner,task.job.id);
     await client.query(`UPDATE "${schema}".jobs SET body=$1 WHERE owner=$2 AND id=$3`,[storedJob,f.owner,task.job.id]);
     const withoutOutput={...readGrant,outputs:[]};

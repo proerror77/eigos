@@ -3510,7 +3510,7 @@
     {
       "id": "security-task-view",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "291d1265997a45f615a9e2891a4d872b5d2b7b528d9572bc94f213d54578c7a5",
+      "sourceDigest": "f9de8353040e7be5e10a68b5382e35e9ecd9462627d50150d48a7d0a00681c5d",
       "channels": [
         "http-mcp-a2a"
       ],
@@ -5540,7 +5540,7 @@
       "currentControl": "Idle non-pipelined connection, transaction identity and savepoint checks, shared advisory lock, authority fencing and fail-closed uncertain commits",
       "targetControl": "Require task, claim and authorization fences in the same transaction before runtime activation",
       "stage": "S5",
-      "sourceDigest": "a338b063f55e85050b65c23679d48a64ccb013ad1caca258c5868bdd4453ed78"
+      "sourceDigest": "b7dc112b37c1bc4e3bc09f813434d589d511769b2cd8b19c039b50b724b83436"
     },
     {
       "id": "postgres-authority-lock",
@@ -5676,9 +5676,9 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "52adcb015c35e0ce2f2973c624e8a774e8274d823d43baac9c78bea5a8475e00",
+      "sourceDigest": "e6029299052ba750e5392cd52b91674e2fdac3c19d5c3fa1c9fdb7b9c5a61198",
       "content": "PostgreSQL agent task-read admission",
-      "currentControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required",
+      "currentControl": "Current identity/task admission and deadlines, frozen request-scoped read snapshots, pinned ontology, roles, labels, direct/retained evidence and current source checks",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
     },
     {
@@ -5839,6 +5839,90 @@
       "targetControl": "Preserve original PA connection, tasks and permissions while checking the published Skill",
       "stage": "S5",
       "sourceDigest": "d4dc918fc4d81545c40bd47dc97b2d75d3f245d2dae0625956f62950fe788663"
+    },
+    {
+      "id": "postgres-task-output-authorization",
+      "file": "packages/postgres/task-output.ts",
+      "sourceDigest": "16032e3b70fd5bf512594c3ae8dcae722017c13d9ffc8b133c025d409ed76e35",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL task object, sealed output and controlled download authorization",
+      "currentControl": "Current task admission, source and field visibility, exact sealed content, projection provenance, dependency digests and recipient checks; bounded read sessions expire before returning protected data",
+      "targetControl": "Current task admission, source and field visibility, exact sealed content, projection provenance, dependency digests and recipient checks; bounded read sessions expire before returning protected data",
+      "stage": "S5"
+    },
+    {
+      "id": "security-delivery-evidence",
+      "file": "packages/security/delivery-evidence.ts",
+      "sourceDigest": "9e1e1237d2baac14a972bba68db54c4e5e74ada66ec92bd60ac9ff1c31a89761",
+      "channels": [
+        "internal"
+      ],
+      "content": "Reviewed sealed delivery reference extraction",
+      "currentControl": "Strict reviewed reference slots only; child/provider payloads are not public output",
+      "targetControl": "Current task and output authorization required",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-task-view",
+      "file": "packages/postgres/task-view.ts",
+      "sourceDigest": "95043b36860595950a17a4f887af906f2dacdc604597093f40eb1c0b94b867be",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL public task projection",
+      "currentControl": "Bounded owned task metadata, current root read, sealed outputs and controlled artifacts through the fenced task authorization session",
+      "targetControl": "Current task and output authorization required",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-database-runtime",
+      "file": "packages/postgres/database.ts",
+      "sourceDigest": "1a6f32ade6e81d3e5ee860435edba7840bee60a0edbab087d601920479c5e6e3",
+      "channels": [
+        "internal"
+      ],
+      "content": "Request-owned PostgreSQL transaction pool",
+      "currentControl": "One fenced transaction per borrowed connection; exact captured authority, single lease release and eviction after uncertain outcomes; no implicit retry",
+      "targetControl": "One fenced transaction per borrowed connection; exact captured authority, single lease release and eviction after uncertain outcomes; no implicit retry",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-task-read-service",
+      "file": "packages/postgres/task-read-service.ts",
+      "sourceDigest": "435c19e9f8f6548cd74f87c310772cb83b8b41864eb08cb902b8c780155eebe8",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL task get/list/wait service",
+      "currentControl": "Current installation and task roots before listing/counting; sealed TaskViews for each result; each poll releases its transaction and rechecks current permission",
+      "targetControl": "Current installation and task roots before listing/counting; sealed TaskViews for each result; each poll releases its transaction and rechecks current permission",
+      "stage": "S5"
+    },
+    {
+      "id": "ontology-graph-program",
+      "file": "packages/ontology/graph-program.ts",
+      "sourceDigest": "a1cd369fcc803051c72e3fabfb72790244c1a1a94627ad5eacbb4bb45937e662",
+      "channels": [
+        "internal"
+      ],
+      "content": "Shared synchronous/asynchronous ontology storage program",
+      "currentControl": "Typed sequential storage operations preserve original error handling; no model/provider calls or replay; transaction and authorization belong to the supplied graph port",
+      "targetControl": "Typed sequential storage operations preserve original error handling; no model/provider calls or replay; transaction and authorization belong to the supplied graph port",
+      "stage": "S5"
+    },
+    {
+      "id": "ontology-catalog-projection",
+      "file": "packages/ontology/catalog-projection.ts",
+      "sourceDigest": "b77d3c7cfe805a753452b8df73d7627660331369bbfcc5f84a4099f0fb3edda8",
+      "channels": [
+        "internal"
+      ],
+      "content": "Checked catalog snapshot projection",
+      "currentControl": "Same checked snapshot, task binding and immutable observation rules on both storage drivers; provider payloads do not create dispatch authority",
+      "targetControl": "Same checked snapshot, task binding and immutable observation rules on both storage drivers; provider payloads do not create dispatch authority",
+      "stage": "S5"
     }
   ]
 }

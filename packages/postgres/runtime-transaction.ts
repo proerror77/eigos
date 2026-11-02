@@ -1,9 +1,19 @@
 import type { Client } from 'pg';
+import { SecurityError } from '../security/errors.js';
 
 const schemaPattern = /^eigos_business_[a-z0-9_]{1,40}$/;
 const digestPattern = /^[a-f0-9]{64}$/;
 const active = new WeakSet<object>();
-const contexts = new WeakMap<object, { schema: string; authorityDigest: string }>();
+const contexts = new WeakMap<object, { schema: string; authorityDigest: string; readUntil:number }>();
+
+/** A protected read must remain authorized when the transaction returns,
+ * including the network wait for COMMIT. This never extends a grant/lease. */
+export function postgresConstrainReadDeadline(client:Client,validUntil:number):void {
+  const context=contexts.get(client);
+  if(!context)throw new Error('An active PostgreSQL business transaction is required');
+  if(!Number.isSafeInteger(validUntil) || validUntil<=Date.now())throw new SecurityError('OUTPUT_NOT_ALLOWED');
+  context.readUntil=Math.min(context.readUntil,validUntil);
+}
 
 /** Only valid while the caller owns the business transaction callback. */
 export function postgresBusinessSchema(client: Client): string {
@@ -62,7 +72,8 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
     await assertAuthority();
     await assertBoundary();
     await client.query('SAVEPOINT eigos_runtime_action_guard');
-    contexts.set(client, { schema, authorityDigest: expected.digest });
+    const context={schema,authorityDigest:expected.digest,readUntil:Infinity};
+    contexts.set(client,context);
     let result: T;
     try { result = await action(client); }
     catch (error) {
@@ -77,7 +88,11 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
     await assertBoundary();
     await assertAuthority();
     await assertBoundary();
-    committing = true; await client.query('COMMIT'); opened = false;
+    if(context.readUntil<=Date.now())throw new SecurityError('OUTPUT_NOT_ALLOWED');
+    committing = true; await client.query('COMMIT'); opened = false;committing=false;
+    // The commit was acknowledged, so an expired response is a disclosure
+    // denial, not an unknown commit. Mutation callers must retain their receipt.
+    if(context.readUntil<=Date.now())throw new SecurityError('OUTPUT_NOT_ALLOWED');
     return result;
   } catch (error) {
     if (opened && !committing) { try { await client.query('ROLLBACK'); } catch { await discard(); throw new Error('PostgreSQL business transaction rollback failed; connection discarded', { cause: error }); } }

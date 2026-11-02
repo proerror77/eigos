@@ -4,7 +4,7 @@ import { digest } from '../core/delegation.js';
 import { ownerKey, requireScope, taskIdSchema, type Principal } from '../core/domain.js';
 import { accessContextSchema, agentAccessGrantSchema, securityEnvelopeSchema, taskDataGrantSchema, SECURITY_CONTRACT, POLICY_VERSION } from '../security/contracts.js';
 import { SecurityError } from '../security/errors.js';
-import { postgresBusinessSchema } from './runtime-transaction.js';
+import { postgresBusinessSchema, postgresConstrainReadDeadline } from './runtime-transaction.js';
 import { postgresOntologyReadContext } from './ontology-release.js';
 import { roleAllows, roleSchema } from '../security/resource-role.js';
 import { currentKernelImplementation } from '../ontology/definition-store.js';
@@ -26,13 +26,23 @@ const bindingEvidenceSchema=z.strictObject({object:objectRefSchema,revision:z.nu
   projectionOrigin:z.strictObject({version:z.literal(1),contentDigest:sha,linksDigest:sha,inputDigest:sha}).optional(),
   sourceObservation:z.looseObject({programId:z.string().min(1).max(200),programDigest:sha,sourceBindingId:z.string().min(1).max(200)}).optional()});
 const observationSourceSchema=z.looseObject({programId:z.string().min(1).max(200),programDigest:sha,sourceBindingId:z.string().min(1).max(200)});
+type ReadOntology=Awaited<ReturnType<typeof postgresOntologyReadContext>>;
+const snapshots=new WeakMap<Client,{key:string;admission:Awaited<ReturnType<typeof postgresTaskReadGrant>>;ontology:Map<StagedKernelBuilder|undefined,Promise<ReadOntology>>}>();
+const snapshotKey=(principal:Principal,taskId:string,policyDigest:string)=>digest([principal,taskId,policyDigest]);
+function freezeData<T>(input:T):T {
+  if(input && typeof input==='object' && !Object.isFrozen(input)) {
+    for(const value of Object.values(input))freezeData(value);
+    Object.freeze(input);
+  }
+  return input;
+}
 
-/** Resolve a current agent task-read grant. The principal and policy digest
+/** Resolve current installation admission for task reads. The principal and policy digest
  * must come from trusted authentication and reviewed server configuration.
  * This is an internal admission check, not field/output authorization. All writers must use the business
  * transaction fence; callers must recheck before returning protected data. */
-export async function postgresTaskReadGrant(client: Client, principal: Principal, taskId: string, policyDigest: string) {
-  const schema = postgresBusinessSchema(client), q = `"${schema}"`, id = taskIdSchema.parse(taskId);
+export async function postgresAgentReadAdmission(client: Client, principal: Principal, policyDigest: string) {
+  const schema = postgresBusinessSchema(client), q = `"${schema}"`;
   requireScope(principal,'tasks:read');
   if (!/^[a-f0-9]{64}$/.test(policyDigest)) throw new Error('Invalid PostgreSQL policy digest');
   const actor = accessContextSchema.parse(principal.access), owner = ownerKey(principal);
@@ -54,13 +64,30 @@ export async function postgresTaskReadGrant(client: Client, principal: Principal
   if (row.installation_id !== actor.installationId || row.owner !== owner || row.member_id !== actor.memberId || row.client_id !== actor.clientId
     || row.state !== 'active' || row.fenced !== false || !Number.isSafeInteger(subjectExpiry) || subjectExpiry <= now) throw new SecurityError('ACCESS_REVOKED');
   if (!Number.isSafeInteger(epoch) || epoch !== actor.authEpoch) throw new SecurityError('POLICY_CHANGED');
-  const parentRows = await client.query(`SELECT revision,state,CASE WHEN octet_length(body)<=1048576 THEN body END AS body
+  const parentRows = await client.query(`SELECT revision,state,expires_at,CASE WHEN octet_length(body)<=1048576 THEN body END AS body
     FROM ${q}.security_grants WHERE installation_id=$1 AND kind='agent_access' AND state='active' AND expires_at>$2 LIMIT 2`,[actor.installationId,now]);
   if (parentRows.rowCount !== 1 || parentRows.rows[0].body === null) throw new SecurityError('AUTHORIZATION_REQUIRED');
   const parentRow = parentRows.rows[0], parent = agentAccessGrantSchema.parse({ ...JSON.parse(String(parentRow.body)), revision:Number(parentRow.revision),status:parentRow.state });
   if (parent.id !== actor.agentGrant.id || parent.revision !== actor.agentGrant.revision) throw new SecurityError('POLICY_CHANGED');
   if (parent.ownerKey !== owner || parent.memberId !== actor.memberId || parent.installationId !== actor.installationId) throw new SecurityError('ACCESS_REVOKED');
-  const rows = await client.query(`SELECT d.revision,d.state,CASE WHEN octet_length(d.body)<=1048576 THEN d.body END AS body
+  const validUntil=Math.min(managerExpiry,subjectExpiry,Number(parentRow.expires_at),Date.parse(parent.expiresAt));
+  if(!Number.isSafeInteger(validUntil) || validUntil<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');
+  return {actor,parent,policyRevision:revision,validUntil};
+}
+
+export async function withPostgresAgentRead<T>(client:Client,principal:Principal,policyDigest:string,
+  action:(admission:Awaited<ReturnType<typeof postgresAgentReadAdmission>>)=>Promise<T>):Promise<T> {
+  const captured=structuredClone(principal),before=await postgresAgentReadAdmission(client,captured,policyDigest);
+  const result=await action(before),after=await postgresAgentReadAdmission(client,captured,policyDigest);
+  if(digest(before)!==digest(after))throw new SecurityError('POLICY_CHANGED');
+  postgresConstrainReadDeadline(client,after.validUntil);
+  return result;
+}
+
+export async function postgresTaskReadGrant(client: Client, principal: Principal, taskId: string, policyDigest: string) {
+  const id=taskIdSchema.parse(taskId),base=await postgresAgentReadAdmission(client,principal,policyDigest);
+  const {actor,parent}=base,owner=ownerKey(principal),q=`"${postgresBusinessSchema(client)}"`,now=Date.now();
+  const rows = await client.query(`SELECT d.revision,d.state,d.expires_at,CASE WHEN octet_length(d.body)<=1048576 THEN d.body END AS body
     FROM ${q}.security_grants d JOIN ${q}.jobs j ON j.id=$1 AND j.owner=d.owner
     CROSS JOIN LATERAL (SELECT ${q}.eigos_try_jsonb(d.body) AS value OFFSET 0) data
     CROSS JOIN LATERAL (SELECT ${q}.eigos_try_jsonb(j.body) AS value OFFSET 0) job
@@ -83,17 +110,43 @@ export async function postgresTaskReadGrant(client: Client, principal: Principal
     || grant.parentGrant.id !== parent.id || grant.parentGrant.revision !== parent.revision || grant.purpose !== 'delegated_task'
     || !grant.operations.includes('task.result.read') || grant.inputs.length > 0 && !grant.operations.includes('member_asset.read')
     || !grant.channels.includes('agent_response') || !parent.channels.includes('agent_response')) throw new SecurityError('AUTHORIZATION_REQUIRED');
-  return { actor, parent, grant, policyRevision:revision };
+  const validUntil=Math.min(base.validUntil,Number(grantRow.expires_at),Date.parse(grant.expiresAt));
+  if(!Number.isSafeInteger(validUntil) || validUntil<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');
+  return { ...base,grant,validUntil };
 }
 
 /** Recheck admission after an awaited read. The action must additionally apply
  * object/field and recipient policy before exposing protected output. */
 export async function withPostgresTaskReadGrant<T>(client: Client, principal: Principal, taskId: string, policyDigest: string, action: (admission: Awaited<ReturnType<typeof postgresTaskReadGrant>>) => Promise<T>): Promise<T> {
   const captured = structuredClone(principal);
+  const snapshot=snapshots.get(client);
+  if(snapshot) {
+    postgresBusinessSchema(client);
+    if(snapshot.key!==snapshotKey(captured,taskId,policyDigest))throw new SecurityError('AUTHORIZATION_REQUIRED');
+    if(snapshot.admission.validUntil<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');
+    const result=await action(snapshot.admission);
+    if(snapshot.admission.validUntil<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');
+    return result;
+  }
   const before = await postgresTaskReadGrant(client,captured,taskId,policyDigest), result = await action(before);
   const after = await postgresTaskReadGrant(client,captured,taskId,policyDigest);
-  if (digest(before) !== digest(after)) throw new SecurityError('POLICY_CHANGED');
+  if (digest(before) !== digest(after) || after.validUntil<=Date.now()) throw new SecurityError('POLICY_CHANGED');
   return result;
+}
+
+/** Reuse immutable admission only inside one read-only callback on the locked
+ * transaction. Nested helpers keep their role/source/recipient time checks;
+ * the outer grant is freshly resolved again after the callback closes. */
+export async function withPostgresTaskReadSnapshot<T>(client:Client,principal:Principal,taskId:string,policyDigest:string,
+  action:(admission:Awaited<ReturnType<typeof postgresTaskReadGrant>>)=>Promise<T>):Promise<T> {
+  if(snapshots.has(client))throw new Error('Nested PostgreSQL read snapshots are not supported');
+  const captured=structuredClone(principal);
+  return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission=>{
+    const snapshot={key:snapshotKey(captured,taskId,policyDigest),admission:freezeData(structuredClone(admission)),ontology:new Map<StagedKernelBuilder|undefined,Promise<ReadOntology>>()};
+    snapshots.set(client,snapshot);
+    try{return await action(snapshot.admission);}
+    finally{snapshots.delete(client);}
+  });
 }
 
 /** Check resource.view against the reviewed security model, as SQLite does.
@@ -103,7 +156,7 @@ export async function postgresTaskResourceViewValidUntil(client: Client, princip
   const captured = structuredClone(principal);
   const checked=await withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission => {
     const schema = postgresBusinessSchema(client);
-    await postgresOntologyReadContext(client,ownerKey(captured),{taskId},captured.scopes.includes('ontology:admin'),builder);
+    await postgresTaskReadOntology(client,captured,taskId,policyDigest,builder);
     const result = await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${schema}".security_roles WHERE subject_id IN ($1,$2) LIMIT 257`,[admission.actor.memberId,admission.actor.installationId]);
     if (result.rows.length > 256 || result.rows.some(row=>row.body===null)) throw new SecurityError('OUTPUT_NOT_ALLOWED');
     const roles = result.rows.map(row=>roleSchema.parse(JSON.parse(String(row.body))));
@@ -122,7 +175,7 @@ export async function postgresTaskResourceViewAllowed(client: Client, principal:
 export async function postgresTaskFieldClassification(client: Client, principal: Principal, taskId: string, policyDigest: string, type: string, field: string, builder?: StagedKernelBuilder): Promise<string> {
   const captured=structuredClone(principal);
   return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async()=>{
-    await postgresOntologyReadContext(client,ownerKey(captured),{taskId},captured.scopes.includes('ontology:admin'),builder);
+    await postgresTaskReadOntology(client,captured,taskId,policyDigest,builder);
     return reviewedFieldPolicy(builder === undefined ? currentKernelImplementation() : stagedKernelComponents(builder).model,type,field);
   });
 }
@@ -150,8 +203,14 @@ export async function postgresTaskReadClearance(client: Client, principal: Princ
  * requires object, field, lineage and recipient checks before data leaves. */
 export async function postgresTaskReadOntology(client: Client, principal: Principal, taskId: string, policyDigest: string, builder?: StagedKernelBuilder) {
   const captured = structuredClone(principal);
-  return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,() =>
+  const read=()=>withPostgresTaskReadGrant(client,captured,taskId,policyDigest,() =>
     postgresOntologyReadContext(client,ownerKey(captured),{taskId},captured.scopes.includes('ontology:admin'),builder));
+  const snapshot=snapshots.get(client);
+  if(!snapshot)return read();
+  if(snapshot.key!==snapshotKey(captured,taskId,policyDigest))throw new SecurityError('AUTHORIZATION_REQUIRED');
+  let pending=snapshot.ontology.get(builder);
+  if(!pending){pending=read();snapshot.ontology.set(builder,pending);}
+  return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,()=>pending!);
 }
 
 /** Internal restriction inputs for a current object revision. This does not
@@ -163,7 +222,7 @@ export async function postgresTaskCurrentLabels(client: Client, principal: Princ
   if(!Number.isSafeInteger(revision) || revision<1)throw new SecurityError('POLICY_CHANGED');
   const relevant=[...new Set([...requested,...requested.flatMap(field=>projectionInputs(ref.type,field))])];
   return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async()=>{
-    await postgresOntologyReadContext(client,ownerKey(captured),{taskId},captured.scopes.includes('ontology:admin'),builder);
+    await postgresTaskReadOntology(client,captured,taskId,policyDigest,builder);
     const schema=postgresBusinessSchema(client),owner=ownerKey(captured);
     const object=await client.query(`SELECT revision FROM "${schema}".ontology_objects WHERE owner=$1 AND type=$2 AND id=$3`,[owner,ref.type,ref.id]);
     if(object.rowCount!==1 || String(object.rows[0].revision)!==String(revision))throw new SecurityError('POLICY_CHANGED');
@@ -184,7 +243,7 @@ export async function postgresTaskDirectBindingEvidence(client: Client, principa
   input: ObjectRef, builder?: StagedKernelBuilder) {
   const captured=structuredClone(principal), ref=objectRefSchema.parse(input);
   return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission=>{
-    await postgresOntologyReadContext(client,ownerKey(captured),{taskId},captured.scopes.includes('ontology:admin'),builder);
+    await postgresTaskReadOntology(client,captured,taskId,policyDigest,builder);
     const schema=postgresBusinessSchema(client),owner=ownerKey(captured);
     const result=await client.query(`SELECT b.owner,b.task_id,b.request_revision,b.object_revision,
       CASE WHEN octet_length(b.body)<=1048576 THEN b.body END AS body
@@ -213,7 +272,7 @@ export async function postgresTaskRetainedBindingEvidence(client:Client,principa
   if(typeof historicalCapability!=='boolean')throw new Error('Invalid retained binding mode');
   const captured=structuredClone(principal),ref=objectRefSchema.parse(input),owner=ownerKey(captured);
   return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission=>{
-    await postgresOntologyReadContext(client,owner,{taskId},captured.scopes.includes('ontology:admin'),builder);
+    await postgresTaskReadOntology(client,captured,taskId,policyDigest,builder);
     if(await postgresTaskDirectBindingEvidence(client,captured,taskId,policyDigest,ref,builder))return undefined;
     const q=`"${postgresBusinessSchema(client)}"`;
     const rows=await client.query(`SELECT b.object_revision,CASE WHEN octet_length(b.body)<=1048576 THEN b.body END AS binding_body,
@@ -265,8 +324,8 @@ export async function postgresTaskRetainedBindingEvidence(client:Client,principa
 
 /** Check only the provider-source portion of a direct binding. Object roles,
  * field restrictions, provenance, lineage and recipient checks remain required. */
-export async function postgresTaskSourceObservationAllowed(client: Client, principal: Principal, taskId: string, policyDigest: string,
-  input: ObjectRef, builder?: StagedKernelBuilder):Promise<boolean> {
+export async function postgresTaskSourceObservationValidUntil(client: Client, principal: Principal, taskId: string, policyDigest: string,
+  input: ObjectRef, builder?: StagedKernelBuilder):Promise<number> {
   const captured=structuredClone(principal),ref=objectRefSchema.parse(input);
   const checked=await withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission=>{
     const direct=await postgresTaskDirectBindingEvidence(client,captured,taskId,policyDigest,ref,builder);
@@ -296,17 +355,25 @@ export async function postgresTaskSourceObservationAllowed(client: Client, princ
     }).filter(source=>source.parentGrant.id===admission.parent.id && source.parentGrant.revision===admission.parent.revision);
     return {origin,sources};
   });
-  return !!checked && sourceMatchesObservation(checked.sources.filter(source=>Date.parse(source.expiresAt)>Date.now()),checked.origin,ref.type);
+  if(!checked)return 0;
+  const now=Date.now();
+  return checked.sources.filter(source=>Date.parse(source.expiresAt)>now && sourceMatchesObservation([source],checked.origin,ref.type))
+    .reduce((latest,source)=>Math.max(latest,Date.parse(source.expiresAt)),0);
+}
+
+export async function postgresTaskSourceObservationAllowed(client: Client, principal: Principal, taskId: string, policyDigest: string,
+  input: ObjectRef, builder?: StagedKernelBuilder):Promise<boolean> {
+  return (await postgresTaskSourceObservationValidUntil(client,principal,taskId,policyDigest,input,builder))>Date.now();
 }
 
 /** Internal candidate fields for a binding, not permission to disclose.
  * Source, task membership, provenance, dependencies and output checks remain. */
 async function postgresTaskFieldCandidates(client: Client, principal: Principal, taskId: string, policyDigest: string,
-  input: ObjectRef, retained: boolean, builder?: StagedKernelBuilder) {
+  input: ObjectRef, retained: boolean, builder?: StagedKernelBuilder, historicalCapability = false) {
   const captured=structuredClone(principal),ref=objectRefSchema.parse(input);
   const checked=await withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission=>{
     const binding=retained
-      ? await postgresTaskRetainedBindingEvidence(client,captured,taskId,policyDigest,ref,false,builder)
+      ? await postgresTaskRetainedBindingEvidence(client,captured,taskId,policyDigest,ref,historicalCapability,builder)
       : await postgresTaskDirectBindingEvidence(client,captured,taskId,policyDigest,ref,builder);
     if(!binding)return undefined;
     if(binding.projectionOrigin && binding.sourceBindingId!=='task_context')throw new SecurityError('POLICY_CHANGED');
@@ -345,8 +412,8 @@ export async function postgresTaskDirectFieldCandidates(client: Client, principa
 /** Field candidates for retained evidence only. Source, task membership,
  * provenance, dependencies and output authorization remain mandatory. */
 export async function postgresTaskRetainedFieldCandidates(client: Client, principal: Principal, taskId: string, policyDigest: string,
-  input: ObjectRef, builder?: StagedKernelBuilder) {
-  return postgresTaskFieldCandidates(client,principal,taskId,policyDigest,input,true,builder);
+  input: ObjectRef, builder?: StagedKernelBuilder, historicalCapability = false) {
+  return postgresTaskFieldCandidates(client,principal,taskId,policyDigest,input,true,builder,historicalCapability);
 }
 
 /** Construct an edge reader only after its trusted kernel has finished loading.

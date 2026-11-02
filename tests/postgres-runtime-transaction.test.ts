@@ -4,8 +4,9 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { readFileSync } from 'node:fs';
 const clientOptions = () => process.env.EIGOS_TEST_PG_CA_FILE ? { ssl: { ca: readFileSync(process.env.EIGOS_TEST_PG_CA_FILE, 'utf8'), rejectUnauthorized: true } } : {};
-import { postgresBusinessTransaction } from '../packages/postgres/runtime-transaction.js';
+import { postgresBusinessTransaction, postgresConstrainReadDeadline } from '../packages/postgres/runtime-transaction.js';
 import { installPostgresAuthorityLock } from '../packages/postgres/authority-lock.js';
+import { PostgresDatabase } from '../packages/postgres/database.js';
 
 test('PostgreSQL business mutations fence authority, roll back and report uncertain commits', { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async () => {
   const client = new pg.Client(clientOptions()); await client.connect();
@@ -146,4 +147,54 @@ test('pipelined or unverified connections are rejected', async () => {
   const unknown = { pipeline: false, getTransactionStatus: () => null } as unknown as pg.Client;
   const unspecified = { getTransactionStatus: () => 'I' } as unknown as pg.Client;
   for (const client of [pipelined,unknown,unspecified]) await assert.rejects(postgresBusinessTransaction(client,'eigos_business_fixture',authority,async () => undefined), /idle, non-pipelined/);
+});
+
+test('protected reads are withheld if authority expires before or during commit acknowledgment', async () => {
+  const authority={id:'authority',revision:1,digest:'a'.repeat(64)};
+  for(const phase of ['before','during']) {
+    const originalNow=Date.now,start=originalNow();let now=start,started=false,committed=false,rolledBack=false,discarded=false;
+    const client={pipeline:false,getTransactionStatus:()=>started?'T':'I',
+      query:async(sql:string)=>{
+        if(sql==='BEGIN ISOLATION LEVEL SERIALIZABLE')started=true;
+        if(sql==='ROLLBACK'){started=false;rolledBack=true;}
+        if(sql==='COMMIT'){started=false;committed=true;now=start+20;}
+        if(sql.startsWith('SELECT pg_catalog.pg_current_xact_id'))return {rowCount:1,rows:[{id:'42'}]};
+        if(sql.startsWith('SELECT id,revision'))return {rowCount:1,rows:[{id:authority.id,revision:'1',configuration_digest:authority.digest}]};
+        return {rowCount:0,rows:[]};
+      },end:async()=>{discarded=true;}} as unknown as pg.Client;
+    Date.now=()=>now;
+    try {
+      await assert.rejects(postgresBusinessTransaction(client,'eigos_business_fixture',authority,async c=>{
+        postgresConstrainReadDeadline(c,start+10);
+        if(phase==='before')now=start+20;
+        return 'protected response';
+      }),error=>error instanceof Error && error.message==='OUTPUT_NOT_ALLOWED');
+      assert.equal(committed,phase==='during');assert.equal(rolledBack,phase==='before');assert.equal(discarded,false);
+      assert.throws(()=>postgresConstrainReadDeadline(client,start+1000),/active PostgreSQL business transaction/);
+    } finally {Date.now=originalNow;}
+  }
+});
+
+test('database runtime releases each lease once and evicts an uncertain connection without retrying', async () => {
+  for(const uncertain of [false,true]) {
+    let started=false,releases=0,evicted=false,connects=0,ends=0,writes=0,nextLeaseReleases=0;
+    const authority={id:'authority',revision:1,digest:'a'.repeat(64)};
+    const client={pipeline:false,getTransactionStatus:()=>started?'T':'I',release:(error?:Error|boolean)=>{releases++;evicted=error instanceof Error;client.release=()=>{nextLeaseReleases++;};},
+      query:async(sql:string)=>{
+        if(sql==='BEGIN ISOLATION LEVEL SERIALIZABLE')started=true;
+        if(sql==='COMMIT'){started=false;if(uncertain)throw new Error('lost commit response');}
+        if(sql==='ROLLBACK')started=false;
+        if(sql==='INSERT synthetic_task')writes++;
+        if(sql.startsWith('SELECT pg_catalog.pg_current_xact_id'))return {rowCount:1,rows:[{id:'42'}]};
+        if(sql.startsWith('SELECT id,revision'))return {rowCount:1,rows:[{id:'authority',revision:'1',configuration_digest:'a'.repeat(64)}]};
+        return {rowCount:0,rows:[]};
+      }} as unknown as pg.PoolClient;
+    const pool={connect:async()=>{connects++;return client;},end:async()=>{ends++;}} as unknown as Pick<pg.Pool,'connect'|'end'>;
+    const database=new PostgresDatabase(pool,'eigos_business_fixture',authority);authority.digest='b'.repeat(64);
+    const operation=()=>database.run(async c=>{await c.query('INSERT synthetic_task');return 'receipt';});
+    if(uncertain)await assert.rejects(operation(),/commit outcome is unknown/);else assert.equal(await operation(),'receipt');
+    assert.equal(releases,1);assert.equal(evicted,uncertain);assert.equal(connects,1);assert.equal(writes,1);assert.equal(nextLeaseReleases,0);
+    await database.close();await database.close();assert.equal(ends,1);
+    await assert.rejects(database.run(async()=>undefined),/runtime is closing/);assert.equal(connects,1);
+  }
 });

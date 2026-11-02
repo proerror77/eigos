@@ -1,23 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { once } from 'node:events';
-import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { setImmediate } from 'node:timers/promises';
-import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-import { createMcpExpressApp } from '@modelcontextprotocol/express';
-import { createMcpHandler } from '@modelcontextprotocol/server';
-import { toNodeHandler } from '@modelcontextprotocol/node';
-import { jsonRpcHandler } from '@a2a-js/sdk/server/express';
-import { AgentUser, A2AGateway, agentCard } from '../apps/gateway/a2a.js';
-import { createMcpServer } from '../apps/gateway/mcp.js';
 import type { GatewayTaskService } from '../apps/gateway/task-service.js';
-import { readConfig } from '../packages/core/config.js';
 import { JobStore } from '../packages/core/store.js';
 import { DomainError, type Job } from '../packages/core/domain.js';
 import { SecurityError } from '../packages/security/errors.js';
 import { LocalTasks } from './local-tasks.js';
 import { principal } from './backend-fixture.js';
+import { taskProtocolFixture } from './fixtures/task-protocol.js';
 
 // The real SQLite service and Worker are exercised through delayed protocol
 // operations. This tests asynchronous dispatch, not PostgreSQL persistence.
@@ -36,34 +27,10 @@ async function fixture() {
       };
     },
   }) as GatewayTaskService;
-  const server = createServer();
-  server.listen(0, '127.0.0.1'); await once(server, 'listening');
-  const address = server.address(); assert(address && typeof address !== 'string');
-  const base = `http://127.0.0.1:${address.port}`;
-  const config = readConfig({ EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'async-fixture-only-'.repeat(3), PUBLIC_URL: base, PORT: String(address.port), DATABASE_PATH: ':memory:' });
-  const app = createMcpExpressApp({ host: '127.0.0.1' });
-  const handler = createMcpHandler(() => createMcpServer(asynchronous, principal), { legacy: 'stateless', maxSubscriptions: 0 });
-  const http = toNodeHandler(handler);
-  app.all('/mcp', async (req, res) => { await http(req, res, req.body); });
-  const a2a = new A2AGateway(asynchronous, agentCard(config, tasks.services()));
-  app.use('/a2a', jsonRpcHandler({ requestHandler: a2a, userBuilder: async () => new AgentUser(principal) }));
-  server.on('request', app);
-  const client = new Client({ name: 'async-task-fixture', version: '1' });
-  await client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp')));
-  const rpc = async (method: string, params: object) => {
-    const response = await fetch(base + '/a2a', { method: 'POST', headers: { 'Content-Type': 'application/json', 'A2A-Version': '1.0' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: randomUUID(), method, params }) });
-    assert.equal(response.status, 200); return response.json();
-  };
-  const call = (name: string, args: Record<string, unknown>) => client.callTool({ name, arguments: args });
-  const job = async (name: string, args: Record<string, unknown>) => {
-    const result = await call(name, args); assert(!result.isError, JSON.stringify(result));
-    return (result.structuredContent as { result: Job }).result;
-  };
-  return { tasks, failures, rpc, call, job, close: async () => {
-    await client.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
-    await handler.close(); await tasks.close(); store.close();
-  } };
+  const protocol=await taskProtocolFixture(asynchronous,principal);
+  return {...protocol,tasks,failures,close:async()=>{
+    await protocol.close();await tasks.close();store.close();
+  }};
 }
 
 test('asynchronous task service preserves the same task across MCP, A2A and the local Worker', async () => {
