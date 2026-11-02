@@ -9,8 +9,15 @@
 - `/connect/agent.json`：公开连接信息，包含当前 origin、已配置的传输、会员／授权页、检查步骤及结果合同。没有客户身份、任务、来源凭据或访问令牌。
 - `/connect/eigos-delegate.tar.gz`：完整 Skill 文件夹，含主指引、按需参考、既有可选脚本及绑定当前 origin 的公开 `connection.json`。解压后按宿主规则导入或放入其 Skill 目录，再刷新宿主。
 - `/connect/SKILL.md`：可直接阅读的主指引；相对参考链接也可通过同一 `/connect/` 路径读取。
+- `/connect/manifest.json`：当前 Skill 版本、文件清单和摘要；不包含客户身份或凭据。完整包内带有同一清单及 `scripts/check_connection.py`。
+
+PA 可用自检脚本检查已安装目录与明确指定的当前 origin：`python3 <Skill目录>/scripts/check_connection.py --directory <Skill目录> --origin <当前实例origin>`。它只读取固定 Skill 文件和公开清单，不读取凭据、不创建任务。`fileIntegrity=verified` 与 `filesCurrent=true` 仅表示文件正确且与网站当前发布一致；`hostActivation=unconfirmed` 仍须刷新宿主并确认加载。从宿主实际加载的指引读取版本标记后，可加 `--loaded-marker <标记>`；该状态明确是宿主自报，不是服务端证明模型已经使用了 Skill。宿主不支持目录检查时如实报告不可用，不能用远端下载替代。随后仍须通过原生 MCP／既有 A2A 连接核验身份、会员与权限。
+
+新客户的第三方账号、Key、日历 Token 和付款信息由客户自己的 PA 保管。EIGOS 会员开通只建立会员及 PA 身份关系；EIGOS 的权限页审阅具体任务与数据协作范围，不是第三方登录页，也不接收新客户的供应商或付款凭据。需要某项服务时，PA 在自身支持的私有连接流程中引导本人授权，按当前受支持的 PA／Source 合同返回获准的最少结果。没有兼容的账号连接或来源桥接时报告缺少前置条件；不能借用服务器操作人的账号，也不能把 PA 自报的账号状态当作已核验业务结果。
 
 普通连接检查只读取运行身份、准入与服务定义，不创建业务任务、不要求供应商凭据。遇到缺少登录、会员、邀请或安装许可时，PA 使用返回的下一步和本人页面继续原登记。Foundation 的原生 MCP 只有在统一 authority 已登记该客户端时才作为公开接入方式列出；其他已配置的 Agent 使用既有 A2A／AgentConnector 登记。
+
+公开发现入口应支持非浏览器客户端。客户端可发送明确的 `User-Agent`（包内 Python 客户端及自检脚本已发送）；若边缘返回 `403/1010`，不能当作会员或任务授权不足。Cloudflare 的 Browser Integrity Check 可能拒绝默认或缺失的 User-Agent。运营方应只对本实例明确列出的公开发现与 Skill 下载路径、`GET`／`HEAD` 方法配置兼容规则；不扩大到 `/mcp`、`/a2a`、`/members`、`/agents`、`/tasks` 或任何写请求，不关闭全站身份验证、WAF 或限流。规则需要当前域名的配置权限，应用后分别用默认 Python、明确客户端标识及原生 PA 复查；本地 HTTP 测试不能证明线上边缘已放行。依据 [Cloudflare BIC 说明](https://developers.cloudflare.com/waf/tools/browser-integrity-check/)及[配置规则](https://developers.cloudflare.com/rules/configuration-rules/settings/)。
 
 Skill 的选择依据是实际服务意图：用户说“明天从家去机场，先帮我查车价”或“查一下出差住宿和交通”时，即使没有提到 EIGOS，也先检查当前可用服务；“网约车怎么计价”、旅行散文及明确排除委托的请求由 PA 正常处理。MCP 的服务端指引／工具描述与 A2A 发现说明提供相同的判断原则。自动选择仍依赖目标宿主的 Skill 加载与模型选择，需要在实际支持的 PA 上验收。
 
@@ -24,7 +31,7 @@ Skill 的选择依据是实际服务意图：用户说“明天从家去机场�
 
 客户的 Agent 从公开发现入口开始登记，Auth0 验证真实用户并签发令牌，EIGOS 校验会员资格、邀请和安装实例的停用状态。Gateway 不持有 Agent 的刷新令牌，也不另建 OAuth 授权服务器。
 
-需要本人服务账号的能力按当前模式走[会员自有账号授权](member-sources.md)。legacy 显式启用该入口后，发现文档列出 `sources:read`／`sources:write`，PA 经用户同意通过 `AgentConnector.connectSource` 的独立通道传输供应商凭据。foundation 使用已登记的 Source 与会员授权页，不提供该通用上传入口；未发现本人账号接入方式时报告缺少前置条件。Token 不进入模型或任务，EIGOS 登录与供应商账号授权分别管理。
+需要本人服务账号的能力按[PA 自有账号与来源授权](member-sources.md)处理。第三方登录、密钥与付款能力留在 PA；foundation 使用已登记的 Source 与会员授权页，不提供通用凭据上传入口。历史 legacy 的 `AgentConnector.connectSource` 是另一个显式兼容模式，不是新客户接入方案；新客户不能被引导向它上传供应商凭据。EIGOS 登录、任务数据许可和 PA 的第三方账号授权分别管理。
 
 ## 接入顺序
 

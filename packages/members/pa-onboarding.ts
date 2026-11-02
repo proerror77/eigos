@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
+import { createHash } from 'node:crypto';
 import type { Config } from '../core/config.js';
 import { inviteBetaCodexConfig } from './native-mcp.js';
 import { PA_DISCOVERY_GUIDANCE } from '../core/services.js';
@@ -8,9 +9,11 @@ import { MESSAGING_SCOPES } from '../agent-messaging/contracts.js';
 // The same reviewed files are used by the website, downloads and immutable releases.
 export const PA_SKILL_FILES = [
   'SKILL.md', 'references/a2a.md', 'references/relay.md', 'references/test-payments.md',
-  'scripts/eigos_a2a.py', 'scripts/eigos_test_payment.py',
+  'scripts/eigos_a2a.py', 'scripts/eigos_test_payment.py', 'scripts/check_connection.py',
 ] as const;
 export const PA_SKILL_DIRECTORY = 'integrations/grok/eigos-delegate';
+export const PA_SKILL_VERSION = '1.1.0';
+export const PA_SKILL_MARKER = `eigos-delegate@${PA_SKILL_VERSION}`;
 
 const nativeMcpAvailable = (c: Config) => !!c.OIDC_MCP_CLIENT_ID && (c.EIGOS_SECURITY_MODE !== 'foundation' || !!c.authority);
 
@@ -23,6 +26,10 @@ export function paConnectionInfo(c: Config) {
   const origin = c.PUBLIC_URL;
   return {
     version: 1, origin, skill: 'eigos-delegate', usage: PA_DISCOVERY_GUIDANCE, securityMode: c.EIGOS_SECURITY_MODE,
+    skillContract: { version: PA_SKILL_VERSION, marker: PA_SKILL_MARKER, manifest: `${origin}/connect/manifest.json`,
+      checkScript: 'scripts/check_connection.py', hostActivation: 'confirm_in_host', websiteUpdatesInstalledCopy: false },
+    accountCustody: { owner: 'pa', customerFlowCredentialsAccepted: false, paymentCredentialsAccepted: false,
+      nextAction: 'connect_service_in_pa', description: 'Service accounts, API keys and payment information stay in the customer PA. EIGOS membership and task/data-sharing permissions are separate.' },
     admissionPolicy: c.EIGOS_MEMBERSHIP_APPROVAL,
     ...(c.EIGOS_MESSAGING_ENABLED === 'true' ? { communication: { discovery: `${origin}/.well-known/eigos-communications`,
       permissions: `${origin}/members/communications`, optionalScopes: MESSAGING_SCOPES, serviceDelegation: 'explicit_only', receiving: 'pull', custody: 'eigos-service' } } : {}),
@@ -55,16 +62,28 @@ export function paConnectionInfo(c: Config) {
 export type PaConnectionInfo = ReturnType<typeof paConnectionInfo>;
 
 export function paBootstrapPrompt(c: Config): string {
-  return `请为我连接 EIGOS：${c.PUBLIC_URL}。\n读取 ${c.PUBLIC_URL}/connect/agent.json，使用我的 PA 支持的 MCP 或 A2A 方式连接，并按宿主规则安装、启用 eigos-delegate Skill。保留已有连接和任务，不将令牌或供应商凭据放入对话。\n由我完成本人登录、会员开通和必要的权限批准。先做只读连接检查，报告实际连接的实例、接入状态、当前可发现的服务及缺少的权限；不要为了测试连接创建业务任务。\n以后我提出实际出行查价、住宿查询、旅行安排、预约或其他适用服务需求时，先检查 EIGOS 当前能力，在允许的范围内委托，保留原任务并回读实际交付。纯知识问答和创意写作照常处理；我明确指定其他方式时遵从我的要求。`;
+  return `请为我连接 EIGOS：${c.PUBLIC_URL}。\n读取 ${c.PUBLIC_URL}/connect/agent.json，使用我的 PA 支持的 MCP 或 A2A 方式连接，并按宿主规则安装、启用 eigos-delegate Skill。保留已有连接和任务，不将令牌或供应商凭据放入对话。\n由我完成 EIGOS 登录、会员开通和必要的权限批准。第三方账号、Key 和付款信息留在我的 PA，不上传到 EIGOS；需要服务连接时，在 PA 的私有连接流程中处理。\n先做只读连接检查，分别报告 Skill 文件版本、宿主实际加载的版本、连接的实例、接入状态、当前可发现的服务及缺少的权限；不要为了测试连接创建业务任务。\n以后我提出实际出行查价、住宿查询、旅行安排、预约或其他适用服务需求时，先检查 EIGOS 当前能力，在允许的范围内委托，保留原任务并回读实际交付。纯知识问答和创意写作照常处理；我明确指定其他方式时遵从我的要求。`;
 }
 
 export function paSkillFiles(connection: PaConnectionInfo): Record<string, Buffer> {
   const directory = new URL(`../../${PA_SKILL_DIRECTORY}/`, import.meta.url);
   const files: Record<string, Buffer> = Object.fromEntries(PA_SKILL_FILES.map(name => [name, readFileSync(new URL(name, directory))]));
+  if (!files['SKILL.md']!.toString('utf8').includes(`Skill contract marker: ${PA_SKILL_MARKER}.`)) throw new Error('Skill contract version differs from its published manifest');
   files['SKILL.md'] = Buffer.from(files['SKILL.md']!.toString('utf8')
-    + `\n## This EIGOS connection\n\nUse ${connection.origin}. Read its public connection instructions at ${connection.links.guide}/agent.json. The adjacent connection.json contains public metadata only. Authenticate in the PA host; never put credentials in this file.\n`);
+    + `\n## This EIGOS connection\n\nSkill contract marker: ${PA_SKILL_MARKER}. Report this marker from the instructions actually loaded by your host; reading a website or a downloaded file alone does not prove activation.\nUse ${connection.origin}. Read its public connection instructions at ${connection.links.guide}/agent.json. The adjacent connection.json contains public metadata only. Authenticate in the PA host; never put credentials in this file.\n`);
   files['connection.json'] = Buffer.from(JSON.stringify(connection, null, 2) + '\n');
+  const entries = Object.entries(files).map(([path, body]) => ({ path, bytes: body.byteLength, sha256: createHash('sha256').update(body).digest('hex') }));
+  files['manifest.json'] = Buffer.from(JSON.stringify({ schema: 'eigos.skill-manifest/1', name: 'eigos-delegate', version: PA_SKILL_VERSION,
+    marker: PA_SKILL_MARKER, origin: connection.origin, files: entries,
+    packageDigest: createHash('sha256').update(JSON.stringify(entries)).digest('hex'),
+    hostActivation: 'not_attested_by_file_integrity' }, null, 2) + '\n');
   return files;
+}
+
+/** Keep private host instructions out of the canonical, integrity-checked package. */
+export function paSkillInstallFiles(connection: PaConnectionInfo, localInstructions: string) {
+  const files = paSkillFiles(connection);
+  return { files, handoff: files['SKILL.md']!.toString('utf8') + '\n' + localInstructions };
 }
 
 /** A small ustar download of the fixed skill files; no shell or install code runs. */
