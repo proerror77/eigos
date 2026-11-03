@@ -15,7 +15,9 @@ import type { Job, Principal } from '../../packages/core/domain.js';
 
 /** Loopback protocol fixture with an explicitly supplied authenticated context.
  * Identity/token verification itself is covered by the production app tests. */
-export async function taskProtocolFixture(tasks:TaskServicePort,principal:Principal) {
+export async function taskProtocolFixture(tasks:TaskServicePort,principal:Principal,options:{requestTimeoutMs?:number}={}) {
+  const timeout=options.requestTimeoutMs;
+  if(timeout!==undefined&&(!Number.isSafeInteger(timeout)||timeout<1000||timeout>300000))throw new Error('Invalid protocol fixture network wait');
   const server=createServer();server.listen(0,'127.0.0.1');await once(server,'listening');
   const address=server.address();assert(address && typeof address!=='string');
   const base=`http://127.0.0.1:${address.port}`;
@@ -30,9 +32,9 @@ export async function taskProtocolFixture(tasks:TaskServicePort,principal:Princi
   server.on('request',app);
   const client=new Client({name:'task-protocol-fixture',version:'1'});
   const close=async()=>{await client.close();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await handler.close();};
-  try {await client.connect(new StreamableHTTPClientTransport(new URL(base+'/mcp')));}
+  try {await client.connect(new StreamableHTTPClientTransport(new URL(base+'/mcp')),timeout===undefined?undefined:{timeout});}
   catch(error){await close();throw error;}
-  const call=(name:string,args:Record<string,unknown>)=>client.callTool({name,arguments:args});
+  const call=(name:string,args:Record<string,unknown>)=>client.callTool({name,arguments:args},timeout===undefined?undefined:{timeout});
   return {base,call,
     rpc:async(method:string,params:object)=>{
       const response=await fetch(base+'/a2a',{method:'POST',headers:{'Content-Type':'application/json','A2A-Version':'1.0'},
