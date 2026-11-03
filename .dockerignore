@@ -17,6 +17,8 @@
 !scripts/agent-request.mjs
 !scripts/agent-enroll.mjs
 !scripts/ontology-operator.mjs
+!scripts/relocate-primary.mjs
+!scripts/refresh-harness-login.mjs
 !integrations/
 !integrations/grok/
 !integrations/grok/eigos-delegate/

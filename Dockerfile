@@ -9,6 +9,7 @@ COPY apps ./apps
 COPY packages ./packages
 COPY scripts/build.mjs scripts/ontology.mjs scripts/release-artifacts.mjs ./scripts/
 COPY scripts/run-local.mjs scripts/agent-request.mjs scripts/agent-enroll.mjs scripts/ontology-operator.mjs ./scripts/
+COPY scripts/relocate-primary.mjs scripts/refresh-harness-login.mjs ./scripts/
 # build.mjs copies the actual PA Skill assets. Omitting this breaks npm run build.
 COPY integrations/grok/eigos-delegate ./integrations/grok/eigos-delegate
 COPY integrations/grok/eigos-native/client.mjs ./integrations/grok/eigos-native/client.mjs
