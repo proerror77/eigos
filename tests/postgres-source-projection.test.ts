@@ -7,7 +7,7 @@ import {digest} from '../packages/core/delegation.js';
 import type {AgentExecutionState,AgentActionPlan} from '../packages/ontology/agent-actions.js';
 import {DocumentAgentProgram} from '../packages/capabilities/document-agent.js';
 import {initializeDocumentProgram,prepareDocumentInvocationProgram,buildDocumentResult,projectDocumentProgram} from '../packages/capabilities/document-program.js';
-import {runGraphProgramAsync} from '../packages/ontology/graph-program.js';
+import {graphRead,runGraphProgramAsync} from '../packages/ontology/graph-program.js';
 import {templatePlanning} from '../packages/ontology/planning-contract.js';
 import {PostgresTaskBindings} from '../packages/postgres/task-bindings.js';
 import {PostgresWorkerStore} from '../packages/postgres/worker-store.js';
@@ -163,5 +163,23 @@ test('Worker graph commands commit original state and source bindings together a
     await x.pauseHeartbeat();
     await x.t.client.query(`UPDATE ${x.q}.work_claims SET expires_at=$1 WHERE job_id=$2`,[Date.now()-1,x.claim.job.id]);
     assert.deepEqual(await x.worker.project(x.claim,options,function*(){throw new Error('Expired command must not run');}),{applied:false});
+  }finally{await x.close();}
+});
+
+
+test('a graph command seals newly read model-only fields before returning any task output',local,async()=>{
+  const x=await fixture();try{
+    const place={type:'Place',id:randomUUID()},secret='SYNTHETIC_MODEL_ONLY_VALUE',receipt={type:'SourceReceipt',id:randomUUID()},at=new Date().toISOString();
+    const properties={placeId:place.id,displayTitle:'Synthetic source',name:secret};
+    await x.run(graph=>graph.ingest(x.f.owner,{objects:[{ref:place,properties},{ref:receipt,properties:{receiptId:receipt.id,displayTitle:'Synthetic receipt',sourceIdentity:'synthetic-source',sourceEventId:receipt.id,observedAt:at,evidenceLevel:'synthetic',scope:'public_locations',contentDigest:digest(properties),subjects:[{object:place,digest:digest(properties),linksDigest:digest([])}],safeSummary:'Synthetic source only'}}],links:[{type:'PlaceEvidence',from:place,to:receipt}]},{kind:'synthetic',id:'synthetic-projection-seal',observedAt:at}));
+    await x.t.client.query(`INSERT INTO ${x.q}.security_labels(owner,type,object_id,field,body) VALUES($1,'Place',$2,'name',$3)`,[x.f.owner,place.id,JSON.stringify({classification:'sensitive',requiredMarkings:['financial'],channels:['registered_model']})]);
+    const {policyDigest:_policy,inspectClaim:_inspect,builder:_builder,...options}=x.options;
+    const result=await x.worker.project(x.claim,options,function*({job}){
+      const object=yield* graphRead(x.f.owner,place);job.question=String(object.properties.name);job.updatedAt=new Date().toISOString();return true;
+    });assert(result.applied);
+    const seal=JSON.parse((await x.t.client.query(`SELECT body FROM ${x.q}.security_outputs WHERE owner=$1 AND task_id=$2 AND output_id='question'`,[x.f.owner,x.claim.job.id])).rows[0].body);
+    assert.deepEqual(seal.channels,['registered_model']);assert(seal.requiredMarkings.includes('financial'));
+    const view=await new PostgresTaskReadService(x.t.database,x.t.policy).get(x.principal,x.claim.job.id);
+    assert.equal(view.question,undefined);assert.equal(view.outputStatus,'restricted');assert(!view.messages.some(message=>message.text===secret));
   }finally{await x.close();}
 });

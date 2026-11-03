@@ -25,6 +25,7 @@ import {postgresRecordClaimRelease} from './claim-release.js';
 import {runGraphProgramAsync,type GraphProgram,type ProjectionMetadata} from '../ontology/graph-program.js';
 import type {ServiceRequest} from '../ontology/execution.js';
 import {withPostgresSourceProjection,type PostgresSourceProjectionOptions} from './source-projection.js';
+import {combineEnvelopes,type SecurityEnvelope} from '../security/envelope.js';
 
 export interface PostgresWorkerProjectionContext {
   readonly graph:ProjectionMetadata;
@@ -186,7 +187,7 @@ export class PostgresWorkerStore {
       if(result&&typeof result==='object'&&'then'in result)throw new Error('Worker mutation callback must not perform asynchronous work');
     },finish,modelEvidence);
   }
-  private async mutateCurrent(claim:WorkClaim,update:(job:Job,client:Client)=>Promise<void>,finish:boolean,modelEvidence?:RunEvidence){
+  private async mutateCurrent(claim:WorkClaim,update:(job:Job,client:Client)=>Promise<void>,finish:boolean,modelEvidence?:RunEvidence,additionalInfluence?:()=>SecurityEnvelope|undefined){
     const original=postgresWorkReference(claim);
     try{const committed=await this.db.run(async client=>{
       if(!await postgresClaimSnapshotMatches(client,original,this.policy)||!await this.db.inspectClaim(original,this.policy))return false;
@@ -196,8 +197,9 @@ export class PostgresWorkerStore {
       if(modelEvidence)await postgresRecordModelResponse(client,original,modelEvidence);
       await update(current,client);
       if(current.id!==original.job.id||current.revision!==revision||current.delegation?.request.revision!==request)throw new DomainError('CONFLICT','Worker cannot revise the owner request');
+      const added=additionalInfluence?.(),outputSeal=added?(seal?combineEnvelopes([seal,added]):added):seal;
       await store.save(original.owner,current);
-      if(seal)await postgresRecordWorkerOutputs(client,original.owner,current,seal);
+      if(outputSeal)await postgresRecordWorkerOutputs(client,original.owner,current,outputSeal);
       const after=await postgresWorkerAdmission(client,original.owner,original.job.id,this.policy);
       if(digest(before)!==digest(after))throw new LostClaim();
       const q=`"${postgresBusinessSchema(client)}"`;
@@ -221,15 +223,15 @@ export class PostgresWorkerStore {
    * writes and output seals share the original claim's fenced commit. */
   async project<T>(claim:WorkClaim,options:Omit<PostgresSourceProjectionOptions,'policyDigest'|'inspectClaim'|'builder'>,
     prepare:(context:PostgresWorkerProjectionContext)=>GraphProgram<T>,finish=false):Promise<{applied:false}|{applied:true;value:T}>{
-    const configured=structuredClone(options);let value:T;
+    const configured=structuredClone(options);let value:T,influence:SecurityEnvelope|undefined;
     const applied=await this.mutateCurrent(claim,async(job,client)=>{
       const intents=await new PostgresTaskStorage(client,this.kernel).intents(claim.owner,job.id);
       await withPostgresSourceProjection(client,claim,{...configured,policyDigest:this.policy,builder:this.kernel,inspectClaim:fence=>this.db.inspectClaim(fence,this.policy)},async graph=>{
         const program=prepare({job,intents,request:structuredClone(graph.request),graph:{model:graph.model,now:graph.now,releaseRef:graph.releaseRef,security:true}});
         if(!program||typeof program.next!=='function'||typeof program.throw!=='function')throw new Error('Worker projection requires a synchronous graph program');
         value=await runGraphProgramAsync(graph,program);
-      });
-    },finish);
+      },approved=>{influence=influence?combineEnvelopes([influence,approved]):approved;});
+    },finish,undefined,()=>influence);
     return applied?{applied:true,value:value!}:{applied:false};
   }
 }

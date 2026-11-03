@@ -53,7 +53,7 @@ export type PostgresSourceProjectionGraph={ [K in SourceMethod]:(...args:Paramet
  * Every read is admitted; every write binds the actual configured source and
  * inherited input restrictions. There is no raw/private read fallback. */
 export async function withPostgresSourceProjection<T>(client:Client,input:PostgresWorkReference,options:PostgresSourceProjectionOptions,
-  action:(graph:PostgresSourceProjectionGraph)=>Promise<T>):Promise<T>{
+  action:(graph:PostgresSourceProjectionGraph)=>Promise<T>,onInfluence?:(envelope:SecurityEnvelope)=>void):Promise<T>{
   const schema=postgresBusinessSchema(client),token=postgresBusinessToken(client),q=`"${schema}"`,claim=postgresWorkReference(input);
   if(claim.recovery||claim.job.state!=='working')throw new SecurityError('ACCESS_REVOKED');
   options={...options,programRef:{...options.programRef}};
@@ -99,7 +99,8 @@ export async function withPostgresSourceProjection<T>(client:Client,input:Postgr
     withPostgresWorkerEvidenceAuthorization(client,claim,options.policyDigest,(auth,admission,principal)=>
       withPostgresPlanningReadGraph(client,principal,request.id,options.policyDigest,auth,admission,async graph=>{
         const result=await operation(graph),influence=graph.evidence();
-        if(influence){const approved=await auth.authorizeEvidence(influence);await client.query(`INSERT INTO ${q}.security_reads(grant_id,digest,body) VALUES($1,$2,$3) ON CONFLICT(grant_id,digest) DO NOTHING`,[admission.grant.id,digest(approved),JSON.stringify(approved)]);}
+        if(influence){const approved=await auth.authorizeEvidence(influence);await client.query(`INSERT INTO ${q}.security_reads(grant_id,digest,body) VALUES($1,$2,$3) ON CONFLICT(grant_id,digest) DO NOTHING`,[admission.grant.id,digest(approved),JSON.stringify(approved)]);
+          onInfluence?.(structuredClone(approved));}
         return result;
       },options.builder),options.builder,options.modelChannel,options.inspectClaim);
   const permission=async(type:string)=>withPostgresWorkerEvidenceAuthorization(client,claim,options.policyDigest,async(_auth,_admission,principal)=>{
@@ -184,6 +185,10 @@ export async function withPostgresSourceProjection<T>(client:Client,input:Postgr
     read:(...args:Parameters<GraphStorage['read']>)=>serial(()=>{if(++reads>1000)throw new SecurityError('OUTPUT_NOT_ALLOWED');return read(graph=>graph.read(...args));}),
     query:(...args:Parameters<GraphStorage['query']>)=>serial(()=>read(graph=>graph.query(...args))),related:(...args:Parameters<GraphStorage['related']>)=>serial(()=>read(graph=>graph.related(...args))),relationshipDigest:(...args:Parameters<GraphStorage['relationshipDigest']>)=>serial(()=>read(graph=>graph.relationshipDigest(...args))),
     ingest:(...args:Parameters<GraphStorage['ingest']>)=>serial(()=>ingest(...args)),readPrivate:()=>{throw new SecurityError('AUTHORIZATION_REQUIRED');},containsLinks:()=>{throw new SecurityError('AUTHORIZATION_REQUIRED');},evidencePropertiesDigest:()=>{throw new SecurityError('AUTHORIZATION_REQUIRED');},tombstone:()=>{throw new SecurityError('AUTHORIZATION_REQUIRED');}});
+  // Capture admitted original-request/history influence before the mapper can
+  // change its own source projections. Later reads append their exact approved
+  // snapshots; never reinterpret an older read as the new written revision.
+  if(onInfluence)onInfluence(structuredClone(await evidence()));
   const frame=`source_frame_${randomUUID().replaceAll('-','')}`;await client.query(`SAVEPOINT ${frame}`);
   try{const result=await action(driver);if(pending){open=false;await queue;throw new Error('Source projection callback must await every storage operation');}await source();await client.query(`RELEASE SAVEPOINT ${frame}`);return result;}
   catch(error){open=false;await queue;await client.query(`ROLLBACK TO SAVEPOINT ${frame}`);await client.query(`RELEASE SAVEPOINT ${frame}`);throw error;}

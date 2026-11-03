@@ -6011,7 +6011,7 @@
     {
       "id": "postgres-worker-store",
       "file": "packages/postgres/worker-store.ts",
-      "sourceDigest": "7f423a21bdb1dee1b62c3a56a3cd2de9e490a730dbbdeb58125544dabfb73675",
+      "sourceDigest": "e7f1e104a01bb9a8db7c313c020fbb5729bb3514ab03ee9efdf6e413271052ec",
       "channels": [
         "internal"
       ],
@@ -6566,7 +6566,7 @@
     {
       "id": "postgres-source-projection",
       "file": "packages/postgres/source-projection.ts",
-      "sourceDigest": "e6a665924497b1fb6c3e2578405f2e0b441ef58b04ba5a0d1b49fd7e36da0bc2",
+      "sourceDigest": "712e0a45938bd8f9e08130b24cd12cd898fdf960daf763469389df50f0a68e32",
       "channels": [
         "internal"
       ],
