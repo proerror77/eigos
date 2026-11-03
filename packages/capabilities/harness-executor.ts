@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import { mkdtemp, open, rm, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
+import { StringDecoder } from 'node:string_decoder';
 import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import type { Job } from '../core/domain.js';
@@ -95,6 +96,8 @@ export class HarnessExecutor implements Executor {
     this.securityChannelId = harnessSecurityChannel(this.configuration.credentialKind);
   }
 
+  async assertReady(): Promise<void> { await credential(this.configuration); }
+
   async run(job: Job, signal: AbortSignal) {
     const response = await this.runStructured(documentPrompt(job), documentOutputSchema, signal, { toolFree: true });
     return { output: decisionSchema.parse(response.output), evidence: response.evidence };
@@ -104,7 +107,7 @@ export class HarnessExecutor implements Executor {
     signal.throwIfAborted();
     if (options.toolFree && options.mcp) throw new Error('A tool-free Harness invocation cannot attach MCP');
     const id = randomUUID(), sessionId = 'eigos-' + id, startedAt = new Date().toISOString(), started = performance.now();
-    const recorder = modelUsageRecorder(); recorder?.begin(id, 'harness-sdk', startedAt);
+    const recorder = modelUsageRecorder(); await recorder?.begin(id, 'harness-sdk', startedAt);
     const usage: Record<string, number> = {};
     let directory: string | undefined, recorded: RunEvidence | undefined, success = false;
     const model = this.configuration.model ?? (this.configuration.credentialKind === 'api-key' ? 'deepseek-flash' : 'gpt-6-luna');
@@ -120,6 +123,7 @@ export class HarnessExecutor implements Executor {
         cwd: directory, env: { ...base, HOME: directory, DSH_HOME: join(directory, 'dsh'), EIGOS_HARNESS_MODEL_TOKEN: modelToken },
         stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32',
       });
+      const decoder = new StringDecoder('utf8');
       let seq = 0, bytes = 0, buffer = '', failure: Error | undefined, exited = false;
       let finalText: string | undefined, finalReason: unknown, turns = 0, promptRead = false;
       const readMessages = new Set<string>();
@@ -144,7 +148,7 @@ export class HarnessExecutor implements Executor {
       child.stdout.on('data', (chunk: Buffer) => {
         bytes += chunk.length;
         if (bytes > 2_000_000) { fail('Harness output limit reached'); return; }
-        buffer += chunk.toString();
+        buffer += decoder.write(chunk);
         let end: number;
         while ((end = buffer.indexOf('\n')) >= 0) {
           const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
@@ -235,7 +239,7 @@ export class HarnessExecutor implements Executor {
         stop('SIGKILL'); await closed;
       }
     } finally {
-      try { recorder?.finish(id, recorded ?? { id, runtime: 'harness-sdk', startedAt, completedAt: new Date().toISOString(), model, usage }, success ? 'completed' : signal.aborted ? 'interrupted' : 'failed'); }
+      try { await recorder?.finish(id, recorded ?? { id, runtime: 'harness-sdk', startedAt, completedAt: new Date().toISOString(), model, usage }, success ? 'completed' : signal.aborted ? 'interrupted' : 'failed'); }
       finally { if (directory) await rm(directory, { recursive: true, force: true }); }
     }
   }

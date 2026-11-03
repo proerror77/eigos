@@ -33,6 +33,15 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   }
   if(mode==='tool')event('tool/call',{name:'bash',callId:'forbidden',arguments:'{}'});
   if(mode==='output-limit'){console.log('x'.repeat(2100000));return;}
+  if(mode==='split-utf8'){
+   const text=JSON.stringify({message:'东京你好 👋🧪'});
+   const frame=Buffer.from(JSON.stringify({jsonrpc:'2.0',method:'session.event',params:{sessionId:session,event:{type:'assistant/message',data:{message:{role:'assistant',content:[{type:'text',text}]}}}}})+'\n');
+   const chinese=frame.indexOf(Buffer.from('京'))+1, emoji=frame.indexOf(Buffer.from('👋'))+2;
+   process.stdout.write(frame.subarray(0,chinese));
+   setTimeout(()=>{process.stdout.write(frame.subarray(chinese,emoji));setTimeout(()=>{
+    process.stdout.write(frame.subarray(emoji));event('turn/end',{turn:1,reason:{kind:'completed'}});reply(q.id,{});
+   },30);},30);return;
+  }
   const output=mode==='bad-json'?'invalid':JSON.stringify({ok:mode!=='bad-schema'});
   event('assistant/message',{message:{role:'assistant',content:[{type:'text',text:output}]},usage:{inputTokens:3,outputTokens:2}});
   if(mode!=='no-completion')event('turn/end',{turn:1,reason:{kind:mode==='failed'?'failed':'completed'}});
@@ -46,6 +55,37 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
     close: () => rmSync(root, { recursive: true, force: true }) };
 }
 const schema = { type: 'object', properties: { ok: { const: true } }, required: ['ok'], additionalProperties: false };
+
+test('Harness preserves Chinese and emoji split inside UTF-8 bytes across stdout chunks', async t => {
+  const f = fixture('split-utf8'); t.after(f.close);
+  const textSchema = { type: 'object', properties: { message: { type: 'string' } }, required: ['message'], additionalProperties: false };
+  const result = await f.model.runStructured('synthetic', textSchema, t.signal, { toolFree: true });
+  assert.deepEqual(result.output, { message: '东京你好 👋🧪' });
+});
+
+test('Harness waits for durable dispatch acknowledgement and accounting before returning', async t => {
+  const f = fixture(); t.after(f.close);
+  let admit!: () => void, finish!: () => void, began!: () => void, accounting!: () => void;
+  const admitted = new Promise<void>(resolve => { admit = resolve; });
+  const finished = new Promise<void>(resolve => { finish = resolve; });
+  const started = new Promise<void>(resolve => { began = resolve; });
+  const ending = new Promise<void>(resolve => { accounting = resolve; });
+  let settled = false;
+  const pending = withModelUsage({ begin: async () => { began(); await admitted; }, finish: async () => { accounting(); await finished; } },
+    () => f.model.runStructured('synthetic', schema, t.signal, { toolFree: true })).finally(() => { settled = true; });
+  t.after(() => { admit(); finish(); });
+  await started; assert(!existsSync(f.log), 'No model process before the durable begin acknowledgement');
+  admit(); await ending; assert.equal(settled, false, 'Completion must wait for accounting acknowledgement');
+  finish(); assert.deepEqual((await pending).output, { ok: true });
+  assert(!existsSync(f.boot().home));
+});
+
+test('Harness never dispatches when the durable begin acknowledgement fails or is unknown', async t => {
+  const f = fixture(); t.after(f.close);
+  await assert.rejects(withModelUsage({ begin: async () => { throw new Error('Commit acknowledgement unknown'); }, finish: () => { assert.fail('No admitted dispatch'); } },
+    () => f.model.runStructured('synthetic', schema, t.signal)), /Commit acknowledgement unknown/);
+  assert(!existsSync(f.log));
+});
 
 test('Harness confines the original turn, credentials, profile and receipt to its invocation', async t => {
   const f = fixture(); t.after(f.close);

@@ -4376,12 +4376,12 @@
     {
       "id": "primary-deployment",
       "file": "scripts/deploy-primary.mjs",
-      "sourceDigest": "197fc8777e0f4983c4fb75c32c6095dd7f386117effeb3dcf1a15727dff9eea7",
+      "sourceDigest": "683e0044233b4e8b4f16251f656be7d9d5ee27b8a8c29d648c9a9e21a0ec8559",
       "channels": [
         "operator_cli"
       ],
       "content": "Single managed primary runtime and immutable release",
-      "currentControl": "Owned config, stopped legacy profiles and bounded readiness matching healthy status, authority and immutable release. Preflight checks the selected Codex or recipient-specific Harness model channel and uses its explicit executable path; no policy is installed or widened.",
+      "currentControl": "Owned clean immutable release; read-only existing Foundation/JWT stores and current recipient qualification; exact Harness runtime and credential readiness; non-root Linux user manager or launchd; full graceful-stop budget and bounded authority/build readiness. No policy is installed or widened.",
       "targetControl": "Owned config, stopped legacy profiles and bounded readiness matching healthy status, authority and immutable release",
       "stage": "S5"
     },
@@ -5222,7 +5222,7 @@
       ],
       "content": "Immutable runtime manifest including complete public Skill assets",
       "currentControl": "Current source-derived runtime files and explicit reviewed Skill assets; no private configuration or credentials included",
-      "sourceDigest": "7da80e3413b6f265ca57213a70fa5410eafeb7b66f4f8f8bb5cc036bab266eec",
+      "sourceDigest": "62b0d4b396e3f983588166bcc36112b0ca010f60f59e9cb06778343ba89ed89a",
       "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
       "stage": "S5"
     },
@@ -5424,15 +5424,80 @@
     {
       "id": "harness-executor",
       "file": "packages/capabilities/harness-executor.ts",
-      "sourceDigest": "96ad0c2a03fa42a12887d6eb0fe8115e8891f40086d0e68d234196eba738f5f3",
+      "sourceDigest": "b78e41bae191276cff3366f3144919ad29e280c731d43354e5305de01ce1a73a",
       "channels": [
         "registered_model",
         "private_file"
       ],
       "content": "Task-bound Harness SDK Executor Session, private current model credential and actual Ontology MCP receipts",
-      "currentControl": "Distinct GPT OAuth and DeepSeek recipient channel identities; isolated invocation home and single original completed turn; no shell, filesystem or working-directory tools; only Worker loopback MCP operations; private credential-file checks; OAuth refresh remains with the original login; schema validation and process-group teardown before releasing the invocation. Recipient configuration is snapshotted before deriving the channel identity.",
+      "currentControl": "Distinct GPT OAuth and DeepSeek recipient channel identities; isolated invocation home and single original completed turn; no shell, filesystem or working-directory tools; only Worker loopback MCP operations; private credential-file checks; OAuth refresh remains with the original login; schema validation and process-group teardown before releasing the invocation. Recipient configuration is snapshotted before deriving the channel identity. Streaming UTF-8 preserves split characters; waits for durable pre-dispatch and accounting acknowledgements; acknowledgement failure cannot dispatch.",
       "targetControl": "Current model-channel approval and task data/lease fences remain independent of Harness output; no second formal task or policy authority",
       "stage": "S3"
+    },
+    {
+      "id": "primary-service-manager",
+      "file": "packages/deployment/service-manager.ts",
+      "channels": [
+        "operator_cli"
+      ],
+      "content": "Owned launchd or systemd user primary service",
+      "currentControl": "Non-root Linux owner bus and lingering; rejects active competing formal services; literal unit arguments, private mask, process-group shutdown with full recovery budget",
+      "targetControl": "Single authority; no independent task queue or credential in unit arguments",
+      "stage": "S5",
+      "sourceDigest": "c583a4eb628cd611795be889ceb4284f4be7f35b03cea9fa63f14fdd8ebe7185"
+    },
+    {
+      "id": "primary-deployment-preflight",
+      "file": "packages/deployment/preflight.ts",
+      "channels": [
+        "operator_cli",
+        "private_file",
+        "sqlite"
+      ],
+      "content": "Read-only primary deployment eligibility",
+      "currentControl": "Owned private files and runtime paths; existing Foundation/JWT authority and both database integrity checks; current recipient qualification; no store constructor, migrations or grants",
+      "targetControl": "Deployment inspection cannot bootstrap permissions or create missing stores",
+      "stage": "S5",
+      "sourceDigest": "1d0ec488d2b38b3fe54656b8f344718aa810213a3f9156dae6331932f91ead01"
+    },
+    {
+      "id": "primary-ingress-readiness",
+      "file": "packages/deployment/ingress-readiness.ts",
+      "channels": [
+        "operator_cli",
+        "http"
+      ],
+      "content": "Independent registered-ingress identity and authentication readback",
+      "currentControl": "Bounded requests, response size and streaming UTF-8; exact authority/release/discovery and unauthenticated MCP/A2A refusal; no login, grants, task creation or forwarding override",
+      "targetControl": "Frontend verification remains separate from authorized same-task and business acceptance",
+      "stage": "S5",
+      "sourceDigest": "c266d9d88702e7130218bd38516d579922d024f8144850b8993b0f606cfd8688"
+    },
+    {
+      "id": "primary-relocation",
+      "file": "packages/deployment/relocation.ts",
+      "channels": [
+        "operator_cli",
+        "private_file",
+        "sqlite"
+      ],
+      "content": "Closed primary snapshot relocation preserving the original runtime authority",
+      "currentControl": "Exact snapshot digests, closed private copies and integrity; refuses active ownership and inconsistent member identities; preserves task bodies, operation keys, releases and grant expiry; same authority ID with one revision fence and immutable relocation receipts",
+      "targetControl": "No source writes, new permissions, replay or automatic activation; only one formal writer during operator handoff",
+      "stage": "S5",
+      "sourceDigest": "b10273ae8d33226853f6ff8d3357578970548aa18b7ddd4f68ca3f660187d339"
+    },
+    {
+      "id": "primary-relocation-cli",
+      "file": "scripts/relocate-primary.mjs",
+      "channels": [
+        "operator_cli"
+      ],
+      "content": "Explicit reviewed primary relocation input and apply gate",
+      "currentControl": "Private input with exact fields, owned source authority and expected source digest; default preview; never starts a service or switches the frontend",
+      "targetControl": "Production handoff and business acceptance remain separately authorized",
+      "stage": "S5",
+      "sourceDigest": "882aeac5a7e9c3b43d85f258acbb6a320131fa38302861b4215388e8168181fe"
     }
   ]
 }

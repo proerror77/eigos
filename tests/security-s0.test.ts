@@ -28,10 +28,13 @@ test('S0 inventories every definition and nested subtree without changing runtim
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
   assert.equal(report.counts.objectTypes, 202); assert.equal(report.counts.properties, 1852); assert.equal(report.counts.interfaces, 14);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 204);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 209);
   const harness = report.surfaces.find(surface => surface.id === 'harness-executor');
   assert(harness); assert.equal(harness.file, 'packages/capabilities/harness-executor.ts');
   assert.deepEqual(harness.channels, ['registered_model', 'private_file']);
+  for (const id of ['primary-service-manager', 'primary-deployment-preflight', 'primary-ingress-readiness', 'primary-relocation', 'primary-relocation-cli']) {
+    assert(report.surfaces.some(surface => surface.id === id), `Unreviewed Linux primary boundary: ${id}`);
+  }
   for (const id of ['observation-contract-schema', 'observation-contract-storage', 'observation-task-boundary']) {
     assert(report.surfaces.some(surface => surface.id === id), `Unreviewed observation contract surface: ${id}`);
   }
