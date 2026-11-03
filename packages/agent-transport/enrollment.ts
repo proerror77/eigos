@@ -1,3 +1,4 @@
+import { consentDeadline } from '../security/consent-lifetime.js';
 import { importJWK, SignJWT, decodeJwt } from 'jose';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
@@ -40,7 +41,7 @@ export class RelayEnrollmentIssuer {
     agentIdSchema.parse(agentId);
     const actor = this.#security.agentContext(principal), parent = this.#security.agentGrant(actor.installationId), now = this.#security.now();
     if (!principal.scopes.includes('services:read')) throw new SecurityError('AUTHORIZATION_REQUIRED');
-    const expiresAt = Math.floor(Math.min(now + 60000, Date.parse(parent.expiresAt), z.number().int().parse(decodeJwt(bearer).exp) * 1000) / 1000);
+    const expiresAt = Math.floor(Math.min(now + 60000, consentDeadline(parent.expiresAt), z.number().int().parse(decodeJwt(bearer).exp) * 1000) / 1000);
     if (expiresAt * 1000 <= now) throw new SecurityError('AUTHORIZATION_REQUIRED');
     const assertion = await new SignJWT({ tenant_id: principal.tenant, client_id: RELAY_ENROLLMENT_CLIENT, scope: 'relay:enroll', eigos_agent_id: agentId })
       .setProtectedHeader({ alg: 'EdDSA', typ: 'at+jwt', kid: this.#kid }).setIssuer(this.issuer).setAudience(this.audience)

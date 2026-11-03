@@ -3318,36 +3318,36 @@
     {
       "id": "security-contracts",
       "file": "packages/security/contracts.ts",
-      "sourceDigest": "42faffa36df647c139edce30eae58282874a1c9f05a3f27666f134d256064ac1",
+      "sourceDigest": "11f745d37936c5ae93550980d754f69acf4bdb3a0e33e62d6f1e5035901e0cc9",
       "channels": [
         "authorization_control"
       ],
       "content": "Validated context and grant structures",
-      "currentControl": "Strict shape; parsing is not authorization",
+      "currentControl": "Strict shape; explicit null expiry denotes until-revoked consent; parsing is not authorization",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
     {
       "id": "security-coordinator",
       "file": "packages/security/coordinator.ts",
-      "sourceDigest": "15cbc8fdd157f83d623cb39ae69c99762f212181d62b3022bc4f42fb10ed8ebe",
+      "sourceDigest": "a21e747fb05819a1f34989bc44c0057b51caba8e043f28e1b0ee308c55457395",
       "channels": [
         "authorization_control"
       ],
       "content": "Signed installation resolution and cross-database eligibility coordination",
-      "currentControl": "Existing identity and revocation coordinator plus reviewed source/task approval and explicit controller takeover; Member-reviewed original-PA source renewal pins current source versions and exact prior grants, preserves identity, inputs, processing rights, channels and expiration ceiling, rejects existing operations, and leaves the task paused.",
+      "currentControl": "Current identity and reviewed source/task approval. Original-PA conversion to persistent consent requires explicit controller review, exact prior scopes and current sources, only read/local existing plans and operations; preserve their ledgers without replay, and leaves the task paused. Standalone revocation cannot be restored.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
     {
       "id": "security-store",
       "file": "packages/security/store.ts",
-      "sourceDigest": "14c40eee444314724a10c57363478f944fec1e542c67cd5c959f8263b1670497",
+      "sourceDigest": "9e26ecfddcf447a72901b9d1f538771d21294776973b8298790e1323a74f5879",
       "channels": [
         "authorization_control"
       ],
       "content": "Subjects, grants, fences, task authority, audit and worker eligibility",
-      "currentControl": "Foundation v2 persistent authority and task scopes, no automatic schema migration; Historical task authority is available only for explicit member review and never substitutes for current execution eligibility. Persistent identity generation includes cleared fences so restoring eligibility cannot revive old communication consent.",
+      "currentControl": "Current installation, task revision, grants, revocation fences and Worker leases. Permanent consent uses explicit null plus a finite SQL index projection; old policy cannot adopt it without the named migration.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
@@ -3414,12 +3414,12 @@
     {
       "id": "permission-review-page",
       "file": "apps/gateway/members/permissions-page.ts",
-      "sourceDigest": "7990fe05676ef06dd535ebeb364419f781ec0eaa1bba4ab2314d80b5bf6e8805",
+      "sourceDigest": "08b6d984226b982ddbbf2c9e6c04cfaa0458a91ddd6dfefc89171fcda4389ee5",
       "channels": [
         "member-ui"
       ],
       "content": "Exact immutable controller review, source readback and revocation",
-      "currentControl": "Foundation v2: Exact immutable controller review, source readback and revocation; Original-PA renewal has a distinct explicit review, pins source versions, displays current output fields and preserves original task restrictions without controller takeover. Installation and source reviews can retain a same-installation unexpired ceiling deadline, including its explicit replacement record, without copying rights; source deadlines remain capped by the active parent.",
+      "currentControl": "Exact controller review and actual lifetime display; new consent defaults to until revoked. Legacy finite deadlines remain explicit, source/task consent cannot exceed its parent, and persistent conversion retains original task restrictions.",
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "stage": "S4"
     },
@@ -3474,7 +3474,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "4b0ba5268128652d8d4c7fa53c01dc9bf9b0c1582ec890caca5ac4cadedf9551",
+      "sourceDigest": "2fdd2df0945b435bb0265817a5ba702a4603187bd2d3561fd5c4ce65e993d9b5",
       "channels": [
         "all-reads"
       ],
@@ -3498,7 +3498,7 @@
     {
       "id": "security-original-recovery",
       "file": "packages/security/recovery.ts",
-      "sourceDigest": "09dd0b030c57e0dbd48726500393217f6d97e447c5ded1f1479a770b0ef1d3ec",
+      "sourceDigest": "fa6bb92422c6493517ae6010591dc25bfdedbb42a7fe85af20f3ffafc5917a10",
       "channels": [
         "audit"
       ],
@@ -3510,7 +3510,7 @@
     {
       "id": "security-task-view",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "868d9615ae91a87bf8e88fefbfcbb8dc26294652e3d35f3ddba5ba6bcef06c0f",
+      "sourceDigest": "d6f5506e1266a17b607b1d15552e44f5cc84d2182d145eab401377476ced9018",
       "channels": [
         "http-mcp-a2a"
       ],
@@ -4616,7 +4616,7 @@
     {
       "id": "primary-relay-entry",
       "file": "apps/gateway/relay.ts",
-      "sourceDigest": "660b3233fe5c9a23626c1572df67712b89bed2dbb29dc857eb68b4f5280c5e0a",
+      "sourceDigest": "7d39e7d970f0a18f52fbaa0a34b7a4f4263d585c9efc04551bf96f48b3806226",
       "channels": [
         "http",
         "authorization_control"
@@ -4629,7 +4629,7 @@
     {
       "id": "relay-identity-authority",
       "file": "packages/security/relay.ts",
-      "sourceDigest": "93cd7dabe9436473b46da79e1788e5bd44b42832c08968d15b2a10f423c11e17",
+      "sourceDigest": "65d887264852c69375d132513d1e13e09b1f071dec44c5d216881f1aaec4776e",
       "channels": [
         "authorization_control"
       ],
@@ -4641,7 +4641,7 @@
     {
       "id": "relay-read-authority",
       "file": "packages/security/relay-service.ts",
-      "sourceDigest": "23c54d79e5b7e27bff128bba6d9e27593584346033c9452f04c3adf68b209e2e",
+      "sourceDigest": "c8bdfe75d0eb978ac6b657719649cdfa64f2d65a28ff4cf6192c51666781df12",
       "channels": [
         "authorization_control",
         "source"
@@ -4680,7 +4680,7 @@
     {
       "id": "relay-enrollment-issuer",
       "file": "packages/agent-transport/enrollment.ts",
-      "sourceDigest": "6027d3421b4e4085768c3002d621fb703ae43b79e0f32211b6242c8bbf6b25e5",
+      "sourceDigest": "e63153daefb76a218666240bcb08623f296467d9f1f6f313d67b3a90c1027e58",
       "channels": [
         "authorization_control"
       ],
@@ -4930,7 +4930,7 @@
     {
       "id": "packages-security-reviewed-policy-upgrade",
       "file": "packages/security/reviewed-policy-upgrade.ts",
-      "sourceDigest": "43e01f38436b048b449d9408738db1f7605684c388022771f192a62ed614b493",
+      "sourceDigest": "6edef088eb32ece5dc72f83c8d841e6dfc61bd713ee7d2c079b19e1d4aaacdca",
       "channels": [
         "sqlite"
       ],
@@ -5395,7 +5395,31 @@
       "currentControl": "Current original-task authority and published mapping; fresh control-only task grant, no inherited data or execution authority",
       "targetControl": "Reviewed contract-only metadata; observer activation remains unavailable",
       "stage": "S2",
-      "sourceDigest": "519462b0dda5f71be4e6e954db3748a2282b075fca48bddda528c6b6cb064781"
+      "sourceDigest": "549cb42e36b9205b9e58cfec70749d33f4f98a2eaf752c62b3a8e0f18d6bd3ad"
+    },
+    {
+      "id": "consent-lifetime",
+      "file": "packages/security/consent-lifetime.ts",
+      "sourceDigest": "96b995fd8f310ee181fb9054bc7193133de1ae6aa79fa079a347b7c8cd097d6d",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Explicit nullable consent lifetime and SQL projection",
+      "currentControl": "Validates timestamps; Infinity is used only for consent comparisons, never Worker leases or business evidence",
+      "targetControl": "Current owner, version, revocation and bounded execution checks",
+      "stage": "S1"
+    },
+    {
+      "id": "persistent-consent-policy-upgrade",
+      "file": "packages/security/persistent-consent-upgrade.ts",
+      "sourceDigest": "2f0cbe468cc6ce480cda67d38e5774121abb83deb3b10eee6216e11ecadbc379",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Named offline consent-contract upgrade",
+      "currentControl": "Exact previous policy digest/revision, stopped writers, immutable receipt; existing grants and expirations remain unchanged",
+      "targetControl": "Current owner, version, revocation and bounded execution checks",
+      "stage": "S1"
     }
   ]
 }
