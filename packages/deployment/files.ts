@@ -12,5 +12,5 @@ export function releaseFiles(root: string): string[] {
   });
   return [...scan(join(root, 'apps')), ...scan(join(root, 'packages'))].sort()
     .concat(PA_SKILL_FILES.map(name => `dist/${PA_SKILL_DIRECTORY}/${name}`), ['scripts/run-local.mjs', 'scripts/agent-request.mjs', 'scripts/agent-enroll.mjs', 'scripts/ontology-operator.mjs',
-      'integrations/grok/eigos-native/client.mjs', 'integrations/grok/eigos-delegate/scripts/eigos_a2a.py', 'package.json', 'package-lock.json']);
+      'scripts/relocate-primary.mjs', 'scripts/refresh-harness-login.mjs', 'integrations/grok/eigos-native/client.mjs', 'integrations/grok/eigos-delegate/scripts/eigos_a2a.py', 'package.json', 'package-lock.json']);
 }

@@ -1,5 +1,5 @@
 // Local synthetic SQLite benchmark. No model, provider, credential or live task.
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync, StatementSync } from 'node:sqlite';
 import { performance } from 'node:perf_hooks';
 import { cpus, platform, release, arch } from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -15,28 +15,25 @@ interface Counters { sqlExecutions: number; sqlRows: number; sqlMs: number; grap
 const counters = (): Counters => ({ sqlExecutions: 0, sqlRows: 0, sqlMs: 0, graphQueries: 0, graphReads: 0, relationships: 0, evaluations: 0 });
 const percentile = (values: number[], p: number) => [...values].sort((a, b) => a - b)[Math.max(0, Math.ceil(values.length * p) - 1)]!;
 
-/** Count statement executions (including repeats), not just prepare() calls.
+/** Count get/all/run across connections used by a synchronous action, including
+ * statements prepared before the measurement window. The database argument is
+ * retained for callers; no instance methods are wrapped or left on Statements.
  * Instrumentation and serialization are included in local elapsed time. */
-export function measureQuery(db: DatabaseSync, graph: OntologyObjectStore, action: () => unknown, samples = 25, warmups = 3) {
+export function measureQuery(_db: DatabaseSync, graph: OntologyObjectStore, action: () => unknown, samples = 25, warmups = 3) {
   if (!Number.isInteger(samples) || samples < 1 || samples > 1000 || !Number.isInteger(warmups) || warmups < 0 || warmups > 100) throw new Error('Invalid benchmark sample bounds');
   let counts = counters();
-  const prepare = db.prepare;
-  db.prepare = function(sql) {
-    const statement = prepare.call(this, sql);
-    for (const method of ['get', 'all', 'run'] as const) {
-      const execute = statement[method];
-      Object.defineProperty(statement, method, { configurable: true, value: function(...args: unknown[]) {
-        counts.sqlExecutions++;
-        const start = performance.now();
-        try {
-          const result = Reflect.apply(execute, this, args);
-          counts.sqlRows += method === 'all' ? result.length : method === 'get' && result !== undefined ? 1 : 0;
-          return result;
-        } finally { counts.sqlMs += performance.now() - start; }
-      } });
-    }
-    return statement;
-  };
+  const execution = { get: StatementSync.prototype.get, all: StatementSync.prototype.all, run: StatementSync.prototype.run };
+  for (const method of ['get', 'all', 'run'] as const) {
+    StatementSync.prototype[method] = function(this: StatementSync, ...args: unknown[]) {
+      counts.sqlExecutions++;
+      const start = performance.now();
+      try {
+        const result = Reflect.apply(execution[method], this, args);
+        counts.sqlRows += method === 'all' ? result.length : method === 'get' && result !== undefined ? 1 : 0;
+        return result;
+      } finally { counts.sqlMs += performance.now() - start; }
+    };
+  }
   const query = graph.query, read = graph.read, related = graph.related, evaluate = graph.evaluate;
   graph.query = function(...args) { counts.graphQueries++; return query.apply(this, args); };
   graph.read = function(...args) { counts.graphReads++; return read.apply(this, args); };
@@ -61,7 +58,10 @@ export function measureQuery(db: DatabaseSync, graph: OntologyObjectStore, actio
         const values = runs.map(run => Number(run[key as keyof typeof run]));
         return [key, { min: Math.min(...values), median: percentile(values, .5), max: Math.max(...values) }];
       })) } };
-  } finally { db.prepare = prepare; graph.query = query; graph.read = read; graph.related = related; graph.evaluate = evaluate; }
+  } finally {
+    StatementSync.prototype.get = execution.get; StatementSync.prototype.all = execution.all; StatementSync.prototype.run = execution.run;
+    graph.query = query; graph.read = read; graph.related = related; graph.evaluate = evaluate;
+  }
 }
 
 export function benchmarkHistory(sizes = [1, 5, 10, 25, 50, 51, 100, 500], samples = 25) {
@@ -91,7 +91,7 @@ export function benchmarkHistory(sizes = [1, 5, 10, 25, 50, 51, 100, 500], sampl
 }
 
 /** Same cumulative-evidence fixture as the authorization regressions. The
- * prototype counter covers both the task store and membership connections. */
+ * execution window covers both the task store and membership connections. */
 export function benchmarkAuthorizedReads(sizes = [1, 8, 32, 64], samples = 25) {
   if (!sizes.length || sizes.length > 10 || sizes.some(size => !Number.isInteger(size) || size < 1 || size > 64)) throw new Error('Dependency sizes must be integers from 1 to 64');
   return sizes.map(dependencies => {

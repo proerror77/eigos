@@ -41,6 +41,8 @@ test('immutable release retains JSON assets required by relocated runtime import
     put(join(source, 'scripts/agent-request.mjs'), '');
     put(join(source, 'scripts/agent-enroll.mjs'), '');
     put(join(source, 'scripts/ontology-operator.mjs'), "import {label} from '../dist/packages/members/ontology-operator.js'; console.log(label);");
+    put(join(source, 'scripts/relocate-primary.mjs'), '');
+    put(join(source, 'scripts/refresh-harness-login.mjs'), '');
     put(join(source, 'packages/members/ontology-operator.ts'), "export const label = 'Operator transport fixture';");
     put(join(source, 'dist/packages/members/ontology-operator.js'), "export const label = 'Operator transport fixture';");
     put(join(source, 'integrations/grok/eigos-delegate/scripts/eigos_a2a.py'), '');
@@ -50,6 +52,7 @@ test('immutable release retains JSON assets required by relocated runtime import
     const files = releaseFiles(source);
     assert(!files.includes('dist/apps/gateway/platform.d.js'), 'Type-only declarations do not emit runtime files');
     assert(files.includes('dist/packages/ontology/definitions/didi-readonly.json'));
+    assert(files.includes('scripts/relocate-primary.mjs'));
     assert(!files.some(path => path.endsWith('/orphan.js')));
     for (const name of PA_SKILL_FILES) assert(files.includes(`dist/${PA_SKILL_DIRECTORY}/${name}`));
     for (const path of files) { mkdirSync(dirname(join(release, path)), { recursive: true }); cpSync(join(source, path), join(release, path)); }

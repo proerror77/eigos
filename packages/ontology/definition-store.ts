@@ -1,3 +1,4 @@
+import { commerceReadObjects, commerceReadActions, commerceReadFunctions } from './payment-commerce.js';
 import { rollingGoObjects, rollingGoActions, rollingGoFunctions } from './rollinggo.js';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
@@ -8,7 +9,7 @@ import { definitionKindSchema, ontologyIdSchema, ontologyReleaseRefSchema, parse
   type DefinitionKind, type OntologyDocument, type OntologyReleaseRef, type SerializableAction, type SerializableInterface,
   type SerializableLink, type SerializableObjectType } from './definition-contracts.js';
 import { compileOntologyDocument, normalizeOntologyDocument, validateBusinessDefinitionExtensions, type TrustedDefinitionRegistry } from './model-compiler.js';
-import { createCurrentKernelDefinition, createSeedDefinition, createRollingGoKernelDefinition, createTaskClosureKernelDefinition, createBusinessFactsKernelDefinition, createPersonalContextKernelDefinition } from './seed-definition.js';
+import { createCurrentKernelDefinition, createSingleReadKernelDefinition, createSeedDefinition, createRollingGoKernelDefinition, createTaskClosureKernelDefinition, createBusinessFactsKernelDefinition, createPersonalContextKernelDefinition } from './seed-definition.js';
 import { SINGLE_READ_PREDECESSOR } from './single-read-kernel.js';
 import { personalObjects, personalActions, personalLinks, PERSONAL_CONTEXT_PREDECESSOR } from './personal-context-kernel.js';
 import { businessFactTypes, businessFactLinks } from './business-facts.js';
@@ -237,7 +238,7 @@ export class DefinitionStore {
     return this.transaction(() => {
       const namespace = this.namespace();
       if (digest(namespace.active) !== digest(expected) || namespace.generation !== expectedGeneration) return conflict('Active ontology changed before read-contract installation');
-      const current = this.resolve(namespace.active), kernel = trustedTemplates().kernel;
+      const current = this.resolve(namespace.active), kernel = createSingleReadKernelDefinition(trustedTemplates().registry).document;
       if (current.model.ref.digest === compiledModel(kernel, trustedTemplates().registry).ref.digest) return namespace;
       if (current.model.ref.digest !== SINGLE_READ_PREDECESSOR) return conflict('Read contracts require the exact reviewed v25 predecessor');
       const document = structuredClone(current.document); document.version = '26';
@@ -245,6 +246,29 @@ export class DefinitionStore {
       document.objects[index] = structuredClone(kernel.objects.find(type => type.id === 'GoalCoverage')!);
       const release = this.insertRelease(document, 'system:install-single-read-contract', namespace.active);
       return this.activate('system:install-single-read-contract', release.ref, expectedGeneration, true);
+    });
+  }
+  /** Publish only the new read bindings. Existing facts, task pins and grants
+   * retain their original versions; this never starts a provider or grants access. */
+  installPaymentCommerceReads(expected: OntologyReleaseRef, expectedGeneration: number): OntologyNamespace {
+    return this.transaction(() => {
+      const namespace = this.namespace();
+      if (digest(namespace.active) !== digest(expected) || namespace.generation !== expectedGeneration) return conflict('Active ontology changed before payment/commerce installation');
+      const document = structuredClone(this.resolve(namespace.active).document), kernel = trustedTemplates().kernel;
+      const types = new Set(commerceReadObjects.map(type => type.id)), available = new Set([...document.objects, ...document.interfaces, ...commerceReadObjects].map(type => type.id));
+      const actions = new Set(commerceReadActions.map(action => action.id)), functions = new Set(commerceReadFunctions.map(fn => fn.id));
+      const additions = { objects: kernel.objects.filter(type => types.has(type.id)), links: kernel.links.filter(link => (types.has(link.from.type) || types.has(link.to.type)) && available.has(link.from.type) && available.has(link.to.type)),
+        actions: kernel.actions.filter(action => actions.has(action.id)), functions: kernel.functions.filter(fn => functions.has(fn.id)) };
+      let changed = false;
+      for (const kind of ['objects', 'links', 'actions', 'functions'] as const) for (const value of additions[kind]) {
+        const current = document[kind].find(item => item.id === value.id);
+        if (current && digest(current) !== digest(value)) return conflict('Payment/commerce installation would replace an existing definition');
+        if (!current) { (document[kind] as unknown[]).push(structuredClone(value)); changed = true; }
+      }
+      if (!changed) return namespace;
+      document.version = `payment-commerce-reads-${namespace.generation + 1}`;
+      const release = this.insertRelease(document, 'system:install-payment-commerce-reads', namespace.active);
+      return this.activate('system:install-payment-commerce-reads', release.ref, expectedGeneration, true);
     });
   }
   namespace(id = DEFAULT_ONTOLOGY): OntologyNamespace {

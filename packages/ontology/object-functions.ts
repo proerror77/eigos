@@ -1,3 +1,4 @@
+import { evaluateCommerceReadProgram } from './payment-commerce-functions.js';
 import { runGraphProgram, type ProjectionMetadata, type GraphProgram, graphRead, graphRelated } from './graph-program.js';
 import { evaluateOrderTestProgram } from './didi-order-test-functions.js';
 import { evaluateRollingGoProgram } from './rollinggo-functions.js';
@@ -43,7 +44,7 @@ const simple = (name: string) => z.object({ function: z.literal(name), object: o
 export const functionCallSchema = z.union([
   ...productAttributeFunctionSchemas, ...identityFunctionSchemas, ...errandFunctionSchemas,
   simple('authorizationStatus'), simple('bookingObservationStatus'), simple('stripePaymentStatus'),
-  simple('registrationStatus'), simple('rollingGoSearchStatus'), simple('businessFactStatus'),
+  simple('registrationStatus'), simple('rollingGoSearchStatus'), simple('businessFactStatus'), simple('paymentCommerceReadStatus'),
   simple('shopifyCheckoutObservationStatus'),
   simple('shopifyPAPaymentStatus'),
   simple('didiOrderTestStatus'), simple('didiOrderTestIdentity'), simple('selectDidiOrderTestPlace'), simple('taskOutcomeStatus'),
@@ -93,6 +94,8 @@ function* freshnessProgram(store: ProjectionMetadata, owner: string, object: Obj
 export function evaluateFunction(store: OntologyObjectStore, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): Computation { return runGraphProgram(store, evaluateFunctionProgram(store, owner, input, budget)); }
 
 export function* evaluateFunctionProgram(store: ProjectionMetadata, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): GraphProgram<Computation> {
+  const commerceRead = (yield* evaluateCommerceReadProgram(store, owner, input, budget));
+  if (commerceRead) return commerceRead;
   const orderTestResult = (yield* evaluateOrderTestProgram(store, owner, input, budget));
   if (orderTestResult) return orderTestResult;
   const hotelResult = (yield* evaluateRollingGoProgram(store, owner, input, budget));

@@ -26,6 +26,38 @@ Worker 的原生本体规划将任务专属 Ontology MCP 标记为必需服务�
 
 输出边界是 CLI 的已完成消息，并非首个 token。`firstOutput` 可包含过程消息；仅当 CLI 标明 `final_answer` 时记录 `finalOutput`，否则该边界保持未知。最终结构化结果仍须读取并解析，业务决策仍须有本体提交回执，两者不能由计时记录代替。
 
+## Harness 执行适配（POC）
+
+Super-agent 整体可以承担广义 Worker 的角色，但上游原型还包含来源监听、Ticket、Policy、排队与回报。此处复用的是它调用 Harness 的 Executor Session；EIGOS Worker 仍是任务执行宿主，Coordinator 在其内部调用模型和业务连接器。运行配置选择 `codex` 或 `harness`，进程名本身不能证明当前使用哪种模型。
+
+```mermaid
+flowchart LR
+  PA[PA / 客户端] --> G[Gateway：MCP / A2A]
+  G --> DB[(唯一业务库与本体发布)]
+  DB --> W[EIGOS Worker：领取 / 取消 / 恢复 / 验收]
+  W --> C[Coordinator]
+  C --> H[Codex 或 Harness Executor Session]
+  H --> O[当前任务的 Ontology MCP]
+  O --> DB
+  C --> P[已授权的业务连接器]
+```
+
+Worker 可显式选择 `EIGOS_EXECUTOR=harness`。适配采用 Super-agent 原型的独立 Executor Session 边界，通过 DeepSeek Harness 的 `sdk-minimal` JSON-RPC 接口运行模型；不启动原型的 GitHub／飞书来源、第二套 Ticket／Policy 引擎或独立正式任务库。EIGOS 继续负责持久领取、当前授权、取消、原操作恢复与结果验收。Gateway 只按相同开关公布文档能力，不启动 Harness，也不需要模型凭据。
+
+已验证的外部运行版本为 `@deepseek-ai/dsh@0.2.1-rc.5`，使用 Node.js 22.22.3。运行环境与项目依赖分开安装，例如 `npm install --prefix /opt/eigos/harness-runtime @deepseek-ai/dsh@0.2.1-rc.5`。配置入口见 [`.env.example`](../.env.example)；Worker 必须设置绝对路径 `EIGOS_HARNESS_CREDENTIAL_FILE`，文件须由运行用户拥有、权限不大于 `0600`，不能是符号链接。
+
+`codex-oauth` 读取现有 Codex 登录 JSON 中当前的 ChatGPT access token，通过 Harness 的 `openai-codex` 通道调用所选模型；不把 refresh token、原 Codex home、Gateway 令牌或供应商凭据传入模型进程。原登录仍是刷新凭据的唯一写入方。远程副本过期时调用停止，须由原登录刷新后更新私密副本；不能以重建任务、切换凭据来源或自动换模型掩盖失败。`api-key` 使用私有纯文本文件和明确的 DeepSeek 模型；两种方式都不会在缺失或过期时回退至其他模型。
+
+每次调用使用新的私有 home、随机会话 ID 和只含当前任务的配置。Shell、文件工具和工作目录工具在宿主配置层关闭；原生规划仅接入 Worker 创建的 loopback Ontology MCP，并保留实际服务端读取与决策回执。文档及单次只读决策不接入工具。调用只在原提示已入会话、唯一模型回合成功结束、输出符合 JSON Schema 后返回；入队、空闲通知或模型文字不能单独证明业务完成。初始化最多 15 秒，MCP 单次调用最多 30 秒，总调用仍受原执行截止约束。
+
+SDK 没有单会话取消接口，因此每次调用独占进程；取消、超时和关闭会终止并回收该进程组，再清理私有 home。外部来源返回后的执行与验收仍独立检查 EIGOS 原任务权限和领取身份。Harness Worker 固定一个并发领取，原 Codex Worker 保持已有两个并发上限。
+
+Foundation 按模型接收方分别使用 `harness-openai-codex`（GPT OAuth）和 `harness-deepseek`（DeepSeek API）通道。现有 `codex-native` 许可及另一接收方的 Harness 许可不会自动赋予它；启用前须审核实际模型接收方与数据出口许可，并通过已有管理入口配置相应通道及授权。部署预检按所选执行器和凭据类型核对通道，不自动修改权限策略。真实模型、Linux 候选部署、正式实例切换与业务完成须分别验证。
+
+输出使用流式 UTF-8 解码，跨数据块的中文与 emoji 保持原文。适配器等待使用记录的 `begin` 确认后才启动进程，并等待 `finish` 确认后返回；预派发确认失败或结果未知时不调用模型。这是执行适配边界，不能替代 PostgreSQL Worker 的当前授权检查、事务提交确认和原操作恢复验收。此分支的常驻部署仍使用同机 SQLite；跨主机 PostgreSQL 与 Harness 的完整组合须在对应迁移中单独验收，不能套用 Codex 镜像或合成测试结论。
+
+上游接口与边界：[Super-agent 执行说明](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/main/docs/003-execution.md)、[Harness SDK](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sdk/protocol/README.md)、[多模型与 OAuth](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/llm/llm-pi-ai/README.md)。
+
 ## 一个共享存储
 
 Gateway 和 Worker 必须使用同一个持久 SQLite 文件，建议设置相同的绝对 `DATABASE_PATH`。分进程不能使用 `:memory:`，也不能把数据库复制到两个位置来扩容。当前实现面向同机持久磁盘；跨主机需要另外的共享存储方案。
@@ -72,6 +104,8 @@ Agent 的同类校验／完成失败在没有新投影来源证据或已核验 s
 Worker 每次心跳仍检查当前权限，并通过同步状态列提前察觉取消；该轻量提示不授予任何执行权限。完整任务正文、版本、权限与租约判定继续用于续租、派发和提交，只到续租时点才重查并续租原领取。标量领取检查保留重复 JSON 键的 `JSON.parse` 最后值语义和损坏记录拒绝行为，不把完整历史复制到临时大对象表。超时／关闭后的恢复写回使用独立 scope：保留原角色、授权、版本和租约校验，移除的仅是已中止的执行截止检查；原执行 scope 继续拒绝迟到结果。授权失效或租约已过期时，写回仍不得提交。
 
 恢复元数据写回最多 45 秒，原任务执行截止时间、15 秒默认领取租约、来源新鲜度和业务授权期限均不因此延长。`run-local.mjs` 在关闭时最多等待 50 秒，再强制停止仍未退出的直接子进程；正式主实例的 LaunchAgent 显式设置 `ExitTimeOut=60`。当前 macOS 将更长的配置限制为 60 秒，因此必须同时回读配置和系统有效值，保持应用退出宽限在该上限内。关闭前后的恢复状态必须从原任务回读，不能仅以进程已经退出作为成功依据。
+
+Linux 使用专用非 root 用户的 `com.eigos.primary.service`，启用 user lingering 后可在开机和退出登录后运行。systemd 的 `TimeoutStopSec=60s`、`KillMode=control-group` 覆盖相同的应用退出预算；部署器等待停止的上限为 75 秒。Gateway 和 Worker 仍由同一个 supervisor 启动并共用本机持久库；最小部署不需要 Kubernetes、Redis 或另一份任务库。安装、迁移和真实入口验收见[部署说明](guides/deployment.md)。
 
 任务控制对象的来源证据与追加式读取审计分别维护。相同对象版本、正文和出向关系未变时，重复保存保留其原始输入证据；后来的读取不会反向成为旧记录的输入。关系改变、新对象或新版本仍合并当前完整输入约束。新模型产出使用新的计划、尝试或观察身份，不能仅因显示值相同复用旧来源；业务输出及验收结果继续记录当前模型信息约束。
 

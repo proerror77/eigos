@@ -73,6 +73,38 @@ test('internal relationship completeness cannot turn an unauthorized neighbor in
   } finally { f.close(); }
 });
 
+test('large hidden relationships do not leak through pagination and retain field checks and revocation', () => {
+  const f = fixture(['SourceReceipt']);
+  try {
+    f.role(f.a.id);
+    const place = f.place('bounded-private-history');
+    const refs = Array.from({ length: 1_000 }, (_, i) => ({ type: 'SourceReceipt', id: `private-page-${String(i).padStart(4, '0')}` }));
+    for (let offset = 0; offset < refs.length; offset += 100) {
+      const batch = refs.slice(offset, offset + 100);
+      f.raw.ingest(f.owner, { objects: batch.map(ref => ({ ref, properties: { receiptId: ref.id, displayTitle: 'Synthetic receipt', safeSummary: `summary-${ref.id}`, evidenceLevel: 'synthetic' } })),
+        links: batch.map(to => ({ type: 'PlaceEvidence', from: place.object, to })) }, { kind: 'synthetic', id: 'pagination-security', observedAt: new Date().toISOString() });
+    }
+    const visible = [refs[500]!, refs[900]!];
+    const task = f.task(f.a, [place, ...visible.map(object => ({ object, objectRevision: 1, fields: ['receiptId', 'displayTitle', 'safeSummary'] }))]);
+    const query = { from: place.object, link: 'sourceReceipts', select: ['safeSummary'], limit: 1 };
+    const first = f.va.query({ version: 2, taskId: task.job.id, query });
+    assert.deepEqual(first.items.map(v => v.ref), [visible[0]]);
+    assert.deepEqual(first.items[0]!.properties, { safeSummary: `summary-${visible[0]!.id}` });
+    assert(first.page.hasMore && first.page.cursor);
+    assert.match(first.page.cursor, /^[0-9a-f-]{36}$/);
+    assert(!('scanned' in first.page));
+    const next = f.va.query({ version: 2, taskId: task.job.id, query: { ...query, cursor: first.page.cursor } });
+    assert.deepEqual(next.items.map(v => v.ref), [visible[1]]);
+    assert.equal(next.page.hasMore, false, 'Hidden edges must not create observable extra pages');
+    assert.throws(() => f.va.query({ version: 2, taskId: task.job.id, query: { ...query, select: ['evidenceLevel'] } }), /INSUFFICIENT_ACCESS/);
+    f.jobs.security.withAgent(f.pa, task.job.id, 'task.query', () => {
+      assert.throws(() => f.jobs.ontology.related(f.owner, place.object, 'sourceReceipts', { remaining: 1_000 }), /incomplete/);
+    });
+    f.jobs.security.revokeGrant(f.owner, task.grant.id, 1);
+    assert.throws(() => f.va.query({ version: 2, taskId: task.job.id, query: { ...query, cursor: first.page.cursor } }), /AUTHORIZATION_REQUIRED|POLICY_CHANGED/);
+  } finally { f.close(); }
+});
+
 test('authorized discovery exposes shared contracts and pages each catalogue without disclosing unavailable implementations', () => {
   const f = fixture(['HotelProperty', 'RideEstimate', 'Proposal', 'RequestingParty', 'ProductOffer']);
   try {

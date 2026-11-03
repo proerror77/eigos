@@ -8,7 +8,7 @@ import { gunzipSync } from 'node:zlib';
 import { JobStore } from '../packages/core/store.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { currentKernelImplementation } from '../packages/ontology/definition-store.js';
-import { CURRENT_KERNEL_VERSION } from '../packages/ontology/seed-definition.js';
+import { CURRENT_KERNEL_VERSION, SINGLE_READ_KERNEL_MODEL_REF } from '../packages/ontology/seed-definition.js';
 test('a parent-created v22 database opens and retains active and task-pinned releases with RollingGo disabled', () => {
   const fixture = JSON.parse(
     readFileSync(
@@ -71,10 +71,14 @@ test('a parent-created v22 database opens and retains active and task-pinned rel
       const personal = store.definitions.installPersonalContext(facts.active, facts.generation);
       assert.deepEqual(store.definitions.installPersonalContext(personal.active, personal.generation), personal);
       const readContract = store.definitions.installSingleReadContract(personal.active, personal.generation);
-      assert.equal(store.definitions.active().model.ref.digest, currentKernelImplementation().ref.digest);
+      assert.equal(store.definitions.active().model.ref.digest, SINGLE_READ_KERNEL_MODEL_REF.digest);
       assert.deepEqual(store.definitions.installSingleReadContract(readContract.active, readContract.generation), readContract);
       assert.equal(store.ontologyForJob(fixture.owner, job).model.ref.version, '22');
-      assert.equal(CURRENT_KERNEL_VERSION, '26');
+      const commerce = store.definitions.installPaymentCommerceReads(readContract.active, readContract.generation);
+      assert.equal(store.definitions.active().model.ref.digest, currentKernelImplementation().ref.digest);
+      assert.deepEqual(store.definitions.installPaymentCommerceReads(commerce.active, commerce.generation), commerce);
+      assert.deepEqual(store.get(fixture.owner, fixture.taskId).delegation!.ontologyRelease, fixture.release);
+      assert.equal(CURRENT_KERNEL_VERSION, '27');
     } finally {
       store.close();
     }

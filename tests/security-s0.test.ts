@@ -27,13 +27,21 @@ const issuedAt = '2026-10-24T00:00:00Z', expiresAt = '2026-10-24T01:00:00Z';
 test('S0 inventories every definition and nested subtree without changing runtime or granting access', () => {
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
-  assert.equal(report.counts.objectTypes, 202); assert.equal(report.counts.properties, 1852); assert.equal(report.counts.interfaces, 14);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 317);
+  assert.equal(report.counts.objectTypes, 204); assert.equal(report.counts.properties, 1863); assert.equal(report.counts.interfaces, 14);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 330);
   assert(report.surfaces.some(surface=>surface.id==='relay-postgres-grant'));
   assert(report.surfaces.some(surface=>surface.id==='relay-postgres-grant-cli'));
   for (const id of ['observation-contract-schema', 'observation-contract-storage', 'observation-task-boundary', 'postgres-projection-graph', 'postgres-task-bindings', 'postgres-task-grants', 'postgres-task-personal', 'postgres-task-storage', 'postgres-task-commands', 'postgres-worker-admission', 'postgres-worker-store', 'security-object-envelope', 'task-submission-contract', 'task-intent-cancellation', 'postgres-task-lineage', 'postgres-worker-input', 'postgres-worker-output', 'supabase-postgres-local-proxy', 'task-reply-program', 'postgres-independent-lease-renewal', 'task-technical-resume']) {
     assert(report.surfaces.some(surface => surface.id === id), `Unreviewed migration or observation surface: ${id}`);
   }
+  for (const id of ['consent-lifetime', 'persistent-consent-policy-upgrade', 'payment-commerce-connection', 'payment-commerce-mcp', 'payment-commerce-http', 'payment-commerce-program', 'payment-commerce-policy-upgrade', 'primary-service-manager', 'primary-deployment-preflight', 'primary-ingress-readiness', 'primary-relocation', 'primary-relocation-cli', 'primary-harness-login', 'primary-harness-login-cli']) {
+    assert(report.surfaces.some(surface => surface.id === id), `Unreviewed merged runtime boundary: ${id}`);
+  }
+  assert.equal(report.types.find(type => type.id === 'PaymentCommerceReadTask')!.properties.find(field => field.name === 'input')!.policy, 'task_sensitive');
+  assert.equal(report.types.find(type => type.id === 'PaymentCommerceReadObservation')!.properties.find(field => field.name === 'snapshot')!.policy, 'internal_only');
+  const harness = report.surfaces.find(surface => surface.id === 'harness-executor');
+  assert(harness); assert.equal(harness.file, 'packages/capabilities/harness-executor.ts');
+  assert.deepEqual(harness.channels, ['registered_model', 'private_file']);
   const guidance = report.surfaces.find(surface => surface.id === 'security-error-guidance');
   assert(guidance); assert.equal(guidance.file, 'packages/security/error-guidance.ts');
   assert.deepEqual(guidance.channels, ['http', 'mcp', 'a2a']);
@@ -81,6 +89,8 @@ test('S0 rejects unreviewed fields, weakened restrictions, changed nested schema
   assert(drift.issues.includes('definition_changed:SavedAddress')); assert.equal(drift.passed, false);
   const stale = baseline(); stale.surfaces[0]!.sourceDigest = '0'.repeat(64);
   assert(buildSecurityInventory(stale, undefined, root).issues.includes(`surface_changed:${stale.surfaces[0]!.id}`));
+  const changedHarness = baseline(); changedHarness.surfaces.find(surface => surface.id === 'harness-executor')!.sourceDigest = '0'.repeat(64);
+  assert(buildSecurityInventory(changedHarness, undefined, root).issues.includes('surface_changed:harness-executor'));
   const path = baseline(); path.surfaces[0]!.file = '../outside.ts';
   assert(buildSecurityInventory(path, undefined, root).issues.includes(`invalid_surface_path:${path.surfaces[0]!.id}`));
 });
