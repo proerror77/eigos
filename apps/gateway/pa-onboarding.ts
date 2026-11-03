@@ -6,6 +6,11 @@ import { onboardingScript, paOnboardingPage } from './pa-onboarding-page.js';
 export function mountPaOnboarding(app: Express, config: Config): void {
   if (!paOnboardingAvailable(config)) return;
   const connection = paConnectionInfo(config), files = paSkillFiles(connection), archive = paSkillArchive(files);
+  const canonical = new URL('/connect', config.PUBLIC_URL).href;
+  const xml = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[char]!);
+  app.get('/sitemap.xml', (_req, res) => {
+    res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${xml(canonical)}</loc></url></urlset>`);
+  });
   app.get(['/', '/connect'], (_req, res) => {
     res.set('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
     res.set('Referrer-Policy', 'same-origin').type('html').send(paOnboardingPage(config));

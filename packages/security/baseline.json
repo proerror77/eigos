@@ -5171,7 +5171,7 @@
       ],
       "content": "Public PA connection page, metadata and complete Skill download",
       "currentControl": "Fixed public GET routes and reviewed assets with no-store publication; no enrollment, credential ingestion or business grants",
-      "sourceDigest": "035e21bd507699c102bc3d458d5f1adfb495e655fb6090ca9da92f4ea9c0b136",
+      "sourceDigest": "097630fb7c29d4a0b2fa355c1903b03b9cdf78cb0f35340e6efbfb7ca8fd6db0",
       "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
       "stage": "S5"
     },
@@ -5184,7 +5184,7 @@
       ],
       "content": "Customer connection instructions and clipboard interaction",
       "currentControl": "Escaped public configuration and same-origin CSP; Skill file integrity, published version and host self-reported activation stay distinct. Customer third-party and payment credentials remain in the PA",
-      "sourceDigest": "aba8a690277396dda70999190897650135c15b656dd870d03c0e4403373baef5",
+      "sourceDigest": "e49404c81683895800817d3976c53dd346ef3ae78c7f429562af643d3098c129",
       "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
       "stage": "S5"
     },
