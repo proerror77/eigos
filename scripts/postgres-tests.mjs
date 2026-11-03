@@ -16,7 +16,7 @@ export const POSTGRES_EXECUTION_GROUPS=Object.freeze({
   contracts:Object.freeze(['tests/postgres-consent.test.ts','tests/composition-program-parity.test.ts','tests/document-program-parity.test.ts','tests/goal-assessment-program.test.ts','tests/postgres-action-authorization.test.ts','tests/postgres-action-journal.test.ts','tests/postgres-action-permit.test.ts','tests/postgres-capability-catalog.test.ts','tests/postgres-recovery-commands.test.ts']),
   planning:Object.freeze(['tests/postgres-agent-plan.test.ts','tests/postgres-document-bindings.test.ts','tests/postgres-goal-contexts.test.ts','tests/postgres-model-context.test.ts']),
   documents:Object.freeze(['tests/postgres-document-execution.test.ts','tests/postgres-document-policy.test.ts']),
-  transitions:Object.freeze(['tests/postgres-task-commands.test.ts','tests/postgres-task-intents.test.ts','tests/postgres-source-projection.test.ts','tests/postgres-worker-read-lease.test.ts','tests/postgres-worker-write-lease.test.ts']),
+  transitions:Object.freeze(['tests/postgres-task-commands.test.ts','tests/postgres-task-intents.test.ts','tests/postgres-caller-action.test.ts','tests/postgres-source-projection.test.ts','tests/postgres-worker-read-lease.test.ts','tests/postgres-worker-write-lease.test.ts']),
 });
 export const POSTGRES_EXECUTION_JOBS=Object.freeze(Object.keys(POSTGRES_EXECUTION_GROUPS).map(name=>'postgres-execution-cases ('+name+')'));
 export const POSTGRES_COORDINATOR_CASES=Object.freeze({

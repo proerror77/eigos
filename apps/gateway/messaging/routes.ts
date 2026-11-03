@@ -9,6 +9,7 @@ import type { AgentMessagingService } from '../../../packages/agent-messaging/se
 import { communicationGrantInputSchema, MessagingError, type CommunicationGrantInput } from '../../../packages/agent-messaging/contracts.js';
 
 type AwaitableMethods<T,K extends keyof T>={[P in K]:T[P] extends (...args:infer A)=>infer R?(...args:A)=>R|Promise<Awaited<R>>:never};
+export type MessagingMemberIdentityPort=Pick<MemberStoragePort,'session'|'authorizationFacts'>&{agents:Pick<MemberStoragePort['agents'],'list'>};
 export type MessagingMemberRoutesPort=AwaitableMethods<AgentMessagingService,'approve'|'revoke'|'prepareEndpoint'>&{store:AwaitableMethods<MessagingStore,'grants'|'installation'>};
 
 const escape = (value: unknown) => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
@@ -17,7 +18,7 @@ const hidden = (name: string, value: string) => `<input type="hidden" name="${es
 const time = (value: number, member: Member) => new Intl.DateTimeFormat(member.locale, { timeZone: member.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 const page = (body: string) => `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>EIGOS · 个人 Agent 通信</title><main><h1>个人 Agent 通信</h1>${body}<p><a href="/members">返回会员中心</a></p></main></html>`;
 
-export function mountMessagingMemberRoutes(app: Express, config: Config, members: MemberStoragePort, messaging: MessagingMemberRoutesPort) {
+export function mountMessagingMemberRoutes(app: Express, config: Config, members: MessagingMemberIdentityPort, messaging: MessagingMemberRoutesPort) {
   const cookieName = new URL(config.PUBLIC_URL).protocol === 'https:' ? '__Host-eigos-member' : 'eigos-member';
   const reviews = new Map<string, { memberId: string; sessionHash: string; expiresAt: number; input: CommunicationGrantInput }>();
   async function session(req: Request) {
