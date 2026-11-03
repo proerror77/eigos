@@ -1,9 +1,11 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,readdirSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
 import {parse} from 'yaml';
-import {POSTGRES_TEST_GROUPS,POSTGRES_GROUP_JOBS,POSTGRES_TEST_FILES,POSTGRES_COORDINATOR_CASES,POSTGRES_COORDINATOR_JOBS,postgresTestsRequired,assertPostgresGroups,assertCoordinatorCases,coordinatorTestPattern,assertCoordinatorTap} from '../scripts/postgres-tests.mjs';
+import {POSTGRES_TEST_GROUPS,POSTGRES_GROUP_JOBS,POSTGRES_TEST_FILES,POSTGRES_PURE_TEST_FILES,POSTGRES_COORDINATOR_CASES,POSTGRES_COORDINATOR_JOBS,postgresTestsRequired,assertPostgresGroups,assertCoordinatorCases,coordinatorTestPattern,assertCoordinatorTap} from '../scripts/postgres-tests.mjs';
 import {proveExactCi} from '../scripts/release-artifacts.mjs';
+import {testFiles,shardFiles} from '../scripts/test-scope.mjs';
 
 const workflow=parse(readFileSync(new URL('../.github/workflows/ci.yml',import.meta.url),'utf8'));
 const sourceRef='${{ github.event.pull_request.head.sha || github.sha }}';
@@ -17,10 +19,14 @@ test('real PostgreSQL suites have one deterministic group with no missing or dup
   for(const path of POSTGRES_TEST_FILES)assert(readFileSync(new URL('../'+path,import.meta.url),'utf8').length);
   assert.deepEqual(Object.keys(POSTGRES_TEST_GROUPS),['storage','access','execution','coordinator']);
   assert.deepEqual(POSTGRES_TEST_GROUPS.coordinator,['tests/postgres-coordinator.test.ts']);
+  const all=testFiles(fileURLToPath(new URL('../',import.meta.url)));
+  assert.equal(postgresTestsRequired(shardFiles(all)),true,'the actual full test-scope shards must remain schedulable');
+  for(const path of POSTGRES_PURE_TEST_FILES){assert(!POSTGRES_TEST_FILES.includes(path));assert(!/process\.env\.(?:EIGOS_TEST_PG_LOCAL|EIGOS_TEST_RELAY_POSTGRES|EIGOS_TEST_LARGE_ROW)/.test(readFileSync(new URL('../'+path,import.meta.url),'utf8')));}
 });
 
 test('PG scope selection rejects unknown suites instead of silently dropping a required check',()=>{
   assert.equal(postgresTestsRequired(needed),true);assert.equal(postgresTestsRequired(JSON.stringify(empty)),false);
+  assert.equal(postgresTestsRequired({'1':[...POSTGRES_PURE_TEST_FILES]}),false);
   for(const value of [null,[],{'1':'not-an-array'},{'1':['tests/postgres-unregistered.test.ts']}])assert.throws(()=>postgresTestsRequired(value));
 });
 

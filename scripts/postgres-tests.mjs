@@ -20,12 +20,15 @@ export const POSTGRES_COORDINATOR_CASES=Object.freeze({
 export const POSTGRES_COORDINATOR_JOBS=Object.freeze(Object.keys(POSTGRES_COORDINATOR_CASES).map(name=>'postgres-coordinator-cases ('+name+')'));
 export const POSTGRES_GROUP_JOBS=Object.freeze(Object.keys(POSTGRES_TEST_GROUPS).map(group=>'postgres-'+group));
 export const POSTGRES_TEST_FILES=Object.freeze(Object.values(POSTGRES_TEST_GROUPS).flat());
+// These names describe offline PostgreSQL migration formats/CLI planning;
+// they never connect to the fixture service and remain ordinary unit suites.
+export const POSTGRES_PURE_TEST_FILES=Object.freeze(['tests/business-postgres-snapshot.test.ts','tests/business-postgres-verify-cli.test.ts','tests/relay-postgres-cli.test.ts']);
 const pgFile=path=>/^tests\/(?:postgres-|relay-postgres-|business-postgres-|membership-postgres-)/.test(path)||['tests/document-program-parity.test.ts','tests/composition-program-parity.test.ts','tests/goal-assessment-program.test.ts','tests/relay-client-repoint.test.ts'].includes(path);
 
 export function postgresTestsRequired(input){
   const shards=typeof input==='string'?JSON.parse(input):input;
   if(!shards||typeof shards!=='object'||Array.isArray(shards)||Object.values(shards).some(files=>!Array.isArray(files)||files.some(path=>typeof path!=='string')))throw Error('A valid selected test scope is required');
-  const selected=Object.values(shards).flat().filter(pgFile);
+  const selected=Object.values(shards).flat().filter(path=>pgFile(path)&&!POSTGRES_PURE_TEST_FILES.includes(path));
   if(selected.some(path=>!POSTGRES_TEST_FILES.includes(path)))throw Error('A selected PostgreSQL suite has no registered CI group');
   return selected.length>0;
 }
