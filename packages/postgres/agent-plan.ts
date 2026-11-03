@@ -15,15 +15,15 @@ import type {PlanningSnapshot} from '../ontology/planning-contract.js';
 import {stepBindingRef,stepInputDigest,discoveredBinding,componentContext,componentScopeDigestProgram} from '../core/composed-actions.js';
 import {assertGoalCoverage} from '../ontology/goal-coverage.js';
 import {assertGoalEffects} from '../core/goal-contract.js';
-import {DocumentAgentProgram} from '../capabilities/document-agent.js';
 import {readOntologyRequestProgram} from '../ontology/execution-projection.js';
 import {runGraphProgramAsync} from '../ontology/graph-program.js';
 import {compositionCompiler,evaluateCompositionChecks} from '../ontology/composition-contract.js';
-import {resolvePostgresDocumentBinding} from './document-bindings.js';
+import {resolvePostgresDocumentBinding,postgresReadRegistry} from './document-bindings.js';
 import {assertPostgresPlanningDecisionEvidence,postgresGoalProgram} from './goal-contexts.js';
 import {SecurityError} from '../security/errors.js';
 import {postgresBusinessToken,postgresBusinessSchema,postgresConstrainReadDeadline,postgresRequireLeaseAtCommit} from './runtime-transaction.js';
 import {postgresClaimSnapshotMatches,postgresWorkReference,type PostgresWorkReference} from './work-claim.js';
+import type {PostgresReadProgramRegistry,PostgresReadRegistration} from './didi-registry.js';
 import {PostgresTaskStorage} from './task-storage.js';
 import {PostgresActionJournal} from './action-journal.js';
 import {createPostgresActionAuthorization,type PostgresActionAuthorizationOptions,type PostgresActionProgramPolicy} from './action-authorization.js';
@@ -31,7 +31,7 @@ import {withPostgresWorkerEvidenceAuthorization} from './task-output.js';
 import {withPostgresPlanningReadGraph} from './planning-read-graph.js';
 
 type Registration=PostgresActionProgramPolicy&{program:PostgresActionProgramPolicy['program']&Pick<AgentProgram,'limits'|'privateInput'|'simulatedApproval'>};
-export interface PostgresAgentPlanOptions extends Omit<PostgresActionAuthorizationOptions,'programs'|'observation'>{programs:readonly Registration[]}
+export interface PostgresAgentPlanOptions extends Omit<PostgresActionAuthorizationOptions,'programs'|'observation'>{programs:readonly Registration[];registry?:PostgresReadProgramRegistry}
 const same=(a:unknown,b:unknown)=>digest(a)===digest(b);
 function fail(message:string):never{throw new DomainError('CONFLICT',message);}
 
@@ -84,13 +84,13 @@ export async function installPostgresAgentPlan(client:Client,input:PostgresWorkR
       if(preceding.has(selected.id)||new Set(selected.dependsOn).size!==selected.dependsOn.length||selected.dependsOn.some(id=>!preceding.has(id)))fail('Step IDs must be unique and dependencies must precede their consumers');
       if(selected.inputRefs.length||selected.acceptedInputs?.length)fail('PostgreSQL accepted/derived input planning is not installed on this plan path');
       if(!state.composition&&(selected.bindingDigest||selected.contextId||selected.contributesTo?.length))fail('PostgreSQL composition planning is not installed on this direct plan path');
-      let selectedProgram:Registration['program']=program,pinned:Pick<AgentActionPlan['steps'][number],'binding'|'contextDigest'|'contextScope'|'scopeDigest'>={};
+      let readRegistration:PostgresReadRegistration|undefined,selectedProgram:Registration['program']=program,pinned:Pick<AgentActionPlan['steps'][number],'binding'|'contextDigest'|'contextScope'|'scopeDigest'>={};
       if(state.composition){
         if(!selected.bindingDigest||!selected.contextId||!selected.contributesTo?.length||selected.contributesTo.some(id=>!state.composition!.goal.criteria.some(criterion=>criterion.id===id)))fail('Each composed action must select an exact binding, context and contribution to the fixed goal');
         const pin=discoveredBinding(reads,selected.bindingDigest),resolved=await resolvePostgresDocumentBinding(client,claim,data.request,pin,options),component=state.composition.contexts.find(value=>value.id===selected.contextId)??fail('Prepare this original component before selecting its action');
         const registrations=options.programs.filter(value=>same(value.program.ref,pin.programRef)&&value.program.configurationDigest===pin.configurationDigest);
         if(registrations.length!==1||!registrations[0]?.validate||registrations[0].program.privateInput||registrations[0].program.simulatedApproval)throw new SecurityError('AUTHORITY_UNAVAILABLE','The selected composed action has no installed PostgreSQL semantic policy');
-        if(pin.actionId!==selected.action)fail('Composed action differs from its actually discovered binding');selectedProgram=registrations[0].program;
+        if(pin.actionId!==selected.action)fail('Composed action differs from its actually discovered binding');selectedProgram=registrations[0].program;readRegistration=resolved.registration;await postgresReadRegistry(options).assertConfigured(client,resolved.registration,claim,job);
         const context={graph:{model:data.model,now:Date.now,releaseRef:d.ontologyRelease,security:true},owner:claim.owner,request:data.request,state,intents,modelRuns:job.runs};
         const scoped=componentContext(context,component,resolved.program);
         if(component.managedActionIds&&!component.managedActionIds.includes(selected.action))fail('Action is outside its explicitly selected managed context');
@@ -105,8 +105,8 @@ export async function installPostgresAgentPlan(client:Client,input:PostgresWorkR
       const parsed:unknown=JSON.parse(selected.argumentsJson);if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))fail('Action arguments must be an object');
       const actionInput=parsed as Record<string,unknown>;selectedProgram.schema(selected.action).parse(actionInput);
       if(state.composition){
-        const doc=new DocumentAgentProgram();if(!same(selectedProgram.ref,doc.ref)||selectedProgram.configurationDigest!==doc.configurationDigest)throw new SecurityError('AUTHORITY_UNAVAILABLE','The selected composed program semantics are not installed');
-        if(Array.isArray(actionInput.citations)&&actionInput.citations.length||Array.isArray(actionInput.additionalCitations)&&actionInput.additionalCitations.length)fail('Composed document citations require their installed current producer semantics');
+        if(!readRegistration)throw new SecurityError('AUTHORITY_UNAVAILABLE','The selected composed program has no actual PostgreSQL registration');
+        if(readRegistration.kind==='document'&&(Array.isArray(actionInput.citations)&&actionInput.citations.length||Array.isArray(actionInput.additionalCitations)&&actionInput.additionalCitations.length))fail('Composed document citations require their installed current producer semantics');
         if(!definition.composition)fail('Missing action composition contract');evaluateCompositionChecks(definition.composition,'before',actionInput,{},compositionCompiler(data.model));
       }
       const refs=new Map<string,ObjectRef>();let nodes=0;

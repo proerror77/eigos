@@ -58,14 +58,27 @@ const enrollmentKeySchema=z.strictObject({kty:z.literal('OKP'),crv:z.literal('Ed
 const relayConfigurationSchema=z.strictObject({version:z.literal(1),relayUrl:z.string().transform(relayOrigin),credentialPath:absolute.optional(),statePath:absolute.optional(),displayName:z.string().min(1).max(80).default('EIGOS'),enrollmentKeyFile:absolute.optional(),operatorInstallationId:z.uuid().optional()});
 const nodeCounts=z.strictObject({outbox:z.number().int().min(0).max(10000),inbox:z.number().int().min(0).max(10000),retained:z.number().int().min(0).max(10000)});
 const nodeInventory=z.strictObject({nodeId:z.string().min(1).max(200),agentId:agentIdSchema,importDigest:sha,counts:nodeCounts,importReceipt:file,independentReadback:file});
-export const postgresRelaySourceInventorySchema=z.strictObject({version:z.literal(1),kind:z.literal('eigos.relay-node-source-inventory'),sourceAuthority:authority,businessSnapshotDigest:sha,baseUrl:z.string().transform(relayOrigin),configurationDigest:sha,
+export const postgresRelaySourceInventoryV1Schema=z.strictObject({version:z.literal(1),kind:z.literal('eigos.relay-node-source-inventory'),sourceAuthority:authority,businessSnapshotDigest:sha,baseUrl:z.string().transform(relayOrigin),configurationDigest:sha,
   gatewayNode:nodeInventory,endpointImports:z.array(nodeInventory.extend({endpointId:z.uuid()})).max(1000)});
+/** Historical metadata parsing only; this never permits HTTP network calls.
+ * The live target origin still uses relayOrigin's HTTPS/loopback policy. */
+export function postgresHistoricalRelayOrigin(value:string){const url=new URL(value);if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash||url.pathname!=='/'||url.origin!==value)throw new Error('Invalid exact historical Relay origin');return url.origin;}
+const sourceFiles=z.strictObject({credentialFileDigest:sha,stateFileDigest:sha});
+export const postgresRelayRepointReceiptSchema=z.strictObject({version:z.literal(1),kind:z.literal('eigos.relay-node-origin-repoint'),nodeId:z.string().min(1).max(200),agentId:agentIdSchema,sourceBaseUrl:z.string().transform(postgresHistoricalRelayOrigin),targetBaseUrl:z.string().transform(relayOrigin),sourceSnapshotDigest:sha,targetSnapshotDigest:sha,credentialsDigest:sha,historyDigest:sha,cursorsDigest:sha,sourceFiles,counts:nodeCounts,receiptText:z.literal('preserved'),serverAcceptance:z.literal('not-observed')});
+const nodeV2=z.strictObject({nodeId:z.string().min(1).max(200),agentId:agentIdSchema,sourceSnapshotDigest:sha,targetSnapshotDigest:sha,sourceFiles,counts:nodeCounts,repointReceipt:file,importReceipt:file,independentReadback:file});
+export const postgresRelaySourceInventoryV2Schema=z.strictObject({version:z.literal(2),kind:z.literal('eigos.relay-node-source-inventory'),sourceAuthority:authority,businessSnapshotDigest:sha,membershipSnapshotDigest:sha,sourceBaseUrl:z.string().transform(postgresHistoricalRelayOrigin),targetBaseUrl:z.string().transform(relayOrigin),configurationDigest:sha,bindingIdentity:sha,sourceManifest:file,
+  gatewayNode:nodeV2,endpointImports:z.array(nodeV2.extend({endpointId:z.uuid()})).max(1000)});
+export const postgresRelaySourceInventorySchema=z.discriminatedUnion('version',[postgresRelaySourceInventoryV1Schema,postgresRelaySourceInventoryV2Schema]);
+/** A pre-activation core binding can acquire its node evidence later without
+ * inventing future receipts. Final activation still pins the complete binding. */
+export function postgresNodeMigrationBindingIdentity(input:PostgresBinding){const {relay:_relay,handoff:_handoff,activation:_activation,...core}=postgresBindingSchema.parse(input);return digest(core);}
 /** This checks existing, hash-pinned operator evidence; it never creates an
  * inventory or certifies source completeness. The actual reviewed handoff
  * pins this whole binding, and live startup separately checks every PG node. */
 export function readPostgresRelaySourceInventory(binding:PostgresBinding){
   const relay=binding.relay;if(!relay)throw new Error('Configured PostgreSQL Relay binding is missing');
   const inventory=postgresRelaySourceInventorySchema.parse(readPinnedPostgresJson(relay.sourceInventory,1048576));
+  if(inventory.version===2)return readPostgresRelayInventoryV2(binding,inventory);
   const pin=(node:{nodeId:string;agentId:string;importDigest:string})=>({nodeId:node.nodeId,agentId:node.agentId,importDigest:node.importDigest});
   const endpoints=inventory.endpointImports.map(node=>({endpointId:node.endpointId,agentId:node.agentId,importDigest:node.importDigest})).sort((a,b)=>a.endpointId.localeCompare(b.endpointId));
   const expected=[...relay.endpointImports].sort((a,b)=>a.endpointId.localeCompare(b.endpointId));
@@ -80,6 +93,24 @@ export function readPostgresRelaySourceInventory(binding:PostgresBinding){
   }
   return inventory;
 }
+function readPostgresRelayInventoryV2(binding:PostgresBinding,inventory:z.infer<typeof postgresRelaySourceInventoryV2Schema>){
+  const relay=binding.relay!;
+  const pins=inventory.endpointImports.map(node=>({endpointId:node.endpointId,agentId:node.agentId,importDigest:node.targetSnapshotDigest})).sort((a,b)=>a.endpointId.localeCompare(b.endpointId));
+  if(digest(inventory.sourceAuthority)!==digest(binding.sourceAuthority)||inventory.businessSnapshotDigest!==binding.business.sourceFileDigest||inventory.membershipSnapshotDigest!==binding.membership.sourceFileDigest||inventory.targetBaseUrl!==relay.baseUrl||inventory.configurationDigest!==relay.configuration.sha256||inventory.bindingIdentity!==postgresNodeMigrationBindingIdentity(binding)
+    ||digest({nodeId:inventory.gatewayNode.nodeId,agentId:inventory.gatewayNode.agentId,importDigest:inventory.gatewayNode.targetSnapshotDigest})!==digest(relay.gatewayNode)||digest(pins)!==digest([...relay.endpointImports].sort((a,b)=>a.endpointId.localeCompare(b.endpointId)))||inventory.endpointImports.some(node=>node.nodeId!==`communication:${node.endpointId}`)||new Set([inventory.gatewayNode,...inventory.endpointImports].map(node=>node.nodeId)).size!==pins.length+1)throw new Error('Source-to-target Relay inventory differs from the reviewed binding');
+  // The small frozen source manifest is deployable evidence; source private
+  // snapshots/credentials themselves are never read by runtime startup.
+  const manifest=readPinnedPostgresJson(inventory.sourceManifest,1048576);
+  const expected=z.strictObject({version:z.literal(1),kind:z.literal('eigos.relay-node-source-files'),sourceAuthority:authority,businessSnapshotDigest:sha,membershipSnapshotDigest:sha,sourceBaseUrl:z.string(),nodes:z.array(z.strictObject({nodeId:z.string(),agentId:agentIdSchema,endpointId:z.uuid().optional(),sourceSnapshot:file,sourceSnapshotDigest:sha,sourceFiles})).max(1001),uninitializedEndpoints:z.array(z.uuid()).max(1000)}).parse(manifest);
+  if(digest(expected.sourceAuthority)!==digest(binding.sourceAuthority)||expected.businessSnapshotDigest!==inventory.businessSnapshotDigest||expected.membershipSnapshotDigest!==inventory.membershipSnapshotDigest||expected.sourceBaseUrl!==inventory.sourceBaseUrl||expected.nodes.length!==pins.length+1||new Set(expected.nodes.map(node=>node.nodeId)).size!==expected.nodes.length||new Set(expected.uninitializedEndpoints).size!==expected.uninitializedEndpoints.length||expected.nodes.some(node=>node.endpointId&&expected.uninitializedEndpoints.includes(node.endpointId)))throw new Error('Original complete node source manifest differs');
+  for(const node of [inventory.gatewayNode,...inventory.endpointImports]){
+    const source=expected.nodes.find(value=>value.nodeId===node.nodeId);
+    if(!source||source.agentId!==node.agentId||source.sourceSnapshotDigest!==node.sourceSnapshotDigest||digest(source.sourceFiles)!==digest(node.sourceFiles)||source.endpointId!==('endpointId'in node?node.endpointId:undefined))throw new Error('Original node file digest or identity differs from the source manifest');
+    const repoint=postgresRelayRepointReceiptSchema.parse(readPinnedPostgresJson(node.repointReceipt,8192)),imported=z.strictObject({status:z.enum(['imported','already-imported']),nodeId:z.string(),agentId:agentIdSchema,digest:sha,counts:nodeCounts}).parse(readPinnedPostgresJson(node.importReceipt,4096)),readback=z.strictObject({agentId:agentIdSchema,digest:sha,counts:nodeCounts}).parse(readPinnedPostgresJson(node.independentReadback,4096));
+    if(repoint.nodeId!==node.nodeId||repoint.agentId!==node.agentId||repoint.sourceBaseUrl!==inventory.sourceBaseUrl||repoint.targetBaseUrl!==inventory.targetBaseUrl||repoint.sourceSnapshotDigest!==node.sourceSnapshotDigest||repoint.targetSnapshotDigest!==node.targetSnapshotDigest||digest(repoint.sourceFiles)!==digest(node.sourceFiles)||imported.nodeId!==node.nodeId||imported.agentId!==node.agentId||readback.agentId!==node.agentId||imported.digest!==node.targetSnapshotDigest||readback.digest!==node.targetSnapshotDigest||[repoint.counts,imported.counts,readback.counts].some(value=>digest(value)!==digest(node.counts)))throw new Error('Actual Relay repoint/import/readback differs from the complete source-to-target mapping');
+  }
+  return inventory;
+}
 /** PG transport never opens the optional legacy credential/state paths. It
  * requires the independently migrated durable node declared in the binding. */
 export function readPostgresTaskRelayConfiguration(binding:PostgresBinding,path:string){
@@ -87,6 +118,7 @@ export function readPostgresTaskRelayConfiguration(binding:PostgresBinding,path:
   const config=relayConfigurationSchema.parse(readPinnedPostgresJson(binding.relay.configuration,8192));
   if(config.relayUrl!==binding.relay.baseUrl||config.enrollmentKeyFile&&config.enrollmentKeyFile!==binding.relay.enrollmentKey.path)throw new Error('Relay origin or enrollment key differs from the reviewed binding');return config;
 }
+export function readReviewedPostgresRelayConfiguration(reference:{path:string;sha256:string}){return relayConfigurationSchema.parse(readPinnedPostgresJson(reference,8192));}
 /** Reads existing host secrets only. No key generation, rotation or model/JSON
  * secret input is accepted, and the reviewed wrapping-key fingerprint is fixed. */
 export function readPostgresRelaySecrets(binding:PostgresBinding,environment:NodeJS.ProcessEnv){

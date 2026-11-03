@@ -7,6 +7,7 @@ import type {PostgresDatabase} from '../../packages/postgres/database.js';
 import type {StagedKernelBuilder} from '../../packages/ontology/seed-definition.js';
 import {PostgresWorkerStore} from '../../packages/postgres/worker-store.js';
 import {PostgresCoordinator,type PostgresReasoner,type PostgresExecutor} from '../../packages/postgres/coordinator.js';
+import type {PostgresReadProgramRegistry} from '../../packages/postgres/didi-registry.js';
 import {PostgresTaskWorker} from './postgres-worker.js';
 
 /** The app-server session transport still has synchronous-recorder behavior.
@@ -47,7 +48,7 @@ function configuredModel(config:PostgresModelConfig):CodexExecutor|HarnessExecut
  * creating it does not start polling, switch primary, or change Gateway. The
  * caller owns the injected database/publisher lifecycle. */
 export function createPostgresWorker(config:PostgresModelConfig,options:{
-  database:PostgresDatabase;policyDigest:string;sourceBindingId?:string;builder?:StagedKernelBuilder;
+  database:PostgresDatabase;policyDigest:string;sourceBindingId?:string;builder?:StagedKernelBuilder;registry?:PostgresReadProgramRegistry;
   reasoner?:PostgresReasoner;executor?:PostgresExecutor;modelChannel?:string;
   timing?:{leaseMs?:number;pollMs?:number;timeoutMs?:number};
 }){
@@ -57,6 +58,6 @@ export function createPostgresWorker(config:PostgresModelConfig,options:{
   // existing unadapted synchronous recorder implementations are rejected.
   const executor=options.executor??Object.assign(model!,{postgresModelDispatch:'acknowledged-v1' as const}),reasoner=options.reasoner??(model instanceof HarnessExecutor?postgresHarnessReasoner(model):postgresCodexReasoner(model!)),modelChannel=options.modelChannel??reasoner.securityChannelId??executor.securityChannelId;
   const store=new PostgresWorkerStore(options.database,options.policyDigest,options.builder),coordinator=new PostgresCoordinator({...options,store,executor,reasoner,modelChannel,maxTaskMs:config.EIGOS_TASK_MAX_MS});
-  const worker=new PostgresTaskWorker(store,{...options.timing,run:(claim,signal)=>coordinator.run(claim,signal),onError:(claim,error,signal)=>coordinator.onError(claim,error,signal)});
+  const worker=new PostgresTaskWorker(store,{...options.timing,maxConcurrent:config.EIGOS_EXECUTOR==='harness'||executor instanceof HarnessExecutor?1:2,run:(claim,signal)=>coordinator.run(claim,signal),onError:(claim,error,signal)=>coordinator.onError(claim,error,signal)});
   return {worker,coordinator,store,start:()=>worker.start(),pause:()=>worker.pauseClaims(),resume:()=>worker.resumeClaims(),close:async()=>{await worker.close();await coordinator.closeModelContexts();}};
 }

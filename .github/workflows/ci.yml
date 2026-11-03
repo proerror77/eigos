@@ -152,7 +152,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        case: [contracts, planning, documents, transitions]
+        case: [contracts, planning, documents, didi, transitions]
     services:
       postgres:
         image: postgres:17

@@ -4,7 +4,6 @@ import {z} from 'zod';
 import {digest,groundingSchema,type Grounding} from '../core/delegation.js';
 import {DomainError,ConnectionAuthorizationRequired,type Job} from '../core/domain.js';
 import type {WorkClaim} from '../core/store.js';
-import {ExecutionCatalog} from '../core/catalog.js';
 import {executionBudgetStatus,remainingModelTurns,MIN_REASONING_TURNS,pauseExecutionBudget} from '../core/execution-budget.js';
 import {canRecoverReadOnly,resolveTaskRecovery,scheduleTaskRecovery,resumeScheduledRecovery} from '../core/task-recovery.js';
 import {withModelUsage,type ModelUsageEvidence} from '../core/model-usage-context.js';
@@ -13,7 +12,6 @@ import {GoalProgram,goalState} from '../coordinator/goal-program.js';
 import {groundRequirements} from '../coordinator/requirements.js';
 import {groundConditions} from '../coordinator/conditions.js';
 import type {Reasoner,PlanningAccess} from '../coordinator/coordinator.js';
-import {DocumentAgentProgram} from '../capabilities/document-agent.js';
 import type {Executor,RunEvidence} from '../capabilities/executor.js';
 import {BACKEND_VERSION} from '../ontology/execution.js';
 import {agentDecisionSchema} from '../ontology/agent-actions.js';
@@ -30,7 +28,8 @@ import {postgresPrepareWorkerSeal,postgresRecordWorkerOutputs} from './worker-ou
 import {postgresRecordClaimRelease} from './claim-release.js';
 import {PostgresNativePlanningSession} from './native-planning-session.js';
 import {discoverPostgresDocumentActions,discoverPostgresDocumentBindings,type PostgresDocumentBindingOptions} from './document-bindings.js';
-import {createPostgresDocumentPolicy} from './document-policy.js';
+import {PostgresReadProgramRegistry} from './didi-registry.js';
+import {PostgresDidiExecution} from './didi-execution.js';
 import {PostgresDocumentExecution} from './document-execution.js';
 import {installPostgresAgentPlan} from './agent-plan.js';
 import {preparePostgresGoalContexts,postgresGoalProgram} from './goal-contexts.js';
@@ -68,17 +67,20 @@ function budgetView(job:Job):ReturnType<typeof executionBudgetStatus>{
  * storage calls. This candidate supports registered document composition;
  * unavailable adapters retain the same original task and fail explicitly. */
 export class PostgresCoordinator {
-  private readonly doc=new DocumentAgentProgram();
-  private readonly registry=new ExecutionCatalog([this.doc.capability()],[],[],[],[this.doc]);
+  private readonly runtime:PostgresReadProgramRegistry;
+  private readonly didi:PostgresDidiExecution;
   private readonly options:PostgresDocumentBindingOptions;
   private readonly execution:PostgresDocumentExecution;
   private readonly maximum:number;
   constructor(private readonly configured:PostgresCoordinatorOptions){
     if(configured.reasoner.postgresModelDispatch!=='acknowledged-v1'||configured.executor.postgresModelDispatch!=='acknowledged-v1')throw new Error('PostgreSQL model ports require acknowledged usage and a current pre-dispatch guard');
     if(configured.reasoner.securityChannelId!==configured.modelChannel||configured.executor.securityChannelId!==configured.modelChannel)throw new Error('The existing registered model channel must match both configured model ports');
-    this.options={policyDigest:configured.policyDigest,modelChannel:configured.modelChannel,builder:configured.builder,sourceBindingId:configured.sourceBindingId,inspectClaim:claim=>configured.database.inspectClaim(claim,configured.policyDigest)};
+    this.runtime=configured.registry??new PostgresReadProgramRegistry(configured.policyDigest,{documentSourceBindingId:configured.sourceBindingId});
+    if(!(this.runtime instanceof PostgresReadProgramRegistry)||this.runtime.policyDigest!==configured.policyDigest)throw new Error('Actual current PostgreSQL program registry is required');
+    this.options={registry:this.runtime,policyDigest:configured.policyDigest,modelChannel:configured.modelChannel,builder:configured.builder,sourceBindingId:configured.sourceBindingId,inspectClaim:claim=>configured.database.inspectClaim(claim,configured.policyDigest)};
     this.maximum=configured.maxTaskMs??86400000;if(!Number.isSafeInteger(this.maximum)||this.maximum<1||this.maximum>86400000)throw new Error('Invalid original task execution deadline');
     this.execution=new PostgresDocumentExecution({...configured,modelChannel:configured.modelChannel,policyDigest:configured.policyDigest});
+    this.didi=new PostgresDidiExecution({...configured,registry:this.runtime,modelChannel:configured.modelChannel,policyDigest:configured.policyDigest});
   }
   private load(claim:WorkClaim){return this.configured.database.run(client=>new PostgresTaskStorage(client,this.options.builder).get(claim.owner,claim.job.id));}
   /** Host task transition, with the same original claim and output fences as
@@ -106,14 +108,15 @@ export class PostgresCoordinator {
   }
   private async available(claim:WorkClaim,signal:AbortSignal){
     signal.throwIfAborted();
-    const {request,page}=await this.configured.store.withAuthorizedRequest(claim,this.options.modelChannel,async(request,client)=>({request,
-      page:await discoverPostgresDocumentBindings(client,claim,request,{actionId:'ComposeDocument',programRef:this.doc.ref},this.options)}));
-    if(!page.items.some(item=>item.bindings.some(binding=>binding.readiness==='ready')))throw new SecurityError('SOURCE_NOT_AUTHORIZED','The requested task has no current registered PostgreSQL document binding');
+    const {request,ready}=await this.configured.store.withAuthorizedRequest(claim,this.options.modelChannel,async(request,client)=>{
+      let ready=false;for(const entry of this.runtime.entries)for(const actionId of entry.program.actionIds){const page=await discoverPostgresDocumentBindings(client,claim,request,{actionId,programRef:entry.program.ref},this.options);if(page.items.some(item=>item.bindings.some(binding=>binding.readiness==='ready')))ready=true;}return {request,ready};
+    });
+    if(!ready)throw new SecurityError('SOURCE_NOT_AUTHORIZED','The requested task has no current registered PostgreSQL readonly binding');
     signal.throwIfAborted();return request;
   }
   private async access(claim:WorkClaim,job:Job,purpose:'grounding'|'agent',signal:AbortSignal,bootstrapComplete=true){
     const state=job.delegation?.agent,refs=[...(state?[state.scope,...state.observations]:[]),...(state?.composition?.contexts??[]).filter(component=>!state?.composition?.retiredContexts?.some(retired=>retired.id===component.id)).map(component=>component.scope)];
-    const session=await PostgresNativePlanningSession.create(this.configured.store,claim,this.options.policyDigest,this.options.modelChannel,{builder:this.options.builder,signal,boundRefs:refs,readScope:'request',priorReads:job.delegation?.ontologyReads,actionCatalog:this.registry,
+    const session=await PostgresNativePlanningSession.create(this.configured.store,claim,this.options.policyDigest,this.options.modelChannel,{builder:this.options.builder,signal,boundRefs:refs,readScope:'request',priorReads:job.delegation?.ontologyReads,actionCatalog:this.runtime.catalog,
       taskContext:{purpose,refs,capabilityDirectory:{bootstrapComplete,discoveryTool:'discover_actions'}},
       discoverActions:(graph,owner,request,input,context)=>discoverPostgresDocumentActions(graph,owner,request,input,context,this.options)});
     claim.modelContextKey=session.modelSessionKey();
@@ -159,8 +162,10 @@ export class PostgresCoordinator {
         const intent=intents.find(value=>value.id===step.intentId);if(!intent)fail('The original plan intent is missing');
         if(intent.state==='effect_confirmed')continue;
         if(intent.state!=='ready')throw new SecurityError('AUTHORITY_UNAVAILABLE','An original dispatched operation must be reconciled; automatic replay is prohibited');
-        if(step.action!=='ComposeDocument'||step.effect!=='local')throw new SecurityError('AUTHORITY_UNAVAILABLE','The selected program has no installed PostgreSQL execution adapter');
-        await this.execution.execute(claim,intent.id,signal);
+        const entry=this.runtime.require(step.binding?.programRef??plan.programRef,step.binding?.configurationDigest??plan.programDigest);
+        if(entry.kind==='document'&&step.action==='ComposeDocument'&&step.effect==='local')await this.execution.execute(claim,intent.id,signal);
+        else if(entry.kind==='didi'&&step.effect==='read')await this.didi.execute(claim,intent.id,signal);
+        else throw new SecurityError('AUTHORITY_UNAVAILABLE','The selected program has no installed PostgreSQL execution adapter');
       }
       await this.transition(claim,current=>{delete current.delegation!.agent!.pendingPlanId;current.delegation!.phase='planning';current.delegation!.nextAt=0;});return;
     }
@@ -168,7 +173,7 @@ export class PostgresCoordinator {
     }finally{if(claim.modelContextKey)await this.configured.reasoner.closeTask?.(claim.modelContextKey);}
   }
   private async ground(claim:WorkClaim,job:Job,signal:AbortSignal){
-    const page=await this.configured.store.catalogue(claim,[{program:this.doc,capability:this.doc.capability()}],this.options.modelChannel);
+    const page=await this.configured.store.catalogue(claim,this.runtime.entries.map(entry=>({program:entry.program,capability:entry.program.capability()})),this.options.modelChannel);
     if(!page.items.length)throw new SecurityError('AUTHORITY_UNAVAILABLE','The requested service is not covered by the currently installed PostgreSQL runtime');
     const request=await this.available(claim,signal),{session,access}=await this.access(claim,job,'grounding',signal,!page.hasMore);
     try{
@@ -179,7 +184,7 @@ export class PostgresCoordinator {
         await this.transition(claim,current=>{current.state=decision.kind==='clarify'?'input-required':'rejected';current.updatedAt=new Date().toISOString();current.delegation!.phase=decision.kind==='clarify'?'clarifying':'rejected';if(decision.kind==='clarify')current.question=decision.message;else current.error=decision.message;});return;
       }
       if(decision.kind!=='compose')throw new SecurityError('AUTHORITY_UNAVAILABLE','This native PostgreSQL path requires the actual composed-goal decision; resolve and initial-selection adapters are not installed');
-      const capabilities=[this.doc.capability()];
+      const capabilities=this.runtime.entries.map(entry=>entry.program.capability());
       const fixed=groundConditions(groundRequirements(request,decision.requirementsJson,capabilities.flatMap(value=>value.outcomePredicates??[]),capabilities.flatMap(value=>value.requirementRoles??[]),capabilities.flatMap(value=>value.predicates.map(predicate=>predicate.id))),decision.conditionsJson,session.retrievedRefs());
       const normalized={...fixed,successCriteria:fixed.successCriteria??[],conditions:fixed.conditions??[],confirmedInputs:fixed.confirmedInputs??{}};
       await this.transition(claim,current=>{
@@ -194,13 +199,13 @@ export class PostgresCoordinator {
   }
   private async cover(claim:WorkClaim,program:GoalProgram,signal:AbortSignal){
     if(!this.configured.reasoner.reviewGoal)fail('The configured runtime has no independent whole-goal reviewer');
-    const context=await this.configured.database.run(client=>postgresGoalReviewContext(client,claim,program,{...this.options,componentPrograms:[this.doc]}));
+    const context=await this.configured.database.run(client=>postgresGoalReviewContext(client,claim,program,{...this.options,componentPrograms:this.runtime.entries.map(entry=>entry.program)}));
     const response=await this.model(claim,signal,'goal_coverage_reviewed',async()=>{
-      const fresh=await this.configured.database.run(client=>postgresGoalReviewContext(client,claim,program,{...this.options,componentPrograms:[this.doc]}));if(!same(fresh.context,context.context))throw new SecurityError('POLICY_CHANGED');
+      const fresh=await this.configured.database.run(client=>postgresGoalReviewContext(client,claim,program,{...this.options,componentPrograms:this.runtime.entries.map(entry=>entry.program)}));if(!same(fresh.context,context.context))throw new SecurityError('POLICY_CHANGED');
     },()=>this.configured.reasoner.reviewGoal!(context.context,signal));
     const proof=createGoalCoverage(context.context,response.decision,response.evidence);
     await this.transition(claim,async(current,client)=>{
-      const fresh=await postgresGoalReviewContext(client,claim,postgresGoalProgram(current),{...this.options,componentPrograms:[this.doc]});if(!same(fresh.context,context.context))throw new SecurityError('POLICY_CHANGED');
+      const fresh=await postgresGoalReviewContext(client,claim,postgresGoalProgram(current),{...this.options,componentPrograms:this.runtime.entries.map(entry=>entry.program)});if(!same(fresh.context,context.context))throw new SecurityError('POLICY_CHANGED');
       if(current.delegation!.goalCoverage)current.delegation!.goalCoverageHistory=[...(current.delegation!.goalCoverageHistory??[]),current.delegation!.goalCoverage];current.delegation!.goalCoverage=proof;
       current.updatedAt=new Date().toISOString();current.delegation!.events.push({at:current.updatedAt,event:'goal_coverage_recorded',evidence:proof.digest});
       if(proof.review.verdict!=='covered'){current.state=proof.review.verdict==='clarify'?'input-required':'rejected';current.delegation!.phase=proof.review.verdict==='clarify'?'clarifying':'rejected';if(proof.review.verdict==='clarify')current.question=proof.review.message;else current.error=proof.review.message;}
@@ -208,13 +213,13 @@ export class PostgresCoordinator {
   }
   private async act(claim:WorkClaim,job:Job,program:GoalProgram,signal:AbortSignal){
     if(!this.configured.reasoner.act)fail('The configured model has no Agent decision port');
-    const dto=await this.configured.database.run(client=>postgresAgentPlanningContext(client,claim,program,{...this.options,componentPrograms:[this.doc]})),{session,access}=await this.access(claim,job,'agent',signal);
+    const dto=await this.configured.database.run(client=>postgresAgentPlanningContext(client,claim,program,{...this.options,componentPrograms:this.runtime.entries.map(entry=>entry.program)})),{session,access}=await this.access(claim,job,'agent',signal);
     access.executionBudget=dto.executionBudget;access.maxTurns=Math.min(access.maxTurns,dto.maxTurns);
     try{
       const response=await this.model(claim,signal,'agent_decision',async()=>{
-        await this.available(claim,signal);const fresh=await this.configured.database.run(client=>postgresAgentPlanningContext(client,claim,program,{...this.options,componentPrograms:[this.doc]}));if(!same(fresh.context,dto.context))throw new SecurityError('POLICY_CHANGED');await session.authorizeModel(this.options.modelChannel);
+        await this.available(claim,signal);const fresh=await this.configured.database.run(client=>postgresAgentPlanningContext(client,claim,program,{...this.options,componentPrograms:this.runtime.entries.map(entry=>entry.program)}));if(!same(fresh.context,dto.context))throw new SecurityError('POLICY_CHANGED');await session.authorizeModel(this.options.modelChannel);
       },()=>this.configured.reasoner.act!(dto.context,signal,access));
-      const decision=agentDecisionSchema.parse(response.decision),reads=await session.finish(),configured={...this.options,programs:[createPostgresDocumentPolicy()],maxTaskMs:this.maximum};
+      const decision=agentDecisionSchema.parse(response.decision),reads=await session.finish(),configured={...this.options,programs:this.runtime.policies(),maxTaskMs:this.maximum};
       signal.throwIfAborted();
       if(decision.kind==='prepare')await this.configured.database.run(client=>preparePostgresGoalContexts(client,claim,decision,response.evidence.id,reads,configured));
       else if(decision.kind==='execute')await this.configured.database.run(client=>installPostgresAgentPlan(client,claim,decision,response.evidence.id,reads,configured));

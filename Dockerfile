@@ -9,7 +9,7 @@ COPY apps ./apps
 COPY packages ./packages
 COPY scripts/build.mjs scripts/ontology.mjs scripts/release-artifacts.mjs ./scripts/
 COPY scripts/run-local.mjs scripts/agent-request.mjs scripts/agent-enroll.mjs scripts/ontology-operator.mjs ./scripts/
-COPY scripts/relocate-primary.mjs scripts/refresh-harness-login.mjs scripts/postgres-primary-handoff.mjs ./scripts/
+COPY scripts/relocate-primary.mjs scripts/refresh-harness-login.mjs scripts/postgres-primary-handoff.mjs scripts/postgres-node-migrate.mjs ./scripts/
 # build.mjs copies the actual PA Skill assets. Omitting this breaks npm run build.
 COPY integrations/grok/eigos-delegate ./integrations/grok/eigos-delegate
 COPY integrations/grok/eigos-native/client.mjs ./integrations/grok/eigos-native/client.mjs
@@ -57,6 +57,27 @@ RUN npm install --global --omit=dev @openai/codex@0.164.0 \
     && npm cache clean --force
 ENV EIGOS_CODEX_BIN=/usr/local/bin/codex
 LABEL io.eigos.model-cli="codex@0.164.0"
+USER node
+
+# Generate the same immutable runtime payload with its selected Harness backend.
+# This remains a candidate; an initialize-only image smoke is not model or
+# business acceptance and does not finalize release publication.
+FROM build AS harness-release
+ARG SOURCE_SHA
+RUN node scripts/release-artifacts.mjs create --root /app --out /app/release-harness --source-sha "${SOURCE_SHA}" --backend harness
+
+FROM worker AS worker-harness
+USER root
+# pi-ai is the actual existing codex-oauth provider plugin. Keep it beside dsh
+# so native profile resolution also supports that selected account backend.
+RUN npm install --prefix /opt/eigos-harness --omit=dev --save-exact --no-audit --no-fund \
+      @deepseek-ai/dsh@0.2.1-rc.5 @deepseek-ai/dsh-llm-pi-ai@0.2.1-rc.5 \
+    && ln -s /opt/eigos-harness/node_modules/.bin/dsh /usr/local/bin/dsh \
+    && test "$(dsh --version)" = "0.2.1-rc.5" \
+    && npm cache clean --force
+COPY --from=harness-release --chown=node:node /app/release-harness/manifest.json ./release/manifest.json
+ENV EIGOS_EXECUTOR=harness EIGOS_HARNESS_BIN=/usr/local/bin/dsh
+LABEL io.eigos.model-cli="dsh@0.2.1-rc.5"
 USER node
 
 # Keep the ordinary docker build endpoint as the Gateway.

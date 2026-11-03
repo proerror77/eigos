@@ -1,6 +1,8 @@
 # 镜像与 Ontology 发布流程
 
-应用构建、Ontology 打包、业务库发布和生产激活是四个独立步骤。只有最后的真实回读通过，才能记录为正式发布。业务库中的不可变本体注册库是运行权威；镜像里的 JSON 是待校验的构建产物。
+应用构建、Ontology 打包、业务库发布和本体激活是四个独立步骤。只有最后的真实回读通过，才能记录为正式发布。SQLite 与 PostgreSQL 均使用业务库中的不可变本体注册库作为运行权威；镜像里的 JSON 是待校验的构建产物。
+
+存储迁移的 runtime schema／authority handoff 激活与本体 `activate_release` 是不同记录。迁移应完整保留现有发布、active 引用、generation 和旧任务 pin，不把导入的本体重新发布成另一套定义，也不因启动 Gateway 而推进 active。PostgreSQL 的两阶段 handoff、节点全量回读与实际启动见[部署说明](deployment.md)。
 
 ## 版本与发布清单
 
@@ -69,7 +71,11 @@ node scripts/ontology-operator.mjs --profile /private/operator/profile.json comm
 node scripts/ontology-operator.mjs --profile /private/operator/profile.json query --input /private/release/get-ontology.json
 ```
 
-上述 UUID 和 revision 只是格式示例，不是可用于生产的回执。Foundation 模式只开放已审查的管理接口；若入口拒绝某项操作，不能关掉权限模式或直接改表绕过。PostgreSQL 管理写入与运行入口尚未完成时，只能构建和验证候选产物，不能把打包步骤标为业务库已经发布或激活。
+上述 UUID 和 revision 只是格式示例，不是可用于生产的回执。PostgreSQL 已有实际草稿、发布与显式 CAS 激活管理端口，Gateway 按所选后端连接同一注册库；Foundation 模式仍只开放已审查的操作及当前 owner／角色／字段范围。若入口拒绝某项操作，不能关掉权限模式或直接改表绕过。
+
+本体对象动作的 prepare／approve 使用原任务、原计划摘要和当前受审预览；CallerAction 执行仍检查批准范围、对象版本、原尝试与当前权限。发布元数据不授予对象写入或供应商执行权限。Pipeline 验证还须绑定原独立程序、真实观察与逐项确认的原意图回执；普通组合 Goal 的完成标签不能替代该验证。当前 PostgreSQL 装配缺少 `prepare_pipeline_validation` 的任务执行端口时会明确返回 `AUTHORITY_UNAVAILABLE`，不生成不可执行的替代任务。
+
+只有镜像／包清单、代码适配或合成测试时，产物仍是 candidate。Harness 的 PostgreSQL 执行合同与专用镜像发布分别验收；镜像必须带实际 backend、固定工具版本、准确提交的必要 CI 和 OCI digest。无论使用哪种后端，都不能把本地打包写成业务库已发布、已激活或实际模型／供应商任务已完成。
 
 ## 回滚
 

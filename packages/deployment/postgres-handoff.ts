@@ -247,16 +247,16 @@ async function applyPrivileges(client:Client,grants:ReturnType<typeof postgresRu
   }
 }
 
-async function lockHandoff(client:Client,checked:ReturnType<typeof readPostgresHandoffOperation>){
+async function lockHandoff(client:Client,checked:ReturnType<typeof readPostgresHandoffOperation>,runtimeExtension=false,readOnly=false){
   const {binding,plan}=checked;
   await client.query("SET LOCAL lock_timeout='10000ms'; SET LOCAL statement_timeout='60000ms'; SET LOCAL idle_in_transaction_session_timeout='60000ms'");
   // LOCK is a utility statement: obtain all original table locks before the
   // first SELECT fixes SERIALIZABLE's MVCC snapshot. Never certify stale rows
   // captured while waiting for another writer's table lock.
-  const extension=checked.operation.phase==='activate'?[...POSTGRES_RUNTIME_SCHEMA_CONTRACT.messagingNode.tables,POSTGRES_RUNTIME_SCHEMA_CONTRACT.activationTable,POSTGRES_RUNTIME_SCHEMA_CONTRACT.schemaReceiptTable]:[];
+  const extension=runtimeExtension||checked.operation.phase==='activate'?[...POSTGRES_RUNTIME_SCHEMA_CONTRACT.messagingNode.tables,POSTGRES_RUNTIME_SCHEMA_CONTRACT.activationTable,POSTGRES_RUNTIME_SCHEMA_CONTRACT.schemaReceiptTable]:[];
   const relations=[...plan.tables.map(table=>table.name),'eigos_migration_receipt','eigos_business_mutex',...extension].map(table=>`${q(binding.business.schema)}.${q(table)}`);
   relations.push(...[...membershipTables,'eigos_membership_migration_receipt'].map(table=>`${q(binding.membership.schema)}.${q(table)}`));
-  await client.query(`LOCK TABLE ${relations.sort().join(',')} IN ACCESS EXCLUSIVE MODE`);
+  await client.query(`LOCK TABLE ${relations.sort().join(',')} IN ${readOnly?'ACCESS SHARE':'ACCESS EXCLUSIVE'} MODE`);
   for(const schema of [binding.business.schema,binding.membership.schema].sort())await client.query('SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext($1))',[schema]);
   await assertAdminIdentity(client,checked);
   const sessions=await client.query(`SELECT count(*)::int AS n FROM pg_catalog.pg_stat_activity WHERE usename=$1 AND pid<>pg_backend_pid()`,[binding.connection.role]);
@@ -337,13 +337,28 @@ export async function verifyPreparedPostgresRuntimeSchema(client:Client,input:un
   },true);
 }
 
-/** Separate reviewed activation phase; deliberately rejects Relay bindings
- * until the real offline-admin whole-node verifier is installed. Starting a
- * publisher to run the ordinary NodeStore importer would break this boundary. */
-export async function activatePostgresPrimary(client:Client,input:unknown){
+/** Host-only administrator boundary for offline node migration/readback. It
+ * reuses the exact original-row, schema, ACL and owner checks, never a running
+ * publisher. The separate storage context further restricts the node scope. */
+export async function withPreparedPostgresNodeTransaction<T>(client:Client,input:unknown,action:(checked:ReturnType<typeof readPostgresHandoffOperation>)=>Promise<T>,readOnly=false){
+  const checked=readPostgresHandoffOperation(input);
+  if(checked.operation.phase!=='prepare-schema')throw new Error('Offline node migration requires the separate pre-activation schema operation');
+  return transaction(client,async()=>{
+    await lockHandoff(client,checked,true,readOnly);
+    await verifyOriginalRows(client,checked);await assertTargetInventory(client,checked);await assertPostgresRuntimeRole(client,checked.binding,checked.grants,'granted');await assertNoOtherGrantees(client,checked.binding,true);
+    await assertPostgresMessagingStorageSchema(client,checked.binding.business.schema);
+    const activations=await client.query(`SELECT 1 FROM ${q(checked.binding.business.schema)}.eigos_runtime_activation LIMIT 1`);
+    if(activations.rowCount)throw new Error('Offline node migration cannot run after activation');
+    return action(checked);
+  },readOnly);
+}
+
+/** Separate reviewed activation phase, including actual admin AEAD/full-row
+ * node readback when Relay is enabled. It never starts an authorization lease. */
+export async function activatePostgresPrimary(client:Client,input:unknown,options:{relayWrappingKey?:CryptoKey}={}){
   const checked=readPostgresHandoffOperation(input);if(checked.operation.phase!=='activate')throw new Error('Expected the separate reviewed activation phase');
   const {binding,grants}=checked;
-  if(binding.relay)throw new Error('Activation requires the actual offline-admin Relay node readback and reviewed source-to-target origin mapping; no publisher is started by this tool');
+  if(binding.relay&&!options.relayWrappingKey)throw new Error('Activation requires the existing host Relay wrapping key for actual offline node readback');
   const freshIdentity=await auditImportedIdentities(client,{businessSchema:binding.business.schema,membershipSchema:binding.membership.schema,businessFileDigest:binding.business.sourceFileDigest,membershipFileDigest:binding.membership.sourceFileDigest,now:Date.now()});
   if(freshIdentity.mismatchedSubjects!==0)throw new Error('Fresh identity audit failed');
   const handoff=postgresHandoffSchema.parse(readPinnedPostgresJson(binding.handoff!,65536));
@@ -356,6 +371,7 @@ export async function activatePostgresPrimary(client:Client,input:unknown){
     const receipt=await client.query(`SELECT body FROM ${schema}.${q(POSTGRES_RUNTIME_SCHEMA_CONTRACT.schemaReceiptTable)} WHERE slot=1 LIMIT 2`),imported=await client.query(`SELECT body FROM ${schema}.eigos_migration_receipt WHERE slot=1 LIMIT 2`);
     if(receipt.rowCount!==1||imported.rowCount!==1)throw new Error('Actual immutable migration or schema receipt is missing');
     assertReviewedPostgresActivation(binding,{handoff,sourceFence:checked.fence,businessVerification:checked.verification,identityAudit:checked.identity,runtimeSchema:receipt.rows[0]?.body,activation,businessImport:imported.rows[0]?.body});
+    if(binding.relay){const {verifyPostgresNodesForActivation}=await import('./postgres-node-migration.js');await verifyPostgresNodesForActivation(client,binding,options.relayWrappingKey!,checked.operation.adminIdentity.role,checked.operation.businessVerification.sha256);}
     await client.query(`SET LOCAL ROLE ${q(binding.connection.role)}`);
     // A failed role check rolls back this entire transaction, including LOCAL
     // ROLE. Sending RESET after a server error can mask its first cause.

@@ -5,7 +5,7 @@ const config=readWorkerConfig();
 async function createConfiguredWorker(){
   if(config.EIGOS_STORAGE_BACKEND!=='postgres')return createWorker(config);
   if(config.EIGOS_EXECUTOR==='disabled')throw new Error('PostgreSQL Worker model execution is disabled');
-  const {createPostgresPrimaryHostResources,assertPostgresBuiltinSourceConfiguration,assertPostgresRelayHostConfiguration}=await import('../../packages/postgres/host-runtime.js');
+  const {createPostgresPrimaryHostResources,assertPostgresBuiltinSourceConfiguration,assertPostgresRelayHostConfiguration,createPostgresProgramTransport,assertPostgresProgramSourceCurrent}=await import('../../packages/postgres/host-runtime.js');
   assertPostgresBuiltinSourceConfiguration(config);
   const resources=await createPostgresPrimaryHostResources(config,'worker');
   try{
@@ -13,11 +13,13 @@ async function createConfiguredWorker(){
     // credentials or creating another publisher/network client in the Worker.
     assertPostgresRelayHostConfiguration(config,resources.binding);
     await resources.requireWorkerReadiness();
+    const programTransport=createPostgresProgramTransport(config,{database:resources.database,policyDigest:resources.binding.policyDigest,authority:resources.binding.authority,builder:resources.kernel,role:'worker'});
+    await assertPostgresProgramSourceCurrent(programTransport,resources);
     const factory=await import('./postgres-runtime.js');
     if(config.EIGOS_EXECUTOR==='harness'&&typeof factory.postgresHarnessReasoner!=='function')throw new Error('The configured PostgreSQL Harness runtime is not installed');
     // Pass the original model/backend configuration through unchanged. This
     // host owns pools only; it never starts a second publisher or grants rights.
-    const candidate=factory.createPostgresWorker(config,{database:resources.database,policyDigest:resources.binding.policyDigest,builder:resources.kernel});
+    const candidate=factory.createPostgresWorker(config,{database:resources.database,policyDigest:resources.binding.policyDigest,builder:resources.kernel,registry:programTransport.registry});
     let closing:Promise<void>|undefined;
     const close=()=>closing??=(async()=>{const errors:unknown[]=[];try{await candidate.close();}catch(error){errors.push(error);}try{await resources.close();}catch(error){errors.push(error);}if(errors.length)throw new AggregateError(errors,'PostgreSQL Worker shutdown failed');})();
     try{candidate.start();return {worker:candidate.worker,close};}catch(error){await close();throw error;}

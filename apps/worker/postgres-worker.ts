@@ -7,11 +7,12 @@ type WorkerStore = Pick<PostgresWorkerStore, 'claim' | 'renew' | 'active' | 'fin
 interface Options {
   run(claim: WorkClaim, signal: AbortSignal): Promise<void>;
   leaseMs?: number; pollMs?: number; timeoutMs?: number;
+  maxConcurrent?: number;
   onError?(claim: WorkClaim, error: unknown, signal: AbortSignal): Promise<void>;
 }
 interface Running { controller: AbortController; done: Promise<void> }
 
-/** Mac execution loop for the shared SQL queue. The handler owns each durable
+/** Execution loop for the shared SQL queue. The handler owns each durable
  * business transition; this loop never starts a model inside a transaction. */
 export class PostgresTaskWorker {
   private readonly running = new Map<string, Running>();
@@ -22,11 +23,13 @@ export class PostgresTaskWorker {
   private readonly leaseMs: number;
   private readonly pollMs: number;
   private readonly timeoutMs: number;
+  private readonly maxConcurrent: number;
   constructor(private readonly store: WorkerStore, private readonly options: Options) {
-    this.leaseMs = options.leaseMs ?? 15000; this.pollMs = options.pollMs ?? 100; this.timeoutMs = options.timeoutMs ?? 1800000;
+    this.leaseMs = options.leaseMs ?? 15000; this.pollMs = options.pollMs ?? 100; this.timeoutMs = options.timeoutMs ?? 300000; this.maxConcurrent=options.maxConcurrent??2;
     if (!Number.isSafeInteger(this.leaseMs) || this.leaseMs < 100 || this.leaseMs > 300000
       || !Number.isSafeInteger(this.pollMs) || this.pollMs < 10 || this.pollMs > 60000
       || !Number.isSafeInteger(this.timeoutMs) || this.timeoutMs < 1) throw new Error('Invalid PostgreSQL Worker timing');
+    if(!Number.isInteger(this.maxConcurrent)||this.maxConcurrent<1||this.maxConcurrent>2)throw new Error('Invalid PostgreSQL Worker concurrency');
   }
   start() {
     if (this.timer || this.paused || this.stopping) return;
@@ -37,7 +40,7 @@ export class PostgresTaskWorker {
     if (this.stopping || this.paused) return Promise.resolve();
     if (this.polling) return this.polling;
     const poll = async () => {
-      while (!this.stopping && !this.paused && this.running.size < 2) {
+      while (!this.stopping && !this.paused && this.running.size < this.maxConcurrent) {
         const claim = await this.store.claim(['eigos.delegate'], this.leaseMs);
         if (!claim) break;
         if (this.stopping || this.paused) { await this.store.finish(claim, () => {}); break; }

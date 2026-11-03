@@ -5,7 +5,7 @@ import { syncOntology } from './ontology.mjs';
 const root = process.cwd();
 // Static JSON imports are bundled without a runtime file read; retain the
 // original raw-file size limit before building reviewed provider definitions.
-for (const name of ['didi-order-test.json','didi-readonly.json','meituan-readonly.json','shopify-catalog.json','rollinggo-readonly.json']) {
+for (const name of ['didi-order-test.json','didi-readonly.json','meituan-readonly.json','shopify-catalog.json','rollinggo-readonly.json','payment-commerce-readonly.json']) {
   if (statSync(resolve(root,'packages/ontology/definitions',name)).size > 128000) throw new Error('Ontology MCP definition exceeds its size limit');
 }
 // TypeScript does not remove outputs for deleted sources. Prune only orphaned build files.

@@ -45,7 +45,7 @@ class PlanningReadGraph implements GraphStorage, ProjectionMetadata {
   private readonly inputs = new Map<string, SecurityEnvelope>();
   constructor(private readonly client: Client, private readonly principal: Principal, private readonly taskId: string,
     private readonly policy: string, private readonly auth: PostgresTaskReadAuthorization, private readonly admission: PostgresTaskReadAdmission,
-    private readonly storage: PostgresProjectionGraph, private readonly builder?: StagedKernelBuilder) {
+    private readonly storage: PostgresProjectionGraph, private readonly builder?: StagedKernelBuilder,private readonly functionScope?:{id:string;authorization:import('./task-output.js').PostgresFunctionReadAuthorization}) {
     this.owner = ownerKey(principal); this.model = storage.model; this.releaseRef = storage.releaseRef;
     this.planning = { revision: (owner: string) => this.revision(owner),
       evaluate: (owner: string, input: unknown, budget?: ReadBudget) => this.evaluate(owner, input, budget),
@@ -150,7 +150,16 @@ class PlanningReadGraph implements GraphStorage, ProjectionMetadata {
     }
     this.active(); return result;
   }
-  readPrivate(): never { throw new SecurityError('AUTHORIZATION_REQUIRED'); }
+  async withGraphFunction<T>(owner:string,id:string,action:(scope:GraphStorage)=>Promise<T>):Promise<T>{
+    this.active(owner);this.model.function(id);return this.auth.withFunction(id,async scoped=>{
+      const graph=new PlanningReadGraph(this.client,this.principal,this.taskId,this.policy,scoped,this.admission,this.storage,this.builder,{id,authorization:scoped});
+      try{const value=await action(graph),influence=await graph.authorize();if(influence)this.capture(influence);this.active();return value;}finally{graph.close();}
+    });
+  }
+  readPrivate(owner?:string,ref?:ObjectRef,budget:ReadBudget={remaining:1000}){
+    this.active();const frame=this.functionScope;if(owner===undefined||ref===undefined||!frame||!['rideEstimateStatus','selectDidiPlace'].includes(frame.id)||!['RideEstimateTask','DidiPlaceObservation','RideEstimateObservation'].includes(ref.type))throw new SecurityError('AUTHORIZATION_REQUIRED');
+    this.active(owner);this.charge(budget);return (async()=>{const visible=await frame.authorization.readObject(ref);this.capture(visible.envelope);const result=await frame.authorization.readPrivate(ref);this.active();return result;})();
+  }
   evidencePropertiesDigest(): never { throw new SecurityError('AUTHORIZATION_REQUIRED'); }
   containsLinks(): never { throw new SecurityError('AUTHORIZATION_REQUIRED'); }
   ingest(): never { throw new SecurityError('AUTHORIZATION_REQUIRED'); }

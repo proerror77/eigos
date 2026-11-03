@@ -17,7 +17,7 @@ const postgres:GatewayApplicationFactory=async selected=>{
   })();
   try{
     const services=createPostgresGatewayServices(selected,resources);
-    communications=await createPostgresRelayServices(selected,resources);
+    communications=await createPostgresRelayServices(selected,resources,process.env,services.programTransport);
     if(communications)relay=new TaskRelayGateway(communications.port,services.tasks,selected.PUBLIC_URL,communications.configuration,selected.EIGOS_DIDI_RELAY_AGENT_ID,
       {openClient:communications.openClient,enrollmentKey:communications.enrollmentKey});
     const messaging=communications?.messaging,taskRelay=relay,relayPort=communications?.port;
@@ -26,7 +26,7 @@ const postgres:GatewayApplicationFactory=async selected=>{
       relay:taskRelay&&relayPort?{status:()=>taskRelay.status,mount:(app,authenticate,principal)=>mountTaskRelay(app,taskRelay,relayPort,authenticate,principal)}:undefined,
       messaging:messaging?{service:messaging,mountMembers:app=>mountMessagingMemberRoutes(app,selected,services.members,messaging)}:undefined,
       authorityCurrent:resources.authorityCurrent,ontologyRelease:services.ontologyRelease,
-      start:async()=>{try{await resources.startPublisher();await communications?.verifyMigrations();await taskRelay?.start();resources.assertAvailable();}catch(error){try{await close();}catch(cleanup){throw new AggregateError([error,cleanup],'PostgreSQL Gateway startup failed',{cause:error});}throw error;}},close};
+      start:async()=>{try{await services.assertSourceCurrent();await resources.startPublisher();await communications?.verifyMigrations();await taskRelay?.start();await services.assertSourceCurrent();resources.assertAvailable();}catch(error){try{await close();}catch(cleanup){throw new AggregateError([error,cleanup],'PostgreSQL Gateway startup failed',{cause:error});}throw error;}},close};
     return await createPostgresApp(selected,runtime);
   }catch(error){try{await close();}catch(cleanup){throw new AggregateError([error,cleanup],'PostgreSQL Gateway startup failed',{cause:error});}throw error;}
 };

@@ -1,5 +1,5 @@
 import type {Client} from 'pg';
-import {randomBytes,randomUUID} from 'node:crypto';
+import {randomBytes,randomUUID,createPrivateKey,createPublicKey} from 'node:crypto';
 import {z} from 'zod';
 import {digest} from '../core/delegation.js';
 import {agentIdSchema,fail,MAX_ENVELOPE_BYTES,receiptSchema,relayOrigin,sha256,uuidSchema} from '../relay/contracts.js';
@@ -15,6 +15,7 @@ const sealedSchema=z.strictObject({version:z.literal(1),iv:z.string().regex(/^[A
 const querySchema=z.strictObject({after:z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),limit:z.number().int().min(1).max(1000).default(1000),pendingOnly:z.boolean().default(false)});
 export {relayNodeSnapshotSchema} from '../agent-transport/store.js';
 type Options={database:Pick<PostgresDatabase,'run'>;publisher:MessagingPublisher;nodeId:string;baseUrl:string;wrappingKey:CryptoKey};
+type NodeCryptoOptions=Pick<Options,'nodeId'|'baseUrl'|'wrappingKey'>;
 type State={baseUrl:string;agentId:string;signedCard:string;sealed:string;importDigest?:string};
 
 export async function relayNodeWrappingKey(bytes:Uint8Array):Promise<CryptoKey>{
@@ -23,12 +24,12 @@ export async function relayNodeWrappingKey(bytes:Uint8Array):Promise<CryptoKey>{
 }
 function wrappingKey(key:CryptoKey){if(key.type!=='secret'||key.algorithm.name!=='AES-GCM'||!('length'in key.algorithm)||key.algorithm.length!==256||!key.usages.includes('encrypt')||!key.usages.includes('decrypt'))throw new Error('A host-owned AES-256-GCM node wrapping key is required');}
 const metadata=(row:Record<string,unknown>):State=>({baseUrl:z.string().parse(row.base_url),agentId:agentIdSchema.parse(row.agent_id),signedCard:z.string().max(4096).parse(row.signed_card),sealed:z.string().max(32000).parse(row.credentials),...(row.import_digest?{importDigest:hash.parse(row.import_digest)}:{})});
-function aad(options:Options,schema:string,authority:string,agentId:string){return new TextEncoder().encode(JSON.stringify(['eigos.relay-node.credentials.v1',schema,authority,options.nodeId,options.baseUrl,agentId]));}
-async function seal(options:Options,schema:string,authority:string,credentials:RelayNodeCredentials,agentId:string){
+function aad(options:NodeCryptoOptions,schema:string,authority:string,agentId:string){return new TextEncoder().encode(JSON.stringify(['eigos.relay-node.credentials.v1',schema,authority,options.nodeId,options.baseUrl,agentId]));}
+async function seal(options:NodeCryptoOptions,schema:string,authority:string,credentials:RelayNodeCredentials,agentId:string){
   const iv=crypto.getRandomValues(new Uint8Array(12)),body=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:aad(options,schema,authority,agentId)},options.wrappingKey,new TextEncoder().encode(JSON.stringify(credentials)));
   return JSON.stringify({version:1,iv:Buffer.from(iv).toString('base64url'),body:Buffer.from(body).toString('base64url')});
 }
-async function unseal(options:Options,schema:string,authority:string,state:State):Promise<RelayNodeCredentials>{
+async function unseal(options:NodeCryptoOptions,schema:string,authority:string,state:State):Promise<RelayNodeCredentials>{
   try{const value=sealedSchema.parse(JSON.parse(state.sealed)),iv=new Uint8Array(Buffer.from(value.iv,'base64url')),data=new Uint8Array(Buffer.from(value.body,'base64url'));
     const body=await crypto.subtle.decrypt({name:'AES-GCM',iv,additionalData:aad(options,schema,authority,state.agentId)},options.wrappingKey,data);
     const credentials=relayNodeCredentialsSchema.parse(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(body)));
@@ -38,6 +39,7 @@ async function unseal(options:Options,schema:string,authority:string,state:State
 async function keys(credentials:RelayNodeCredentials,expected?:string):Promise<NodeKeys>{
   const identity=await verifyCard(credentials.signedCard,expected);
   if(credentials.signingKey.x!==identity.card.signingKey.x||credentials.encryptionKey.x!==identity.card.encryptionKey.x)throw new Error('Node private keys do not match the signed identity');
+  for(const key of [credentials.signingKey,credentials.encryptionKey]){const raw=Buffer.from(key.d,'base64url'),der=Buffer.concat([Buffer.from(key.crv==='Ed25519'?'302e020100300506032b657004220420':'302e020100300506032b656e04220420','hex'),raw]);try{if(createPublicKey(createPrivateKey({key:der,format:'der',type:'pkcs8'})).export({format:'jwk'}).x!==key.x)throw new Error('Node private key does not match its signed public key');}finally{raw.fill(0);der.fill(0);}}
   return {identity,signingKey:credentials.signingKey,encryptionKey:credentials.encryptionKey};
 }
 
@@ -126,17 +128,17 @@ export async function validateRelayNodeSnapshot(input:unknown,expected:{baseUrl:
   return {snapshot,keys:nodeKeys};
 }
 
-async function storedSnapshot(client:Client,q:string,nodeId:string,credentials:RelayNodeCredentials):Promise<Snapshot>{
+async function storedSnapshot(client:Client,q:string,nodeId:string,credentials:RelayNodeCredentials,version:1|2=1):Promise<Snapshot>{
   let total=0;
   for(const table of ['outbox','inbox','retained']){
     const extra=table==='outbox'?"octet_length(coalesce(receipt,''))":table==='inbox'?"octet_length(sender_card)+octet_length(coalesce(reason,''))":"octet_length(sender_card)";
     const row=(await client.query(`SELECT count(*) AS n,coalesce(sum(octet_length(coalesce(envelope,''))+${extra}),0) AS bytes FROM ${q}.eigos_relay_node_${table} WHERE node_id=$1`,[nodeId])).rows[0];
     total+=Number(row?.bytes);if(Number(row?.n)>10000||!Number.isSafeInteger(total)||total>67108864)throw new Error('Node history exceeds the complete private snapshot bound');
   }
-  const outbox=(await client.query(`SELECT __eigos_rowid AS cursor,id,recipient,connection_id,content_digest,envelope,receipt FROM ${q}.eigos_relay_node_outbox WHERE node_id=$1 ORDER BY __eigos_rowid`,[nodeId])).rows.map(row=>({cursor:Number(row.cursor),id:row.id,recipient:row.recipient,connectionId:row.connection_id,contentDigest:row.content_digest,envelope:row.envelope,...(row.receipt?{receipt:JSON.parse(row.receipt)}:{})}));
-  const inbox=(await client.query(`SELECT __eigos_rowid AS cursor,sender,id,digest,envelope,sender_card,state,reason,expires_at FROM ${q}.eigos_relay_node_inbox WHERE node_id=$1 ORDER BY __eigos_rowid`,[nodeId])).rows.map(row=>({cursor:Number(row.cursor),sender:row.sender,id:row.id,digest:row.digest,...(row.envelope?{envelope:row.envelope}:{}),senderCard:row.sender_card,state:row.state,...(row.reason?{reason:row.reason}:{}),expiresAt:Number(row.expires_at)}));
+  const outbox=(await client.query(`SELECT __eigos_rowid AS cursor,id,recipient,connection_id,content_digest,envelope,receipt FROM ${q}.eigos_relay_node_outbox WHERE node_id=$1 ORDER BY __eigos_rowid`,[nodeId])).rows.map(row=>({cursor:Number(row.cursor),id:row.id,recipient:row.recipient,connectionId:row.connection_id,contentDigest:row.content_digest,envelope:row.envelope,...(row.receipt?{receipt:JSON.parse(row.receipt),...(version===2?{receiptText:String(row.receipt)}:{})}:{})}));
+  const inbox=(await client.query(`SELECT __eigos_rowid AS cursor,sender,id,digest,envelope,sender_card,state,reason,expires_at FROM ${q}.eigos_relay_node_inbox WHERE node_id=$1 ORDER BY __eigos_rowid`,[nodeId])).rows.map(row=>({cursor:Number(row.cursor),sender:row.sender,id:row.id,digest:row.digest,...((version===2?row.envelope!==null:!!row.envelope)?{envelope:row.envelope}:{}),senderCard:row.sender_card,state:row.state,...((version===2?row.reason!==null:!!row.reason)?{reason:row.reason}:{}),expiresAt:Number(row.expires_at)}));
   const retained=(await client.query(`SELECT __eigos_rowid AS cursor,sender,id,digest,envelope,sender_card,expires_at FROM ${q}.eigos_relay_node_retained WHERE node_id=$1 ORDER BY __eigos_rowid`,[nodeId])).rows.map(row=>({cursor:Number(row.cursor),sender:row.sender,id:row.id,digest:row.digest,envelope:row.envelope,senderCard:row.sender_card,expiresAt:Number(row.expires_at)}));
-  const snapshot=relayNodeSnapshotSchema.parse({format:'eigos.relay-node.snapshot.v1',credentials,outbox,inbox,retained});if(Buffer.byteLength(JSON.stringify(snapshot))>67108864)throw new Error('Node snapshot exceeds its complete read bound');return snapshot;
+  const snapshot=relayNodeSnapshotSchema.parse({format:version===2?'eigos.relay-node.snapshot.v2':'eigos.relay-node.snapshot.v1',credentials,outbox,inbox,retained});if(Buffer.byteLength(JSON.stringify(snapshot))>67108864)throw new Error('Node snapshot exceeds its complete read bound');return snapshot;
 }
 
 /** Explicit private migration operation. The caller freezes and independently
@@ -146,22 +148,27 @@ async function storedSnapshot(client:Client,q:string,nodeId:string,credentials:R
 export async function importPostgresRelayNodeSnapshot(input:Options&{snapshot:unknown;expectedSnapshotDigest:string;expectedAgentId:string}){
   wrappingKey(input.wrappingKey);const options={...input,baseUrl:relayOrigin(input.baseUrl)};z.string().min(1).max(200).parse(options.nodeId);
   const checked=await validateRelayNodeSnapshot(input.snapshot,{baseUrl:options.baseUrl,agentId:input.expectedAgentId,digest:input.expectedSnapshotDigest}),snapshot=checked.snapshot;
-  return options.database.run(client=>options.publisher.withManagement(client,async()=>{
-    const schema=postgresBusinessSchema(client),q=`"${schema}"`,authority=postgresBusinessAuthorityDigest(client),existing=(await client.query(`SELECT base_url,agent_id,signed_card,credentials,import_digest FROM ${q}.eigos_relay_node_state WHERE node_id=$1 LIMIT 2`,[options.nodeId])).rows;
+  return options.database.run(client=>options.publisher.withManagement(client,()=>importNodeRows(client,options,postgresBusinessSchema(client),postgresBusinessAuthorityDigest(client),input,snapshot)));
+}
+
+/** Shared row algorithm; callers must supply a real runtime or offline-admin
+ * fenced transaction. It never opens a transaction or creates authority. */
+async function importNodeRows(client:Client,options:NodeCryptoOptions,schema:string,authority:string,input:{expectedSnapshotDigest:string;expectedAgentId:string},snapshot:Snapshot){
+    const q=`"${schema}"`,existing=(await client.query(`SELECT base_url,agent_id,signed_card,credentials,import_digest FROM ${q}.eigos_relay_node_state WHERE node_id=$1 LIMIT 2`,[options.nodeId])).rows;
     let status:'imported'|'already-imported'='imported';
     if(existing.length){
       if(existing.length!==1)throw new Error('Relay node import identity is ambiguous');const state=metadata(existing[0]);
       if(state.baseUrl!==options.baseUrl||state.agentId!==input.expectedAgentId||state.importDigest!==input.expectedSnapshotDigest)throw new Error('A different Relay identity/history already occupies the destination');
-      const credentials=await unseal(options,schema,authority,state),current=await storedSnapshot(client,q,options.nodeId,credentials);if(digest(current)!==input.expectedSnapshotDigest)throw new Error('The imported node has changed; do not overwrite its newer receipts/history');status='already-imported';
+      const credentials=await unseal(options,schema,authority,state),current=await storedSnapshot(client,q,options.nodeId,credentials,snapshot.format==='eigos.relay-node.snapshot.v2'?2:1);if(digest(current)!==input.expectedSnapshotDigest)throw new Error('The imported node has changed; do not overwrite its newer receipts/history');status='already-imported';
     }else{
       for(const table of ['outbox','inbox','retained'])if((await client.query(`SELECT 1 FROM ${q}.eigos_relay_node_${table} WHERE node_id=$1 LIMIT 1`,[options.nodeId])).rowCount)throw new Error('Partial Relay node state requires operator recovery');
       const encrypted=await seal(options,schema,authority,snapshot.credentials,input.expectedAgentId);
       await client.query(`INSERT INTO ${q}.eigos_relay_node_state(node_id,base_url,agent_id,signed_card,credentials,import_digest) VALUES($1,$2,$3,$4,$5,$6)`,[options.nodeId,options.baseUrl,input.expectedAgentId,snapshot.credentials.signedCard,encrypted,input.expectedSnapshotDigest]);
       const batches=async(table:string,values:unknown[],columns:string,select:string,record:string)=>{for(let offset=0;offset<values.length;offset+=100)await client.query(`INSERT INTO ${q}.eigos_relay_node_${table}(node_id,${columns}) SELECT $1,${select} FROM jsonb_to_recordset($2::jsonb) AS x(${record})`,[options.nodeId,JSON.stringify(values.slice(offset,offset+100))]);};
-      await batches('outbox',snapshot.outbox,'__eigos_rowid,id,recipient,connection_id,content_digest,envelope,receipt','x.cursor,x.id,x.recipient,x."connectionId",x."contentDigest",x.envelope,CASE WHEN x.receipt IS NULL THEN NULL ELSE x.receipt::text END','cursor bigint,id text,recipient text,"connectionId" text,"contentDigest" text,envelope text,receipt jsonb');
+      await batches('outbox',snapshot.outbox,'__eigos_rowid,id,recipient,connection_id,content_digest,envelope,receipt',`x.cursor,x.id,x.recipient,x."connectionId",x."contentDigest",x.envelope,CASE WHEN x.receipt IS NULL THEN NULL ELSE ${snapshot.format==='eigos.relay-node.snapshot.v2'?'x."receiptText"':'x.receipt::text'} END`,`cursor bigint,id text,recipient text,"connectionId" text,"contentDigest" text,envelope text,receipt jsonb,"receiptText" text`);
       await batches('inbox',snapshot.inbox,'__eigos_rowid,sender,id,digest,envelope,sender_card,state,reason,expires_at','x.cursor,x.sender,x.id,x.digest,x.envelope,x."senderCard",x.state,x.reason,x."expiresAt"','cursor bigint,sender text,id text,digest text,envelope text,"senderCard" text,state text,reason text,"expiresAt" bigint');
       await batches('retained',snapshot.retained,'__eigos_rowid,sender,id,digest,envelope,sender_card,expires_at','x.cursor,x.sender,x.id,x.digest,x.envelope,x."senderCard",x."expiresAt"','cursor bigint,sender text,id text,digest text,envelope text,"senderCard" text,"expiresAt" bigint');
-      if(digest(await storedSnapshot(client,q,options.nodeId,snapshot.credentials))!==input.expectedSnapshotDigest)throw new Error('Complete Relay node import readback differs from its source');
+      if(digest(await storedSnapshot(client,q,options.nodeId,snapshot.credentials,snapshot.format==='eigos.relay-node.snapshot.v2'?2:1))!==input.expectedSnapshotDigest)throw new Error('Complete Relay node import readback differs from its source');
       for(const table of ['outbox','inbox','retained']){
         const sequence=`eigos_relay_node_${table}_rowid_seq`,old=(await client.query(`SELECT last_value,is_called FROM ${q}.${sequence}`)).rows[0],max=(await client.query(`SELECT max(__eigos_rowid) AS value FROM ${q}.eigos_relay_node_${table}`)).rows[0]?.value;
         const value=Math.max(Number(old.last_value),Number(max??1));if(!Number.isSafeInteger(value))throw new Error('Relay row identity exceeds the supported cursor range');
@@ -169,14 +176,71 @@ export async function importPostgresRelayNodeSnapshot(input:Options&{snapshot:un
       }
     }
     return {status,nodeId:options.nodeId,agentId:input.expectedAgentId,digest:input.expectedSnapshotDigest,counts:{outbox:snapshot.outbox.length,inbox:snapshot.inbox.length,retained:snapshot.retained.length}};
-  }));
 }
 
 /** Separate target readback for the operator; only a digest/count leaves this
  * function, never decrypted credentials or message plaintext. */
-export async function postgresRelayNodeSnapshotDigest(options:Options&{expectedAgentId:string}){
+export async function postgresRelayNodeSnapshotDigest(options:Options&{expectedAgentId:string;snapshotVersion?:1|2}){
   const node=await PostgresRelayNodeStore.open({...options,displayName:'readback',expectedAgentId:options.expectedAgentId,createIfMissing:false});
-  try{return await options.database.run(client=>options.publisher.withManagement(client,async()=>{const snapshot=await storedSnapshot(client,`"${postgresBusinessSchema(client)}"`,options.nodeId,node.credentials);return {agentId:options.expectedAgentId,digest:digest(snapshot),counts:{outbox:snapshot.outbox.length,inbox:snapshot.inbox.length,retained:snapshot.retained.length}};}));}finally{node.store.close();}
+  try{return await options.database.run(client=>options.publisher.withManagement(client,async()=>{const snapshot=await storedSnapshot(client,`"${postgresBusinessSchema(client)}"`,options.nodeId,node.credentials,options.snapshotVersion??1);return {agentId:options.expectedAgentId,digest:digest(snapshot),counts:{outbox:snapshot.outbox.length,inbox:snapshot.inbox.length,retained:snapshot.retained.length}};}));}finally{node.store.close();}
+}
+
+export interface OfflineRelayNodeContext {readonly kind:'eigos.offline-relay-node-context'}
+export interface OfflineRelayNodeReview {
+  businessSchema:string;membershipSchema:string;adminRole:string;runtimeRole:string;
+  authority:{id:string;revision:number;digest:string};businessSourceDigest:string;membershipSourceDigest:string;
+  policyDigest:string;schemaReceiptDigest:string;contractDigest:string;baseSchemaDigest:string;baseVerificationDigest:string;
+  nodes:readonly {nodeId:string;baseUrl:string;agentId:string;digest:string;snapshotVersion:1|2}[];
+}
+type OfflineScope={client:Client;review:OfflineRelayNodeReview;nonce:string;readOnly:boolean};
+const offlineScopes=new WeakMap<OfflineRelayNodeContext,OfflineScope>();
+async function offlineScope(context:OfflineRelayNodeContext,nodeId?:string){
+  const scope=offlineScopes.get(context);if(!scope||scope.client.getTransactionStatus()!=='T'||scope.client.pipeline!==false)throw new Error('A live verified offline migration-admin context is required');
+  const row=(await scope.client.query("SELECT current_user AS role,session_user AS session_role,current_setting('eigos.offline_node_nonce',true) AS nonce")).rows[0];
+  if(row?.role!==scope.review.adminRole||row.session_role!==scope.review.adminRole||row.nonce!==scope.nonce)throw new Error('Offline migration transaction identity changed');
+  if(nodeId&&!scope.review.nodes.some(node=>node.nodeId===nodeId))throw new Error('Node is outside the exact reviewed offline migration scope');return scope;
+}
+/** Actual administrator admission, never a publisher impersonation. Requires
+ * the caller's exclusive, already validated post-import transaction. The
+ * opaque context is bound to this client and LOCAL nonce and expires on exit. */
+export async function withPostgresOfflineRelayNodeContext<T>(client:Client,input:OfflineRelayNodeReview,action:(context:OfflineRelayNodeContext)=>Promise<T>):Promise<T>{
+  const review=structuredClone(input);
+  if(client.getTransactionStatus()!=='T'||client.pipeline!==false||!/^eigos_business_[a-z0-9_]{1,40}$/.test(review.businessSchema)||!/^eigos_membership_[a-z0-9_]{1,40}$/.test(review.membershipSchema)||review.adminRole===review.runtimeRole||review.nodes.length>1001||new Set(review.nodes.map(node=>node.nodeId)).size!==review.nodes.length)throw new Error('Invalid offline migration-admin transaction');
+  for(const node of review.nodes){z.string().min(1).max(200).parse(node.nodeId);agentIdSchema.parse(node.agentId);hash.parse(node.digest);if(relayOrigin(node.baseUrl)!==node.baseUrl||![1,2].includes(node.snapshotVersion))throw new Error('Invalid offline node pin');}
+  const owner=await client.query(`SELECT current_user AS role,session_user AS session_role,count(*)::int AS schemas,bool_and(n.nspowner=r.oid) AS owns FROM pg_catalog.pg_namespace n JOIN pg_catalog.pg_roles r ON r.rolname=current_user WHERE n.nspname=ANY($1::text[]) GROUP BY r.oid`,[[review.businessSchema,review.membershipSchema]]),who=owner.rows[0];
+  if(owner.rowCount!==1||who?.role!==review.adminRole||who.session_role!==review.adminRole||who.schemas!==2||who.owns!==true)throw new Error('Only the actual imported schema owner can migrate offline nodes');
+  const readonly=(await client.query("SELECT current_setting('transaction_read_only') AS value")).rows[0]?.value==='on';
+  const required=['runtime_authority','eigos_migration_receipt','eigos_runtime_schema_receipt','security_policy_definitions','messaging_grants','eigos_relay_node_state','eigos_relay_node_outbox','eigos_relay_node_inbox','eigos_relay_node_retained'];
+  const locks=await client.query(`SELECT c.relname,EXISTS(SELECT 1 FROM pg_catalog.pg_locks l WHERE l.pid=pg_backend_pid() AND l.locktype='relation' AND l.relation=c.oid AND l.granted AND l.mode=ANY($3::text[])) AS held FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname=ANY($2::text[])`,[review.businessSchema,required,readonly?['AccessShareLock','AccessExclusiveLock']:['AccessExclusiveLock']]);
+  const memberLock=await client.query(`SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_locks l JOIN pg_catalog.pg_class c ON c.oid=l.relation JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE l.pid=pg_backend_pid() AND l.granted AND n.nspname=$1 AND c.relname='eigos_membership_migration_receipt' AND l.mode=ANY($2::text[])) AS held`,[review.membershipSchema,readonly?['AccessShareLock','AccessExclusiveLock']:['AccessExclusiveLock']]);
+  if(locks.rowCount!==required.length||locks.rows.some(row=>row.held!==true)||memberLock.rows[0]?.held!==true)throw new Error('Offline node context requires the actual complete administrator table locks');
+  const q=`"${review.businessSchema}"`,m=`"${review.membershipSchema}"`;
+  const a=await client.query(`SELECT id,revision,configuration_digest FROM ${q}.runtime_authority WHERE slot=1 LIMIT 2`),b=await client.query(`SELECT body FROM ${q}.eigos_migration_receipt WHERE slot=1 LIMIT 2`),membership=await client.query(`SELECT body FROM ${m}.eigos_membership_migration_receipt WHERE slot=1 LIMIT 2`),s=await client.query(`SELECT body FROM ${q}.eigos_runtime_schema_receipt WHERE slot=1 LIMIT 2`),p=await client.query(`SELECT digest FROM ${q}.security_policy_definitions WHERE slot=1 LIMIT 2`);
+  const schema=s.rows[0]?.body;
+  if(a.rowCount!==1||a.rows[0]?.id!==review.authority.id||Number(a.rows[0]?.revision)!==review.authority.revision||a.rows[0]?.configuration_digest!==review.authority.digest||b.rowCount!==1||b.rows[0]?.body?.version!==2||b.rows[0]?.body?.status!=='imported-not-activated'||b.rows[0]?.body?.sourceFileDigest!==review.businessSourceDigest||b.rows[0]?.body?.policyDigest!==review.policyDigest||membership.rowCount!==1||membership.rows[0]?.body?.version!==1||membership.rows[0]?.body?.status!=='imported-not-activated'||membership.rows[0]?.body?.sourceFileDigest!==review.membershipSourceDigest||p.rowCount!==1||p.rows[0]?.digest!==review.policyDigest||s.rowCount!==1||digest(schema)!==review.schemaReceiptDigest||schema?.kind!=='eigos.postgres-runtime-schema'||schema.version!==1||schema.businessSchema!==review.businessSchema||schema.contractDigest!==review.contractDigest||schema.baseSchemaDigest!==review.baseSchemaDigest||schema.baseVerificationDigest!==review.baseVerificationDigest)throw new Error('Offline node context differs from the actual source, authority or schema receipts');
+  const nonce=randomUUID();await client.query("SELECT set_config('eigos.offline_node_nonce',$1,true)",[nonce]);
+  const context:OfflineRelayNodeContext=Object.freeze({kind:'eigos.offline-relay-node-context'});offlineScopes.set(context,{client,review,nonce,readOnly:readonly});
+  try{const result=await action(context);await offlineScope(context);return result;}finally{offlineScopes.delete(context);}
+}
+function offlinePin(scope:OfflineScope,input:NodeCryptoOptions&{expectedAgentId:string;expectedSnapshotDigest:string}){
+  wrappingKey(input.wrappingKey);const pin=scope.review.nodes.find(node=>node.nodeId===input.nodeId)!;
+  if(!pin||pin.baseUrl!==input.baseUrl||pin.agentId!==input.expectedAgentId||pin.digest!==input.expectedSnapshotDigest)throw new Error('Offline node does not match its exact reviewed pin');return pin;
+}
+export async function importPostgresRelayNodeInAdminContext(context:OfflineRelayNodeContext,input:NodeCryptoOptions&{snapshot:unknown;expectedAgentId:string;expectedSnapshotDigest:string}){
+  const scope=await offlineScope(context,input.nodeId),pin=offlinePin(scope,input),checked=await validateRelayNodeSnapshot(input.snapshot,{baseUrl:pin.baseUrl,agentId:pin.agentId,digest:pin.digest});
+  if(scope.readOnly)throw new Error('A read-only offline context cannot import a node');
+  if(checked.snapshot.format!==`eigos.relay-node.snapshot.v${pin.snapshotVersion}`)throw new Error('Offline snapshot format differs from its reviewed complete history');
+  const result=await importNodeRows(scope.client,input,scope.review.businessSchema,scope.review.authority.digest,input,checked.snapshot);await offlineScope(context);return result;
+}
+export async function postgresRelayNodeDigestInAdminContext(context:OfflineRelayNodeContext,input:NodeCryptoOptions&{expectedAgentId:string;expectedSnapshotDigest:string}){
+  const scope=await offlineScope(context,input.nodeId),pin=offlinePin(scope,input),q=`"${scope.review.businessSchema}"`;
+  const rows=await scope.client.query(`SELECT base_url,agent_id,signed_card,credentials,import_digest FROM ${q}.eigos_relay_node_state WHERE node_id=$1 LIMIT 2`,[input.nodeId]);
+  if(rows.rowCount!==1)throw new Error('Original imported node is missing');const state=metadata(rows.rows[0]);
+  if(state.baseUrl!==pin.baseUrl||state.agentId!==pin.agentId||state.importDigest!==pin.digest)throw new Error('Actual node import stamp or origin differs from the reviewed migration');
+  const credentials=await unseal(input,scope.review.businessSchema,scope.review.authority.digest,state);
+  const snapshot=await storedSnapshot(scope.client,q,input.nodeId,credentials,pin.snapshotVersion);
+  await validateRelayNodeSnapshot(snapshot,{baseUrl:pin.baseUrl,agentId:pin.agentId,digest:pin.digest});await offlineScope(context);
+  return {agentId:pin.agentId,digest:digest(snapshot),counts:{outbox:snapshot.outbox.length,inbox:snapshot.inbox.length,retained:snapshot.retained.length}};
 }
 
 /** Required host factory for PostgreSQL/Workers. It never opens local files,

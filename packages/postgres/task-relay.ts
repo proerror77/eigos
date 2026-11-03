@@ -1,9 +1,7 @@
 import type {Principal} from '../core/domain.js';
-import type {StagedKernelBuilder} from '../ontology/seed-definition.js';
 import type {TaskRelayHostPort} from '../agent-transport/task-host.js';
-import type {PostgresDatabase} from './database.js';
-import {PostgresTaskRelayAuthority,type PostgresTaskRelayAuthorityOptions} from './task-relay-authority.js';
-import {PostgresRelayReadAuthority} from './relay-read-authority.js';
+import {PostgresTaskRelayAuthority} from './task-relay-authority.js';
+import {PostgresRelayReadAuthority,type PostgresRelayReadAuthorityOptions} from './relay-read-authority.js';
 import {postgresTaskView} from './task-view.js';
 
 /** Actual async business port. The transport node/store and task service are
@@ -12,7 +10,7 @@ export class PostgresTaskRelay implements TaskRelayHostPort {
   readonly authorityId:string;readonly gatewayOrigin:string;
   readonly authority:PostgresTaskRelayAuthority;readonly reads:PostgresRelayReadAuthority;
   readonly enrollment;
-  constructor(private readonly options:Omit<PostgresTaskRelayAuthorityOptions,'database'>&{database:Pick<PostgresDatabase,'run'|'inspectClaim'>;builder?:StagedKernelBuilder}){
+  constructor(private readonly options:PostgresRelayReadAuthorityOptions){
     this.authority=new PostgresTaskRelayAuthority(options);this.authorityId=this.authority.authorityId;this.gatewayOrigin=this.authority.gatewayOrigin;
     this.reads=new PostgresRelayReadAuthority(options);this.enrollment={now:this.authority.now,withEnrollmentAdmission:this.authority.withEnrollmentAdmission.bind(this.authority)};
   }

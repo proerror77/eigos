@@ -193,6 +193,19 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     }
     return true;
   }
+  /** Internal complete preview for an already admitted canonical source mapper.
+   * No visibility filtering or partial edge list can certify a source receipt. */
+  async projectedRelationshipDigest(owner:string,ref:ObjectRef,inputLinks:LinkWrite[],inputRemove:LinkWrite[]=[]):Promise<string>{
+    this.assertOpen(owner);objectRefSchema.parse(ref);this.model.object(ref.type);
+    const batch=ontologyBatchSchema.parse({objects:[],links:structuredClone(inputLinks),removeLinks:structuredClone(inputRemove)}),values:unknown[]=[],where=this.owned(values);values.push(ref.type,ref.id);const n=values.length;
+    const rows=await this.sql(`SELECT type,to_type,to_id,definition_digest FROM ${this.table('links')} WHERE ${where} AND from_type=$${n-1} AND from_id=$${n} AND to_type<>'SourceReceipt' LIMIT 201`,values);
+    if(rows.rows.length>200)throw new DomainError('CONFLICT','Relationship evidence exceeds its bound');
+    const key=(link:LinkWrite)=>JSON.stringify([link.type,link.to]),links=new Map<string,LinkWrite>();
+    for(const row of rows.rows){await this.linkDefinition(String(row.type),String(row.definition_digest));const link={type:String(row.type),from:ref,to:{type:String(row.to_type),id:String(row.to_id)}};links.set(key(link),link);}
+    const applies=(link:LinkWrite)=>link.from.type===ref.type&&link.from.id===ref.id&&link.to.type!=='SourceReceipt';
+    for(const link of batch.removeLinks.filter(applies))links.delete(key(link));for(const link of batch.links.filter(applies))links.set(key(link),link);
+    if(links.size>200)throw new DomainError('CONFLICT','Relationship evidence exceeds its bound');return linkSnapshotDigest(ref,[...links.values()]);
+  }
   async relationshipDigest(owner:string,ref:ObjectRef,budget:ReadBudget):Promise<string>{
     return this.relationshipDigestRows(owner,ref,budget);
   }

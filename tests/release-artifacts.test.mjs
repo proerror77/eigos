@@ -4,15 +4,17 @@ import {createHash} from 'node:crypto';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,symlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname,join} from 'node:path';
-import {artifactDigest,canonical,createReleaseManifest,validateReleaseManifest,readReleaseManifest,verifyReleaseArtifacts,finalizeReleaseArtifacts,selectExactCiRun,proveExactCi} from '../scripts/release-artifacts.mjs';
+import {artifactDigest,canonical,createReleaseManifest,createReleaseArtifacts,validateReleaseManifest,readReleaseManifest,verifyReleaseArtifacts,finalizeReleaseArtifacts,selectExactCiRun,proveExactCi,HARNESS_RELEASE_TOOLS} from '../scripts/release-artifacts.mjs';
 
 const sourceSha='1'.repeat(40),rawDigest=bytes=>createHash('sha256').update(bytes).digest('hex'),roles=['gateway','relay','worker'];
-const jobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)','postgres-execution-cases (contracts)','postgres-execution-cases (planning)','postgres-execution-cases (documents)','postgres-execution-cases (transitions)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
+const jobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)','postgres-execution-cases (contracts)','postgres-execution-cases (planning)','postgres-execution-cases (documents)','postgres-execution-cases (didi)','postgres-execution-cases (transitions)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
 const ci={sourceSha,runId:17,url:'https://github.com/example/eigos/actions/runs/17',jobs};
 const images=Object.fromEntries(roles.map((role,i)=>[role,`ghcr.io/example/eigos/${role}@sha256:${String(i+1).repeat(64)}`]));
-function fixture(){
+const harnessPaths=['dist/packages/capabilities/harness-executor.js','dist/apps/worker/postgres-runtime.js','dist/packages/core/model-usage-context.js','dist/packages/core/model-dispatch-context.js','dist/packages/postgres/coordinator.js'];
+function fixture(backend='codex'){
   const directory=mkdtempSync(join(tmpdir(),'eigos-release-artifacts-')),put=(prefix,path,bytes)=>{const file=join(directory,prefix,path);mkdirSync(dirname(file),{recursive:true});writeFileSync(file,bytes);return {path,sha256:rawDigest(bytes),bytes:Buffer.byteLength(bytes)};};
   const runtimeFiles=[put('runtime','dist/apps/gateway/main.js','// explicit synthetic runtime fixture\n'),put('runtime','package.json','{"name":"eigos","version":"0.1.0"}\n'),put('runtime','package-lock.json','{"lockfileVersion":3}\n')],sourceFiles=[put('source','apps/gateway/main.ts','// explicit synthetic source fixture\n')];
+  if(backend==='harness')for(const path of harnessPaths){runtimeFiles.push(put('runtime',path,'// explicit synthetic Harness runtime inventory\n'));sourceFiles.push(put('source',path.replace(/^dist\//,'').replace(/\.js$/,'.ts'),'// explicit synthetic Harness source inventory\n'));}
   const document={formatVersion:1,id:'synthetic.ontology',version:'1',objects:[],interfaces:[],links:[],actions:[],functions:[]},kernelBytes=canonical(document)+'\n',file=put('ontology','kernel.json',kernelBytes),pkg={format:'eigos.ontology-package/1',kernel:{id:document.id,version:document.version,documentDigest:artifactDigest(document),modelDigest:'a'.repeat(64),file},providerModules:[]},packageFile=put('','ontology/package.json',canonical(pkg)+'\n');
   const build=createHash('sha256');for(const file of runtimeFiles){build.update(file.path+'\0');build.update(readFileSync(join(directory,'runtime',file.path)));}
   const input={sourceSha,version:'0.1.0',buildDigest:build.digest('hex'),runtimeFiles,sourceFiles,lockfile:runtimeFiles[2],ontology:{packageFile,package:pkg}};
@@ -26,7 +28,8 @@ test('release manifests are deterministic and candidate until all fixed image di
     const again=createReleaseManifest({...x.input,images:{worker:images.worker,relay:images.relay,gateway:images.gateway},ci});assert.equal(canonical(ready),canonical(again));
     assert.throws(()=>createReleaseManifest({...x.input,images:{gateway:'ghcr.io/example/eigos/gateway:latest'},ci}),/immutable OCI/);
     assert.throws(()=>createReleaseManifest({...x.input,ci:{...ci,sourceSha:'2'.repeat(40)}}),/Exact-source/);
-    assert.throws(()=>createReleaseManifest({...x.input,backend:'harness'}),/Harness/);
+    assert.throws(()=>createReleaseManifest({...x.input,backend:'harness'}),/actual executor.*runtime inventory/);
+    assert.throws(()=>createReleaseManifest({...x.input,backend:'disabled'}),/registered.*backend/);
     assert.equal(Object.hasOwn(candidate.ontology,'publishedRef'),false);assert.equal(Object.hasOwn(candidate.ontology.package.kernel,'releaseId'),false);
   }finally{x.close();}
 });
@@ -40,7 +43,7 @@ test('verification reads actual bytes, lockfile, ontology package and fixed docu
 
 test('artifact inventories reject private state, traversal, symlinks and invented database publication refs',()=>{
   const x=fixture();try{
-    for(const path of ['../auth.json','/tmp/auth.json','data/tasks.sqlite','dist/.env.production','dist/private.config.json','dist/.codex/auth.json','dist/tasks.sqlite3','dist/credentials.json'])assert.throws(()=>createReleaseManifest({...x.input,runtimeFiles:[{path,sha256:'a'.repeat(64),bytes:1}]}),/Private state|relative paths/);
+    for(const path of ['../auth.json','/tmp/auth.json','data/tasks.sqlite','dist/.env.production','dist/private.config.json','dist/.codex/auth.json','dist/.dsh/session.json','dist/tasks.sqlite3','dist/credentials.json'])assert.throws(()=>createReleaseManifest({...x.input,runtimeFiles:[{path,sha256:'a'.repeat(64),bytes:1}]}),/Private state|relative paths/);
     const ordinary=createReleaseManifest(x.input),changed={...ordinary,ontology:{...ordinary.ontology,publishedRef:{releaseId:'invented'}}};assert.throws(()=>validateReleaseManifest(changed),/Invalid ontology artifact/);
     writeFileSync(join(x.directory,'manifest.json'),canonical(ordinary)+'\n');rmSync(join(x.directory,'runtime/dist/apps/gateway/main.js'));symlinkSync('/etc/hosts',join(x.directory,'runtime/dist/apps/gateway/main.js'));assert.throws(()=>verifyReleaseArtifacts(x.directory),/symbolic links/);
   }finally{x.close();}
@@ -60,9 +63,49 @@ test('finalization adds verified references once without changing the embedded i
   const x=fixture();try{const candidate=createReleaseManifest(x.input);writeFileSync(join(x.directory,'manifest.json'),canonical(candidate)+'\n');const ready=finalizeReleaseArtifacts(x.directory,{images,ci});assert.equal(ready.state,'artifact-ready');assert.equal(ready.payloadDigest,candidate.payloadDigest);assert.equal(verifyReleaseArtifacts(x.directory).manifestDigest,ready.manifestDigest);assert.throws(()=>finalizeReleaseArtifacts(x.directory,{images,ci}),/finalized once/);}finally{x.close();}
 });
 
+test('Harness candidates bind the actual adapter inventory and selected tool pins without claiming a verified native worker image',()=>{
+  const x=fixture('harness');try{
+    const candidate=createReleaseManifest({...x.input,backend:'harness'});assert.equal(candidate.backend,'harness');assert.equal(candidate.state,'candidate');assert.deepEqual(candidate.tools,HARNESS_RELEASE_TOOLS);assert(!Object.hasOwn(candidate.tools,'codex'));
+    const referenced=createReleaseManifest({...x.input,backend:'harness',images,ci});assert.equal(referenced.state,'candidate','OCI digest strings and CI alone do not prove dsh is installed or executable in the image');assert.equal(referenced.payloadDigest,candidate.payloadDigest);
+    assert.throws(()=>validateReleaseManifest(referenced,{requireReady:true}),/native dsh.*installation.*image compatibility/);assert.throws(()=>validateReleaseManifest({...referenced,state:'artifact-ready'}),/native dsh/);
+    assert.throws(()=>validateReleaseManifest({...candidate,tools:{node:candidate.tools.node,codex:'0.164.0'}}),/tool versions.*selected backend/);
+    assert.throws(()=>validateReleaseManifest({...candidate,tools:{...candidate.tools,harness:'latest'}}),/tool versions/);
+    for(const path of harnessPaths)assert.throws(()=>createReleaseManifest({...x.input,backend:'harness',runtimeFiles:x.input.runtimeFiles.filter(file=>file.path!==path)}),/runtime inventory/);
+    assert.throws(()=>createReleaseManifest({...x.input,backend:'harness',images:{worker:'ghcr.io/example/eigos/worker:latest'}}),/immutable OCI/);
+    assert.throws(()=>createReleaseManifest({...x.input,backend:'harness',ci:{...ci,sourceSha:'2'.repeat(40)}}),/Exact-source/);
+    writeFileSync(join(x.directory,'manifest.json'),canonical(candidate)+'\n');assert.equal(verifyReleaseArtifacts(x.directory).backend,'harness');assert.throws(()=>finalizeReleaseArtifacts(x.directory,{images,ci}),/native dsh.*installation/);assert.equal(readReleaseManifest(join(x.directory,'manifest.json')).manifestDigest,candidate.manifestDigest,'Refused finalization preserves the immutable candidate');
+    writeFileSync(join(x.directory,'runtime',harnessPaths[0]),'changed adapter');assert.throws(()=>verifyReleaseArtifacts(x.directory),/differs/);
+  }finally{x.close();}
+});
+
+function packagingFixture({version=HARNESS_RELEASE_TOOLS.harness,adapter=true}={}){
+  const root=mkdtempSync(join(tmpdir(),'eigos-harness-package-')),output=join(root,'candidate'),put=(path,value)=>{const full=join(root,path);mkdirSync(dirname(full),{recursive:true});writeFileSync(full,value);};
+  const paths=[...harnessPaths,'package.json','package-lock.json'];
+  put('package.json','{"name":"synthetic-harness-package","type":"module","version":"0.1.0"}');put('package-lock.json','{"lockfileVersion":3}');
+  for(const path of harnessPaths){put(path,'// synthetic runtime fixture, never invoked\n');put(path.replace(/^dist\//,'').replace(/\.js$/,'.ts'),'// synthetic source fixture\n');}
+  put(harnessPaths[0],`export const HARNESS_TESTED_VERSION=${JSON.stringify(version)};export class HarnessExecutor {runStructured(){throw new Error('Synthetic packaging must never dispatch a model')}}`);
+  put(harnessPaths[1],`export function createPostgresWorker(){throw new Error('Synthetic packaging must never start a Worker')}\n${adapter?"export function postgresHarnessReasoner(){throw new Error('Synthetic packaging must never invoke reasoning')}":''}`);
+  put('dist/packages/deployment/files.js',`export const releaseFiles=()=>${JSON.stringify(paths)};`);
+  const document={formatVersion:1,id:'synthetic.harness-package',version:'1',objects:[],interfaces:[],links:[],actions:[],functions:[]};
+  put('dist/packages/ontology/seed-definition.js',`const document=${JSON.stringify(document)};export class StagedKernelBuilder{static stages=1;step(){}result(){return {document}}}export const stagedKernelComponents=()=>({documentDigest:${JSON.stringify(artifactDigest(document))},model:{ref:{digest:'${'a'.repeat(64)}'}}});`);
+  put('dist/packages/ontology/mcp-read.js','export const loadMcpReadModule=()=>{};export const mcpReadModuleRef=()=>{};');mkdirSync(join(root,'dist/packages/ontology/definitions'),{recursive:true});
+  for(const path of ['Dockerfile','.dockerignore','tsconfig.json','scripts/build.mjs','scripts/ontology.mjs','scripts/release-artifacts.mjs'])put(path,'// synthetic source packaging fixture\n');
+  return {root,output,put,close:()=>rmSync(root,{recursive:true,force:true})};
+}
+
+test('Harness packaging checks real bundled export/version metadata without executing a model, CLI or credential reader',async()=>{
+  const x=packagingFixture();try{
+    const candidate=await createReleaseArtifacts({root:x.root,output:x.output,sourceSha,backend:'harness',images,ci});assert.equal(candidate.state,'candidate');assert.deepEqual(candidate.tools,HARNESS_RELEASE_TOOLS);assert.equal(verifyReleaseArtifacts(x.output).manifestDigest,candidate.manifestDigest);
+    await assert.rejects(createReleaseArtifacts({root:x.root,output:x.output,sourceSha,backend:'harness'}),/output already exists/);
+  }finally{x.close();}
+  for(const options of [{version:'unverified'},{adapter:false}]){
+    const invalid=packagingFixture(options);try{await assert.rejects(createReleaseArtifacts({root:invalid.root,output:invalid.output,sourceSha,backend:'harness'}),options.adapter===false?/actual Harness executor.*adapter must be bundled/:/version differs.*release tool pin/);}finally{invalid.close();}
+  }
+});
+
 test('container build inputs include PA assets and role images retain nonroot and exact tool pins',()=>{
   const docker=readFileSync(new URL('../Dockerfile',import.meta.url),'utf8'),ignore=readFileSync(new URL('../.dockerignore',import.meta.url),'utf8');
-  assert.match(docker,/COPY integrations\/grok\/eigos-delegate/);assert.match(docker,/node:22\.22\.3-bookworm-slim/);assert.match(docker,/@openai\/codex@0\.164\.0/);assert.match(docker,/npm ci/);assert.match(docker,/USER node/);assert.match(docker,/AS gateway/);assert.match(docker,/AS relay/);assert.match(docker,/AS worker-codex/);assert(!docker.includes('AS worker-harness'));
+  assert.match(docker,/COPY integrations\/grok\/eigos-delegate/);assert.match(docker,/node:22\.22\.3-bookworm-slim/);assert.match(docker,/@openai\/codex@0\.164\.0/);assert.match(docker,/npm ci/);assert.match(docker,/USER node/);assert.match(docker,/AS gateway/);assert.match(docker,/AS relay/);assert.match(docker,/AS worker-codex/);assert.match(docker,/AS worker-harness/);assert.match(docker,/@deepseek-ai\/dsh@0\.2\.1-rc\.5/);assert.match(docker,/@deepseek-ai\/dsh-llm-pi-ai@0\.2\.1-rc\.5/);
   for(const pattern of ['**/.env*','**/*sqlite*','**/auth.json','**/private.config*'])assert(ignore.includes(pattern));
 });
 

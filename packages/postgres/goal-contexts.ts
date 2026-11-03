@@ -8,8 +8,6 @@ import {executionBudgetExceeded,executionBudgetStatus} from '../core/execution-b
 import {canRecoverReadOnly,resolveTaskRecovery} from '../core/task-recovery.js';
 import {GoalProgram} from '../coordinator/goal-program.js';
 import {validatePlanningSnapshotProgram,type PlanningMetadata} from '../coordinator/planning-program.js';
-import {DocumentAgentProgram} from '../capabilities/document-agent.js';
-import {initializeDocumentProgram} from '../capabilities/document-program.js';
 import type {RunEvidence} from '../capabilities/executor.js';
 import {agentDecisionSchema,type AgentDecision,type AgentComponentContext} from '../ontology/agent-actions.js';
 import type {PlanningSnapshot} from '../ontology/planning-contract.js';
@@ -23,7 +21,7 @@ import {withPostgresWorkerEvidenceAuthorization} from './task-output.js';
 import {withPostgresPlanningReadGraph,postgresPlanningAccessDigest} from './planning-read-graph.js';
 import {withPostgresTaskDefinitionAccess} from './ontology-metadata.js';
 import {withPostgresSourceProjection} from './source-projection.js';
-import {resolvePostgresDocumentBinding} from './document-bindings.js';
+import {resolvePostgresDocumentBinding,postgresReadRegistry} from './document-bindings.js';
 import type {PostgresAgentPlanOptions} from './agent-plan.js';
 
 const same=(a:unknown,b:unknown)=>digest(a)===digest(b);
@@ -70,7 +68,7 @@ export async function preparePostgresGoalContexts(client:Client,input:PostgresWo
     const maximum=options.maxTaskMs??86400000;if(!Number.isSafeInteger(maximum)||maximum<1||maximum>86400000)throw new Error('Invalid fixed goal deadline');
     const until=Date.parse(canRecoverReadOnly(job,intents)&&!state.paPayment?executionBudgetStatus(job).window.startedAt:job.createdAt)+maximum;postgresConstrainReadDeadline(client,until);
     if(state.composition!.contexts.length+decision.contexts.length>16)fail('Task component context limit reached');
-    const ids=new Set([...state.composition!.contexts.map(value=>value.id),...(state.composition!.retiredContexts??[]).map(value=>value.id)]),contexts:AgentComponentContext[]=[],program=new DocumentAgentProgram(),goalDigest=state.composition!.goal.digest,requestDigest=digest(d.request);
+    const ids=new Set([...state.composition!.contexts.map(value=>value.id),...(state.composition!.retiredContexts??[]).map(value=>value.id)]),contexts:AgentComponentContext[]=[],registry=postgresReadRegistry(options),goalDigest=state.composition!.goal.digest,requestDigest=digest(d.request);
     await withPostgresWorkerEvidenceAuthorization(client,claim,options.policyDigest,(auth,admission,principal)=>withPostgresPlanningReadGraph(client,principal,job.id,options.policyDigest,auth,admission,graph=>withPostgresTaskDefinitionAccess(client,principal,job.id,options.policyDigest,async(access,selected)=>{
       const meta:PlanningMetadata={model:graph.model,now:graph.now,releaseRef:graph.releaseRef,security:true,authorization:{accessDigest:()=>postgresPlanningAccessDigest(admission),definitions:()=>authorizedDefinitionCatalogue(access,selected),describe:value=>describeDefinitionCatalogue(access,value,selected),binding:ref=>(reads.deliveredObjects??reads.objects).some(value=>same(value.ref,ref)),requireResource:(kind,id)=>{if(!access.resourceAllowed(kind,id))throw new SecurityError('AUTHORIZATION_REQUIRED');},receipt:()=>({accessDigest:postgresPlanningAccessDigest(admission),securityEnvelope:graph.evidence()})}};
       await runGraphProgramAsync(graph,validatePlanningSnapshotProgram(meta,claim.owner,d.request,reads,true));
@@ -78,18 +76,19 @@ export async function preparePostgresGoalContexts(client:Client,input:PostgresWo
     for(const selected of decision.contexts){
       if(ids.has(selected.id))fail('A component context cannot be replaced or initialized twice');ids.add(selected.id);
       const pin=discoveredBinding(reads,selected.bindingDigest),registered=options.programs.filter(value=>same(value.program.ref,pin.programRef)&&value.program.configurationDigest===pin.configurationDigest);
-      if(registered.length!==1||!registered[0]?.validate||!same(pin.programRef,program.ref)||pin.configurationDigest!==program.configurationDigest)throw new SecurityError('AUTHORITY_UNAVAILABLE','The selected component has no installed PostgreSQL initialization semantics');
+      if(registered.length!==1||!registered[0]?.validate)throw new SecurityError('AUTHORITY_UNAVAILABLE','The selected component has no installed PostgreSQL initialization semantics');
       if(registered[0].program.privateInput||registered[0].program.simulatedApproval)fail('Private or simulation component initialization is not installed');
-      const resolved=await resolvePostgresDocumentBinding(client,claim,d.request,pin,options),parsed:unknown=JSON.parse(selected.inputJson);
-      await withPostgresSourceProjection(client,claim,{...options,programRef:resolved.program.ref,configurationDigest:resolved.program.configurationDigest},async graph=>{
+      const resolved=await resolvePostgresDocumentBinding(client,claim,d.request,pin,options),parsed:unknown=JSON.parse(selected.inputJson);await registry.assertConfigured(client,resolved.registration,claim,job);
+      await withPostgresSourceProjection(client,claim,{...options,programRef:resolved.program.ref,configurationDigest:resolved.program.configurationDigest,sourceBindingId:resolved.registration.sourceBindingId??(resolved.registration.kind==='document'?options.sourceBindingId:undefined)},async graph=>{
         const protectedScopes=await Promise.all([...state.composition!.contexts,...contexts].map(async component=>({ref:component.scope,digest:digest((await graph.read(claim.owner,component.scope)).properties)})));
-        const initialized=await runGraphProgramAsync(graph,initializeDocumentProgram(resolved.program,claim.owner,graph.request,parsed,{id:selected.id,scopeKey:digest({request:job.id,revision:d.request.revision,program:resolved.program.ref,context:selected.id})}));
+        const initialized=await runGraphProgramAsync(graph,resolved.registration.initialize(graph,claim.owner,graph.request,parsed,{id:selected.id,scopeKey:digest({request:job.id,revision:d.request.revision,program:resolved.program.ref,context:selected.id})}));
         await graph.read(claim.owner,initialized.scope);
         for(const old of protectedScopes)if(digest((await graph.read(claim.owner,old.ref)).properties)!==old.digest)fail('Pure component preparation cannot rewrite an existing context');
         const body:Omit<AgentComponentContext,'digest'>={id:selected.id,programRef:resolved.program.ref,programDigest:resolved.program.configurationDigest,requestRevision:d.request.revision,...initialized,initializedBy:{modelRunId,binding:pin,decision:structuredClone(decision),ontologyPlanning:structuredClone(reads)}};
         contexts.push({...body,digest:digest(body)});
       });
     }
+    for(const component of contexts)await registry.assertConfigured(client,registry.require(component.programRef,component.programDigest),claim,job);
     if(digest(d.request)!==requestDigest||state.composition!.goal.digest!==goalDigest)fail('Component preparation cannot revise the original request or fixed goal');
     state.composition!.contexts.push(...contexts);d.phase='planning';d.nextAt=0;resolveTaskRecovery(job,'decision');job.updatedAt=new Date().toISOString();d.events.push({at:job.updatedAt,event:'agent_contexts_prepared',evidence:digest(contexts.map(value=>value.digest))});
     await store.save(claim.owner,job);await fence();await query(`RELEASE SAVEPOINT ${name}`);return structuredClone(contexts);

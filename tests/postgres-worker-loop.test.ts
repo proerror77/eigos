@@ -22,6 +22,21 @@ function schedulingStore(claim:WorkClaim){
     beginModelUsage:async()=>{},finishModelUsage:async()=>{}};
 }
 
+test('the selected single-session Worker drains one original claim before claiming another',async()=>{
+  const first=syntheticClaim(),second={...syntheticClaim(),token:'second-original-token',job:{...syntheticClaim().job,id:'second-original-task'}},queue=[first,second],store=schedulingStore(first),started:string[]=[];let claims=0,release!:()=>void;
+  store.claim=async()=>{claims++;return queue.shift();};
+  const loop=new PostgresTaskWorker(store,{maxConcurrent:1,pollMs:10000,run:async(claim,signal)=>{started.push(claim.token);await new Promise<void>(resolve=>{release=resolve;signal.addEventListener('abort',()=>resolve(),{once:true});});}});
+  try{await loop.tick();await until(()=>started.length===1);assert.equal(claims,1);assert.deepEqual(started,[first.token]);release();await loop.pauseClaims();assert.equal(claims,1);loop.resumeClaims();await until(()=>started.length===2);assert.equal(claims,2);assert.deepEqual(started,[first.token,second.token]);}
+  finally{await loop.close();}
+});
+
+test('the default SQL Worker keeps the existing five-minute execution deadline',async context=>{
+  context.mock.timers.enable({apis:['setTimeout']});const store=schedulingStore(syntheticClaim());let signal!:AbortSignal,started!:()=>void,failed!:()=>void;const running=new Promise<void>(resolve=>{started=resolve;}),ended=new Promise<void>(resolve=>{failed=resolve;});
+  const loop=new PostgresTaskWorker(store,{pollMs:10000,run:async(_claim,current)=>{signal=current;started();await new Promise<void>(resolve=>current.addEventListener('abort',()=>resolve(),{once:true}));},onError:async(_claim,error)=>{assert(error instanceof Error);assert.equal(error.message,'Worker execution time budget ended');failed();}});
+  try{await loop.tick();await running;context.mock.timers.tick(299999);assert.equal(signal.aborted,false);context.mock.timers.tick(1);await ended;assert.equal(signal.aborted,true);}
+  finally{await loop.close();}
+});
+
 test('a returned host checkpoint uses one atomic release instead of a second active/read and empty finish',async()=>{
   const claim=syntheticClaim(),store=schedulingStore(claim);let active=0,released=0,finished=0;
   store.active=async()=>{active++;return true;};

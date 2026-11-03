@@ -5,19 +5,17 @@ import {runtimeAuthoritySchema,runtimeAuthorityDigest} from '../core/runtime-aut
 import {z} from 'zod';
 import {readPostgresBinding,assertPostgresBindingAuthority,postgresConnectionOptions,postgresBindingIdentity,postgresHandoffSchema,postgresActivationSchema,postgresRuntimeSchemaReceiptSchema,POSTGRES_RUNTIME_SCHEMA_CONTRACT,readPinnedPostgresJson,readPostgresTaskRelayConfiguration,readPostgresRelaySourceInventory,readPostgresRelaySecrets,type PostgresBinding} from '../deployment/postgres-binding.js';
 import {preparePostgresKernel} from './kernel-runtime.js';
-import {stagedKernelComponents} from '../ontology/seed-definition.js';
+import {stagedKernelComponents,type StagedKernelBuilder} from '../ontology/seed-definition.js';
 import {PostgresDatabase} from './database.js';
 import {PostgresMembershipDatabase} from './members-database.js';
 import {PostgresMemberStore} from './member-store.js';
 import {PostgresAuthorizationPublisher} from './authority-publisher.js';
 import {auditImportedIdentities} from './identity-audit.js';
 import {supabaseProxyOptions} from './supabase-proxy.js';
-import {ExecutionCatalog} from '../core/catalog.js';
 import type {AgentProgram} from '../core/agent-program.js';
 import type {Job} from '../core/domain.js';
 import {DomainError} from '../core/domain.js';
 import type {Ref} from '../ontology/execution.js';
-import {DocumentAgentProgram} from '../capabilities/document-agent.js';
 import {assertReviewedModel} from '../security/model-review.js';
 import {postgresOntologyRelease} from './ontology-release.js';
 import {PostgresTaskCommandService} from './task-command-service.js';
@@ -31,6 +29,12 @@ import {PostgresTaskRelay} from './task-relay.js';
 import {PostgresAgentMessagingService,postgresMessagingNodeId} from './messaging-service.js';
 import {PostgresRelayNodeStore,openPostgresRelayNode,relayNodeWrappingKey,listPostgresRelayNodeIdentities} from './relay-node-store.js';
 import {RelayEnrollmentIssuer} from '../agent-transport/enrollment.js';
+import {resolve} from 'node:path';
+import {readDidiMemberConnection,didiSourceOwner} from '../core/didi-source.js';
+import {didiBindingSchema} from '../capabilities/didi/contracts.js';
+import {PostgresDidiAccount} from './didi-account.js';
+import {PostgresReadProgramRegistry} from './didi-registry.js';
+import {PostgresRelayReadAuthority} from './relay-read-authority.js';
 
 const sha=z.string().regex(/^[a-f0-9]{64}$/),integer=z.number().int().nonnegative().safe();
 const businessReceipt=z.strictObject({version:z.literal(2),status:z.literal('imported-not-activated'),sourceFileDigest:sha,schemaDigest:sha,authorityDigest:sha,policyDigest:sha,
@@ -41,8 +45,9 @@ const same=(a:unknown,b:unknown)=>digest(a)===digest(b);
 /** Structural task methods are not evidence that every configured provider
  * has a PostgreSQL execution port. Keep these enabled sources explicit. */
 export function assertPostgresBuiltinSourceConfiguration(config:Config):void{
+  const didi=!!(config.EIGOS_DIDI_KEY_FILE||config.EIGOS_DIDI_KEY_SHA256||config.EIGOS_DIDI_BINDING_ID||config.EIGOS_DIDI_MEMBER_CONNECTION_FILE||config.EIGOS_DIDI_RELAY_AGENT_ID||config.EIGOS_DIDI_AUDIT_DIR||config.EIGOS_DIDI_ORDER_TEST_ENABLED==='true'||config.EIGOS_DIDI_ORDERS_ENABLED==='mock');
+  if(didi&&(!config.authority||!config.EIGOS_TASK_RELAY_FILE||!config.EIGOS_DIDI_RELAY_AGENT_ID||!config.EIGOS_DIDI_MEMBER_CONNECTION_FILE||!config.EIGOS_PERSONAL_SOURCE_OWNER||!config.EIGOS_DIDI_KEY_FILE||!config.EIGOS_DIDI_KEY_SHA256||!config.EIGOS_DIDI_BINDING_ID||config.EIGOS_DIDI_ENVIRONMENT!=='production'||config.EIGOS_DIDI_ORDERS_ENABLED!=='false'||config.EIGOS_DIDI_ORDER_TEST_ENABLED==='true'))throw new Error('PostgreSQL DiDi requires the complete current member-owned readonly Relay binding; order/direct-provider adapters are not installed');
   const unavailable=[
-    [config.EIGOS_DIDI_KEY_FILE||config.EIGOS_DIDI_MEMBER_CONNECTION_FILE||config.EIGOS_DIDI_RELAY_AGENT_ID||config.EIGOS_DIDI_ORDER_TEST_ENABLED==='true','DiDi'],
     [config.EIGOS_PAOTUI_SKILL_DIR||config.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE||config.EIGOS_MEMBER_SOURCE_KEY_FILE||config.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES?.length,'Meituan/Geo'],
     [config.EIGOS_ROLLINGGO_KEY_FILE,'RollingGo'],
     [config.EIGOS_ALIPAY_CONNECTION_FILE||config.EIGOS_WECHATPAY_CONNECTION_FILE||config.EIGOS_UNIONPAY_CONNECTION_FILE||config.EIGOS_TAOBAO_CONNECTION_FILE,'payment-commerce'],
@@ -53,6 +58,28 @@ export function assertPostgresBuiltinSourceConfiguration(config:Config):void{
   ] as const;
   const missing=unavailable.filter(([enabled])=>!!enabled).map(([,name])=>name);
   if(missing.length)throw new Error(`PostgreSQL primary is not ready: configured execution adapters are not installed (${missing.join(', ')})`);
+}
+
+/** Actual current descriptor only. The provider Key path/fingerprint are
+ * metadata and are never opened, copied or supplied to a model/provider here. */
+export function readPostgresDidiHostConfiguration(config:Config){
+  assertPostgresBuiltinSourceConfiguration(config);if(!config.EIGOS_DIDI_RELAY_AGENT_ID)return undefined;
+  const path=config.EIGOS_DIDI_MEMBER_CONNECTION_FILE!,initial=readDidiMemberConnection(path),owner=config.EIGOS_PERSONAL_SOURCE_OWNER!;
+  const binding=didiBindingSchema.parse({bindingId:config.EIGOS_DIDI_BINDING_ID,keyFile:config.EIGOS_DIDI_KEY_FILE,keySha256:config.EIGOS_DIDI_KEY_SHA256,environment:config.EIGOS_DIDI_ENVIRONMENT,...(config.EIGOS_DIDI_AUDIT_DIR?{auditDirectory:config.EIGOS_DIDI_AUDIT_DIR}:{})});
+  if(didiSourceOwner(initial)!==owner||resolve(initial.binding.keyFile)!==resolve(binding.keyFile)||initial.binding.keySha256!==binding.keySha256)throw new Error('Current PostgreSQL DiDi routes must retain the original owner and credential fingerprint');
+  return {binding,owner,peerId:config.EIGOS_DIDI_RELAY_AGENT_ID,descriptor:{readCurrent:()=>readDidiMemberConnection(path),expectedDigest:digest({policy:'member-didi-estimate@1',connection:initial})}};
+}
+
+/** Shared host assembly. Worker receives only its actual source-read authority
+ * and registry; no publisher, durable node, wrapping key or model is created. */
+export function createPostgresProgramTransport(config:Config,options:{database:PostgresDatabase;policyDigest:string;authority:{id:string;revision:number;digest:string};builder?:StagedKernelBuilder;role:'gateway'|'worker'}){
+  if(!config.authority||config.authority.id!==options.authority.id||runtimeAuthorityDigest(config.authority)!==options.authority.digest||config.authority.revision!==options.authority.revision||config.PUBLIC_URL!==config.authority.canonicalOrigin)throw new Error('Program transport requires the same original host authority');
+  const selected=readPostgresDidiHostConfiguration(config),account=selected?new PostgresDidiAccount(selected.binding,selected.owner,selected.descriptor):undefined;
+  const opts={database:options.database,policyDigest:options.policyDigest,authorityId:options.authority.id,gatewayOrigin:config.PUBLIC_URL,builder:options.builder,didiAccount:account};
+  const taskRelay=options.role==='gateway'&&config.EIGOS_TASK_RELAY_FILE?new PostgresTaskRelay(opts):undefined;
+  const reads=selected?(taskRelay?.reads??new PostgresRelayReadAuthority(opts)):undefined;
+  const registry=new PostgresReadProgramRegistry(options.policyDigest,{documentEnabled:config.EIGOS_EXECUTOR!=='disabled',...(selected?{didi:{kind:'relay' as const,binding:selected.binding,owner:selected.owner,account:account!,reads:reads!,peerId:selected.peerId,authority:{id:options.authority.id,gatewayOrigin:config.PUBLIC_URL}}}:{})});
+  return {role:options.role,database:options.database,registry,taskRelay,reads,account,selected};
 }
 const runtimeContract=structuredClone(POSTGRES_RUNTIME_SCHEMA_CONTRACT),runtimeContractDigest=digest(runtimeContract);
 const verificationSchema=z.strictObject({version:z.literal(1),status:z.literal('verified-at-snapshot'),transactionStartedAt:z.iso.datetime({offset:true}),sourceFileDigest:sha,schemaDigest:sha,authorityDigest:sha,policyDigest:sha,
@@ -258,11 +285,11 @@ export async function createPostgresPrimaryHostResources(config:Config,role:'gat
 /** Real Gateway metadata/task services; no executor or model is constructed.
  * Other source runtimes must be installed explicitly instead of substituting
  * a different program, model, owner or task when a binding is unavailable. */
-export function createPostgresGatewayServices(config:Config,resources:Awaited<ReturnType<typeof createPostgresHostResources>>){
+export function createPostgresGatewayServices(config:Config,resources:Awaited<ReturnType<typeof createPostgresHostResources>>,programTransport=createPostgresProgramTransport(config,{database:resources.database,policyDigest:resources.binding.policyDigest,authority:resources.binding.authority,builder:resources.kernel,role:'gateway'})){
   assertPostgresBuiltinSourceConfiguration(config);
   const publisher=resources.publisher;if(!publisher)throw new Error('Gateway services require the sole Gateway authorization publisher');
-  const document=new DocumentAgentProgram(),programs=config.EIGOS_EXECUTOR==='disabled'?[]:[document];
-  const catalog=new ExecutionCatalog(programs.map(program=>program.capability()),[],[],[],programs);
+  if(programTransport.role!=='gateway'||programTransport.database!==resources.database||!(programTransport.registry instanceof PostgresReadProgramRegistry)||programTransport.registry.policyDigest!==resources.binding.policyDigest)throw new Error('Gateway requires its own actual shared program transport');
+  const catalog=programTransport.registry.catalog;
   const checkedProgram=async(client:Client,owner:string,releaseRef:Parameters<typeof postgresOntologyRelease>[1],ref:Ref,job?:Job):Promise<AgentProgram>=>{
     const release=await postgresOntologyRelease(client,releaseRef,resources.kernel);assertReviewedModel(stagedKernelComponents(resources.kernel).model,release.model);
     const program=ref.id==='eigos.goal'&&job?postgresGoalProgram(job):catalog.agentProgram(ref,owner);
@@ -271,7 +298,8 @@ export function createPostgresGatewayServices(config:Config,resources:Awaited<Re
     if(state&&same(state.programRef,ref)&&state.programDigest!==program.configurationDigest)throw new DomainError('CONFLICT','The original program configuration changed');
     // Definition implementations are the real registered program metadata.
     // No fake graph or storage object is lent to the synchronous catalogue.
-    for(const action of program.actionIds){const definition=release.model.action(action);if(release.model.actionImplementation(action)?.kind!=='trusted'||definition.operation?.effect!=='local')throw new DomainError('CONFLICT','This source program requires its actual installed PostgreSQL adapter');}
+    const registered=programTransport.registry.find(program.ref,program.configurationDigest);
+    for(const action of program.actionIds){const definition=release.model.action(action);if(release.model.actionImplementation(action)?.kind!=='trusted'||definition.operation?.effect!=='local'&&!(registered?.kind==='didi'&&!definition.operation&&definition.read?.effect==='read'))throw new DomainError('CONFLICT','This source program requires its actual installed PostgreSQL adapter');}
     return program;
   };
   const tasks=new PostgresTaskCommandService(resources.database,resources.binding.policyDigest,resources.kernel,{
@@ -282,10 +310,27 @@ export function createPostgresGatewayServices(config:Config,resources:Awaited<Re
   });
   const permissions=new PostgresPermissionManagement({database:resources.database,members:resources.members,publisher,catalog,policyDigest:resources.binding.policyDigest,builder:resources.kernel});
   const definitions=new PostgresDefinitionService({database:resources.database,tasks,catalog,publisher,policyDigest:resources.binding.policyDigest,builder:resources.kernel});
-  return {tasks,members:resources.members,publisher,permissions,definitions,catalog,
+  return {tasks,members:resources.members,publisher,permissions,definitions,catalog,programTransport,
+    assertSourceCurrent:()=>assertPostgresProgramSourceCurrent(programTransport,resources),
     ontologyRelease:()=>resources.database.run(async client=>(await new PostgresDefinitionStore(client,{builder:resources.kernel}).active('eigos.business')).ref),
     available:async()=>{try{resources.assertAvailable();return await resources.database.run(client=>publisher.withManagement(client,async()=>{resources.assertAvailable();return true;}));}catch{return false;}},
   };
+}
+
+/** Startup reads only: actual active member and unchanged original source
+ * admission. It never self-admits, grants a source or replaces a deadline.
+ * Claim/dispatch paths retain their own fresh account.assert checks. */
+export async function assertPostgresProgramSourceCurrent(transport:ReturnType<typeof createPostgresProgramTransport>,resources:Awaited<ReturnType<typeof createPostgresHostResources>>){
+  if(transport.database!==resources.database||transport.registry.policyDigest!==resources.binding.policyDigest)throw new Error('Source readiness requires the same actual primary database');
+  const account=transport.account,selected=transport.selected;if(!account||!selected)return;
+  account.assertBinding(selected.binding,selected.owner);
+  const member=await resources.members.get(account.record.memberId);
+  if(member.status!=='active'||!member.acceptedAt||member.issuer!==account.record.owner.issuer||member.tenant!==account.record.owner.tenant||member.subject!==account.record.owner.subject)throw new Error('The original DiDi member source is unavailable');
+  await resources.database.run(async client=>{
+    const row=await client.query(`SELECT configuration_digest,connection_id,owner,member_id,state FROM "${resources.binding.business.schema}".member_didi_source_admissions WHERE configuration_digest=$1 LIMIT 2`,[account.configurationDigest]),value=row.rows[0];
+    if(row.rowCount!==1||value?.configuration_digest!==account.configurationDigest||value.connection_id!==account.record.connectionId||value.owner!==account.owner||value.member_id!==account.record.memberId||value.state!=='active')throw new Error('The original DiDi account has no current source admission');
+  });
+  account.assertBinding(selected.binding,selected.owner);resources.assertAvailable();
 }
 
 /** Configuration admission only, without opening credentials, a DB or network.
@@ -298,7 +343,7 @@ export function assertPostgresRelayHostConfiguration(config:Pick<Config,'EIGOS_T
 /** Real package-level Relay services, sharing the original primary database.
  * Assembly does not provision nodes, publish authority or start a poller. The
  * application owns HTTP/network startup after verifyMigrations has succeeded. */
-export async function createPostgresRelayServices(config:Config,resources:Awaited<ReturnType<typeof createPostgresHostResources>>,environment:NodeJS.ProcessEnv=process.env){
+export async function createPostgresRelayServices(config:Config,resources:Awaited<ReturnType<typeof createPostgresHostResources>>,environment:NodeJS.ProcessEnv=process.env,programTransport=createPostgresProgramTransport(config,{database:resources.database,policyDigest:resources.binding.policyDigest,authority:resources.binding.authority,builder:resources.kernel,role:'gateway'})){
   assertPostgresRelayHostConfiguration(config,resources.binding);
   const binding=resources.binding.relay;if(!binding||!config.EIGOS_TASK_RELAY_FILE)return undefined;
   const publisher=resources.publisher;if(!publisher)throw new Error('A Worker cannot own the primary Relay or a second publisher');
@@ -307,7 +352,8 @@ export async function createPostgresRelayServices(config:Config,resources:Awaite
   const secrets=readPostgresRelaySecrets(resources.binding,environment);let wrappingKey:CryptoKey;
   try{wrappingKey=await relayNodeWrappingKey(secrets.wrappingKeyBytes);}finally{secrets.wrappingKeyBytes.fill(0);}
   resources.assertAvailable();
-  const port=new PostgresTaskRelay({database:resources.database,policyDigest:resources.binding.policyDigest,authorityId:resources.binding.authority.id,gatewayOrigin:config.PUBLIC_URL,builder:resources.kernel});
+  const port=programTransport.taskRelay;
+  if(programTransport.role!=='gateway'||programTransport.database!==resources.database||!port||programTransport.registry.policyDigest!==resources.binding.policyDigest||port.reads.didiAccount!==programTransport.account)throw new Error('Relay requires the actual same-account Gateway program transport');
   const enrollment=new RelayEnrollmentIssuer(secrets.enrollmentKey,config.PUBLIC_URL,relayConfig.relayUrl,port.enrollment);
   const expected=new Map(binding.endpointImports.map(node=>[postgresMessagingNodeId(node.endpointId),{agentId:node.agentId,importDigest:node.importDigest}]));
   // Even when communication routes are disabled, verify preserved historical

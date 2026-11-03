@@ -25,8 +25,9 @@ import {postgresWorkReference,type PostgresWorkReference} from './work-claim.js'
 import {withPostgresWorkerReadSnapshot,postgresTaskResourcePermissionValidUntil} from './task-read-access.js';
 import {withPostgresWorkerEvidenceAuthorization} from './task-output.js';
 import {postgresConsentIndex} from './consent.js';
+import {PostgresDidiAccount} from './didi-account.js';
 
-type Options=Omit<PostgresTaskRelayAuthorityOptions,'database'>&{database:Pick<PostgresDatabase,'run'|'inspectClaim'>;builder?:StagedKernelBuilder};
+export type PostgresRelayReadAuthorityOptions=Omit<PostgresTaskRelayAuthorityOptions,'database'>&{database:Pick<PostgresDatabase,'run'|'inspectClaim'>;builder?:StagedKernelBuilder;didiAccount?:PostgresDidiAccount};
 type ReadRow={id:string;retry_key:string;peer_id:string;actor:string;policy_revision:unknown;request:string;state:string;connection_id:string|null;result:string|null;has_result:boolean;expires_at:unknown};
 const same=(a:unknown,b:unknown)=>a===undefined?b===undefined:b!==undefined&&digest(a)===digest(b);
 const intentSchema=z.looseObject({id:z.string().min(1),owner:z.string().min(1),jobId:z.string().min(1),planDigest:z.string().regex(/^[a-f0-9]{64}$/),effect:z.string().min(1),dispatchInput:z.record(z.string(),z.unknown()).optional()});
@@ -36,7 +37,11 @@ const factSchema=z.looseObject({sourceKey:z.string(),object:objectRefSchema,revi
  * adapter grants no action, runs no model/provider, and never creates a claim. */
 export class PostgresRelayReadAuthority {
   private readonly authority:PostgresTaskRelayAuthority;
-  constructor(private readonly options:Options){this.authority=new PostgresTaskRelayAuthority(options);}
+  constructor(private readonly options:PostgresRelayReadAuthorityOptions){
+    if(options.didiAccount!==undefined&&!(options.didiAccount instanceof PostgresDidiAccount))throw new Error('The current DiDi account authority must be an actual PostgreSQL account');
+    this.authority=new PostgresTaskRelayAuthority(options);
+  }
+  get didiAccount(){return this.options.didiAccount;}
   private inspect=(claim:PostgresWorkReference)=>this.options.database.inspectClaim(claim,this.options.policyDigest);
   private async row(client:Client,id:string):Promise<ReadRow>{
     const q=`"${postgresBusinessSchema(client)}"`,rows=await client.query<ReadRow>(`SELECT id,retry_key,peer_id,policy_revision,state,connection_id,expires_at,result IS NOT NULL AS has_result,CASE WHEN octet_length(actor)<=65536 THEN actor END AS actor,CASE WHEN octet_length(request)<=1048576 THEN request END AS request,CASE WHEN octet_length(result)<=8388608 THEN result END AS result FROM ${q}.security_relay_reads WHERE id=$1 LIMIT 2`,[z.uuid().parse(id)]);
@@ -63,6 +68,7 @@ export class PostgresRelayReadAuthority {
       const {checkedAt:_old,...stable}=actor,{checkedAt:_fresh,...current}=admission.actor;
       if(!same(stable,current)||admission.policyRevision!==Number(row.policy_revision))throw new SecurityError('POLICY_CHANGED');
       const job=await new PostgresTaskStorage(client,this.options.builder).get(claim.owner,claim.job.id),state=job.delegation?.agent,plan=state?.plans.find(value=>value.id===request.context.planId);
+      await this.options.didiAccount?.assert(client,claim,job,this.options.policyDigest);
       const intentRows=await client.query(`SELECT state,CASE WHEN octet_length(body)<=8388608 THEN body END AS body FROM ${q}.action_intents WHERE owner=$1 AND job_id=$2 AND id=$3 AND state='dispatching' LIMIT 2`,[claim.owner,job.id,request.context.intentId]);
       const attemptRows=await client.query(`SELECT CASE WHEN octet_length(body)<=8388608 THEN body END AS body FROM ${q}.action_attempts WHERE owner=$1 AND intent_id=$2 AND id=$3 LIMIT 2`,[claim.owner,request.context.intentId,request.context.attemptId]);
       if(!state||!plan||intentRows.rowCount!==1||typeof intentRows.rows[0]?.body!=='string'||attemptRows.rowCount!==1||typeof attemptRows.rows[0]?.body!=='string')throw new SecurityError('ACCESS_REVOKED');
@@ -108,6 +114,7 @@ export class PostgresRelayReadAuthority {
       };
       const thisOptions=this.options;
       try{await runGraphProgramAsync(proof,assertPipelineSnapshotsProgram(graph,claim.owner,snapshots,function*(ref){const state=facts.get(key(ref));return state?{...state,health:state.conflicted?'conflicted':Date.parse(state.expiresAt)<=Date.now()?'stale':'fresh'}:undefined;}));}catch(error){if(error instanceof DomainError){const denied=new SecurityError('SOURCE_NOT_AUTHORIZED');Object.defineProperty(denied,'cause',{value:error});throw denied;}throw error;}
+      await this.options.didiAccount?.assert(client,claim,job,this.options.policyDigest);
       postgresConstrainReadDeadline(client,Math.min(request.expiresAt,admission.validUntil));if(postgresBusinessToken(client)!==token||request.expiresAt<=Date.now())throw new SecurityError('ACCESS_REVOKED');return request;
     },this.options.builder,undefined,this.inspect);
   }

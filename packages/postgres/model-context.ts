@@ -14,6 +14,7 @@ import {objectRefSchema} from '../ontology/model.js';
 import {readOntologyRequestProgram,readExecutionContextProgram} from '../ontology/execution-projection.js';
 import {runGraphProgramAsync} from '../ontology/graph-program.js';
 import type {StagedKernelBuilder} from '../ontology/seed-definition.js';
+import type {PostgresReadProgramRegistry} from './didi-registry.js';
 import {assertDocumentContextProgram} from '../capabilities/document-program.js';
 import {SecurityError} from '../security/errors.js';
 import {combineEnvelopes} from '../security/envelope.js';
@@ -29,7 +30,7 @@ import {assertPostgresPlanningDiscoveryContext,type PostgresPlanningDiscoveryCon
 
 export type PostgresModelProgramMetadata=Pick<AgentProgram,'ref'|'configurationDigest'|'capability'|'permitted'|'actionIds'|'guidance'|'completionSchema'|'limits'|'preparePlanningContext'|'planningObservationTypes'>;
 export interface PostgresModelContextOptions {
-  policyDigest:string;modelChannel:string;builder?:StagedKernelBuilder;componentPrograms?:readonly PostgresModelProgramMetadata[];
+  policyDigest:string;modelChannel:string;builder?:StagedKernelBuilder;componentPrograms?:readonly PostgresModelProgramMetadata[];registry?:PostgresReadProgramRegistry;
   inspectClaim:(claim:PostgresWorkReference)=>Promise<{validUntil:number}|undefined>;
 }
 export interface PostgresModelContextResult<T>{context:T;executionBudget:ReturnType<typeof executionBudgetStatus>;maxTurns:number}
@@ -47,17 +48,17 @@ function budget(job:Job,program:PostgresModelProgramMetadata){
     ...(status.paused?{paused:z.strictObject({resource:z.enum(['modelTurns','plans','actions','time','reasoning']),scope:z.enum(['window','task']),at:z.iso.datetime({offset:true})}).parse(status.paused)}:{})};
   return {executionBudget:safe,maxTurns:integer.parse(Math.min(remainingModelTurns(job),program.limits?Math.max(0,agentLimits(program).modelTurns-(job.runs?.length??0)):Infinity))};
 }
-function metadata(program:PostgresModelProgramMetadata,owner:string){
+function metadata(program:PostgresModelProgramMetadata,owner:string,registeredDidi=false){
   if(!program||typeof program.capability!=='function'||typeof program.permitted!=='function'||!program.permitted(owner)||!/^[a-f0-9]{64}$/.test(program.configurationDigest))throw new SecurityError('AUTHORIZATION_REQUIRED');
   const capability=structuredClone(program.capability());
-  if(!same(capability.ref,program.ref)||!(['eigos.goal','document.compose'].includes(program.ref.id))||program.ref.version!==(program.ref.id==='eigos.goal'?'1':'2'))throw new SecurityError('AUTHORITY_UNAVAILABLE','PostgreSQL model context for this registered adapter is not installed');
+  if(!same(capability.ref,program.ref)||!(registeredDidi&&program.ref.id==='ride.estimate.query'&&program.ref.version==='1'&&capability.actions.every(action=>action.effect==='read'&&!action.additionalEffects?.length)||['eigos.goal','document.compose'].includes(program.ref.id)&&program.ref.version===(program.ref.id==='eigos.goal'?'1':'2')))throw new SecurityError('AUTHORITY_UNAVAILABLE','PostgreSQL model context for this registered adapter is not installed');
   return capability;
 }
 
 /** A real checked scope owns every value used in the prompt. Private Job data
  * is used only to verify the current projection and compute bounded counters;
  * it is never spread into the DTO. Model calls happen after this scope commits. */
-async function context<T extends 'goal'|'agent'>(kind:T,scope:Scope,program:PostgresModelProgramMetadata,options:Pick<PostgresModelContextOptions,'builder'|'componentPrograms'>):Promise<PostgresModelContextResult<T extends 'goal'?GoalReviewContext:AgentPlanningContext>>{
+async function context<T extends 'goal'|'agent'>(kind:T,scope:Scope,program:PostgresModelProgramMetadata,options:Pick<PostgresModelContextOptions,'builder'|'componentPrograms'|'registry'>):Promise<PostgresModelContextResult<T extends 'goal'?GoalReviewContext:AgentPlanningContext>>{
   scope.assertActive();const {client,claim,authorization:auth,admission,principal,policyDigest,modelChannel}=scope,token=postgresBusinessToken(client);
   if(admission.actor.actorKind!=='worker'||admission.actor.taskId!==claim.job.id||admission.grant.taskId!==claim.job.id||admission.actor.ownerKey!==claim.owner)throw new SecurityError('AUTHORIZATION_REQUIRED');
   const original=metadata(program,claim.owner),programStamp=digest({ref:program.ref,configuration:program.configurationDigest,capability:original,actions:program.actionIds}),store=new PostgresTaskStorage(client,options.builder),job=await store.get(claim.owner,claim.job.id),d=job.delegation,state=d?.agent;
@@ -79,9 +80,14 @@ async function context<T extends 'goal'|'agent'>(kind:T,scope:Scope,program:Post
       for(const component of state.composition.contexts.filter(value=>!state.composition!.retiredContexts?.some(old=>old.id===value.id))){
         const found=options.componentPrograms?.filter(value=>same(value.ref,component.programRef)&&value.configurationDigest===component.programDigest)??[];
         if(found.length!==1)throw new SecurityError('AUTHORITY_UNAVAILABLE','PostgreSQL active component model context has no registered adapter');
-        metadata(found[0]!,claim.owner);
-        if(found[0]!.ref.id!=='document.compose')throw new SecurityError('AUTHORITY_UNAVAILABLE','PostgreSQL active component model context is not installed');
-        const scoped=componentContext(ownerContext,component,found[0]!);await runGraphProgramAsync(graph,assertDocumentContextProgram(found[0]!,scoped));
+        const registered=options.registry?.find(component.programRef,component.programDigest);
+        if(registered?.kind==='didi'){
+          if(registered.program!==found[0])throw new SecurityError('POLICY_CHANGED');await options.registry!.assertConfigured(client,registered,claim,job);metadata(found[0]!,claim.owner,true);
+          const scoped=componentContext(ownerContext,component,registered.program);await runGraphProgramAsync(graph,registered.assertContext(scoped));
+        }else{
+          metadata(found[0]!,claim.owner);if(found[0]!.ref.id!=='document.compose')throw new SecurityError('AUTHORITY_UNAVAILABLE','PostgreSQL active component model context is not installed');
+          const scoped=componentContext(ownerContext,component,found[0]!);await runGraphProgramAsync(graph,assertDocumentContextProgram(found[0]!,scoped));
+        }
       }
     }else{
       await runGraphProgramAsync(graph,assertDocumentContextProgram(program,ownerContext));
@@ -105,6 +111,7 @@ async function context<T extends 'goal'|'agent'>(kind:T,scope:Scope,program:Post
         ...(program.preparePlanningContext?{prepareContext:true}:{}),...(program.planningObservationTypes?{planningObservationTypes:[...program.planningObservationTypes]}:{}),
         ...(native?{preparedContextNavigation:navigation}:{}),actionOutcomes:ownerContext.intents.map(intent=>({stepId:z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/).parse(intent.stepId),intentId:'',state:intentState.parse(intent.state)}))};
     }
+    if(options.registry)for(const component of state.composition?.contexts??[]){const entry=options.registry.find(component.programRef,component.programDigest);if(entry?.kind==='didi')await options.registry.assertConfigured(client,entry,claim,job);}
     const current=graph.evidence(),submitted=combineEnvelopes([checked.envelope,{...checked.envelope,classification:'sensitive',requiredMarkings:['member_private','personal_data']}]);
     submitted.submission={taskId:request.id,requestRevision:request.revision,contentDigest:submissionDigest(request)};
     const history=await postgresTaskReadHistory(client,claim.owner,job.id,request.revision),approved=await auth.authorizeEvidence(combineEnvelopes([...history,submitted,...(current?[current]:[])]));
@@ -120,5 +127,5 @@ function standalone<T extends 'goal'|'agent'>(kind:T,client:Client,input:Postgre
 }
 export const postgresGoalReviewContext=(client:Client,claim:PostgresWorkReference,program:PostgresModelProgramMetadata,options:PostgresModelContextOptions)=>standalone('goal',client,claim,program,options);
 export const postgresAgentPlanningContext=(client:Client,claim:PostgresWorkReference,program:PostgresModelProgramMetadata,options:PostgresModelContextOptions)=>standalone('agent',client,claim,program,options);
-export function postgresGoalReviewContextFromDiscoveryContext(scope:PostgresPlanningDiscoveryContext,program:PostgresModelProgramMetadata,options:Pick<PostgresModelContextOptions,'builder'|'componentPrograms'>={}){assertPostgresPlanningDiscoveryContext(scope);return context('goal',scope,program,options);}
-export function postgresAgentPlanningContextFromDiscoveryContext(scope:PostgresPlanningDiscoveryContext,program:PostgresModelProgramMetadata,options:Pick<PostgresModelContextOptions,'builder'|'componentPrograms'>={}){assertPostgresPlanningDiscoveryContext(scope);return context('agent',scope,program,options);}
+export function postgresGoalReviewContextFromDiscoveryContext(scope:PostgresPlanningDiscoveryContext,program:PostgresModelProgramMetadata,options:Pick<PostgresModelContextOptions,'builder'|'componentPrograms'|'registry'>={}){assertPostgresPlanningDiscoveryContext(scope);return context('goal',scope,program,options);}
+export function postgresAgentPlanningContextFromDiscoveryContext(scope:PostgresPlanningDiscoveryContext,program:PostgresModelProgramMetadata,options:Pick<PostgresModelContextOptions,'builder'|'componentPrograms'|'registry'>={}){assertPostgresPlanningDiscoveryContext(scope);return context('agent',scope,program,options);}

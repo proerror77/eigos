@@ -2,9 +2,10 @@ import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { commerceProviderSchema, commerceQuerySchema } from '../capabilities/payment-commerce/contracts.js';
 import { objectRefSchema, type ObjectTypeDefinition, type LinkDefinition, type ActionDefinition, type FunctionDefinition, type PropertyDefinition } from './model.js';
-import { loadMcpReadModule, mcpReadModuleRef } from './mcp-read.js';
+import { parseBundledMcpReadModule, mcpReadModuleRef } from './mcp-read.js';
+import commerceReadModuleJson from './definitions/payment-commerce-readonly.json' with { type: 'json' };
 
-export const commerceReadDefinition = loadMcpReadModule(new URL('./definitions/payment-commerce-readonly.json', import.meta.url));
+export const commerceReadDefinition = parseBundledMcpReadModule(commerceReadModuleJson);
 export const commerceReadModule = mcpReadModuleRef(commerceReadDefinition);
 export const commerceReadActionSchema = z.strictObject({ scope: objectRefSchema.extend({ type: z.literal('PaymentCommerceReadTask') }) });
 const text = z.string().min(1).max(500), sha = z.string().regex(/^[a-f0-9]{64}$/);

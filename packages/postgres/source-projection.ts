@@ -1,3 +1,4 @@
+import {DomainError} from '../core/domain.js';
 import {postgresConsentDeadline,postgresConstrainConsent} from './consent.js';
 import {randomUUID} from 'node:crypto';
 import type {Client} from 'pg';
@@ -10,6 +11,17 @@ import {ontologyBatchSchema,ontologySourceSchema,type ObjectBatch,type ObjectSou
 import type {ObjectRef} from '../ontology/model.js';
 import type {GraphStorage,ProjectionMetadata} from '../ontology/graph-program.js';
 import type {StagedKernelBuilder} from '../ontology/seed-definition.js';
+import {DidiAgentProgram} from '../capabilities/didi/program.js';
+import {checkedRideEstimate} from '../ontology/ride-estimate-projection.js';
+import {sourceEntityRef} from '../ontology/business-fact-projection.js';
+import {objectEnvelope} from '../security/object-envelope.js';
+import {reviewedFieldPolicy} from '../security/field-policy.js';
+import {postgresTaskCurrentLabels} from './task-read-access.js';
+import {verifyPostgresDidiSourceReceipt,type PostgresDidiTransport} from './didi-policy.js';
+import {PostgresDidiAccount} from './didi-account.js';
+import type {PostgresActionSemanticContext} from './action-authorization.js';
+import type {AgentActionResult} from '../core/agent-program.js';
+import type {ExecutionAttempt,ActionResult} from '../ontology/actions.js';
 import {isPersonalAction} from '../ontology/personal-context.js';
 import {taskDataGrantSchema,securityEnvelopeSchema} from '../security/contracts.js';
 import {storedSourceSchema,type ObservationSource} from '../security/source-policy.js';
@@ -51,9 +63,11 @@ export interface PostgresSourceProjectionOptions{
   inspectClaim:(claim:PostgresWorkReference)=>Promise<{validUntil:number}|undefined>;builder?:StagedKernelBuilder;
 }
 type SourceMethod='read'|'query'|'related'|'relationshipDigest'|'ingest'|'readPrivate'|'containsLinks'|'evidencePropertiesDigest'|'tombstone';
-export type PostgresSourceProjectionGraph={ [K in SourceMethod]:(...args:Parameters<GraphStorage[K]>)=>Promise<Awaited<ReturnType<GraphStorage[K]>>> }&ProjectionMetadata&{readonly request:ServiceRequest};
+export type PostgresSourceProjectionGraph={ [K in SourceMethod]:(...args:Parameters<GraphStorage[K]>)=>Promise<Awaited<ReturnType<GraphStorage[K]>>> }&ProjectionMetadata&Pick<GraphStorage,'withGraphFunction'|'projectedRelationshipDigest'|'planning'>&{readonly request:ServiceRequest};
 export type PostgresCallerSourceProjectionGraph=PostgresSourceProjectionGraph&Pick<GraphStorage,'managedObject'|'previewManaged'|'applyManaged'|'managedDispatchCheck'>;
 type CallerDispatch={journal:PostgresActionJournal;intentId:string;attemptId:string;planId:string};
+export interface PostgresDidiCanonicalDispatch {journal:PostgresActionJournal;program:DidiAgentProgram;account:PostgresDidiAccount;transport:PostgresDidiTransport;context:PostgresActionSemanticContext;attempt:ExecutionAttempt;observationId:string;response:AgentActionResult}
+
 
 /** Explicit host-only caller mapper. The actual journal instance, immutable
  * template and persisted original dispatch are checked before selecting the
@@ -72,8 +86,23 @@ export async function withPostgresSourceProjection<T>(client:Client,input:Postgr
   action:(graph:PostgresSourceProjectionGraph)=>Promise<T>,onInfluence?:(envelope:SecurityEnvelope)=>void):Promise<T>{
   return sourceProjection(client,input,options,action,onInfluence);
 }
+/** Only the actual original, confirmed DiDi projector can compare canonical
+ * source entities. No normal initializer, model/caller reader or JSON flag can
+ * acquire this port; all source/account/receipt checks remain current. */
+export async function withPostgresDidiCanonicalSourceProjection<T>(client:Client,input:PostgresWorkReference,options:PostgresSourceProjectionOptions,dispatch:PostgresDidiCanonicalDispatch,action:(graph:PostgresSourceProjectionGraph)=>Promise<T>):Promise<T>{
+  const claim=postgresWorkReference(input),ctx=dispatch.context;
+  if(!(dispatch.journal instanceof PostgresActionJournal)||!(dispatch.program instanceof DidiAgentProgram)||!(dispatch.account instanceof PostgresDidiAccount)
+    ||ctx.owner!==claim.owner||ctx.job.id!==claim.job.id||ctx.intent.id!==dispatch.attempt.intentId||ctx.step.intentId!==ctx.intent.id||ctx.step.effect!=='read'||!['SearchDidiPlaces','EstimateDidiRide'].includes(ctx.step.action)
+    ||digest(dispatch.program.ref)!==digest(options.programRef)||dispatch.program.configurationDigest!==options.configurationDigest||options.action!==ctx.step.action)throw new SecurityError('AUTHORIZATION_REQUIRED');
+  await dispatch.journal.assertDispatchAllowed(claim,ctx.intent.id,dispatch.attempt.id);await dispatch.account.assert(client,claim,ctx.job,options.policyDigest);
+  const rows=await client.query(`SELECT attempt_id,digest,applied,CASE WHEN octet_length(body)<=8388608 THEN body END AS body FROM "${postgresBusinessSchema(client)}".action_observations WHERE owner=$1 AND intent_id=$2 AND id=$3 LIMIT 2`,[claim.owner,ctx.intent.id,dispatch.observationId]);
+  if(rows.rowCount!==1||rows.rows[0].attempt_id!==dispatch.attempt.id||Number(rows.rows[0].applied)!==0||typeof rows.rows[0].body!=='string')throw new SecurityError('AUTHORIZATION_REQUIRED');
+  const result=JSON.parse(rows.rows[0].body) as ActionResult;if(digest(result)!==rows.rows[0].digest||result.kind!=='confirmed'||digest(result.output?.source)!==digest(dispatch.response.value))throw new SecurityError('POLICY_CHANGED');
+  checkedRideEstimate(dispatch.response.value);await verifyPostgresDidiSourceReceipt(client,claim,ctx,dispatch.attempt,dispatch.response,result,dispatch.transport);
+  return sourceProjection(client,claim,options,action,undefined,undefined,dispatch);
+}
 async function sourceProjection<T>(client:Client,input:PostgresWorkReference,options:PostgresSourceProjectionOptions,
-  action:(graph:PostgresCallerSourceProjectionGraph)=>Promise<T>,onInfluence?:((envelope:SecurityEnvelope)=>void),caller?:CallerDispatch):Promise<T>{
+  action:(graph:PostgresCallerSourceProjectionGraph)=>Promise<T>,onInfluence?:((envelope:SecurityEnvelope)=>void),caller?:CallerDispatch,canonical?:PostgresDidiCanonicalDispatch):Promise<T>{
   const schema=postgresBusinessSchema(client),token=postgresBusinessToken(client),q=`"${schema}"`,claim=postgresWorkReference(input);
   if(claim.recovery||claim.job.state!=='working')throw new SecurityError('ACCESS_REVOKED');
   options={...options,programRef:{...options.programRef}};
@@ -114,10 +143,11 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
   await source();const job=await new PostgresTaskStorage(client,options.builder).get(claim.owner,claim.job.id),release=job.delegation?.ontologyRelease;
   if(!release||release.ontologyId!=='eigos.business'||request.revision!==job.delegation?.request.revision)throw new SecurityError('POLICY_CHANGED');
   const metadata=await PostgresProjectionGraph.create(client,claim.owner,release,options.builder,{readOnly:true});
+  const canonicalRestrictions=new Map<string,SecurityEnvelope>();
   const evidence=async()=>{
     const history=await postgresTaskReadHistory(client,claim.owner,claim.job.id,request.revision);
     if(!history.length)throw new SecurityError('OUTPUT_NOT_ALLOWED');
-    const envelope=combineEnvelopes(history);
+    const envelope=combineEnvelopes([...history,...canonicalRestrictions.values()]);
     if(envelope.submission?.taskId!==request.id||envelope.submission.requestRevision!==request.revision||envelope.submission.contentDigest!==submissionDigest(request))throw new SecurityError('POLICY_CHANGED');
     return authorize(client,claim,options.policyDigest,auth=>auth.authorizeEvidence(envelope),options.builder,options.modelChannel,options.inspectClaim);
   };
@@ -206,9 +236,68 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
       await current();await client.query(`RELEASE SAVEPOINT ${name}`);
     }catch(error){await client.query(`ROLLBACK TO SAVEPOINT ${name}`);await client.query(`RELEASE SAVEPOINT ${name}`);throw error;}
   };
+  const canonicalTypes=new Set(['Place','Provider','RideRoute','RideEstimate']);
+  const expectedAbsences=new WeakSet<object>();
+  const absent=():never=>{const error=new DomainError('NOT_FOUND','Original DiDi output has not been projected');expectedAbsences.add(error);throw error;};
+  const storedPresence=async(owner:string,ref:ObjectRef)=>{
+    const scoped=release.ontologyId!=='eigos.business',table=scoped?'ontology_scoped_objects':'ontology_objects';
+    const rows=await client.query(`SELECT EXISTS(SELECT 1 FROM ${q}.${table} WHERE ${scoped?'ontology_id=$1 AND ':''}owner=$2 AND type=$3 AND id=$4) AS present,EXISTS(SELECT 1 FROM ${q}.ontology_tombstones WHERE ontology_id=$1 AND owner=$2 AND type=$3 AND id=$4) AS tombstoned`,[release.ontologyId,owner,ref.type,ref.id]);
+    if(rows.rowCount!==1||typeof rows.rows[0].present!=='boolean'||typeof rows.rows[0].tombstoned!=='boolean')throw new SecurityError('SOURCE_NOT_AUTHORIZED');
+    return {present:rows.rows[0].present as boolean,tombstoned:rows.rows[0].tombstoned as boolean};
+  };
+  const canonicalSnapshot=canonical?checkedRideEstimate(canonical.response.value):undefined;
+  const freshObservationRefs=new Set(canonicalSnapshot?[key({type:canonicalSnapshot.data.kind==='places'?'DidiPlaceObservation':'RideEstimateObservation',id:canonicalSnapshot.id}),key({type:'SourceReceipt',id:`didi:${canonicalSnapshot.id}`})]:[]);
+  const sourceRead=async(...args:Parameters<GraphStorage['read']>)=>{
+    const [owner,ref]=args;
+    // Only the two immutable output identities from the already verified
+    // original receipt may establish absence without a binding. Existing or
+    // tombstoned objects retain the normal authorization/replay refusal.
+    if(canonical&&owner===claim.owner&&freshObservationRefs.has(key(ref))){
+      await source();await canonical.account.assert(client,claim,job,options.policyDigest);
+      const exists=await storedPresence(owner,ref);if(!exists.present&&!exists.tombstoned)absent();
+    }
+    return read(graph=>graph.read(...args));
+  };
+  const canonicalRead=async(owner:string,ref:ObjectRef,budget:import('../ontology/object-store.js').ReadBudget={remaining:1000})=>{
+    active();if(!canonical||caller||owner!==claim.owner||!canonicalTypes.has(ref.type)||metadata.model.objectWritePolicy(ref.type)!=='source')throw new SecurityError('AUTHORIZATION_REQUIRED');
+    await canonical.account.assert(client,claim,job,options.policyDigest);const current=await source(),rule=current.admission.grant.outputs.find(value=>value.type===ref.type&&value.programId===current.selected.programId&&value.programDigest===current.selected.programDigest&&value.sourceBindingId===current.selected.bindingId),allowed=current.admission.parent.resources.find(value=>value.type===ref.type)?.fields??[];
+    if(!rule||!current.selected.outputTypes.includes(ref.type)||!rule.fields.every(field=>allowed.includes(field)))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
+    await authorize(client,claim,options.policyDigest,async(_auth,_admission,principal)=>{const until=await postgresTaskResourceViewValidUntil(client,principal,request.id,options.policyDigest,'objectType',ref.type,options.builder);if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');postgresConstrainReadDeadline(client,until);},options.builder,options.modelChannel,options.inspectClaim);
+    const exists=await storedPresence(owner,ref);if(exists.tombstoned)throw new DomainError('CONFLICT','A deleted canonical source entity cannot be recreated');if(!exists.present)absent();
+    const storage=await PostgresProjectionGraph.create(client,owner,release,options.builder,{readOnly:true});
+    const view=await storage.readPrivate(owner,ref,budget);
+    const origins=await client.query(`SELECT CASE WHEN octet_length(body)<=8388608 THEN body END AS body FROM ${q}.security_object_origins WHERE owner=$1 AND type=$2 AND object_id=$3 AND object_revision=$4 LIMIT 2`,[owner,ref.type,ref.id,view.revision]);
+    if(origins.rowCount!==1||typeof origins.rows[0].body!=='string'||!['provider','synthetic'].includes(view.source.kind))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
+    const origin=z.looseObject({programId:z.string(),programDigest:z.string(),sourceBindingId:z.string(),inputEnvelope:securityEnvelopeSchema}).parse(JSON.parse(origins.rows[0].body));
+    const sameSource=origin.programId===current.selected.programId&&(origin.programDigest===current.selected.programDigest&&origin.sourceBindingId===current.selected.bindingId||current.selected.readbackVersions?.some(value=>value.programDigest===origin.programDigest&&value.sourceBindingId===origin.sourceBindingId));
+    // The trusted mapper compares its own deterministic provider identity on
+    // reobservation. Its fixed, verified endpoint is server metadata, never a
+    // model-readable field or authority to read arbitrary private properties.
+    const provider=canonicalSnapshot&&sourceEntityRef('Provider',`didi:${canonicalSnapshot.receipt.environment}:${canonicalSnapshot.receipt.bindingId}`,'didi-mcp');
+    const providerIdentity=provider&&key(provider)===key(ref)&&Object.hasOwn(view.properties,'verifiedIdentityRefs');
+    if(providerIdentity&&digest(view.properties.verifiedIdentityRefs)!==digest([canonicalSnapshot!.receipt.endpoint]))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
+    const fields=Object.keys(view.properties).filter(field=>!(providerIdentity&&field==='verifiedIdentityRefs'));
+    if(!sameSource||origin.inputEnvelope.ownerKey!==owner||!origin.inputEnvelope.lineageComplete||fields.some(field=>!rule.fields.includes(field)||!allowed.includes(field)||reviewedFieldPolicy(metadata.model,ref.type,field)==='internal_only'))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
+    // This is a verified independent provider reobservation, not reuse of an
+    // older task's input. Preserve current explicit object labels/restrictions
+    // without copying that task's private submission/dependency values.
+    const labels=await authorize(client,claim,options.policyDigest,(_auth,_admission,principal)=>postgresTaskCurrentLabels(client,principal,request.id,options.policyDigest,ref,view.revision,fields,options.builder),options.builder,options.modelChannel,options.inspectClaim);
+    const restricted=objectEnvelope({owner,ref,revision:view.revision,fields,values:Object.fromEntries(fields.map(field=>[field,view.properties[field]])),channels:current.admission.grant.channels,labels,policy:field=>reviewedFieldPolicy(metadata.model,ref.type,field)});
+    const {lineage:_lineage,submission:_submission,...restrictions}=restricted;canonicalRestrictions.set(key(ref),{...restrictions,lineage:[],lineageComplete:true});await evidence();active();return view;
+  };
+  const canonicalRelated=async(owner:string,ref:ObjectRef,link:string,budget:import('../ontology/object-store.js').ReadBudget)=>{
+    if(!canonical||link!=='sourceReceipts'||!canonicalTypes.has(ref.type))throw new SecurityError('AUTHORIZATION_REQUIRED');await canonicalRead(owner,ref,budget);const current=await source();await permission(metadata.model.navigation(ref.type,link).link.id);
+    if(!current.selected.outputTypes.includes('SourceReceipt')||!current.admission.grant.outputs.some(value=>value.type==='SourceReceipt'&&value.programId===current.selected.programId&&value.programDigest===current.selected.programDigest&&value.sourceBindingId===current.selected.bindingId))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
+    await authorize(client,claim,options.policyDigest,async(_auth,_admission,principal)=>{const until=await postgresTaskResourceViewValidUntil(client,principal,request.id,options.policyDigest,'objectType','SourceReceipt',options.builder);if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');postgresConstrainReadDeadline(client,until);},options.builder,options.modelChannel,options.inspectClaim);
+    const receiptRule=current.admission.grant.outputs.find(value=>value.type==='SourceReceipt'&&value.programId===current.selected.programId&&value.programDigest===current.selected.programDigest&&value.sourceBindingId===current.selected.bindingId),receiptFields=current.admission.parent.resources.find(value=>value.type==='SourceReceipt')?.fields??[],definition=metadata.model.object('SourceReceipt');
+    if(!receiptRule||![definition.primaryKey,definition.titleKey,'observedAt'].every(field=>receiptFields.includes(field)&&receiptRule.fields.includes(field)))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
+    const storage=await PostgresProjectionGraph.create(client,owner,release,options.builder,{readOnly:true}),rows=await storage.related(owner,ref,link,budget);if(rows===undefined)throw new DomainError('CONFLICT','Canonical source evidence is incomplete');
+    for(const receipt of rows){if(receipt.ref.type!=='SourceReceipt'||receipt.source.kind!=='provider'&&receipt.source.kind!=='synthetic')throw new SecurityError('SOURCE_NOT_AUTHORIZED');const origins=await client.query(`SELECT CASE WHEN octet_length(body)<=8388608 THEN body END AS body FROM ${q}.security_object_origins WHERE owner=$1 AND type='SourceReceipt' AND object_id=$2 AND object_revision=$3 LIMIT 2`,[owner,receipt.ref.id,receipt.revision]);if(origins.rowCount!==1||typeof origins.rows[0].body!=='string')throw new SecurityError('SOURCE_NOT_AUTHORIZED');const origin=z.looseObject({programId:z.string(),programDigest:z.string(),sourceBindingId:z.string()}).parse(JSON.parse(origins.rows[0].body));if(origin.programId!==current.selected.programId||!(origin.programDigest===current.selected.programDigest&&origin.sourceBindingId===current.selected.bindingId||current.selected.readbackVersions?.some(value=>value.programDigest===origin.programDigest&&value.sourceBindingId===origin.sourceBindingId)))throw new SecurityError('SOURCE_NOT_AUTHORIZED');}
+    return rows.map(row=>({...row,properties:{[definition.primaryKey]:row.properties[definition.primaryKey],[definition.titleKey]:row.properties[definition.titleKey],observedAt:z.iso.datetime({offset:true}).parse(row.properties.observedAt)}}));
+  };
   const serial=<R>(operation:()=>Promise<R>):Promise<R>=>{
     try{active();if(++steps>1000)throw new SecurityError('OUTPUT_NOT_ALLOWED');}catch(error){return Promise.reject(error);}pending++;
-    const next=queue.then(async()=>{active();try{const result=await operation();active();return result;}catch(error){failed=true;throw error;}}).finally(()=>{pending--;});
+    const next=queue.then(async()=>{active();try{const result=await operation();active();return result;}catch(error){if(!error||typeof error!=='object'||!expectedAbsences.has(error))failed=true;throw error;}}).finally(()=>{pending--;});
     queue=next.catch(()=>{});return next;
   };
   const dispatchCheck=async(owner:string,invocation:import('../ontology/graph-program.js').ManagedDispatchInvocation)=>{
@@ -216,11 +305,14 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
     await caller.journal.assertDispatchAllowed(claim,caller.intentId,caller.attemptId);active();await scope();active();
   };
   const driver:PostgresCallerSourceProjectionGraph=Object.freeze({model:metadata.model,now:metadata.now,releaseRef:metadata.releaseRef,security:true,request:freezeData(structuredClone(request)),
-    read:(...args:Parameters<GraphStorage['read']>)=>serial(()=>{if(++reads>1000)throw new SecurityError('OUTPUT_NOT_ALLOWED');return read(graph=>graph.read(...args));}),
-    query:(...args:Parameters<GraphStorage['query']>)=>serial(()=>read(graph=>graph.query(...args))),related:(...args:Parameters<GraphStorage['related']>)=>serial(()=>read(graph=>graph.related(...args))),relationshipDigest:(...args:Parameters<GraphStorage['relationshipDigest']>)=>serial(()=>read(graph=>graph.relationshipDigest(...args))),
-    ingest:(...args:Parameters<GraphStorage['ingest']>)=>serial(()=>{if(caller)throw new SecurityError('AUTHORIZATION_REQUIRED');return ingest(...args);}),readPrivate:()=>{throw new SecurityError('AUTHORIZATION_REQUIRED');},
+    read:(...args:Parameters<GraphStorage['read']>)=>serial(()=>{if(++reads>1000)throw new SecurityError('OUTPUT_NOT_ALLOWED');return sourceRead(...args);}),
+    query:(...args:Parameters<GraphStorage['query']>)=>serial(()=>read(graph=>graph.query(...args))),related:(...args:Parameters<GraphStorage['related']>)=>serial(()=>canonical&&canonicalTypes.has(args[1].type)&&args[2]==='sourceReceipts'?canonicalRelated(...args):read(graph=>graph.related(...args))),relationshipDigest:(...args:Parameters<GraphStorage['relationshipDigest']>)=>serial(()=>read(graph=>graph.relationshipDigest(...args))),
+    ingest:(...args:Parameters<GraphStorage['ingest']>)=>serial(()=>{if(caller)throw new SecurityError('AUTHORIZATION_REQUIRED');return ingest(...args);}),readPrivate:(...args:Parameters<GraphStorage['readPrivate']>)=>{if(!canonical)throw new SecurityError('AUTHORIZATION_REQUIRED');return serial(()=>canonicalRead(...args));},
     containsLinks:(...args:Parameters<GraphStorage['containsLinks']>)=>serial(()=>{if(!caller)throw new SecurityError('AUTHORIZATION_REQUIRED');return callerGraph(graph=>Promise.resolve(graph.containsLinks(...args)));}),
     evidencePropertiesDigest:()=>{throw new SecurityError('AUTHORIZATION_REQUIRED');},
+    withGraphFunction:<R>(owner:string,id:string,action:(scope:GraphStorage)=>Promise<R>)=>serial(()=>{if(caller||configured.programRef.id!=='ride.estimate.query'||!['rideEstimateStatus','selectDidiPlace'].includes(id))throw new SecurityError('AUTHORIZATION_REQUIRED');return read(graph=>graph.withGraphFunction(owner,id,action));}),
+    planning:{evaluate:(...args:Parameters<NonNullable<import('../ontology/graph-program.js').PlanningGraphStorage['evaluate']>>)=>serial(()=>read(graph=>graph.evaluate(...args)))},
+    projectedRelationshipDigest:(owner:string,ref:ObjectRef,links:import('../ontology/object-store.js').LinkWrite[],remove:import('../ontology/object-store.js').LinkWrite[]=[])=>serial(async()=>{if(!canonical||owner!==claim.owner||!canonicalTypes.has(ref.type))throw new SecurityError('AUTHORIZATION_REQUIRED');try{await canonicalRead(owner,ref);}catch(error){if(!(error instanceof DomainError&&error.code==='NOT_FOUND'))throw error;}return(await PostgresProjectionGraph.create(client,owner,release,options.builder,{readOnly:true})).projectedRelationshipDigest(owner,ref,links,remove);}),
     tombstone:(...args:Parameters<GraphStorage['tombstone']>)=>serial(()=>{if(!caller)throw new SecurityError('AUTHORIZATION_REQUIRED');return callerGraph(graph=>Promise.resolve(graph.tombstone(...args)));}),
     ...(caller?{
       managedObject:(...args:Parameters<NonNullable<GraphStorage['managedObject']>>)=>serial(()=>callerGraph(graph=>Promise.resolve(graph.managedObject!(...args)))),
@@ -240,7 +332,7 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
   // snapshots; never reinterpret an older read as the new written revision.
   if(onInfluence)onInfluence(structuredClone(await evidence()));
   const frame=`source_frame_${randomUUID().replaceAll('-','')}`;await client.query(`SAVEPOINT ${frame}`);
-  try{const result=await action(driver);if(pending){open=false;await queue;throw new Error('Source projection callback must await every storage operation');}await source();await client.query(`RELEASE SAVEPOINT ${frame}`);return result;}
+  try{const result=await action(driver);if(pending){open=false;await queue;throw new Error('Source projection callback must await every storage operation');}await source();if(canonical)await canonical.account.assert(client,claim,job,options.policyDigest);await client.query(`RELEASE SAVEPOINT ${frame}`);return result;}
   catch(error){open=false;await queue;await client.query(`ROLLBACK TO SAVEPOINT ${frame}`);await client.query(`RELEASE SAVEPOINT ${frame}`);throw error;}
   finally{open=false;await queue;}
 }

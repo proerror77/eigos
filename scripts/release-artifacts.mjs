@@ -9,11 +9,28 @@ import {setImmediate as yieldToHost} from 'node:timers/promises';
 export const RELEASE_ARTIFACT_FORMAT='eigos.release-artifacts/1';
 export const ONTOLOGY_PACKAGE_FORMAT='eigos.ontology-package/1';
 export const RELEASE_TOOLS=Object.freeze({node:'22.22.3',codex:'0.164.0'});
+export const HARNESS_RELEASE_TOOLS=Object.freeze({node:RELEASE_TOOLS.node,harness:'0.2.1-rc.5'});
+const harnessRuntimeFiles=['dist/packages/capabilities/harness-executor.js','dist/apps/worker/postgres-runtime.js','dist/packages/core/model-usage-context.js','dist/packages/core/model-dispatch-context.js','dist/packages/postgres/coordinator.js'];
+const harnessImagePending=`Harness remains a candidate until the native dsh ${HARNESS_RELEASE_TOOLS.harness} installation and worker image compatibility are independently verified`;
 const sha=/^[a-f0-9]{64}$/,commit=/^(?!0{40}$)[a-f0-9]{40}$/;
 const image=/^[a-z0-9][a-z0-9.:-]*(?:\/[a-z0-9][a-z0-9._-]*)+@sha256:[a-f0-9]{64}$/;
 const roles=['gateway','relay','worker'];
-const requiredJobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)','postgres-execution-cases (contracts)','postgres-execution-cases (planning)','postgres-execution-cases (documents)','postgres-execution-cases (transitions)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
+const requiredJobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)','postgres-execution-cases (contracts)','postgres-execution-cases (planning)','postgres-execution-cases (documents)','postgres-execution-cases (didi)','postgres-execution-cases (transitions)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
 function fail(message){throw new Error(message);}
+function backendTools(backend){if(backend==='codex')return RELEASE_TOOLS;if(backend==='harness')return HARNESS_RELEASE_TOOLS;fail('Only the registered codex or harness release backend is supported');}
+function assertHarnessInventory(value){
+  for(const [inventory,paths] of [[value.runtime.files,harnessRuntimeFiles],[value.sourceFiles,harnessRuntimeFiles.map(path=>path.replace(/^dist\//,'').replace(/\.js$/,'.ts'))]]){
+    const names=new Set(inventory.map(file=>file.path));if(paths.some(path=>!names.has(path)))fail('The Harness candidate requires the actual executor, PostgreSQL reasoning adapter and acknowledged usage/dispatch runtime inventory');
+  }
+}
+async function assertHarnessPackaging(root){
+  // The fixed, reviewed checkout is already required below. Import only its
+  // built API metadata; never invoke a model, CLI, credential reader or worker.
+  // This proves bundled adapter/version parity, not an installed dsh binary.
+  const [executor,worker]=await Promise.all([import(pathToFileURL(checkedFile(root,harnessRuntimeFiles[0])).href),import(pathToFileURL(checkedFile(root,harnessRuntimeFiles[1])).href)]);
+  if(executor.HARNESS_TESTED_VERSION!==HARNESS_RELEASE_TOOLS.harness)fail('The bundled Harness runtime version differs from its release tool pin');
+  if(typeof executor.HarnessExecutor!=='function'||typeof executor.HarnessExecutor.prototype?.runStructured!=='function'||typeof worker.postgresHarnessReasoner!=='function'||typeof worker.createPostgresWorker!=='function')fail('The actual Harness executor and acknowledged PostgreSQL reasoning adapter must be bundled');
+}
 export function canonical(value){const normalize=input=>Array.isArray(input)?input.map(normalize):input&&typeof input==='object'?Object.fromEntries(Object.entries(input).filter(([,v])=>v!==undefined).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([k,v])=>[k,normalize(v)])):input;return JSON.stringify(normalize(value));}
 export const artifactDigest=value=>createHash('sha256').update(canonical(value)).digest('hex');
 const bytesDigest=value=>createHash('sha256').update(value).digest('hex');
@@ -21,7 +38,7 @@ function record(value,keys,label){if(!value||typeof value!=='object'||Array.isAr
 function text(value,label){if(typeof value!=='string'||!value||value.length>500)fail(`Invalid ${label}`);return value;}
 function safePath(path){
   if(typeof path!=='string'||!path||path.length>1000||isAbsolute(path)||path.includes('\\')||path.split('/').some(part=>!part||part==='.'||part==='..'))fail('Artifact paths must be bounded relative paths');
-  const parts=path.split('/');if(parts.some(part=>['.git','node_modules','data','private.config','auth.json','credentials.json'].includes(part)||part.startsWith('.env')||/^(?:\.?private[._-]?config(?:[._-]|$)|\.codex$|\.aws$|\.ssh$)/i.test(part)||/\.(?:sqlite[^/]*|db(?:[-.].*)?|pem|key|p12|pfx)$/i.test(part)))fail('Private state is not a release artifact');return path;
+  const parts=path.split('/');if(parts.some(part=>['.git','node_modules','data','private.config','auth.json','credentials.json'].includes(part)||part.startsWith('.env')||/^(?:\.?private[._-]?config(?:[._-]|$)|\.codex$|\.dsh$|\.aws$|\.ssh$)/i.test(part)||/\.(?:sqlite[^/]*|db(?:[-.].*)?|pem|key|p12|pfx)$/i.test(part)))fail('Private state is not a release artifact');return path;
 }
 function descriptor(input){record(input,['path','sha256','bytes'],'file descriptor');safePath(input.path);if(!sha.test(input.sha256)||!Number.isSafeInteger(input.bytes)||input.bytes<0)fail('Invalid file digest');return {...input};}
 function files(input){if(!Array.isArray(input)||!input.length||input.length>30000)fail('Invalid bounded artifact file inventory');const result=input.map(descriptor);if(new Set(result.map(x=>x.path)).size!==result.length)fail('Duplicate artifact path');return result;}
@@ -53,17 +70,20 @@ export function proveExactCi(run,jobs,sourceSha,repository){
 }
 function payloadOf(value){return {format:value.format,source:value.source,backend:value.backend,tools:value.tools,runtime:value.runtime,sourceFiles:value.sourceFiles,lockfile:value.lockfile,ontology:value.ontology};}
 export function createReleaseManifest(input){
-  const value={format:RELEASE_ARTIFACT_FORMAT,source:{sha:input.sourceSha,version:input.version},backend:input.backend??'codex',tools:{...RELEASE_TOOLS},runtime:{buildDigest:input.buildDigest,files:input.runtimeFiles},sourceFiles:input.sourceFiles,lockfile:input.lockfile,ontology:input.ontology,images:input.images??{},...(input.ci?{ci:input.ci}:{}),state:roles.every(role=>input.images?.[role])&&!!input.ci?'artifact-ready':'candidate'};
+  const backend=input.backend??'codex';
+  const value={format:RELEASE_ARTIFACT_FORMAT,source:{sha:input.sourceSha,version:input.version},backend,tools:{...backendTools(backend)},runtime:{buildDigest:input.buildDigest,files:input.runtimeFiles},sourceFiles:input.sourceFiles,lockfile:input.lockfile,ontology:input.ontology,images:input.images??{},...(input.ci?{ci:input.ci}:{}),state:backend==='codex'&&roles.every(role=>input.images?.[role])&&!!input.ci?'artifact-ready':'candidate'};
   value.payloadDigest=artifactDigest(payloadOf(value));value.manifestDigest=artifactDigest(value);return validateReleaseManifest(value);
 }
 export function validateReleaseManifest(input,{requireReady=false}={}){
   record(input,['format','source','backend','tools','runtime','sourceFiles','lockfile','ontology','images','ci','state','payloadDigest','manifestDigest'],'release manifest');
   if(input.format!==RELEASE_ARTIFACT_FORMAT||!commit.test(input.source?.sha))fail('A fixed source SHA is required');record(input.source,['sha','version'],'source');text(input.source.version,'package version');
-  if(input.backend!=='codex')fail('Harness release is unavailable until its actual reviewed runtime adapter is integrated');if(canonical(input.tools)!==canonical(RELEASE_TOOLS))fail('Release tool versions must remain pinned');
+  if(canonical(input.tools)!==canonical(backendTools(input.backend)))fail('Release tool versions must remain pinned for the selected backend');
   record(input.runtime,['buildDigest','files'],'runtime inventory');if(!sha.test(input.runtime.buildDigest))fail('Invalid runtime build digest');files(input.runtime.files);files(input.sourceFiles);descriptor(input.lockfile);if(input.lockfile.path!=='package-lock.json')fail('Release lockfile must be package-lock.json');
+  if(input.backend==='harness')assertHarnessInventory(input);
   record(input.ontology,['packageFile','package'],'ontology artifact');descriptor(input.ontology.packageFile);if(input.ontology.packageFile.path!=='ontology/package.json')fail('Invalid ontology package path');validateOntologyPackage(input.ontology.package);
   record(input.images,roles,'OCI references');for(const ref of Object.values(input.images))if(typeof ref!=='string'||!image.test(ref))fail('Image references must use an immutable OCI sha256 digest');
-  if(input.ci)ciProof(input.ci,input.source.sha);const ready=roles.every(role=>input.images[role])&&!!input.ci;
+  if(input.ci)ciProof(input.ci,input.source.sha);const ready=input.backend==='codex'&&roles.every(role=>input.images[role])&&!!input.ci;
+  if(input.backend==='harness'&&(input.state==='artifact-ready'||requireReady))fail(harnessImagePending);
   if(input.state!==(ready?'artifact-ready':'candidate')||requireReady&&!ready)fail('An artifact-ready release requires all OCI digests and exact-source CI');
   if(input.payloadDigest!==artifactDigest(payloadOf(input)))fail('Release payload digest does not match');const {manifestDigest,...body}=input;if(manifestDigest!==artifactDigest(body))fail('Release manifest digest does not match');return structuredClone(input);
 }
@@ -80,18 +100,22 @@ export function verifyReleaseArtifacts(directory,manifest=readReleaseManifest(jo
 
 export function finalizeReleaseArtifacts(directory,{images,ci}){
   const current=verifyReleaseArtifacts(directory);if(current.state!=='candidate')fail('Only a verified candidate can be finalized once');
+  if(current.backend==='harness')fail(harnessImagePending);
   const value=createReleaseManifest({sourceSha:current.source.sha,version:current.source.version,backend:current.backend,buildDigest:current.runtime.buildDigest,runtimeFiles:current.runtime.files,sourceFiles:current.sourceFiles,lockfile:current.lockfile,ontology:current.ontology,images,ci});
   validateReleaseManifest(value,{requireReady:true});if(value.payloadDigest!==current.payloadDigest)fail('Finalization cannot change the image payload');writeJson(join(directory,'manifest.json'),value);return value;
 }
 
 export async function createReleaseArtifacts({root=process.cwd(),output,sourceSha,backend='codex',images={},ci}){
-  root=resolve(root);if(!output)fail('An explicit new artifact output directory is required');output=resolve(output);if(existsSync(output))fail('Artifact output already exists; preserve immutable releases');if(!commit.test(sourceSha))fail('Use an exact 40-character source SHA');if(backend!=='codex')fail('Harness adapter is not integrated; do not publish an image that merely installs a CLI');
+  root=resolve(root);if(!output)fail('An explicit new artifact output directory is required');output=resolve(output);if(existsSync(output))fail('Artifact output already exists; preserve immutable releases');if(!commit.test(sourceSha))fail('Use an exact 40-character source SHA');backendTools(backend);
   if(existsSync(join(root,'.git'))){if(execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim()!==sourceSha)fail('Release source SHA differs from this checkout');if(execFileSync('git',['status','--porcelain','--untracked-files=normal'],{cwd:root,encoding:'utf8'}).trim())fail('Release packaging requires a clean reviewed source checkout');}
   const {releaseFiles}=await import(pathToFileURL(join(root,'dist/packages/deployment/files.js')).href),runtimePaths=releaseFiles(root);if(new Set(runtimePaths).size!==runtimePaths.length)fail('Runtime whitelist contains duplicate paths');
   const runtimeFiles=runtimePaths.map(path=>fileDescriptor(root,path)),build=createHash('sha256');for(const path of runtimePaths){build.update(path+'\0');build.update(readFileSync(checkedFile(root,path)));}
   const scan=directory=>readdirSync(join(root,directory),{withFileTypes:true}).flatMap(entry=>{const path=`${directory}/${entry.name}`;if(entry.isSymbolicLink())fail('Source inventory cannot follow symbolic links');return entry.isDirectory()?scan(path):entry.isFile()&&/\.(?:ts|json)$/.test(entry.name)?[safePath(path)]:[];});
   const sourcePaths=[...new Set([...scan('apps'),...scan('packages'),'Dockerfile','.dockerignore','tsconfig.json','scripts/build.mjs','scripts/ontology.mjs','scripts/release-artifacts.mjs',...runtimePaths.filter(path=>!path.startsWith('dist/'))])].sort();
   const sourceFiles=sourcePaths.map(path=>fileDescriptor(root,path)),lockfile=fileDescriptor(root,'package-lock.json'),version=JSON.parse(readFileSync(checkedFile(root,'package.json'),'utf8')).version;
+  if(backend==='harness'){
+    assertHarnessInventory({runtime:{files:runtimeFiles},sourceFiles});await assertHarnessPackaging(root);
+  }
   const {StagedKernelBuilder,stagedKernelComponents}=await import(pathToFileURL(join(root,'dist/packages/ontology/seed-definition.js')).href),kernel=new StagedKernelBuilder();for(let stage=0;stage<StagedKernelBuilder.stages;stage++){kernel.step(stage);await yieldToHost();}const ready=stagedKernelComponents(kernel),definition=kernel.result().document;
   const {loadMcpReadModule,mcpReadModuleRef}=await import(pathToFileURL(join(root,'dist/packages/ontology/mcp-read.js')).href),providerDirectory='dist/packages/ontology/definitions';
   mkdirSync(output,{recursive:true});for(const path of runtimePaths)copyFile(root,path,output,'runtime');for(const path of sourcePaths)copyFile(root,path,output,'source');

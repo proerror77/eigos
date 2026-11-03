@@ -27,7 +27,9 @@ try{
     if(!adminUser||adminUser!==input.adminIdentity.user||!adminPassword||adminPassword.includes('\0'))throw new Error('Existing administrator credentials must match the reviewed target identity');
     const connection={...supabaseProxyOptions(binding.connection.host,binding.connection.port,binding.connection.proxyUrl),...postgresConnectionOptions(binding,{...process.env,EIGOS_POSTGRES_PASSWORD:adminPassword}),user:adminUser};
     admin=new pg.Client(connection);adminErrors=observePostgresClient(admin);await admin.connect();adminErrors.check();
-    const result=input.phase==='prepare-schema'?await preparePostgresRuntimeSchema(admin,input):await activatePostgresPrimary(admin,input);
+    let relayWrappingKey;
+    if(input.phase==='activate'&&binding.relay){const {postgresMigrationWrappingKey}=await import('../dist/packages/deployment/postgres-node-migration.js');relayWrappingKey=await postgresMigrationWrappingKey(binding.relay.wrappingKey,process.env);}
+    const result=input.phase==='prepare-schema'?await preparePostgresRuntimeSchema(admin,input):await activatePostgresPrimary(admin,input,{relayWrappingKey});
     adminErrors.check();applied=true;
     // A separately connected runtime login reads the actual installed rows.
     // It is opened only after the acknowledged administrative transaction.

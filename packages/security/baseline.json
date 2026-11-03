@@ -2958,7 +2958,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "99650808c7206eaf24630e63aa481b0050a1555be646a4374d5dd9e9573d7119",
+      "sourceDigest": "80546d0280194c4a76c0a29b0f693bab8cedf163e0ffdb176b738200f829b722",
       "channels": [
         "query",
         "function"
@@ -3639,7 +3639,7 @@
     {
       "id": "security-build",
       "file": "scripts/build.mjs",
-      "sourceDigest": "1d4bb42f6fc13c815641f1b2a908883325e73bd597ce22f6e97c8de08a37f43a",
+      "sourceDigest": "dfdcc6bdb0c45146f1395d80f0cf67f6d9097c6b2e87c7d834a272123af42a5a",
       "channels": [
         "build"
       ],
@@ -3773,7 +3773,7 @@
     {
       "id": "s5-packages-capabilities-didi-program",
       "file": "packages/capabilities/didi/program.ts",
-      "sourceDigest": "14a6640af5b6eaf7634afed2c8c6be208c58ded5be749e316e42ffb9bad8030a",
+      "sourceDigest": "ae75f934f200e3ba8f5f4b1a5e21ec89ec304bdbc581f9253b36152d1a1692ad",
       "channels": [
         "runtime"
       ],
@@ -4725,7 +4725,7 @@
     {
       "id": "relay-node-client",
       "file": "packages/agent-transport/client.ts",
-      "sourceDigest": "484038cac5b6e729fc06c97ccaa86134fd15c9e61c9204c916104a6de511b5c8",
+      "sourceDigest": "7005434cfd8a2c2b57ccf806261c579d9311255a6d30c0bec8a4f0c30c634bb7",
       "channels": [
         "agent_transport",
         "private_file"
@@ -4927,7 +4927,7 @@
     {
       "id": "packages-ontology-business-fact-projection",
       "file": "packages/ontology/business-fact-projection.ts",
-      "sourceDigest": "2b90b201b276d5ef18c00a0ecb1714ca50abdfa3668d66bdca2e22f08acfa620",
+      "sourceDigest": "5312cdd7b37cea2d5f4af534e9a91d5b300c1304c22f2492b26a4e70c3904102",
       "channels": [
         "sqlite"
       ],
@@ -5243,7 +5243,7 @@
       ],
       "content": "Immutable runtime manifest including complete public Skill assets",
       "currentControl": "Current source-derived runtime files and explicit reviewed Skill assets; no private configuration or credentials included; type-only declarations are excluded from the runtime manifest",
-      "sourceDigest": "09e3de32c7ea4b6021606a8ffbfdcceb5c1660fe158b65b76242e2c06315bc5c",
+      "sourceDigest": "be94587d27b40b85ff516a62bab10ab46dc4e19783b0ef3f0f2a112672c69fec",
       "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
       "stage": "S5"
     },
@@ -5924,7 +5924,7 @@
     {
       "id": "ontology-graph-program",
       "file": "packages/ontology/graph-program.ts",
-      "sourceDigest": "4194b045a39e88df5dd2ce1e5f78d3b58bacd2c938e58bce9bfed28741d3fe5f",
+      "sourceDigest": "b38a7c33fd2266e89e5b5362fadbb1eccaa92a4c6ec0438f0294144373e30a94",
       "channels": [
         "internal"
       ],
@@ -5948,7 +5948,7 @@
     {
       "id": "postgres-projection-graph",
       "file": "packages/postgres/projection-graph.ts",
-      "sourceDigest": "9dc42004020c5267719134767360f00caf9e5a5e8c3947dd2b95f7fff5910b95",
+      "sourceDigest": "c4a4a7ff1688ae7b895784b9afd2253a35bb76601e4aa453cc7364af2d2e4219",
       "channels": [
         "internal"
       ],
@@ -6323,7 +6323,7 @@
     {
       "id": "postgres-planning-read-graph",
       "file": "packages/postgres/planning-read-graph.ts",
-      "sourceDigest": "a48ae10dcb203f9cbb8dee7d1529f50f04acf44fd8d705df021a9238258255b6",
+      "sourceDigest": "2d8d997780420a1020bc554b39d8ecf925ad30128b7159132a0b678688cb7486",
       "channels": [
         "internal"
       ],
@@ -6371,7 +6371,7 @@
     {
       "id": "postgres-worker-loop",
       "file": "apps/worker/postgres-worker.ts",
-      "sourceDigest": "6dab4da0bd359a60e2e9a104f5b19fc41290e5b72f3a70dafe9088724535277d",
+      "sourceDigest": "9b6fd10a53093aa8330682fb986fa64d271e651524d768d26edb0cd814ede0fd",
       "channels": [
         "internal"
       ],
@@ -6479,7 +6479,7 @@
     {
       "id": "postgres-action-authorization",
       "file": "packages/postgres/action-authorization.ts",
-      "sourceDigest": "a2f2821fa97ac25b4d803474014a68b0a257e8cf3c441f6dde7c84afbe859214",
+      "sourceDigest": "d5d8de5a644cbfde35d7cdbedf634f6ce55540b48704a9b1d4e9020690746d72",
       "channels": [
         "internal"
       ],
@@ -6587,7 +6587,7 @@
     {
       "id": "postgres-source-projection",
       "file": "packages/postgres/source-projection.ts",
-      "sourceDigest": "4f227fff43f19268a3587bc8a3528fe5525a4352929fdeb2c09a7ef99d9c4490",
+      "sourceDigest": "850c55f936559f498e81c90dd6da16bed97feaf4e83a8799e664ecb31ca98674",
       "channels": [
         "internal"
       ],
@@ -6647,7 +6647,7 @@
     {
       "id": "postgres-agent-plan",
       "file": "packages/postgres/agent-plan.ts",
-      "sourceDigest": "0b9ba6ec94eefadecdf45ace43172b7e664ad6df8611a80979faab5e47f3a7a0",
+      "sourceDigest": "2635cc8c511c95dee0e14147b90c424352fa42dac3b855cc6278dc33f95219b1",
       "channels": [
         "internal"
       ],
@@ -6695,7 +6695,7 @@
     {
       "id": "postgres-document-bindings",
       "file": "packages/postgres/document-bindings.ts",
-      "sourceDigest": "17f8d4c193b501b2a14a0833fac32d2894d7e79796183e29eb6eca20126d6303",
+      "sourceDigest": "e08fbf261ec807275d3fec445022a0c34131567f1e3543a1541dddee62cc15b8",
       "channels": [
         "internal"
       ],
@@ -6707,7 +6707,7 @@
     {
       "id": "postgres-goal-contexts",
       "file": "packages/postgres/goal-contexts.ts",
-      "sourceDigest": "fe3fae729199d041e2a1abdf65e249d13cc7c85f88768a9830b6948cc425b287",
+      "sourceDigest": "cfd0726ffc8b4e53a041ce38c4b527381f70f47ae8a6317070e8c74c9aadd16c",
       "channels": [
         "internal"
       ],
@@ -6719,7 +6719,7 @@
     {
       "id": "postgres-model-context",
       "file": "packages/postgres/model-context.ts",
-      "sourceDigest": "e2a4a7b0f04421831466d0e5edc2b072c1f23d17340c28f1dec12cf55036fdb5",
+      "sourceDigest": "3b347379fb7ae8474859d6873639fc464934f484e2c76b740fc1cf76f8a7b327",
       "channels": [
         "internal"
       ],
@@ -6731,19 +6731,19 @@
     {
       "id": "release-artifacts-cli",
       "file": "scripts/release-artifacts.mjs",
-      "sourceDigest": "02fe24152f51e46d3cd09a84b6cade6daf9543f6e91c63cd41ae6f90bd6a641d",
+      "sourceDigest": "77c68bb3a3cbe226e6a329e7d871053d38273e6ac3bebd263b575aaec8900fe5",
       "channels": [
         "internal"
       ],
       "content": "Immutable container and Ontology release artifact manifest and CI proof",
-      "currentControl": "Exact-source terminal runtime CI gate, pinned backend/tools, bounded credential-free releaseFiles inventory and byte digests, immutable OCI references and offline Ontology package; candidate/artifact-ready are separate from database publication or activation; Harness remains unsupported without its actual adapter",
-      "targetControl": "Exact-source terminal runtime CI gate, pinned backend/tools, bounded credential-free releaseFiles inventory and byte digests, immutable OCI references and offline Ontology package; candidate/artifact-ready are separate from database publication or activation; Harness remains unsupported without its actual adapter",
+      "currentControl": "Exact-source terminal runtime CI, pinned backend/tools, bounded credential-free releaseFiles inventory and byte digests, immutable OCI references and offline Ontology package; publication and activation remain separate; Harness candidates bind actual adapter inventory and require independent native image verification before readiness",
+      "targetControl": "Exact-source terminal runtime CI, pinned backend/tools, bounded credential-free releaseFiles inventory and byte digests, immutable OCI references and offline Ontology package; publication and activation remain separate; Harness candidates bind actual adapter inventory and require independent native image verification before readiness",
       "stage": "S5"
     },
     {
       "id": "postgres-coordinator",
       "file": "packages/postgres/coordinator.ts",
-      "sourceDigest": "dbaca49304cc470082474dd6d0c94b60cb9eed30c9edc98d0b81ca684808af8a",
+      "sourceDigest": "55872ff0f0e0cf6e043afdfd35352850673845265a183089c7dd20782df37a2c",
       "channels": [
         "internal"
       ],
@@ -6755,7 +6755,7 @@
     {
       "id": "postgres-goal-acceptance",
       "file": "packages/postgres/goal-acceptance.ts",
-      "sourceDigest": "6daf864bfce227e0c98dbe7c48c12c3d158ea656f0d94a26b1e60fb7f3ae6255",
+      "sourceDigest": "66a243fc72bbe729629b3145d0eb8947a13227aff3427b508501608efbced71a",
       "channels": [
         "internal"
       ],
@@ -6767,19 +6767,19 @@
     {
       "id": "postgres-worker-runtime",
       "file": "apps/worker/postgres-runtime.ts",
-      "sourceDigest": "b7e8d2b2ff9ebf1ce86ff99a23e036f00dfd893b8e6d5d5d90ea70c4d69996bd",
+      "sourceDigest": "f9aa1199a47b56a7ae21a6ece11c039a72026daecef9abd5c54627a785dd42f2",
       "channels": [
         "internal"
       ],
       "content": "Explicit registered PostgreSQL Worker candidate assembly",
-      "currentControl": "Known Codex transport uses acknowledged usage and a current guarded runStructured path; unadapted runtime ports reject, configured original authority and injected database/publisher ownership; construction neither starts polling nor switches primary or Gateway",
-      "targetControl": "Known Codex transport uses acknowledged usage and a current guarded runStructured path; unadapted runtime ports reject, configured original authority and injected database/publisher ownership; construction neither starts polling nor switches primary or Gateway",
+      "currentControl": "Selected known Codex or Harness transport uses acknowledged usage and a current guarded runStructured path; original model/account/configuration retained, Harness concurrency one and existing five-minute Worker deadline; unadapted ports reject, injected original database ownership; construction never starts polling or switches primary",
+      "targetControl": "Selected known Codex or Harness transport uses acknowledged usage and a current guarded runStructured path; original model/account/configuration retained, Harness concurrency one and existing five-minute Worker deadline; unadapted ports reject, injected original database ownership; construction never starts polling or switches primary",
       "stage": "S5"
     },
     {
       "id": "postgres-ci-groups",
       "file": "scripts/postgres-tests.mjs",
-      "sourceDigest": "cc479b38448f4ab746f58201906d31fb41809c59598aaa683eb509a2fd7feced",
+      "sourceDigest": "6be721a35b0ed48b98156b9bfde02e2f2d6311c40485e2a08f606798d4f779e0",
       "channels": [
         "internal"
       ],
@@ -7158,7 +7158,7 @@
     {
       "id": "postgres-host-binding",
       "file": "packages/deployment/postgres-binding.ts",
-      "sourceDigest": "111bc07583e844a9abf3c06a793cd1774c136e5a4d5848bd725b17bd3e7e05ac",
+      "sourceDigest": "370c628f8bd979be443471030164e2d8d60d53417afba97a52bbb94d2b9b153d",
       "channels": [
         "internal"
       ],
@@ -7170,7 +7170,7 @@
     {
       "id": "postgres-host-runtime",
       "file": "packages/postgres/host-runtime.ts",
-      "sourceDigest": "2fe193bbb8a73cbd838c95b0d1b5b60c3ccd7d69e8942880dd7c1872d4de4e04",
+      "sourceDigest": "33018dda4f8480872a465a6b47f7d283d0326816528441fcb974413552bc3ca5",
       "channels": [
         "internal"
       ],
@@ -7206,7 +7206,7 @@
     {
       "id": "relay-node-storage-contract",
       "file": "packages/agent-transport/store.ts",
-      "sourceDigest": "8e7a958fe482756f009e081c627f8ffd494111d78d13fbfa8cd6861b02ea2516",
+      "sourceDigest": "53304ee82118624ea8bb652328587056195123b4ef3ed716bdd58d11f2ee8e2a",
       "channels": [
         "internal"
       ],
@@ -7266,7 +7266,7 @@
     {
       "id": "postgres-relay-node-store",
       "file": "packages/postgres/relay-node-store.ts",
-      "sourceDigest": "d3e162bf3dc43a9e29b63cd0ec9b1615cf3f0cb0308ed6a9b7a53ca59e5673f0",
+      "sourceDigest": "9d63d77cda2c9fe00f7f6058a12570fe523c34c01928af61486d95a2a6a7a4ee",
       "channels": [
         "internal"
       ],
@@ -7278,7 +7278,7 @@
     {
       "id": "postgres-source-relay-authority",
       "file": "packages/postgres/relay-read-authority.ts",
-      "sourceDigest": "42a57bb85d332e0d6e1d0b9db748c4afa3f61ce684c2817dfb77d3cb3b7142b1",
+      "sourceDigest": "960dd17151e45a4db9e87bf96e40fbd3e800d8b70f385a85363f495c61c44f88",
       "channels": [
         "internal"
       ],
@@ -7314,7 +7314,7 @@
     {
       "id": "postgres-task-relay",
       "file": "packages/postgres/task-relay.ts",
-      "sourceDigest": "216e5d580209678a6c114e3fc1aaf37b46c11a6e27198a430ad9320da1453076",
+      "sourceDigest": "815cf28f2a3c7381c2019c99c6a7bf41ec99d218b081a0b2ddb76dfe2723d062",
       "channels": [
         "internal"
       ],
@@ -7326,7 +7326,7 @@
     {
       "id": "postgres-runtime-handoff",
       "file": "packages/deployment/postgres-handoff.ts",
-      "sourceDigest": "c67d1cc7b3fd17d35493b9d1ed8132103f7562364f5c0f6707df13ab2cd7601c",
+      "sourceDigest": "e48a2d3dae054f4b3dff760cff70c9beefba9cc9bd98b871d1a92c6bf4c18de7",
       "channels": [
         "internal"
       ],
@@ -7338,7 +7338,7 @@
     {
       "id": "postgres-runtime-handoff-cli",
       "file": "scripts/postgres-primary-handoff.mjs",
-      "sourceDigest": "a20412fcb087851c3e2c1419838ef4068217fe779917f3a3779b622d30f45483",
+      "sourceDigest": "455d7beee4efdf585ea969017aa8b65000abdd3589da2d80abaf49b01951069b",
       "channels": [
         "internal"
       ],
@@ -7357,6 +7357,95 @@
       "content": "Bounded private binding-only chunks retain the original transaction token, owner/grant/task/revision and ordered per-reference validation; overflow falls back to the original reader, never empty data or cached authority",
       "currentControl": "Bounded private binding-only chunks retain the original transaction token, owner/grant/task/revision and ordered per-reference validation; overflow falls back to the original reader, never empty data or cached authority",
       "targetControl": "Preserve full original data, permissions, transaction and independent acceptance; no implicit activation or lossy read",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-didi-account",
+      "file": "packages/postgres/didi-account.ts",
+      "sourceDigest": "2966f77c0826a0a8984475558d2cc9ab5814f63c6626778969a17ce4a3e3916c",
+      "channels": [
+        "internal",
+        "authorization_control"
+      ],
+      "content": "Current PostgreSQL member-owned DiDi source admission",
+      "currentControl": "Exact current member descriptor and digest, owner, account state, expiry and retained SQL source admission; original claim and authority checked without new account custody or permissions",
+      "targetControl": "Exact current member descriptor and digest, owner, account state, expiry and retained SQL source admission; original claim and authority checked without new account custody or permissions",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-didi-policy",
+      "file": "packages/postgres/didi-policy.ts",
+      "sourceDigest": "7e0b0c4b87225a9eb7bb48009e5d6e6d818c7080db225f0765a7863882482caa",
+      "channels": [
+        "internal",
+        "provider"
+      ],
+      "content": "Original DiDi action semantics and independent provider transport verification",
+      "currentControl": "Original task revision, immutable component binding, journal attempt and typed readonly arguments; accepted source-node receipt is independently selected from SQL and bound to the original dispatch, owner and account",
+      "targetControl": "Original task revision, immutable component binding, journal attempt and typed readonly arguments; accepted source-node receipt is independently selected from SQL and bound to the original dispatch, owner and account",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-didi-registry",
+      "file": "packages/postgres/didi-registry.ts",
+      "sourceDigest": "cc1bc4b21adec00316bcdaab5a04e4afe430fedc4677f65fa2a76b44afc0eb93",
+      "channels": [
+        "internal"
+      ],
+      "content": "Explicit document and DiDi program registry",
+      "currentControl": "Configured host programs preserve fixed pins, current account and original source binding; synthetic fixture evidence remains synthetic, unsupported semantics fail closed",
+      "targetControl": "Configured host programs preserve fixed pins, current account and original source binding; synthetic fixture evidence remains synthetic, unsupported semantics fail closed",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-didi-execution",
+      "file": "packages/postgres/didi-execution.ts",
+      "sourceDigest": "97ec5b4de71af7ef0a6c9d389afea5917c13923c8cb86885394e994109cc99f9",
+      "channels": [
+        "internal",
+        "provider"
+      ],
+      "content": "Durable PostgreSQL readonly DiDi execution",
+      "currentControl": "Committed original journal before external call, current account/source and claim fences around dispatch and apply; complete canonical source projection and independent receipt verification; no orders or payments",
+      "targetControl": "Committed original journal before external call, current account/source and claim fences around dispatch and apply; complete canonical source projection and independent receipt verification; no orders or payments",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-node-migration",
+      "file": "packages/deployment/postgres-node-migration.ts",
+      "sourceDigest": "8e0a991e93f002221251478a5be601cab4f3c86062e2c518c892f25bab8d8b75",
+      "channels": [
+        "operator_cli",
+        "private_file"
+      ],
+      "content": "Offline original Relay node migration and independent readback",
+      "currentControl": "Exact closed source inventory and original keys, identities, ciphertext, raw receipt text and cursors; explicit origin mapping; real schema-owner locked transaction and independent full-row decryption/readback; server acceptance remains unobserved",
+      "targetControl": "Exact closed source inventory and original keys, identities, ciphertext, raw receipt text and cursors; explicit origin mapping; real schema-owner locked transaction and independent full-row decryption/readback; server acceptance remains unobserved",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-node-migration-cli",
+      "file": "scripts/postgres-node-migrate.mjs",
+      "sourceDigest": "cd82b3132c428fa5f099beb2aaf8bb1fb2a83b79a0b2924279e1497dce09c9af",
+      "channels": [
+        "operator_cli",
+        "private_file"
+      ],
+      "content": "Explicit PostgreSQL Relay node migration entry",
+      "currentControl": "Preview by default, reviewed digest-bound inputs, exact schema-owner candidate context, private host wrapping key and verified TLS; no enrollment, grant changes, source-stop assertion or service activation",
+      "targetControl": "Preview by default, reviewed digest-bound inputs, exact schema-owner candidate context, private host wrapping key and verified TLS; no enrollment, grant changes, source-stop assertion or service activation",
+      "stage": "S5"
+    },
+    {
+      "id": "harness-image-smoke",
+      "file": "scripts/smoke-harness-image.mjs",
+      "sourceDigest": "5fd7e5698383cf51571dda88eefa831dff94d5fc030a07bac634240a1e50d4b3",
+      "channels": [
+        "internal"
+      ],
+      "content": "Native Harness image installation and SDK compatibility verification",
+      "currentControl": "Actual pinned native CLI and compiled EIGOS API checks, nonroot readonly isolated container, exact source and candidate backend manifest; bounded SDK initialize/shutdown for existing backends without credentials, model turns, prompts, provider dispatch or task claims",
+      "targetControl": "Actual pinned native CLI and compiled EIGOS API checks, nonroot readonly isolated container, exact source and candidate backend manifest; bounded SDK initialize/shutdown for existing backends without credentials, model turns, prompts, provider dispatch or task claims",
       "stage": "S5"
     }
   ]

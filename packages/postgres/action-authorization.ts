@@ -57,6 +57,11 @@ export interface PostgresActionSemanticContext {
 }
 export interface PostgresActionProgramPolicy {
   readonly program:ProgramMetadata;
+  /** Registered storage-only account/source configuration guard. It cannot
+   * allow an action or replace any kernel/role/grant/Pipeline check. */
+  assertConfigured?:(client:Client,claim:import('./work-claim.js').PostgresWorkReference,job:Job,step:AgentActionPlan['steps'][number])=>Promise<void>;
+  /** Independent persisted source receipt, in addition to domain validation. */
+  verifySourceReceipt?:(client:Client,claim:import('./work-claim.js').PostgresWorkReference,context:PostgresActionSemanticContext,attempt:ExecutionAttempt,response:AgentActionResult,result:ActionResult)=>Promise<void>;
   /** The real program's read-only semantic/Pipeline checks, current private
    * input and dynamic authority calculation, ported to shared GraphPrograms.
    * No synchronous OntologyObjectStore or permissive default is substituted. */
@@ -140,6 +145,7 @@ function actionAuthorization(client:Client,options:PostgresActionAuthorizationOp
     if(check.operation==='dispatch'&&check.intent.state!=='ready'||check.operation==='dispatch_check'&&check.intent.state!=='dispatching'||!fresh&&check.intent.state==='canceled_before_dispatch')deny('ACCESS_REVOKED');
     const registered=programs.filter(item=>same(item.program.ref,step.binding?.programRef??state.programRef)&&item.program.configurationDigest===(step.binding?.configurationDigest??state.programDigest));
     if(registered.length!==1)deny('SOURCE_NOT_AUTHORIZED');const registration=registered[0]!,program=registration.program,capability=program.capability();
+    await registration.assertConfigured?.(client,check.claim,job,step);
     // Pure origin checks need only this metadata marker, never a SecurityStore.
     if(plan.callerDecision){
       if(!(program instanceof DynamicOntologyProgram))deny();
@@ -186,7 +192,10 @@ function actionAuthorization(client:Client,options:PostgresActionAuthorizationOp
       const semantic=await runGraphProgramAsync(graph,registration.validate(context));
       if(check.operation==='accept'&&check.result?.kind!=='unknown'){
         if(!check.result||!check.attempt||!check.verified||!proof||proof.attemptId!==check.attempt.id||!same(normalizedResponse(proof.response,check.attempt),check.result)||!registration.verifyObservation)deny('SOURCE_NOT_AUTHORIZED');
+        await registration.assertConfigured?.(client,check.claim,job,step);
+        await registration.verifySourceReceipt?.(client,check.claim,context,check.attempt,structuredClone(proof.response),check.result);
         await runGraphProgramAsync(graph,registration.verifyObservation(context,check.attempt,structuredClone(proof.response),check.result));
+        await registration.assertConfigured?.(client,check.claim,job,step);
       }
       return semantic;
     }):undefined;
@@ -255,6 +264,7 @@ function actionAuthorization(client:Client,options:PostgresActionAuthorizationOp
           job:structuredClone(job),plan:structuredClone(plan),step:structuredClone(step),intent:structuredClone(check.intent),input:structuredClone(input),operation:check.operation,...(check.attempt?{attempt:structuredClone(check.attempt)}:{})};
         if(plan.initialSelection)await runGraphProgramAsync(graph,registration.verifyInitialSelection!(context));
         const semantic=callerSemantic??await runGraphProgramAsync(graph,registration.validate(context));deadline(semantic.validUntil);
+        await registration.assertConfigured?.(client,check.claim,job,step);
         if(semantic.privateDigest!==check.intent.privateDigest)deny('POLICY_CHANGED');
         if((step.inputRefs.length||step.acceptedInputs?.length)&&semantic.materializedInputDigest!==digest(input))deny('AUTHORITY_UNAVAILABLE','PostgreSQL current accepted-input derivation semantic proof is not installed');
         if(fresh&&['read','local'].includes(step.effect)){
@@ -305,7 +315,12 @@ function actionAuthorization(client:Client,options:PostgresActionAuthorizationOp
           }else{
             if(!check.verified||!proof||proof.attemptId!==check.attempt.id||!same(normalizedResponse(proof.response,check.attempt),check.result))deny('SOURCE_NOT_AUTHORIZED');
             if(!registration.verifyObservation)deny('AUTHORITY_UNAVAILABLE','PostgreSQL trusted provider-result semantic verifier is not installed');
-            if(!plan.callerDecision)await runGraphProgramAsync(graph,registration.verifyObservation(context,check.attempt,structuredClone(proof.response),check.result));
+            if(!plan.callerDecision){
+              await registration.assertConfigured?.(client,check.claim,job,step);
+              await registration.verifySourceReceipt?.(client,check.claim,context,check.attempt,structuredClone(proof.response),check.result);
+              await runGraphProgramAsync(graph,registration.verifyObservation(context,check.attempt,structuredClone(proof.response),check.result));
+              await registration.assertConfigured?.(client,check.claim,job,step);
+            }
           }
         }
         const influenced=graph.evidence();if(influenced)inputEvidence.push(influenced);

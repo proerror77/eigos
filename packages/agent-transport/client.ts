@@ -1,7 +1,7 @@
-import { constants, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { constants, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { randomBytes, randomUUID } from 'node:crypto';
-import type { DatabaseSync } from 'node:sqlite';
+import { randomBytes, randomUUID,createHash } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import type { Client as PostgresClient } from 'pg';
 import { z } from 'zod';
 import { agentIdSchema, fail, receiptSchema, relayOrigin,
@@ -265,15 +265,18 @@ export class RelayClient extends RelayProtocolClient {
  * OS-backed lifetime lock prevents exporting a live client. This result holds
  * private service credentials and must only be passed to the encrypted target
  * importer; never log it or place it in Git/model/API responses. */
-export async function readRelayNodeSnapshot(options:{credentialPath:string;statePath?:string;expectedAgentId:string}):Promise<RelayNodeSnapshot>{
+export async function readRelayNodeSnapshot(options:{credentialPath:string;statePath?:string;expectedAgentId:string;snapshotVersion?:1|2}):Promise<RelayNodeSnapshot>{
   const path=options.credentialPath,statePath=options.statePath??path+'.sqlite';
   if(resolve(path)!==path||resolve(statePath)!==statePath||path===statePath||!existsSync(path)||!existsSync(statePath))throw new Error('Existing absolute private node credentials and complete state are required');
   agentIdSchema.parse(options.expectedAgentId);const unlock=lock(path+'.lock');let db:DatabaseSync|undefined;
   try{
     const credentials=credentialsSchema.parse(JSON.parse(readPrivate(path))),identity=await verifyCard(credentials.signedCard,options.expectedAgentId);
     if(credentials.signingKey.x!==identity.card.signingKey.x||credentials.encryptionKey.x!==identity.card.encryptionKey.x)throw new Error('Node private keys do not match its signed identity');
-    db=openPrivateDatabase(statePath,0x45474e31);
-    return transaction(db,()=>{
+    if(options.snapshotVersion===2){
+      const stat=lstatSync(statePath);if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||stat.mode&0o077||process.getuid&&stat.uid!==process.getuid()||['-wal','-shm','-journal'].some(suffix=>existsSync(statePath+suffix)))throw new Error('A closed owned source node snapshot without sidecars is required');
+      db=new DatabaseSync(statePath,{readOnly:true});db.exec('PRAGMA query_only=ON');if(Number(db.prepare('PRAGMA application_id').get()?.application_id)!==0x45474e31)throw new Error('Source node snapshot belongs to another application');
+    }else db=openPrivateDatabase(statePath,0x45474e31);
+    const read=()=>{
       if(db!.prepare("SELECT value FROM node_meta WHERE key='identity'").get()?.value!==JSON.stringify([credentials.baseUrl,options.expectedAgentId])||db!.prepare("SELECT 1 FROM node_meta WHERE key='migration_fence'").get())throw new Error('Node state identity or migration fence requires recovery');
       const expectedTables=['node_inbox','node_meta','node_outbox','node_retained'],inventory=db!.prepare("SELECT type,name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
       if(JSON.stringify(inventory.map(row=>[row.type,row.name]))!==JSON.stringify([['index','node_pending'],...expectedTables.map(name=>['table',name])]))throw new Error('Node history requires its reviewed complete schema before migration');
@@ -288,10 +291,33 @@ export async function readRelayNodeSnapshot(options:{credentialPath:string;state
         const row=db!.prepare(`SELECT count(*) AS n,coalesce(sum(length(coalesce(envelope,''))+${reason}),0) AS bytes,max(length(envelope)) AS envelope_bytes FROM ${table}`).get()!;
         bytes+=Number(row.bytes);if(Number(row.n)>10000||!Number.isSafeInteger(bytes)||bytes>67108864||Number(row.envelope_bytes??0)>98304)throw new Error('Node history needs a complete streaming migration beyond this bounded importer');
       }
-      const outbox=db!.prepare('SELECT rowid AS cursor,* FROM node_outbox ORDER BY rowid').all().map(row=>({cursor:Number(row.cursor),id:String(row.id),recipient:String(row.recipient),connectionId:String(row.connection_id),contentDigest:String(row.content_digest),envelope:String(row.envelope),...(row.receipt?{receipt:JSON.parse(String(row.receipt))}:{})}));
-      const inbox=db!.prepare('SELECT rowid AS cursor,* FROM node_inbox ORDER BY rowid').all().map(row=>({cursor:Number(row.cursor),sender:String(row.sender),id:String(row.id),digest:String(row.digest),...(row.envelope?{envelope:String(row.envelope)}:{}),senderCard:String(row.sender_card),state:String(row.state),...(row.reason?{reason:String(row.reason)}:{}),expiresAt:Number(row.expires_at)}));
-      const retained=db!.prepare('SELECT rowid AS cursor,* FROM node_retained ORDER BY rowid').all().map(row=>({cursor:Number(row.cursor),sender:String(row.sender),id:String(row.id),digest:String(row.digest),envelope:String(row.envelope),senderCard:String(row.sender_card),expiresAt:Number(row.expires_at)}));
-      const snapshot={format:'eigos.relay-node.snapshot.v1',credentials,outbox,inbox,retained};if(Buffer.byteLength(JSON.stringify(snapshot))>67108864)throw new Error('Node history exceeds the complete private snapshot bound');return relayNodeSnapshotSchema.parse(snapshot);
-    });
+      const rows=(table:string)=>{const fields=expectedColumns[table]!.filter(name=>name!=='expires_at');const values=db!.prepare(`SELECT rowid AS cursor,*,${fields.map((name,index)=>`CAST(${name} AS BLOB) AS raw_${index}`).join(',')} FROM ${table} ORDER BY rowid`).all();if(options.snapshotVersion===2)for(const row of values)for(const [index,name] of fields.entries())if(row[name]!==null&&(typeof row[name]!=='string'||!Buffer.from(row[name] as string,'utf8').equals(Buffer.from(row[`raw_${index}`] as Uint8Array))))throw new Error('Original node TEXT is not valid UTF-8');return values;};
+      const present=(value:unknown)=>options.snapshotVersion===2?value!==null:!!value;
+      const outbox=rows('node_outbox').map(row=>{
+        return {cursor:Number(row.cursor),id:String(row.id),recipient:String(row.recipient),connectionId:String(row.connection_id),contentDigest:String(row.content_digest),envelope:String(row.envelope),...(present(row.receipt)?{receipt:JSON.parse(String(row.receipt)),...(options.snapshotVersion===2?{receiptText:String(row.receipt)}:{})}:{})};
+      });
+      const inbox=rows('node_inbox').map(row=>({cursor:Number(row.cursor),sender:String(row.sender),id:String(row.id),digest:String(row.digest),...(present(row.envelope)?{envelope:String(row.envelope)}:{}),senderCard:String(row.sender_card),state:String(row.state),...(present(row.reason)?{reason:String(row.reason)}:{}),expiresAt:Number(row.expires_at)}));
+      const retained=rows('node_retained').map(row=>({cursor:Number(row.cursor),sender:String(row.sender),id:String(row.id),digest:String(row.digest),envelope:String(row.envelope),senderCard:String(row.sender_card),expiresAt:Number(row.expires_at)}));
+      const snapshot={format:options.snapshotVersion===2?'eigos.relay-node.snapshot.v2':'eigos.relay-node.snapshot.v1',credentials,outbox,inbox,retained};if(Buffer.byteLength(JSON.stringify(snapshot))>67108864)throw new Error('Node history exceeds the complete private snapshot bound');return relayNodeSnapshotSchema.parse(snapshot);
+    };
+    if(options.snapshotVersion===2){db.exec('BEGIN');try{return read();}finally{db.exec('ROLLBACK');}}
+    return transaction(db,read);
   }finally{db?.close();unlock();}
+}
+
+function closedNodeFileDigest(path:string,maxBytes:number){
+  const fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+  try{const before=fstatSync(fd);if(!before.isFile()||before.nlink!==1||before.mode&0o077||process.getuid&&before.uid!==process.getuid()||before.size<1||before.size>maxBytes)throw new Error('Invalid closed private source node file');
+    const hash=createHash('sha256'),buffer=Buffer.alloc(1048576);let count=0;for(;;){const n=readSync(fd,buffer,0,buffer.length,null);if(!n)break;count+=n;if(count>before.size)throw new Error('Source node file changed');hash.update(buffer.subarray(0,n));}
+    const after=fstatSync(fd);if(count!==before.size||after.size!==before.size||after.mtimeMs!==before.mtimeMs||after.ctimeMs!==before.ctimeMs)throw new Error('Source node file changed');return hash.digest('hex');
+  }finally{closeSync(fd);}
+}
+/** Private offline export with original file hashes. No source data is
+ * rewritten and the hashes must remain equal across the complete v2 read. */
+export async function readRelayNodeMigrationSource(options:{credentialPath:string;statePath?:string;expectedAgentId:string}){
+  const statePath=options.statePath??options.credentialPath+'.sqlite',credentialFileDigest=closedNodeFileDigest(options.credentialPath,16000),stateFileDigest=closedNodeFileDigest(statePath,134217728);
+  const snapshot=await readRelayNodeSnapshot({...options,statePath,snapshotVersion:2});
+  if(snapshot.format!=='eigos.relay-node.snapshot.v2')throw new Error('Complete migration export requires original v2 receipt TEXT');
+  if(closedNodeFileDigest(options.credentialPath,16000)!==credentialFileDigest||closedNodeFileDigest(statePath,134217728)!==stateFileDigest)throw new Error('Original node files changed during complete export');
+  return {snapshot,sourceFiles:{credentialFileDigest,stateFileDigest}};
 }

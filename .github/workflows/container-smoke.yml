@@ -12,6 +12,8 @@ on:
       - scripts/build.mjs
       - scripts/ontology.mjs
       - scripts/release-artifacts.mjs
+      - scripts/smoke-harness-image.mjs
+      - tests/harness-image-smoke.test.mjs
       - apps/**
       - packages/**
       - integrations/grok/**
@@ -27,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [gateway, worker-codex]
+        target: [gateway, worker-codex, worker-harness]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -51,3 +53,9 @@ jobs:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           docker run --rm --entrypoint node --env SOURCE_SHA "eigos-container-smoke:$TARGET" -e 'const fs=require("node:fs");if(process.getuid()===0)throw Error("Runtime must be nonroot");for(const path of ["dist/apps/gateway/main.js","dist/apps/relay/main.js","dist/apps/worker/main.js","dist/integrations/grok/eigos-delegate/SKILL.md"]){fs.accessSync(path);}const manifest=JSON.parse(fs.readFileSync("release/manifest.json"));if(manifest.source.sha!==process.env.SOURCE_SHA||manifest.state!=="candidate")throw Error("Packaged source mismatch");'
+      - name: Initialize the actual Harness SDK without a model turn or network
+        if: matrix.target == 'worker-harness'
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          docker run --rm --network none --read-only --tmpfs /tmp:rw,exec,mode=1777 --entrypoint node --env SOURCE_SHA --mount "type=bind,src=$PWD/scripts/smoke-harness-image.mjs,dst=/opt/eigos-smoke.mjs,readonly" eigos-container-smoke:worker-harness /opt/eigos-smoke.mjs

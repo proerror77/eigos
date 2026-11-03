@@ -26,7 +26,7 @@ Worker 的原生本体规划将任务专属 Ontology MCP 标记为必需服务�
 
 输出边界是 CLI 的已完成消息，并非首个 token。`firstOutput` 可包含过程消息；仅当 CLI 标明 `final_answer` 时记录 `finalOutput`，否则该边界保持未知。最终结构化结果仍须读取并解析，业务决策仍须有本体提交回执，两者不能由计时记录代替。
 
-## Harness 执行适配（POC）
+## Codex 与 Harness 执行器
 
 Super-agent 整体可以承担广义 Worker 的角色，但上游原型还包含来源监听、Ticket、Policy、排队与回报。此处复用的是它调用 Harness 的 Executor Session；EIGOS Worker 仍是任务执行宿主，Coordinator 在其内部调用模型和业务连接器。运行配置选择 `codex` 或 `harness`，进程名本身不能证明当前使用哪种模型。
 
@@ -54,13 +54,25 @@ SDK 没有单会话取消接口，因此每次调用独占进程；取消、超�
 
 Foundation 按模型接收方分别使用 `harness-openai-codex`（GPT OAuth）和 `harness-deepseek`（DeepSeek API）通道。现有 `codex-native` 许可及另一接收方的 Harness 许可不会自动赋予它；启用前须审核实际模型接收方与数据出口许可，并通过已有管理入口配置相应通道及授权。部署预检按所选执行器和凭据类型核对通道，不自动修改权限策略。真实模型、Linux 候选部署、正式实例切换与业务完成须分别验证。
 
-输出使用流式 UTF-8 解码，跨数据块的中文与 emoji 保持原文。适配器等待使用记录的 `begin` 确认后才启动进程，并等待 `finish` 确认后返回；预派发确认失败或结果未知时不调用模型。这是执行适配边界，不能替代 PostgreSQL Worker 的当前授权检查、事务提交确认和原操作恢复验收。此分支的常驻部署仍使用同机 SQLite；跨主机 PostgreSQL 与 Harness 的完整组合须在对应迁移中单独验收，不能套用 Codex 镜像或合成测试结论。
+输出使用流式 UTF-8 解码，跨数据块的中文与 emoji 保持原文。适配器等待使用记录的 `begin` 确认后才启动进程，并等待 `finish` 确认后返回；预派发确认失败或结果未知时不调用模型。SQLite 与 PostgreSQL Worker 均已接入相同的预派发确认和持久用量回执合同；PostgreSQL 适配在实际发出提示词前还检查原领取、模型通道、来源与原尝试。执行器接线、真实模型验收、镜像发布和正式实例切换分别记录；不能套用 Codex 镜像或合成测试结论证明 Harness 已上线。
 
 上游接口与边界：[Super-agent 执行说明](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/main/docs/003-execution.md)、[Harness SDK](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sdk/protocol/README.md)、[多模型与 OAuth](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/llm/llm-pi-ai/README.md)。
 
 ## 一个共享存储
 
-Gateway 和 Worker 必须使用同一个持久 SQLite 文件，建议设置相同的绝对 `DATABASE_PATH`。分进程不能使用 `:memory:`，也不能把数据库复制到两个位置来扩容。当前实现面向同机持久磁盘；跨主机需要另外的共享存储方案。
+`EIGOS_STORAGE_BACKEND` 默认是 `sqlite`。该模式的 Gateway 和 Worker 必须使用同一个持久 SQLite 文件及相同绝对 `DATABASE_PATH`，分进程不能使用 `:memory:`，也不能复制数据库到两个位置扩容。
+
+`postgres` 模式已接入 Gateway 与 Worker 的正式启动代码，可让常驻 Gateway 和 ECS 等执行主机连接同一 PostgreSQL 业务 schema；会员身份使用同一目标会员 schema。启动必须显式选择后端，并提供原 Foundation JWT authority、受控私有 binding、真实导入／schema 校验与单独激活回执。候选导入、配置文件和模块测试本身不会启用目标库，完整迁移流程见[部署说明](guides/deployment.md)。
+
+```dotenv
+EIGOS_STORAGE_BACKEND=postgres
+EIGOS_POSTGRES_BINDING_FILE=/absolute/private/primary/postgres-binding.json
+EIGOS_AUTHORITY_FILE=/absolute/private/primary/authority.json
+EIGOS_AUTH_MODE=jwt
+EIGOS_SECURITY_MODE=foundation
+```
+
+数据库密码由宿主秘密环境 `EIGOS_POSTGRES_PASSWORD` 提供；binding 固定目标身份、TLS CA 摘要、schema、策略和回执，不携带明文密码。禁止退回另一数据库、关闭 TLS 校验或绕过激活。Gateway 持有唯一资格 publisher；Worker 先验证原 Gateway 的就绪资格，不创建第二个 publisher。
 
 本体定义、发布引用、任务、授权和执行账本处于同一业务存储。新任务固定准确本体 release；Worker、MCP、A2A 和回读按该版本解析。会员登录会话使用独立会员库，Worker 不读取会员会话。详见[共享本体](../packages/ontology/README.md)。
 
@@ -78,7 +90,7 @@ PostgreSQL Worker 的空队列轮询先读取当前运行权威和调度布尔�
 
 `PostgresWorkerStore.project` 用显式 GraphProgram 在同一原领取事务内保存任务、真实来源投影、权限绑定和输出封装。旧 `checkpoint`／`finish` 回调继续只接受同步状态变更。实际模型响应通过 `recordActionRun` 保留原文档用途和不变回执；模型仍在事务外运行。模型宿主可安装 `withModelDispatchGuard`，在 CLI 文件准备结束、提示词进入子进程前复查当前模型通道、任务及来源资格。原已提交发送标记通过 `assertDispatchAllowed` 再查，不能创建第二次尝试或恢复失效权限。
 
-Mac Worker 的 PostgreSQL 连接使用独立续租连接池：`new PostgresDatabase(businessPool, schema, authority, { leasePool })`。续租在独立事务中核对原令牌、任务版本、身份、授权及期限，只更新租约到期时间；业务提交、取消和结果写回继续经过共享业务事务。模型工具通过 `PostgresWorkerStore.readEvidence` 读取时，事务内核对原领取头部，入口和回传前另查同一令牌的当前有效期，避免旧数据库快照误用已更新的心跳时间；该查询不延长租约。租约在外层提交前再次核验，数据与角色的固定期限仍独立约束结果。Worker 结束时，业务结果、完成回执与运行资格撤销原子提交；只按该回执清理原令牌的物理领取记录，避免与心跳竞争或重放业务写回。宿主层持有数据库凭据，模型进程使用任务范围内的本体工具。当前默认启动入口仍采用上文的 SQLite 路径；切换入口须完成对应协议、执行器与迁移验收。
+常驻 Linux／ECS Worker 的 PostgreSQL 连接使用独立续租连接池：`new PostgresDatabase(businessPool, schema, authority, { leasePool })`。续租在独立事务中核对原令牌、任务版本、身份、授权及期限，只更新租约到期时间；业务提交、取消和结果写回继续经过共享业务事务。模型工具通过 `PostgresWorkerStore.readEvidence` 读取时，事务内核对原领取头部，入口和回传前另查同一令牌的当前有效期，避免旧数据库快照误用已更新的心跳时间；该查询不延长租约。租约在外层提交前再次核验，数据与角色的固定期限仍独立约束结果。Worker 结束时，业务结果、完成回执与运行资格撤销原子提交；只按该回执清理原令牌的物理领取记录，避免与心跳竞争或重放业务写回。宿主层持有数据库凭据，模型进程使用任务范围内的本体工具。启动入口按显式后端选择存储；默认值仍是 SQLite。已持久化 checkpoint 的正常收尾可只释放原领取并记下完成回执，不重复改写任务、本体或输出封装；它仍核对当前资格、原令牌、租约和提交边界，也不证明业务目标完成。切换入口须完成对应协议、所选执行器与迁移验收。
 
 
 PostgreSQL 会员库使用 `PostgresMembershipDatabase`／`PostgresMemberStore`，保留导入回执、原身份、会话 CSRF、安装／令牌绑定及邀请语义。Gateway 的会员与注册路由接受可等待的存储接口；权限审批另有原子 `applyPermissionReview` 接口，不能把异步回调传给 SQLite 的同步事务。
@@ -87,9 +99,11 @@ PostgreSQL 会员库使用 `PostgresMembershipDatabase`／`PostgresMemberStore`�
 
 `PostgresDocumentExecution` 只执行已持久化的原文档动作。发送标记与准备读取先提交，模型调用在事务外进行；实际模型发出提示词前再次核对原尝试、当前权限和相同输入。模型用量、文档用途的原回执、独立观察审计、真实来源投影及组合输出封装分别按顺序持久化。取消、撤权或映射失败保留原操作，不自动重放；生成草稿后仍需模型选择和完整任务验收，不能直接标为整个目标完成。当前未接通的延迟输入继续拒绝执行。
 
-真实 PostgreSQL 组合测试覆盖签名 JWT、导入会员库、资格发布、原任务领取、授权输出与撤销后的迟到结果拒绝。这些模块尚未构成完整生产 Gateway／Worker 启动入口；业务来源验证、其余任务／权限命令和候选切换仍须完成。
+PostgreSQL 启动入口与实际异步 TaskService 已接通 MCP／A2A、会员审批、本体管理、受控 CallerAction、输出封装和原任务取消／恢复。已经安装的只读来源通过注册程序、账户／来源状态和原 TaskRelay 通道工作；当前 DiDi 只读适配保留实际加密回执、Pipeline、规范事实与固定 Goal 的验证。未知程序、缺失绑定、未安装的付款／供应商观察器或不受支持的输入引用继续拒绝。来源只读接通不授予下单或付款权限。
 
-`apps/worker/postgres-runtime.ts` 提供显式的 `createPostgresWorker` 候选装配：调用方注入同一运行权威的数据库、资格发布器生命周期和注册模型通道，另行决定何时开始领取。当前候选接通真实任务目录、经过授权的模型输入、独立目标审阅、原生本体工具、固定 Goal 的文档组件及原任务验收；模型和执行器在业务事务之外运行。默认 Codex 端口使用已接入当前权限检查和持久用量回执的 `runStructured`，不向独立审阅暴露尚未适配该边界的 app-server 会话。其他执行后端、来源组件及未安装的引用／输入适配明确拒绝；创建候选不启动轮询、不改 Gateway，也不切换正式入口。容器和本体产物的固定版本流程见[发布指南](guides/ontology-releases.md)。
+Relay 服务端的节点／联系人／密文信箱与 Gateway、通信节点自己的凭据／outbox／inbox 是不同持久状态。PostgreSQL 节点存储保留原身份和密文历史，以宿主管理的 AES-GCM wrapping key 封装服务节点凭据；迁移须单独完成 v2 全量快照、独立回读和完整库存绑定，不能在目标端生成新身份填补缺口。
+
+`apps/gateway/main.ts` 和 `apps/worker/main.ts` 根据后端调用受审查的 host 装配。`createPostgresWorker` 保留原所选 Codex／Harness、模型通道和私有凭据来源；两者均须实现 acknowledged model-dispatch 与持久用量确认，不能自动换模型或借用另一接收方许可。模型与执行器在业务事务之外运行，原生本体工具、独立目标审阅、文档／已注册来源组件和原任务验收各自保留当前权限边界。源码入口存在不等于 ECS／Cloudflare 已完成正式切换；真实模型、来源服务端接受和原任务最终结果仍须逐项验收。固定镜像与本体流程见[发布指南](guides/ontology-releases.md)。
 
 `PostgresActionJournal` 在同一业务事务中保存原操作、预算占用、发送标记和观察结果；观察回执可先独立保存，失去领取后不能据此推进任务。`createPostgresActionAuthorization` 核对原计划、输入、角色、来源、授权和实际规划凭据。各业务程序仍须提供真实语义校验、原始来源响应校验，以及适用时的首次选择校验；缺少接口会拒绝执行。最终映射、结果输出封装与接受状态须在同一事务内完成。延迟输入的准备与实际发送仍需分别接通，不能只信任已保存的输入摘要。
 
@@ -105,11 +119,11 @@ Worker 每次心跳仍检查当前权限，并通过同步状态列提前察觉�
 
 恢复元数据写回最多 45 秒，原任务执行截止时间、15 秒默认领取租约、来源新鲜度和业务授权期限均不因此延长。`run-local.mjs` 在关闭时最多等待 50 秒，再强制停止仍未退出的直接子进程；正式主实例的 LaunchAgent 显式设置 `ExitTimeOut=60`。当前 macOS 将更长的配置限制为 60 秒，因此必须同时回读配置和系统有效值，保持应用退出宽限在该上限内。关闭前后的恢复状态必须从原任务回读，不能仅以进程已经退出作为成功依据。
 
-Linux 使用专用非 root 用户的 `com.eigos.primary.service`，启用 user lingering 后可在开机和退出登录后运行。systemd 的 `TimeoutStopSec=60s`、`KillMode=control-group` 覆盖相同的应用退出预算；部署器等待停止的上限为 75 秒。Gateway 和 Worker 仍由同一个 supervisor 启动并共用本机持久库；最小部署不需要 Kubernetes、Redis 或另一份任务库。安装、迁移和真实入口验收见[部署说明](guides/deployment.md)。
+Linux 使用专用非 root 用户的 `com.eigos.primary.service`，启用 user lingering 后可在开机和退出登录后运行。systemd 的 `TimeoutStopSec=60s`、`KillMode=control-group` 覆盖相同的应用退出预算；部署器等待停止的上限为 75 秒。SQLite 模式由同一 supervisor 启动并共用本机持久库；PostgreSQL 模式允许 Gateway 与执行 Worker 分处常驻主机，但必须指向同一受审查权威和原任务库。执行环境保持在 ECS 等宿主，不把 Codex CLI／Harness 放入请求型 Cloudflare Worker。安装、迁移和真实入口验收见[部署说明](guides/deployment.md)。
 
 任务控制对象的来源证据与追加式读取审计分别维护。相同对象版本、正文和出向关系未变时，重复保存保留其原始输入证据；后来的读取不会反向成为旧记录的输入。关系改变、新对象或新版本仍合并当前完整输入约束。新模型产出使用新的计划、尝试或观察身份，不能仅因显示值相同复用旧来源；业务输出及验收结果继续记录当前模型信息约束。
 
-来源复用不复用访问许可。同安装、同请求版本的替换授权可以保留已记录的来源，但字段、当前成员关系、来源权限、撤销和到期仍独立检查。旧绑定首次加入来源摘要时保守保留其已有依赖；不会为了提速删改历史约束。当前实现仍使用 SQLite 的同步读取边界，不能把它当成已完成 PostgreSQL 异步事务迁移。
+来源复用不复用访问许可。同安装、同请求版本的替换授权可以保留已记录的来源，但字段、当前成员关系、来源权限、撤销和到期仍独立检查。旧绑定首次加入来源摘要时保守保留其已有依赖；不会为了提速删改历史约束。SQLite 同步边界与 PostgreSQL 异步读取／投影均执行这些检查；不能把一次读取或密文传输成功当作后续动作的授权结论。
 
 只读任务可以由模型一次选择有界依赖图：独立查询并发执行，后续查询只使用原账本中已验收的具名输出。标量选择必须是动作定义中声明的纯函数，并与同一步、同一个输出端口的观察绑定；歧义、过期或权限变化会阻止后续查询，交回模型处理。组合步骤的每个 `inputRefs` 都须包含 `port`，包括计算标量的引用；缺少端口的原生提案在 MCP 提交时拒绝，模型可在同一会话内修正，Worker 的语义与权限检查继续独立执行。
 

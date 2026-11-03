@@ -37,6 +37,14 @@ export const relayInboxRecordSchema=z.strictObject({sender:agentIdSchema,id:uuid
 export const relayRetainedRecordSchema=relayInboxRecordSchema.pick({sender:true,id:true,digest:true,senderCard:true,expiresAt:true}).extend({envelope:z.string().max(MAX_ENVELOPE_BYTES)});
 /** Complete offline source inventory, including original paging row identities.
  * Never accept this private operator payload from an Agent/model/API request. */
-export const relayNodeSnapshotSchema=z.strictObject({format:z.literal('eigos.relay-node.snapshot.v1'),credentials:relayNodeCredentialsSchema,
+export const relayNodeSnapshotV1Schema=z.strictObject({format:z.literal('eigos.relay-node.snapshot.v1'),credentials:relayNodeCredentialsSchema,
   outbox:z.array(relayOutboxRecordSchema.extend({cursor})).max(10000),inbox:z.array(relayInboxRecordSchema.extend({cursor})).max(10000),retained:z.array(relayRetainedRecordSchema.extend({cursor})).max(10000)});
+const rawReceiptOutbox=relayOutboxRecordSchema.extend({cursor,receiptText:z.string().min(1).max(4096).optional()}).superRefine((row,ctx)=>{
+  if(!!row.receipt!==!!row.receiptText){ctx.addIssue({code:'custom',message:'Original receipt TEXT is required with the parsed receipt'});return;}
+  if(row.receiptText)try{if(JSON.stringify(receiptSchema.parse(JSON.parse(row.receiptText)))!==JSON.stringify(row.receipt))throw new Error();}catch{ctx.addIssue({code:'custom',message:'Original receipt TEXT differs from its validated receipt'});}
+});
+/** v2 preserves original receipt TEXT as well as its typed meaning. v1 has no
+ * evidence for the original TEXT serialization and stays a legacy format. */
+export const relayNodeSnapshotV2Schema=relayNodeSnapshotV1Schema.extend({format:z.literal('eigos.relay-node.snapshot.v2'),outbox:z.array(rawReceiptOutbox).max(10000)});
+export const relayNodeSnapshotSchema=z.discriminatedUnion('format',[relayNodeSnapshotV1Schema,relayNodeSnapshotV2Schema]);
 export type RelayNodeSnapshot=z.infer<typeof relayNodeSnapshotSchema>;
