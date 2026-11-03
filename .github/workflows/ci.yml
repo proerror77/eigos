@@ -17,9 +17,11 @@ jobs:
       verify: ${{ steps.scope.outputs.verify }}
       shards: ${{ steps.scope.outputs.shards }}
       e2e: ${{ steps.scope.outputs.e2e }}
+      postgres: ${{ steps.postgres.outputs.required }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -32,6 +34,10 @@ jobs:
         env:
           CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: node scripts/test-scope.mjs --ci
+      - id: postgres
+        env:
+          PG_TEST_SHARDS: ${{ steps.scope.outputs.shards }}
+        run: node scripts/postgres-tests.mjs needed
   verify:
     needs: scope
     if: ${{ !cancelled() }}
@@ -44,6 +50,8 @@ jobs:
         run: test "$SCOPE_RESULT" = success
       - uses: actions/checkout@v4
         if: needs.scope.outputs.verify == 'true'
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         if: needs.scope.outputs.verify == 'true'
         with:
@@ -62,9 +70,9 @@ jobs:
       - name: Documentation scope
         if: needs.scope.outputs.verify == 'false'
         run: echo 'Documentation-only change; no runtime checks required.'
-  relay-postgres:
+  postgres-storage:
     needs: scope
-    if: ${{ needs.scope.result == 'success' && (contains(needs.scope.outputs.shards, 'tests/postgres-') || contains(needs.scope.outputs.shards, 'tests/document-program-parity.test.ts') || contains(needs.scope.outputs.shards, 'tests/composition-program-parity.test.ts') || contains(needs.scope.outputs.shards, 'tests/goal-assessment-program.test.ts') || contains(needs.scope.outputs.shards, 'tests/relay-postgres-import.test.ts') || contains(needs.scope.outputs.shards, 'tests/relay-postgres-grant.test.ts') || contains(needs.scope.outputs.shards, 'tests/business-postgres-schema.test.ts') || contains(needs.scope.outputs.shards, 'tests/business-postgres-import.test.ts') || contains(needs.scope.outputs.shards, 'tests/business-postgres-large-row.test.ts') || contains(needs.scope.outputs.shards, 'tests/membership-postgres-import.test.ts') || contains(needs.scope.outputs.shards, 'tests/postgres-identity-audit.test.ts') || contains(needs.scope.outputs.shards, 'tests/postgres-runtime-transaction.test.ts') || contains(needs.scope.outputs.shards, 'tests/postgres-work-authority.test.ts') || contains(needs.scope.outputs.shards, 'tests/postgres-ontology-release.test.ts') || contains(needs.scope.outputs.shards, 'tests/postgres-task-read-access.test.ts') || contains(needs.scope.outputs.shards, 'tests/relay-client-repoint.test.ts')) }}
+    if: ${{ needs.scope.result == 'success' && needs.scope.outputs.postgres == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -90,12 +98,159 @@ jobs:
       PGPASSWORD: fixture-only-password
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: node --import tsx --test tests/relay-postgres-import.test.ts tests/relay-postgres-grant.test.ts tests/business-postgres-schema.test.ts tests/business-postgres-import.test.ts tests/business-postgres-large-row.test.ts tests/membership-postgres-import.test.ts tests/postgres-identity-audit.test.ts tests/postgres-runtime-transaction.test.ts tests/postgres-work-authority.test.ts tests/postgres-ontology-release.test.ts tests/postgres-kernel-runtime.test.ts tests/postgres-task-read-access.test.ts tests/postgres-projection-graph.test.ts tests/postgres-task-commands.test.ts tests/postgres-task-intents.test.ts tests/postgres-ontology-metadata.test.ts tests/postgres-ontology-query.test.ts tests/postgres-ontology-functions.test.ts tests/postgres-planning-context.test.ts tests/postgres-native-planning.test.ts tests/postgres-model-usage.test.ts tests/postgres-member-store.test.ts tests/postgres-authority-publisher.test.ts tests/postgres-authentication.test.ts tests/postgres-action-journal.test.ts tests/postgres-action-authorization.test.ts tests/postgres-action-permit.test.ts tests/postgres-access-check.test.ts tests/postgres-eligibility-inspection.test.ts tests/postgres-eligibility-snapshot.test.ts tests/postgres-recovery-commands.test.ts tests/document-program-parity.test.ts tests/composition-program-parity.test.ts tests/postgres-source-projection.test.ts tests/postgres-document-policy.test.ts tests/postgres-document-execution.test.ts tests/postgres-agent-plan.test.ts tests/postgres-goal-contexts.test.ts tests/postgres-document-bindings.test.ts tests/postgres-model-context.test.ts tests/postgres-coordinator.test.ts tests/postgres-capability-catalog.test.ts tests/goal-assessment-program.test.ts tests/postgres-work-availability.test.ts tests/postgres-worker-loop.test.ts tests/postgres-worker-read-lease.test.ts tests/postgres-worker-write-lease.test.ts tests/postgres-supabase-proxy.test.ts tests/relay-client-repoint.test.ts
+      - run: node scripts/postgres-tests.mjs run --group storage
+
+  postgres-access:
+    needs: scope
+    if: ${{ needs.scope.result == 'success' && needs.scope.outputs.postgres == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: fixture-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      EIGOS_TEST_RELAY_POSTGRES: '1'
+      EIGOS_TEST_PG_LOCAL: '1'
+      EIGOS_TEST_LARGE_ROW: '1'
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGPASSWORD: fixture-only-password
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/postgres-tests.mjs run --group access
+
+  postgres-execution:
+    needs: scope
+    if: ${{ needs.scope.result == 'success' && needs.scope.outputs.postgres == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: fixture-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      EIGOS_TEST_RELAY_POSTGRES: '1'
+      EIGOS_TEST_PG_LOCAL: '1'
+      EIGOS_TEST_LARGE_ROW: '1'
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGPASSWORD: fixture-only-password
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/postgres-tests.mjs run --group execution
+
+  postgres-coordinator-cases:
+    needs: scope
+    if: ${{ needs.scope.result == 'success' && needs.scope.outputs.postgres == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [protocol, revocation, lifecycle]
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: fixture-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      EIGOS_TEST_RELAY_POSTGRES: '1'
+      EIGOS_TEST_PG_LOCAL: '1'
+      EIGOS_TEST_LARGE_ROW: '1'
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGPASSWORD: fixture-only-password
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/postgres-tests.mjs run --group coordinator --case ${{ matrix.case }}
+
+  postgres-coordinator:
+    needs: [scope, postgres-coordinator-cases]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Require every selected Coordinator case set to succeed
+        env:
+          PG_TEST_SHARDS: ${{ needs.scope.outputs.shards }}
+          PG_CI_NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/postgres-tests.mjs aggregate-coordinator
+
+  relay-postgres:
+    needs: [scope, postgres-storage, postgres-access, postgres-execution, postgres-coordinator]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Require every selected PostgreSQL group to succeed
+        env:
+          PG_TEST_SHARDS: ${{ needs.scope.outputs.shards }}
+          PG_CI_NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/postgres-tests.mjs aggregate
   # Preserve required check names. Empty shards validate the scope without
   # installing dependencies or invoking Node's automatic test discovery.
   tests:
@@ -116,6 +271,8 @@ jobs:
         run: test "$SCOPE_RESULT" = success
       - uses: actions/checkout@v4
         if: env.EIGOS_TEST_FILES != '[]'
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         if: env.EIGOS_TEST_FILES != '[]'
         with:

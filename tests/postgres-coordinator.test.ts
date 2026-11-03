@@ -137,15 +137,19 @@ async function fixture(hooks:Hooks={}){
 
 test('HTTP MCP and A2A reach the same original SQL task through native compose, real Doc and whole-goal acceptance',local,async()=>{
   const x=await fixture();try{
+    const originalIds:string[]=[];
     for(const ingress of ['mcp','a2a'] as const){
-      const id=await x.submit(ingress);x.runtime.start();await x.wait(async()=>['completed','paused','failed','rejected'].includes((await x.state(id))??''));assert.equal(await x.state(id),'completed',JSON.stringify({stats:x.stats,errors:x.errors}));
+      const id=await x.submit(ingress);originalIds.push(id);x.runtime.start();await x.wait(async()=>['completed','paused','failed','rejected'].includes((await x.state(id))??''));assert.equal(await x.state(id),'completed',JSON.stringify({stats:x.stats,errors:x.errors}));
       const mcp=await x.protocol.job('get_task',{taskId:id}),a2a=await x.protocol.rpc('GetTask',{id});assert(!a2a.error,JSON.stringify(a2a));
       assert.equal(mcp.id,id);assert.equal('accepted'in mcp?mcp.accepted:undefined,true);assert.equal('outputStatus'in mcp?mcp.outputStatus:undefined,'available');assert.equal(a2a.result.id,id);assert.equal(a2a.result.status.state,'TASK_STATE_COMPLETED');assert(JSON.stringify(mcp.artifact).includes('# Synthetic original document'));
+      const sameArtifact=a2a.result.artifacts?.find((artifact:{artifactId:string})=>artifact.artifactId===mcp.artifact?.id);
+      assert(sameArtifact&&JSON.stringify(sameArtifact.parts).includes('# Synthetic original document'),'A2A must deliver the same sealed artifact id and actual document body');
       assert.equal((await x.t.client.query(`SELECT count(*)::int AS n FROM ${x.q}.jobs WHERE id=$1`,[id])).rows[0].n,1);
       const row=(await x.t.client.query(`SELECT ${x.q}.eigos_try_jsonb(body) AS body FROM ${x.q}.jobs WHERE id=$1`,[id])).rows[0].body;
       assert.equal(row.delegation.groundingDecisions[0].decision.kind,'compose');assert.equal(row.delegation.agent.composition.assessment.accepted,true);assert.equal(row.delegation.outcome.status,'satisfied');assert.equal(row.delegation.agent.plans[0].version,'3');
     }
     assert.equal(x.stats.documents,2);assert(x.stats.nativeDecisions>=8);
+    assert.deepEqual((await x.t.client.query(`SELECT id FROM ${x.q}.jobs ORDER BY id`)).rows.map(row=>row.id),originalIds.sort(),'both protocols must preserve exactly the two original tasks');
   }finally{await x.close();}
 });
 

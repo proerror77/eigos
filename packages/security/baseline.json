@@ -3510,7 +3510,7 @@
     {
       "id": "security-task-view",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "c2485bf39a3d9e4e5271aeada1afce307c0de676caae7311ae6727c0be18fd5d",
+      "sourceDigest": "3e2f30eac567477d8b6b76737830379c186450632b18169979005fe38e5dfe53",
       "channels": [
         "http-mcp-a2a"
       ],
@@ -5867,7 +5867,7 @@
     {
       "id": "postgres-task-view",
       "file": "packages/postgres/task-view.ts",
-      "sourceDigest": "95043b36860595950a17a4f887af906f2dacdc604597093f40eb1c0b94b867be",
+      "sourceDigest": "1d4468f35f0f6e44dbc506cf0bba30f1fa3e6b4ca9adfe5e93b61767aab461bf",
       "channels": [
         "internal"
       ],
@@ -6710,7 +6710,7 @@
     {
       "id": "release-artifacts-cli",
       "file": "scripts/release-artifacts.mjs",
-      "sourceDigest": "c8267f9bf12aa1251ed802b49baca154b8e915daa6053381ebf0c73ca71abc80",
+      "sourceDigest": "77fd030bbb29fef6a70588f04bd5141eeddc0392c025637e144833c3218e41f3",
       "channels": [
         "internal"
       ],
@@ -6753,6 +6753,30 @@
       "content": "Explicit registered PostgreSQL Worker candidate assembly",
       "currentControl": "Known Codex transport uses acknowledged usage and a current guarded runStructured path; unadapted runtime ports reject, configured original authority and injected database/publisher ownership; construction neither starts polling nor switches primary or Gateway",
       "targetControl": "Known Codex transport uses acknowledged usage and a current guarded runStructured path; unadapted runtime ports reject, configured original authority and injected database/publisher ownership; construction neither starts polling nor switches primary or Gateway",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-ci-groups",
+      "file": "scripts/postgres-tests.mjs",
+      "sourceDigest": "1d664948fe6adcd019afb8ab98b1806d13684fc5f2a5a032fc547271150d3e8c",
+      "channels": [
+        "internal"
+      ],
+      "content": "Deterministic PostgreSQL CI selection, bounded scheduling and required aggregation",
+      "currentControl": "Static exhaustive real-PostgreSQL test groups, one test file at a time on independent fixture services, strict selected-suite registration and always-run required aggregate; missing/skipped/failed/cancelled required groups never become successful release evidence",
+      "targetControl": "Static exhaustive real-PostgreSQL test groups, one test file at a time on independent fixture services, strict selected-suite registration and always-run required aggregate; missing/skipped/failed/cancelled required groups never become successful release evidence",
+      "stage": "S5"
+    },
+    {
+      "id": "task-artifact-projection",
+      "file": "packages/security/task-artifact.ts",
+      "sourceDigest": "b051f9a7d8dfbe9abd35344a79ba99819cc007fff6c50a5861c85dee4a42a91c",
+      "channels": [
+        "agent"
+      ],
+      "content": "Shared finite whole-goal document projection after current artifact and field checks",
+      "currentControl": "Whole original artifact must pass its current content seal before finite verified-document selection; current task/revision and permitted DocumentDraft snapshot must match status, exact text/hash and citations; public output contains only registered document Markdown and preserves opaque provider/ledger payload exclusions",
+      "targetControl": "Whole original artifact must pass its current content seal before finite verified-document selection; current task/revision and permitted DocumentDraft snapshot must match status, exact text/hash and citations; public output contains only registered document Markdown and preserves opaque provider/ledger payload exclusions",
       "stage": "S5"
     }
   ]

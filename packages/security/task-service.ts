@@ -7,6 +7,7 @@ import { SecurityError, type TaskDataGrant } from './store.js';
 import { withAuthorization,authorizationScope } from './context.js';
 import {z} from 'zod';
 import { deliveryEvidence } from './delivery-evidence.js';
+import {goalDocumentCandidates,projectGoalDocument,publicTaskArtifact,type PublicGoalDocument} from './task-artifact.js';
 import {projectionFields} from './projections.js';
 import {SOURCE_AUTHORIZATION_MESSAGE,SOURCE_AUTHORIZATION_RENEWED_MESSAGE} from '../core/task-recovery.js';
 
@@ -165,13 +166,21 @@ export class TaskSecurity {
       if (job.artifact) {
         // Arbitrary result payloads and provider locators have no public contract.
         // Text deliverables are sealed and delivered through the same lineage check.
-        const markdown=job.artifact.data.markdown;
         const refs=allowed('artifact',job.artifact)?deliveryEvidence(job.artifact):undefined;
-        if (refs) {
+        const candidates=refs?goalDocumentCandidates(job.artifact):undefined;
+        if (refs && candidates) {
           const observations=refs.map(ref=>{const object=graph.read(actor.ownerKey,ref);return {ref,revision:object.revision,properties:Object.fromEntries(Object.entries(object.properties).filter(([field])=>Object.hasOwn(projectionFields(ref.type),field) || Object.hasOwn(personalInputFields, ref.type) && (personalInputFields[ref.type as keyof typeof personalInputFields] as readonly string[]).includes(field)))};});
-          if(observations.length)security.policies.requireRecipient(scope,security.policies.outputEnvelope(actor.ownerKey),'agent_response');
-          base.artifact={id:job.artifact.id,name:job.artifact.name,data:{...(typeof markdown==='string'?{markdown}:{}),goal:job.artifact.data.goal,deliverable:job.artifact.data.deliverable,execution:job.artifact.data.execution,...(observations.length?{result:{observations}}:{})}};
-          if(job.state==='completed' && job.delegation?.acceptance?.accepted)base.accepted=true;
+          const documents:PublicGoalDocument[]=[];let current=true;
+          try{for(const candidate of candidates){
+            const object=graph.read(actor.ownerKey,{type:'DocumentDraft',id:candidate.document.id});
+            const document=projectGoalDocument(candidate,object.properties.snapshot,job.id,grant.requestRevision);
+            if(!document){current=false;break;}documents.push(document);
+          }}catch(error){if(!(error instanceof SecurityError)&&!(error instanceof DomainError&&['NOT_FOUND','CONFLICT'].includes(error.code)))throw error;current=false;}
+          if(current){
+            if(observations.length||documents.length)security.policies.requireRecipient(scope,security.policies.outputEnvelope(actor.ownerKey),'agent_response');
+            base.artifact=publicTaskArtifact(job.artifact,observations,documents);
+            if(job.state==='completed' && job.delegation?.acceptance?.accepted)base.accepted=true;
+          }else base.outputStatus='restricted';
         }
         else base.outputStatus='restricted';
       }

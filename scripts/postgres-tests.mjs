@@ -1,0 +1,81 @@
+// Deterministic real-PostgreSQL CI groups. Every selected boundary remains
+// covered; each group runs one test file at a time on its own service instance.
+import {spawn} from 'node:child_process';
+import {appendFileSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
+import {resolve} from 'node:path';
+import {parseArgs} from 'node:util';
+
+export const POSTGRES_TEST_GROUPS=Object.freeze({
+  storage:Object.freeze(["tests/relay-postgres-import.test.ts","tests/relay-postgres-grant.test.ts","tests/business-postgres-schema.test.ts","tests/business-postgres-import.test.ts","tests/business-postgres-large-row.test.ts","tests/membership-postgres-import.test.ts","tests/postgres-identity-audit.test.ts","tests/postgres-runtime-transaction.test.ts","tests/postgres-work-authority.test.ts","tests/postgres-ontology-release.test.ts","tests/postgres-kernel-runtime.test.ts","tests/postgres-projection-graph.test.ts","tests/postgres-supabase-proxy.test.ts","tests/relay-client-repoint.test.ts"]),
+  access:Object.freeze(["tests/postgres-task-read-access.test.ts","tests/postgres-ontology-metadata.test.ts","tests/postgres-ontology-query.test.ts","tests/postgres-ontology-functions.test.ts","tests/postgres-planning-context.test.ts","tests/postgres-native-planning.test.ts","tests/postgres-model-usage.test.ts","tests/postgres-member-store.test.ts","tests/postgres-authority-publisher.test.ts","tests/postgres-authentication.test.ts","tests/postgres-access-check.test.ts","tests/postgres-eligibility-inspection.test.ts","tests/postgres-eligibility-snapshot.test.ts","tests/postgres-work-availability.test.ts","tests/postgres-worker-loop.test.ts"]),
+  execution:Object.freeze(["tests/postgres-task-commands.test.ts","tests/postgres-task-intents.test.ts","tests/postgres-action-journal.test.ts","tests/postgres-action-authorization.test.ts","tests/postgres-action-permit.test.ts","tests/postgres-recovery-commands.test.ts","tests/document-program-parity.test.ts","tests/composition-program-parity.test.ts","tests/postgres-source-projection.test.ts","tests/postgres-document-policy.test.ts","tests/postgres-document-execution.test.ts","tests/postgres-agent-plan.test.ts","tests/postgres-goal-contexts.test.ts","tests/postgres-document-bindings.test.ts","tests/postgres-model-context.test.ts","tests/postgres-capability-catalog.test.ts","tests/goal-assessment-program.test.ts","tests/postgres-worker-read-lease.test.ts","tests/postgres-worker-write-lease.test.ts"]),
+  coordinator:Object.freeze(["tests/postgres-coordinator.test.ts"]),
+});
+export const POSTGRES_COORDINATOR_CASES=Object.freeze({
+  protocol:Object.freeze(['the default Codex review','an unadapted synchronous model port','HTTP MCP and A2A reach']),
+  revocation:Object.freeze(['parent, action role, source and model revocation']),
+  lifecycle:Object.freeze(['canceling the original task','an incomplete whole-goal assessment','an unknown original document invocation']),
+});
+export const POSTGRES_COORDINATOR_JOBS=Object.freeze(Object.keys(POSTGRES_COORDINATOR_CASES).map(name=>'postgres-coordinator-cases ('+name+')'));
+export const POSTGRES_GROUP_JOBS=Object.freeze(Object.keys(POSTGRES_TEST_GROUPS).map(group=>'postgres-'+group));
+export const POSTGRES_TEST_FILES=Object.freeze(Object.values(POSTGRES_TEST_GROUPS).flat());
+const pgFile=path=>/^tests\/(?:postgres-|relay-postgres-|business-postgres-|membership-postgres-)/.test(path)||['tests/document-program-parity.test.ts','tests/composition-program-parity.test.ts','tests/goal-assessment-program.test.ts','tests/relay-client-repoint.test.ts'].includes(path);
+
+export function postgresTestsRequired(input){
+  const shards=typeof input==='string'?JSON.parse(input):input;
+  if(!shards||typeof shards!=='object'||Array.isArray(shards)||Object.values(shards).some(files=>!Array.isArray(files)||files.some(path=>typeof path!=='string')))throw Error('A valid selected test scope is required');
+  const selected=Object.values(shards).flat().filter(pgFile);
+  if(selected.some(path=>!POSTGRES_TEST_FILES.includes(path)))throw Error('A selected PostgreSQL suite has no registered CI group');
+  return selected.length>0;
+}
+
+export function assertPostgresGroups(needs,scope){
+  if(!needs||typeof needs!=='object'||needs.scope?.result!=='success')throw Error('PostgreSQL checks require a successful test scope');
+  const required=postgresTestsRequired(scope);
+  for(const name of POSTGRES_GROUP_JOBS){
+    const result=needs[name]?.result;
+    if(required&&result!=='success')throw Error('Required PostgreSQL group is not successful: '+name+' ('+String(result)+')');
+    if(!required&&result!=='skipped'&&result!=='success')throw Error('Unexpected PostgreSQL group result: '+name);
+  }
+  return {required,groups:[...POSTGRES_GROUP_JOBS]};
+}
+
+export function assertCoordinatorCases(needs,scope){
+  if(!needs||needs.scope?.result!=='success')throw Error('Coordinator checks require a successful test scope');
+  const required=postgresTestsRequired(scope),result=needs['postgres-coordinator-cases']?.result;
+  if(required&&result!=='success'||!required&&result!=='success'&&result!=='skipped')throw Error('Required Coordinator cases are not successful: '+String(result));
+  return {required,cases:[...POSTGRES_COORDINATOR_JOBS]};
+}
+
+export function coordinatorTestPattern(scenario){
+  if(!Object.hasOwn(POSTGRES_COORDINATOR_CASES,scenario))throw Error('Unknown Coordinator case set');
+  return '^(?:'+POSTGRES_COORDINATOR_CASES[scenario].map(name=>name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|')+')';
+}
+export function assertCoordinatorTap(scenario,lines){
+  const top=[],nested=[];
+  for(const line of lines){const match=line.match(/^(\s*)ok \d+ - (.+)$/);if(!match||/ #\s*(?:SKIP|TODO)\b/i.test(match[2]))continue;(match[1]?nested:top).push(match[2]);}
+  for(const name of POSTGRES_COORDINATOR_CASES[scenario])if(!top.some(value=>value.startsWith(name)))throw Error('Coordinator case did not actually pass: '+name);
+  if(scenario==='revocation')for(const name of ['parent','role','source','model'])if(!nested.includes(name))throw Error('Revocation subtest did not actually pass: '+name);
+}
+
+async function main(){
+  const {values,positionals}=parseArgs({allowPositionals:true,options:{group:{type:'string'},case:{type:'string'}}}),command=positionals[0];
+  if(command==='needed'){const required=postgresTestsRequired(process.env.PG_TEST_SHARDS);if(!process.env.GITHUB_OUTPUT)throw Error('CI output path is required');appendFileSync(process.env.GITHUB_OUTPUT,'required='+required+'\n');console.log(JSON.stringify({required,groups:POSTGRES_GROUP_JOBS}));return;}
+  if(command==='aggregate-coordinator'){console.log(JSON.stringify(assertCoordinatorCases(JSON.parse(process.env.PG_CI_NEEDS??'null'),process.env.PG_TEST_SHARDS)));return;}
+  if(command==='aggregate'){console.log(JSON.stringify(assertPostgresGroups(JSON.parse(process.env.PG_CI_NEEDS??'null'),process.env.PG_TEST_SHARDS)));return;}
+  if(command!=='run'||!Object.hasOwn(POSTGRES_TEST_GROUPS,values.group??''))throw Error('Use needed, aggregate, or run --group <registered group>');
+  const files=POSTGRES_TEST_GROUPS[values.group],scenario=values.case;
+  if(values.group==='coordinator'&&!Object.hasOwn(POSTGRES_COORDINATOR_CASES,scenario??'')||values.group!=='coordinator'&&scenario)throw Error('Coordinator runs require exactly one registered case set');
+  // Prefix matching intentionally includes every nested revocation subtest.
+  const pattern=scenario?coordinatorTestPattern(scenario):undefined;
+  const options=['--import','tsx','--test','--test-concurrency=1','--test-reporter=tap',...(pattern?['--test-name-pattern='+pattern]:[])];
+  console.log(JSON.stringify({group:values.group,testFileConcurrency:1,files}));
+  for(const name of ['EIGOS_TEST_PG_LOCAL','EIGOS_TEST_RELAY_POSTGRES','EIGOS_TEST_LARGE_ROW'])if(process.env[name]!=='1')throw Error('Required PostgreSQL test flag is missing: '+name);
+  await new Promise((resolve,reject)=>{
+    const child=spawn(process.execPath,[...options,...files],{stdio:['inherit','pipe','inherit']}),lines=[];let pending='',bytes=0;
+    child.stdout.on('data',chunk=>{process.stdout.write(chunk);if(scenario){bytes+=chunk.length;if(bytes>4194304){child.kill();reject(Error('Coordinator TAP exceeds its bounded validation log'));return;}pending+=chunk.toString();const complete=pending.split('\n');pending=complete.pop();lines.push(...complete);}});
+    child.once('error',reject);child.once('close',(code,signal)=>{if(code!==0||signal){reject(Error('PostgreSQL group failed: '+values.group+' ('+String(signal??code)+')'));return;}try{if(scenario)assertCoordinatorTap(scenario,[...lines,pending]);resolve();}catch(error){reject(error);}});
+  });
+}
+if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(error=>{console.error(error.message);process.exitCode=1;});

@@ -5,6 +5,7 @@ import { SOURCE_AUTHORIZATION_MESSAGE, SOURCE_AUTHORIZATION_RENEWED_MESSAGE } fr
 import { personalInputFields } from '../ontology/personal-context.js';
 import type { StagedKernelBuilder } from '../ontology/seed-definition.js';
 import { deliveryEvidence } from '../security/delivery-evidence.js';
+import {goalDocumentCandidates,projectGoalDocument,publicTaskArtifact,type PublicGoalDocument} from '../security/task-artifact.js';
 import { SecurityError } from '../security/errors.js';
 import { projectionFields } from '../security/projections.js';
 import type { TaskView } from '../security/task-service.js';
@@ -63,17 +64,23 @@ export async function postgresTaskView(client:Client,principal:Principal,taskId:
       }
       if(job.artifact) {
         const refs=await auth.output('artifact',job.artifact)?deliveryEvidence(job.artifact):undefined;
-        if(refs) {
+        const candidates=refs?goalDocumentCandidates(job.artifact):undefined;
+        if(refs && candidates) {
           const observations=[];
           for(const ref of refs) {
             const {object}=await auth.readObject(ref);
             observations.push({ref,revision:object.revision,properties:Object.fromEntries(Object.entries(object.properties).filter(([field])=>Object.hasOwn(projectionFields(ref.type),field)
               || Object.hasOwn(personalInputFields,ref.type) && (personalInputFields[ref.type as keyof typeof personalInputFields] as readonly string[]).includes(field)))});
           }
-          const data=job.artifact.data;
-          base.artifact={id:job.artifact.id,name:job.artifact.name,data:{...(typeof data.markdown==='string'?{markdown:data.markdown}:{}),goal:data.goal,deliverable:data.deliverable,
-            execution:data.execution,...(observations.length?{result:{observations}}:{})}};
-          if(job.state==='completed' && job.delegation?.acceptance?.accepted)base.accepted=true;
+          const documents:PublicGoalDocument[]=[];let current=true;
+          try{for(const candidate of candidates){
+            const {object}=await auth.readObject({type:'DocumentDraft',id:candidate.document.id},['snapshot']);
+            const document=projectGoalDocument(candidate,object.properties.snapshot,id,admission.grant.requestRevision);
+            if(!document){current=false;break;}documents.push(document);
+          }}catch(error){if(!(error instanceof SecurityError)&&!(error instanceof DomainError&&['NOT_FOUND','CONFLICT'].includes(error.code)))throw error;current=false;}
+          if(current){base.artifact=publicTaskArtifact(job.artifact,observations,documents);
+            if(job.state==='completed' && job.delegation?.acceptance?.accepted)base.accepted=true;
+          }else base.outputStatus='restricted';
         } else base.outputStatus='restricted';
       }
       if(metadata.hasError)base.error='Task did not produce an authorized deliverable; inspect its current state.';

@@ -7,7 +7,7 @@ import {dirname,join} from 'node:path';
 import {artifactDigest,canonical,createReleaseManifest,validateReleaseManifest,readReleaseManifest,verifyReleaseArtifacts,finalizeReleaseArtifacts,selectExactCiRun,proveExactCi} from '../scripts/release-artifacts.mjs';
 
 const sourceSha='1'.repeat(40),rawDigest=bytes=>createHash('sha256').update(bytes).digest('hex'),roles=['gateway','relay','worker'];
-const jobs=['scope','verify','relay-postgres',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
+const jobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
 const ci={sourceSha,runId:17,url:'https://github.com/example/eigos/actions/runs/17',jobs};
 const images=Object.fromEntries(roles.map((role,i)=>[role,`ghcr.io/example/eigos/${role}@sha256:${String(i+1).repeat(64)}`]));
 function fixture(){
