@@ -3047,13 +3047,13 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "34dece32f0c51ff47a0d8dd9d66f05c2f71b779e1a3e3ec81f023aa2d0a9549d",
+      "sourceDigest": "a8a91ceb241cdbb793886b109981f76132c493ce9bb33aa75bc9e79cb523682a",
       "channels": [
         "model",
         "dispatch"
       ],
       "content": "Task interpretation, initial context, selection and execution orchestration",
-      "currentControl": "Foundation source/role/channel gates and bounded task Ontology context; pipeline eligibility narrows grounded candidates without granting source or effect authority; Rechecks a previously selected source before another model turn without granting execution through unselected metadata discovery.",
+      "currentControl": "Foundation source/role/channel gates and bounded task Ontology context; pipeline eligibility narrows grounded candidates without granting source or effect authority; Rechecks a previously selected source before another model turn without granting execution through unselected metadata discovery. Whole-goal semantic review compares the immutable criteria and preserves independent component authorization and fulfillment checks; an intentionally empty root action list is not treated as an unavailable component.",
       "targetControl": "Persisted task authority with source/input/output checks",
       "stage": "S3"
     },
