@@ -1,3 +1,6 @@
+import {postgresCanInspectEligibility} from './runtime-transaction.js';
+import {postgresWorkerAdmission} from './worker-admission.js';
+import {SecurityError} from '../security/errors.js';
 import type { Client } from 'pg';
 import { taskExecutionAuthoritySchema } from '../security/contracts.js';
 import { postgresBusinessSchema } from './runtime-transaction.js';
@@ -7,6 +10,7 @@ import { postgresBusinessSchema } from './runtime-transaction.js';
  * task state and policy scope before any operation. */
 export async function postgresWorkAuthority(client: Client, owner: string, taskId: string, policyDigest: string) {
   const schema = postgresBusinessSchema(client);
+  if(postgresCanInspectEligibility(client)){try{return(await postgresWorkerAdmission(client,owner,taskId,policyDigest)).authority;}catch(error){if(error instanceof SecurityError)return undefined;throw error;}}
   const now = Date.now();
   if (!owner || !taskId || !Number.isSafeInteger(now) || now < 0 || !/^[a-f0-9]{64}$/.test(policyDigest)) throw new Error('Invalid PostgreSQL task authority input');
   const q = `"${schema}"`, json = `${q}.eigos_try_jsonb`;

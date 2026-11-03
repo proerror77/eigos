@@ -7,11 +7,42 @@ import {taskDataGrantSchema,taskExecutionAuthoritySchema,SECURITY_CONTRACT,POLIC
 import {SecurityError} from '../security/errors.js';
 import {storedSourceSchema} from '../security/source-policy.js';
 import type {StagedKernelBuilder} from '../ontology/seed-definition.js';
-import {postgresBusinessSchema} from './runtime-transaction.js';
+import {postgresBusinessSchema,postgresBusinessToken} from './runtime-transaction.js';
+import {postgresTaskGrantReferenceSchema,type PostgresTaskGrantReference,type PostgresEligibilityReference} from './eligibility-reference.js';
 import {postgresAgentWriteAdmission} from './task-read-access.js';
 import {PostgresTaskBindings} from './task-bindings.js';
 
 type TaskGrant=z.infer<typeof taskDataGrantSchema>;
+type IssuedGrant={reference:PostgresTaskGrantReference;origin:{xmin:string;tuple:string;table:string};parent?:PostgresEligibilityReference;replaces?:PostgresTaskGrantReference};
+// The write side is module-private and runs only after an actual NEW insert,
+// its source bindings, execution authority and audit events all succeed.
+const issuedGrants=new WeakMap<object,Map<string,IssuedGrant>>();
+const grantReference=(grant:TaskGrant):PostgresTaskGrantReference=>({id:grant.id,revision:grant.revision,bodyDigest:digest(grant),taskId:grant.taskId,requestRevision:grant.requestRevision});
+const sameReference=(a:PostgresTaskGrantReference,b:PostgresTaskGrantReference)=>digest(a)===digest(b);
+export async function postgresIsNewTaskGrant(client:Client,input:PostgresTaskGrantReference):Promise<boolean>{
+  const reference=postgresTaskGrantReferenceSchema.parse(input),receipt=issuedGrants.get(postgresBusinessToken(client))?.get(reference.id);
+  if(!receipt||!sameReference(receipt.reference,reference))return false;
+  const q=`"${postgresBusinessSchema(client)}"`,rows=await client.query(`SELECT xmin::text AS xmin,ctid::text AS tuple,tableoid::text AS "table" FROM ${q}.security_grants WHERE id=$1 LIMIT 2`,[reference.id]);
+  const row=rows.rows[0];return rows.rowCount===1&&row.xmin===receipt.origin.xmin&&row.tuple===receipt.origin.tuple&&row.table===receipt.origin.table;
+}
+/** Resolve only successful, still-visible trusted issuance, including real
+ * savepoints. Rolled-back receipts cannot replace a committed grant. */
+export async function postgresEligibilityAtEgress(client:Client,references:readonly PostgresEligibilityReference[],token:object):Promise<PostgresEligibilityReference[]>{
+  if(postgresBusinessToken(client)!==token)throw new SecurityError('AUTHORIZATION_REQUIRED');
+  const receipts=[...(issuedGrants.get(token)?.values()??[])],visible=new Set<string>();
+  for(const receipt of receipts)if(await postgresIsNewTaskGrant(client,receipt.reference))visible.add(receipt.reference.id);
+  const resolve=(reference:PostgresTaskGrantReference,visited=new Set<string>()):PostgresTaskGrantReference|undefined=>{
+    if(visited.has(reference.id))throw new SecurityError('POLICY_CHANGED');visited.add(reference.id);
+    for(const receipt of receipts)if(receipt.replaces&&sameReference(receipt.replaces,reference)){
+      const next=resolve(receipt.reference,new Set(visited));if(next)return next;
+    }
+    return visible.has(reference.id)?reference:undefined;
+  };
+  const result=references.map(reference=>{const next=reference.taskGrant&&resolve(reference.taskGrant);return next?{...reference,taskGrant:next}:reference;});
+  for(const receipt of receipts)if(visible.has(receipt.reference.id)&&receipt.parent)result.push({...receipt.parent,taskGrant:receipt.reference});
+  return [...new Map(result.map(reference=>[digest(reference),reference])).values()];
+}
+
 /** Internal provisioning only. Public commands supply checked personal inputs;
  * neither an OAuth scope nor this function itself creates business authority. */
 export async function postgresProvisionTask(client:Client,principal:Principal,job:Job,policyDigest:string,
@@ -54,8 +85,8 @@ export async function postgresProvisionTask(client:Client,principal:Principal,jo
     await client.query(`UPDATE ${q}.security_task_authorities SET state='revoked' WHERE data_grant_id=$1`,[previous.id]);
     await client.query(`INSERT INTO ${q}.security_events(id,at,kind,subject_digest,revision) VALUES($1,$2,'grant_revoked',$3,$4)`,[randomUUID(),at,digest(previous.id),previous.revision+1]);
   }
-  await client.query(`INSERT INTO ${q}.security_grants(id,kind,owner,member_id,installation_id,parent_id,parent_revision,revision,state,expires_at,body)
-    VALUES($1,'task_data',$2,$3,$4,$5,$6,1,'active',$7,$8)`,[grant.id,grant.ownerKey,grant.memberId,grant.installationId,parent.id,parent.revision,Date.parse(grant.expiresAt),JSON.stringify(grant)]);
+  const inserted=await client.query(`INSERT INTO ${q}.security_grants(id,kind,owner,member_id,installation_id,parent_id,parent_revision,revision,state,expires_at,body)
+    VALUES($1,'task_data',$2,$3,$4,$5,$6,1,'active',$7,$8) RETURNING xmin::text AS xmin,ctid::text AS tuple,tableoid::text AS "table"`,[grant.id,grant.ownerKey,grant.memberId,grant.installationId,parent.id,parent.revision,Date.parse(grant.expiresAt),JSON.stringify(grant)]);
   const bindings=new PostgresTaskBindings(client,options.builder);await bindings.bindInputs(grant,parent);await bindings.project(grant,parent,job);
   const authority=taskExecutionAuthoritySchema.parse({version:SECURITY_CONTRACT,id:randomUUID(),revision:1,ownerKey:actor.ownerKey,memberId:actor.memberId,installationId:actor.installationId,
     taskId:job.id,requestRevision:grant.requestRevision,agentGrant:grant.parentGrant,dataGrant:{id:grant.id,revision:grant.revision},submittedScopes:[...new Set(principal.scopes)],
@@ -64,5 +95,11 @@ export async function postgresProvisionTask(client:Client,principal:Principal,jo
   await client.query(`INSERT INTO ${q}.security_task_authorities(id,owner,member_id,installation_id,task_id,request_revision,agent_grant_id,agent_grant_revision,data_grant_id,data_grant_revision,auth_epoch,state,expires_at,body)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,1,$10,'active',$11,$12)`,[authority.id,authority.ownerKey,authority.memberId,authority.installationId,job.id,authority.requestRevision,parent.id,parent.revision,grant.id,actor.authEpoch,Date.parse(authority.expiresAt),JSON.stringify(authority)]);
   await client.query(`INSERT INTO ${q}.security_events(id,at,kind,subject_digest,revision) VALUES($1,$2,'task_grant_issued',$3,1),($4,$2,'task_authority_attached',$5,1)`,[randomUUID(),at,digest(grant.id),randomUUID(),digest(authority.id)]);
+  const origin=inserted.rows[0];
+  if(inserted.rowCount!==1||!origin||typeof origin.xmin!=='string'||typeof origin.tuple!=='string'||typeof origin.table!=='string')throw new SecurityError('POLICY_CHANGED');
+  const token=postgresBusinessToken(client),receipts=issuedGrants.get(token)??new Map<string,IssuedGrant>();
+  if(receipts.size>=256)throw new DomainError('CONFLICT','New grant issuance exceeds its transaction bound');
+  receipts.set(grant.id,{reference:grantReference(grant),origin:{xmin:origin.xmin,tuple:origin.tuple,table:origin.table},
+    ...(admission.eligibility?{parent:structuredClone(admission.eligibility)}:{}),...(previous?{replaces:grantReference(previous)}:{})});issuedGrants.set(token,receipts);
   return {grant,authority};
 }

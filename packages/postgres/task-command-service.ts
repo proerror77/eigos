@@ -1,4 +1,5 @@
 import {ownerKey,submitSchema,replySchema,versionedReplySchema,resumeTaskSchema,taskIdSchema,DomainError,type Principal,type Job} from '../core/domain.js';
+import {runRecoveryProgramAsync,reconcileTransition,revokeAuthorizationTransition} from '../core/recovery-commands.js';
 import {runReplyProgramAsync,replyTransition,assertReplyTaskContext} from '../core/reply-program.js';
 import {assertTechnicalResume,assertTechnicalResumeState,applyTechnicalResume} from '../core/technical-resume.js';
 import {postgresWorkerAdmission} from './worker-admission.js';
@@ -138,6 +139,38 @@ export class PostgresTaskCommandService extends PostgresTaskReadService {
         return store.save(owner,applyTechnicalResume(current,args,intents.length));
       });
       const after=await postgresTaskProcessingGrant(client,p,args.taskId,this.policy),currentAuthority=await postgresWorkerAdmission(client,owner,args.taskId,this.policy);
+      if(digest(before.grant)!==digest(after.grant)||digest(authority.authority)!==digest(currentAuthority.authority))throw new DomainError('CONFLICT','Original task authority changed during recovery');
+      return this.view(client,p,job);
+    }));
+  }
+  async reconcile(principal:Principal,taskId:string,requestId:string):Promise<Job>{
+    const p=structuredClone(principal),id=taskIdSchema.parse(taskId),owner=ownerKey(p);
+    return this.db.run(client=>withPostgresAgentWrite(client,p,this.policy,async admission=>{
+      const before=await postgresTaskProcessingGrant(client,p,id,this.policy),authority=await postgresWorkerAdmission(client,owner,id,this.policy);
+      if(authority.authority.installationId!==admission.actor.installationId||authority.grant.id!==before.grant.id||authority.grant.revision!==before.grant.revision)throw new DomainError('FORBIDDEN','The original task authority is required');
+      const store=new PostgresTaskStorage(client,this.kernel);
+      const job=await store.once(owner,admission.actor.installationId,`reconcile:${id}`,requestId,id,async()=>{
+        const result=await runRecoveryProgramAsync({intents:store.intents.bind(store),saveIntent:store.saveIntent.bind(store),revokeGrants:store.revokeGrants.bind(store),
+          saveTask:async(owner,job)=>{await store.save(owner,job);}},reconcileTransition(await store.get(owner,id),owner,requestId,{foundation:true}));
+        return result.job;
+      });
+      const after=await postgresTaskProcessingGrant(client,p,id,this.policy),currentAuthority=await postgresWorkerAdmission(client,owner,id,this.policy);
+      if(digest(before.grant)!==digest(after.grant)||digest(authority.authority)!==digest(currentAuthority.authority))throw new DomainError('CONFLICT','Original task authority changed during recovery');
+      return this.view(client,p,job);
+    }));
+  }
+  async revokeAuthorization(principal:Principal,taskId:string,requestId:string):Promise<Job>{
+    const p=structuredClone(principal),id=taskIdSchema.parse(taskId),owner=ownerKey(p);
+    return this.db.run(client=>withPostgresAgentWrite(client,p,this.policy,async admission=>{
+      const before=await postgresTaskProcessingGrant(client,p,id,this.policy),authority=await postgresWorkerAdmission(client,owner,id,this.policy);
+      if(authority.authority.installationId!==admission.actor.installationId||authority.grant.id!==before.grant.id||authority.grant.revision!==before.grant.revision)throw new DomainError('FORBIDDEN','The original task authority is required');
+      const store=new PostgresTaskStorage(client,this.kernel);
+      const job=await store.once(owner,admission.actor.installationId,`revoke:${id}`,requestId,id,async()=>{
+        const result=await runRecoveryProgramAsync({intents:store.intents.bind(store),saveIntent:store.saveIntent.bind(store),revokeGrants:store.revokeGrants.bind(store),
+          saveTask:async(owner,job)=>{await store.save(owner,job);}},revokeAuthorizationTransition(await store.get(owner,id),owner,requestId));
+        return result.job;
+      });
+      const after=await postgresTaskProcessingGrant(client,p,id,this.policy),currentAuthority=await postgresWorkerAdmission(client,owner,id,this.policy);
       if(digest(before.grant)!==digest(after.grant)||digest(authority.authority)!==digest(currentAuthority.authority))throw new DomainError('CONFLICT','Original task authority changed during recovery');
       return this.view(client,p,job);
     }));

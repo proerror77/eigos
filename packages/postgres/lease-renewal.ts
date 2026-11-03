@@ -25,13 +25,13 @@ async function workerLease(client:Client,schema:string,runtime:PostgresRuntimeAu
   if(!/^eigos_business_[a-z0-9_]{1,40}$/.test(schema)||!runtime.id||!Number.isSafeInteger(runtime.revision)||runtime.revision<1
     ||!/^[a-f0-9]{64}$/.test(runtime.digest)||!/^[a-f0-9]{64}$/.test(policyDigest))throw new Error('Invalid PostgreSQL lease configuration');
   const expected=Object.freeze(structuredClone(runtime)),releaseClient=reservePostgresTransactionClient(client),q=`"${schema}"`;
-  let opened=false,committing=false;
+  let opened=false,beginning=false,committing=false;
   const discard=async()=>{
     const pooled=client as Client&{release?:(error?:Error)=>void};
     try{if(typeof pooled.release==='function')pooled.release(new Error('Lease transaction state is uncertain'));else await client.end();}catch{/* unusable connection */}
   };
   try{
-    await client.query(renewing?'BEGIN ISOLATION LEVEL READ COMMITTED':'BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY');opened=true;
+    beginning=true;await client.query(renewing?'BEGIN ISOLATION LEVEL READ COMMITTED':'BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY');beginning=false;opened=true;
     if(client.getTransactionStatus()!=='T'){committing=true;throw new Error('Lease transaction did not start');}
     await client.query(`SET LOCAL search_path TO pg_catalog, "${schema}", pg_temp`);
     const candidate=`WITH scope AS(${postgresWorkerScopeQuery(schema)}),
@@ -61,6 +61,7 @@ async function workerLease(client:Client,schema:string,runtime:PostgresRuntimeAu
     // subsequent work. Inspection never renews or conveys execution rights.
     const validUntil=Math.min(until,scope.validUntil);return validUntil>Date.now()?{validUntil}:undefined;
   }catch(error){
+    if(beginning){await discard();throw new Error('PostgreSQL lease transaction start outcome is unknown; connection discarded',{cause:error});}
     if(opened&&!committing){try{await client.query('ROLLBACK');}catch{await discard();throw new Error('PostgreSQL lease rollback failed; connection discarded',{cause:error});}}
     if(committing){await discard();throw new Error(`PostgreSQL lease ${renewing?'renewal':'inspection'} outcome is unknown; connection discarded`,{cause:error});}
     if(error instanceof SecurityError||error instanceof ZodError||error instanceof SyntaxError)return undefined;

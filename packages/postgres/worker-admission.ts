@@ -1,3 +1,5 @@
+import {digest} from '../core/delegation.js';
+import {postgresCanInspectEligibility,postgresRequireCurrentEligibility} from './runtime-transaction.js';
 import type {Client} from 'pg';
 import {agentAccessGrantSchema,taskDataGrantSchema,taskExecutionAuthoritySchema} from '../security/contracts.js';
 import {SecurityError} from '../security/errors.js';
@@ -6,7 +8,7 @@ import {postgresBusinessSchema,postgresBusinessAuthorityDigest,postgresConstrain
 
 /** Internal SQL shared by business admission and lease-only renewal. The
  * supplied schema is server configuration, never a model/tool argument. */
-export function postgresWorkerScopeQuery(schema:string):string{
+function workerScopeQuery(schema:string,currentEligibility=false):string{
   if(!/^eigos_business_[a-z0-9_]{1,40}$/.test(schema))throw new Error('Invalid PostgreSQL business schema');
   const q=`"${schema}"`,json=`${q}.eigos_try_jsonb`;
   return `SELECT a.id AS authority_row_id,a.owner,a.member_id,a.installation_id,a.task_id,a.request_revision,a.auth_epoch AS epoch,
@@ -14,7 +16,7 @@ export function postgresWorkerScopeQuery(schema:string):string{
     a.expires_at AS authority_until,CASE WHEN octet_length(a.body)<=1048576 THEN a.body END AS authority_body,
     g.state AS parent_state,g.expires_at AS parent_until,d.state AS data_state,d.expires_at AS data_until,
     CASE WHEN octet_length(g.body)<=1048576 THEN g.body END AS parent_body,CASE WHEN octet_length(d.body)<=1048576 THEN d.body END AS data_body,
-    s.valid_until,s.client_id,m.expires_at AS manager_until,p.revision AS policy_revision,pd.digest AS policy_digest,
+    s.valid_until,s.client_id,m.expires_at AS manager_until,CASE WHEN octet_length(m.token)<=2000 THEN m.token END AS manager_token,p.revision AS policy_revision,pd.digest AS policy_digest,
     runtime.id AS runtime_id,runtime.revision AS runtime_revision,runtime.configuration_digest AS runtime_digest,
     j.state AS stored_state,job.value->>'state' AS job_state,
     CASE WHEN jsonb_typeof(job.value->'revision')='number' THEN(job.value->>'revision')::numeric END AS job_revision,
@@ -37,7 +39,7 @@ export function postgresWorkerScopeQuery(schema:string):string{
       AND a.request_revision=CASE WHEN jsonb_typeof(job.value#>'{delegation,request,revision}')='number' THEN(job.value#>>'{delegation,request,revision}')::numeric END
       AND job.value->>'id'=j.id AND job.value->>'authorityId'=runtime.id AND job.value->>'executionMode'='worker-security-v2'
       AND job.value->>'service'='eigos.delegate' AND job.value#>>'{delegation,backendVersion}'='${BACKEND_VERSION}'
-      AND a.expires_at>$4 AND s.valid_until>$4 AND g.expires_at>$4 AND d.expires_at>$4 AND m.expires_at>$4
+      AND a.expires_at>$4 AND g.expires_at>$4 AND d.expires_at>$4 ${currentEligibility?'':'AND s.valid_until>$4 AND m.expires_at>$4'}
       AND p.revision BETWEEN 1 AND 9007199254740991
       AND NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN jsonb_typeof(data.value)='object' THEN d.body::json ELSE '{}'::json END)
         WHERE key IN('taskId','requestRevision','purpose') GROUP BY key HAVING count(*)>1)
@@ -51,7 +53,7 @@ export function postgresWorkerScopeQuery(schema:string):string{
 
 /** Parse the exact same persisted delegation for both transaction types. This
  * does not itself establish a claim or grant any output/model channel. */
-export function parsePostgresWorkerScope(row:Record<string,unknown>,owner:string,taskId:string,policyDigest:string){
+function parseWorkerScope(row:Record<string,unknown>,owner:string,taskId:string,policyDigest:string,currentEligibility=false){
   if(row.fenced!==false||typeof row.authority_body!=='string'||typeof row.parent_body!=='string'||typeof row.data_body!=='string')throw new SecurityError('ACCESS_REVOKED');
   const authority=taskExecutionAuthoritySchema.parse(JSON.parse(row.authority_body));
   const parent=agentAccessGrantSchema.parse({...JSON.parse(row.parent_body),revision:Number(row.parent_revision),status:row.parent_state});
@@ -66,18 +68,33 @@ export function parsePostgresWorkerScope(row:Record<string,unknown>,owner:string
     ||grant.purpose!=='delegated_task'||!grant.operations.includes('task.process')||grant.inputs.length>0&&!grant.operations.includes('member_asset.read')
     ||(authority.authorityOrigin==='agent_submission'?!authority.submittedScopes.includes('tasks:write')||grant.inputs.length>0&&!authority.submittedScopes.includes('tasks:read'):authority.submittedScopes.length!==0)
     ||!Number.isSafeInteger(policyRevision)||policyRevision<1||row.policy_digest!==policyDigest||!Number.isSafeInteger(revision)||revision<0||row.job_state!==row.stored_state)throw new SecurityError('ACCESS_REVOKED');
-  const validUntil=Math.min(Number(row.valid_until),Number(row.manager_until),Number(row.parent_until),Number(row.data_until),Number(row.authority_until),
+  const qualificationUntil=currentEligibility?Infinity:Math.min(Number(row.valid_until),Number(row.manager_until));
+  const validUntil=Math.min(qualificationUntil,Number(row.parent_until),Number(row.data_until),Number(row.authority_until),
     Date.parse(parent.expiresAt),Date.parse(grant.expiresAt),Date.parse(authority.expiresAt));
   if(!Number.isSafeInteger(validUntil)||validUntil<=Date.now())throw new SecurityError('ACCESS_REVOKED');
   return {authority,parent,grant,policyRevision,validUntil,clientId:String(row.client_id)};
 }
 
+/** Strict current timestamps for independent lease transactions. Only the
+ * admitted business path below may use a current qualification inspector. */
+export function postgresWorkerScopeQuery(schema:string):string{return workerScopeQuery(schema);}
+export function parsePostgresWorkerScope(row:Record<string,unknown>,owner:string,taskId:string,policyDigest:string){return parseWorkerScope(row,owner,taskId,policyDigest);}
+
 /** Business operations additionally retain the original transaction's authority
  * and response deadline. A Worker never borrows an Agent bearer identity. */
 export async function postgresWorkerAdmission(client:Client,owner:string,taskId:string,policyDigest:string){
   const schema=postgresBusinessSchema(client);
-  const rows=await client.query(postgresWorkerScopeQuery(schema),[policyDigest,owner,taskId,Date.now()]);
+  const currentEligibility=postgresCanInspectEligibility(client);
+  const rows=await client.query(workerScopeQuery(schema,currentEligibility),[policyDigest,owner,taskId,Date.now()]);
   if(rows.rowCount!==1)throw new SecurityError('AUTHORIZATION_REQUIRED');
   const row=rows.rows[0];if(row.runtime_digest!==postgresBusinessAuthorityDigest(client))throw new SecurityError('POLICY_CHANGED');
-  const scope=parsePostgresWorkerScope(row,owner,taskId,policyDigest);postgresConstrainReadDeadline(client,scope.validUntil);return scope;
+  const scope=parseWorkerScope(row,owner,taskId,policyDigest,currentEligibility);
+  if(currentEligibility){
+    if(typeof row.manager_token!=='string'||!row.manager_token)throw new SecurityError('AUTHORITY_UNAVAILABLE');
+    await postgresRequireCurrentEligibility(client,{ownerKey:owner,memberId:scope.authority.memberId,installationId:scope.authority.installationId,clientId:scope.clientId,
+      authEpoch:scope.authority.authEpoch,policyRevision:scope.policyRevision,policyDigest,managerTokenDigest:digest(row.manager_token),
+      parentGrant:{id:scope.parent.id,revision:scope.parent.revision,bodyDigest:digest(scope.parent)},
+      taskGrant:{id:scope.grant.id,revision:scope.grant.revision,bodyDigest:digest(scope.grant),taskId,requestRevision:scope.grant.requestRevision}});
+  }
+  postgresConstrainReadDeadline(client,scope.validUntil);return scope;
 }

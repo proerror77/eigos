@@ -9,7 +9,8 @@ import type { PlanningSnapshot } from '../ontology/planning-contract.js';
 import type { ActionIntent } from '../ontology/actions.js';
 import type { AgentActionContext, AgentActionResult } from './agent-program.js';
 import { objectRefSchema, type ObjectRef } from '../ontology/model.js';
-import { assertPortCompatible, compositionCompiler, evaluateCompositionChecks, readAcceptedPort, sealPortValue, type AcceptedPortValue, type CompositionPort } from '../ontology/composition-contract.js';
+import { assertPortCompatible, assertAcceptedPortFreshness, compositionCompiler, evaluateCompositionChecks, readAcceptedPort, readAcceptedPortProgram, sealPortValue, type AcceptedPortValue, type CompositionPort } from '../ontology/composition-contract.js';
+import {graphRead,runGraphProgram,type GraphProgram,type ProjectionMetadata} from '../ontology/graph-program.js';
 
 function fail(message: string): never { throw new DomainError('CONFLICT', message); }
 const same = (a: unknown, b: unknown) => digest(a) === digest(b);
@@ -60,19 +61,31 @@ export function prepareComponentContexts(catalog: ExecutionCatalog, ctx: AgentPr
   return { contexts, request };
 }
 
-function receiptContext(ctx: AgentProgramContext, intent: ActionIntent, output: AcceptedPortValue) {
+export type AcceptedInputContext=Omit<AgentProgramContext,'graph'>&{graph:ProjectionMetadata};
+function receiptProofContext(ctx:AcceptedInputContext,intent:ActionIntent,output:AcceptedPortValue){
   return { owner: ctx.owner, requestId: ctx.request.id, requestRevision: ctx.request.revision, ontologyRelease: ctx.graph.releaseRef!, now: ctx.graph.now(),
     isAccepted: (value: AcceptedPortValue) => intent.owner === ctx.owner && intent.jobId === ctx.request.id && intent.id === value.intentId && intent.state === 'effect_confirmed'
       && intent.latestObservationId === value.observationId && same((intent.acceptedOutput?.ports as AcceptedPortValue[] | undefined)?.find(port => port.port === value.port), output)
       && same(intent.bindingRef, { id: value.binding.id, version: value.binding.version })
       && !!intent.lastVerifiedResult && intent.lastVerifiedResult.kind === 'confirmed' && value.evidence.refs.every(ref => intent.lastVerifiedResult!.evidenceRefs.includes(ref)),
-    readObject: (ref: ObjectRef) => { const view = ctx.graph.read(ctx.owner, ref); return { revision: view.revision, digest: digest(view.properties) }; },
     schema: compositionCompiler(ctx.graph.model).schema,
   };
 }
+function receiptContext(ctx:AgentProgramContext,intent:ActionIntent,output:AcceptedPortValue){return {...receiptProofContext(ctx,intent,output),
+  readObject:(ref:ObjectRef)=>{const view=ctx.graph.read(ctx.owner,ref);return {revision:view.revision,digest:digest(view.properties)};}};}
 export function acceptedInput(ctx: AgentProgramContext, intent: ActionIntent, port: string, consumer: CompositionPort): unknown {
+  return runGraphProgram(ctx.graph,acceptedInputProgram(ctx,intent,port,consumer));
+}
+export function* acceptedInputProgram(ctx:AcceptedInputContext,intent:ActionIntent,port:string,consumer:CompositionPort):GraphProgram<unknown>{
   const output = (intent.acceptedOutput?.ports as AcceptedPortValue[] | undefined)?.find(value => value.port === port) ?? fail('The original accepted observation has no such named output');
-  return readAcceptedPort(ctx.graph.model, output, consumer, receiptContext(ctx, intent, output));
+  const reader=readAcceptedPortProgram(ctx.graph.model,output,consumer,receiptProofContext(ctx,intent,output));let step=reader.next();
+  while(!step.done){
+    let current:{revision:number;digest:string};
+    try{const object=yield* graphRead(ctx.owner,step.value);current={revision:object.revision,digest:digest(object.properties)};}
+    catch(error){step=reader.throw(error);continue;}
+    step=reader.next(current);
+  }
+  assertAcceptedPortFreshness(output,consumer,ctx.graph.now());return step.value;
 }
 export function assertAcceptedOutputCurrent(catalog: ExecutionCatalog, ctx: AgentProgramContext, intent: ActionIntent, port: string): AcceptedPortValue {
   const source = ctx.state.plans.flatMap(plan => plan.steps).find(step => step.intentId === intent.id) ?? fail('Accepted producer has no original task plan');

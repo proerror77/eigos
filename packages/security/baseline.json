@@ -2910,7 +2910,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "df40c24b559e6d6af04b87bdc14e759b0b5dc6318ada4cffc491df7b10768a1b",
+      "sourceDigest": "23a2086a2e1d078d43eeeacf48f4f91e7c9665e9e2c7660f9a39a616e34a180a",
       "channels": [
         "http",
         "mcp",
@@ -3135,7 +3135,7 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "9c5ff3b5799370b4ecd66d53ff4c37c7c5dee7472740a994a086a0238991c1b6",
+      "sourceDigest": "4eaa1584b87f88f946e1e86c2472f696e4c684c86d44099d9994266a3fab75f3",
       "channels": [
         "registered_model",
         "private_file"
@@ -4598,7 +4598,7 @@
       "currentControl": "Original accepted ports, same-component declared functions, exact source observations, ownership, freshness and independent input validation",
       "targetControl": "No guessed values, cross-task aliases, implicit conversions or authority from model text",
       "stage": "S5",
-      "sourceDigest": "36e8480e3673418255328e0b7e928bd5684ede096c780072746d6064af62527c"
+      "sourceDigest": "b9043ec3bdb4d97709721458307addcfa9fa2dc3ab7d73886cb75b1f36112090"
     },
     {
       "id": "native-agent-decision-contract",
@@ -5540,7 +5540,7 @@
       "currentControl": "Serializable business state after transaction-scoped table serialization, exact authority/transaction identity and savepoint guards; current deadlines before/after commit, unknown-outcome eviction and no automatic retries",
       "targetControl": "Serializable business state after transaction-scoped table serialization, exact authority/transaction identity and savepoint guards; current deadlines before/after commit, unknown-outcome eviction and no automatic retries",
       "stage": "S5",
-      "sourceDigest": "16be2bbb17cc4c73dbbbfb4592c88615f37e292b85ba922c4961612ddaff031e"
+      "sourceDigest": "6fb3c85e7080b0126f5547e02644cbbb23661360492ba1278d6838899ebacbe0"
     },
     {
       "id": "postgres-authority-lock",
@@ -5566,7 +5566,7 @@
       "currentControl": "Matches current subject, parent and data grants, manager lease, policy digest, revisions and expiry; fails closed without transaction",
       "targetControl": "Require independent claim, task state and policy scope validation before Worker execution",
       "stage": "S5",
-      "sourceDigest": "469f2c430f250a7f4394b994204b0eef0910492861153e5ab14502baeb5ccc8a"
+      "sourceDigest": "5ab51357b668c50debe335178a14ac1b9a71a531d3bc2272d79039c4fcb470b4"
     },
     {
       "id": "postgres-work-claim",
@@ -5676,7 +5676,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "ffd5572fad0bc8f75874b807643c2b2ce4ecf3c604af1ca4532088791999c22d",
+      "sourceDigest": "1c8321bcd40c317f33ec1741139ebf7e86701b2609d8e8491ce278db5ae91541",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current identity/task admission and deadlines, frozen request-scoped read snapshots, pinned ontology, roles, labels, direct/retained evidence and current source checks",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
@@ -5879,7 +5879,7 @@
     {
       "id": "postgres-database-runtime",
       "file": "packages/postgres/database.ts",
-      "sourceDigest": "543eb98a2ab540e42cd8efb6155fd9be78dd0d55458ad3c76bdf0549e0b2f31b",
+      "sourceDigest": "a05f81a5d1ce3574def748f4d31a49bc6eb4891e369b95a756549fb99f894eea",
       "channels": [
         "internal"
       ],
@@ -5951,7 +5951,7 @@
     {
       "id": "postgres-task-grants",
       "file": "packages/postgres/task-grants.ts",
-      "sourceDigest": "20c4800f4beb0c86153682451380e5df2d8cf161c03b4cc71b9f2f47f462a521",
+      "sourceDigest": "3594824091eeb3361630eea31768d87e5b19175ca1b86c8a7ac3fc153e491001",
       "channels": [
         "internal"
       ],
@@ -5975,7 +5975,7 @@
     {
       "id": "postgres-task-storage",
       "file": "packages/postgres/task-storage.ts",
-      "sourceDigest": "8cb9ece5b7503d6f7ff9e9ba8856e4a83c88ca452fd7cbfebe036d654d22f5bd",
+      "sourceDigest": "5ec8da7ce3925f986209a6f569bf25680469a9680221e32d2aba0b1758b6a21a",
       "channels": [
         "internal"
       ],
@@ -5987,7 +5987,7 @@
     {
       "id": "postgres-task-commands",
       "file": "packages/postgres/task-command-service.ts",
-      "sourceDigest": "1deccadcc32d0e26fbf712e996b9a79e5660b299a4ce09f295c0c5da0d7732ba",
+      "sourceDigest": "b58ca2b7bf9207d5f8d1cdb0301cd90dc5a725ed85dc011002ac2b7019eff784",
       "channels": [
         "internal"
       ],
@@ -5999,7 +5999,7 @@
     {
       "id": "postgres-worker-admission",
       "file": "packages/postgres/worker-admission.ts",
-      "sourceDigest": "ea30366fe20262918ec6df62895af7351a1a0b8d3e9c7fd9da3b929a762bffbc",
+      "sourceDigest": "f7703b3d3ce2747b8195512eea22310dd0384b59b7cd98238139d236afa3a999",
       "channels": [
         "internal"
       ],
@@ -6158,7 +6158,7 @@
     {
       "id": "postgres-independent-lease-renewal",
       "file": "packages/postgres/lease-renewal.ts",
-      "sourceDigest": "9ce3c19fd21d145967f34c55afab1f51a7b2583543ad5ef1101951aa9d51e1b9",
+      "sourceDigest": "c672a9af7caf242c038ba6a9f59ef28331d86eb7abbda46bcaba6133f990df4d",
       "channels": [
         "internal"
       ],
@@ -6290,7 +6290,7 @@
     {
       "id": "postgres-claim-release",
       "file": "packages/postgres/claim-release.ts",
-      "sourceDigest": "09e7fd247f2a359b387ce815599d4b8cce14cb78cee42a5372f1f0cd3fb33313",
+      "sourceDigest": "1e872980da4d3a090dd44babfd3303693b1183d3b1590cc3ad4e21d1cdf67439",
       "channels": [
         "internal"
       ],
@@ -6489,6 +6489,66 @@
       "content": "PostgreSQL task permission metadata and action readiness",
       "currentControl": "Current original signed Agent/task grant/policy and exact operation; fields-only binding scope and separate resource/function/action/export reasons; no output channel, value disclosure, grant, claim or dispatch authority",
       "targetControl": "Current original signed Agent/task grant/policy and exact operation; fields-only binding scope and separate resource/function/action/export reasons; no output channel, value disclosure, grant, claim or dispatch authority",
+      "stage": "S5"
+    },
+    {
+      "id": "model-output-contract",
+      "file": "packages/capabilities/model-output.ts",
+      "sourceDigest": "c2ea26276adc93bd1d288fa85a093c90f0ace149a80c5a99a32954c294ca9f3d",
+      "channels": [
+        "internal"
+      ],
+      "content": "Pure bounded model output validation",
+      "currentControl": "Same strict ask-user/complete schema shared by executor and storage validators; completed output needs a deliverable and clarification cannot claim completion; no model or subprocess import",
+      "targetControl": "Same strict ask-user/complete schema shared by executor and storage validators; completed output needs a deliverable and clarification cannot claim completion; no model or subprocess import",
+      "stage": "S5"
+    },
+    {
+      "id": "document-program",
+      "file": "packages/capabilities/document-program.ts",
+      "sourceDigest": "ea63fea2018e858eac8cc306afa80643c4d02f8d619fb2bb34154e36ad18b5a5",
+      "channels": [
+        "internal"
+      ],
+      "content": "Shared document evidence and execution programs",
+      "currentControl": "Same original scope, six-call bound, actual invocation/model receipt, citations/versions and fixed evidence expiry; storage programs complete before external model dispatch and verified projection is atomic; document is only an artifact",
+      "targetControl": "Same original scope, six-call bound, actual invocation/model receipt, citations/versions and fixed evidence expiry; storage programs complete before external model dispatch and verified projection is atomic; document is only an artifact",
+      "stage": "S5"
+    },
+    {
+      "id": "task-recovery-commands",
+      "file": "packages/core/recovery-commands.ts",
+      "sourceDigest": "50d58768d92577f9582933569903ce19dff4e914c192f951a63c3858b4ef8dbb",
+      "channels": [
+        "internal"
+      ],
+      "content": "Shared original-operation reconcile and permit revocation",
+      "currentControl": "Original task and uncertain operation keys, PA handoff, terminal/revision and cumulative budgets preserved; storage effects run once, revoke plan permits only, no parent/data grant or provider execution",
+      "targetControl": "Original task and uncertain operation keys, PA handoff, terminal/revision and cumulative budgets preserved; storage effects run once, revoke plan permits only, no parent/data grant or provider execution",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-eligibility-reference",
+      "file": "packages/postgres/eligibility-reference.ts",
+      "sourceDigest": "3f53e76a8abed13f8ebdcd702318784a9f64cba805ad897fcdfee4e44fa799bd",
+      "channels": [
+        "internal"
+      ],
+      "content": "Internal current-eligibility continuity references",
+      "currentControl": "Server-captured original manager digest, identity/epoch/policy and exact parsed parent/task grant fingerprints; metadata only, no reusable permission or credential",
+      "targetControl": "Server-captured original manager digest, identity/epoch/policy and exact parsed parent/task grant fingerprints; metadata only, no reusable permission or credential",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-eligibility-inspection",
+      "file": "packages/postgres/eligibility-inspection.ts",
+      "sourceDigest": "42dfd0b03265e8f17ff0a4ae016f46bc7721fd2b44b87da268b6127eb9b5503b",
+      "channels": [
+        "internal"
+      ],
+      "content": "Independent current eligibility inspection",
+      "currentControl": "Read-only READ COMMITTED current original-manager/identity/fence/policy/grant checks with fixed expiry and bounded acknowledgement; no grant issuance, renewal, data write or role/request/claim replacement",
+      "targetControl": "Read-only READ COMMITTED current original-manager/identity/fence/policy/grant checks with fixed expiry and bounded acknowledgement; no grant issuance, renewal, data write or role/request/claim replacement",
       "stage": "S5"
     }
   ]

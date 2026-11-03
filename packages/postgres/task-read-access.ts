@@ -1,3 +1,6 @@
+import {postgresIsNewTaskGrant} from './task-grants.js';
+import {postgresCanInspectEligibility,postgresRequireCurrentEligibility} from './runtime-transaction.js';
+import type {PostgresEligibilityReference} from './eligibility-reference.js';
 import type { Client } from 'pg';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
@@ -59,6 +62,7 @@ async function postgresAgentAdmission(client: Client, principal: Principal, poli
   const now = Date.now();
   const row = (await client.query(`SELECT p.revision AS policy_revision,d.digest AS policy_digest,m.expires_at AS manager_expires_at,
     s.installation_id,s.owner,s.member_id,s.client_id,s.epoch,s.state,s.valid_until,
+    CASE WHEN octet_length(m.token)<=2000 THEN m.token END AS manager_token,
     EXISTS(SELECT 1 FROM ${q}.security_fences f WHERE f.owner=s.owner AND f.state<>'cleared'
       AND ((f.kind='member' AND f.target_id=s.member_id) OR (f.kind='connection' AND f.target_id=s.client_id)
         OR (f.kind='installation' AND f.target_id=s.installation_id))) AS fenced
@@ -66,11 +70,11 @@ async function postgresAgentAdmission(client: Client, principal: Principal, poli
     JOIN ${q}.security_settings cfg ON cfg.slot=p.slot AND cfg.version=2 AND cfg.mode='foundation'
     JOIN ${q}.security_manager m ON m.slot=p.slot
     LEFT JOIN ${q}.security_subjects s ON s.installation_id=$1 WHERE p.slot=1`,[actor.installationId])).rows[0];
-  const revision = Number(row?.policy_revision), managerExpiry = Number(row?.manager_expires_at);
-  if (!row || !Number.isSafeInteger(revision) || revision < 1 || row.policy_digest !== policyDigest || !Number.isSafeInteger(managerExpiry) || managerExpiry <= now) throw new SecurityError('AUTHORITY_UNAVAILABLE');
+  const revision = Number(row?.policy_revision), managerExpiry = Number(row?.manager_expires_at),currentEligibility=postgresCanInspectEligibility(client);
+  if (!row || !Number.isSafeInteger(revision) || revision < 1 || row.policy_digest !== policyDigest || !Number.isSafeInteger(managerExpiry) || (!currentEligibility&&managerExpiry <= now)) throw new SecurityError('AUTHORITY_UNAVAILABLE');
   const epoch = Number(row.epoch), subjectExpiry = Number(row.valid_until);
   if (row.installation_id !== actor.installationId || row.owner !== owner || row.member_id !== actor.memberId || row.client_id !== actor.clientId
-    || row.state !== 'active' || row.fenced !== false || !Number.isSafeInteger(subjectExpiry) || subjectExpiry <= now) throw new SecurityError('ACCESS_REVOKED');
+    || row.state !== 'active' || row.fenced !== false || !Number.isSafeInteger(subjectExpiry) || (!currentEligibility&&subjectExpiry <= now)) throw new SecurityError('ACCESS_REVOKED');
   if (!Number.isSafeInteger(epoch) || epoch !== actor.authEpoch) throw new SecurityError('POLICY_CHANGED');
   const parentRows = await client.query(`SELECT revision,state,expires_at,CASE WHEN octet_length(body)<=1048576 THEN body END AS body
     FROM ${q}.security_grants WHERE installation_id=$1 AND kind='agent_access' AND state='active' AND expires_at>$2 LIMIT 2`,[actor.installationId,now]);
@@ -78,9 +82,17 @@ async function postgresAgentAdmission(client: Client, principal: Principal, poli
   const parentRow = parentRows.rows[0], parent = agentAccessGrantSchema.parse({ ...JSON.parse(String(parentRow.body)), revision:Number(parentRow.revision),status:parentRow.state });
   if (parent.id !== actor.agentGrant.id || parent.revision !== actor.agentGrant.revision) throw new SecurityError('POLICY_CHANGED');
   if (parent.ownerKey !== owner || parent.memberId !== actor.memberId || parent.installationId !== actor.installationId) throw new SecurityError('ACCESS_REVOKED');
-  const validUntil=Math.min(managerExpiry,subjectExpiry,Number(parentRow.expires_at),Date.parse(parent.expiresAt));
+  const fixedUntil=Math.min(Number(parentRow.expires_at),Date.parse(parent.expiresAt));
+  const validUntil=currentEligibility?fixedUntil:Math.min(managerExpiry,subjectExpiry,fixedUntil);
   if(!Number.isSafeInteger(validUntil) || validUntil<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');
-  return {actor,parent,policyRevision:revision,validUntil};
+  let eligibility:PostgresEligibilityReference|undefined;
+  if(currentEligibility){
+    if(typeof row.manager_token!=='string'||!row.manager_token)throw new SecurityError('AUTHORITY_UNAVAILABLE');
+    eligibility={ownerKey:owner,memberId:actor.memberId,installationId:actor.installationId,clientId:actor.clientId,authEpoch:epoch,
+      policyRevision:revision,policyDigest,managerTokenDigest:digest(row.manager_token),parentGrant:{id:parent.id,revision:parent.revision,bodyDigest:digest(parent)}};
+    await postgresRequireCurrentEligibility(client,eligibility);
+  }
+  return {actor,parent,policyRevision:revision,validUntil,...(eligibility?{eligibility}:{})};
 }
 
 export async function postgresAgentMetadataAdmission(client:Client,principal:Principal,policyDigest:string) {
@@ -125,7 +137,7 @@ async function postgresTaskGrant(client: Client, principal: Principal, taskId: s
   const checking=mode.startsWith('check_');
   const id=taskIdSchema.parse(taskId),base=mode==='read'||checking?await postgresAgentReadAdmission(client,principal,policyDigest):await postgresAgentWriteAdmission(client,principal,policyDigest);
   const {actor,parent}=base,owner=ownerKey(principal),q=`"${postgresBusinessSchema(client)}"`,now=Date.now();
-  const rows = await client.query(`SELECT d.revision,d.state,d.expires_at,CASE WHEN octet_length(d.body)<=1048576 THEN d.body END AS body
+  const rows = await client.query(`SELECT d.id AS grant_id,d.revision,d.state,d.expires_at,CASE WHEN octet_length(d.body)<=1048576 THEN d.body END AS body
     FROM ${q}.security_grants d JOIN ${q}.jobs j ON j.id=$1 AND j.owner=d.owner
     CROSS JOIN LATERAL (SELECT ${q}.eigos_try_jsonb(d.body) AS value OFFSET 0) data
     CROSS JOIN LATERAL (SELECT ${q}.eigos_try_jsonb(j.body) AS value OFFSET 0) job
@@ -144,7 +156,7 @@ async function postgresTaskGrant(client: Client, principal: Principal, taskId: s
         WHERE key='revision' GROUP BY key HAVING count(*)>1) LIMIT 2`,[id,owner,actor.installationId,now,parent.id,parent.revision]);
   if (rows.rowCount !== 1 || rows.rows[0].body === null) throw new SecurityError('AUTHORIZATION_REQUIRED');
   const grantRow = rows.rows[0], grant = taskDataGrantSchema.parse({ ...JSON.parse(String(grantRow.body)),revision:Number(grantRow.revision),status:grantRow.state });
-  if (grant.ownerKey !== owner || grant.memberId !== actor.memberId || grant.installationId !== actor.installationId || grant.taskId !== id
+  if (grant.id!==grantRow.grant_id || grant.ownerKey !== owner || grant.memberId !== actor.memberId || grant.installationId !== actor.installationId || grant.taskId !== id
     || grant.parentGrant.id !== parent.id || grant.parentGrant.revision !== parent.revision || grant.purpose !== 'delegated_task'
     || (mode==='read'||mode==='check_result'? !grant.operations.includes('task.result.read')
       :mode==='process'||mode==='check_process'? !grant.operations.includes('task.process')
@@ -153,7 +165,15 @@ async function postgresTaskGrant(client: Client, principal: Principal, taskId: s
     || mode==='read'&&(!grant.channels.includes('agent_response')||!parent.channels.includes('agent_response'))) throw new SecurityError('AUTHORIZATION_REQUIRED');
   const validUntil=Math.min(base.validUntil,Number(grantRow.expires_at),Date.parse(grant.expiresAt));
   if(!Number.isSafeInteger(validUntil) || validUntil<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');
-  return { ...base,grant,validUntil };
+  let eligibility=base.eligibility;
+  // Only the trusted issuance path can record an exact NEW grant receipt.
+  // Its uncommitted row cannot be inspected on another connection. Existing
+  // grants still require fresh inspection, including across nested savepoints.
+  const taskGrant={id:grant.id,revision:grant.revision,bodyDigest:digest(grant),taskId:id,requestRevision:grant.requestRevision};
+  if(eligibility&&!await postgresIsNewTaskGrant(client,taskGrant)){
+    eligibility={...eligibility,taskGrant};await postgresRequireCurrentEligibility(client,eligibility);
+  }
+  return { ...base,grant,validUntil,...(eligibility?{eligibility}:{}) };
 }
 
 export async function postgresTaskReadGrant(client:Client,principal:Principal,taskId:string,policyDigest:string) {

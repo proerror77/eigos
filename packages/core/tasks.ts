@@ -1,3 +1,4 @@
+import {runRecoveryProgram,reconcileTransition,revokeAuthorizationTransition} from './recovery-commands.js';
 import {taskScopedServices} from './service-metadata.js';
 import {assertTechnicalResume,assertTechnicalResumeState,applyTechnicalResume} from './technical-resume.js';
 import {runReplyProgram,replyTransition,assertReplyTaskContext} from './reply-program.js';
@@ -566,67 +567,19 @@ export class TaskService {
   private reconcileRaw(p: Principal, id: string, requestId: string): Job {
     requireScope(p, 'tasks:write'); taskIdSchema.parse(id); const owner = ownerKey(p);
     return this.store.once(owner, `reconcile:${id}`, requestId, id, () => {
-      const job = this.store.get(owner, id);
-      if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.agent?.paPayment) {
-        const payment = verifyPAPaymentRequest(job, owner);
-      if (this.security && payment.request.version !== '2') throw new DomainError('FORBIDDEN','This payment handoff needs a reviewed foundation projection');
-        if (job.state === 'completed' || job.state === 'working' || job.state === 'submitted') return this.view(owner, job);
-        const terminal = ['canceled', 'failed', 'rejected'].includes(job.state);
-        payment.recoveryAttempts = 0; payment.readbackSequence++; payment.status = terminal ? 'withdrawn' : 'reported';
-        job.delegation.manualReconciliation = requestId; job.delegation.nextAt = 0; job.delegation.recoveryPending = terminal;
-        if (!terminal) { job.state = 'submitted'; job.delegation.phase = 'planning'; delete job.question; }
-        job.revision = (job.revision ?? 0) + 1; job.updatedAt = new Date().toISOString();
-        this.store.save(owner, job); return this.view(owner, job);
-      }
-      if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.agent) {
-        const pending = this.store.intents(owner, id).filter(i => !['read', 'local'].includes(i.effect) && ['needs_review', 'effect_unknown', 'awaiting_remote', 'dispatching'].includes(i.state));
-        if (!pending.length) return job;
-        for (const intent of pending) { intent.state = 'effect_unknown'; intent.failedQueries = 0; intent.nextAt = 0; this.store.saveIntent(owner, intent); }
-        job.delegation.manualReconciliation = requestId; job.delegation.nextAt = 0;
-        const terminal = ['canceled', 'failed', 'completed', 'auth-required'].includes(job.state);
-        job.delegation.recoveryPending = terminal; job.revision = (job.revision ?? 0) + 1;
-        if (!terminal) { job.state = 'working'; delete job.question; }
-        job.updatedAt = new Date().toISOString(); this.store.save(owner, job); return job;
-      }
-      if (job.delegation?.backendVersion !== BACKEND_VERSION || !job.delegation.plan) throw new DomainError('CONFLICT', 'No current business operation to reconcile');
-      let pending = false;
-      for (const intent of this.store.intents(owner, id)) if (['needs_review', 'effect_unknown', 'awaiting_remote', 'dispatching'].includes(intent.state)) { pending = true; intent.state = 'effect_unknown'; intent.failedQueries = 0; intent.nextAt = Date.now(); this.store.saveIntent(owner, intent); }
-      else if (intent.state === 'effect_confirmed' && intent.remoteRef && !['read', 'local'].includes(intent.effect)) { pending = true; intent.needsObservation = true; intent.nextAt = Date.now(); this.store.saveIntent(owner, intent); }
-      if (!pending) return job;
-      job.delegation.manualReconciliation = requestId;
-      const terminal = ['canceled', 'failed', 'completed', 'auth-required'].includes(job.state);
-      job.delegation.recoveryPending = terminal; job.delegation.nextAt = 0; job.revision = (job.revision ?? 0) + 1;
-      if (!terminal) { job.state = 'working'; delete job.question; } job.updatedAt = new Date().toISOString(); this.store.save(owner, job); return job;
+      const result=runRecoveryProgram({intents:this.store.intents.bind(this.store),saveIntent:this.store.saveIntent.bind(this.store),
+        revokeGrants:this.store.revokeGrants.bind(this.store),saveTask:this.store.save.bind(this.store)},
+        reconcileTransition(this.store.get(owner,id),owner,requestId,{foundation:!!this.security}));
+      return result.legacyView?this.view(owner,result.job):result.job;
     });
   }
   revokeAuthorization(p:Principal,id:string,requestId:string):Job {taskIdSchema.parse(id);return this.security?this.security.mutate(p,id,()=>this.revokeAuthorizationRaw(p,id,requestId)):this.revokeAuthorizationRaw(p,id,requestId);}
   private revokeAuthorizationRaw(p: Principal, id: string, requestId: string): Job {
     requireScope(p, 'tasks:write'); taskIdSchema.parse(id); const owner = ownerKey(p);
     return this.store.once(owner, `revoke:${id}`, requestId, id, () => {
-      const job = this.store.get(owner, id); const d = job.delegation;
-      const simulationPlan = d?.agent?.plans.find(plan => plan.id === d.agent?.pendingPlanId && plan.quote);
-      if (d?.backendVersion === BACKEND_VERSION && simulationPlan && !['completed', 'failed', 'canceled'].includes(job.state)) {
-        delete d.approval; job.revision = (job.revision ?? 0) + 1; d.nextAt = 0;
-        job.state = 'auth-required'; d.phase = 'awaiting_authorization'; job.updatedAt = new Date().toISOString();
-        d.events.push({ at: job.updatedAt, event: 'authorization_revoked', evidence: simulationPlan.digest });
-        this.store.save(owner, job); return job;
-      }
-      if (d?.backendVersion === BACKEND_VERSION && d.agent && d.authorizationRequest && !['completed', 'failed', 'canceled'].includes(job.state)) {
-        this.store.revokeGrants(owner, id);
-        const intents = this.store.intents(owner, id);
-        const pendingWrite = intents.some(i => !['read', 'local'].includes(i.effect) && ['ready', 'dispatching', 'awaiting_remote', 'effect_unknown', 'needs_review'].includes(i.state));
-        if (!pendingWrite) { job.updatedAt = new Date().toISOString(); d.events.push({ at: job.updatedAt, event: 'agent_authority_revoked_readback_continues', evidence: requestId }); this.store.save(owner, job); return job; }
-        job.revision = (job.revision ?? 0) + 1;
-        for (const intent of intents) if (intent.state === 'dispatching' && !['read', 'local'].includes(intent.effect)) { intent.state = 'effect_unknown'; intent.nextAt = 0; this.store.saveIntent(owner, intent); }
-        d.recoveryPending = intents.some(i => !['read', 'local'].includes(i.effect) && ['dispatching', 'awaiting_remote', 'effect_unknown'].includes(i.state)); d.nextAt = 0;
-        job.state = 'auth-required'; d.phase = 'awaiting_authorization'; job.updatedAt = new Date().toISOString(); this.store.save(owner, job); return job;
-      }
-      if (d?.backendVersion !== BACKEND_VERSION || !d.plan || (!d.authorizationRequest && !d.plan.quote) || ['completed', 'failed', 'canceled'].includes(job.state)) throw new DomainError('CONFLICT', 'No open plan authorization to revoke');
-      this.store.revokeGrants(owner, id); delete d.approval; job.revision = (job.revision ?? 0) + 1;
-      d.recoveryPending = this.store.intents(owner, id).some(i => ['dispatching', 'awaiting_remote', 'effect_unknown'].includes(i.state)); d.nextAt = 0;
-      job.state = 'auth-required'; d.phase = 'awaiting_authorization'; job.updatedAt = new Date().toISOString();
-      d.events.push({ at: job.updatedAt, event: 'authorization_revoked', evidence: d.plan.digest });
-      this.store.save(owner, job); return job;
+      return runRecoveryProgram({intents:this.store.intents.bind(this.store),saveIntent:this.store.saveIntent.bind(this.store),
+        revokeGrants:this.store.revokeGrants.bind(this.store),saveTask:this.store.save.bind(this.store)},
+        revokeAuthorizationTransition(this.store.get(owner,id),owner,requestId)).job;
     });
   }
   requestRemediation(p:Principal,input:unknown):Job {const args=remediationSchema.parse(input);return this.security?this.security.mutate(p,args.originalTaskId,()=>this.requestRemediationRaw(p,args)):this.requestRemediationRaw(p,args);}

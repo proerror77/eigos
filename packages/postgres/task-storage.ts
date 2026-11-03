@@ -92,6 +92,25 @@ export class PostgresTaskStorage {
       await this.query('RELEASE SAVEPOINT eigos_intent_save');
     }catch(error){await this.query('ROLLBACK TO SAVEPOINT eigos_intent_save');await this.query('RELEASE SAVEPOINT eigos_intent_save');throw error;}
   }
+  /** Revoke only existing original-task plan permits. Parent/data grants and
+   * financial reservation amounts, states and fixed expirations stay intact. */
+  async revokeGrants(owner:string,taskId:string):Promise<void>{
+    await this.query('SAVEPOINT eigos_plan_grants_revoke');
+    try{
+      await this.get(owner,taskId);const q=`"${this.schema}"`;
+      const rows=await this.query(`SELECT id,CASE WHEN octet_length(body)<=8388608 AND sum(octet_length(body)) OVER()<=8388608 THEN body END AS body
+        FROM ${q}.plan_grants WHERE owner=$1 AND job_id=$2 ORDER BY id LIMIT 2001`,[owner,taskId]);
+      if(rows.rows.length>2000||rows.rows.some(row=>typeof row.body!=='string'))throw new DomainError('CONFLICT','Task plan permits exceed their safe read bound');
+      for(const row of rows.rows){
+        const grant=JSON.parse(row.body) as PlanGrant;
+        if(grant.id!==row.id||grant.owner!==owner||grant.jobId!==taskId)throw new DomainError('CONFLICT','Stored plan permit identity is invalid');
+        const body=JSON.stringify({...grant,revoked:true,revokedAt:grant.revokedAt??new Date().toISOString()});
+        const written=await this.query(`UPDATE ${q}.plan_grants SET body=$1 WHERE id=$2 AND owner=$3 AND job_id=$4 AND body=$5`,[body,row.id,owner,taskId,row.body]);
+        if(written.rowCount!==1)throw new DomainError('CONFLICT','Original plan permit changed');
+      }
+      await this.project(owner,await this.get(owner,taskId),false);await this.query('RELEASE SAVEPOINT eigos_plan_grants_revoke');
+    }catch(error){await this.query('ROLLBACK TO SAVEPOINT eigos_plan_grants_revoke');await this.query('RELEASE SAVEPOINT eigos_plan_grants_revoke');throw error;}
+  }
   async cancelActions(owner:string,taskId:string):Promise<boolean>{
     let pending=false;
     for(const intent of await this.intents(owner,taskId)){
