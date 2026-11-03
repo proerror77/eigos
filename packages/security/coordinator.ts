@@ -1,3 +1,4 @@
+import { consentDeadline, consentExpirySchema } from './consent-lifetime.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { DomainError, ownerKey, type Principal } from '../core/domain.js';
@@ -14,7 +15,7 @@ const grantFields = agentAccessGrantSchema.shape;
 const writeContention=(error:unknown)=>error instanceof Error && 'code' in error && error.code==='ERR_SQLITE_ERROR'
   && 'errcode' in error && typeof error.errcode==='number' && Number.isInteger(error.errcode) && (error.errcode&255)===5;
 export const agentGrantRequestSchema = z.strictObject({ installationId: grantFields.installationId, capabilityIds: grantFields.capabilityIds,
-  resources: grantFields.resources, sourceBindingIds: grantFields.sourceBindingIds, channels: grantFields.channels, expiresAt: grantFields.expiresAt });
+  resources: grantFields.resources, sourceBindingIds: grantFields.sourceBindingIds, channels: grantFields.channels, expiresAt: grantFields.expiresAt.default(null) });
 
 /** The sole online eligibility publisher. Administrative CLI processes may use
  * the same deny/restore methods, but cannot publish eligibility or issue grants
@@ -112,7 +113,7 @@ export class AuthorizationCoordinator {
     const owner=this.owned(memberId),installations=this.members.agents.list(memberId).map(a=>({id:a.id,name:a.displayName,revoked:a.revoked})),profiles=this.sourceProfiles(memberId).profiles;
     const types=[...new Set(['ServiceRequest',...TASK_PROJECTION_TYPES,...profiles.flatMap(p=>p.outputTypes)])];
     const grants=this.grants(memberId),jobs=this.jobs?.list(owner,{limit:50,offset:0}).jobs??[];
-    const grantedTaskIds=[...new Set(grants.flatMap(grant=>grant.kind==='task_data'&&grant.status==='active'&&Date.parse(grant.expiresAt)>this.store.now()?[grant.taskId]:[]))];
+    const grantedTaskIds=[...new Set(grants.flatMap(grant=>grant.kind==='task_data'&&grant.status==='active'&&consentDeadline(grant.expiresAt)>this.store.now()?[grant.taskId]:[]))];
     const grantedJobs=grantedTaskIds.length?this.jobs?.list(owner,{limit:grantedTaskIds.length,offset:0},grantedTaskIds).jobs??[]:[];
     const permissionJobs=[...new Map([...jobs,...grantedJobs].map(job=>[job.id,job])).values()];
     return {installations,grants,profiles,policyRevision:this.store.policies.revision(),recoveries:this.recoveries(memberId),recoveryCandidates:jobs.flatMap(job=>this.recoveryPreview(memberId,job.id).map(op=>({...op,taskId:job.id}))),
@@ -127,7 +128,7 @@ export class AuthorizationCoordinator {
       })};
   }
   approveSource(memberId:string,input:unknown) {
-    const args=z.strictObject({installationId:z.uuid(),bindingId:z.string().min(1),programId:z.string().min(1),operations:z.array(z.string()).min(1),outputTypes:z.array(z.string()).min(1),expiresAt:z.iso.datetime({offset:true}),expectedRevision:z.number().int().positive(),expectedAgentGrant:grantRefSchema}).parse(input);
+    const args=z.strictObject({installationId:z.uuid(),bindingId:z.string().min(1),programId:z.string().min(1),operations:z.array(z.string()).min(1),outputTypes:z.array(z.string()).min(1),expiresAt:consentExpirySchema.default(null),expectedRevision:z.number().int().positive(),expectedAgentGrant:grantRefSchema}).parse(input);
     const facts=this.members.authorizationFacts(memberId,args.installationId);
     if (!facts.active) throw new SecurityError('ACCESS_REVOKED');
     const profile=this.sourceProfiles(memberId).profiles.find(s=>s.programId===args.programId && s.bindingId===args.bindingId);
@@ -151,7 +152,7 @@ export class AuthorizationCoordinator {
     const args=z.strictObject({taskId:z.uuid(),installationId:z.uuid(),expectedRequestRevision:z.number().int().positive(),
       replaces: z.strictObject({id:z.uuid(),revision:z.number().int().positive()}).optional(),expectedAgentGrant:grantRefSchema,takeover:z.boolean().default(false),renewOriginal:z.boolean().default(false),
       expectedSources:z.array(z.strictObject({programId:z.string().min(1),programDigest:z.string().regex(/^[a-f0-9]{64}$/),bindingId:z.string().min(1)})).max(100).optional(),
-      inputs:fields.inputs,programIds:z.array(z.string().min(1)).max(100),purpose:fields.purpose,operations:fields.operations,channels:fields.channels,expiresAt:fields.expiresAt}).parse(input);
+      inputs:fields.inputs,programIds:z.array(z.string().min(1)).max(100),purpose:fields.purpose,operations:fields.operations,channels:fields.channels,expiresAt:fields.expiresAt.default(null)}).parse(input);
     const facts=this.members.authorizationFacts(memberId,args.installationId);
     if (!facts.active) throw new SecurityError('ACCESS_REVOKED');
     this.store.publishSubject(facts,this.token);
@@ -181,17 +182,17 @@ export class AuthorizationCoordinator {
           || (current.status!=='active' && !replacedWithParent) || job.state!=='paused' || this.jobs!.intents(facts.ownerKey,job.id).length
           || !args.operations.includes('task.process') || !equalSet(args.operations,current.operations) || !equalSet(args.channels,current.channels)
           || digest(args.inputs)!==digest(current.inputs) || args.purpose!==current.purpose
-          || Date.parse(args.expiresAt)>Math.min(Date.parse(current.expiresAt),Date.parse(original.expiresAt))
-          || Date.parse(current.expiresAt)<=this.store.now() || Date.parse(original.expiresAt)<=this.store.now()
+          || args.expiresAt!==null && (consentDeadline(args.expiresAt)>Math.min(consentDeadline(current.expiresAt),consentDeadline(original.expiresAt))
+            || consentDeadline(current.expiresAt)<=this.store.now() || consentDeadline(original.expiresAt)<=this.store.now())
           || !args.programIds.length || new Set(args.programIds).size!==args.programIds.length
           || args.programIds.some(id=>!current.outputs.some(output=>output.programId===id)))
-          throw new DomainError('CONFLICT','Review an unexpired, undispatched paused task for its original PA; renewal cannot change its inputs, processing rights, channels or deadline');
+          throw new DomainError('CONFLICT','Review an undispatched paused task for its original PA; only explicit persistent consent may replace an expired deadline, without changing inputs, processing rights or channels');
         const profiles=this.sourceProfiles(memberId).profiles;
         if(args.expectedSources?.length!==args.programIds.length || args.programIds.some(id=>{
           const expected=args.expectedSources!.filter(s=>s.programId===id),source=sources.find(s=>s.programId===id);
           return expected.length!==1 || !source || expected[0]!.programDigest!==source.programDigest || expected[0]!.bindingId!==source.bindingId
             || !profiles.some(p=>p.programId===id && p.bindingId===source.bindingId && p.programDigest===source.programDigest)
-            || Date.parse(args.expiresAt)>Date.parse(source.expiresAt);
+            || consentDeadline(args.expiresAt)>consentDeadline(source.expiresAt);
         }))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
       }
       const outputs=sources.filter(s=>args.programIds.includes(s.programId)).flatMap(s=>s.outputTypes.flatMap(type=>{

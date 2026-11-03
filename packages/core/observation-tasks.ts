@@ -1,3 +1,4 @@
+import { consentDeadline } from '../security/consent-lifetime.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { DomainError, ownerKey, requireScope, type Job, type Principal } from './domain.js';
@@ -62,7 +63,7 @@ export class ObservationTasks {
     if (program.configurationDigest !== intake.configurationDigest || (program.capability().environment ?? 'local') !== intake.environment || !program.actionIds.includes(args.read.action) || !definition.read || definition.operation
       || definition.read.effect !== 'read' || !action || action.definitionDigest !== digest(definition)) conflict('Observation requires an exact published source read action');
     security.policies.requireResource(security.policies.scope(owner), 'actionType', args.read.action, 'action.execute');
-    const until = Math.min(Date.parse(parent.expiresAt), Date.parse(source.expiresAt));
+    const until = Math.min(consentDeadline(parent.expiresAt), consentDeadline(source.expiresAt));
     if (Date.parse(args.until) > until) conflict('Observation cannot outlive the current installation and source permission');
     const input = z.record(z.string(), z.unknown()).parse(program.schema(args.read.action).parse(args.read.input));
     assertDefinitionJson(input);

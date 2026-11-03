@@ -1,3 +1,4 @@
+import { consentDeadline } from './consent-lifetime.js';
 import type {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
@@ -74,7 +75,7 @@ export class RecoveryStore {
       const expiry=Date.parse(args.expiresAt);
       if(!source || !this.security.policies.resourceAllowedFor(memberId,subject.installationId,'actionType',original.operation.action)
         || !parent.sourceBindingIds.includes(source.bindingId) || !parent.capabilityIds.includes(source.programId) || expiry<=this.security.now()
-        || expiry>Math.min(this.security.now()+3600000,Date.parse(parent.expiresAt),Date.parse(source.expiresAt))) throw new SecurityError('SOURCE_NOT_AUTHORIZED');
+        || expiry>Math.min(this.security.now()+3600000,consentDeadline(parent.expiresAt),consentDeadline(source.expiresAt))) throw new SecurityError('SOURCE_NOT_AUTHORIZED');
       const permit:RecoveryPermit={...original.operation,id:randomUUID(),memberId,installationId:subject.installationId,authEpoch:subject.epoch,
         parentGrant:{id:parent.id,revision:parent.revision},sourceBindingId:source.bindingId,policyRevision:this.security.policies.revision(),issuedAt:this.security.now(),expiresAt:expiry};
       this.db.prepare("INSERT INTO security_recoveries VALUES(?,?,?,?,'pending',0,0,NULL,0,?,NULL)").run(permit.id,owner,permit.taskId,permit.intentId,JSON.stringify(permit));

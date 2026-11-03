@@ -1,3 +1,4 @@
+import { consentDeadline } from '../packages/security/consent-lifetime.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {securityGatewayFixture} from './fixtures/security-gateway.js';
@@ -6,7 +7,7 @@ import {DidiAgentProgram} from '../packages/capabilities/didi/program.js';
 import {ExecutionCatalog} from '../packages/core/catalog.js';
 import {ownerKey} from '../packages/core/domain.js';
 import {randomUUID} from 'node:crypto';
-import {customerPermissionOverview,permissionsPage,preparePermissionReview} from '../apps/gateway/members/permissions-page.js';
+import {customerPermissionOverview,permissionsPage,preparePermissionReview,permissionReviewPage} from '../apps/gateway/members/permissions-page.js';
 
 async function fixture() {
   const source=didiFixture(),f=await securityGatewayFixture((_store,p)=>{
@@ -25,6 +26,26 @@ async function fixture() {
   }
   return {...f,a,b,now,profile,source,close:async()=>{await f.close();source.close();}};
 }
+
+test('new installation and source reviews default to until-revoked consent and render its actual lifetime',async()=>{
+  const f=await fixture();try {
+    const manager=f.gateway.security!,view=manager.managementView(f.member.id);
+    const prior=view.grants.find(g=>g.kind==='agent_access' && g.installationId===f.a.id)!;
+    assert.equal(prior.kind,'agent_access');if(prior.kind!=='agent_access')assert.fail();
+    const review=preparePermissionReview(view,{kind:'agent',installationId:f.a.id,programs:prior.capabilityIds,
+      fields:prior.resources.flatMap(row=>row.fields.map(field=>`${row.type}.${field}`)),channels:prior.channels},f.now);
+    assert.equal(review.input.expiresAt,null);
+    assert(permissionReviewPage(review,view,f.member,f.session.csrf,'synthetic-review').includes('持续有效，直到你主动撤销'));
+    manager.revokeGrant(f.member.id,prior.id,prior.revision);manager.approveAgentGrant(f.member.id,review.input);
+    const next=manager.managementView(f.member.id),source=preparePermissionReview(next,{kind:'source',installationId:f.a.id,
+      programId:f.profile.programId,operations:'SearchDidiPlaces',outputTypes:'DidiPlaceObservation'},f.now);
+    assert.equal(source.input.expiresAt,null);manager.approveSource(f.member.id,source.input);
+    const current=manager.managementView(f.member.id),html=customerPermissionOverview(current,f.member,f.session.csrf,f.now);
+    assert(html.includes('持续有效，直到你主动撤销'));assert(!html.includes('Invalid Date'));assert(!html.includes('9999'));
+    assert(permissionsPage(current,f.member,f.session.csrf).includes('name="hours" value="permanent"'));
+    assert.equal(f.source.calls.length,0);
+  }finally{await f.close();}
+});
 
 test('customer permissions keep each connection action, data, purpose and expiry separate',async()=>{
   const f=await fixture();try {
@@ -107,7 +128,7 @@ test('permission replacement preserves an exact existing deadline without copyin
     assert.throws(()=>preparePermissionReview(view,{...form,programs:'unavailable.capability'},f.now),/available capability/);
     assert.throws(()=>preparePermissionReview(view,{...form,expiryGrantId:foreign.id},f.now),/this installation/);
     assert.throws(()=>preparePermissionReview(view,{...form,expiryGrantId:randomUUID()},f.now),/this installation/);
-    assert.throws(()=>preparePermissionReview(view,form,Date.parse(prior.expiresAt)),/unexpired/);
+    assert.throws(()=>preparePermissionReview(view,form,consentDeadline(prior.expiresAt)),/unexpired/);
     assert.throws(()=>preparePermissionReview(view,{...form,kind:'task'},f.now),/Only installation and source/);
     manager.revokeGrant(f.member.id,prior.id,prior.revision);
     const replaced=manager.managementView(f.member.id);
@@ -118,7 +139,7 @@ test('permission replacement preserves an exact existing deadline without copyin
     const sourceForm={kind:'source',installationId:f.a.id,programId:f.profile.programId,operations:'SearchDidiPlaces',outputTypes:'DidiPlaceObservation',expiryGrantId:prior.id,hours:'1'};
     const current=manager.managementView(f.member.id);
     assert.equal(preparePermissionReview(current,sourceForm,f.now).input.expiresAt,prior.expiresAt);
-    const shorter=new Date(Date.parse(parent.expiresAt)-1000).toISOString();
+    const shorter=new Date(consentDeadline(parent.expiresAt)-1000).toISOString();
     const clipped={...current,grants:current.grants.map(g=>g.id===parent.id?{...g,expiresAt:shorter}:g)};
     assert.equal(preparePermissionReview(clipped,sourceForm,f.now).input.expiresAt,shorter);
     assert(permissionsPage(current,f.member,f.session.csrf).includes('name="expiryGrantId"'));

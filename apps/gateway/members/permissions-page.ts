@@ -1,3 +1,4 @@
+import { consentDeadline, minimumConsentExpiry, type ConsentExpiry } from '../../../packages/security/consent-lifetime.js';
 import {z} from 'zod';
 import {memberLayout} from './page.js';
 import type {AuthorizationCoordinator} from '../../../packages/security/coordinator.js';
@@ -12,7 +13,7 @@ const values=(v:unknown)=>v===undefined?[]:z.array(z.string().max(2000)).max(100
 const options=(view:View)=>view.installations.filter(a=>!a.revoked).map(a=>`<option value="${escape(a.id)}">${escape(a.name)} · ${escape(a.id.slice(0,8))}</option>`).join('');
 const check=(name:string,value:string,label:string)=>`<label class="check"><input type="checkbox" name="${name}" value="${escape(value)}"><span>${label}</span></label>`;
 const hidden=(name:string,value:unknown)=>`<input type="hidden" name="${name}" value="${escape(value)}">`;
-const expiry=(member:Member,value:unknown)=>new Intl.DateTimeFormat(member.locale,{timeZone:member.timezone,dateStyle:'medium',timeStyle:'short'}).format(new Date(String(value)));
+const expiry=(member:Member,value:unknown)=>value===null?'持续有效，直到你主动撤销':new Intl.DateTimeFormat(member.locale,{timeZone:member.timezone,dateStyle:'medium',timeStyle:'short'}).format(new Date(String(value)));
 
 const serviceNames:Record<string,string>={
   'brief.prepare.atomic':'整理任务说明','document.compose':'生成文档','ride.estimate.query':'地点与出行估价',
@@ -83,18 +84,18 @@ function inputSummary(view:View,inputs:readonly {object:{type:string;id:string};
  * Never form a broader permission by joining independent connections. */
 export function customerPermissionOverview(view:View,member:Member,csrf:string,now=Date.now()) {
   const installations=new Set(view.installations.filter(installation=>!installation.revoked).map(installation=>installation.id));
-  const active=view.grants.filter(grant=>installations.has(grant.installationId)&&grant.status==='active'&&Date.parse(grant.expiresAt)>now);
+  const active=view.grants.filter(grant=>installations.has(grant.installationId)&&grant.status==='active'&&consentDeadline(grant.expiresAt)>now);
   const parents=active.filter(grant=>grant.kind==='agent_access');
   const revoke=(kind:'revoke'|'revoke_source',installationId:string,id:string)=>`<form method="post" action="/members/permissions/review">${hidden('_csrf',csrf)}${hidden('kind',kind)}${hidden('installationId',installationId)}${hidden(kind==='revoke'?'grantId':'bindingId',id)}<button type="submit">查看收回授权的影响</button></form>`;
   const resources=(rows:readonly {type:string;fields:string[]}[])=>resourceSummary(view,rows);
   const sources=view.sources.flatMap(source=>{
     const parent=parents.find(grant=>grant.installationId===source.installationId);
     const profile=view.profiles.find(item=>item.programId===source.programId&&item.bindingId===source.bindingId);
-    if(!parent||parent.kind!=='agent_access'||!profile||Date.parse(source.expiresAt)<=now||!parent.sourceBindingIds.includes(source.bindingId)
+    if(!parent||parent.kind!=='agent_access'||!profile||consentDeadline(source.expiresAt)<=now||!parent.sourceBindingIds.includes(source.bindingId)
       ||![profile.programId,profile.capabilityId].some(id=>parent.capabilityIds.includes(id)))return [];
     const rows=parent.resources.filter(row=>source.outputTypes.includes(row.type));
     if(!rows.length)return [];
-    const until=new Date(Math.min(Date.parse(parent.expiresAt),Date.parse(source.expiresAt))).toISOString();
+    const until=minimumConsentExpiry(parent.expiresAt,source.expiresAt);
     return [{source,parent,profile,rows,until}];
   });
   const services=sources.map(({source,parent,profile,rows,until},index)=>`<article class="permission-range">
@@ -120,12 +121,12 @@ export function customerPermissionOverview(view:View,member:Member,csrf:string,n
 export function preparePermissionReview(view:View,form:Record<string,unknown>,now=Date.now()):PermissionReview {
   const kind=z.enum(['agent','source','task','revoke','revoke_source','recovery']).parse(form.kind),installationId=z.uuid().parse(form.installationId);
   if(!view.installations.some(a=>a.id===installationId && !a.revoked)) throw new Error('Unknown installation');
-  const hours=z.coerce.number().int().min(1).max(kind==='agent'?720:24).parse(form.hours??1);
-  let expiresAt=new Date(now+hours*3600000).toISOString();
+  const hours=form.hours===undefined || form.hours==='permanent' ? null : z.coerce.number().int().min(1).max(kind==='agent'?720:24).parse(form.hours);
+  let expiresAt: ConsentExpiry=hours===null ? null : new Date(now+hours*3600000).toISOString();
   if(form.expiryGrantId) {
     if(kind!=='agent' && kind!=='source')throw new Error('Only installation and source reviews can reuse a ceiling deadline');
     const id=z.uuid().parse(form.expiryGrantId),prior=view.grants.find(g=>g.id===id && g.kind==='agent_access' && g.installationId===installationId);
-    if(!prior || Date.parse(prior.expiresAt)<=now)throw new Error('Choose an unexpired permission boundary for this installation');
+    if(!prior || consentDeadline(prior.expiresAt)<=now)throw new Error('Choose an unexpired permission boundary for this installation');
     expiresAt=prior.expiresAt;
   }
   const selectedChannels=values(form.channels);if(!selectedChannels.every(c=>Object.hasOwn(channels,c)))throw new Error('Unknown channel');
@@ -141,7 +142,7 @@ export function preparePermissionReview(view:View,form:Record<string,unknown>,no
     if(!profile || !parent)throw new Error('Approve the installation ceiling first');
     const operations=values(form.operations),outputTypes=values(form.outputTypes);
     if(!operations.length || !outputTypes.length || !operations.every(o=>profile.operations.includes(o)) || !outputTypes.every(t=>profile.outputTypes.includes(t)))throw new Error('Choose available source operations and outputs');
-    input={installationId,bindingId:profile.bindingId,programId:profile.programId,operations,outputTypes,expiresAt:new Date(Math.min(Date.parse(expiresAt),Date.parse(parent.expiresAt))).toISOString(),expectedRevision:view.policyRevision,expectedAgentGrant:{id:parent.id,revision:parent.revision}};
+    input={installationId,bindingId:profile.bindingId,programId:profile.programId,operations,outputTypes,expiresAt:minimumConsentExpiry(expiresAt,parent.expiresAt),expectedRevision:view.policyRevision,expectedAgentGrant:{id:parent.id,revision:parent.revision}};
   } else if(kind==='task') {
     const task=view.tasks.find(t=>t.id===form.taskId),parent=view.grants.find(g=>g.kind==='agent_access' && g.installationId===installationId && g.status==='active');
     if(!task || !parent)throw new Error('Choose an owned task and active installation ceiling');
@@ -156,11 +157,11 @@ export function preparePermissionReview(view:View,form:Record<string,unknown>,no
     if(renewOriginal && (task.continuation?.installationId!==installationId || current?.kind!=='task_data'))throw new Error('Choose the original PA and its paused task');
     input={installationId,taskId:task.id,expectedRequestRevision:task.requestRevision,expectedAgentGrant:{id:parent.id,revision:parent.revision},...(current?{replaces:{id:current.id,revision:current.revision}}:{}),takeover,
       inputs,programIds,purpose:'delegated_task',operations:['task.query','task.result.read',...(takeover?['task.process']:[]),...(inputs.length?['member_asset.read']:[]),...(selectedChannels.includes('controlled_download')?['artifact.export']:[])],
-      channels:selectedChannels,expiresAt:new Date(Math.min(Date.parse(expiresAt),Date.parse(parent.expiresAt))).toISOString()};
+      channels:selectedChannels,expiresAt:minimumConsentExpiry(expiresAt,parent.expiresAt)};
     if(renewOriginal && current?.kind==='task_data') {
       const sources=programIds.map(id=>view.sources.find(s=>s.installationId===installationId && s.programId===id)!);
       Object.assign(input,{renewOriginal:true,inputs:selected.length?inputs:current.inputs,operations:current.operations,channels:selectedChannels.length?selectedChannels:current.channels,
-        expiresAt:new Date(Math.min(Date.parse(String(input.expiresAt)),Date.parse(current.expiresAt),...sources.map(s=>Date.parse(s.expiresAt)))).toISOString(),
+        expiresAt:minimumConsentExpiry(input.expiresAt as ConsentExpiry,...(expiresAt===null?[]:[current.expiresAt]),...sources.map(s=>s.expiresAt)),
         expectedSources:sources.map(s=>({programId:s.programId,programDigest:s.programDigest,bindingId:s.bindingId}))});
     }
     if(!selectedChannels.length && !renewOriginal)throw new Error('Choose a delivery channel');
@@ -169,7 +170,7 @@ export function preparePermissionReview(view:View,form:Record<string,unknown>,no
     const source=operation?view.sources.find(s=>s.installationId===installationId && s.programId===operation.programId && s.operations.includes('recover_original')):undefined;
     const parent=view.grants.find(g=>g.kind==='agent_access' && g.installationId===installationId && g.status==='active');
     if(!operation || !source || !parent)throw new Error('No eligible original-operation observer');
-    input={installationId,intentId:operation.intentId,expectedIntentDigest:operation.expectedIntentDigest,expiresAt:new Date(Math.min(now+3600000,Date.parse(source.expiresAt),Date.parse(parent.expiresAt))).toISOString()};
+    input={installationId,intentId:operation.intentId,expectedIntentDigest:operation.expectedIntentDigest,expiresAt:new Date(Math.min(now+3600000,consentDeadline(source.expiresAt),consentDeadline(parent.expiresAt))).toISOString()};
   } else if(kind==='revoke_source') {
     const source=view.sources.find(s=>s.installationId===installationId && s.bindingId===form.bindingId);
     if(!source)throw new Error('Source authorization is no longer active');
@@ -185,8 +186,8 @@ export function permissionsPage(view:View,member:Member,csrf:string,notice?:stri
   const form=(kind:string,body:string)=>`<form method="post" action="/members/permissions/review">${hidden('_csrf',csrf)}${hidden('kind',kind)}${body}<button type="submit">${kind.startsWith('revoke')?'审阅撤销范围':'查看本次授权范围'}</button></form>`;
   const install=`<label>个人助手<select name="installationId" required>${options(view)}</select></label>`;
   const channelChoices=Object.entries(channels).filter(([key])=>key!=='member_ui').map(([key,label])=>check('channels',key,escape(label))).join('');
-  const active=view.grants.filter(g=>g.status==='active' && Date.parse(g.expiresAt)>Date.now());
-  const expiryChoice=`<label>沿用已有权限边界的截止时间（可选）<select name="expiryGrantId"><option value="">按下方有效期创建</option>${view.grants.filter(g=>g.kind==='agent_access' && Date.parse(g.expiresAt)>Date.now()).map(g=>`<option value="${escape(g.id)}">${escape(view.installations.find(a=>a.id===g.installationId)?.name??'助手')} · ${escape(g.installationId.slice(0,8))} · 至 ${escape(expiry(member,g.expiresAt))}</option>`).join('')}</select></label><p class="fine">只沿用所选连接的原截止时间，不复制原授权的能力或字段。替换后仍可选原记录，过期记录不可用。</p>`;
+  const active=view.grants.filter(g=>g.status==='active' && consentDeadline(g.expiresAt)>Date.now());
+  const expiryChoice=`<label>沿用已有权限边界的截止时间（可选）<select name="expiryGrantId"><option value="">按下方有效期创建</option>${view.grants.filter(g=>g.kind==='agent_access' && consentDeadline(g.expiresAt)>Date.now()).map(g=>`<option value="${escape(g.id)}">${escape(view.installations.find(a=>a.id===g.installationId)?.name??'助手')} · ${escape(g.installationId.slice(0,8))} · 至 ${escape(expiry(member,g.expiresAt))}</option>`).join('')}</select></label><p class="fine">只沿用所选连接的原截止时间，不复制原授权的能力或字段。替换后仍可选原记录，过期记录不可用。</p>`;
   const current=active.length?active.map(g=>`<article><h3>${escape(view.installations.find(a=>a.id===g.installationId)?.name??'助手')} · ${g.kind==='agent_access'?'安装授权上限':'任务授权'}</h3>
     <p>${g.kind==='task_data'?`任务 <code>${escape(g.taskId)}</code> · 请求版本 ${g.requestRevision}`:`${g.capabilityIds.length} 项能力 · ${g.resources.length} 类数据`}</p>
     <p>${g.channels.map(c=>escape(channels[c])).join(' · ')}<br>到期：${escape(expiry(member,g.expiresAt))}</p>
@@ -195,17 +196,17 @@ export function permissionsPage(view:View,member:Member,csrf:string,notice?:stri
   const ceilingCapabilities=new Map(view.profiles.flatMap(p=>[p.programId,p.capabilityId].map(id=>[id,`${p.name} · ${id}`] as const)));
   const ceilings=view.profiles.length && options(view)?form('agent',install+`<fieldset><legend>允许创建的任务能力</legend>${[...ceilingCapabilities].map(([id,name])=>check('programs',id,escape(name))).join('')}</fieldset>
     <fieldset><legend>可使用的数据字段</legend><p class="fine">结构化字段涵盖其完整子项；未勾选的字段不在授权内。</p>${view.fields.map(r=>`<details><summary>${escape(r.name)}</summary>${r.fields.map(f=>check('fields',`${r.type}.${f.field}`,`${escape(f.description)}${f.sensitive?' · 敏感数据':''}<small><code>${escape(r.type)}.${escape(f.field)}</code></small>`)).join('')}</details>`).join('')}</fieldset>
-    <fieldset><legend>允许的处理和交付渠道</legend>${channelChoices}</fieldset>${expiryChoice}<label>有效期<select name="hours"><option value="24">1 天</option><option value="168">7 天</option><option value="720">30 天</option></select></label>`):'<div class="empty">当前没有可授予的已绑定来源能力。来源必须先通过已有账号与连接资格检查。</div>';
-  const sourceForms=view.profiles.map(profile=>`<details><summary>${escape(profile.name)}</summary>${form('source',install+hidden('programId',profile.programId)+`<fieldset><legend>来源操作</legend>${profile.operations.map(o=>check('operations',o,escape(o==='recover_original'?'仅查询原操作的状态':o))).join('')}</fieldset><fieldset><legend>允许接收的数据类型</legend>${profile.outputTypes.map(t=>check('outputTypes',t,escape(view.fields.find(f=>f.type===t)?.name??t))).join('')}</fieldset>${expiryChoice}<label>有效期<select name="hours"><option value="1">1 小时</option><option value="8">8 小时</option><option value="24">24 小时</option></select></label>`)}</details>`).join('');
+    <fieldset><legend>允许的处理和交付渠道</legend>${channelChoices}</fieldset>${expiryChoice}<p>有效期：持续有效，直到你主动撤销。</p>${hidden('hours','permanent')}`):'<div class="empty">当前没有可授予的已绑定来源能力。来源必须先通过已有账号与连接资格检查。</div>';
+  const sourceForms=view.profiles.map(profile=>`<details><summary>${escape(profile.name)}</summary>${form('source',install+hidden('programId',profile.programId)+`<fieldset><legend>来源操作</legend>${profile.operations.map(o=>check('operations',o,escape(o==='recover_original'?'仅查询原操作的状态':o))).join('')}</fieldset><fieldset><legend>允许接收的数据类型</legend>${profile.outputTypes.map(t=>check('outputTypes',t,escape(view.fields.find(f=>f.type===t)?.name??t))).join('')}</fieldset>${expiryChoice}<p>有效期：持续有效，直到你主动撤销。</p>${hidden('hours','permanent')}`)}</details>`).join('');
   const taskForm=view.tasks.length && active.length?form('task',install+`<label>任务<select name="taskId">${view.tasks.filter(t=>t.requestRevision>0).map(t=>`<option value="${escape(t.id)}">${escape(t.id.slice(0,8))} · ${escape(t.state)} · 版本 ${t.requestRevision}</option>`).join('')}</select></label>
     <fieldset><legend>选定的现有输入</legend><p class="fine">只显示本人拥有、已开放定义且可委托的当前对象。每个选择固定对象版本与字段。</p>${view.objects.map(o=>`<details><summary>${escape(o.title)} · ${escape(o.object.type)}</summary><small><code>${escape(o.object.id)}</code> · 版本 ${o.objectRevision}</small>${o.fields.map(field=>check('inputs',JSON.stringify([o.object,o.objectRevision,field]),escape(field))).join('')}</details>`).join('')||'<p>暂无可选择的现有对象。</p>'}</fieldset>
     <fieldset><legend>本任务可接收的来源输出</legend>${view.profiles.map(p=>check('programs',p.programId,escape(p.name))).join('')}</fieldset>
-    <fieldset><legend>处理和交付</legend>${channelChoices}${check('renewOriginal','yes','更新原助手的来源授权，保留原任务、输入、处理权限、交付渠道和期限；授权后仍由原助手恢复。仅适用于尚未派发操作的暂停任务。')}${check('takeover','yes','允许这个助手继续处理任务；会撤销其他助手对此任务的授权。已发出的业务操作须先完成原操作查证。')}</fieldset>
-    <label>有效期<select name="hours"><option value="1">1 小时</option><option value="8">8 小时</option><option value="24">24 小时</option></select></label>`):'<p class="muted">有了安装授权和任务后，可以在这里批准输入、来源和接管范围。</p>';
+    <fieldset><legend>处理和交付</legend>${channelChoices}${check('renewOriginal','yes','更新原助手的授权并设为持续有效；沿用原任务、输入、处理权限和交付渠道，授权后仍由原助手恢复。仅适用于尚未派发操作的暂停任务。')}${check('takeover','yes','允许这个助手继续处理任务；会撤销其他助手对此任务的授权。已发出的业务操作须先完成原操作查证。')}</fieldset>
+    <p>有效期：持续有效，直到你主动撤销。</p>${hidden('hours','permanent')}`):'<p class="muted">有了安装授权和任务后，可以在这里批准输入、来源和接管范围。</p>';
   const recovery=view.recoveryCandidates.length && view.sources.some(s=>s.operations.includes('recover_original'))?form('recovery',install+`<label>原操作<select name="intentId">${view.recoveryCandidates.map(o=>`<option value="${escape(o.intentId)}">${escape(o.action)} · ${escape(o.taskId.slice(0,8))}</option>`).join('')}</select></label><p>仅回读原操作；最多三次、一小时内有效。结果进入审计记录。</p>`):'<p class="muted">当前没有具备专用只读观察器的待查证操作。</p>';
   return memberLayout(`<style>
     .permission-overview h1{font-family:"Iowan Old Style","Songti SC",Georgia,serif;font-weight:500}.permission-overview .lead{font-size:18px;line-height:1.7}.permission-range{padding:28px 0;border-top:1px solid var(--line)}.permission-range h3{font-size:21px;margin:0;overflow-wrap:anywhere}.permission-range dl{margin:22px 0;display:grid;grid-template-columns:128px 1fr;gap:14px 20px;font-size:14px;line-height:1.7}.permission-range dt{color:var(--muted)}.permission-range dd{margin:0;overflow-wrap:anywhere}.permission-range ul{margin:0;padding-left:20px}.permission-data small{display:block;font-size:12px;color:var(--muted)}.permission-data li{margin-bottom:10px}.permission-boundary{margin:16px 0}.permission-boundary dl{font-size:13px;line-height:1.7}.permission-boundary dd{margin:8px 0 20px}.permission-range form{margin-top:20px}.permission-overview h2{margin-top:42px}.permission-help p{font-size:14px;line-height:1.8}.permission-technical{margin-top:32px}.permission-technical .technical-body{font-size:13px}.permission-technical h2{font-size:18px}@media(max-width:760px){.permission-range dl{grid-template-columns:1fr;gap:5px}.permission-range dd{margin-bottom:14px}}
-    </style>${customerPermissionOverview(view,member,csrf)}<aside class="permission-help"><h2>你始终保留控制</h2><p>每份授权都有自己的范围和期限。选择“查看收回授权的影响”，核对后可以收回该项权限；历史结果和审计记录会保留。</p><h2>什么时候会再问你</h2><p>请求超出已有范围、需要额外资料，或业务规则要求单独确认时，再由你决定。日常的权限校验由系统自动完成。</p><h2>金额与对外操作</h2><p>这里显示数据与服务访问范围，不代表已经批准付款、购买或对外发送。具体业务操作仍按对应任务的许可执行。</p><details class="permission-technical" id="permission-technical"><summary>高级连接与权限明细</summary><div class="technical-body"><p>用于检查具体连接、授权记录及单个任务设置。这里的名称与编号是技术信息。</p><h2>当前授权记录</h2>${current}${sourceGrants}<details><summary>原始授权记录与完整字段</summary><pre class="review-data">${escape(JSON.stringify({grants:view.grants,sources:view.sources},null,2))}</pre></details><details><summary>新增安装授权上限</summary>${ceilings}</details><details><summary>批准来源操作</summary>${sourceForms||'<p>暂无可用来源。</p>'}</details><h2>任务范围与接管</h2>${taskForm}<details><summary>原操作查证</summary>${recovery}${view.recoveries.map(r=>`<p><code>${escape(r.intentId.slice(0,8))}</code> · ${escape(r.state)} · 已读 ${r.attempts} 次</p>`).join('')}</details></div></details><p><a href="/members">返回会员中心</a></p></aside>`,notice,'你的授权范围');
+    </style>${customerPermissionOverview(view,member,csrf)}<aside class="permission-help"><h2>你始终保留控制</h2><p>每份授权都有自己的范围。新开通的权限持续有效，直到你主动撤销；历史限时授权会显示原截止时间。选择“查看收回授权的影响”，核对后可以收回该项权限；历史结果和审计记录会保留。</p><h2>什么时候会再问你</h2><p>请求超出已有范围、需要额外资料，或业务规则要求单独确认时，再由你决定。日常的权限校验由系统自动完成。</p><h2>金额与对外操作</h2><p>这里显示数据与服务访问范围，不代表已经批准付款、购买或对外发送。具体业务操作仍按对应任务的许可执行。</p><details class="permission-technical" id="permission-technical"><summary>高级连接与权限明细</summary><div class="technical-body"><p>用于检查具体连接、授权记录及单个任务设置。这里的名称与编号是技术信息。</p><h2>当前授权记录</h2>${current}${sourceGrants}<details><summary>原始授权记录与完整字段</summary><pre class="review-data">${escape(JSON.stringify({grants:view.grants,sources:view.sources},null,2))}</pre></details><details><summary>新增安装授权上限</summary>${ceilings}</details><details><summary>批准来源操作</summary>${sourceForms||'<p>暂无可用来源。</p>'}</details><h2>任务范围与接管</h2>${taskForm}<details><summary>原操作查证</summary>${recovery}${view.recoveries.map(r=>`<p><code>${escape(r.intentId.slice(0,8))}</code> · ${escape(r.state)} · 已读 ${r.attempts} 次</p>`).join('')}</details></div></details><p><a href="/members">返回会员中心</a></p></aside>`,notice,'你的授权范围');
 }
 
 export function permissionReviewPage(review:PermissionReview,view:View,member:Member,csrf:string,id:string) {
@@ -255,7 +256,7 @@ export function permissionReviewPage(review:PermissionReview,view:View,member:Me
   }).join(''):'';
   return memberLayout(`<section><p class="eyebrow">确认范围</p><h1>${title}</h1><p>只影响下面列出的服务、资料或任务。</p>
     ${rows.map(row=>`<p><strong>${escape(row.label)}</strong><br>${escape(row.value)}</p>`).join('')}
-    ${expiresAt?`<p><strong>${revoking?'原授权有效至':'有效至'}</strong><br>${escape(expiry(member,expiresAt))}（${escape(member.timezone)}）</p>`:''}
+    ${expiresAt!==undefined?`<p><strong>${revoking?'原授权有效至':'有效至'}</strong><br>${escape(expiry(member,expiresAt))}（${escape(member.timezone)}）</p>`:''}
     ${selectedChannels?`<h2>资料用途</h2><ul>${purposes(selectedChannels)}</ul>`:''}
     ${resources?`<h2>${revoking?'将收回的资料范围':'可使用的资料范围'}</h2>${resourceSummary(view,resources)}`:''}
     ${inputs?`<h2>选定的已有资料</h2>${inputSummary(view,inputs)}`:''}

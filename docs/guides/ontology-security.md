@@ -16,6 +16,18 @@ Gateway 的资格协调器发布短期资格投影；Worker 在领取、心跳�
 
 会员本人在 `/members/permissions` 检查精确授权和来源资格；`/members/security/grants`、`/members/security/sources`、`/members/security/recoveries` 及任务 recovery-preview 是同一控制面。`npm run members -- approve/suspend` 读取数据库实际模式并复用撤销协调，不能因漏配环境变量绕过 foundation。
 
+## 持续有效的授权
+
+新开通的 PA 安装、来源及任务数据许可默认持续有效，直到本人主动撤销。合同使用明确的 `expiresAt: null`，页面显示“持续有效，直到你主动撤销”；不会生成一个虚构的未来到期日期。正常任务从长期安装许可继承长期任务许可，暂停、恢复和请求修订保留其有效性，MCP、A2A 与 HTTP 共用这些检查。
+
+既有明确截止日期继续生效。历史暂停任务可通过权限页的“更新原助手的授权并设为持续有效”一次性转换：安装上限和选定来源必须允许长期访问，原 PA、请求版本、输入、处理权限及交付渠道保持准确匹配。该操作只适用于没有操作账本的暂停任务，批准后仍暂停，随后由原 PA 恢复。单独撤销的授权不会自动恢复，未知业务操作仍走原操作查证。
+
+长期许可只改变用户同意的有效期。登录令牌、资格投影、Worker 领取、执行预算、观察委托期限、供应商报价和专用原操作恢复窗口仍有独立边界；撤销、取消、来源版本、字段、归属和结果时效检查照常执行。
+
+已有 Foundation 数据库先在维护窗口停止 Gateway／Worker，保存一致性备份，再运行 `scripts/upgrade-persistent-consent-policy.mjs --database /absolute/private/database --expected-digest <当前摘要> --expected-revision <当前版本>` 预览，加 `--apply` 才升级。正式库须配置准确的 `EIGOS_AUTHORITY_FILE`。升级只启用新合同，不延长或恢复任何已有许可，也不调用模型或供应商；既有许可的长期转换由会员明确审阅。
+
+旧策略在升级前继续执行原有有限期限；写入长期许可会明确拒绝，不能由启动过程自动采用新合同。旧历史策略指纹保持不变。SQL 到期索引对长期许可使用超出所有合法 JavaScript 日期的整数上界，权威 JSON 中仍为 `null`。回退到不认识该合同的代码需要明确的兼容处理，不能静默改回旧策略摘要。
+
 ## Foundation v2 协议
 
 MCP 与 A2A 都使用 `eigos.task.v2`，不返回原始 Job、模型历史或内部计划账本。完成要求 Task completed、`accepted=true` 和允许接收的实际输出；`outputStatus=restricted`／`receipt_only` 不是可用业务结果。附件通过受控下载接口单独检查。
