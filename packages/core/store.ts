@@ -1068,7 +1068,7 @@ export class JobStore {
     } catch (error) { this.db.exec('ROLLBACK TO task_and_ontology; RELEASE task_and_ontology'); throw error; }
   }
 
-  list(owner: string, filter: ListFilter, taskIds?: string[]): { jobs: Job[]; total: number } {
+  private listRows(owner: string, filter: ListFilter, taskIds: string[] | undefined, projection: 'body' | 'permissions') {
     const clauses = ['owner = ?'];
     const args: string[] = [owner];
     if (taskIds) { clauses.push('id IN (SELECT value FROM json_each(?))'); args.push(JSON.stringify(taskIds)); }
@@ -1077,9 +1077,25 @@ export class JobStore {
     if (filter.updatedAfter) { clauses.push('updated_at >= ?'); args.push(filter.updatedAfter); }
     const where = clauses.join(' AND ');
     const total = Number(this.db.prepare(`SELECT count(*) AS total FROM jobs WHERE ${where}`).get(...args)?.total ?? 0);
-    const rows = this.db.prepare(`SELECT body FROM jobs WHERE ${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`)
+    const columns = projection === 'permissions'
+      ? "json_extract(body,'$.id','$.goal','$.state','$.delegation.request.revision') AS metadata" : 'body';
+    const rows = this.db.prepare(`SELECT ${columns} FROM jobs WHERE ${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`)
       .all(...args, filter.limit, filter.offset);
+    return { rows, total };
+  }
+
+  list(owner: string, filter: ListFilter, taskIds?: string[]): { jobs: Job[]; total: number } {
+    const { rows, total } = this.listRows(owner, filter, taskIds, 'body');
     return { jobs: rows.map(row => JSON.parse(String(row.body)) as Job), total };
+  }
+
+  /** The member permission selector needs no messages, plans or execution history. */
+  listForPermissions(owner: string, filter: ListFilter, taskIds?: string[]) {
+    const { rows, total } = this.listRows(owner, filter, taskIds, 'permissions');
+    return { jobs: rows.map(row => {
+      const [id, goal, state, requestRevision] = JSON.parse(String(row.metadata)) as [string, string, JobState, number | null];
+      return { id, goal, state, requestRevision: requestRevision ?? 0 };
+    }), total };
   }
 
   assertTransaction(): void {

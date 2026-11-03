@@ -112,9 +112,9 @@ export class AuthorizationCoordinator {
   managementView(memberId:string) {
     const owner=this.owned(memberId),installations=this.members.agents.list(memberId).map(a=>({id:a.id,name:a.displayName,revoked:a.revoked})),profiles=this.sourceProfiles(memberId).profiles;
     const types=[...new Set(['ServiceRequest',...TASK_PROJECTION_TYPES,...profiles.flatMap(p=>p.outputTypes)])];
-    const grants=this.grants(memberId),jobs=this.jobs?.list(owner,{limit:50,offset:0}).jobs??[];
+    const grants=this.grants(memberId),jobs=this.jobs?.listForPermissions(owner,{limit:50,offset:0}).jobs??[];
     const grantedTaskIds=[...new Set(grants.flatMap(grant=>grant.kind==='task_data'&&grant.status==='active'&&consentDeadline(grant.expiresAt)>this.store.now()?[grant.taskId]:[]))];
-    const grantedJobs=grantedTaskIds.length?this.jobs?.list(owner,{limit:grantedTaskIds.length,offset:0},grantedTaskIds).jobs??[]:[];
+    const grantedJobs=grantedTaskIds.length?this.jobs?.listForPermissions(owner,{limit:grantedTaskIds.length,offset:0},grantedTaskIds).jobs??[]:[];
     const permissionJobs=[...new Map([...jobs,...grantedJobs].map(job=>[job.id,job])).values()];
     return {installations,grants,profiles,policyRevision:this.store.policies.revision(),recoveries:this.recoveries(memberId),recoveryCandidates:jobs.flatMap(job=>this.recoveryPreview(memberId,job.id).map(op=>({...op,taskId:job.id}))),
       sources:installations.flatMap(a=>this.store.policies.sources(owner,a.id)),objects:this.store.policies.memberCandidates(owner,memberId),
@@ -122,7 +122,7 @@ export class AuthorizationCoordinator {
       operationDescriptions:Object.fromEntries([...new Set(profiles.flatMap(profile=>profile.operations))].map(id=>[id,id==='recover_original'?'查询已经提交操作的状态':this.store.model.action(id).description])),
       tasks:permissionJobs.map(job=>{
         const authority=this.store.latestTaskAuthority(owner,job.id);
-        return {id:job.id,title:job.goal,state:job.state,requestRevision:job.delegation?.request.revision??0,
+        return {id:job.id,title:job.goal,state:job.state,requestRevision:job.requestRevision,
           continuation:job.state==='paused' && authority?.authorityOrigin==='agent_submission'
             ? {installationId:authority.installationId,grant:authority.dataGrant} : undefined};
       })};
