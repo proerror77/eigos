@@ -71,7 +71,7 @@ export async function verifyBusinessSnapshot(client:Client,options:BusinessVerif
 
 /** Sequence values are not governed by the row snapshot and can change at any
  * time. An operator must separately fence all writers before using this result. */
-async function verifySequences(client:Client,schema:string,plan:BusinessSnapshotPlan,identities:ReturnType<typeof compileBusinessSchema>['identities']) {
+export async function verifySequences(client:Client,schema:string,plan:BusinessSnapshotPlan,identities:ReturnType<typeof compileBusinessSchema>['identities']) {
   const byTable=new Map(plan.tables.map(table=>[table.name,table])),sourceSequence=new Map(plan.sequences.map(sequence=>[sequence.table,BigInt(sequence.lastValue)]));
   const expected=plan.tables.map(table=>({table:table.name,column:'__eigos_rowid',identity:'a',minimum:[BigInt(table.maxRowid??'0'),sourceSequence.get(table.name)??0n].reduce((a,b)=>a>b?a:b)}));
   for(const identity of identities){
@@ -103,7 +103,7 @@ async function verifySequences(client:Client,schema:string,plan:BusinessSnapshot
   return {checked:expected.length,atomicWithRows:false as const};
 }
 
-async function verifyTable(client:Client,schema:string,table:BusinessTable,index:number):Promise<void> {
+export async function verifyTable(client:Client,schema:string,table:BusinessTable,index:number):Promise<void> {
   const actual=await client.query(`SELECT a.attname,pg_catalog.format_type(a.atttypid,a.atttypmod) AS type,a.attnotnull
     FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname=$1 AND c.relname=$2 AND c.relkind='r' AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum`,[schema,table.name]);

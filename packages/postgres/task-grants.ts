@@ -83,13 +83,22 @@ export async function postgresProvisionTask(client:Client,principal:Principal,jo
   if(grant.purpose!=='delegated_task'||postgresConsentDeadline(grant.expiresAt,policyDigest)<=at||!grant.channels.every(channel=>parent.channels.includes(channel))
     ||!grant.inputs.every(input=>permitted(input.object.type,input.fields))
     ||!grant.outputs.every(output=>permitted(output.type,output.fields)&&parent.sourceBindingIds.includes(output.sourceBindingId)))throw new SecurityError('ACCESS_REVOKED');
-  for(const input of grant.inputs){const row=await client.query(`SELECT revision FROM ${q}.ontology_objects WHERE owner=$1 AND type=$2 AND id=$3`,[actor.ownerKey,input.object.type,input.object.id]);
-    if(row.rowCount!==1||String(row.rows[0]?.revision)!==String(input.objectRevision))throw new DomainError('CONFLICT','Grant input must reference a current owned object revision');}
+  if(grant.inputs.length){
+    const inputs=grant.inputs.map((input,n)=>({n,type:input.object.type,id:input.object.id,revision:input.objectRevision}));
+    const current=await client.query(`SELECT input.n,o.id IS NOT NULL AS found,o.revision FROM jsonb_to_recordset($1::jsonb) AS input(n integer,type text,id text,revision bigint)
+      LEFT JOIN ${q}.ontology_objects o ON o.owner=$2 AND o.type=input.type AND o.id=input.id ORDER BY input.n`,[JSON.stringify(inputs),actor.ownerKey]);
+    if(current.rowCount!==inputs.length||current.rows.some((row,index)=>row.n!==index||row.found!==true||String(row.revision)!==String(inputs[index]!.revision)))throw new DomainError('CONFLICT','Grant input must reference a current owned object revision');
+  }
   if(previous){
-    const revoked=await client.query(`UPDATE ${q}.security_grants SET state='revoked',revision=revision+1 WHERE owner=$1 AND id=$2 AND revision=$3 AND state='active'`,[actor.ownerKey,previous.id,previous.revision]);
-    if(revoked.rowCount!==1)throw new SecurityError('POLICY_CHANGED');
-    await client.query(`UPDATE ${q}.security_task_authorities SET state='revoked' WHERE data_grant_id=$1`,[previous.id]);
-    await client.query(`INSERT INTO ${q}.security_events(id,at,kind,subject_digest,revision) VALUES($1,$2,'grant_revoked',$3,$4)`,[randomUUID(),at,digest(previous.id),previous.revision+1]);
+    const revoked=await client.query(`WITH revoked AS(UPDATE ${q}.security_grants SET state='revoked',revision=revision+1
+        WHERE owner=$1 AND id=$2 AND revision=$3 AND state='active' RETURNING id),
+      authorities AS(UPDATE ${q}.security_task_authorities SET state='revoked' WHERE data_grant_id IN(SELECT id FROM revoked) RETURNING id),
+      event AS(INSERT INTO ${q}.security_events(id,at,kind,subject_digest,revision)
+        SELECT $4,CASE WHEN done.n>=0 THEN $5::bigint ELSE NULL END,'grant_revoked',$6,$7
+        FROM revoked CROSS JOIN(SELECT count(*) AS n FROM authorities) done RETURNING id)
+      SELECT(SELECT count(*) FROM revoked)=1 AS revoked,(SELECT count(*) FROM event)=1 AS audited`,
+      [actor.ownerKey,previous.id,previous.revision,randomUUID(),at,digest(previous.id),previous.revision+1]);
+    if(revoked.rowCount!==1||revoked.rows[0]?.revoked!==true||revoked.rows[0]?.audited!==true)throw new SecurityError('POLICY_CHANGED');
   }
   const inserted=await client.query(`INSERT INTO ${q}.security_grants(id,kind,owner,member_id,installation_id,parent_id,parent_revision,revision,state,expires_at,body)
     VALUES($1,'task_data',$2,$3,$4,$5,$6,1,'active',$7,$8) RETURNING xmin::text AS xmin,ctid::text AS tuple,tableoid::text AS "table"`,[grant.id,grant.ownerKey,grant.memberId,grant.installationId,parent.id,parent.revision,postgresConsentIndex(grant.expiresAt,policyDigest),JSON.stringify(grant)]);
@@ -98,10 +107,19 @@ export async function postgresProvisionTask(client:Client,principal:Principal,jo
     taskId:job.id,requestRevision:grant.requestRevision,agentGrant:grant.parentGrant,dataGrant:{id:grant.id,revision:grant.revision},submittedScopes:[...new Set(principal.scopes)],
     authEpoch:actor.authEpoch,policyVersion:POLICY_VERSION,issuedAt,expiresAt:grant.expiresAt});
   if(!grant.operations.includes('task.process')||!principal.scopes.includes('tasks:write')||grant.inputs.length>0&&!principal.scopes.includes('tasks:read'))throw new SecurityError('ACCESS_REVOKED');
-  if(authority)await client.query(`INSERT INTO ${q}.security_task_authorities(id,owner,member_id,installation_id,task_id,request_revision,agent_grant_id,agent_grant_revision,data_grant_id,data_grant_revision,auth_epoch,state,expires_at,body)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,1,$10,'active',$11,$12)`,[authority.id,authority.ownerKey,authority.memberId,authority.installationId,job.id,authority.requestRevision,parent.id,parent.revision,grant.id,actor.authEpoch,postgresConsentIndex(authority.expiresAt,policyDigest),JSON.stringify(authority)]);
-  await client.query(`INSERT INTO ${q}.security_events(id,at,kind,subject_digest,revision) VALUES($1,$2,'task_grant_issued',$3,1)`,[randomUUID(),at,digest(grant.id)]);
-  if(authority)await client.query(`INSERT INTO ${q}.security_events(id,at,kind,subject_digest,revision) VALUES($1,$2,'task_authority_attached',$3,1)`,[randomUUID(),at,digest(authority.id)]);
+  const authorityRows=authority?[{id:authority.id,owner:authority.ownerKey,member_id:authority.memberId,installation_id:authority.installationId,
+    task_id:job.id,request_revision:grant.requestRevision,agent_grant_id:parent.id,agent_grant_revision:parent.revision,data_grant_id:grant.id,data_grant_revision:grant.revision,
+    auth_epoch:actor.authEpoch,expires_at:postgresConsentIndex(authority.expiresAt,policyDigest),body:JSON.stringify(authority)}]:[];
+  const recorded=await client.query(`WITH authority AS(INSERT INTO ${q}.security_task_authorities(id,owner,member_id,installation_id,task_id,request_revision,agent_grant_id,agent_grant_revision,data_grant_id,data_grant_revision,auth_epoch,state,expires_at,body)
+      SELECT id,owner,member_id,installation_id,task_id,request_revision,agent_grant_id,agent_grant_revision,data_grant_id,data_grant_revision,auth_epoch,'active',expires_at,body
+      FROM jsonb_to_recordset($1::jsonb) AS x(id text,owner text,member_id text,installation_id text,task_id text,request_revision bigint,agent_grant_id text,agent_grant_revision bigint,data_grant_id text,data_grant_revision bigint,auth_epoch bigint,expires_at bigint,body text) RETURNING id),
+    grant_event AS(INSERT INTO ${q}.security_events(id,at,kind,subject_digest,revision)
+      SELECT $2,$3,'task_grant_issued',$4,1 FROM(SELECT count(*) AS n FROM authority) inserted WHERE inserted.n=$7 RETURNING id),
+    authority_event AS(INSERT INTO ${q}.security_events(id,at,kind,subject_digest,revision)
+      SELECT $5,$3,'task_authority_attached',$6,1 FROM authority CROSS JOIN grant_event RETURNING id)
+    SELECT(SELECT count(*) FROM authority)=$7 AS authorized,(SELECT count(*) FROM grant_event)=1 AS issued,(SELECT count(*) FROM authority_event)=$7 AS attached`,
+    [JSON.stringify(authorityRows),randomUUID(),at,digest(grant.id),authority?randomUUID():null,authority?digest(authority.id):null,authorityRows.length]);
+  if(recorded.rowCount!==1||recorded.rows[0]?.authorized!==true||recorded.rows[0]?.issued!==true||recorded.rows[0]?.attached!==true)throw new SecurityError('POLICY_CHANGED');
   const origin=inserted.rows[0];
   if(inserted.rowCount!==1||!origin||typeof origin.xmin!=='string'||typeof origin.tuple!=='string'||typeof origin.table!=='string')throw new SecurityError('POLICY_CHANGED');
   const token=postgresBusinessToken(client),receipts=issuedGrants.get(token)??new Map<string,IssuedGrant>();

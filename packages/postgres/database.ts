@@ -33,7 +33,7 @@ export class PostgresDatabase {
     if(this.closing)throw new Error('PostgreSQL runtime is closing');
     const client=await pool.connect(),release=client.release.bind(client);
     if(this.closing){release();throw new Error('PostgreSQL runtime is closing');}
-    const connection=observePostgresClient(client);let released=false;
+    let connection:ReturnType<typeof observePostgresClient>|undefined;let released=false;
     // The transaction helper may evict an uncertain connection itself. The
     // request owner must not release that lease twice or return it to the pool.
     const releaseOnce=(error?:Error|boolean)=>{if(!released){released=true;release(error);}};
@@ -42,10 +42,11 @@ export class PostgresDatabase {
       // This class owns the pool lease. Lower-level transaction helpers must
       // preserve a direct caller's already-owned/manual transaction on reject.
       if(typeof client.getTransactionStatus!=='function'||client.getTransactionStatus()!=='I'||client.pipeline!==false){releaseOnce(new Error('Pool returned a non-idle PostgreSQL client'));throw new Error('PostgreSQL pool lease requires an idle non-pipelined client');}
+      try{connection=observePostgresClient(client);}catch(error){releaseOnce(new Error('Pool client cannot observe PostgreSQL connection errors'));throw error;}
       const result=await action(client);connection.check();return result;
     }
-    catch(error){throw connection.annotate(error);}
-    finally{try{releaseOnce(connection.failure);}finally{connection.close();}}
+    catch(error){throw connection?.annotate(error)??error;}
+    finally{try{releaseOnce(connection?.failure);}finally{connection?.close();}}
   }
   run<T>(action:(client:Client)=>Promise<T>):Promise<T>{
     const eligibilityInspector=this.eligibilityPool?(reference:PostgresEligibilityReference)=>postgresInspectEligibility(this.eligibilityPool!,this.schema,this.authority,reference):undefined;

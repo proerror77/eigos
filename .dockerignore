@@ -19,6 +19,7 @@
 !scripts/ontology-operator.mjs
 !scripts/relocate-primary.mjs
 !scripts/refresh-harness-login.mjs
+!scripts/postgres-primary-handoff.mjs
 !integrations/
 !integrations/grok/
 !integrations/grok/eigos-delegate/

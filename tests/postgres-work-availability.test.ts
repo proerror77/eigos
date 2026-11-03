@@ -1,3 +1,4 @@
+import {EventEmitter} from 'node:events';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {randomUUID} from 'node:crypto';
@@ -17,8 +18,8 @@ type Query={text:string;values:unknown[];query_timeout:number};
 function poolFixture(query:(request:Query)=>Promise<{rowCount:number;rows:Record<string,unknown>[]}>) {
   const stats={connects:0,releases:0,evictions:0,queries:0,ends:0,leaseConnects:0,leaseEnds:0};
   const release=(error?:Error|boolean)=>{stats.releases++;if(error)stats.evictions++;};
-  const client={pipeline:false,getTransactionStatus:()=> 'I',release,
-    query:async(request:Query)=>{stats.queries++;return query(request);}} as unknown as pg.PoolClient;
+  const client=Object.assign(new EventEmitter(),{pipeline:false,getTransactionStatus:()=> 'I',release,
+    query:async(request:Query)=>{stats.queries++;return query(request);}}) as unknown as pg.PoolClient;
   // node-postgres installs a new lease release function on every acquisition.
   const pool={connect:async()=>{stats.connects++;client.release=release;return client;},end:async()=>{stats.ends++;}};
   const lease={connect:async()=>{stats.leaseConnects++;throw new Error('Hint must not occupy heartbeat capacity');},end:async()=>{stats.leaseEnds++;}};

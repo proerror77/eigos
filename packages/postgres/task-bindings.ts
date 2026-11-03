@@ -1,3 +1,4 @@
+import {POSTGRES_TASK_BINDING_CHUNK_REFS,PostgresTaskBindingBatch,type PostgresBindingWrite} from './task-binding-batch.js';
 import {postgresTaskReadHistory} from './task-lineage.js';
 import type {Client} from 'pg';
 import {z} from 'zod';
@@ -39,10 +40,10 @@ export class PostgresTaskBindings {
     this.model=builder===undefined?currentKernelImplementation():stagedKernelComponents(builder).model;
   }
   private assertCurrent(){if(postgresBusinessToken(this.client)!==this.token)throw new SecurityError('AUTHORIZATION_REQUIRED');}
-  private async query(text:string,values:unknown[]=[]){this.assertCurrent();const result=await this.client.query(text,values);this.assertCurrent();return result;}
-  private async raw(owner:string,ref:ObjectRef){
+  protected async query(text:string,values:unknown[]=[]){this.assertCurrent();const result=await this.client.query(text,values);this.assertCurrent();return result;}
+  private async raw(owner:string,ref:ObjectRef,scope?:{batch:PostgresTaskBindingBatch;grant:TaskGrant}){
     objectRefSchema.parse(ref);
-    const result=await this.query(`SELECT revision,definition_digest,CASE WHEN octet_length(body)<=1048576 THEN body END AS body
+    const result=scope?.batch.get('raw',scope.grant,ref)??await this.query(`SELECT revision,definition_digest,CASE WHEN octet_length(body)<=1048576 THEN body END AS body
       FROM "${this.schema}".ontology_objects WHERE owner=$1 AND type=$2 AND id=$3 LIMIT 2`,[owner,ref.type,ref.id]);
     const row=result.rows[0];if(result.rowCount!==1||!row||row.body===null)throw new SecurityError('POLICY_CHANGED');
     const revision=Number(row.revision);if(!Number.isSafeInteger(revision)||revision<1)throw new SecurityError('POLICY_CHANGED');
@@ -53,9 +54,9 @@ export class PostgresTaskBindings {
   }
   /** Reuse only a row just read by this binding operation. This method never
    * writes ontology facts; current labels and private views are still queried. */
-  private async envelopeFor(owner:string,ref:ObjectRef,fields:string[],channels:SecurityEnvelope['channels'],row:Awaited<ReturnType<PostgresTaskBindings['raw']>>):Promise<SecurityEnvelope>{
+  private async envelopeFor(owner:string,ref:ObjectRef,fields:string[],channels:SecurityEnvelope['channels'],row:Awaited<ReturnType<PostgresTaskBindings['raw']>>,scope?:{batch:PostgresTaskBindingBatch;grant:TaskGrant}):Promise<SecurityEnvelope>{
     this.assertCurrent();const policy=(field:string)=>reviewedFieldPolicy(this.model,ref.type,field);
-    const labels=await this.query(`SELECT field,CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${this.schema}".security_labels
+    const labels=scope?.batch.get('labels',scope.grant,ref)??await this.query(`SELECT field,CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${this.schema}".security_labels
       WHERE owner=$1 AND type=$2 AND object_id=$3 ORDER BY field LIMIT 257`,[owner,ref.type,ref.id]);
     if(labels.rows.length>256||labels.rows.some(row=>row.body===null))throw new SecurityError('OUTPUT_NOT_ALLOWED');
     const restrictions:ObjectRestriction[]=labels.rows.map(row=>({field:String(row.field),...labelSchema.parse(JSON.parse(String(row.body)))}));
@@ -74,9 +75,10 @@ export class PostgresTaskBindings {
   async bind(grant:TaskGrant,ref:ObjectRef,fields:string[],sourceBindingId:string,evidence?:SecurityEnvelope|(()=>Promise<SecurityEnvelope>)) {
     await this.bindCurrent(grant,ref,fields,sourceBindingId,evidence);
   }
-  private async bindCurrent(grant:TaskGrant,ref:ObjectRef,fields:string[],sourceBindingId:string,evidence?:SecurityEnvelope|(()=>Promise<SecurityEnvelope>),projecting=false) {
+  private async bindCurrent(grant:TaskGrant,ref:ObjectRef,fields:string[],sourceBindingId:string,evidence?:SecurityEnvelope|(()=>Promise<SecurityEnvelope>),projecting=false,batch?:PostgresTaskBindingBatch) {
+    if(batch&&!projecting)throw new Error('Batched rows require the private binding-only projection scope');
     if(!['task_submission','task_context','task_projection','member_asset'].includes(sourceBindingId))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
-    this.assertCurrent();const g=taskDataGrantSchema.parse(structuredClone(grant)),row=await this.raw(g.ownerKey,ref);
+    this.assertCurrent();const g=taskDataGrantSchema.parse(structuredClone(grant)),row=await this.raw(g.ownerKey,ref,batch?{batch,grant:g}:undefined);
     if(row.definitionDigest!==this.model.fingerprint(ref.type)){
       let compatible=false;
       if(sourceBindingId==='task_context'&&ref.type==='RegisteredCapability'&&row.body.source?.kind==='task'){
@@ -98,17 +100,21 @@ export class PostgresTaskBindings {
     if(typeof evidence==='function'){
       if(sourceBindingId!=='task_context'||!taskContextFields[ref.type]||row.body.source?.kind!=='task')throw new SecurityError('POLICY_CHANGED');
       let previous:Binding|undefined;
-      const direct=await this.query(`SELECT CASE WHEN octet_length(body)<=1048576 THEN body END AS body FROM "${this.schema}".security_bindings
-        WHERE grant_id=$1 AND owner=$2 AND task_id=$3 AND request_revision=$4 AND type=$5 AND object_id=$6 LIMIT 2`,[g.id,g.ownerKey,g.taskId,g.requestRevision,ref.type,ref.id]);
-      if(direct.rowCount){if(direct.rowCount!==1||direct.rows[0]?.body===null)throw new SecurityError('POLICY_CHANGED');previous=JSON.parse(String(direct.rows[0]!.body)) as Binding;}
+      const selected=batch?.get('previous',g,ref);
+      if(selected!==undefined){if(selected.rowCount){if(selected.rowCount!==1||selected.rows[0]?.body===null)throw new SecurityError('POLICY_CHANGED');previous=JSON.parse(String(selected.rows[0]!.body)) as Binding;}}
       else{
-        const retained=await this.query(`SELECT CASE WHEN octet_length(b.body)<=1048576 THEN b.body END AS body FROM "${this.schema}".security_bindings b
-          JOIN "${this.schema}".security_grants issued ON issued.id=b.grant_id WHERE b.owner=$1 AND b.task_id=$2 AND b.request_revision=$3
-          AND issued.installation_id=$4 AND issued.kind='task_data' AND b.type=$5 AND b.object_id=$6 ORDER BY issued.__eigos_rowid DESC LIMIT 1`,[g.ownerKey,g.taskId,g.requestRevision,g.installationId,ref.type,ref.id]);
-        if(retained.rowCount){if(retained.rows[0]?.body===null)throw new SecurityError('POLICY_CHANGED');previous=JSON.parse(String(retained.rows[0]!.body)) as Binding;}
+        const direct=await this.query(`SELECT CASE WHEN octet_length(body)<=1048576 THEN body END AS body FROM "${this.schema}".security_bindings
+          WHERE grant_id=$1 AND owner=$2 AND task_id=$3 AND request_revision=$4 AND type=$5 AND object_id=$6 LIMIT 2`,[g.id,g.ownerKey,g.taskId,g.requestRevision,ref.type,ref.id]);
+        if(direct.rowCount){if(direct.rowCount!==1||direct.rows[0]?.body===null)throw new SecurityError('POLICY_CHANGED');previous=JSON.parse(String(direct.rows[0]!.body)) as Binding;}
+        else{
+          const retained=await this.query(`SELECT CASE WHEN octet_length(b.body)<=1048576 THEN b.body END AS body FROM "${this.schema}".security_bindings b
+            JOIN "${this.schema}".security_grants issued ON issued.id=b.grant_id WHERE b.owner=$1 AND b.task_id=$2 AND b.request_revision=$3
+            AND issued.installation_id=$4 AND issued.kind='task_data' AND b.type=$5 AND b.object_id=$6 ORDER BY issued.__eigos_rowid DESC LIMIT 1`,[g.ownerKey,g.taskId,g.requestRevision,g.installationId,ref.type,ref.id]);
+          if(retained.rowCount){if(retained.rows[0]?.body===null)throw new SecurityError('POLICY_CHANGED');previous=JSON.parse(String(retained.rows[0]!.body)) as Binding;}
+        }
       }
       if(previous&&(previous.sourceBindingId!==sourceBindingId||refKey(previous.object)!==refKey(ref)))throw new SecurityError('POLICY_CHANGED');
-      const links=await this.query(`SELECT type,to_type,to_id,definition_digest FROM "${this.schema}".ontology_links
+      const links=batch?.get('links',g,ref)??await this.query(`SELECT type,to_type,to_id,definition_digest FROM "${this.schema}".ontology_links
         WHERE owner=$1 AND from_type=$2 AND from_id=$3 AND(type<>'CapabilityRequest' OR(to_type='ServiceRequest' AND to_id=$4))
         ORDER BY type COLLATE "C",to_type COLLATE "C",to_id COLLATE "C" LIMIT 4001`,[g.ownerKey,ref.type,ref.id,g.taskId]);
       if(links.rows.length>4000)throw new SecurityError('INSUFFICIENT_ACCESS');
@@ -144,7 +150,7 @@ export class PostgresTaskBindings {
         sourceBindingId=origin.sourceBindingId;inputEnvelope=origin.inputEnvelope&&securityEnvelopeSchema.parse(origin.inputEnvelope);
       }
     }
-    await this.writeBinding(g,ref,row,fields,sourceBindingId,inputEnvelope,projectionOrigin,undefined,projecting);return row;
+    await this.writeBinding(g,ref,row,fields,sourceBindingId,inputEnvelope,projectionOrigin,undefined,projecting,batch);return row;
   }
   /** Only the current checked source writer can mint this one-use permit.
    * Ordinary bind() retains its reserved-source fence above. */
@@ -154,13 +160,31 @@ export class PostgresTaskBindings {
     await this.writeBinding(authority.grant,authority.ref,row,authority.fields,authority.sourceBindingId,authority.evidence,undefined,authority.sourceObservation);
     await authority.assertCurrent();
   }
-  private async writeBinding(g:TaskGrant,ref:ObjectRef,row:Awaited<ReturnType<PostgresTaskBindings['raw']>>,fields:string[],sourceBindingId:string,inputEnvelope?:SecurityEnvelope,projectionOrigin?:ProjectionOrigin,sourceObservation?:ObservationSource,projecting=false){
+  private async writeBinding(g:TaskGrant,ref:ObjectRef,row:Awaited<ReturnType<PostgresTaskBindings['raw']>>,fields:string[],sourceBindingId:string,inputEnvelope?:SecurityEnvelope,projectionOrigin?:ProjectionOrigin,sourceObservation?:ObservationSource,projecting=false,batch?:PostgresTaskBindingBatch){
     const safe=[...new Set(fields)].filter(field=>reviewedFieldPolicy(this.model,ref.type,field)!=='internal_only');
-    const own=projecting?await this.envelopeFor(g.ownerKey,ref,safe,g.channels,row):await this.envelope(g.ownerKey,ref,safe,g.channels),binding:Binding={object:ref,revision:row.revision,fields:safe,sourceBindingId,
+    const own=projecting?await this.envelopeFor(g.ownerKey,ref,safe,g.channels,row,batch?{batch,grant:g}:undefined):await this.envelope(g.ownerKey,ref,safe,g.channels),binding:Binding={object:ref,revision:row.revision,fields:safe,sourceBindingId,
       envelope:inputEnvelope?combineEnvelopes([own,inputEnvelope]):own,...(inputEnvelope?{inputEnvelope}:{}),...(projectionOrigin?{projectionOrigin}:{}),...(sourceObservation?{sourceObservation}:{})};
+    if(batch){const full=batch.add(g,{grant_id:g.id,owner:g.ownerKey,task_id:g.taskId,request_revision:g.requestRevision,type:ref.type,object_id:ref.id,object_revision:row.revision,body:JSON.stringify(binding)});if(full)await this.writeBatch(batch.take(g));return;}
     await this.query(`INSERT INTO "${this.schema}".security_bindings(grant_id,owner,task_id,request_revision,type,object_id,object_revision,body)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(grant_id,type,object_id) DO UPDATE SET object_revision=excluded.object_revision,body=excluded.body
       WHERE security_bindings.object_revision<>excluded.object_revision OR security_bindings.body<>excluded.body`,[g.id,g.ownerKey,g.taskId,g.requestRevision,ref.type,ref.id,row.revision,JSON.stringify(binding)]);
+  }
+  private async writeBatch(rows:PostgresBindingWrite[]){
+    if(!rows.length)return;
+    await this.query(`INSERT INTO "${this.schema}".security_bindings(grant_id,owner,task_id,request_revision,type,object_id,object_revision,body)
+      SELECT grant_id,owner,task_id,request_revision,type,object_id,object_revision,body FROM jsonb_to_recordset($1::jsonb)
+        AS x(n integer,grant_id text,owner text,task_id text,request_revision bigint,type text,object_id text,object_revision bigint,body text) ORDER BY n
+      ON CONFLICT(grant_id,type,object_id) DO UPDATE SET object_revision=excluded.object_revision,body=excluded.body
+      WHERE security_bindings.object_revision<>excluded.object_revision OR security_bindings.body<>excluded.body`,[JSON.stringify(rows.map((row,n)=>({n,...row})))]);
+  }
+  private async projectChunks(grant:TaskGrant,refs:readonly ObjectRef[],context:boolean,action:(ref:ObjectRef,batch:PostgresTaskBindingBatch)=>Promise<void>){
+    for(let offset=0;offset<refs.length;){
+      const selected:ObjectRef[]=[],seen=new Set<string>();
+      while(offset<refs.length&&selected.length<POSTGRES_TASK_BINDING_CHUNK_REFS){const ref=refs[offset]!;if(seen.has(refKey(ref)))break;seen.add(refKey(ref));selected.push(ref);offset++;}
+      const batch=new PostgresTaskBindingBatch(this.client,grant,selected);
+      try{await batch.load(grant,this.schema,(sql,values)=>this.query(sql,values),context);for(const ref of selected)await action(ref,batch);await this.writeBatch(batch.take(grant));}
+      finally{batch.close();}
+    }
   }
   async bindInputs(grant:TaskGrant,parent:ParentGrant){
     for(const input of grant.inputs)await this.bind(grant,input.object,input.fields,'member_asset');
@@ -179,16 +203,20 @@ export class PostgresTaskBindings {
       inherited=combineEnvelopes([await this.envelopeFor(grant.ownerKey,root,['originalGoal'],grant.channels,rootRow),...envelopes]);return inherited;
     };
     const members=await postgresOwnedTaskContextMembers(this.client,grant.ownerKey,job.id,grant.requestRevision);
-    for(const ref of members){const fields=(parent.resources.find(resource=>resource.type===ref.type)?.fields??[]).filter(field=>taskContextFields[ref.type]?.includes(field));
-      if(fields.length)await this.bindCurrent(grant,ref,fields,'task_context',evidence,true);}
+    const selected=members.filter(ref=>(parent.resources.find(resource=>resource.type===ref.type)?.fields??[]).some(field=>taskContextFields[ref.type]?.includes(field)));
+    await this.projectChunks(grant,selected,true,async(ref,batch)=>{const fields=(parent.resources.find(resource=>resource.type===ref.type)?.fields??[]).filter(field=>taskContextFields[ref.type]?.includes(field));
+      await this.bindCurrent(grant,ref,fields,'task_context',evidence,true,batch);
+    });
     const binding=job.delegation.agent?.programRef??job.delegation.plan?.bindingRef;
     const refs:ObjectRef[]=[...(job.delegation.goalCoverage?[{type:'GoalCoverage',id:job.delegation.goalCoverage.digest}]:[]),
       ...(rootRow.body.properties.currentAssessment?[objectRefSchema.parse(rootRow.body.properties.currentAssessment)]:[]),
       ...(binding?[{type:'ExecutionFeedback',id:digest({request:job.id,revision:grant.requestRevision,bindingRef:binding})}]:[])];
-    for(const ref of refs){const fields=parent.resources.find(resource=>resource.type===ref.type)?.fields;if(!fields)continue;
-      const present=await this.query(`SELECT 1 FROM "${this.schema}".ontology_objects WHERE owner=$1 AND type=$2 AND id=$3`,[grant.ownerKey,ref.type,ref.id]);
-      if(!present.rowCount)continue;
-      await this.bindCurrent(grant,ref,fields,'task_projection',await evidence(),true);}
+    const projected=refs.filter(ref=>parent.resources.find(resource=>resource.type===ref.type)?.fields);
+    await this.projectChunks(grant,projected,false,async(ref,batch)=>{const fields=parent.resources.find(resource=>resource.type===ref.type)!.fields,loaded=batch.get('raw',grant,ref);
+      if(loaded?.rowCount===0)return;
+      if(loaded===undefined){const present=await this.query(`SELECT 1 FROM "${this.schema}".ontology_objects WHERE owner=$1 AND type=$2 AND id=$3`,[grant.ownerKey,ref.type,ref.id]);if(!present.rowCount)return;}
+      await this.bindCurrent(grant,ref,fields,'task_projection',await evidence(),true,batch);
+    });
   }
 }
 import {postgresCurrentConsentDeadline} from './consent.js';

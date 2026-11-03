@@ -78,7 +78,7 @@ export function assertReviewedPostgresActivation(binding:PostgresBinding,input:{
     handoffDigest:binding.handoff.sha256,sourceFenceDigest:handoff.sourceFence.sha256,businessVerificationDigest:handoff.businessVerification.sha256,identityAuditDigest:handoff.identityAudit.sha256,runtimeSchemaReceiptDigest:binding.activation.runtimeSchemaReceiptDigest,reviewDigest:handoff.reviewDigest};
   if(!same(activation,expected)||digest(activation)!==binding.activation.receiptDigest)throw new Error('PostgreSQL activation record differs from the reviewed evidence');
 }
-async function checkActivationSchema(client:Client,schema:string){
+export async function checkActivationSchema(client:Client,schema:string){
   const tables=[runtimeContract.activationTable,runtimeContract.schemaReceiptTable];
   for(const [index,table] of tables.entries()){
     const rows=await client.query(`SELECT a.attname,pg_catalog.format_type(a.atttypid,a.atttypmod) AS type,a.attnotnull,a.atthasdef,a.attgenerated,a.attidentity FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
@@ -97,8 +97,8 @@ async function checkActivationSchema(client:Client,schema:string){
     const trigger=triggers.rows[0];if(triggers.rowCount!==1||Number(trigger.tgtype)!==27||trigger.tgenabled!=='O'||trigger.attributes!==''||trigger.unconditional!==true||Number(trigger.tgnargs)!==0||trigger.nspname!==schema||trigger.proname!==runtimeContract.triggerFunction||trigger.prosecdef!==false||trigger.lanname!=='plpgsql'||String(trigger.prosrc).trim()!==runtimeContract.triggerBody)throw new Error('PostgreSQL activation immutable-history guard differs');
   }
   const privilege=await client.query(`SELECT r.rolsuper,r.rolbypassrls,r.rolcreaterole,r.rolcreatedb,pg_catalog.has_schema_privilege(current_user,$1,'CREATE') AS schema_create,
-    pg_catalog.has_table_privilege(current_user,format('%I.%I',$1,$2),'INSERT,UPDATE,DELETE,TRUNCATE') AS activation_write,
-    pg_catalog.has_table_privilege(current_user,format('%I.%I',$1,$3),'INSERT,UPDATE,DELETE,TRUNCATE') AS schema_receipt_write,
+    pg_catalog.has_table_privilege(current_user,format('%I.%I',$1::text,$2::text),'INSERT,UPDATE,DELETE,TRUNCATE') AS activation_write,
+    pg_catalog.has_table_privilege(current_user,format('%I.%I',$1::text,$3::text),'INSERT,UPDATE,DELETE,TRUNCATE') AS schema_receipt_write,
     EXISTS(SELECT 1 FROM pg_catalog.pg_namespace n WHERE n.nspname=$1 AND pg_catalog.pg_has_role(current_user,n.nspowner,'MEMBER')) AS schema_owner,
     EXISTS(SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname IN($2,$3) AND pg_catalog.pg_has_role(current_user,c.relowner,'MEMBER')) AS table_owner,
     EXISTS(SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1 AND p.proname IN($4,$6) AND pg_catalog.pg_has_role(current_user,p.proowner,'MEMBER')) AS guard_owner,

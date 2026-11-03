@@ -5243,7 +5243,7 @@
       ],
       "content": "Immutable runtime manifest including complete public Skill assets",
       "currentControl": "Current source-derived runtime files and explicit reviewed Skill assets; no private configuration or credentials included; type-only declarations are excluded from the runtime manifest",
-      "sourceDigest": "bdb8a08f005de2bab9ca06bb392fccdeaa6c521f5be9b27741d081765bcb5b8e",
+      "sourceDigest": "09e3de32c7ea4b6021606a8ffbfdcceb5c1660fe158b65b76242e2c06315bc5c",
       "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
       "stage": "S5"
     },
@@ -5813,7 +5813,7 @@
     {
       "id": "business-postgres-verification",
       "file": "packages/postgres/business-verify.ts",
-      "sourceDigest": "f085e92d3e65f3938368b596b51b9f9e7f9adda9ccb46d7f05f2684321abe04c",
+      "sourceDigest": "3da89906919e455f1bc252d5174d097eeecd603b7cc4713d029629cc8c238dd8",
       "channels": [
         "offline migration",
         "authorization_control"
@@ -5900,7 +5900,7 @@
     {
       "id": "postgres-database-runtime",
       "file": "packages/postgres/database.ts",
-      "sourceDigest": "7037f2d8e50f36f81221dd01386ad91b834966d7a29758a9ecb9c71c666c8762",
+      "sourceDigest": "fe5ace1c20a7d22592da00d7523700ce7a76f7a0b605c31580fa5b7de8870e6d",
       "channels": [
         "internal"
       ],
@@ -5960,7 +5960,7 @@
     {
       "id": "postgres-task-bindings",
       "file": "packages/postgres/task-bindings.ts",
-      "sourceDigest": "12981cacfc03caf2095af54184edcf14544414ebe9a176e2b65191658dae8bdf",
+      "sourceDigest": "c379d88e76d9e633863ad78b376e38eab51c2cd965e02e2f4c1f2c59bda99ffe",
       "channels": [
         "internal"
       ],
@@ -5972,7 +5972,7 @@
     {
       "id": "postgres-task-grants",
       "file": "packages/postgres/task-grants.ts",
-      "sourceDigest": "d603af468a3c957ef31b9e68dacba59d11da65a803d4802fa013796826524510",
+      "sourceDigest": "ed3359ca7db31bcb0ac17fb4bcffe92eb62f2e2388151301f436475163494397",
       "channels": [
         "internal"
       ],
@@ -6779,7 +6779,7 @@
     {
       "id": "postgres-ci-groups",
       "file": "scripts/postgres-tests.mjs",
-      "sourceDigest": "1acb1e9453fba0e19faefcaf130e32833c4432525ca8473a74d0ba7aed40b990",
+      "sourceDigest": "cc479b38448f4ab746f58201906d31fb41809c59598aaa683eb509a2fd7feced",
       "channels": [
         "internal"
       ],
@@ -7170,7 +7170,7 @@
     {
       "id": "postgres-host-runtime",
       "file": "packages/postgres/host-runtime.ts",
-      "sourceDigest": "7f540d6ba7ac23a3e2cfe2cd5d9e401375b06223d615f4f08992abae4fa4f609",
+      "sourceDigest": "2fe193bbb8a73cbd838c95b0d1b5b60c3ccd7d69e8942880dd7c1872d4de4e04",
       "channels": [
         "internal"
       ],
@@ -7321,6 +7321,42 @@
       "content": "Real PostgreSQL Relay task port projects only currently authorized task views and retains one original task across encrypted command retries",
       "currentControl": "Real PostgreSQL Relay task port projects only currently authorized task views and retains one original task across encrypted command retries",
       "targetControl": "Preserve one current primary, original task/node identities and full data/authorization semantics; no silent fallback or activation claim",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-runtime-handoff",
+      "file": "packages/deployment/postgres-handoff.ts",
+      "sourceDigest": "c67d1cc7b3fd17d35493b9d1ed8132103f7562364f5c0f6707df13ab2cd7601c",
+      "channels": [
+        "internal"
+      ],
+      "content": "Explicit preview and separate admin schema/least-privilege/activation phases; actual strict source row and sequence equivalence, exact physical extensions and immutable receipts, no publisher or automatic retry of uncertain commit",
+      "currentControl": "Explicit preview and separate admin schema/least-privilege/activation phases; actual strict source row and sequence equivalence, exact physical extensions and immutable receipts, no publisher or automatic retry of uncertain commit",
+      "targetControl": "Preserve full original data, permissions, transaction and independent acceptance; no implicit activation or lossy read",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-runtime-handoff-cli",
+      "file": "scripts/postgres-primary-handoff.mjs",
+      "sourceDigest": "a20412fcb087851c3e2c1419838ef4068217fe779917f3a3779b622d30f45483",
+      "channels": [
+        "internal"
+      ],
+      "content": "Default preview; exact preview digest and private raw reviewed fence/evidence files before administrative apply, pinned admin/runtime identities and TLS; credentials only in environment, no stop/approval assertion or service start",
+      "currentControl": "Default preview; exact preview digest and private raw reviewed fence/evidence files before administrative apply, pinned admin/runtime identities and TLS; credentials only in environment, no stop/approval assertion or service start",
+      "targetControl": "Preserve full original data, permissions, transaction and independent acceptance; no implicit activation or lossy read",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-task-binding-batch",
+      "file": "packages/postgres/task-binding-batch.ts",
+      "sourceDigest": "05ffef453107f0d7c7d72690bd6dfa7d931125e6797fc14130f1cac79cc0db54",
+      "channels": [
+        "internal"
+      ],
+      "content": "Bounded private binding-only chunks retain the original transaction token, owner/grant/task/revision and ordered per-reference validation; overflow falls back to the original reader, never empty data or cached authority",
+      "currentControl": "Bounded private binding-only chunks retain the original transaction token, owner/grant/task/revision and ordered per-reference validation; overflow falls back to the original reader, never empty data or cached authority",
+      "targetControl": "Preserve full original data, permissions, transaction and independent acceptance; no implicit activation or lossy read",
       "stage": "S5"
     }
   ]
