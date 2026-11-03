@@ -27,8 +27,12 @@ const issuedAt = '2026-10-24T00:00:00Z', expiresAt = '2026-10-24T01:00:00Z';
 test('S0 inventories every definition and nested subtree without changing runtime or granting access', () => {
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
-  assert.equal(report.counts.objectTypes, 202); assert.equal(report.counts.properties, 1852); assert.equal(report.counts.interfaces, 14);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 201);
+  assert.equal(report.counts.objectTypes, 204); assert.equal(report.counts.properties, 1863); assert.equal(report.counts.interfaces, 14);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 206);
+  for (const id of ['payment-commerce-connection', 'payment-commerce-mcp', 'payment-commerce-http', 'payment-commerce-program', 'payment-commerce-policy-upgrade'])
+    assert(report.surfaces.some(surface => surface.id === id), `Unreviewed payment/commerce boundary: ${id}`);
+  assert.equal(report.types.find(type => type.id === 'PaymentCommerceReadTask')!.properties.find(field => field.name === 'input')!.policy, 'task_sensitive');
+  assert.equal(report.types.find(type => type.id === 'PaymentCommerceReadObservation')!.properties.find(field => field.name === 'snapshot')!.policy, 'internal_only');
   for (const id of ['observation-contract-schema', 'observation-contract-storage', 'observation-task-boundary']) {
     assert(report.surfaces.some(surface => surface.id === id), `Unreviewed observation contract surface: ${id}`);
   }
