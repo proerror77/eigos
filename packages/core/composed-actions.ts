@@ -12,6 +12,8 @@ import { objectRefSchema, type ObjectRef, type ActionDefinition } from '../ontol
 import { assertPortCompatible, assertAcceptedPortFreshness, compositionCompiler, evaluateCompositionChecks, readAcceptedPort, readAcceptedPortProgram, sealPortValue, actionVersion, type AcceptedPortValue, type CompositionPort } from '../ontology/composition-contract.js';
 import type {ObjectView} from '../ontology/object-store.js';
 import {graphRead,runGraphProgram,type GraphProgram,type ProjectionMetadata} from '../ontology/graph-program.js';
+import {projectionFields} from '../security/projections.js';
+import {reviewedFieldPolicy} from '../security/field-policy.js';
 
 function fail(message: string): never { throw new DomainError('CONFLICT', message); }
 const same = (a: unknown, b: unknown) => digest(a) === digest(b);
@@ -185,6 +187,21 @@ export function validateCompositionInputs(ctx: AgentProgramContext, action: stri
 }
 export type ComposedOutputContext=Omit<AgentActionContext,'graph'>&{graph:ProjectionMetadata};
 export type ComposedOutputProjection=ReturnType<NonNullable<AgentProgram['projectOutputs']>>;
+/** A read snapshot is the admitted public projection, not the stored object.
+ * Validate its visible schema without fetching private fields or injecting
+ * defaults into the bytes covered by the original read receipt. */
+function outputSnapshot(graph:ProjectionMetadata,ref:ObjectRef,view:ObjectView){
+  if(!same(view.ref,ref)||!Number.isSafeInteger(view.revision)||view.revision<1)fail('Current output object snapshot is missing or invalid');
+  const properties=graph.model.properties(ref.type),registered={...properties,...(graph.security?projectionFields(ref.type):{})};
+  // An unknown type/fingerprint is not proof that all its required fields are
+  // private. Its mandatory visible identity must belong to the reviewed model.
+  const reviewed=graph.security&&graph.model.ref.id==='eigos.business'&&reviewedFieldPolicy(graph.model,ref.type,graph.model.object(ref.type).primaryKey)!=='internal_only';
+  if(!view.properties||typeof view.properties!=='object'||Array.isArray(view.properties)
+    ||Object.entries(properties).some(([field,p])=>p.required&&!p.restricted&&!p.derived
+      &&!(reviewed&&reviewedFieldPolicy(graph.model,ref.type,field)==='internal_only')&&!Object.hasOwn(view.properties,field))
+    ||Object.entries(view.properties).some(([field,value])=>!Object.hasOwn(registered,field)||value===undefined||!registered[field]!.schema.safeParse(value).success))fail('Current output object properties violate the registered projection schema');
+  return {revision:view.revision,digest:digest(view.properties)};
+}
 /** The host supplies registered semantic code, never a model/request mapping.
  * Only this program reads current admitted objects and creates their receipts.
  * The enclosing action journal still owns grant/claim/cancellation fences. */
@@ -244,9 +261,7 @@ export function* sealComposedOutputsProgram(ctx:ComposedOutputContext,step:Agent
       const view=yield* graphRead(ctx.owner,ref);current();
       // Current typed properties are mandatory. A private/raw read or a model
       // response cannot stand in for missing admitted projection fields.
-      if(!same(view.ref,ref)||!Number.isSafeInteger(view.revision)||view.revision<1)fail('Current output object snapshot is missing or invalid');
-      const properties=ctx.graph.model.parseProperties(ref.type,view.properties);
-      objects.push({ref,revision:view.revision,digest:digest(properties)});
+      objects.push({ref,...outputSnapshot(ctx.graph,ref,view)});
     }
     const receipt=sealPortValue({version:'1',owner:ctx.owner,requestId:ctx.request.id,requestRevision:ctx.request.revision,ontologyRelease:release,
       actionId:step.action,actionVersion:binding!.actionVersion,binding:{...binding!.ref,configurationDigest:binding!.configurationDigest},intentId:intent.id,observationId:observationId!,port,definition:portDefinition,value,evidence,objects});
@@ -257,7 +272,7 @@ export function* sealComposedOutputsProgram(ctx:ComposedOutputContext,step:Agent
     let proof=reader.next();
     while(!proof.done){
       let snapshot:{revision:number;digest:string};
-      try{const view=yield* graphRead(ctx.owner,proof.value);current();if(!same(view.ref,proof.value)||!Number.isSafeInteger(view.revision)||view.revision<1)fail('Current output object snapshot is missing or invalid');snapshot={revision:view.revision,digest:digest(ctx.graph.model.parseProperties(proof.value.type,view.properties))};}
+      try{const view=yield* graphRead(ctx.owner,proof.value);current();snapshot=outputSnapshot(ctx.graph,proof.value,view);}
       catch(error){proof=reader.throw(error);continue;}
       assertAcceptedPortFreshness(receipt,portDefinition,ctx.graph.now());proof=reader.next(snapshot);
     }

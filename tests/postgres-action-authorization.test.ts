@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {setTimeout as delay} from 'node:timers/promises';
 import type {Client} from 'pg';
 import type {AgentActionPlan,AgentDecision,AgentExecutionState} from '../packages/ontology/agent-actions.js';
 import type {ActionIntent,ActionResult} from '../packages/ontology/actions.js';
@@ -25,6 +26,17 @@ import {evidence} from './backend-fixture.js';
 
 const local={skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'};
 const policyChanged=(error:unknown)=>error instanceof SecurityError&&error.reason==='POLICY_CHANGED';
+type ReleaseIdentity={owner:string;taskId:string;token:string;runtime:string};
+/** Match the production finish-receipt key without putting a raw claim token
+ * in a receipt or diagnostic. An absent runtime row alone proves no finish. */
+async function committedRelease(client:Client,schema:string,identity:ReleaseIdentity){
+  const {owner,taskId,token,runtime}=identity,q=`"${schema}"`;
+  const rows=await client.query(`SELECT 1 FROM ${q}.requests receipt JOIN ${q}.jobs job ON job.owner=receipt.owner AND job.id=$2
+    WHERE receipt.owner=$1 AND receipt.operation=$3 AND receipt.request_id=$4 AND receipt.fingerprint=$5 AND receipt.response=$6
+      AND NOT EXISTS(SELECT 1 FROM ${q}.runtime_work_claims claim WHERE claim.job_id=$2 AND claim.token=$7)`,
+    [owner,taskId,`eigos.worker.finish:${runtime}`,digest([taskId,token]),digest([owner,taskId,token,runtime]),JSON.stringify({taskId,workerRelease:1}),token]);
+  return rows.rowCount===1;
+}
 async function fixture(dependent=false,readable=false){
   const f=securityFixture(Date.now,{unified:true});let target:Awaited<ReturnType<typeof importPostgresFixture>>|undefined,timer:ReturnType<typeof setInterval>|undefined,pending:Promise<void>|undefined,heartbeatFailure:unknown;
   try{
@@ -56,7 +68,17 @@ async function fixture(dependent=false,readable=false){
     const state:AgentExecutionState={version:'1',programRef,programDigest:configurationDigest,scope,input,requestRevision:1,plans:[],observations:[],feedback:[]};job.delegation!.agent=state;f.jobs.save(f.owner,job);
     const principal={...f.principal,access:f.coordinator.authenticate(f.principal,installation.token)};
     target=await importPostgresFixture(f);const t=target,worker=new PostgresWorkerStore(t.database,t.policy),claim=await worker.claim(['eigos.delegate'],30000);assert(claim);
-    timer=setInterval(()=>{if(!pending)pending=worker.renew(claim,30000).then(ok=>{assert(ok);}).catch(error=>{heartbeatFailure=error;}).finally(()=>{pending=undefined;});},5000);timer.unref();
+    const identity:ReleaseIdentity={owner:claim.owner,taskId:claim.job.id,token:claim.token,runtime:t.authority.digest},heartbeatStats={renewed:0,finished:0};
+    // Use a separately leased transaction: the fixture's raw client may hold
+    // uncommitted writes while testing rollback and cannot prove completion.
+    const released=(overrides:Partial<ReleaseIdentity>={})=>t.database.run(client=>committedRelease(client,t.schema,{...identity,...overrides}));
+    const heartbeat=async()=>{
+      if(await worker.renew(claim,30000)){heartbeatStats.renewed++;return;}
+      assert(await released(),'The original Worker lease ended without its exact committed finish receipt');heartbeatStats.finished++;
+    };
+    const flushHeartbeat=async()=>{if(pending)await pending;};
+    const stopHeartbeat=async()=>{if(timer)clearInterval(timer);await flushHeartbeat();};
+    timer=setInterval(()=>{if(!pending)pending=heartbeat().catch(error=>{heartbeatFailure=error;}).finally(()=>{pending=undefined;});},5000);timer.unref();
     const session=await PostgresNativePlanningSession.create(worker,claim,t.policy,'synthetic:action-policy',{boundRefs:[scope],readScope:'request'});
     const description=await session.call('describe_ontology',{actions:[action],kind:'actions'});assert.equal(session.lastReceipt()?.status,'ok',JSON.stringify(description));
     const query=await session.call('query_ontology',{object:scope,select:['id','displayTitle']});assert.equal(session.lastReceipt()?.status,'ok',JSON.stringify(query));
@@ -72,7 +94,7 @@ async function fixture(dependent=false,readable=false){
       verifyObservation:function*(_context,_attempt,response,result){assert.deepEqual(response.evidenceRefs,result.evidenceRefs);assert.equal(response.value,'synthetic-provider-value');}};
     const options:PostgresActionAuthorizationOptions={policyDigest:t.policy,modelChannel:'synthetic:action-policy',inspectClaim:c=>t.database.inspectClaim(c,t.policy),programs:[registration]};
     const journal=(client:Client,changes:Partial<PostgresActionAuthorizationOptions>={})=>new PostgresActionJournal(client,{...options,authorize:createPostgresActionAuthorization(client,{...options,...changes})});
-    return {f,t,worker,claim,intent,principal,dependentIntent:dependent?{...intent,id:plan.steps[1]!.intentId,stepId:plan.steps[1]!.id,businessOperationKey:plan.steps[1]!.operationKey}:undefined,plan,registration,options,journal,installation,scope,bindingId,q:`"${t.schema}"`,close:async()=>{if(timer)clearInterval(timer);if(pending)await pending;await t.close();f.close();assert.equal(heartbeatFailure,undefined);}};
+    return {f,t,worker,claim,intent,principal,dependentIntent:dependent?{...intent,id:plan.steps[1]!.intentId,stepId:plan.steps[1]!.id,businessOperationKey:plan.steps[1]!.operationKey}:undefined,plan,registration,options,journal,installation,scope,bindingId,heartbeat,heartbeatStats,released,flushHeartbeat,stopHeartbeat,q:`"${t.schema}"`,close:async()=>{await stopHeartbeat();await t.close();f.close();assert.equal(heartbeatFailure,undefined);}};
   }catch(error){if(timer)clearInterval(timer);if(pending)await pending;if(target)await target.close();f.close();throw error;}
 }
 
@@ -184,14 +206,36 @@ test('verified action output is sealed with its original acceptance and a seal f
     assert.equal((await x.t.run(c=>x.journal(c).intent(x.f.owner,x.intent.id))).state,'dispatching');
     assert.equal((await x.t.client.query(`SELECT count(*)::int AS n FROM ${x.q}.runtime_work_claims WHERE job_id=$1 AND token=$2`,[x.claim.job.id,x.claim.token])).rows[0].n,1);
     assert.equal((await x.t.client.query(`SELECT count(*)::int AS n FROM ${x.q}.security_outputs WHERE task_id=$1`,[x.claim.job.id])).rows[0].n,0);
+    assert.equal(await x.released(),false,'a rolled-back output/finish has no committed release proof');
     await x.t.client.query(`DROP TRIGGER reject_fixture_seal ON ${x.q}.security_outputs; DROP FUNCTION ${x.q}.reject_fixture_seal()`);
     assert((await accept()).applied);
     assert.equal((await x.t.client.query(`SELECT count(*)::int AS n FROM ${x.q}.runtime_work_claims WHERE job_id=$1 AND token=$2`,[x.claim.job.id,x.claim.token])).rows[0].n,0);
     await x.t.database.cleanupReleasedClaims();
     assert.equal((await x.t.client.query(`SELECT count(*)::int AS n FROM ${x.q}.work_claims WHERE job_id=$1`,[x.claim.job.id])).rows[0].n,0);
+    assert.equal(await x.released(),true);
+    for(const mismatch of [{owner:'synthetic-other-owner'},{taskId:randomUUID()},{token:randomUUID()},{runtime:'a'.repeat(64)}])assert.equal(await x.released(mismatch),false);
+    const finishedBefore=x.heartbeatStats.finished;
+    // The accepted result remains readable after a scheduled heartbeat has
+    // observed the correctly released original claim, as on a slower CI read.
+    await delay(5500);
     const view=await new PostgresTaskReadService(x.t.database,x.t.policy).get(x.principal,x.claim.job.id);
     assert.equal(view.id,x.claim.job.id);assert.equal(view.outputStatus,'available');assert.equal(view.question,'Synthetic source output accepted under original scope');
+    await x.flushHeartbeat();assert(x.heartbeatStats.finished>finishedBefore);
+    assert.equal((await x.t.run(c=>new PostgresTaskStorage(c).get(x.f.owner,x.claim.job.id))).state,'input-required');
   }finally{await x.close();}
+});
+
+test('the action fixture heartbeat still reports an unproved missing binding and an expired unfinished claim',local,async t=>{
+  for(const expired of [false,true])await t.test(expired?'expired original claim':'missing runtime binding without finish',async()=>{
+    const x=await fixture();try{
+      await x.stopHeartbeat();await x.heartbeat();assert.equal(x.heartbeatStats.finished,0);
+      if(expired)await x.t.client.query(`UPDATE ${x.q}.work_claims SET expires_at=0 WHERE job_id=$1 AND token=$2`,[x.claim.job.id,x.claim.token]);
+      else await x.t.client.query(`DELETE FROM ${x.q}.runtime_work_claims WHERE job_id=$1 AND token=$2`,[x.claim.job.id,x.claim.token]);
+      assert.equal(await x.released(),false);await assert.rejects(x.heartbeat(),/without its exact committed finish receipt/);
+      assert.equal(x.heartbeatStats.finished,0);assert.equal((await x.t.run(c=>new PostgresTaskStorage(c).get(x.f.owner,x.claim.job.id))).state,'working');
+      assert.equal((await x.t.client.query(`SELECT count(*)::int AS n FROM ${x.q}.requests WHERE owner=$1 AND operation=$2`,[x.f.owner,`eigos.worker.finish:${x.t.authority.digest}`])).rows[0].n,0);
+    }finally{await x.close();}
+  });
 });
 
 test('committed dispatch preflight rechecks original source and authority without creating another attempt',local,async()=>{

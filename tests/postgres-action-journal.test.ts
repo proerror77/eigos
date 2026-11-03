@@ -177,7 +177,12 @@ test('PostgreSQL observations apply only with atomic mapper, job and graph accep
 });
 
 test('PostgreSQL observations reject stale versions, same-event conflicts, old attempts and task revisions',local,async()=>{
-  const x=await fixture();try{
+  const x=await fixture();let pending:Promise<void>|undefined,heartbeatFailure:unknown;
+  // This long storage sequence models one live Worker. Keep its ORIGINAL
+  // token current; stale observation/attempt/revision checks stay independent.
+  const timer=setInterval(()=>{if(!pending)pending=x.worker.renew(x.claim,30000).then(ok=>{assert(ok);})
+    .catch(error=>{heartbeatFailure=error;clearInterval(timer);}).finally(()=>{pending=undefined;});},5000);timer.unref();
+  try{
     const intent=x.intent();await x.t.run(c=>x.journal(c).createIntent(x.claim,intent));const attempt=await x.t.run(c=>x.journal(c).startAttempt(x.claim,intent.id,'dispatch',intent.inputDigest));
     const apply=async()=>{},result=confirmed(randomUUID(),3),first=await x.t.run(c=>x.journal(c).recordObservation(x.f.owner,intent.id,attempt.id,result));
     await x.t.run(c=>x.journal(c).commitObservation(intent.id,first.id,true,{claim:x.claim,apply}));
@@ -196,7 +201,7 @@ test('PostgreSQL observations reject stale versions, same-event conflicts, old a
     const late=await x.t.run(c=>x.journal(c).recordObservation(x.f.owner,intent.id,attempt.id,{kind:'unknown',eventId:randomUUID(),sourceVersion:0,evidenceRefs:[]}));
     assert.equal((await x.t.run(c=>x.journal(c).commitObservation(intent.id,late.id,false,{claim:x.claim,apply}))).applied,false);
     assert.equal((await x.t.run(c=>x.journal(c).intent(x.f.owner,intent.id))).state,'effect_confirmed');
-  }finally{await x.close();}
+  }finally{clearInterval(timer);if(pending)await pending;await x.close();assert.equal(heartbeatFailure,undefined);}
 });
 
 test('PostgreSQL journal holds original lease at acceptance and denies expired fixed policy permits',local,async()=>{

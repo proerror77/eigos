@@ -11,6 +11,7 @@ import type {AgentActionContext,AgentActionResult} from '../packages/core/agent-
 import type {ActionIntent} from '../packages/ontology/actions.js';
 import type {AgentActionPlan,AgentComponentContext,AgentDecision} from '../packages/ontology/agent-actions.js';
 import {OntologyObjectStore} from '../packages/ontology/object-store.js';
+import {objectRefSchema} from '../packages/ontology/model.js';
 import {runGraphProgramAsync,type GraphProgram,type ProjectionMetadata} from '../packages/ontology/graph-program.js';
 import {templatePlanning} from '../packages/ontology/planning-contract.js';
 import {createGoalContract} from '../packages/core/goal-contract.js';
@@ -20,7 +21,26 @@ import {prepareDocumentInvocationProgram,buildDocumentResult,projectDocumentProg
 import {PostgresProjectionGraph} from '../packages/postgres/projection-graph.js';
 import {securityFixture} from './fixtures/security.js';
 import {importPostgresFixture} from './fixtures/postgres-business.js';
-import {evidence} from './backend-fixture.js';
+import {evidence,owner as legacyOwner} from './backend-fixture.js';
+import {setupCheckout} from './fixtures/shopify-checkout.js';
+
+test('accepted Shopify ports seal the public typed snapshot without requiring private stored fields',async()=>{
+  const x=setupCheckout();try{
+    const id=x.submit().id,job=await x.finish(id);assert.equal(job.state,'auth-required',JSON.stringify(job.delegation?.agent?.feedback));
+    const intents=x.store.intents(legacyOwner,id),intent=intents.find(value=>value.state==='effect_confirmed'&&objectRefSchema.safeParse(value.acceptedOutput?.object).data?.type==='ShopifyCheckoutProducts')!;assert(intent);
+    const state=job.delegation!.agent!,plan=state.plans.find(value=>value.digest===intent.planDigest)!,step=plan.steps.find(value=>value.intentId===intent.id)!;
+    const component=state.composition!.contexts.find(value=>value.id===step.contextId)!,program=x.catalog.agentProgram(component.programRef,legacyOwner)!,graph=x.store.ontologyForJob(legacyOwner,id);
+    const context:AgentActionContext={...componentContext({graph,owner:legacyOwner,request:job.delegation!.request,state,intents,modelRuns:job.runs},component,program),planId:plan.id,intentId:intent.id,attemptId:x.store.attempts(legacyOwner,intent.id)[0]!.id,modelRunId:plan.modelRunId};
+    const object=objectRefSchema.parse(intent.acceptedOutput!.object),view=graph.read(legacyOwner,object),result:AgentActionResult={value:intent.lastVerifiedResult!.output!.source,evidenceRefs:intent.lastVerifiedResult!.evidenceRefs};
+    assert.equal(graph.model.properties(object.type).snapshot!.required,true);assert.equal(graph.model.properties(object.type).snapshot!.restricted,true);assert(!Object.hasOwn(view.properties,'snapshot'));
+    const receipts=sealComposedOutputs(program,context,step,step.input,result,object,intent);
+    assert(receipts.some(port=>port.objects.some(snapshot=>snapshot.digest===digest(view.properties))));assert.equal(x.countCreates(),0);
+    for(const change of [({items:_items,...properties}:Record<string,unknown>)=>properties,(properties:Record<string,unknown>)=>({...properties,displayTitle:42}),(properties:Record<string,unknown>)=>({...properties,unregisteredProjection:true})]){
+      const altered=new Proxy(graph,{get(target,key){if(key==='read')return(...args:Parameters<typeof graph.read>)=>{const current=target.read(...args);return current.ref.type===object.type?{...current,properties:change(current.properties)}:current;};const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;}});
+      assert.throws(()=>sealComposedOutputs(program,{...context,graph:altered},step,step.input,result,object,intent),/registered projection schema/);
+    }
+  }finally{x.store.close();}
+});
 
 async function fixture(t:TestContext){
   const fixed=Date.now();t.mock.timers.enable({apis:['Date'],now:fixed});t.after(()=>t.mock.timers.reset());let clock=fixed;
@@ -108,7 +128,7 @@ test('output sealing rejects manufactured accepted state, wrong pins, missing fi
     await assert.rejects(x.asyncRun(ctx=>sealComposedOutputsProgram(ctx,x.plan.steps[0]!,x.input,x.result,x.object,x.intent,ctx.graph.model.action('ComposeDocument'),()=>documentOutputPorts(x.result,x.object)),graph=>new Proxy(graph,{get(target,key){
       if(key==='read')return async(...args:Parameters<typeof graph.read>)=>{const view=await target.read(...args);if(view.ref.type!=='DocumentDraft')return view;const {snapshot:_snapshot,...properties}=view.properties;return {...view,properties};};
       const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;
-    }})),/registered schema|expected|undefined/i);
+    }})),/registered (?:projection )?schema|expected|undefined/i);
   }finally{await x.close();}
 });
 

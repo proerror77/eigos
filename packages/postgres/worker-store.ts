@@ -26,6 +26,7 @@ import {runGraphProgramAsync,type GraphProgram,type ProjectionMetadata} from '..
 import type {ServiceRequest} from '../ontology/execution.js';
 import {withPostgresSourceProjection,type PostgresSourceProjectionOptions} from './source-projection.js';
 import {combineEnvelopes,type SecurityEnvelope} from '../security/envelope.js';
+import {postgresProjectCapabilityCatalog,type PostgresCapabilityCatalogEntry} from './capability-catalog.js';
 
 export interface PostgresWorkerProjectionContext {
   readonly graph:ProjectionMetadata;
@@ -118,13 +119,19 @@ export class PostgresWorkerStore {
     });
   }
   async active(input:WorkClaim){const claim=postgresWorkReference(input);return this.db.run(async client=>{
-    if(!await postgresClaimSnapshotMatches(client,claim,this.policy)||!await this.db.inspectClaim(claim,this.policy))return false;
+    if(!await this.db.inspectClaim(claim,this.policy)||!await postgresClaimSnapshotMatches(client,claim,this.policy))return false;
     const admission=await postgresWorkerAdmission(client,claim.owner,claim.job.id,this.policy);
     if(admission.authority.id!==claim.securityAuthorityId||admission.authority.authEpoch!==claim.securityEpoch||admission.policyRevision!==claim.securityPolicyRevision)return false;
     postgresConstrainReadDeadline(client,admission.validUntil);postgresRequireLeaseAtCommit(client,digest(claim),()=>this.db.inspectClaim(claim,this.policy));
     return true;
   });}
   renew(claim:WorkClaim,leaseMs:number){return this.db.renewClaim(claim,leaseMs,this.policy);}
+  /** Real host registry metadata, never an arbitrary MCP-provided catalogue.
+   * The helper owns current admission, reserved bindings and atomic rollback. */
+  catalogue(claim:WorkClaim,entries:readonly PostgresCapabilityCatalogEntry[],modelChannel:string){
+    return this.db.run(client=>postgresProjectCapabilityCatalog(client,claim,entries,{policyDigest:this.policy,modelChannel,
+      inspectClaim:fence=>this.db.inspectClaim(fence,this.policy),builder:this.kernel}));
+  }
   readRequest(claim:PostgresWorkReference,modelChannel:string){
     const reference=postgresWorkReference(claim);
     return this.db.run(client=>postgresWorkerRequest(client,reference,this.policy,modelChannel,this.kernel,fence=>this.db.inspectClaim(fence,this.policy)));
@@ -190,7 +197,7 @@ export class PostgresWorkerStore {
   private async mutateCurrent(claim:WorkClaim,update:(job:Job,client:Client)=>Promise<void>,finish:boolean,modelEvidence?:RunEvidence,additionalInfluence?:()=>SecurityEnvelope|undefined){
     const original=postgresWorkReference(claim);
     try{const committed=await this.db.run(async client=>{
-      if(!await postgresClaimSnapshotMatches(client,original,this.policy)||!await this.db.inspectClaim(original,this.policy))return false;
+      if(!await this.db.inspectClaim(original,this.policy)||!await postgresClaimSnapshotMatches(client,original,this.policy))return false;
       const before=await postgresWorkerAdmission(client,original.owner,original.job.id,this.policy),store=new PostgresTaskStorage(client,this.kernel);
       const seal=await postgresPrepareWorkerSeal(client,original,this.policy,this.kernel,fence=>this.db.inspectClaim(fence,this.policy));
       const current=await store.get(original.owner,original.job.id),request=current.delegation!.request.revision,revision=current.revision;

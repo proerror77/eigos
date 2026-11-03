@@ -11,6 +11,7 @@ import {importMembershipSnapshot} from '../../packages/postgres/membership-impor
 import {PostgresMembershipDatabase} from '../../packages/postgres/members-database.js';
 import {PostgresMemberStore} from '../../packages/postgres/member-store.js';
 import {PostgresAuthorizationPublisher} from '../../packages/postgres/authority-publisher.js';
+import {preparePostgresKernel} from '../../packages/postgres/kernel-runtime.js';
 import {PostgresDatabase} from '../../packages/postgres/database.js';
 import {supabaseProxyOptions} from '../../packages/postgres/supabase-proxy.js';
 
@@ -19,6 +20,7 @@ import {supabaseProxyOptions} from '../../packages/postgres/supabase-proxy.js';
  * All grants are the originals explicitly approved before the snapshot. */
 export async function importPostgresPrimaryFixture(f:ReturnType<typeof securityFixture>){
   if(!f.authority)throw new Error('Unified fixture authority is required');
+  const kernel=await preparePostgresKernel();
   f.coordinator.close();
   const schema=`eigos_business_${randomUUID().replaceAll('-','')}`,membershipSchema=`eigos_membership_${randomUUID().replaceAll('-','')}`;
   const authority={id:f.authority.id,revision:f.authority.revision,digest:runtimeAuthorityDigest(f.authority)},policy=f.jobs.security.policies.definitionDigest;
@@ -32,7 +34,7 @@ export async function importPostgresPrimaryFixture(f:ReturnType<typeof securityF
   const connection={...supabaseProxyOptions(process.env.PGHOST??'localhost',Number(process.env.PGPORT??5432),process.env.EIGOS_TEST_PG_PROXY_URL),
     ssl:local?false:{ca:readFileSync(ca!,'utf8'),rejectUnauthorized:true},connectionTimeoutMillis:15000};
   const client=new pg.Client(connection);await client.connect();
-  const database=new PostgresDatabase(new pg.Pool({...connection,max:3}),schema,authority,{leasePool:new pg.Pool({...connection,max:2})});
+  const database=new PostgresDatabase(new pg.Pool({...connection,max:3}),schema,authority,{leasePool:new pg.Pool({...connection,max:2}),kernel});
   const membershipDigest=createHash('sha256').update(readFileSync(snapshots[1]!)).digest('hex');
   const members=new PostgresMemberStore(new PostgresMembershipDatabase(new pg.Pool({...connection,max:2}),membershipSchema,membershipDigest));
   const controlPool=new pg.Pool({...connection,max:2,query_timeout:15000});
@@ -58,7 +60,7 @@ export async function importPostgresPrimaryFixture(f:ReturnType<typeof securityF
     await importMembershipSnapshot(client,snapshots[1]!,membershipSchema,membershipDigest,1000000000);
     await publisher.start();
   }catch(error){try{await close();}catch(cleanup){throw new AggregateError([error,cleanup],'PostgreSQL fixture setup failed; cleanup also failed',{cause:error});}throw error;}
-  return {client,schema,membershipSchema,authority,policy,database,members,publisher,
+  return {client,schema,membershipSchema,authority,policy,database,kernel,members,publisher,
     failure:()=>failure,
     close};
 }

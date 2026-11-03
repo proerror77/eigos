@@ -1,3 +1,4 @@
+import {stagedKernelComponents,type StagedKernelBuilder} from '../ontology/seed-definition.js';
 import {createHash} from 'node:crypto';
 import {postgresEligibilityReferenceSchema,type PostgresEligibilityReference,type PostgresEligibilityInspector,type PostgresEligibilityEgress} from './eligibility-reference.js';
 import type { Client } from 'pg';
@@ -6,7 +7,7 @@ import { SecurityError } from '../security/errors.js';
 const schemaPattern = /^eigos_business_[a-z0-9_]{1,40}$/;
 const digestPattern = /^[a-f0-9]{64}$/;
 const active = new WeakSet<object>();
-const contexts = new WeakMap<object, { schema: string; authorityDigest: string; readUntil:number;token:object;leases:Map<string,()=>Promise<{validUntil:number}|undefined>>;eligibilityInspector?:PostgresEligibilityInspector;eligibility:Map<string,Promise<void>>;eligibilityReferences:Map<string,PostgresEligibilityReference>;egressReferences:PostgresEligibilityReference[] }>();
+const contexts = new WeakMap<object, { schema: string; authorityDigest: string; readUntil:number;token:object;kernel?:StagedKernelBuilder;leases:Map<string,()=>Promise<{validUntil:number}|undefined>>;eligibilityInspector?:PostgresEligibilityInspector;eligibility:Map<string,Promise<void>>;eligibilityReferences:Map<string,PostgresEligibilityReference>;egressReferences:PostgresEligibilityReference[] }>();
 
 /** An original-token inspector, never business/model/provider work. Lease
  * evidence is refreshed at the outer commit; fixed read deadlines stay fixed. */
@@ -44,6 +45,15 @@ export function postgresBusinessToken(client:Client):object {
   return context.token;
 }
 
+/** Host-only immutable compiler context. It grants no namespace, task, role,
+ * source or output access. A captured reader must retain this exact token;
+ * closed callbacks and reuse of the pooled client cannot lend a new kernel. */
+export function postgresBusinessKernel(client:Client,expectedToken:object):StagedKernelBuilder|undefined{
+  const context=contexts.get(client);
+  if(!context||context.token!==expectedToken)throw new Error('The exact active PostgreSQL business transaction is required');
+  return context.kernel;
+}
+
 /** A protected read must remain authorized when the transaction returns,
  * including the network wait for COMMIT. This never extends a grant/lease. */
 export function postgresConstrainReadDeadline(client:Client,validUntil:number):void {
@@ -79,8 +89,9 @@ export interface PostgresRuntimeAuthority {
  * the same callback, and all business writers must use the same lock. The
  * client must be request-owned and every database operation must be awaited.
  * External side effects must not be performed inside the transaction. */
-export async function postgresBusinessTransaction<T>(client: Client, schema: string, authority: PostgresRuntimeAuthority, action: (client: Client) => Promise<T>,options:{eligibilityInspector?:PostgresEligibilityInspector;prepareEligibilityAtEgress?:PostgresEligibilityEgress}={}): Promise<T> {
+export async function postgresBusinessTransaction<T>(client: Client, schema: string, authority: PostgresRuntimeAuthority, action: (client: Client) => Promise<T>,options:{eligibilityInspector?:PostgresEligibilityInspector;prepareEligibilityAtEgress?:PostgresEligibilityEgress;kernel?:StagedKernelBuilder}={}): Promise<T> {
   if (!schemaPattern.test(schema) || !authority.id || !Number.isSafeInteger(authority.revision) || authority.revision < 1 || !digestPattern.test(authority.digest)) throw new Error('Invalid PostgreSQL business authority');
+  const kernel=options.kernel;if(kernel!==undefined)stagedKernelComponents(kernel);
   const releaseClient=reservePostgresTransactionClient(client);
   const expected = { id: authority.id, revision: authority.revision, digest: authority.digest };
   let opened = false, beginning = false, committing = false;
@@ -111,7 +122,7 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
     await assertAuthority();
     await assertBoundary();
     await client.query('SAVEPOINT eigos_runtime_action_guard');
-    const context={schema,authorityDigest:expected.digest,readUntil:Infinity,token:Object.freeze({}),leases:new Map<string,()=>Promise<{validUntil:number}|undefined>>(),eligibilityInspector:options.eligibilityInspector,eligibility:new Map<string,Promise<void>>(),eligibilityReferences:new Map<string,PostgresEligibilityReference>(),egressReferences:[] as PostgresEligibilityReference[]};
+    const context={schema,authorityDigest:expected.digest,readUntil:Infinity,token:Object.freeze({}),kernel,leases:new Map<string,()=>Promise<{validUntil:number}|undefined>>(),eligibilityInspector:options.eligibilityInspector,eligibility:new Map<string,Promise<void>>(),eligibilityReferences:new Map<string,PostgresEligibilityReference>(),egressReferences:[] as PostgresEligibilityReference[]};
     contexts.set(client,context);
     let result: T;
     try {

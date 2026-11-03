@@ -10,7 +10,7 @@ import { compileOntologyDocument, type TrustedDefinitionRegistry } from '../onto
 import { createCurrentKernelDefinition, createSeedDefinition, stagedKernelComponents, type StagedKernelBuilder } from '../ontology/seed-definition.js';
 import { validateTaskReadProjection } from '../ontology/task-read-proof.js';
 import type { Job } from '../core/domain.js';
-import { postgresBusinessSchema } from './runtime-transaction.js';
+import { postgresBusinessSchema,postgresBusinessToken,postgresBusinessKernel } from './runtime-transaction.js';
 
 let registry: TrustedDefinitionRegistry | undefined;
 function trustedRegistry(): TrustedDefinitionRegistry {
@@ -121,7 +121,8 @@ export async function postgresOntologyReadContext(client: Client, owner: string,
  * task/installation permissions and claim freshness in the same transaction. */
 export async function postgresOntologyRelease(client: Client, input: OntologyReleaseRef, builder?: StagedKernelBuilder) {
   const schema = postgresBusinessSchema(client), ref = ontologyReleaseRefSchema.parse(input), q = `"${schema}"`;
-  const staged = builder === undefined ? undefined : stagedKernelComponents(builder);
+  const kernel=builder===undefined?postgresBusinessKernel(client,postgresBusinessToken(client)):builder;
+  const staged = kernel === undefined ? undefined : stagedKernelComponents(kernel);
   let result = await client.query(`SELECT body,model_digest,created_at,sequence FROM ${q}.ontology_definition_releases WHERE id=$1 AND ontology_id=$2 AND digest=$3`, [ref.releaseId,ref.ontologyId,ref.digest]);
   if (!result.rowCount) result = await client.query(`SELECT r.body,r.model_digest,r.created_at,r.sequence FROM ${q}.ontology_definition_release_aliases a JOIN ${q}.ontology_definition_releases r ON r.id=a.canonical_id AND r.ontology_id=a.ontology_id AND r.digest=a.digest WHERE a.alias_id=$1 AND a.ontology_id=$2 AND a.digest=$3`, [ref.releaseId,ref.ontologyId,ref.digest]);
   if (result.rowCount !== 1) return conflict('The exact ontology release is unavailable');

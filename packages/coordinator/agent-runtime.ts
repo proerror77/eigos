@@ -34,12 +34,8 @@ import { externalDraftScopeSchema } from '../ontology/external-draft.js';
 import { assertPipelineReady } from '../ontology/pipeline/contracts.js';
 import { bindGoalCompletion, validateGoalDataflow } from './goal-dataflow.js';
 
-export const AGENT_LIMITS = { modelTurns: 32, plans: 8, actions: 16 } as const;
-export function agentLimits(program?: AgentProgram) {
-  const limits = program?.limits ?? AGENT_LIMITS;
-  if (!Number.isInteger(limits.modelTurns) || limits.modelTurns < 1 || limits.modelTurns > 80 || !Number.isInteger(limits.plans) || limits.plans < 1 || limits.plans > 24 || !Number.isInteger(limits.actions) || limits.actions < 1 || limits.actions > 64) throw new DomainError('CONFLICT', 'Agent execution limits are outside the bounded host policy');
-  return limits;
-}
+import {AGENT_LIMITS,agentLimits} from '../core/agent-limits.js';
+export {AGENT_LIMITS,agentLimits} from '../core/agent-limits.js';
 class RecoverableAgentReadFailure extends Error { constructor(readonly action: string) { super('A source read requires recovery'); } }
 const equal = (a: unknown, b: unknown) => digest(a) === digest(b);
 const failure = (message: string): never => { throw new DomainError('CONFLICT', message); };

@@ -3060,7 +3060,7 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "2eda24e758ec91984b1107ac7d236b41820b5d277fa241ccaca3c09414a3afc5",
+      "sourceDigest": "d4ceeb497990f86931b155423c97bd2b88bd385baa9f5c434997cb9905e908ce",
       "channels": [
         "model",
         "dispatch",
@@ -4598,7 +4598,7 @@
       "currentControl": "Original accepted ports, same-component declared functions, exact source observations, ownership, freshness and independent input validation",
       "targetControl": "No guessed values, cross-task aliases, implicit conversions or authority from model text",
       "stage": "S5",
-      "sourceDigest": "1b7784ceb1e8be1c069ff21cf53aa4e68d4ef45833049b2c54d70171576b0766"
+      "sourceDigest": "c4bd161e866c09db0d5d3b3b62e3f2cb47df6a8457ef69ec9bae7f23e88fc91b"
     },
     {
       "id": "native-agent-decision-contract",
@@ -5540,7 +5540,7 @@
       "currentControl": "Serializable business state after transaction-scoped table serialization, exact authority/transaction identity and savepoint guards; current deadlines before/after commit, unknown-outcome eviction and no automatic retries",
       "targetControl": "Serializable business state after transaction-scoped table serialization, exact authority/transaction identity and savepoint guards; current deadlines before/after commit, unknown-outcome eviction and no automatic retries",
       "stage": "S5",
-      "sourceDigest": "6fb3c85e7080b0126f5547e02644cbbb23661360492ba1278d6838899ebacbe0"
+      "sourceDigest": "df18813fe0b33616c214edb496b521f2c14f95dcc778d2f0721618fe3b583fc2"
     },
     {
       "id": "postgres-authority-lock",
@@ -5652,7 +5652,7 @@
       "stage": "S5",
       "id": "postgres-ontology-read",
       "file": "packages/postgres/ontology-release.ts",
-      "sourceDigest": "92910c39f1b76dbb820b2500fe716012f7bb8419b02c85c0f04b943eb163d725",
+      "sourceDigest": "671b35bf2544f3d0fca58176907be7c18692dfe59d598536e74a35a0a8abf56a",
       "content": "PostgreSQL ontology release and historical witness reader",
       "currentControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions",
       "targetControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions"
@@ -5879,7 +5879,7 @@
     {
       "id": "postgres-database-runtime",
       "file": "packages/postgres/database.ts",
-      "sourceDigest": "afa9757c78fa1465a1cf19dff79b06847292728cf5e65b6d03933d58b080856d",
+      "sourceDigest": "f234a8530cad6c24bb849a33399ff51cf773fc38f060211674006228ec8934b2",
       "channels": [
         "internal"
       ],
@@ -6011,7 +6011,7 @@
     {
       "id": "postgres-worker-store",
       "file": "packages/postgres/worker-store.ts",
-      "sourceDigest": "e7f1e104a01bb9a8db7c313c020fbb5729bb3514ab03ee9efdf6e413271052ec",
+      "sourceDigest": "830044ef173e88ee4752a29f65d891f7016f0dd4f63c8c38563f599219d0785c",
       "channels": [
         "internal"
       ],
@@ -6585,6 +6585,90 @@
       "content": "Non-authoritative PostgreSQL queue scheduling hint",
       "currentControl": "One uncached read-only autocommit statement outside the business lock; exact runtime metadata; reliable false skips one empty poll, true grants no claim or permission; errors discard the owned client and never masquerade as empty work",
       "targetControl": "One uncached read-only autocommit statement outside the business lock; exact runtime metadata; reliable false skips one empty poll, true grants no claim or permission; errors discard the owned client and never masquerade as empty work",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-document-policy",
+      "file": "packages/postgres/document-policy.ts",
+      "sourceDigest": "986c3f76c905edb9774ae3a6ea70d6a8499fb4b432d932e876f4099a038663fe",
+      "channels": [
+        "internal"
+      ],
+      "content": "Actual shared Document action and model-response semantics",
+      "currentControl": "Current original typed request and exact direct/component scope, real accepted citations and fixed evidence expiry; original decision and persisted document-purpose run; missing current materialization remains denied",
+      "targetControl": "Current original typed request and exact direct/component scope, real accepted citations and fixed evidence expiry; original decision and persisted document-purpose run; missing current materialization remains denied",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-document-execution",
+      "file": "packages/postgres/document-execution.ts",
+      "sourceDigest": "7bb9b0f0e98d50f569f67af7d78ba2de7918ac5d4f34cea75b49c90dc757ef9f",
+      "channels": [
+        "internal"
+      ],
+      "content": "Fenced original PostgreSQL document action execution",
+      "currentControl": "Actual persisted ready action, source/role/plan/claim checks; acknowledged model usage and current pre-spawn input validation; model outside SQL, original audit receipt and atomic source projection/output sealing; cancellation and late response never replay or complete the whole goal",
+      "targetControl": "Actual persisted ready action, source/role/plan/claim checks; acknowledged model usage and current pre-spawn input validation; model outside SQL, original audit receipt and atomic source projection/output sealing; cancellation and late response never replay or complete the whole goal",
+      "stage": "S5"
+    },
+    {
+      "id": "agent-runtime-limits",
+      "file": "packages/core/agent-limits.ts",
+      "sourceDigest": "7fbf6cd1e645112dee1c80a7e2b5e5a81cc570bbba61d987eef89f661510d27e",
+      "channels": [
+        "internal"
+      ],
+      "content": "Shared original Agent model, plan and action bounds",
+      "currentControl": "Original default and registered program ceilings; pure shared validation with unchanged source re-export; no new model call, window reset or permission",
+      "targetControl": "Original default and registered program ceilings; pure shared validation with unchanged source re-export; no new model call, window reset or permission",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-agent-plan",
+      "file": "packages/postgres/agent-plan.ts",
+      "sourceDigest": "11160b664dba35f54b416bb7612cc35223abf1302dc29f3ca488b2b26db90a51",
+      "channels": [
+        "internal"
+      ],
+      "content": "Atomic original PostgreSQL Agent frontier installation",
+      "currentControl": "Current original claim and scope, exact durable model decision and read receipts, cumulative budgets and pinned definitions; same-savepoint plan and actual journal-authorized fresh intents; unported dataflow, private inputs and effects remain denied",
+      "targetControl": "Current original claim and scope, exact durable model decision and read receipts, cumulative budgets and pinned definitions; same-savepoint plan and actual journal-authorized fresh intents; unported dataflow, private inputs and effects remain denied",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-kernel-runtime",
+      "file": "packages/postgres/kernel-runtime.ts",
+      "sourceDigest": "3cf40bf48620dede95e46921c4be2854b4f43e3f11e95ea6ed36d07da9ce2ce5",
+      "channels": [
+        "internal"
+      ],
+      "content": "Yielded pre-publication PostgreSQL compiler preparation",
+      "currentControl": "Existing exact 13-stage trusted kernel, ready-brand checks and cancellation between stages; prepared before qualification publishing and passed through exact transaction token; original release row/body/digest/model checks remain authoritative, with no permission or data caching",
+      "targetControl": "Existing exact 13-stage trusted kernel, ready-brand checks and cancellation between stages; prepared before qualification publishing and passed through exact transaction token; original release row/body/digest/model checks remain authoritative, with no permission or data caching",
+      "stage": "S5"
+    },
+    {
+      "id": "goal-assessment-program",
+      "file": "packages/coordinator/goal-assessment-program.ts",
+      "sourceDigest": "cea3e886c21fb43894af47e2bae7814cabc4654f1e8198e11718977dadaa46ca",
+      "channels": [
+        "internal"
+      ],
+      "content": "Shared independent whole-goal assessment and partial evidence",
+      "currentControl": "Original immutable goal/criteria/request and current component/model/accepted-port evidence; registered semantic callbacks, all hard requirements and conditions plus economic identity; partial component success never grants whole-goal acceptance or business authority",
+      "targetControl": "Original immutable goal/criteria/request and current component/model/accepted-port evidence; registered semantic callbacks, all hard requirements and conditions plus economic identity; partial component success never grants whole-goal acceptance or business authority",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-capability-catalog",
+      "file": "packages/postgres/capability-catalog.ts",
+      "sourceDigest": "6518708d2afcd5fbc5a905b5957162e6f1022dc70ab0d689c1627832155c16ca",
+      "channels": [
+        "internal"
+      ],
+      "content": "Original-claim PostgreSQL capability metadata projection",
+      "currentControl": "Actual server program metadata, current scoped capability/field/role/namespace filtering, bounded immutable RegisteredCapability objects and reserved task-context bindings; same-savepoint rollback, unchanged grants and deadlines; metadata never authorizes execution or pretends Pipeline readiness",
+      "targetControl": "Actual server program metadata, current scoped capability/field/role/namespace filtering, bounded immutable RegisteredCapability objects and reserved task-context bindings; same-savepoint rollback, unchanged grants and deadlines; metadata never authorizes execution or pretends Pipeline readiness",
       "stage": "S5"
     }
   ]

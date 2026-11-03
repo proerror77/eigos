@@ -7,18 +7,21 @@ import { postgresBusinessTransaction, type PostgresRuntimeAuthority } from './ru
 import {postgresRenewWorkerLease,postgresInspectWorkerLease} from './lease-renewal.js';
 import type {WorkClaim} from '../core/store.js';
 import {postgresCleanupReleasedClaims} from './claim-release.js';
+import {stagedKernelComponents,type StagedKernelBuilder} from '../ontology/seed-definition.js';
 import {postgresWorkAvailable} from './work-availability.js';
 
 /** Owns the runtime's connection pool, not a second business authority. Each
  * operation gets one client and one fenced transaction. No implicit retries. */
 export class PostgresDatabase {
   private readonly authority:PostgresRuntimeAuthority;
+  private readonly kernel:StagedKernelBuilder|undefined;
   private closing?:Promise<void>;
   private readonly leasePool:Pick<Pool,'connect'|'end'>|undefined;
   private readonly eligibilityPool:Pick<Pool,'connect'|'end'>|undefined;
-  constructor(private readonly pool:Pick<Pool,'connect'|'end'>,private readonly schema:string,authority:PostgresRuntimeAuthority,options:{leasePool?:Pick<Pool,'connect'|'end'>;eligibilityPool?:Pick<Pool,'connect'|'end'>}={}) {
+  constructor(private readonly pool:Pick<Pool,'connect'|'end'>,private readonly schema:string,authority:PostgresRuntimeAuthority,options:{leasePool?:Pick<Pool,'connect'|'end'>;eligibilityPool?:Pick<Pool,'connect'|'end'>;kernel?:StagedKernelBuilder}={}) {
     if(!/^eigos_business_[a-z0-9_]{1,40}$/.test(schema) || typeof authority.id!=='string' || !authority.id
       || !Number.isSafeInteger(authority.revision) || authority.revision<1 || !/^[a-f0-9]{64}$/.test(authority.digest))throw new Error('Invalid PostgreSQL runtime configuration');
+    if(options.kernel!==undefined)stagedKernelComponents(options.kernel);this.kernel=options.kernel;
     this.authority=Object.freeze(structuredClone(authority));
     if(options.leasePool===pool)throw new Error('Worker heartbeats require a separate connection pool');
     this.leasePool=options.leasePool;this.eligibilityPool=options.eligibilityPool??options.leasePool;
@@ -43,7 +46,7 @@ export class PostgresDatabase {
   }
   run<T>(action:(client:Client)=>Promise<T>):Promise<T>{
     const eligibilityInspector=this.eligibilityPool?(reference:PostgresEligibilityReference)=>postgresInspectEligibility(this.eligibilityPool!,this.schema,this.authority,reference):undefined;
-    return this.use(this.pool,client=>postgresBusinessTransaction(client,this.schema,this.authority,action,{eligibilityInspector,prepareEligibilityAtEgress:eligibilityInspector?postgresEligibilityAtEgress:undefined}));
+    return this.use(this.pool,client=>postgresBusinessTransaction(client,this.schema,this.authority,action,{eligibilityInspector,prepareEligibilityAtEgress:eligibilityInspector?postgresEligibilityAtEgress:undefined,kernel:this.kernel}));
   }
   renewClaim(claim:WorkClaim,leaseMs:number,policy:string):Promise<boolean>{
     if(!this.leasePool)throw new Error('PostgreSQL Worker requires a dedicated heartbeat pool');

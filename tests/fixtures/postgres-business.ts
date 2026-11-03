@@ -10,11 +10,13 @@ import {importBusinessSnapshot} from '../../packages/postgres/business-import.js
 import {postgresBusinessTransaction} from '../../packages/postgres/runtime-transaction.js';
 import {supabaseProxyOptions} from '../../packages/postgres/supabase-proxy.js';
 import {securityDefaults} from '../../packages/security/contracts.js';
+import {preparePostgresKernel} from '../../packages/postgres/kernel-runtime.js';
 import {PostgresDatabase} from '../../packages/postgres/database.js';
 
 /** Actual offline importer, isolated schema, synthetic fixture data only. */
 export async function importPostgresFixture(f:ReturnType<typeof securityFixture>){
   if(!f.authority)throw new Error('Unified fixture authority is required');
+  const kernel=await preparePostgresKernel();
   const snapshot=join(f.directory,`snapshot-${randomUUID()}.sqlite`),schema=`eigos_business_${randomUUID().replaceAll('-','')}`;
   const authority={id:f.authority.id,revision:f.authority.revision,digest:runtimeAuthorityDigest(f.authority)};
   const policy=f.jobs.security.policies.definitionDigest;
@@ -77,16 +79,16 @@ export async function importPostgresFixture(f:ReturnType<typeof securityFixture>
   }
   const refreshEligibility=()=>pending??(pending=refresh().catch(error=>{failure??=error;throw error;}).finally(()=>{pending=undefined;}));
   const timer=setInterval(()=>{void refreshEligibility().catch(()=>{clearInterval(timer);});},securityDefaults.authorityProjectionRefreshSeconds*1000);timer.unref();
-  const database=new PostgresDatabase(new pg.Pool({...connection,max:2}),schema,authority,{leasePool:new pg.Pool({...connection,max:1})});
+  const database=new PostgresDatabase(new pg.Pool({...connection,max:2}),schema,authority,{leasePool:new pg.Pool({...connection,max:1}),kernel});
   const ownedRun=database.run.bind(database);
   database.run=<T>(action:(client:pg.Client)=>Promise<T>):Promise<T>=>{
     if(failure)return Promise.reject(new Error('Synthetic eligibility publisher failed',{cause:failure}));return ownedRun(action);
   };
   const publisherStatus=()=>({lastAttemptAt,lastAcknowledgedAt,acknowledgedUntil,remainingMs:acknowledgedUntil===undefined?undefined:acknowledgedUntil-Date.now(),
     failure:failure instanceof Error?{name:failure.name,code:'code'in failure?failure.code:undefined,message:failure.message}:failure?{name:'unknown'}:undefined});
-  return {client,schema,authority,policy,database,refreshEligibility,publisherStatus,run:<T>(action:(client:pg.Client)=>Promise<T>)=>{
+  return {client,schema,authority,policy,database,kernel,refreshEligibility,publisherStatus,run:<T>(action:(client:pg.Client)=>Promise<T>)=>{
     if(failure)throw new Error('Synthetic eligibility publisher failed',{cause:failure});
-    return postgresBusinessTransaction(client,schema,authority,action);
+    return postgresBusinessTransaction(client,schema,authority,action,{kernel});
   },close:async()=>{
     clearInterval(timer);if(pending)await pending.catch(()=>{});await database.close();await publisher.end();
     try{await client.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await client.end();}
