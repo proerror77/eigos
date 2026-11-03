@@ -28,7 +28,8 @@ test('S0 inventories every definition and nested subtree without changing runtim
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
   assert.equal(report.counts.objectTypes, 204); assert.equal(report.counts.properties, 1863); assert.equal(report.counts.interfaces, 14);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 206);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 208);
+  for (const id of ['consent-lifetime', 'persistent-consent-policy-upgrade']) assert(report.surfaces.some(surface => surface.id === id));
   for (const id of ['payment-commerce-connection', 'payment-commerce-mcp', 'payment-commerce-http', 'payment-commerce-program', 'payment-commerce-policy-upgrade'])
     assert(report.surfaces.some(surface => surface.id === id), `Unreviewed payment/commerce boundary: ${id}`);
   assert.equal(report.types.find(type => type.id === 'PaymentCommerceReadTask')!.properties.find(field => field.name === 'input')!.policy, 'task_sensitive');

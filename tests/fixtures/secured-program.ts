@@ -13,10 +13,10 @@ import {setTimeout as delay} from 'node:timers/promises';
 import type {WorkClaim} from '../../packages/core/store.js';
 import {evidence,interpretation,syntheticGoalReview,observeTaskContext,acknowledgeReads} from '../backend-fixture.js';
 
-export function securedProgramFixture(factory:(f:ReturnType<typeof securityFixture>)=>AgentProgram,input:object,choice:(ctx:AgentPlanningContext,access:PlanningAccess)=>AgentDecision,base?:ReturnType<typeof securityFixture>,options:{nativeTaskContext?:boolean;grantExpiresAt?:string;leaseMs?:number;signal?:AbortSignal;renewLease?:boolean}={}) {
+export function securedProgramFixture(factory:(f:ReturnType<typeof securityFixture>)=>AgentProgram,input:object,choice:(ctx:AgentPlanningContext,access:PlanningAccess)=>AgentDecision,base?:ReturnType<typeof securityFixture>,options:{nativeTaskContext?:boolean;grantExpiresAt?:string|null;leaseMs?:number;signal?:AbortSignal;renewLease?:boolean}={}) {
   const f=base??securityFixture(),program=factory(f);bindPersonalSourceOwner(program,f.owner);
   const businessModel=f.jobs.security.model,BUSINESS_MODEL_DEFINITION=businessModel.definitionSnapshot();
-  const catalog=new ExecutionCatalog([program.capability()],[],[],[],[program],undefined,f.jobs.security),profile=catalog.securityProfiles(f.owner)[0]!,policy=f.jobs.security.policies,until=options.grantExpiresAt??new Date(Date.now()+3600000).toISOString(),a=f.installation('Scoped native program',15*60*1000);
+  const catalog=new ExecutionCatalog([program.capability()],[],[],[],[program],undefined,f.jobs.security),profile=catalog.securityProfiles(f.owner)[0]!,policy=f.jobs.security.policies,until=options.grantExpiresAt===undefined?new Date(Date.now()+3600000).toISOString():options.grantExpiresAt,a=f.installation('Scoped native program',15*60*1000);
   const resources=[...new Set(['ServiceRequest',...profile.outputTypes])].map(type=>({type,fields:Object.keys(policy.fields(type)).filter(field=>policy.fieldPolicy(type,field)!=='internal_only')}));
   if(options.nativeTaskContext) for(const [type,allowed] of Object.entries(taskContextFields)) {
     const fields=allowed.filter(field=>Object.hasOwn(policy.fields(type),field) && policy.fieldPolicy(type,field)!=='internal_only');

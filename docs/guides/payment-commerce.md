@@ -91,7 +91,7 @@ node --env-file-if-exists=.env --import tsx examples/payment-commerce-status.ts
 新建数据库使用 v27 内核。旧库启动不会自动激活新本体，也不会改变已有任务的 release：
 
 1. 在离线备份上检查当前 namespace 与 generation，调用 `DefinitionStore.installPaymentCommerceReads(active, generation)` 预先验证追加发布。它仅添加两类技术对象、五个只读 Action 及其关系／状态函数，拒绝覆盖不同的已有定义。
-2. Foundation 的 v26 权限合同须在 Gateway／Worker 停止、无有效领取／待处理授权栅栏时，使用 `upgradePaymentCommercePolicy` 的原 digest 和 revision 先预览，再应用。此步骤保留原授权与到期时间，不授权任何新供应商 Action。其他旧版本应先沿已有命名迁移逐步升级。
+2. Foundation 的 v26 权限合同须在 Gateway／Worker 停止、无有效领取／待处理授权栅栏时，使用 `upgradePaymentCommercePolicy` 的原 digest 和 revision 先预览，再应用。入口同时识别有限期与“撤销前有效”的既有合同，保持相同模式并原样保留原授权与到期时间，不授权任何新供应商 Action，也不将有限期授权转成长期授权。其他旧版本应先沿已有命名迁移逐步升级。
 3. 核对本体 release、权限合同和相同的 Gateway／Worker 配置，再为明确的 owner／安装授予所需查询权限。已有任务继续读取原 release，不自动重放查询。
 
 代码 PR、离线迁移验证和正式实例部署分别交付。没有正式部署与来源回读时，只能说执行接线已实现，不能说线上已经接通。

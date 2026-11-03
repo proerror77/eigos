@@ -1,3 +1,4 @@
+import { consentDeadline } from '../packages/security/consent-lifetime.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
@@ -138,9 +139,9 @@ for (const parentLifetimeMs of [120000, 3600000]) test(`foundation validation ex
   try {
     const args = f.request(), task = f.tasks.preparePipelineValidation(f.p, args), actor = f.jobs.security.agentContext(f.p);
     const grant = f.jobs.security.taskGrant(actor, task.id), parent = f.jobs.security.agentGrant(f.a.id);
-    assert.equal(Date.parse(grant.expiresAt), Math.min(Date.parse(args.expiresAt), Date.parse(parent.expiresAt)));
+    assert.equal(consentDeadline(grant.expiresAt), Math.min(consentDeadline(args.expiresAt), consentDeadline(parent.expiresAt)));
     const count = f.jobs.security.listGrants(f.owner).length;
-    f.elapse(Date.parse(grant.expiresAt) - f.now() + 1);
+    f.elapse(consentDeadline(grant.expiresAt) - f.now() + 1);
     assert.equal(f.jobs.security.workAuthority(f.owner, task.id), undefined);
     assert.equal(f.jobs.claim(['eigos.delegate'], 30000, f.now()), undefined);
     assert.throws(() => f.tasks.get(f.p, task.id), /AUTHORIZATION_REQUIRED|ACCESS_REVOKED/);
