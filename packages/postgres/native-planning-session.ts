@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Client } from 'pg';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
-import { DomainError } from '../core/domain.js';
+import { DomainError,type Principal } from '../core/domain.js';
 import type { WorkClaim } from '../core/store.js';
 import type { ActionDiscoveryPage, ActionDiscoveryQuery } from '../core/action-bindings.js';
 import type { ExecutablePlanningSession } from '../coordinator/native-planning-session.js';
@@ -20,7 +20,7 @@ import type { SecurityEnvelope } from '../security/envelope.js';
 import { submissionDigest } from '../security/submission-digest.js';
 import { withPostgresPlanningReadGraph, postgresPlanningAccessDigest } from './planning-read-graph.js';
 import { withPostgresTaskDefinitionAccess } from './ontology-metadata.js';
-import { postgresBusinessSchema } from './runtime-transaction.js';
+import { postgresBusinessSchema,postgresBusinessToken } from './runtime-transaction.js';
 import type { PostgresTaskReadAuthorization } from './task-output.js';
 import type { PostgresTaskReadAdmission } from './task-read-access.js';
 import { postgresWorkReference, type PostgresWorkReference } from './work-claim.js';
@@ -28,9 +28,24 @@ import type { PostgresWorkerStore } from './worker-store.js';
 
 type ReadGraph = Parameters<Parameters<typeof withPostgresPlanningReadGraph>[6]>[0];
 type PlanningStore = Pick<PostgresWorkerStore, 'readRequest' | 'readEvidence'>;
+/** Host callback capability only. Never part of a tool's portable arguments,
+ * response, or model context. It expires with this exact checked read scope. */
+export interface PostgresPlanningDiscoveryContext {
+  readonly client:Client;readonly claim:PostgresWorkReference;readonly principal:Principal;
+  readonly authorization:PostgresTaskReadAuthorization;readonly admission:PostgresTaskReadAdmission;
+  readonly policyDigest:string;readonly modelChannel:string;
+  assertActive():void;
+}
+const discoveryScopes=new WeakMap<object,{client:Client;token:object;open:()=>boolean;active:()=>void}>();
+/** Reject structural lookalikes as well as closed/reused real capabilities. */
+export function assertPostgresPlanningDiscoveryContext(scope:PostgresPlanningDiscoveryContext):void{
+  const current=discoveryScopes.get(scope);
+  if(!current||!current.open())throw new SecurityError('AUTHORIZATION_REQUIRED');
+  current.active();if(postgresBusinessToken(current.client)!==current.token)throw new SecurityError('AUTHORIZATION_REQUIRED');
+}
 interface Options extends PlanningSessionOptions {
   candidates?: ResolvedCandidate[]; boundRefs?: ObjectRef[]; readScope?: 'owner' | 'request'; signal?: AbortSignal; builder?: StagedKernelBuilder;
-  discoverActions?: (graph: GraphStorage & ProjectionMetadata, owner: string, request: ServiceRequest, input: ActionDiscoveryQuery) => Promise<ActionDiscoveryPage>;
+  discoverActions?: (graph: GraphStorage & ProjectionMetadata, owner: string, request: ServiceRequest, input: ActionDiscoveryQuery, context:PostgresPlanningDiscoveryContext) => Promise<ActionDiscoveryPage>;
 }
 const refKey = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);
 const snapshotSchema = z.strictObject({ ref: objectRefSchema, revision: z.number().int().positive().safe(), propertiesDigest: z.string().regex(/^[a-f0-9]{64}$/), linksDigest: z.string().regex(/^[a-f0-9]{64}$/) });
@@ -145,11 +160,16 @@ export class PostgresNativePlanningSession implements ExecutablePlanningSession 
                 definitions: () => authorizedDefinitionCatalogue(access, selected), describe: input => describeDefinitionCatalogue(access, input, selected),
                 binding: ref => allowed.has(refKey(ref)), requireResource: (kind, id) => { if (!access.resourceAllowed(kind, id)) throw new SecurityError('AUTHORIZATION_REQUIRED'); },
                 receipt: () => { const envelope = graph.evidence(); return { accessDigest: postgresPlanningAccessDigest(admission), ...(envelope ? { securityEnvelope: envelope } : {}) }; } } };
+            const token=postgresBusinessToken(client);let discoveryOpen=true;
+            const discovery:PostgresPlanningDiscoveryContext=Object.freeze({client,claim:postgresWorkReference(this.claim),principal:freeze(structuredClone(principal)),authorization:auth,admission:freeze(structuredClone(admission)),policyDigest:this.policy,modelChannel:this.channel,
+              assertActive:()=>assertPostgresPlanningDiscoveryContext(discovery)});
+            discoveryScopes.set(discovery,{client,token,open:()=>discoveryOpen,active:()=>this.active()});
             const next = this.state.fork(meta), driver = storage(graph, {
               recordRead: receipt => recordRead(client, this.claim, admission, auth, receipt, graph.evidence()),
-              ...(this.options.discoverActions ? { discoverActions: (owner, request, input) => this.options.discoverActions!(graph, owner, request, input) } : {}),
+              ...(this.options.discoverActions ? { discoverActions: (owner, request, input) => this.options.discoverActions!(graph, owner, request, input,discovery) } : {}),
             });
-            const value = await action(next, graph, driver); this.active(); return { value, next };
+            try{const value = await action(next, graph, driver); this.active(); return { value, next };}
+            finally{discoveryOpen=false;discoveryScopes.delete(discovery);}
           }, this.options.builder), this.options.builder));
       this.active(); this.state.adopt(committed.next); return committed.value;
     }));

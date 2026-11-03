@@ -26,6 +26,26 @@
 切换前保留关闭快照、配置与前端路由，核对哈希。主实例一旦接受新任务或授权变化，就保留其数据库并向前修复；不能恢复旧库而丢失结果或复活已撤销权限。业务订单、付款和未知外部效果的重试不属于部署操作。
 
 
+## 固定版本的容器与发布产物
+
+`Dockerfile` 提供独立的 `gateway`、`relay`、`worker`、`worker-codex` 目标；默认目标为 Gateway。镜像使用 Node.js 22.22.3 和锁文件 `npm ci`，运行用户为 `node`（UID 1000）。`worker-codex` 另安装固定 Codex CLI 0.164.0；基础 `worker` 不包含模型 CLI。当前主线没有已整合的 Harness adapter，因此发布入口明确拒绝 `backend=harness`，不能以安装 DSH 二进制冒充支持 PR #73。
+
+构建上下文默认拒绝未列出的文件，包含构建必需的 PA Skill 源资产；运行镜像只复制实际 `releaseFiles` 白名单和生产依赖。数据库、`.env`、私有配置、认证文件和本机工具目录不进入镜像。`/var/lib/eigos` 用于外部持久状态；`CODEX_HOME=/home/node/.codex` 的认证须在运行时注入，`auth.json` 必须属于 UID 1000、为普通文件且权限为 `0600`。模型进程继续使用既有凭据白名单、任务范围和注册模型通道检查；安装 CLI 不授予业务或数据权限。
+
+按需发布使用 GitHub Actions 的 **Release artifacts** 手动入口，明确提供完整源 SHA 与 backend。它先要求该准确 SHA 的最新 CI 及全部必要检查成功，包括类型、构建和进程级验证；缺失、运行中或跳过必要检查均停止发布。普通 PR／push 不触发 GHCR 发布。针对 Docker、发布脚本及构建源资产的 PR，独立的 **Container build smoke** 只构建 Gateway／固定 Codex Worker 并读取镜像内文件与非 root 身份；`push: false`、不登录 registry、不启动模型或服务。它用于给当前 PR 留下真实远端镜像构建证据，不代表已发布或完成部署。镜像先用 `sha-<完整SHA>-codex` 标签写入 GHCR，再记录构建实际返回的 `@sha256:` 引用与 provenance／SBOM；已有标签不会被此流程覆盖，部分失败时仅重跑失败的角色任务。
+
+产物下载包 `release-<SHA>-codex` 包含 `manifest.json`、实际 runtime/source/lockfile 摘要、13 阶段官方内核的离线 `ontology/package.json`、固定 document/model digest 及供应商模块引用。`payloadDigest` 固定镜像内的代码与本体文件，`manifestDigest` 另外绑定外部 OCI 引用和准确源 CI，避免镜像包含自身摘要的循环。缺少任一镜像 digest 或 CI 记录时只能是 `candidate`；`artifact-ready` 只表示这些发布产物已齐备。
+
+产物可用以下只读入口复核，不能据此推定实例已部署：
+
+```sh
+node scripts/release-artifacts.mjs verify --root /private/release-package --require-ready
+```
+
+该手动流程当前构建 `linux/amd64`，部署前核对 ECS 的实际架构。镜像适用于 ECS／兼容 OCI 的运行环境；Cloudflare Workers 的请求入口仍使用独立 Workers 构建，不能把 Docker target 直接当成 Workers 脚本。部署须使用 manifest 中准确的 `image@sha256:...`，显式注入私有环境、同一 authority 描述与已验证的数据库连接。现有默认运行入口仍有 SQLite 路径，产物生成不会替代 PostgreSQL 运行时、两协议或业务权限验收；跨主机也不能各自启动一份 SQLite 正式库。
+
+本体包没有数据库 `releaseId`、published／active 声明。将离线包校验、不可变发布、候选代码部署和 CAS 激活分别执行，见[固定本体与发布流程](ontology-releases.md)。回滚代码时固定上一份已核对兼容性的镜像 digest 和实际发布引用；仍使用当前业务库，禁止用旧数据库覆盖后续任务、结果或撤销记录。部署后从真实 Gateway／Relay／Worker 路径回读 source/build、authority、实际本体引用与原任务结果，才能认定该次切换完成。
+
 ## 业务事实内核 v24
 
 这是显式的 v23 → v24 更新，代码启动不执行迁移。维护窗口中停止 Gateway／Worker，保留业务库备份和准确恢复记录，再分别预览并审核以下入口：

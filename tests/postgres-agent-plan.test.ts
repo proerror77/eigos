@@ -149,3 +149,19 @@ test('Agent plan installation preserves cumulative and registered program budget
     assert.deepEqual(after.delegation!.executionBudget,before.delegation!.executionBudget);assert.deepEqual(after.delegation!.request,before.delegation!.request);
   }finally{await x.close();}
 });
+
+// This frontier uses actual native preparation/discovery, not a hand-built
+// component or an allowed-policy fixture. Unsupported dataflow remains denied.
+test('native v3 plan keeps fixed contributions, original prepared context and unported dataflow closed',local,async()=>{
+  const {postgresGoalFixture}=await import('./fixtures/postgres-goal.js');
+  const x=await postgresGoalFixture();try{
+    const prepared=await x.prepareDecision(),component=(await x.prepare(prepared))[0]!,selected=await x.executeDecision(component);
+    const contribution={...selected.decision,steps:[{...selected.decision.steps[0]!,contributesTo:['different-unapproved-goal']}]},wrongRun=await x.record(contribution,selected.run.startedAt);
+    await assert.rejects(x.install({...selected,decision:contribution,run:wrongRun}),/contribution to the fixed goal/);
+    const flow={...selected.decision,steps:[{...selected.decision.steps[0]!,inputRefs:[{stepId:'missing',targetKey:'scope',port:'result'}]}]},flowRun=await x.record(flow,selected.run.startedAt);
+    await assert.rejects(x.install({...selected,decision:flow,run:flowRun}),/accepted\/derived input planning/);
+    assert(await x.worker.checkpoint(x.claim,job=>{job.delegation!.agent!.composition!.retiredContexts=[{id:component.id,at:new Date().toISOString(),reason:'source_authorization_renewed'}];}));
+    await assert.rejects(x.install(selected),/retired/);
+    const after=await x.stored();assert.equal(after.delegation!.agent!.plans.length,0);assert.equal(after.delegation!.agent!.pendingPlanId,undefined);assert.deepEqual(after.delegation!.agent!.composition!.goal,x.goal);
+  }finally{await x.close();}
+});

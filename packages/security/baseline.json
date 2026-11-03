@@ -6326,7 +6326,7 @@
     {
       "id": "postgres-native-planning-session",
       "file": "packages/postgres/native-planning-session.ts",
-      "sourceDigest": "2cb34c2cbdd6537908688c3878afa0ffc611403fc1bb19102790b05ac9e1303a",
+      "sourceDigest": "92413e589ff3f2821b89cc24541457f0e259638e7ac6ab21a718d2c27b901fa5",
       "channels": [
         "internal"
       ],
@@ -6626,7 +6626,7 @@
     {
       "id": "postgres-agent-plan",
       "file": "packages/postgres/agent-plan.ts",
-      "sourceDigest": "11160b664dba35f54b416bb7612cc35223abf1302dc29f3ca488b2b26db90a51",
+      "sourceDigest": "0b9ba6ec94eefadecdf45ace43172b7e664ad6df8611a80979faab5e47f3a7a0",
       "channels": [
         "internal"
       ],
@@ -6669,6 +6669,90 @@
       "content": "Original-claim PostgreSQL capability metadata projection",
       "currentControl": "Actual server program metadata, current scoped capability/field/role/namespace filtering, bounded immutable RegisteredCapability objects and reserved task-context bindings; same-savepoint rollback, unchanged grants and deadlines; metadata never authorizes execution or pretends Pipeline readiness",
       "targetControl": "Actual server program metadata, current scoped capability/field/role/namespace filtering, bounded immutable RegisteredCapability objects and reserved task-context bindings; same-savepoint rollback, unchanged grants and deadlines; metadata never authorizes execution or pretends Pipeline readiness",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-document-bindings",
+      "file": "packages/postgres/document-bindings.ts",
+      "sourceDigest": "4c9e3b895990168c8c08c1e669f4ef4dc223676637e14d7ebc7d42d7c865b732",
+      "channels": [
+        "internal"
+      ],
+      "content": "Current task-scoped Document discovery and binding resolution",
+      "currentControl": "Current original Worker/parent/source/metadata roles, exact pin/schema/configuration/release and scope; real opaque native read scope reuse; no nested snapshots, guessed inputs or unverified matching Pipeline readiness",
+      "targetControl": "Current original Worker/parent/source/metadata roles, exact pin/schema/configuration/release and scope; real opaque native read scope reuse; no nested snapshots, guessed inputs or unverified matching Pipeline readiness",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-goal-contexts",
+      "file": "packages/postgres/goal-contexts.ts",
+      "sourceDigest": "fe3fae729199d041e2a1abdf65e249d13cc7c85f88768a9830b6948cc425b287",
+      "channels": [
+        "internal"
+      ],
+      "content": "Atomic original Goal component preparation",
+      "currentControl": "Actual model decision and durable native read receipts, immutable original Goal criteria and request, current registered Doc binding/source, checked initializer and component digest; same-savepoint rollback without new task/grant or authority",
+      "targetControl": "Actual model decision and durable native read receipts, immutable original Goal criteria and request, current registered Doc binding/source, checked initializer and component digest; same-savepoint rollback without new task/grant or authority",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-model-context",
+      "file": "packages/postgres/model-context.ts",
+      "sourceDigest": "e2a4a7b0f04421831466d0e5edc2b072c1f23d17340c28f1dec12cf55036fdb5",
+      "channels": [
+        "internal"
+      ],
+      "content": "Authorized PostgreSQL goal review and Agent model inputs",
+      "currentControl": "Actual checked request, scope, current binding/role/source and registered metadata, approved influence persisted before model egress; strict model DTO and budget allowlists, no raw plans/payment/private job leakage; real opaque scope only",
+      "targetControl": "Actual checked request, scope, current binding/role/source and registered metadata, approved influence persisted before model egress; strict model DTO and budget allowlists, no raw plans/payment/private job leakage; real opaque scope only",
+      "stage": "S5"
+    },
+    {
+      "id": "release-artifacts-cli",
+      "file": "scripts/release-artifacts.mjs",
+      "sourceDigest": "c8267f9bf12aa1251ed802b49baca154b8e915daa6053381ebf0c73ca71abc80",
+      "channels": [
+        "internal"
+      ],
+      "content": "Immutable container and Ontology release artifact manifest and CI proof",
+      "currentControl": "Exact-source terminal runtime CI gate, pinned backend/tools, bounded credential-free releaseFiles inventory and byte digests, immutable OCI references and offline Ontology package; candidate/artifact-ready are separate from database publication or activation; Harness remains unsupported without its actual adapter",
+      "targetControl": "Exact-source terminal runtime CI gate, pinned backend/tools, bounded credential-free releaseFiles inventory and byte digests, immutable OCI references and offline Ontology package; candidate/artifact-ready are separate from database publication or activation; Harness remains unsupported without its actual adapter",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-coordinator",
+      "file": "packages/postgres/coordinator.ts",
+      "sourceDigest": "76abad2185c8ffa22039d1e8e959aaba2f2b51d9fd874b6f56eede5f1ba9c804",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL original-task Goal and document phase coordinator",
+      "currentControl": "Registered acknowledged model ports; authorized typed request/catalogue/model DTOs and actual native receipts; independent Goal review, committed original attempts, current model/claim/role/source checks before dispatch, atomic output seals and no uncertain-operation replay",
+      "targetControl": "Registered acknowledged model ports; authorized typed request/catalogue/model DTOs and actual native receipts; independent Goal review, committed original attempts, current model/claim/role/source checks before dispatch, atomic output seals and no uncertain-operation replay",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-goal-acceptance",
+      "file": "packages/postgres/goal-acceptance.ts",
+      "sourceDigest": "6daf864bfce227e0c98dbe7c48c12c3d158ea656f0d94a26b1e60fb7f3ae6255",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL original-model whole-goal acceptance",
+      "currentControl": "Original durable model completion and read receipts, fixed Goal and independent coverage, current component/requirements/conditions/definition checks; approved influence and sealed output in the original fenced commit; unavailable producer/citation semantics never default to accepted",
+      "targetControl": "Original durable model completion and read receipts, fixed Goal and independent coverage, current component/requirements/conditions/definition checks; approved influence and sealed output in the original fenced commit; unavailable producer/citation semantics never default to accepted",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-worker-runtime",
+      "file": "apps/worker/postgres-runtime.ts",
+      "sourceDigest": "1b5ca4a8a248f3dc223b98b2426feee1c4af7c34c0809e9232d7d625b084a4f3",
+      "channels": [
+        "internal"
+      ],
+      "content": "Explicit registered PostgreSQL Worker candidate assembly",
+      "currentControl": "Known Codex transport uses acknowledged usage and a current guarded runStructured path; unadapted runtime ports reject, configured original authority and injected database/publisher ownership; construction neither starts polling nor switches primary or Gateway",
+      "targetControl": "Known Codex transport uses acknowledged usage and a current guarded runStructured path; unadapted runtime ports reject, configured original authority and injected database/publisher ownership; construction neither starts polling nor switches primary or Gateway",
       "stage": "S5"
     }
   ]

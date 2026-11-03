@@ -57,6 +57,8 @@ PostgreSQL 会员库使用 `PostgresMembershipDatabase`／`PostgresMemberStore`�
 
 真实 PostgreSQL 组合测试覆盖签名 JWT、导入会员库、资格发布、原任务领取、授权输出与撤销后的迟到结果拒绝。这些模块尚未构成完整生产 Gateway／Worker 启动入口；业务来源验证、其余任务／权限命令和候选切换仍须完成。
 
+`apps/worker/postgres-runtime.ts` 提供显式的 `createPostgresWorker` 候选装配：调用方注入同一运行权威的数据库、资格发布器生命周期和注册模型通道，另行决定何时开始领取。当前候选接通真实任务目录、经过授权的模型输入、独立目标审阅、原生本体工具、固定 Goal 的文档组件及原任务验收；模型和执行器在业务事务之外运行。默认 Codex 端口使用已接入当前权限检查和持久用量回执的 `runStructured`，不向独立审阅暴露尚未适配该边界的 app-server 会话。其他执行后端、来源组件及未安装的引用／输入适配明确拒绝；创建候选不启动轮询、不改 Gateway，也不切换正式入口。容器和本体产物的固定版本流程见[发布指南](guides/ontology-releases.md)。
+
 `PostgresActionJournal` 在同一业务事务中保存原操作、预算占用、发送标记和观察结果；观察回执可先独立保存，失去领取后不能据此推进任务。`createPostgresActionAuthorization` 核对原计划、输入、角色、来源、授权和实际规划凭据。各业务程序仍须提供真实语义校验、原始来源响应校验，以及适用时的首次选择校验；缺少接口会拒绝执行。最终映射、结果输出封装与接受状态须在同一事务内完成。延迟输入的准备与实际发送仍需分别接通，不能只信任已保存的输入摘要。
 
 ## 领取与恢复

@@ -1,0 +1,192 @@
+name: Release artifacts
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact reviewed source commit (40 lowercase hex characters)
+        type: string
+        required: true
+      backend:
+        description: Worker backend; Harness is gated until its actual adapter is integrated
+        type: choice
+        options: [codex, harness]
+        default: codex
+        required: true
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: release-artifacts-${{ inputs.source_sha }}-${{ inputs.backend }}
+  cancel-in-progress: false
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Require explicit supported source and backend
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          BACKEND: ${{ inputs.backend }}
+        run: |
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          if [ "$BACKEND" != codex ]; then
+            echo 'Harness adapter is not integrated in this release; installing a CLI is insufficient.' >&2
+            exit 1
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.22.3
+      - name: Validate exact checkout and packaging logic
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git diff --exit-code
+          node --test tests/release-artifacts.test.mjs
+      - id: version
+        run: node -e 'const fs=require("node:fs");fs.appendFileSync(process.env.GITHUB_OUTPUT,`version=${JSON.parse(fs.readFileSync("package.json")).version}\n`)'
+      - name: Require terminal CI on this exact source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SOURCE_SHA&per_page=100" > "$RUNNER_TEMP/ci-runs.json"
+          CI_RUN=$(node scripts/release-artifacts.mjs select-ci --source-sha "$SOURCE_SHA" --runs "$RUNNER_TEMP/ci-runs.json")
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN/jobs?filter=latest&per_page=100" > "$RUNNER_TEMP/ci-job-pages.json"
+          node -e 'const fs=require("node:fs"),p=process.env.RUNNER_TEMP;fs.writeFileSync(p+"/ci-jobs.json",JSON.stringify({jobs:JSON.parse(fs.readFileSync(p+"/ci-job-pages.json")).flatMap(page=>page.jobs)}))'
+          node scripts/release-artifacts.mjs ci-proof --source-sha "$SOURCE_SHA" --repository "$GITHUB_REPOSITORY" --runs "$RUNNER_TEMP/ci-runs.json" --jobs "$RUNNER_TEMP/ci-jobs.json" --out "$RUNNER_TEMP/ci-proof.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ci-proof-${{ inputs.source_sha }}
+          path: ${{ runner.temp }}/ci-proof.json
+          if-no-files-found: error
+
+  image:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - role: gateway
+            target: gateway
+          - role: relay
+            target: relay
+          - role: worker
+            target: worker-codex
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - id: reference
+        name: Preserve the immutable source tag
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          ROLE: ${{ matrix.role }}
+        run: |
+          REPOSITORY="ghcr.io/${GITHUB_REPOSITORY,,}/$ROLE"
+          TAG="$REPOSITORY:sha-$SOURCE_SHA-codex"
+          if RESULT=$(docker buildx imagetools inspect "$TAG" 2>&1); then
+            echo 'This immutable source tag is already published. Re-run only failed jobs instead of overwriting it.' >&2
+            exit 1
+          elif [[ "$RESULT" != *"not found"* && "$RESULT" != *"manifest unknown"* ]]; then
+            echo 'Could not establish that the image tag is absent; publication stopped.' >&2
+            exit 1
+          fi
+          echo "repository=$REPOSITORY" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.reference.outputs.tag }}
+          build-args: SOURCE_SHA=${{ inputs.source_sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ inputs.source_sha }}
+            org.opencontainers.image.version=${{ needs.gate.outputs.version }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=release-${{ inputs.source_sha }}
+          cache-to: type=gha,mode=max,scope=release-${{ inputs.source_sha }}
+      - name: Record the returned digest and provenance metadata
+        env:
+          ROLE: ${{ matrix.role }}
+          REPOSITORY: ${{ steps.reference.outputs.repository }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          BUILD_METADATA: ${{ steps.build.outputs.metadata }}
+        run: |
+          node -e 'const fs=require("node:fs"),e=process.env;if(!/^sha256:[a-f0-9]{64}$/.test(e.IMAGE_DIGEST))throw Error("Missing returned OCI digest");fs.mkdirSync("image-result",{recursive:true});fs.writeFileSync(`image-result/${e.ROLE}.json`,JSON.stringify({role:e.ROLE,reference:`${e.REPOSITORY}@${e.IMAGE_DIGEST}`})+"\n");fs.writeFileSync(`image-result/${e.ROLE}-provenance.json`,e.BUILD_METADATA+"\n")'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: image-${{ matrix.role }}-${{ inputs.source_sha }}
+          path: image-result/
+          if-no-files-found: error
+
+  package:
+    needs: [gate, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.22.3
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ci-proof-${{ inputs.source_sha }}
+          path: release-input/
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: image-*-${{ inputs.source_sha }}
+          merge-multiple: true
+          path: release-input/
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Export the exact payload from the same Docker build stage
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          target: release-package
+          platforms: linux/amd64
+          push: false
+          build-args: SOURCE_SHA=${{ inputs.source_sha }}
+          outputs: type=local,dest=release-package
+          cache-from: type=gha,scope=release-${{ inputs.source_sha }}
+      - name: Finalize immutable OCI references without republishing Ontology
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" release-package
+          node -e 'const fs=require("node:fs"),cp=require("node:child_process"),roles=["gateway","relay","worker"],args=["scripts/release-artifacts.mjs","finalize","--root","release-package","--ci-proof","release-input/ci-proof.json"];for(const role of roles){const result=JSON.parse(fs.readFileSync(`release-input/${role}.json`));if(result.role!==role)throw Error("Image role mismatch");args.push(`--image-${role}`,result.reference);}cp.execFileSync(process.execPath,args,{stdio:"inherit"})'
+          node scripts/release-artifacts.mjs verify --root release-package --require-ready
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ inputs.source_sha }}-codex
+          path: release-package/
+          # Only the verified whitelist directory, including source/.dockerignore.
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30

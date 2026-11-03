@@ -146,7 +146,9 @@ test('eligibility preflight, uncertain BEGIN and uncertain COMMIT evict without 
   }finally{await x.close();}
 });
 
-test('the eligibility watchdog bounds acquisition and rejects a late connection before BEGIN',{...local,timeout:30000},async()=>{
+// This test budget also includes the real imported membership/business fixture
+// and its cleanup. The application watchdog remains exactly 10 seconds below.
+test('the eligibility watchdog bounds acquisition and rejects a late connection before BEGIN',{...local,timeout:60000},async()=>{
   const x=await fixture(),pool=new pg.Pool({max:1});let arrived!:()=>void,release!:()=>void;
   const entered=new Promise<void>(resolve=>{arrived=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
   const {wrapped,stats}=instrument(pool,{acquired:async()=>{arrived();await gate;}});
@@ -156,7 +158,7 @@ test('the eligibility watchdog bounds acquisition and rejects a late connection 
   }finally{release();await pool.end();await x.close();}
 });
 
-test('a lost eligibility COMMIT reply cannot adopt late validity or replace the original timeout cause',{...local,timeout:30000},async()=>{
+test('a lost eligibility COMMIT reply cannot adopt late validity or replace the original timeout cause',{...local,timeout:60000},async()=>{
   const x=await fixture(),pool=new pg.Pool({max:1});let arrived!:()=>void,release!:()=>void,adopted=false,hold=true;
   const entered=new Promise<void>(resolve=>{arrived=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
   const {wrapped,stats}=instrument(pool,{replied:async text=>{if(text==='COMMIT'&&hold){hold=false;arrived();await gate;}}});let failure:unknown;
