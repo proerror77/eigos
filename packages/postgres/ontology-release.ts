@@ -116,10 +116,47 @@ export async function postgresOntologyReadContext(client: Client, owner: string,
   return release;
 }
 
+type ResolvedRelease=Awaited<ReturnType<typeof resolveOntologyRelease>>;
+const releaseSnapshots=new WeakMap<object,{bytes:number;entries:{key:string;kernel:StagedKernelBuilder|undefined;value:ResolvedRelease;bytes:number}[]}>();
+
+/** Explicit host-only reading scope. Ordinary administration and writer paths
+ * keep resolving rows freshly; no cache survives this callback. */
+export async function withPostgresOntologyReleaseSnapshot<T>(client:Client,action:()=>Promise<T>):Promise<T>{
+  const token=postgresBusinessToken(client);
+  if(releaseSnapshots.has(token))throw new Error('Nested immutable release snapshots are not supported');
+  releaseSnapshots.set(token,{bytes:0,entries:[]});
+  try{
+    const value=await action();
+    if(postgresBusinessToken(client)!==token)throw new Error('The exact active PostgreSQL business transaction is required');
+    return value;
+  }finally{releaseSnapshots.delete(token);}
+}
+
+/** Immutable release content only, bounded to this exact transaction and trusted
+ * compiler. Namespace visibility, grants, roles and current leases are never
+ * cached here. Published rows and aliases have immutable-history guards. */
+export async function postgresOntologyRelease(client:Client,input:OntologyReleaseRef,builder?:StagedKernelBuilder):Promise<ResolvedRelease>{
+  const token=postgresBusinessToken(client),ref=ontologyReleaseRefSchema.parse(input),key=digest(ref);
+  const kernel=builder===undefined?postgresBusinessKernel(client,token):builder;
+  if(kernel!==undefined)stagedKernelComponents(kernel);
+  const snapshot=releaseSnapshots.get(token),cached=snapshot?.entries.find(entry=>entry.key===key&&entry.kernel===kernel);
+  if(cached)return cached.value;
+  const value=await resolveOntologyRelease(client,ref,kernel);
+  if(postgresBusinessToken(client)!==token)throw new Error('The exact active PostgreSQL business transaction is required');
+  if(snapshot){
+    if(releaseSnapshots.get(token)!==snapshot)throw new Error('Immutable release reading scope has closed');
+    const bytes=Buffer.byteLength(JSON.stringify(value.document));
+    if(bytes<=8388608){
+      while(snapshot.entries.length>=8||snapshot.bytes+bytes>8388608)snapshot.bytes-=snapshot.entries.shift()!.bytes;
+      snapshot.entries.push({key,kernel,value,bytes});snapshot.bytes+=bytes;
+    }
+  }
+  return value;
+}
+
 /** Resolve an exact persisted release using the same trusted compiler as the
- * SQLite authority. This is an internal building block: the caller must check
- * task/installation permissions and claim freshness in the same transaction. */
-export async function postgresOntologyRelease(client: Client, input: OntologyReleaseRef, builder?: StagedKernelBuilder) {
+ * SQLite authority. The caller owns namespace and task/source authorization. */
+async function resolveOntologyRelease(client: Client, input: OntologyReleaseRef, builder?: StagedKernelBuilder) {
   const schema = postgresBusinessSchema(client), ref = ontologyReleaseRefSchema.parse(input), q = `"${schema}"`;
   const kernel=builder===undefined?postgresBusinessKernel(client,postgresBusinessToken(client)):builder;
   const staged = kernel === undefined ? undefined : stagedKernelComponents(kernel);

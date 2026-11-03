@@ -104,8 +104,9 @@ export class PostgresCoordinator {
     });
   }
   private async available(claim:WorkClaim,signal:AbortSignal){
-    signal.throwIfAborted();const request=await this.configured.store.readRequest(claim,this.options.modelChannel);
-    const page=await this.configured.database.run(client=>discoverPostgresDocumentBindings(client,claim,request,{actionId:'ComposeDocument',programRef:this.doc.ref},this.options));
+    signal.throwIfAborted();
+    const {request,page}=await this.configured.store.withAuthorizedRequest(claim,this.options.modelChannel,async(request,client)=>({request,
+      page:await discoverPostgresDocumentBindings(client,claim,request,{actionId:'ComposeDocument',programRef:this.doc.ref},this.options)}));
     if(!page.items.some(item=>item.bindings.some(binding=>binding.readiness==='ready')))throw new SecurityError('SOURCE_NOT_AUTHORIZED','The requested task has no current registered PostgreSQL document binding');
     signal.throwIfAborted();return request;
   }

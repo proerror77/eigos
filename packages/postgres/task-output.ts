@@ -20,7 +20,7 @@ import { postgresBusinessSchema, postgresConstrainReadDeadline } from './runtime
 import { postgresTaskContextMembers } from './task-context-membership.js';
 import { postgresTaskCurrentLabels, postgresTaskDirectBindingEvidence, postgresTaskDirectFieldCandidates,
   postgresTaskReadClearance, postgresTaskReadOntology, postgresTaskRetainedBindingEvidence, postgresTaskRetainedFieldCandidates,
-  postgresTaskResourceViewValidUntil, postgresTaskResourcePermissionValidUntil, postgresTaskSourceObservationValidUntil, withPostgresTaskReadSnapshot,withPostgresWorkerReadSnapshot,withPostgresTaskPermissionSnapshot,type PostgresTaskReadAdmission } from './task-read-access.js';
+  postgresTaskResourceViewValidUntil, postgresTaskResourcePermissionValidUntil, postgresTaskSourceObservationValidUntil, withPostgresTaskReadSnapshot,withPostgresWorkerReadSnapshot,withPostgresTaskPermissionSnapshot,withPostgresTaskReadGrant,withPostgresWorkerRequestReadRows,type PostgresTaskReadAdmission } from './task-read-access.js';
 import type { ServiceRequest } from '../ontology/execution.js';
 import type { ObjectView } from '../ontology/object-store.js';
 import type { Computation } from '../ontology/object-functions.js';
@@ -66,7 +66,7 @@ export interface PostgresFunctionReadAuthorization extends PostgresTaskReadAutho
  * Authorization objects expire at the callback boundary; current identity,
  * grants and all captured role/source/recipient deadlines are checked at exit. */
 async function withTaskAuthorization<T>(client: Client, principal: Principal, taskId: string, policyDigest: string,
-  action: (authorization: PostgresTaskReadAuthorization) => Promise<T>, builder?: StagedKernelBuilder,processing?:{admission:PostgresTaskReadAdmission;modelChannel?:string},permissionAdmission?:PostgresTaskReadAdmission): Promise<T> {
+  action: (authorization: PostgresTaskReadAuthorization) => Promise<T>, builder?: StagedKernelBuilder,processing?:{admission:PostgresTaskReadAdmission;modelChannel?:string;requestRows?:()=>void},permissionAdmission?:PostgresTaskReadAdmission): Promise<T> {
   const captured = structuredClone(principal), owner = ownerKey(captured), q = `"${postgresBusinessSchema(client)}"`;
   let validUntil = Infinity;
   const authorize = async (admission:PostgresTaskReadAdmission) => {
@@ -79,6 +79,16 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
     const objects = new Map<string, { bytes: number; value: { revision: number; definitionDigest: string; body: z.infer<typeof bodySchema> } }>();
     let objectBytes = 0;
     let nodes = 0;
+    let requestMembers:Promise<ObjectRef[]>|undefined;
+    const contextMembers=async()=>{
+      if(!processing?.requestRows)return postgresTaskContextMembers(client,captured,taskId,policyDigest,builder);
+      processing.requestRows();
+      const members=await withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async()=>{
+        await postgresTaskReadOntology(client,captured,taskId,policyDigest,builder);
+        return requestMembers??=(postgresTaskContextMembers(client,captured,taskId,policyDigest,builder));
+      });
+      processing.requestRows();return structuredClone(members);
+    };
     let modelClearance: {classification:'private'|'sensitive';markings:SecurityEnvelope['requiredMarkings'];expiresAt:ConsentExpiry}|undefined;
     const tombstones = new Map<string,boolean>();
     const raw = async (ref: ObjectRef) => {
@@ -178,7 +188,7 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
         if (!controls.has(ref.type) || current.body.source.kind !== 'task' || current.body.source.id !== taskId
           || current.body.properties.requestRevision !== admission.grant.requestRevision) return undefined;
       } else if (evidence.sourceBindingId === 'task_context') {
-        const members = await postgresTaskContextMembers(client, captured, taskId, policyDigest, builder);
+        const members = await contextMembers();
         const historicalMetadata=historical && ref.type==='RegisteredCapability' && current.body.source.kind==='task'
           && ref.id===`capability:${current.body.properties.definitionDigest}`;
         if (!members.some(member => key(member) === key(ref)) && !historicalMetadata) return undefined;
@@ -458,6 +468,17 @@ export async function withPostgresWorkerEvidenceAuthorization<T>(client:Client,c
   if(modelChannel!==undefined)z.string().min(1).max(200).parse(modelChannel);
   return withPostgresWorkerReadSnapshot(client,claim,policyDigest,(principal,admission)=>
     withTaskAuthorization(client,principal,claim.job.id,policyDigest,auth=>action(auth,admission,principal),builder,{admission,modelChannel}),inspectLease);
+}
+
+/** Only the pure Worker request reader opts in. Every source/graph writer and
+ * general evidence reader keeps its existing fresh-read lifecycle. */
+export async function withPostgresWorkerRequestAuthorization<T>(client:Client,claim:PostgresWorkReference,policyDigest:string,
+  action:(authorization:PostgresTaskReadAuthorization,admission:PostgresTaskReadAdmission,principal:Principal)=>Promise<T>,builder?:StagedKernelBuilder,modelChannel?:string,
+  inspectLease?:(claim:PostgresWorkReference)=>Promise<{validUntil:number}|undefined>):Promise<T>{
+  if(modelChannel!==undefined)z.string().min(1).max(200).parse(modelChannel);
+  return withPostgresWorkerReadSnapshot(client,claim,policyDigest,(principal,admission)=>
+    withPostgresWorkerRequestReadRows(client,principal,claim.job.id,policyDigest,requestRows=>
+      withTaskAuthorization(client,principal,claim.job.id,policyDigest,auth=>action(auth,admission,principal),builder,{admission,modelChannel,requestRows})),inspectLease);
 }
 
 /** Check an existing worker seal without exposing unsealed task data. */

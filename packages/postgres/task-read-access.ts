@@ -9,7 +9,7 @@ import { digest } from '../core/delegation.js';
 import { DomainError, ownerKey, requireScope, taskIdSchema, type Principal } from '../core/domain.js';
 import { accessContextSchema, agentAccessGrantSchema, securityEnvelopeSchema, taskDataGrantSchema, SECURITY_CONTRACT, POLICY_VERSION,ownerIdentitySchema,type AccessContext } from '../security/contracts.js';
 import { SecurityError } from '../security/errors.js';
-import { postgresBusinessSchema, postgresConstrainReadDeadline,postgresRequireLeaseAtCommit } from './runtime-transaction.js';
+import { postgresBusinessSchema,postgresBusinessToken, postgresConstrainReadDeadline,postgresRequireLeaseAtCommit } from './runtime-transaction.js';
 import { postgresOntologyReadContext } from './ontology-release.js';
 import { roleAllows, roleSchema } from '../security/resource-role.js';
 import { currentKernelImplementation } from '../ontology/definition-store.js';
@@ -42,6 +42,34 @@ type ReadSnapshot={key:string;admission:PostgresTaskReadAdmission;ontology:Map<S
   labels?:Map<string,Promise<{revision:number;values:({field:string}&z.infer<typeof storedLabelSchema>)[]}>>};
 const snapshots=new WeakMap<Client,ReadSnapshot>();
 const snapshotKey=(principal:Principal,taskId:string,policyDigest:string)=>digest([principal,taskId,policyDigest]);
+type DirectBindingRows={rowCount:number|null;rows:Record<string,unknown>[]};
+type WorkerRequestRows={snapshot:ReadSnapshot;token:object;identity:string;
+  direct:Map<string,{value:DirectBindingRows;bytes:number}>;bytes:number};
+const workerRequestRows=new WeakMap<Client,WorkerRequestRows>();
+const requestRowsIdentity=(principal:Principal,taskId:string,policyDigest:string,snapshot:ReadSnapshot)=>
+  digest([snapshot.key,ownerKey(principal),taskId,policyDigest,snapshot.admission.grant.id,snapshot.admission.grant.revision,snapshot.admission.grant.requestRevision]);
+function currentWorkerRequestRows(client:Client,principal:Principal,taskId:string,policyDigest:string){
+  const memo=workerRequestRows.get(client);if(!memo)return;
+  const snapshot=snapshots.get(client);
+  if(!snapshot||snapshot!==memo.snapshot||snapshot.key!==snapshotKey(principal,taskId,policyDigest)
+    ||postgresBusinessToken(client)!==memo.token||memo.identity!==requestRowsIdentity(principal,taskId,policyDigest,snapshot))throw new SecurityError('AUTHORIZATION_REQUIRED');
+  return memo;
+}
+/** Explicit immutable request-read scope only. Source writers keep fresh row
+ * reads. This retains raw lookup rows, never field/output/source permission. */
+export async function withPostgresWorkerRequestReadRows<T>(client:Client,principal:Principal,taskId:string,policyDigest:string,
+  action:(assertCurrent:()=>void)=>Promise<T>):Promise<T>{
+  const captured=structuredClone(principal),snapshot=snapshots.get(client);
+  if(!snapshot||snapshot.key!==snapshotKey(captured,taskId,policyDigest)||snapshot.admission.actor.actorKind!=='worker'
+    ||snapshot.admission.actor.taskId!==taskId||workerRequestRows.has(client))throw new SecurityError('AUTHORIZATION_REQUIRED');
+  const memo:WorkerRequestRows={snapshot,token:postgresBusinessToken(client),identity:requestRowsIdentity(captured,taskId,policyDigest,snapshot),direct:new Map(),bytes:0};
+  workerRequestRows.set(client,memo);
+  const assertCurrent=()=>{
+    if(currentWorkerRequestRows(client,captured,taskId,policyDigest)!==memo||snapshot.admission.validUntil<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');
+  };
+  try{assertCurrent();const result=await action(assertCurrent);assertCurrent();return result;}
+  finally{workerRequestRows.delete(client);memo.direct.clear();memo.bytes=0;}
+}
 function freezeData<T>(input:T):T {
   if(input && typeof input==='object' && !Object.isFrozen(input)) {
     for(const value of Object.values(input))freezeData(value);
@@ -389,14 +417,27 @@ export async function postgresTaskDirectBindingEvidence(client: Client, principa
   return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission=>{
     await postgresTaskReadOntology(client,captured,taskId,policyDigest,builder);
     const schema=postgresBusinessSchema(client),owner=ownerKey(captured);
-    const result=await client.query(`SELECT b.owner,b.task_id,b.request_revision,b.object_revision,
+    const memo=currentWorkerRequestRows(client,captured,taskId,policyDigest),key=JSON.stringify([ref.type,ref.id]);
+    const cached=memo?.direct.get(key);
+    const result:DirectBindingRows=cached?structuredClone(cached.value):await client.query(`SELECT b.owner,b.task_id,b.request_revision,b.object_revision,
       CASE WHEN octet_length(b.body)<=1048576 THEN b.body END AS body
       FROM "${schema}".security_bindings b JOIN "${schema}".ontology_objects o
       ON o.owner=b.owner AND o.type=b.type AND o.id=b.object_id AND o.revision=b.object_revision
       WHERE b.grant_id=$1 AND b.type=$2 AND b.object_id=$3 LIMIT 2`,[admission.grant.id,ref.type,ref.id]);
+    if(memo){
+      if(currentWorkerRequestRows(client,captured,taskId,policyDigest)!==memo)throw new SecurityError('AUTHORIZATION_REQUIRED');
+      if(!cached){
+        const value={rowCount:result.rowCount,rows:result.rows},bytes=Buffer.byteLength(JSON.stringify(value,(_key,item)=>typeof item==='bigint'?item.toString():item));
+        if(bytes<=8388608){
+          while(memo.direct.size>=64||memo.bytes+bytes>8388608){const first=memo.direct.keys().next().value;if(first===undefined)break;
+            memo.bytes-=memo.direct.get(first)!.bytes;memo.direct.delete(first);}
+          memo.direct.set(key,{value:structuredClone(value),bytes});memo.bytes+=bytes;
+        }
+      }
+    }
     if(result.rowCount===0)return undefined;
-    if(result.rowCount!==1 || result.rows[0].body===null)throw new SecurityError('OUTPUT_NOT_ALLOWED');
     const row=result.rows[0];
+    if(result.rowCount!==1 || !row || row.body===null)throw new SecurityError('OUTPUT_NOT_ALLOWED');
     if(row.owner!==owner || row.task_id!==taskId || String(row.request_revision)!==String(admission.grant.requestRevision))throw new SecurityError('POLICY_CHANGED');
     let evidence:z.infer<typeof bindingEvidenceSchema>;
     try {evidence=bindingEvidenceSchema.parse(JSON.parse(String(row.body)));}

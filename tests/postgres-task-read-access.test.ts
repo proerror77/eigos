@@ -8,7 +8,7 @@ import pg from 'pg';
 import { securityFixture } from './fixtures/security.js';
 import { installPostgresAuthorityLock } from '../packages/postgres/authority-lock.js';
 import { postgresBusinessTransaction } from '../packages/postgres/runtime-transaction.js';
-import { createStagedPostgresTaskReader, postgresTaskFieldClassification, postgresTaskReadClearance, postgresTaskReadGrant, postgresTaskReadOntology, postgresTaskResourceViewAllowed, withPostgresTaskReadGrant, withPostgresTaskReadSnapshot } from '../packages/postgres/task-read-access.js';
+import { createStagedPostgresTaskReader, postgresTaskDirectBindingEvidence, postgresTaskFieldClassification, postgresTaskReadClearance, postgresTaskReadGrant, postgresTaskReadOntology, postgresTaskResourceViewAllowed, withPostgresTaskReadGrant, withPostgresTaskReadSnapshot } from '../packages/postgres/task-read-access.js';
 import { POLICY_VERSION, SECURITY_CONTRACT } from '../packages/security/contracts.js';
 import { StagedKernelBuilder } from '../packages/ontology/seed-definition.js';
 import { sourceMatchesObservation } from '../packages/security/source-policy.js';
@@ -17,7 +17,7 @@ import { postgresTaskContextMembers } from '../packages/postgres/task-context-me
 import { postgresTaskContextBindingCandidate } from '../packages/postgres/task-context-binding.js';
 import { digest } from '../packages/core/delegation.js';
 import { submissionDigest } from '../packages/security/submission-digest.js';
-import { postgresTaskAuthorizeOutput, withPostgresTaskReadAuthorization, type PostgresTaskReadAuthorization } from '../packages/postgres/task-output.js';
+import { postgresTaskAuthorizeOutput, withPostgresTaskReadAuthorization, withPostgresWorkerEvidenceAuthorization,withPostgresWorkerRequestAuthorization,type PostgresTaskReadAuthorization } from '../packages/postgres/task-output.js';
 import { postgresTaskView } from '../packages/postgres/task-view.js';
 import { TaskSecurity } from '../packages/security/task-service.js';
 import { DomainError } from '../packages/core/domain.js';
@@ -25,6 +25,99 @@ import type { TaskServicePort } from '../packages/core/task-service-port.js';
 import { PostgresTaskReadService } from '../packages/postgres/task-read-service.js';
 import { PostgresDatabase } from '../packages/postgres/database.js';
 import { taskProtocolFixture } from './fixtures/task-protocol.js';
+import {importPostgresPrimaryFixture} from './fixtures/postgres-primary.js';
+import {DocumentAgentProgram} from '../packages/capabilities/document-agent.js';
+import {taskContextFields} from '../packages/security/task-context-contract.js';
+import {PostgresTaskCommandService} from '../packages/postgres/task-command-service.js';
+import {PostgresWorkerStore} from '../packages/postgres/worker-store.js';
+
+test('Worker request row reuse expires with its immutable scope and never covers source writers',
+  {skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'},async()=>{
+    const f=securityFixture(Date.now,{unified:true}),doc=new DocumentAgentProgram();
+    let target:Awaited<ReturnType<typeof importPostgresPrimaryFixture>>|undefined,heartbeat:ReturnType<typeof setInterval>|undefined,renewal:Promise<void>|undefined;
+    try{
+      const installation=f.installation('Synthetic request-row reuse',3600000),expiresAt=new Date(Date.now()+3600000).toISOString(),channel='synthetic:request-row-reuse',bindingId='synthetic-request-row-doc';
+      const types=[...new Set(['ServiceRequest','DocumentTask','DocumentDraft','Place',...Object.keys(taskContextFields)])];
+      f.coordinator.approveAgentGrant(f.member.id,{installationId:installation.id,capabilityIds:[doc.ref.id],resources:types.map(type=>({type,fields:Object.keys(f.jobs.security.policies.fields(type)).filter(field=>f.jobs.security.policies.fieldPolicy(type,field)!=='internal_only')})),sourceBindingIds:[bindingId],channels:['agent_response','registered_model'],expiresAt});
+      f.jobs.security.policies.setRole({subjectKind:'installation',subjectId:installation.id,resource:{kind:'namespace',id:f.jobs.ontology.model.ref.id,version:f.jobs.ontology.model.ref.digest},role:'Viewer',executeActions:['ComposeDocument'],expiresAt},f.jobs.security.policies.revision());
+      f.jobs.security.policies.setRecipient(installation.id,{classification:'sensitive',markings:['member_private','personal_data'],channels:['agent_response'],expiresAt},f.jobs.security.policies.revision());
+      f.jobs.security.policies.setModelChannel(channel,{classification:'sensitive',markings:['member_private','personal_data'],expiresAt},f.jobs.security.policies.revision());
+      f.jobs.security.policies.setSource(f.owner,{installationId:installation.id,bindingId,programId:doc.ref.id,programDigest:doc.configurationDigest,operations:['ComposeDocument'],outputTypes:['DocumentTask','DocumentDraft'],expiresAt},f.jobs.security.policies.revision());
+      target=await importPostgresPrimaryFixture(f);const t=target,q=`"${t.schema}"`;
+      const principal={...f.principal,access:await t.publisher.authenticate(f.principal,installation.token)},commands=new PostgresTaskCommandService(t.database,t.policy);
+      const task=await commands.submit(principal,{requestId:'synthetic-request-row-reuse',goal:'Prepare a synthetic document only.'}),worker=new PostgresWorkerStore(t.database,t.policy);
+      const claim=await worker.claim(['eigos.delegate'],15000);assert(claim);assert.equal(claim.job.id,task.id);
+      let renewalFailure:unknown;
+      heartbeat=setInterval(()=>{if(!renewal)renewal=worker.renew(claim,15000).then(ok=>{if(!ok)renewalFailure??=new Error('Original synthetic claim ended');}).catch(error=>{renewalFailure??=error;}).finally(()=>{renewal=undefined;});},5000);
+      await worker.catalogue(claim,[{program:doc,capability:doc.capability()}],channel);
+      const root={type:'ServiceRequest',id:task.id},inspect=(reference:Parameters<typeof t.database.inspectClaim>[0])=>t.database.inspectClaim(reference,t.policy);
+      const members=await t.database.run(c=>withPostgresWorkerEvidenceAuthorization(c,claim,t.policy,(_auth,_admission,actor)=>postgresTaskContextMembers(c,actor,task.id,t.policy),undefined,channel,inspect));
+      assert(members.length>=3);
+      await t.database.run(async c=>{
+        const originalQuery=c.query,counts={invalid:0,ambiguous:0,candidates:0,links:0},direct=new Map<string,number>();
+        c.query=new Proxy(originalQuery,{apply(method,thisArg,args){
+          const sql=typeof args[0]==='string'?args[0]:args[0]?.text;
+          if(typeof sql==='string'){
+            if(sql.includes('eigos_try_jsonb(o.body) IS NULL')&&sql.includes('.ontology_objects o WHERE'))counts.invalid++;
+            if(sql.startsWith('WITH relevant AS MATERIALIZED'))counts.ambiguous++;
+            if(sql.startsWith('WITH candidates AS MATERIALIZED'))counts.candidates++;
+            if(sql.startsWith('WITH task_objects AS MATERIALIZED'))counts.links++;
+            if(sql.startsWith('SELECT b.owner,b.task_id,b.request_revision,b.object_revision,')){
+              const key=JSON.stringify(typeof args[0]==='string'?args[1]:args[0]?.values);direct.set(key,(direct.get(key)??0)+1);
+            }
+          }
+          return Reflect.apply(method,thisArg,args);
+        }});
+        try{
+          let escaped:PostgresTaskReadAuthorization|undefined;
+          await withPostgresWorkerRequestAuthorization(c,claim,t.policy,async(auth,_admission,actor)=>{
+            escaped=auth;
+            for(const ref of members)await auth.readObject(ref);
+            const first=await auth.readObject(root,['originalGoal']),expected=structuredClone(first.object);
+            first.object.properties.originalGoal='A caller cannot mutate retained raw rows';
+            assert.deepEqual((await auth.readObject(root,['originalGoal'])).object,expected);
+            const evidence=await postgresTaskDirectBindingEvidence(c,actor,task.id,t.policy,root);assert(evidence);evidence.fields.length=0;
+            assert((await postgresTaskDirectBindingEvidence(c,actor,task.id,t.policy,root))!.fields.length>0);
+            await assert.rejects(postgresTaskDirectBindingEvidence(c,{...actor,subject:'wrong-owner'},task.id,t.policy,root),/AUTHORIZATION_REQUIRED/);
+            await assert.rejects(postgresTaskDirectBindingEvidence(c,actor,randomUUID(),t.policy,root),/AUTHORIZATION_REQUIRED/);
+          },undefined,channel,inspect);
+          assert.deepEqual(counts,{invalid:1,ambiguous:1,candidates:1,links:1},'Each request scope performs one complete original membership selection');
+          assert(direct.size>=members.length);assert([...direct.values()].every(count=>count===1),'Every direct row is fetched once while logical checks still run');
+          await assert.rejects(escaped!.bindingMetadata(root),/AUTHORIZATION_REQUIRED/);
+        }finally{c.query=originalQuery;}
+        // A new authorization in the same writable transaction must see the
+        // intervening binding change. The cache is not a transaction cache.
+        const original=(await c.query(`SELECT body FROM ${q}.security_bindings WHERE owner=$1 AND task_id=$2 AND type='ServiceRequest' AND object_id=$2`,[claim.owner,task.id])).rows[0].body;
+        await c.query(`UPDATE ${q}.security_bindings SET body=jsonb_set(body::jsonb,'{fields}','[]'::jsonb)::text WHERE owner=$1 AND task_id=$2 AND type='ServiceRequest' AND object_id=$2`,[claim.owner,task.id]);
+        await assert.rejects(withPostgresWorkerRequestAuthorization(c,claim,t.policy,auth=>auth.readTaskRoot(),undefined,channel,inspect),/AUTHORIZATION_REQUIRED/);
+        await c.query(`UPDATE ${q}.security_bindings SET body=$1 WHERE owner=$2 AND task_id=$3 AND type='ServiceRequest' AND object_id=$3`,[original,claim.owner,task.id]);
+        await withPostgresWorkerRequestAuthorization(c,claim,t.policy,auth=>auth.readTaskRoot(),undefined,channel,inspect);
+        // The general/source-style API never enables request-row memoization.
+        await withPostgresWorkerEvidenceAuthorization(c,claim,t.policy,async(_auth,_admission,actor)=>{
+          assert((await postgresTaskDirectBindingEvidence(c,actor,task.id,t.policy,root))!.fields.length>0);
+          await c.query(`UPDATE ${q}.security_bindings SET body=jsonb_set(body::jsonb,'{fields}','[]'::jsonb)::text WHERE owner=$1 AND task_id=$2 AND type='ServiceRequest' AND object_id=$2`,[claim.owner,task.id]);
+          assert.deepEqual((await postgresTaskDirectBindingEvidence(c,actor,task.id,t.policy,root))!.fields,[]);
+          await c.query(`UPDATE ${q}.security_bindings SET body=$1 WHERE owner=$2 AND task_id=$3 AND type='ServiceRequest' AND object_id=$3`,[original,claim.owner,task.id]);
+        },undefined,channel,inspect);
+      });
+      const read=()=>worker.readRequest(claim,channel);await read();
+      await assert.rejects(worker.readRequest({...claim,token:'wrong-original-claim'},channel),/ACCESS_REVOKED/);
+      const model=(await t.client.query(`SELECT body FROM ${q}.security_model_channels WHERE id=$1`,[channel])).rows[0].body;
+      await t.client.query(`UPDATE ${q}.security_model_channels SET body=jsonb_set(body::jsonb,'{expiresAt}',to_jsonb($1::text))::text WHERE id=$2`,[new Date(Date.now()-1).toISOString(),channel]);
+      await assert.rejects(read(),/OUTPUT_NOT_ALLOWED/);await t.client.query(`UPDATE ${q}.security_model_channels SET body=$1 WHERE id=$2`,[model,channel]);
+      const recipient=(await t.client.query(`SELECT body FROM ${q}.security_recipients WHERE installation_id=$1`,[installation.id])).rows[0].body;
+      await t.client.query(`UPDATE ${q}.security_recipients SET body=jsonb_set(body::jsonb,'{expiresAt}',to_jsonb($1::text))::text WHERE installation_id=$2`,[new Date(Date.now()-1).toISOString(),installation.id]);
+      await assert.rejects(read(),/AUTHORIZATION_REQUIRED/);await t.client.query(`UPDATE ${q}.security_recipients SET body=$1 WHERE installation_id=$2`,[recipient,installation.id]);
+      clearInterval(heartbeat);if(renewal)await renewal;assert.equal(renewalFailure,undefined);
+      const parent=(await t.client.query(`SELECT id FROM ${q}.security_grants WHERE installation_id=$1 AND kind='agent_access'`,[installation.id])).rows[0].id;
+      await t.client.query(`UPDATE ${q}.security_grants SET state='revoked' WHERE id=$1`,[parent]);await assert.rejects(read(),/ACCESS_REVOKED/);
+      await t.client.query(`UPDATE ${q}.security_grants SET state='active' WHERE id=$1`,[parent]);
+      await t.client.query(`UPDATE ${q}.work_claims SET expires_at=$1 WHERE job_id=$2`,[Date.now()-1,task.id]);await assert.rejects(read(),/ACCESS_REVOKED/);
+    }finally{
+      clearInterval(heartbeat);if(renewal)await renewal;
+      try{if(target)await target.close();}finally{f.close();}
+    }
+  });
 
 test('PostgreSQL task read admission preserves identity, revocation and grant fences', {skip:process.env.EIGOS_TEST_PG_LOCAL !== '1'}, async () => {
   // Remote setup and large-row validation may outlast the synthetic lease;

@@ -5652,7 +5652,7 @@
       "stage": "S5",
       "id": "postgres-ontology-read",
       "file": "packages/postgres/ontology-release.ts",
-      "sourceDigest": "671b35bf2544f3d0fca58176907be7c18692dfe59d598536e74a35a0a8abf56a",
+      "sourceDigest": "6b4b8287596f35a59abe6c19b1dc00ac5dd4951114974b7ef1cb318fb60c04df",
       "content": "PostgreSQL ontology release and historical witness reader",
       "currentControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions",
       "targetControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions"
@@ -5676,7 +5676,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "9cd6c7be2d66a99312129f559c225c91762d5474cf73772e5c65d620deafb824",
+      "sourceDigest": "e450da9bb4d812546720a2b3c5f64de54054bf9db001e4bc084e68bc7a5ffcc9",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current identity/task admission and deadlines, frozen request-scoped read snapshots, pinned ontology, roles, labels, direct/retained evidence and current source checks",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
@@ -5843,7 +5843,7 @@
     {
       "id": "postgres-task-output-authorization",
       "file": "packages/postgres/task-output.ts",
-      "sourceDigest": "a4247bd675bfc8751bc43d22c07f6a474a450ed440b7f76d45994ee93552c6aa",
+      "sourceDigest": "7156252c239ea8410a8a1feab504d45fcc582bd5ac97bce0d3c54ed72cf9e04b",
       "channels": [
         "internal"
       ],
@@ -6011,7 +6011,7 @@
     {
       "id": "postgres-worker-store",
       "file": "packages/postgres/worker-store.ts",
-      "sourceDigest": "3dc83ea87fd4fe53083b0979dc0d80a65bb1119b37a656a787626e7605313f71",
+      "sourceDigest": "0a764dae60845cccd628dbe2f7c18455bde53e4b6b0d01241a57d78c056e62ad",
       "channels": [
         "internal"
       ],
@@ -6110,7 +6110,7 @@
     {
       "id": "postgres-worker-input",
       "file": "packages/postgres/worker-input.ts",
-      "sourceDigest": "62798298f9d7b428791c3c6b5564559026e1bd5d94e34eb50cba3bd07b391abf",
+      "sourceDigest": "6e9e62acebd90bf54a8092c62a5239326a95ba48df85efaac5c2a06226b7e237",
       "channels": [
         "internal"
       ],
@@ -6722,7 +6722,7 @@
     {
       "id": "postgres-coordinator",
       "file": "packages/postgres/coordinator.ts",
-      "sourceDigest": "76abad2185c8ffa22039d1e8e959aaba2f2b51d9fd874b6f56eede5f1ba9c804",
+      "sourceDigest": "e2b0fb46d7e62b8cc1bbebbd8a8b22da2b50b5fb6fcce4b400648bef2f3a42b7",
       "channels": [
         "internal"
       ],

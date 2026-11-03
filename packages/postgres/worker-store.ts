@@ -37,7 +37,8 @@ export interface PostgresWorkerProjectionContext {
 
 class LostClaim extends Error{}
 /** Durable queue shared by Mac Workers. Each method releases its transaction
- * before the caller can run a model or contact a provider. */
+ * before the caller can run a model or contact a provider. Explicit host-only
+ * database continuations remain inside that boundary. */
 export class PostgresWorkerStore {
   constructor(private readonly db:Pick<PostgresDatabase,'run'|'renewClaim'|'inspectClaim'|'cleanupReleasedClaims'>&Partial<Pick<PostgresDatabase,'workAvailable'>>,private readonly policy:string,private readonly kernel?:StagedKernelBuilder){
     if(!/^[a-f0-9]{64}$/.test(policy))throw new Error('Invalid PostgreSQL Worker policy');
@@ -133,8 +134,18 @@ export class PostgresWorkerStore {
       inspectClaim:fence=>this.db.inspectClaim(fence,this.policy),builder:this.kernel}));
   }
   readRequest(claim:PostgresWorkReference,modelChannel:string){
+    return this.withAuthorizedRequest(claim,modelChannel,async request=>request);
+  }
+  /** Host-only database continuation after the request's evidence snapshot and
+   * final checks have closed, within the same outer business transaction. The
+   * callback must open its own checked read scope; it must not run models or
+   * providers, or mutate task, policy or claim state. */
+  withAuthorizedRequest<T>(claim:PostgresWorkReference,modelChannel:string,action:(request:ServiceRequest,client:Client)=>Promise<T>):Promise<T>{
     const reference=postgresWorkReference(claim);
-    return this.db.run(client=>postgresWorkerRequest(client,reference,this.policy,modelChannel,this.kernel,fence=>this.db.inspectClaim(fence,this.policy)));
+    return this.db.run(async client=>{
+      const request=await postgresWorkerRequest(client,reference,this.policy,modelChannel,this.kernel,fence=>this.db.inspectClaim(fence,this.policy));
+      return action(request,client);
+    });
   }
   /** Host-side tool reads/receipt bookkeeping only. The callback must not run
    * models/providers or mutate task, policy or claim state. */

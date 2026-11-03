@@ -10,7 +10,7 @@ import { BACKEND_VERSION } from '../packages/ontology/execution.js';
 import { StagedKernelBuilder, stagedKernelComponents } from '../packages/ontology/seed-definition.js';
 import { installPostgresAuthorityLock } from '../packages/postgres/authority-lock.js';
 import { postgresBusinessTransaction } from '../packages/postgres/runtime-transaction.js';
-import { postgresAssertOntologyAccess, postgresOntologyDefinitionCompatible, postgresOntologyReadContext, postgresOntologyRelease, postgresProjectedTaskOntologyRelease, postgresTaskOntologyRelease } from '../packages/postgres/ontology-release.js';
+import { postgresAssertOntologyAccess, postgresOntologyDefinitionCompatible, postgresOntologyReadContext, postgresOntologyRelease, postgresProjectedTaskOntologyRelease, postgresTaskOntologyRelease,withPostgresOntologyReleaseSnapshot } from '../packages/postgres/ontology-release.js';
 
 test('PostgreSQL resolves the exact task-pinned ontology and legacy release', { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async () => {
   const sqlite = new DatabaseSync(':memory:'), definitions = new DefinitionStore(sqlite);
@@ -62,6 +62,37 @@ test('PostgreSQL resolves the exact task-pinned ontology and legacy release', { 
     assert.deepEqual(first.ref,legacy.ref); assert.deepEqual(first.model.ref,legacy.model.ref);
     assert(Object.isFrozen(first.document)); assert(Object.isFrozen(first.ref));
     assert.notDeepEqual(first.ref,active.ref);
+    const originalQuery=client.query;let resolutions=0;
+    client.query=(async(...args:unknown[])=>{
+      if(String(args[0]).startsWith('SELECT body,model_digest,created_at,sequence FROM '))resolutions++;
+      return Reflect.apply(originalQuery,client,args);
+    }) as typeof client.query;
+    try{
+      await postgresBusinessTransaction(client,schema,authority,async c=>{
+        await withPostgresOntologyReleaseSnapshot(c,async()=>{
+          const a=await postgresOntologyRelease(c,legacy.ref),b=await postgresOntologyRelease(c,legacy.ref);
+          assert.equal(a,b,'One reading scope can reuse the same immutable compilation');
+          await c.query(`UPDATE "${schema}".ontology_namespaces SET owner=$1 WHERE id=$2`,[owner,legacy.ref.ontologyId]);
+          assert.deepEqual((await postgresOntologyReadContext(c,owner,{release:legacy.ref})).ref,legacy.ref);
+          await assert.rejects(postgresOntologyReadContext(c,'other-owner',{release:legacy.ref}),/Ontology belongs to another owner/);
+          await c.query(`UPDATE "${schema}".ontology_namespaces SET owner=NULL WHERE id=$1`,[legacy.ref.ontologyId]);
+        });
+        assert.equal(resolutions,1,'Immutable release lookup is not repeated within its reading scope');
+        await postgresOntologyRelease(c,legacy.ref);
+        assert.equal(resolutions,2,'Even the same transaction resolves rows freshly after that scope closes');
+      });
+      await postgresBusinessTransaction(client,schema,authority,c=>postgresOntologyRelease(c,legacy.ref));
+      assert.equal(resolutions,3,'A later transaction must resolve its own persisted release');
+    }finally{client.query=originalQuery;}
+    const rolledBackAlias={...legacy.ref,releaseId:randomUUID()};
+    await assert.rejects(postgresBusinessTransaction(client,schema,authority,async c=>{
+      await assert.rejects(postgresOntologyRelease(c,rolledBackAlias),/exact ontology release is unavailable/);
+      await c.query(`INSERT INTO "${schema}".ontology_definition_release_aliases VALUES($1,$2,$3,$4,$5,$6)`,
+        [rolledBackAlias.releaseId,rolledBackAlias.ontologyId,legacy.ref.releaseId,rolledBackAlias.digest,'synthetic','2026']);
+      assert.deepEqual((await withPostgresOntologyReleaseSnapshot(c,()=>postgresOntologyRelease(c,rolledBackAlias))).ref,rolledBackAlias,'An earlier miss is not cached');
+      throw new Error('Synthetic release alias rollback');
+    }),/Synthetic release alias rollback/);
+    await assert.rejects(postgresBusinessTransaction(client,schema,authority,c=>postgresOntologyRelease(c,rolledBackAlias)),/exact ontology release is unavailable/);
     const readContext = (input: unknown) => postgresBusinessTransaction(client,schema,authority,c => postgresOntologyReadContext(c,owner,input));
     assert.deepEqual((await readContext({})).ref,active.ref);
     assert.deepEqual((await readContext({release:legacy.ref})).ref,legacy.ref);
