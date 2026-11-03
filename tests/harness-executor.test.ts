@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { HarnessExecutor, HARNESS_SECURITY_CHANNEL_ID } from '../packages/capabilities/harness-executor.js';
+import { HarnessExecutor, HARNESS_SECURITY_CHANNEL_ID, HARNESS_DEEPSEEK_SECURITY_CHANNEL_ID, type HarnessConfiguration } from '../packages/capabilities/harness-executor.js';
 import { readConfig, readWorkerConfig } from '../packages/core/config.js';
 import { withModelUsage } from '../packages/core/model-usage-context.js';
 
@@ -13,7 +13,8 @@ function fixture(mode = 'success') {
   writeFileSync(binary, '#!' + process.execPath + '\n' + String.raw`
 const fs=require('node:fs'), readline=require('node:readline'), {spawn}=require('node:child_process');
 const mode=MODE_VALUE, log=LOG_VALUE, patch=JSON.parse(fs.readFileSync(process.argv[process.argv.indexOf('--patch')+1],'utf8'));
-fs.writeFileSync(log,JSON.stringify({pid:process.pid,args:process.argv.slice(2),home:process.env.HOME,dshHome:process.env.DSH_HOME,patch,env:Object.keys(process.env),hasCredential:!!process.env.EIGOS_HARNESS_MODEL_TOKEN}));
+const writeBoot=value=>{fs.writeFileSync(log+'.next',JSON.stringify(value));fs.renameSync(log+'.next',log)};
+writeBoot({pid:process.pid,args:process.argv.slice(2),home:process.env.HOME,dshHome:process.env.DSH_HOME,patch,env:Object.keys(process.env),hasCredential:!!process.env.EIGOS_HARNESS_MODEL_TOKEN});
 let session, messageId='prompt-receipt';
 const reply=(id,result)=>console.log(JSON.stringify({jsonrpc:'2.0',id,result}));
 const event=(type,data)=>console.log(JSON.stringify({jsonrpc:'2.0',method:'session.event',params:{sessionId:mode==='other-session'?'another-session':session,event:{type,data}}}));
@@ -28,7 +29,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
  if(q.method==='session/wait'){
   if(mode==='hang'){
    const child=spawn(process.execPath,['-e','process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'],{stdio:'ignore'});
-   fs.writeFileSync(log,JSON.stringify({...JSON.parse(fs.readFileSync(log,'utf8')),childPid:child.pid}));return;
+   writeBoot({...JSON.parse(fs.readFileSync(log,'utf8')),childPid:child.pid});return;
   }
   if(mode==='tool')event('tool/call',{name:'bash',callId:'forbidden',arguments:'{}'});
   if(mode==='output-limit'){console.log('x'.repeat(2100000));return;}
@@ -55,7 +56,8 @@ test('Harness confines the original turn, credentials, profile and receipt to it
   const result = await withModelUsage({ begin: () => {}, finish: (...args) => { recorded.push(args); } },
     () => f.model.runStructured('Only synthetic supplied information', schema, t.signal, { toolFree: true }));
   assert.deepEqual(result.output, { ok: true });
-  assert.equal(result.evidence.runtime, 'harness-sdk'); assert.equal(f.model.securityChannelId, HARNESS_SECURITY_CHANNEL_ID);
+  assert.equal(result.evidence.runtime, 'harness-sdk'); assert.equal(f.model.securityChannelId, HARNESS_DEEPSEEK_SECURITY_CHANNEL_ID);
+  assert.notEqual(f.model.securityChannelId, HARNESS_SECURITY_CHANNEL_ID, 'A different model recipient must not inherit the GPT channel');
   assert.deepEqual(result.evidence.toolFreeInvocation, { completedTurns: 1, toolCalls: 0 });
   assert.deepEqual(result.evidence.usage, { inputTokens: 3, outputTokens: 2 }); assert.equal(recorded.length, 1);
   const boot = f.boot();
@@ -77,14 +79,17 @@ for (const [mode, message] of [
 });
 
 test('Harness cancellation and timeout reap its process group before returning', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   for (const cancel of [false, true]) {
     const f = fixture('hang'), controller = new AbortController(); t.after(f.close);
-    const pending = f.model.runStructured('synthetic', schema, controller.signal);
-    const deadline = Date.now() + 3000;
-    while ((!existsSync(f.log) || !f.boot().childPid) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    t.after(() => controller.abort());
+    const pending = f.model.runStructured('synthetic', schema, controller.signal).then(() => undefined, (error: unknown) => error);
+    const deadline = Date.now() + 8000;
+    while ((!existsSync(f.log) || !f.boot().childPid) && Date.now() < deadline) await new Promise<void>(resolve => setImmediate(resolve));
     assert(f.boot().childPid, 'Observe the real descendant before interrupting');
     if (cancel) controller.abort();
-    await assert.rejects(pending, cancel ? /canceled/ : /timed out/);
+    else t.mock.timers.tick(5000);
+    const error = await pending; assert(error instanceof Error); assert.match(error.message, cancel ? /canceled/ : /timed out/);
     const boot = f.boot(); assert(!existsSync(boot.home));
     for (const pid of [boot.pid, boot.childPid!]) {
       try { process.kill(pid, 0); assert.equal(process.platform, 'linux'); assert.equal(readFileSync('/proc/' + pid + '/stat', 'utf8').split(' ')[2], 'Z'); }
@@ -105,12 +110,15 @@ test('Harness does not spawn after cancellation or with a public or expired cred
   await assert.rejects(oauth.runStructured('synthetic', schema, t.signal), /expired/); assert(!existsSync(f.log));
 });
 
-test('Harness reads current OAuth access without exporting refresh or unrelated credentials', async t => {
+test('Harness pins its recipient while reading current OAuth access without exporting refresh credentials', async t => {
   const f = fixture(); t.after(f.close);
   const token = 'x.' + Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url') + '.x';
   writeFileSync(f.key, JSON.stringify({ auth_mode: 'chatgpt', tokens: { access_token: token, refresh_token: 'never-pass-refresh' } }));
-  const oauth = new HarnessExecutor(f.binary, 5000, { credentialFile: f.key });
+  const config: HarnessConfiguration = { credentialFile: f.key, credentialKind: 'codex-oauth' };
+  const oauth = new HarnessExecutor(f.binary, 5000, config);
+  config.credentialKind = 'api-key';
   await oauth.runStructured('synthetic', schema, t.signal, { toolFree: true });
+  assert.equal(oauth.securityChannelId, HARNESS_SECURITY_CHANNEL_ID);
   const boot = f.boot(); assert(boot.patch.some(x => x.id === 'llm-deepseek' && x.disabled));
   assert(!JSON.stringify(boot).includes('never-pass-refresh')); assert(!JSON.stringify(boot.patch).includes(token));
 });

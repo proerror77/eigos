@@ -12,7 +12,7 @@ import {releaseFiles} from '../dist/packages/deployment/files.js';
 import {installReleaseDependencies} from '../dist/packages/deployment/dependencies.js';
 import {primaryRuntime,waitForPrimaryHealth} from '../dist/packages/deployment/primary.js';
 import {CODEX_SECURITY_CHANNEL_ID} from '../dist/packages/capabilities/executor.js';
-import {HARNESS_SECURITY_CHANNEL_ID} from '../dist/packages/capabilities/harness-executor.js';
+import {harnessSecurityChannel} from '../dist/packages/capabilities/harness-executor.js';
 
 const {values}=parseArgs({options:{config:{type:'string'},apply:{type:'boolean'}}});
 if(process.platform!=='darwin' || !values.config)throw new Error('Use --config with the owned primary environment on macOS');
@@ -24,7 +24,7 @@ const root=resolve(dirname(fileURLToPath(import.meta.url)),'..'),runtime=primary
 const envPath=join(runtime,'server.env'),plistPath=join(homedir(),'Library/LaunchAgents',label+'.plist');
 if(!authority.databasePath.startsWith(runtime+'/') || !authority.membershipDatabasePath.startsWith(runtime+'/'))throw new Error('Primary stores must live in the owned primary runtime');
 const store=new JobStore(authority.databasePath,{securityMode:'foundation',authority});
-try{if(config.EIGOS_EXECUTOR!=='disabled')store.security.policies.modelChannel(config.EIGOS_EXECUTOR==='harness'?HARNESS_SECURITY_CHANNEL_ID:CODEX_SECURITY_CHANNEL_ID);}finally{store.close();}
+try{if(config.EIGOS_EXECUTOR!=='disabled')store.security.policies.modelChannel(config.EIGOS_EXECUTOR==='harness'?harnessSecurityChannel(config.EIGOS_HARNESS_CREDENTIAL_KIND):CODEX_SECURITY_CHANNEL_ID);}finally{store.close();}
 const loaded=name=>{try{execFileSync('launchctl',['print',`gui/${process.getuid()}/${name}`],{stdio:'ignore'});return true;}catch{return false;}};
 if(['com.eigos.grok-life','com.eigos.invite-beta','com.eigos.shopify-checkout-private','com.eigos.member-network'].some(loaded))throw new Error('Stop the retired formal profiles before installing the single authority');
 if(execFileSync('git',['status','--porcelain'],{cwd:root,encoding:'utf8'}).trim())throw new Error('Deploy a committed, reviewed checkout');

@@ -10,7 +10,8 @@ import { modelUsageRecorder } from '../core/model-usage-context.js';
 import { decisionSchema, documentOutputSchema, documentPrompt, nativeInstructions, type Executor, type ModelRunOptions, type RunEvidence } from './executor.js';
 import { modelEnvironment } from './model-process.js';
 
-export const HARNESS_SECURITY_CHANNEL_ID = 'harness-native';
+export const HARNESS_SECURITY_CHANNEL_ID = 'harness-openai-codex';
+export const HARNESS_DEEPSEEK_SECURITY_CHANNEL_ID = 'harness-deepseek';
 export const HARNESS_TESTED_VERSION = '0.2.1-rc.5';
 export interface HarnessConfiguration {
   credentialFile: string;
@@ -18,6 +19,9 @@ export interface HarnessConfiguration {
   model?: string;
   reasoningEffort?: string;
   maxTokens?: number;
+}
+export function harnessSecurityChannel(kind?: HarnessConfiguration['credentialKind']): string {
+  return kind === 'api-key' ? HARNESS_DEEPSEEK_SECURITY_CHANNEL_ID : HARNESS_SECURITY_CHANNEL_ID;
 }
 type Packet = Record<string, unknown>;
 const object = (value: unknown): Packet => value && typeof value === 'object' && !Array.isArray(value) ? value as Packet : {};
@@ -83,10 +87,13 @@ function profile(config: HarnessConfiguration, options: ModelRunOptions, token?:
  * Each invocation owns one isolated SDK runtime and no independent task queue,
  * source watcher, GitHub identity, shell tool, or business authorization. */
 export class HarnessExecutor implements Executor {
-  readonly securityChannelId = HARNESS_SECURITY_CHANNEL_ID;
+  readonly securityChannelId: string;
   readonly ontologyTransport = 'native-mcp' as const;
   readonly ontologyContextPreparation = 'worker_snapshot' as const;
-  constructor(private binary: string, private timeoutMs: number, private configuration: HarnessConfiguration) {}
+  constructor(private binary: string, private timeoutMs: number, private configuration: HarnessConfiguration) {
+    this.configuration = Object.freeze({ ...configuration });
+    this.securityChannelId = harnessSecurityChannel(this.configuration.credentialKind);
+  }
 
   async run(job: Job, signal: AbortSignal) {
     const response = await this.runStructured(documentPrompt(job), documentOutputSchema, signal, { toolFree: true });

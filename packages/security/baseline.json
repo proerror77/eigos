@@ -3383,7 +3383,7 @@
         "authorization_control"
       ],
       "content": "Worker security mode binding",
-      "currentControl": "Persisted mode must match Gateway; no membership credentials. Harness selects a separate harness-native model channel and one durable claim; task authorization, source adapters and result acceptance remain EIGOS-owned.",
+      "currentControl": "Persisted mode must match Gateway; no membership credentials. Harness selects a separate recipient-bound Harness model channel and one durable claim; task authorization, source adapters and result acceptance remain EIGOS-owned.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
@@ -4376,12 +4376,12 @@
     {
       "id": "primary-deployment",
       "file": "scripts/deploy-primary.mjs",
-      "sourceDigest": "475137241151923f76671225d96b13c0d167672ae719a4514bbc8b89c925147f",
+      "sourceDigest": "197fc8777e0f4983c4fb75c32c6095dd7f386117effeb3dcf1a15727dff9eea7",
       "channels": [
         "operator_cli"
       ],
       "content": "Single managed primary runtime and immutable release",
-      "currentControl": "Owned config, stopped legacy profiles and bounded readiness matching healthy status, authority and immutable release. Preflight checks the selected Codex or Harness model channel and uses its explicit executable path; no policy is installed or widened.",
+      "currentControl": "Owned config, stopped legacy profiles and bounded readiness matching healthy status, authority and immutable release. Preflight checks the selected Codex or recipient-specific Harness model channel and uses its explicit executable path; no policy is installed or widened.",
       "targetControl": "Owned config, stopped legacy profiles and bounded readiness matching healthy status, authority and immutable release",
       "stage": "S5"
     },
@@ -5400,13 +5400,13 @@
     {
       "id": "harness-executor",
       "file": "packages/capabilities/harness-executor.ts",
-      "sourceDigest": "84c40845a7a98707247d48ada6257756e5fa01322d93d7d9abac3f3ef9c23bf0",
+      "sourceDigest": "96ad0c2a03fa42a12887d6eb0fe8115e8891f40086d0e68d234196eba738f5f3",
       "channels": [
         "registered_model",
         "private_file"
       ],
       "content": "Task-bound Harness SDK Executor Session, private current model credential and actual Ontology MCP receipts",
-      "currentControl": "Explicit harness-native identity; isolated invocation home and single original completed turn; no shell, filesystem or working-directory tools; only Worker loopback MCP operations; private credential-file checks; OAuth refresh remains with the original login; schema validation and process-group teardown before releasing the invocation",
+      "currentControl": "Distinct GPT OAuth and DeepSeek recipient channel identities; isolated invocation home and single original completed turn; no shell, filesystem or working-directory tools; only Worker loopback MCP operations; private credential-file checks; OAuth refresh remains with the original login; schema validation and process-group teardown before releasing the invocation Recipient configuration is snapshotted before deriving the channel identity.",
       "targetControl": "Current model-channel approval and task data/lease fences remain independent of Harness output; no second formal task or policy authority",
       "stage": "S3"
     }

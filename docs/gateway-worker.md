@@ -38,7 +38,7 @@ Worker 可显式选择 `EIGOS_EXECUTOR=harness`。适配采用 Super-agent 原�
 
 SDK 没有单会话取消接口，因此每次调用独占进程；取消、超时和关闭会终止并回收该进程组，再清理私有 home。外部来源返回后的执行与验收仍独立检查 EIGOS 原任务权限和领取身份。Harness Worker 固定一个并发领取，原 Codex Worker 保持已有两个并发上限。
 
-Foundation 使用独立的 `harness-native` 模型通道。现有 `codex-native` 许可不会自动赋予它；启用前须审核实际模型接收方与数据出口许可，并通过已有管理入口配置相应通道及授权。部署预检按所选执行器核对通道，不自动修改权限策略。真实模型、Linux 候选部署、正式实例切换与业务完成须分别验证。
+Foundation 按模型接收方分别使用 `harness-openai-codex`（GPT OAuth）和 `harness-deepseek`（DeepSeek API）通道。现有 `codex-native` 许可及另一接收方的 Harness 许可不会自动赋予它；启用前须审核实际模型接收方与数据出口许可，并通过已有管理入口配置相应通道及授权。部署预检按所选执行器和凭据类型核对通道，不自动修改权限策略。真实模型、Linux 候选部署、正式实例切换与业务完成须分别验证。
 
 上游接口与边界：[Super-agent 执行说明](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/main/docs/003-execution.md)、[Harness SDK](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sdk/protocol/README.md)、[多模型与 OAuth](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/llm/llm-pi-ai/README.md)。
 
