@@ -5,7 +5,7 @@ export const commerceProviderSchema = z.enum(commerceProviders);
 export type CommerceProvider = z.infer<typeof commerceProviderSchema>;
 export const commerceParameters = {
   QueryAlipayTrade: z.strictObject({ outTradeNo: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/) }),
-  QueryWechatPayTrade: z.strictObject({ outTradeNo: z.string().regex(/^[A-Za-z0-9_-]{1,32}$/) }),
+  QueryWechatPayTrade: z.strictObject({ outTradeNo: z.string().regex(/^[A-Za-z0-9_|*-]{1,32}$/) }),
   QueryUnionPayTrade: z.strictObject({ orderId: z.string().regex(/^[A-Za-z0-9]{8,40}$/), txnTime: z.string().regex(/^\d{14}$/) }),
   SearchTaobaoProducts: z.strictObject({ query: z.string().trim().min(1).max(200), page: z.number().int().min(1).max(100), limit: z.number().int().min(1).max(20) }),
   GetTaobaoProducts: z.strictObject({ itemIds: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,100}$/)).min(1).max(20).refine(ids => new Set(ids).size === ids.length) }),

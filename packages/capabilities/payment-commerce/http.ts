@@ -36,7 +36,7 @@ export async function queryWechatPay(credentialValue: unknown, outTradeNo: strin
     const uri = `/v3/pay/transactions/out-trade-no/${encodeURIComponent(outTradeNo)}?mchid=${encodeURIComponent(credential.merchantId)}`;
     const timestamp = String(Math.floor(Date.now() / 1000)), nonce = randomBytes(16).toString('hex');
     const response = await fetcher(`https://api.mch.weixin.qq.com${uri}`, { method: 'GET', redirect: 'manual', signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
-      headers: { Accept: 'application/json', Authorization: wechatPayAuthorization(credential, uri, timestamp, nonce), 'User-Agent': 'EIGOS-readonly/1' } });
+      headers: { Accept: 'application/json', Authorization: wechatPayAuthorization(credential, uri, timestamp, nonce), 'Wechatpay-Serial': credential.platformPublicKeyId, 'User-Agent': 'EIGOS-readonly/1' } });
     requestId = requestIdOf(response);
     const raw = await boundedBody(response);
     if (response.redirected || response.status !== 200) throw new Error('Provider query rejected');
@@ -64,7 +64,7 @@ export function signTaobao(parameters: Record<string, string>, secret: string) {
 }
 const id = z.union([z.string().regex(/^[A-Za-z0-9_-]{1,100}$/), z.number().int().positive().max(Number.MAX_SAFE_INTEGER)]).transform(String);
 const amount = z.string().regex(/^\d{1,18}(\.\d{1,6})?$/);
-const item = z.object({ item_id: id.optional(), num_iid: id.optional(), title: z.string().min(1).max(1000), zk_final_price: amount.optional(), reserve_price: amount.optional(), item_url: z.string().max(2000).optional() });
+const item = z.object({ item_id: id.optional(), num_iid: id.optional(), input_num_iid: id.optional(), title: z.string().min(1).max(1000), zk_final_price: amount.optional(), reserve_price: amount.optional(), item_url: z.string().max(2000).optional() });
 function safeItemUrl(value: string | undefined) {
   if (!value) return undefined;
   try {
@@ -80,11 +80,12 @@ export async function queryTaobao(credentialValue: unknown, tool: string, args: 
     const credential = taobaoCredentialSchema.parse(credentialValue);
     if (!['taobao.tbk.dg.material.optional', 'taobao.tbk.item.info.get'].includes(tool)) throw new Error('Unregistered TOP method');
     const search = tool === 'taobao.tbk.dg.material.optional';
+    const requestedIds = search ? undefined : z.array(id).min(1).max(20).parse(args.num_iids);
     const parameters: Record<string, string> = { method: tool, app_key: credential.appKey, sign_method: 'md5', format: 'json', v: '2.0',
       timestamp: new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 19).replace('T', ' '),
       ...(search ? { q: z.string().min(1).max(200).parse(args.q), page_no: String(z.number().int().min(1).max(100).parse(args.page_no)),
         page_size: String(z.number().int().min(1).max(20).parse(args.page_size)), adzone_id: credential.adzoneId }
-        : { num_iids: z.array(id).min(1).max(20).parse(args.num_iids).join(','), platform: '2', biz_scene_id: '2' }),
+        : { num_iids: requestedIds!.join(','), platform: '2', biz_scene_id: requestedIds!.every(value => /^\d+$/.test(value)) ? '2' : '1' }),
     };
     parameters.sign = signTaobao(parameters, credential.appSecret);
     const response = await fetcher('https://eco.taobao.com/router/rest', { method: 'POST', redirect: 'manual', signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
@@ -97,14 +98,18 @@ export async function queryTaobao(credentialValue: unknown, tool: string, args: 
     let rows: unknown;
     if (search) rows = result.result_list ? z.object({ map_data: z.array(z.unknown()) }).parse(result.result_list).map_data : result.total_results === 0 || result.total_results === '0' ? [] : undefined;
     else rows = z.object({ n_tbk_item: z.array(z.unknown()) }).parse(result.results).n_tbk_item;
-    const limit = search ? Number(parameters.page_size) : z.array(id).parse(args.num_iids).length;
+    const limit = search ? Number(parameters.page_size) : requestedIds!.length;
     const items = z.array(item).max(limit).parse(rows).map(row => {
-      const itemId = row.item_id ?? row.num_iid;
-      if (!itemId) throw new Error('Missing TOP item identity');
+      const sourceItemId = row.item_id ?? row.num_iid;
+      if (!sourceItemId) throw new Error('Missing TOP item identity');
+      // TOP may return a new alias. Its explicit input echo correlates the row
+      // with the selected dynamic ID; never infer that association by position.
+      const echoedId = !search && row.input_num_iid && row.input_num_iid !== '0' ? row.input_num_iid : undefined;
+      const itemId = echoedId ?? sourceItemId;
       const url = safeItemUrl(row.item_url), price = row.zk_final_price ?? row.reserve_price;
       return { itemId, title: row.title, ...(price !== undefined ? { referenceAmount: price, currency: 'CNY', amountUnit: 'major' } : {}), ...(url ? { url } : {}) };
     });
-    if (new Set(items.map(row => row.itemId)).size !== items.length || !search && items.some(row => !z.array(id).parse(args.num_iids).includes(row.itemId))) throw new Error('TOP item selection mismatch');
+    if (new Set(items.map(row => row.itemId)).size !== items.length || !search && items.some(row => !requestedIds!.includes(row.itemId))) throw new Error('TOP item selection mismatch');
     return { items, priceKind: 'reference', stockGuarantee: false, checkoutTotal: 'unknown' };
   } catch { signal.throwIfAborted(); throw new CommerceReadError('taobao'); }
 }

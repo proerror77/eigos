@@ -56,7 +56,7 @@ EIGOS_TAOBAO_CONNECTION_FILE=/absolute/private/taobao-connection.json
 | 银联 | `UP_MER_ID`、`UP_SIGN_CERT_PWD`、`signingCertificateBase64`、`validationCertificates`；可选 `UP_TR_ID`、`UP_TOKEN_TYPE: "01"` |
 | 淘宝 | `appKey`、`appSecret`、`adzoneId`（字符串，保留精度） |
 
-微信的 `merchantCertificateSerial` 是商户 API 证书序列号，`platformPublicKeyId` 是微信支付公钥 ID，两者不能混用。私钥与公钥均要求 RSA 至少 2048 位。
+微信的 `merchantCertificateSerial` 是商户 API 证书序列号，`platformPublicKeyId` 是微信支付公钥 ID，两者不能混用。请求通过 `Wechatpay-Serial` 明确选择已配置公钥签名的应答；商户订单号保留合法的 `|`、`*` 等字符。私钥与公钥均要求 RSA 至少 2048 位。
 
 银联 `validationCertificates` 为 `[{"name":"root.cer","base64":"<证书文件字节的 Base64>"}]`。每次调用将证书写入独立私有临时目录，只向子进程传入当前供应商所需字段；固定 `UP_ACCESS_TYPE=0`，限制可用工具并将日志留在临时目录，结束即清理。支付宝同样只开放查单工具，并关闭其日志。调用方不能提供工具白名单、交易地址或其他环境变量。
 
@@ -72,7 +72,7 @@ EIGOS_TAOBAO_CONNECTION_FILE=/absolute/private/taobao-connection.json
 {"action":"GetTaobaoProducts","parameters":{"itemIds":["123","456"]}}
 ```
 
-一次任务固定一家供应商、一个 Action 和准确参数。后续执行只提交已绑定的任务 `scope`，不能临时替换订单号、商户、查询词或商品 ID。淘宝详情支持最多 20 个显式 ID，搜索单页最多 20 条；不做隐藏分页或跟随商品链接。
+一次任务固定一家供应商、一个 Action 和准确参数。后续执行只提交已绑定的任务 `scope`，不能临时替换订单号、商户、查询词或商品 ID。淘宝详情支持最多 20 个显式 ID：全部为数字时使用比价场景 `2`，包含动态 ID 时使用场景 `1`；来源返回新别名时用 `input_num_iid` 与原输入精确关联。搜索单页最多 20 条；不做隐藏分页或跟随商品链接。
 
 来源响应仅投影必要的交易状态、金额或商品数据。金额保留来源单位：微信使用整数分，支付宝和淘宝使用元的十进制字符串。银联的来源金额保留原样与 `provider_reported` 单位，不参与跨来源金额计算。支付宝沙箱回执标记为 `provider_mock`，注入夹具为 `synthetic`，均不提升成生产查询证据。观察的本地有效窗为五分钟，不代表报价承诺或供应商承诺。
 
@@ -101,5 +101,7 @@ node --env-file-if-exists=.env --import tsx examples/payment-commerce-status.ts
 - [支付宝 MCP 服务](https://opendocs.alipay.com/open/0h3gdq)、[官方 MCP 包说明](https://www.npmjs.com/package/@alipay/mcp-server-alipay)
 - [微信 AI 支付介绍](https://pay.weixin.qq.com/doc/v3/merchant/4035576700)、[开发接入准备](https://pay.weixin.qq.com/doc/v3/merchant/4035576711)
 - [微信支付接入 Skill](https://github.com/wechatpay-apiv3/wechatpay-skills/blob/main/wechatpay-payment-integration/SKILL.md)、[商户订单号查单](https://pay.weixin.qq.com/doc/v3/merchant/4012791880)、[请求签名](https://pay.weixin.qq.com/doc/v3/merchant/4012365337)、[公钥验签](https://pay.weixin.qq.com/doc/v3/merchant/4013053249)
+- [微信支付公钥切换与请求头](https://pay.wechatpay.cn/doc/v3/partner/4012925289)、[微信订单号字符规则](https://pay.wechatpay.cn/doc/v3/merchant/4012791877)
 - [银联 MCP 智能支付服务](https://open.unionpay.com/tjweb/solution/detail?solId=613)、[MCP 包说明](https://www.npmjs.com/package/unionpay-mcp-server)
 - [淘宝客商品搜索](https://developer.alibaba.com/docs/api.htm?apiId=35896)、[商品详情](https://developer.alibaba.com/docs/api.htm?apiId=24518)
+- [淘宝动态 ID 的场景限制](https://developer.alibaba.com/support/hotProblemDetail.htm?id=696172&source=search)

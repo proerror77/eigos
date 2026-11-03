@@ -4,7 +4,7 @@
   "model": {
     "id": "eigos.business",
     "version": "27",
-    "digest": "3110e32cff0999f4074c3dd39139c95132e040d67f1d7d17c1409ca100b1e639"
+    "digest": "8e5b11eb6b25d873b12f05d67232899f97af6af929b143397aa19e75379fc5e6"
   },
   "types": {
     "ServiceRequest": {
@@ -2870,7 +2870,7 @@
       }
     },
     "PaymentCommerceReadTask": {
-      "fingerprint": "ebc5583bdad4a9f2f3d387ff345c6e4f7dbe7c395df54bc55811c30e539d8ee0",
+      "fingerprint": "7097e543702371f30e743e0b33ea29054585ab36940ab9090e944b8df44e0ccd",
       "fields": {
         "id": "task_private",
         "displayTitle": "task_private",
@@ -2882,7 +2882,7 @@
       }
     },
     "PaymentCommerceReadObservation": {
-      "fingerprint": "08024280e9ccab53c611b351fb537bd71ff0f37c0f22cd9ee87641bb3ddc36c8",
+      "fingerprint": "a36368289f4d19aa829f7fd85c45a93ebc7539653a17377f7b2a6692627643ef",
       "fields": {
         "id": "task_private",
         "displayTitle": "task_private",
@@ -5446,7 +5446,7 @@
     {
       "id": "payment-commerce-http",
       "file": "packages/capabilities/payment-commerce/http.ts",
-      "sourceDigest": "5913c3d85336e96608e5a98d18570379b80321e7dd6ce87a3ead73c004bd2f91",
+      "sourceDigest": "58625aed2ea3c23530980ca9c643b3d56bedc2a9c92756949408416ff7109cf8",
       "channels": [
         "provider_http"
       ],

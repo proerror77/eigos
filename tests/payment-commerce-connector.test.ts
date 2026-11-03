@@ -27,17 +27,31 @@ test('WeChat Pay signs the exact GET URI, verifies the original response and dro
     calls++;
     assert.equal(String(url), `https://api.mch.weixin.qq.com/v3/pay/transactions/out-trade-no/owned_order?mchid=${wechat.merchantId}`);
     assert.equal(options!.method, 'GET'); assert.equal(options!.redirect, 'manual');
-    const auth = new Headers(options!.headers).get('Authorization')!;
+    const headers = new Headers(options!.headers), auth = headers.get('Authorization')!;
+    assert.equal(headers.get('Wechatpay-Serial'), wechat.platformPublicKeyId);
     assert(auth.startsWith('WECHATPAY2-SHA256-RSA2048 '));
     const fields = Object.fromEntries([...auth.matchAll(/(\w+)="([^"]+)"/g)].map(match => [match[1]!, match[2]!]));
     assert.equal(fields.serial_no, wechat.merchantCertificateSerial); assert.equal(fields.mchid, wechat.merchantId);
     assert(verify('RSA-SHA256', Buffer.from(`GET\n/v3/pay/transactions/out-trade-no/owned_order?mchid=${wechat.merchantId}\n${fields.timestamp}\n${fields.nonce_str}\n\n`), merchant.publicKey, Buffer.from(fields.signature!, 'base64')));
-    return signedResponse();
+    return signedResponse(order, { serial: headers.get('Wechatpay-Serial') === wechat.platformPublicKeyId ? wechat.platformPublicKeyId : 'PLATFORM_CERT_SERIAL' });
   };
   const result = await queryWechatPay(wechat, 'owned_order', controller().signal, fetcher);
   assert.equal(calls, 1);
   assert.deepEqual(result, { outTradeNo: 'owned_order', tradeState: 'NOTPAY', totalMinor: 12345, currency: 'CNY', requestId: 'synthetic-request' });
   assert(!JSON.stringify(result).includes('must-not-leak'));
+});
+test('WeChat Pay resolves and queries original order IDs containing pipes and stars', async () => {
+  const original = 'merchant|order*01';
+  const resolved = resolveCommerceQuery('wechatpay', { action: 'QueryWechatPayTrade', parameters: { outTradeNo: original } });
+  assert.deepEqual(resolved.args, { outTradeNo: original });
+  const result = await queryWechatPay(wechat, String(resolved.args.outTradeNo), controller().signal, async (url, options) => {
+    assert.equal(String(url), `https://api.mch.weixin.qq.com/v3/pay/transactions/out-trade-no/merchant%7Corder*01?mchid=${wechat.merchantId}`);
+    const selected = new Headers(options!.headers).get('Wechatpay-Serial');
+    return signedResponse({ ...order, out_trade_no: original }, { serial: selected === wechat.platformPublicKeyId ? wechat.platformPublicKeyId : 'PLATFORM_CERT_SERIAL' });
+  });
+  assert.equal(result.outTradeNo, original);
+  for (const invalid of ['bad/order', 'bad%order', 'bad?order', 'x'.repeat(33), ''])
+    assert.throws(() => resolveCommerceQuery('wechatpay', { action: 'QueryWechatPayTrade', parameters: { outTradeNo: invalid } }));
 });
 test('WeChat Pay rejects altered bytes, stale headers, a different key, another merchant/order, and HTTP rejection', async () => {
   const responses = [() => signedResponse(order, { tamper: true }), () => signedResponse(order, { at: '1554208460' }),
@@ -76,6 +90,22 @@ test('TOP rejects business errors, missing result sets, unsafe numeric IDs and u
   const empty = await queryTaobao(taobao, 'taobao.tbk.dg.material.optional', { q: '帽子', page_no: 1, page_size: 1 }, controller().signal,
     async () => new Response(JSON.stringify({ tbk_dg_material_optional_response: { total_results: 0 } })));
   assert.deepEqual(empty.items, []);
+});
+test('TOP selects numeric comparison or dynamic-ID scenes and correlates explicit input echoes', async () => {
+  for (const requested of [['123', '9007199254740993'], ['dynamic_item-123'], ['123', 'dynamic_item-123']]) {
+    const numericOnly = requested.every(value => /^\d+$/.test(value));
+    const result = await queryTaobao(taobao, 'taobao.tbk.item.info.get', { num_iids: requested }, controller().signal, async (_url, options) => {
+      const body = new URLSearchParams(String(options!.body));
+      assert.equal(body.get('num_iids'), requested.join(','));
+      assert.equal(body.get('biz_scene_id'), numericOnly ? '2' : '1');
+      const rows = requested.map((value, index) => /^\d+$/.test(value) ? { num_iid: value, input_num_iid: '0', title: `合成商品${index}` }
+        : { num_iid: `returned_alias-${index}`, input_num_iid: value, title: `合成商品${index}` });
+      return new Response(JSON.stringify({ tbk_item_info_get_response: { results: { n_tbk_item: rows } } }));
+    });
+    assert.deepEqual(result.items.map(row => row.itemId), requested);
+  }
+  await assert.rejects(queryTaobao(taobao, 'taobao.tbk.item.info.get', { num_iids: ['dynamic_item-123'] }, controller().signal,
+    async () => new Response(JSON.stringify({ tbk_item_info_get_response: { results: { n_tbk_item: [{ num_iid: 'returned_alias', input_num_iid: 'other_input', title: '错误关联' }] } } }))), /unavailable/);
 });
 test('Read connectors bound response sizes and honor cancellation without issuing a request', async () => {
   const aborted = controller(); aborted.abort(new Error('cancelled'));
