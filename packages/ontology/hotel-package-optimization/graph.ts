@@ -4,6 +4,8 @@ import { DomainError } from '../../core/domain.js';
 import type { ObjectRef } from '../model.js';
 import type { OntologyObjectStore, ObjectView } from '../object-store.js';
 import { PACKAGE_STUDY_ONTOLOGY, PACKAGE_STUDY_FUNCTION, createPackageStudyModel } from './model.js';
+import { isPublishedPackageStudyModel } from './pipeline-model.js';
+import type { PipelineFactStore } from '../pipeline/facts.js';
 import { requestSchema, skuSchema, componentSchema, quoteSchema, inventorySchema, entitlementSchema, resourceSchema, prerequisiteSchema,
   type Request, type Sku, type Component, type Quote, type Inventory, type Entitlement, type Demand, type Prerequisite } from './contracts.js';
 
@@ -21,6 +23,12 @@ export interface Study {
   skus:Map<string,SkuNode>;pools:Map<string,PoolNode>;quotes:QuoteNode[];entitlements:Map<string,{ref:ObjectRef;data:Entitlement}>;
   demands:Demand[];inputDigest:string;modelDigest:string;now:number;reader:StudyReader;
 }
+export interface PipelineStudyContext {
+  facts: PipelineFactStore;
+  intakeDigest: string;
+  sourceId: string;
+  assertCurrent: () => void;
+}
 /** Uses ordinary owned reads, without integrity bypasses or production writes. */
 export class StudyReader {
   private objects=new Map<string,ObjectView>();
@@ -28,17 +36,35 @@ export class StudyReader {
   private budget={remaining:50000};
   readonly revision:number;
   datasetId:string|undefined;
-  constructor(readonly graph:OntologyObjectStore,readonly owner:string){
-    if(graph.ontologyId!==PACKAGE_STUDY_ONTOLOGY || graph.model.ref.digest!==createPackageStudyModel().ref.digest
-      || graph.model.function(PACKAGE_STUDY_FUNCTION).version!=='1') fail('Only the registered synthetic package-study ontology is accepted');
+  constructor(readonly graph:OntologyObjectStore,readonly owner:string,readonly pipeline?:PipelineStudyContext){
+    const direct=graph.model.ref.digest===createPackageStudyModel().ref.digest&&graph.model.functionIds().includes(PACKAGE_STUDY_FUNCTION);
+    if(graph.ontologyId!==PACKAGE_STUDY_ONTOLOGY || !(pipeline&&graph.releaseRef?isPublishedPackageStudyModel(graph.model):direct)) fail('Only the registered synthetic package-study ontology is accepted');
+    pipeline?.assertCurrent();
     this.revision=graph.revision(owner);
   }
   read(ref:ObjectRef):ObjectView{
     const key=refKey(ref),cached=this.objects.get(key);if(cached)return cached;
     const value=this.graph.read(this.owner,ref,this.budget);
     if(value.source.kind!=='synthetic' || Date.parse(value.source.observedAt)>this.graph.now()) fail('Package test optimization requires current synthetic provenance');
-    if(this.datasetId && value.source.id!==this.datasetId) fail('A package object belongs to a different synthetic dataset');
+    this.checkSource(value);
     this.objects.set(key,value);return value;
+  }
+  private checkSource(value:ObjectView){
+    if(this.pipeline){
+      const fact=this.pipeline.facts.current(this.owner,this.graph.ontologyId,value.ref);
+      if(!fact)return fail('Synthetic pipeline fact is missing from this published study');
+      if(fact.health!=='fresh'||fact.evidenceLevel!=='synthetic'||fact.intakeDigest!==this.pipeline.intakeDigest
+        ||fact.sourceId!==this.pipeline.sourceId||digest(fact.release)!==digest(this.graph.releaseRef)
+        ||digest(fact.properties)!==digest(value.properties)||this.datasetId&&this.datasetId!==fact.sourceId) fail('Synthetic pipeline fact is stale, conflicted or outside this published study');
+      if(fact.relationshipDigest){
+        const links=(fact.relationshipTypes??[]).flatMap(type=>{
+          const targets=this.graph.related(this.owner,value.ref,this.graph.model.link(type).from.name,this.budget);
+          if(!targets)throw new DomainError('CONFLICT','Pipeline relationship read is incomplete');
+          return targets.map(target=>({type,from:value.ref,to:target.ref}));
+        }).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
+        if(digest(links)!==fact.relationshipDigest)fail('Synthetic pipeline relationships differ from the mapped observation');
+      }
+    }else if(this.datasetId&&value.source.id!==this.datasetId)fail('A package object belongs to a different synthetic dataset');
   }
   related(ref:ObjectRef,name:string,max=200):ObjectView[]{
     const key=refKey(ref)+':'+name;
@@ -55,18 +81,22 @@ export class StudyReader {
   }
   snapshot():string{
     if(this.graph.revision(this.owner)!==this.revision) throw new DomainError('CONFLICT','Synthetic package facts changed during the read');
+    this.pipeline?.assertCurrent();
+    for(const view of this.objects.values())this.checkSource(view);
     return digest({model:this.graph.model.ref,owner:digest(this.owner),dataset:this.datasetId,
       objects:[...this.objects.values()].sort((a,b)=>refKey(a.ref).localeCompare(refKey(b.ref))).map(v=>({ref:v.ref,revision:v.revision,properties:v.properties,source:v.source})),
-      links:[...this.links.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([,value])=>value)});
+      links:[...this.links.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([,value])=>value),
+      ...(this.pipeline?{pipeline:{release:this.graph.releaseRef,intakeDigest:this.pipeline.intakeDigest,
+        facts:[...this.objects.values()].sort((a,b)=>refKey(a.ref).localeCompare(refKey(b.ref))).map(v=>this.pipeline!.facts.current(this.owner,this.graph.ontologyId,v.ref))}}:{})});
   }
 }
 const data = <T>(view:ObjectView,schema:z.ZodType<T>):T => schema.parse(view.properties.data);
-export function readStudy(graph:OntologyObjectStore,owner:string,requestRef:ObjectRef):Study{
+export function readStudy(graph:OntologyObjectStore,owner:string,requestRef:ObjectRef,pipeline?:PipelineStudyContext):Study{
   if(requestRef.type!=='HotelPackageRequest')fail('Expected a synthetic package optimization request');
-  const reader=new StudyReader(graph,owner),requestView=reader.read(requestRef),request=data(requestView,requestSchema);
+  const reader=new StudyReader(graph,owner,pipeline),requestView=reader.read(requestRef),request=data(requestView,requestSchema);
   const catalogView=reader.one(requestRef,'study')!,catalogData=z.strictObject({datasetId:z.string(),evidenceLevel:z.literal('synthetic'),completeness:z.enum(['complete','partial'])}).parse(catalogView.properties.data);
   reader.datasetId=catalogData.datasetId;
-  if(requestView.source.id!==reader.datasetId || catalogView.source.id!==reader.datasetId)fail('Request and catalog have different dataset identities');
+  if(pipeline?reader.datasetId!==pipeline.sourceId:requestView.source.id!==reader.datasetId || catalogView.source.id!==reader.datasetId)fail('Request and catalog have different dataset identities');
   const hotel=reader.one(requestRef,'hotel')!,roomTypes=new Map(reader.related(requestRef,'roomTypes',8).map(v=>[refKey(v.ref),v]));
   const nights=nightsBetween(request.checkIn,request.checkOut);
   if(nights<1 || nights>7 || !roomTypes.size)fail('Synthetic package studies support one hotel, one to seven nights and explicit room choices');

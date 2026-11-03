@@ -2,7 +2,7 @@ import { digest } from '../../core/delegation.js';
 import type { ObjectRef } from '../model.js';
 import type { OntologyObjectStore } from '../object-store.js';
 import { boundsSchema, type Bounds, type OptimizationResult, type Plan, type Prerequisite, type Realization } from './contracts.js';
-import { day, refKey, readStudy, sameRef, type Study } from './graph.js';
+import { day, refKey, readStudy, sameRef, type Study, type PipelineStudyContext } from './graph.js';
 import { generateRealizations } from './realizations.js';
 
 export interface DependencyNeed { sku:ObjectRef; quantity:number; roomIndex?:number; anchor:Prerequisite['anchor']; date?:string;phase:Prerequisite['phase'] }
@@ -55,8 +55,8 @@ function planFrom(purchases:Realization[],study:Study):Plan{
     resourceUsage:Object.entries(usage).sort(([a],[b])=>a.localeCompare(b)).map(([key,quantity])=>({pool:study.pools.get(key)!.ref,quantity,capacity:study.pools.get(key)!.data.capacity!}))};
 }
 const planCompare=(a:Plan,b:Plan)=>BigInt(a.totalMinor)<BigInt(b.totalMinor)?-1:BigInt(a.totalMinor)>BigInt(b.totalMinor)?1:a.purchases.length-b.purchases.length||a.id.localeCompare(b.id);
-export function optimizeSyntheticHotelPackages(graph:OntologyObjectStore,owner:string,request:ObjectRef,rawBounds:Partial<Bounds>={}):OptimizationResult{
-  const bounds=boundsSchema.parse(rawBounds),study=readStudy(graph,owner,request),generated=generateRealizations(study,bounds.maxRealizations);
+export function optimizeSyntheticHotelPackages(graph:OntologyObjectStore,owner:string,request:ObjectRef,rawBounds:Partial<Bounds>={},pipeline?:PipelineStudyContext):OptimizationResult{
+  const bounds=boundsSchema.parse(rawBounds),study=readStudy(graph,owner,request,pipeline),generated=generateRealizations(study,bounds.maxRealizations);
   const candidates=generated.items,bySku=new Map<string,Realization[]>();
   for(const candidate of candidates){const key=refKey(candidate.sku);bySku.set(key,[...(bySku.get(key)??[]),candidate]);}
   const plans:Plan[]=[],planIds=new Set<string>(),visitedStates=new Set<string>();let nodes=0,complete=generated.complete;
