@@ -12,6 +12,49 @@
 
 `eigos.business` 是共享默认本体，查看需要对应读取权限，修改还需要 `ontology:admin`。新建本体归当前验证身份所有，独立命名空间中的同名类型和实例互不混用。命名空间授权发生在返回定义、数量、差异或历史之前。
 
+## Function与Action Type的边界
+
+领域概念按对象、业务决策和可观察结果划分，代码中的类名、函数名和步骤 ID 只能作为实现线索。Palantir 的 Function 可读取属性、遍历关系、返回对象集和计算结果，也可访问外部系统，或通过 function-backed actions 描述本体编辑。因此“Function 一律只读”不是通用定义。[Palantir Functions](https://www.palantir.com/docs/foundry/functions/overview)
+
+**EIGOS 当前的注册本体函数采用只读查询／计算子集**，受控实例写入通过独立的 Action／Worker 提交路径完成；这是一项实现边界，不能表述为已经具备完整的 Palantir Function、外部函数或 function-backed action 能力。Action Type 应表达可提交的对象、属性、关系变更及规定副作用；本体事务不自动使供应商 HTTP 调用具备同样的原子性。[Palantir Action types](https://www.palantir.com/docs/foundry/action-types/overview)
+
+MCP 工具、供应商端点和运行步骤不是业务 Action Type 的同义词。当前[滴滴读取模块](../../packages/ontology/definitions/didi-readonly.json)把 `SearchDidiPlaces`、`EstimateDidiRide` 固定为来源读取合约，分别绑定 `maps_textsearch`、`taxi_estimate`；[程序](../../packages/capabilities/didi/program.ts)检查来源、所选地点角色、读取凭据和有效期。即使这两个 ID 已登记为运行模型中的动作资源，也不能仅凭名称认定业务边界已与 Palantir 对齐。
+
+下面是出行业务的**拟议概念映射**，不是新定义已经发布、接口已经实现或真实服务已经接通的声明：
+
+| 业务概念 | 应表达的身份、状态与关系 | 当前模型可参考的对象 |
+| --- | --- | --- |
+| Place | 来源限定的地点及身份依据；同名不自动合并 | `Place`、`DidiPlaceObservation` |
+| Route | 有方向的起终点及其选取依据；不证明实际接送 | `RideRoute` |
+| Quote | 对准确路线和条件的价格、条款及观察期限；费用缺项仍未知 | `RideEstimate`、报价相关接口；估价不能升级成最终报价承诺 |
+| TripRequest | 用户的出行需求、约束、所选方案与申请状态 | `ServiceRequest`；是否细化为独立类型待设计 |
+| Order | 供应方确认的订单及请求、确认、取消等状态和证据 | 需单独核对出行业务定义与供应方绑定；本表不新增通用 `Order` ID |
+
+查询地点、计算路线、取得估价和比较候选，可作为查询／计算 Function 的领域职责；外部读调用还需明确来源绑定和证据契约。用户选择准确报价、请求出行或申请取消，才是需要明确变更范围、提交条件及副作用的业务决策边界。选择报价不等于已经下单，申请取消也不等于供应方已取消。这些是拟议职责，不是对现有 ID 的改名方案。[概念参考](https://www.palantir.com/docs/foundry/ontology/core-concepts)
+
+来源采集与[事实投影](../../packages/ontology/ride-estimate-projection.ts)保存“来源在何时说了什么”，可以产生来源观察及关联事实；它们不代表用户已选择方案、建立订单或完成出行。当前仍不允许真实下单或付款。扩展到业务 Action Type 前，需核对实际对象／关系变更、原用户授权、供应方回执、幂等、撤销、取消与迟到结果，而非给现有读取步骤换名称。
+
+本次概念修正不重命名已发布 API、不改写历史指纹，也不修改既有 v27 定义或任何 active release。后续边界调整须经草稿、兼容性检查和明确发布；在途任务保留其原版本与原输入。
+
+## PostgreSQL与pgvector语义检索目标
+
+迁移目标包含 PostgreSQL 上的 **pgvector 语义检索**，用于召回与当前问题相关的定义、说明或获准业务资料。pgvector 提供向量相似性检索；相似度既不是权限判断，也不证明实体同一性、来源真实性或业务执行成功。[pgvector 官方说明](https://github.com/pgvector/pgvector)
+
+落地时必须保留以下边界，当前均需实现与联调验收：
+
+- 生成 embedding 的材料与返回给模型的检索结果，均受 owner、命名空间、任务发布版本及字段可见性约束；不能将不可见原文或内部字段先发给 embedding 服务，再以结果过滤代替授权。
+- 向量记录应能追溯原对象／定义及其准确版本、内容摘要和 embedding 模型版本。命中后通过原有授权查询重新读取允许的字段；撤权、字段收紧、来源失效或版本变化必须反映到实际返回结果。
+- 相似候选仅供发现。RAG、重排、对象集数量或缓存均不能绕过 owner／版本／字段过滤，不能从未返回候选推定全域不存在，也不能据此发放来源、模型或动作权限。
+- embedding 供应商、模型、维度、索引方案、费用及私有资料外发许可仍为 `unknown`，需明确后才能配置；本要求不自动引入新的收费供应商。
+
+文档中的目标不证明扩展已安装、向量已生成或查询已接通，须以实际目标库、权限否定用例和端到端回读确认。语义召回与业务 Action Type 的提交、供应方授权及结果验收分别验证。
+
+## 领域边界与SQL查询预算
+
+本体 Function 用于可复用的领域查询、计算和明确契约的逻辑，不要求把每条 SQL 行过滤、claim、租约或字段授权检查都暴露为 Function。存储与安全层保留完整检查；将读取命名为一个 Function 或 Action，也不会自动消除重复查询或网络往返。
+
+查询预算仍是待验收项：应在固定数据规模、同一原任务及实际 PostgreSQL 链路上，分别测量初始化、来源读取、规划验证、Kernel 许可与独立规范投影的 SQL 条数、往返和时延，并核对有效期、撤权、取消及迟到结果。目标预算须依据基线与负载另行明确，不能编造固定阈值；CPU 测试或本地绿灯不能代替网络链路和业务回读。优化可以合并同次调用中的纯重复计算，不能跨信任边界复用授权结论。
+
 ## 原始模型与迁移
 
 原始 `eigos.business@15` 固定摘要为 `efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776`，包含 153 个对象类型、7 个接口、655 个关系、55 个动作、40 个函数。冻结快照和准确受信任校验器保留原始语义与指纹；不会把旧事实重新盖成新摘要。
