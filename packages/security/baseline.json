@@ -3414,7 +3414,7 @@
     {
       "id": "permission-review-page",
       "file": "apps/gateway/members/permissions-page.ts",
-      "sourceDigest": "34ea95efa76419a06b6d9529346395299eb9f11d8f998b2ec9060db811f0284f",
+      "sourceDigest": "08b6d984226b982ddbbf2c9e6c04cfaa0458a91ddd6dfefc89171fcda4389ee5",
       "channels": [
         "member-ui"
       ],
@@ -5395,7 +5395,7 @@
       "currentControl": "Current original-task authority and published mapping; fresh control-only task grant, no inherited data or execution authority",
       "targetControl": "Reviewed contract-only metadata; observer activation remains unavailable",
       "stage": "S2",
-      "sourceDigest": "d92d5cef853e8e5e6637ef80842a402f89b8a4662ad2aff3793547f2bcf53f09"
+      "sourceDigest": "549cb42e36b9205b9e58cfec70749d33f4f98a2eaf752c62b3a8e0f18d6bd3ad"
     },
     {
       "id": "consent-lifetime",

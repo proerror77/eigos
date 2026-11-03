@@ -1,4 +1,5 @@
 import { consentDeadline, minimumConsentExpiry, type ConsentExpiry } from '../../../packages/security/consent-lifetime.js';
+import { securityDefaults } from '../../../packages/security/contracts.js';
 import {z} from 'zod';
 import {memberLayout} from './page.js';
 import type {AuthorizationCoordinator} from '../../../packages/security/coordinator.js';
@@ -157,7 +158,8 @@ export function preparePermissionReview(view:View,form:Record<string,unknown>,no
     if(renewOriginal && (task.continuation?.installationId!==installationId || current?.kind!=='task_data'))throw new Error('Choose the original PA and its paused task');
     input={installationId,taskId:task.id,expectedRequestRevision:task.requestRevision,expectedAgentGrant:{id:parent.id,revision:parent.revision},...(current?{replaces:{id:current.id,revision:current.revision}}:{}),takeover,
       inputs,programIds,purpose:'delegated_task',operations:['task.query','task.result.read',...(takeover?['task.process']:[]),...(inputs.length?['member_asset.read']:[]),...(selectedChannels.includes('controlled_download')?['artifact.export']:[])],
-      channels:selectedChannels,expiresAt:minimumConsentExpiry(expiresAt,parent.expiresAt)};
+      channels:selectedChannels,expiresAt:minimumConsentExpiry(expiresAt,parent.expiresAt,
+        parent.expiresAt===null?null:new Date(now+securityDefaults.taskGrantMaxSeconds*1000).toISOString())};
     if(renewOriginal && current?.kind==='task_data') {
       const sources=programIds.map(id=>view.sources.find(s=>s.installationId===installationId && s.programId===id)!);
       Object.assign(input,{renewOriginal:true,inputs:selected.length?inputs:current.inputs,operations:current.operations,channels:selectedChannels.length?selectedChannels:current.channels,

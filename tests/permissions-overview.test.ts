@@ -8,6 +8,7 @@ import {ExecutionCatalog} from '../packages/core/catalog.js';
 import {ownerKey} from '../packages/core/domain.js';
 import {randomUUID} from 'node:crypto';
 import {customerPermissionOverview,permissionsPage,preparePermissionReview,permissionReviewPage} from '../apps/gateway/members/permissions-page.js';
+import { securityDefaults } from '../packages/security/contracts.js';
 
 async function fixture() {
   const source=didiFixture(),f=await securityGatewayFixture((_store,p)=>{
@@ -26,6 +27,24 @@ async function fixture() {
   }
   return {...f,a,b,now,profile,source,close:async()=>{await f.close();source.close();}};
 }
+
+for (const days of [7, 30]) test(`task approval under a finite ${days}-day parent retains the finite task lifetime cap`, async () => {
+  const f = await fixture();
+  try {
+    const manager = f.gateway.security!, prior = f.gateway.store.security.agentGrant(f.a.id);
+    manager.revokeGrant(f.member.id, prior.id, prior.revision);
+    manager.approveAgentGrant(f.member.id, { installationId: f.a.id, capabilityIds: prior.capabilityIds, resources: prior.resources,
+      sourceBindingIds: prior.sourceBindingIds, channels: prior.channels, expiresAt: new Date(Date.now() + days * 86400000).toISOString() });
+    const created = await f.post('/tasks', { service: 'eigos.delegate', requestId: randomUUID(), goal: 'Synthetic finite-parent task' }, { authorization: `Bearer ${f.a.token}` });
+    assert.equal(created.status, 200);
+    const now = Date.now(), review = preparePermissionReview(manager.managementView(f.member.id), {
+      kind: 'task', installationId: f.a.id, taskId: created.value.id, takeover: 'yes', channels: ['agent_response'],
+    }, now);
+    assert.equal(review.input.expiresAt, new Date(now + securityDefaults.taskGrantMaxSeconds * 1000).toISOString());
+    assert.equal(manager.approveTaskGrant(f.member.id, review.input).expiresAt, review.input.expiresAt);
+    assert.equal(f.source.calls.length, 0);
+  } finally { await f.close(); }
+});
 
 test('new installation and source reviews default to until-revoked consent and render its actual lifetime',async()=>{
   const f=await fixture();try {
