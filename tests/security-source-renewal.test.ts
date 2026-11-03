@@ -15,6 +15,7 @@ import {Coordinator} from '../packages/coordinator/coordinator.js';
 import {AuthorizationCoordinator} from '../packages/security/coordinator.js';
 import {taskContextFields} from '../packages/security/task-context-contract.js';
 import {scheduleTaskRecovery} from '../packages/core/task-recovery.js';
+import type { ActionIntent, ExecutionAttempt } from '../packages/ontology/actions.js';
 import {preparePermissionReview,permissionReviewPage} from '../apps/gateway/members/permissions-page.js';
 
 function fixture(legacyFields=false) {
@@ -73,6 +74,23 @@ test('explicit persistent consent restores an expired original paused task witho
   const f=fixture(),db=new DatabaseSync(f.database);
   try {
     f.pause();
+    // Existing synthetic read operations model the original task's two
+    // confirmed place reads and rejected, undispatched estimate.
+    for (const [index,state] of (['effect_confirmed','effect_confirmed','rejected'] as const).entries()) {
+      const intent:ActionIntent={id:randomUUID(),owner:f.owner,jobId:f.task.id,stepId:`read-${index}`,businessOperationKey:`synthetic-read-${index}`,
+        planDigest:'a'.repeat(64),bindingRef:f.program.ref,inputDigest:'b'.repeat(64),privateDigest:'c'.repeat(64),privateData:null,
+        effect:'read',state,nextAt:0,createdAt:new Date().toISOString()};
+      const {privateData,...body}=intent;
+      db.prepare('INSERT INTO action_intents VALUES(?,?,?,?,?,?,?)').run(intent.id,f.owner,f.task.id,intent.businessOperationKey,state,JSON.stringify(privateData),JSON.stringify(body));
+      if(index<2) {
+        const attempt:ExecutionAttempt={id:randomUUID(),intentId:intent.id,kind:'dispatch',requestKey:randomUUID(),startedAt:intent.createdAt,
+          claimToken:'synthetic-historical-claim',requestRevision:1,inputDigest:intent.inputDigest,planDigest:intent.planDigest,ordinal:1};
+        db.prepare('INSERT INTO action_attempts VALUES(?,?,?,?)').run(attempt.id,f.owner,intent.id,JSON.stringify(attempt));
+      }
+    }
+    const ledger=()=>({intents:db.prepare('SELECT * FROM action_intents WHERE job_id=? ORDER BY id').all(f.task.id),
+      attempts:db.prepare('SELECT * FROM action_attempts WHERE intent_id IN (SELECT id FROM action_intents WHERE job_id=?) ORDER BY id').all(f.task.id)});
+    const beforeLedger=ledger();
     const expiresAt=new Date(Date.now()-1).toISOString();
     for(const [table,id] of [['security_grants',f.originalGrant.id],['security_task_authorities',f.originalAuthority.id]] as const) {
       const body=JSON.parse(String(db.prepare(`SELECT body FROM ${table} WHERE id=?`).get(id)!.body));body.expiresAt=expiresAt;
@@ -93,7 +111,24 @@ test('explicit persistent consent restores an expired original paused task witho
     assert.deepEqual(after.messages,before.messages);assert.deepEqual(after.runs,before.runs);
     assert.equal(after.state,'paused');assert.equal(after.id,before.id);assert.equal(after.contextId,before.contextId);
     assert.equal(f.jobs.security.workAuthority(f.owner,f.task.id)!.expiresAt,null);
+    assert.deepEqual(ledger(),beforeLedger,'Consent conversion cannot replay or rewrite prior read operations');
     assert.equal(new TaskSecurity(f.jobs).get(f.principal(),f.task.id).state,'paused');
+    assert.equal(f.source.calls.length,0);
+  }finally{db.close();f.close();}
+});
+
+for(const mode of ['write','additional_write'] as const)test(`persistent original-PA conversion rejects ${mode} operations`,()=>{
+  const f=fixture(),db=new DatabaseSync(f.database);
+  try {
+    f.pause();f.makePersistent();
+    const intent:ActionIntent={id:randomUUID(),owner:f.owner,jobId:f.task.id,stepId:'unsafe',businessOperationKey:'synthetic-unsafe',planDigest:'a'.repeat(64),
+      bindingRef:f.program.ref,inputDigest:'b'.repeat(64),privateDigest:'c'.repeat(64),privateData:null,effect:mode==='write'?'order':'read',
+      ...(mode==='additional_write'?{additionalEffects:['payment'] as const}:{}),state:'ready',nextAt:0,createdAt:new Date().toISOString()};
+    const {privateData,...body}=intent;
+    db.prepare('INSERT INTO action_intents VALUES(?,?,?,?,?,?,?)').run(intent.id,f.owner,f.task.id,intent.businessOperationKey,intent.state,JSON.stringify(privateData),JSON.stringify(body));
+    const before=f.jobs.security.listGrants(f.owner);
+    assert.throws(()=>f.manager.approveTaskGrant(f.member.id,{...f.renewal(),expiresAt:null}),/read-only task/);
+    assert.deepEqual(f.jobs.security.listGrants(f.owner),before);
     assert.equal(f.source.calls.length,0);
   }finally{db.close();f.close();}
 });
@@ -147,7 +182,7 @@ test('original-PA renewal rejects changed rights, extended deadlines, stale appr
       assert.equal(f.jobs.get(f.owner,f.task.id).state,'paused');
     }
     f.jobs.security.revokeGrant(f.owner,f.originalGrant.id,f.originalGrant.revision);
-    assert.throws(()=>f.manager.approveTaskGrant(f.member.id,f.renewal()),/undispatched paused task/);
+    assert.throws(()=>f.manager.approveTaskGrant(f.member.id,f.renewal()),/paused task for its original PA/);
     assert.equal(f.source.calls.length,0);
   }finally{f.close();}
 });

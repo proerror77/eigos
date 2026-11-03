@@ -3330,12 +3330,12 @@
     {
       "id": "security-coordinator",
       "file": "packages/security/coordinator.ts",
-      "sourceDigest": "ec45d391e10f34ecf87fd863bf48248267720aac0e71971611db71a88879d178",
+      "sourceDigest": "53e5603c25ca3f15c3b748bb16929363d46ea0d5f490b18e872e6bf0b694e292",
       "channels": [
         "authorization_control"
       ],
       "content": "Signed installation resolution and cross-database eligibility coordination",
-      "currentControl": "Current identity and reviewed source/task approval. Original-PA conversion to persistent consent requires explicit controller review, exact prior scopes and current sources, no dispatched operations, and leaves the task paused. Standalone revocation cannot be restored.",
+      "currentControl": "Current identity and reviewed source/task approval. Original-PA conversion to persistent consent requires explicit controller review, exact prior scopes and current sources, only read/local existing plans and operations; preserve their ledgers without replay, and leaves the task paused. Standalone revocation cannot be restored.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
@@ -3414,7 +3414,7 @@
     {
       "id": "permission-review-page",
       "file": "apps/gateway/members/permissions-page.ts",
-      "sourceDigest": "a98809b92a3a887ce90c49099921709fbb3cd71a0bc528a37f7dd3c188b82e49",
+      "sourceDigest": "34ea95efa76419a06b6d9529346395299eb9f11d8f998b2ec9060db811f0284f",
       "channels": [
         "member-ui"
       ],

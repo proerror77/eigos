@@ -162,16 +162,21 @@ export class AuthorizationCoordinator {
       const allGrants=this.store.listGrants(facts.ownerKey).filter((g):g is TaskDataGrant=>g.kind==='task_data' && g.taskId===job.id);
       const grants=allGrants.filter(g=>g.status==='active'),original=args.renewOriginal?this.store.latestTaskAuthority(facts.ownerKey,job.id):undefined;
       const current=args.renewOriginal?allGrants.find(g=>g.id===original?.dataGrant.id):grants.find(g=>g.installationId===args.installationId);
+      const intents=this.jobs!.intents(facts.ownerKey,job.id);
       if (current && (current.id!==args.replaces?.id || current.revision!==args.replaces.revision) || !current && args.replaces) throw new DomainError('CONFLICT','Task grant changed; review the current grant');
       if (args.operations.includes('task.process')) {
         if (!args.takeover && !args.renewOriginal) throw new DomainError('INVALID_INPUT','Continuing execution requires explicit takeover or original-PA renewal approval');
-        if (this.jobs!.intents(facts.ownerKey,job.id).some(i=>!['read','local'].includes(i.effect) && this.jobs!.attempts(facts.ownerKey,i.id).length)) throw new DomainError('CONFLICT','An existing business operation requires its original recovery path');
+        if (intents.some(i=>!['read','local'].includes(i.effect) && this.jobs!.attempts(facts.ownerKey,i.id).length)) throw new DomainError('CONFLICT','An existing business operation requires its original recovery path');
       }
       const parent=this.store.agentGrant(args.installationId),at=new Date(this.store.now()).toISOString(),sources=this.store.policies.sources(facts.ownerKey,args.installationId);
       if(parent.id!==args.expectedAgentGrant.id || parent.revision!==args.expectedAgentGrant.revision)throw new SecurityError('POLICY_CHANGED');
       if (!args.programIds.every(id=>sources.some(s=>s.programId===id))) throw new SecurityError('SOURCE_NOT_AUTHORIZED');
       if(args.renewOriginal) {
         const equalSet=(a:string[],b:string[])=>digest([...a].sort())===digest([...b].sort());
+        const readOnly=(step:{effect:string;additionalEffects?:readonly string[]})=>[step.effect,...(step.additionalEffects??[])].every(effect=>['read','local'].includes(effect));
+        const persistentReadOnly=args.expiresAt===null && intents.every(readOnly)
+          && (job.delegation?.plan?.steps??[]).every(readOnly)
+          && (job.delegation?.agent?.plans??[]).every(plan=>plan.steps.every(readOnly));
         const replacedWithParent=current?.status==='revoked' && current.parentGrant.id!==parent.id && current.parentGrant.id===original?.agentGrant.id
           && current.revision===(original?.dataGrant.revision??0)+1
           && this.store.listGrants(facts.ownerKey).some(g=>g.id===current.parentGrant.id && g.status==='revoked');
@@ -179,14 +184,15 @@ export class AuthorizationCoordinator {
           || original.authEpoch!==this.store.requireSubject(args.installationId).epoch || original.requestRevision!==request.revision
           || !current || current.kind!=='task_data' || current.installationId!==args.installationId
           || current.status==='active' && (current.revision!==original.dataGrant.revision || current.parentGrant.id!==original.agentGrant.id)
-          || (current.status!=='active' && !replacedWithParent) || job.state!=='paused' || this.jobs!.intents(facts.ownerKey,job.id).length
+          || (current.status!=='active' && !replacedWithParent) || job.state!=='paused'
+          || intents.length>0 && !persistentReadOnly || args.expiresAt===null && !persistentReadOnly
           || !args.operations.includes('task.process') || !equalSet(args.operations,current.operations) || !equalSet(args.channels,current.channels)
           || digest(args.inputs)!==digest(current.inputs) || args.purpose!==current.purpose
           || args.expiresAt!==null && (consentDeadline(args.expiresAt)>Math.min(consentDeadline(current.expiresAt),consentDeadline(original.expiresAt))
             || consentDeadline(current.expiresAt)<=this.store.now() || consentDeadline(original.expiresAt)<=this.store.now())
           || !args.programIds.length || new Set(args.programIds).size!==args.programIds.length
           || args.programIds.some(id=>!current.outputs.some(output=>output.programId===id)))
-          throw new DomainError('CONFLICT','Review an undispatched paused task for its original PA; only explicit persistent consent may replace an expired deadline, without changing inputs, processing rights or channels');
+          throw new DomainError('CONFLICT','Review a paused task for its original PA; only explicit persistent consent for a read-only task may replace an expired deadline or retain prior read operations, without changing inputs, processing rights or channels');
         const profiles=this.sourceProfiles(memberId).profiles;
         if(args.expectedSources?.length!==args.programIds.length || args.programIds.some(id=>{
           const expected=args.expectedSources!.filter(s=>s.programId===id),source=sources.find(s=>s.programId===id);
