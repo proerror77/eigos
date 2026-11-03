@@ -168,12 +168,12 @@ export class PostgresWorkerStore {
   recordRun(claim:WorkClaim,evidence:RunEvidence,event:string){
     const captured=structuredClone(evidence);
     if(!event||event.length>80)throw new Error('Invalid model evidence event');
-    return this.mutate(claim,job=>{
-      if(job.runs?.some(run=>run.id===captured.id))return;
+    const stored={...captured,purpose:event==='request_interpreted'?'grounding' as const:event==='goal_coverage_reviewed'?'goal_coverage' as const:'planning' as const};
+    return this.mutateCurrent(claim,async job=>{
       if(!remainingModelTurns(job))throw new DomainError('CONFLICT','Maximum reasoning turns reached');
-      job.runs=[...(job.runs??[]),{...captured,purpose:event==='request_interpreted'?'grounding':event==='goal_coverage_reviewed'?'goal_coverage':'planning'}];
+      job.runs=[...(job.runs??[]),stored];
       job.updatedAt=new Date().toISOString();job.delegation!.events.push({at:job.updatedAt,event,evidence:captured.id});
-    },false,captured);
+    },false,captured,undefined,stored);
   }
   /** Preserve the real action executor's purpose and original receipt. A
    * document run is not a new planning/grounding decision or business result. */
@@ -194,19 +194,27 @@ export class PostgresWorkerStore {
       if(result&&typeof result==='object'&&'then'in result)throw new Error('Worker mutation callback must not perform asynchronous work');
     },finish,modelEvidence);
   }
-  private async mutateCurrent(claim:WorkClaim,update:(job:Job,client:Client)=>Promise<void>,finish:boolean,modelEvidence?:RunEvidence,additionalInfluence?:()=>SecurityEnvelope|undefined){
+  private async mutateCurrent(claim:WorkClaim,update:(job:Job,client:Client)=>Promise<void>,finish:boolean,modelEvidence?:RunEvidence,additionalInfluence?:()=>SecurityEnvelope|undefined,existingRun?:RunEvidence){
     const original=postgresWorkReference(claim);
     try{const committed=await this.db.run(async client=>{
       if(!await this.db.inspectClaim(original,this.policy)||!await postgresClaimSnapshotMatches(client,original,this.policy))return false;
       const before=await postgresWorkerAdmission(client,original.owner,original.job.id,this.policy),store=new PostgresTaskStorage(client,this.kernel);
-      const seal=await postgresPrepareWorkerSeal(client,original,this.policy,this.kernel,fence=>this.db.inspectClaim(fence,this.policy));
       const current=await store.get(original.owner,original.job.id),request=current.delegation!.request.revision,revision=current.revision;
       if(modelEvidence)await postgresRecordModelResponse(client,original,modelEvidence);
-      await update(current,client);
-      if(current.id!==original.job.id||current.revision!==revision||current.delegation?.request.revision!==request)throw new DomainError('CONFLICT','Worker cannot revise the owner request');
-      const added=additionalInfluence?.(),outputSeal=added?(seal?combineEnvelopes([seal,added]):added):seal;
-      await store.save(original.owner,current);
-      if(outputSeal)await postgresRecordWorkerOutputs(client,original.owner,current,outputSeal);
+      const previous=existingRun&&current.runs?.find(run=>run.id===existingRun.id);
+      if(previous&&digest(previous)!==digest(existingRun))throw new DomainError('CONFLICT','Original model evidence changed');
+      if(previous&&(finish||additionalInfluence))throw new Error('Evidence idempotency cannot skip a task or source transition');
+      // A known identical receipt changes no task/output. Keep accounting and
+      // every current claim/authority/commit fence, without rewriting all graph
+      // projections or minting another output seal for that same response.
+      if(!previous){
+        const seal=await postgresPrepareWorkerSeal(client,original,this.policy,this.kernel,fence=>this.db.inspectClaim(fence,this.policy));
+        await update(current,client);
+        if(current.id!==original.job.id||current.revision!==revision||current.delegation?.request.revision!==request)throw new DomainError('CONFLICT','Worker cannot revise the owner request');
+        const added=additionalInfluence?.(),outputSeal=added?(seal?combineEnvelopes([seal,added]):added):seal;
+        await store.save(original.owner,current);
+        if(outputSeal)await postgresRecordWorkerOutputs(client,original.owner,current,outputSeal);
+      }
       const after=await postgresWorkerAdmission(client,original.owner,original.job.id,this.policy);
       if(digest(before)!==digest(after))throw new LostClaim();
       const q=`"${postgresBusinessSchema(client)}"`;

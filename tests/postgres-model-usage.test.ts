@@ -42,16 +42,27 @@ test('PostgreSQL registers each model dispatch once and late accounting cannot r
       const modelRun = { ...syntheticEvidence(), id: randomUUID(), runtime, startedAt, completedAt, model: 'synthetic-model', usage: { input_tokens: 2 } };
       await worker.beginModelUsage(claim, modelRun.id, runtime, startedAt); await worker.finishModelUsage(claim, modelRun.id, modelRun, 'completed');
       assert.equal(await worker.recordRun(claim, modelRun, 'request_interpreted'), true);
+      const projectionVersions=async()=>{
+        const result:Record<string,unknown>={};
+        for(const table of ['jobs','ontology_objects','ontology_object_versions','security_outputs'])result[table]=(await t.client.query(`SELECT count(*)::int AS n,
+          md5(coalesce(string_agg(xmin::text||':'||ctid::text,',' ORDER BY xmin::text,ctid::text),'')) AS row_versions FROM ${q}.${table}`)).rows[0];
+        return result;
+      };
+      const beforeDuplicate=await projectionVersions();
       assert.equal(await worker.recordRun(claim, modelRun, 'request_interpreted'), true);
+      assert.deepEqual(await projectionVersions(),beforeDuplicate,'An identical model receipt must not rewrite the task, graph history or output seals');
       const recorded = (await t.client.query(`SELECT body,state,updated_at FROM ${q}.jobs WHERE id=$1`, [task.id])).rows[0]!;
       const job = JSON.parse(recorded.body); assert.equal(job.runs.length, 1); assert.equal(job.runs[0].id, modelRun.id); assert.equal(job.runs[0].purpose, 'grounding');
       await assert.rejects(worker.recordRun(claim, { ...modelRun, usage: { input_tokens: 999 } }, 'request_interpreted'), /changed/);
+      await assert.rejects(worker.recordRun(claim, { ...modelRun, outputSha256: 'changed-original-output' }, 'request_interpreted'), /changed/);
+      await assert.rejects(worker.recordRun(claim,modelRun,'goal_coverage_reviewed'),/changed/,'The same run cannot be relabeled as another model purpose');
       const lateId = randomUUID(); await worker.beginModelUsage(claim, lateId, runtime, startedAt);
       await t.client.query(`UPDATE ${q}.work_claims SET expires_at=$1 WHERE job_id=$2`, [Date.now() - 1, task.id]);
       const expired = (await t.client.query(`SELECT token,revision,expires_at FROM ${q}.work_claims WHERE job_id=$1`, [task.id])).rows[0];
       await worker.finishModelUsage(claim, lateId, { id: lateId, runtime, startedAt, completedAt, usage: { input_tokens: 3 } }, 'completed');
       assert.equal((await read(lateId)).state, 'completed');
       await assert.rejects(worker.beginModelUsage(claim, randomUUID(), runtime, startedAt), /lease/);
+      assert.equal(await worker.recordRun(claim,modelRun,'request_interpreted'),false,'Duplicate accounting cannot revive an expired original claim');
       assert.equal(await worker.finish(claim, job => { job.state = 'completed'; }), false);
       assert.deepEqual((await t.client.query(`SELECT body,state,updated_at FROM ${q}.jobs WHERE id=$1`, [task.id])).rows[0], recorded);
       assert.deepEqual((await t.client.query(`SELECT token,revision,expires_at FROM ${q}.work_claims WHERE job_id=$1`, [task.id])).rows[0], expired);
