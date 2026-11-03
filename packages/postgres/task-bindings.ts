@@ -49,7 +49,12 @@ export class PostgresTaskBindings {
     return {revision,definitionDigest:String(row.definition_digest),body:JSON.parse(String(row.body))};
   }
   async envelope(owner:string,ref:ObjectRef,fields:string[],channels:SecurityEnvelope['channels']):Promise<SecurityEnvelope>{
-    const row=await this.raw(owner,ref),policy=(field:string)=>reviewedFieldPolicy(this.model,ref.type,field);
+    return this.envelopeFor(owner,ref,fields,channels,await this.raw(owner,ref));
+  }
+  /** Reuse only a row just read by this binding operation. This method never
+   * writes ontology facts; current labels and private views are still queried. */
+  private async envelopeFor(owner:string,ref:ObjectRef,fields:string[],channels:SecurityEnvelope['channels'],row:Awaited<ReturnType<PostgresTaskBindings['raw']>>):Promise<SecurityEnvelope>{
+    this.assertCurrent();const policy=(field:string)=>reviewedFieldPolicy(this.model,ref.type,field);
     const labels=await this.query(`SELECT field,CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${this.schema}".security_labels
       WHERE owner=$1 AND type=$2 AND object_id=$3 ORDER BY field LIMIT 257`,[owner,ref.type,ref.id]);
     if(labels.rows.length>256||labels.rows.some(row=>row.body===null))throw new SecurityError('OUTPUT_NOT_ALLOWED');
@@ -67,6 +72,9 @@ export class PostgresTaskBindings {
     return objectEnvelope({owner,ref,revision:row.revision,fields,channels,policy,values,labels:restrictions});
   }
   async bind(grant:TaskGrant,ref:ObjectRef,fields:string[],sourceBindingId:string,evidence?:SecurityEnvelope|(()=>Promise<SecurityEnvelope>)) {
+    await this.bindCurrent(grant,ref,fields,sourceBindingId,evidence);
+  }
+  private async bindCurrent(grant:TaskGrant,ref:ObjectRef,fields:string[],sourceBindingId:string,evidence?:SecurityEnvelope|(()=>Promise<SecurityEnvelope>),projecting=false) {
     if(!['task_submission','task_context','task_projection','member_asset'].includes(sourceBindingId))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
     this.assertCurrent();const g=taskDataGrantSchema.parse(structuredClone(grant)),row=await this.raw(g.ownerKey,ref);
     if(row.definitionDigest!==this.model.fingerprint(ref.type)){
@@ -136,7 +144,7 @@ export class PostgresTaskBindings {
         sourceBindingId=origin.sourceBindingId;inputEnvelope=origin.inputEnvelope&&securityEnvelopeSchema.parse(origin.inputEnvelope);
       }
     }
-    await this.writeBinding(g,ref,row,fields,sourceBindingId,inputEnvelope,projectionOrigin);
+    await this.writeBinding(g,ref,row,fields,sourceBindingId,inputEnvelope,projectionOrigin,undefined,projecting);return row;
   }
   /** Only the current checked source writer can mint this one-use permit.
    * Ordinary bind() retains its reserved-source fence above. */
@@ -146,9 +154,9 @@ export class PostgresTaskBindings {
     await this.writeBinding(authority.grant,authority.ref,row,authority.fields,authority.sourceBindingId,authority.evidence,undefined,authority.sourceObservation);
     await authority.assertCurrent();
   }
-  private async writeBinding(g:TaskGrant,ref:ObjectRef,row:Awaited<ReturnType<PostgresTaskBindings['raw']>>,fields:string[],sourceBindingId:string,inputEnvelope?:SecurityEnvelope,projectionOrigin?:ProjectionOrigin,sourceObservation?:ObservationSource){
+  private async writeBinding(g:TaskGrant,ref:ObjectRef,row:Awaited<ReturnType<PostgresTaskBindings['raw']>>,fields:string[],sourceBindingId:string,inputEnvelope?:SecurityEnvelope,projectionOrigin?:ProjectionOrigin,sourceObservation?:ObservationSource,projecting=false){
     const safe=[...new Set(fields)].filter(field=>reviewedFieldPolicy(this.model,ref.type,field)!=='internal_only');
-    const own=await this.envelope(g.ownerKey,ref,safe,g.channels),binding:Binding={object:ref,revision:row.revision,fields:safe,sourceBindingId,
+    const own=projecting?await this.envelopeFor(g.ownerKey,ref,safe,g.channels,row):await this.envelope(g.ownerKey,ref,safe,g.channels),binding:Binding={object:ref,revision:row.revision,fields:safe,sourceBindingId,
       envelope:inputEnvelope?combineEnvelopes([own,inputEnvelope]):own,...(inputEnvelope?{inputEnvelope}:{}),...(projectionOrigin?{projectionOrigin}:{}),...(sourceObservation?{sourceObservation}:{})};
     await this.query(`INSERT INTO "${this.schema}".security_bindings(grant_id,owner,task_id,request_revision,type,object_id,object_revision,body)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(grant_id,type,object_id) DO UPDATE SET object_revision=excluded.object_revision,body=excluded.body
@@ -161,24 +169,26 @@ export class PostgresTaskBindings {
   async project(grant:TaskGrant,parent:ParentGrant,job:Job){
     if(job.id!==grant.taskId||job.delegation?.request.revision!==grant.requestRevision)throw new SecurityError('POLICY_CHANGED');
     const root={type:'ServiceRequest',id:job.id};
-    await this.bind(grant,root,parent.resources.find(resource=>resource.type===root.type)?.fields??[],'task_submission');
+    // This scope only writes security_bindings. Its private evidence callback
+    // reads history/labels; it cannot change the already projected facts.
+    const rootRow=await this.bindCurrent(grant,root,parent.resources.find(resource=>resource.type===root.type)?.fields??[],'task_submission',undefined,true);
     let inherited:SecurityEnvelope|undefined;
     const evidence=async()=>{
       if(inherited)return inherited;
       const envelopes=await postgresTaskReadHistory(this.client,grant.ownerKey,job.id,grant.requestRevision);
-      inherited=combineEnvelopes([await this.envelope(grant.ownerKey,root,['originalGoal'],grant.channels),...envelopes]);return inherited;
+      inherited=combineEnvelopes([await this.envelopeFor(grant.ownerKey,root,['originalGoal'],grant.channels,rootRow),...envelopes]);return inherited;
     };
     const members=await postgresOwnedTaskContextMembers(this.client,grant.ownerKey,job.id,grant.requestRevision);
     for(const ref of members){const fields=(parent.resources.find(resource=>resource.type===ref.type)?.fields??[]).filter(field=>taskContextFields[ref.type]?.includes(field));
-      if(fields.length)await this.bind(grant,ref,fields,'task_context',evidence);}
+      if(fields.length)await this.bindCurrent(grant,ref,fields,'task_context',evidence,true);}
     const binding=job.delegation.agent?.programRef??job.delegation.plan?.bindingRef;
-    const rootRow=await this.raw(grant.ownerKey,root),refs:ObjectRef[]=[...(job.delegation.goalCoverage?[{type:'GoalCoverage',id:job.delegation.goalCoverage.digest}]:[]),
+    const refs:ObjectRef[]=[...(job.delegation.goalCoverage?[{type:'GoalCoverage',id:job.delegation.goalCoverage.digest}]:[]),
       ...(rootRow.body.properties.currentAssessment?[objectRefSchema.parse(rootRow.body.properties.currentAssessment)]:[]),
       ...(binding?[{type:'ExecutionFeedback',id:digest({request:job.id,revision:grant.requestRevision,bindingRef:binding})}]:[])];
     for(const ref of refs){const fields=parent.resources.find(resource=>resource.type===ref.type)?.fields;if(!fields)continue;
       const present=await this.query(`SELECT 1 FROM "${this.schema}".ontology_objects WHERE owner=$1 AND type=$2 AND id=$3`,[grant.ownerKey,ref.type,ref.id]);
       if(!present.rowCount)continue;
-      await this.bind(grant,ref,fields,'task_projection',await evidence());}
+      await this.bindCurrent(grant,ref,fields,'task_projection',await evidence(),true);}
   }
 }
 import {postgresCurrentConsentDeadline} from './consent.js';

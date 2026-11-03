@@ -8,6 +8,8 @@ import { PostgresWorkerStore } from '../packages/postgres/worker-store.js';
 import { NativeModelTrace } from '../packages/capabilities/native-model-timing.js';
 import { evidence as syntheticEvidence } from './backend-fixture.js';
 import { digest } from '../packages/core/delegation.js';
+import {PostgresTaskBindings} from '../packages/postgres/task-bindings.js';
+import {postgresWorkerAdmission} from '../packages/postgres/worker-admission.js';
 
 test('PostgreSQL registers each model dispatch once and late accounting cannot revive a lease or publish a result',
   { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async () => {
@@ -21,6 +23,19 @@ test('PostgreSQL registers each model dispatch once and late accounting cannot r
       const other = await service.submit(principal, { requestId: 'model-accounting-other', goal: 'Another task cannot receive the original attempt.' });
       const worker = new PostgresWorkerStore(t.database, t.policy), claim = await worker.claim(['eigos.delegate'], 300000); assert(claim); assert.equal(claim.job.id, task.id);
       const initial = (await t.client.query(`SELECT body,state,updated_at FROM ${q}.jobs WHERE id=$1`, [task.id])).rows[0];
+      await assert.rejects(t.database.run(async c=>{
+        const admission=await postgresWorkerAdmission(c,claim.owner,task.id,t.policy),bindings=new PostgresTaskBindings(c);
+        const readBinding=async()=>JSON.parse((await c.query(`SELECT body FROM ${q}.security_bindings WHERE grant_id=$1 AND type='ServiceRequest' AND object_id=$2`,[admission.grant.id,task.id])).rows[0].body);
+        await bindings.project(admission.grant,admission.parent,claim.job);const before=await readBinding();
+        await c.query(`UPDATE ${q}.ontology_objects SET revision=revision+1 WHERE owner=$1 AND type='ServiceRequest' AND id=$2`,[claim.owner,task.id]);
+        await c.query(`INSERT INTO ${q}.security_labels(owner,type,object_id,field,body) VALUES($1,'ServiceRequest',$2,'originalGoal',$3)
+          ON CONFLICT(owner,type,object_id,field) DO UPDATE SET body=excluded.body`,[claim.owner,task.id,JSON.stringify({classification:'sensitive',requiredMarkings:['financial'],channels:['registered_model']})]);
+        await bindings.project(admission.grant,admission.parent,claim.job);const after=await readBinding();
+        assert.equal(after.revision,before.revision+1,'A reused binder must read current facts for every projection call');
+        assert(after.envelope.requiredMarkings.includes('financial'),'Current labels must still constrain a repeated projection');
+        assert.deepEqual(after.envelope.channels,['registered_model']);
+        throw new Error('Synthetic binding regression rollback');
+      }),/Synthetic binding regression rollback/);
       const runId = randomUUID(), startedAt = new Date().toISOString(), runtime = 'synthetic-accounting';
       await worker.beginModelUsage(claim, runId, runtime, startedAt);
       const read = async (id: string) => (await t.client.query(`SELECT state,body FROM ${q}.member_model_usage WHERE run_id=$1`, [id])).rows[0]!;

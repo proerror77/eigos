@@ -126,12 +126,32 @@ test('PostgreSQL shared projection programs preserve SQLite versions, relationsh
     const taskSource={kind:'task' as const,id,observedAt:at};graph.ingest(owner,instructions,taskSource);
     await postgresBusinessTransaction(client,schema,authority,async c=>{
       const target=await PostgresProjectionGraph.create(c,owner,release.ref,undefined,{now:()=>fixed});await target.ingest(owner,instructions,taskSource);
+      const repeated=Array.from({length:130},(_,index)=>instructions.links![index%instructions.links!.length]!);
+      const originalQuery=c.query;let queries=0,linkWrites=0;
+      c.query=(async(...args:unknown[])=>{queries++;if(/^INSERT INTO .*\.ontology_links\(/.test(String(args[0])))linkWrites++;return Reflect.apply(originalQuery,c,args);}) as typeof c.query;
+      try{
+        assert.equal(await target.containsLinks(owner,repeated),true);
+        assert.equal(queries,3,'Existing relationships use bounded batches rather than one network round trip per edge');
+        await target.ingest(owner,{objects:[],links:[instructions.links![0]!] },taskSource);
+        assert.equal(linkWrites,0,'An existing compatible relationship does not attempt another INSERT');
+      }finally{c.query=originalQuery;}
+      const missing={...instructions.links![0]!,from:{type:'RequestInstruction',id:'missing-instruction'}};
+      assert.equal(await target.containsLinks(owner,[...repeated,missing]),false);
+      assert.equal(await target.containsLinks(owner,[missing,...repeated]),false);
       await assert.rejects(target.related(owner,{type:'ServiceRequest',id},'instructions',{remaining:1000}),IncompleteRelationshipRead);
       const first=await target.query(owner,{from:{type:'ServiceRequest',id},link:'instructions',limit:10});assert(first.page.hasMore);assert(first.page.cursor);
       const second=await target.query(owner,{from:{type:'ServiceRequest',id},link:'instructions',limit:10,cursor:first.page.cursor});assert(second.items.length>0);
       assert(!second.items.some(item=>first.items.some(prior=>prior.ref.id===item.ref.id)));
     });
     assert.throws(()=>graph.related(owner,{type:'ServiceRequest',id},'instructions',{remaining:1000}),IncompleteRelationshipRead);await compare();
+    await assert.rejects(postgresBusinessTransaction(client,schema,authority,async c=>{
+      const target=await PostgresProjectionGraph.create(c,owner,release.ref),edge=instructions.links![0]!;
+      await c.query(`UPDATE "${schema}".ontology_links SET definition_digest=$1 WHERE owner=$2 AND type=$3 AND from_type=$4 AND from_id=$5 AND to_type=$6 AND to_id=$7`,
+        ['0'.repeat(64),owner,edge.type,edge.from.type,edge.from.id,edge.to.type,edge.to.id]);
+      const missing={...edge,from:{type:'RequestInstruction',id:'missing-instruction'}};
+      assert.equal(await target.containsLinks(owner,[missing,edge]),false,'The original first-missing short circuit precedes later definition checks');
+      await target.containsLinks(owner,[edge,missing]);
+    }),/Pinned link definition changed/);await compare();
     const orphan={type:'RequestInstruction',id:'missing-required-request'};
     const missing:ObjectBatch={objects:[{ref:orphan,properties:{...instructions.objects[0]!.properties,id:orphan.id}}]};
     assert.throws(()=>graph.ingest(owner,missing,taskSource),/Relationship cardinality/);

@@ -5927,7 +5927,7 @@
     {
       "id": "postgres-projection-graph",
       "file": "packages/postgres/projection-graph.ts",
-      "sourceDigest": "f94c6a507a156923b519194c41a118e00226b597ddd97629ecdbefd561267647",
+      "sourceDigest": "bbad1fa12f19ce3c72843e9eff377e7ac5ea0dd25bfb44c3749ab7e35f77ccf5",
       "channels": [
         "internal"
       ],
@@ -5939,7 +5939,7 @@
     {
       "id": "postgres-task-bindings",
       "file": "packages/postgres/task-bindings.ts",
-      "sourceDigest": "843ccfedff5eb9ff44c627819fc7a2f4b5b67c010fc6cd53428414f1b13c3bad",
+      "sourceDigest": "12981cacfc03caf2095af54184edcf14544414ebe9a176e2b65191658dae8bdf",
       "channels": [
         "internal"
       ],

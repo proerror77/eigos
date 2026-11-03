@@ -174,10 +174,24 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
   }
   async containsLinks(owner:string,links:LinkWrite[]):Promise<boolean>{
     this.assertOpen(owner);
-    for(const link of links){const values:unknown[]=[],where=this.owned(values);values.push(link.type,link.from.type,link.from.id,link.to.type,link.to.id);
-      const n=values.length,rows=await this.sql(`SELECT definition_digest FROM ${this.table('links')} WHERE ${where} AND type=$${n-4} AND from_type=$${n-3} AND from_id=$${n-2} AND to_type=$${n-1} AND to_id=$${n} LIMIT 2`,values);
-      if(rows.rowCount===0)return false;await this.linkDefinition(link.type,String(this.one(rows).definition_digest));
-    }return true;
+    // One bounded query retains input order and the same first-missing and
+    // historical-definition checks. Never cache links on this writable graph.
+    for(let offset=0;offset<links.length;offset+=64){
+      const part=links.slice(offset,offset+64),values:unknown[]=[],where=this.owned(values,'l');
+      const requested=part.map((link,index)=>{
+        const first=values.length+1;values.push(link.type,link.from.type,link.from.id,link.to.type,link.to.id);
+        return `(${index},${[0,1,2,3,4].map(n=>`$${first+n}::text`).join(',')})`;
+      });
+      const rows=await this.sql(`WITH requested(n,type,from_type,from_id,to_type,to_id) AS(VALUES ${requested.join(',')})
+        SELECT r.n,l.owner IS NOT NULL AS found,l.definition_digest FROM requested r LEFT JOIN ${this.table('links')} l ON ${where}
+          AND l.type=r.type AND l.from_type=r.from_type AND l.from_id=r.from_id AND l.to_type=r.to_type AND l.to_id=r.to_id ORDER BY r.n`,values);
+      if(rows.rowCount!==part.length||rows.rows.some((row,index)=>row.n!==index||typeof row.found!=='boolean'))throw new DomainError('CONFLICT','Unexpected relationship row count');
+      for(const [index,row] of rows.rows.entries()){
+        if(!row.found)return false;
+        await this.linkDefinition(part[index]!.type,String(row.definition_digest));
+      }
+    }
+    return true;
   }
   async relationshipDigest(owner:string,ref:ObjectRef,budget:ReadBudget):Promise<string>{
     return this.relationshipDigestRows(owner,ref,budget);
@@ -384,7 +398,10 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
         if(remove){changed=!!(await this.sql(`DELETE FROM ${this.table('links')} WHERE ${match}`,values)).rowCount||changed;}
         else{
           const prior=await this.sql(`SELECT definition_digest FROM ${this.table('links')} WHERE ${match} LIMIT 2`,values);
-          if(prior.rowCount)await this.linkDefinition(edge.type,String(this.one(prior).definition_digest));
+          if(prior.rowCount){
+            const stored=String(this.one(prior).definition_digest);await this.linkDefinition(edge.type,stored);
+            if(stored===digest(definition))continue;
+          }
           const insert:unknown[]=[...(this.scoped?[this.ontologyId]:[]),this.owner,edge.type,edge.from.type,edge.from.id,edge.to.type,edge.to.id,digest(definition)];
           const columns=(this.scoped?'ontology_id,':'')+'owner,type,from_type,from_id,to_type,to_id,definition_digest';
           changed=!!(await this.sql(`INSERT INTO ${this.table('links')}(${columns}) VALUES(${insert.map((_,i)=>'$'+(i+1)).join(',')}) ON CONFLICT DO NOTHING`,insert)).rowCount||changed;
