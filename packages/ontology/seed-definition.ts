@@ -156,7 +156,7 @@ export class StagedKernelBuilder {
   #current?: SeedDefinition;
   #model?: OntologyModel;
   #documentDigest?: string;
-  static readonly stages = 13;
+  static readonly stages = 14;
 
   step(expected: number): { completed: number; total: number; ready: boolean } {
     if (this.#failed) throw new Error('Failed kernel builder must be discarded');
@@ -195,7 +195,11 @@ export class StagedKernelBuilder {
         case 10: this.#current = complete(extendBusinessFactsKernel(this.#current!.document,this.#registry),this.#registry,false); break;
         case 11: this.#current = complete(extendPersonalContextKernel(this.#current!.document,this.#registry),this.#registry,false); break;
         case 12:
-          this.#current = complete(extendSingleReadKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
+          this.#current = complete(extendSingleReadKernel(this.#current!.document,this.#registry),this.#registry,false);
+          if (digest(this.#current.audit.model) !== digest(SINGLE_READ_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT','The original v26 kernel fingerprint changed');
+          break;
+        case 13:
+          this.#current = complete(extendPaymentCommerceKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
           this.#documentDigest=digest(this.#current.document);
           this.#registry.seal();
           break;

@@ -6,6 +6,12 @@ import { join } from 'node:path';
 import { HarnessExecutor, HARNESS_SECURITY_CHANNEL_ID, HARNESS_DEEPSEEK_SECURITY_CHANNEL_ID, type HarnessConfiguration } from '../packages/capabilities/harness-executor.js';
 import { readConfig, readWorkerConfig } from '../packages/core/config.js';
 import { withModelUsage } from '../packages/core/model-usage-context.js';
+import {withModelDispatchGuard} from '../packages/core/model-dispatch-context.js';
+import {createPostgresWorker,postgresHarnessReasoner} from '../apps/worker/postgres-runtime.js';
+import {PostgresDatabase} from '../packages/postgres/database.js';
+import {DocumentAgentProgram} from '../packages/capabilities/document-agent.js';
+import type {Pool} from 'pg';
+import {CodexExecutor} from '../packages/capabilities/executor.js';
 
 function fixture(mode = 'success') {
   const root = mkdtempSync(join(tmpdir(), 'eigos-harness-test-')), binary = join(root, 'harness.cjs'), log = join(root, 'boot.json'), key = join(root, 'model.key');
@@ -20,7 +26,7 @@ const reply=(id,result)=>console.log(JSON.stringify({jsonrpc:'2.0',id,result}));
 const event=(type,data)=>console.log(JSON.stringify({jsonrpc:'2.0',method:'session.event',params:{sessionId:mode==='other-session'?'another-session':session,event:{type,data}}}));
 readline.createInterface({input:process.stdin}).on('line',line=>{
  const q=JSON.parse(line);
- if(q.method==='initialize'){reply(q.id,{serverInfo:{name:'deepseek-harness-sdk-runtime',version:'0.0.1'}});return;}
+ if(q.method==='initialize'){writeBoot({...JSON.parse(fs.readFileSync(log,'utf8')),initialization:q.params});reply(q.id,{serverInfo:{name:'deepseek-harness-sdk-runtime',version:'0.0.1'}});return;}
  if(q.method==='session/prompt'){
   session=q.params.sessionId;
   if(mode!=='unread')event('user/message',{id:messageId});
@@ -42,7 +48,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
     process.stdout.write(frame.subarray(emoji));event('turn/end',{turn:1,reason:{kind:'completed'}});reply(q.id,{});
    },30);},30);return;
   }
-  const output=mode==='bad-json'?'invalid':JSON.stringify({ok:mode!=='bad-schema'});
+  const output=mode==='bad-json'?'invalid':JSON.stringify(mode==='review'?{requestRevision:1,verdict:'covered',message:'Synthetic transport review only',clauses:[{messageId:'message',quote:'Write a draft',disposition:'covered',inputKeys:['format'],requirementIds:[],conditionIds:[],reason:'Explicit fixture'}]}:{ok:mode!=='bad-schema'});
   event('assistant/message',{message:{role:'assistant',content:[{type:'text',text:output}]},usage:{inputTokens:3,outputTokens:2}});
   if(mode!=='no-completion')event('turn/end',{turn:1,reason:{kind:mode==='failed'?'failed':'completed'}});
   reply(q.id,{});return;
@@ -51,7 +57,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
 });
 `.replace('MODE_VALUE', JSON.stringify(mode)).replace('LOG_VALUE', JSON.stringify(log)), { mode: 0o700 });
   const model = new HarnessExecutor(binary, mode === 'hang' ? 1200 : 5000, { credentialFile: key, credentialKind: 'api-key' });
-  return { root, key, binary, model, log, boot: () => JSON.parse(readFileSync(log, 'utf8')) as { pid: number; childPid?: number; args: string[]; home: string; dshHome: string; patch: { id?: string; disabled?: boolean; insert?: { name: string; config?: unknown }[] }[]; env: string[]; hasCredential: boolean },
+  return { root, key, binary, model, log, boot: () => JSON.parse(readFileSync(log, 'utf8')) as { pid: number; childPid?: number; args: string[]; home: string; dshHome: string; initialization?:{model:string;provider:string;maxTokens:number;reasoningEffort?:string};patch: { id?: string; disabled?: boolean; insert?: { name: string; config?: unknown }[] }[]; env: string[]; hasCredential: boolean },
     close: () => rmSync(root, { recursive: true, force: true }) };
 }
 const schema = { type: 'object', properties: { ok: { const: true } }, required: ['ok'], additionalProperties: false };
@@ -63,21 +69,78 @@ test('Harness preserves Chinese and emoji split inside UTF-8 bytes across stdout
   assert.deepEqual(result.output, { message: '东京你好 👋🧪' });
 });
 
-test('Harness waits for durable dispatch acknowledgement and accounting before returning', async t => {
+test('Harness waits for durable begin, current dispatch authorization and final accounting', async t => {
   const f = fixture(); t.after(f.close);
-  let admit!: () => void, finish!: () => void, began!: () => void, accounting!: () => void;
+  let admit!: () => void, finish!: () => void, began!: () => void, accounting!: () => void,authorize!:()=>void,checking!:()=>void;
   const admitted = new Promise<void>(resolve => { admit = resolve; });
   const finished = new Promise<void>(resolve => { finish = resolve; });
   const started = new Promise<void>(resolve => { began = resolve; });
   const ending = new Promise<void>(resolve => { accounting = resolve; });
+  const authorized=new Promise<void>(resolve=>{authorize=resolve;}),checked=new Promise<void>(resolve=>{checking=resolve;});
   let settled = false;
   const pending = withModelUsage({ begin: async () => { began(); await admitted; }, finish: async () => { accounting(); await finished; } },
-    () => f.model.runStructured('synthetic', schema, t.signal, { toolFree: true })).finally(() => { settled = true; });
-  t.after(() => { admit(); finish(); });
+    () => withModelDispatchGuard({channelId:f.model.securityChannelId,authorize:async()=>{checking();await authorized;}},()=>f.model.runStructured('synthetic', schema, t.signal, { toolFree: true }))).finally(() => { settled = true; });
+  t.after(() => { admit(); authorize();finish(); });
   await started; assert(!existsSync(f.log), 'No model process before the durable begin acknowledgement');
-  admit(); await ending; assert.equal(settled, false, 'Completion must wait for accounting acknowledgement');
+  admit();await checked;assert(!existsSync(f.log),'No process before the current authorization finishes');authorize(); await ending; assert.equal(settled, false, 'Completion must wait for accounting acknowledgement');
   finish(); assert.deepEqual((await pending).output, { ok: true });
   assert(!existsSync(f.boot().home));
+});
+
+test('Harness pre-spawn denial, channel mismatch and abort cannot dispatch a prompt',async t=>{
+  for(const mode of ['denied','channel','abort'] as const){
+    const f=fixture(),controller=new AbortController(),events:string[]=[];t.after(f.close);
+    await assert.rejects(withModelUsage({begin:async()=>{events.push('begin');},finish:async(_id,_evidence,outcome)=>{events.push(outcome);}},()=>
+      withModelDispatchGuard({channelId:mode==='channel'?'wrong-channel':f.model.securityChannelId,authorize:async()=>{
+        events.push('authorize');if(mode==='denied')throw new Error('Original permission revoked');if(mode==='abort')controller.abort(new Error('Synthetic canceled before spawn'));
+      }},()=>f.model.runStructured('synthetic',schema,controller.signal))),mode==='channel'?/differs from its admitted boundary/:mode==='denied'?/Original permission revoked/:/Synthetic canceled/);
+    assert(!existsSync(f.log));assert.deepEqual(events,mode==='channel'?['begin','failed']:mode==='abort'?['begin','authorize','interrupted']:['begin','authorize','failed']);
+  }
+});
+
+test('Harness rejects failed finish acknowledgement and cancellation during accounting',async t=>{
+  for(const cancel of [false,true]){
+    const f=fixture(),controller=new AbortController();t.after(f.close);
+    await assert.rejects(withModelUsage({begin:async()=>{},finish:async(_id,_evidence,outcome)=>{
+      assert.equal(outcome,'completed');if(cancel)controller.abort(new Error('Synthetic canceled during finish'));else throw new Error('Finish acknowledgement unknown');
+    }},()=>withModelDispatchGuard({channelId:f.model.securityChannelId,authorize:async()=>{}},()=>f.model.runStructured('synthetic',schema,controller.signal))),cancel?/canceled during finish/:/Finish acknowledgement unknown/);
+    assert(!existsSync(f.boot().home));
+  }
+});
+
+test('Harness never spawns when pre-dispatch preparation exhausts its original timeout',async t=>{
+  const f=fixture();t.after(f.close);
+  const model=new HarnessExecutor(f.binary,10,{credentialFile:f.key,credentialKind:'api-key'});
+  await assert.rejects(withModelUsage({begin:async()=>{},finish:async()=>{}},()=>withModelDispatchGuard({channelId:model.securityChannelId,authorize:async()=>{await new Promise(resolve=>setTimeout(resolve,20));}},()=>model.runStructured('synthetic',schema,t.signal))),/Harness invocation timed out/);
+  assert(!existsSync(f.log));
+});
+
+test('PostgreSQL Harness reasoning uses its selected guarded exec transport and configuration',async t=>{
+  const f=fixture('review');t.after(f.close);
+  const model=new HarnessExecutor(f.binary,5000,{credentialFile:f.key,credentialKind:'api-key',model:'selected-harness-model',reasoningEffort:'high',maxTokens:2048});
+  Object.assign(model,{openStructuredSession:()=>{throw new Error('App-server must not receive a prompt');}});
+  const reasoner=postgresHarnessReasoner(model),events:string[]=[],at=new Date().toISOString();
+  assert.equal(model.postgresModelDispatch,'acknowledged-v1');assert.equal(reasoner.postgresModelDispatch,'acknowledged-v1');assert.equal(reasoner.ontologyContextMode,'task');assert.equal(reasoner.securityChannelId,HARNESS_DEEPSEEK_SECURITY_CHANNEL_ID);
+  const result=await withModelUsage({begin:async()=>{events.push('begin');},finish:async()=>{events.push('finish');}},()=>withModelDispatchGuard({channelId:model.securityChannelId,authorize:async()=>{events.push('authorize');}},()=>reasoner.reviewGoal!({request:{id:'synthetic-review',revision:1,originalGoal:'Write a draft',requirements:[],messages:[{id:'message',text:'Write a draft',receivedAt:at}]},capability:new DocumentAgentProgram().capability(),input:{format:'markdown'}},t.signal)));
+  assert.equal(result.decision.verdict,'covered');assert.deepEqual(events,['begin','authorize','finish']);
+  assert.deepEqual(f.boot().initialization,{cwd:f.boot().home,provider:'deepseek-official',model:'selected-harness-model',maxTokens:2048,reasoningEffort:'high'});
+  assert.equal(result.evidence.model,'selected-harness-model');assert.equal(result.evidence.runtime,'harness-sdk');
+});
+
+test('PostgreSQL factory honors Harness selection without starting or connecting and retains synthetic injection',async t=>{
+  const f=fixture();t.after(f.close);let connected=0;
+  const pool={connect:async()=>{connected++;throw new Error('No database work belongs to model-port construction');},end:async()=>{}} as Pick<Pool,'connect'|'end'>;
+  const database=new PostgresDatabase(pool,'eigos_business_harness_factory',{id:'synthetic-harness',revision:1,digest:'a'.repeat(64)});
+  const config=readWorkerConfig({EIGOS_EXECUTOR:'harness',EIGOS_HARNESS_BIN:f.binary,EIGOS_HARNESS_CREDENTIAL_FILE:f.key,EIGOS_HARNESS_CREDENTIAL_KIND:'api-key',EIGOS_HARNESS_MODEL:'kept-model'});
+  const runtime=createPostgresWorker(config,{database,policyDigest:'a'.repeat(64),modelChannel:HARNESS_DEEPSEEK_SECURITY_CHANNEL_ID});
+  await runtime.close();assert.equal(connected,0);assert(!existsSync(f.log));
+  const legacy=createPostgresWorker({...config,EIGOS_EXECUTOR:undefined,EIGOS_CODEX_BIN:'must-not-start-legacy-codex'},{database,policyDigest:'a'.repeat(64),modelChannel:new CodexExecutor('must-not-start-channel-probe').securityChannelId});
+  await legacy.close();assert.equal(connected,0);
+  assert.throws(()=>createPostgresWorker({...config,EIGOS_HARNESS_CREDENTIAL_FILE:undefined},{database,policyDigest:'a'.repeat(64)}),/absolute private credential/);
+  assert.throws(()=>createPostgresWorker({...config,EIGOS_EXECUTOR:'disabled'},{database,policyDigest:'a'.repeat(64)}),/model execution is disabled/);
+  const unexpected=async()=>{throw new Error('Synthetic model ports must remain idle');};
+  const injected=createPostgresWorker({...config,EIGOS_EXECUTOR:'disabled'},{database,policyDigest:'a'.repeat(64),reasoner:{postgresModelDispatch:'acknowledged-v1',securityChannelId:'synthetic',ontologyContextMode:'task',ground:unexpected,plan:unexpected},executor:{postgresModelDispatch:'acknowledged-v1',securityChannelId:'synthetic',run:unexpected}});
+  await injected.close();assert.equal(connected,0);await database.close();
 });
 
 test('Harness never dispatches when the durable begin acknowledgement fails or is unknown', async t => {
@@ -89,9 +152,9 @@ test('Harness never dispatches when the durable begin acknowledgement fails or i
 
 test('Harness confines the original turn, credentials, profile and receipt to its invocation', async t => {
   const f = fixture(); t.after(f.close);
-  const previousGateway=process.env.EIGOS_DEV_TOKEN,previousModel=process.env.DEEPSEEK_API_KEY;
-  process.env.EIGOS_DEV_TOKEN='gateway-secret';process.env.DEEPSEEK_API_KEY='unrelated-host-key';
-  t.after(()=>{if(previousGateway===undefined)delete process.env.EIGOS_DEV_TOKEN;else process.env.EIGOS_DEV_TOKEN=previousGateway;if(previousModel===undefined)delete process.env.DEEPSEEK_API_KEY;else process.env.DEEPSEEK_API_KEY=previousModel;});
+  const privateKeys=['EIGOS_DEV_TOKEN','DEEPSEEK_API_KEY','PGPASSWORD','PGHOST','DATABASE_URL','SUPABASE_SERVICE_ROLE_KEY'],previous=new Map(privateKeys.map(key=>[key,process.env[key]]));
+  for(const key of privateKeys)process.env[key]='synthetic-unrelated-host-secret';
+  t.after(()=>{for(const [key,value] of previous){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
   const recorded: unknown[] = [];
   const result = await withModelUsage({ begin: () => {}, finish: (...args) => { recorded.push(args); } },
     () => f.model.runStructured('Only synthetic supplied information', schema, t.signal, { toolFree: true }));
@@ -102,6 +165,7 @@ test('Harness confines the original turn, credentials, profile and receipt to it
   assert.deepEqual(result.evidence.usage, { inputTokens: 3, outputTokens: 2 }); assert.equal(recorded.length, 1);
   const boot = f.boot();
   assert(boot.hasCredential); assert(!boot.env.includes('EIGOS_DEV_TOKEN')); assert(!boot.env.includes('DEEPSEEK_API_KEY')); assert(!boot.env.includes('CODEX_HOME'));
+  for(const key of privateKeys)assert(!boot.env.includes(key),'Host credentials are not Harness invocation credentials');
   assert(boot.args.includes('sdk-minimal')); assert(!boot.args.join(' ').includes('synthetic-model-credential'));
   for (const id of ['tool-fs', 'tool-working-directory', 'persistent-bash', 'persistent-pwsh']) assert(boot.patch.some(x => x.id === id && x.disabled));
   assert(!existsSync(boot.home)); assert(!existsSync(boot.dshHome)); assert(existsSync(f.key));
@@ -170,7 +234,8 @@ test('Harness MCP confines endpoints and keeps the task bearer out of command ar
   await assert.rejects(f.model.runStructured('synthetic', schema, t.signal, { toolFree: true, mcp }), /cannot attach/);
   await f.model.runStructured('synthetic', schema, t.signal, { mcp: { ...mcp, url: 'http://127.0.0.1:12345/mcp' } });
   const boot = f.boot(); assert(!boot.args.join(' ').includes(mcp.token));
-  assert(boot.patch.flatMap(x => x.insert ?? []).some(x => x.name === '@deepseek-ai/dsh-mcp-client'));
+  const plugin=boot.patch.flatMap(x => x.insert ?? []).find(x => x.name === '@deepseek-ai/dsh-mcp-client');assert(plugin);
+  assert(plugin.config&&typeof plugin.config==='object');assert.equal(Reflect.get(plugin.config,'toolCallTimeoutMs'),30000,'The native Harness tool budget stays unchanged');
 });
 
 test('Harness configuration is opt-in, with no credential requirement on the protocol-only Gateway', () => {

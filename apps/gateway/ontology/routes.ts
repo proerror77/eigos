@@ -1,13 +1,13 @@
 import type { Express, Request, RequestHandler } from 'express';
 import { z } from 'zod';
 import { DomainError, type Principal } from '../../../packages/core/domain.js';
-import type { DefinitionService } from '../../../packages/ontology/definition-service.js';
+import type {DefinitionServicePort} from '../../../packages/ontology/definition-service-port.js';
 import { ontologyManagerPage, ontologyManagerScript } from './page.js';
 
-export function mountDefinitionRoutes(app: Express, service: DefinitionService, authenticate: RequestHandler, principal: (request: Request) => Principal): void {
+export function mountDefinitionRoutes(app: Express, service: DefinitionServicePort, authenticate: RequestHandler, principal: (request: Request) => Principal): void {
   for (const [path, method] of [['query', 'query'], ['commands', 'command'], ['actions/prepare', 'prepare'], ['actions/approve', 'approve']] as const) {
-    app.post(`/ontology/v1/${path}`, authenticate, (req, res, next) => {
-      try { res.json(service[method](principal(req), req.body)); }
+    app.post(`/ontology/v1/${path}`, authenticate, async (req, res, next) => {
+      try { res.json(await service[method](principal(req), req.body)); }
       catch (error) {
         if (error instanceof DomainError || error instanceof z.ZodError) {
           const code = error instanceof DomainError ? error.code : 'INVALID_INPUT';

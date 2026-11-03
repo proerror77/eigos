@@ -16,7 +16,7 @@ import {requireRecovery} from '../security/recovery.js';
 import {SecurityError,type SecurityStore} from '../security/store.js';
 import { CompositionProgram } from '../coordinator/composition-program.js';
 import type { AgentActionMetadata } from './agent-action-binding.js';
-import type { ActionDefinition } from '../ontology/model.js';
+import type { ActionDefinition,OntologyModel } from '../ontology/model.js';
 
 export interface AdapterContext { owner: string; request: ServiceRequest }
 /** A bounded view for reusing one adapter operation. It links to the real sealed
@@ -359,6 +359,11 @@ export class ExecutionCatalog {
    * source locators or an implicit grant for programs restricted to another owner. */
   securityProfiles(owner:string) {
     const model = this.security?.model ?? this.ontologyModel ?? currentKernelImplementation();
+    return this.securityProfilesForModel(owner,model);
+  }
+  /** Pure registered-program metadata for an explicitly reviewed published
+   * model. Callers still own namespace, member and source authorization. */
+  securityProfilesForModel(owner:string,model:OntologyModel) {
     return [...this.programs.values()].filter(p=>p.permitted(owner)).map(program=>{
       const ontology=program.capability().ontology;
       const objects=ontology && 'objects' in ontology && Array.isArray(ontology.objects) ? ontology.objects.filter((v):v is string=>typeof v==='string') : [];

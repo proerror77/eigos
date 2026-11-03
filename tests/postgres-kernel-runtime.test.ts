@@ -10,6 +10,7 @@ import {postgresOntologyRelease,postgresOntologyReadContext} from '../packages/p
 import {postgresWorkerAdmission} from '../packages/postgres/worker-admission.js';
 import {securityFixture} from './fixtures/security.js';
 import {importPostgresFixture} from './fixtures/postgres-business.js';
+import {currentKernelImplementation} from '../packages/ontology/definition-store.js';
 
 const local={skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'};
 async function fixture(){
@@ -23,6 +24,7 @@ test('PostgreSQL kernel preparation yields between all genuine stages and reject
   let kernel:StagedKernelBuilder;try{kernel=await preparePostgresKernel();}finally{running=false;}
   assert(kernel instanceof StagedKernelBuilder);assert.equal(kernel.step(StagedKernelBuilder.stages).ready,true);assert(ticks>=StagedKernelBuilder.stages-1,'host callbacks must run between construction stages');
   assert(stagedKernelComponents(kernel).model.actionIds().includes('ComposeDocument'));
+  assert.deepEqual(stagedKernelComponents(kernel).model.ref,currentKernelImplementation().ref,'The staged PG compiler must include every current trusted kernel extension');
   const controller=new AbortController(),reason=new Error('Synthetic startup canceled');controller.abort(reason);await assert.rejects(preparePostgresKernel(controller.signal),error=>error===reason);
 });
 

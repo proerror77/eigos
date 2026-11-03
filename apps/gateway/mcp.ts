@@ -14,13 +14,13 @@ import { securityErrorResponse } from '../../packages/security/error-guidance.js
 import { objectQuerySchema } from '../../packages/ontology/object-store.js';
 import { functionCallSchema } from '../../packages/ontology/object-functions.js';
 import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
-import type { DefinitionService } from '../../packages/ontology/definition-service.js';
+import type {DefinitionServicePort} from '../../packages/ontology/definition-service-port.js';
 import { PA_DISCOVERY_GUIDANCE } from '../../packages/core/services.js';
 import { ontologyIdSchema, ontologyReleaseRefSchema } from '../../packages/ontology/definition-contracts.js';
 import { mountDefinitionMcp } from './ontology/mcp.js';
 import { externalDraftPermitSchema } from '../../packages/ontology/external-draft.js';
 import { mountMessagingMcp } from './messaging/mcp.js';
-import type { AgentMessagingService } from '../../packages/agent-messaging/service.js';
+import type {AgentMessagingExecutionPort} from '../../packages/agent-messaging/ports.js';
 import type { MessagingIdentity } from '../../packages/agent-messaging/contracts.js';
 
 async function toolResult(action: () => unknown, instance?: string): Promise<CallToolResult> {
@@ -37,7 +37,7 @@ async function toolResult(action: () => unknown, instance?: string): Promise<Cal
   }
 }
 
-export function createMcpServer(tasks: GatewayTaskService, principal: Principal, network?: { service: NetworkService; token: string }, sources?: { service: MemberSourceService; token: string }, definitions?: DefinitionService, options: { payment?: boolean; externalDrafts?: boolean; messaging?: { service: AgentMessagingService; identity: MessagingIdentity }; messagingOnly?: boolean; runtime?: { instance: string; backend: string; releaseDigest?: string; ontologyTransport: 'native-mcp' } } = {}): McpServer {
+export function createMcpServer(tasks: GatewayTaskService, principal: Principal, network?: { service: NetworkService; token: string }, sources?: { service: MemberSourceService; token: string }, definitions?: DefinitionServicePort, options: { payment?: boolean; externalDrafts?: boolean; messaging?: { service: AgentMessagingExecutionPort; identity: MessagingIdentity }; messagingOnly?: boolean; runtime?: { instance: string; backend: string; releaseDigest?: string; ontologyTransport: 'native-mcp' } } = {}): McpServer {
   const result = (action: () => unknown) => toolResult(action, options.runtime?.instance);
   const communication = 'Use the Personal Agent communication tools for messages to other people’s PAs. Only an explicit service delegation uses submit_task/eigos.delegate. Message delivery does not authorize a business action.';
   const server = new McpServer({ name: 'eigos', version: '0.1.0' }, { instructions: options.messagingOnly ? communication : PA_DISCOVERY_GUIDANCE + (options.messaging ? '\n' + communication : '') });

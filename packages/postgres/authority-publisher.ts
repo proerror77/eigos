@@ -8,7 +8,7 @@ import {accessContextSchema,agentAccessGrantSchema,ownerIdentitySchema,POLICY_VE
 import {SecurityError} from '../security/errors.js';
 import type {Fence,Subject,SubjectFacts} from '../security/store.js';
 import type {PostgresDatabase} from './database.js';
-import {postgresBusinessSchema,postgresBusinessAuthorityDigest,postgresConstrainReadDeadline,reservePostgresTransactionClient,type PostgresRuntimeAuthority} from './runtime-transaction.js';
+import {postgresBusinessSchema,postgresBusinessToken,postgresBusinessAuthorityDigest,postgresConstrainReadDeadline,postgresRequireLeaseAtCommit,reservePostgresTransactionClient,type PostgresRuntimeAuthority} from './runtime-transaction.js';
 
 type Awaitable<T>=T|Promise<T>;
 type ControlWatch={cause?:Error;evict?:()=>void};
@@ -175,6 +175,27 @@ export class PostgresAuthorizationPublisher {
         clientId:subject.clientId,tokenScopes:[...new Set(verified.scopes)],agentGrant:{id:grant.id,revision:grant.revision},authEpoch:subject.epoch,policyVersion:POLICY_VERSION,checkedAt:new Date().toISOString()});
     });
     this.stillCurrent(token);return access;
+  }
+  /** Trusted management work in the caller's existing fenced transaction.
+   * This guard grants no member, role, source or task permission by itself. */
+  withManagement<T>(client:Client,action:()=>Promise<T>):Promise<T>{
+    return this.track((async()=>{
+      const manager=this.currentToken(),transaction=postgresBusinessToken(client);
+      if(postgresBusinessSchema(client)!==this.schema||postgresBusinessAuthorityDigest(client)!==this.runtime.digest)throw new SecurityError('AUTHORITY_UNAVAILABLE');
+      const row=(await client.query(`SELECT id,revision,configuration_digest FROM "${this.schema}".eigos_lock_runtime_authority()`)).rows[0];
+      if(!row||row.id!==this.runtime.id||Number(row.revision)!==this.runtime.revision||row.configuration_digest!==this.runtime.digest)throw new SecurityError('AUTHORITY_UNAVAILABLE');
+      const guard=async()=>{
+        if(postgresBusinessToken(client)!==transaction)throw new SecurityError('AUTHORITY_UNAVAILABLE');
+        this.stillCurrent(manager);await this.requirePolicy(client);await this.requireManager(client,manager);this.stillCurrent(manager);
+      };
+      await guard();const result=await action();await guard();
+      postgresRequireLeaseAtCommit(client,digest(['management',this.schema,manager]),async()=>{
+        this.stillCurrent(manager);
+        const validUntil=await this.control(current=>this.requireControlManager(current,manager),this.until);
+        this.stillCurrent(manager);return {validUntil};
+      });
+      return result;
+    })());
   }
   private async requireControlManager(client:Client,token:string):Promise<number>{
     this.stillCurrent(token);

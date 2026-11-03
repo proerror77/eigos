@@ -16,7 +16,7 @@ import { paOnboardingAvailable } from '../../packages/members/pa-onboarding.js';
 import { SecurityError } from '../../packages/security/store.js';
 import { securityErrorResponse } from '../../packages/security/error-guidance.js';
 import { communicationRequestSchema, MessagingError, type MessagingIdentity } from '../../packages/agent-messaging/contracts.js';
-import type { AgentMessagingService } from '../../packages/agent-messaging/service.js';
+import type {AgentMessagingExecutionPort} from '../../packages/agent-messaging/ports.js';
 
 export class AgentUser implements User {
   readonly isAuthenticated = true;
@@ -87,7 +87,7 @@ export function agentCard(c: Config, services: ReturnType<GatewayTaskService['se
 }
 
 export class A2AGateway implements A2ARequestHandler {
-  constructor(private tasks: GatewayTaskService, private card: AgentCard, private messaging?: AgentMessagingService) {}
+  constructor(private tasks: GatewayTaskService, private card: AgentCard, private messaging?: AgentMessagingExecutionPort) {}
   async getAgentCard(): Promise<AgentCard> { return this.card; }
 
   private principal(ctx: ServerCallContext, tenant?: string): Principal {

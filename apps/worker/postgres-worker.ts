@@ -3,7 +3,7 @@ import { DomainError } from '../../packages/core/domain.js';
 import { withModelUsage } from '../../packages/core/model-usage-context.js';
 import type { PostgresWorkerStore } from '../../packages/postgres/worker-store.js';
 
-type WorkerStore = Pick<PostgresWorkerStore, 'claim' | 'renew' | 'active' | 'finish' | 'beginModelUsage' | 'finishModelUsage'>;
+type WorkerStore = Pick<PostgresWorkerStore, 'claim' | 'renew' | 'active' | 'finish' | 'releaseCheckpoint' | 'beginModelUsage' | 'finishModelUsage'>;
 interface Options {
   run(claim: WorkClaim, signal: AbortSignal): Promise<void>;
   leaseMs?: number; pollMs?: number; timeoutMs?: number;
@@ -66,7 +66,7 @@ export class PostgresTaskWorker {
       () => this.options.run(claim, controller.signal));
       // A handler may checkpoint a next phase instead of ending the task. Its
       // original claim is still released before any subsequent polling cycle.
-      if (await this.store.active(claim)) { controller.signal.throwIfAborted(); await this.store.finish(claim, () => {}); }
+      await this.store.releaseCheckpoint(claim,controller.signal);
     }).catch(async error => {
       if (this.options.onError) { await this.options.onError(claim, error, controller.signal); return; }
       // Keep uncertain effects and original instructions intact. A generic

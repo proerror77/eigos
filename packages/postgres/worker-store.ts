@@ -242,6 +242,42 @@ export class PostgresWorkerStore {
   }
   checkpoint(claim:WorkClaim,update:(job:Job)=>void){return this.mutate(claim,update,false);}
   finish(claim:WorkClaim,update:(job:Job)=>void){return this.mutate(claim,update,true);}
+  /** Release the original claim after its trusted host handler returns. The
+   * handler still owns persisting its checkpoint/result; this method neither
+   * proves a phase transition nor changes or publishes task content. */
+  async releaseCheckpoint(claim:WorkClaim,signal?:AbortSignal):Promise<boolean>{
+    const original=postgresWorkReference(claim);
+    try{
+      const committed=await this.db.run(async client=>{
+        // The former outer active() and empty finish() share this one fenced
+        // transaction. An already finished or invalid original token is a no-op.
+        if(!await this.db.inspectClaim(original,this.policy)||!await postgresClaimSnapshotMatches(client,original,this.policy))return false;
+        signal?.throwIfAborted();
+        const before=await postgresWorkerAdmission(client,original.owner,original.job.id,this.policy);
+        if(before.authority.id!==original.securityAuthorityId||before.authority.authEpoch!==original.securityEpoch||before.policyRevision!==original.securityPolicyRevision)return false;
+        const q=`"${postgresBusinessSchema(client)}"`,runtime=postgresBusinessAuthorityDigest(client);
+        const headers=await client.query(`SELECT 1 FROM ${q}.work_claims c JOIN ${q}.runtime_work_claims r ON r.job_id=c.job_id AND r.token=c.token
+          WHERE c.job_id=$1 AND c.token=$2 AND c.revision=$3 AND r.authority_digest=$4`,[original.job.id,original.token,original.job.revision??0,runtime]);
+        if(headers.rowCount!==1)throw new LostClaim();
+        const lease=await this.db.inspectClaim(original,this.policy);if(!lease)throw new LostClaim();
+        signal?.throwIfAborted();
+        postgresRequireLeaseAtCommit(client,digest(original),async()=>{
+          signal?.throwIfAborted();const current=await this.db.inspectClaim(original,this.policy);signal?.throwIfAborted();return current;
+        });
+        await postgresRecordClaimRelease(client,original.owner,original.job.id,original.token);
+        const released=await client.query(`DELETE FROM ${q}.runtime_work_claims WHERE job_id=$1 AND token=$2 AND authority_digest=$3`,[original.job.id,original.token,runtime]);
+        if(released.rowCount!==1)throw new LostClaim();
+        const after=await postgresWorkerAdmission(client,original.owner,original.job.id,this.policy);
+        if(digest(before)!==digest(after))throw new LostClaim();
+        signal?.throwIfAborted();return true;
+      });
+      if(committed){
+        try{await this.db.cleanupReleasedClaims();}catch{console.error('Committed Worker checkpoint release retained; claim cleanup deferred to the next poll');}
+        signal?.throwIfAborted();
+      }
+      return committed;
+    }catch(error){if(error instanceof LostClaim)return false;throw error;}
+  }
   /** Host-owned graph command for real source initialization, mapping and
    * completion. The typed driver admits reads and source writes; its program
    * cannot receive a raw client or a synchronous store. Execute the model or

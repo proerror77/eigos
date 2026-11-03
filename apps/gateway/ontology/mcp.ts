@@ -1,17 +1,18 @@
 import { type McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import type {DefinitionServicePort} from '../../../packages/ontology/definition-service-port.js';
 import { DomainError, type Principal } from '../../../packages/core/domain.js';
-import { DefinitionService, definitionQuerySchema, definitionCommandSchema, foundationDefinitionQuerySchema, foundationDefinitionCommandSchema, prepareOntologyActionSchema, approveOntologyActionSchema } from '../../../packages/ontology/definition-service.js';
+import { definitionQuerySchema, definitionCommandSchema, foundationDefinitionQuerySchema, foundationDefinitionCommandSchema, prepareOntologyActionSchema, approveOntologyActionSchema } from '../../../packages/ontology/definition-service.js';
 
-function result(action: () => { version: 1; result: unknown }): CallToolResult {
-  try { const value = action(); return { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value }; }
+async function result(action: () => { version: 1; result: unknown } | Promise<{ version: 1; result: unknown }>): Promise<CallToolResult> {
+  try { const value = await action(); return { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value }; }
   catch (error) {
     if (error instanceof DomainError || error instanceof z.ZodError) return { isError: true, content: [{ type: 'text', text: JSON.stringify({ version: 1, error: { code: error instanceof DomainError ? error.code : 'INVALID_INPUT', message: error instanceof DomainError ? error.message : 'Invalid metadata request' } }) }] };
     throw error;
   }
 }
 
-export function mountDefinitionMcp(server: McpServer, service: DefinitionService, principal: Principal): void {
+export function mountDefinitionMcp(server: McpServer, service: DefinitionServicePort, principal: Principal): void {
   if (service.secured) {
     if (principal.scopes.includes('ontology:read')) server.registerTool('query_ontology_definitions', {
       description: 'Read operator-owned service intake metadata or authorized task-specific discovery, source changes and verification uses. Intake contracts require namespace management; task data retains its current row and field grants.',

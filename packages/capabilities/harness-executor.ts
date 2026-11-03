@@ -8,6 +8,7 @@ import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import type { Job } from '../core/domain.js';
 import { modelUsageRecorder } from '../core/model-usage-context.js';
+import { authorizeModelDispatch } from '../core/model-dispatch-context.js';
 import { decisionSchema, documentOutputSchema, documentPrompt, nativeInstructions, type Executor, type ModelRunOptions, type RunEvidence } from './executor.js';
 import { modelEnvironment } from './model-process.js';
 
@@ -88,6 +89,7 @@ function profile(config: HarnessConfiguration, options: ModelRunOptions, token?:
  * Each invocation owns one isolated SDK runtime and no independent task queue,
  * source watcher, GitHub identity, shell tool, or business authorization. */
 export class HarnessExecutor implements Executor {
+  readonly postgresModelDispatch = 'acknowledged-v1' as const;
   readonly securityChannelId: string;
   readonly ontologyTransport = 'native-mcp' as const;
   readonly ontologyContextPreparation = 'worker_snapshot' as const;
@@ -112,6 +114,7 @@ export class HarnessExecutor implements Executor {
     let directory: string | undefined, recorded: RunEvidence | undefined, success = false;
     const model = this.configuration.model ?? (this.configuration.credentialKind === 'api-key' ? 'deepseek-flash' : 'gpt-6-luna');
     try {
+      signal.throwIfAborted();
       const modelToken = await credential(this.configuration);
       const patch = profile(this.configuration, options, options.mcp?.token);
       signal.throwIfAborted();
@@ -119,6 +122,9 @@ export class HarnessExecutor implements Executor {
       const patchPath = join(directory, 'worker.patch.json');
       await writeFile(patchPath, JSON.stringify(patch), { mode: 0o600 });
       const { HOME: _home, CODEX_HOME: _codex, ...base } = modelEnvironment();
+      await authorizeModelDispatch(this.securityChannelId);
+      signal.throwIfAborted();
+      if(performance.now()-started>=this.timeoutMs)throw new Error('Harness invocation timed out');
       const child = spawn(this.binary, ['--profile', 'sdk-minimal', '--patch', patchPath], {
         cwd: directory, env: { ...base, HOME: directory, DSH_HOME: join(directory, 'dsh'), EIGOS_HARNESS_MODEL_TOKEN: modelToken },
         stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32',
@@ -241,6 +247,7 @@ export class HarnessExecutor implements Executor {
     } finally {
       try { await recorder?.finish(id, recorded ?? { id, runtime: 'harness-sdk', startedAt, completedAt: new Date().toISOString(), model, usage }, success ? 'completed' : signal.aborted ? 'interrupted' : 'failed'); }
       finally { if (directory) await rm(directory, { recursive: true, force: true }); }
+      if(success)signal.throwIfAborted();
     }
   }
 }

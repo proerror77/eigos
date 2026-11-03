@@ -6,6 +6,49 @@ import { importPostgresFixture } from './fixtures/postgres-business.js';
 import { PostgresTaskCommandService } from '../packages/postgres/task-command-service.js';
 import { PostgresWorkerStore } from '../packages/postgres/worker-store.js';
 import { PostgresTaskWorker } from '../apps/worker/postgres-worker.js';
+import type {WorkClaim} from '../packages/core/store.js';
+
+// Scheduling-only test doubles. No database, authorization decision, model or
+// production Worker is started by these unit tests.
+function syntheticClaim():WorkClaim{
+  const at='2026-01-01T00:00:00.000Z';
+  return {owner:'synthetic-owner',token:'synthetic-original-token',job:{id:'synthetic-task',contextId:'synthetic-context',service:'eigos.delegate',goal:'Synthetic scheduling only',state:'working',revision:1,messages:[],createdAt:at,updatedAt:at}};
+}
+function schedulingStore(claim:WorkClaim){
+  let claimed=false;
+  return {claim:async()=>{if(claimed)return;claimed=true;return claim;},renew:async()=>true,active:async()=>true,
+    releaseCheckpoint:async(_claim:WorkClaim,signal?:AbortSignal)=>{signal?.throwIfAborted();return true;},
+    finish:async(_claim:WorkClaim,update:(job:WorkClaim['job'])=>void)=>{update(claim.job);return true;},
+    beginModelUsage:async()=>{},finishModelUsage:async()=>{}};
+}
+
+test('a returned host checkpoint uses one atomic release instead of a second active/read and empty finish',async()=>{
+  const claim=syntheticClaim(),store=schedulingStore(claim);let active=0,released=0,finished=0;
+  store.active=async()=>{active++;return true;};
+  store.releaseCheckpoint=async(original,signal)=>{assert.equal(original,claim);signal?.throwIfAborted();released++;return true;};
+  store.finish=async()=>{finished++;throw new Error('No result mutation belongs to checkpoint release');};
+  const loop=new PostgresTaskWorker(store,{run:async()=>{},leaseMs:15000,pollMs:10000,timeoutMs:600000});
+  try{await loop.tick();await until(()=>released===1);await loop.pauseClaims();assert.equal(active,1);assert.equal(finished,0);assert.equal(released,1);}
+  finally{await loop.close();}
+});
+
+test('checkpoint release retains the original execution-budget abort',async()=>{
+  const claim=syntheticClaim(),store=schedulingStore(claim);let aborted=false,finished=0;let observed:unknown;
+  store.releaseCheckpoint=async(_claim,signal)=>{aborted=signal?.aborted===true;signal?.throwIfAborted();return true;};
+  store.finish=async()=>{finished++;return true;};
+  const loop=new PostgresTaskWorker(store,{run:async()=>{await delay(20);},onError:async(_claim,error)=>{observed=error;},leaseMs:15000,pollMs:10000,timeoutMs:5});
+  try{await loop.tick();await until(()=>observed!==undefined);await loop.pauseClaims();assert(aborted);assert(observed instanceof Error);assert.equal(observed.message,'Worker execution time budget ended');assert.equal(finished,0);}
+  finally{await loop.close();}
+});
+
+test('a handler that already finished is not written a second time',async()=>{
+  const claim=syntheticClaim(),store=schedulingStore(claim);let finished=0,released=0,inactive=false;
+  store.finish=async(_claim,update)=>{finished++;update(claim.job);inactive=true;return true;};
+  store.releaseCheckpoint=async()=>{released++;assert(inactive);return false;};
+  const loop=new PostgresTaskWorker(store,{run:async original=>{await store.finish(original,job=>{job.state='paused';job.question='Actual synthetic handler output';});},leaseMs:15000,pollMs:10000,timeoutMs:600000});
+  try{await loop.tick();await until(()=>released===1);await loop.pauseClaims();assert.equal(finished,1);assert.equal(claim.job.question,'Actual synthetic handler output');}
+  finally{await loop.close();}
+});
 
 async function until(check: () => boolean | Promise<boolean>, timeout = 10000) {
   const deadline = Date.now() + timeout;

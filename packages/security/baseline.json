@@ -2895,7 +2895,7 @@
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "815e2ac9ca8470562053a3474f244f586bb2e35f07cf4703d71febef6a231238",
+      "sourceDigest": "0b2f6a0cbcd46df88e15e086114f439cd3bf062ee6c194d2a86f26eddf4ef7dc",
       "channels": [
         "http"
       ],
@@ -2907,7 +2907,7 @@
     {
       "id": "mcp",
       "file": "apps/gateway/mcp.ts",
-      "sourceDigest": "52c9f4ca9616be93c865e8064073101bbc8312192d63dbfc6824ff59796e112c",
+      "sourceDigest": "befd0e871e90942f02f0a59de93ddaa44b7f41fabe46d293bb9cec601af375ca",
       "channels": [
         "mcp"
       ],
@@ -2919,7 +2919,7 @@
     {
       "id": "a2a",
       "file": "apps/gateway/a2a.ts",
-      "sourceDigest": "9d0163f1eb1bc24783f6c9a6d04f422017750c7b0f3bc8173a4742b640cff994",
+      "sourceDigest": "777b775dbf013eb47c919f9228231c80c1991c32dbea72b7c3ed20fbe19e326a",
       "channels": [
         "a2a"
       ],
@@ -3567,7 +3567,7 @@
     {
       "id": "execution-catalog",
       "file": "packages/core/catalog.ts",
-      "sourceDigest": "0c7c65ff971a1827b3bcb887c4a6cd404281690184837dd89ac4ad3c96b8a22e",
+      "sourceDigest": "b68c367a6e0b2f0ce466a20f06f82d7be9c2c84d83d1ba6e54edccd28fdd952c",
       "channels": [
         "worker"
       ],
@@ -4421,7 +4421,7 @@
     {
       "id": "ontology-metadata-http",
       "file": "apps/gateway/ontology/routes.ts",
-      "sourceDigest": "e374de4d48fc73d36e44c8e7dc3c956b77836a28dc987a91772b8a7b019d1457",
+      "sourceDigest": "7e1a45cf4cc3447fe071351727cb9fcdd5314ea38b6470068ede14cc687b9b89",
       "channels": [
         "http"
       ],
@@ -4433,7 +4433,7 @@
     {
       "id": "ontology-metadata-mcp",
       "file": "apps/gateway/ontology/mcp.ts",
-      "sourceDigest": "c9d80c7b59e05cbc6fa84547fb4e6be3e1f46921ccabeea5dd59833af5d5bb86",
+      "sourceDigest": "7240959f09b2024375b80eb4830e66709668f25349f8c849e9d0ff2d9f74f21b",
       "channels": [
         "mcp"
       ],
@@ -5317,7 +5317,7 @@
     {
       "id": "pa-messaging-mcp",
       "file": "apps/gateway/messaging/mcp.ts",
-      "sourceDigest": "16e05ed4ec881e68324d79056af140b0f744718a141b00ea24c05e3c611cd543",
+      "sourceDigest": "14553d69277192219465af2c86d339b68b143641a8f267ade477b32df88a8a51",
       "channels": [
         "mcp"
       ],
@@ -5729,7 +5729,7 @@
     {
       "id": "trusted-kernel-bootstrap",
       "file": "packages/ontology/seed-definition.ts",
-      "sourceDigest": "f5393aeedc789ae28f3f66a0b828e13eb3963f49d6131c8f5d4a679dc43ffb75",
+      "sourceDigest": "c1d6d8657c1b6889ccd00e26420c962fa91df161a3824edd1f417082d5eba411",
       "channels": [
         "authorization_control"
       ],
@@ -6032,7 +6032,7 @@
     {
       "id": "postgres-worker-store",
       "file": "packages/postgres/worker-store.ts",
-      "sourceDigest": "0a764dae60845cccd628dbe2f7c18455bde53e4b6b0d01241a57d78c056e62ad",
+      "sourceDigest": "877c3b06bc618858392de013d20175f5b62ec464221b6ff1cd083a4b64a2c25f",
       "channels": [
         "internal"
       ],
@@ -6371,7 +6371,7 @@
     {
       "id": "postgres-worker-loop",
       "file": "apps/worker/postgres-worker.ts",
-      "sourceDigest": "715ce22d454681e38e216cc5b66859134a6c745f6c78d091eeb01fc9a34211e7",
+      "sourceDigest": "6dab4da0bd359a60e2e9a104f5b19fc41290e5b72f3a70dafe9088724535277d",
       "channels": [
         "internal"
       ],
@@ -6455,7 +6455,7 @@
     {
       "id": "postgres-authority-publisher",
       "file": "packages/postgres/authority-publisher.ts",
-      "sourceDigest": "f10f357edb18508a783e7d37517329c75ef7ab1d722385d7902d0b4a2c610e87",
+      "sourceDigest": "87b4bdcc613f9f215aa8ce1a12b6818315921b3c5476dfa0eecafe7d41d701fc",
       "channels": [
         "internal"
       ],
@@ -6767,7 +6767,7 @@
     {
       "id": "postgres-worker-runtime",
       "file": "apps/worker/postgres-runtime.ts",
-      "sourceDigest": "1b5ca4a8a248f3dc223b98b2426feee1c4af7c34c0809e9232d7d625b084a4f3",
+      "sourceDigest": "b7e8d2b2ff9ebf1ce86ff99a23e036f00dfd893b8e6d5d5d90ea70c4d69996bd",
       "channels": [
         "internal"
       ],
@@ -6779,7 +6779,7 @@
     {
       "id": "postgres-ci-groups",
       "file": "scripts/postgres-tests.mjs",
-      "sourceDigest": "506dc97bae2b7bd186951db68279075fda479752dd1ac64160f6384a684b2c5c",
+      "sourceDigest": "5c986e7e4d676843cbca150b5e0761fe5f8b8b325e7b626bf25920b1c227df12",
       "channels": [
         "internal"
       ],
@@ -6901,7 +6901,7 @@
     {
       "id": "harness-executor",
       "file": "packages/capabilities/harness-executor.ts",
-      "sourceDigest": "b78e41bae191276cff3366f3144919ad29e280c731d43354e5305de01ce1a73a",
+      "sourceDigest": "420ec2236571a3813a6aabf1c12290a2b4dd21440e8d7156c83810c035d2db47",
       "channels": [
         "registered_model",
         "private_file"
@@ -7002,6 +7002,31 @@
       "targetControl": "No task, grant, policy, provider business call or frontend mutation",
       "stage": "S5",
       "sourceDigest": "291a531cf293012bacf7e5fd9693096e5c6e177d8f7c2eafe907154e44e901f2"
+    },
+    {
+      "id": "postgres-permission-management",
+      "file": "packages/postgres/permission-management.ts",
+      "sourceDigest": "01aa7130c86bbf316fe30d9759a7b38789fcc5fb95150411167838230685f257",
+      "channels": [
+        "member_ui",
+        "authorization_control"
+      ],
+      "content": "PostgreSQL member-reviewed consent and task authority management",
+      "currentControl": "Exact current owner, reviewed policy revision and live original Gateway manager; atomic consent, source and task review; explicit takeover/renewal, immutable model compatibility, current field/source bounds and deny-first revocation. No automatic role or model clearance grants; uninstalled original-operation recovery fails closed.",
+      "targetControl": "Preserve task identities, customer-owned authorization, revoked and expired states, current runtime fences and independent readback",
+      "stage": "S5"
+    },
+    {
+      "id": "gateway-runtime-ports",
+      "file": "apps/gateway/runtime-ports.ts",
+      "sourceDigest": "f631592ae90872873093f00b4048e87dd38367df38ca56b83eb88b9bfeab4844",
+      "channels": [
+        "internal"
+      ],
+      "content": "Backend-neutral awaited Gateway ports and lifecycle",
+      "currentControl": "Same reviewed runtime authority, task/member/permission/definition ports and lifecycle; PostgreSQL startup rejects missing configured adapters rather than using SQLite or dropping routes; host ports do not execute models",
+      "targetControl": "Preserve original transport, identity and output authorization semantics across storage backends",
+      "stage": "S5"
     }
   ]
 }

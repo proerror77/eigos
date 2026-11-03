@@ -48,29 +48,18 @@ import { AgentMessagingService } from '../../packages/agent-messaging/service.js
 import { communicationRequestSchema, MESSAGING_SCOPES, MESSAGING_TOOLS, MessagingError, type MessagingIdentity } from '../../packages/agent-messaging/contracts.js';
 import { communicationIntent, communicationScope } from './messaging/rpc.js';
 import { mountMessagingMemberRoutes } from './messaging/routes.js';
+import {memberPermissionCoordinatorPort} from '../../packages/members/ports.js';
+import {runtimeAuthorityDigest} from '../../packages/core/runtime-authority.js';
+import type {GatewayRuntimePorts,GatewayApplication,GatewayApplicationFactory} from './runtime-ports.js';
 
 const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tenant: z.string(), clientId: z.string(), scopes: z.array(z.string()), access: accessContextSchema.optional() });
 const auditId = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value
   : typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value) ? value : undefined;
 
 export function createApp(config: Config, verify?: VerifyToken, catalogFactory?: (store: JobStore) => ExecutionCatalog, loginProvider?: LoginProvider, verifierFactory?: (config: Config) => VerifyToken) {
-  const securityAdvice = (error: unknown) => error instanceof SecurityError ? securityErrorResponse(error, config.PUBLIC_URL) : {};
   assertPersonalSourceConfig(config);
   assertSourceProxy(config);
-  if (config.EIGOS_CSV_PILOT === 'true' && (process.env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(config.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(config.PUBLIC_URL).hostname))) throw new Error('CSV simulation requires non-production loopback');
-  if (config.EIGOS_NETWORK_ENABLED === 'true' && (config.EIGOS_AUTH_MODE !== 'jwt' || !config.OIDC_AGENT_CLIENT_ID || !config.OIDC_CLIENT_ID || !config.EIGOS_NETWORK_MEMBER_IDS.length)) throw new Error('Network requires explicit JWT and enrolled-member configuration');
-  const hostname = new URL(config.PUBLIC_URL).hostname;
-  const ingress = createIngressRouter(config, verify, verifierFactory);
-  const allowedOrigins = new Set([config.PUBLIC_URL, ...(config.authority?.ingresses.map(value => value.origin) ?? []), ...config.ALLOWED_ORIGINS.split(',').filter(Boolean)]);
-  const app = createMcpExpressApp({
-    host: config.HOST,
-    allowedHosts: [...new Set([hostname, ...(config.authority?.ingresses.map(value => new URL(value.origin).hostname) ?? [])])],
-    allowedOrigins: [...allowedOrigins].map(origin => new URL(origin).hostname),
-    jsonLimit: '64kb',
-  });
-  app.disable('x-powered-by');
-  const principals = new WeakMap<Request, Principal>();
-  const messagingIdentities = new WeakMap<Request, MessagingIdentity>();
+  assertHttpConfiguration(config);
   const store = new JobStore(config.DATABASE_PATH, { securityMode: config.EIGOS_SECURITY_MODE, authority: config.authority });
   const members = new MemberStore(config.MEMBERSHIP_DATABASE_PATH ?? (config.DATABASE_PATH === ':memory:' ? ':memory:' : `${config.DATABASE_PATH}.members`));
   let catalog: ExecutionCatalog, tasks: TaskService, network: NetworkService | undefined;
@@ -127,8 +116,41 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
         } });
     }
   } catch(error) { security?.close(); network?.close(); store.close(); members.close(); throw error; }
-  app.use((req, res, next) => {
-    if (!store.authorityCurrent()) { res.status(503).json({ error: 'runtime_authority_unavailable' }); return; }
+  const sources = !security && config.EIGOS_MEMBER_SOURCE_KEY_FILE ? new MemberSourceService(store.memberSources(config.EIGOS_MEMBER_SOURCE_KEY_FILE, config.EIGOS_PAOTUI_SKILL_DIR!), members, tasks, config) : undefined;
+  const definitions = new DefinitionService(store, tasks, catalog);
+  const runtime:GatewayRuntimePorts={backend:'sqlite',tasks,members,definitions,
+    ...(config.authority?{authority:{id:config.authority.id,revision:config.authority.revision,digest:runtimeAuthorityDigest(config.authority)}}:{}),
+    security:security?{permissions:memberPermissionCoordinatorPort(security),authenticate:(principal,bearer)=>security.authenticate(principal,bearer),available:()=>security.available,onUnavailable:handler=>security.onUnavailable(handler)}:undefined,
+    relay:relay?{status:()=>relay.status,mount:(app,authenticate,principal)=>mountTaskRelay(app,relay,store,authenticate,principal)}:undefined,
+    messaging:messaging?{service:messaging,mountMembers:app=>mountMessagingMemberRoutes(app,config,members,messaging)}:undefined,
+    legacy:{network,sources,mount:(app,authenticate,principal)=>{mountNetworkRoutes(app,config,members,network,authenticate,principal);mountSourceRoutes(app,sources,authenticate,principal);}},
+    authorityCurrent:()=>store.authorityCurrent(),ontologyRelease:()=>store.definitions.active().ref,start:async()=>{await relay?.start();},
+    close:async()=>{const errors:unknown[]=[];for(const action of [()=>messaging?.close(),()=>relay?.close(),()=>security?.close(),()=>network?.close(),()=>store.close(),()=>members.close()]){try{await action();}catch(error){errors.push(error);}}if(errors.length)throw new AggregateError(errors,'SQLite Gateway runtime shutdown failed');}};
+  try { const gateway=createGatewayHttpApp(config,runtime,verify,loginProvider,verifierFactory);return {...gateway,tasks,store,members,network,catalog,definitions,security,relay,messaging}; }
+  catch(error){security?.close();network?.close();store.close();members.close();void Promise.allSettled([messaging?.close(),relay?.close(),tasks.close()]);throw error;}
+}
+
+/** Shared authenticated HTTP layer. Runtime construction and storage ownership
+ * stay in the factories; protocol routes never instantiate a storage backend. */
+function createGatewayHttpApp(config:Config,runtime:GatewayRuntimePorts,verify?:VerifyToken,loginProvider?:LoginProvider,verifierFactory?:(config:Config)=>VerifyToken){
+  const {tasks,members,definitions,security}=runtime,network=runtime.legacy?.network,sources=runtime.legacy?.sources,relay=runtime.relay,messaging=runtime.messaging?.service;
+  const securityAdvice=(error:unknown)=>error instanceof SecurityError?securityErrorResponse(error,config.PUBLIC_URL):{};
+  assertHttpConfiguration(config);
+  const hostname = new URL(config.PUBLIC_URL).hostname;
+  const ingress = createIngressRouter(config, verify, verifierFactory);
+  const allowedOrigins = new Set([config.PUBLIC_URL, ...(config.authority?.ingresses.map(value => value.origin) ?? []), ...config.ALLOWED_ORIGINS.split(',').filter(Boolean)]);
+  const app = createMcpExpressApp({
+    host: config.HOST,
+    allowedHosts: [...new Set([hostname, ...(config.authority?.ingresses.map(value => new URL(value.origin).hostname) ?? [])])],
+    allowedOrigins: [...allowedOrigins].map(origin => new URL(origin).hostname),
+    jsonLimit: '64kb',
+  });
+  app.disable('x-powered-by');
+  const principals = new WeakMap<Request, Principal>();
+  const messagingIdentities = new WeakMap<Request, MessagingIdentity>();
+  app.use(async (req, res, next) => {
+    try { if (!await runtime.authorityCurrent()) { res.status(503).json({ error: 'runtime_authority_unavailable' }); return; } }
+    catch { res.status(503).json({error:'runtime_authority_unavailable'});return; }
     if (config.authority) {
       let route;
       try { route = ingress.selected(req)!; } catch { res.status(403).json({ error: 'unregistered_ingress' }); return; }
@@ -176,14 +198,15 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
   });
   const runtimeIdentity = { instance: config.PUBLIC_URL, backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST, ontologyTransport: 'native-mcp' as const,
     ...(config.authority ? { authorityId: config.authority.id, authorityRevision: config.authority.revision } : {}) };
-  app.get('/health', (_req, res) => { const available = !security || security.available; res.status(available ? 200 : 503).json({ status: available ? 'ok' : 'unavailable', version: '0.1.0', ...runtimeIdentity,
-    ...(config.authority?{ontologyRelease:store.definitions.active().ref}:{}), ...(relay ? { taskRelay: { status: relay.status } } : {}), securityStage: security ? 'S5_foundation_v2' : 'legacy' }); });
+  app.get('/health', async (_req, res) => { try { const available = !security || await security.available(); res.status(available ? 200 : 503).json({ status: available ? 'ok' : 'unavailable', version: '0.1.0', ...runtimeIdentity,
+    ...(config.authority?{ontologyRelease:await runtime.ontologyRelease()}:{}), ...(relay ? { taskRelay: { status: await relay.status() } } : {}), securityStage: security ? 'S5_foundation_v2' : 'legacy' }); }
+    catch { res.status(503).json({status:'unavailable',version:'0.1.0',...runtimeIdentity}); } });
   mountPaOnboarding(app, config);
   if (config.EIGOS_INVITE_BETA === 'true') app.get('/.well-known/eigos-pa-payment', (_req, res) => { res.status(404).json({ error: 'payment_unavailable_in_invite_beta' }); });
   app.get('/.well-known/eigos-pa-payment', (_req, res) => { const protocol = paPaymentProtocol(!security && !!config.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL); res.json(security ? { ...protocol, requestPath: 'metadata.payment.request', selectionPath: 'metadata.payment.selection', requestSchema: z.toJSONSchema(paPaymentRequestSchema.omit({ownerDigest:true,configurationDigest:true})) } : protocol); });
-  mountMemberRoutes(app, config, members, loginProvider, security);
-  if (messaging) mountMessagingMemberRoutes(app, config, members, messaging);
-  mountAgentRoutes(app, config, members, verify ?? createVerifier(config), security, config.authority ? req => ({ config: ingress.config(req), verify: ingress.verify(req), route: ingress.selected(req)! }) : undefined, messaging);
+  mountMemberRoutes(app, config, members, loginProvider, security?.permissions);
+  runtime.messaging?.mountMembers(app);
+  mountAgentRoutes(app, config, members, verify ?? createVerifier(config), security?.permissions, config.authority ? req => ({ config: ingress.config(req), verify: ingress.verify(req), route: ingress.selected(req)! }) : undefined, messaging);
   if (messaging) app.get('/.well-known/eigos-communications', (_req, res) => res.json({ version: 1, schema: 'eigos.agent-communication/1',
     tools: Object.keys(MESSAGING_TOOLS), scopes: MESSAGING_SCOPES, permissions_url: `${config.PUBLIC_URL}/members/communications`,
     operationPath: '/communication', delivery: 'pull', custody: 'eigos-service', businessTasks: 'explicit_delegation_only' }));
@@ -209,15 +232,15 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
           if (config.authority) {
             const route = ingress.selected(req)!;
             if (route.nativeClientIds.includes(principal.clientId)) {
-              members.authorize(principal);
-              const member = members.find(principal)!;
+              await members.authorize(principal);
+              const member = (await members.find(principal))!;
               const claims = z.object({ exp: z.number() }).parse(decodeJwt(match[1]));
-              members.agents.authorizeNative(principal, member.id, match[1], claims.exp * 1000);
+              await members.agents.authorizeNative(principal, member.id, match[1], claims.exp * 1000);
             } else if (!route.agentClientIds.includes(principal.clientId)) throw new SecurityError('AUTHORIZATION_REQUIRED');
           } else if (principal.clientId !== config.OIDC_AGENT_CLIENT_ID) throw new SecurityError('AUTHORIZATION_REQUIRED');
-          const messageIdentity = () => {
+          const messageIdentity = async () => {
             if (!principal.scopes.some(scope => (MESSAGING_SCOPES as readonly string[]).includes(scope))) throw new MessagingError('MESSAGING_AUTHORIZATION_REQUIRED');
-            const identity = messaging!.identity(principal, bearer);
+            const identity = await messaging!.identity(principal, bearer);
             messagingIdentities.set(req, identity); delete principal.access; messagingOnly = true;
           };
           if (intent === 'call') {
@@ -226,15 +249,15 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
               res.setHeader('WWW-Authenticate', `Bearer error="insufficient_scope", scope="${required}"`);
               res.status(403).json({ error: 'insufficient_scope', scope: required, onboarding_url: `${config.PUBLIC_URL}/.well-known/eigos-agent-registration` }); return;
             }
-            messageIdentity();
+            await messageIdentity();
           } else {
-            try { principal.access = security.authenticate(principal, match[1]); }
+            try { principal.access = await security.authenticate(principal, match[1]); }
             catch (error) {
               if (intent !== 'discovery' || !principal.scopes.some(scope => (MESSAGING_SCOPES as readonly string[]).includes(scope))) throw error;
-              messageIdentity();
+              await messageIdentity();
             }
             if (intent === 'discovery' && messaging && principal.scopes.some(scope => (MESSAGING_SCOPES as readonly string[]).includes(scope))) {
-              messagingIdentities.set(req, messaging.identity(principal, match[1]));
+              messagingIdentities.set(req, await messaging.identity(principal, match[1]));
             }
           }
         } catch(error) {
@@ -248,14 +271,14 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
         }
       } else if (config.EIGOS_AUTH_MODE === 'jwt') {
         if (principal.clientId === config.OIDC_AGENT_CLIENT_ID) {
-          try { members.agents.authorize(principal, match[1]); }
+          try { await members.agents.authorize(principal, match[1]); }
           catch (error) {
             if (error instanceof AgentAccessError || error instanceof DomainError) res.status(403).json({ error: error instanceof AgentAccessError ? error.code : 'agent_registration_required', onboarding_url: `${config.PUBLIC_URL}/.well-known/eigos-agent-registration` });
             else next(error);
             return;
           }
         }
-        try { members.authorize(principal); }
+        try { await members.authorize(principal); }
         catch (error) {
           if (error instanceof MemberAccessError) res.status(403).json({ error: error.code, membership_url: `${config.PUBLIC_URL}/members`, ...(config.OIDC_AGENT_CLIENT_ID ? { onboarding_url: `${config.PUBLIC_URL}/.well-known/eigos-agent-registration` } : {}) });
           else next(error);
@@ -273,8 +296,8 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
     }
   };
 
-  if (!security) mountNetworkRoutes(app, config, members, network, authenticate, req => principals.get(req)!);
-  if (relay) mountTaskRelay(app, relay, store, authenticate, req => principals.get(req)!);
+  if (!security) runtime.legacy?.mount(app,authenticate,req=>principals.get(req)!);
+  relay?.mount(app,authenticate,req=>principals.get(req)!);
   if (messaging) app.post('/communication', authenticate, async (req, res) => {
     try {
       const input = communicationRequestSchema.parse(req.body), identity = messagingIdentities.get(req);
@@ -285,9 +308,6 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
       else res.status(error instanceof z.ZodError ? 400 : 503).json({ error: error instanceof z.ZodError ? 'INVALID_INPUT' : 'MESSAGING_UNAVAILABLE' });
     }
   });
-  const sources = !security && config.EIGOS_MEMBER_SOURCE_KEY_FILE ? new MemberSourceService(store.memberSources(config.EIGOS_MEMBER_SOURCE_KEY_FILE, config.EIGOS_PAOTUI_SKILL_DIR!), members, tasks, config) : undefined;
-  if (!security) mountSourceRoutes(app, sources, authenticate, req => principals.get(req)!);
-  const definitions = new DefinitionService(store, tasks, catalog);
   mountDefinitionRoutes(app, definitions, authenticate, req => principals.get(req)!);
 
   app.post('/security/context', authenticate, (req, res) => {
@@ -300,12 +320,12 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
   });
 
   // Same authentication, membership, scopes and owner as MCP/A2A; no object-write endpoint.
-  for (const operation of ['describe', 'query', 'evaluate','check-access'] as const) app.post(`/ontology/${operation}`, authenticate, (req, res, next) => {
+  for (const operation of ['describe', 'query', 'evaluate','check-access'] as const) app.post(`/ontology/${operation}`, authenticate, async (req, res, next) => {
     try {
       const p = principals.get(req)!;
       const token = req.headers.authorization?.replace(/^Bearer\s+/i, '') ?? '';
       const reader = operation === 'describe' ? undefined : network?.ontologyReader(p, token);
-      res.json(operation === 'describe' ? tasks.describeOntology(p, req.body) : operation === 'query' ? tasks.queryOntology(p, req.body, reader) : operation === 'check-access' ? tasks.checkAccess(p,req.body) : tasks.evaluateOntology(p, req.body, reader));
+      res.json(await (operation === 'describe' ? tasks.describeOntology(p, req.body) : operation === 'query' ? tasks.queryOntology(p, req.body, reader) : operation === 'check-access' ? tasks.checkAccess(p,req.body) : tasks.evaluateOntology(p, req.body, reader)));
     } catch (error) {
       if (error instanceof DomainError) { res.status(error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : error.code === 'INVALID_INPUT' ? 400 : 409).json({ error: error.code, message: error.message, ...securityAdvice(error) }); return; }
       if (error instanceof z.ZodError) { res.status(400).json({ error: 'invalid_ontology_input' }); return; }
@@ -313,20 +333,20 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
     }
   });
 
-  const taskHttp=(action:(req:Request)=>unknown):RequestHandler=>(req,res,next)=>{
-    try {res.json(action(req));} catch(error) {
+  const taskHttp=(action:(req:Request)=>unknown):RequestHandler=>async(req,res,next)=>{
+    try {res.json(await action(req));} catch(error) {
       if(error instanceof DomainError){res.status(error.code==='FORBIDDEN'?403:error.code==='NOT_FOUND'?404:error.code==='INVALID_INPUT'?400:409).json({error:error instanceof SecurityError?error.reason:error.code,...securityAdvice(error)});return;}
       if(error instanceof z.ZodError){res.status(400).json({error:'invalid_task_input'});return;} next(error);
     }
   };
-  app.get('/tasks',authenticate,taskHttp(req=>{const found=tasks.list(principals.get(req)!,z.strictObject({limit:z.coerce.number().int().min(1).max(100).default(50),offset:z.coerce.number().int().min(0).max(1_000_000).default(0)}).parse(req.query));return {...found,jobs:found.jobs.map(taskSummary)};}));
-  app.get('/tasks/:taskId',authenticate,taskHttp(req=>taskSummary(tasks.get(principals.get(req)!,String(req.params.taskId)))));
-  app.post('/tasks',authenticate,taskHttp(req=>taskSummary(tasks.submit(principals.get(req)!,req.body))));
-  app.post('/tasks/:taskId/reply',authenticate,taskHttp(req=>taskSummary(tasks.reply(principals.get(req)!,{...req.body,taskId:String(req.params.taskId)}))));
-  app.post('/tasks/:taskId/cancel',authenticate,taskHttp(req=>{z.strictObject({}).parse(req.body);return taskSummary(tasks.cancel(principals.get(req)!,String(req.params.taskId)));}));
-  app.get('/tasks/:taskId/artifacts/:artifactId',authenticate,(req,res,next)=>{
+  app.get('/tasks',authenticate,taskHttp(async req=>{const found=await tasks.list(principals.get(req)!,z.strictObject({limit:z.coerce.number().int().min(1).max(100).default(50),offset:z.coerce.number().int().min(0).max(1_000_000).default(0)}).parse(req.query));return {...found,jobs:found.jobs.map(taskSummary)};}));
+  app.get('/tasks/:taskId',authenticate,taskHttp(async req=>taskSummary(await tasks.get(principals.get(req)!,String(req.params.taskId)))));
+  app.post('/tasks',authenticate,taskHttp(async req=>taskSummary(await tasks.submit(principals.get(req)!,req.body))));
+  app.post('/tasks/:taskId/reply',authenticate,taskHttp(async req=>taskSummary(await tasks.reply(principals.get(req)!,{...req.body,taskId:String(req.params.taskId)}))));
+  app.post('/tasks/:taskId/cancel',authenticate,taskHttp(async req=>{z.strictObject({}).parse(req.body);return taskSummary(await tasks.cancel(principals.get(req)!,String(req.params.taskId)));}));
+  app.get('/tasks/:taskId/artifacts/:artifactId',authenticate,async(req,res,next)=>{
     try {
-      const artifact=tasks.downloadArtifact(principals.get(req)!,String(req.params.taskId),String(req.params.artifactId));
+      const artifact=await tasks.downloadArtifact(principals.get(req)!,String(req.params.taskId),String(req.params.artifactId));
       res.set({'Content-Type':artifact.mediaType,'X-Content-Type-Options':'nosniff','Cache-Control':'no-store','Content-Disposition':`attachment; filename="artifact"; filename*=UTF-8''${encodeURIComponent(artifact.name)}`}).send(artifact.content);
     } catch(error) {
       if(error instanceof DomainError){res.status(error.code==='NOT_FOUND'?404:403).json({error:error instanceof SecurityError?error.reason:error.code,...securityAdvice(error)});return;}
@@ -335,21 +355,21 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
   });
 
   // Application authorization channel, separate from A2A messages. No raw credentials in task parts.
-  app.post('/tasks/:taskId/authorize', authenticate, (req, res, next) => {
-    try { res.json({ task: taskSummary(tasks.authorize(principals.get(req)!, String(req.params.taskId), req.body)) }); }
+  app.post('/tasks/:taskId/authorize', authenticate, async (req, res, next) => {
+    try { res.json({ task: taskSummary(await tasks.authorize(principals.get(req)!, String(req.params.taskId), req.body)) }); }
     catch (error) {
       if (error instanceof DomainError) { res.status(error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : 409).json({ error: error.code, message: error.message, ...securityAdvice(error) }); return; }
       if (error instanceof z.ZodError) { res.status(400).json({ error: 'invalid_authorization' }); return; }
       next(error);
     }
   });
-  for (const action of ['reconcile', 'revoke-authorization', 'aftersales'] as const) app.post(`/tasks/:taskId/${action}`, authenticate, (req, res, next) => {
+  for (const action of ['reconcile', 'revoke-authorization', 'aftersales'] as const) app.post(`/tasks/:taskId/${action}`, authenticate, async (req, res, next) => {
     try {
       const p = principals.get(req)!; const id = String(req.params.taskId);
       const task = action === 'aftersales' ? tasks.requestRemediation(p, { ...req.body, originalTaskId: id })
         : action === 'reconcile' ? tasks.reconcile(p, id, z.object({ requestId: z.string().min(1).max(128) }).strict().parse(req.body).requestId)
         : tasks.revokeAuthorization(p, id, z.object({ requestId: z.string().min(1).max(128) }).strict().parse(req.body).requestId);
-      res.json({ task: taskSummary(task) });
+      res.json({ task: taskSummary(await task) });
     } catch (error) {
       if (error instanceof DomainError) { res.status(error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : 409).json({ error: error.code, message: error.message, ...securityAdvice(error) }); return; }
       if (error instanceof z.ZodError) { res.status(400).json({ error: 'invalid_business_action' }); return; } next(error);
@@ -393,5 +413,47 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
     res.status(status).json({ error: status === 500 ? 'internal_error' : 'invalid_request' });
   };
   app.use(errors);
-  return { app, tasks, store, members, network, catalog, definitions, security, relay, messaging, scopes: SCOPES, close: async () => { await messaging?.close(); await relay?.close(); security?.close(); await tasks.close(); await mcp.close(); network?.close(); store.close(); members.close(); } };
+  let starting:Promise<void>|undefined,closing:Promise<void>|undefined;
+  const start=()=>starting??=(async()=>{await runtime.start();})();
+  const close=()=>closing??=(async()=>{const errors:unknown[]=[];for(const action of [()=>tasks.close(),()=>mcp.close(),()=>runtime.close()]){try{await action();}catch(error){errors.push(error);}}if(errors.length)throw new AggregateError(errors,'Gateway shutdown failed');})();
+  return {app,tasks,members,definitions,security,relay,messaging,scopes:SCOPES,start,close,onUnavailable:(handler:()=>void)=>security?.onUnavailable(handler)};
 }
+
+function assertHttpConfiguration(config:Config){
+  if(config.EIGOS_CSV_PILOT==='true'&&(process.env.NODE_ENV==='production'||!['127.0.0.1','localhost','::1'].includes(config.HOST)||!['127.0.0.1','localhost','[::1]'].includes(new URL(config.PUBLIC_URL).hostname)))throw new Error('CSV simulation requires non-production loopback');
+  if(config.EIGOS_NETWORK_ENABLED==='true'&&(config.EIGOS_AUTH_MODE!=='jwt'||!config.OIDC_AGENT_CLIENT_ID||!config.OIDC_CLIENT_ID||!config.EIGOS_NETWORK_MEMBER_IDS.length))throw new Error('Network requires explicit JWT and enrolled-member configuration');
+}
+
+/** Awaited assembly of already bound PostgreSQL ports. This selects no URL,
+ * credential, model or alternate authority. Missing installed features stop
+ * startup; this factory never opens a SQLite store to fill a gap. */
+export async function createPostgresApp(config:Config,runtime:GatewayRuntimePorts,options:{verify?:VerifyToken;loginProvider?:LoginProvider;verifierFactory?:(config:Config)=>VerifyToken}={}):Promise<GatewayApplication>{
+  assertHttpConfiguration(config);
+  if(runtime.backend!=='postgres'||!config.authority||config.EIGOS_AUTH_MODE!=='jwt'||config.EIGOS_SECURITY_MODE!=='foundation'||config.EIGOS_DEV_TOKEN)throw new Error('PostgreSQL Gateway requires the existing primary JWT authority');
+  const expected={id:config.authority.id,revision:config.authority.revision,digest:runtimeAuthorityDigest(config.authority)};
+  if(digest(runtime.authority??null)!==digest(expected))throw new Error('Gateway ports do not match the existing primary authority');
+  if(runtime.legacy||config.EIGOS_NETWORK_ENABLED==='true')throw new Error('PostgreSQL Gateway has no installed legacy network/source-route adapter');
+  if(!runtime.tasks?.secured||!runtime.security||!runtime.definitions?.secured)throw new Error('PostgreSQL Gateway requires task, member permission and definition adapters');
+  if(!!config.EIGOS_TASK_RELAY_FILE!==!!runtime.relay)throw new Error('Configured Task Relay requires its installed PostgreSQL adapter');
+  if((config.EIGOS_MESSAGING_ENABLED==='true')!==!!runtime.messaging)throw new Error('Configured messaging requires its installed PostgreSQL adapter');
+  for(const method of ['describeOntology','queryOntology','evaluateOntology','checkAccess','usage','submit','get','getAfterWait','wait','list','reply','amend','resume','authorize','selectPaymentRoute','reportPayment','cancel','reconcile','revokeAuthorization','requestRemediation','prepareObservationContract','downloadArtifact','close','services'] as const){
+    if(typeof runtime.tasks[method]!=='function')throw new Error(`PostgreSQL task adapter is missing ${method}`);
+  }
+  for(const method of ['query','command','prepare','approve'] as const)if(typeof runtime.definitions[method]!=='function')throw new Error(`PostgreSQL definition adapter is missing ${method}`);
+  for(const method of ['find','get','list','login','apply','update','setStatus','createSession','session','logout','connections','authorizationFacts','block','authorize'] as const)if(typeof runtime.members?.[method]!=='function')throw new Error(`PostgreSQL member adapter is missing ${method}`);
+  for(const method of ['create','get','list','lookup','status','requireOwner','bind','authorize','ensureNativeInstallation','authorizeNative','revoke','invite','revokeInvitation','redeem','redeemForMember'] as const)if(typeof runtime.members.agents?.[method]!=='function')throw new Error(`PostgreSQL registration adapter is missing ${method}`);
+  for(const method of ['managementView','grants','sourceProfiles','recoveries','recoveryPreview','approveAgentGrant','approveSource','approveTaskGrant','approveRecovery','revokeSource','revokeGrant','revokeInstallation','setConnectionBlocked','agentGrant','applyPermissionReview'] as const)if(typeof runtime.security.permissions?.[method]!=='function')throw new Error(`PostgreSQL permission adapter is missing ${method}`);
+  for(const method of ['authenticate','available','onUnavailable'] as const)if(typeof runtime.security[method]!=='function')throw new Error(`PostgreSQL security adapter is missing ${method}`);
+  for(const method of ['authorityCurrent','ontologyRelease','start','close'] as const)if(typeof runtime[method]!=='function')throw new Error(`PostgreSQL runtime is missing ${method}`);
+  if(runtime.relay)for(const method of ['status','mount'] as const)if(typeof runtime.relay[method]!=='function')throw new Error(`PostgreSQL Task Relay adapter is missing ${method}`);
+  if(runtime.messaging){
+    if(typeof runtime.messaging.mountMembers!=='function')throw new Error('PostgreSQL messaging adapter is missing member routes');
+    for(const method of ['identity','execute','readiness'] as const)if(typeof runtime.messaging.service?.[method]!=='function')throw new Error(`PostgreSQL messaging adapter is missing ${method}`);
+  }
+  const gateway=createGatewayHttpApp(config,runtime,options.verify,options.loginProvider,options.verifierFactory);
+  try{await gateway.start();return gateway;}catch(error){try{await gateway.close();}catch(closeError){throw new AggregateError([error,closeError],'PostgreSQL Gateway startup failed',{cause:error});}throw error;}
+}
+
+/** The host selects one configured runtime factory. SQLite remains the default
+ * until the reviewed host binding explicitly supplies PostgreSQL assembly. */
+export async function createGateway(config:Config,factory:GatewayApplicationFactory=createApp):Promise<GatewayApplication>{return factory(config);}
