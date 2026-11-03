@@ -2937,7 +2937,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "2e9f5be9a2edf6f5fddf1c0b0edcc57cbc5296835fc17bd94b130a8b9d47d5f6",
+      "sourceDigest": "576884a4121de7fef6a758e05c78b6e5de6768f7e06d22b609220dcb650857e3",
       "channels": [
         "query",
         "function"

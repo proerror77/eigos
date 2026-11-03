@@ -64,13 +64,38 @@ function probe(t: TestContext, db: DatabaseSync) {
 }
 
 for (const scoped of [false, true]) {
+  test(`definition statements are reused by direction while owner, link and pin reads stay current (scoped=${scoped})`, t => {
+    const f = fixture(scoped);
+    try {
+      populate(f, 300);
+      const prepare = f.db.prepare.bind(f.db);
+      let definitionsPrepared = 0;
+      t.mock.method(f.db, 'prepare', (sql: string) => {
+        if (sql.startsWith('WITH RECURSIVE relationship_definitions')) definitionsPrepared++;
+        return prepare(sql);
+      });
+      for (let repeat = 0; repeat < 3; repeat++) for (const link of ['history', 'origins', 'current', 'parents']) {
+        assert.equal(f.graph.query(f.owner, { from: f.hub, link, limit: 1 }).items[0]!.ref.id, neighbor(0).id);
+      }
+      assert.equal(definitionsPrepared, 2, 'One compiled statement per direction, with fresh parameters on every execution');
+      f.graph.ingest('bob', { objects: [f.hub, neighbor(0)].map(ref => ({ ref, properties: { id: ref.id, label: 'bob' } })),
+        links: [{ type: 'Historical', from: f.hub, to: neighbor(0) }] }, f.source);
+      assert.equal(f.graph.query('bob', { from: f.hub, link: 'history', limit: 1 }).items[0]!.properties.label, 'bob');
+      assert.equal(f.graph.query(f.owner, { from: f.hub, link: 'history', limit: 1 }).items[0]!.properties.label, neighbor(0).id);
+      f.db.prepare(`UPDATE ${f.links} SET definition_digest='changed' WHERE ${scoped ? 'ontology_id=? AND ' : ''}owner=? AND type='Historical' AND from_id=? AND to_id=?`)
+        .run(...f.prefix, f.hub.id, neighbor(299).id);
+      assert.throws(() => f.graph.query(f.owner, { from: f.hub, link: 'history', limit: 1 }), /link definition changed/);
+      assert.equal(definitionsPrepared, 2);
+    } finally { f.db.close(); }
+  });
+
   test(`repeated definitions are skipped independently of the target-page limit (scoped=${scoped})`, t => {
     const f = fixture(scoped);
     try {
       populate(f, 10_000);
       const p = probe(t, f.db);
       assert.equal(f.graph.query(f.owner, { from: f.hub, link: 'history', limit: 1 }).items.length, 1);
-      assert(p.counts.definitions <= 2, `One pinned definition visited ${p.counts.definitions} repeated edges`);
+      assert(p.counts.definitions > 0 && p.counts.definitions <= 2, `One pinned definition visited ${p.counts.definitions} repeated edges`);
     } finally { f.db.close(); }
   });
 
@@ -83,13 +108,13 @@ for (const scoped of [false, true]) {
         const query = { from: f.hub, link, limit: 1 };
         const first = f.graph.query(f.owner, query);
         assert.equal(first.items[0]!.ref.id, neighbor(0).id);
-        assert(p.counts.targets <= 201, `First page visited ${p.counts.targets} targets`);
-        assert(p.counts.definitions <= 2, `One definition visited ${p.counts.definitions} edges`);
+        assert(p.counts.targets > 0 && p.counts.targets <= 201, `First page visited ${p.counts.targets} targets`);
+        assert(p.counts.definitions > 0 && p.counts.definitions <= 2, `One definition visited ${p.counts.definitions} edges`);
         p.reset();
         const next = f.graph.query(f.owner, { ...query, cursor: first.page.cursor });
         assert.equal(next.items[0]!.ref.id, neighbor(1).id);
-        assert(p.counts.targets <= 201, `Second page visited ${p.counts.targets} targets`);
-        assert(p.counts.definitions <= 2);
+        assert(p.counts.targets > 0 && p.counts.targets <= 201, `Second page visited ${p.counts.targets} targets`);
+        assert(p.counts.definitions > 0 && p.counts.definitions <= 2);
         p.reset();
         const ids: string[] = [];
         let cursor: string | undefined;
@@ -211,12 +236,15 @@ for (const scoped of [false, true]) {
     try {
       populate(f, 1_000);
       for (const table of ['ontology_links', 'ontology_scoped_links']) for (const side of ['forward', 'reverse']) f.db.exec(`DROP INDEX IF EXISTS ${table}_${side}_definitions`);
+      const p = probe(t, f.db);
       const before = f.graph.query(f.owner, { from: f.hub, link: 'history', limit: 1 });
       const reopened = new OntologyObjectStore(f.db, f.model, Date.now, undefined, f.context);
       new OntologyObjectStore(f.db, f.model, Date.now, undefined, f.context);
-      const p = probe(t, f.db), after = reopened.query(f.owner, { from: f.hub, link: 'history', limit: 1 });
+      p.reset();
+      const after = reopened.query(f.owner, { from: f.hub, link: 'history', limit: 1 });
       assert.deepEqual(after, before);
-      assert(p.counts.definitions <= 2);
+      assert.deepEqual(f.graph.query(f.owner, { from: f.hub, link: 'history', limit: 1 }), before, 'An existing compiled reader also observes the new indexes');
+      assert(p.counts.definitions > 0 && p.counts.definitions <= 4);
       assert.equal(f.db.prepare(`SELECT count(*) AS n FROM ${f.objects}`).get()!.n, 1_001);
     } finally { f.db.close(); }
   });

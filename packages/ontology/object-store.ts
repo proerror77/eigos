@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -71,6 +71,7 @@ export class OntologyObjectStore {
   readonly releaseRef?: OntologyReleaseRef;
   private readerFactory?: (owner: string, requestId: string) => NetworkOntologyReadAdapter | undefined;
   private backingStore?: OntologyObjectStore;
+  private definitionReaders: Partial<Record<'from' | 'to', StatementSync>> = {};
   pipelineStatus(owner: string, programRef: { id: string; version: string }, configurationDigest: string, actionId: string): import('./pipeline/contracts.js').PipelineStatus {
     return this.context.pipelineStatus?.(owner, programRef, configurationDigest, actionId) ?? { status: 'unmanaged', reason: 'No intake policy on this historical graph', verificationIds: [], authorization: 'per_action_required', availabilityProof: false };
   }
@@ -150,18 +151,25 @@ export class OntologyObjectStore {
     if (storedDigest !== currentDigest && !this.context.compatibleDefinition?.({ kind: 'link', id: type, storedDigest, currentDigest })) throw new DomainError('CONFLICT', 'Pinned link definition changed');
   }
   private relationshipDefinitions(owner: string, type: string, side: 'from' | 'to', from: ObjectRef) {
-    const select = `SELECT definition_digest FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND ${side}_type=? AND ${side}_id=?`;
-    const params = [...this.ownerParameters(owner), type, from.type, from.id];
     // Seek once per distinct pin using the endpoint/definition index. DISTINCT
     // with LIMIT would still visit every edge when they all share one pin.
     // Validate the entire relationship, including hidden/dangling targets and
     // definitions beyond the requested page, with the existing 200-pin bound.
-    return this.db.prepare(`WITH RECURSIVE relationship_definitions(definition_digest) AS (
-      SELECT (${select} ORDER BY definition_digest LIMIT 1)
-      UNION ALL
-      SELECT (${select} AND definition_digest>relationship_definitions.definition_digest ORDER BY definition_digest LIMIT 1)
-      FROM relationship_definitions WHERE definition_digest IS NOT NULL LIMIT 201
-    ) SELECT definition_digest FROM relationship_definitions WHERE definition_digest IS NOT NULL`).all(...params, ...params);
+    // Only the compiled SQL is reused, at most once per direction on this
+    // store/connection. Every call binds current scope and reads current pins.
+    let statement = this.definitionReaders[side];
+    if (!statement) {
+      const select = `SELECT definition_digest FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND ${side}_type=? AND ${side}_id=?`;
+      statement = this.db.prepare(`WITH RECURSIVE relationship_definitions(definition_digest) AS (
+        SELECT (${select} ORDER BY definition_digest LIMIT 1)
+        UNION ALL
+        SELECT (${select} AND definition_digest>relationship_definitions.definition_digest ORDER BY definition_digest LIMIT 1)
+        FROM relationship_definitions WHERE definition_digest IS NOT NULL LIMIT 201
+      ) SELECT definition_digest FROM relationship_definitions WHERE definition_digest IS NOT NULL`);
+      this.definitionReaders[side] = statement;
+    }
+    const params = [...this.ownerParameters(owner), type, from.type, from.id];
+    return statement.all(...params, ...params);
   }
   private bumpRevision(owner: string): void {
     if (this.scoped) this.db.prepare('INSERT INTO ontology_scoped_revisions VALUES(?,?,1) ON CONFLICT(ontology_id,owner) DO UPDATE SET revision=revision+1').run(this.ontologyId, owner);
