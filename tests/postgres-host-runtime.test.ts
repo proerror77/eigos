@@ -38,8 +38,9 @@ import {loopbackFetch} from './fixtures/loopback-fetch.js';
 const local={skip:process.env.EIGOS_TEST_PG_LOCAL!=='1',timeout:300000};
 const password='synthetic-handoff-runtime-only';
 function localConnection(){
-  if(process.env.PGHOST!=='127.0.0.1'||Number(process.env.PGPORT??52744)!==52744)throw new Error('Host lifecycle tests require the explicit synthetic LOCAL PostgreSQL instance');
-  return {host:'127.0.0.1',port:52744,user:'postgres',database:'postgres',password:process.env.PGPASSWORD,ssl:false as const};
+  const port=Number(process.env.PGPORT??52744);
+  if(process.env.EIGOS_TEST_PG_LOCAL!=='1'||process.env.PGHOST!=='127.0.0.1'||!Number.isInteger(port)||port<1||port>65535)throw new Error('Host lifecycle tests require the explicit synthetic LOCAL PostgreSQL instance');
+  return {host:'127.0.0.1',port,user:'postgres',database:'postgres',password:process.env.PGPASSWORD,ssl:false as const};
 }
 
 test('PostgreSQL SSLRequest fixture genuinely verifies TLS and forwards bytes without a PostgreSQL result emulator',{timeout:10000},async()=>{
