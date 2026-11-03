@@ -2,6 +2,8 @@
 
 MCP 与 A2A 共用任务、身份、权限和执行状态。先发现当前实例的接口与能力，再提交明确目标；服务配置和业务授权分别检查。
 
+显式配置后还可使用[支付宝／微信支付／银联查单与淘宝商品查询](guides/payment-commerce.md)。四家均沿用同一任务与来源授权；默认关闭，当前不提供下单或付款。安装开发 Skill、拥有平台登录或看到能力定义都不代表来源已通过真实联调。
+
 Foundation 还支持显式准备[长期观察合同](guides/observation-contracts.md)：MCP 使用 `prepare_observation_contract`，A2A 向原任务发送同名 action 的结构化请求，返回独立的暂停守护任务。当前阶段仅保存合同、回读和撤销，`monitoring:false`；不能通过普通恢复启动监测。原任务继续保持完成。
 
 显式启用[个人 Agent 通信](guides/agent-communication.md)后，同一入口还可通过独立通信许可和 Relay 收发 PA 消息。普通通信返回消息回执，不创建业务任务；明确服务委托继续沿用本文的原任务链。手机接入不要求安装常驻连接器。

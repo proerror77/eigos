@@ -27,8 +27,13 @@ const issuedAt = '2026-10-24T00:00:00Z', expiresAt = '2026-10-24T01:00:00Z';
 test('S0 inventories every definition and nested subtree without changing runtime or granting access', () => {
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
-  assert.equal(report.counts.objectTypes, 202); assert.equal(report.counts.properties, 1852); assert.equal(report.counts.interfaces, 14);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 209);
+  assert.equal(report.counts.objectTypes, 204); assert.equal(report.counts.properties, 1863); assert.equal(report.counts.interfaces, 14);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 214);
+  for (const id of ['consent-lifetime', 'persistent-consent-policy-upgrade']) assert(report.surfaces.some(surface => surface.id === id));
+  for (const id of ['payment-commerce-connection', 'payment-commerce-mcp', 'payment-commerce-http', 'payment-commerce-program', 'payment-commerce-policy-upgrade'])
+    assert(report.surfaces.some(surface => surface.id === id), `Unreviewed payment/commerce boundary: ${id}`);
+  assert.equal(report.types.find(type => type.id === 'PaymentCommerceReadTask')!.properties.find(field => field.name === 'input')!.policy, 'task_sensitive');
+  assert.equal(report.types.find(type => type.id === 'PaymentCommerceReadObservation')!.properties.find(field => field.name === 'snapshot')!.policy, 'internal_only');
   const harness = report.surfaces.find(surface => surface.id === 'harness-executor');
   assert(harness); assert.equal(harness.file, 'packages/capabilities/harness-executor.ts');
   assert.deepEqual(harness.channels, ['registered_model', 'private_file']);

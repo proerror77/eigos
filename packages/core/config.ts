@@ -53,6 +53,10 @@ const schema = z.object({
   EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES: publicGeoQueries.optional(),
   EIGOS_SHOPIFY_CATALOG_MERCHANTS: merchantList('EIGOS_SHOPIFY_CATALOG_MERCHANTS').optional(),
   EIGOS_SHOPIFY_AUDIT_DIR: z.string().optional(),
+  EIGOS_ALIPAY_CONNECTION_FILE: z.string().optional(),
+  EIGOS_WECHATPAY_CONNECTION_FILE: z.string().optional(),
+  EIGOS_UNIONPAY_CONNECTION_FILE: z.string().optional(),
+  EIGOS_TAOBAO_CONNECTION_FILE: z.string().optional(),
   EIGOS_ROLLINGGO_KEY_FILE: z.string().optional(),
   EIGOS_ROLLINGGO_KEY_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   EIGOS_DIDI_KEY_FILE: z.string().optional(),
@@ -264,6 +268,9 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
 
 /** Both owned-source modes remain explicit, non-production and loopback-only. */
 export function assertPersonalSourceConfig(c: Config, nodeEnv = process.env.NODE_ENV) {
+  const commerceFiles = [c.EIGOS_ALIPAY_CONNECTION_FILE, c.EIGOS_WECHATPAY_CONNECTION_FILE, c.EIGOS_UNIONPAY_CONNECTION_FILE, c.EIGOS_TAOBAO_CONNECTION_FILE].filter((value): value is string => !!value);
+  if (commerceFiles.length && (!c.EIGOS_PERSONAL_SOURCE_OWNER || commerceFiles.some(file => !isAbsolute(file)) || c.EIGOS_INVITE_BETA === 'true' || !allowsBoundPersonalSource(c, nodeEnv)))
+    throw new Error('Payment/commerce reads require absolute private connection files, an explicit source owner and the bound Foundation authority');
   if (c.EIGOS_PERSONAL_SOURCE_OWNER && (c.EIGOS_MEMBER_SOURCE_KEY_FILE || c.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE || !c.authority && c.EIGOS_DIDI_MEMBER_CONNECTION_FILE)) throw new Error('Personal owner and member-managed sources require separate explicit bindings');
   const privateOrigin = c.EIGOS_MEMBER_SOURCE_TAILNET_ORIGIN;
   if (privateOrigin && (!c.EIGOS_MEMBER_SOURCE_KEY_FILE || new URL(privateOrigin).origin !== privateOrigin || new URL(privateOrigin).protocol !== 'https:' || !new URL(privateOrigin).hostname.endsWith('.ts.net') || privateOrigin !== c.PUBLIC_URL)) throw new Error('Member source private origin must exactly match an explicit HTTPS Tailscale origin');
