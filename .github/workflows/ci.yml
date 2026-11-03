@@ -144,11 +144,15 @@ jobs:
       - run: npm ci
       - run: node scripts/postgres-tests.mjs run --group access
 
-  postgres-execution:
+  postgres-execution-cases:
     needs: scope
     if: ${{ needs.scope.result == 'success' && needs.scope.outputs.postgres == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [contracts, planning, documents, transitions]
     services:
       postgres:
         image: postgres:17
@@ -179,7 +183,22 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: node scripts/postgres-tests.mjs run --group execution
+      - run: node scripts/postgres-tests.mjs run --group execution --case ${{ matrix.case }}
+
+  postgres-execution:
+    needs: [scope, postgres-execution-cases]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Require every selected execution group to succeed
+        env:
+          PG_TEST_SHARDS: ${{ needs.scope.outputs.shards }}
+          PG_CI_NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/postgres-tests.mjs aggregate-execution
 
   postgres-coordinator-cases:
     needs: scope

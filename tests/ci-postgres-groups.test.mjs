@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync,readdirSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {parse} from 'yaml';
-import {POSTGRES_TEST_GROUPS,POSTGRES_GROUP_JOBS,POSTGRES_TEST_FILES,POSTGRES_PURE_TEST_FILES,POSTGRES_COORDINATOR_CASES,POSTGRES_COORDINATOR_JOBS,postgresTestsRequired,assertPostgresGroups,assertCoordinatorCases,coordinatorTestPattern,assertCoordinatorTap} from '../scripts/postgres-tests.mjs';
+import {POSTGRES_TEST_GROUPS,POSTGRES_GROUP_JOBS,POSTGRES_TEST_FILES,POSTGRES_PURE_TEST_FILES,POSTGRES_EXECUTION_GROUPS,POSTGRES_EXECUTION_JOBS,POSTGRES_COORDINATOR_CASES,POSTGRES_COORDINATOR_JOBS,postgresTestsRequired,assertPostgresGroups,assertExecutionCases,assertCoordinatorCases,coordinatorTestPattern,assertCoordinatorTap} from '../scripts/postgres-tests.mjs';
 import {proveExactCi} from '../scripts/release-artifacts.mjs';
 import {testFiles,shardFiles} from '../scripts/test-scope.mjs';
 
@@ -39,18 +39,25 @@ test('the relay-postgres aggregate rejects missing, skipped, failed or canceled 
 });
 
 test('all required groups keep their own bounded service and exact-source checkout; aggregate runs on failure',()=>{
-  for(const name of ['scope','verify',...POSTGRES_GROUP_JOBS,'postgres-coordinator-cases','tests','relay-postgres']){
+  for(const name of ['scope','verify',...POSTGRES_GROUP_JOBS,'postgres-execution-cases','postgres-coordinator-cases','tests','relay-postgres']){
     const job=workflow.jobs[name];assert(job,name);
     for(const step of job.steps.filter(step=>step.uses?.startsWith('actions/checkout@')))assert.equal(step.with?.ref,sourceRef,name);
   }
   for(const [group,files] of Object.entries(POSTGRES_TEST_GROUPS)){
-    const job=workflow.jobs[group==='coordinator'?'postgres-coordinator-cases':'postgres-'+group];assert(job.services.postgres);assert.equal(job['timeout-minutes'],30);assert(job.if.includes("needs.scope.outputs.postgres == 'true'"));
+    const job=workflow.jobs[group==='coordinator'?'postgres-coordinator-cases':group==='execution'?'postgres-execution-cases':'postgres-'+group];assert(job.services.postgres);assert.equal(job['timeout-minutes'],30);assert(job.if.includes("needs.scope.outputs.postgres == 'true'"));
     assert(job.steps.some(step=>step.run?.startsWith('node scripts/postgres-tests.mjs run --group '+group)));assert(files.length);
   }
   assert.deepEqual(workflow.jobs['relay-postgres'].needs,['scope',...POSTGRES_GROUP_JOBS]);
   assert.equal(workflow.jobs['relay-postgres'].if,'${{ always() }}');
   assert(workflow.jobs['relay-postgres'].steps.some(step=>step.run==='node scripts/postgres-tests.mjs aggregate'));
   assert(readFileSync(new URL('../scripts/postgres-tests.mjs',import.meta.url),'utf8').includes("'--test-concurrency=1'"));
+});
+
+test('execution partitions preserve every original file once and require all actual partition results',()=>{
+  const files=Object.values(POSTGRES_EXECUTION_GROUPS).flat();assert.equal(files.length,new Set(files).size);assert.deepEqual([...files].sort(),[...POSTGRES_TEST_GROUPS.execution].sort());
+  assert.deepEqual(workflow.jobs['postgres-execution-cases'].strategy.matrix.case,Object.keys(POSTGRES_EXECUTION_GROUPS));assert.deepEqual(workflow.jobs['postgres-execution'].needs,['scope','postgres-execution-cases']);assert.equal(workflow.jobs['postgres-execution'].if,'${{ always() }}');
+  for(const result of ['failure','cancelled','skipped',undefined])assert.throws(()=>assertExecutionCases({scope:{result:'success'},'postgres-execution-cases':{result}},needed),/not successful/);
+  assert.equal(assertExecutionCases({scope:{result:'success'},'postgres-execution-cases':{result:'success'}},needed).required,true);
 });
 
 test('Coordinator case sets cover every top-level test once and keep every revocation child selected',()=>{
@@ -73,8 +80,8 @@ test('Coordinator success requires actual non-skipped TAP cases and all four rev
 
 test('immutable release proof requires the actual successful PG groups as well as their aggregate',()=>{
   const sha='1'.repeat(40),run={id:17,head_sha:sha,status:'completed',conclusion:'success',html_url:'https://github.com/example/eigos/actions/runs/17',head_repository:{full_name:'example/eigos'}};
-  const names=['scope','verify','relay-postgres',...POSTGRES_GROUP_JOBS,...POSTGRES_COORDINATOR_JOBS,...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
+  const names=['scope','verify','relay-postgres',...POSTGRES_GROUP_JOBS,...POSTGRES_COORDINATOR_JOBS,...POSTGRES_EXECUTION_JOBS,...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
   const jobs=names.map(name=>({name,status:'completed',conclusion:'success',...(name==='verify'?{steps:['npm run check','npm run build','npm run test:e2e:run'].map(command=>({name:'Run '+command,status:'completed',conclusion:'success'}))}:{})}));
   assert.deepEqual(proveExactCi(run,jobs,sha,'example/eigos').jobs,names);
-  for(const name of [...POSTGRES_GROUP_JOBS,...POSTGRES_COORDINATOR_JOBS])assert.throws(()=>proveExactCi(run,jobs.filter(job=>job.name!==name),sha,'example/eigos'),/Required CI job/);
+  for(const name of [...POSTGRES_GROUP_JOBS,...POSTGRES_COORDINATOR_JOBS,...POSTGRES_EXECUTION_JOBS])assert.throws(()=>proveExactCi(run,jobs.filter(job=>job.name!==name),sha,'example/eigos'),/Required CI job/);
 });

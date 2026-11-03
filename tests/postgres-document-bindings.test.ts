@@ -3,6 +3,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {assertPostgresPlanningDiscoveryContext} from '../packages/postgres/native-planning-session.js';
 import {resolvePostgresDocumentBinding} from '../packages/postgres/document-bindings.js';
+import {roleSchema} from '../packages/security/resource-role.js';
 import {postgresGoalFixture} from './fixtures/postgres-goal.js';
 
 const local={skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'};
@@ -23,7 +24,8 @@ test('Doc binding resolution checks the current namespace role and actual source
     await x.t.client.query(`UPDATE ${x.q}.security_sources SET state='revoked' WHERE binding_id=$1`,[x.bindingId]);await assert.rejects(x.t.database.run(client=>resolvePostgresDocumentBinding(client,x.claim,x.request,pin,x.options)),error=>error instanceof SecurityError&&error.reason==='SOURCE_NOT_AUTHORIZED');
     await x.t.client.query(`UPDATE ${x.q}.security_sources SET state='active' WHERE binding_id=$1`,[x.bindingId]);
     const row=(await x.t.client.query(`SELECT id,body FROM ${x.q}.security_roles WHERE subject_id=$1`,[x.installation.id])).rows[0]!;
-    await x.t.client.query(`UPDATE ${x.q}.security_roles SET body=$1 WHERE id=$2`,[JSON.stringify({...JSON.parse(row.body),role:'Editor',resource:{kind:'actionType',id:'NonexistentAction'}}),row.id]);
+    const original=JSON.parse(row.body),unrelated=roleSchema.parse({...original,role:'Editor',resource:{kind:'namespace',id:'unrelated-namespace',version:original.resource.version}});
+    await x.t.client.query(`UPDATE ${x.q}.security_roles SET body=$1 WHERE id=$2`,[JSON.stringify(unrelated),row.id]);
     await assert.rejects(x.t.database.run(client=>resolvePostgresDocumentBinding(client,x.claim,x.request,pin,x.options)),error=>error instanceof SecurityError&&['AUTHORIZATION_REQUIRED','INSUFFICIENT_ACCESS','AUTHORITY_UNAVAILABLE'].includes(error.reason));
   }finally{await x.close();}
 });

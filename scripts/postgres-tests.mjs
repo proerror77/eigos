@@ -12,6 +12,13 @@ export const POSTGRES_TEST_GROUPS=Object.freeze({
   execution:Object.freeze(["tests/postgres-task-commands.test.ts","tests/postgres-task-intents.test.ts","tests/postgres-action-journal.test.ts","tests/postgres-action-authorization.test.ts","tests/postgres-action-permit.test.ts","tests/postgres-recovery-commands.test.ts","tests/document-program-parity.test.ts","tests/composition-program-parity.test.ts","tests/postgres-source-projection.test.ts","tests/postgres-document-policy.test.ts","tests/postgres-document-execution.test.ts","tests/postgres-agent-plan.test.ts","tests/postgres-goal-contexts.test.ts","tests/postgres-document-bindings.test.ts","tests/postgres-model-context.test.ts","tests/postgres-capability-catalog.test.ts","tests/goal-assessment-program.test.ts","tests/postgres-worker-read-lease.test.ts","tests/postgres-worker-write-lease.test.ts"]),
   coordinator:Object.freeze(["tests/postgres-coordinator.test.ts"]),
 });
+export const POSTGRES_EXECUTION_GROUPS=Object.freeze({
+  contracts:Object.freeze(['tests/composition-program-parity.test.ts','tests/document-program-parity.test.ts','tests/goal-assessment-program.test.ts','tests/postgres-action-authorization.test.ts','tests/postgres-action-journal.test.ts','tests/postgres-action-permit.test.ts','tests/postgres-capability-catalog.test.ts','tests/postgres-recovery-commands.test.ts']),
+  planning:Object.freeze(['tests/postgres-agent-plan.test.ts','tests/postgres-document-bindings.test.ts','tests/postgres-goal-contexts.test.ts','tests/postgres-model-context.test.ts']),
+  documents:Object.freeze(['tests/postgres-document-execution.test.ts','tests/postgres-document-policy.test.ts']),
+  transitions:Object.freeze(['tests/postgres-task-commands.test.ts','tests/postgres-task-intents.test.ts','tests/postgres-source-projection.test.ts','tests/postgres-worker-read-lease.test.ts','tests/postgres-worker-write-lease.test.ts']),
+});
+export const POSTGRES_EXECUTION_JOBS=Object.freeze(Object.keys(POSTGRES_EXECUTION_GROUPS).map(name=>'postgres-execution-cases ('+name+')'));
 export const POSTGRES_COORDINATOR_CASES=Object.freeze({
   protocol:Object.freeze(['the default Codex review','an unadapted synchronous model port','HTTP MCP and A2A reach']),
   revocation:Object.freeze(['parent, action role, source and model revocation']),
@@ -51,6 +58,13 @@ export function assertCoordinatorCases(needs,scope){
   return {required,cases:[...POSTGRES_COORDINATOR_JOBS]};
 }
 
+export function assertExecutionCases(needs,scope){
+  if(!needs||needs.scope?.result!=='success')throw Error('Execution checks require a successful test scope');
+  const required=postgresTestsRequired(scope),result=needs['postgres-execution-cases']?.result;
+  if(required&&result!=='success'||!required&&result!=='success'&&result!=='skipped')throw Error('Required execution groups are not successful: '+String(result));
+  return {required,groups:[...POSTGRES_EXECUTION_JOBS]};
+}
+
 export function coordinatorTestPattern(scenario){
   if(!Object.hasOwn(POSTGRES_COORDINATOR_CASES,scenario))throw Error('Unknown Coordinator case set');
   return '^(?:'+POSTGRES_COORDINATOR_CASES[scenario].map(name=>name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|')+')';
@@ -65,20 +79,22 @@ export function assertCoordinatorTap(scenario,lines){
 async function main(){
   const {values,positionals}=parseArgs({allowPositionals:true,options:{group:{type:'string'},case:{type:'string'}}}),command=positionals[0];
   if(command==='needed'){const required=postgresTestsRequired(process.env.PG_TEST_SHARDS);if(!process.env.GITHUB_OUTPUT)throw Error('CI output path is required');appendFileSync(process.env.GITHUB_OUTPUT,'required='+required+'\n');console.log(JSON.stringify({required,groups:POSTGRES_GROUP_JOBS}));return;}
+  if(command==='aggregate-execution'){console.log(JSON.stringify(assertExecutionCases(JSON.parse(process.env.PG_CI_NEEDS??'null'),process.env.PG_TEST_SHARDS)));return;}
   if(command==='aggregate-coordinator'){console.log(JSON.stringify(assertCoordinatorCases(JSON.parse(process.env.PG_CI_NEEDS??'null'),process.env.PG_TEST_SHARDS)));return;}
   if(command==='aggregate'){console.log(JSON.stringify(assertPostgresGroups(JSON.parse(process.env.PG_CI_NEEDS??'null'),process.env.PG_TEST_SHARDS)));return;}
   if(command!=='run'||!Object.hasOwn(POSTGRES_TEST_GROUPS,values.group??''))throw Error('Use needed, aggregate, or run --group <registered group>');
-  const files=POSTGRES_TEST_GROUPS[values.group],scenario=values.case;
-  if(values.group==='coordinator'&&!Object.hasOwn(POSTGRES_COORDINATOR_CASES,scenario??'')||values.group!=='coordinator'&&scenario)throw Error('Coordinator runs require exactly one registered case set');
+  const scenario=values.case,coordinator=values.group==='coordinator',execution=values.group==='execution';
+  if(coordinator&&!Object.hasOwn(POSTGRES_COORDINATOR_CASES,scenario??'')||execution&&!Object.hasOwn(POSTGRES_EXECUTION_GROUPS,scenario??'')||!coordinator&&!execution&&scenario)throw Error('Use exactly one registered case set for split suites');
+  const files=execution?POSTGRES_EXECUTION_GROUPS[scenario]:POSTGRES_TEST_GROUPS[values.group];
   // Prefix matching intentionally includes every nested revocation subtest.
-  const pattern=scenario?coordinatorTestPattern(scenario):undefined;
+  const pattern=coordinator?coordinatorTestPattern(scenario):undefined;
   const options=['--import','tsx','--test','--test-concurrency=1','--test-reporter=tap',...(pattern?['--test-name-pattern='+pattern]:[])];
   console.log(JSON.stringify({group:values.group,testFileConcurrency:1,files}));
   for(const name of ['EIGOS_TEST_PG_LOCAL','EIGOS_TEST_RELAY_POSTGRES','EIGOS_TEST_LARGE_ROW'])if(process.env[name]!=='1')throw Error('Required PostgreSQL test flag is missing: '+name);
   await new Promise((resolve,reject)=>{
     const child=spawn(process.execPath,[...options,...files],{stdio:['inherit','pipe','inherit']}),lines=[];let pending='',bytes=0;
-    child.stdout.on('data',chunk=>{process.stdout.write(chunk);if(scenario){bytes+=chunk.length;if(bytes>4194304){child.kill();reject(Error('Coordinator TAP exceeds its bounded validation log'));return;}pending+=chunk.toString();const complete=pending.split('\n');pending=complete.pop();lines.push(...complete);}});
-    child.once('error',reject);child.once('close',(code,signal)=>{if(code!==0||signal){reject(Error('PostgreSQL group failed: '+values.group+' ('+String(signal??code)+')'));return;}try{if(scenario)assertCoordinatorTap(scenario,[...lines,pending]);resolve();}catch(error){reject(error);}});
+    child.stdout.on('data',chunk=>{process.stdout.write(chunk);if(coordinator){bytes+=chunk.length;if(bytes>4194304){child.kill();reject(Error('Coordinator TAP exceeds its bounded validation log'));return;}pending+=chunk.toString();const complete=pending.split('\n');pending=complete.pop();lines.push(...complete);}});
+    child.once('error',reject);child.once('close',(code,signal)=>{if(code!==0||signal){reject(Error('PostgreSQL group failed: '+values.group+' ('+String(signal??code)+')'));return;}try{if(coordinator)assertCoordinatorTap(scenario,[...lines,pending]);resolve();}catch(error){reject(error);}});
   });
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(error=>{console.error(error.message);process.exitCode=1;});

@@ -12,7 +12,7 @@ export const RELEASE_TOOLS=Object.freeze({node:'22.22.3',codex:'0.164.0'});
 const sha=/^[a-f0-9]{64}$/,commit=/^(?!0{40}$)[a-f0-9]{40}$/;
 const image=/^[a-z0-9][a-z0-9.:-]*(?:\/[a-z0-9][a-z0-9._-]*)+@sha256:[a-f0-9]{64}$/;
 const roles=['gateway','relay','worker'];
-const requiredJobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
+const requiredJobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)','postgres-execution-cases (contracts)','postgres-execution-cases (planning)','postgres-execution-cases (documents)','postgres-execution-cases (transitions)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
 function fail(message){throw new Error(message);}
 export function canonical(value){const normalize=input=>Array.isArray(input)?input.map(normalize):input&&typeof input==='object'?Object.fromEntries(Object.entries(input).filter(([,v])=>v!==undefined).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([k,v])=>[k,normalize(v)])):input;return JSON.stringify(normalize(value));}
 export const artifactDigest=value=>createHash('sha256').update(canonical(value)).digest('hex');
