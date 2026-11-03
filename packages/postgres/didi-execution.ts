@@ -5,7 +5,7 @@ import type {WorkClaim} from '../core/store.js';
 import {executionBudgetStatus} from '../core/execution-budget.js';
 import {canRecoverReadOnly,resolveTaskRecovery} from '../core/task-recovery.js';
 import {sealComposedOutputsProgram} from '../core/composed-actions.js';
-import {validateDidiProgram,validateDidiPlanningProgram,resolveDidiCallProgram,didiCallContext,buildDidiReadResult,projectDidiProgram,didiOutputPorts,type DidiResolvedCall,type DidiReadInvocationContext} from '../capabilities/didi/program.js';
+import {validateDidiCallPlanningProgram,didiCallContext,buildDidiReadResult,projectDidiProgram,didiOutputPorts,type DidiResolvedCall,type DidiReadInvocationContext} from '../capabilities/didi/program.js';
 import type {DidiCallContext} from '../capabilities/didi/connector.js';
 import type {AgentActionResult} from '../core/agent-program.js';
 import type {ActionIntent,ExecutionAttempt} from '../ontology/actions.js';
@@ -63,8 +63,7 @@ export class PostgresDidiExecution {
     const attempt=await journal.startAttempt(claim,intentId,'dispatch',digest(selected.input));intent=await journal.intent(claim.owner,intentId);
     return withPostgresSourceProjection(client,claim,this.source(selected.entry,selected.step.action),async graph=>{
       const semantic=await this.context(client,claim,job,intent,graph,'dispatch',attempt),program=selected.entry.didi!.program,ctx=await runGraphProgramAsync(graph,postgresDidiContextProgram(semantic,program));
-      await runGraphProgramAsync(graph,validateDidiProgram(program,ctx,selected.step.action,selected.input));await runGraphProgramAsync(graph,validateDidiPlanningProgram(program,ctx,selected.step.action,selected.input,selected.plan.ontologyPlanning));
-      const call=await runGraphProgramAsync(graph,resolveDidiCallProgram(program,ctx,selected.step.action,selected.input)),action=didiActionContext(semantic,ctx,attempt);
+      const {call}=await runGraphProgramAsync(graph,validateDidiCallPlanningProgram(program,ctx,selected.step.action,selected.input,selected.plan.ontologyPlanning)),action=didiActionContext(semantic,ctx,attempt);
       const invocation:DidiReadInvocationContext={request:structuredClone(action.request),state:structuredClone(action.state),planId:action.planId,intentId:action.intentId,attemptId:action.attemptId,modelRunId:action.modelRunId};
       return {entry:selected.entry,attempt,input:selected.input,action:selected.step.action,call,wire:didiCallContext(program,invocation,selected.step.action,selected.input),invocation,requestDigest:digest(job.delegation!.request),releaseDigest:digest(job.delegation!.ontologyRelease)};
     });

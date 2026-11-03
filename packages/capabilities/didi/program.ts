@@ -97,6 +97,7 @@ export type DidiActionProgramContext=Omit<AgentActionContext,'graph'>&{graph:Pro
 export type DidiReadInvocationContext=Pick<DidiActionProgramContext,'request'|'state'|'planId'|'intentId'|'attemptId'|'modelRunId'>;
 export type DidiProgramSemantics=Pick<DidiAgentProgram,'ref'|'configurationDigest'|'actionIds'|'binding'|'schema'|'definition'|'permitted'|'evidenceKind'>;
 export interface DidiResolvedCall{tool:DidiTool;args:Record<string,unknown>;route?:{origin:DidiPlace;destination:DidiPlace}}
+export interface DidiValidatedCall{call:DidiResolvedCall;dependencies:{dependency:McpReadDependency;ref:ObjectRef;snapshot:RideEstimateObservation}[]}
 type DidiObservation={snapshot:RideEstimateObservation;status:ReturnType<OntologyObjectStore['evaluate']>};
 export function didiCallContext(program:DidiProgramSemantics,ctx:DidiReadInvocationContext,action:string,input:Record<string,unknown>):DidiCallContext{return {requestId:ctx.request.id,requestRevision:ctx.request.revision,actionInputDigest:digest(input),planId:ctx.planId,intentId:ctx.intentId,attemptId:ctx.attemptId,modelRunId:ctx.modelRunId??invalid('DiDi requires a recorded model decision'),programId:program.ref.id,programDigest:program.configurationDigest,action};}
 export function* initializeDidiProgram(program:DidiProgramSemantics,graph:ProjectionMetadata,owner:string,request:ServiceRequest,value:unknown,component?:{id:string;scopeKey:string}):GraphProgram<ReturnType<DidiAgentProgram['initialize']>>{
@@ -143,7 +144,7 @@ function* didiObservationBody(program:DidiProgramSemantics,ctx:DidiProgramContex
 
 export function* didiObservationProgram(program:DidiProgramSemantics,ctx:DidiProgramContext,ref:ObjectRef):GraphProgram<DidiObservation>{return yield* graphWithFunction(ctx.owner,didiReadDefinition.completion.evaluate,didiObservationBody(program,ctx,ref));}
 
-function* selectDidiPlaceProgram(program:DidiProgramSemantics,ctx:DidiProgramContext,ref:ObjectRef,id:string,dependency:McpReadDependency):GraphProgram<DidiPlace>{
+function* selectDidiPlaceProgram(program:DidiProgramSemantics,ctx:DidiProgramContext,ref:ObjectRef,id:string,dependency:McpReadDependency):GraphProgram<{place:DidiPlace;snapshot:RideEstimateObservation}>{
     const role = z.enum(['origin', 'destination']).parse(dependency.role);
     const scope = (yield* assertDidiContextProgram(program,ctx)), s = (yield* didiObservationProgram(program,ctx,ref)).snapshot;
     if (ref.type !== dependency.objectType || dependency.action && s.action !== dependency.action || scope.mode !== 'estimate' || s.data.kind !== 'places' || s.actionInput.role !== role) return invalid('Wrong place source for the route role');
@@ -155,14 +156,15 @@ function* selectDidiPlaceProgram(program:DidiProgramSemantics,ctx:DidiProgramCon
     const providedMatch = provided && context.city && s.data.places.filter(p => locationMatchesSource(provided, context.city!, p)).length === 1;
     const explicitlyAddressed = place.addressAll.length > place.name.length && s.data.places.filter(p => p.addressAll === place.addressAll).length === 1 && ctx.request.messages.some(m => m.text.includes(place.addressAll));
     if (s.data.places.length !== 1 && !(exact.length === 1 && exact[0]!.id === id) && !explicitlyAddressed && !providedMatch) invalid('Ambiguous place needs an explicit full-address choice; the first candidate is not a default');
-    return place;
+    return {place,snapshot:s};
 }
 
-export function* resolveDidiCallProgram(program:DidiProgramSemantics,ctx:DidiProgramContext,action:string,value:Record<string,unknown>):GraphProgram<DidiResolvedCall>{
+function* resolveDidiCallDetailsProgram(program:DidiProgramSemantics,ctx:DidiProgramContext,action:string,value:Record<string,unknown>):GraphProgram<DidiValidatedCall>{
     const scope = (yield* assertDidiContextProgram(program,ctx)), binding = program.definition(ctx.graph, action).read!.mcp!;
-    const selected=new Map<string,DidiPlace>();
+    const selected=new Map<string,DidiPlace>(),dependencies:DidiValidatedCall['dependencies']=[];
     for(const dependency of binding.requires){if(dependency.optional&&value[dependency.observationInput]===undefined)continue;
-      selected.set(digest(dependency),yield* selectDidiPlaceProgram(program,ctx,objectRefSchema.parse(value[dependency.observationInput]),z.string().parse(value[dependency.selectionInput??invalid('Missing source selection input')]),dependency));}
+      const ref=objectRefSchema.parse(value[dependency.observationInput]),checked=yield* selectDidiPlaceProgram(program,ctx,ref,z.string().parse(value[dependency.selectionInput??invalid('Missing source selection input')]),dependency);
+      selected.set(digest(dependency),checked.place);dependencies.push({dependency,ref,snapshot:checked.snapshot});}
     const call=resolveOntologyMcpRead(binding,value,scope,dependency=>selected.get(digest(dependency))??invalid('Missing independently checked source selection'));
     if (call.server !== 'didi') invalid('Ontology MCP server is outside this private account binding');
     const tool = z.enum(DIDI_TOOLS).parse(call.tool), args = didiToolInputs[tool].parse(call.args);
@@ -171,13 +173,29 @@ export function* resolveDidiCallProgram(program:DidiProgramSemantics,ctx:DidiPro
     if ('from_lng' in args) {
       if (!route || !equal(args, { from_lng: String(route.origin.lng), from_lat: String(route.origin.lat), from_name: route.origin.name, to_lng: String(route.destination.lng), to_lat: String(route.destination.lat), to_name: route.destination.name })) invalid('MCP wire coordinates differ from the selected source route');
     }
-    return { tool, args, route };
+    return {call:{ tool, args, route },dependencies};
 }
+export function* resolveDidiCallProgram(program:DidiProgramSemantics,ctx:DidiProgramContext,action:string,value:Record<string,unknown>):GraphProgram<DidiResolvedCall>{return (yield* resolveDidiCallDetailsProgram(program,ctx,action,value)).call;}
 
-export function* validateDidiProgram(program:DidiProgramSemantics,ctx:DidiProgramContext,action:string,value:Record<string,unknown>):GraphProgram<void>{
+export function* validateDidiCallProgram(program:DidiProgramSemantics,ctx:DidiProgramContext,action:string,value:Record<string,unknown>):GraphProgram<DidiValidatedCall>{
     const parsed = program.schema(action).parse(value); program.definition(ctx.graph, action);
     if (!equal(parsed, value) || !equal(parsed.scope, ctx.state.scope)) invalid('DiDi action escaped its canonical task scope');
-    (yield* resolveDidiCallProgram(program,ctx,action,value));
+    return yield* resolveDidiCallDetailsProgram(program,ctx,action,value);
+}
+export function* validateDidiProgram(program:DidiProgramSemantics,ctx:DidiProgramContext,action:string,value:Record<string,unknown>):GraphProgram<void>{yield* validateDidiCallProgram(program,ctx,action,value);}
+
+/** One validation invocation only. Selection already checked each accepted
+ * source observation; planning still performs its own fresh evaluation and
+ * exact model-read receipt comparison. No permission/observation is cached
+ * across invocations, callbacks, transactions or the mapper boundary. */
+export function* validateDidiCallPlanningProgram(program:DidiProgramSemantics,ctx:DidiProgramContext,action:string,value:Record<string,unknown>,reads:PlanningSnapshot):GraphProgram<DidiValidatedCall>{
+    const checked=yield* validateDidiCallProgram(program,ctx,action,value);
+    for(const {dependency,ref} of checked.dependencies){
+      const args={function:dependency.evaluate,object:ref},status=yield* graphEvaluate(ctx.owner,args);
+      if(dependency.evidence==='accepted'){if(status.status!=='known')invalid('Declared source dependency is unknown');}
+      else if(status.status!=='known'||!reads.objects.some(o=>equal(o.ref,ref))||!reads.reads.some(r=>r.tool==='evaluate_ontology'&&r.status==='ok'&&r.inputDigest===digest(args)&&r.outputDigest===digest(status)))invalid('The model must read and evaluate the exact current DiDi observation');
+    }
+    return checked;
 }
 
 export function* readEvaluatedDidiProgram(program:DidiProgramSemantics,ctx:DidiProgramContext,ref:ObjectRef,reads:PlanningSnapshot,evaluate=didiReadDefinition.completion.evaluate):GraphProgram<void>{
@@ -204,8 +222,8 @@ export function buildDidiReadResult(program:DidiProgramSemantics,ctx:DidiReadInv
 }
 
 export function* verifyDidiResultProgram(program:DidiProgramSemantics,ctx:DidiActionProgramContext,action:string,input:Record<string,unknown>,result:AgentActionResult):GraphProgram<RideEstimateObservation>{
-    yield* validateDidiProgram(program,ctx,action,input); const s = checkedRideEstimate(result.value), call = (yield* resolveDidiCallProgram(program,ctx,action,input));
-    if (s.requestId !== ctx.request.id || s.requestRevision !== ctx.request.revision || s.configurationDigest !== program.configurationDigest || s.action !== action || !equal(s.actionInput, input) || !equal(s.scope, ctx.state.scope) || !equal(s.route, call.route) || s.receipt.inputDigest !== digest(call.args) || s.receipt.bindingId !== program.binding.bindingId || s.receipt.environment !== program.binding.environment || s.receipt.endpoint !== didiEndpoint(program.binding.environment) || s.evidenceKind !== program.evidenceKind || s.planId !== ctx.planId || s.intentId !== ctx.intentId || s.attemptId !== ctx.attemptId || s.modelRunId !== ctx.modelRunId || !equal(result.evidenceRefs, [s.id]) || Date.parse(s.expiresAt) <= ctx.graph.now()) invalid('DiDi result does not bind this accepted action attempt');
+    const {call,dependencies}=yield* validateDidiCallProgram(program,ctx,action,input),s=checkedRideEstimate(result.value);
+    if (s.requestId !== ctx.request.id || s.requestRevision !== ctx.request.revision || s.configurationDigest !== program.configurationDigest || s.action !== action || !equal(s.actionInput, input) || !equal(s.scope, ctx.state.scope) || !equal(s.route, call.route) || s.receipt.inputDigest !== digest(call.args) || s.receipt.bindingId !== program.binding.bindingId || s.receipt.environment !== program.binding.environment || s.receipt.endpoint !== didiEndpoint(program.binding.environment) || s.evidenceKind !== program.evidenceKind || s.planId !== ctx.planId || s.intentId !== ctx.intentId || s.attemptId !== ctx.attemptId || s.modelRunId !== ctx.modelRunId || !equal(result.evidenceRefs, [s.id]) || Date.parse(s.expiresAt) <= ctx.graph.now() || dependencies.some(({snapshot})=>Date.parse(snapshot.expiresAt)<=ctx.graph.now())) invalid('DiDi result does not bind this accepted action attempt');
     return s;
 }
 export function* projectDidiProgram(program:DidiProgramSemantics,ctx:DidiActionProgramContext,action:string,input:Record<string,unknown>,result:AgentActionResult):GraphProgram<ObjectRef>{

@@ -12,6 +12,7 @@ import {templatePlanning} from '../packages/ontology/planning-contract.js';
 import {PostgresTaskBindings} from '../packages/postgres/task-bindings.js';
 import {PostgresWorkerStore} from '../packages/postgres/worker-store.js';
 import {PostgresTaskReadService} from '../packages/postgres/task-read-service.js';
+import {SecurityError,SecurityLineageLimitError} from '../packages/security/errors.js';
 import {withPostgresSourceProjection,type PostgresSourceProjectionOptions,type PostgresSourceProjectionGraph} from '../packages/postgres/source-projection.js';
 import {securityFixture} from './fixtures/security.js';
 import {importPostgresFixture} from './fixtures/postgres-business.js';
@@ -43,6 +44,60 @@ async function fixture(){
     return {f,t,q,claim,worker,program,grant,principal,installation,bindingId,options,run,initialize,counts,pauseHeartbeat:async()=>{if(timer)clearInterval(timer);if(heartbeat)await heartbeat;},close:async()=>{if(timer)clearInterval(timer);if(heartbeat)await heartbeat;await t.close();f.close();assert.equal(failure,undefined);}};
   }catch(error){if(timer)clearInterval(timer);if(heartbeat)await heartbeat;if(target)await target.close();f.close();throw error;}
 }
+
+async function seedSharedSourceEdge(x:Awaited<ReturnType<typeof fixture>>){
+  const place={type:'Place',id:randomUUID()},receipt={type:'SourceReceipt',id:randomUUID()},at=new Date().toISOString(),properties={placeId:place.id,displayTitle:'Synthetic shared place',name:'Shared independently authorized endpoint'},edge={type:'PlaceEvidence',from:place,to:receipt},source={kind:'synthetic' as const,id:'synthetic-shared-link',observedAt:at};
+  await x.run(graph=>graph.ingest(x.f.owner,{objects:[{ref:place,properties},{ref:receipt,properties:{receiptId:receipt.id,displayTitle:'Synthetic shared receipt',sourceIdentity:'synthetic-source',sourceEventId:receipt.id,observedAt:at,evidenceLevel:'synthetic',scope:'public_locations',contentDigest:digest(properties),subjects:[{object:place,digest:digest(properties),linksDigest:digest([])}],safeSummary:'Synthetic link validation fixture'}}],links:[edge]},source));
+  return {place,receipt,edge,source};
+}
+
+test('source link validation reads shared ancestry once instead of once per duplicate edge',local,async t=>{
+  const x=await fixture();try{
+    const seeded=await seedSharedSourceEdge(x),query=x.t.client.query;let bindingReads=0;
+    const spy=t.mock.method(x.t.client,'query',function(this:typeof x.t.client,...args:unknown[]){
+      const text=typeof args[0]==='string'?args[0]:undefined;if(text?.includes('.security_bindings')&&/^\s*(SELECT|WITH)\b/.test(text))bindingReads++;return Reflect.apply(query,this,args);
+    });
+    try{
+      await x.run(graph=>graph.ingest(x.f.owner,{objects:[],links:[seeded.edge]},seeded.source));const single=bindingReads;bindingReads=0;
+      await x.run(graph=>graph.ingest(x.f.owner,{objects:[],links:Array.from({length:32},()=>structuredClone(seeded.edge))},seeded.source));assert(single>0);assert(bindingReads<=single+4,`Shared endpoint binding reads grew from ${single} to ${bindingReads}`);
+    }finally{spy.mock.restore();}
+    assert.equal(Number((await x.t.client.query(`SELECT count(*) AS n FROM ${x.q}.ontology_links WHERE type=$1 AND from_id=$2`,[seeded.edge.type,seeded.place.id])).rows[0].n),1);
+  }finally{await x.close();}
+});
+
+test('a source frame rechecks tightened current labels after its own writes and atomically rolls back both ingests',local,async()=>{
+  const x=await fixture();try{
+    const seeded=await seedSharedSourceEdge(x),before=await x.counts(),first={type:'Place',id:randomUUID()},second={type:'Place',id:randomUUID()};
+    await assert.rejects(x.t.run(client=>withPostgresSourceProjection(client,x.claim,x.options,async graph=>{
+      const batch=(ref:typeof first)=>({objects:[{ref,properties:{placeId:ref.id,displayTitle:'Synthetic later endpoint',name:'Must not survive failed authorization'}}],links:[{type:'PlaceEvidence',from:ref,to:seeded.receipt}]});
+      await graph.ingest(x.f.owner,batch(first),seeded.source);
+      await client.query(`INSERT INTO ${x.q}.security_labels(owner,type,object_id,field,body) VALUES($1,'SourceReceipt',$2,'*',$3) ON CONFLICT(owner,type,object_id,field) DO UPDATE SET body=excluded.body`,[x.f.owner,seeded.receipt.id,JSON.stringify({classification:'internal',requiredMarkings:[],channels:['registered_model']})]);
+      await graph.ingest(x.f.owner,batch(second),seeded.source);
+    })),/AUTHORIZATION_REQUIRED|OUTPUT_NOT_ALLOWED|INSUFFICIENT_ACCESS/);
+    assert.deepEqual(await x.counts(),before);assert.equal(Number((await x.t.client.query(`SELECT count(*) AS n FROM ${x.q}.security_labels WHERE object_id=$1`,[seeded.receipt.id])).rows[0].n),0);assert.equal((await x.run(graph=>graph.read(x.f.owner,seeded.receipt))).ref.id,seeded.receipt.id);
+  }finally{await x.close();}
+});
+
+test('only a readonly shared-lineage limit falls back to fully authenticating every original edge',local,async t=>{
+  for(const mode of ['limit','denied'] as const)await t.test(mode,async context=>{
+    const x=await fixture();try{
+      const before=await x.counts(),query=x.t.client.query;let origins=0,injected=false,roleReadsAfterFault=0;
+      const spy=context.mock.method(x.t.client,'query',function(this:typeof x.t.client,...args:unknown[]){
+        const text=typeof args[0]==='string'?args[0]:'';if(text.includes('INSERT INTO')&&text.includes('.security_object_origins'))origins++;
+        if(/^\s*SELECT\b/.test(text)&&text.includes('.security_roles')){
+          if(injected)roleReadsAfterFault++;
+          if(origins===2&&!injected){injected=true;throw mode==='limit'?new SecurityLineageLimitError():new SecurityError('AUTHORIZATION_REQUIRED');}
+        }
+        return Reflect.apply(query,this,args);
+      });
+      try{
+        if(mode==='limit'){const seeded=await seedSharedSourceEdge(x);assert(roleReadsAfterFault>0,'Fallback must perform real current role checks');assert.equal((await x.run(graph=>graph.read(x.f.owner,seeded.place))).ref.id,seeded.place.id);}
+        else{await assert.rejects(seedSharedSourceEdge(x),/AUTHORIZATION_REQUIRED/);assert.equal(roleReadsAfterFault,0,'A role denial must not be retried through fallback');assert.deepEqual(await x.counts(),before);}
+        assert(injected,'The fault must occur in the readonly link pass after all origins are written');
+      }finally{spy.mock.restore();}
+    }finally{await x.close();}
+  });
+});
 
 test('checked PostgreSQL Document initialization and projection create immediately readable source bindings',local,async()=>{
   const x=await fixture();try{

@@ -25,7 +25,7 @@ import type {ExecutionAttempt,ActionResult} from '../ontology/actions.js';
 import {isPersonalAction} from '../ontology/personal-context.js';
 import {taskDataGrantSchema,securityEnvelopeSchema} from '../security/contracts.js';
 import {storedSourceSchema,type ObservationSource} from '../security/source-policy.js';
-import {SecurityError} from '../security/errors.js';
+import {SecurityError,SecurityLineageLimitError} from '../security/errors.js';
 import {combineEnvelopes,type SecurityEnvelope} from '../security/envelope.js';
 import {submissionDigest} from '../security/submission-digest.js';
 import {postgresBusinessSchema,postgresBusinessToken,postgresConstrainReadDeadline,postgresRequireLeaseAtCommit} from './runtime-transaction.js';
@@ -222,16 +222,42 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
       }
       // Bind all new endpoints before checking links, exactly as the source
       // mapper does. A failed endpoint or role rolls back the entire batch.
-      for(const edge of batch.links){await permission(edge.type);await requireObject(edge.from);await requireObject(edge.to);}
-      for(const edge of batch.removeLinks){
-        await permission(edge.type);await requireObject(edge.from);
-        const replacement=metadata.model.hasType('ObservedFact')&&metadata.model.linkWritePolicy(edge.type)==='source'&&initial.selected.outputTypes.includes(edge.to.type)
-          &&batch.objects.some(object=>key(object.ref)===key(edge.from))&&batch.links.some(link=>link.type===edge.type&&key(link.from)===key(edge.from)&&batch.objects.some(object=>object.ref.type===edge.to.type&&key(object.ref)===key(link.to)));
-        let sameSource=false;
-        if(replacement){const previous=await client.query(`SELECT CASE WHEN octet_length(origin.body)<=8388608 THEN origin.body END AS body FROM ${q}.security_object_origins origin JOIN ${q}.ontology_objects object ON object.owner=origin.owner AND object.type=origin.type AND object.id=origin.object_id AND object.revision=origin.object_revision WHERE object.owner=$1 AND object.type=$2 AND object.id=$3 LIMIT 2`,[owner,edge.to.type,edge.to.id]);
-          if(previous.rowCount){if(previous.rowCount!==1||typeof previous.rows[0].body!=='string')throw new SecurityError('POLICY_CHANGED');const value=JSON.parse(previous.rows[0].body);
-            sameSource=value.programId===origin.programId&&(value.sourceBindingId===origin.sourceBindingId&&value.programDigest===origin.programDigest||initial.selected.readbackVersions?.some(version=>version.sourceBindingId===value.sourceBindingId&&version.programDigest===value.programDigest)===true);}}
-        if(!sameSource)await requireObject(edge.to);
+      const validateLinks=async(requireLink:(type:string)=>Promise<void>,requireEndpoint:(ref:ObjectRef)=>Promise<void>)=>{
+        for(const edge of batch.links){await requireLink(edge.type);await requireEndpoint(edge.from);await requireEndpoint(edge.to);}
+        for(const edge of batch.removeLinks){
+          await requireLink(edge.type);await requireEndpoint(edge.from);
+          const replacement=metadata.model.hasType('ObservedFact')&&metadata.model.linkWritePolicy(edge.type)==='source'&&initial.selected.outputTypes.includes(edge.to.type)
+            &&batch.objects.some(object=>key(object.ref)===key(edge.from))&&batch.links.some(link=>link.type===edge.type&&key(link.from)===key(edge.from)&&batch.objects.some(object=>object.ref.type===edge.to.type&&key(object.ref)===key(link.to)));
+          let sameSource=false;
+          if(replacement){const previous=await client.query(`SELECT CASE WHEN octet_length(origin.body)<=8388608 THEN origin.body END AS body FROM ${q}.security_object_origins origin JOIN ${q}.ontology_objects object ON object.owner=origin.owner AND object.type=origin.type AND object.id=origin.object_id AND object.revision=origin.object_revision WHERE object.owner=$1 AND object.type=$2 AND object.id=$3 LIMIT 2`,[owner,edge.to.type,edge.to.id]);
+            if(previous.rowCount){if(previous.rowCount!==1||typeof previous.rows[0].body!=='string')throw new SecurityError('POLICY_CHANGED');const value=JSON.parse(previous.rows[0].body);
+              sameSource=value.programId===origin.programId&&(value.sourceBindingId===origin.sourceBindingId&&value.programDigest===origin.programDigest||initial.selected.readbackVersions?.some(version=>version.sourceBindingId===value.sourceBindingId&&version.programDigest===value.programDigest)===true);}}
+          if(!sameSource)await requireEndpoint(edge.to);
+        }
+      };
+      if(batch.links.length||batch.removeLinks.length){
+        try{
+          // All graph/binding/origin writes have finished. This entire pass is
+          // read-only, so one actual authorization can validate shared lineage
+          // once. Its caches close before current() or another graph command.
+          await authorize(client,claim,options.policyDigest,async(auth,_admission,principal)=>{
+            const linkTypes=new Set<string>(),endpoints=new Set<string>();
+            await validateLinks(async type=>{
+              if(linkTypes.has(type))return;
+              const until=await postgresTaskResourceViewValidUntil(client,principal,request.id,options.policyDigest,'linkType',type,options.builder);
+              if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');postgresConstrainReadDeadline(client,until);linkTypes.add(type);
+            },async ref=>{
+              const id=key(ref);if(endpoints.has(id))return;
+              if(!await auth.bindingMetadata(ref))throw new SecurityError('AUTHORIZATION_REQUIRED');endpoints.add(id);
+            });
+          },options.builder,options.modelChannel,options.inspectClaim);
+        }catch(error){
+          // A union of individually bounded ancestry can exceed one scope's
+          // unchanged limit. The failed read-only scope is already closed;
+          // replay only its reads with the original per-edge boundaries.
+          if(!(error instanceof SecurityLineageLimitError))throw error;
+          await validateLinks(permission,requireObject);
+        }
       }
       await current();await client.query(`RELEASE SAVEPOINT ${name}`);
     }catch(error){await client.query(`ROLLBACK TO SAVEPOINT ${name}`);await client.query(`RELEASE SAVEPOINT ${name}`);throw error;}

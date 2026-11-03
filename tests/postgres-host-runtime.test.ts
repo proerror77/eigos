@@ -101,7 +101,7 @@ async function fixture(){
   try{
     const sqlite=new DatabaseSync(source.business,{readOnly:true});let authority;
     try{const row=sqlite.prepare('SELECT body FROM runtime_authority WHERE slot=1').get();authority=runtimeAuthoritySchema.parse(JSON.parse(String(row?.body)));}finally{sqlite.close();}
-    await admin.connect();connected=true;endpoint=await postgresTlsFixture();
+    await admin.connect();connected=true;endpoint=await postgresTlsFixture(connection.port);
     const caPath=join(source.directory,'synthetic-ca.pem');writeFileSync(caPath,endpoint.ca,{mode:0o600});
     const binding:PostgresBinding={...source.binding,connection:{...source.binding.connection,host:endpoint.host,port:endpoint.port,tls:{ca:{path:caPath,sha256:createHash('sha256').update(endpoint.ca).digest('hex')}}}};
     await admin.query(`CREATE ROLE "${source.role}" LOGIN PASSWORD '${password}' NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION`);

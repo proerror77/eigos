@@ -3773,7 +3773,7 @@
     {
       "id": "s5-packages-capabilities-didi-program",
       "file": "packages/capabilities/didi/program.ts",
-      "sourceDigest": "ae75f934f200e3ba8f5f4b1a5e21ec89ec304bdbc581f9253b36152d1a1692ad",
+      "sourceDigest": "fa0ab8213faf573772a86f12331682bc6bb1e4cf23082cf0c0d8569da7888ba1",
       "channels": [
         "runtime"
       ],
@@ -6587,7 +6587,7 @@
     {
       "id": "postgres-source-projection",
       "file": "packages/postgres/source-projection.ts",
-      "sourceDigest": "850c55f936559f498e81c90dd6da16bed97feaf4e83a8799e664ecb31ca98674",
+      "sourceDigest": "ae5ccf2fdf778827267ae0687f33f2146eea9424176f3c6c1b55cbf11d8aedd5",
       "channels": [
         "internal"
       ],
@@ -7375,7 +7375,7 @@
     {
       "id": "postgres-didi-policy",
       "file": "packages/postgres/didi-policy.ts",
-      "sourceDigest": "7e0b0c4b87225a9eb7bb48009e5d6e6d818c7080db225f0765a7863882482caa",
+      "sourceDigest": "30c95ac1209561908c27183eb00560b19d4a17993ad90210d54592faa227fd1a",
       "channels": [
         "internal",
         "provider"
@@ -7400,7 +7400,7 @@
     {
       "id": "postgres-didi-execution",
       "file": "packages/postgres/didi-execution.ts",
-      "sourceDigest": "b9bc8084a04b25b45eefdfe0f5a8cab44e6df8d69661de7aec11962652f33223",
+      "sourceDigest": "c2a2959a4ba401a388363f8586fd14af5070e332254871b4a199ac8a6a354bf3",
       "channels": [
         "internal",
         "provider"

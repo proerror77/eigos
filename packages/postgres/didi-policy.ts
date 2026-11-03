@@ -5,7 +5,7 @@ import {DomainError} from '../core/domain.js';
 import {componentContext,componentScopeDigestProgram} from '../core/composed-actions.js';
 import type {DidiBinding} from '../capabilities/didi/contracts.js';
 import type {DidiAgentProgram,DidiProgramContext,DidiActionProgramContext} from '../capabilities/didi/program.js';
-import {validateDidiProgram,validateDidiPlanningProgram,verifyDidiResultProgram,didiObservationProgram,didiCallContext,resolveDidiCallProgram} from '../capabilities/didi/program.js';
+import {validateDidiCallPlanningProgram,verifyDidiResultProgram,didiCallContext,resolveDidiCallProgram} from '../capabilities/didi/program.js';
 import {checkedRideEstimate} from '../ontology/ride-estimate-projection.js';
 import {readOntologyRequestProgram} from '../ontology/execution-projection.js';
 import {objectRefSchema} from '../ontology/model.js';
@@ -69,9 +69,8 @@ export function createPostgresDidiPolicy(options:PostgresDidiPolicyOptions):Post
   const {program,account,transport}=options;
   return {program,assertConfigured:(client,claim,job)=>account.assert(client,claim,job,options.policyDigest),verifySourceReceipt:(client,claim,context,attempt,response,result)=>verifyPostgresDidiSourceReceipt(client,claim,context,attempt,response,result,transport),
     validate:function*(context){
-      const ctx=yield* postgresDidiContextProgram(context,program);yield* validateDidiProgram(program,ctx,context.step.action,context.input);
-      yield* validateDidiPlanningProgram(program,ctx,context.step.action,context.input,context.plan.ontologyPlanning);
-      let validUntil=context.validUntil;for(const dependency of program.definition(context.graph,context.step.action).read!.mcp!.requires){if(dependency.optional&&context.input[dependency.observationInput]===undefined)continue;const observation=yield* didiObservationProgram(program,ctx,objectRefSchema.parse(context.input[dependency.observationInput]));validUntil=Math.min(validUntil,Date.parse(observation.snapshot.expiresAt));}
+      const ctx=yield* postgresDidiContextProgram(context,program),checked=yield* validateDidiCallPlanningProgram(program,ctx,context.step.action,context.input,context.plan.ontologyPlanning);
+      let validUntil=context.validUntil;for(const {snapshot} of checked.dependencies)validUntil=Math.min(validUntil,Date.parse(snapshot.expiresAt));
       if(validUntil<=context.graph.now())fail('DiDi dependency expired');return {privateDigest:digest({}),validUntil};
     },
     verifyObservation:function*(context,attempt,response){

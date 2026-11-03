@@ -29,8 +29,9 @@ function certificate(){
 /** A PostgreSQL SSLRequest terminator that forwards the decrypted protocol
  * bytes unchanged to LOCAL PostgreSQL. It neither synthesizes PostgreSQL
  * replies nor changes the real backend authentication or transaction result.
- * The optional port is also used by the pure transport echo test. */
-export async function postgresTlsFixture(targetPort=52744){
+ * Require the caller's actual backend port; a fallback can hide a mismatch
+ * between the administrator connection and the TLS-forwarded runtime login. */
+export async function postgresTlsFixture(targetPort:number){
   if(!Number.isInteger(targetPort)||targetPort<1||targetPort>65535)throw new Error('An explicit local target port is required');
   const {ca,key}=certificate(),secureContext=tls.createSecureContext({key,cert:ca});
   const sockets=new Set<net.Socket>(),fronts=new Set<net.Socket>(),errors:Error[]=[];
