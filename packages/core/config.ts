@@ -53,6 +53,10 @@ const schema = z.object({
   EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES: publicGeoQueries.optional(),
   EIGOS_SHOPIFY_CATALOG_MERCHANTS: merchantList('EIGOS_SHOPIFY_CATALOG_MERCHANTS').optional(),
   EIGOS_SHOPIFY_AUDIT_DIR: z.string().optional(),
+  EIGOS_ALIPAY_CONNECTION_FILE: z.string().optional(),
+  EIGOS_WECHATPAY_CONNECTION_FILE: z.string().optional(),
+  EIGOS_UNIONPAY_CONNECTION_FILE: z.string().optional(),
+  EIGOS_TAOBAO_CONNECTION_FILE: z.string().optional(),
   EIGOS_ROLLINGGO_KEY_FILE: z.string().optional(),
   EIGOS_ROLLINGGO_KEY_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   EIGOS_DIDI_KEY_FILE: z.string().optional(),
@@ -108,7 +112,13 @@ const schema = z.object({
   MEMBERSHIP_DATABASE_PATH: z.string().optional(),
   EIGOS_MEMBERSHIP_APPROVAL: z.enum(['self-service', 'manual', 'invite-only']).default('self-service'),
   ALLOWED_ORIGINS: z.string().default(''),
-  EIGOS_EXECUTOR: z.enum(['disabled', 'codex']).default('disabled'),
+  EIGOS_EXECUTOR: z.enum(['disabled', 'codex', 'harness']).default('disabled'),
+  EIGOS_HARNESS_BIN: z.string().min(1).optional(),
+  EIGOS_HARNESS_CREDENTIAL_FILE: z.string().min(1).optional(),
+  EIGOS_HARNESS_CREDENTIAL_KIND: z.enum(['codex-oauth', 'api-key']).optional(),
+  EIGOS_HARNESS_MODEL: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/).optional(),
+  EIGOS_HARNESS_REASONING_EFFORT: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
+  EIGOS_HARNESS_MAX_TOKENS: z.coerce.number().int().min(128).max(32768).optional(),
   EIGOS_MESSAGING_ENABLED: z.enum(['false', 'true']).default('false'),
   EIGOS_MESSAGING_NODE_DIR: z.string().optional(),
   EIGOS_CODEX_BIN: z.string().default('codex'),
@@ -130,6 +140,8 @@ export function allowsBoundPersonalSource(config: Config, nodeEnv: string | unde
 function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config {
   const parsed = schema.parse(env);
   const c: Config = parsed.EIGOS_AUTHORITY_FILE ? { ...parsed, authority: readRuntimeAuthority(parsed.EIGOS_AUTHORITY_FILE) } : parsed;
+  if (role === 'worker' && c.EIGOS_EXECUTOR === 'harness' && (!c.EIGOS_HARNESS_CREDENTIAL_FILE || !isAbsolute(c.EIGOS_HARNESS_CREDENTIAL_FILE)))
+    throw new Error('Harness Worker requires an absolute private credential file');
   if (c.EIGOS_TASK_RELAY_FILE && (!c.authority || !isAbsolute(c.EIGOS_TASK_RELAY_FILE))) throw new Error('Task Relay requires the existing primary authority and an absolute private configuration file');
   if (c.EIGOS_MESSAGING_ENABLED === 'true' && (!c.authority || !c.EIGOS_TASK_RELAY_FILE || !c.EIGOS_MESSAGING_NODE_DIR || !isAbsolute(c.EIGOS_MESSAGING_NODE_DIR)))
     throw new Error('Messaging requires the existing primary Relay and an absolute private node directory');
@@ -186,7 +198,7 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
     if (c.EIGOS_AUTH_MODE !== 'jwt' || publicUrl.protocol !== 'https:' || c.OAUTH_AUDIENCE !== publicUrl.href
       || c.EIGOS_MEMBERSHIP_APPROVAL !== 'invite-only' || !c.OIDC_CLIENT_ID || !c.OIDC_AGENT_CLIENT_ID || !c.OIDC_MCP_CLIENT_ID
       || !isAbsolute(c.DATABASE_PATH) || !c.MEMBERSHIP_DATABASE_PATH || !isAbsolute(c.MEMBERSHIP_DATABASE_PATH)
-      || c.EIGOS_EXECUTOR !== 'codex') throw new Error('Invite beta requires HTTPS/JWT, its exact audience, invite-only membership, registered clients, persistent absolute database paths and the document executor');
+      || c.EIGOS_EXECUTOR === 'disabled') throw new Error('Invite beta requires HTTPS/JWT, its exact audience, invite-only membership, registered clients, persistent absolute database paths and the document executor');
     if (c.EIGOS_DEV_TOKEN || c.EIGOS_NETWORK_ENABLED === 'true' || c.EIGOS_PAOTUI_SKILL_DIR || c.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE
       || c.EIGOS_MEMBER_SOURCE_KEY_FILE || c.EIGOS_MEMBER_SOURCE_TAILNET_ORIGIN || c.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES?.length
       || c.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length || c.EIGOS_SHOPIFY_AUDIT_DIR || c.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length || c.EIGOS_SHOPIFY_CHECKOUT_AUDIT_DIR || c.EIGOS_CSV_INPUT_DIR || c.EIGOS_CSV_PILOT === 'true'
@@ -256,6 +268,9 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
 
 /** Both owned-source modes remain explicit, non-production and loopback-only. */
 export function assertPersonalSourceConfig(c: Config, nodeEnv = process.env.NODE_ENV) {
+  const commerceFiles = [c.EIGOS_ALIPAY_CONNECTION_FILE, c.EIGOS_WECHATPAY_CONNECTION_FILE, c.EIGOS_UNIONPAY_CONNECTION_FILE, c.EIGOS_TAOBAO_CONNECTION_FILE].filter((value): value is string => !!value);
+  if (commerceFiles.length && (!c.EIGOS_PERSONAL_SOURCE_OWNER || commerceFiles.some(file => !isAbsolute(file)) || c.EIGOS_INVITE_BETA === 'true' || !allowsBoundPersonalSource(c, nodeEnv)))
+    throw new Error('Payment/commerce reads require absolute private connection files, an explicit source owner and the bound Foundation authority');
   if (c.EIGOS_PERSONAL_SOURCE_OWNER && (c.EIGOS_MEMBER_SOURCE_KEY_FILE || c.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE || !c.authority && c.EIGOS_DIDI_MEMBER_CONNECTION_FILE)) throw new Error('Personal owner and member-managed sources require separate explicit bindings');
   const privateOrigin = c.EIGOS_MEMBER_SOURCE_TAILNET_ORIGIN;
   if (privateOrigin && (!c.EIGOS_MEMBER_SOURCE_KEY_FILE || new URL(privateOrigin).origin !== privateOrigin || new URL(privateOrigin).protocol !== 'https:' || !new URL(privateOrigin).hostname.endsWith('.ts.net') || privateOrigin !== c.PUBLIC_URL)) throw new Error('Member source private origin must exactly match an explicit HTTPS Tailscale origin');

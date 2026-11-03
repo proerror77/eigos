@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { SCOPES } from '../core/domain.js';
 import { objectRefSchema, nameSchema } from '../ontology/model.js';
+import { consentExpirySchema } from './consent-lifetime.js';
 
 // Versioned data contracts. Parsing is not authorization; S1 resolves signed
 // identity and current grants before producing a server-side AccessContext.
@@ -57,6 +58,7 @@ export const securityDefaults = {
   automaticLegacyGrant: false, automaticMemberResourceRole: 'none', unregisteredModelChannel: 'deny',
   gatewayOperationScopes: SCOPES,
   agentGrantMaxSeconds: 30 * 86400, taskGrantMaxSeconds: 86400,
+  consentLifetime: 'until_revoked',
   authorityProjectionLeaseSeconds: 60, authorityProjectionRefreshSeconds: 30,
 } as const;
 
@@ -64,12 +66,12 @@ const fields = z.array(nameSchema).min(1).max(200).refine(v => new Set(v).size =
 const typeFields = z.strictObject({ type: nameSchema, fields });
 const grantBase = {
   version: z.literal(SECURITY_CONTRACT), id: z.uuid(), revision, ownerKey: ownerIdentitySchema,
-  memberId: z.uuid(), installationId: z.uuid(), issuedAt: instant, expiresAt: instant,
+  memberId: z.uuid(), installationId: z.uuid(), issuedAt: instant, expiresAt: consentExpirySchema,
   status: z.enum(['active', 'revoked']), approvedByMemberId: z.uuid(),
 };
-const grantTime = (maxSeconds: number) => (v: { issuedAt: string; expiresAt: string; memberId: string; approvedByMemberId: string }) =>
-  v.memberId === v.approvedByMemberId && Date.parse(v.expiresAt) > Date.parse(v.issuedAt)
-  && Date.parse(v.expiresAt) - Date.parse(v.issuedAt) <= maxSeconds * 1000;
+const grantTime = (maxSeconds: number) => (v: { issuedAt: string; expiresAt: string | null; memberId: string; approvedByMemberId: string }) =>
+  v.memberId === v.approvedByMemberId && (v.expiresAt === null || Date.parse(v.expiresAt) > Date.parse(v.issuedAt)
+  && Date.parse(v.expiresAt) - Date.parse(v.issuedAt) <= maxSeconds * 1000);
 export const agentAccessGrantSchema = z.strictObject({ ...grantBase, kind: z.literal('agent_access'), scope: z.literal('task_only'),
   capabilityIds: z.array(id).min(1).max(100), resources: z.array(typeFields).min(1).max(200),
   sourceBindingIds: z.array(id).max(100), channels: z.array(channelSchema).min(1).max(4),
@@ -85,8 +87,8 @@ export const taskExecutionAuthoritySchema = z.strictObject({
   memberId: z.uuid(), installationId: z.uuid(), taskId: z.uuid(), requestRevision: revision,
   agentGrant: grantRefSchema, dataGrant: grantRefSchema, submittedScopes: scopeList,
   authorityOrigin: z.enum(['agent_submission','member_controller']).default('agent_submission'),
-  authEpoch: revision, policyVersion: z.literal(POLICY_VERSION), issuedAt: instant, expiresAt: instant,
-}).refine(v => Date.parse(v.expiresAt) > Date.parse(v.issuedAt)
+  authEpoch: revision, policyVersion: z.literal(POLICY_VERSION), issuedAt: instant, expiresAt: consentExpirySchema,
+}).refine(v => v.expiresAt === null || Date.parse(v.expiresAt) > Date.parse(v.issuedAt)
   && Date.parse(v.expiresAt) - Date.parse(v.issuedAt) <= securityDefaults.taskGrantMaxSeconds * 1000, 'Invalid execution lifetime');
 export const securityEnvelopeSchema = z.strictObject({
   version: z.literal(SECURITY_CONTRACT), ownerKey: ownerIdentitySchema,

@@ -1,3 +1,4 @@
+import { consentDeadline, minimumConsentExpiry } from './consent-lifetime.js';
 import { personalInputFields } from '../ontology/personal-context.js';
 import { randomUUID } from 'node:crypto';
 import { DomainError, ownerKey, requireScope, type Job, type Principal } from '../core/domain.js';
@@ -76,9 +77,9 @@ export class TaskSecurity {
     }));
     const grant = security.issueTaskGrant({ version: SECURITY_CONTRACT, id: randomUUID(), revision: 1, kind: 'task_data', status: 'active',
       ownerKey: actor.ownerKey, memberId: actor.memberId, approvedByMemberId: actor.memberId, installationId: actor.installationId,
-      parentGrant: { id: parent.id, revision: parent.revision }, issuedAt: at, expiresAt: new Date(Math.min(Date.parse(parent.expiresAt),
-        previous ? Date.parse(previous.expiresAt) : Date.parse(at) + securityDefaults.taskGrantMaxSeconds * 1000,
-        job.delegation.pipelineValidation ? Date.parse(job.delegation.pipelineValidation.expiresAt) : Infinity)).toISOString(),
+      parentGrant: { id: parent.id, revision: parent.revision }, issuedAt: at, expiresAt: minimumConsentExpiry(parent.expiresAt,
+        previous ? previous.expiresAt : parent.expiresAt === null ? null : new Date(Date.parse(at) + securityDefaults.taskGrantMaxSeconds * 1000).toISOString(),
+        job.delegation.pipelineValidation?.expiresAt ?? null),
       taskId: job.id, requestRevision: job.delegation.request.revision, purpose: previous?.purpose ?? 'delegated_task',
       operations: previous ? [...new Set([...previous.operations, ...(replacePersonalInputs && personalInputs.length ? ['member_asset.read' as const] : [])])] : ['task.process', ...(personalInputs.length ? ['member_asset.read'] : []), ...(p.scopes.includes('tasks:read') ? ['task.query','task.result.read',...(parent.channels.includes('controlled_download')?['artifact.export']:[])] : [])],
       inputs: replacePersonalInputs ? personalInputs : previous?.inputs ?? personalInputs, outputs: previous?.outputs ?? sourceRules, channels: previous?.channels ?? parent.channels });
@@ -173,7 +174,7 @@ export class TaskSecurity {
         const contract=this.store.watchContracts.get(actor.ownerKey,job.id),pins=contract.pins,declaration=contract.declaration;
         if(contract.digest!==job.delegation.observationContract.digest || pins.installationId!==actor.installationId)throw new SecurityError('AUTHORIZATION_REQUIRED');
         const parent=security.agentGrant(actor.installationId);
-        const permitted=pins.parentGrant.id===parent.id && pins.parentGrant.revision===parent.revision && Date.parse(pins.expiresAt)>security.now()
+        const permitted=pins.parentGrant.id===parent.id && pins.parentGrant.revision===parent.revision && consentDeadline(pins.expiresAt)>security.now()
           && security.policies.resourceAllowed(scope,'objectType',declaration.target.object.type)
           && security.policies.resourceAllowed(scope,'actionType',declaration.read.action,'action.execute')
           && declaration.target.fields.every(field=>parent.resources.some(resource=>resource.type===declaration.target.object.type && resource.fields.includes(field)) && security.policies.fieldPolicy(declaration.target.object.type,field)!=='internal_only')

@@ -22,7 +22,9 @@ import {actionSources} from './component-authority.js';
 import {compatibleProjectedObject} from '../ontology/task-read-projection.js';
 import {DefinitionStore} from '../ontology/definition-store.js';
 import { SINGLE_READ_PREDECESSOR, PRIOR_GOAL_COVERAGE_FINGERPRINT } from '../ontology/single-read-kernel.js';
+import { SINGLE_READ_KERNEL_MODEL_REF } from '../ontology/seed-definition.js';
 import {assertProjectionOrigin,taskProjectionEvidence,type ProjectionOrigin} from './projection-origin.js';
+import { consentExpirySchema, consentDeadline, type ConsentExpiry } from './consent-lifetime.js';
 
 // Count only direct audit writes and checked claim renewals on this connection.
 // Other writes, trigger side effects and other connections still invalidate the
@@ -30,17 +32,20 @@ import {assertProjectionOrigin,taskProjectionEvidence,type ProjectionOrigin} fro
 const readBookkeepingChanges = new WeakMap<DatabaseSync, number>();
 
 const id = z.string().min(1).max(200), instant = z.iso.datetime({ offset: true });
-const roleSchema = z.strictObject({ subjectKind: z.enum(['member', 'installation']), subjectId: z.uuid(),
+const legacyRoleSchema = z.strictObject({ subjectKind: z.enum(['member', 'installation']), subjectId: z.uuid(),
   resource: z.union([resourceRefSchema, z.strictObject({ kind: z.literal('namespace'), id, version: id })]),
   role: z.enum(['Viewer', 'Editor', 'Owner']), executeActions: z.array(nameSchema).max(100).default([]),
   invokeFunctions: z.array(nameSchema).max(100).default([]), expiresAt: instant });
-export const sourceAuthorizationSchema = z.strictObject({ installationId: z.uuid(), bindingId: id, programId: id,
+const roleSchema = legacyRoleSchema.extend({ expiresAt: consentExpirySchema });
+const legacySourceAuthorizationSchema = z.strictObject({ installationId: z.uuid(), bindingId: id, programId: id,
   programDigest: z.string().regex(/^[a-f0-9]{64}$/), operations: z.array(id).min(1).max(100),
   outputTypes: z.array(nameSchema).min(1).max(200), expiresAt: instant });
-const storedSourceSchema=sourceAuthorizationSchema.extend({parentGrant:grantRefSchema,
+export const sourceAuthorizationSchema = legacySourceAuthorizationSchema.extend({ expiresAt: consentExpirySchema });
+const legacyStoredSourceSchema=legacySourceAuthorizationSchema.extend({parentGrant:grantRefSchema,
   // Operator-reviewed predecessor versions may explain existing observations.
   // They never authorize dispatch or enter newly provisioned task outputs.
   readbackVersions:z.array(z.strictObject({sourceBindingId:id,programDigest:z.string().regex(/^[a-f0-9]{64}$/)})).max(32).optional()});
+const storedSourceSchema = legacyStoredSourceSchema.extend({ expiresAt: consentExpirySchema });
 const baseline = JSON.parse(readFileSync(new URL('./baseline.json', import.meta.url), 'utf8')) as {
   types: Record<string, { fingerprint: string; fields: Record<string, string> }>;
 };
@@ -53,12 +58,22 @@ export function rollingGoPolicyContracts(model: SecurityStore['model']) {
   const priorProjection={...projectionContract,fields:Object.fromEntries(Object.entries(projectionContract.fields).filter(([id])=>id!=='RollingGoSearchObservation'))};
   return {before:policyContract({id:'eigos.business',version:'22',digest:'b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4'},priorFields,priorProjection),after:policyContract({id:'eigos.business',version:'23',digest:'2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127'},fields,projectionContract)};
 }
-function policyContract(model: SecurityStore['model']['ref'], fields: typeof baseline.types, projection: typeof projectionContract, reobservation = false) {
-  if (model.version !== '26' && fields.GoalCoverage) { fields = structuredClone(fields); fields.GoalCoverage!.fingerprint = PRIOR_GOAL_COVERAGE_FINGERPRINT; }
+function policyContract(model: SecurityStore['model']['ref'], fields: typeof baseline.types, projection: typeof projectionContract, reobservation = false, persistentConsent = false) {
+  if (model.version !== '27') {
+    fields = Object.fromEntries(Object.entries(fields).filter(([id]) => !['PaymentCommerceReadTask', 'PaymentCommerceReadObservation'].includes(id)));
+    projection = { ...projection, fields: Object.fromEntries(Object.entries(projection.fields).filter(([id]) => id !== 'PaymentCommerceReadObservation')) };
+  }
+  if (!['26', '27'].includes(model.version) && fields.GoalCoverage) { fields = structuredClone(fields); fields.GoalCoverage!.fingerprint = PRIOR_GOAL_COVERAGE_FINGERPRINT; }
   if (!fields.Person && fields.RequestFact) { fields = structuredClone(fields); fields.RequestFact!.fingerprint = 'aca8fe3bad913ec40620004cfaf77e1620dbd40d6f59d92a774fc90aca9e1ace'; delete fields.RequestFact!.fields.personalBasis; }
   const taskFields = fields.Person ? taskContextFields : { ...taskContextFields, RequestFact: taskContextFields.RequestFact!.filter(field => field !== 'personalBasis') };
   return digest({model,fields,projection,taskContext:{version:TASK_CONTEXT_BINDING_VERSION,fields:taskFields,capabilityReader:'immutable-compatible-definition-v1'},
-    roles:z.toJSONSchema(roleSchema),source:z.toJSONSchema(storedSourceSchema), ...(reobservation ? { sourceObservationBinding: 'independent-source-read-v1' } : {})});
+    roles:z.toJSONSchema(persistentConsent ? roleSchema : legacyRoleSchema),source:z.toJSONSchema(persistentConsent ? storedSourceSchema : legacyStoredSourceSchema), ...(reobservation ? { sourceObservationBinding: 'independent-source-read-v1' } : {}),
+    ...(persistentConsent ? { consentLifetime: 'until-revoked-v1' } : {})});
+}
+export function persistentConsentPolicyContracts(model: SecurityStore['model']) {
+  const fields = Object.fromEntries(Object.entries(baseline.types).filter(([id]) => model.hasType(id)));
+  return { before: policyContract(model.ref, fields, projectionContract, model.hasType('RideEstimate')),
+    after: policyContract(model.ref, fields, projectionContract, model.hasType('RideEstimate'), true) };
 }
 export function businessFactsPolicyContracts(model: SecurityStore['model']) {
   if (model.ref.version !== '24' || !model.hasType('RideEstimate') || !model.hasType('EventRegistration')) throw new Error('Expected the reviewed business-facts v24 kernel');
@@ -72,6 +87,10 @@ export function singleReadPolicyContracts(model: SecurityStore['model']) {
   if (model.ref.version !== '26' || !model.properties('GoalCoverage').reviewOrigin!.schema.safeParse('ontology_read_contract').success) throw new Error('Expected the reviewed single-read v26 kernel');
   return { before: '24660653b4da9066baac6d6d1d57fa0d8fe11ff8b8e042d333aac123f75b0f41', after: policyContract(model.ref, baseline.types, projectionContract, true) };
 }
+export function paymentCommercePolicyContracts(model: SecurityStore['model'], persistentConsent = false) {
+  if (model.ref.version !== '27' || !model.hasType('PaymentCommerceReadObservation')) throw new Error('Expected the reviewed payment/commerce v27 kernel');
+  return { before: policyContract(SINGLE_READ_KERNEL_MODEL_REF, baseline.types, projectionContract, true, persistentConsent), after: policyContract(model.ref, baseline.types, projectionContract, true, persistentConsent) };
+}
 const refKey = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);
 export const TASK_PROJECTION_TYPES = ['GoalCoverage','OutcomeAssessment','ExecutionFeedback',...Object.keys(taskContextFields)];
 const taskControlHistoryTypes = new Set(TASK_PROJECTION_TYPES);
@@ -82,6 +101,7 @@ export interface ObjectBinding { object: ObjectRef; revision: number; fields: st
  * setRole; a member data grant never manufactures a platform resource role. */
 export class SecurityPolicies {
   readonly definitionDigest:string;
+  readonly persistentConsentEnabled: boolean;
   private definitionReader?: DefinitionStore;
   get model() { return this.security.model; }
   private readonly reviewedModels = new WeakSet<SecurityStore['model']>();
@@ -91,11 +111,11 @@ export class SecurityPolicies {
     if (model === this.model || this.reviewedModels.has(model)) return;
     // Reviewed v22 -> RollingGo-only v23 compatibility. Historical tasks keep
     // their own model and action bindings; current data/source grants still gate reads.
-    if ((this.model.ref.digest === '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127' || ['24','25','26'].includes(this.model.ref.version))
-      && model.ref.id === this.model.ref.id && ['b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4', '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127', '496938a2cf4a6661acab90171d6c3988c890364dee7d4f62c3575b2e2c70d644', SINGLE_READ_PREDECESSOR].includes(model.ref.digest)
+    if ((this.model.ref.digest === '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127' || ['24','25','26','27'].includes(this.model.ref.version))
+      && model.ref.id === this.model.ref.id && ['b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4', '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127', '496938a2cf4a6661acab90171d6c3988c890364dee7d4f62c3575b2e2c70d644', SINGLE_READ_PREDECESSOR, SINGLE_READ_KERNEL_MODEL_REF.digest].includes(model.ref.digest)
       && model.definitionSnapshot().objects.every(type => this.model.hasType(type.id) && (model.fingerprint(type.id) === this.model.fingerprint(type.id)
         || this.model.hasType('Person') && type.id === 'RequestFact' && model.fingerprint(type.id) === 'aca8fe3bad913ec40620004cfaf77e1620dbd40d6f59d92a774fc90aca9e1ace'
-        || this.model.ref.version === '26' && type.id === 'GoalCoverage' && model.fingerprint(type.id) === PRIOR_GOAL_COVERAGE_FINGERPRINT))
+        || ['26', '27'].includes(this.model.ref.version) && type.id === 'GoalCoverage' && model.fingerprint(type.id) === PRIOR_GOAL_COVERAGE_FINGERPRINT))
       && model.definitionSnapshot().links.every(link => digest(link) === digest(this.model.link(link.id)))
       && model.definitionSnapshot().functions.every(fn => digest(fn) === digest(this.model.function(fn.id)))
       && model.actionIds().every(id => digest(model.actionImplementation(id) ?? null) === digest(this.model.actionImplementation(id) ?? null))) {
@@ -110,9 +130,12 @@ export class SecurityPolicies {
   constructor(private db: DatabaseSync, readonly security: SecurityStore,readOnly=false) {
     const existing=!!db.prepare("SELECT 1 FROM sqlite_master WHERE name='security_policy'").get();
     const definitions=!!db.prepare("SELECT 1 FROM sqlite_master WHERE name='security_policy_definitions'").get();
-    const expected=policyContract(this.model.ref, Object.fromEntries(Object.entries(baseline.types).filter(([id]) => this.model.hasType(id))), projectionContract, this.model.hasType('RideEstimate'));
+    const contracts = persistentConsentPolicyContracts(this.model);
+    const stored = definitions ? db.prepare('SELECT digest FROM security_policy_definitions WHERE slot=1').get()?.digest : undefined;
+    this.persistentConsentEnabled = !existing || stored === contracts.after;
+    const expected = this.persistentConsentEnabled ? contracts.after : contracts.before;
     this.definitionDigest=expected;
-    if(security.enabled && existing && (!definitions || db.prepare('SELECT digest FROM security_policy_definitions WHERE slot=1').get()?.digest!==expected)) throw new Error('Security policy contract changed or is missing; explicit migration is required');
+    if(security.enabled && existing && (!definitions || stored!==expected)) throw new Error('Security policy contract changed or is missing; explicit migration is required');
     if(security.enabled && existing) {
       const revision=db.prepare('SELECT revision FROM security_policy WHERE slot=1').get()?.revision;
       if(!Number.isSafeInteger(revision) || Number(revision)<1)throw new Error('Security policy authority is missing; explicit recovery is required');
@@ -146,16 +169,20 @@ export class SecurityPolicies {
       return Number(row.revision);
     }catch{throw new SecurityError('AUTHORITY_UNAVAILABLE');}
   }
+  assertConsentExpiry(expiresAt: ConsentExpiry): void {
+    if (expiresAt === null && !this.persistentConsentEnabled) throw new SecurityError('POLICY_CHANGED', 'Persistent consent requires the explicit policy upgrade');
+  }
   private change(expectedRevision: number) {
     if (this.db.prepare('UPDATE security_policy SET revision=revision+1 WHERE slot=1 AND revision=?').run(expectedRevision).changes !== 1) throw new SecurityError('POLICY_CHANGED');
   }
   setRole(input: unknown, expectedRevision: number) {
     const role = roleSchema.parse(input), r = role.resource;
+    this.assertConsentExpiry(role.expiresAt);
     if (r.kind === 'namespace') { if (r.id !== this.model.ref.id || r.version !== this.model.ref.digest) throw new SecurityError('POLICY_CHANGED'); }
     else if (this.resourceVersion(r.kind, r.id) !== r.version) throw new SecurityError('POLICY_CHANGED');
     for (const action of role.executeActions) this.model.action(action);
     for (const fn of role.invokeFunctions) this.model.function(fn);
-    if (Date.parse(role.expiresAt) <= this.security.now()) throw new SecurityError('ACCESS_REVOKED');
+    if (consentDeadline(role.expiresAt) <= this.security.now()) throw new SecurityError('ACCESS_REVOKED');
     return this.security.atomic(() => { this.change(expectedRevision); const id = digest([role.subjectKind, role.subjectId, r]); this.db.prepare('INSERT INTO security_roles VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(id, role.subjectId, JSON.stringify(role)); return { id, revision: this.revision() }; });
   }
   revokeRole(id: string, expectedRevision: number) { this.security.atomic(() => { this.change(expectedRevision); this.db.prepare('DELETE FROM security_roles WHERE id=?').run(id); }); }
@@ -191,12 +218,12 @@ export class SecurityPolicies {
   resourceAllowedFor(memberId:string,installationId:string,kind:string,id:string,permission='resource.view'):boolean {
     return this.roleAllows(this.roles(memberId,installationId),memberId,installationId,kind,id,permission);
   }
-  private roles(memberId:string,installationId:string){return this.db.prepare('SELECT body FROM security_roles WHERE subject_id IN (?,?)').all(memberId,installationId).map(row=>roleSchema.parse(JSON.parse(String(row.body))));}
+  private roles(memberId:string,installationId:string){return this.db.prepare('SELECT body FROM security_roles WHERE subject_id IN (?,?)').all(memberId,installationId).map(row=>(this.persistentConsentEnabled?roleSchema:legacyRoleSchema).parse(JSON.parse(String(row.body))));}
   private roleAllows(roles:z.infer<typeof roleSchema>[],memberId:string,installationId:string,kind:string,id:string,permission:string) {
     let version: string; try { version = this.resourceVersion(kind, id); } catch { return false; }
     return roles.some(value => {
       const ref = value.resource;
-      if (Date.parse(value.expiresAt) <= this.security.now() || (value.subjectKind === 'member' ? value.subjectId !== memberId : value.subjectId !== installationId)) return false;
+      if (consentDeadline(value.expiresAt) <= this.security.now() || (value.subjectKind === 'member' ? value.subjectId !== memberId : value.subjectId !== installationId)) return false;
       const matches = ref.kind === 'namespace' ? ref.id === this.model.ref.id && ref.version === this.model.ref.digest : ref.kind === kind && ref.id === id && ref.version === version;
       return matches && (permission === 'action.execute' ? value.executeActions.includes(id) : permission === 'function.invoke' ? value.invokeFunctions.includes(id) : (resourceDefaults[value.role] as readonly string[]).includes(permission));
     });
@@ -212,8 +239,9 @@ export class SecurityPolicies {
   setSource(owner: string, input: unknown, expectedRevision: number) {
     const source = sourceAuthorizationSchema.parse(input), subject = this.security.requireSubject(source.installationId);
     const parent = this.security.agentGrant(source.installationId);
+    this.assertConsentExpiry(source.expiresAt);
     if (subject.ownerKey !== owner || !parent.capabilityIds.includes(source.programId) || !parent.sourceBindingIds.includes(source.bindingId)
-      || Date.parse(source.expiresAt) <= this.security.now() || Date.parse(source.expiresAt) > Date.parse(parent.expiresAt)) throw new SecurityError('SOURCE_NOT_AUTHORIZED');
+      || consentDeadline(source.expiresAt) <= this.security.now() || consentDeadline(source.expiresAt) > consentDeadline(parent.expiresAt)) throw new SecurityError('SOURCE_NOT_AUTHORIZED');
     for (const type of source.outputTypes) this.model.object(type);
     const row=this.db.prepare("SELECT state,body FROM security_sources WHERE owner=? AND installation_id=? AND binding_id=? AND program_id=?").get(owner,source.installationId,source.bindingId,source.programId);
     const prior=row?storedSourceSchema.parse(JSON.parse(String(row.body))):undefined;
@@ -225,7 +253,7 @@ export class SecurityPolicies {
     let parent;try{parent=this.security.agentGrant(installationId);}catch{return [];}
     if(parent.ownerKey!==owner) return [];
     return this.db.prepare("SELECT body FROM security_sources WHERE owner=? AND installation_id=? AND state='active'").all(owner, installationId)
-      .map(row => storedSourceSchema.parse(JSON.parse(String(row.body)))).filter(s => Date.parse(s.expiresAt) > this.security.now() && s.parentGrant.id===parent.id && s.parentGrant.revision===parent.revision);
+      .map(row => (this.persistentConsentEnabled?storedSourceSchema:legacyStoredSourceSchema).parse(JSON.parse(String(row.body)))).filter(s => consentDeadline(s.expiresAt) > this.security.now() && s.parentGrant.id===parent.id && s.parentGrant.revision===parent.revision);
   }
   revokeSource(owner: string, installationId: string, bindingId: string, expectedRevision: number) {
     this.security.atomic(() => { this.change(expectedRevision);
@@ -528,8 +556,8 @@ export class SecurityPolicies {
     // Expired historical roles grant nothing and cannot shorten a read that
     // another current role permits. Every role valid at entry still constrains
     // this snapshot, and roleAllows keeps checking the requested resource.
-    const currentRoles=this.roles(scope.actor.memberId,scope.actor.installationId).filter(role=>Date.parse(role.expiresAt)>at);
-    const validity=[this.security.agentGrant(scope.actor.installationId).expiresAt,scope.grant?.expiresAt,this.recipient(scope.actor.installationId)?.expiresAt,...this.sources(scope.actor.ownerKey,scope.actor.installationId).map(s=>s.expiresAt),...currentRoles.map(r=>r.expiresAt)].filter((v):v is string=>!!v).map(Date.parse);
+    const currentRoles=this.roles(scope.actor.memberId,scope.actor.installationId).filter(role=>consentDeadline(role.expiresAt)>at);
+    const validity=[this.security.agentGrant(scope.actor.installationId).expiresAt,scope.grant?.expiresAt,this.recipient(scope.actor.installationId)?.expiresAt,...this.sources(scope.actor.ownerKey,scope.actor.installationId).map(s=>s.expiresAt),...currentRoles.map(r=>r.expiresAt)].filter((v):v is ConsentExpiry=>v!==undefined).map(consentDeadline);
     const validUntil=Math.min(...validity);
     let readScope:AuthorizationScope;
     const current=()=>{if(!active)throw new SecurityError('AUTHORIZATION_REQUIRED');const next=stamp(),now=this.security.now(),changed=next.version!==checked.version||next.changes!==checked.changes;if(changed || now>=validUntil || now<at){retryable=next.version!==checked.version&&next.changes===checked.changes&&now<validUntil&&now>=at;bindings.clear();members.clear();lineageDigests.clear();readScope.readCombinedEnvelope=undefined;this.roleCache.delete(readScope);this.labelCache.delete(readScope);generation++;}if(changed || now-at>=10 || now<at){scope.assertCurrent();checked=next;at=this.security.now();}};
@@ -731,7 +759,7 @@ export class SecurityPolicies {
     }
     if (!value) return;
     const id = randomUUID(); this.db.prepare('DELETE FROM security_cursors WHERE expires_at<=?').run(this.security.now());
-    this.db.prepare('INSERT INTO security_cursors VALUES(?,?,?,?)').run(id, context, Math.min(this.security.now() + 300000, Date.parse(scope.grant!.expiresAt)), JSON.stringify(value)); return id;
+    this.db.prepare('INSERT INTO security_cursors VALUES(?,?,?,?)').run(id, context, Math.min(this.security.now() + 300000, consentDeadline(scope.grant!.expiresAt)), JSON.stringify(value)); return id;
   }
   recordProjection(owner: string, batch: ObjectBatch, _source: ObjectSource) {
     const scope = this.scope(owner), origin = scope.projection;
@@ -880,13 +908,15 @@ export class SecurityPolicies {
   setRecipient(installationId:string,input:unknown,expectedRevision:number) {
     z.uuid().parse(installationId);this.security.requireSubject(installationId);
     const value=z.strictObject({classification:z.enum(['private','sensitive']),markings:securityEnvelopeSchema.shape.requiredMarkings,
-      channels:securityEnvelopeSchema.shape.channels,expiresAt:instant}).parse(input);
+      channels:securityEnvelopeSchema.shape.channels,expiresAt:consentExpirySchema}).parse(input);
+    this.assertConsentExpiry(value.expiresAt);
     this.security.atomic(()=>{this.change(expectedRevision);this.db.prepare('INSERT INTO security_recipients VALUES(?,?) ON CONFLICT(installation_id) DO UPDATE SET body=excluded.body').run(installationId,JSON.stringify(value));});
   }
   private recipient(installationId:string) {
     const row=this.db.prepare('SELECT body FROM security_recipients WHERE installation_id=?').get(installationId);
-    const value=row?JSON.parse(String(row.body)) as {classification:'private'|'sensitive';markings:SecurityEnvelope['requiredMarkings'];channels:Channel[];expiresAt:string}:undefined;
-    return value && Date.parse(value.expiresAt)>this.security.now()?value:undefined;
+    const value=row?JSON.parse(String(row.body)) as {classification:'private'|'sensitive';markings:SecurityEnvelope['requiredMarkings'];channels:Channel[];expiresAt:ConsentExpiry}:undefined;
+    if (value) this.assertConsentExpiry(value.expiresAt);
+    return value && consentDeadline(value.expiresAt)>this.security.now()?value:undefined;
   }
   private qualified(envelope:SecurityEnvelope,clearance:ReturnType<SecurityPolicies['recipient']>):boolean {
     const rank={private:0,sensitive:1,internal:2};
@@ -910,7 +940,7 @@ export class SecurityPolicies {
   }
   requireRecipient(scope:AuthorizationScope,envelope:SecurityEnvelope,channel:Channel) {
     const value=this.recipient(scope.actor.installationId);
-    if(!value || Date.parse(value.expiresAt)<=this.security.now() || !value.channels.includes(channel) || !scope.grant?.channels.includes(channel)) throw new SecurityError('OUTPUT_NOT_ALLOWED');
+    if(!value || consentDeadline(value.expiresAt)<=this.security.now() || !value.channels.includes(channel) || !scope.grant?.channels.includes(channel)) throw new SecurityError('OUTPUT_NOT_ALLOWED');
     requireChannel(this.effectiveEnvelope(scope,envelope),channel,value);
   }
   recordOutput(owner: string, taskId: string, outputId: string, content: unknown, envelope: SecurityEnvelope) {
@@ -930,13 +960,15 @@ export class SecurityPolicies {
     try { return this.effectiveEnvelope(scope,envelope); } catch {return;}
   }
   setModelChannel(id: string, input: unknown, expectedRevision: number) {
-    const value = z.strictObject({ classification: z.enum(['private', 'sensitive']), markings: securityEnvelopeSchema.shape.requiredMarkings, expiresAt: instant }).parse(input);
+    const value = z.strictObject({ classification: z.enum(['private', 'sensitive']), markings: securityEnvelopeSchema.shape.requiredMarkings, expiresAt: consentExpirySchema }).parse(input);
+    this.assertConsentExpiry(value.expiresAt);
     this.security.atomic(() => { this.change(expectedRevision); this.db.prepare('INSERT INTO security_model_channels VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(id, JSON.stringify(value)); });
   }
   modelChannel(id: string) {
     const row = this.db.prepare('SELECT body FROM security_model_channels WHERE id=?').get(id);
-    const value = row ? JSON.parse(String(row.body)) as { classification: 'private' | 'sensitive'; markings: SecurityEnvelope['requiredMarkings']; expiresAt: string } : undefined;
-    if (!value || Date.parse(value.expiresAt) <= this.security.now()) throw new SecurityError('OUTPUT_NOT_ALLOWED'); return value;
+    const value = row ? JSON.parse(String(row.body)) as { classification: 'private' | 'sensitive'; markings: SecurityEnvelope['requiredMarkings']; expiresAt: ConsentExpiry } : undefined;
+    if (value) this.assertConsentExpiry(value.expiresAt);
+    if (!value || consentDeadline(value.expiresAt) <= this.security.now()) throw new SecurityError('OUTPUT_NOT_ALLOWED'); return value;
   }
   /** Human controller selector: owned, grantable fields only. Resource roles
    * still apply; internal fields and labels never become a delegation option. */

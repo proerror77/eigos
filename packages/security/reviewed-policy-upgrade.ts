@@ -1,3 +1,4 @@
+import { consentDeadline } from './consent-lifetime.js';
 import type { DatabaseSync } from 'node:sqlite';
 import { digest } from '../core/delegation.js';
 import { businessTransaction } from '../core/transaction.js';
@@ -22,7 +23,7 @@ export function upgradeReviewedPolicy(db: DatabaseSync, previous: OntologyModel,
     if (db.prepare('SELECT 1 FROM security_manager WHERE expires_at>?').get(now) || db.prepare('SELECT 1 FROM work_claims WHERE expires_at>?').get(now)) throw new Error('Stop Gateway and Worker before the policy upgrade');
     if (db.prepare("SELECT 1 FROM security_fences WHERE state NOT IN ('applied','cleared')").get()) throw new Error('Resolve pending authorization fences first');
     const roles = db.prepare('SELECT body FROM security_roles').all().map(row => JSON.parse(String(row.body)))
-      .filter(role => role.resource.kind === 'namespace' && role.resource.id === previous.ref.id && role.resource.version === previous.ref.digest && Date.parse(role.expiresAt) > now);
+      .filter(role => role.resource.kind === 'namespace' && role.resource.id === previous.ref.id && role.resource.version === previous.ref.digest && consentDeadline(role.expiresAt) > now);
     const additions = roles.map(role => {
       // Existing permissions must be valid in both releases. No new action or
       // function permission is inferred from a namespace role or new schema.
