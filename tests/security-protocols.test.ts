@@ -1,3 +1,4 @@
+import { consentDeadline } from '../packages/security/consent-lifetime.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -110,7 +111,7 @@ test('HTTP, MCP and A2A return the same sealed native goal observations for the 
       const actual=didiBusinessViewSchema.parse(data.result.observations[0]!.properties.observedData);assert.deepEqual(actual,expected);
       assert.equal(actual.data.kind,'estimate');assert(actual.data.kind==='estimate');
       assert.equal(actual.data.items[0]!.productName,'快车');assert.equal(actual.data.items[0]!.estimatedMoney?.currency,'CNY');assert.equal(actual.data.items[0]!.estimatedMoney?.minor,'7305');
-      assert.equal(actual.observedAt,expected.observedAt);assert.equal(actual.expiresAt,expected.expiresAt);assert.equal(Date.parse(actual.expiresAt)-Date.parse(actual.observedAt)<=300000,true);assert.equal(actual.noBusinessWrites,true);
+      assert.equal(actual.observedAt,expected.observedAt);assert.equal(actual.expiresAt,expected.expiresAt);assert.equal(consentDeadline(actual.expiresAt)-Date.parse(actual.observedAt)<=300000,true);assert.equal(actual.noBusinessWrites,true);
     }
     for(const result of [http,mcp,rpc.value])for(const hidden of ['"snapshot":','"components":','PRIVATE_TRACE_NEVER_TO_MODEL','didiAnswer'])assert(!JSON.stringify(result).includes(hidden));
   }finally{await client.close();await f.close();source.close();}
@@ -136,7 +137,7 @@ test('a long-lived installation issues a task grant from one timestamp even whil
     const p={...f.principal,access:f.coordinator.authenticate(f.principal,a.token)},tasks=new TaskService(f.jobs,{catalog:new ExecutionCatalog([],[],[])});
     const job=tasks.submit(p,{service:'eigos.delegate',requestId:randomUUID(),goal:'Synthetic long-lived installation task'});
     const grant=f.jobs.security.listGrants(f.owner).find(g=>g.kind==='task_data' && g.taskId===job.id)!;
-    assert.equal(Date.parse(grant.expiresAt)-Date.parse(grant.issuedAt),securityDefaults.taskGrantMaxSeconds*1000);
+    assert.equal(consentDeadline(grant.expiresAt)-Date.parse(grant.issuedAt),securityDefaults.taskGrantMaxSeconds*1000);
     assert(f.jobs.security.workAuthority(f.owner,job.id));
   }finally{f.close();}
 });

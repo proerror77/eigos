@@ -3318,38 +3318,38 @@
     {
       "id": "security-contracts",
       "file": "packages/security/contracts.ts",
-      "sourceDigest": "42faffa36df647c139edce30eae58282874a1c9f05a3f27666f134d256064ac1",
+      "sourceDigest": "11f745d37936c5ae93550980d754f69acf4bdb3a0e33e62d6f1e5035901e0cc9",
       "channels": [
         "authorization_control"
       ],
       "content": "Validated context and grant structures",
-      "currentControl": "Strict shape; parsing is not authorization",
+      "currentControl": "Strict shape; explicit null expiry denotes until-revoked consent; parsing is not authorization",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
     {
       "id": "security-coordinator",
       "file": "packages/security/coordinator.ts",
-      "sourceDigest": "15cbc8fdd157f83d623cb39ae69c99762f212181d62b3022bc4f42fb10ed8ebe",
+      "sourceDigest": "a21e747fb05819a1f34989bc44c0057b51caba8e043f28e1b0ee308c55457395",
       "channels": [
         "authorization_control"
       ],
       "content": "Signed installation resolution and cross-database eligibility coordination",
-      "currentControl": "Existing identity and revocation coordinator plus reviewed source/task approval and explicit controller takeover; Member-reviewed original-PA source renewal pins current source versions and exact prior grants, preserves identity, inputs, processing rights, channels and expiration ceiling, rejects existing operations, and leaves the task paused.",
+      "currentControl": "Current identity and reviewed source/task approval. Original-PA conversion to persistent consent requires explicit controller review, exact prior scopes and current sources, only read/local existing plans and operations; preserve their ledgers without replay, and leaves the task paused. Standalone revocation cannot be restored.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
     {
-      "id": "security-store",
+      "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "file": "packages/security/store.ts",
-      "sourceDigest": "58e7c13e09f898f2fe0d0cccbfb87d9873ffa8abfcb4f58828800f15228c975e",
+      "sourceDigest": "4f1929095efc64acd422344d2dc249980646b7a359fb222a7425081b9b2600b1",
+      "stage": "S1",
+      "content": "Subjects, grants, fences, task authority, audit and worker eligibility",
+      "currentControl": "Current installation, task revision, grants, revocation fences and Worker leases. Permanent consent uses explicit null plus a finite SQL index projection; old policy cannot adopt it without the named migration.",
+      "id": "security-store",
       "channels": [
         "authorization_control"
-      ],
-      "content": "Subjects, grants, fences, task authority, audit and worker eligibility",
-      "currentControl": "Foundation v2 persistent authority and task scopes, no automatic schema migration; Historical task authority is available only for explicit member review and never substitutes for current execution eligibility. Persistent identity generation includes cleared fences so restoring eligibility cannot revive old communication consent.",
-      "targetControl": "Complete resource/data/output enforcement in S2-S4",
-      "stage": "S1"
+      ]
     },
     {
       "id": "security-admin",
@@ -3414,12 +3414,12 @@
     {
       "id": "permission-review-page",
       "file": "apps/gateway/members/permissions-page.ts",
-      "sourceDigest": "7990fe05676ef06dd535ebeb364419f781ec0eaa1bba4ab2314d80b5bf6e8805",
+      "sourceDigest": "08b6d984226b982ddbbf2c9e6c04cfaa0458a91ddd6dfefc89171fcda4389ee5",
       "channels": [
         "member-ui"
       ],
       "content": "Exact immutable controller review, source readback and revocation",
-      "currentControl": "Foundation v2: Exact immutable controller review, source readback and revocation; Original-PA renewal has a distinct explicit review, pins source versions, displays current output fields and preserves original task restrictions without controller takeover. Installation and source reviews can retain a same-installation unexpired ceiling deadline, including its explicit replacement record, without copying rights; source deadlines remain capped by the active parent.",
+      "currentControl": "Exact controller review and actual lifetime display; new consent defaults to until revoked. Legacy finite deadlines remain explicit, source/task consent cannot exceed its parent, and persistent conversion retains original task restrictions.",
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "stage": "S4"
     },
@@ -3472,16 +3472,16 @@
       "stage": "S3"
     },
     {
-      "id": "security-data-policy",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "60de0ac123d53b75b056ed9cf23da9424d43ef590dcb09955f258b701d910e0c",
-      "channels": [
-        "all-reads"
-      ],
+      "sourceDigest": "307f519aa37e8dab63df3a07f93d29b501cc89f793bd6e39cd1fb6c0aa0dbc61",
+      "stage": "S2",
       "content": "Resource roles, fields, bindings, source grants, derived lineage, artifacts and opaque cursors",
       "currentControl": "Current resource roles, fields, source grants and output lineage; release labels may differ only with identical reviewed model content and action implementations; long task projections report checked Worker progress without changing the original lease, authority or evidence",
-      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
-      "stage": "S2"
+      "id": "security-data-policy",
+      "channels": [
+        "all-reads"
+      ]
     },
     {
       "id": "security-safe-projections",
@@ -3498,7 +3498,7 @@
     {
       "id": "security-original-recovery",
       "file": "packages/security/recovery.ts",
-      "sourceDigest": "09dd0b030c57e0dbd48726500393217f6d97e447c5ded1f1479a770b0ef1d3ec",
+      "sourceDigest": "fa6bb92422c6493517ae6010591dc25bfdedbb42a7fe85af20f3ffafc5917a10",
       "channels": [
         "audit"
       ],
@@ -3508,16 +3508,16 @@
       "stage": "S3"
     },
     {
-      "id": "security-task-view",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "3e2f30eac567477d8b6b76737830379c186450632b18169979005fe38e5dfe53",
-      "channels": [
-        "http-mcp-a2a"
-      ],
+      "sourceDigest": "ec3552c8021ba963693f548b74fdd964b8a71f996e30760c140b717fb72d63e9",
+      "stage": "S4",
       "content": "Common safe views for mutations, reads, waits, replay and downloads",
       "currentControl": "Safe TaskView and current controller grants; validation expiry intersects parent and task bounds, post-provision checks roll back task/grant/idempotency together; Bounded recovery guidance uses the exact active successor grant and ordered pause events, including legacy generic pauses; no raw diagnostic or source configuration is exported.",
-      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
-      "stage": "S4"
+      "id": "security-task-view",
+      "channels": [
+        "http-mcp-a2a"
+      ]
     },
     {
       "id": "security-ontology-view",
@@ -4614,22 +4614,22 @@
       "sourceDigest": "1f844a90c0e568455536b5f09f43c4ba8443a5458dcdbe02a78eaa53bf305066"
     },
     {
-      "id": "primary-relay-entry",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
       "file": "apps/gateway/relay.ts",
-      "sourceDigest": "43c1a0a89be4f11a6bb43d3a1b688cf1e99bd70ff90671500b160df783e6a995",
+      "sourceDigest": "065b30080ef58363f26a5729f040ec97baba51a43bd1f23ee9980b42dd6e0f8a",
+      "stage": "S5",
+      "content": "Node enrollment, installation binding, current source authorization and dispatch",
+      "currentControl": "Authenticated member and DPoP binding; exact primary authority; live grant and Worker lease checks; at most two source deliveries, each freshly authorized before send; shutdown rejects new enrollment or binding and drains started work before closing node state",
+      "id": "primary-relay-entry",
       "channels": [
         "http",
         "authorization_control"
-      ],
-      "content": "Node enrollment, installation binding, current source authorization and dispatch",
-      "currentControl": "Authenticated member and DPoP binding; exact primary authority; live grant and Worker lease checks; at most two source deliveries, each freshly authorized before send; shutdown rejects new enrollment or binding and drains started work before closing node state",
-      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
-      "stage": "S5"
+      ]
     },
     {
       "id": "relay-identity-authority",
       "file": "packages/security/relay.ts",
-      "sourceDigest": "93cd7dabe9436473b46da79e1788e5bd44b42832c08968d15b2a10f423c11e17",
+      "sourceDigest": "65d887264852c69375d132513d1e13e09b1f071dec44c5d216881f1aaec4776e",
       "channels": [
         "authorization_control"
       ],
@@ -4641,7 +4641,7 @@
     {
       "id": "relay-read-authority",
       "file": "packages/security/relay-service.ts",
-      "sourceDigest": "23c54d79e5b7e27bff128bba6d9e27593584346033c9452f04c3adf68b209e2e",
+      "sourceDigest": "c8bdfe75d0eb978ac6b657719649cdfa64f2d65a28ff4cf6192c51666781df12",
       "channels": [
         "authorization_control",
         "source"
@@ -4680,7 +4680,7 @@
     {
       "id": "relay-enrollment-issuer",
       "file": "packages/agent-transport/enrollment.ts",
-      "sourceDigest": "6027d3421b4e4085768c3002d621fb703ae43b79e0f32211b6242c8bbf6b25e5",
+      "sourceDigest": "e63153daefb76a218666240bcb08623f296467d9f1f6f313d67b3a90c1027e58",
       "channels": [
         "authorization_control"
       ],
@@ -4930,7 +4930,7 @@
     {
       "id": "packages-security-reviewed-policy-upgrade",
       "file": "packages/security/reviewed-policy-upgrade.ts",
-      "sourceDigest": "43e01f38436b048b449d9408738db1f7605684c388022771f192a62ed614b493",
+      "sourceDigest": "6edef088eb32ece5dc72f83c8d841e6dfc61bd713ee7d2c079b19e1d4aaacdca",
       "channels": [
         "sqlite"
       ],
@@ -5676,7 +5676,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "1c8321bcd40c317f33ec1741139ebf7e86701b2609d8e8491ce278db5ae91541",
+      "sourceDigest": "9cd6c7be2d66a99312129f559c225c91762d5474cf73772e5c65d620deafb824",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current identity/task admission and deadlines, frozen request-scoped read snapshots, pinned ontology, roles, labels, direct/retained evidence and current source checks",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
@@ -5684,7 +5684,7 @@
     {
       "id": "resource-role-policy",
       "file": "packages/security/resource-role.ts",
-      "sourceDigest": "f74d44b92f95eebb4963c5f35759cfc594f69f485d6c38adff963aa50add95eb",
+      "sourceDigest": "627752204de8c664c973adde8e986a2fd0791b7ace0d0c7b63adb7ec3bbe9eba",
       "channels": [
         "authorization_control"
       ],
@@ -5732,7 +5732,7 @@
     {
       "id": "source-policy-contract",
       "file": "packages/security/source-policy.ts",
-      "sourceDigest": "bc8dc8729d629d1435695018bc43d6d9890aab67eb5e5823327cc43244257d51",
+      "sourceDigest": "f0412c5698901fdeb0c00e109131fccb33c38f5ae0bab81e6a63bb968003d43c",
       "channels": [
         "authorization_control"
       ],
@@ -5744,7 +5744,7 @@
     {
       "id": "field-recipient-restrictions",
       "file": "packages/security/field-restrictions.ts",
-      "sourceDigest": "abe9da9ec95ee4610f4c5e925defd78742915100897f76955cb103dfcf106392",
+      "sourceDigest": "4b88a4b940c341a4c97392c04d2c58f6192b469258c50f71adec941bd5ab041b",
       "channels": [
         "authorization_control"
       ],
@@ -5843,7 +5843,7 @@
     {
       "id": "postgres-task-output-authorization",
       "file": "packages/postgres/task-output.ts",
-      "sourceDigest": "9f4c81228b18a6a134df48a3809b16c3d4cbda75853bb16d6f90ffadb2b15ac9",
+      "sourceDigest": "a4247bd675bfc8751bc43d22c07f6a474a450ed440b7f76d45994ee93552c6aa",
       "channels": [
         "internal"
       ],
@@ -5879,7 +5879,7 @@
     {
       "id": "postgres-database-runtime",
       "file": "packages/postgres/database.ts",
-      "sourceDigest": "f234a8530cad6c24bb849a33399ff51cf773fc38f060211674006228ec8934b2",
+      "sourceDigest": "82badfff53acb2f152d3fda33e86e0d1128f224c60d6ef051960ce625c7811e6",
       "channels": [
         "internal"
       ],
@@ -5939,7 +5939,7 @@
     {
       "id": "postgres-task-bindings",
       "file": "packages/postgres/task-bindings.ts",
-      "sourceDigest": "6f6a778616d9dbb537d47c301288ce501b8c650d0b5f6aeac48de33d620dd1ed",
+      "sourceDigest": "843ccfedff5eb9ff44c627819fc7a2f4b5b67c010fc6cd53428414f1b13c3bad",
       "channels": [
         "internal"
       ],
@@ -5951,7 +5951,7 @@
     {
       "id": "postgres-task-grants",
       "file": "packages/postgres/task-grants.ts",
-      "sourceDigest": "3594824091eeb3361630eea31768d87e5b19175ca1b86c8a7ac3fc153e491001",
+      "sourceDigest": "b58696ab8852592bcd70ec19e0bf2c760d70f2194da20d9e69da48622cbd7349",
       "channels": [
         "internal"
       ],
@@ -5963,7 +5963,7 @@
     {
       "id": "postgres-task-personal",
       "file": "packages/postgres/task-personal.ts",
-      "sourceDigest": "98e0c479bb8bb35d1e86587f349b36edc707c74f39eee90f119aaaaad51ce890",
+      "sourceDigest": "04bd3c2f5131f3aef4f9458e9e3f315fa6d918b766d23781345575286ad9947a",
       "channels": [
         "internal"
       ],
@@ -5999,7 +5999,7 @@
     {
       "id": "postgres-worker-admission",
       "file": "packages/postgres/worker-admission.ts",
-      "sourceDigest": "f7703b3d3ce2747b8195512eea22310dd0384b59b7cd98238139d236afa3a999",
+      "sourceDigest": "0c76f58a81da3b2672eb2ddac326faeab969fd79c79f9dc08c4f7e0266710f0e",
       "channels": [
         "internal"
       ],
@@ -6093,7 +6093,7 @@
       "currentControl": "Current original-task authority and published mapping; fresh control-only task grant, no inherited data or execution authority",
       "targetControl": "Reviewed contract-only metadata; observer activation remains unavailable",
       "stage": "S2",
-      "sourceDigest": "519462b0dda5f71be4e6e954db3748a2282b075fca48bddda528c6b6cb064781"
+      "sourceDigest": "549cb42e36b9205b9e58cfec70749d33f4f98a2eaf752c62b3a8e0f18d6bd3ad"
     },
     {
       "id": "postgres-task-lineage",
@@ -6230,7 +6230,7 @@
     {
       "id": "postgres-ontology-metadata",
       "file": "packages/postgres/ontology-metadata.ts",
-      "sourceDigest": "59deb8f8877593a4bc3ec7d0c51d173bc1a12850629c958d0b7a4271993c4e23",
+      "sourceDigest": "a9d2af05983b958690ef2e27f0fa01d78c73a395f19194e89ea6d54b264959dc",
       "channels": [
         "internal"
       ],
@@ -6434,7 +6434,7 @@
     {
       "id": "postgres-authority-publisher",
       "file": "packages/postgres/authority-publisher.ts",
-      "sourceDigest": "88c3ae133506959a3f21d57325cacd29bfdfb5367ba91d940cee2adbbe23e85d",
+      "sourceDigest": "f10f357edb18508a783e7d37517329c75ef7ab1d722385d7902d0b4a2c610e87",
       "channels": [
         "internal"
       ],
@@ -6458,7 +6458,7 @@
     {
       "id": "postgres-action-authorization",
       "file": "packages/postgres/action-authorization.ts",
-      "sourceDigest": "1d8324584bd286ee376258bc441287780b2ff76a510fd78766a19451144aa248",
+      "sourceDigest": "8cb65bd5ff78fece2de37189b6c31881da43c9f178a909a469deadbb27500af3",
       "channels": [
         "internal"
       ],
@@ -6482,7 +6482,7 @@
     {
       "id": "postgres-permission-check",
       "file": "packages/postgres/access-check.ts",
-      "sourceDigest": "b57b27f1e42f1fc00e1278ec1c3e1961ce5c1f21aa8be66e0c8fed58b2144475",
+      "sourceDigest": "7b01585cf07cbfc4ba7554ecdf0f0f42a65ddde4c97d8c74177b0904990ebc6c",
       "channels": [
         "internal"
       ],
@@ -6542,7 +6542,7 @@
     {
       "id": "postgres-eligibility-inspection",
       "file": "packages/postgres/eligibility-inspection.ts",
-      "sourceDigest": "42dfd0b03265e8f17ff0a4ae016f46bc7721fd2b44b87da268b6127eb9b5503b",
+      "sourceDigest": "2b7d27df48182fc1453beea7b0f6176ec07489d310739048cc154b1c4c63e909",
       "channels": [
         "internal"
       ],
@@ -6566,7 +6566,7 @@
     {
       "id": "postgres-source-projection",
       "file": "packages/postgres/source-projection.ts",
-      "sourceDigest": "712e0a45938bd8f9e08130b24cd12cd898fdf960daf763469389df50f0a68e32",
+      "sourceDigest": "dd19b1903c06cf1fb0bcc4f820a046ef32274965a0b0c0529b504b2d4b6cca4d",
       "channels": [
         "internal"
       ],
@@ -6674,7 +6674,7 @@
     {
       "id": "postgres-document-bindings",
       "file": "packages/postgres/document-bindings.ts",
-      "sourceDigest": "4c9e3b895990168c8c08c1e669f4ef4dc223676637e14d7ebc7d42d7c865b732",
+      "sourceDigest": "17f8d4c193b501b2a14a0833fac32d2894d7e79796183e29eb6eca20126d6303",
       "channels": [
         "internal"
       ],
@@ -6758,7 +6758,7 @@
     {
       "id": "postgres-ci-groups",
       "file": "scripts/postgres-tests.mjs",
-      "sourceDigest": "2d8fab3a128965ebb9c7a1c65793b88406095a5507381154d135f34576956de8",
+      "sourceDigest": "506dc97bae2b7bd186951db68279075fda479752dd1ac64160f6384a684b2c5c",
       "channels": [
         "internal"
       ],
@@ -6778,6 +6778,42 @@
       "currentControl": "Whole original artifact must pass its current content seal before finite verified-document selection; current task/revision and permitted DocumentDraft snapshot must match status, exact text/hash and citations; public output contains only registered document Markdown and preserves opaque provider/ledger payload exclusions",
       "targetControl": "Whole original artifact must pass its current content seal before finite verified-document selection; current task/revision and permitted DocumentDraft snapshot must match status, exact text/hash and citations; public output contains only registered document Markdown and preserves opaque provider/ledger payload exclusions",
       "stage": "S5"
+    },
+    {
+      "id": "consent-lifetime",
+      "file": "packages/security/consent-lifetime.ts",
+      "sourceDigest": "96b995fd8f310ee181fb9054bc7193133de1ae6aa79fa079a347b7c8cd097d6d",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Explicit nullable consent lifetime and SQL projection",
+      "currentControl": "Validates timestamps; Infinity is used only for consent comparisons, never Worker leases or business evidence",
+      "targetControl": "Current owner, version, revocation and bounded execution checks",
+      "stage": "S1"
+    },
+    {
+      "id": "persistent-consent-policy-upgrade",
+      "file": "packages/security/persistent-consent-upgrade.ts",
+      "sourceDigest": "2f0cbe468cc6ce480cda67d38e5774121abb83deb3b10eee6216e11ecadbc379",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Named offline consent-contract upgrade",
+      "currentControl": "Exact previous policy digest/revision, stopped writers, immutable receipt; existing grants and expirations remain unchanged",
+      "targetControl": "Current owner, version, revocation and bounded execution checks",
+      "stage": "S1"
+    },
+    {
+      "id": "postgres-consent-policy",
+      "file": "packages/postgres/consent.ts",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "PostgreSQL explicit consent lifetime compatibility",
+      "currentControl": "Nullable consent requires the exact reviewed persistent policy contract; legacy finite deadlines remain unchanged. SQL index projection is never a Worker lease, execution window or business permit; current manager, claim, revocation and output gates remain independent.",
+      "targetControl": "Preserve original grant identities and finite deadlines, reject legacy null consent, and retain current eligibility and execution bounds.",
+      "stage": "S5",
+      "sourceDigest": "298170fc446565f695049cb3fc968eafba61f9a35fe7e1ae633ce333e1024b38"
     }
   ]
 }

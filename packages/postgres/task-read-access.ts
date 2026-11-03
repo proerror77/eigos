@@ -1,3 +1,5 @@
+import {consentExpirySchema} from '../security/consent-lifetime.js';
+import {postgresConsentDeadline,postgresConsentIndex} from './consent.js';
 import {postgresIsNewTaskGrant} from './task-grants.js';
 import {postgresCanInspectEligibility,postgresRequireCurrentEligibility} from './runtime-transaction.js';
 import type {PostgresEligibilityReference} from './eligibility-reference.js';
@@ -82,7 +84,7 @@ async function postgresAgentAdmission(client: Client, principal: Principal, poli
   const parentRow = parentRows.rows[0], parent = agentAccessGrantSchema.parse({ ...JSON.parse(String(parentRow.body)), revision:Number(parentRow.revision),status:parentRow.state });
   if (parent.id !== actor.agentGrant.id || parent.revision !== actor.agentGrant.revision) throw new SecurityError('POLICY_CHANGED');
   if (parent.ownerKey !== owner || parent.memberId !== actor.memberId || parent.installationId !== actor.installationId) throw new SecurityError('ACCESS_REVOKED');
-  const fixedUntil=Math.min(Number(parentRow.expires_at),Date.parse(parent.expiresAt));
+  const fixedUntil=Math.min(Number(parentRow.expires_at),postgresConsentDeadline(parent.expiresAt,policyDigest));
   const validUntil=currentEligibility?fixedUntil:Math.min(managerExpiry,subjectExpiry,fixedUntil);
   if(!Number.isSafeInteger(validUntil) || validUntil<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');
   let eligibility:PostgresEligibilityReference|undefined;
@@ -163,7 +165,7 @@ async function postgresTaskGrant(client: Client, principal: Principal, taskId: s
       :mode==='check_query'&&!grant.operations.includes('task.query'))
     || grant.inputs.length > 0 && !grant.operations.includes('member_asset.read')
     || mode==='read'&&(!grant.channels.includes('agent_response')||!parent.channels.includes('agent_response'))) throw new SecurityError('AUTHORIZATION_REQUIRED');
-  const validUntil=Math.min(base.validUntil,Number(grantRow.expires_at),Date.parse(grant.expiresAt));
+  const validUntil=Math.min(base.validUntil,Number(grantRow.expires_at),postgresConsentDeadline(grant.expiresAt,policyDigest));
   if(!Number.isSafeInteger(validUntil) || validUntil<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');
   let eligibility=base.eligibility;
   // Only the trusted issuance path can record an exact NEW grant receipt.
@@ -287,14 +289,14 @@ export async function postgresTaskResourcePermissionValidUntil(client: Client, p
     const load=async()=>{
       const result=await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${schema}".security_roles WHERE subject_id IN ($1,$2) LIMIT 257`,[admission.actor.memberId,admission.actor.installationId]);
       if(result.rows.length>256||result.rows.some(row=>row.body===null))throw new SecurityError('OUTPUT_NOT_ALLOWED');
-      return freezeData(result.rows.map(row=>roleSchema.parse(JSON.parse(String(row.body)))));
+      return freezeData(result.rows.map(row=>{const role=roleSchema.parse(JSON.parse(String(row.body)));postgresConsentDeadline(role.expiresAt,policyDigest);return role;}));
     };
     const snapshot=snapshots.get(client);
     const roles=await(snapshot?(snapshot.roles??=load()):load());
     return {roles,actor:admission.actor,model:builder === undefined ? currentKernelImplementation() : stagedKernelComponents(builder).model};
   });
   const now=Date.now(),matching=checked.roles.filter(role=>roleAllows(checked.model,[role],checked.actor.memberId,checked.actor.installationId,kind,id,permission,()=>now));
-  return matching.reduce((latest,role)=>Math.max(latest,Date.parse(role.expiresAt)),0);
+  return matching.reduce((latest,role)=>Math.max(latest,postgresConsentIndex(role.expiresAt,policyDigest,checked.model)),0);
 }
 
 export async function postgresTaskResourceViewAllowed(client: Client, principal: Principal, taskId: string, policyDigest: string, kind: string, id: string, builder?: StagedKernelBuilder): Promise<boolean> {
@@ -312,7 +314,7 @@ export async function postgresTaskFieldClassification(client: Client, principal:
 }
 
 const recipientSchema = z.strictObject({ classification:z.enum(['private','sensitive']), markings:securityEnvelopeSchema.shape.requiredMarkings,
-  channels:securityEnvelopeSchema.shape.channels, expiresAt:z.iso.datetime({offset:true}) });
+  channels:securityEnvelopeSchema.shape.channels, expiresAt:consentExpirySchema });
 
 /** Read current recipient clearance for an admitted task. This is not an
  * output authorization: callers must also recompute and validate the complete
@@ -325,12 +327,12 @@ export async function postgresTaskReadClearance(client: Client, principal: Princ
       const rows=await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${schema}".security_recipients WHERE installation_id=$1 LIMIT 2`,[admission.actor.installationId]);
       if(rows.rowCount===0)return undefined;
       if(rows.rowCount!==1||rows.rows[0].body===null)throw new SecurityError('OUTPUT_NOT_ALLOWED');
-      return freezeData(recipientSchema.parse(JSON.parse(String(rows.rows[0].body))));
+      const clearance=recipientSchema.parse(JSON.parse(String(rows.rows[0].body)));postgresConsentDeadline(clearance.expiresAt,policyDigest);return freezeData(clearance);
     };
     const snapshot=snapshots.get(client);
     return snapshot?(snapshot.clearance??=load()):load();
   });
-  return result && Date.parse(result.expiresAt)>Date.now()?structuredClone(result):undefined;
+  return result && postgresConsentDeadline(result.expiresAt,policyDigest)>Date.now()?structuredClone(result):undefined;
 }
 
 /** Resolve the admitted task's exact read model. The returned model still
@@ -499,8 +501,8 @@ export async function postgresTaskSourceObservationValidUntil(client: Client, pr
   });
   if(!checked)return 0;
   const now=Date.now();
-  return checked.sources.filter(source=>Date.parse(source.expiresAt)>now && sourceMatchesObservation([source],checked.origin,ref.type))
-    .reduce((latest,source)=>Math.max(latest,Date.parse(source.expiresAt)),0);
+  return checked.sources.filter(source=>postgresConsentDeadline(source.expiresAt,policyDigest)>now && sourceMatchesObservation([source],checked.origin,ref.type))
+    .reduce((latest,source)=>Math.max(latest,postgresConsentIndex(source.expiresAt,policyDigest)),0);
 }
 
 export async function postgresTaskSourceObservationAllowed(client: Client, principal: Principal, taskId: string, policyDigest: string,
@@ -564,7 +566,7 @@ async function postgresTaskFieldCandidates(client: Client, principal: Principal,
     if(!fields.includes(definition.primaryKey) || !fields.includes(definition.titleKey))return undefined;
     const roleValidUntil=await postgresTaskResourceViewValidUntil(client,captured,taskId,policyDigest,'objectType',ref.type,builder);
     if(!roleValidUntil)return undefined;
-    return {revision:binding.revision,fields,validUntil:Math.min(roleValidUntil,Date.parse(clearance.expiresAt))};
+    return {revision:binding.revision,fields,validUntil:Math.min(roleValidUntil,postgresConsentIndex(clearance.expiresAt,policyDigest))};
   });
   if(!checked || checked.validUntil<=Date.now())return undefined;
   return checked;

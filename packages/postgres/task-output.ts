@@ -79,7 +79,7 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
     const objects = new Map<string, { bytes: number; value: { revision: number; definitionDigest: string; body: z.infer<typeof bodySchema> } }>();
     let objectBytes = 0;
     let nodes = 0;
-    let modelClearance: {classification:'private'|'sensitive';markings:SecurityEnvelope['requiredMarkings'];expiresAt:string}|undefined;
+    let modelClearance: {classification:'private'|'sensitive';markings:SecurityEnvelope['requiredMarkings'];expiresAt:ConsentExpiry}|undefined;
     const tombstones = new Map<string,boolean>();
     const raw = async (ref: ObjectRef) => {
       const objectKey = key(ref), cached = objects.get(objectKey);
@@ -241,13 +241,14 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
         if(!modelClearance){
           const rows=await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM ${q}.security_model_channels WHERE id=$1 LIMIT 2`,[processing.modelChannel]);
           if(rows.rowCount!==1||typeof rows.rows[0]?.body!=='string')throw new SecurityError('OUTPUT_NOT_ALLOWED');
-          modelClearance=z.strictObject({classification:z.enum(['private','sensitive']),markings:securityEnvelopeSchema.shape.requiredMarkings,expiresAt:z.iso.datetime({offset:true})}).parse(JSON.parse(rows.rows[0].body));
+          modelClearance=z.strictObject({classification:z.enum(['private','sensitive']),markings:securityEnvelopeSchema.shape.requiredMarkings,expiresAt:consentExpirySchema}).parse(JSON.parse(rows.rows[0].body));
+          postgresConsentDeadline(modelClearance.expiresAt,policyDigest);
         }
         clearance={...modelClearance,channels:['registered_model'] as Channel[]};
       }else clearance=await postgresTaskReadClearance(client,captured,taskId,policyDigest);
       if (!clearance || !clearance.channels.includes(channel) || !admission.grant.channels.includes(channel)) throw new SecurityError('OUTPUT_NOT_ALLOWED');
       requireChannel(effective, channel, clearance);
-      validUntil = Math.min(validUntil, Date.parse(clearance.expiresAt));
+      validUntil = Math.min(validUntil, postgresConsentIndex(clearance.expiresAt,policyDigest));
       if (validUntil <= Date.now()) throw new SecurityError('OUTPUT_NOT_ALLOWED');
       return effective;
     };
@@ -469,3 +470,5 @@ export async function postgresTaskAuthorizeOutput(client: Client, principal: Pri
     throw error;
   }
 }
+import {consentExpirySchema,type ConsentExpiry} from '../security/consent-lifetime.js';
+import {postgresConsentDeadline,postgresConsentIndex} from './consent.js';

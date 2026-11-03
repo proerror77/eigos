@@ -1,3 +1,4 @@
+import {postgresConsentDeadline,postgresConstrainConsent} from './consent.js';
 import type {Client} from 'pg';
 import type {Principal} from '../core/domain.js';
 import {requireScope} from '../core/domain.js';
@@ -30,7 +31,7 @@ async function checkAction(client:Client,principal:Principal,taskId:string,actio
   if(!admission.grant.operations.includes('task.process'))return 'AUTHORIZATION_REQUIRED';
   const owner=admission.actor.ownerKey,authority=await postgresWorkAuthority(client,owner,taskId,policy);
   if(!authority||authority.installationId!==admission.actor.installationId||authority.dataGrant.id!==admission.grant.id)return 'AUTHORIZATION_REQUIRED';
-  postgresConstrainReadDeadline(client,Date.parse(authority.expiresAt));
+  postgresConstrainConsent(client,authority.expiresAt,policy);
   const job=await new PostgresTaskStorage(client,builder).get(owner,taskId),state=job.delegation?.agent,plan=state?.plans.find(value=>value.id===state.pendingPlanId),step=plan?.steps.find(value=>value.action===action);
   if(!plan||!step)return 'PLAN_REQUIRED';
   if(plan.ontologyPlanning.accessDigest!==fingerprint(admission,'task.process'))return 'POLICY_CHANGED';
@@ -42,11 +43,11 @@ async function checkAction(client:Client,principal:Principal,taskId:string,actio
     if(rows.rows.length>256||rows.rows.some(row=>typeof row.body!=='string'))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
     const sources=rows.rows.map(row=>{const source=storedSourceSchema.parse(JSON.parse(row.body));
       if(source.bindingId!==row.binding_id||source.programId!==row.program_id||source.installationId!==admission.actor.installationId)throw new SecurityError('SOURCE_NOT_AUTHORIZED');return source;
-    }).filter(source=>source.parentGrant.id===admission.parent.id&&source.parentGrant.revision===admission.parent.revision&&Date.parse(source.expiresAt)>Date.now());
+    }).filter(source=>source.parentGrant.id===admission.parent.id&&source.parentGrant.revision===admission.parent.revision&&postgresConsentDeadline(source.expiresAt,policy)>Date.now());
     for(const needed of actionSources(state!,action,step.input,step)){
       const source=sources.find(value=>value.programId===needed.programRef.id&&value.programDigest===needed.programDigest&&value.operations.includes(action));
       if(!source||!admission.grant.outputs.some(output=>output.programId===needed.programRef.id&&output.programDigest===needed.programDigest&&output.sourceBindingId===source.bindingId))return 'SOURCE_NOT_AUTHORIZED';
-      postgresConstrainReadDeadline(client,Date.parse(source.expiresAt));
+      postgresConstrainConsent(client,source.expiresAt,policy);
     }
   }catch{return 'SOURCE_NOT_AUTHORIZED';}
   let nodes=0;

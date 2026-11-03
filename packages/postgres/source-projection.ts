@@ -1,3 +1,4 @@
+import {postgresConsentDeadline,postgresConstrainConsent} from './consent.js';
 import {randomUUID} from 'node:crypto';
 import type {Client} from 'pg';
 import {z} from 'zod';
@@ -75,10 +76,10 @@ export async function withPostgresSourceProjection<T>(client:Client,input:Postgr
     if(rows.rows.length>256||rows.rows.some(row=>typeof row.body!=='string'))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
     const choices=rows.rows.map(row=>{const value=storedSourceSchema.parse(JSON.parse(row.body));if(value.bindingId!==row.binding_id||value.programId!==row.program_id||value.installationId!==admission.authority.installationId)throw new SecurityError('SOURCE_NOT_AUTHORIZED');return value;})
       .filter(value=>value.programId===configured.programRef.id&&value.programDigest===configured.configurationDigest&&(!configured.sourceBindingId||value.bindingId===configured.sourceBindingId)
-        &&(!configured.action||value.operations.includes(configured.action))&&value.parentGrant.id===admission.parent.id&&value.parentGrant.revision===admission.parent.revision&&Date.parse(value.expiresAt)>Date.now());
+        &&(!configured.action||value.operations.includes(configured.action))&&value.parentGrant.id===admission.parent.id&&value.parentGrant.revision===admission.parent.revision&&postgresConsentDeadline(value.expiresAt,options.policyDigest)>Date.now());
     if(choices.length!==1)throw new SecurityError('SOURCE_NOT_AUTHORIZED');const selected=choices[0]!;
     if(reserved.has(selected.bindingId)||!admission.parent.capabilityIds.includes(selected.programId)||!admission.parent.sourceBindingIds.includes(selected.bindingId))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
-    postgresConstrainReadDeadline(client,Date.parse(selected.expiresAt));
+    postgresConstrainConsent(client,selected.expiresAt,options.policyDigest);
     if(configured.action)await withPostgresWorkerEvidenceAuthorization(client,claim,options.policyDigest,async(_auth,_scope,principal)=>{
       for(const permission of ['resource.view','action.execute'] as const){const until=await postgresTaskResourcePermissionValidUntil(client,principal,request.id,options.policyDigest,'actionType',configured.action!,permission,options.builder);
         if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');postgresConstrainReadDeadline(client,until);}

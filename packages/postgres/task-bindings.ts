@@ -125,9 +125,14 @@ export class PostgresTaskBindings {
       }else if(origin){
         const sources=await this.query(`SELECT binding_id,program_id,CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${this.schema}".security_sources WHERE owner=$1 AND installation_id=$2 AND state='active' LIMIT 257`,[g.ownerKey,g.installationId]);
         if(sources.rows.length>256||sources.rows.some(item=>item.body===null))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
-        if(!sources.rows.some(item=>{const value=storedSourceSchema.parse(JSON.parse(String(item.body)));return value.bindingId===item.binding_id&&value.programId===item.program_id
-          &&value.parentGrant.id===g.parentGrant.id&&value.parentGrant.revision===g.parentGrant.revision
-          &&value.bindingId===origin.sourceBindingId&&value.programId===origin.programId&&value.programDigest===origin.programDigest&&Date.parse(value.expiresAt)>Date.now();}))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
+        let authorized=false;
+        for(const item of sources.rows){
+          const value=storedSourceSchema.parse(JSON.parse(String(item.body)));
+          if(value.bindingId===item.binding_id&&value.programId===item.program_id&&value.parentGrant.id===g.parentGrant.id&&value.parentGrant.revision===g.parentGrant.revision
+            &&value.bindingId===origin.sourceBindingId&&value.programId===origin.programId&&value.programDigest===origin.programDigest
+            &&await postgresCurrentConsentDeadline(this.client,value.expiresAt)>Date.now()){authorized=true;break;}
+        }
+        if(!authorized)throw new SecurityError('SOURCE_NOT_AUTHORIZED');
         sourceBindingId=origin.sourceBindingId;inputEnvelope=origin.inputEnvelope&&securityEnvelopeSchema.parse(origin.inputEnvelope);
       }
     }
@@ -176,3 +181,4 @@ export class PostgresTaskBindings {
       await this.bind(grant,ref,fields,'task_projection',await evidence());}
   }
 }
+import {postgresCurrentConsentDeadline} from './consent.js';

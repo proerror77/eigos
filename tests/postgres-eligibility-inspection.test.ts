@@ -1,3 +1,4 @@
+import {consentDeadline} from '../packages/security/consent-lifetime.js';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {randomUUID} from 'node:crypto';
@@ -49,7 +50,7 @@ test('fresh original-token eligibility survives expiration of an old business sn
       await x.t.publisher.renew();await x.t.publisher.publish(x.f.member.id,x.installation.id);await delay(5100);
       assert(Number(old.expires_at)<=Date.now());assert(Number(old.valid_until)<=Date.now());
       const result=await x.inspect();assert(result.validUntil>Date.now()+30000);
-      assert(result.validUntil<=Date.parse(x.parent.expiresAt));assert(result.validUntil<=Date.parse(x.task.grant.expiresAt));
+      assert(result.validUntil<=consentDeadline(x.parent.expiresAt));assert(result.validUntil<=consentDeadline(x.task.grant.expiresAt));
       const snapshot=(await client.query(`SELECT expires_at FROM ${x.q}.security_manager`)).rows[0];assert.equal(Number(snapshot.expires_at),Number(old.expires_at));
     });
     assert.deepEqual((await x.t.client.query(`SELECT id,revision,state,expires_at,body FROM ${x.q}.security_grants ORDER BY id`)).rows,grants);

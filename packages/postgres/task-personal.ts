@@ -1,3 +1,4 @@
+import {postgresConsentDeadline,postgresConsentIndex} from './consent.js';
 import type {Client} from 'pg';
 import type {z} from 'zod';
 import {requireScope,type Job,type Principal} from '../core/domain.js';
@@ -23,11 +24,11 @@ export async function postgresPersonalInputs(client:Client,p:Principal,job:Job,p
   const model=builder?stagedKernelComponents(builder).model:currentKernelImplementation();
   const rows=await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM ${q}.security_roles WHERE subject_id IN($1,$2) LIMIT 257`,[actor.memberId,actor.installationId]);
   if(rows.rows.length>256||rows.rows.some(row=>row.body===null))throw new SecurityError('INSUFFICIENT_ACCESS');
-  const roles=rows.rows.map(row=>roleSchema.parse(JSON.parse(String(row.body))));
+  const roles=rows.rows.map(row=>{const role=roleSchema.parse(JSON.parse(String(row.body)));postgresConsentDeadline(role.expiresAt,policy,model);return role;});
   const take=async(ref:ObjectRef,selected:readonly string[],revision?:number,optional=false):Promise<Record<string,unknown>|undefined>=>{
     const matching=roles.filter(role=>roleAllows(model,[role],actor.memberId,actor.installationId,'objectType',ref.type,'resource.view',Date.now));
     if(!matching.length)throw new SecurityError('INSUFFICIENT_ACCESS');
-    postgresConstrainReadDeadline(client,Math.max(...matching.map(role=>Date.parse(role.expiresAt))));
+    postgresConstrainReadDeadline(client,Math.max(...matching.map(role=>postgresConsentIndex(role.expiresAt,policy,model))));
     const definition=model.object(ref.type),fields=[...new Set([definition.primaryKey,definition.titleKey,...selected])];
     if(fields.some(field=>!parent.resources.some(resource=>resource.type===ref.type&&resource.fields.includes(field))||reviewedFieldPolicy(model,ref.type,field)==='internal_only'))throw new SecurityError('INSUFFICIENT_ACCESS');
     const objects=await client.query(`SELECT revision,CASE WHEN octet_length(body)<=1048576 THEN body END AS body FROM ${q}.ontology_objects

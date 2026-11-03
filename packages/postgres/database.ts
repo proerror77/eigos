@@ -9,6 +9,7 @@ import type {WorkClaim} from '../core/store.js';
 import {postgresCleanupReleasedClaims} from './claim-release.js';
 import {stagedKernelComponents,type StagedKernelBuilder} from '../ontology/seed-definition.js';
 import {postgresWorkAvailable} from './work-availability.js';
+import {registerPostgresConsentKernel} from './consent.js';
 
 /** Owns the runtime's connection pool, not a second business authority. Each
  * operation gets one client and one fenced transaction. No implicit retries. */
@@ -21,7 +22,7 @@ export class PostgresDatabase {
   constructor(private readonly pool:Pick<Pool,'connect'|'end'>,private readonly schema:string,authority:PostgresRuntimeAuthority,options:{leasePool?:Pick<Pool,'connect'|'end'>;eligibilityPool?:Pick<Pool,'connect'|'end'>;kernel?:StagedKernelBuilder}={}) {
     if(!/^eigos_business_[a-z0-9_]{1,40}$/.test(schema) || typeof authority.id!=='string' || !authority.id
       || !Number.isSafeInteger(authority.revision) || authority.revision<1 || !/^[a-f0-9]{64}$/.test(authority.digest))throw new Error('Invalid PostgreSQL runtime configuration');
-    if(options.kernel!==undefined)stagedKernelComponents(options.kernel);this.kernel=options.kernel;
+    if(options.kernel!==undefined){stagedKernelComponents(options.kernel);registerPostgresConsentKernel(options.kernel);}this.kernel=options.kernel;
     this.authority=Object.freeze(structuredClone(authority));
     if(options.leasePool===pool)throw new Error('Worker heartbeats require a separate connection pool');
     this.leasePool=options.leasePool;this.eligibilityPool=options.eligibilityPool??options.leasePool;

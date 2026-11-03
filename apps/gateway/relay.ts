@@ -1,3 +1,4 @@
+import { consentDeadline } from '../../packages/security/consent-lifetime.js';
 import { isAbsolute } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Express, Request, RequestHandler } from 'express';
@@ -125,7 +126,7 @@ export class TaskRelayGateway {
     const checkedProof = await verifyProof(proof, token, 'POST', this.gatewayOrigin + '/relay/bind', card.card.agentId, now);
     const tokenExpiry = z.number().int().positive().parse(decodeJwt(token).exp) * 1000;
     const actor = this.store.security.agentContext(principal), parent = this.store.security.agentGrant(actor.installationId);
-    const expiresAt = Math.min(tokenExpiry, now + 900000, Date.parse(parent.expiresAt));
+    const expiresAt = Math.min(tokenExpiry, now + 900000, consentDeadline(parent.expiresAt));
     const binding = this.store.security.relay.bind(principal, card.card.agentId, expiresAt, checkedProof);
     // Contact acceptance only follows this installation's authenticated key binding.
     let contact = await this.client.ensureContact(card.card.agentId);

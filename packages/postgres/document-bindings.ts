@@ -1,3 +1,4 @@
+import {postgresConsentDeadline,postgresConstrainConsent} from './consent.js';
 import type {Client} from 'pg';
 import {z} from 'zod';
 import {digest} from '../core/delegation.js';
@@ -77,10 +78,10 @@ export async function discoverPostgresDocumentBindings(client:Client,input:Postg
           const sourceRows=await sql(`SELECT binding_id,program_id,CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM ${q}.security_sources WHERE owner=$1 AND installation_id=$2 AND state='active' LIMIT 257`,[claim.owner,admission.actor.installationId]);
           if(sourceRows.rows.length>256||sourceRows.rows.some(row=>typeof row.body!=='string'))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
           const sources=sourceRows.rows.map(row=>{const source=storedSourceSchema.parse(JSON.parse(row.body));if(source.bindingId!==row.binding_id||source.programId!==row.program_id||source.installationId!==admission.actor.installationId)throw new SecurityError('SOURCE_NOT_AUTHORIZED');return source;}).filter(source=>source.programId===program.ref.id&&source.programDigest===program.configurationDigest&&source.operations.includes(action.id)&&(!options.sourceBindingId||source.bindingId===options.sourceBindingId)
-            &&source.parentGrant.id===admission.parent.id&&source.parentGrant.revision===admission.parent.revision&&admission.parent.sourceBindingIds.includes(source.bindingId)&&Date.parse(source.expiresAt)>Date.now()
+            &&source.parentGrant.id===admission.parent.id&&source.parentGrant.revision===admission.parent.revision&&admission.parent.sourceBindingIds.includes(source.bindingId)&&postgresConsentDeadline(source.expiresAt,options.policyDigest,model)>Date.now()
             &&['DocumentTask','DocumentDraft'].every(type=>source.outputTypes.includes(type)&&admission.grant.outputs.some(output=>output.type===type&&output.programId===source.programId&&output.programDigest===source.programDigest&&output.sourceBindingId===source.bindingId&&output.fields.every(field=>admission.parent.resources.some(resource=>resource.type===type&&resource.fields.includes(field))))));
           let readiness:DiscoveredActionBinding['readiness']=sources.length===1?'ready':'source_authorization_required',reason=sources.length===1?'Exact task-scoped action binding; current inputs and effect authorization must still pass':'The exact document source binding requires current owner approval';
-          if(sources.length===1)postgresConstrainReadDeadline(client,Date.parse(sources[0]!.expiresAt));
+          if(sources.length===1)postgresConstrainConsent(client,sources[0]!.expiresAt,options.policyDigest,model);
           // Resolve only the relevant program's published intake. Unrelated
           // services' pending/expired verification never blocks document work.
           // Matching intake semantics need their real verifier port; absence

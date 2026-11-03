@@ -1,3 +1,4 @@
+import {consentDeadline} from '../packages/security/consent-lifetime.js';
 // Real SQLite/PostgreSQL projections and actual document completion semantics.
 // Decisions and executor output are explicitly synthetic; no live LLM/provider.
 import assert from 'node:assert/strict';
@@ -96,7 +97,7 @@ async function fixture(t:TestContext,additionalGoal=false){
       const q=`"${pg.schema}"`,sources=(await client.query(`SELECT body FROM ${q}.security_sources WHERE owner=$1 AND installation_id=$2 AND binding_id=$3 AND state='active'`,[owner,installation.id,bindingId])).rows;
       const roles=(await client.query(`SELECT body FROM ${q}.security_roles WHERE subject_id IN($1,$2)`,[f.member.id,installation.id])).rows.map(row=>roleSchema.parse(JSON.parse(row.body)));
       const source=sources.length===1?storedSourceSchema.parse(JSON.parse(sources[0]!.body)):undefined;
-      const permitted=!!source&&source.programId===program.ref.id&&source.programDigest===program.configurationDigest&&source.operations.includes('ComposeDocument')&&Date.parse(source.expiresAt)>clock
+      const permitted=!!source&&source.programId===program.ref.id&&source.programDigest===program.configurationDigest&&source.operations.includes('ComposeDocument')&&consentDeadline(source.expiresAt)>clock
         &&roleAllows(graph.model,roles,f.member.id,installation.id,'actionType','ComposeDocument','resource.view',()=>clock);
       const storage=await PostgresProjectionGraph.create(client,owner,release.ref,undefined,{readOnly:true,now:()=>clock});
       const admitted:GoalAssessmentPorts={...ports,resolveProgram:function*(ctx,selected){if(!permitted)throw new SecurityError('SOURCE_NOT_AUTHORIZED');return yield* ports.resolveProgram(ctx,selected);}};

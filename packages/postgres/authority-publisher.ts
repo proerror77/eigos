@@ -1,3 +1,4 @@
+import {postgresConsentIndex} from './consent.js';
 import {randomUUID} from 'node:crypto';
 import type {Client,Pool} from 'pg';
 import {z} from 'zod';
@@ -169,7 +170,7 @@ export class PostgresAuthorizationPublisher {
       if(rows.rowCount!==1||typeof rows.rows[0].body!=='string')throw new SecurityError('AUTHORIZATION_REQUIRED');
       const row=rows.rows[0],grant=agentAccessGrantSchema.parse({...JSON.parse(row.body),revision:Number(row.revision),status:row.state});
       if(grant.id!==row.id||grant.ownerKey!==subject.ownerKey||grant.memberId!==subject.memberId||grant.installationId!==subject.installationId)throw new SecurityError('ACCESS_REVOKED');
-      postgresConstrainReadDeadline(client,Math.min(Number(row.expires_at),Date.parse(grant.expiresAt)));
+      postgresConstrainReadDeadline(client,Math.min(Number(row.expires_at),postgresConsentIndex(grant.expiresAt,this.policy)));
       return accessContextSchema.parse({version:SECURITY_CONTRACT,actorKind:'agent',ownerKey:subject.ownerKey,memberId:subject.memberId,installationId:subject.installationId,
         clientId:subject.clientId,tokenScopes:[...new Set(verified.scopes)],agentGrant:{id:grant.id,revision:grant.revision},authEpoch:subject.epoch,policyVersion:POLICY_VERSION,checkedAt:new Date().toISOString()});
     });

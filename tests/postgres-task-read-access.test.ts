@@ -1,3 +1,4 @@
+import {consentExpiryIndex} from '../packages/security/consent-lifetime.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -656,9 +657,9 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await client.query(`DELETE FROM "${schema}".security_fences WHERE id=$1`,[fence[0]]);
     sqlite.prepare('UPDATE security_grants SET expires_at=0 WHERE id=?').run(task.grant.id);
     assert.throws(()=>f.jobs.security.taskGrant(f.jobs.security.agentContext(principal),task.job.id),/AUTHORIZATION_REQUIRED/);
-    sqlite.prepare('UPDATE security_grants SET expires_at=? WHERE id=?').run(Date.parse(task.grant.expiresAt),task.grant.id);
+    sqlite.prepare('UPDATE security_grants SET expires_at=? WHERE id=?').run(consentExpiryIndex(task.grant.expiresAt),task.grant.id);
     await client.query(`UPDATE "${schema}".security_grants SET expires_at=0 WHERE id=$1`,[task.grant.id]); await assert.rejects(read(),/AUTHORIZATION_REQUIRED/);
-    await client.query(`UPDATE "${schema}".security_grants SET expires_at=$1 WHERE id=$2`,[Date.parse(task.grant.expiresAt),task.grant.id]);
+    await client.query(`UPDATE "${schema}".security_grants SET expires_at=$1 WHERE id=$2`,[consentExpiryIndex(task.grant.expiresAt),task.grant.id]);
     const jobBody=String(sqlite.prepare('SELECT body FROM jobs WHERE id=?').get(task.job.id)!.body),changedJob=JSON.parse(jobBody); changedJob.delegation.request.revision++;
     sqlite.prepare('UPDATE jobs SET body=? WHERE id=?').run(JSON.stringify(changedJob),task.job.id);
     assert.throws(()=>f.jobs.security.taskGrant(f.jobs.security.agentContext(principal),task.job.id),/AUTHORIZATION_REQUIRED/);

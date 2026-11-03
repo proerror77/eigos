@@ -1,3 +1,4 @@
+import {postgresConsentDeadline,postgresConsentIndex} from './consent.js';
 import type {Client} from 'pg';
 import {z} from 'zod';
 import {digest} from '../core/delegation.js';
@@ -183,11 +184,11 @@ export function createPostgresActionAuthorization(client:Client,options:Postgres
       const sources:StoredSource[]=sourceRows.rows.map(row=>{const source=storedSourceSchema.parse(JSON.parse(row.body));if(source.bindingId!==row.binding_id||source.programId!==row.program_id||source.installationId!==admission.actor.installationId)deny('SOURCE_NOT_AUTHORIZED');return source;});
       for(const needed of actionSources(state,step.action,step.input,step)){
         const choices=sources.filter(source=>source.programId===needed.programRef.id&&source.programDigest===needed.programDigest&&source.operations.includes(step.action)
-          &&source.parentGrant.id===admission.parent.id&&source.parentGrant.revision===admission.parent.revision&&Date.parse(source.expiresAt)>Date.now()
+          &&source.parentGrant.id===admission.parent.id&&source.parentGrant.revision===admission.parent.revision&&postgresConsentDeadline(source.expiresAt,options.policyDigest)>Date.now()
           &&admission.parent.sourceBindingIds.includes(source.bindingId)&&admission.parent.capabilityIds.includes(source.programId)
           &&admission.grant.outputs.some(output=>output.programId===source.programId&&output.programDigest===source.programDigest&&output.sourceBindingId===source.bindingId&&source.outputTypes.includes(output.type)
             &&output.fields.every(field=>admission.parent.resources.some(resource=>resource.type===output.type&&resource.fields.includes(field)))));
-        if(choices.length!==1)deny('SOURCE_NOT_AUTHORIZED');deadline(Date.parse(choices[0]!.expiresAt));
+        if(choices.length!==1)deny('SOURCE_NOT_AUTHORIZED');deadline(postgresConsentIndex(choices[0]!.expiresAt,options.policyDigest));
       }
       const ontology=await postgresTaskReadOntology(client,principal,job.id,options.policyDigest,options.builder);
       const definition=ontology.model.action(step.action),operation=agentOperation(definition),bindings=capability.actions.filter(binding=>binding.ref.id===step.action);

@@ -1,3 +1,4 @@
+import {postgresConsentDeadline} from './consent.js';
 import type {Pool} from 'pg';
 import {digest} from '../core/delegation.js';
 import {agentAccessGrantSchema,taskDataGrantSchema} from '../security/contracts.js';
@@ -55,7 +56,7 @@ function parse(row:Row,runtime:PostgresRuntimeAuthority,reference:PostgresEligib
   try{parent=agentAccessGrantSchema.parse({...JSON.parse(row.parent_body),revision:Number(row.parent_revision),status:row.parent_state});}catch(error){throw changed(error);}
   if(parent.id!==reference.parentGrant.id||parent.ownerKey!==reference.ownerKey||parent.memberId!==reference.memberId||parent.installationId!==reference.installationId
     ||digest(parent)!==reference.parentGrant.bodyDigest)throw changed();
-  let fixedUntil=Math.min(parentUntil,Date.parse(parent.expiresAt));
+  let fixedUntil=Math.min(parentUntil,postgresConsentDeadline(parent.expiresAt,reference.policyDigest));
   if(reference.taskGrant){
     const pinned=reference.taskGrant,dataUntil=until(row.data_until);
     if(row.data_id===null||row.data_id===undefined||row.data_state!=='active'||dataUntil<=Date.now())throw new SecurityError('ACCESS_REVOKED');
@@ -65,7 +66,7 @@ function parse(row:Row,runtime:PostgresRuntimeAuthority,reference:PostgresEligib
     try{data=taskDataGrantSchema.parse({...JSON.parse(row.data_body),revision:Number(row.data_revision),status:row.data_state});}catch(error){throw changed(error);}
     if(data.id!==pinned.id||data.ownerKey!==reference.ownerKey||data.memberId!==reference.memberId||data.installationId!==reference.installationId
       ||data.parentGrant.id!==parent.id||data.parentGrant.revision!==parent.revision||data.taskId!==pinned.taskId||data.requestRevision!==pinned.requestRevision||digest(data)!==pinned.bodyDigest)throw changed();
-    fixedUntil=Math.min(fixedUntil,dataUntil,Date.parse(data.expiresAt));
+    fixedUntil=Math.min(fixedUntil,dataUntil,postgresConsentDeadline(data.expiresAt,reference.policyDigest));
   }
   const validUntil=Math.min(managerUntil,subjectUntil,fixedUntil);
   const current=()=>{

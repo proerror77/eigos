@@ -1,3 +1,4 @@
+import {postgresConsentDeadline} from './consent.js';
 import {digest} from '../core/delegation.js';
 import {postgresCanInspectEligibility,postgresRequireCurrentEligibility} from './runtime-transaction.js';
 import type {Client} from 'pg';
@@ -70,7 +71,7 @@ function parseWorkerScope(row:Record<string,unknown>,owner:string,taskId:string,
     ||!Number.isSafeInteger(policyRevision)||policyRevision<1||row.policy_digest!==policyDigest||!Number.isSafeInteger(revision)||revision<0||row.job_state!==row.stored_state)throw new SecurityError('ACCESS_REVOKED');
   const qualificationUntil=currentEligibility?Infinity:Math.min(Number(row.valid_until),Number(row.manager_until));
   const validUntil=Math.min(qualificationUntil,Number(row.parent_until),Number(row.data_until),Number(row.authority_until),
-    Date.parse(parent.expiresAt),Date.parse(grant.expiresAt),Date.parse(authority.expiresAt));
+    postgresConsentDeadline(parent.expiresAt,policyDigest),postgresConsentDeadline(grant.expiresAt,policyDigest),postgresConsentDeadline(authority.expiresAt,policyDigest));
   if(!Number.isSafeInteger(validUntil)||validUntil<=Date.now())throw new SecurityError('ACCESS_REVOKED');
   return {authority,parent,grant,policyRevision,validUntil,clientId:String(row.client_id)};
 }
