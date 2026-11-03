@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -71,6 +71,7 @@ export class OntologyObjectStore {
   readonly releaseRef?: OntologyReleaseRef;
   private readerFactory?: (owner: string, requestId: string) => NetworkOntologyReadAdapter | undefined;
   private backingStore?: OntologyObjectStore;
+  private definitionReaders: Partial<Record<'from' | 'to', StatementSync>> = {};
   pipelineStatus(owner: string, programRef: { id: string; version: string }, configurationDigest: string, actionId: string): import('./pipeline/contracts.js').PipelineStatus {
     return this.context.pipelineStatus?.(owner, programRef, configurationDigest, actionId) ?? { status: 'unmanaged', reason: 'No intake policy on this historical graph', verificationIds: [], authorization: 'per_action_required', availabilityProof: false };
   }
@@ -108,11 +109,15 @@ export class OntologyObjectStore {
       CREATE TABLE IF NOT EXISTS ontology_links (owner TEXT NOT NULL,type TEXT NOT NULL,from_type TEXT NOT NULL,from_id TEXT NOT NULL,to_type TEXT NOT NULL,to_id TEXT NOT NULL,definition_digest TEXT NOT NULL,PRIMARY KEY(owner,type,from_type,from_id,to_type,to_id));
       CREATE INDEX IF NOT EXISTS ontology_links_reverse ON ontology_links(owner,type,to_type,to_id,from_type,from_id);
       CREATE INDEX IF NOT EXISTS ontology_links_outgoing ON ontology_links(owner,from_type,from_id,type,to_type,to_id);
+      CREATE INDEX IF NOT EXISTS ontology_links_forward_definitions ON ontology_links(owner,type,from_type,from_id,definition_digest);
+      CREATE INDEX IF NOT EXISTS ontology_links_reverse_definitions ON ontology_links(owner,type,to_type,to_id,definition_digest);
       CREATE TABLE IF NOT EXISTS ontology_revisions (owner TEXT PRIMARY KEY,revision INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS ontology_scoped_objects (ontology_id TEXT NOT NULL,owner TEXT NOT NULL,type TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,definition_digest TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(ontology_id,owner,type,id));
       CREATE TABLE IF NOT EXISTS ontology_scoped_links (ontology_id TEXT NOT NULL,owner TEXT NOT NULL,type TEXT NOT NULL,from_type TEXT NOT NULL,from_id TEXT NOT NULL,to_type TEXT NOT NULL,to_id TEXT NOT NULL,definition_digest TEXT NOT NULL,PRIMARY KEY(ontology_id,owner,type,from_type,from_id,to_type,to_id));
       CREATE INDEX IF NOT EXISTS ontology_scoped_links_reverse ON ontology_scoped_links(ontology_id,owner,type,to_type,to_id,from_type,from_id);
       CREATE INDEX IF NOT EXISTS ontology_scoped_links_outgoing ON ontology_scoped_links(ontology_id,owner,from_type,from_id,type,to_type,to_id);
+      CREATE INDEX IF NOT EXISTS ontology_scoped_links_forward_definitions ON ontology_scoped_links(ontology_id,owner,type,from_type,from_id,definition_digest);
+      CREATE INDEX IF NOT EXISTS ontology_scoped_links_reverse_definitions ON ontology_scoped_links(ontology_id,owner,type,to_type,to_id,definition_digest);
       CREATE TABLE IF NOT EXISTS ontology_scoped_revisions (ontology_id TEXT NOT NULL,owner TEXT NOT NULL,revision INTEGER NOT NULL,PRIMARY KEY(ontology_id,owner));
       CREATE TABLE IF NOT EXISTS ontology_tombstones (ontology_id TEXT NOT NULL,owner TEXT NOT NULL,type TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,definition_digest TEXT NOT NULL,body TEXT NOT NULL,deleted_at TEXT NOT NULL,PRIMARY KEY(ontology_id,owner,type,id));
       CREATE TABLE IF NOT EXISTS ontology_object_versions (ontology_id TEXT NOT NULL,owner TEXT NOT NULL,type TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,definition_digest TEXT NOT NULL,release_id TEXT,release_digest TEXT,body TEXT NOT NULL,deleted INTEGER NOT NULL,PRIMARY KEY(ontology_id,owner,type,id,revision));
@@ -144,6 +149,27 @@ export class OntologyObjectStore {
   private assertLinkDefinition(type: string, storedDigest: string): void {
     const currentDigest = digest(this.model.link(type));
     if (storedDigest !== currentDigest && !this.context.compatibleDefinition?.({ kind: 'link', id: type, storedDigest, currentDigest })) throw new DomainError('CONFLICT', 'Pinned link definition changed');
+  }
+  private relationshipDefinitions(owner: string, type: string, side: 'from' | 'to', from: ObjectRef) {
+    // Seek once per distinct pin using the endpoint/definition index. DISTINCT
+    // with LIMIT would still visit every edge when they all share one pin.
+    // Validate the entire relationship, including hidden/dangling targets and
+    // definitions beyond the requested page, with the existing 200-pin bound.
+    // Only the compiled SQL is reused, at most once per direction on this
+    // store/connection. Every call binds current scope and reads current pins.
+    let statement = this.definitionReaders[side];
+    if (!statement) {
+      const select = `SELECT definition_digest FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND ${side}_type=? AND ${side}_id=?`;
+      statement = this.db.prepare(`WITH RECURSIVE relationship_definitions(definition_digest) AS (
+        SELECT (${select} ORDER BY definition_digest LIMIT 1)
+        UNION ALL
+        SELECT (${select} AND definition_digest>relationship_definitions.definition_digest ORDER BY definition_digest LIMIT 1)
+        FROM relationship_definitions WHERE definition_digest IS NOT NULL LIMIT 201
+      ) SELECT definition_digest FROM relationship_definitions WHERE definition_digest IS NOT NULL`);
+      this.definitionReaders[side] = statement;
+    }
+    const params = [...this.ownerParameters(owner), type, from.type, from.id];
+    return statement.all(...params, ...params);
   }
   private bumpRevision(owner: string): void {
     if (this.scoped) this.db.prepare('INSERT INTO ontology_scoped_revisions VALUES(?,?,1) ON CONFLICT(ontology_id,owner) DO UPDATE SET revision=revision+1').run(this.ontologyId, owner);
@@ -202,9 +228,9 @@ export class OntologyObjectStore {
     objectRefSchema.parse(ref); this.model.object(ref.type); this.charge(budget);
     this.assertReaderOwner(owner);
     if (isVirtualRef(ref)) return this.overlay(owner).read(ref, budget);
-    const row = this.db.prepare(`SELECT * FROM ${this.objectTable} WHERE ${this.owned()} AND type=? AND id=?`).get(...this.ownerParameters(owner), ref.type, ref.id);
+    const row = this.db.prepare(`SELECT o.*, deleted.revision AS tombstone_revision, deleted.deleted_at AS tombstone_deleted_at FROM ${this.objectTable} o LEFT JOIN ontology_tombstones deleted ON deleted.ontology_id=? AND deleted.owner=o.owner AND deleted.type=o.type AND deleted.id=o.id WHERE ${this.owned('o.')} AND o.type=? AND o.id=?`).get(this.ontologyId, ...this.ownerParameters(owner), ref.type, ref.id);
     if (!row) throw new DomainError('NOT_FOUND', 'Ontology object not found');
-    const deleted = this.db.prepare('SELECT revision,deleted_at FROM ontology_tombstones WHERE ontology_id=? AND owner=? AND type=? AND id=?').get(this.ontologyId, owner, ref.type, ref.id);
+    const deleted = row.tombstone_revision == null ? undefined : { revision: row.tombstone_revision, deleted_at: row.tombstone_deleted_at };
     if (deleted && !allowTombstone) throw new DomainError('NOT_FOUND', 'Ontology object was tombstoned');
     const body = JSON.parse(String(row.body)); this.assertObjectDefinition(ref.type, String(row.definition_digest), body.properties);
     return { ref, revision: Number(row.revision), ...body, ...(deleted ? { tombstone: { revision: Number(deleted.revision), deletedAt: String(deleted.deleted_at) } } : {}) };
@@ -576,7 +602,8 @@ export class OntologyObjectStore {
       if (cursor.owner !== digest(owner) || (cursor.ontologyId ?? 'eigos.business') !== this.ontologyId || cursor.query !== queryDigest || cursor.model !== this.model.ref.digest || cursor.revision !== revision) throw new DomainError('CONFLICT', 'Query context changed; restart the bounded query');
       last = cursor.last;
     }
-    let target: string, sql: string, params: (string | number)[], historical = false;
+    let target: string, sql: string, params: (string | number)[], historical = false, noLinks = false;
+    let relationship: { other: 'from' | 'to'; pageSql: string; pageParams: (string | number)[] } | undefined;
     if ('object' in args) {
       guard?.requireObject(owner, args.object);
       this.raw(owner, args.object, budget);
@@ -591,11 +618,24 @@ export class OntologyObjectStore {
       if (guard && scope) guard.requireResource(scope, 'linkType', nav.link.id);
       target = nav.viewType ?? nav.other.type;
       const side = nav.direction === 'forward' ? 'from' : 'to', other = nav.direction === 'forward' ? 'to' : 'from';
-      const storedDefinitions = this.db.prepare(`SELECT DISTINCT definition_digest FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND ${side}_type=? AND ${side}_id=? LIMIT 201`).all(...this.ownerParameters(owner), nav.link.id, args.from.type, args.from.id);
+      const storedDefinitions = this.relationshipDefinitions(owner, nav.link.id, side, args.from);
       if (storedDefinitions.length > 200) throw new DomainError('CONFLICT', 'Relationship definition read bound exceeded');
       for (const stored of storedDefinitions) this.assertLinkDefinition(nav.link.id, String(stored.definition_digest));
-      sql = `SELECT o.* FROM ${this.linkTable} l JOIN ${this.objectTable} o ON ${this.scoped ? 'o.ontology_id=l.ontology_id AND ' : ''}o.owner=l.owner AND o.type=l.${other}_type AND o.id=l.${other}_id WHERE ${this.owned('l.')} AND l.type=? AND l.${side}_type=? AND l.${side}_id=?`;
-      params = [...this.ownerParameters(owner), nav.link.id, args.from.type, args.from.id];
+      // No matching link can yield a target. Still run all permission, field,
+      // filter and revision checks below; this is never a cached empty result.
+      noLinks = storedDefinitions.length === 0;
+      // Bound candidate edges before object lookups and deletion filtering;
+      // guarded reads narrow the candidates to authorized refs below. Seek in
+      // the same indexed target key as the order. A LEFT JOIN retains deleted
+      // or dangling positions so empty pages can still advance.
+      relationship = {
+        other,
+        pageSql: `SELECT l.${other}_type AS type,l.${other}_id AS id FROM ${this.linkTable} l WHERE ${this.owned('l.')} AND l.type=? AND l.${side}_type=? AND l.${side}_id=?`,
+        pageParams: [...this.ownerParameters(owner), nav.link.id, args.from.type, args.from.id],
+      };
+      sql = `SELECT l.type AS page_type,l.id AS page_id,o.*${historical ? ', deleted.revision AS tombstone_revision, deleted.deleted_at AS tombstone_deleted_at' : ''}
+        FROM relationship_page l LEFT JOIN ${this.objectTable} o ON ${this.owned('o.')} AND o.type=l.type AND o.id=l.id`;
+      params = this.ownerParameters(owner);
     } else {
       target = args.type;
       const types = this.model.concreteTypes(target);
@@ -615,6 +655,14 @@ export class OntologyObjectStore {
       guard.requireResource(scope, this.model.isInterface(target) ? 'interface' : 'objectType', target);
       const bound = guard.predicate(owner, 'o', this.model.isInterface(target) ? [] : args.where.map(f => f.property),
         { types: this.model.concreteTypes(target), ...('object' in args ? { objectId: args.object.id } : {}) });
+      if (relationship) {
+        // Drive guarded reads from the already-validated task boundary (at
+        // most 2,000 refs), doing exact edge lookups. Paging raw hidden edges
+        // would both scan unnecessarily and disclose their count via cursors.
+        const { other } = relationship;
+        relationship.pageSql = relationship.pageSql.replace(`FROM ${this.linkTable} l`, `FROM json_each(?) visible CROSS JOIN ${this.linkTable} l ON l.${other}_type=json_extract(visible.value,'$.type') AND l.${other}_id=json_extract(visible.value,'$.id')`);
+        relationship.pageParams.unshift(JSON.stringify(bound.objects));
+      }
       sql += bound.sql; params.push(...bound.params);
     }
     const properties = this.properties(target);
@@ -631,21 +679,34 @@ export class OntologyObjectStore {
       const values = f.op === 'in' ? f.value : [f.value];
       if (!Array.isArray(values) || values.some(v => !p.schema.safeParse(v).success)) failure('Filter value does not match property type');
     }
-    if (last) { sql += ' AND (o.type > ? OR (o.type=? AND o.id>?))'; params.push(last.type, last.type, last.id); }
-    // Index-bounded scan, not an unbounded JSON predicate scan. Empty pages can have a continuation.
-    sql += ' ORDER BY o.type,o.id LIMIT 201';
-    const rows = this.db.prepare(sql).all(...params);
+    if (relationship) {
+      const { other } = relationship;
+      if (last) { relationship.pageSql += ` AND (l.${other}_type,l.${other}_id)>(?,?)`; relationship.pageParams.push(last.type, last.id); }
+      sql = `WITH relationship_page AS MATERIALIZED (${relationship.pageSql} ORDER BY l.${other}_type,l.${other}_id LIMIT 201) ${sql}`;
+      params = [...relationship.pageParams, ...params];
+      if (historical) {
+        sql += ' LEFT JOIN ontology_tombstones deleted ON deleted.ontology_id=? AND deleted.owner=o.owner AND deleted.type=o.type AND deleted.id=o.id';
+        params.push(this.ontologyId);
+      }
+      // Only this already-bounded candidate page may need sorting, never the
+      // entire relation. Authorization predicates above belong to the join.
+      sql += ' ORDER BY l.type,l.id';
+    } else {
+      if (last) { sql += ' AND (o.type > ? OR (o.type=? AND o.id>?))'; params.push(last.type, last.type, last.id); }
+      sql += ' ORDER BY o.type,o.id LIMIT 201';
+    }
+    const rows = noLinks ? [] : this.db.prepare(sql).all(...params);
     this.charge(budget, rows.length);
     const items: ObjectView[] = []; let scanned = 0, bytes = 0, hasMore = false;
     for (const row of rows) {
       if (scanned === 200 || items.length === args.limit) { hasMore = true; break; }
       scanned++;
+      if (row.type == null) { last = { type: String(row.page_type), id: String(row.page_id) }; continue; }
       const ref = { type: String(row.type), id: String(row.id) };
       const object = { ref, revision: Number(row.revision), ...JSON.parse(String(row.body)) } as StoredObject;
       this.assertObjectDefinition(ref.type, String(row.definition_digest), object.properties);
       if (historical) {
-        const deleted = this.db.prepare('SELECT revision,deleted_at FROM ontology_tombstones WHERE ontology_id=? AND owner=? AND type=? AND id=?').get(this.ontologyId, owner, ref.type, ref.id);
-        if (deleted) object.tombstone = { revision: Number(deleted.revision), deletedAt: String(deleted.deleted_at) };
+        if (row.tombstone_revision != null) object.tombstone = { revision: Number(row.tombstone_revision), deletedAt: String(row.tombstone_deleted_at) };
       }
       const binding = guard?.requireObject(owner, ref, object.revision);
       if (binding && args.where.some(f => !binding.fields.includes(this.model.propertyName(ref.type, target, f.property)))) throw new SecurityError('INSUFFICIENT_ACCESS');
@@ -680,7 +741,7 @@ export class OntologyObjectStore {
       const nav = this.model.navigation(from.type, link), side = nav.direction === 'forward' ? 'from' : 'to';
       // Completeness is used only inside trusted calculations, never returned as
       // a hidden neighbor count. Missing rows cannot imply a zero/full result.
-      const total = Number(this.db.prepare(`SELECT count(*) AS n FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND ${side}_type=? AND ${side}_id=?`).get(...this.ownerParameters(owner), nav.link.id, from.type, from.id)?.n ?? 0);
+      const total = Number(this.db.prepare(`SELECT count(*) AS n FROM (SELECT 1 FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND ${side}_type=? AND ${side}_id=? LIMIT 51)`).get(...this.ownerParameters(owner), nav.link.id, from.type, from.id)?.n ?? 0);
       if (total !== result.items.length) throw new IncompleteRelationshipRead();
     }
     if (result.page.hasMore) throw new IncompleteRelationshipRead();

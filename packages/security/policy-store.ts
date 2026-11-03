@@ -717,7 +717,9 @@ export class SecurityPolicies {
     const types=selection?new Set(selection.types):undefined;
     const candidates=rows.filter(row=>(!types || types.has(String(row.type))) && (selection?.objectId===undefined || row.object_id===selection.objectId));
     const refs=candidates.flatMap(row=>{const b=this.binding(scope,{type:String(row.type),id:String(row.object_id)});return b && fields.every(f=>b.fields.includes(f))?[b.object]:[];});
-    return {sql:` AND EXISTS(SELECT 1 FROM json_each(?) visible WHERE json_extract(visible.value,'$.type')=${alias}.type AND json_extract(visible.value,'$.id')=${alias}.id)`,params:[JSON.stringify(refs)]};
+    // The reader may drive bounded edge lookups from these same validated refs;
+    // this is the current call's boundary, never a cached authorization proof.
+    return {sql:` AND EXISTS(SELECT 1 FROM json_each(?) visible WHERE json_extract(visible.value,'$.type')=${alias}.type AND json_extract(visible.value,'$.id')=${alias}.id)`,params:[JSON.stringify(refs)],objects:refs};
   }
   project(owner: string, value: ObjectView, selected?: string[]): ObjectView {
     const scope = this.scope(owner), binding = this.requireObject(owner, value.ref, value.revision), properties: Record<string, unknown> = {};

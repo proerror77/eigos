@@ -109,6 +109,22 @@ test('conflicting native versions invalidate optimization even if canonical obje
   } finally { study.close(); }
 });
 
+test('reused study views still recheck current Pipeline facts before sealing the snapshot', () => {
+  const feed = syntheticPackageFeed(), study = createSyntheticPackagePipeline(feed);
+  try {
+    const request = study.ref('request', 'request'), loaded = readStudy(study.graph, study.owner, request, study.context);
+    const quotes = loaded.reader.related(loaded.catalog, 'quotes', 100);
+    assert(quotes.length > 0);
+    assert.deepEqual(loaded.reader.related(loaded.catalog, 'quotes', 100), quotes);
+    const revision = study.graph.revision(study.owner);
+    const conflicting = update(feed, 'quote', 'bundle-date-price', payload => { record(payload, 'pricing').amountMinor = '100'; }, 1);
+    conflicting.rows[0]!.eventId = 'conflict-after-study-read';
+    assert.equal(study.ingest(conflicting)[0]!.status, 'conflicted');
+    assert.equal(study.graph.revision(study.owner), revision);
+    assert.throws(() => loaded.reader.snapshot(), /stale, conflicted/);
+  } finally { study.close(); }
+});
+
 test('source identity and relationships are mapped atomically; labels and input order cannot merge SKU identities', () => {
   const feed = syntheticPackageFeed();
   for (const row of feed.rows.filter(row => row.mappingId === 'variant')) row.payload.label = 'Identical marketing label';
