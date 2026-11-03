@@ -25,7 +25,17 @@ export interface PostgresDocumentBindingOptions {
   policyDigest:string;modelChannel:string;builder?:StagedKernelBuilder;sourceBindingId?:string;registry?:PostgresReadProgramRegistry;
   inspectClaim:(claim:PostgresWorkReference)=>Promise<{validUntil:number}|undefined>;
 }
-export const postgresReadRegistry=(options:PostgresDocumentBindingOptions)=>options.registry??new PostgresReadProgramRegistry(options.policyDigest,{documentSourceBindingId:options.sourceBindingId});
+// The compatibility Doc directory belongs to this host-options scope. Its
+// registration identity must survive resolution and the subsequent current
+// check; no authorization result or account state is cached here.
+const defaultRegistries=new WeakMap<PostgresDocumentBindingOptions,{policyDigest:string;sourceBindingId?:string;registry:PostgresReadProgramRegistry}>();
+export function postgresReadRegistry(options:PostgresDocumentBindingOptions){
+  if(options.registry)return options.registry;
+  const current=defaultRegistries.get(options);
+  if(current&&current.policyDigest===options.policyDigest&&current.sourceBindingId===options.sourceBindingId)return current.registry;
+  const registry=new PostgresReadProgramRegistry(options.policyDigest,{documentSourceBindingId:options.sourceBindingId});
+  defaultRegistries.set(options,{policyDigest:options.policyDigest,sourceBindingId:options.sourceBindingId,registry});return registry;
+}
 const same=(a:unknown,b:unknown)=>digest(a)===digest(b);
 const key=(program:ActionDiscoveryProgram,actionId:string)=>digest({ref:program.ref,configuration:program.configurationDigest,actionId});
 function fail(message:string):never{throw new DomainError('CONFLICT',message);}

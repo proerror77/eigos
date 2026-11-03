@@ -26,7 +26,7 @@ import {postgresWorkerAdmission} from './worker-admission.js';
 import {postgresWorkReference,type PostgresWorkReference} from './work-claim.js';
 
 interface Options {database:Pick<PostgresDatabase,'run'|'inspectClaim'>;registry:PostgresReadProgramRegistry;policyDigest:string;modelChannel:string;builder?:StagedKernelBuilder;maxTaskMs?:number}
-interface Prepared {entry:PostgresReadRegistration;attempt:ExecutionAttempt;input:Record<string,unknown>;action:string;call:DidiResolvedCall;wire:DidiCallContext;invocation:DidiReadInvocationContext}
+interface Prepared {entry:PostgresReadRegistration;attempt:ExecutionAttempt;input:Record<string,unknown>;action:string;call:DidiResolvedCall;wire:DidiCallContext;invocation:DidiReadInvocationContext;requestDigest:string;releaseDigest:string}
 const same=(a:unknown,b:unknown)=>digest(a)===digest(b);
 function fail(message:string):never{throw new DomainError('CONFLICT',message);}
 
@@ -55,25 +55,42 @@ export class PostgresDidiExecution {
     const admission=await postgresWorkerAdmission(client,claim.owner,job.id,this.options.policyDigest),validUntil=Math.min(admission.validUntil,Date.parse(canRecoverReadOnly(job,intents)?executionBudgetStatus(job).window.startedAt:job.createdAt)+this.maximum);
     return {model:graph.model,graph,owner:claim.owner,intents,validUntil,job,plan:selected.plan,step:selected.step,intent,input:selected.input,operation,attempt} satisfies PostgresActionSemanticContext;
   }
-  private async prepare(client:Client,claim:PostgresWorkReference,intentId:string,previous?:ExecutionAttempt):Promise<Prepared>{
+  private async prepare(client:Client,claim:PostgresWorkReference,intentId:string):Promise<Prepared>{
     const store=new PostgresTaskStorage(client,this.options.builder),journal=this.journal(client);let intent=await journal.intent(claim.owner,intentId);
     const job=await store.get(claim.owner,claim.job.id),selected=this.select(job,intent);await this.options.registry.assertConfigured(client,selected.entry,claim,job);
-    if(intent.state!==(previous?'dispatching':'ready'))fail('A dispatched DiDi read retains its original outcome; automatic replay is prohibited');
-    if(!previous&&!intent.dispatchInput){intent.dispatchInput=structuredClone(selected.input);await store.saveIntent(claim.owner,intent);}
-    const attempt=previous??await journal.startAttempt(claim,intentId,'dispatch',digest(selected.input));if(previous)await journal.assertDispatchAllowed(claim,intentId,attempt.id);intent=await journal.intent(claim.owner,intentId);
+    if(intent.state!=='ready')fail('A dispatched DiDi read retains its original outcome; automatic replay is prohibited');
+    if(!intent.dispatchInput){intent.dispatchInput=structuredClone(selected.input);await store.saveIntent(claim.owner,intent);}
+    const attempt=await journal.startAttempt(claim,intentId,'dispatch',digest(selected.input));intent=await journal.intent(claim.owner,intentId);
     return withPostgresSourceProjection(client,claim,this.source(selected.entry,selected.step.action),async graph=>{
-      const semantic=await this.context(client,claim,job,intent,graph,previous?'dispatch_check':'dispatch',attempt),program=selected.entry.didi!.program,ctx=await runGraphProgramAsync(graph,postgresDidiContextProgram(semantic,program));
+      const semantic=await this.context(client,claim,job,intent,graph,'dispatch',attempt),program=selected.entry.didi!.program,ctx=await runGraphProgramAsync(graph,postgresDidiContextProgram(semantic,program));
       await runGraphProgramAsync(graph,validateDidiProgram(program,ctx,selected.step.action,selected.input));await runGraphProgramAsync(graph,validateDidiPlanningProgram(program,ctx,selected.step.action,selected.input,selected.plan.ontologyPlanning));
       const call=await runGraphProgramAsync(graph,resolveDidiCallProgram(program,ctx,selected.step.action,selected.input)),action=didiActionContext(semantic,ctx,attempt);
       const invocation:DidiReadInvocationContext={request:structuredClone(action.request),state:structuredClone(action.state),planId:action.planId,intentId:action.intentId,attemptId:action.attemptId,modelRunId:action.modelRunId};
-      return {entry:selected.entry,attempt,input:selected.input,action:selected.step.action,call,wire:didiCallContext(program,invocation,selected.step.action,selected.input),invocation};
+      return {entry:selected.entry,attempt,input:selected.input,action:selected.step.action,call,wire:didiCallContext(program,invocation,selected.step.action,selected.input),invocation,requestDigest:digest(job.delegation!.request),releaseDigest:digest(job.delegation!.ontologyRelease)};
     });
+  }
+  private async assertCurrent(client:Client,claim:PostgresWorkReference,intentId:string,prepared:Prepared){
+    const journal=this.journal(client);
+    // This remains the full current authorization: claim fences, roles, source,
+    // Pipeline, immutable plan/attempt, original planning receipts and current
+    // typed DiDi semantics (which already resolve the exact MCP dependencies).
+    await journal.assertDispatchAllowed(claim,intentId,prepared.attempt.id);
+    const store=new PostgresTaskStorage(client,this.options.builder),job=await store.get(claim.owner,claim.job.id),intent=await journal.intent(claim.owner,intentId),selected=this.select(job,intent);
+    const attempt=(await journal.attempts(claim.owner,intentId)).find(value=>value.id===prepared.attempt.id);
+    const wire:DidiCallContext={requestId:job.id,requestRevision:job.delegation!.request.revision,planId:selected.plan.id,intentId:intent.id,attemptId:prepared.attempt.id,modelRunId:selected.plan.modelRunId??fail('Original DiDi model decision is missing'),programId:selected.entry.program.ref.id,programDigest:selected.entry.program.configurationDigest,action:selected.step.action,actionInputDigest:digest(selected.input)};
+    if(intent.state!=='dispatching'||!intent.dispatchInput||!attempt||!same(attempt,prepared.attempt)||selected.entry!==prepared.entry||selected.plan.digest!==prepared.attempt.planDigest
+      ||prepared.attempt.intentId!==intentId||prepared.attempt.inputDigest!==digest(selected.input)||!same(selected.input,prepared.input)||!same(wire,prepared.wire)
+      ||digest(job.delegation!.request)!==prepared.requestDigest||digest(job.delegation!.ontologyRelease)!==prepared.releaseDigest)fail('DiDi original invocation changed before source dispatch or return');
+    await this.options.registry.assertConfigured(client,selected.entry,claim,job);
+    // Reuse only the derived wire value. The trusted interpreter is pure over
+    // the pinned definition/input/scope and source snapshots just revalidated
+    // by the journal; opening another source graph would repeat those checks.
   }
   async execute(input:WorkClaim,intentId:string,signal:AbortSignal){
     signal.throwIfAborted();const claim=structuredClone(input),reference=postgresWorkReference(claim),prepared=await this.options.database.run(client=>this.prepare(client,reference,intentId)),program=prepared.entry.didi!.program;
     const fixed=digest({input:prepared.input,action:prepared.action,call:prepared.call,wire:prepared.wire});let response:AgentActionResult|undefined,receipt:{id:string}|undefined;
     const audit=()=>this.options.database.run(client=>this.journal(client).recordObservation(claim.owner,intentId,prepared.attempt.id,response?{kind:'confirmed',eventId:prepared.attempt.id,sourceVersion:prepared.attempt.ordinal,output:{source:response.value},evidenceRefs:response.evidenceRefs}:{kind:'unknown',eventId:prepared.attempt.id,sourceVersion:prepared.attempt.ordinal,evidenceRefs:[],message:'Original DiDi source read ended without a verified source response'}));
-    const current=async()=>{signal.throwIfAborted();const fresh=await this.options.database.run(client=>this.prepare(client,reference,intentId,prepared.attempt));if(digest({input:fresh.input,action:fresh.action,call:fresh.call,wire:fresh.wire})!==fixed)fail('DiDi original invocation changed before source dispatch or return');signal.throwIfAborted();};
+    const current=async()=>{signal.throwIfAborted();await this.options.database.run(client=>this.assertCurrent(client,reference,intentId,prepared));if(digest({input:prepared.input,action:prepared.action,call:prepared.call,wire:prepared.wire})!==fixed)fail('DiDi original invocation changed before source dispatch or return');signal.throwIfAborted();};
     try{
       const raw=await this.options.registry.withClaim(reference,()=>program.invokeRead(prepared.wire,prepared.call.tool,prepared.call.args,signal,current));
       response=buildDidiReadResult(program,prepared.invocation,prepared.action,prepared.input,prepared.call,raw);receipt=await audit();await current();

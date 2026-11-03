@@ -6695,7 +6695,7 @@
     {
       "id": "postgres-document-bindings",
       "file": "packages/postgres/document-bindings.ts",
-      "sourceDigest": "e08fbf261ec807275d3fec445022a0c34131567f1e3543a1541dddee62cc15b8",
+      "sourceDigest": "1843e89a74b527a2b5390ae2e3966678687c130b29b3828b146cd705db4b7302",
       "channels": [
         "internal"
       ],
@@ -7400,7 +7400,7 @@
     {
       "id": "postgres-didi-execution",
       "file": "packages/postgres/didi-execution.ts",
-      "sourceDigest": "97ec5b4de71af7ef0a6c9d389afea5917c13923c8cb86885394e994109cc99f9",
+      "sourceDigest": "b9bc8084a04b25b45eefdfe0f5a8cab44e6df8d69661de7aec11962652f33223",
       "channels": [
         "internal",
         "provider"

@@ -2,11 +2,19 @@ import {SecurityError} from '../packages/security/errors.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {assertPostgresPlanningDiscoveryContext} from '../packages/postgres/native-planning-session.js';
-import {resolvePostgresDocumentBinding} from '../packages/postgres/document-bindings.js';
+import {resolvePostgresDocumentBinding,postgresReadRegistry,type PostgresDocumentBindingOptions} from '../packages/postgres/document-bindings.js';
 import {roleSchema} from '../packages/security/resource-role.js';
 import {postgresGoalFixture} from './fixtures/postgres-goal.js';
 
 const local={skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'};
+test('default document registration retains identity within its original host options and changes with source configuration',()=>{
+  const options:PostgresDocumentBindingOptions={policyDigest:'a'.repeat(64),modelChannel:'synthetic-metadata-only',sourceBindingId:'original-source',inspectClaim:async()=>undefined};
+  const original=postgresReadRegistry(options);assert.strictEqual(postgresReadRegistry(options),original);assert.strictEqual(postgresReadRegistry(options).entries[0],original.entries[0]);
+  assert.notStrictEqual(postgresReadRegistry({...options}),original,'Independent host scopes never share mutable registration instances');
+  options.sourceBindingId='changed-source';const changed=postgresReadRegistry(options);assert.notStrictEqual(changed,original);assert.equal(changed.entries[0]!.sourceBindingId,'changed-source');
+  options.policyDigest='b'.repeat(64);assert.notStrictEqual(postgresReadRegistry(options),changed);
+  options.registry=original;assert.strictEqual(postgresReadRegistry(options),original,'An explicitly installed registry retains its own original instance');
+});
 test('actual native Doc discovery returns the same source pin and closes its host-only callback capability',local,async()=>{
   const x=await postgresGoalFixture();try{
     const selected=await x.prepareDecision(),page=selected.page;assert.deepEqual(page.items[0]!.bindings[0]!.pin,x.sourcePage.items[0]!.bindings[0]!.pin);assert.deepEqual(page.items[0]!.bindings[0]!.inputSchema,x.sourcePage.items[0]!.bindings[0]!.inputSchema);

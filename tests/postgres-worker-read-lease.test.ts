@@ -112,7 +112,7 @@ test('checked Worker request and real Doc discovery use one outer transaction wi
       const missing=await worker.withAuthorizedRequest(x.claim,x.channel,(current,client)=>discoverPostgresDocumentBindings(client,x.claim,current,query,{...x.options,sourceBindingId:'synthetic-unregistered-source'}));
       assert(!missing.items.some(item=>item.bindings.some(binding=>binding.readiness==='ready')),'an absent source cannot become ready through request admission');
       const unsupported=await worker.withAuthorizedRequest(x.claim,x.channel,(current,client)=>discoverPostgresDocumentBindings(client,x.claim,current,{actionId:'SearchDidiPlaces'},x.options));
-      assert.equal(unsupported.items.length,0,'unsupported actions cannot acquire a fallback binding');
+      assert.equal(unsupported.items.length,1);assert.equal(unsupported.items[0]!.action.id,'SearchDidiPlaces');assert.equal(unsupported.items[0]!.status,'binding_unavailable');assert.deepEqual(unsupported.items[0]!.bindings,[],'Visible definitions cannot acquire an uninstalled fallback binding');
     }finally{await x.close();}
   });
 
