@@ -6,6 +6,8 @@ import {DidiAgentProgram} from '../packages/capabilities/didi/program.js';
 import {ExecutionCatalog} from '../packages/core/catalog.js';
 import {ownerKey} from '../packages/core/domain.js';
 import {randomUUID} from 'node:crypto';
+import {DatabaseSync} from 'node:sqlite';
+import {join} from 'node:path';
 import {customerPermissionOverview,permissionsPage,preparePermissionReview} from '../apps/gateway/members/permissions-page.js';
 
 async function fixture() {
@@ -66,13 +68,38 @@ test('expired, revoked or ceiling-only records are never described as enabled se
   }finally{await f.close();}
 });
 
+test('permission page reads task summaries without decoding execution history',async t=>{
+  const f=await fixture();try {
+    const submitted=await f.post('/tasks',{service:'eigos.delegate',requestId:randomUUID(),goal:'Synthetic task with a large history'},{authorization:`Bearer ${f.a.token}`});
+    assert.equal(submitted.status,200);
+    const marker='SYNTHETIC_EXECUTION_HISTORY',db=new DatabaseSync(join(f.directory,'tasks.sqlite'));
+    try {
+      db.prepare("UPDATE jobs SET body=json_set(body,'$.messages',json(?)) WHERE id=?")
+        .run(JSON.stringify([{id:randomUUID(),role:'agent',text:marker.repeat(10000),at:new Date().toISOString()}]),submitted.value.id);
+    }finally{db.close();}
+    const parse=JSON.parse;let historiesDecoded=0;
+    t.mock.method(JSON,'parse',(...args:Parameters<typeof JSON.parse>)=>{
+      if(String(args[0]).includes(marker))historiesDecoded++;
+      return parse(...args);
+    });
+    const filter={limit:1,offset:0,state:'submitted' as const},store=f.gateway.store,owner=ownerKey(f.p);
+    assert.deepEqual(store.listForPermissions(owner,filter,[submitted.value.id]),{jobs:[{id:submitted.value.id,goal:'Synthetic task with a large history',state:'submitted',requestRevision:1}],total:1});
+    assert.deepEqual(store.listForPermissions('another-owner',filter,[submitted.value.id]),{jobs:[],total:0});
+    assert.deepEqual(store.listForPermissions(owner,filter,[]),{jobs:[],total:0});
+    const response=await fetch(f.base+'/members/permissions',{headers:{cookie:f.cookie}}),html=await response.text();
+    assert.equal(response.status,200);assert(html.includes('Synthetic task with a large history'));assert(!html.includes(marker));
+    assert.equal(historiesDecoded,0,'Permission selection must not materialize a task execution history');
+    assert.equal(f.source.calls.length,0);
+  }finally{t.mock.restoreAll();await f.close();}
+});
+
 test('task scopes include older granted tasks, escape titles and stop describing changed request versions as current',async t=>{
   const f=await fixture();try {
     const title='查询公开地点 <script>private()</script>';
     const submitted=await f.post('/tasks',{service:'eigos.delegate',requestId:randomUUID(),goal:title},{authorization:`Bearer ${f.a.token}`});
     assert.equal(submitted.status,200);
-    const list=f.gateway.store.list.bind(f.gateway.store);
-    t.mock.method(f.gateway.store,'list',(...[owner,filter,taskIds]:Parameters<typeof list>)=>taskIds?list(owner,filter,taskIds):{jobs:[],total:51});
+    const list=f.gateway.store.listForPermissions.bind(f.gateway.store);
+    t.mock.method(f.gateway.store,'listForPermissions',(...[owner,filter,taskIds]:Parameters<typeof list>)=>taskIds?list(owner,filter,taskIds):{jobs:[],total:51});
     const view=f.gateway.security!.managementView(f.member.id);
     assert(view.tasks.some(task=>task.title===title),'A task grant must not disappear outside the latest task page');
     const html=customerPermissionOverview(view,f.member,f.session.csrf,f.now);
