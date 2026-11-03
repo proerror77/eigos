@@ -1,3 +1,4 @@
+import { commerceReadSnapshotSchema } from '../ontology/payment-commerce.js';
 import { rollingGoObservationSchema } from '../ontology/rollinggo.js';
 import {compositionContractSchema} from '../ontology/composition-contract.js';
 import {requirementSchema} from '../ontology/execution.js';
@@ -54,6 +55,8 @@ add(['ExecutionContext'],'goalAssessment',{schema:goalAssessmentView,inputs:['go
 const snapshotPaths=['data','route','observedAt','expiresAt','evidenceKind','noBusinessWrites'];
 add(['DidiPlaceObservation','RideEstimateObservation'],'observedData',{schema:didiBusinessViewSchema,inputs:['snapshot'],markings:['precise_location','financial'],value:p=>didiBusinessViewSchema.parse(pick(p.snapshot,snapshotPaths))});
 const rollingGoView=rollingGoObservationSchema.pick({input:true,hotels:true,observedAt:true,expiresAt:true,evidenceKind:true}).extend({priceKind:z.literal('reference'),providerExpiry:z.literal('unknown'),noBusinessWrites:z.literal(true)});
+const paymentCommerceView=commerceReadSnapshotSchema.pick({provider:true,query:true,result:true,observedAt:true,expiresAt:true,evidenceKind:true}).extend({noBusinessWrites:z.literal(true),paymentPerformedByEigos:z.literal(false)});
+add(['PaymentCommerceReadObservation'],'observedData',{schema:paymentCommerceView,inputs:['snapshot'],markings:['financial','account_private'],value:p=>paymentCommerceView.parse({...pick(p.snapshot,['provider','query','result','observedAt','expiresAt','evidenceKind']),noBusinessWrites:true,paymentPerformedByEigos:false})});
 add(['RollingGoSearchObservation'],'observedData',{schema:rollingGoView,inputs:['snapshot'],markings:['precise_location','financial','account_private'],value:p=>rollingGoView.parse({...pick(p.snapshot,['input','hotels','observedAt','expiresAt','evidenceKind']),priceKind:'reference',providerExpiry:'unknown',noBusinessWrites:true})});
 const catalogView=catalogObservationSchema.pick({action:true,merchant:true,country:true,items:true,observedAt:true,expiresAt:true,evidenceKind:true,completeness:true,stockQuantity:true,deliveryCommitment:true,partnerTrust:true,noBusinessWrites:true});
 add(['CatalogObservation','CatalogEndpoint'],'observedData',{schema:catalogView,inputs:['snapshot'],markings:['financial'],value:p=>catalogView.parse(pick(p.snapshot,Object.keys(catalogView.shape)))});
@@ -109,7 +112,7 @@ export function integrityField(type:string,field:string,allowed:string[]):boolea
   if(type==='ServiceComponentResult' && field==='output')return allowed.includes('observedData');
   return allowed.includes('observedData') && !!registry[type]?.observedData && ['snapshot','data'].includes(field) || type==='MeituanReadTask' && field==='input' && allowed.includes('authorizedInput');
 }
-export const integrityFunctions=new Set(['rollingGoSearchStatus','rideEstimateStatus','selectDidiPlace','catalogObservationStatus','meituanReadStatus','registrationStatus','bookingObservationStatus','commerceObservationStatus','commerceJourneyStatus','shippingGateStatus','customsGateStatus']);
+export const integrityFunctions=new Set(['paymentCommerceReadStatus','rollingGoSearchStatus','rideEstimateStatus','selectDidiPlace','catalogObservationStatus','meituanReadStatus','registrationStatus','bookingObservationStatus','commerceObservationStatus','commerceJourneyStatus','shippingGateStatus','customsGateStatus']);
 /** Registered status functions may validate private source records internally;
  * their returned data uses the same field projection as ordinary queries. */
 export function projectFunctionValue(functionId:string,type:string,value:unknown):unknown {
