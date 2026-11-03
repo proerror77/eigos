@@ -5,6 +5,8 @@ import type { Config } from '../core/config.js';
 import { runtimeAuthorityMatches } from '../core/runtime-authority.js';
 import { CODEX_SECURITY_CHANNEL_ID } from '../capabilities/executor.js';
 import { harnessSecurityChannel } from '../capabilities/harness-executor.js';
+import { SecurityStore } from '../security/store.js';
+import { currentKernelImplementation } from '../ontology/definition-store.js';
 
 export function privateDeploymentFile(path: string): void {
   if (!isAbsolute(path)) throw new Error('Deployment files require absolute paths');
@@ -21,7 +23,7 @@ export function resolveDeploymentBinary(name: string, path = process.env.PATH ??
   throw new Error('The configured model executable is unavailable');
 }
 
-/** Inspection never instantiates a store, migrates a schema, adopts an
+/** Inspection never opens a writing store, migrates a schema, adopts an
  * authority, changes a policy or creates a missing membership database. */
 export function assertPrimaryStores(config: Config, runtime: string, now = Date.now()): void {
   const authority = config.authority;
@@ -39,13 +41,11 @@ export function assertPrimaryStores(config: Config, runtime: string, now = Date.
     if (settings?.mode !== 'foundation' || settings.version !== 2)
       throw new Error('The persisted business store is not Foundation');
     if (business.prepare('PRAGMA quick_check(1)').get()?.quick_check !== 'ok') throw new Error('Business database integrity check failed');
+    const security = new SecurityStore(business, 'foundation', () => now, true, currentKernelImplementation());
     if (config.EIGOS_EXECUTOR !== 'disabled') {
       const id = config.EIGOS_EXECUTOR === 'harness' ? harnessSecurityChannel(config.EIGOS_HARNESS_CREDENTIAL_KIND) : CODEX_SECURITY_CHANNEL_ID;
-      const row = business.prepare('SELECT body FROM security_model_channels WHERE id=?').get(id);
-      let channel: { expiresAt?: unknown } | undefined;
-      try { channel = row ? JSON.parse(String(row.body)) : undefined; } catch { /* Invalid qualification is unavailable. */ }
-      if (!channel || typeof channel.expiresAt !== 'string' || !Number.isFinite(Date.parse(channel.expiresAt)) || Date.parse(channel.expiresAt) <= now)
-        throw new Error('The selected model recipient has no current channel qualification');
+      try { security.policies.modelChannel(id); }
+      catch (error) { throw new Error('The selected model recipient has no current channel qualification', { cause: error }); }
     }
   } finally { business.close(); }
   const members = new DatabaseSync(authority.membershipDatabasePath, { readOnly: true });

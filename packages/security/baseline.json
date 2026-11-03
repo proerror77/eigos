@@ -5527,7 +5527,7 @@
       "currentControl": "Non-root Linux owner bus and lingering; rejects active competing formal services; literal unit arguments, private mask, process-group shutdown with full recovery budget",
       "targetControl": "Single authority; no independent task queue or credential in unit arguments",
       "stage": "S5",
-      "sourceDigest": "c583a4eb628cd611795be889ceb4284f4be7f35b03cea9fa63f14fdd8ebe7185"
+      "sourceDigest": "b8410c1d4e5883b46b204b5bd91e90c942680e34b044a97812fd4f0f631025af"
     },
     {
       "id": "primary-deployment-preflight",
@@ -5538,10 +5538,10 @@
         "sqlite"
       ],
       "content": "Read-only primary deployment eligibility",
-      "currentControl": "Owned private files and runtime paths; existing Foundation/JWT authority and both database integrity checks; current recipient qualification; no store constructor, migrations or grants",
+      "currentControl": "Owned private files and runtime paths; existing Foundation/JWT authority, both database integrity checks and the exact runtime policy contract; read-only policy reader preserves approved finite or until-revoked recipient qualification; no writable stores, migrations or grants",
       "targetControl": "Deployment inspection cannot bootstrap permissions or create missing stores",
       "stage": "S5",
-      "sourceDigest": "1d0ec488d2b38b3fe54656b8f344718aa810213a3f9156dae6331932f91ead01"
+      "sourceDigest": "13830d6b58b71f808879ee2f80d105c10981ac0fdf8e1fcc7ac399519f72d506"
     },
     {
       "id": "primary-ingress-readiness",

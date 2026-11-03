@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { primaryService, type ServiceCommand } from '../packages/deployment/service-manager.js';
 import { verifyPrimaryIngresses } from '../packages/deployment/ingress-readiness.js';
 import type { RuntimeAuthority } from '../packages/core/runtime-authority.js';
@@ -49,6 +53,18 @@ test('systemd literals cannot expand environment/specifiers or inject another un
   assert(manager.ownsConfiguration(text));
   assert.throws(() => primaryService({ ...input, release: '/safe\nExecStart=/evil' }), /control/);
   assert.throws(() => primaryService({ ...input, label: 'other.service' }), /label/);
+});
+
+test('the actual Linux systemd parser accepts literal paths separately from command words', { skip: process.platform !== 'linux' }, t => {
+  const root = mkdtempSync(join(tmpdir(), 'eigos-unit-parser-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const release = join(root, 'release %i $ROLE "东京"'), runtime = join(root, 'private %i $ROLE "东京"');
+  mkdirSync(release); mkdirSync(runtime);
+  const manager = primaryService({ ...input, release, runtime, node: process.execPath, modelBinary: process.execPath });
+  const unit = join(root, 'com.eigos.primary.service'); writeFileSync(unit, manager.render());
+  const result = spawnSync('systemd-analyze', ['verify', '--man=no', unit], { encoding: 'utf8' });
+  if (result.error && 'code' in result.error && result.error.code === 'ENOENT') { t.skip('systemd-analyze is unavailable'); return; }
+  assert.equal(result.status, 0, result.stderr);
+  assert(!result.stderr.includes('ignoring'), result.stderr);
 });
 
 test('macOS retains the launchd label, XML escaping and graceful exit timeout', () => {

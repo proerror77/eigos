@@ -100,6 +100,12 @@ test('primary deployment preview checks both stores read-only and never creates 
   assert.deepEqual([hash(f.original), hash(f.membership)], before);
   assert.throws(() => assertPrimaryStores({ ...config, EIGOS_EXECUTOR: 'harness' }, join(f.root, 'live')), /no current channel/);
   assert.deepEqual([hash(f.original), hash(f.membership)], before);
+  const jobs = new JobStore(f.original, { securityMode: 'foundation', authority: f.input.sourceAuthority });
+  jobs.security.policies.setModelChannel('harness-openai-codex', { classification: 'private', markings: [], expiresAt: null }, jobs.security.policies.revision()); jobs.close();
+  const qualified = [hash(f.original), hash(f.membership)];
+  assertPrimaryStores({ ...config, EIGOS_EXECUTOR: 'harness' }, join(f.root, 'live'));
+  assert.throws(() => assertPrimaryStores({ ...config, EIGOS_EXECUTOR: 'harness', EIGOS_HARNESS_CREDENTIAL_KIND: 'api-key' }, join(f.root, 'live')), /no current channel/);
+  assert.deepEqual([hash(f.original), hash(f.membership)], qualified, 'An existing until-revoked qualification is read without rewriting it');
   const unrelated = join(f.root, 'unrelated'); mkdirSync(unrelated, { mode: 0o700 });
   assert.throws(() => assertPrimaryStores(config, unrelated), /owned primary runtime/);
 });

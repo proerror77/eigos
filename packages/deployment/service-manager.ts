@@ -30,6 +30,12 @@ const unitValue = (value: string, argv = false): string => {
   const text = value.replaceAll('%', '%%').replaceAll('\\', '\\\\').replaceAll('"', '\\"');
   return '"' + (argv ? text.replaceAll('$', () => '$$') : text) + '"';
 };
+// WorkingDirectory and append paths are literal single-path directives, not
+// command-line words. Quotes would become part of the path on systemd 255.
+const unitPath = (value: string): string => {
+  if (value.trimEnd() !== value || value.endsWith('\\')) throw new Error('Systemd paths cannot end in whitespace or a continuation character');
+  return value.replaceAll('%', '%%');
+};
 
 export function primaryService(input: PrimaryServiceInput, run: ServiceCommand = command) {
   const home = safePath(input.home ?? homedir()), uid = input.uid ?? process.getuid?.();
@@ -91,11 +97,11 @@ export function primaryService(input: PrimaryServiceInput, run: ServiceCommand =
     }
     return [
       '[Unit]', 'Description=EIGOS owned Gateway and Worker primary', '',
-      '[Service]', 'Type=exec', 'WorkingDirectory=' + unitValue(input.release),
+      '[Service]', 'Type=exec', 'WorkingDirectory=' + unitPath(input.release),
       'ExecStart=' + args.map(arg => unitValue(arg, true)).join(' '), 'Environment=' + unitValue('PATH=' + path),
       'Restart=on-failure', 'RestartSec=2s', 'TimeoutStopSec=60s', 'KillMode=control-group', 'UMask=0077', 'NoNewPrivileges=true',
-      'StandardOutput=' + unitValue('append:' + join(input.runtime, 'stdout.log')),
-      'StandardError=' + unitValue('append:' + join(input.runtime, 'stderr.log')),
+      'StandardOutput=append:' + unitPath(join(input.runtime, 'stdout.log')),
+      'StandardError=append:' + unitPath(join(input.runtime, 'stderr.log')),
       '', '[Install]', 'WantedBy=default.target', '',
     ].join('\n');
   }
