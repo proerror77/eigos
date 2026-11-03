@@ -20,7 +20,10 @@ export function dependencyNeeds(purchases:Realization[],study:Study):DependencyN
   for(const purchase of purchases)for(const dependency of study.skus.get(refKey(purchase.sku))!.prerequisites){
     const date=dependency.anchor==='any'?undefined:day(purchase.anchorDate,dependency.dayOffset);
     const need:DependencyNeed={sku:dependency.sku,quantity:dependency.quantity,...(dependency.scope==='same_room'?{roomIndex:purchase.roomIndex}:{}),anchor:dependency.anchor,...(date?{date}:{}),phase:dependency.phase};
-    const key=digest({dependentSku:purchase.sku,sku:need.sku,room:need.roomIndex,anchor:need.anchor,date,phase:need.phase});
+    // Distinct rules can resolve to the same date. Preserve each rule's
+    // threshold; possession satisfying both requires their maximum, not the
+    // first threshold encountered or a sum across unrelated predicates.
+    const key=digest({dependentSku:purchase.sku,dependency,room:need.roomIndex,date});
     const prior=grouped.get(key);
     if(!prior)grouped.set(key,need);else if(dependency.basis==='per_unit')prior.quantity+=dependency.quantity;
   }
@@ -58,12 +61,23 @@ const planCompare=(a:Plan,b:Plan)=>BigInt(a.totalMinor)<BigInt(b.totalMinor)?-1:
 export function optimizeSyntheticHotelPackages(graph:OntologyObjectStore,owner:string,request:ObjectRef,rawBounds:Partial<Bounds>={}):OptimizationResult{
   const bounds=boundsSchema.parse(rawBounds),study=readStudy(graph,owner,request),generated=generateRealizations(study,bounds.maxRealizations);
   const candidates=generated.items,bySku=new Map<string,Realization[]>();
+  candidates.sort((a,b)=>BigInt(a.totalMinor)<BigInt(b.totalMinor)?-1:BigInt(a.totalMinor)>BigInt(b.totalMinor)?1:a.id.localeCompare(b.id));
   for(const candidate of candidates){const key=refKey(candidate.sku);bySku.set(key,[...(bySku.get(key)??[]),candidate]);}
   const plans:Plan[]=[],planIds=new Set<string>(),visitedStates=new Set<string>();let nodes=0,complete=generated.complete;
+  // Allocate at most each candidate's price across all room-night cells it
+  // covers. Summing the cheapest allocation for uncovered cells is a lower
+  // bound even for multi-night bundles; meals/prerequisites only add costs.
+  const roomFloor=study.demands.map((d,i)=>d.kind!=='room'?0n:candidates.reduce<bigint|undefined>((best,p)=>{
+    if(!p.coverage[i])return best;
+    const cells=p.coverage.filter((n,j)=>n>0&&study.demands[j]!.kind==='room').length;
+    const price=BigInt(p.totalMinor)/BigInt(cells);
+    return best===undefined||price<best?price:best;
+  },undefined)??0n);
   function visit(selected:Realization[],coverage:number[],usage:Record<string,number>,counts:Record<string,number>,roomTypes:Record<number,string>,cost:bigint){
     if(nodes>=bounds.maxNodes){complete=false;return;}nodes++;
     if(study.request.maxTotalMinor!==null&&cost>BigInt(study.request.maxTotalMinor))return;
     if(plans.length>=bounds.maxPlans&&cost>BigInt(plans[plans.length-1]!.totalMinor))return;
+    if(plans.length>=bounds.maxPlans&&cost+roomFloor.reduce((sum,price,i)=>sum+(coverage[i]!<study.demands[i]!.quantity?price:0n),0n)>BigInt(plans[plans.length-1]!.totalMinor))return;
     const signature=selected.map(p=>p.id).sort().join(':');if(visitedStates.has(signature))return;visitedStates.add(signature);
     const need=dependencyNeeds(selected,study).find(n=>selected.filter(p=>matchesDependency(p,n,study)).length<n.quantity);
     const pivot=coverage.findIndex((quantity,index)=>quantity<study.demands[index]!.quantity);

@@ -594,7 +594,10 @@ export class OntologyObjectStore {
       const storedDefinitions = this.db.prepare(`SELECT DISTINCT definition_digest FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND ${side}_type=? AND ${side}_id=? LIMIT 201`).all(...this.ownerParameters(owner), nav.link.id, args.from.type, args.from.id);
       if (storedDefinitions.length > 200) throw new DomainError('CONFLICT', 'Relationship definition read bound exceeded');
       for (const stored of storedDefinitions) this.assertLinkDefinition(nav.link.id, String(stored.definition_digest));
-      sql = `SELECT o.* FROM ${this.linkTable} l JOIN ${this.objectTable} o ON ${this.scoped ? 'o.ontology_id=l.ontology_id AND ' : ''}o.owner=l.owner AND o.type=l.${other}_type AND o.id=l.${other}_id WHERE ${this.owned('l.')} AND l.type=? AND l.${side}_type=? AND l.${side}_id=?`;
+      // Start at the bounded relationship endpoint, then look up each object
+      // by primary key. SQLite otherwise may walk all objects for this owner
+      // to satisfy ORDER BY even when the selected relationship is empty.
+      sql = `SELECT o.* FROM ${this.linkTable} l CROSS JOIN ${this.objectTable} o ON ${this.scoped ? 'o.ontology_id=l.ontology_id AND ' : ''}o.owner=l.owner AND o.type=l.${other}_type AND o.id=l.${other}_id WHERE ${this.owned('l.')} AND l.type=? AND l.${side}_type=? AND l.${side}_id=?`;
       params = [...this.ownerParameters(owner), nav.link.id, args.from.type, args.from.id];
     } else {
       target = args.type;

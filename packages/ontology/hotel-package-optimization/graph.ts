@@ -35,17 +35,29 @@ export class StudyReader {
   }
   read(ref:ObjectRef):ObjectView{
     const key=refKey(ref),cached=this.objects.get(key);if(cached)return cached;
-    const value=this.graph.read(this.owner,ref,this.budget);
+    return this.remember(this.graph.read(this.owner,ref,this.budget));
+  }
+  private remember(value:ObjectView):ObjectView{
+    if(value.tombstone)fail('Tombstoned package facts are unavailable');
     if(value.source.kind!=='synthetic' || Date.parse(value.source.observedAt)>this.graph.now()) fail('Package test optimization requires current synthetic provenance');
     if(this.datasetId && value.source.id!==this.datasetId) fail('A package object belongs to a different synthetic dataset');
+    const key=refKey(value.ref),previous=this.objects.get(key);
+    if(previous&&previous.revision!==value.revision)throw new DomainError('CONFLICT','Synthetic package facts changed during the read');
     this.objects.set(key,value);return value;
   }
   related(ref:ObjectRef,name:string,max=200):ObjectView[]{
     const key=refKey(ref)+':'+name;
     this.read(ref);
+    const cached=this.links.get(key);
+    if(cached){
+      if(cached.to.length>max)throw new DomainError('CONFLICT','Package relationship read exceeds its bound');
+      return cached.to.map(to=>this.objects.get(refKey(to))!);
+    }
     const values=this.graph.related(this.owner,ref,name,this.budget);
     if(!values || values.length>max) throw new DomainError('CONFLICT','Package relationship read is incomplete or exceeds its bound');
-    const result=values.map(v=>this.read(v.ref)).sort((a,b)=>refKey(a.ref).localeCompare(refKey(b.ref)));
+    // related() already returns owned, projected ObjectViews. Validate their
+    // provenance here instead of fetching every target again (N+1).
+    const result=values.map(v=>this.remember(v)).sort((a,b)=>refKey(a.ref).localeCompare(refKey(b.ref)));
     this.links.set(key,{from:ref,name,to:result.map(v=>v.ref)});return result;
   }
   one(ref:ObjectRef,name:string,required=true):ObjectView|undefined{
