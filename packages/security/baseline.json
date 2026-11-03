@@ -2874,12 +2874,12 @@
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "fbc55f0d3762f8859ab9beeaac13199d451c4a012518a364b1ae91f712564a53",
+      "sourceDigest": "0d4ad05652cce8e55cc8aaf266b3e713179b1f84ee50628d1851d7f4c8f7f496",
       "channels": [
         "http"
       ],
       "content": "Ontology describe/query/evaluate and task authorization/reconcile responses; error and HTTP audit",
-      "currentControl": "Foundation authenticated TaskView, controlled downloads and sanitized audit; Pipeline-only metadata entrypoints retain current installation and namespace authority; authentication failures provide public onboarding and canonical member-permission links without grants. Canonical redirects include the public PA guide and downloads; authenticated task routing and projections are unchanged. Opt-in PA communication uses explicit RPC dispatch and current member/installation facts; all business requests retain the original Foundation authentication.",
+      "currentControl": "Foundation authenticated TaskView, controlled downloads and sanitized audit; Pipeline-only metadata entrypoints retain current installation and namespace authority; authentication failures provide public onboarding and canonical member-permission links without grants. Canonical redirects include the public PA guide and downloads; authenticated task routing and projections are unchanged. Opt-in PA communication uses explicit RPC dispatch and current member/installation facts; all business requests retain the original Foundation authentication. The Harness switch only advertises the existing document capability; Gateway starts no model and reads no model credential.",
       "targetControl": "AccessContext plus resource/data policies and TaskView",
       "stage": "S2"
     },
@@ -3135,13 +3135,13 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "5788b2b564f5435d1dc74665b30f662ed984be1eef89bfbe6194c3469a946809",
+      "sourceDigest": "c84fd62b28f775e6b2f078a9190f85778f2c440b79ab407fe8542f668c6f4fbe",
       "channels": [
         "registered_model",
         "private_file"
       ],
       "content": "Goal/messages to model process; temporary schema/output files",
-      "currentControl": "Explicit codex model-channel identity; qualification remains separately configured",
+      "currentControl": "Explicit codex model-channel identity; qualification remains separately configured. The bounded document prompt and schema are shared with the opt-in Harness adapter without changing this Codex channel.",
       "targetControl": "Model channel approval and label propagation; files stay private",
       "stage": "S3"
     },
@@ -3366,36 +3366,36 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "0917d4080bbce8d00f8d0634171412bc226b3b260313fce0585d639c4f0f6917",
+      "sourceDigest": "2c8f11193fa9285a14c94b094e68e9022aed633f7fcd74a76f73b5b8300cbf8d",
       "channels": [
         "authorization_control"
       ],
       "content": "Explicit security foundation activation",
-      "currentControl": "JWT, registered client and persistent new task database; legacy default",
+      "currentControl": "JWT, registered client and persistent new task database; legacy default. Opt-in Harness requires a Worker-owned absolute credential file, bounded model configuration and an allowlisted credential kind; Gateway needs no model credential.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
     {
       "id": "security-worker-runtime",
       "file": "apps/worker/runtime.ts",
-      "sourceDigest": "dbfb30921d81694912aeb2a3a296597b6669936e13dcd906aac07dfc697645f1",
+      "sourceDigest": "51457b13c64603c9635eb619f7671c84827a89c326adb45267a647916ba6ab45",
       "channels": [
         "authorization_control"
       ],
       "content": "Worker security mode binding",
-      "currentControl": "Persisted mode must match Gateway; no membership credentials",
+      "currentControl": "Persisted mode must match Gateway; no membership credentials. Harness selects a separate harness-native model channel and one durable claim; task authorization, source adapters and result acceptance remain EIGOS-owned.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
     {
       "id": "security-worker-loop",
       "file": "apps/worker/worker.ts",
-      "sourceDigest": "4f3803e4d1ce18c216162967d9fc2afd9cfe71360b79f911bac1cd64d0ca73b8",
+      "sourceDigest": "7133741fd6773a3e9ccc0356cb7ac2160ec4b58b8424aac114ffee324ae9be43",
       "channels": [
         "authorization_control"
       ],
       "content": "Lease renewal, cancellation and completion lifecycle",
-      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit; synchronous progress renews each due active task claim through its original lease, execution deadline and policy fences; A source authorization mismatch produces explicit blocked recovery without automatic resubmission or new permission.",
+      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit; synchronous progress renews each due active task claim through its original lease, execution deadline and policy fences; A source authorization mismatch produces explicit blocked recovery without automatic resubmission or new permission. The Harness runtime may select one concurrent claim; existing lease, cancellation and late-result fences remain unchanged.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
@@ -4376,12 +4376,12 @@
     {
       "id": "primary-deployment",
       "file": "scripts/deploy-primary.mjs",
-      "sourceDigest": "1a79eea4ddd038628bcf2a8c4cb008d3773b216469f10929c039770354651bb4",
+      "sourceDigest": "475137241151923f76671225d96b13c0d167672ae719a4514bbc8b89c925147f",
       "channels": [
         "operator_cli"
       ],
       "content": "Single managed primary runtime and immutable release",
-      "currentControl": "Owned config, stopped legacy profiles and bounded readiness matching healthy status, authority and immutable release",
+      "currentControl": "Owned config, stopped legacy profiles and bounded readiness matching healthy status, authority and immutable release. Preflight checks the selected Codex or Harness model channel and uses its explicit executable path; no policy is installed or widened.",
       "targetControl": "Owned config, stopped legacy profiles and bounded readiness matching healthy status, authority and immutable release",
       "stage": "S5"
     },
@@ -5396,6 +5396,19 @@
       "targetControl": "Reviewed contract-only metadata; observer activation remains unavailable",
       "stage": "S2",
       "sourceDigest": "519462b0dda5f71be4e6e954db3748a2282b075fca48bddda528c6b6cb064781"
+    },
+    {
+      "id": "harness-executor",
+      "file": "packages/capabilities/harness-executor.ts",
+      "sourceDigest": "84c40845a7a98707247d48ada6257756e5fa01322d93d7d9abac3f3ef9c23bf0",
+      "channels": [
+        "registered_model",
+        "private_file"
+      ],
+      "content": "Task-bound Harness SDK Executor Session, private current model credential and actual Ontology MCP receipts",
+      "currentControl": "Explicit harness-native identity; isolated invocation home and single original completed turn; no shell, filesystem or working-directory tools; only Worker loopback MCP operations; private credential-file checks; OAuth refresh remains with the original login; schema validation and process-group teardown before releasing the invocation",
+      "targetControl": "Current model-channel approval and task data/lease fences remain independent of Harness output; no second formal task or policy authority",
+      "stage": "S3"
     }
   ]
 }

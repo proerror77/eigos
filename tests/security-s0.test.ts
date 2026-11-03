@@ -28,7 +28,10 @@ test('S0 inventories every definition and nested subtree without changing runtim
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
   assert.equal(report.counts.objectTypes, 202); assert.equal(report.counts.properties, 1852); assert.equal(report.counts.interfaces, 14);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 201);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 202);
+  const harness = report.surfaces.find(surface => surface.id === 'harness-executor');
+  assert(harness); assert.equal(harness.file, 'packages/capabilities/harness-executor.ts');
+  assert.deepEqual(harness.channels, ['registered_model', 'private_file']);
   for (const id of ['observation-contract-schema', 'observation-contract-storage', 'observation-task-boundary']) {
     assert(report.surfaces.some(surface => surface.id === id), `Unreviewed observation contract surface: ${id}`);
   }
@@ -79,6 +82,8 @@ test('S0 rejects unreviewed fields, weakened restrictions, changed nested schema
   assert(drift.issues.includes('definition_changed:SavedAddress')); assert.equal(drift.passed, false);
   const stale = baseline(); stale.surfaces[0]!.sourceDigest = '0'.repeat(64);
   assert(buildSecurityInventory(stale, undefined, root).issues.includes(`surface_changed:${stale.surfaces[0]!.id}`));
+  const changedHarness = baseline(); changedHarness.surfaces.find(surface => surface.id === 'harness-executor')!.sourceDigest = '0'.repeat(64);
+  assert(buildSecurityInventory(changedHarness, undefined, root).issues.includes('surface_changed:harness-executor'));
   const path = baseline(); path.surfaces[0]!.file = '../outside.ts';
   assert(buildSecurityInventory(path, undefined, root).issues.includes(`invalid_surface_path:${path.surfaces[0]!.id}`));
 });
