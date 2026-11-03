@@ -3,8 +3,8 @@
   "enforcement": "not_installed",
   "model": {
     "id": "eigos.business",
-    "version": "26",
-    "digest": "78e73e56caaed8c894b716a0ed486dd98442beed1234a7c29e557821ba2f4020"
+    "version": "27",
+    "digest": "8e5b11eb6b25d873b12f05d67232899f97af6af929b143397aa19e75379fc5e6"
   },
   "types": {
     "ServiceRequest": {
@@ -2868,13 +2868,34 @@
         "status": "task_sensitive",
         "authority": "task_sensitive"
       }
+    },
+    "PaymentCommerceReadTask": {
+      "fingerprint": "7097e543702371f30e743e0b33ea29054585ab36940ab9090e944b8df44e0ccd",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "provider": "task_private",
+        "input": "task_sensitive",
+        "allowedActions": "internal_only",
+        "configurationDigest": "internal_only"
+      }
+    },
+    "PaymentCommerceReadObservation": {
+      "fingerprint": "a36368289f4d19aa829f7fd85c45a93ebc7539653a17377f7b2a6692627643ef",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "snapshot": "internal_only"
+      }
     }
   },
   "surfaces": [
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "fbc55f0d3762f8859ab9beeaac13199d451c4a012518a364b1ae91f712564a53",
+      "sourceDigest": "701d69d2ec26db3afa1471162ff897c29ff5d305301798900d387bb1616e38bc",
       "channels": [
         "http"
       ],
@@ -3148,7 +3169,7 @@
     {
       "id": "source-catalog",
       "file": "packages/capabilities/catalog.ts",
-      "sourceDigest": "ddb1d363a3b4fe7ef4683b7b3b7c0cfdf1d4e264fbfaacfe62e8c6729efc3752",
+      "sourceDigest": "e757d4b77b308bdd4268040dda7cbba3da18fedcf11e76f0bf488987e1e7c8d7",
       "channels": [
         "source",
         "dispatch"
@@ -3366,7 +3387,7 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "0917d4080bbce8d00f8d0634171412bc226b3b260313fce0585d639c4f0f6917",
+      "sourceDigest": "f218d1f4fad1a56991db86580bdb3c9ef6038b5698653fdd87229cb533d1acd3",
       "channels": [
         "authorization_control"
       ],
@@ -3378,7 +3399,7 @@
     {
       "id": "security-worker-runtime",
       "file": "apps/worker/runtime.ts",
-      "sourceDigest": "dbfb30921d81694912aeb2a3a296597b6669936e13dcd906aac07dfc697645f1",
+      "sourceDigest": "bc3d6fff813f5d7d6849179cf34079d79e7e14cef5f1d0db78dba969303017f4",
       "channels": [
         "authorization_control"
       ],
@@ -3474,7 +3495,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "2fdd2df0945b435bb0265817a5ba702a4603187bd2d3561fd5c4ce65e993d9b5",
+      "sourceDigest": "01171357c4b31c55cdfb3db0c62083510d1bdf690b236ac13efe3b0d8ce3c53d",
       "channels": [
         "all-reads"
       ],
@@ -3486,7 +3507,7 @@
     {
       "id": "security-safe-projections",
       "file": "packages/security/projections.ts",
-      "sourceDigest": "9b8253a7643b2132433b8ecfa070517f3ad20f51e8f3057267e9a0761970648a",
+      "sourceDigest": "86bf1d06f4a265ae9db2265ca148dd607778f19b8364c103ac577bca76c3e8fb",
       "channels": [
         "model-and-agent"
       ],
@@ -3582,7 +3603,7 @@
     {
       "id": "source-evidence-validation",
       "file": "packages/ontology/object-evidence.ts",
-      "sourceDigest": "eb96a85a81a0f0de67ca02f411032d5a863af11af0046f5bc461f1ec473e1b00",
+      "sourceDigest": "3623f3624de1c8ef7ac5e86762e8ba11be268edff9224d22c83f6e8ba6e4fa6a",
       "channels": [
         "internal"
       ],
@@ -4092,7 +4113,7 @@
     {
       "id": "definition-registry",
       "file": "packages/ontology/definition-store.ts",
-      "sourceDigest": "11d380723d521b30f7ffe53b4c57ede1c17c47cf124d8b4347d8373fefd03175",
+      "sourceDigest": "99371b43f3833b230335ac56e19d8d5aa3c284021d227c46571402a80f6e0601",
       "channels": [
         "model",
         "artifact"
@@ -5111,7 +5132,7 @@
       "currentControl": "Stopped authority, exact digest/revision, unchanged actions/functions/grants and expiry",
       "targetControl": "Preserve current data, source and execution boundaries",
       "stage": "S4",
-      "sourceDigest": "108abe22a84f35d8803e8d39b6ccab54e148b67710d78daffc7189c00b69f0b5"
+      "sourceDigest": "9012eecfcd930d0d43a361b1441f179d3b76697e034d0f3973e814c0d836c6a5"
     },
     {
       "id": "single-read-policy-upgrade-cli",
@@ -5420,6 +5441,68 @@
       "currentControl": "Exact previous policy digest/revision, stopped writers, immutable receipt; existing grants and expirations remain unchanged",
       "targetControl": "Current owner, version, revocation and bounded execution checks",
       "stage": "S1"
+    },
+    {
+      "id": "payment-commerce-connection",
+      "file": "packages/capabilities/payment-commerce/connection.ts",
+      "sourceDigest": "bd9374f3a036759fa9d58485440483841f2d582d244a306c749a2535d1139d4d",
+      "channels": [
+        "private_file"
+      ],
+      "content": "Owned private metadata, credential and pinned runtime validation",
+      "currentControl": "Owner/task/revision and fingerprint checks; no order or payment operation; explicit migration and source grants",
+      "targetControl": "Maintain exact source authority and independent readback",
+      "stage": "S5"
+    },
+    {
+      "id": "payment-commerce-mcp",
+      "file": "packages/capabilities/payment-commerce/connector.ts",
+      "sourceDigest": "46fea72055f9ddae75bdc8ed2ccb8889cf1171c459ce52ea5c8afb3e2df60fea",
+      "channels": [
+        "provider_mcp",
+        "private_file"
+      ],
+      "content": "Exact read-only tools in private provider MCP processes",
+      "currentControl": "Owner/task/revision and fingerprint checks; no order or payment operation; explicit migration and source grants",
+      "targetControl": "Maintain exact source authority and independent readback",
+      "stage": "S5"
+    },
+    {
+      "id": "payment-commerce-http",
+      "file": "packages/capabilities/payment-commerce/http.ts",
+      "sourceDigest": "58625aed2ea3c23530980ca9c643b3d56bedc2a9c92756949408416ff7109cf8",
+      "channels": [
+        "provider_http"
+      ],
+      "content": "Signed merchant query and bounded TOP catalog reads",
+      "currentControl": "Owner/task/revision and fingerprint checks; no order or payment operation; explicit migration and source grants",
+      "targetControl": "Maintain exact source authority and independent readback",
+      "stage": "S5"
+    },
+    {
+      "id": "payment-commerce-program",
+      "file": "packages/capabilities/payment-commerce/program.ts",
+      "sourceDigest": "9aad285c5f70bb25377c3918d8dcd1a1f805e227135f7ccd6cd5c364aa3d29ec",
+      "channels": [
+        "registered_model",
+        "agent_response"
+      ],
+      "content": "Task-bound provider scope, observation and read-only completion",
+      "currentControl": "Owner/task/revision and fingerprint checks; no order or payment operation; explicit migration and source grants",
+      "targetControl": "Maintain exact source authority and independent readback",
+      "stage": "S5"
+    },
+    {
+      "id": "payment-commerce-policy-upgrade",
+      "file": "packages/security/payment-commerce-upgrade.ts",
+      "sourceDigest": "54003310074d0a9bbf37877afea11478424ee49d21eb8d7eb80bb621414c696e",
+      "channels": [
+        "private_file"
+      ],
+      "content": "Offline v26 to v27 policy transition without new source grants",
+      "currentControl": "Owner/task/revision and fingerprint checks; no order or payment operation; explicit migration and source grants",
+      "targetControl": "Maintain exact source authority and independent readback",
+      "stage": "S5"
     }
   ]
 }

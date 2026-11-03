@@ -56,6 +56,7 @@ flowchart LR
 | `definitions/didi-readonly.json` | 地点搜索和车型估价 |
 | `definitions/meituan-readonly.json` | 地点、地址及费用预览 |
 | `definitions/shopify-catalog.json` | 商品目录和商家端点发现 |
+| `definitions/payment-commerce-readonly.json` | 支付宝／微信支付／银联查单、淘宝商品查询；[配置与资格](../../docs/guides/payment-commerce.md) |
 
 这些声明包含 server、tool、transport、参数来源、观察依赖、评估函数和版本摘要。模型依据实际读取选择动作与顺序；`requires` 表示证据前提，不自动编排调用。连接器只解释选定动作，凭据、主机和允许的外部效果由执行端检查。
 
