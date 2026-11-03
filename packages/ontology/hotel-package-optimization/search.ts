@@ -20,7 +20,10 @@ export function dependencyNeeds(purchases:Realization[],study:Study):DependencyN
   for(const purchase of purchases)for(const dependency of study.skus.get(refKey(purchase.sku))!.prerequisites){
     const date=dependency.anchor==='any'?undefined:day(purchase.anchorDate,dependency.dayOffset);
     const need:DependencyNeed={sku:dependency.sku,quantity:dependency.quantity,...(dependency.scope==='same_room'?{roomIndex:purchase.roomIndex}:{}),anchor:dependency.anchor,...(date?{date}:{}),phase:dependency.phase};
-    const key=digest({dependentSku:purchase.sku,sku:need.sku,room:need.roomIndex,anchor:need.anchor,date,phase:need.phase});
+    // Distinct rules can resolve to the same date. Preserve each rule's
+    // threshold; possession satisfying both requires their maximum, not the
+    // first threshold encountered or a sum across unrelated predicates.
+    const key=digest({dependentSku:purchase.sku,dependency,room:need.roomIndex,date});
     const prior=grouped.get(key);
     if(!prior)grouped.set(key,need);else if(dependency.basis==='per_unit')prior.quantity+=dependency.quantity;
   }

@@ -62,6 +62,8 @@ node --import tsx --test tests/hotel-package-pipeline.test.ts
 
 前置条件表达所需资格/持有数量，`per_plan` 可复用，`per_unit` 随从属购买数量增加；它们不消耗前置 SKU。可消耗的优惠券和库存由共享资源池独立限制。`scope` 与日期条件决定前置资格适用于哪个房间/日期，`phase` 区分只需购买还是需先完成激活/预约兑换。没有需求收益的门槛购买只在请求明确允许 `allowQualificationPurchases` 时参与。
 
+不同规则即使计算到同一个日期，也分别保留数量门槛；同一持有资格可同时满足多条规则，但不能漏掉较高门槛。独立重放同样拒绝当前不支持的多个住宿组件单位，不会只计算其中第一段。
+
 ## 验证
 
 `verifySyntheticHotelPackagePlan` 不调用 DFS 或候选生成器，重新读取当前本体并独立计算价格、权益覆盖、资源消耗和步骤前置关系；篡改结果、来源变化、价格/库存过期或权限不可读均拒绝。它验证可行性与总价，**不重放全搜索证明最优性**（`optimalityReplayed=false`）。最优性另由独立的完整子集穷举 oracle 对 30 个小目录交叉验证。

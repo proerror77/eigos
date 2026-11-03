@@ -45,6 +45,7 @@ function replay(plan:Plan,study:Study,reject:(message:string)=>void){
     const enabled=sku.components.filter(c=>purchase.components.some(r=>sameRef(r,c.ref)));
     if(enabled.length!==purchase.components.length||sku.components.some(c=>(c.data.kind==='stay'||c.data.optional!==true)&&!enabled.includes(c)))reject('missing_or_foreign_component');
     if(enabled.some(c=>!c.data.conditionsKnown))reject('component_condition_unknown');
+    if(enabled.filter(c=>c.data.kind==='stay').length>1)reject('multi_room_unit_not_supported');
     const stay=enabled.find(c=>c.data.kind==='stay'),vector=study.demands.map(()=>0);
     if(stay){
       if(stay.data.kind!=='stay'||stay.data.rooms!==1||stay.data.nights===null||!quote.roomType||!purchase.roomType||!sameRef(quote.roomType,purchase.roomType))reject('lodging_mapping');
