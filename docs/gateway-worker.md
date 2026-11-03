@@ -26,6 +26,22 @@ Worker 的原生本体规划将任务专属 Ontology MCP 标记为必需服务�
 
 输出边界是 CLI 的已完成消息，并非首个 token。`firstOutput` 可包含过程消息；仅当 CLI 标明 `final_answer` 时记录 `finalOutput`，否则该边界保持未知。最终结构化结果仍须读取并解析，业务决策仍须有本体提交回执，两者不能由计时记录代替。
 
+## Harness 执行适配（POC）
+
+Worker 可显式选择 `EIGOS_EXECUTOR=harness`。适配采用 Super-agent 原型的独立 Executor Session 边界，通过 DeepSeek Harness 的 `sdk-minimal` JSON-RPC 接口运行模型；不启动原型的 GitHub／飞书来源、第二套 Ticket／Policy 引擎或独立正式任务库。EIGOS 继续负责持久领取、当前授权、取消、原操作恢复与结果验收。Gateway 只按相同开关公布文档能力，不启动 Harness，也不需要模型凭据。
+
+已验证的外部运行版本为 `@deepseek-ai/dsh@0.2.1-rc.5`，使用 Node.js 22.22.3。运行环境与项目依赖分开安装，例如 `npm install --prefix /opt/eigos/harness-runtime @deepseek-ai/dsh@0.2.1-rc.5`。配置入口见 [`.env.example`](../.env.example)；Worker 必须设置绝对路径 `EIGOS_HARNESS_CREDENTIAL_FILE`，文件须由运行用户拥有、权限不大于 `0600`，不能是符号链接。
+
+`codex-oauth` 读取现有 Codex 登录 JSON 中当前的 ChatGPT access token，通过 Harness 的 `openai-codex` 通道调用所选模型；不把 refresh token、原 Codex home、Gateway 令牌或供应商凭据传入模型进程。原登录仍是刷新凭据的唯一写入方。远程副本过期时调用停止，须由原登录刷新后更新私密副本；不能以重建任务、切换凭据来源或自动换模型掩盖失败。`api-key` 使用私有纯文本文件和明确的 DeepSeek 模型；两种方式都不会在缺失或过期时回退至其他模型。
+
+每次调用使用新的私有 home、随机会话 ID 和只含当前任务的配置。Shell、文件工具和工作目录工具在宿主配置层关闭；原生规划仅接入 Worker 创建的 loopback Ontology MCP，并保留实际服务端读取与决策回执。文档及单次只读决策不接入工具。调用只在原提示已入会话、唯一模型回合成功结束、输出符合 JSON Schema 后返回；入队、空闲通知或模型文字不能单独证明业务完成。初始化最多 15 秒，MCP 单次调用最多 30 秒，总调用仍受原执行截止约束。
+
+SDK 没有单会话取消接口，因此每次调用独占进程；取消、超时和关闭会终止并回收该进程组，再清理私有 home。外部来源返回后的执行与验收仍独立检查 EIGOS 原任务权限和领取身份。Harness Worker 固定一个并发领取，原 Codex Worker 保持已有两个并发上限。
+
+Foundation 使用独立的 `harness-native` 模型通道。现有 `codex-native` 许可不会自动赋予它；启用前须审核实际模型接收方与数据出口许可，并通过已有管理入口配置相应通道及授权。部署预检按所选执行器核对通道，不自动修改权限策略。真实模型、Linux 候选部署、正式实例切换与业务完成须分别验证。
+
+上游接口与边界：[Super-agent 执行说明](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/main/docs/003-execution.md)、[Harness SDK](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sdk/protocol/README.md)、[多模型与 OAuth](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/llm/llm-pi-ai/README.md)。
+
 ## 一个共享存储
 
 Gateway 和 Worker 必须使用同一个持久 SQLite 文件，建议设置相同的绝对 `DATABASE_PATH`。分进程不能使用 `:memory:`，也不能把数据库复制到两个位置来扩容。当前实现面向同机持久磁盘；跨主机需要另外的共享存储方案。

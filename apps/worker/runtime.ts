@@ -4,6 +4,7 @@ import { assertPersonalSourceConfig, type Config } from '../../packages/core/con
 import { assertSourceProxy } from '../../packages/core/private-source-proxy.js';
 import { JobStore } from '../../packages/core/store.js';
 import { CodexExecutor, type Executor } from '../../packages/capabilities/executor.js';
+import { HarnessExecutor } from '../../packages/capabilities/harness-executor.js';
 import { Worker } from './worker.js';
 
 export function createWorker(config: Config, overrides: {
@@ -16,11 +17,14 @@ export function createWorker(config: Config, overrides: {
   const store = overrides.store ?? new JobStore(config.DATABASE_PATH, { securityMode: config.EIGOS_SECURITY_MODE, authority: config.authority });
   if (store.security.enabled !== (config.EIGOS_SECURITY_MODE === 'foundation')) throw new Error('Gateway and Worker security modes must match');
   try {
-    const model = new CodexExecutor(config.EIGOS_CODEX_BIN, config.EIGOS_EXECUTOR_TIMEOUT_MS, {
+    const model = config.EIGOS_EXECUTOR === 'harness' ? new HarnessExecutor(config.EIGOS_HARNESS_BIN ?? 'dsh', config.EIGOS_EXECUTOR_TIMEOUT_MS, {
+      credentialFile: config.EIGOS_HARNESS_CREDENTIAL_FILE!, credentialKind: config.EIGOS_HARNESS_CREDENTIAL_KIND,
+      model: config.EIGOS_HARNESS_MODEL, reasoningEffort: config.EIGOS_HARNESS_REASONING_EFFORT, maxTokens: config.EIGOS_HARNESS_MAX_TOKENS,
+    }) : new CodexExecutor(config.EIGOS_CODEX_BIN, config.EIGOS_EXECUTOR_TIMEOUT_MS, {
       model: config.EIGOS_CODEX_MODEL, reasoningEffort: config.EIGOS_CODEX_REASONING_EFFORT, serviceTier: config.EIGOS_CODEX_SERVICE_TIER,
     });
     const catalog = createExecutionCatalog({ store, didiRelayAgentId: config.EIGOS_DIDI_RELAY_AGENT_ID, personalSourceOwner: config.EIGOS_PERSONAL_SOURCE_OWNER, didiOrderTestEnabled: config.EIGOS_DIDI_ORDER_TEST_ENABLED === 'true', csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
-      documentEnabled: config.EIGOS_EXECUTOR === 'codex', documentExecutor: overrides.executor ?? model,
+      documentEnabled: config.EIGOS_EXECUTOR !== 'disabled', documentExecutor: overrides.executor ?? model,
       paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR, paotuiMemberConnectionFile: config.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE, memberSourceKeyFile: config.EIGOS_MEMBER_SOURCE_KEY_FILE, executionHost: 'worker', ontologyAuditPath: config.EIGOS_ONTOLOGY_AUDIT_PATH,
       publicGeoDiscoveryQueries: config.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES,
       rollinggo: config.EIGOS_ROLLINGGO_KEY_FILE ? { keyFile: config.EIGOS_ROLLINGGO_KEY_FILE, keySha256: config.EIGOS_ROLLINGGO_KEY_SHA256! } : undefined,
@@ -34,7 +38,7 @@ export function createWorker(config: Config, overrides: {
       commerceSandbox: config.EIGOS_COMMERCE_SANDBOX_URL ? { endpoint: config.EIGOS_COMMERCE_SANDBOX_URL, tokenFile: config.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE!, auditDirectory: config.EIGOS_COMMERCE_SANDBOX_AUDIT_DIR } : undefined,
       sandbox: config.EIGOS_SANDBOX_PROVIDER_URL ? { endpoint: config.EIGOS_SANDBOX_PROVIDER_URL, tokenFile: config.EIGOS_SANDBOX_TOKEN_FILE! } : undefined });
     const worker = new Worker(store, { coordinator: new Coordinator(store, overrides.reasoner ?? new CodexReasoner(model), catalog,
-      { allowSandbox: config.EIGOS_ACTION_SANDBOX === 'true', allowExternalDrafts: !!config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length, maxTaskMs: config.EIGOS_TASK_MAX_MS ?? 86400000 }), ...overrides.timing });
+      { allowSandbox: config.EIGOS_ACTION_SANDBOX === 'true', allowExternalDrafts: !!config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length, maxTaskMs: config.EIGOS_TASK_MAX_MS ?? 86400000 }), maxConcurrent: config.EIGOS_EXECUTOR === 'harness' ? 1 : 2, ...overrides.timing });
     worker.start();
     return { worker, close: async () => { await worker.close(); if (!overrides.store) store.close(); } };
   } catch (error) { if (!overrides.store) store.close(); throw error; }

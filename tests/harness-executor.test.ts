@@ -1,0 +1,135 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { HarnessExecutor, HARNESS_SECURITY_CHANNEL_ID } from '../packages/capabilities/harness-executor.js';
+import { readConfig, readWorkerConfig } from '../packages/core/config.js';
+import { withModelUsage } from '../packages/core/model-usage-context.js';
+
+function fixture(mode = 'success') {
+  const root = mkdtempSync(join(tmpdir(), 'eigos-harness-test-')), binary = join(root, 'harness.cjs'), log = join(root, 'boot.json'), key = join(root, 'model.key');
+  writeFileSync(key, 'synthetic-model-credential', { mode: 0o600 });
+  writeFileSync(binary, '#!' + process.execPath + '\n' + String.raw`
+const fs=require('node:fs'), readline=require('node:readline'), {spawn}=require('node:child_process');
+const mode=MODE_VALUE, log=LOG_VALUE, patch=JSON.parse(fs.readFileSync(process.argv[process.argv.indexOf('--patch')+1],'utf8'));
+fs.writeFileSync(log,JSON.stringify({pid:process.pid,args:process.argv.slice(2),home:process.env.HOME,dshHome:process.env.DSH_HOME,patch,env:Object.keys(process.env),hasCredential:!!process.env.EIGOS_HARNESS_MODEL_TOKEN}));
+let session, messageId='prompt-receipt';
+const reply=(id,result)=>console.log(JSON.stringify({jsonrpc:'2.0',id,result}));
+const event=(type,data)=>console.log(JSON.stringify({jsonrpc:'2.0',method:'session.event',params:{sessionId:mode==='other-session'?'another-session':session,event:{type,data}}}));
+readline.createInterface({input:process.stdin}).on('line',line=>{
+ const q=JSON.parse(line);
+ if(q.method==='initialize'){reply(q.id,{serverInfo:{name:'deepseek-harness-sdk-runtime',version:'0.0.1'}});return;}
+ if(q.method==='session/prompt'){
+  session=q.params.sessionId;
+  if(mode!=='unread')event('user/message',{id:messageId});
+  reply(q.id,{messageId});return;
+ }
+ if(q.method==='session/wait'){
+  if(mode==='hang'){
+   const child=spawn(process.execPath,['-e','process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'],{stdio:'ignore'});
+   fs.writeFileSync(log,JSON.stringify({...JSON.parse(fs.readFileSync(log,'utf8')),childPid:child.pid}));return;
+  }
+  if(mode==='tool')event('tool/call',{name:'bash',callId:'forbidden',arguments:'{}'});
+  if(mode==='output-limit'){console.log('x'.repeat(2100000));return;}
+  const output=mode==='bad-json'?'invalid':JSON.stringify({ok:mode!=='bad-schema'});
+  event('assistant/message',{message:{role:'assistant',content:[{type:'text',text:output}]},usage:{inputTokens:3,outputTokens:2}});
+  if(mode!=='no-completion')event('turn/end',{turn:1,reason:{kind:mode==='failed'?'failed':'completed'}});
+  reply(q.id,{});return;
+ }
+ if(q.method==='shutdown'){reply(q.id,{});return;}
+});
+`.replace('MODE_VALUE', JSON.stringify(mode)).replace('LOG_VALUE', JSON.stringify(log)), { mode: 0o700 });
+  const model = new HarnessExecutor(binary, mode === 'hang' ? 1200 : 5000, { credentialFile: key, credentialKind: 'api-key' });
+  return { root, key, binary, model, log, boot: () => JSON.parse(readFileSync(log, 'utf8')) as { pid: number; childPid?: number; args: string[]; home: string; dshHome: string; patch: { id?: string; disabled?: boolean; insert?: { name: string; config?: unknown }[] }[]; env: string[]; hasCredential: boolean },
+    close: () => rmSync(root, { recursive: true, force: true }) };
+}
+const schema = { type: 'object', properties: { ok: { const: true } }, required: ['ok'], additionalProperties: false };
+
+test('Harness confines the original turn, credentials, profile and receipt to its invocation', async t => {
+  const f = fixture(); t.after(f.close);
+  const previousGateway=process.env.EIGOS_DEV_TOKEN,previousModel=process.env.DEEPSEEK_API_KEY;
+  process.env.EIGOS_DEV_TOKEN='gateway-secret';process.env.DEEPSEEK_API_KEY='unrelated-host-key';
+  t.after(()=>{if(previousGateway===undefined)delete process.env.EIGOS_DEV_TOKEN;else process.env.EIGOS_DEV_TOKEN=previousGateway;if(previousModel===undefined)delete process.env.DEEPSEEK_API_KEY;else process.env.DEEPSEEK_API_KEY=previousModel;});
+  const recorded: unknown[] = [];
+  const result = await withModelUsage({ begin: () => {}, finish: (...args) => { recorded.push(args); } },
+    () => f.model.runStructured('Only synthetic supplied information', schema, t.signal, { toolFree: true }));
+  assert.deepEqual(result.output, { ok: true });
+  assert.equal(result.evidence.runtime, 'harness-sdk'); assert.equal(f.model.securityChannelId, HARNESS_SECURITY_CHANNEL_ID);
+  assert.deepEqual(result.evidence.toolFreeInvocation, { completedTurns: 1, toolCalls: 0 });
+  assert.deepEqual(result.evidence.usage, { inputTokens: 3, outputTokens: 2 }); assert.equal(recorded.length, 1);
+  const boot = f.boot();
+  assert(boot.hasCredential); assert(!boot.env.includes('EIGOS_DEV_TOKEN')); assert(!boot.env.includes('DEEPSEEK_API_KEY')); assert(!boot.env.includes('CODEX_HOME'));
+  assert(boot.args.includes('sdk-minimal')); assert(!boot.args.join(' ').includes('synthetic-model-credential'));
+  for (const id of ['tool-fs', 'tool-working-directory', 'persistent-bash', 'persistent-pwsh']) assert(boot.patch.some(x => x.id === id && x.disabled));
+  assert(!existsSync(boot.home)); assert(!existsSync(boot.dshHome)); assert(existsSync(f.key));
+  assert(!JSON.stringify(result.evidence).includes('synthetic-model-credential'));
+});
+
+for (const [mode, message] of [
+  ['bad-json', /invalid structured/], ['bad-schema', /invalid structured/], ['other-session', /another session/],
+  ['unread', /original, completed/], ['no-completion', /original, completed/], ['failed', /original, completed/],
+  ['tool', /outside the task/], ['output-limit', /output limit/],
+] as const) test('Harness rejects ' + mode + ' instead of manufacturing completion', async t => {
+  const f = fixture(mode); t.after(f.close);
+  await assert.rejects(f.model.runStructured('synthetic', schema, t.signal, { toolFree: true }), message);
+  assert(!existsSync(f.boot().home));
+});
+
+test('Harness cancellation and timeout reap its process group before returning', async t => {
+  for (const cancel of [false, true]) {
+    const f = fixture('hang'), controller = new AbortController(); t.after(f.close);
+    const pending = f.model.runStructured('synthetic', schema, controller.signal);
+    const deadline = Date.now() + 3000;
+    while ((!existsSync(f.log) || !f.boot().childPid) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    assert(f.boot().childPid, 'Observe the real descendant before interrupting');
+    if (cancel) controller.abort();
+    await assert.rejects(pending, cancel ? /canceled/ : /timed out/);
+    const boot = f.boot(); assert(!existsSync(boot.home));
+    for (const pid of [boot.pid, boot.childPid!]) {
+      try { process.kill(pid, 0); assert.equal(process.platform, 'linux'); assert.equal(readFileSync('/proc/' + pid + '/stat', 'utf8').split(' ')[2], 'Z'); }
+      catch (error) { if (!(error instanceof Error) || !('code' in error) || error.code !== 'ESRCH') throw error; }
+    }
+  }
+});
+
+test('Harness does not spawn after cancellation or with a public or expired credential', async t => {
+  const f = fixture(); t.after(f.close);
+  const aborted = new AbortController(); aborted.abort();
+  await assert.rejects(f.model.runStructured('synthetic', schema, aborted.signal)); assert(!existsSync(f.log));
+  chmodSync(f.key, 0o644);
+  await assert.rejects(f.model.runStructured('synthetic', schema, t.signal), /owned private/); assert(!existsSync(f.log));
+  chmodSync(f.key, 0o600);
+  writeFileSync(f.key, JSON.stringify({ auth_mode: 'chatgpt', tokens: { access_token: 'x.' + Buffer.from(JSON.stringify({ exp: 1 })).toString('base64url') + '.x', refresh_token: 'never-pass-refresh' } }));
+  const oauth = new HarnessExecutor(f.binary, 5000, { credentialFile: f.key });
+  await assert.rejects(oauth.runStructured('synthetic', schema, t.signal), /expired/); assert(!existsSync(f.log));
+});
+
+test('Harness reads current OAuth access without exporting refresh or unrelated credentials', async t => {
+  const f = fixture(); t.after(f.close);
+  const token = 'x.' + Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url') + '.x';
+  writeFileSync(f.key, JSON.stringify({ auth_mode: 'chatgpt', tokens: { access_token: token, refresh_token: 'never-pass-refresh' } }));
+  const oauth = new HarnessExecutor(f.binary, 5000, { credentialFile: f.key });
+  await oauth.runStructured('synthetic', schema, t.signal, { toolFree: true });
+  const boot = f.boot(); assert(boot.patch.some(x => x.id === 'llm-deepseek' && x.disabled));
+  assert(!JSON.stringify(boot).includes('never-pass-refresh')); assert(!JSON.stringify(boot.patch).includes(token));
+});
+
+test('Harness MCP confines endpoints and keeps the task bearer out of command arguments', async t => {
+  const f = fixture(); t.after(f.close);
+  const mcp = { name: 'eigos_ontology' as const, url: 'https://remote.example/mcp', token: 'synthetic-task-bearer', tools: ['read_task_context', 'submit_decision'] };
+  await assert.rejects(f.model.runStructured('synthetic', schema, t.signal, { mcp }), /task-bound loopback/); assert(!existsSync(f.log));
+  await assert.rejects(f.model.runStructured('synthetic', schema, t.signal, { toolFree: true, mcp }), /cannot attach/);
+  await f.model.runStructured('synthetic', schema, t.signal, { mcp: { ...mcp, url: 'http://127.0.0.1:12345/mcp' } });
+  const boot = f.boot(); assert(!boot.args.join(' ').includes(mcp.token));
+  assert(boot.patch.flatMap(x => x.insert ?? []).some(x => x.name === '@deepseek-ai/dsh-mcp-client'));
+});
+
+test('Harness configuration is opt-in, with no credential requirement on the protocol-only Gateway', () => {
+  assert.equal(readWorkerConfig({}).EIGOS_EXECUTOR, 'disabled');
+  assert.throws(() => readWorkerConfig({ EIGOS_EXECUTOR: 'harness' }), /absolute private credential/);
+  assert.throws(() => readWorkerConfig({ EIGOS_EXECUTOR: 'harness', EIGOS_HARNESS_CREDENTIAL_FILE: 'relative.key' }), /absolute private credential/);
+  const config = readWorkerConfig({ EIGOS_EXECUTOR: 'harness', EIGOS_HARNESS_CREDENTIAL_FILE: '/private/key' });
+  assert.equal(config.EIGOS_EXECUTOR, 'harness');
+  assert.equal(readConfig({ EIGOS_EXECUTOR: 'harness', EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'a'.repeat(32) }).EIGOS_HARNESS_CREDENTIAL_FILE, undefined);
+});

@@ -24,6 +24,24 @@ import type { TaskSummary } from '../packages/core/task-summary.js';
 
 const principal: Principal = { issuer: 'test', tenant: 'one', subject: 'alice', clientId: 'test', scopes: [...SCOPES] };
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+test('a single-slot Worker leaves the next task durably queued until the current task ends', async () => {
+  const store = new JobStore(':memory:'), tasks = new TaskService(store, { catalog: createExecutionCatalog() });
+  const first = tasks.submit(principal, { service: 'eigos.delegate', goal: 'first synthetic task', requestId: 'single-first' });
+  const second = tasks.submit(principal, { service: 'eigos.delegate', goal: 'second synthetic task', requestId: 'single-second' });
+  const active = new Map<string, () => void>();
+  const worker = new Worker(store, { maxConcurrent: 1, coordinator: { run: async (claim, signal) => new Promise<void>(resolve => {
+    active.set(claim.job.id, () => { store.finish(claim, current => { current.state = 'completed'; }); resolve(); });
+    signal.addEventListener('abort', () => resolve(), { once: true });
+  }) } });
+  try {
+    worker.tick(); await new Promise<void>(resolve => setImmediate(resolve)); worker.tick();
+    assert.deepEqual([...active.keys()], [first.id]); assert.equal(tasks.get(principal, second.id).state, 'submitted');
+    active.get(first.id)!(); await new Promise<void>(resolve => setImmediate(resolve));
+    worker.tick(); await new Promise<void>(resolve => setImmediate(resolve));
+    assert(active.has(second.id)); active.get(second.id)!();
+  } finally { await worker.close(); store.close(); }
+});
 async function until<T>(read: () => Promise<T> | T, accept: (value: T) => boolean): Promise<T> {
   const deadline = Date.now() + 8000;
   while (true) {
