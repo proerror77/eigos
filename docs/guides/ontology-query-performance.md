@@ -26,8 +26,12 @@ node --import tsx examples/ontology-query-benchmark.ts > /absolute/local/archive
 
 `query()` 返回明确分页与 continuation，应用可按需继续读取；缺少当前字段和本地分页不能一律触发供应商重查。已知引用优先直接选取字段；同一同步读取可合并事实需求，后续决策仍复核权限和版本。
 
+关系分页按关系目标的 `(type,id)` 索引键推进游标，联表前最多取 201 个候选，其中第 201 个用于判断后续页；每页最多处理 200 个。可信内部读取遇到删除或悬空目标时，空页仍可带 continuation。授权读取从当次已经验证的任务对象边界做精确关系查找，不用隐藏关系的数量产生额外分页；仍逐对象检查版本和字段投影。调用方须以 `hasMore` 判断是否读完，不能以 `items.length === 0` 判断。
+
+固定定义的校验独立于结果分页：使用端点／定义摘要复合索引，逐个定位不同的摘要，仍核对整个关系集合，包括页外、不可见和悬空边；超过 200 种定义拒绝读取。旧库在正式存储初始化时幂等补建正反向索引，普通只读视图不迁移数据库。新增索引会占用磁盘并产生一次性建立成本，测量时应将它与初始化后的读取耗时分列。
+
 内部 `related()` 用于需要完整邻居集合的计算和写入。达到数量、响应字节限制，或者授权过滤使集合不完整时，抛出不含隐藏对象标识或数量的冲突。函数评估、派生属性与条件评估保留 unknown，普通已读字段仍可返回；硬条件未知时不能通过执行检查。写入不能以空列表继续。完整且确实为空的集合仍返回空列表。该行为也约束历史观察取代、依赖匹配与关系替换；不要用 `?? []` 或捕获后返回空数组恢复旧语义。
 
 历史集合过大时，应保留未知并报告边界。后续优化应基于准确来源身份、当前版本或受信索引定位需要核查的观察，同时证明未遗漏较新／冲突状态、跨账号隔离和历史解释。不能通过无界遍历、提高模型轮数、删掉完整性检查或跨决策复用授权来取得更好数字。
 
-回归入口：`tests/relationship-completeness.test.ts`、`tests/security-data-policy.test.ts`、`tests/ontology-query-benchmark.test.ts` 和 `tests/security-read-dependencies.test.ts`。基准本身无墙钟性能门槛，避免把机器负载波动变成 CI 失败；回归检查的是实际计数、合并行为和不完整读取的拒绝。
+回归入口：`tests/ontology-relationship-pagination.test.ts`、`tests/relationship-completeness.test.ts`、`tests/security-data-policy.test.ts`、`tests/ontology-query-benchmark.test.ts` 和 `tests/security-read-dependencies.test.ts`。基准本身无墙钟性能门槛，避免把机器负载波动变成 CI 失败；回归检查的是实际计数、合并行为和不完整读取的拒绝。
