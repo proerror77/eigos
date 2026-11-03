@@ -16,6 +16,7 @@ export interface WorkerOptions {
   pollMs?: number;
   leaseMs?: number;
   timeoutMs?: number;
+  maxConcurrent?: number;
 }
 type RunningWork = { controller: AbortController; done: Promise<void>; renewIfDue?: () => boolean };
 type FailurePhase = 'recovery_writeback' | 'claim_cleanup' | 'model_context_cleanup';
@@ -41,10 +42,13 @@ export class Worker {
   private stopping = false;
   private readonly leaseMs: number;
   private readonly pollMs: number;
+  private readonly maxConcurrent: number;
   constructor(private store: JobStore, private options: WorkerOptions) {
     this.leaseMs = options.leaseMs ?? 15000;
     this.pollMs = options.pollMs ?? 100;
+    this.maxConcurrent = options.maxConcurrent ?? 2;
     if (this.leaseMs < 100 || this.pollMs < 10) throw new Error('Invalid Worker timing');
+    if (!Number.isInteger(this.maxConcurrent) || this.maxConcurrent < 1 || this.maxConcurrent > 2) throw new Error('Invalid Worker concurrency');
   }
 
   start(): void {
@@ -61,7 +65,7 @@ export class Worker {
   tick(): void {
     if (this.stopping) return;
     const services = ['eigos.delegate'];
-    while (this.running.size < 2) {
+    while (this.running.size < this.maxConcurrent) {
       const claim = this.store.claim(services, this.leaseMs);
       if (!claim) {
         const recovery=this.options.coordinator.recover && this.options.coordinator.claimRecovery?.();

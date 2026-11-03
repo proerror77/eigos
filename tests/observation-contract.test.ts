@@ -8,6 +8,20 @@ import { prepareObservationSchema } from '../packages/ontology/observation-contr
 import { observationContractFixture } from './fixtures/observation-contract.js';
 import { taskSummary } from '../packages/core/task-summary.js';
 
+test('permanent consent retains a finite observation pin deadline at the declared horizon', () => {
+  const f = observationContractFixture(true);
+  try {
+    assert.equal(f.jobs.security.agentGrant(f.a.id).expiresAt, null);
+    assert.equal(f.jobs.security.policies.sources(f.owner, f.a.id)[0]!.expiresAt, null);
+    const args = f.input(), task = f.tasks.prepareObservationContract(f.p, args);
+    const contract = f.jobs.watchContracts.get(f.owner, task.id);
+    assert.equal(contract.pins.expiresAt, args.until);
+    assert(Number.isFinite(Date.parse(contract.pins.expiresAt)));
+    assert.equal(task.observation!.monitoring, false);
+    assert.equal(f.sourceCalls(), 0); assert.equal(f.modelInputs.length, 0);
+  } finally { f.close(); }
+});
+
 test('an explicit observation contract creates an inactive guardian, never reopening the completed task or issuing execution authority', () => {
   const f = observationContractFixture();
   try {

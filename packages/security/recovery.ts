@@ -1,3 +1,4 @@
+import { consentDeadline } from './consent-lifetime.js';
 import type {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
@@ -48,19 +49,22 @@ export class RecoveryStore {
     const row=this.db.prepare('SELECT body FROM action_intents WHERE owner=? AND id=?').get(owner,intentId);
     if(!row) throw new DomainError('NOT_FOUND','Original operation not found');
     const intent=JSON.parse(String(row.body)) as ActionIntent;
+    if(!['effect_unknown','awaiting_remote','dispatching','needs_review'].includes(intent.state) || ['read','local'].includes(intent.effect))
+      throw new DomainError('CONFLICT','No unresolved dispatched business operation');
+    const attempts=this.db.prepare('SELECT body FROM action_attempts WHERE owner=? AND intent_id=? ORDER BY rowid').all(owner,intentId).map(r=>JSON.parse(String(r.body)) as ExecutionAttempt);
+    const dispatch=attempts.find(a=>a.kind==='dispatch');
+    if(!dispatch) throw new DomainError('CONFLICT','No unresolved dispatched business operation');
     const jobRow=this.db.prepare('SELECT body FROM jobs WHERE owner=? AND id=?').get(owner,intent.jobId);
     const job=jobRow?JSON.parse(String(jobRow.body)) as Job:undefined;
     const states=[...(job?.delegation?.agent?[job.delegation.agent]:[]),...(job?.delegation?.agentHistory??[])];
     const plan=states.flatMap(s=>s.plans).find(p=>p.digest===intent.planDigest),step=plan?.steps.find(s=>s.intentId===intentId);
-    const attempts=this.db.prepare('SELECT body FROM action_attempts WHERE owner=? AND intent_id=? ORDER BY rowid').all(owner,intentId).map(r=>JSON.parse(String(r.body)) as ExecutionAttempt);
-    const dispatch=attempts.find(a=>a.kind==='dispatch');
-    if(!plan || !step || !dispatch || !['effect_unknown','awaiting_remote','dispatching','needs_review'].includes(intent.state) || ['read','local'].includes(intent.effect)) throw new DomainError('CONFLICT','No unresolved dispatched business operation');
+    if(!plan || !step) throw new DomainError('CONFLICT','No unresolved dispatched business operation');
     const operation:OriginalOperation={owner,taskId:intent.jobId,intentId,operationKey:intent.businessOperationKey,...(intent.remoteRef?{remoteRef:intent.remoteRef}:{}),
       action:step.action,programRef:plan.programRef,programDigest:plan.programDigest,originalDispatchAt:dispatch.startedAt};
     return {operation,intent,attempts,digest:digest({operation,planDigest:intent.planDigest,state:intent.state})};
   }
   preview(owner:string,taskId:string) {
-    return this.db.prepare('SELECT id FROM action_intents WHERE owner=? AND job_id=?').all(owner,taskId).flatMap(row=>{
+    return this.db.prepare("SELECT id FROM action_intents WHERE owner=? AND job_id=? AND state IN ('effect_unknown','awaiting_remote','dispatching','needs_review')").all(owner,taskId).flatMap(row=>{
       try {const value=this.original(owner,String(row.id));return [{intentId:value.operation.intentId,action:value.operation.action,effect:value.intent.effect,
         programId:value.operation.programRef.id,originalDispatchAt:value.operation.originalDispatchAt,expectedIntentDigest:value.digest,mode:'audit_only'}];} catch{return [];}
     });
@@ -74,7 +78,7 @@ export class RecoveryStore {
       const expiry=Date.parse(args.expiresAt);
       if(!source || !this.security.policies.resourceAllowedFor(memberId,subject.installationId,'actionType',original.operation.action)
         || !parent.sourceBindingIds.includes(source.bindingId) || !parent.capabilityIds.includes(source.programId) || expiry<=this.security.now()
-        || expiry>Math.min(this.security.now()+3600000,Date.parse(parent.expiresAt),Date.parse(source.expiresAt))) throw new SecurityError('SOURCE_NOT_AUTHORIZED');
+        || expiry>Math.min(this.security.now()+3600000,consentDeadline(parent.expiresAt),consentDeadline(source.expiresAt))) throw new SecurityError('SOURCE_NOT_AUTHORIZED');
       const permit:RecoveryPermit={...original.operation,id:randomUUID(),memberId,installationId:subject.installationId,authEpoch:subject.epoch,
         parentGrant:{id:parent.id,revision:parent.revision},sourceBindingId:source.bindingId,policyRevision:this.security.policies.revision(),issuedAt:this.security.now(),expiresAt:expiry};
       this.db.prepare("INSERT INTO security_recoveries VALUES(?,?,?,?,'pending',0,0,NULL,0,?,NULL)").run(permit.id,owner,permit.taskId,permit.intentId,JSON.stringify(permit));

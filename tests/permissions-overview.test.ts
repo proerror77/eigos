@@ -1,3 +1,4 @@
+import { consentDeadline } from '../packages/security/consent-lifetime.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {securityGatewayFixture} from './fixtures/security-gateway.js';
@@ -6,7 +7,10 @@ import {DidiAgentProgram} from '../packages/capabilities/didi/program.js';
 import {ExecutionCatalog} from '../packages/core/catalog.js';
 import {ownerKey} from '../packages/core/domain.js';
 import {randomUUID} from 'node:crypto';
-import {customerPermissionOverview,permissionsPage,preparePermissionReview} from '../apps/gateway/members/permissions-page.js';
+import {DatabaseSync} from 'node:sqlite';
+import {join} from 'node:path';
+import {customerPermissionOverview,permissionsPage,preparePermissionReview,permissionReviewPage} from '../apps/gateway/members/permissions-page.js';
+import { securityDefaults } from '../packages/security/contracts.js';
 
 async function fixture() {
   const source=didiFixture(),f=await securityGatewayFixture((_store,p)=>{
@@ -25,6 +29,44 @@ async function fixture() {
   }
   return {...f,a,b,now,profile,source,close:async()=>{await f.close();source.close();}};
 }
+
+for (const days of [7, 30]) test(`task approval under a finite ${days}-day parent retains the finite task lifetime cap`, async () => {
+  const f = await fixture();
+  try {
+    const manager = f.gateway.security!, prior = f.gateway.store.security.agentGrant(f.a.id);
+    manager.revokeGrant(f.member.id, prior.id, prior.revision);
+    manager.approveAgentGrant(f.member.id, { installationId: f.a.id, capabilityIds: prior.capabilityIds, resources: prior.resources,
+      sourceBindingIds: prior.sourceBindingIds, channels: prior.channels, expiresAt: new Date(Date.now() + days * 86400000).toISOString() });
+    const created = await f.post('/tasks', { service: 'eigos.delegate', requestId: randomUUID(), goal: 'Synthetic finite-parent task' }, { authorization: `Bearer ${f.a.token}` });
+    assert.equal(created.status, 200);
+    const now = Date.now(), review = preparePermissionReview(manager.managementView(f.member.id), {
+      kind: 'task', installationId: f.a.id, taskId: created.value.id, takeover: 'yes', channels: ['agent_response'],
+    }, now);
+    assert.equal(review.input.expiresAt, new Date(now + securityDefaults.taskGrantMaxSeconds * 1000).toISOString());
+    assert.equal(manager.approveTaskGrant(f.member.id, review.input).expiresAt, review.input.expiresAt);
+    assert.equal(f.source.calls.length, 0);
+  } finally { await f.close(); }
+});
+
+test('new installation and source reviews default to until-revoked consent and render its actual lifetime',async()=>{
+  const f=await fixture();try {
+    const manager=f.gateway.security!,view=manager.managementView(f.member.id);
+    const prior=view.grants.find(g=>g.kind==='agent_access' && g.installationId===f.a.id)!;
+    assert.equal(prior.kind,'agent_access');if(prior.kind!=='agent_access')assert.fail();
+    const review=preparePermissionReview(view,{kind:'agent',installationId:f.a.id,programs:prior.capabilityIds,
+      fields:prior.resources.flatMap(row=>row.fields.map(field=>`${row.type}.${field}`)),channels:prior.channels},f.now);
+    assert.equal(review.input.expiresAt,null);
+    assert(permissionReviewPage(review,view,f.member,f.session.csrf,'synthetic-review').includes('持续有效，直到你主动撤销'));
+    manager.revokeGrant(f.member.id,prior.id,prior.revision);manager.approveAgentGrant(f.member.id,review.input);
+    const next=manager.managementView(f.member.id),source=preparePermissionReview(next,{kind:'source',installationId:f.a.id,
+      programId:f.profile.programId,operations:'SearchDidiPlaces',outputTypes:'DidiPlaceObservation'},f.now);
+    assert.equal(source.input.expiresAt,null);manager.approveSource(f.member.id,source.input);
+    const current=manager.managementView(f.member.id),html=customerPermissionOverview(current,f.member,f.session.csrf,f.now);
+    assert(html.includes('持续有效，直到你主动撤销'));assert(!html.includes('Invalid Date'));assert(!html.includes('9999'));
+    assert(permissionsPage(current,f.member,f.session.csrf).includes('name="hours" value="permanent"'));
+    assert.equal(f.source.calls.length,0);
+  }finally{await f.close();}
+});
 
 test('customer permissions keep each connection action, data, purpose and expiry separate',async()=>{
   const f=await fixture();try {
@@ -66,13 +108,38 @@ test('expired, revoked or ceiling-only records are never described as enabled se
   }finally{await f.close();}
 });
 
+test('permission page reads task summaries without decoding execution history',async t=>{
+  const f=await fixture();try {
+    const submitted=await f.post('/tasks',{service:'eigos.delegate',requestId:randomUUID(),goal:'Synthetic task with a large history'},{authorization:`Bearer ${f.a.token}`});
+    assert.equal(submitted.status,200);
+    const marker='SYNTHETIC_EXECUTION_HISTORY',db=new DatabaseSync(join(f.directory,'tasks.sqlite'));
+    try {
+      db.prepare("UPDATE jobs SET body=json_set(body,'$.messages',json(?)) WHERE id=?")
+        .run(JSON.stringify([{id:randomUUID(),role:'agent',text:marker.repeat(10000),at:new Date().toISOString()}]),submitted.value.id);
+    }finally{db.close();}
+    const parse=JSON.parse;let historiesDecoded=0;
+    t.mock.method(JSON,'parse',(...args:Parameters<typeof JSON.parse>)=>{
+      if(String(args[0]).includes(marker))historiesDecoded++;
+      return parse(...args);
+    });
+    const filter={limit:1,offset:0,state:'submitted' as const},store=f.gateway.store,owner=ownerKey(f.p);
+    assert.deepEqual(store.listForPermissions(owner,filter,[submitted.value.id]),{jobs:[{id:submitted.value.id,goal:'Synthetic task with a large history',state:'submitted',requestRevision:1}],total:1});
+    assert.deepEqual(store.listForPermissions('another-owner',filter,[submitted.value.id]),{jobs:[],total:0});
+    assert.deepEqual(store.listForPermissions(owner,filter,[]),{jobs:[],total:0});
+    const response=await fetch(f.base+'/members/permissions',{headers:{cookie:f.cookie}}),html=await response.text();
+    assert.equal(response.status,200);assert(html.includes('Synthetic task with a large history'));assert(!html.includes(marker));
+    assert.equal(historiesDecoded,0,'Permission selection must not materialize a task execution history');
+    assert.equal(f.source.calls.length,0);
+  }finally{t.mock.restoreAll();await f.close();}
+});
+
 test('task scopes include older granted tasks, escape titles and stop describing changed request versions as current',async t=>{
   const f=await fixture();try {
     const title='查询公开地点 <script>private()</script>';
     const submitted=await f.post('/tasks',{service:'eigos.delegate',requestId:randomUUID(),goal:title},{authorization:`Bearer ${f.a.token}`});
     assert.equal(submitted.status,200);
-    const list=f.gateway.store.list.bind(f.gateway.store);
-    t.mock.method(f.gateway.store,'list',(...[owner,filter,taskIds]:Parameters<typeof list>)=>taskIds?list(owner,filter,taskIds):{jobs:[],total:51});
+    const list=f.gateway.store.listForPermissions.bind(f.gateway.store);
+    t.mock.method(f.gateway.store,'listForPermissions',(...[owner,filter,taskIds]:Parameters<typeof list>)=>taskIds?list(owner,filter,taskIds):{jobs:[],total:51});
     const view=f.gateway.security!.managementView(f.member.id);
     assert(view.tasks.some(task=>task.title===title),'A task grant must not disappear outside the latest task page');
     const html=customerPermissionOverview(view,f.member,f.session.csrf,f.now);
@@ -107,7 +174,7 @@ test('permission replacement preserves an exact existing deadline without copyin
     assert.throws(()=>preparePermissionReview(view,{...form,programs:'unavailable.capability'},f.now),/available capability/);
     assert.throws(()=>preparePermissionReview(view,{...form,expiryGrantId:foreign.id},f.now),/this installation/);
     assert.throws(()=>preparePermissionReview(view,{...form,expiryGrantId:randomUUID()},f.now),/this installation/);
-    assert.throws(()=>preparePermissionReview(view,form,Date.parse(prior.expiresAt)),/unexpired/);
+    assert.throws(()=>preparePermissionReview(view,form,consentDeadline(prior.expiresAt)),/unexpired/);
     assert.throws(()=>preparePermissionReview(view,{...form,kind:'task'},f.now),/Only installation and source/);
     manager.revokeGrant(f.member.id,prior.id,prior.revision);
     const replaced=manager.managementView(f.member.id);
@@ -118,7 +185,7 @@ test('permission replacement preserves an exact existing deadline without copyin
     const sourceForm={kind:'source',installationId:f.a.id,programId:f.profile.programId,operations:'SearchDidiPlaces',outputTypes:'DidiPlaceObservation',expiryGrantId:prior.id,hours:'1'};
     const current=manager.managementView(f.member.id);
     assert.equal(preparePermissionReview(current,sourceForm,f.now).input.expiresAt,prior.expiresAt);
-    const shorter=new Date(Date.parse(parent.expiresAt)-1000).toISOString();
+    const shorter=new Date(consentDeadline(parent.expiresAt)-1000).toISOString();
     const clipped={...current,grants:current.grants.map(g=>g.id===parent.id?{...g,expiresAt:shorter}:g)};
     assert.equal(preparePermissionReview(clipped,sourceForm,f.now).input.expiresAt,shorter);
     assert(permissionsPage(current,f.member,f.session.csrf).includes('name="expiryGrantId"'));

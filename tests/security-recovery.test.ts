@@ -94,6 +94,29 @@ test('original-operation recovery stops after three unknown reads and cannot sur
   }finally{f.close();}
 });
 
+test('recovery preview skips read-only, local and resolved operations before loading task history',t=>{
+  const f=setup();try {
+    const marker='SYNTHETIC_RECOVERY_HISTORY',original=f.jobs.intent(f.owner,f.intentId),db=new DatabaseSync(f.database);
+    try {
+      db.prepare("UPDATE jobs SET body=json_set(body,'$.messages',json(?)) WHERE owner=? AND id=?")
+        .run(JSON.stringify([{id:randomUUID(),role:'agent',text:marker.repeat(10000),at:new Date(f.now()).toISOString()}]),f.owner,f.job.id);
+      for(const [effect,state] of [['read','effect_unknown'],['local','awaiting_remote'],['reserve','effect_confirmed'],['reserve','ready']] as const) {
+        const {privateData,...intent}={...original,id:randomUUID(),businessOperationKey:randomUUID(),effect,state};
+        db.prepare('INSERT INTO action_intents VALUES(?,?,?,?,?,?,?)').run(intent.id,f.owner,f.job.id,intent.businessOperationKey,state,JSON.stringify(privateData??null),JSON.stringify(intent));
+      }
+    }finally{db.close();}
+    const parse=JSON.parse;let historiesDecoded=0;
+    t.mock.method(JSON,'parse',(...args:Parameters<typeof JSON.parse>)=>{
+      if(String(args[0]).includes(marker))historiesDecoded++;
+      return parse(...args);
+    });
+    const preview=f.coordinator.recoveryPreview(f.member.id,f.job.id);
+    assert.deepEqual(preview.map(value=>value.intentId),[f.intentId]);
+    assert.equal(historiesDecoded,1,'Only the unresolved dispatched business operation needs its original task plan');
+    assert.deepEqual(f.jobs.security.recoveries.preview('another-owner',f.job.id),[]);
+  }finally{t.mock.restoreAll();f.close();}
+});
+
 test('participant audit requires the exact live recovery lease and a separate fresh matching source read',async()=>{
   const f=setup(true),path=join(f.directory,'source.sqlite'),workerToken=randomBytes(32).toString('hex'),operatorToken=randomBytes(32).toString('hex'),attendeeRef=digest('synthetic attendee');
   const bridge=await createParticipantBrowserBridge({databasePath:path,taskDatabasePath:f.database,evidenceDirectory:join(f.directory,'evidence'),bindingId:'synthetic-s5-audit',attendeeRef,workerToken,operatorToken,ownerKey:f.owner});

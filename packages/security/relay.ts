@@ -1,3 +1,4 @@
+import { consentDeadline } from './consent-lifetime.js';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
@@ -31,7 +32,7 @@ export class RelayAuthority {
       const actor = this.security.agentContext(principal), now = this.security.now();
       const parent = this.security.agentGrant(actor.installationId);
       if (!Number.isSafeInteger(expiresAt) || expiresAt <= now || expiresAt > now + 900000
-        || expiresAt > Date.parse(parent.expiresAt) || proof.expiresAt <= now) throw new SecurityError('AUTHORIZATION_REQUIRED');
+        || expiresAt > consentDeadline(parent.expiresAt) || proof.expiresAt <= now) throw new SecurityError('AUTHORIZATION_REQUIRED');
       const previous = this.db.prepare('SELECT installation_id,owner,state FROM security_relay_identities WHERE agent_id=?').get(agentId);
       if (previous && (previous.installation_id !== actor.installationId || previous.owner !== actor.ownerKey)) throw new SecurityError('AUTHORIZATION_REQUIRED');
       if (previous?.state === 'revoked') throw new SecurityError('ACCESS_REVOKED');
