@@ -40,6 +40,8 @@ const schema = z.object({
   EIGOS_NETWORK_MAX_CLARIFICATION_ROUNDS: z.coerce.number().int().min(1).max(10).default(2),
   EIGOS_RELEASE_DIGEST: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   EIGOS_AUTHORITY_FILE: z.string().optional(),
+  EIGOS_STORAGE_BACKEND: z.enum(['sqlite','postgres']).default('sqlite'),
+  EIGOS_POSTGRES_BINDING_FILE: z.string().optional(),
   EIGOS_TASK_RELAY_FILE: z.string().optional(),
   EIGOS_DIDI_RELAY_AGENT_ID: z.string().regex(/^agent_[A-Za-z0-9_-]{43}$/).optional(),
   EIGOS_COORDINATOR: z.literal('codex').default('codex'),
@@ -128,7 +130,9 @@ const schema = z.object({
   EIGOS_EXECUTOR_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300000).default(120000),
   EIGOS_AUDIT_PATH: z.string().optional(),
 });
-export type Config = z.infer<typeof schema> & { authority?: RuntimeAuthority };
+// Older in-process SQLite callers may omit the newly selected backend. Parsed
+// host configuration always supplies its explicit default from the schema.
+export type Config = Omit<z.infer<typeof schema>,'EIGOS_STORAGE_BACKEND'> & { EIGOS_STORAGE_BACKEND?:'sqlite'|'postgres'; authority?: RuntimeAuthority };
 
 export function allowsBoundPersonalSource(config: Config, nodeEnv: string | undefined): boolean {
   return config.EIGOS_SECURITY_MODE === 'foundation' && config.EIGOS_AUTH_MODE === 'jwt'
@@ -140,11 +144,13 @@ export function allowsBoundPersonalSource(config: Config, nodeEnv: string | unde
 function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config {
   const parsed = schema.parse(env);
   const c: Config = parsed.EIGOS_AUTHORITY_FILE ? { ...parsed, authority: readRuntimeAuthority(parsed.EIGOS_AUTHORITY_FILE) } : parsed;
+  if(c.EIGOS_STORAGE_BACKEND==='postgres'&&(!c.EIGOS_POSTGRES_BINDING_FILE||!isAbsolute(c.EIGOS_POSTGRES_BINDING_FILE)||!c.authority||c.EIGOS_AUTH_MODE!=='jwt'||c.EIGOS_SECURITY_MODE!=='foundation'))throw new Error('PostgreSQL startup requires an absolute private binding and the existing foundation JWT authority');
+  if(c.EIGOS_STORAGE_BACKEND==='sqlite'&&c.EIGOS_POSTGRES_BINDING_FILE)throw new Error('A PostgreSQL binding requires explicit PostgreSQL backend selection');
   if (role === 'worker' && c.EIGOS_EXECUTOR === 'harness' && (!c.EIGOS_HARNESS_CREDENTIAL_FILE || !isAbsolute(c.EIGOS_HARNESS_CREDENTIAL_FILE)))
     throw new Error('Harness Worker requires an absolute private credential file');
   if (c.EIGOS_TASK_RELAY_FILE && (!c.authority || !isAbsolute(c.EIGOS_TASK_RELAY_FILE))) throw new Error('Task Relay requires the existing primary authority and an absolute private configuration file');
-  if (c.EIGOS_MESSAGING_ENABLED === 'true' && (!c.authority || !c.EIGOS_TASK_RELAY_FILE || !c.EIGOS_MESSAGING_NODE_DIR || !isAbsolute(c.EIGOS_MESSAGING_NODE_DIR)))
-    throw new Error('Messaging requires the existing primary Relay and an absolute private node directory');
+  if (c.EIGOS_MESSAGING_ENABLED === 'true' && (!c.authority || !c.EIGOS_TASK_RELAY_FILE || c.EIGOS_STORAGE_BACKEND!=='postgres'&&(!c.EIGOS_MESSAGING_NODE_DIR||!isAbsolute(c.EIGOS_MESSAGING_NODE_DIR)) || c.EIGOS_MESSAGING_NODE_DIR&&!isAbsolute(c.EIGOS_MESSAGING_NODE_DIR)))
+    throw new Error(c.EIGOS_STORAGE_BACKEND==='postgres'?'Messaging requires the existing primary Relay and reviewed PostgreSQL node migration binding':'Messaging requires the existing primary Relay and an absolute private node directory');
   if (c.EIGOS_DIDI_RELAY_AGENT_ID && (!c.EIGOS_TASK_RELAY_FILE || !c.authority || c.EIGOS_DIDI_ENVIRONMENT !== 'production')) throw new Error('Relay source reads require the primary task relay and production read-only DiDi configuration');
   if (c.authority) {
     const primary = c.authority.ingresses.find(value => value.origin === c.authority!.canonicalOrigin)!;

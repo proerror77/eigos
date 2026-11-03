@@ -1,3 +1,4 @@
+import {EventEmitter} from 'node:events';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -183,7 +184,7 @@ test('database runtime releases each lease once and evicts an uncertain connecti
   for(const uncertain of [false,true]) {
     let started=false,releases=0,evicted=false,connects=0,ends=0,writes=0,nextLeaseReleases=0;
     const authority={id:'authority',revision:1,digest:'a'.repeat(64)};
-    const client={pipeline:false,getTransactionStatus:()=>started?'T':'I',release:(error?:Error|boolean)=>{releases++;evicted=error instanceof Error;client.release=()=>{nextLeaseReleases++;};},
+    const client=Object.assign(new EventEmitter(),{pipeline:false,getTransactionStatus:()=>started?'T':'I',release:(error?:Error|boolean)=>{releases++;evicted=error instanceof Error;client.release=()=>{nextLeaseReleases++;};},
       query:async(sql:string)=>{
         if(sql==='BEGIN ISOLATION LEVEL SERIALIZABLE')started=true;
         if(sql==='COMMIT'){started=false;if(uncertain)throw new Error('lost commit response');}
@@ -192,7 +193,7 @@ test('database runtime releases each lease once and evicts an uncertain connecti
         if(sql.startsWith('SELECT pg_catalog.pg_current_xact_id'))return {rowCount:1,rows:[{id:'42'}]};
         if(sql.startsWith('SELECT id,revision'))return {rowCount:1,rows:[{id:'authority',revision:'1',configuration_digest:'a'.repeat(64)}]};
         return {rowCount:0,rows:[]};
-      }} as unknown as pg.PoolClient;
+      }}) as unknown as pg.PoolClient;
     const pool={connect:async()=>{connects++;return client;},end:async()=>{ends++;}} as unknown as Pick<pg.Pool,'connect'|'end'>;
     const database=new PostgresDatabase(pool,'eigos_business_fixture',authority);authority.digest='b'.repeat(64);
     const operation=()=>database.run(async c=>{await c.query('INSERT synthetic_task');return 'receipt';});
@@ -219,11 +220,11 @@ test('heartbeat headers are captured before waiting for its connection lease',as
   const claim:WorkClaim={owner:JSON.stringify(['issuer','tenant','subject']),token:'original-token',securityAuthorityId:randomUUID(),securityEpoch:1,securityPolicyRevision:1,
     job:{id,contextId:randomUUID(),service:'eigos.delegate',goal:'Synthetic',state:'working',revision:1,messages:[],createdAt:at,updatedAt:at,
       delegation:{backendVersion:BACKEND_VERSION,phase:'grounding',events:[],request:{id,revision:1,originalGoal:'Synthetic',messages:[],requirements:[]}}}};
-  const client={pipeline:false,getTransactionStatus:()=>started?'T':'I',release:()=>{released++;},query:async(sql:string,values?:unknown[])=>{
+  const client=Object.assign(new EventEmitter(),{pipeline:false,getTransactionStatus:()=>started?'T':'I',release:()=>{released++;},query:async(sql:string,values?:unknown[])=>{
     if(sql==='BEGIN ISOLATION LEVEL READ COMMITTED')started=true;if(sql==='ROLLBACK')started=false;
     if(sql.startsWith('WITH scope AS')){token=values?.[4];revision=values?.[5];}
     return {rowCount:0,rows:[]};
-  }} as unknown as pg.PoolClient;
+  }}) as unknown as pg.PoolClient;
   const business={connect:async()=>{throw new Error('unused');},end:async()=>{}} as unknown as Pick<pg.Pool,'connect'|'end'>;
   const lease={connect:()=>new Promise<pg.PoolClient>(resolve=>{connected=resolve;}),end:async()=>{}};
   const database=new PostgresDatabase(business,'eigos_business_fixture',authority,{leasePool:lease});

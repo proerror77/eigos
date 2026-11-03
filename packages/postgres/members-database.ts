@@ -1,3 +1,4 @@
+import {observePostgresClient} from './client-errors.js';
 import type { Client, Pool } from 'pg';
 import { reservePostgresTransactionClient } from './runtime-transaction.js';
 
@@ -37,10 +38,10 @@ export class PostgresMembershipDatabase {
 
   private async transaction<T>(action: (client: Client) => Promise<T>, watch: Watch): Promise<T> {
     const client = await this.pool.connect(), release = client.release.bind(client);
-    let released = false;
+    const connection=observePostgresClient(client);let released = false;
     const releaseOnce = (error?: Error | boolean) => { if (!released) { released = true; release(error); } };
     const evict = () => { try { releaseOnce(new Error('Membership transaction state is uncertain')); } catch { /* already disconnected */ } };
-    const observing = () => { if (watch.cause) throw watch.cause; };
+    const observing = () => { if (watch.cause) throw watch.cause; connection.check(); };
     watch.evict = evict;
     let unreserve: (() => void) | undefined, opened = false, beginning = false, committing = false;
     try {
@@ -78,7 +79,8 @@ export class PostgresMembershipDatabase {
       await assertBoundary(); observing();
       committing = true; await client.query('COMMIT'); opened = false; committing = false; observing();
       return result;
-    } catch (error) {
+    } catch (caught) {
+      const error=connection.annotate(caught);
       // Eviction can cause a secondary network/rollback error. Keep the exact
       // timeout that rejected the caller, even after a late acknowledgement.
       if (watch.cause) { evict(); throw watch.cause; }
@@ -95,7 +97,7 @@ export class PostgresMembershipDatabase {
         throw new Error('PostgreSQL membership commit outcome is unknown; inspect persisted state before retrying', { cause: error });
       }
       throw error;
-    } finally { watch.evict = undefined; unreserve?.(); releaseOnce(); }
+    } finally { watch.evict = undefined; unreserve?.();try{releaseOnce(connection.failure);}finally{connection.close();} }
   }
 
   async close(): Promise<void> { this.closing ??= this.pool.end(); await this.closing; }

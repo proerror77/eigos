@@ -82,9 +82,9 @@ function freezeData<T>(input:T):T {
  * must come from trusted authentication and reviewed server configuration.
  * This is an internal admission check, not field/output authorization. All writers must use the business
  * transaction fence; callers must recheck before returning protected data. */
-async function postgresAgentAdmission(client: Client, principal: Principal, policyDigest: string,scope:Scope) {
+async function postgresAgentAdmission(client: Client, principal: Principal, policyDigest: string,scope?:Scope) {
   const schema = postgresBusinessSchema(client), q = `"${schema}"`;
-  requireScope(principal,scope);
+  if(scope!==undefined)requireScope(principal,scope);
   if (!/^[a-f0-9]{64}$/.test(policyDigest)) throw new Error('Invalid PostgreSQL policy digest');
   const actor = accessContextSchema.parse(principal.access), owner = ownerKey(principal);
   if (actor.actorKind !== 'agent' || actor.ownerKey !== owner || actor.clientId !== principal.clientId
@@ -127,6 +127,15 @@ async function postgresAgentAdmission(client: Client, principal: Principal, poli
 
 export async function postgresAgentMetadataAdmission(client:Client,principal:Principal,policyDigest:string) {
   return postgresAgentAdmission(client,principal,policyDigest,'services:read');
+}
+
+/** Current host identity only, used to withdraw an installation's own Relay
+ * binding. This grants no task, object, field, output or enrollment operation. */
+export async function withPostgresAgentIdentity<T>(client:Client,principal:Principal,policyDigest:string,
+  action:(admission:Awaited<ReturnType<typeof postgresAgentAdmission>>)=>Promise<T>):Promise<T>{
+  const captured=structuredClone(principal),before=await postgresAgentAdmission(client,captured,policyDigest),result=await action(before),after=await postgresAgentAdmission(client,captured,policyDigest);
+  if(digest(before)!==digest(after))throw new SecurityError('POLICY_CHANGED');
+  postgresConstrainReadDeadline(client,after.validUntil);return result;
 }
 
 export async function postgresAgentReadAdmission(client:Client,principal:Principal,policyDigest:string) {

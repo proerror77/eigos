@@ -3387,7 +3387,7 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "e4aa4c3d5c82835ee222f78e04ea5418f57c7dd53e23ffe2590ad7166e3bcfc2",
+      "sourceDigest": "d112e2921cbe104aebf1de8136073d94552b41b1b51f52f6c633e6016a825637",
       "channels": [
         "authorization_control"
       ],
@@ -4332,7 +4332,7 @@
     {
       "id": "ontology-pipeline-facts",
       "file": "packages/ontology/pipeline/facts.ts",
-      "sourceDigest": "5709592c17627b206b3f2b047b8ebb99bc4a1e9ec61dd877ac92c5fa41eac6f2",
+      "sourceDigest": "96d516d69a0c389e26a3893283f9d0320920e4a7f3ce776d734deed83ed424bd",
       "channels": [
         "source",
         "sqlite",
@@ -4637,7 +4637,7 @@
     {
       "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
       "file": "apps/gateway/relay.ts",
-      "sourceDigest": "065b30080ef58363f26a5729f040ec97baba51a43bd1f23ee9980b42dd6e0f8a",
+      "sourceDigest": "a049b3d7e23e0b1f91807f589cdd670943de3dd1759f0a410241f293da997199",
       "stage": "S5",
       "content": "Node enrollment, installation binding, current source authorization and dispatch",
       "currentControl": "Authenticated member and DPoP binding; exact primary authority; live grant and Worker lease checks; at most two source deliveries, each freshly authorized before send; shutdown rejects new enrollment or binding and drains started work before closing node state",
@@ -4675,7 +4675,7 @@
     {
       "id": "relay-task-host",
       "file": "packages/agent-transport/task-host.ts",
-      "sourceDigest": "b22d557b993dc86b0921cbbb4477ab539603eb2c030f9c16367d2620ff55f837",
+      "sourceDigest": "0e0ed85b529cb1ddacd1eeb9d5d190b2e89d6eb7e480e2f8ac344a458f2bcc2f",
       "channels": [
         "agent_transport"
       ],
@@ -4701,7 +4701,7 @@
     {
       "id": "relay-enrollment-issuer",
       "file": "packages/agent-transport/enrollment.ts",
-      "sourceDigest": "e63153daefb76a218666240bcb08623f296467d9f1f6f313d67b3a90c1027e58",
+      "sourceDigest": "d432e7ad02d6de29fd2cd7926ed0e46dbcee57de9f49d164a05e6de088e860c2",
       "channels": [
         "authorization_control"
       ],
@@ -4725,7 +4725,7 @@
     {
       "id": "relay-node-client",
       "file": "packages/agent-transport/client.ts",
-      "sourceDigest": "2f21f9d47f2ef14f3ab9e6a06937665410dd1f2720eeee2f5e400e5c98f11ea1",
+      "sourceDigest": "484038cac5b6e729fc06c97ccaa86134fd15c9e61c9204c916104a6de511b5c8",
       "channels": [
         "agent_transport",
         "private_file"
@@ -5288,7 +5288,7 @@
     {
       "id": "pa-messaging-service",
       "file": "packages/agent-messaging/service.ts",
-      "sourceDigest": "c987ffbb8ea8f74e47851d4e186ba92c3317eea1d9045436c4080b5002f6614a",
+      "sourceDigest": "a3329799447ac15fbd4d2e324b70581125d54a1b00169c8d520638fc331e3c6a",
       "channels": [
         "mcp",
         "a2a",
@@ -5697,7 +5697,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "37a1ee4bfccc7caea41b334c9812e39dde84301a20fab54d8cda39c630884396",
+      "sourceDigest": "5ca8e4174a9f8a5d1e11b4b5ba1d3efa3ac9f857b1516d67bdd53d33fb7680b8",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current identity/task admission and deadlines, frozen request-scoped read snapshots, pinned ontology, roles, labels, direct/retained evidence and current source checks",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
@@ -5900,7 +5900,7 @@
     {
       "id": "postgres-database-runtime",
       "file": "packages/postgres/database.ts",
-      "sourceDigest": "82badfff53acb2f152d3fda33e86e0d1128f224c60d6ef051960ce625c7811e6",
+      "sourceDigest": "7037f2d8e50f36f81221dd01386ad91b834966d7a29758a9ecb9c71c666c8762",
       "channels": [
         "internal"
       ],
@@ -6155,7 +6155,7 @@
     {
       "id": "supabase-postgres-local-proxy",
       "file": "packages/postgres/supabase-proxy.ts",
-      "sourceDigest": "b8b357d3ec45945f9e0a38af3594c0fc7507c4c59e887128198f8cb8667a05ef",
+      "sourceDigest": "4ceb0f2d413b0dc56c6e58e81de9ec4a057406b63f711d7a8df9405fe3bd134d",
       "channels": [
         "internal"
       ],
@@ -6407,7 +6407,7 @@
     {
       "id": "postgres-membership-database",
       "file": "packages/postgres/members-database.ts",
-      "sourceDigest": "31d165213f17bcf795e2d0e88683f4ab2b54d8264aa9c99047ec5d2c9a0d475a",
+      "sourceDigest": "b2395861f008bb301fabdea875e585fba9d5b264e748871d59224c113c1f9876",
       "channels": [
         "internal"
       ],
@@ -6455,7 +6455,7 @@
     {
       "id": "postgres-authority-publisher",
       "file": "packages/postgres/authority-publisher.ts",
-      "sourceDigest": "87b4bdcc613f9f215aa8ce1a12b6818315921b3c5476dfa0eecafe7d41d701fc",
+      "sourceDigest": "ca4da7bdffad6eb8700782307a8ba25f1adeaf5fb4ff13e1708008a7c3da5193",
       "channels": [
         "internal"
       ],
@@ -6563,7 +6563,7 @@
     {
       "id": "postgres-eligibility-inspection",
       "file": "packages/postgres/eligibility-inspection.ts",
-      "sourceDigest": "2b7d27df48182fc1453beea7b0f6176ec07489d310739048cc154b1c4c63e909",
+      "sourceDigest": "1ba24d13486d73ec328bb226a5a559d0d06e56ffe36b995e58d00d6d38010a2b",
       "channels": [
         "internal"
       ],
@@ -6779,7 +6779,7 @@
     {
       "id": "postgres-ci-groups",
       "file": "scripts/postgres-tests.mjs",
-      "sourceDigest": "c2a9db1c6fc78f04c73e3455e2b2bedbf3dc37a78cd1f1976bbe29569afa6b7d",
+      "sourceDigest": "1acb1e9453fba0e19faefcaf130e32833c4432525ca8473a74d0ba7aed40b990",
       "channels": [
         "internal"
       ],
@@ -7141,6 +7141,186 @@
       "content": "Actual caller-managed action implementation and independent readback",
       "currentControl": "Pinned immutable model and task envelope; host-awaited dispatch fence before actual managed apply; exact grant and preview, current fields and links and fresh completion readback; no model or provider substitution",
       "targetControl": "Preserve original operation and authorized task boundary across SQLite and PostgreSQL",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-client-errors",
+      "file": "packages/postgres/client-errors.ts",
+      "sourceDigest": "0d977d8135acd9f097b411b86f81a01de49e08923dfaeefa88b26921323df2f1",
+      "channels": [
+        "internal"
+      ],
+      "content": "Active connection errors retain their first cause, reject successful return, preserve unknown-commit and timeout identity, and require discard without retry",
+      "currentControl": "Active connection errors retain their first cause, reject successful return, preserve unknown-commit and timeout identity, and require discard without retry",
+      "targetControl": "Preserve one current primary, original task/node identities and full data/authorization semantics; no silent fallback or activation claim",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-host-binding",
+      "file": "packages/deployment/postgres-binding.ts",
+      "sourceDigest": "111bc07583e844a9abf3c06a793cd1774c136e5a4d5848bd725b17bd3e7e05ac",
+      "channels": [
+        "internal"
+      ],
+      "content": "Private digest-pinned authority, TLS, runtime-role, whole-node import/readback and source inventory contracts; no credential in JSON or implicit activation",
+      "currentControl": "Private digest-pinned authority, TLS, runtime-role, whole-node import/readback and source inventory contracts; no credential in JSON or implicit activation",
+      "targetControl": "Preserve one current primary, original task/node identities and full data/authorization semantics; no silent fallback or activation claim",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-host-runtime",
+      "file": "packages/postgres/host-runtime.ts",
+      "sourceDigest": "7f540d6ba7ac23a3e2cfe2cd5d9e401375b06223d615f4f08992abae4fa4f609",
+      "channels": [
+        "internal"
+      ],
+      "content": "Actual same-authority Gateway/Worker assembly, independent pools, exact imported identities and physical schema/ACL checks; immutable reviewed activation before one publisher and original node startup; missing configured adapters refuse startup",
+      "currentControl": "Actual same-authority Gateway/Worker assembly, independent pools, exact imported identities and physical schema/ACL checks; immutable reviewed activation before one publisher and original node startup; missing configured adapters refuse startup",
+      "targetControl": "Preserve one current primary, original task/node identities and full data/authorization semantics; no silent fallback or activation claim",
+      "stage": "S5"
+    },
+    {
+      "id": "agent-messaging-protocol",
+      "file": "packages/agent-messaging/protocol.ts",
+      "sourceDigest": "77e7dc67813c517e7d75ea6799c716232ca5000354674c88f5ef92bc6f37f9f8",
+      "channels": [
+        "internal"
+      ],
+      "content": "Shared awaited communication protocol with current identity, consent, contact, ciphertext, receipt and before-send checks; no task or model execution",
+      "currentControl": "Shared awaited communication protocol with current identity, consent, contact, ciphertext, receipt and before-send checks; no task or model execution",
+      "targetControl": "Preserve one current primary, original task/node identities and full data/authorization semantics; no silent fallback or activation claim",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-protocol-client",
+      "file": "packages/agent-transport/async-client.ts",
+      "sourceDigest": "db10bc7953884471d71ac150edf07c4e96c0fb78f382a757f6441b42b874db57",
+      "channels": [
+        "internal"
+      ],
+      "content": "Storage-neutral signed encrypted Relay transport; actual awaited node persistence, bounded inbox handling, receipt validation and last-send authority",
+      "currentControl": "Storage-neutral signed encrypted Relay transport; actual awaited node persistence, bounded inbox handling, receipt validation and last-send authority",
+      "targetControl": "Preserve one current primary, original task/node identities and full data/authorization semantics; no silent fallback or activation claim",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-node-storage-contract",
+      "file": "packages/agent-transport/store.ts",
+      "sourceDigest": "8e7a958fe482756f009e081c627f8ffd494111d78d13fbfa8cd6861b02ea2516",
+      "channels": [
+        "internal"
+      ],
+      "content": "Complete credentials and ciphertext/cursor snapshot contracts; bound sizes and immutable original identities; no partial-history certification",
+      "currentControl": "Complete credentials and ciphertext/cursor snapshot contracts; bound sizes and immutable original identities; no partial-history certification",
+      "targetControl": "Preserve one current primary, original task/node identities and full data/authorization semantics; no silent fallback or activation claim",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-messaging-authority",
+      "file": "packages/postgres/messaging-authority.ts",
+      "sourceDigest": "282a854333f923c5720f8fe049f0b18f49d3cdba8bf29fd77beaaa42792c404e",
+      "channels": [
+        "internal"
+      ],
+      "content": "Actual membership, bound bearer and current communication-generation/fence checks, independent of business task/source grants",
+      "currentControl": "Actual membership, bound bearer and current communication-generation/fence checks, independent of business task/source grants",
+      "targetControl": "Preserve one current primary, original task/node identities and full data/authorization semantics; no silent fallback or activation claim",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-messaging-schema",
+      "file": "packages/postgres/messaging-schema.ts",
+      "sourceDigest": "4846396540c70b8694a45a5e5ae7f0854c476f70eb3b6bbfdfbce7de0c962e93",
+      "channels": [
+        "internal"
+      ],
+      "content": "Explicit-only node DDL and read-only exact physical tables, defaults, sequence dependency OIDs, indexes and immutable guards; no runtime schema creation",
+      "currentControl": "Explicit-only node DDL and read-only exact physical tables, defaults, sequence dependency OIDs, indexes and immutable guards; no runtime schema creation",
+      "targetControl": "Preserve one current primary, original task/node identities and full data/authorization semantics; no silent fallback or activation claim",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-messaging-service",
+      "file": "packages/postgres/messaging-service.ts",
+      "sourceDigest": "f7bea4579aaa900a4accb79fee2a0ffee7fcba0a04167072d4c69ddb523810cc",
+      "channels": [
+        "internal"
+      ],
+      "content": "Actual independent communication approval, identity and complete imported-node verification before network operations; no new business permissions",
+      "currentControl": "Actual independent communication approval, identity and complete imported-node verification before network operations; no new business permissions",
+      "targetControl": "Preserve one current primary, original task/node identities and full data/authorization semantics; no silent fallback or activation claim",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-messaging-store",
+      "file": "packages/postgres/messaging-store.ts",
+      "sourceDigest": "e23881134c43b6857acc2f8dfab815212fc57fb0064aba09e6d52c4d94ae36dc",
+      "channels": [
+        "internal"
+      ],
+      "content": "Atomic original consent revisions, request idempotency, metadata and receipts in the same primary; revoked or expired generations remain denied",
+      "currentControl": "Atomic original consent revisions, request idempotency, metadata and receipts in the same primary; revoked or expired generations remain denied",
+      "targetControl": "Preserve one current primary, original task/node identities and full data/authorization semantics; no silent fallback or activation claim",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-relay-node-store",
+      "file": "packages/postgres/relay-node-store.ts",
+      "sourceDigest": "d3e162bf3dc43a9e29b63cd0ec9b1615cf3f0cb0308ed6a9b7a53ca59e5673f0",
+      "channels": [
+        "internal"
+      ],
+      "content": "Host AES-GCM wrapped original keys, immutable signed ciphertext and complete cursor/receipt imports with independent digest readback; missing known identity cannot create a replacement",
+      "currentControl": "Host AES-GCM wrapped original keys, immutable signed ciphertext and complete cursor/receipt imports with independent digest readback; missing known identity cannot create a replacement",
+      "targetControl": "Preserve one current primary, original task/node identities and full data/authorization semantics; no silent fallback or activation claim",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-source-relay-authority",
+      "file": "packages/postgres/relay-read-authority.ts",
+      "sourceDigest": "42a57bb85d332e0d6e1d0b9db748c4afa3f61ce684c2817dfb77d3cb3b7142b1",
+      "channels": [
+        "internal"
+      ],
+      "content": "Exact original dispatch, attempt, source, role, Pipeline facts, claim, deadline and egress fences; DPoP consumption atomic with source authorization; transport receipt never completes business",
+      "currentControl": "Exact original dispatch, attempt, source, role, Pipeline facts, claim, deadline and egress fences; DPoP consumption atomic with source authorization; transport receipt never completes business",
+      "targetControl": "Preserve one current primary, original task/node identities and full data/authorization semantics; no silent fallback or activation claim",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-source-relay-connector",
+      "file": "packages/postgres/relay-read-connector.ts",
+      "sourceDigest": "aa0aa81e11ff6de83b15b43278b4145695742bde5a6fb36070923c47d6929143",
+      "channels": [
+        "internal"
+      ],
+      "content": "Bound original claim and configured source transport using durable authorized requests/results; no direct source credential or substitute invocation",
+      "currentControl": "Bound original claim and configured source transport using durable authorized requests/results; no direct source credential or substitute invocation",
+      "targetControl": "Preserve one current primary, original task/node identities and full data/authorization semantics; no silent fallback or activation claim",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-task-relay-authority",
+      "file": "packages/postgres/task-relay-authority.ts",
+      "sourceDigest": "97e41b3ac92c805a431e58fd1f4760274ab854b4f6cb1dd21fa4600b23ec1996",
+      "channels": [
+        "internal"
+      ],
+      "content": "Current original installation/owner binding, one-use DPoP and command identity; own-identity revocation preserves original scope boundary",
+      "currentControl": "Current original installation/owner binding, one-use DPoP and command identity; own-identity revocation preserves original scope boundary",
+      "targetControl": "Preserve one current primary, original task/node identities and full data/authorization semantics; no silent fallback or activation claim",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-task-relay",
+      "file": "packages/postgres/task-relay.ts",
+      "sourceDigest": "216e5d580209678a6c114e3fc1aaf37b46c11a6e27198a430ad9320da1453076",
+      "channels": [
+        "internal"
+      ],
+      "content": "Real PostgreSQL Relay task port projects only currently authorized task views and retains one original task across encrypted command retries",
+      "currentControl": "Real PostgreSQL Relay task port projects only currently authorized task views and retains one original task across encrypted command retries",
+      "targetControl": "Preserve one current primary, original task/node identities and full data/authorization semantics; no silent fallback or activation claim",
       "stage": "S5"
     }
   ]

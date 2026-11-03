@@ -1,3 +1,4 @@
+import {observePostgresClient} from './client-errors.js';
 import {postgresConsentIndex} from './consent.js';
 import {randomUUID} from 'node:crypto';
 import type {Client,Pool} from 'pg';
@@ -339,10 +340,10 @@ export class PostgresAuthorizationPublisher {
     return this.track(Promise.race([this.controlTransaction(action,deadline,watch),timeout]).finally(()=>clearTimeout(timer)));
   }
   private async controlTransaction<T>(action:(client:Client)=>Promise<T>,deadline:number,watch:ControlWatch):Promise<T>{
-    const client=await this.options.controlPool.connect(),release=client.release.bind(client);let discarded=false,opened=false,beginning=false,committing=false;
+    const client=await this.options.controlPool.connect(),release=client.release.bind(client),connection=observePostgresClient(client);let discarded=false,opened=false,beginning=false,committing=false;
     let free:(()=>void)|undefined;const q=`"${this.schema}"`;
     const discard=()=>{if(!discarded){discarded=true;try{release(new Error('Eligibility control transaction state is uncertain'));}catch{/* already disconnected */}}};
-    const observing=()=>{if(watch.cause)throw watch.cause;};
+    const observing=()=>{if(watch.cause)throw watch.cause;connection.check();};
     watch.evict=discard;
     try{
       observing();
@@ -365,11 +366,12 @@ export class PostgresAuthorizationPublisher {
       if(deadline<=Date.now())throw new SecurityError('AUTHORITY_UNAVAILABLE');
       committing=true;await client.query('COMMIT');opened=false;committing=false;observing();
       if(deadline<=Date.now())throw new SecurityError('AUTHORITY_UNAVAILABLE','Eligibility lease expired before acknowledgement');return result;
-    }catch(error){
+    }catch(caught){
+      const error=connection.annotate(caught);
       if(watch.cause){discard();throw watch.cause;}
       if(beginning){discard();throw new Error('Eligibility control transaction start outcome is unknown; connection discarded',{cause:error});}
       if(opened&&!committing){try{await client.query('ROLLBACK');}catch{discard();}}
       if(committing){discard();throw new Error('Eligibility control commit outcome is unknown; publisher must stop',{cause:error});}throw error;
-    }finally{watch.evict=undefined;free?.();if(!discarded)release();}
+    }finally{watch.evict=undefined;free?.();try{if(!discarded)release(connection.failure);}finally{connection.close();}}
   }
 }

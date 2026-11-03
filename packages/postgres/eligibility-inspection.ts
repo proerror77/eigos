@@ -1,3 +1,4 @@
+import {observePostgresClient} from './client-errors.js';
 import {postgresConsentDeadline} from './consent.js';
 import type {Pool} from 'pg';
 import {digest} from '../core/delegation.js';
@@ -94,10 +95,10 @@ export function postgresInspectEligibility(pool:Pick<Pool,'connect'>,schema:stri
 }
 
 async function inspect(pool:Pick<Pool,'connect'>,schema:string,runtime:PostgresRuntimeAuthority,reference:PostgresEligibilityReference,watch:Watch):Promise<{validUntil:number}>{
-  const client=await pool.connect(),release=client.release.bind(client);let released=false,opened=false,beginning=false,committing=false,unreserve:(()=>void)|undefined;
+  const client=await pool.connect(),release=client.release.bind(client),connection=observePostgresClient(client);let released=false,opened=false,beginning=false,committing=false,unreserve:(()=>void)|undefined;
   const releaseOnce=(error?:Error)=>{if(!released){released=true;release(error);}};
   const evict=()=>{try{releaseOnce(new Error('Eligibility inspection transaction state is uncertain'));}catch{/* already disconnected */}};
-  const observing=()=>{if(watch.failure)throw watch.failure;};watch.evict=evict;
+  const observing=()=>{if(watch.failure)throw watch.failure;connection.check();};watch.evict=evict;
   try{
     observing();try{unreserve=reservePostgresTransactionClient(client);}catch(error){evict();throw unavailable(error);}
     beginning=true;await client.query('BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY');beginning=false;opened=true;observing();
@@ -108,10 +109,11 @@ async function inspect(pool:Pick<Pool,'connect'>,schema:string,runtime:PostgresR
     if(client.getTransactionStatus()!=='T'){evict();opened=false;throw unavailable(new Error('Eligibility inspection transaction boundary was lost'));}
     value.current();committing=true;await client.query('COMMIT');opened=false;committing=false;observing();value.current();
     return {validUntil:value.validUntil};
-  }catch(error){
+  }catch(caught){
+    const error=connection.annotate(caught);
     if(watch.failure){evict();throw watch.failure;}
     if(beginning||committing){evict();throw unavailable(new Error(`Eligibility inspection ${beginning?'BEGIN':'COMMIT'} acknowledgement is uncertain; connection discarded`,{cause:error}));}
     if(opened){try{await client.query('ROLLBACK');observing();}catch{evict();if(watch.failure)throw watch.failure;throw unavailable(new Error('Eligibility inspection rollback failed',{cause:error}));}}
     if(error instanceof SecurityError)throw error;throw unavailable(error);
-  }finally{watch.evict=undefined;unreserve?.();releaseOnce();}
+  }finally{watch.evict=undefined;unreserve?.();try{releaseOnce(connection.failure);}finally{connection.close();}}
 }

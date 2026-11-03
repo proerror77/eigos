@@ -8,9 +8,10 @@ import type { OntologyReleaseRef } from '../definition-contracts.js';
 import type { ObjectSnapshot } from '../planning-contract.js';
 import type { PipelineIntake, PipelineObservation } from './contracts.js';
 import { mapPipelineObservation } from './mapping.js';
-import { withIntegrity } from '../../security/context.js';
+import {graphRead,graphIntegrity,graphEvidencePropertiesDigest,graphRelated,graphRelationshipDigest,runGraphProgram,type GraphProgram,type ProjectionMetadata} from '../graph-program.js';
+import {withIntegrity} from '../../security/context.js';
 
-interface FactState {
+export interface FactState {
   sourceKey: string; object: ObjectRef; revision: number; semanticRevision: number; semanticDigest: string;
   properties: Record<string, unknown>; providerVersion?: number; conflicted: boolean;
   intakeDigest: string; mappingId: string; release: OntologyReleaseRef; observedAt: string; expiresAt: string; evidenceRefs: string[];
@@ -156,27 +157,10 @@ export class PipelineFactStore {
     }
   }
   assertSnapshots(owner: string, graph: OntologyObjectStore, snapshots: readonly ObjectSnapshot[]): void {
-    this.assertFresh(owner, graph.ontologyId, snapshots.map(value => value.ref));
-    for (const snapshot of snapshots.filter(value => value.ref.id.startsWith('pipeline:'))) {
-      const state = this.current(owner, graph.ontologyId, snapshot.ref);
-      if (!state) continue;
-      // Planning hashes contain a field projection. Compare the canonical
-      // revision, then check full source integrity separately inside the host;
-      // private properties and their digest never become model tool output.
-      const current = graph.read(owner, snapshot.ref);
-      const integrity = withIntegrity(() => graph.evidencePropertiesDigest(owner, snapshot.ref, { remaining: 1 }));
-      if (digest(state.properties) !== integrity) fail('Source fact integrity differs from its recorded observation; operator review is required');
-      if (state.relationshipDigest) {
-        const links = withIntegrity(() => (state.relationshipTypes ?? []).flatMap(type => {
-          const values = graph.related(owner, snapshot.ref, graph.model.link(type).from.name, { remaining: 1000 }) ?? fail('Source relationship integrity exceeds its bound');
-          return values.map(value => ({ type, from: snapshot.ref, to: value.ref }));
-        })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
-        if (digest(links) !== state.relationshipDigest) fail('Source relationship integrity differs from its recorded observation; operator review is required');
-      }
-      if (current.revision !== snapshot.revision) fail('Source fact changed after planning; refresh the affected inputs before dispatch');
-      if (state.relationshipDigest && graph.relationshipDigest(owner, snapshot.ref, { remaining: 1000 }) !== snapshot.linksDigest) fail('Source relationships changed after planning; refresh the affected inputs before dispatch');
-    }
+    const current=(ref:ObjectRef)=>this.current(owner,graph.ontologyId,ref);
+    runGraphProgram(graph,assertPipelineSnapshotsProgram(graph,owner,snapshots,function*(ref){return current(ref);}));
   }
+
   hasDependencies(owner: string, jobId: string, requestRevision: number): boolean {
     return !!this.db.prepare('SELECT 1 FROM ontology_pipeline_dependencies WHERE owner=? AND job_id=? AND request_revision=? LIMIT 1').get(owner, jobId, requestRevision);
   }
@@ -199,5 +183,31 @@ export class PipelineFactStore {
     ) ORDER BY rowid DESC LIMIT 101`).all(owner, jobId, requestRevision);
     if (rows.length > 100) fail('Task fact changes exceed the bounded context limit');
     return rows.map(row => JSON.parse(String(row.body)));
+  }
+}
+
+/** Trusted source-integrity check, shared by both persistence drivers. The
+ * state reader is host-owned and callback scoped; no JSON or model argument
+ * supplies a freshness assertion or private graph implementation. */
+export function* assertPipelineSnapshotsProgram(graph:ProjectionMetadata,owner:string,snapshots:readonly ObjectSnapshot[],
+  current:(ref:ObjectRef)=>GraphProgram<(FactState&{health:'fresh'|'stale'|'conflicted'})|undefined>):GraphProgram<void>{
+  const selected=snapshots.filter(value=>value.ref.id.startsWith('pipeline:'));
+  for(const snapshot of selected){const state=yield* current(snapshot.ref);if(state&&state.health!=='fresh')fail(`Source fact is ${state.health}; historical evidence cannot authorize current execution`);}
+  for(const snapshot of selected){
+    const state=yield* current(snapshot.ref);if(!state)continue;
+    const object=yield* graphRead(owner,snapshot.ref),integrity=yield* graphIntegrity(graphEvidencePropertiesDigest(owner,snapshot.ref,{remaining:1}));
+    if(digest(state.properties)!==integrity)fail('Source fact integrity differs from its recorded observation; operator review is required');
+    if(state.relationshipDigest){
+      const links=yield* graphIntegrity((function*():GraphProgram<LinkWrite[]>{
+        const result:LinkWrite[]=[];for(const type of state.relationshipTypes??[]){
+          const values=(yield* graphRelated(owner,snapshot.ref,graph.model.link(type).from.name,{remaining:1000}))??fail('Source relationship integrity exceeds its bound');
+          result.push(...values.map(value=>({type,from:snapshot.ref,to:value.ref})));
+        }return result;
+      })());
+      links.sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
+      if(digest(links)!==state.relationshipDigest)fail('Source relationship integrity differs from its recorded observation; operator review is required');
+    }
+    if(object.revision!==snapshot.revision)fail('Source fact changed after planning; refresh the affected inputs before dispatch');
+    if(state.relationshipDigest&&(yield* graphRelationshipDigest(owner,snapshot.ref,{remaining:1000}))!==snapshot.linksDigest)fail('Source relationships changed after planning; refresh the affected inputs before dispatch');
   }
 }
