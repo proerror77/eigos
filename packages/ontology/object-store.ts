@@ -202,9 +202,9 @@ export class OntologyObjectStore {
     objectRefSchema.parse(ref); this.model.object(ref.type); this.charge(budget);
     this.assertReaderOwner(owner);
     if (isVirtualRef(ref)) return this.overlay(owner).read(ref, budget);
-    const row = this.db.prepare(`SELECT * FROM ${this.objectTable} WHERE ${this.owned()} AND type=? AND id=?`).get(...this.ownerParameters(owner), ref.type, ref.id);
+    const row = this.db.prepare(`SELECT o.*, deleted.revision AS tombstone_revision, deleted.deleted_at AS tombstone_deleted_at FROM ${this.objectTable} o LEFT JOIN ontology_tombstones deleted ON deleted.ontology_id=? AND deleted.owner=o.owner AND deleted.type=o.type AND deleted.id=o.id WHERE ${this.owned('o.')} AND o.type=? AND o.id=?`).get(this.ontologyId, ...this.ownerParameters(owner), ref.type, ref.id);
     if (!row) throw new DomainError('NOT_FOUND', 'Ontology object not found');
-    const deleted = this.db.prepare('SELECT revision,deleted_at FROM ontology_tombstones WHERE ontology_id=? AND owner=? AND type=? AND id=?').get(this.ontologyId, owner, ref.type, ref.id);
+    const deleted = row.tombstone_revision == null ? undefined : { revision: row.tombstone_revision, deleted_at: row.tombstone_deleted_at };
     if (deleted && !allowTombstone) throw new DomainError('NOT_FOUND', 'Ontology object was tombstoned');
     const body = JSON.parse(String(row.body)); this.assertObjectDefinition(ref.type, String(row.definition_digest), body.properties);
     return { ref, revision: Number(row.revision), ...body, ...(deleted ? { tombstone: { revision: Number(deleted.revision), deletedAt: String(deleted.deleted_at) } } : {}) };
@@ -576,7 +576,7 @@ export class OntologyObjectStore {
       if (cursor.owner !== digest(owner) || (cursor.ontologyId ?? 'eigos.business') !== this.ontologyId || cursor.query !== queryDigest || cursor.model !== this.model.ref.digest || cursor.revision !== revision) throw new DomainError('CONFLICT', 'Query context changed; restart the bounded query');
       last = cursor.last;
     }
-    let target: string, sql: string, params: (string | number)[], historical = false;
+    let target: string, sql: string, params: (string | number)[], historical = false, noLinks = false;
     if ('object' in args) {
       guard?.requireObject(owner, args.object);
       this.raw(owner, args.object, budget);
@@ -594,11 +594,15 @@ export class OntologyObjectStore {
       const storedDefinitions = this.db.prepare(`SELECT DISTINCT definition_digest FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND ${side}_type=? AND ${side}_id=? LIMIT 201`).all(...this.ownerParameters(owner), nav.link.id, args.from.type, args.from.id);
       if (storedDefinitions.length > 200) throw new DomainError('CONFLICT', 'Relationship definition read bound exceeded');
       for (const stored of storedDefinitions) this.assertLinkDefinition(nav.link.id, String(stored.definition_digest));
+      // No matching link can yield a target. Still run all permission, field,
+      // filter and revision checks below; this is never a cached empty result.
+      noLinks = storedDefinitions.length === 0;
       // Start at the bounded relationship endpoint, then look up each object
       // by primary key. SQLite otherwise may walk all objects for this owner
       // to satisfy ORDER BY even when the selected relationship is empty.
-      sql = `SELECT o.* FROM ${this.linkTable} l CROSS JOIN ${this.objectTable} o ON ${this.scoped ? 'o.ontology_id=l.ontology_id AND ' : ''}o.owner=l.owner AND o.type=l.${other}_type AND o.id=l.${other}_id WHERE ${this.owned('l.')} AND l.type=? AND l.${side}_type=? AND l.${side}_id=?`;
-      params = [...this.ownerParameters(owner), nav.link.id, args.from.type, args.from.id];
+      const tombstones = historical ? ' LEFT JOIN ontology_tombstones deleted ON deleted.ontology_id=? AND deleted.owner=o.owner AND deleted.type=o.type AND deleted.id=o.id' : '';
+      sql = `SELECT o.*${historical ? ', deleted.revision AS tombstone_revision, deleted.deleted_at AS tombstone_deleted_at' : ''} FROM ${this.linkTable} l CROSS JOIN ${this.objectTable} o ON ${this.scoped ? 'o.ontology_id=l.ontology_id AND ' : ''}o.owner=l.owner AND o.type=l.${other}_type AND o.id=l.${other}_id${tombstones} WHERE ${this.owned('l.')} AND l.type=? AND l.${side}_type=? AND l.${side}_id=?`;
+      params = [...(historical ? [this.ontologyId] : []), ...this.ownerParameters(owner), nav.link.id, args.from.type, args.from.id];
     } else {
       target = args.type;
       const types = this.model.concreteTypes(target);
@@ -637,7 +641,7 @@ export class OntologyObjectStore {
     if (last) { sql += ' AND (o.type > ? OR (o.type=? AND o.id>?))'; params.push(last.type, last.type, last.id); }
     // Index-bounded scan, not an unbounded JSON predicate scan. Empty pages can have a continuation.
     sql += ' ORDER BY o.type,o.id LIMIT 201';
-    const rows = this.db.prepare(sql).all(...params);
+    const rows = noLinks ? [] : this.db.prepare(sql).all(...params);
     this.charge(budget, rows.length);
     const items: ObjectView[] = []; let scanned = 0, bytes = 0, hasMore = false;
     for (const row of rows) {
@@ -647,8 +651,7 @@ export class OntologyObjectStore {
       const object = { ref, revision: Number(row.revision), ...JSON.parse(String(row.body)) } as StoredObject;
       this.assertObjectDefinition(ref.type, String(row.definition_digest), object.properties);
       if (historical) {
-        const deleted = this.db.prepare('SELECT revision,deleted_at FROM ontology_tombstones WHERE ontology_id=? AND owner=? AND type=? AND id=?').get(this.ontologyId, owner, ref.type, ref.id);
-        if (deleted) object.tombstone = { revision: Number(deleted.revision), deletedAt: String(deleted.deleted_at) };
+        if (row.tombstone_revision != null) object.tombstone = { revision: Number(row.tombstone_revision), deletedAt: String(row.tombstone_deleted_at) };
       }
       const binding = guard?.requireObject(owner, ref, object.revision);
       if (binding && args.where.some(f => !binding.fields.includes(this.model.propertyName(ref.type, target, f.property)))) throw new SecurityError('INSUFFICIENT_ACCESS');
