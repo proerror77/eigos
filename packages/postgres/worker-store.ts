@@ -22,12 +22,22 @@ import {postgresBeginModelUsage,postgresFinishModelUsage,postgresRecordModelResp
 import type {ModelUsageEvidence} from '../core/model-usage-context.js';
 import type {RunEvidence} from '../capabilities/executor.js';
 import {postgresRecordClaimRelease} from './claim-release.js';
+import {runGraphProgramAsync,type GraphProgram,type ProjectionMetadata} from '../ontology/graph-program.js';
+import type {ServiceRequest} from '../ontology/execution.js';
+import {withPostgresSourceProjection,type PostgresSourceProjectionOptions} from './source-projection.js';
+
+export interface PostgresWorkerProjectionContext {
+  readonly graph:ProjectionMetadata;
+  readonly request:ServiceRequest;
+  readonly job:Job;
+  readonly intents:readonly ActionIntent[];
+}
 
 class LostClaim extends Error{}
 /** Durable queue shared by Mac Workers. Each method releases its transaction
  * before the caller can run a model or contact a provider. */
 export class PostgresWorkerStore {
-  constructor(private readonly db:Pick<PostgresDatabase,'run'|'renewClaim'|'inspectClaim'|'cleanupReleasedClaims'>,private readonly policy:string,private readonly kernel?:StagedKernelBuilder){
+  constructor(private readonly db:Pick<PostgresDatabase,'run'|'renewClaim'|'inspectClaim'|'cleanupReleasedClaims'>&Partial<Pick<PostgresDatabase,'workAvailable'>>,private readonly policy:string,private readonly kernel?:StagedKernelBuilder){
     if(!/^[a-f0-9]{64}$/.test(policy))throw new Error('Invalid PostgreSQL Worker policy');
   }
   private async expire(client:Client){
@@ -60,6 +70,7 @@ export class PostgresWorkerStore {
   async claim(services:string[],leaseMs:number):Promise<WorkClaim|undefined>{
     if(!Number.isSafeInteger(leaseMs)||leaseMs<100||leaseMs>300000)throw new Error('Invalid Worker lease');
     if(!services.includes('eigos.delegate'))return;
+    if(this.db.workAvailable&&!await this.db.workAvailable())return;
     await this.db.cleanupReleasedClaims();
     return this.db.run(async client=>{
       await this.expire(client);const q=`"${postgresBusinessSchema(client)}"`,now=Date.now();
@@ -156,7 +167,26 @@ export class PostgresWorkerStore {
       job.updatedAt=new Date().toISOString();job.delegation!.events.push({at:job.updatedAt,event,evidence:captured.id});
     },false,captured);
   }
-  private async mutate(claim:WorkClaim,update:(job:Job)=>void,finish:boolean,modelEvidence?:RunEvidence){
+  /** Preserve the real action executor's purpose and original receipt. A
+   * document run is not a new planning/grounding decision or business result. */
+  recordActionRun(claim:WorkClaim,evidence:RunEvidence&{purpose:'document'}){
+    const captured=structuredClone(evidence);
+    if(captured.purpose!=='document')throw new Error('Unsupported action model evidence purpose');
+    return this.mutate(claim,job=>{
+      const previous=job.runs?.find(run=>run.id===captured.id);
+      if(previous){if(digest(previous)!==digest(captured))throw new DomainError('CONFLICT','Original action model evidence changed');return;}
+      if(!remainingModelTurns(job))throw new DomainError('CONFLICT','Maximum reasoning turns reached');
+      job.runs=[...(job.runs??[]),captured];job.updatedAt=new Date().toISOString();
+      job.delegation!.events.push({at:job.updatedAt,event:'agent_action_model_completed',evidence:captured.id});
+    },false,captured);
+  }
+  private mutate(claim:WorkClaim,update:(job:Job)=>void,finish:boolean,modelEvidence?:RunEvidence){
+    return this.mutateCurrent(claim,async current=>{
+      const result:unknown=update(current);
+      if(result&&typeof result==='object'&&'then'in result)throw new Error('Worker mutation callback must not perform asynchronous work');
+    },finish,modelEvidence);
+  }
+  private async mutateCurrent(claim:WorkClaim,update:(job:Job,client:Client)=>Promise<void>,finish:boolean,modelEvidence?:RunEvidence){
     const original=postgresWorkReference(claim);
     try{const committed=await this.db.run(async client=>{
       if(!await postgresClaimSnapshotMatches(client,original,this.policy)||!await this.db.inspectClaim(original,this.policy))return false;
@@ -164,7 +194,7 @@ export class PostgresWorkerStore {
       const seal=await postgresPrepareWorkerSeal(client,original,this.policy,this.kernel,fence=>this.db.inspectClaim(fence,this.policy));
       const current=await store.get(original.owner,original.job.id),request=current.delegation!.request.revision,revision=current.revision;
       if(modelEvidence)await postgresRecordModelResponse(client,original,modelEvidence);
-      const result:unknown=update(current);if(result&&typeof result==='object'&&'then'in result)throw new Error('Worker mutation callback must not perform asynchronous work');
+      await update(current,client);
       if(current.id!==original.job.id||current.revision!==revision||current.delegation?.request.revision!==request)throw new DomainError('CONFLICT','Worker cannot revise the owner request');
       await store.save(original.owner,current);
       if(seal)await postgresRecordWorkerOutputs(client,original.owner,current,seal);
@@ -184,4 +214,22 @@ export class PostgresWorkerStore {
   }
   checkpoint(claim:WorkClaim,update:(job:Job)=>void){return this.mutate(claim,update,false);}
   finish(claim:WorkClaim,update:(job:Job)=>void){return this.mutate(claim,update,true);}
+  /** Host-owned graph command for real source initialization, mapping and
+   * completion. The typed driver admits reads and source writes; its program
+   * cannot receive a raw client or a synchronous store. Execute the model or
+   * provider before this command, never inside the program. Job/graph/binding
+   * writes and output seals share the original claim's fenced commit. */
+  async project<T>(claim:WorkClaim,options:Omit<PostgresSourceProjectionOptions,'policyDigest'|'inspectClaim'|'builder'>,
+    prepare:(context:PostgresWorkerProjectionContext)=>GraphProgram<T>,finish=false):Promise<{applied:false}|{applied:true;value:T}>{
+    const configured=structuredClone(options);let value:T;
+    const applied=await this.mutateCurrent(claim,async(job,client)=>{
+      const intents=await new PostgresTaskStorage(client,this.kernel).intents(claim.owner,job.id);
+      await withPostgresSourceProjection(client,claim,{...configured,policyDigest:this.policy,builder:this.kernel,inspectClaim:fence=>this.db.inspectClaim(fence,this.policy)},async graph=>{
+        const program=prepare({job,intents,request:structuredClone(graph.request),graph:{model:graph.model,now:graph.now,releaseRef:graph.releaseRef,security:true}});
+        if(!program||typeof program.next!=='function'||typeof program.throw!=='function')throw new Error('Worker projection requires a synchronous graph program');
+        value=await runGraphProgramAsync(graph,program);
+      });
+    },finish);
+    return applied?{applied:true,value:value!}:{applied:false};
+  }
 }

@@ -38,6 +38,11 @@ type Check=Parameters<PostgresActionJournalOptions['authorize']>[0];
 type ProgramMetadata=Pick<AgentProgram,'ref'|'configurationDigest'|'actionIds'|'capability'|'schema'|'callerManagedActions'|'liveFreeReservation'>;
 export interface PostgresActionSemanticContext {
   readonly model:OntologyModel;
+  readonly graph:import('../ontology/graph-program.js').ProjectionMetadata;
+  readonly owner:string;
+  readonly intents:readonly ActionIntent[];
+  /** Fixed current admission and task deadline. Semantic evidence may narrow it. */
+  readonly validUntil:number;
   readonly job:Job;
   readonly plan:AgentActionPlan;
   readonly step:AgentActionPlan['steps'][number];
@@ -102,7 +107,7 @@ export function createPostgresActionAuthorization(client:Client,options:Postgres
   if(new Set(programs.map(item=>digest([item.program.ref,item.program.configurationDigest]))).size!==programs.length)throw new Error('Ambiguous PostgreSQL action program registration');
   return async supplied=>{
     if(postgresBusinessToken(client)!==token)deny();
-    const check=structuredClone(supplied),fresh=['create','dispatch','budget'].includes(check.operation),store=new PostgresTaskStorage(client,options.builder);
+    const check=structuredClone(supplied),fresh=['create','dispatch','dispatch_check','budget'].includes(check.operation),launch=check.operation==='dispatch'||check.operation==='dispatch_check',store=new PostgresTaskStorage(client,options.builder);
     if(check.operation==='create')assertFreshPostgresActionIntent(check.intent);
     if(check.claim.owner!==check.intent.owner||check.claim.job.id!==check.intent.jobId)deny();
     const job=await store.get(check.claim.owner,check.claim.job.id);
@@ -118,7 +123,7 @@ export function createPostgresActionAuthorization(client:Client,options:Postgres
     if(fresh&&state.pendingPlanId!==plan.id)deny('AUTHORIZATION_REQUIRED','Only the current fixed execution frontier can start an action');
     if(fresh&&(plan.steps.some(value=>value.effect==='local')&&plan.steps.length!==1||plan.steps.filter(value=>value.effect!=='read').length>1))deny('POLICY_CHANGED','The original frontier requires a separate local or business operation');
     if(check.operation==='create'&&check.intent.createdAt!==plan.createdAt)deny('POLICY_CHANGED');
-    if(check.operation==='dispatch'&&check.intent.state!=='ready'||!fresh&&check.intent.state==='canceled_before_dispatch')deny('ACCESS_REVOKED');
+    if(check.operation==='dispatch'&&check.intent.state!=='ready'||check.operation==='dispatch_check'&&check.intent.state!=='dispatching'||!fresh&&check.intent.state==='canceled_before_dispatch')deny('ACCESS_REVOKED');
     const registered=programs.filter(item=>same(item.program.ref,step.binding?.programRef??state.programRef)&&item.program.configurationDigest===(step.binding?.configurationDigest??state.programDigest));
     if(registered.length!==1)deny('SOURCE_NOT_AUTHORIZED');const registration=registered[0]!,program=registration.program,capability=program.capability();
     // Pure origin checks need only this metadata marker, never a SecurityStore.
@@ -151,12 +156,12 @@ export function createPostgresActionAuthorization(client:Client,options:Postgres
     if(check.attempt){
       const attempt=check.attempt;
       if(attempt.intentId!==check.intent.id||attempt.claimToken!==check.claim.token||attempt.requestRevision!==(job.revision??0)||attempt.planDigest!==plan.digest)deny('ACCESS_REVOKED');
-      if(check.operation==='dispatch'&&(attempt.kind!=='dispatch'||attempt.requestKey!==check.intent.businessOperationKey||attempt.inputDigest!==digest(input)))deny('POLICY_CHANGED');
-      if(check.operation==='accept'){
+      if(launch&&(attempt.kind!=='dispatch'||attempt.requestKey!==check.intent.businessOperationKey||attempt.inputDigest!==digest(input)))deny('POLICY_CHANGED');
+      if(check.operation==='accept'||check.operation==='dispatch_check'){
         const rows=await client.query(`SELECT CASE WHEN octet_length(body)<=8388608 THEN body END AS body FROM ${q}.action_attempts WHERE owner=$1 AND intent_id=$2 AND id=$3 LIMIT 2`,[check.claim.owner,check.intent.id,attempt.id]);
         if(rows.rowCount!==1||typeof rows.rows[0].body!=='string'||!same(JSON.parse(rows.rows[0].body),attempt))deny('ACCESS_REVOKED');
       }
-    }else if(['dispatch','observe','reconcile','resume','accept'].includes(check.operation))deny();
+    }else if(['dispatch','dispatch_check','observe','reconcile','resume','accept'].includes(check.operation))deny();
     if(step.inputRefs.length||step.acceptedInputs?.length){
       const resolved=state.inputResolutions?.find(value=>value.planId===plan.id&&value.stepId===step.id&&value.intentId===check.intent.id&&value.inputDigest===digest(input));
       if(!check.intent.dispatchInput||!resolved)deny('AUTHORITY_UNAVAILABLE','Exact PostgreSQL accepted-input derivation proof is required');
@@ -165,7 +170,7 @@ export function createPostgresActionAuthorization(client:Client,options:Postgres
       if(admission.actor.actorKind!=='worker'||admission.actor.taskId!==job.id||admission.grant.taskId!==job.id||admission.grant.requestRevision!==request.revision||!admission.grant.operations.includes('task.process')
         ||![program.ref.id,capability.ref.id].some(id=>admission.parent.capabilityIds.includes(id)))deny();
       const currentIntents=await store.intents(check.claim.owner,job.id),readOnly=canRecoverReadOnly(job,[...currentIntents,check.intent])&&!state.paPayment;
-      if(check.operation==='dispatch')for(const dependency of step.dependsOn){
+      if(launch)for(const dependency of step.dependsOn){
         const predecessor=plan.steps.find(value=>value.id===dependency),intent=predecessor&&currentIntents.find(value=>value.id===predecessor.intentId);
         if(!intent||intent.planDigest!==plan.digest||intent.state!=='effect_confirmed')deny('AUTHORIZATION_REQUIRED','An original predecessor has no confirmed outcome');
       }
@@ -220,7 +225,8 @@ export function createPostgresActionAuthorization(client:Client,options:Postgres
           requireResource:(kind,id)=>{if(!access.resourceAllowed(kind,id))deny();},receipt:()=>({accessDigest:postgresPlanningAccessDigest(admission),securityEnvelope:graph.evidence()})}};
         if(fresh)await runGraphProgramAsync(graph,validatePlanningSnapshotProgram(meta,check.claim.owner,request,plan.ontologyPlanning,true));
         if(!registration.validate)deny('AUTHORITY_UNAVAILABLE','PostgreSQL program validate/privateInput/authority/Pipeline semantic proof is not installed');
-        const context:PostgresActionSemanticContext={model:graph.model,job:structuredClone(job),plan:structuredClone(plan),step:structuredClone(step),intent:structuredClone(check.intent),input:structuredClone(input),operation:check.operation,...(check.attempt?{attempt:structuredClone(check.attempt)}:{})};
+        const context:PostgresActionSemanticContext={model:graph.model,graph:{model:graph.model,now:graph.now,releaseRef:graph.releaseRef,security:true},owner:check.claim.owner,intents:structuredClone(currentIntents),validUntil,
+          job:structuredClone(job),plan:structuredClone(plan),step:structuredClone(step),intent:structuredClone(check.intent),input:structuredClone(input),operation:check.operation,...(check.attempt?{attempt:structuredClone(check.attempt)}:{})};
         if(plan.initialSelection)await runGraphProgramAsync(graph,registration.verifyInitialSelection!(context));
         const semantic=await runGraphProgramAsync(graph,registration.validate(context));deadline(semantic.validUntil);
         if(semantic.privateDigest!==check.intent.privateDigest)deny('POLICY_CHANGED');
@@ -251,8 +257,8 @@ export function createPostgresActionAuthorization(client:Client,options:Postgres
           const grants=rows.rows.map(row=>{const grant=JSON.parse(row.body) as PlanGrant;if(grant.id!==row.id||grant.owner!==check.claim.owner||grant.jobId!==job.id)deny();return grant;});
           const permit=grants.find(grant=>(check.grant?grant.id===check.grant.id&&same(grant,check.grant):true)&&(!check.attempt?.authorizationId||grant.id===check.attempt.authorizationId)&&matchesAgentGrant(grant,plan,step));
           if(!permit||check.attempt?.authorizationId!==undefined&&check.attempt.authorizationId!==permit.id
-            ||check.operation==='dispatch'&&check.attempt?.authorizationId!==permit.id)deny('AUTHORIZATION_REQUIRED','Exact durable plan permit is required');deadline(Date.parse(permit.expiresAt));
-          if(check.operation==='dispatch'&&!['object_write','external_draft','refund'].includes(step.effect)){
+            ||launch&&check.attempt?.authorizationId!==permit.id)deny('AUTHORIZATION_REQUIRED','Exact durable plan permit is required');deadline(Date.parse(permit.expiresAt));
+          if(launch&&!['object_write','external_draft','refund'].includes(step.effect)){
             if(!step.cost)deny();moneySchema.parse({minor:step.cost.minor,currency:step.cost.currency});
             const held=await client.query(`SELECT grant_id,minor,currency,state,economic_key,role,CASE WHEN octet_length(additional_impacts)<=65536 THEN additional_impacts END AS additional_impacts
               FROM ${q}.budget_reservations WHERE owner=$1 AND intent_id=$2 LIMIT 2`,[check.claim.owner,check.intent.id]);

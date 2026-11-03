@@ -13,7 +13,7 @@ import {PostgresTaskStorage} from './task-storage.js';
 import {postgresPrepareWorkerSeal,postgresRecordWorkerOutputs} from './worker-output.js';
 import {postgresRecordClaimRelease} from './claim-release.js';
 
-type JournalOperation = 'create'|'dispatch'|'observe'|'reconcile'|'resume'|'budget'|'accept';
+type JournalOperation = 'create'|'dispatch'|'dispatch_check'|'observe'|'reconcile'|'resume'|'budget'|'accept';
 /** New operations cannot arrive with invented execution or acceptance state. */
 export function assertFreshPostgresActionIntent(intent:ActionIntent):void{
   const initial=new Set(['id','owner','jobId','stepId','businessOperationKey','planDigest','bindingRef','inputDigest','privateDigest','privateData','effect','additionalEffects','state','nextAt','createdAt']);
@@ -129,6 +129,15 @@ export class PostgresActionJournal {
     if(rows.rows.length>2000||rows.rows.some(row=>typeof row.body!=='string'))throw new DomainError('CONFLICT','Action attempts exceed their safe read bound');
     return rows.rows.map(row=>{const attempt=JSON.parse(row.body) as ExecutionAttempt;
       if(attempt.id!==row.id||attempt.intentId!==intentId||!Number.isSafeInteger(attempt.ordinal)||attempt.ordinal<1)throw new DomainError('CONFLICT','Stored attempt identity is invalid');return attempt;});
+  }
+  /** Recheck the original committed dispatch immediately before external I/O.
+   * This never creates an attempt, resets an intent or renews permission. */
+  async assertDispatchAllowed(input:PostgresWorkReference,intentId:string,attemptId:string):Promise<void>{
+    const claim=postgresWorkReference(input),intent=await this.intent(claim.owner,intentId);
+    const attempt=(await this.attempts(claim.owner,intentId)).find(value=>value.id===attemptId);
+    if(intent.state!=='dispatching'||!attempt||attempt.kind!=='dispatch'||attempt.claimToken!==claim.token
+      ||attempt.planDigest!==intent.planDigest||attempt.requestRevision!==(claim.job.revision??0))throw new SecurityError('ACCESS_REVOKED');
+    await this.authorize('dispatch_check',claim,intent,{attempt});
   }
   async startAttempt(input:PostgresWorkReference,intentId:string,kind:ExecutionAttempt['kind'],inputDigest:string,requestKey?:string,submission?:ExecutionAttempt['submission'],authorizationId?:string,budget?:{grant:PlanGrant;amount:{minor:string;currency:string}}):Promise<ExecutionAttempt>{
     const claim=postgresWorkReference(input),captured=structuredClone({submission,budget});

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import type { Job } from '../core/domain.js';
 import { createModelProcessFiles, modelEnvironment, modelFeatureArgs } from './model-process.js';
+import {authorizeModelDispatch} from '../core/model-dispatch-context.js';
 import { openCodexModelSession } from './model-session.js';
 import { ModelSessionPool } from './model-session-pool.js';
 import type { PromptDataMetrics } from '../coordinator/prompt-data.js';
@@ -152,6 +153,9 @@ export class CodexExecutor implements Executor {
           '-c', `mcp_servers.eigos_ontology.tool_timeout_sec=${timeout(options.mcp.toolTimeoutSeconds, 30)}`);
       }
       const nativeMcpCalls: NonNullable<RunEvidence['nativeMcpCalls']> = [];
+      signal.throwIfAborted();
+      await authorizeModelDispatch(this.securityChannelId);
+      signal.throwIfAborted();
       await new Promise<void>((resolve, reject) => {
         if (signal.aborted) { reject(new Error('Executor canceled')); return; }
         // A small allowlist prevents gateway credentials from entering the child.

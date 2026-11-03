@@ -19,10 +19,12 @@ import {storedSourceSchema} from '../security/source-policy.js';
 import {postgresBusinessSchema,postgresBusinessToken} from './runtime-transaction.js';
 import {postgresOwnedTaskContextMembers} from './task-context-membership.js';
 import {postgresOntologyRelease,postgresOntologyDefinitionCompatible} from './ontology-release.js';
+import {consumePostgresSourceBindingPermit,type PostgresSourceBindingPermit} from './source-projection.js';
+import type {ObservationSource} from '../security/source-policy.js';
 
 type TaskGrant=z.infer<typeof taskDataGrantSchema>;
 type ParentGrant=z.infer<typeof agentAccessGrantSchema>;
-type Binding={object:ObjectRef;revision:number;fields:string[];sourceBindingId:string;envelope:SecurityEnvelope;inputEnvelope?:SecurityEnvelope;projectionOrigin?:ProjectionOrigin};
+type Binding={object:ObjectRef;revision:number;fields:string[];sourceBindingId:string;envelope:SecurityEnvelope;inputEnvelope?:SecurityEnvelope;projectionOrigin?:ProjectionOrigin;sourceObservation?:ObservationSource};
 const labelSchema=z.object({classification:securityEnvelopeSchema.shape.classification,requiredMarkings:securityEnvelopeSchema.shape.requiredMarkings,channels:securityEnvelopeSchema.shape.channels}).strict();
 const refKey=(ref:ObjectRef)=>JSON.stringify([ref.type,ref.id]);
 
@@ -129,9 +131,20 @@ export class PostgresTaskBindings {
         sourceBindingId=origin.sourceBindingId;inputEnvelope=origin.inputEnvelope&&securityEnvelopeSchema.parse(origin.inputEnvelope);
       }
     }
+    await this.writeBinding(g,ref,row,fields,sourceBindingId,inputEnvelope,projectionOrigin);
+  }
+  /** Only the current checked source writer can mint this one-use permit.
+   * Ordinary bind() retains its reserved-source fence above. */
+  async bindSourceProjection(permit:PostgresSourceBindingPermit):Promise<void>{
+    const authority=await consumePostgresSourceBindingPermit(this.client,permit),row=await this.raw(authority.grant.ownerKey,authority.ref);
+    if(row.revision!==authority.revision||row.definitionDigest!==authority.fingerprint||row.definitionDigest!==this.model.fingerprint(authority.ref.type))throw new SecurityError('POLICY_CHANGED');
+    await this.writeBinding(authority.grant,authority.ref,row,authority.fields,authority.sourceBindingId,authority.evidence,undefined,authority.sourceObservation);
+    await authority.assertCurrent();
+  }
+  private async writeBinding(g:TaskGrant,ref:ObjectRef,row:Awaited<ReturnType<PostgresTaskBindings['raw']>>,fields:string[],sourceBindingId:string,inputEnvelope?:SecurityEnvelope,projectionOrigin?:ProjectionOrigin,sourceObservation?:ObservationSource){
     const safe=[...new Set(fields)].filter(field=>reviewedFieldPolicy(this.model,ref.type,field)!=='internal_only');
     const own=await this.envelope(g.ownerKey,ref,safe,g.channels),binding:Binding={object:ref,revision:row.revision,fields:safe,sourceBindingId,
-      envelope:inputEnvelope?combineEnvelopes([own,inputEnvelope]):own,...(inputEnvelope?{inputEnvelope}:{}),...(projectionOrigin?{projectionOrigin}:{})};
+      envelope:inputEnvelope?combineEnvelopes([own,inputEnvelope]):own,...(inputEnvelope?{inputEnvelope}:{}),...(projectionOrigin?{projectionOrigin}:{}),...(sourceObservation?{sourceObservation}:{})};
     await this.query(`INSERT INTO "${this.schema}".security_bindings(grant_id,owner,task_id,request_revision,type,object_id,object_revision,body)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(grant_id,type,object_id) DO UPDATE SET object_revision=excluded.object_revision,body=excluded.body
       WHERE security_bindings.object_revision<>excluded.object_revision OR security_bindings.body<>excluded.body`,[g.id,g.ownerKey,g.taskId,g.requestRevision,ref.type,ref.id,row.revision,JSON.stringify(binding)]);

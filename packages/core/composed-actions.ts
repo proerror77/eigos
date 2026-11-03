@@ -8,14 +8,17 @@ import type { AgentActionPlan, AgentComponentContext, AgentDecision, AgentStep }
 import type { PlanningSnapshot } from '../ontology/planning-contract.js';
 import type { ActionIntent } from '../ontology/actions.js';
 import type { AgentActionContext, AgentActionResult } from './agent-program.js';
-import { objectRefSchema, type ObjectRef } from '../ontology/model.js';
-import { assertPortCompatible, assertAcceptedPortFreshness, compositionCompiler, evaluateCompositionChecks, readAcceptedPort, readAcceptedPortProgram, sealPortValue, type AcceptedPortValue, type CompositionPort } from '../ontology/composition-contract.js';
+import { objectRefSchema, type ObjectRef, type ActionDefinition } from '../ontology/model.js';
+import { assertPortCompatible, assertAcceptedPortFreshness, compositionCompiler, evaluateCompositionChecks, readAcceptedPort, readAcceptedPortProgram, sealPortValue, actionVersion, type AcceptedPortValue, type CompositionPort } from '../ontology/composition-contract.js';
+import type {ObjectView} from '../ontology/object-store.js';
 import {graphRead,runGraphProgram,type GraphProgram,type ProjectionMetadata} from '../ontology/graph-program.js';
 
 function fail(message: string): never { throw new DomainError('CONFLICT', message); }
 const same = (a: unknown, b: unknown) => digest(a) === digest(b);
-export const componentScopeDigest = (ctx: AgentProgramContext, scope: ObjectRef) =>
-  scope.type === 'ServiceRequest' && scope.id === ctx.request.id ? digest(ctx.request) : digest(ctx.graph.read(ctx.owner, scope).properties);
+export function* componentScopeDigestProgram(ctx:AcceptedInputContext,scope:ObjectRef):GraphProgram<string>{
+  return scope.type==='ServiceRequest'&&scope.id===ctx.request.id?digest(ctx.request):digest((yield* graphRead(ctx.owner,scope)).properties);
+}
+export const componentScopeDigest=(ctx:AgentProgramContext,scope:ObjectRef)=>runGraphProgram(ctx.graph,componentScopeDigestProgram(ctx,scope));
 export const stepBindingRef = (plan: AgentActionPlan, step: AgentActionPlan['steps'][number]) => step.binding?.ref ?? plan.programRef;
 export const stepInputDigest = (step: Pick<AgentStep, 'inputRefs' | 'acceptedInputs'> & { input: Record<string, unknown> }) =>
   digest({ input: step.input, inputRefs: step.inputRefs, ...(step.acceptedInputs ? { acceptedInputs: step.acceptedInputs } : {}) });
@@ -180,36 +183,94 @@ export function validateCompositionInputs(ctx: AgentProgramContext, action: stri
   }
   evaluateCompositionChecks(contract, 'before', input, {}, compositionCompiler(ctx.graph.model));
 }
-export function sealComposedOutputs(program: AgentProgram, ctx: AgentActionContext, step: AgentActionPlan['steps'][number], input: Record<string, unknown>, result: AgentActionResult, object: ObjectRef, intent: ActionIntent): AcceptedPortValue[] {
-  const contract = program.definition(ctx.graph, step.action).composition ?? fail('Missing output composition contract');
-  if (!step.binding || !ctx.graph.releaseRef || !intent.latestObservationId || intent.state !== 'effect_confirmed') fail('Outputs require the current accepted action observation');
-  const view = ctx.graph.read(ctx.owner, object), outputEntries = Object.entries(contract.outputs);
-  const projected = program.projectOutputs?.(ctx, step.action, input, result, object) ?? (() => {
-    if (outputEntries.length !== 1 || outputEntries[0]![1].kind !== 'object' || outputEntries[0]![1].cardinality !== 'one') fail('Named outputs require an explicit trusted projection');
-    return { values: { [outputEntries[0]![0]]: object }, evidence: { origin: view.source.kind === 'task' ? 'managed' as const : view.source.kind, refs: result.evidenceRefs, observedAt: view.source.observedAt } };
-  })();
-  if (Object.keys(projected.values).some(name => !Object.hasOwn(contract.outputs, name)) || outputEntries.some(([name, port]) => !port.optional && !Object.hasOwn(projected.values, name)) || !projected.evidence.refs.length
-    || projected.evidence.refs.some(ref => !result.evidenceRefs.includes(ref))) fail('Output projection has missing, extra or unrelated evidence');
-  evaluateCompositionChecks(contract, 'after', input, projected.values, compositionCompiler(ctx.graph.model));
-  return outputEntries.filter(([port]) => Object.hasOwn(projected.values, port)).map(([port, definition]) => {
-    const evidence = 'evidenceByPort' in projected ? projected.evidenceByPort?.[port] ?? projected.evidence : projected.evidence;
-    if (!evidence.refs.length || evidence.refs.some(ref => !result.evidenceRefs.includes(ref))) fail('Named output evidence differs from its accepted source receipt');
-    const value = projected.values[port], values = definition.cardinality === 'many' ? value : [value];
-    if (!Array.isArray(values) || values.length > 200) fail('Output collection exceeds its contract');
-    const objects = definition.kind === 'object' ? values.map(item => {
-      const ref = objectRefSchema.parse(item), object = ctx.graph.read(ctx.owner, ref);
-      if (!ctx.graph.model.assignableType(ref.type, definition.type)) fail('Projected output has the wrong ontology type');
-      return { ref, revision: object.revision, digest: digest(object.properties) };
-    }) : [];
-    if (definition.kind === 'value') for (const item of values) compositionCompiler(ctx.graph.model).schema(definition.schema).parse(item);
-    const receipt = sealPortValue({ version: '1', owner: ctx.owner, requestId: ctx.request.id, requestRevision: ctx.request.revision,
-      ontologyRelease: ctx.graph.releaseRef!, actionId: step.action, actionVersion: step.binding!.actionVersion,
-      binding: { ...step.binding!.ref, configurationDigest: step.binding!.configurationDigest }, intentId: intent.id, observationId: intent.latestObservationId!,
-      port, definition, value, evidence, objects });
-    // Validate origin and time immediately; later reads additionally check the durable receipt.
-    readAcceptedPort(ctx.graph.model, receipt, definition, { ...receiptContext(ctx, intent, receipt), isAccepted: () => true });
-    return receipt;
-  });
+export type ComposedOutputContext=Omit<AgentActionContext,'graph'>&{graph:ProjectionMetadata};
+export type ComposedOutputProjection=ReturnType<NonNullable<AgentProgram['projectOutputs']>>;
+/** The host supplies registered semantic code, never a model/request mapping.
+ * Only this program reads current admitted objects and creates their receipts.
+ * The enclosing action journal still owns grant/claim/cancellation fences. */
+export function* sealComposedOutputsProgram(ctx:ComposedOutputContext,step:AgentActionPlan['steps'][number],input:Record<string,unknown>,result:AgentActionResult,object:ObjectRef,intent:ActionIntent,
+  definition:ActionDefinition,project:(current:ObjectView)=>ComposedOutputProjection):GraphProgram<AcceptedPortValue[]>{
+  const contract=definition.composition??fail('Missing output composition contract'),binding=step.binding;
+  const release=ctx.graph.releaseRef??fail('Outputs require the pinned ontology release');
+  const plan=ctx.state.plans.find(value=>value.id===ctx.planId),observationId=intent.latestObservationId;
+  const witness=()=>digest({step,input,result,object,definition,invocation:{planId:ctx.planId,intentId:ctx.intentId,attemptId:ctx.attemptId,modelRunId:ctx.modelRunId,callerRequestId:ctx.callerRequestId},release:ctx.graph.releaseRef,requestId:ctx.request.id,requestRevision:ctx.request.revision,
+    program:ctx.state.programRef,configuration:ctx.state.programDigest,intent:{id:intent.id,owner:intent.owner,jobId:intent.jobId,stepId:intent.stepId,planDigest:intent.planDigest,
+      key:intent.businessOperationKey,binding:intent.bindingRef,input:intent.inputDigest,dispatchInput:intent.dispatchInput,private:intent.privateDigest,state:intent.state,observationId:intent.latestObservationId,lastVerifiedResult:intent.lastVerifiedResult}});
+  const original=witness();
+  const accepted=()=>{
+    if(intent.state!=='effect_confirmed'||!observationId||intent.latestObservationId!==observationId||intent.lastVerifiedResult?.kind!=='confirmed'
+      ||!same(intent.lastVerifiedResult.evidenceRefs,result.evidenceRefs)||!intent.lastVerifiedResult.output||!Object.hasOwn(intent.lastVerifiedResult.output,'source')
+      ||!same(intent.lastVerifiedResult.output.source,result.value))fail('Outputs require the original accepted action observation and source result');
+  };
+  const pinned=()=>{
+    accepted();
+    if(!binding||!plan||plan.id!==ctx.planId||ctx.state.plans.filter(value=>value.id===ctx.planId).length!==1||!same(ctx.state.plans.find(value=>value.id===ctx.planId),plan)||intent.owner!==ctx.owner||intent.jobId!==ctx.request.id||intent.id!==ctx.intentId||intent.id!==step.intentId||intent.stepId!==step.id
+      ||intent.planDigest!==plan.digest||intent.businessOperationKey!==step.operationKey||!same(intent.bindingRef,binding.ref)||intent.inputDigest!==stepInputDigest(step)
+      ||!same(intent.dispatchInput??step.input,input)||!same(plan.steps.find(value=>value.intentId===intent.id),step))fail('Output action differs from its original pinned intent');
+    const {digest:planDigest,...planBody}=plan,{digest:bindingDigest,...bindingBody}=binding;
+    if(digest(planBody)!==planDigest||plan.requestId!==ctx.request.id||plan.requestRevision!==ctx.request.revision||digest(bindingBody)!==bindingDigest||step.bindingDigest!==bindingDigest
+      ||binding.ownerDigest!==digest(ctx.owner)||binding.requestId!==ctx.request.id||binding.requestRevision!==ctx.request.revision||!same(binding.programRef,ctx.state.programRef)
+      ||binding.configurationDigest!==ctx.state.programDigest||binding.actionId!==step.action||binding.actionVersion!==actionVersion(definition)||definition.id!==step.action
+      ||binding.definitionDigest!==digest(definition)||step.definitionDigest!==digest(definition)||binding.compositionDigest!==digest(contract)||!same(binding.ontologyRelease,release)
+      ||!same(ctx.graph.releaseRef,release)||!same(ctx.graph.model.action(step.action),definition))fail('Output definition, composition, binding or ontology release changed');
+    if(step.contextId){
+      const component=ctx.state.composition?.contexts.find(value=>value.id===step.contextId)??fail('Output component context is missing');
+      componentContext(ctx,component,{ref:ctx.state.programRef,configurationDigest:ctx.state.programDigest});
+      if(component.digest!==step.contextDigest||!same(component.scope,step.contextScope)||!same(ctx.state.scope,component.scope))fail('Output component differs from its pinned scope');
+    }
+    if(witness()!==original)fail('Accepted output evidence changed while reading its snapshots');
+  };
+  pinned();
+  const primary=yield* graphRead(ctx.owner,object);accepted();
+  const projected=project(primary);
+  if(!projected||typeof projected!=='object'||'then'in projected)fail('Output projection must be synchronous trusted semantic code');
+  const projectionDigest=digest(projected),entries=Object.entries(contract.outputs),compiler=compositionCompiler(ctx.graph.model);
+  const current=()=>{accepted();if(digest(projected)!==projectionDigest)fail('Trusted output projection changed while reading its snapshots');};
+  if(Object.keys(projected.values).some(name=>!Object.hasOwn(contract.outputs,name))||entries.some(([name,port])=>!port.optional&&!Object.hasOwn(projected.values,name))
+    ||Object.keys(projected.evidenceByPort??{}).some(name=>!Object.hasOwn(projected.values,name))||!projected.evidence.refs.length
+    ||projected.evidence.refs.some(ref=>!result.evidenceRefs.includes(ref)))fail('Output projection has missing, extra or unrelated evidence');
+  evaluateCompositionChecks(contract,'after',input,projected.values,compiler);
+  const receipts:AcceptedPortValue[]=[];
+  for(const [port,portDefinition] of entries.filter(([name])=>Object.hasOwn(projected.values,name))){
+    const evidence=projected.evidenceByPort?.[port]??projected.evidence;
+    if(!evidence.refs.length||evidence.refs.some(ref=>!result.evidenceRefs.includes(ref)))fail('Named output evidence differs from its accepted source receipt');
+    const value=projected.values[port],values=portDefinition.cardinality==='many'?value:[value];
+    if(!Array.isArray(values)||values.length>200)fail('Output collection exceeds its contract');
+    const objects:AcceptedPortValue['objects']=[];
+    for(const item of values){
+      if(portDefinition.kind==='value'){compiler.schema(portDefinition.schema).parse(item);continue;}
+      const ref=objectRefSchema.parse(item);
+      if(!ctx.graph.model.assignableType(ref.type,portDefinition.type))fail('Projected output has the wrong ontology type');
+      const view=yield* graphRead(ctx.owner,ref);current();
+      // Current typed properties are mandatory. A private/raw read or a model
+      // response cannot stand in for missing admitted projection fields.
+      if(!same(view.ref,ref)||!Number.isSafeInteger(view.revision)||view.revision<1)fail('Current output object snapshot is missing or invalid');
+      const properties=ctx.graph.model.parseProperties(ref.type,view.properties);
+      objects.push({ref,revision:view.revision,digest:digest(properties)});
+    }
+    const receipt=sealPortValue({version:'1',owner:ctx.owner,requestId:ctx.request.id,requestRevision:ctx.request.revision,ontologyRelease:release,
+      actionId:step.action,actionVersion:binding!.actionVersion,binding:{...binding!.ref,configurationDigest:binding!.configurationDigest},intentId:intent.id,observationId:observationId!,port,definition:portDefinition,value,evidence,objects});
+    const reader=readAcceptedPortProgram(ctx.graph.model,receipt,portDefinition,{...receiptProofContext(ctx,intent,receipt),isAccepted:candidate=>{
+      accepted();return same(candidate,receipt)&&candidate.intentId===intent.id&&candidate.observationId===intent.latestObservationId&&same(candidate.binding,{...binding!.ref,configurationDigest:binding!.configurationDigest})
+        &&candidate.evidence.refs.every(ref=>intent.lastVerifiedResult!.evidenceRefs.includes(ref));
+    }});
+    let proof=reader.next();
+    while(!proof.done){
+      let snapshot:{revision:number;digest:string};
+      try{const view=yield* graphRead(ctx.owner,proof.value);current();if(!same(view.ref,proof.value)||!Number.isSafeInteger(view.revision)||view.revision<1)fail('Current output object snapshot is missing or invalid');snapshot={revision:view.revision,digest:digest(ctx.graph.model.parseProperties(proof.value.type,view.properties))};}
+      catch(error){proof=reader.throw(error);continue;}
+      assertAcceptedPortFreshness(receipt,portDefinition,ctx.graph.now());proof=reader.next(snapshot);
+    }
+    assertAcceptedPortFreshness(receipt,portDefinition,ctx.graph.now());receipts.push(receipt);
+  }
+  pinned();current();for(const receipt of receipts)assertAcceptedPortFreshness(receipt,receipt.definition,ctx.graph.now());return receipts;
+}
+export function sealComposedOutputs(program:AgentProgram,ctx:AgentActionContext,step:AgentActionPlan['steps'][number],input:Record<string,unknown>,result:AgentActionResult,object:ObjectRef,intent:ActionIntent):AcceptedPortValue[]{
+  const definition=program.definition(ctx.graph,step.action),entries=Object.entries(definition.composition?.outputs??{});
+  return runGraphProgram(ctx.graph,sealComposedOutputsProgram(ctx,step,input,result,object,intent,definition,current=>program.projectOutputs?.(ctx,step.action,input,result,object)??(()=>{
+    if(entries.length!==1||entries[0]![1].kind!=='object'||entries[0]![1].cardinality!=='one')fail('Named outputs require an explicit trusted projection');
+    return {values:{[entries[0]![0]]:object},evidence:{origin:current.source.kind==='task'?'managed' as const:current.source.kind,refs:result.evidenceRefs,observedAt:current.source.observedAt}};
+  })()));
 }
 
 /** Identity-only ports cannot be substituted for current facts because their
@@ -222,7 +283,7 @@ export function objectResultProjection(object: ObjectRef, evidence: AcceptedPort
 
 /** A view for one trusted domain validator. Root plans remain sealed and
  * unchanged; only observations and intents are narrowed to the exact context. */
-export function componentContext(ctx: AgentProgramContext, component: AgentComponentContext, program: AgentProgram): AgentProgramContext {
+export function componentContext<G extends ProjectionMetadata>(ctx:Omit<AgentProgramContext,'graph'>&{graph:G},component:AgentComponentContext,program:Pick<AgentProgram,'ref'|'configurationDigest'>):Omit<AgentProgramContext,'graph'>&{graph:G} {
   if (ctx.state.composition?.retiredContexts?.some(value => value.id === component.id)) fail('Source authorization renewed; prepare a new explicit context instead of reusing the retired one');
   const { digest: expected, ...body } = component;
   if (!ctx.state.composition?.contexts.some(value => value.id === component.id && value.digest === expected)) fail('Component context is not a member of this task');

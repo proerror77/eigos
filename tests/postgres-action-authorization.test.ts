@@ -193,3 +193,21 @@ test('verified action output is sealed with its original acceptance and a seal f
     assert.equal(view.id,x.claim.job.id);assert.equal(view.outputStatus,'available');assert.equal(view.question,'Synthetic source output accepted under original scope');
   }finally{await x.close();}
 });
+
+test('committed dispatch preflight rechecks original source and authority without creating another attempt',local,async()=>{
+  const x=await fixture();try{
+    await x.t.run(c=>x.journal(c).createIntent(x.claim,x.intent));
+    const attempt=await x.t.run(c=>x.journal(c).startAttempt(x.claim,x.intent.id,'dispatch',digest(x.plan.steps[0]!.input)));
+    const before=await x.t.run(c=>x.journal(c).attempts(x.f.owner,x.intent.id));
+    await x.t.run(c=>x.journal(c).assertDispatchAllowed(x.claim,x.intent.id,attempt.id));
+    await assert.rejects(x.t.run(c=>x.journal(c).assertDispatchAllowed(x.claim,x.intent.id,randomUUID())),/ACCESS_REVOKED/);
+    await assert.rejects(x.t.run(c=>x.journal(c).assertDispatchAllowed({...x.claim,token:randomUUID()},x.intent.id,attempt.id)),/ACCESS_REVOKED/);
+    await x.t.client.query(`UPDATE ${x.q}.security_sources SET state='revoked' WHERE binding_id=$1`,[x.bindingId]);
+    await assert.rejects(x.t.run(c=>x.journal(c).assertDispatchAllowed(x.claim,x.intent.id,attempt.id)),/SOURCE_NOT_AUTHORIZED/);
+    await x.t.client.query(`UPDATE ${x.q}.security_sources SET state='active' WHERE binding_id=$1`,[x.bindingId]);
+    await x.t.run(c=>x.journal(c).assertDispatchAllowed(x.claim,x.intent.id,attempt.id));
+    assert.deepEqual(await x.t.run(c=>x.journal(c).attempts(x.f.owner,x.intent.id)),before);
+    assert.equal((await x.t.run(c=>x.journal(c).intent(x.f.owner,x.intent.id))).state,'dispatching');
+    assert.equal((await x.t.client.query(`SELECT count(*)::int AS n FROM ${x.q}.action_observations`)).rows[0].n,0);
+  }finally{await x.close();}
+});

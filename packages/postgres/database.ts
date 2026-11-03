@@ -7,6 +7,7 @@ import { postgresBusinessTransaction, type PostgresRuntimeAuthority } from './ru
 import {postgresRenewWorkerLease,postgresInspectWorkerLease} from './lease-renewal.js';
 import type {WorkClaim} from '../core/store.js';
 import {postgresCleanupReleasedClaims} from './claim-release.js';
+import {postgresWorkAvailable} from './work-availability.js';
 
 /** Owns the runtime's connection pool, not a second business authority. Each
  * operation gets one client and one fenced transaction. No implicit retries. */
@@ -55,6 +56,8 @@ export class PostgresDatabase {
     return this.use(this.leasePool,client=>postgresInspectWorkerLease(client,this.schema,this.authority,fence,policy));
   }
   cleanupReleasedClaims():Promise<void>{return this.use(this.pool,client=>postgresCleanupReleasedClaims(client,this.schema,this.authority.digest));}
+  /** A false result skips one empty poll; true grants no claim or authority. */
+  workAvailable():Promise<boolean>{return this.use(this.pool,client=>postgresWorkAvailable(client,this.schema,this.authority));}
   async close():Promise<void> {
     this.closing??=Promise.all([...new Set([this.pool,...(this.leasePool?[this.leasePool]:[]),...(this.eligibilityPool?[this.eligibilityPool]:[])])].map(pool=>pool.end())).then(()=>{});
     await this.closing;

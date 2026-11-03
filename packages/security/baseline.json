@@ -3135,7 +3135,7 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "4eaa1584b87f88f946e1e86c2472f696e4c684c86d44099d9994266a3fab75f3",
+      "sourceDigest": "9704937794f512da0528712bc762f9cd07b15694bcf75b6c694fdee9caaca317",
       "channels": [
         "registered_model",
         "private_file"
@@ -4598,7 +4598,7 @@
       "currentControl": "Original accepted ports, same-component declared functions, exact source observations, ownership, freshness and independent input validation",
       "targetControl": "No guessed values, cross-task aliases, implicit conversions or authority from model text",
       "stage": "S5",
-      "sourceDigest": "b9043ec3bdb4d97709721458307addcfa9fa2dc3ab7d73886cb75b1f36112090"
+      "sourceDigest": "1b7784ceb1e8be1c069ff21cf53aa4e68d4ef45833049b2c54d70171576b0766"
     },
     {
       "id": "native-agent-decision-contract",
@@ -5879,7 +5879,7 @@
     {
       "id": "postgres-database-runtime",
       "file": "packages/postgres/database.ts",
-      "sourceDigest": "a05f81a5d1ce3574def748f4d31a49bc6eb4891e369b95a756549fb99f894eea",
+      "sourceDigest": "afa9757c78fa1465a1cf19dff79b06847292728cf5e65b6d03933d58b080856d",
       "channels": [
         "internal"
       ],
@@ -5939,7 +5939,7 @@
     {
       "id": "postgres-task-bindings",
       "file": "packages/postgres/task-bindings.ts",
-      "sourceDigest": "61910bb90f617c7aab9345100630032852d5e44f2bb8b244a580e601eb937f86",
+      "sourceDigest": "6f6a778616d9dbb537d47c301288ce501b8c650d0b5f6aeac48de33d620dd1ed",
       "channels": [
         "internal"
       ],
@@ -6011,7 +6011,7 @@
     {
       "id": "postgres-worker-store",
       "file": "packages/postgres/worker-store.ts",
-      "sourceDigest": "5d64f126fb6354e0ad94a0f0cdc3a29f305afbdd0ac8c69d6800d3d82674235e",
+      "sourceDigest": "7f423a21bdb1dee1b62c3a56a3cd2de9e490a730dbbdeb58125544dabfb73675",
       "channels": [
         "internal"
       ],
@@ -6446,7 +6446,7 @@
     {
       "id": "postgres-action-journal",
       "file": "packages/postgres/action-journal.ts",
-      "sourceDigest": "f5a9b1735cb23c07bd5bb83537628ea5a860b6e43de31805a3c827c5953809ee",
+      "sourceDigest": "8cacc3e6a0167a03e9c7de021f1c8db03a0ebbefd25bf70d474185cd139e35e8",
       "channels": [
         "internal"
       ],
@@ -6458,7 +6458,7 @@
     {
       "id": "postgres-action-authorization",
       "file": "packages/postgres/action-authorization.ts",
-      "sourceDigest": "79d1950b515bc16bc9c768458b98b4c4a85ecc4a7da22d5b436018c07cc5de67",
+      "sourceDigest": "1d8324584bd286ee376258bc441287780b2ff76a510fd78766a19451144aa248",
       "channels": [
         "internal"
       ],
@@ -6549,6 +6549,42 @@
       "content": "Independent current eligibility inspection",
       "currentControl": "Read-only READ COMMITTED current original-manager/identity/fence/policy/grant checks with fixed expiry and bounded acknowledgement; no grant issuance, renewal, data write or role/request/claim replacement",
       "targetControl": "Read-only READ COMMITTED current original-manager/identity/fence/policy/grant checks with fixed expiry and bounded acknowledgement; no grant issuance, renewal, data write or role/request/claim replacement",
+      "stage": "S5"
+    },
+    {
+      "id": "model-dispatch-context",
+      "file": "packages/core/model-dispatch-context.ts",
+      "sourceDigest": "974bd901283544991e0edce5e9eb748898aedf5cc66e11472dd9d392e91d0e1c",
+      "channels": [
+        "internal"
+      ],
+      "content": "Host-owned current model dispatch guards",
+      "currentControl": "Exact admitted model channel; awaited current authority and source checks after CLI preparation, before prompt dispatch; nested scopes retain outer controls; no credential or request-provided callback",
+      "targetControl": "Exact admitted model channel; awaited current authority and source checks after CLI preparation, before prompt dispatch; nested scopes retain outer controls; no credential or request-provided callback",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-source-projection",
+      "file": "packages/postgres/source-projection.ts",
+      "sourceDigest": "e6a665924497b1fb6c3e2578405f2e0b441ef58b04ba5a0d1b49fd7e36da0bc2",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL checked source mapper and immutable origins",
+      "currentControl": "Current original Worker claim, fixed source configuration, parent and output fields; checked reads, inherited submission and actual influence; single-use transaction-local binder permits, atomic projections and immutable origins; no private or raw read fallback",
+      "targetControl": "Current original Worker claim, fixed source configuration, parent and output fields; checked reads, inherited submission and actual influence; single-use transaction-local binder permits, atomic projections and immutable origins; no private or raw read fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-work-availability",
+      "file": "packages/postgres/work-availability.ts",
+      "sourceDigest": "579bceb9a9cadbb3698e1c843cc75bc9ef3078c13e1bfba8b0028e0c66556af4",
+      "channels": [
+        "internal"
+      ],
+      "content": "Non-authoritative PostgreSQL queue scheduling hint",
+      "currentControl": "One uncached read-only autocommit statement outside the business lock; exact runtime metadata; reliable false skips one empty poll, true grants no claim or permission; errors discard the owned client and never masquerade as empty work",
+      "targetControl": "One uncached read-only autocommit statement outside the business lock; exact runtime metadata; reliable false skips one empty poll, true grants no claim or permission; errors discard the owned client and never masquerade as empty work",
       "stage": "S5"
     }
   ]
