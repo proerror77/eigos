@@ -1,6 +1,6 @@
 # 合成酒店套餐 Ontology 与优化器
 
-这是独立、无网络、只读的测试算法。它使用真实的 `OntologyModel` 和 `OntologyObjectStore`，运行在 `eigos.synthetic.hotel-packages` 测试命名空间，不改变当前生产内核、不发布或激活正式本体，也不注册线上 MCP/A2A 能力。所有输入和输出均为 synthetic，`bookable=false`、`executed=false`。
+这是独立、无网络的测试算法。它使用真实的 `OntologyModel` 和 `OntologyObjectStore`，运行在 `eigos.synthetic.hotel-packages` 测试命名空间。Pipeline 演示仅在 `:memory:` 数据库内发布/激活测试定义和 intake，不改变当前生产内核或正式运行权威，也不注册线上 MCP/A2A 能力。优化与独立重放是只读的；所有输入和输出均为 synthetic，`bookable=false`、`executed=false`。
 
 ```mermaid
 flowchart LR
@@ -16,16 +16,40 @@ flowchart LR
   D --> SPEC
 ```
 
-Pipeline 未来将有权限的真实来源映射为这些实体/规格/观察，再交给优化函数；Pipeline 字段映射本身不负责价格求解。当前没有真实 SKU、房型或库存映射，不能把搜索起价、营销文字或体验模式响应直接送入测试工厂并声称获得真实最优价。
+Pipeline 已通过合成来源接通这些实体/规格/观察，再交给优化函数；Pipeline 字段映射本身不负责价格求解。当前没有真实 SKU、房型或库存映射，不能把搜索起价、营销文字或体验模式响应直接送入测试工厂并声称获得真实最优价。
 
 ## 运行
 
 ```sh
 node --import tsx packages/ontology/hotel-package-optimization/demo.ts
 node --import tsx --test tests/hotel-package-optimizer*.test.ts
+# 完整来源资料 → Pipeline → Ontology → 优化 → 独立重放
+node --import tsx packages/ontology/hotel-package-optimization/pipeline-demo.ts
+node --import tsx --test tests/hotel-package-pipeline.test.ts
 ```
 
 演示金额均为合成：同酒店、同房型和人数下，房间 599 元、早餐 60 元、晚餐 120 元、套餐 699 元。需要晚餐时套餐比拆买 779 元便宜；只需早餐时拆买 659 元更便宜。
+
+## 已接通的测试 Pipeline
+
+`syntheticPackageFeed` 提供带原生 ID、原生版本、来源账户、观察时间、条款和关系外键的合成来源记录。`createSyntheticPackagePipeline` 不调用旧测试工厂，也不继承其默认价格、库存、人数或资格。
+
+```text
+合成原始记录（14 类固定映射）
+  → DefinitionStore 草稿 / Pipeline mapping_test / 不可变测试 release
+  → PipelineFactStore 在同一事务中映射字段、原生身份和关系
+  → 发布模型下的 OntologyObjectStore
+  → 有界价格和组合路径搜索
+  → 重新读取当前事实的独立可行性/总价/前置顺序校验
+```
+
+来源记录使用 `sourceKey`、`label`、`pricing`、`stock`、`terms`、`relations` 等字段；固定 intake 明确映射到本体属性与关系。身份由 owner/source/account/type/native-ID 决定，标题、价格和事件时间不参与身份。发布时的合成字段样例只验证映射和类型契约；单独的回归测试检验映射后的 SKU/房型身份、预期价格和步骤顺序。动作声明为 `definition_only`，不伪造 Worker 验收或供应商可用性证明。
+
+首次导入按关系依赖排序；缺少目标、循环、同批重复原生身份或缺失必要字段会在写入前失败。一个资料批次原子提交。后续可通过 `study.ingest(feed)` 提交部分更新：省略某条记录表示本次没有更新，并不表示删除。原生版本与不可变样本历史处理重复、乱序和冲突；完整目录范围由 study 记录明确声明。
+
+优化和校验同时固定 release、intake、事实版本和语义快照，检查映射验证是否仍有效、来源是否变化/撤销，以及每个读取事实是否 fresh、synthetic 且属于同一个来源。冲突或过期不能借用旧的 canonical 属性继续通过校验。报价更改后，旧方案拒绝，重新优化可从套餐切换到拆买，SKU 和物理房型身份保持不变。
+
+完整演示还覆盖“500 元房间 + 200 元晚餐”与“600 元房间解锁 20 元晚餐”的比较，后者返回 620 元，并要求优惠晚餐的购买步骤依赖资格房间的模拟兑换步骤。全部步骤仅为模拟。
 
 ## 算法与状态
 
@@ -49,3 +73,4 @@ node --import tsx --test tests/hotel-package-optimizer*.test.ts
 - `allowSplitStay=false` 要求一个单位覆盖该房间整个住宿期；允许拆单也不证明酒店能提供同一物理房间或合并预约。
 - 可选权益仅是已含在固定套餐价中的兑换选择；付费附加服务应作为另一个明确报价 SKU。
 - 合成工厂的默认值有意构造“已知”的假设，不能用于采纳供应商数据。正式使用仍需来源映射、权限、资格和独立日期验价/验库存。
+- Pipeline 测试来源中的 `variantRevision` 是显式构造的 canonical 对象 revision 绑定，`skuVersion` 则绑定来源规格版本；真实适配器需要从发布本体解析当前对象 revision，不能让供应商猜测。正式来源还需独立的完整性、账户权限和语义映射验收，不能只把 `environment` 改为 live。

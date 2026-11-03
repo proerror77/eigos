@@ -2,16 +2,16 @@ import { digest } from '../../core/delegation.js';
 import type { ObjectRef } from '../model.js';
 import type { OntologyObjectStore } from '../object-store.js';
 import type { OptimizationResult, Plan, Realization } from './contracts.js';
-import { day, nightsBetween, readStudy, refKey, sameRef, type Study } from './graph.js';
+import { day, nightsBetween, readStudy, refKey, sameRef, type Study, type PipelineStudyContext } from './graph.js';
 
 export interface PlanVerification { accepted:boolean; evidenceLevel:'synthetic'; bookable:false; optimalityReplayed:false; reasons:string[] }
 /** Replays the supplied plan against current ontology facts, independently of
  * candidate generation and DFS. It verifies feasibility/cost/path, not that DFS
  * explored every alternative; small-catalog optimality has a separate oracle. */
-export function verifySyntheticHotelPackagePlan(graph:OntologyObjectStore,owner:string,result:OptimizationResult):PlanVerification{
+export function verifySyntheticHotelPackagePlan(graph:OntologyObjectStore,owner:string,result:OptimizationResult,pipeline?:PipelineStudyContext):PlanVerification{
   const reasons:string[]=[],reject=(message:string)=>{if(!reasons.includes(message))reasons.push(message);};
   try{
-    const study=readStudy(graph,owner,result.request);
+    const study=readStudy(graph,owner,result.request,pipeline);
     if(result.evidenceLevel!=='synthetic'||result.bookable!==false||result.executed!==false)reject('synthetic_boundary');
     if(result.modelDigest!==study.modelDigest||result.inputDigest!==study.inputDigest)reject('input_snapshot_changed');
     if(result.status==='optimal'&&(!result.search.complete||!result.search.catalogComplete||result.search.unknownCandidates))reject('unsupported_optimality_claim');

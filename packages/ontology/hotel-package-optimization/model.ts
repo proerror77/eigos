@@ -7,7 +7,7 @@ export const PACKAGE_STUDY_ONTOLOGY = 'eigos.synthetic.hotel-packages';
 export const PACKAGE_STUDY_FUNCTION = 'optimizeSyntheticHotelPackages';
 const p = (kind: PropertyDefinition['kind'], schema: z.ZodType): PropertyDefinition => ({kind,schema,required:true,description:'Explicit synthetic domain fact; never provider evidence or execution authority',source:'Synthetic hotel-package optimization study'});
 const object = (id: string, data: z.ZodType): ObjectTypeDefinition => ({id,version:'1',name:id,aliases:[id],description:'Synthetic package domain object; not part of the active production kernel',primaryKey:'id',titleKey:'displayTitle',properties:{id:p('string',text),displayTitle:p('string',text),data:p('struct',data)}});
-const objects = [
+export const packageStudyObjects = [
   object('HotelPackageStudy',z.strictObject({datasetId:text,evidenceLevel:z.literal('synthetic'),completeness:z.enum(['complete','partial'])})),
   object('HotelPackageRequest',requestSchema), object('PackageProduct',z.strictObject({sourceProductId:text})),
   object('PackageSkuSpecification',skuSchema), object('PackageComponent',componentSchema), object('PackageDatedQuote',quoteSchema),
@@ -47,7 +47,7 @@ let cached: OntologyModel | undefined;
 export function createPackageStudyModel(): OntologyModel {
   if (!cached) {
     const base=currentKernelImplementation().definitionSnapshot();
-    cached=new OntologyModel({...base,id:PACKAGE_STUDY_ONTOLOGY,version:'1',objects:[...base.objects,...objects],links:[...base.links,...packageStudyLinks],functions:[...base.functions,{id:PACKAGE_STUDY_FUNCTION,version:'1',inputTypes:['HotelPackageRequest'],description:'Read-only bounded price and composition-path optimization over explicit synthetic facts; not bookability or authorization'}]});
+    cached=new OntologyModel({...base,id:PACKAGE_STUDY_ONTOLOGY,version:'1',objects:[...base.objects,...packageStudyObjects],links:[...base.links,...packageStudyLinks],functions:[...base.functions,{id:PACKAGE_STUDY_FUNCTION,version:'1',inputTypes:['HotelPackageRequest'],description:'Read-only bounded price and composition-path optimization over explicit synthetic facts; not bookability or authorization'}]});
   }
   return cached;
 }

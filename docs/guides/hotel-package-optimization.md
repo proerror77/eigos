@@ -1,6 +1,6 @@
 # 测试酒店套餐的价格与组合路径优化
 
-当前提供独立的合成 Ontology、可运行组合优化函数、结果重放校验和测试 oracle。它不需要飞猪 API Key，不访问真实供应商，不改变正式本体和任务能力，也不下单或预约。完整说明和运行指令见[合成套餐优化器](../../packages/ontology/hotel-package-optimization/README.md)。
+当前已接通合成来源资料 → Ontology Pipeline → SKU/房型/权益/报价/库存映射 → 价格与组合路径优化 → 独立结果重放。它不需要飞猪 API Key，不访问真实供应商，不改变正式本体和任务能力，也不下单或预约。完整说明和运行指令见[合成套餐优化器](../../packages/ontology/hotel-package-optimization/README.md)。
 
 模型复用既有 `HotelProperty`、`RoomType`、`HotelRatePlan` 和 `ProductVariant`，将来源 SPU、SKU 规格版本、组合项、权益、日期报价、共享库存池及购买/兑换前置关系分别表达。价格变化不改变 SKU 身份；优化结果是内部方案，不生成供应商新 SKU。
 
@@ -8,4 +8,8 @@
 
 未知费用、模糊/起价、缺失房型关系、未验证权益数量或过期库存不会被当成 0 或可用。只对完整合成目录且完整搜索的结果声明目录内最优；否则保留最好已知方案与未知原因。平台推广佣金不进入用户价格目标。
 
-未来正式来源接入时，Ontology Pipeline 负责采纳有依据的 SKU/组件/报价/库存映射，随后由优化函数进行比较。不能通过把合成标志改成 live 或沿用测试工厂默认值来完成真实能力验收。
+测试 Pipeline 复用 `DefinitionStore`、`PipelineIntake`、`PipelineFactStore` 和 `OntologyObjectStore`，只在内存数据库的测试命名空间内校验、发布和激活映射。导入按来源关系排序并原子提交；重复资料幂等，乱序旧价格不会覆盖新价格，冲突、过期或映射失效会阻止旧方案通过重放。价格变更不创建新 SKU。
+
+运行完整演示：`node --import tsx packages/ontology/hotel-package-optimization/pipeline-demo.ts`。三组合成资料分别验证 699 元套餐、659 元拆买，以及 620 元前置资格优惠路径，均附来源映射摘要和独立重放结果。
+
+正式来源接入仍需有依据的 SKU/组件/报价/库存映射与账户权限。不能通过把合成标志改成 live 或沿用测试工厂默认值来完成真实能力验收。
