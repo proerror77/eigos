@@ -6,7 +6,7 @@ import type {PostgresEligibilityReference} from './eligibility-reference.js';
 import type { Client } from 'pg';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
-import { DomainError, ownerKey, requireScope, taskIdSchema, type Principal } from '../core/domain.js';
+import { DomainError, ownerKey, requireScope, taskIdSchema, type Principal,type Scope } from '../core/domain.js';
 import { accessContextSchema, agentAccessGrantSchema, securityEnvelopeSchema, taskDataGrantSchema, SECURITY_CONTRACT, POLICY_VERSION,ownerIdentitySchema,type AccessContext } from '../security/contracts.js';
 import { SecurityError } from '../security/errors.js';
 import { postgresBusinessSchema,postgresBusinessToken, postgresConstrainReadDeadline,postgresRequireLeaseAtCommit } from './runtime-transaction.js';
@@ -82,7 +82,7 @@ function freezeData<T>(input:T):T {
  * must come from trusted authentication and reviewed server configuration.
  * This is an internal admission check, not field/output authorization. All writers must use the business
  * transaction fence; callers must recheck before returning protected data. */
-async function postgresAgentAdmission(client: Client, principal: Principal, policyDigest: string,scope:'tasks:read'|'tasks:write'|'services:read') {
+async function postgresAgentAdmission(client: Client, principal: Principal, policyDigest: string,scope:Scope) {
   const schema = postgresBusinessSchema(client), q = `"${schema}"`;
   requireScope(principal,scope);
   if (!/^[a-f0-9]{64}$/.test(policyDigest)) throw new Error('Invalid PostgreSQL policy digest');
@@ -134,6 +134,16 @@ export async function postgresAgentReadAdmission(client:Client,principal:Princip
 }
 export async function postgresAgentWriteAdmission(client:Client,principal:Principal,policyDigest:string) {
   return postgresAgentAdmission(client,principal,policyDigest,'tasks:write');
+}
+/** Host-selected existing OAuth scope, never a scope supplied by request JSON.
+ * Ontology management retains the identical current actor/parent/eligibility
+ * checks without manufacturing unrelated services or task permissions. */
+export async function withPostgresAgentScope<T>(client:Client,principal:Principal,policyDigest:string,scope:Scope,
+  action:(admission:Awaited<ReturnType<typeof postgresAgentReadAdmission>>)=>Promise<T>):Promise<T>{
+  const captured=structuredClone(principal),before=await postgresAgentAdmission(client,captured,policyDigest,scope);
+  const result=await action(before),after=await postgresAgentAdmission(client,captured,policyDigest,scope);
+  if(digest(before)!==digest(after))throw new SecurityError('POLICY_CHANGED');
+  postgresConstrainReadDeadline(client,after.validUntil);return result;
 }
 export async function withPostgresAgentWrite<T>(client:Client,principal:Principal,policyDigest:string,
   action:(admission:Awaited<ReturnType<typeof postgresAgentWriteAdmission>>)=>Promise<T>):Promise<T> {
@@ -221,8 +231,23 @@ export async function postgresTaskReceiptGrant(client:Client,principal:Principal
  * Public checks still require the current signed Agent and tasks:read. */
 export async function withPostgresTaskPermissionSnapshot<T>(client:Client,principal:Principal,taskId:string,policyDigest:string,
   operation:'task.query'|'task.result.read'|'task.process',action:(admission:PostgresTaskReadAdmission)=>Promise<T>):Promise<T>{
+  const mode=operation==='task.query'?'check_query':operation==='task.result.read'?'check_result':'check_process';
+  return withTaskAdmissionSnapshot(client,principal,taskId,policyDigest,mode,action);
+}
+
+/** Actual PA processing authorization, not a public permission check and not a
+ * Worker/model identity. The value reader must still enforce fields, source,
+ * labels and its explicit PA recipient channel. Pure creation does not invent
+ * tasks:read when the original operation requires only tasks:write. */
+export async function withPostgresTaskProcessSnapshot<T>(client:Client,principal:Principal,taskId:string,policyDigest:string,
+  action:(admission:PostgresTaskReadAdmission)=>Promise<T>):Promise<T>{
+  return withTaskAdmissionSnapshot(client,principal,taskId,policyDigest,'process',action);
+}
+
+async function withTaskAdmissionSnapshot<T>(client:Client,principal:Principal,taskId:string,policyDigest:string,
+  mode:'check_query'|'check_result'|'check_process'|'process',action:(admission:PostgresTaskReadAdmission)=>Promise<T>):Promise<T>{
   if(snapshots.has(client))throw new Error('Nested PostgreSQL permission snapshots are not supported');
-  const captured=structuredClone(principal),mode=operation==='task.query'?'check_query':operation==='task.result.read'?'check_result':'check_process';
+  const captured=structuredClone(principal);
   const before=await postgresTaskGrant(client,captured,taskId,policyDigest,mode);
   const snapshot={key:snapshotKey(captured,taskId,policyDigest),admission:freezeData(structuredClone(before)),ontology:new Map<StagedKernelBuilder|undefined,Promise<ReadOntology>>()};
   snapshots.set(client,snapshot);let result:T;

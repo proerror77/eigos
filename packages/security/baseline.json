@@ -4113,7 +4113,7 @@
     {
       "id": "definition-registry",
       "file": "packages/ontology/definition-store.ts",
-      "sourceDigest": "8e846b19423ca852a3b5ad75ecbb028ac0775de3ec4ce6be561f8b1127a64614",
+      "sourceDigest": "8cb1dbe06d119f51512a21474778beca910a7fab0314e6b9a0f94c70231a4827",
       "channels": [
         "model",
         "artifact"
@@ -4306,7 +4306,7 @@
     {
       "id": "ontology-pipeline-registry",
       "file": "packages/ontology/pipeline/store.ts",
-      "sourceDigest": "e560ccd44c31ed4568f2ff80ee89b096c4eb9a4a5a4d707223db9028295f21f9",
+      "sourceDigest": "ee9db13ba4443195fadeccc4cfbea4084d0e8b1337af773ebcb959e758ed1ce0",
       "channels": [
         "sqlite",
         "dispatch"
@@ -5697,7 +5697,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "e450da9bb4d812546720a2b3c5f64de54054bf9db001e4bc084e68bc7a5ffcc9",
+      "sourceDigest": "37a1ee4bfccc7caea41b334c9812e39dde84301a20fab54d8cda39c630884396",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current identity/task admission and deadlines, frozen request-scoped read snapshots, pinned ontology, roles, labels, direct/retained evidence and current source checks",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
@@ -6779,7 +6779,7 @@
     {
       "id": "postgres-ci-groups",
       "file": "scripts/postgres-tests.mjs",
-      "sourceDigest": "5c986e7e4d676843cbca150b5e0761fe5f8b8b325e7b626bf25920b1c227df12",
+      "sourceDigest": "40d770c5976a4d916663c73cd0deefd291cac2d1907e1a654704fa7374afb543",
       "channels": [
         "internal"
       ],
@@ -7026,6 +7026,58 @@
       "content": "Backend-neutral awaited Gateway ports and lifecycle",
       "currentControl": "Same reviewed runtime authority, task/member/permission/definition ports and lifecycle; PostgreSQL startup rejects missing configured adapters rather than using SQLite or dropping routes; host ports do not execute models",
       "targetControl": "Preserve original transport, identity and output authorization semantics across storage backends",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-definition-service",
+      "file": "packages/postgres/definition-service.ts",
+      "sourceDigest": "d2d34ea9dd832c968678e360b16832e015220eedc75da94d63f5b87153a32a99",
+      "channels": [
+        "internal",
+        "ontology_metadata"
+      ],
+      "content": "Current Agent Ontology scope and namespace management",
+      "currentControl": "Exact original transaction, owner, published refs and guarded runtime; explicit scope and namespace permission remain at the service boundary; immutable release history, CAS generations, complete bounded facts/proofs and rollback; unknown or expired evidence cannot certify publication or execution",
+      "targetControl": "Preserve original task pins and current source/role/recipient authorization; no implicit activation or fake evidence",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-definition-store",
+      "file": "packages/postgres/definition-store.ts",
+      "sourceDigest": "e76e63077aabe7f1a2fc98590b3d5deddbc422ba3728aff31c60f5af6387566a",
+      "channels": [
+        "internal",
+        "ontology_metadata"
+      ],
+      "content": "Serialized PostgreSQL immutable definition publication and explicit activation",
+      "currentControl": "Exact original transaction, owner, published refs and guarded runtime; explicit scope and namespace permission remain at the service boundary; immutable release history, CAS generations, complete bounded facts/proofs and rollback; unknown or expired evidence cannot certify publication or execution",
+      "targetControl": "Preserve original task pins and current source/role/recipient authorization; no implicit activation or fake evidence",
+      "stage": "S5"
+    },
+    {
+      "id": "definition-validation",
+      "file": "packages/ontology/definition-validation.ts",
+      "sourceDigest": "5aba90283804391f290868ff01470b3edfd2e4efc5cebb6cb06683fba0d8d8ed",
+      "channels": [
+        "internal",
+        "ontology_metadata"
+      ],
+      "content": "Shared complete definition compatibility validation",
+      "currentControl": "Exact original transaction, owner, published refs and guarded runtime; explicit scope and namespace permission remain at the service boundary; immutable release history, CAS generations, complete bounded facts/proofs and rollback; unknown or expired evidence cannot certify publication or execution",
+      "targetControl": "Preserve original task pins and current source/role/recipient authorization; no implicit activation or fake evidence",
+      "stage": "S5"
+    },
+    {
+      "id": "pipeline-validation",
+      "file": "packages/ontology/pipeline/validation.ts",
+      "sourceDigest": "04c494f1f7df9fba86c3572ca0e36033d537eb3f9282e1d281227372770f7f94",
+      "channels": [
+        "internal",
+        "ontology_metadata"
+      ],
+      "content": "Shared Pipeline proof, mapping and acceptance rules",
+      "currentControl": "Exact original transaction, owner, published refs and guarded runtime; explicit scope and namespace permission remain at the service boundary; immutable release history, CAS generations, complete bounded facts/proofs and rollback; unknown or expired evidence cannot certify publication or execution",
+      "targetControl": "Preserve original task pins and current source/role/recipient authorization; no implicit activation or fake evidence",
       "stage": "S5"
     }
   ]

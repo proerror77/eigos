@@ -8,7 +8,7 @@ import { assertBusinessTransaction, businessTransaction } from '../core/transact
 import { definitionKindSchema, ontologyIdSchema, ontologyReleaseRefSchema, parseOntologyDocument, resourceIdSchema,
   type DefinitionKind, type OntologyDocument, type OntologyReleaseRef, type SerializableAction, type SerializableInterface,
   type SerializableLink, type SerializableObjectType } from './definition-contracts.js';
-import { compileOntologyDocument, normalizeOntologyDocument, validateBusinessDefinitionExtensions, type TrustedDefinitionRegistry } from './model-compiler.js';
+import { compileOntologyDocument, normalizeOntologyDocument, type TrustedDefinitionRegistry } from './model-compiler.js';
 import { createCurrentKernelDefinition, createSingleReadKernelDefinition, createSeedDefinition, createRollingGoKernelDefinition, createTaskClosureKernelDefinition, createBusinessFactsKernelDefinition, createPersonalContextKernelDefinition } from './seed-definition.js';
 import { SINGLE_READ_PREDECESSOR } from './single-read-kernel.js';
 import { personalObjects, personalActions, personalLinks, PERSONAL_CONTEXT_PREDECESSOR } from './personal-context-kernel.js';
@@ -17,6 +17,7 @@ import type { OntologyModel } from './model.js';
 import { rideEstimateObjects, rideEstimateActions, rideEstimateFunctions } from './ride-estimate.js';
 import { PipelineStore } from './pipeline/store.js';
 import { compatibleDefinitionModels } from './definition-compatibility.js';
+import {definitionChanges,definitionNameCategory,invalidDefinitionValidation,validateDefinitionSnapshot} from './definition-validation.js';
 
 export type DefinitionResource = SerializableObjectType | SerializableInterface | SerializableLink | SerializableAction;
 export interface DefinitionEntry { kind: DefinitionKind; definition: DefinitionResource }
@@ -498,83 +499,27 @@ export class DefinitionStore {
     });
   }
   changes(draft: DefinitionDraft): DefinitionChange[] {
-    const before = new Map(entries(this.resolve(draft.base).document).map(entry => [entry.definition.resourceId, entry]));
-    const after = new Map(entries(draft.document).map(entry => [entry.definition.resourceId, entry]));
-    return [...new Set([...before.keys(), ...after.keys()])].flatMap(resourceId => {
-      const old = before.get(resourceId), next = after.get(resourceId), item = next ?? old!;
-      if (old && next && digest(old.definition) === digest(next.definition)) return [];
-      const fields = old && next ? [...new Set([...Object.keys(old.definition), ...Object.keys(next.definition)])].filter(key => digest((old.definition as unknown as Record<string, unknown>)[key] ?? null) !== digest((next.definition as unknown as Record<string, unknown>)[key] ?? null)) : [];
-      return [{ kind: item.kind, resourceId, id: item.definition.id, change: !old ? 'added' as const : !next ? 'retired' as const : 'modified' as const, fields }];
-    });
+    return definitionChanges(this.resolve(draft.base).document,draft.document);
   }
   validate(draftId: string): DefinitionValidation {
-    const draft = this.draft(draftId), issues: DefinitionValidation['issues'] = [];
-    if (draft.status !== 'open') issues.push({ code: 'draft_closed', message: 'Only an open draft can be validated for publication' });
-    let document = draft.document, unboundSourceFields: DefinitionValidation['unboundSourceFields'] = [], migrationRequired = false;
+    const draft=this.draft(draftId);let document=draft.document;
     try {
-      document = normalizeOntologyDocument(document);
-      const model = compiledModel(document, this.registry), base = this.resolve(draft.base);
-      issues.push(...this.pipeline.validateDocument(document, model));
-      if (document.actions.some(action => action.implementation?.kind === 'declarative') && !model.properties('Authorization').environment?.schema.safeParse('managed').success) {
-        issues.push({ code: 'incompatible_kernel', message: 'Declarative actions require a kernel supporting managed authorization; activate a compatible current kernel before publishing these actions' });
+      document=normalizeOntologyDocument(document);
+      const model=compiledModel(document,this.registry),base=this.resolve(draft.base),changes=definitionChanges(base.document,document);
+      const pipelineIssues=this.pipeline.validateDocument(document,model),names=new Map<string,{resource_id:unknown;kind:unknown}|undefined>();
+      const canonicalGeneratedLinks=new Set<string>(),objects=new Map<string,{items:Record<string,unknown>[];overflow:boolean}>(),linkPresence=new Map<string,boolean>();
+      for(const change of changes){
+        const lock=this.db.prepare('SELECT * FROM ontology_definition_names WHERE ontology_id=? AND category=? AND api_name=?').get(draft.ontologyId,definitionNameCategory(change.kind),change.id);
+        names.set(JSON.stringify([definitionNameCategory(change.kind),change.id]),lock as {resource_id:unknown;kind:unknown}|undefined);
+        if(lock&&change.change==='added'){
+          const restored=document.links.find(link=>link.resourceId===change.resourceId);
+          if(change.kind==='link'&&change.resourceId.startsWith('generated:execution-link:')&&restored&&this.db.prepare('SELECT 1 FROM ontology_definition_revisions WHERE ontology_id=? AND resource_id=? AND kind=? AND digest=?').get(draft.ontologyId,change.resourceId,'link',digest(restored)))canonicalGeneratedLinks.add(JSON.stringify([change.resourceId,digest(restored)]));
+        }
+        if(change.kind==='object'&&change.change!=='added')objects.set(change.id,this.instanceRows(draft.ontologyId,change.id));
+        if(change.kind==='link'&&change.change==='retired')linkPresence.set(change.id,this.linkRows(draft.ontologyId,change.id).length>0);
       }
-      unboundSourceFields = validateBusinessDefinitionExtensions(base.document, document).unboundSourceFields;
-      for (const change of this.changes({ ...draft, document })) {
-        const lock = this.db.prepare('SELECT * FROM ontology_definition_names WHERE ontology_id=? AND category=? AND api_name=?').get(draft.ontologyId, category(change.kind), change.id);
-        if (lock && (lock.resource_id !== change.resourceId || lock.kind !== change.kind)) issues.push({ code: 'identity_conflict', message: `Published API identity ${change.id} cannot be reused` });
-        else if (lock && change.change === 'added') {
-          const restored = document.links.find(link => link.resourceId === change.resourceId);
-          const canonicalGeneratedLink = change.kind === 'link' && change.resourceId.startsWith('generated:execution-link:') && restored
-            && this.db.prepare('SELECT 1 FROM ontology_definition_revisions WHERE ontology_id=? AND resource_id=? AND kind=? AND digest=?').get(draft.ontologyId, change.resourceId, 'link', digest(restored));
-          if (!canonicalGeneratedLink) issues.push({ code: 'retired_identity', message: `Retired API identity ${change.id} cannot be reintroduced by editing; activate a compatible historical release instead` });
-        }
-        if (change.kind === 'object' && change.change !== 'added') {
-          const oldType = base.model.object(change.id), next = document.objects.find(value => value.id === change.id);
-          const changedIdentity = !!next && (next.primaryKey !== oldType.primaryKey || next.titleKey !== oldType.titleKey);
-          const rows = this.instanceRows(draft.ontologyId, change.id);
-          if (changedIdentity || rows.overflow) migrationRequired = true;
-          for (const row of rows.items) {
-            if (!next) { migrationRequired = true; break; }
-            const properties = JSON.parse(String(row.body)).properties;
-            try { if (digest(model.parseProperties(change.id, properties)) !== digest(properties)) migrationRequired = true; }
-            catch { migrationRequired = true; }
-          }
-          // Narrowing or source/authority changes need an explicit migration
-          // even if today's sample has no violating value.
-          if (next && !this.additiveObject(base.document.objects.find(value => value.id === change.id)!, next)) migrationRequired = true;
-        }
-        if (change.kind === 'link' && change.change !== 'added') {
-          const next = document.links.find(value => value.id === change.id), old = base.document.links.find(value => value.id === change.id)!;
-          if (next ? digest({ from: old.from, to: old.to, writePolicy: old.writePolicy }) !== digest({ from: next.from, to: next.to, writePolicy: next.writePolicy }) : this.linkRows(draft.ontologyId, change.id).length > 0) migrationRequired = true;
-        }
-        if (change.kind === 'interface' && change.change === 'modified') {
-          const old = base.document.interfaces.find(value => value.id === change.id)!, next = document.interfaces.find(value => value.id === change.id)!;
-          if (!this.additiveInterface(old, next)) migrationRequired = true;
-        }
-        if (change.change === 'retired' && this.hasInflightTasks(draft.ontologyId)) migrationRequired = true;
-      }
-      if (migrationRequired) issues.push({ code: 'migration_required', message: 'This change narrows, retires or changes existing identity/data semantics; supply an explicit compatible migration before activation' });
-      const namespace = this.namespace(draft.ontologyId);
-      if (namespace.generation !== draft.baseGeneration || digest(namespace.active) !== digest(draft.base)) issues.push({ code: 'base_changed', message: 'Active ontology changed; create a fresh draft and resolve the diff' });
-    } catch (error) { issues.push({ code: 'invalid_definition', message: error instanceof Error ? error.message : 'Definition validation failed' }); }
-    return { valid: !issues.length && draft.status === 'open', draftId, revision: draft.revision, documentDigest: digest(document), changes: this.changes({ ...draft, document }), issues, migrationRequired, unboundSourceFields,
-      counts: { objects: document.objects.length, interfaces: document.interfaces.length, links: document.links.length, actions: document.actions.length } };
-  }
-  private additiveObject(old: SerializableObjectType, next: SerializableObjectType): boolean {
-    if (old.id !== next.id || old.resourceId !== next.resourceId || old.primaryKey !== next.primaryKey || old.titleKey !== next.titleKey || old.writePolicy !== next.writePolicy || digest(old.interfaces ?? []) !== digest(next.interfaces ?? [])) return false;
-    if (Object.entries(old.properties).some(([key, property]) => !next.properties[key] || digest(property) !== digest(next.properties[key]))) return false;
-    return Object.entries(next.properties).filter(([key]) => !Object.hasOwn(old.properties, key)).every(([, property]) => !property.required && !property.derived);
-  }
-  private additiveInterface(old: SerializableInterface, next: SerializableInterface): boolean {
-    if (digest(old.parents ?? []) !== digest(next.parents ?? [])) return false;
-    if (Object.entries(old.properties).some(([name, property]) => !next.properties[name] || digest(property) !== digest(next.properties[name]) || (old.optionalProperties ?? []).includes(name) !== (next.optionalProperties ?? []).includes(name))) return false;
-    if (Object.keys(next.properties).some(name => !Object.hasOwn(old.properties, name) && !(next.optionalProperties ?? []).includes(name))) return false;
-    for (const key of ['links', 'actions'] as const) {
-      const identity = (item: { name?: string; id?: string }) => item.name ?? item.id;
-      if ((old[key] ?? []).some(item => !(next[key] ?? []).some(candidate => identity(candidate) === identity(item) && digest(candidate) === digest(item)))) return false;
-      if ((next[key] ?? []).some(item => !(old[key] ?? []).some(previous => identity(previous) === identity(item)) && !item.optional)) return false;
-    }
-    return true;
+      return validateDefinitionSnapshot(draft,{document,model,base,namespace:this.namespace(draft.ontologyId),pipelineIssues,names,canonicalGeneratedLinks,objects,linkPresence,hasInflightTasks:changes.some(change=>change.change==='retired')&&this.hasInflightTasks(draft.ontologyId)});
+    }catch(error){return invalidDefinitionValidation(draft,document,error,this.changes({...draft,document}));}
   }
   private instanceRows(ontologyId: string, type: string): { items: Record<string, unknown>[]; overflow: boolean } {
     const scoped = ontologyId !== DEFAULT_ONTOLOGY, table = scoped ? 'ontology_scoped_objects' : 'ontology_objects';
