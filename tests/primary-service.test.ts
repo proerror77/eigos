@@ -46,6 +46,17 @@ test('Linux primary refuses missing lingering, another system authority and unav
   assert.throws(() => primaryService(input, failed).isLoaded(), /determine/);
 });
 
+test('managed cloud login runs before primary and uses one locked refresh owner with a timer', () => {
+  const f = runner(), manager = primaryService({ ...input, loginConfig: '/home/eigos/.local/share/eigos/primary/login.json' }, f.run);
+  assert(manager.render().includes('Requires=com.eigos.primary.login.service'));
+  assert(manager.render().includes('After=com.eigos.primary.login.service'));
+  assert(manager.login!.service.includes('"/usr/bin/flock" "--nonblock"'));
+  assert(manager.login!.service.includes('TimeoutStartSec=60s'));
+  assert(manager.login!.timer.includes('OnUnitActiveSec=5min'));
+  manager.start(); assert(f.calls.some(call => call.args.join(' ') === '--user start com.eigos.primary.login.timer'));
+  assert.throws(() => primaryService({ ...input, platform: 'darwin', loginConfig: '/private/login.json' }), /systemd Linux/);
+});
+
 test('systemd literals cannot expand environment/specifiers or inject another unit directive', () => {
   const manager = primaryService({ ...input, release: '/home/eigos/release %i $ROLE "quoted"' }, runner().run);
   const text = manager.render();
@@ -59,9 +70,11 @@ test('the actual Linux systemd parser accepts literal paths separately from comm
   const root = mkdtempSync(join(tmpdir(), 'eigos-unit-parser-')); t.after(() => rmSync(root, { recursive: true, force: true }));
   const release = join(root, 'release %i $ROLE "东京"'), runtime = join(root, 'private %i $ROLE "东京"');
   mkdirSync(release); mkdirSync(runtime);
-  const manager = primaryService({ ...input, release, runtime, node: process.execPath, modelBinary: process.execPath });
+  const manager = primaryService({ ...input, release, runtime, node: process.execPath, modelBinary: process.execPath, loginConfig: join(runtime, 'login.json') });
   const unit = join(root, 'com.eigos.primary.service'); writeFileSync(unit, manager.render());
-  const result = spawnSync('systemd-analyze', ['verify', '--man=no', unit], { encoding: 'utf8' });
+  const loginUnit = join(root, 'com.eigos.primary.login.service'), loginTimer = join(root, 'com.eigos.primary.login.timer');
+  writeFileSync(loginUnit, manager.login!.service); writeFileSync(loginTimer, manager.login!.timer);
+  const result = spawnSync('systemd-analyze', ['verify', '--man=no', unit, loginUnit, loginTimer], { encoding: 'utf8' });
   if (result.error && 'code' in result.error && result.error.code === 'ENOENT') { t.skip('systemd-analyze is unavailable'); return; }
   assert.equal(result.status, 0, result.stderr);
   assert(!result.stderr.includes('ignoring'), result.stderr);

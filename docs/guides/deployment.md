@@ -65,6 +65,12 @@ systemctl --user status com.eigos.primary.service
 
 Harness 的 GPT OAuth 文件仅消费当前 access token。原登录是唯一 refresh 写入方；正式切换前必须明确登录维护方和私密副本更新方式，不能把一次复制视为长期有效的无人值守凭据。部署器不会替换模型接收方许可。若正式库没有当前 Harness 通道，须先完成独立授权流程，不能为通过部署预检自动创建。
 
+云端可以使用独立的原生 Codex 登录维护此副本。安装 `@openai/codex@0.164.0`，在该主机专用的私有 `CODEX_HOME` 完成一次 ChatGPT 登录；不要复制仍由 Mac 使用的 refresh 凭据。私有 `--login-config` JSON 指定 `version: 1`、`codexBin`、`codexHome`、`credentialFile`，两个数据目录都必须位于该用户的 primary 运行目录内；`credentialFile` 必须与 `EIGOS_HARNESS_CREDENTIAL_FILE` 一致，且不能是原生 `auth.json`。
+
+先运行 `node scripts/refresh-harness-login.mjs --config /absolute/private/login.json` 生成只含 access token 的副本，再给部署预览及应用命令加相同的 `--login-config /absolute/private/login.json`。原生 Codex 是唯一 refresh 拥有方；更新通过 `account/read {refreshToken:true}` 完成，不创建模型回合。使用 [官方认证流程](https://learn.chatgpt.com/docs/auth)和[原生认证 RPC](https://learn.chatgpt.com/docs/app-server#authentication)。
+
+安装器增加 `com.eigos.primary.login.service` 与对应 timer。主实例启动依赖一次成功的登录检查；timer 每五分钟检查，仅在访问令牌不足十分钟时刷新。`flock` 保证刷新单位只持有一个写入者，输出以 `0600` 原子替换，失败保留上一次完整副本，不切换模型。不要同时让其他 CLI 使用该专用登录目录；人工重新登录前先停 timer。登录缓存不纳入应用回滚，不能恢复已经轮换失效的 refresh token。需要强制验证续期时，在相同的 `login-refresh.lock` 下运行刷新脚本的 `--force`，不要绕过锁并发执行。
+
 ## 将已统一的 Mac primary 搬到 Linux
 
 `consolidate-runtime` 用于尚未统一的历史库，不能再次处理已有 primary。搬迁使用 `relocate-primary`；源和目标之间始终只允许一个正式写入方。以下步骤是操作流程，执行预览不会自动切换生产。
@@ -79,7 +85,7 @@ node scripts/relocate-primary.mjs --input /absolute/private/relocation-input.jso
 node scripts/relocate-primary.mjs --input /absolute/private/relocation-input.json --apply --expected-source-digest <reviewed-sourceDigest>
 ```
 
-5. 输出保留原任务 body、外部操作键、不可变本体 release、会员和原授权到期时间；authority ID、issuer 和 ingress 保持不变，只将目标路径和 authority revision 前进一版，对应策略 fence revision 前进一次。只在目标副本追加不可变搬迁收据。活动领取、恢复、未解决 fence、开放定义草稿或无法与会员身份对应的当前许可会阻止搬迁。工具不创建权限、不重放操作，也不启动服务。
+5. 输出保留原任务 body、外部操作键、不可变本体 release、会员和原授权到期时间；authority ID、issuer 和 ingress 保持不变，只将目标路径和 authority revision 前进一版，对应策略 fence revision 前进一次。只在目标副本追加不可变搬迁收据。活动领取、恢复、未解决 fence 或无法与会员身份对应的当前许可会阻止搬迁。已经释放租约后保留的历史领取摘要映射原样保存，不会复活旧领取。开放定义草稿默认阻止搬迁；审核关闭副本后可在预览与应用时都加 `--preserve-unpublished`，将其计数和摘要纳入原预览，原样保留正文、revision 和 base release，不发布、不丢弃、不自动 rebase。工具不创建权限、不重放操作，也不启动服务。
 6. 私有 `server.env` 指向输出的两库与 `authority.json`，逐项处理主机相关绝对路径和供应商私有配置；不要整份照搬 Mac 路径。按上节预检、安装。确认源仍禁用后才切换既有反向代理；随后运行部署命令加 `--apply --verify-ingresses`，检查每个登记入口的 authority／build 摘要、Agent Card、OAuth 发现及 MCP／A2A 未认证拒绝。该选项不登录、不批准权限、不创建任务。
 
 真实切换还须用已授权的原任务从 MCP 和 A2A 独立回读，并验证安装隔离、取消／恢复和原操作身份。入口检查不代替这些业务数据验收。目的端接受写入后禁止直接恢复旧快照；需要迁回时再次排空并搬运最新关闭副本。ECS 的合成数据演练只证明 Linux 接线，不代表 Mac 正式数据、前端或 PostgreSQL 已经迁移。

@@ -12,6 +12,8 @@ export interface PrimaryRelocationInput {
   membershipSnapshot: string;
   sourceAuthority: RuntimeAuthority;
   targetDirectory: string;
+  /** Explicitly retain frozen unpublished work without publishing/rebasing it. */
+  preserveUnpublished?: boolean;
 }
 const fileHash = (path: string): string => {
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -53,17 +55,20 @@ function inspect(input: PrimaryRelocationInput, now = Date.now()) {
     if (!runtimeAuthorityMatches(business, source)) throw new Error('Snapshot authority differs from the reviewed source descriptor');
     const settings = business.prepare('SELECT mode,version FROM security_settings WHERE slot=1').get();
     if (settings?.mode !== 'foundation' || settings.version !== 2) throw new Error('An existing Foundation v2 source is required');
-    for (const name of ['jobs', 'ontology_definition_releases', 'security_policy', 'security_policy_definitions']) if (!table(business, name)) throw new Error('The business snapshot is incomplete');
+    for (const name of ['jobs', 'work_claims', 'ontology_definition_releases', 'security_policy', 'security_policy_definitions']) if (!table(business, name)) throw new Error('The business snapshot is incomplete');
     for (const name of ['members', 'agent_registrations']) if (!table(members, name)) throw new Error('The membership snapshot is incomplete');
     if (table(business, 'work_claims') && business.prepare('SELECT 1 FROM work_claims LIMIT 1').get()
-      || table(business, 'runtime_work_claims') && business.prepare('SELECT 1 FROM runtime_work_claims LIMIT 1').get()
       || table(business, 'security_manager') && business.prepare('SELECT 1 FROM security_manager WHERE expires_at>?').get(now)
       || table(business, 'network_lease') && business.prepare('SELECT 1 FROM network_lease WHERE expires>?').get(now)
       || table(business, 'messaging_node_leases') && business.prepare('SELECT 1 FROM messaging_node_leases WHERE expires_at>?').get(now)
       || table(business, 'security_recoveries') && business.prepare("SELECT 1 FROM security_recoveries WHERE state='running'").get()
-      || table(business, 'security_fences') && business.prepare("SELECT 1 FROM security_fences WHERE state NOT IN ('cleared','applied')").get()
-      || table(business, 'ontology_definition_drafts') && business.prepare("SELECT 1 FROM ontology_definition_drafts WHERE status='open'").get())
-      throw new Error('Stop source writers and resolve active claims, recovery, leases, fences and drafts before relocation');
+      || table(business, 'security_fences') && business.prepare("SELECT 1 FROM security_fences WHERE state NOT IN ('cleared','applied')").get())
+      throw new Error('Stop source writers and resolve active claims, recovery, leases and fences before relocation');
+    // release() removes the real lease; its runtime digest mapping remains
+    // until the next claim. Preserve that history, never treat it as a lease.
+    const historicalClaimMappings = table(business, 'runtime_work_claims') ? Number(business.prepare('SELECT count(*) n FROM runtime_work_claims').get()?.n) : 0;
+    const drafts = table(business, 'ontology_definition_drafts') ? business.prepare("SELECT id,revision,body FROM ontology_definition_drafts WHERE status='open' ORDER BY id").all() : [];
+    if (drafts.length && !input.preserveUnpublished) throw new Error('Review frozen open drafts and explicitly preserve unpublished work before relocation');
     const member = members.prepare('SELECT issuer,tenant,subject FROM members WHERE id=?');
     const identity = (owner: unknown, memberId: unknown) => {
       const row = member.get(String(memberId));
@@ -86,6 +91,9 @@ function inspect(input: PrimaryRelocationInput, now = Date.now()) {
       taskCount: Number(business.prepare('SELECT count(*) n FROM jobs').get()?.n),
       memberCount: Number(members.prepare('SELECT count(*) n FROM members').get()?.n),
       policyDigest, policyRevision, nextPolicyRevision: policyRevision + 1,
+      historicalClaimMappings, unpublishedDraftCount: drafts.length,
+      unpublishedDraftDigest: digest(drafts.map(row => ({ id: row.id, revision: row.revision, bodyDigest: digest(String(row.body)) }))),
+      unpublishedWorkPreserved: input.preserveUnpublished === true,
       permissionsAdded: 0, expirationsExtended: false, operationsReplayed: 0,
     };
     return { summary, sourceDigest: digest(summary) };

@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { JobStore } from '../packages/core/store.js';
 import { MemberStore } from '../packages/members/store.js';
-import { installRuntimeAuthority, runtimeAuthorityMatches, type RuntimeAuthority } from '../packages/core/runtime-authority.js';
+import { installRuntimeAuthority, runtimeAuthorityMatches, runtimeAuthorityDigest, claimAuthorityCurrent, type RuntimeAuthority } from '../packages/core/runtime-authority.js';
 import { planPrimaryRelocation, relocatePrimarySnapshots } from '../packages/deployment/relocation.js';
 import { assertPrimaryStores } from '../packages/deployment/preflight.js';
 import { readConfig } from '../packages/core/config.js';
@@ -73,6 +73,26 @@ test('a later relocation appends its receipt and keeps the first authority histo
   const db = new DatabaseSync(join(next.targetDirectory, 'tasks.sqlite'));
   assert.equal(db.prepare('SELECT count(*) n FROM primary_relocation_receipts').get()!.n, 2);
   assert.equal(db.prepare('SELECT count(*) n FROM runtime_authority_events').get()!.n, 3); db.close();
+});
+
+test('reviewed relocation preserves unpublished drafts and historical lease mappings without reviving them', t => {
+  const f = fixture(); t.after(f.close);
+  const jobs = new JobStore(f.original, { securityMode: 'foundation', authority: f.input.sourceAuthority });
+  const draft = jobs.definitions.createDraft('private-operator', 'eigos.business', 'PRIVATE_UNPUBLISHED_TITLE', true); jobs.close();
+  const source = new DatabaseSync(f.original), oldToken = randomUUID();
+  source.prepare('INSERT INTO runtime_work_claims VALUES(?,?,?)').run('kept-task', oldToken, runtimeAuthorityDigest(f.input.sourceAuthority));
+  const original = source.prepare('SELECT * FROM ontology_definition_drafts WHERE id=?').get(draft.id);
+  source.exec('PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE'); source.close();
+  copyFileSync(f.original, f.input.businessSnapshot);
+  assert.throws(() => planPrimaryRelocation(f.input), /explicitly preserve unpublished/);
+  const input = { ...f.input, preserveUnpublished: true }, plan = planPrimaryRelocation(input);
+  assert.equal(plan.unpublishedDraftCount, 1); assert.equal(plan.historicalClaimMappings, 1);
+  assert(!JSON.stringify(plan).includes('PRIVATE_UNPUBLISHED_TITLE'));
+  relocatePrimarySnapshots(input, plan.sourceDigest);
+  const target = new DatabaseSync(join(input.targetDirectory, 'tasks.sqlite'));
+  assert.deepEqual(target.prepare('SELECT * FROM ontology_definition_drafts WHERE id=?').get(draft.id), original);
+  assert.equal(target.prepare('SELECT count(*) n FROM runtime_work_claims').get()!.n, 1);
+  assert.equal(claimAuthorityCurrent(target, 'kept-task', oldToken), false, 'Retained old mapping cannot authorize a late result at the moved authority'); target.close();
 });
 
 test('relocation refuses live paths, unclosed snapshots, changed input and outstanding ownership', t => {

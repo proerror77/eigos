@@ -12,6 +12,7 @@ export interface PrimaryServiceInput {
   modelBinary: string;
   home?: string;
   uid?: number;
+  loginConfig?: string;
   /** Internal composition seam; deployment always uses com.eigos.primary. */
   label?: string;
 }
@@ -44,10 +45,24 @@ export function primaryService(input: PrimaryServiceInput, run: ServiceCommand =
   const label = input.label ?? PRIMARY_SERVICE_LABEL;
   if (!/^com\.eigos\.[a-z0-9][a-z0-9.-]{0,90}$/.test(label)) throw new Error('Invalid owned EIGOS service label');
   for (const path of [input.runtime, input.release, input.node, input.modelBinary]) safePath(path);
+  if (input.loginConfig) { safePath(input.loginConfig); if (input.platform !== 'linux') throw new Error('Managed cloud login requires systemd Linux'); }
   const envPath = join(input.runtime, 'server.env'), unit = label + '.service';
   const args = [input.node, '--env-file=' + envPath, join(input.release, 'scripts/run-local.mjs'), '--built'];
   const path = [dirname(input.node), dirname(input.modelBinary), join(home, '.local/bin'), '/usr/local/bin', '/usr/bin', '/bin'].join(':');
   const serviceFile = input.platform === 'darwin' ? join(home, 'Library/LaunchAgents', label + '.plist') : join(home, '.config/systemd/user', unit);
+  const loginLabel = label + '.login', loginUnit = loginLabel + '.service', loginTimer = loginLabel + '.timer';
+  const login = input.loginConfig ? {
+    serviceFile: join(dirname(serviceFile), loginUnit), timerFile: join(dirname(serviceFile), loginTimer),
+    service: ['[Unit]', 'Description=EIGOS cloud-owned ChatGPT access refresh', '', '[Service]', 'Type=oneshot',
+      'WorkingDirectory=' + unitPath(input.runtime),
+      'ExecStart=' + ['/usr/bin/flock', '--nonblock', join(input.runtime, 'login-refresh.lock'), input.node, join(input.release, 'scripts/refresh-harness-login.mjs'), '--config', input.loginConfig].map(value => unitValue(value, true)).join(' '),
+      'TimeoutStartSec=60s', 'TimeoutStopSec=5s', 'KillMode=control-group', 'UMask=0077', 'NoNewPrivileges=true',
+      'StandardOutput=append:' + unitPath(join(input.runtime, 'login.log')), 'StandardError=append:' + unitPath(join(input.runtime, 'login-error.log')), ''].join('\n'),
+    timer: ['[Unit]', 'Description=EIGOS cloud login renewal cadence', '', '[Timer]', 'OnBootSec=20s', 'OnUnitActiveSec=5min', 'Unit=' + loginUnit,
+      '', '[Install]', 'WantedBy=timers.target', ''].join('\n'),
+    ownsService: (text: string) => text.includes(unitValue(input.loginConfig!, true)),
+    ownsTimer: (text: string) => text.includes('Unit=' + loginUnit + '\n'),
+  } : undefined;
   const busEnv = { ...process.env, XDG_RUNTIME_DIR: '/run/user/' + uid, DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/' + uid + '/bus' };
   const systemctl = (...values: string[]) => run('systemctl', ['--user', ...values], busEnv);
   const active = (value: string) => ['active', 'activating', 'deactivating', 'reloading'].includes(value.trim());
@@ -96,7 +111,7 @@ export function primaryService(input: PrimaryServiceInput, run: ServiceCommand =
         + '</string><key>StandardErrorPath</key><string>' + xml(join(input.runtime, 'stderr.log')) + '</string></dict></plist>';
     }
     return [
-      '[Unit]', 'Description=EIGOS owned Gateway and Worker primary', '',
+      '[Unit]', 'Description=EIGOS owned Gateway and Worker primary', ...(login ? ['Requires=' + loginUnit, 'After=' + loginUnit, 'Wants=' + loginTimer] : []), '',
       '[Service]', 'Type=exec', 'WorkingDirectory=' + unitPath(input.release),
       'ExecStart=' + args.map(arg => unitValue(arg, true)).join(' '), 'Environment=' + unitValue('PATH=' + path),
       'Restart=on-failure', 'RestartSec=2s', 'TimeoutStopSec=60s', 'KillMode=control-group', 'UMask=0077', 'NoNewPrivileges=true',
@@ -107,12 +122,12 @@ export function primaryService(input: PrimaryServiceInput, run: ServiceCommand =
   }
   return {
     label, serviceFile, envPath, manager: input.platform === 'darwin' ? 'launchd' as const : 'systemd-user' as const,
-    render, isLoaded, assertReady,
+    render, isLoaded, assertReady, login,
     ownsConfiguration: (contents: string) => contents.includes(input.platform === 'darwin' ? '<string>' + xml('--env-file=' + envPath) + '</string>' : unitValue('--env-file=' + envPath, true)),
     stop: () => { if (isLoaded()) { if (input.platform === 'darwin') run('launchctl', ['bootout', 'gui/' + uid + '/' + label], undefined, 75000); else run('systemctl', ['--user', 'stop', unit], busEnv, 75000); } },
     start: () => {
       if (input.platform === 'darwin') { run('launchctl', ['enable', 'gui/' + uid + '/' + label]); run('launchctl', ['bootstrap', 'gui/' + uid, serviceFile]); }
-      else { systemctl('daemon-reload'); systemctl('enable', unit); run('systemctl', ['--user', 'restart', unit], busEnv, 75000); }
+      else { systemctl('daemon-reload'); if (login) { systemctl('enable', loginTimer); systemctl('start', loginTimer); } systemctl('enable', unit); run('systemctl', ['--user', 'restart', unit], busEnv, 75000); }
     },
   };
 }

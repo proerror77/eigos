@@ -28,7 +28,7 @@ test('S0 inventories every definition and nested subtree without changing runtim
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
   assert.equal(report.counts.objectTypes, 204); assert.equal(report.counts.properties, 1863); assert.equal(report.counts.interfaces, 14);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 214);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 216);
   for (const id of ['consent-lifetime', 'persistent-consent-policy-upgrade']) assert(report.surfaces.some(surface => surface.id === id));
   for (const id of ['payment-commerce-connection', 'payment-commerce-mcp', 'payment-commerce-http', 'payment-commerce-program', 'payment-commerce-policy-upgrade'])
     assert(report.surfaces.some(surface => surface.id === id), `Unreviewed payment/commerce boundary: ${id}`);
@@ -40,6 +40,7 @@ test('S0 inventories every definition and nested subtree without changing runtim
   for (const id of ['primary-service-manager', 'primary-deployment-preflight', 'primary-ingress-readiness', 'primary-relocation', 'primary-relocation-cli']) {
     assert(report.surfaces.some(surface => surface.id === id), `Unreviewed Linux primary boundary: ${id}`);
   }
+  for (const id of ['primary-harness-login', 'primary-harness-login-cli']) assert(report.surfaces.some(surface => surface.id === id));
   for (const id of ['observation-contract-schema', 'observation-contract-storage', 'observation-task-boundary']) {
     assert(report.surfaces.some(surface => surface.id === id), `Unreviewed observation contract surface: ${id}`);
   }

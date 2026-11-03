@@ -4397,12 +4397,12 @@
     {
       "id": "primary-deployment",
       "file": "scripts/deploy-primary.mjs",
-      "sourceDigest": "683e0044233b4e8b4f16251f656be7d9d5ee27b8a8c29d648c9a9e21a0ec8559",
+      "sourceDigest": "0e8c063a03e361cd20e2e8782a558bcfebcc380b86f966a68b30f82219a22657",
       "channels": [
         "operator_cli"
       ],
       "content": "Single managed primary runtime and immutable release",
-      "currentControl": "Owned clean immutable release; read-only existing Foundation/JWT stores and current recipient qualification; exact Harness runtime and credential readiness; non-root Linux user manager or launchd; full graceful-stop budget and bounded authority/build readiness. No policy is installed or widened.",
+      "currentControl": "Owned clean immutable release; read-only existing Foundation/JWT stores and current recipient qualification; exact Harness runtime and credential readiness; non-root Linux user manager or launchd; full graceful-stop budget and bounded authority/build readiness. No policy is installed or widened. Optional managed GPT login pins its native runtime, isolated profile and exact access-only output; owned systemd refresh units run before primary and periodically under one lock.",
       "targetControl": "Owned config, stopped legacy profiles and bounded readiness matching healthy status, authority and immutable release",
       "stage": "S5"
     },
@@ -5243,7 +5243,7 @@
       ],
       "content": "Immutable runtime manifest including complete public Skill assets",
       "currentControl": "Current source-derived runtime files and explicit reviewed Skill assets; no private configuration or credentials included",
-      "sourceDigest": "62b0d4b396e3f983588166bcc36112b0ca010f60f59e9cb06778343ba89ed89a",
+      "sourceDigest": "929a1aacd73adc747f1d27e4bc9f6523f5f15e556adcfe7e871fdc90a85882d5",
       "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
       "stage": "S5"
     },
@@ -5524,10 +5524,10 @@
         "operator_cli"
       ],
       "content": "Owned launchd or systemd user primary service",
-      "currentControl": "Non-root Linux owner bus and lingering; rejects active competing formal services; literal unit arguments, private mask, process-group shutdown with full recovery budget",
+      "currentControl": "Non-root Linux owner bus and lingering; rejects active competing formal services; literal unit arguments, private mask, process-group shutdown with full recovery budget Optional cloud OAuth login is a locked oneshot prerequisite and bounded renewal timer, with refresh credentials isolated from the Worker.",
       "targetControl": "Single authority; no independent task queue or credential in unit arguments",
       "stage": "S5",
-      "sourceDigest": "b8410c1d4e5883b46b204b5bd91e90c942680e34b044a97812fd4f0f631025af"
+      "sourceDigest": "4c49b11970f3567d9e791a19a7ecdb10e7c69c08d84c5eb69edadcf9585dc5ba"
     },
     {
       "id": "primary-deployment-preflight",
@@ -5565,10 +5565,10 @@
         "sqlite"
       ],
       "content": "Closed primary snapshot relocation preserving the original runtime authority",
-      "currentControl": "Exact snapshot digests, closed private copies and integrity; refuses active ownership and inconsistent member identities; preserves task bodies, operation keys, releases and grant expiry; same authority ID with one revision fence and immutable relocation receipts",
+      "currentControl": "Exact snapshot digests, closed private copies and integrity; refuses active ownership and inconsistent member identities; preserves task bodies, operation keys, releases and grant expiry; same authority ID with one revision fence and immutable relocation receipts Only orphan historical runtime mappings are retained with the advanced authority fence; frozen unpublished drafts require explicit digest-bound preservation and retain original body/revision/base without publication.",
       "targetControl": "No source writes, new permissions, replay or automatic activation; only one formal writer during operator handoff",
       "stage": "S5",
-      "sourceDigest": "b10273ae8d33226853f6ff8d3357578970548aa18b7ddd4f68ca3f660187d339"
+      "sourceDigest": "b6898d5d47548726fdcec237c1f2cca349fbf9369341df894efdebeef73c8054"
     },
     {
       "id": "primary-relocation-cli",
@@ -5580,7 +5580,34 @@
       "currentControl": "Private input with exact fields, owned source authority and expected source digest; default preview; never starts a service or switches the frontend",
       "targetControl": "Production handoff and business acceptance remain separately authorized",
       "stage": "S5",
-      "sourceDigest": "882aeac5a7e9c3b43d85f258acbb6a320131fa38302861b4215388e8168181fe"
+      "sourceDigest": "be3c8dffacfa3e8fd912ccbe5f88985eff18fe4e3de47257e18d823057025c3e"
+    },
+    {
+      "id": "primary-harness-login",
+      "file": "packages/deployment/harness-login.ts",
+      "channels": [
+        "operator_cli",
+        "private_file",
+        "registered_model"
+      ],
+      "content": "Cloud-owned native ChatGPT refresh and access-only Harness export",
+      "currentControl": "Dedicated private profile within primary; native account/read only, no inference or tools; bounded isolated process and streamed protocol; atomic private access-only snapshot, no refresh export or raw provider errors; prior snapshot survives failure",
+      "targetControl": "One systemd/flock refresh owner; no copying a concurrently refreshed Mac login or changing model recipient authorization",
+      "stage": "S5",
+      "sourceDigest": "79f858a58fc35e818f66d5962d9984745ffac87eb1771d1ba343a3b7350adc3f"
+    },
+    {
+      "id": "primary-harness-login-cli",
+      "file": "scripts/refresh-harness-login.mjs",
+      "channels": [
+        "operator_cli",
+        "private_file"
+      ],
+      "content": "Explicit native cloud login refresh entry",
+      "currentControl": "Exact owned private configuration; defaults to reuse current access, explicit force for renewal verification; only credential expiry/path metadata returned",
+      "targetControl": "No task, grant, policy, provider business call or frontend mutation",
+      "stage": "S5",
+      "sourceDigest": "291a531cf293012bacf7e5fd9693096e5c6e177d8f7c2eafe907154e44e901f2"
     }
   ]
 }

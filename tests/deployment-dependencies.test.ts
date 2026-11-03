@@ -41,6 +41,7 @@ test('immutable release retains JSON assets required by relocated runtime import
     put(join(source, 'scripts/agent-enroll.mjs'), '');
     put(join(source, 'scripts/ontology-operator.mjs'), "import {label} from '../dist/packages/members/ontology-operator.js'; console.log(label);");
     put(join(source, 'scripts/relocate-primary.mjs'), '');
+    put(join(source, 'scripts/refresh-harness-login.mjs'), '');
     put(join(source, 'packages/members/ontology-operator.ts'), "export const label = 'Operator transport fixture';");
     put(join(source, 'dist/packages/members/ontology-operator.js'), "export const label = 'Operator transport fixture';");
     put(join(source, 'integrations/grok/eigos-delegate/scripts/eigos_a2a.py'), '');
