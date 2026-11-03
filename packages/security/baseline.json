@@ -2895,12 +2895,12 @@
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "701d69d2ec26db3afa1471162ff897c29ff5d305301798900d387bb1616e38bc",
+      "sourceDigest": "815e2ac9ca8470562053a3474f244f586bb2e35f07cf4703d71febef6a231238",
       "channels": [
         "http"
       ],
       "content": "Ontology describe/query/evaluate and task authorization/reconcile responses; error and HTTP audit",
-      "currentControl": "Foundation authenticated TaskView, controlled downloads and sanitized audit; Pipeline-only metadata entrypoints retain current installation and namespace authority; authentication failures provide public onboarding and canonical member-permission links without grants. Canonical redirects include the public PA guide and downloads; authenticated task routing and projections are unchanged. Opt-in PA communication uses explicit RPC dispatch and current member/installation facts; all business requests retain the original Foundation authentication.",
+      "currentControl": "Foundation authenticated TaskView, controlled downloads and sanitized audit; Pipeline-only metadata entrypoints retain current installation and namespace authority; authentication failures provide public onboarding and canonical member-permission links without grants. Canonical redirects include the public PA guide and downloads; authenticated task routing and projections are unchanged. Opt-in PA communication uses explicit RPC dispatch and current member/installation facts; all business requests retain the original Foundation authentication. Explicit Harness selection preserves the Worker-owned task, current model recipient and authorization boundary; the Gateway never starts a model.",
       "targetControl": "AccessContext plus resource/data policies and TaskView",
       "stage": "S2"
     },
@@ -3068,13 +3068,13 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "34dece32f0c51ff47a0d8dd9d66f05c2f71b779e1a3e3ec81f023aa2d0a9549d",
+      "sourceDigest": "a8a91ceb241cdbb793886b109981f76132c493ce9bb33aa75bc9e79cb523682a",
       "channels": [
         "model",
         "dispatch"
       ],
       "content": "Task interpretation, initial context, selection and execution orchestration",
-      "currentControl": "Foundation source/role/channel gates and bounded task Ontology context; pipeline eligibility narrows grounded candidates without granting source or effect authority; Rechecks a previously selected source before another model turn without granting execution through unselected metadata discovery.",
+      "currentControl": "Foundation source/role/channel gates and bounded task Ontology context; pipeline eligibility narrows grounded candidates without granting source or effect authority; Rechecks a previously selected source before another model turn without granting execution through unselected metadata discovery. Whole-goal semantic review compares the immutable criteria and preserves independent component authorization and fulfillment checks; an intentionally empty root action list is not treated as an unavailable component.",
       "targetControl": "Persisted task authority with source/input/output checks",
       "stage": "S3"
     },
@@ -3156,13 +3156,13 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "5788b2b564f5435d1dc74665b30f662ed984be1eef89bfbe6194c3469a946809",
+      "sourceDigest": "c84fd62b28f775e6b2f078a9190f85778f2c440b79ab407fe8542f668c6f4fbe",
       "channels": [
         "registered_model",
         "private_file"
       ],
       "content": "Goal/messages to model process; temporary schema/output files",
-      "currentControl": "Explicit codex model-channel identity; qualification remains separately configured",
+      "currentControl": "Explicit codex model-channel identity; qualification remains separately configured. The bounded document prompt and schema are shared with the opt-in Harness adapter without changing this Codex channel.",
       "targetControl": "Model channel approval and label propagation; files stay private",
       "stage": "S3"
     },
@@ -3387,36 +3387,36 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "f218d1f4fad1a56991db86580bdb3c9ef6038b5698653fdd87229cb533d1acd3",
+      "sourceDigest": "e4aa4c3d5c82835ee222f78e04ea5418f57c7dd53e23ffe2590ad7166e3bcfc2",
       "channels": [
         "authorization_control"
       ],
       "content": "Explicit security foundation activation",
-      "currentControl": "JWT, registered client and persistent new task database; legacy default",
+      "currentControl": "JWT, registered client and persistent new task database; legacy default Explicit Harness selection preserves the Worker-owned task, current model recipient and authorization boundary; the Gateway never starts a model.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
     {
       "id": "security-worker-runtime",
       "file": "apps/worker/runtime.ts",
-      "sourceDigest": "bc3d6fff813f5d7d6849179cf34079d79e7e14cef5f1d0db78dba969303017f4",
+      "sourceDigest": "f0a30896a76c931fa267a38eb4a7ddf9003ddeed89acabc3be8cacf0d4cec49c",
       "channels": [
         "authorization_control"
       ],
       "content": "Worker security mode binding",
-      "currentControl": "Persisted mode must match Gateway; no membership credentials",
+      "currentControl": "Persisted mode must match Gateway; no membership credentials Explicit Harness selection preserves the Worker-owned task, current model recipient and authorization boundary; the Gateway never starts a model.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
     {
       "id": "security-worker-loop",
       "file": "apps/worker/worker.ts",
-      "sourceDigest": "4f3803e4d1ce18c216162967d9fc2afd9cfe71360b79f911bac1cd64d0ca73b8",
+      "sourceDigest": "7133741fd6773a3e9ccc0356cb7ac2160ec4b58b8424aac114ffee324ae9be43",
       "channels": [
         "authorization_control"
       ],
       "content": "Lease renewal, cancellation and completion lifecycle",
-      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit; synchronous progress renews each due active task claim through its original lease, execution deadline and policy fences; A source authorization mismatch produces explicit blocked recovery without automatic resubmission or new permission.",
+      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit; synchronous progress renews each due active task claim through its original lease, execution deadline and policy fences; A source authorization mismatch produces explicit blocked recovery without automatic resubmission or new permission. The Harness runtime may select one concurrent claim; existing lease, cancellation and late-result fences remain unchanged.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
@@ -4397,12 +4397,12 @@
     {
       "id": "primary-deployment",
       "file": "scripts/deploy-primary.mjs",
-      "sourceDigest": "1a79eea4ddd038628bcf2a8c4cb008d3773b216469f10929c039770354651bb4",
+      "sourceDigest": "0e8c063a03e361cd20e2e8782a558bcfebcc380b86f966a68b30f82219a22657",
       "channels": [
         "operator_cli"
       ],
       "content": "Single managed primary runtime and immutable release",
-      "currentControl": "Owned config, stopped legacy profiles and bounded readiness matching healthy status, authority and immutable release",
+      "currentControl": "Owned clean immutable release; read-only existing Foundation/JWT stores and current recipient qualification; exact Harness runtime and credential readiness; non-root Linux user manager or launchd; full graceful-stop budget and bounded authority/build readiness. No policy is installed or widened. Optional managed GPT login pins its native runtime, isolated profile and exact access-only output; owned systemd refresh units run before primary and periodically under one lock.",
       "targetControl": "Owned config, stopped legacy profiles and bounded readiness matching healthy status, authority and immutable release",
       "stage": "S5"
     },
@@ -5243,7 +5243,7 @@
       ],
       "content": "Immutable runtime manifest including complete public Skill assets",
       "currentControl": "Current source-derived runtime files and explicit reviewed Skill assets; no private configuration or credentials included",
-      "sourceDigest": "7da80e3413b6f265ca57213a70fa5410eafeb7b66f4f8f8bb5cc036bab266eec",
+      "sourceDigest": "929a1aacd73adc747f1d27e4bc9f6523f5f15e556adcfe7e871fdc90a85882d5",
       "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
       "stage": "S5"
     },
@@ -5503,6 +5503,111 @@
       "currentControl": "Owner/task/revision and fingerprint checks; no order or payment operation; explicit migration and source grants",
       "targetControl": "Maintain exact source authority and independent readback",
       "stage": "S5"
+    },
+    {
+      "id": "harness-executor",
+      "file": "packages/capabilities/harness-executor.ts",
+      "sourceDigest": "b78e41bae191276cff3366f3144919ad29e280c731d43354e5305de01ce1a73a",
+      "channels": [
+        "registered_model",
+        "private_file"
+      ],
+      "content": "Task-bound Harness SDK Executor Session, private current model credential and actual Ontology MCP receipts",
+      "currentControl": "Distinct GPT OAuth and DeepSeek recipient channel identities; isolated invocation home and single original completed turn; no shell, filesystem or working-directory tools; only Worker loopback MCP operations; private credential-file checks; OAuth refresh remains with the original login; schema validation and process-group teardown before releasing the invocation. Recipient configuration is snapshotted before deriving the channel identity. Streaming UTF-8 preserves split characters; waits for durable pre-dispatch and accounting acknowledgements; acknowledgement failure cannot dispatch.",
+      "targetControl": "Current model-channel approval and task data/lease fences remain independent of Harness output; no second formal task or policy authority",
+      "stage": "S3"
+    },
+    {
+      "id": "primary-service-manager",
+      "file": "packages/deployment/service-manager.ts",
+      "channels": [
+        "operator_cli"
+      ],
+      "content": "Owned launchd or systemd user primary service",
+      "currentControl": "Non-root Linux owner bus and lingering; rejects active competing formal services; literal unit arguments, private mask, process-group shutdown with full recovery budget Optional cloud OAuth login is a locked oneshot prerequisite and bounded renewal timer, with refresh credentials isolated from the Worker.",
+      "targetControl": "Single authority; no independent task queue or credential in unit arguments",
+      "stage": "S5",
+      "sourceDigest": "4c49b11970f3567d9e791a19a7ecdb10e7c69c08d84c5eb69edadcf9585dc5ba"
+    },
+    {
+      "id": "primary-deployment-preflight",
+      "file": "packages/deployment/preflight.ts",
+      "channels": [
+        "operator_cli",
+        "private_file",
+        "sqlite"
+      ],
+      "content": "Read-only primary deployment eligibility",
+      "currentControl": "Owned private files and runtime paths; existing Foundation/JWT authority, both database integrity checks and the exact runtime policy contract; read-only policy reader preserves approved finite or until-revoked recipient qualification; no writable stores, migrations or grants",
+      "targetControl": "Deployment inspection cannot bootstrap permissions or create missing stores",
+      "stage": "S5",
+      "sourceDigest": "13830d6b58b71f808879ee2f80d105c10981ac0fdf8e1fcc7ac399519f72d506"
+    },
+    {
+      "id": "primary-ingress-readiness",
+      "file": "packages/deployment/ingress-readiness.ts",
+      "channels": [
+        "operator_cli",
+        "http"
+      ],
+      "content": "Independent registered-ingress identity and authentication readback",
+      "currentControl": "Bounded requests, response size and streaming UTF-8; exact authority/release/discovery and unauthenticated MCP/A2A refusal; no login, grants, task creation or forwarding override",
+      "targetControl": "Frontend verification remains separate from authorized same-task and business acceptance",
+      "stage": "S5",
+      "sourceDigest": "c266d9d88702e7130218bd38516d579922d024f8144850b8993b0f606cfd8688"
+    },
+    {
+      "id": "primary-relocation",
+      "file": "packages/deployment/relocation.ts",
+      "channels": [
+        "operator_cli",
+        "private_file",
+        "sqlite"
+      ],
+      "content": "Closed primary snapshot relocation preserving the original runtime authority",
+      "currentControl": "Exact snapshot digests, closed private copies and integrity; refuses active ownership and inconsistent member identities; preserves task bodies, operation keys, releases and grant expiry; same authority ID with one revision fence and immutable relocation receipts Only orphan historical runtime mappings are retained with the advanced authority fence; frozen unpublished drafts require explicit digest-bound preservation and retain original body/revision/base without publication.",
+      "targetControl": "No source writes, new permissions, replay or automatic activation; only one formal writer during operator handoff",
+      "stage": "S5",
+      "sourceDigest": "b6898d5d47548726fdcec237c1f2cca349fbf9369341df894efdebeef73c8054"
+    },
+    {
+      "id": "primary-relocation-cli",
+      "file": "scripts/relocate-primary.mjs",
+      "channels": [
+        "operator_cli"
+      ],
+      "content": "Explicit reviewed primary relocation input and apply gate",
+      "currentControl": "Private input with exact fields, owned source authority and expected source digest; default preview; never starts a service or switches the frontend",
+      "targetControl": "Production handoff and business acceptance remain separately authorized",
+      "stage": "S5",
+      "sourceDigest": "be3c8dffacfa3e8fd912ccbe5f88985eff18fe4e3de47257e18d823057025c3e"
+    },
+    {
+      "id": "primary-harness-login",
+      "file": "packages/deployment/harness-login.ts",
+      "channels": [
+        "operator_cli",
+        "private_file",
+        "registered_model"
+      ],
+      "content": "Cloud-owned native ChatGPT refresh and access-only Harness export",
+      "currentControl": "Dedicated private profile within primary; native account/read only, no inference or tools; bounded isolated process and streamed protocol; atomic private access-only snapshot, no refresh export or raw provider errors; prior snapshot survives failure",
+      "targetControl": "One systemd/flock refresh owner; no copying a concurrently refreshed Mac login or changing model recipient authorization",
+      "stage": "S5",
+      "sourceDigest": "79f858a58fc35e818f66d5962d9984745ffac87eb1771d1ba343a3b7350adc3f"
+    },
+    {
+      "id": "primary-harness-login-cli",
+      "file": "scripts/refresh-harness-login.mjs",
+      "channels": [
+        "operator_cli",
+        "private_file"
+      ],
+      "content": "Explicit native cloud login refresh entry",
+      "currentControl": "Exact owned private configuration; defaults to reuse current access, explicit force for renewal verification; only credential expiry/path metadata returned",
+      "targetControl": "No task, grant, policy, provider business call or frontend mutation",
+      "stage": "S5",
+      "sourceDigest": "291a531cf293012bacf7e5fd9693096e5c6e177d8f7c2eafe907154e44e901f2"
     }
   ]
 }
