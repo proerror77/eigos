@@ -8,7 +8,6 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {z} from 'zod';
 import {Client,StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
 import {digest,goalGroundingSchema,type Grounding} from '../packages/core/delegation.js';
-import {DomainError} from '../packages/core/domain.js';
 import type {TaskServicePort} from '../packages/core/task-service-port.js';
 import {modelUsageRecorder,withModelUsage} from '../packages/core/model-usage-context.js';
 import {authorizeModelDispatch,withModelDispatchGuard} from '../packages/core/model-dispatch-context.js';
@@ -26,7 +25,7 @@ import {PostgresDatabase} from '../packages/postgres/database.js';
 import type {Pool} from 'pg';
 import {securityFixture} from './fixtures/security.js';
 import {importPostgresPrimaryFixture} from './fixtures/postgres-primary.js';
-import {taskProtocolFixture} from './fixtures/task-protocol.js';
+import {postgresGatewayProtocolFixture} from './fixtures/postgres-gateway.js';
 
 const local={skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'},channel='synthetic:acknowledged-postgres-coordinator';
 type Stage='ground'|'review'|'act'|'document';
@@ -60,7 +59,7 @@ test('an unadapted synchronous model port is rejected before any prompt or datab
 
 async function fixture(hooks:Hooks={}){
   const f=securityFixture(Date.now,{unified:true}),doc=new DocumentAgentProgram();let target:Awaited<ReturnType<typeof importPostgresPrimaryFixture>>|undefined;
-  let protocol:Awaited<ReturnType<typeof taskProtocolFixture>>|undefined,runtime:ReturnType<typeof createPostgresWorker>|undefined;
+  let protocol:Awaited<ReturnType<typeof postgresGatewayProtocolFixture>>|undefined,runtime:ReturnType<typeof createPostgresWorker>|undefined;
   const stats={models:0,documents:0,documentBegins:0,nativeDecisions:0},errors:string[]=[];
   try{
     const installation=f.installation('Synthetic actual PostgreSQL coordinator',3600000),expiry=new Date(Date.now()+3600000).toISOString(),bindingId='synthetic-coordinator-doc';
@@ -73,12 +72,8 @@ async function fixture(hooks:Hooks={}){
     f.jobs.security.policies.setSource(f.owner,{installationId:installation.id,bindingId,programId:doc.ref.id,programDigest:doc.configurationDigest,operations:['ComposeDocument'],outputTypes:['DocumentTask','DocumentDraft'],expiresAt:expiry},f.jobs.security.policies.revision());
     const principal={...f.principal,access:f.coordinator.authenticate(f.principal,installation.token)};
     target=await importPostgresPrimaryFixture(f);const t=target,q=`"${t.schema}"`,commands=new PostgresTaskCommandService(t.database,t.policy);
-    const port:TaskServicePort=new Proxy({} as TaskServicePort,{get(_target,key){
-      if(key==='secured')return true;
-      if(key==='services')return ()=>[{id:'eigos.delegate',name:'Registered document candidate',description:'Actual PostgreSQL fixture',requiredInputs:['goal'],tags:[],examples:[],inputModes:['application/json'],outputModes:['application/json']}];
-      const value=Reflect.get(commands,key);return typeof value==='function'?value.bind(commands):async()=>{throw new DomainError('FORBIDDEN','This fixture exposes only connected task operations');};
-    }});
-    protocol=await taskProtocolFixture(port,principal,{requestTimeoutMs:180000});
+    const port:TaskServicePort=commands;void port;
+    protocol=await postgresGatewayProtocolFixture(f,t,commands,installation,[doc],{requestTimeoutMs:180000});
     const acknowledge=async<T>(stage:Stage,taskId:string,signal:AbortSignal,work:()=>Promise<T>)=>{
       const recorder=modelUsageRecorder();assert(recorder);const startedAt=new Date().toISOString(),id=randomUUID(),runtimeName='synthetic-acknowledged-model';
       if(stage==='document')stats.documentBegins++;await recorder.begin(id,runtimeName,startedAt);

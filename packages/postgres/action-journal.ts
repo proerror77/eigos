@@ -249,13 +249,16 @@ export class PostgresActionJournal {
       const originalIntent=intentIdentity(intent);
       await acceptance.apply(job,intent);
       if(identity!==jobIdentity(job)||intentIdentity(intent)!==originalIntent)throw new DomainError('CONFLICT','Observation cannot revise its original task or action');
+      // The authenticated result and real mapper have now passed. Its exact
+      // same-transaction applied receipt lets historical personal-input lineage
+      // prove an actual committed mutation during sealing. Any later seal,
+      // output, save or lease failure rolls back this receipt with its facts.
+      const applied=await this.query(`UPDATE ${q}.action_observations SET applied=1 WHERE owner=$1 AND intent_id=$2 AND attempt_id=$3 AND id=$4 AND digest=$5 AND applied=0`,[claim.owner,intentId,attempt.id,id,row.digest]);
+      if(applied.rowCount!==1)throw new DomainError('CONFLICT','Original observation changed during acceptance');
       const seal=await postgresPrepareWorkerSeal(this.client,claim,this.options.policyDigest,this.options.builder,this.options.inspectClaim);
       await this.fence(claim);
       if(verified&&result.kind==='confirmed'&&(intent.effect==='payment'||intent.additionalEffects?.includes('payment')))await this.query(`UPDATE ${q}.budget_reservations SET state='consumed' WHERE owner=$1 AND intent_id=$2`,[claim.owner,intentId]);
       if(verified&&result.kind==='rejected')await this.query(`UPDATE ${q}.budget_reservations SET state='released' WHERE owner=$1 AND intent_id=$2 AND state='held'`,[claim.owner,intentId]);
-      // Mark before projection so its ledger sees the accepted receipt. A later
-      // mapper, projection, save, or final lease failure rolls the whole unit back.
-      await this.query(`UPDATE ${q}.action_observations SET applied=1 WHERE owner=$1 AND intent_id=$2 AND id=$3 AND applied=0`,[claim.owner,intentId,id]);
       await this.store.saveIntent(claim.owner,intent);await this.store.save(claim.owner,job);
       if(seal)await postgresRecordWorkerOutputs(this.client,claim.owner,job,seal);
       await this.commitFence(claim);

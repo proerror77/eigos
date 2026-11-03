@@ -3,6 +3,7 @@ import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import { objectRefSchema, nameSchema, type ObjectRef } from './model.js';
 import type { OntologyObjectStore } from './object-store.js';
+import {graphRead,runGraphProgram,type GraphProgram,type ProjectionMetadata} from './graph-program.js';
 
 export const personalPreferenceKey = z.enum(['rideClass', 'deliveryAddress']);
 export type PersonalPreferenceKey = z.infer<typeof personalPreferenceKey>;
@@ -45,6 +46,9 @@ export interface PersonalSelection { input: PersonalContextInput; person: Object
  * or a cross-account person match. Only this reviewed set of actions can use the
  * Foundation managed-write bridge. */
 export function assertPersonalAction(graph: OntologyObjectStore, owner: string, id: string, input: Record<string, unknown>): ObjectRef[] {
+  return runGraphProgram(graph,assertPersonalActionProgram(graph,owner,id,input));
+}
+export function* assertPersonalActionProgram(graph:ProjectionMetadata,owner:string,id:string,input:Record<string,unknown>):GraphProgram<ObjectRef[]> {
   if (!isPersonalAction(id) || !graph.model.hasType('Person') || graph.model.actionImplementation(id)?.kind !== 'declarative') throw new DomainError('FORBIDDEN', 'Only reviewed personal actions are available');
   const person = selfPersonRef(owner), same = (a: unknown, b: unknown) => digest(a) === digest(b);
   if (id === 'BindSelfPerson') {
@@ -52,19 +56,19 @@ export function assertPersonalAction(graph: OntologyObjectStore, owner: string, 
     return [];
   }
   if (!same(input.person, person)) throw new DomainError('FORBIDDEN', 'Personal action belongs to another service subject');
-  const subject = graph.read(owner, person);
+  const subject = yield* graphRead(owner,person);
   if (subject.properties.identityBasis !== 'self_asserted') throw new DomainError('FORBIDDEN', 'Self binding is unavailable');
   const key = personalPreferenceKey.parse(input.key), preference = personalPreferenceRef(owner, key);
   if (id === 'CreatePersonalPreference' ? input.preferenceId !== preference.id : !same(input.preference, preference)) throw new DomainError('FORBIDDEN', 'Preference identity does not match its person and semantic key');
   if (id !== 'CreatePersonalPreference') {
-    const previous = graph.read(owner, preference);
+    const previous = yield* graphRead(owner,preference);
     if (previous.properties.authority !== 'eigos' || previous.properties.personId !== person.id || previous.properties.key !== key) throw new DomainError('FORBIDDEN', 'This preference is not managed by EIGOS for this person');
     if (!personalPreferenceValue.safeParse(previous.properties.value).success) throw new DomainError('FORBIDDEN', 'The current personal value is not available for an exact preview');
   }
   if (id === 'ClearPersonalPreference') return [];
   const value = personalPreferenceValue.parse(input.value);
   if (value.kind !== key) throw new DomainError('INVALID_INPUT', 'Preference value uses a different semantic key');
-  if (value.kind === 'deliveryAddress') { graph.read(owner, value.address); return [value.address]; }
+  if (value.kind === 'deliveryAddress') { yield* graphRead(owner,value.address); return [value.address]; }
   return [];
 }
 

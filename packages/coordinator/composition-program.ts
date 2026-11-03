@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../ontology/graph-program.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -156,7 +157,7 @@ export class CompositionProgram implements AgentProgram {
     if (local(action)) return compositionActionSchemas[action as keyof typeof compositionActionSchemas];
     return (this.programs.find(p => p.capability().actions.some(a => a.ref.id === action)) ?? fail('Action is not bound to this composition')).schema(action);
   }
-  definition(graph: OntologyObjectStore, action: string) {
+  definition(graph: ProjectionMetadata, action: string) {
     if (local(action)) return graph.model.action(action);
     const programs = this.programs.filter(p => p.capability().actions.some(a => a.ref.id === action));
     if (!programs.length) fail('Action is not bound to this composition');

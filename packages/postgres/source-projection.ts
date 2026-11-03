@@ -6,7 +6,7 @@ import {digest} from '../core/delegation.js';
 import {matchesAgentGrant} from '../core/agent-authorization.js';
 import type {PlanGrant} from '../ontology/actions.js';
 import type {Ref,ServiceRequest} from '../ontology/execution.js';
-import {ontologyBatchSchema,ontologySourceSchema,type ObjectBatch,type ObjectSource} from '../ontology/object-store.js';
+import {ontologyBatchSchema,ontologySourceSchema,type ObjectBatch,type ObjectSource,type ManagedObjectBatch} from '../ontology/object-store.js';
 import type {ObjectRef} from '../ontology/model.js';
 import type {GraphStorage,ProjectionMetadata} from '../ontology/graph-program.js';
 import type {StagedKernelBuilder} from '../ontology/seed-definition.js';
@@ -20,7 +20,10 @@ import {postgresBusinessSchema,postgresBusinessToken,postgresConstrainReadDeadli
 import {postgresWorkReference,postgresClaimSnapshotMatches,type PostgresWorkReference} from './work-claim.js';
 import {postgresWorkerAdmission} from './worker-admission.js';
 import {postgresWorkerRequest} from './worker-input.js';
-import {withPostgresWorkerEvidenceAuthorization} from './task-output.js';
+import {withPostgresWorkerEvidenceAuthorization,withPostgresCallerEvidenceAuthorization} from './task-output.js';
+import {withPostgresCallerActionGraph,assertPostgresCallerAction,postgresCallerActionAuthority} from './caller-action.js';
+import {PostgresActionJournal} from './action-journal.js';
+import {DynamicOntologyProgram} from '../capabilities/dynamic-ontology.js';
 import {withPostgresPlanningReadGraph} from './planning-read-graph.js';
 import {postgresTaskResourceViewValidUntil,postgresTaskResourcePermissionValidUntil} from './task-read-access.js';
 import {postgresTaskReadHistory} from './task-lineage.js';
@@ -49,18 +52,40 @@ export interface PostgresSourceProjectionOptions{
 }
 type SourceMethod='read'|'query'|'related'|'relationshipDigest'|'ingest'|'readPrivate'|'containsLinks'|'evidencePropertiesDigest'|'tombstone';
 export type PostgresSourceProjectionGraph={ [K in SourceMethod]:(...args:Parameters<GraphStorage[K]>)=>Promise<Awaited<ReturnType<GraphStorage[K]>>> }&ProjectionMetadata&{readonly request:ServiceRequest};
+export type PostgresCallerSourceProjectionGraph=PostgresSourceProjectionGraph&Pick<GraphStorage,'managedObject'|'previewManaged'|'applyManaged'|'managedDispatchCheck'>;
+type CallerDispatch={journal:PostgresActionJournal;intentId:string;attemptId:string;planId:string};
+
+/** Explicit host-only caller mapper. The actual journal instance, immutable
+ * template and persisted original dispatch are checked before selecting the
+ * PA channel. A JSON mode flag cannot enter this path. */
+export async function withPostgresCallerSourceProjection<T>(client:Client,input:PostgresWorkReference,options:Omit<PostgresSourceProjectionOptions,'modelChannel'>,
+  dispatch:CallerDispatch,action:(graph:PostgresCallerSourceProjectionGraph)=>Promise<T>):Promise<T>{
+  if(!(dispatch.journal instanceof PostgresActionJournal))throw new SecurityError('AUTHORIZATION_REQUIRED');
+  await dispatch.journal.assertDispatchAllowed(input,dispatch.intentId,dispatch.attemptId);
+  return sourceProjection(client,input,{...options,modelChannel:''},graph=>action(graph),undefined,dispatch);
+}
 
 /** Trusted mapper scope only. Model/provider I/O is forbidden in the callback.
  * Every read is admitted; every write binds the actual configured source and
  * inherited input restrictions. There is no raw/private read fallback. */
 export async function withPostgresSourceProjection<T>(client:Client,input:PostgresWorkReference,options:PostgresSourceProjectionOptions,
   action:(graph:PostgresSourceProjectionGraph)=>Promise<T>,onInfluence?:(envelope:SecurityEnvelope)=>void):Promise<T>{
+  return sourceProjection(client,input,options,action,onInfluence);
+}
+async function sourceProjection<T>(client:Client,input:PostgresWorkReference,options:PostgresSourceProjectionOptions,
+  action:(graph:PostgresCallerSourceProjectionGraph)=>Promise<T>,onInfluence?:((envelope:SecurityEnvelope)=>void),caller?:CallerDispatch):Promise<T>{
   const schema=postgresBusinessSchema(client),token=postgresBusinessToken(client),q=`"${schema}"`,claim=postgresWorkReference(input);
   if(claim.recovery||claim.job.state!=='working')throw new SecurityError('ACCESS_REVOKED');
   options={...options,programRef:{...options.programRef}};
-  if(!/^[a-f0-9]{64}$/.test(options.policyDigest)||!/^[a-f0-9]{64}$/.test(options.configurationDigest)||!options.modelChannel||!options.programRef.id||!options.programRef.version||typeof options.inspectClaim!=='function')throw new Error('Explicit source projection authority is required');
+  if(!/^[a-f0-9]{64}$/.test(options.policyDigest)||!/^[a-f0-9]{64}$/.test(options.configurationDigest)||!caller&&!options.modelChannel||!options.programRef.id||!options.programRef.version||typeof options.inspectClaim!=='function')throw new Error('Explicit source projection authority is required');
   const configured=structuredClone({programRef:options.programRef,configurationDigest:options.configurationDigest,sourceBindingId:options.sourceBindingId,action:options.action});
-  const request=await postgresWorkerRequest(client,claim,options.policyDigest,options.modelChannel,options.builder,options.inspectClaim);
+  const callerGraph=<R>(callback:Parameters<typeof withPostgresCallerActionGraph<R>>[4])=>withPostgresCallerActionGraph(client,{claim,inspectClaim:options.inspectClaim},claim.job.id,options,callback);
+  const request=caller?await callerGraph(async(_graph,program,job)=>{
+    assertPostgresCallerAction(program,job,claim.owner);const plan=job.delegation!.agent!.plans.find(plan=>plan.id===caller.planId),step=plan?.steps[0];
+    if(!plan||plan.steps.length!==1||step?.intentId!==caller.intentId||step.action!==configured.action||digest(program.ref)!==digest(configured.programRef)||program.configurationDigest!==configured.configurationDigest)throw new SecurityError('POLICY_CHANGED');
+    return structuredClone(job.delegation!.request);
+  }):await postgresWorkerRequest(client,claim,options.policyDigest,options.modelChannel,options.builder,options.inspectClaim);
+  const authorize:typeof withPostgresWorkerEvidenceAuthorization=caller?(client,claim,policy,action,builder,_modelChannel,inspect)=>withPostgresCallerEvidenceAuthorization(client,claim,policy,action,builder,inspect):withPostgresWorkerEvidenceAuthorization;
   let open=true,failed=false,pending=0,queue:Promise<unknown>=Promise.resolve(),writes=0,reads=0,steps=0;
   const active=()=>{if(!open||failed||postgresBusinessToken(client)!==token)throw new SecurityError('AUTHORIZATION_REQUIRED');};
   const scope=async()=>{
@@ -80,7 +105,7 @@ export async function withPostgresSourceProjection<T>(client:Client,input:Postgr
     if(choices.length!==1)throw new SecurityError('SOURCE_NOT_AUTHORIZED');const selected=choices[0]!;
     if(reserved.has(selected.bindingId)||!admission.parent.capabilityIds.includes(selected.programId)||!admission.parent.sourceBindingIds.includes(selected.bindingId))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
     postgresConstrainConsent(client,selected.expiresAt,options.policyDigest);
-    if(configured.action)await withPostgresWorkerEvidenceAuthorization(client,claim,options.policyDigest,async(_auth,_scope,principal)=>{
+    if(configured.action)await authorize(client,claim,options.policyDigest,async(_auth,_scope,principal)=>{
       for(const permission of ['resource.view','action.execute'] as const){const until=await postgresTaskResourcePermissionValidUntil(client,principal,request.id,options.policyDigest,'actionType',configured.action!,permission,options.builder);
         if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');postgresConstrainReadDeadline(client,until);}
     },options.builder,options.modelChannel,options.inspectClaim);
@@ -94,21 +119,21 @@ export async function withPostgresSourceProjection<T>(client:Client,input:Postgr
     if(!history.length)throw new SecurityError('OUTPUT_NOT_ALLOWED');
     const envelope=combineEnvelopes(history);
     if(envelope.submission?.taskId!==request.id||envelope.submission.requestRevision!==request.revision||envelope.submission.contentDigest!==submissionDigest(request))throw new SecurityError('POLICY_CHANGED');
-    return withPostgresWorkerEvidenceAuthorization(client,claim,options.policyDigest,auth=>auth.authorizeEvidence(envelope),options.builder,options.modelChannel,options.inspectClaim);
+    return authorize(client,claim,options.policyDigest,auth=>auth.authorizeEvidence(envelope),options.builder,options.modelChannel,options.inspectClaim);
   };
   const read=<R>(operation:(graph:Parameters<Parameters<typeof withPostgresPlanningReadGraph>[6]>[0])=>Promise<R>)=>
-    withPostgresWorkerEvidenceAuthorization(client,claim,options.policyDigest,(auth,admission,principal)=>
+    authorize(client,claim,options.policyDigest,(auth,admission,principal)=>
       withPostgresPlanningReadGraph(client,principal,request.id,options.policyDigest,auth,admission,async graph=>{
         const result=await operation(graph),influence=graph.evidence();
         if(influence){const approved=await auth.authorizeEvidence(influence);await client.query(`INSERT INTO ${q}.security_reads(grant_id,digest,body) VALUES($1,$2,$3) ON CONFLICT(grant_id,digest) DO NOTHING`,[admission.grant.id,digest(approved),JSON.stringify(approved)]);
           onInfluence?.(structuredClone(approved));}
         return result;
       },options.builder),options.builder,options.modelChannel,options.inspectClaim);
-  const permission=async(type:string)=>withPostgresWorkerEvidenceAuthorization(client,claim,options.policyDigest,async(_auth,_admission,principal)=>{
+  const permission=async(type:string)=>authorize(client,claim,options.policyDigest,async(_auth,_admission,principal)=>{
     const until=await postgresTaskResourceViewValidUntil(client,principal,request.id,options.policyDigest,'linkType',type,options.builder);
     if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');postgresConstrainReadDeadline(client,until);
   },options.builder,options.modelChannel,options.inspectClaim);
-  const requireObject=async(ref:ObjectRef)=>withPostgresWorkerEvidenceAuthorization(client,claim,options.policyDigest,async auth=>{
+  const requireObject=async(ref:ObjectRef)=>authorize(client,claim,options.policyDigest,async auth=>{
     if(!await auth.bindingMetadata(ref))throw new SecurityError('AUTHORIZATION_REQUIRED');
   },options.builder,options.modelChannel,options.inspectClaim);
   const personalAsset=async(ref:ObjectRef,provenance:ObjectSource)=>{
@@ -128,10 +153,14 @@ export async function withPostgresSourceProjection<T>(client:Client,input:Postgr
     const grants=await client.query(`SELECT CASE WHEN octet_length(body)<=8388608 THEN body END AS body FROM ${q}.plan_grants WHERE owner=$1 AND job_id=$2 LIMIT 257`,[claim.owner,request.id]);
     if(grants.rows.length>256||!grants.rows.some(row=>typeof row.body==='string'&&matchesAgentGrant(JSON.parse(row.body) as PlanGrant,plan,step)))throw new SecurityError('AUTHORIZATION_REQUIRED');return true;
   };
-  const ingest=async(owner:string,input:ObjectBatch,provenanceInput:ObjectSource)=>{
+  const ingest=async(owner:string,input:ObjectBatch,provenanceInput:ObjectSource,managed?:ManagedObjectBatch)=>{
     active();if(owner!==claim.owner||++writes>200)throw new SecurityError('AUTHORIZATION_REQUIRED');
     const batch=ontologyBatchSchema.parse(structuredClone(input)),provenance=ontologySourceSchema.parse(structuredClone(provenanceInput));
     const initial=await source(),inherited=await evidence(),origin:ObservationSource={programId:initial.selected.programId,programDigest:initial.selected.programDigest,sourceBindingId:initial.selected.bindingId};
+    if(managed)await authorize(client,claim,options.policyDigest,async(_auth,admission,principal)=>{
+      const job=await new PostgresTaskStorage(client,options.builder).get(claim.owner,request.id);
+      await postgresCallerActionAuthority(client,principal,admission,job,new DynamicOntologyProgram(metadata.model,metadata.releaseRef,claim.owner),options,managed);
+    },options.builder,undefined,options.inspectClaim);
     const stamp=digest({parent:initial.admission.parent,grant:initial.admission.grant,source:initial.selected,policy:initial.admission.policyRevision});
     const current=async()=>{const next=await source();if(digest({parent:next.admission.parent,grant:next.admission.grant,source:next.selected,policy:next.admission.policyRevision})!==stamp)throw new SecurityError('POLICY_CHANGED');};
     for(const object of batch.objects){
@@ -142,7 +171,7 @@ export async function withPostgresSourceProjection<T>(client:Client,input:Postgr
     }
     const name=`source_${randomUUID().replaceAll('-','')}`;await client.query(`SAVEPOINT ${name}`);
     try{
-      const graph=await PostgresProjectionGraph.create(client,claim.owner,release,options.builder);await graph.ingest(owner,batch,provenance);
+      const graph=await PostgresProjectionGraph.create(client,claim.owner,release,options.builder);if(managed)await graph.applyManaged(owner,managed,provenance);else await graph.ingest(owner,batch,provenance);
       const binder=new PostgresTaskBindings(client,options.builder);
       for(const object of batch.objects){
         const row=await client.query(`SELECT revision,definition_digest FROM ${q}.ontology_objects WHERE owner=$1 AND type=$2 AND id=$3 LIMIT 2`,[owner,object.ref.type,object.ref.id]);
@@ -182,10 +211,30 @@ export async function withPostgresSourceProjection<T>(client:Client,input:Postgr
     const next=queue.then(async()=>{active();try{const result=await operation();active();return result;}catch(error){failed=true;throw error;}}).finally(()=>{pending--;});
     queue=next.catch(()=>{});return next;
   };
-  const driver:PostgresSourceProjectionGraph=Object.freeze({model:metadata.model,now:metadata.now,releaseRef:metadata.releaseRef,security:true,request:freezeData(structuredClone(request)),
+  const dispatchCheck=async(owner:string,invocation:import('../ontology/graph-program.js').ManagedDispatchInvocation)=>{
+    active();if(!caller||owner!==claim.owner||invocation.requestId!==request.id||invocation.planId!==caller.planId||invocation.intentId!==caller.intentId||invocation.attemptId!==caller.attemptId)throw new SecurityError('AUTHORIZATION_REQUIRED');
+    await caller.journal.assertDispatchAllowed(claim,caller.intentId,caller.attemptId);active();await scope();active();
+  };
+  const driver:PostgresCallerSourceProjectionGraph=Object.freeze({model:metadata.model,now:metadata.now,releaseRef:metadata.releaseRef,security:true,request:freezeData(structuredClone(request)),
     read:(...args:Parameters<GraphStorage['read']>)=>serial(()=>{if(++reads>1000)throw new SecurityError('OUTPUT_NOT_ALLOWED');return read(graph=>graph.read(...args));}),
     query:(...args:Parameters<GraphStorage['query']>)=>serial(()=>read(graph=>graph.query(...args))),related:(...args:Parameters<GraphStorage['related']>)=>serial(()=>read(graph=>graph.related(...args))),relationshipDigest:(...args:Parameters<GraphStorage['relationshipDigest']>)=>serial(()=>read(graph=>graph.relationshipDigest(...args))),
-    ingest:(...args:Parameters<GraphStorage['ingest']>)=>serial(()=>ingest(...args)),readPrivate:()=>{throw new SecurityError('AUTHORIZATION_REQUIRED');},containsLinks:()=>{throw new SecurityError('AUTHORIZATION_REQUIRED');},evidencePropertiesDigest:()=>{throw new SecurityError('AUTHORIZATION_REQUIRED');},tombstone:()=>{throw new SecurityError('AUTHORIZATION_REQUIRED');}});
+    ingest:(...args:Parameters<GraphStorage['ingest']>)=>serial(()=>{if(caller)throw new SecurityError('AUTHORIZATION_REQUIRED');return ingest(...args);}),readPrivate:()=>{throw new SecurityError('AUTHORIZATION_REQUIRED');},
+    containsLinks:(...args:Parameters<GraphStorage['containsLinks']>)=>serial(()=>{if(!caller)throw new SecurityError('AUTHORIZATION_REQUIRED');return callerGraph(graph=>Promise.resolve(graph.containsLinks(...args)));}),
+    evidencePropertiesDigest:()=>{throw new SecurityError('AUTHORIZATION_REQUIRED');},
+    tombstone:(...args:Parameters<GraphStorage['tombstone']>)=>serial(()=>{if(!caller)throw new SecurityError('AUTHORIZATION_REQUIRED');return callerGraph(graph=>Promise.resolve(graph.tombstone(...args)));}),
+    ...(caller?{
+      managedObject:(...args:Parameters<NonNullable<GraphStorage['managedObject']>>)=>serial(()=>callerGraph(graph=>Promise.resolve(graph.managedObject!(...args)))),
+      previewManaged:(...args:Parameters<NonNullable<GraphStorage['previewManaged']>>)=>serial(()=>callerGraph(graph=>Promise.resolve(graph.previewManaged!(...args)))),
+      managedDispatchCheck:(...args:Parameters<NonNullable<GraphStorage['managedDispatchCheck']>>)=>serial(()=>dispatchCheck(...args)),
+      applyManaged:(owner:string,batch:ManagedObjectBatch,provenance:ObjectSource)=>serial(async()=>{
+        await dispatchCheck(owner,{requestId:request.id,planId:caller.planId,intentId:caller.intentId,attemptId:caller.attemptId});
+        if(provenance.kind!=='user'||provenance.id!==caller.intentId)throw new SecurityError('SOURCE_NOT_AUTHORIZED');
+        // Validate the ordinary projection separately from managed create/delete
+        // preconditions; applyManaged receives the complete original batch.
+        await ingest(owner,{objects:batch.objects,links:batch.links,removeLinks:batch.removeLinks},provenance,batch);
+      }),
+    }:{}),
+  });
   // Capture admitted original-request/history influence before the mapper can
   // change its own source projections. Later reads append their exact approved
   // snapshots; never reinterpret an older read as the new written revision.

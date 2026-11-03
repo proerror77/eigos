@@ -185,6 +185,7 @@ export class PostgresTaskStorage {
       if(previous.rows[0]?.owner!==owner)throw new DomainError('FORBIDDEN','Task owner mismatch');
       if(typeof previous.rows[0]?.body!=='string')throw new DomainError('CONFLICT','Stored task exceeds its runtime bound');
       const old=JSON.parse(previous.rows[0].body) as Job;
+      if(digest(old.delegation?.observationContract??null)!==digest(job.delegation?.observationContract??null))throw new DomainError('CONFLICT','Observation delegation is immutable');
       if(old.authorityId!==job.authorityId||digest(old.delegation?.ontologyRelease??null)!==digest(job.delegation?.ontologyRelease??null)
         ||digest(old.delegation?.callerAction??null)!==digest(job.delegation?.callerAction??null))throw new DomainError('CONFLICT','Task authority and pinned execution context are immutable');
     }else if(job.delegation?.backendVersion===BACKEND_VERSION)job.authorityId=String(authority.rows[0].id);

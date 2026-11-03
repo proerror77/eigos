@@ -11,11 +11,14 @@ import { nameSchema, objectRefSchema, type ObjectRef, type OntologyModel } from 
 import { compileJsonSchema } from '../ontology/model-compiler.js';
 import type { OntologyObjectStore } from '../ontology/object-store.js';
 import type { PlanningSnapshot } from '../ontology/planning-contract.js';
-import { applyDeclarativeAction, previewDeclarativeAction, type ManagedActionPreview } from '../ontology/declarative-actions.js';
+import { applyDeclarativeActionProgram, previewDeclarativeActionProgram, type ManagedActionPreview } from '../ontology/declarative-actions.js';
 import { readManagedResultFacts, mergeManagedResultFacts } from '../ontology/managed-result-facts.js';
 import type { ManagedResultFact } from '../ontology/action-dsl.js';
 import { checkRequirements } from '../ontology/requirement-checks.js';
 import { stepBindingRef, stepInputDigest } from '../core/composed-actions.js';
+import {graphRead,graphQuery,graphRelated,graphManagedObject,graphTombstone,graphContainsLinks,graphManagedDispatchCheck,runGraphProgram,type GraphProgram,type ProjectionMetadata} from '../ontology/graph-program.js';
+type ManagedContext=Omit<AgentProgramContext,'graph'>&{graph:ProjectionMetadata};
+type ManagedActionContext=Omit<AgentActionContext,'graph'>&{graph:ProjectionMetadata};
 
 const equal = (a: unknown, b: unknown) => digest(a) === digest(b);
 function fail(message: string): never { throw new DomainError('CONFLICT', message); }
@@ -62,49 +65,56 @@ export class DynamicOntologyProgram implements AgentProgram {
       verifierRef: { id: 'ontology.managed-data-readback', version: '1' },
     };
   }
-  private graph(graph: OntologyObjectStore): void {
+  private graph(graph: ProjectionMetadata): void {
     if (!equal(graph.releaseRef, this.releaseRef) || graph.model.ref.digest !== this.model.ref.digest) fail('Managed program is pinned to a different ontology release');
   }
   initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, value: unknown) {
+    return runGraphProgram(graph,this.initializeProgram(graph,owner,request,value));
+  }
+  *initializeProgram(graph:ProjectionMetadata,owner:string,request:ServiceRequest,value:unknown):GraphProgram<{scope:ObjectRef;input:z.infer<typeof taskInputSchema>;managedActionIds:string[]}>{
     this.graph(graph);
     if (!this.permitted(owner)) throw new DomainError('FORBIDDEN', 'Managed program belongs to another owner');
     const input = taskInputSchema.parse(value);
     if (new Set(input.actionIds).size !== input.actionIds.length || input.actionIds.some(id => !this.actionIds.includes(id))) inputError(['actionIds'], 'Choose unique currently published declarative Action IDs from this ontology');
     for (const [index, ref] of (input.objects ?? []).entries()) {
-      try { graph.read(owner, ref); }
+      try { yield* graphRead(owner,ref); }
       catch (error) {
         if (error instanceof DomainError && error.code === 'NOT_FOUND') inputError(['objects', index], 'Context references must already exist and belong to this owner. Query existing records first; for a pure creation use objects:[] and supply the new identity only in the later create Action arguments.');
         throw error;
       }
     }
-    const specifications = graph.query(owner, { from: { type: 'ServiceRequest', id: request.id }, link: 'specifications', where: [{ property: 'requestRevision', op: 'eq', value: request.revision }], limit: 2 });
+    const specifications = yield* graphQuery(owner,{from:{type:'ServiceRequest',id:request.id},link:'specifications',where:[{property:'requestRevision',op:'eq',value:request.revision}],limit:2});
     if (specifications.page.hasMore || specifications.items.length !== 1) fail('Managed task requires its exact immutable request specification');
     return { scope: specifications.items[0]!.ref, input, managedActionIds: [...input.actionIds] };
   }
   contextRefs(ctx: AgentProgramContext): ObjectRef[] { return taskInputSchema.parse(ctx.state.input).objects ?? []; }
-  private scope(ctx: AgentProgramContext) {
+  private *scopeProgram(ctx:ManagedContext):GraphProgram<z.infer<typeof taskInputSchema>>{
     this.graph(ctx.graph);
     if (!this.permitted(ctx.owner) || !equal(ctx.state.programRef, this.ref) || ctx.state.programDigest !== this.configurationDigest || ctx.state.requestRevision !== ctx.request.revision) fail('Managed task scope changed');
-    const scope = ctx.graph.read(ctx.owner, ctx.state.scope), input = taskInputSchema.parse(ctx.state.input);
-    const requests = ctx.graph.related(ctx.owner, scope.ref, 'request', { remaining: 1000 });
+    const scope = yield* graphRead(ctx.owner,ctx.state.scope), input = taskInputSchema.parse(ctx.state.input);
+    const requests = yield* graphRelated(ctx.owner,scope.ref,'request',{remaining:1000});
     if (scope.ref.type !== 'RequestSpecification' || scope.properties.requestRevision !== ctx.request.revision || requests?.length !== 1 || requests[0]!.ref.id !== ctx.request.id || input.actionIds.some(id => !this.actionIds.includes(id)) || !equal(ctx.state.managedActionIds, input.actionIds)) fail('Managed execution requires the current owned request specification');
     return input;
   }
+  *assertContextProgram(ctx:ManagedContext):GraphProgram<void>{yield* this.scopeProgram(ctx);}
   schema(actionId: string): z.ZodType<Record<string, unknown>> {
     if (!this.actionIds.includes(actionId)) throw new DomainError('FORBIDDEN', 'Action has no executable managed binding');
     const definition = this.model.action(actionId);
     if (!definition.inputSchema) fail('Managed action input schema is unavailable');
     return compileJsonSchema(definition.inputSchema) as z.ZodType<Record<string, unknown>>;
   }
-  definition(graph: OntologyObjectStore, actionId: string) {
+  definition(graph: ProjectionMetadata, actionId: string) {
     this.graph(graph);
     if (!this.actionIds.includes(actionId)) throw new DomainError('FORBIDDEN', 'Action is not bound to this managed program');
     return graph.model.action(actionId);
   }
   validate(ctx: AgentProgramContext, actionId: string, input: Record<string, unknown>): void {
-    if (!this.scope(ctx).actionIds.includes(actionId)) throw new DomainError('FORBIDDEN', 'Action is outside the approved task scope');
+    runGraphProgram(ctx.graph,this.validateProgram(ctx,actionId,input));
+  }
+  *validateProgram(ctx:ManagedContext,actionId:string,input:Record<string,unknown>):GraphProgram<void>{
+    if (!(yield* this.scopeProgram(ctx)).actionIds.includes(actionId)) throw new DomainError('FORBIDDEN', 'Action is outside the approved task scope');
     this.definition(ctx.graph, actionId);
-    const preview = previewDeclarativeAction(ctx.graph, ctx.owner, actionId, input), implementation = this.model.actionImplementation(actionId);
+    const preview = yield* previewDeclarativeActionProgram(ctx.graph,ctx.owner,actionId,input), implementation = this.model.actionImplementation(actionId);
     const bindings = implementation?.kind === 'declarative' ? implementation.resultFacts : undefined;
     if (bindings) {
       const requirements = [...ctx.request.requirements, ...(ctx.request.successCriteria ?? [])].filter(requirement => bindings.some(binding => binding.kind === requirement.kind && binding.role === ('role' in requirement ? requirement.role : undefined)));
@@ -113,33 +123,48 @@ export class DynamicOntologyProgram implements AgentProgram {
     }
   }
   validatePlanning(ctx: AgentProgramContext, actionId: string, input: Record<string, unknown>, reads: PlanningSnapshot): void {
-    const preview = previewDeclarativeAction(ctx.graph, ctx.owner, actionId, input);
+    runGraphProgram(ctx.graph,this.validatePlanningProgram(ctx,actionId,input,reads));
+  }
+  *validatePlanningProgram(ctx:ManagedContext,actionId:string,input:Record<string,unknown>,reads:PlanningSnapshot):GraphProgram<void>{
+    const preview = yield* previewDeclarativeActionProgram(ctx.graph,ctx.owner,actionId,input);
     if (reads.mode === 'trusted_template') return;
     for (const required of preview.reads) if (!(reads.deliveredObjects ?? reads.objects).some(object => equal(object.ref, required.ref) && object.revision === required.revision && object.propertiesDigest === required.propertiesDigest)) fail('Read each current action input and target before planning a managed mutation');
   }
   authority(ctx: AgentProgramContext, actionId: string, input: Record<string, unknown>) {
-    this.validate(ctx, actionId, input);
-    return { objectWrite: previewDeclarativeAction(ctx.graph, ctx.owner, actionId, input).scope };
+    return runGraphProgram(ctx.graph,this.authorityProgram(ctx,actionId,input));
+  }
+  *authorityProgram(ctx:ManagedContext,actionId:string,input:Record<string,unknown>):GraphProgram<{objectWrite:ManagedActionPreview['scope']}>{
+    yield* this.validateProgram(ctx,actionId,input);
+    return {objectWrite:(yield* previewDeclarativeActionProgram(ctx.graph,ctx.owner,actionId,input)).scope};
   }
   async invoke(ctx: AgentActionContext, actionId: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult> {
-    signal.throwIfAborted(); this.validate(ctx, actionId, input);
-    const value: ManagedInvocationResult = { version: '1', requestId: ctx.request.id, requestRevision: ctx.request.revision, planId: ctx.planId, intentId: ctx.intentId, attemptId: ctx.attemptId, programDigest: this.configurationDigest, preview: previewDeclarativeAction(ctx.graph, ctx.owner, actionId, input) };
+    return runGraphProgram(ctx.graph,this.invokeProgram(ctx,actionId,input,signal));
+  }
+  *invokeProgram(ctx:ManagedActionContext,actionId:string,input:Record<string,unknown>,signal:AbortSignal):GraphProgram<AgentActionResult>{
+    signal.throwIfAborted(); yield* this.validateProgram(ctx,actionId,input);
+    const value: ManagedInvocationResult = { version: '1', requestId: ctx.request.id, requestRevision: ctx.request.revision, planId: ctx.planId, intentId: ctx.intentId, attemptId: ctx.attemptId, programDigest: this.configurationDigest, preview: yield* previewDeclarativeActionProgram(ctx.graph,ctx.owner,actionId,input) };
     return { value, evidenceRefs: [ctx.intentId] };
   }
   project(ctx: AgentActionContext, actionId: string, input: Record<string, unknown>, result: AgentActionResult): ObjectRef {
-    this.scope(ctx);
+    return runGraphProgram(ctx.graph,this.projectProgram(ctx,actionId,input,result));
+  }
+  *projectProgram(ctx:ManagedActionContext,actionId:string,input:Record<string,unknown>,result:AgentActionResult):GraphProgram<ObjectRef>{
+    yield* this.scopeProgram(ctx);
     if (ctx.recovery) fail('Readback cannot apply a new managed mutation');
     const value = result.value as ManagedInvocationResult;
     if (!value || value.version !== '1' || value.requestId !== ctx.request.id || value.requestRevision !== ctx.request.revision || value.planId !== ctx.planId || value.intentId !== ctx.intentId || value.attemptId !== ctx.attemptId || value.programDigest !== this.configurationDigest || !equal(result.evidenceRefs, [ctx.intentId])) fail('Managed result differs from the exact invocation');
     const step = ctx.state.plans.find(plan => plan.id === ctx.planId)?.steps.find(step => step.intentId === ctx.intentId);
     if (!step?.objectWrite || step.action !== actionId || !equal(step.input, input)) fail('Managed action has no pinned nonfinancial authority');
-    if (!ctx.assertDispatchAllowed) throw new DomainError('FORBIDDEN', 'Managed projection requires the current dispatch authority fence');
-    ctx.assertDispatchAllowed();
-    const applied = applyDeclarativeAction(ctx.graph, ctx.owner, actionId, input, value.preview, step.objectWrite, { kind: 'user', id: ctx.intentId, observedAt: new Date(ctx.graph.now()).toISOString() });
+    if (ctx.assertDispatchAllowed) ctx.assertDispatchAllowed();
+    else yield* graphManagedDispatchCheck(ctx.owner,{requestId:ctx.request.id,planId:ctx.planId,intentId:ctx.intentId,attemptId:ctx.attemptId});
+    const applied = yield* applyDeclarativeActionProgram(ctx.graph,ctx.owner,actionId,input,value.preview,step.objectWrite,{kind:'user',id:ctx.intentId,observedAt:new Date(ctx.graph.now()).toISOString()});
     return applied.result ?? { type: 'ServiceRequest', id: ctx.request.id };
   }
   async recover(ctx: AgentActionContext, _actionId: string, _input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult | undefined> {
-    signal.throwIfAborted(); this.scope(ctx);
+    return runGraphProgram(ctx.graph,this.recoverProgram(ctx,signal));
+  }
+  *recoverProgram(ctx:ManagedActionContext,signal:AbortSignal):GraphProgram<AgentActionResult|undefined>{
+    signal.throwIfAborted(); yield* this.scopeProgram(ctx);
     const original = ctx.intents?.find(intent => intent.id === ctx.intentId && intent.jobId === ctx.request.id);
     const value = original?.lastVerifiedResult?.output?.source as ManagedInvocationResult | undefined;
     return original?.state === 'effect_confirmed' && value ? { value: structuredClone(value), evidenceRefs: [ctx.intentId] } : undefined;
@@ -150,7 +175,10 @@ export class DynamicOntologyProgram implements AgentProgram {
       evidence: { origin: 'managed' as const, refs: result.evidenceRefs, observedAt: new Date(ctx.graph.now()).toISOString() } };
   }
   complete(ctx: AgentProgramContext, proposal: unknown, reads: PlanningSnapshot): Delivery {
-    this.scope(ctx);
+    return runGraphProgram(ctx.graph,this.completeProgram(ctx,proposal,reads));
+  }
+  *completeProgram(ctx:ManagedContext,proposal:unknown,reads:PlanningSnapshot):GraphProgram<Delivery>{
+    yield* this.scopeProgram(ctx);
     const completion = completionSchema.parse(proposal), confirmed = (ctx.intents ?? []).filter(intent => intent.effect === 'object_write' && intent.state === 'effect_confirmed');
     const ordered = new Map<string, { ordinal: number; plan: typeof ctx.state.plans[number]; step: typeof ctx.state.plans[number]['steps'][number] }>();
     const sequences = new Set<number>();
@@ -189,22 +217,23 @@ export class DynamicOntologyProgram implements AgentProgram {
     });
     for (const change of finalObjects.values()) {
       if (change.operation === 'tombstone') {
-        if (ctx.graph.managedObject(ctx.owner, change.ref) || ctx.graph.tombstone(ctx.owner, change.ref)?.revision !== change.expectedRevision! + 1) fail('Tombstone readback differs from the committed action');
+        if ((yield* graphManagedObject(ctx.owner,change.ref)) || (yield* graphTombstone(ctx.owner,change.ref))?.revision !== change.expectedRevision! + 1) fail('Tombstone readback differs from the committed action');
       } else {
-        const current = ctx.graph.read(ctx.owner, change.ref);
+        const current = yield* graphRead(ctx.owner,change.ref);
         if (!equal(current.properties, change.after) || current.revision !== (change.expectedRevision ?? 0) + 1) fail('Managed object changed after the committed action');
         if (reads.mode === 'model_queries' && !(reads.deliveredObjects ?? reads.objects).some(object => equal(object.ref, current.ref) && object.revision === current.revision)) fail('Completion requires current object readback');
       }
     }
-    for (const change of finalLinks.values()) if (ctx.graph.containsLinks(ctx.owner, [change.link]) !== (change.operation === 'add')) fail('Managed relationship readback differs from the committed action');
-    const resultFacts = mergeManagedResultFacts([...resultBindings.values()].filter(result => finalObjects.get(digest(result.ref))?.operation !== 'tombstone')
-      .map(result => readManagedResultFacts(ctx.graph.read(ctx.owner, result.ref).properties, result.bindings)));
+    for (const change of finalLinks.values()) if ((yield* graphContainsLinks(ctx.owner,[change.link])) !== (change.operation === 'add')) fail('Managed relationship readback differs from the committed action');
+    const facts:ReturnType<typeof readManagedResultFacts>[]=[];
+    for(const result of [...resultBindings.values()].filter(result=>finalObjects.get(digest(result.ref))?.operation!=='tombstone'))facts.push(readManagedResultFacts((yield* graphRead(ctx.owner,result.ref)).properties,result.bindings));
+    const resultFacts=mergeManagedResultFacts(facts);
     const deliverable = '已完成并回读授权的本体受管数据变更。';
     return { artifact: { id: randomUUID(), name: 'ontology-action-result.json', data: { goal: ctx.request.originalGoal, deliverable, execution: 'completed', result: { ontologyRelease: this.releaseRef, managedChanges: changes, ...(changes.every(change => isPersonalAction(change.actionId)) ? { securityEvidenceRefs: [...finalObjects.values()].filter(change => change.operation !== 'tombstone').map(change => change.ref) } : {}), ...(completion.rationale ? { rationale: completion.rationale } : {}) } } }, facts: { ...resultFacts, conditions: ['ontology.managed_data_readback'] }, evidenceRefs: confirmed.map(intent => intent.id) };
   }
 }
 
-export function createDynamicOntologyProgram(graph: OntologyObjectStore, owner: string): DynamicOntologyProgram | undefined {
+export function createDynamicOntologyProgram(graph: ProjectionMetadata, owner: string): DynamicOntologyProgram | undefined {
   if (!graph.releaseRef || !graph.model.actionDefinitions().some(action => graph.model.actionImplementation(action.id)?.kind === 'declarative')) return undefined;
   return new DynamicOntologyProgram(graph.model, graph.releaseRef, owner);
 }

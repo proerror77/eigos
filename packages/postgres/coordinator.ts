@@ -36,6 +36,7 @@ import {installPostgresAgentPlan} from './agent-plan.js';
 import {preparePostgresGoalContexts,postgresGoalProgram} from './goal-contexts.js';
 import {postgresGoalReviewContext,postgresAgentPlanningContext} from './model-context.js';
 import {acceptPostgresGoal} from './goal-acceptance.js';
+import {PostgresCallerActionExecution} from './caller-action.js';
 
 /** Host registry contract: the implementation must await model-usage begin and
  * finish and invoke the actual dispatch guard before sending any prompt. A
@@ -142,7 +143,8 @@ export class PostgresCoordinator {
   async run(claim:WorkClaim,signal:AbortSignal):Promise<void>{
     try{
     signal.throwIfAborted();const job=await this.load(claim),d=job.delegation;
-    if(!d||d.backendVersion!==BACKEND_VERSION||claim.recovery||d.callerAction||d.plan||d.suspendedAgent)throw new SecurityError('AUTHORITY_UNAVAILABLE','This PostgreSQL candidate has no installed legacy, caller or terminal-effect recovery adapter');
+    if(!d||d.backendVersion!==BACKEND_VERSION||claim.recovery||d.plan||d.suspendedAgent)throw new SecurityError('AUTHORITY_UNAVAILABLE','This PostgreSQL candidate has no installed legacy or terminal-effect recovery adapter');
+    if(d.callerAction){await new PostgresCallerActionExecution({database:this.configured.database,policyDigest:this.options.policyDigest,builder:this.options.builder,maxTaskMs:this.maximum}).run(claim,signal);return;}
     const intents=await this.configured.database.run(client=>new PostgresTaskStorage(client,this.options.builder).intents(claim.owner,job.id));
     if(Date.now()>Date.parse(canRecoverReadOnly(job,intents)?executionBudgetStatus(job).window.startedAt:job.createdAt)+this.maximum){await this.transition(claim,current=>pauseExecutionBudget(current,'time','window'));return;}
     if(remainingModelTurns(job)<MIN_REASONING_TURNS&&!d.agent?.pendingPlanId){await this.transition(claim,current=>pauseExecutionBudget(current,'modelTurns','window'));return;}

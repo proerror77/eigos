@@ -3567,7 +3567,7 @@
     {
       "id": "execution-catalog",
       "file": "packages/core/catalog.ts",
-      "sourceDigest": "b68c367a6e0b2f0ce466a20f06f82d7be9c2c84d83d1ba6e54edccd28fdd952c",
+      "sourceDigest": "11c26c69ad42330e92600755b9d4863e2d96c8a506e511b2af6fc5b0fa577a83",
       "channels": [
         "worker"
       ],
@@ -3579,7 +3579,7 @@
     {
       "id": "agent-program-contract",
       "file": "packages/core/agent-program.ts",
-      "sourceDigest": "52984584b26a46d5170082584c629982f9f38b7c960f7b328e05cc68c8043901",
+      "sourceDigest": "f87a8f44798e724a352c061128d327f0ca15728124cb31c766b5ef783f41a1ab",
       "channels": [
         "worker"
       ],
@@ -3725,7 +3725,7 @@
     {
       "id": "s5-packages-capabilities-booking-program",
       "file": "packages/capabilities/booking/program.ts",
-      "sourceDigest": "1e9224dc31e1ffbb2c978c3c6aafe963a86bec025822c7ed297016989ae50ce6",
+      "sourceDigest": "77a54bbd11c527d6388550aee5ddba738a9fa111581d853acbb2c052264b29e5",
       "channels": [
         "runtime"
       ],
@@ -3749,7 +3749,7 @@
     {
       "id": "s5-packages-capabilities-catalog-agent",
       "file": "packages/capabilities/catalog-agent.ts",
-      "sourceDigest": "b8c1d7b8e24ef4a6a683c2d938b362629839c10f41dfc6219c675a74791aa716",
+      "sourceDigest": "4e273eff6371cc3fd8bcc28d78459ad3df325ce0aa30ebc2425d6c3b33c7b616",
       "channels": [
         "runtime"
       ],
@@ -3761,7 +3761,7 @@
     {
       "id": "s5-packages-capabilities-commerce-agent",
       "file": "packages/capabilities/commerce-agent.ts",
-      "sourceDigest": "94ea504b05954370ba476099fef6bfdc01ed45a534a734bc5d86af282cfeda51",
+      "sourceDigest": "cec631df9c5d93f2ea4e261f4626bf95664c3a8dd8d366d4631d15bcbe10ce44",
       "channels": [
         "runtime"
       ],
@@ -3773,7 +3773,7 @@
     {
       "id": "s5-packages-capabilities-didi-program",
       "file": "packages/capabilities/didi/program.ts",
-      "sourceDigest": "d62e5ff21f913288b6ac301c917a05ee73128f68c355e79274bd61b9c338bbc3",
+      "sourceDigest": "14a6640af5b6eaf7634afed2c8c6be208c58ded5be749e316e42ffb9bad8030a",
       "channels": [
         "runtime"
       ],
@@ -3797,7 +3797,7 @@
     {
       "id": "s5-packages-capabilities-free-booking-program",
       "file": "packages/capabilities/free-booking/program.ts",
-      "sourceDigest": "8731c3b80c6f904929a8ab4c6634e7738efff4a5cec52838fd8f9337b463e6ab",
+      "sourceDigest": "48074a508e37cfc1bb268e312ce9b120cb86a4e8ce2236e2c1e2952aca676927",
       "channels": [
         "runtime"
       ],
@@ -3809,7 +3809,7 @@
     {
       "id": "s5-packages-capabilities-meituan-agent",
       "file": "packages/capabilities/meituan-agent.ts",
-      "sourceDigest": "3e5fd8c274a3a68b6e7458fff2f950932e8bd6db890f5209deabcbb3ebfbfcf3",
+      "sourceDigest": "7e9e1a5277cbbed569372acc0123306addf350e984b73c1f5246e59e2b3c30ef",
       "channels": [
         "runtime"
       ],
@@ -3954,7 +3954,7 @@
     {
       "id": "agent-action-binding",
       "file": "packages/core/agent-action-binding.ts",
-      "sourceDigest": "23d00a8755dd5ac1a50664952cd157d55f91c7c422d6950be84ee10c6e7971e1",
+      "sourceDigest": "5fce01c0c67952d33d6ff107cceaf4d8175beb4101c236cb07ffd79ffa3aac86",
       "channels": [
         "model",
         "artifact"
@@ -3980,7 +3980,7 @@
     {
       "id": "composition-program",
       "file": "packages/coordinator/composition-program.ts",
-      "sourceDigest": "b2de717367fbd2c36c1a3a22ccf31bd886a4d1252adf677f569acfb8613dc7c5",
+      "sourceDigest": "a3bdb84b3e3fdb9f85c625dcc4542c7c864bb1726fc8ddc535d4655758f09125",
       "channels": [
         "model",
         "dispatch",
@@ -4035,7 +4035,7 @@
     {
       "id": "didi-order-test-program",
       "file": "packages/capabilities/didi/order-test-program.ts",
-      "sourceDigest": "fec98c5861f200fe64ea84bf016fd025e80901c70734a6228e573ba40be6e78b",
+      "sourceDigest": "1500fddfa6f9c46d52b83c0de98a0058fdf509fd28b81d8fe83da56594ac2c04",
       "channels": [
         "model",
         "dispatch",
@@ -4397,7 +4397,7 @@
     {
       "id": "primary-deployment",
       "file": "scripts/deploy-primary.mjs",
-      "sourceDigest": "0e8c063a03e361cd20e2e8782a558bcfebcc380b86f966a68b30f82219a22657",
+      "sourceDigest": "da199f18d87508c82a3699965fe67b51db2eeaa02b52976910e0ac7f1bc638e5",
       "channels": [
         "operator_cli"
       ],
@@ -4497,7 +4497,7 @@
     {
       "id": "rollinggo-program",
       "file": "packages/capabilities/rollinggo/program.ts",
-      "sourceDigest": "a52964cc083172a793b1375c46708bd073ae1c74e292177a9a9984e84924ecd4",
+      "sourceDigest": "27b3ee826c9bf81ba9fa23df11b46f9a071a9d0e144c7d3e9c7c49530c841c86",
       "channels": [
         "worker",
         "ontology"
@@ -5025,7 +5025,7 @@
     {
       "id": "packages-ontology-personal-context",
       "file": "packages/ontology/personal-context.ts",
-      "sourceDigest": "4f020d123324599ccce906e95e2e972b7a7954b711c95a41dbd49cf69f3def11",
+      "sourceDigest": "3e28797caa4ada568528857d46cc6302d2b7d80fed4113b3be43d209ed67bce5",
       "channels": [
         "sqlite",
         "registered_model"
@@ -5329,7 +5329,7 @@
     {
       "id": "pa-messaging-controller",
       "file": "apps/gateway/messaging/routes.ts",
-      "sourceDigest": "c90c5ce189a6e97ba64ea4224c693f0681b84c121a695a49ec3d688ad156756f",
+      "sourceDigest": "b07a282644e6f04c820ad12a4af257e0aef76b41ee5f9b06b130b00df8d6142d",
       "channels": [
         "member_ui",
         "http"
@@ -5864,7 +5864,7 @@
     {
       "id": "postgres-task-output-authorization",
       "file": "packages/postgres/task-output.ts",
-      "sourceDigest": "7156252c239ea8410a8a1feab504d45fcc582bd5ac97bce0d3c54ed72cf9e04b",
+      "sourceDigest": "05fd26f255be511d8cf9cc5f694bf8e144031b5c1ba72ee2dcf154058d6f3b17",
       "channels": [
         "internal"
       ],
@@ -5888,7 +5888,7 @@
     {
       "id": "postgres-task-view",
       "file": "packages/postgres/task-view.ts",
-      "sourceDigest": "1d4468f35f0f6e44dbc506cf0bba30f1fa3e6b4ca9adfe5e93b61767aab461bf",
+      "sourceDigest": "77505001297651f4f171b4099f33be488b07f8ca562c97c5e1834aead31209bd",
       "channels": [
         "internal"
       ],
@@ -5912,7 +5912,7 @@
     {
       "id": "postgres-task-read-service",
       "file": "packages/postgres/task-read-service.ts",
-      "sourceDigest": "c48823bc73cb25b8a0637339bc08506896e5c6966bf8430a22bcc7458a0938a2",
+      "sourceDigest": "c073f678267c277396d1387eba7939b82a0e2ac8aec6163d35ccaf3c1002106d",
       "channels": [
         "internal"
       ],
@@ -5924,7 +5924,7 @@
     {
       "id": "ontology-graph-program",
       "file": "packages/ontology/graph-program.ts",
-      "sourceDigest": "7e78668b1d82844f01ff162b71125b006ebef3e8b5e8df300ca51c52f9bd839c",
+      "sourceDigest": "4194b045a39e88df5dd2ce1e5f78d3b58bacd2c938e58bce9bfed28741d3fe5f",
       "channels": [
         "internal"
       ],
@@ -5948,7 +5948,7 @@
     {
       "id": "postgres-projection-graph",
       "file": "packages/postgres/projection-graph.ts",
-      "sourceDigest": "bbad1fa12f19ce3c72843e9eff377e7ac5ea0dd25bfb44c3749ab7e35f77ccf5",
+      "sourceDigest": "9dc42004020c5267719134767360f00caf9e5a5e8c3947dd2b95f7fff5910b95",
       "channels": [
         "internal"
       ],
@@ -5972,7 +5972,7 @@
     {
       "id": "postgres-task-grants",
       "file": "packages/postgres/task-grants.ts",
-      "sourceDigest": "b58696ab8852592bcd70ec19e0bf2c760d70f2194da20d9e69da48622cbd7349",
+      "sourceDigest": "d603af468a3c957ef31b9e68dacba59d11da65a803d4802fa013796826524510",
       "channels": [
         "internal"
       ],
@@ -5996,7 +5996,7 @@
     {
       "id": "postgres-task-storage",
       "file": "packages/postgres/task-storage.ts",
-      "sourceDigest": "5ec8da7ce3925f986209a6f569bf25680469a9680221e32d2aba0b1758b6a21a",
+      "sourceDigest": "7d55666bc2cfc4a0536707bf91b73c7948804ab668b8c63b2b79c2d744a2552f",
       "channels": [
         "internal"
       ],
@@ -6008,7 +6008,7 @@
     {
       "id": "postgres-task-commands",
       "file": "packages/postgres/task-command-service.ts",
-      "sourceDigest": "b58ca2b7bf9207d5f8d1cdb0301cd90dc5a725ed85dc011002ac2b7019eff784",
+      "sourceDigest": "245c15f8910f582f319fc85de21cdec929ee28985cb6a01ccdf0f2e453ff1bc0",
       "channels": [
         "internal"
       ],
@@ -6323,7 +6323,7 @@
     {
       "id": "postgres-planning-read-graph",
       "file": "packages/postgres/planning-read-graph.ts",
-      "sourceDigest": "14f56b87f42439d90af75f010175438202563f97437ecb95c9a7319587252bdf",
+      "sourceDigest": "a48ae10dcb203f9cbb8dee7d1529f50f04acf44fd8d705df021a9238258255b6",
       "channels": [
         "internal"
       ],
@@ -6467,7 +6467,7 @@
     {
       "id": "postgres-action-journal",
       "file": "packages/postgres/action-journal.ts",
-      "sourceDigest": "8cacc3e6a0167a03e9c7de021f1c8db03a0ebbefd25bf70d474185cd139e35e8",
+      "sourceDigest": "a52796585cde24b3ceaa5e184bde9c3f5366c0aa7b4ed58fbb5305047b2ced50",
       "channels": [
         "internal"
       ],
@@ -6479,7 +6479,7 @@
     {
       "id": "postgres-action-authorization",
       "file": "packages/postgres/action-authorization.ts",
-      "sourceDigest": "8cb65bd5ff78fece2de37189b6c31881da43c9f178a909a469deadbb27500af3",
+      "sourceDigest": "a2f2821fa97ac25b4d803474014a68b0a257e8cf3c441f6dde7c84afbe859214",
       "channels": [
         "internal"
       ],
@@ -6587,7 +6587,7 @@
     {
       "id": "postgres-source-projection",
       "file": "packages/postgres/source-projection.ts",
-      "sourceDigest": "dd19b1903c06cf1fb0bcc4f820a046ef32274965a0b0c0529b504b2d4b6cca4d",
+      "sourceDigest": "4f227fff43f19268a3587bc8a3528fe5525a4352929fdeb2c09a7ef99d9c4490",
       "channels": [
         "internal"
       ],
@@ -6743,7 +6743,7 @@
     {
       "id": "postgres-coordinator",
       "file": "packages/postgres/coordinator.ts",
-      "sourceDigest": "e2b0fb46d7e62b8cc1bbebbd8a8b22da2b50b5fb6fcce4b400648bef2f3a42b7",
+      "sourceDigest": "dbaca49304cc470082474dd6d0c94b60cb9eed30c9edc98d0b81ca684808af8a",
       "channels": [
         "internal"
       ],
@@ -6779,7 +6779,7 @@
     {
       "id": "postgres-ci-groups",
       "file": "scripts/postgres-tests.mjs",
-      "sourceDigest": "40d770c5976a4d916663c73cd0deefd291cac2d1907e1a654704fa7374afb543",
+      "sourceDigest": "6eb4513c0f55464dcf1eef2fa5612954a75b195d0e7f466a75485d22ab2dace0",
       "channels": [
         "internal"
       ],
@@ -6876,7 +6876,7 @@
     {
       "id": "payment-commerce-program",
       "file": "packages/capabilities/payment-commerce/program.ts",
-      "sourceDigest": "9aad285c5f70bb25377c3918d8dcd1a1f805e227135f7ccd6cd5c364aa3d29ec",
+      "sourceDigest": "f81386be47804518bfb804562df04ce7b1cf8068ff20f453d3874009c72d64e7",
       "channels": [
         "registered_model",
         "agent_response"
@@ -7031,7 +7031,7 @@
     {
       "id": "postgres-definition-service",
       "file": "packages/postgres/definition-service.ts",
-      "sourceDigest": "d2d34ea9dd832c968678e360b16832e015220eedc75da94d63f5b87153a32a99",
+      "sourceDigest": "ecae25155ac8a1ecb59dce864d566c9e4d8c9f6b09975bb465ca2b6cfe76c8b7",
       "channels": [
         "internal",
         "ontology_metadata"
@@ -7078,6 +7078,69 @@
       "content": "Shared Pipeline proof, mapping and acceptance rules",
       "currentControl": "Exact original transaction, owner, published refs and guarded runtime; explicit scope and namespace permission remain at the service boundary; immutable release history, CAS generations, complete bounded facts/proofs and rollback; unknown or expired evidence cannot certify publication or execution",
       "targetControl": "Preserve original task pins and current source/role/recipient authorization; no implicit activation or fake evidence",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-caller-action",
+      "file": "packages/postgres/caller-action.ts",
+      "sourceDigest": "68e8fe80b9d884f75bf042363d5ad9b2df6154fe7972d6f0329d9be6c7025196",
+      "channels": [
+        "internal",
+        "agent_response"
+      ],
+      "content": "Caller-origin managed action preparation and real execution",
+      "currentControl": "Exact original owner, request revision, published action pin, current PA source/field/recipient authority and durable original claim; awaited dispatch fence, actual managed apply, verified observation and fresh independent readback; no model identity or implicit permission",
+      "targetControl": "Preserve original task, current authority and independent acceptance; missing or revoked authorization fails closed",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-observation-contract",
+      "file": "packages/postgres/observation-contract.ts",
+      "sourceDigest": "e5ae561eb66ed8ede76db984ea3ada112c30a4325f3802c20c0e9ed5f9a39470",
+      "channels": [
+        "internal",
+        "agent_response"
+      ],
+      "content": "Inactive observation contract registration",
+      "currentControl": "Exact published intake, current query/source/field authority and immutable task-bound contract; registration remains inactive with empty source rules and outputs; cancellation revokes without issuing execution or model authority",
+      "targetControl": "Preserve original task, current authority and independent acceptance; missing or revoked authorization fails closed",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-action-discovery",
+      "file": "packages/postgres/action-discovery.ts",
+      "sourceDigest": "5e8d6381bf8922abb87004212fe7028fe5ae314a9d66829df30184cfa33e8c05",
+      "channels": [
+        "internal",
+        "agent_response"
+      ],
+      "content": "Agent query-only action discovery",
+      "currentControl": "Actual task.query and original PA recipient, current owner/parent/role/source grants, fixed release and complete bounded Pipeline proofs; shared exact pin and opaque binding-row paging; metadata never authorizes execution",
+      "targetControl": "Preserve original task, current authority and independent acceptance; missing or revoked authorization fails closed",
+      "stage": "S5"
+    },
+    {
+      "id": "declarative-action-program",
+      "file": "packages/ontology/declarative-actions.ts",
+      "sourceDigest": "6c619e01d8878014e8be1f780e969f35f33246a27a59ac1ca21b5ec5f51ef9e6",
+      "channels": [
+        "internal"
+      ],
+      "content": "Shared synchronous and asynchronous declarative mutation semantics",
+      "currentControl": "Current exact action definitions, managed-only targets, explicit create and revision bounds, atomic rollback-only preview, unchanged objects and relationship preconditions; no provider or payment authority",
+      "targetControl": "Preserve original operation and authorized task boundary across SQLite and PostgreSQL",
+      "stage": "S5"
+    },
+    {
+      "id": "dynamic-ontology-program",
+      "file": "packages/capabilities/dynamic-ontology.ts",
+      "sourceDigest": "ea4ea493d1c92e6376f8038c5d002ef135f92325f78a587d3a8f679150ecd7ae",
+      "channels": [
+        "internal"
+      ],
+      "content": "Actual caller-managed action implementation and independent readback",
+      "currentControl": "Pinned immutable model and task envelope; host-awaited dispatch fence before actual managed apply; exact grant and preview, current fields and links and fresh completion readback; no model or provider substitution",
+      "targetControl": "Preserve original operation and authorized task boundary across SQLite and PostgreSQL",
       "stage": "S5"
     }
   ]

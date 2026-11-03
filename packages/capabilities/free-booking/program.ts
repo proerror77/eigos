@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../../ontology/graph-program.js';
 import { objectResultProjection } from '../../core/composed-actions.js';
 import {permitsPersonalSource} from '../../core/source-owner.js';
 import { readRegistration, projectRegistration, registrationStatus, isFreeRegistration } from '../../ontology/free-booking-functions.js';
@@ -61,7 +62,7 @@ export class ParticipantBookingProgram implements AgentProgram {
     if (!this.actionIds.includes(action)) throw new DomainError('FORBIDDEN', 'Only bound participant actions are available');
     return registrationActionSchemas[action as RegistrationAction];
   }
-  definition(graph: OntologyObjectStore, action: string) {
+  definition(graph: ProjectionMetadata, action: string) {
     const definition = graph.model.action(action), operation = definition.read ?? definition.operation;
     if (!operation || !same(operation.inputSchema, z.toJSONSchema(this.schema(action)))) fail('Participant action definition changed');
     return definition;

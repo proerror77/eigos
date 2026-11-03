@@ -50,6 +50,10 @@ export class PostgresTaskReadService implements Pick<TaskServicePort,'get'|'getA
     const p=structuredClone(principal),args=structuredClone(input);
     return this.database.run(client=>postgresCheckAccess(client,p,args,this.policyDigest,this.builder));
   }
+  async downloadArtifact(principal:Principal,taskId:string,artifactId:string){
+    const p=structuredClone(principal),id=taskIdSchema.parse(taskId),artifact=z.uuid().parse(artifactId);
+    return this.database.run(client=>withPostgresTaskReadAuthorization(client,p,id,this.policyDigest,async auth=>{const item=await auth.download(artifact);return {...item,content:Buffer.from(item.content)};},this.builder));
+  }
   async get(principal:Principal,taskId:string) {
     const p=structuredClone(principal),id=taskIdSchema.parse(taskId);
     return this.database.run(client=>postgresTaskView(client,p,id,this.policyDigest,this.builder));

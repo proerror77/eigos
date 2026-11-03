@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../../ontology/graph-program.js';
 import { objectResultProjection } from '../../core/composed-actions.js';
 import { permitsPersonalSource } from '../../core/source-owner.js';
 import { z } from 'zod';
@@ -52,7 +53,7 @@ export class DidiOrderTestProgram implements AgentProgram {
     return { scope, input };
   }
   schema(action: string): z.ZodType<Record<string, unknown>> { if (!Object.hasOwn(orderTestActionSchemas, action)) fail('Unregistered order-test action'); return orderTestActionSchemas[action as OrderTestAction]; }
-  definition(graph: OntologyObjectStore, action: string) {
+  definition(graph: ProjectionMetadata, action: string) {
     const definition = graph.model.action(action), op = definition.read ?? definition.operation;
     if (!op || !same(op.inputSchema, z.toJSONSchema(this.schema(action)))) fail('Order-test Action definition changed');
     return definition;

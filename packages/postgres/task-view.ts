@@ -12,6 +12,7 @@ import type { TaskView } from '../security/task-service.js';
 import { postgresBusinessSchema } from './runtime-transaction.js';
 import { withPostgresTaskReadGrant } from './task-read-access.js';
 import { withPostgresTaskReadAuthorization } from './task-output.js';
+import {postgresObservationContractView} from './observation-contract.js';
 
 const metadataSchema=z.object({id:taskIdSchema,contextId:z.string().min(1).max(128),service:z.string().min(1).max(200),
   state:z.enum(['submitted','auth-required','rejected','working','paused','input-required','completed','canceled','failed']),
@@ -38,7 +39,7 @@ export async function postgresTaskView(client:Client,principal:Principal,taskId:
         'state',source.value->'state','revision',source.value->'revision','createdAt',source.value->'createdAt','updatedAt',source.value->'updatedAt',
         'question',source.value->'question','artifact',source.value->'artifact',
         'hasError',COALESCE(source.value->>'error'<>'',false),'renewed',recovery.renewed,
-        'delegation',json_build_object('recovery',source.value#>'{delegation,recovery}','acceptance',source.value#>'{delegation,acceptance}',
+        'delegation',json_build_object('recovery',source.value#>'{delegation,recovery}','acceptance',source.value#>'{delegation,acceptance}','observationContract',source.value#>'{delegation,observationContract}',
           'authorizationRequest',source.value#>'{delegation,authorizationRequest}','agent',json_build_object('paPayment',source.value#>'{delegation,agent,paPayment}'))) AS value OFFSET 0) minimal
       WHERE j.owner=$1 AND j.id=$2 LIMIT 2`,[owner,id,admission.grant.id]);
     if(rows.rowCount===0)throw new DomainError('NOT_FOUND','Task not found');
@@ -52,6 +53,9 @@ export async function postgresTaskView(client:Client,principal:Principal,taskId:
       const base:TaskView={view:'eigos.task.v2',id,contextId:job.contextId,service:job.service,state:job.state,revision:job.revision,
         authorityId:String(rows.rows[0].authority_id),goal:String(root.object.properties.originalGoal??''),messages:[],
         createdAt:job.createdAt,updatedAt:job.updatedAt,outputStatus:'available'};
+      if(job.delegation?.observationContract){
+        base.observation=await postgresObservationContractView(client,p,job,job.delegation.observationContract.digest,policyDigest,admission,builder);return base;
+      }
       const recovery=job.delegation?.recovery,renewed=metadata.renewed;
       if(job.state==='paused' && (renewed || recovery?.code==='source_authorization_required')) {
         base.recovery={code:renewed?'SOURCE_AUTHORIZATION_RENEWED':'SOURCE_NOT_AUTHORIZED',message:renewed?SOURCE_AUTHORIZATION_RENEWED_MESSAGE:SOURCE_AUTHORIZATION_MESSAGE,

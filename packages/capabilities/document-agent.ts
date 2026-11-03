@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../ontology/graph-program.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import type { AgentProgram, AgentProgramContext, AgentActionContext, AgentActionResult } from '../core/agent-program.js';
@@ -35,7 +36,7 @@ export class DocumentAgentProgram implements AgentProgram {
   }
   assertContext(ctx:AgentProgramContext){return runGraphProgram(ctx.graph,assertDocumentContextProgram(this,ctx));}
   schema(action:string){return documentSchema(action);}
-  definition(graph:OntologyObjectStore,action:string){return documentDefinition(graph,action);}
+  definition(graph: ProjectionMetadata,action:string){return documentDefinition(graph,action);}
   validate(ctx:AgentProgramContext,action:string,input:Record<string,unknown>){runGraphProgram(ctx.graph,validateDocumentProgram(this,ctx,action,input));}
   async invoke(ctx:AgentActionContext,action:string,input:Record<string,unknown>,signal:AbortSignal):Promise<AgentActionResult>{
     const prepared=runGraphProgram(ctx.graph,prepareDocumentInvocationProgram(this,ctx,action,input,!!this.executor));

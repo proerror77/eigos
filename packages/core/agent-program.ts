@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../ontology/graph-program.js';
 import type { z } from 'zod';
 import type { AgentExecutionState } from '../ontology/agent-actions.js';
 import type { ActionDefinition, ObjectRef } from '../ontology/model.js';
@@ -101,7 +102,9 @@ export interface AgentProgram {
   /** Legacy compositions expose the selected leaf for the shared intake gate. */
   pipelineBinding?(ctx: AgentProgramContext, action: string, input: Record<string, unknown>): { ref: Ref; configurationDigest: string };
   schema(action: string): z.ZodType<Record<string, unknown>>;
-  definition(graph: OntologyObjectStore, action: string): ActionDefinition;
+  /** Pure exact-runtime check against immutable release metadata. This port
+   * has no instance, credential, projection or execution storage methods. */
+  definition(graph: ProjectionMetadata, action: string): ActionDefinition;
   validate(ctx: AgentProgramContext, action: string, input: Record<string, unknown>): void;
   validatePlanning?(ctx: AgentProgramContext, action: string, input: Record<string, unknown>, reads: PlanningSnapshot): void;
   validatePause?(ctx: AgentProgramContext, decision: AgentDecision, reads: PlanningSnapshot): void;

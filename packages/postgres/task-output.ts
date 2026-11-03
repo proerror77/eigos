@@ -26,6 +26,10 @@ import type { ObjectView } from '../ontology/object-store.js';
 import type { Computation } from '../ontology/object-functions.js';
 import type {PostgresWorkReference} from './work-claim.js';
 import { postgresOntologyDefinitionCompatible } from './ontology-release.js';
+import {DynamicOntologyProgram} from '../capabilities/dynamic-ontology.js';
+import {assertAgentDecisionOrigin} from '../core/agent-authorization.js';
+import {PostgresTaskStorage} from './task-storage.js';
+import {withPostgresTaskProcessSnapshot} from './task-read-access.js';
 
 type Dependency = SecurityEnvelope['lineage'][number];
 type Binding = NonNullable<Awaited<ReturnType<typeof postgresTaskDirectBindingEvidence>>>;
@@ -66,7 +70,7 @@ export interface PostgresFunctionReadAuthorization extends PostgresTaskReadAutho
  * Authorization objects expire at the callback boundary; current identity,
  * grants and all captured role/source/recipient deadlines are checked at exit. */
 async function withTaskAuthorization<T>(client: Client, principal: Principal, taskId: string, policyDigest: string,
-  action: (authorization: PostgresTaskReadAuthorization) => Promise<T>, builder?: StagedKernelBuilder,processing?:{admission:PostgresTaskReadAdmission;modelChannel?:string;requestRows?:()=>void},permissionAdmission?:PostgresTaskReadAdmission): Promise<T> {
+  action: (authorization: PostgresTaskReadAuthorization) => Promise<T>, builder?: StagedKernelBuilder,processing?:{admission:PostgresTaskReadAdmission;modelChannel?:string;requestRows?:()=>void;caller?:true},permissionAdmission?:PostgresTaskReadAdmission): Promise<T> {
   const captured = structuredClone(principal), owner = ownerKey(captured), q = `"${postgresBusinessSchema(client)}"`;
   let validUntil = Infinity;
   const authorize = async (admission:PostgresTaskReadAdmission) => {
@@ -243,10 +247,10 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
       }
       return combineEnvelopes([initial,...current]);
     };
-    const effectiveEnvelope = async (initial:SecurityEnvelope,channel:Channel=processing?'registered_model':'agent_response') => {
+    const effectiveEnvelope = async (initial:SecurityEnvelope,channel:Channel=processing&&!processing.caller?'registered_model':'agent_response') => {
       const effective=await currentEnvelope(initial);
       let clearance;
-      if(processing){
+      if(processing&&!processing.caller){
         if(channel!=='registered_model'||!processing.modelChannel)throw new SecurityError('OUTPUT_NOT_ALLOWED');
         if(!modelClearance){
           const rows=await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM ${q}.security_model_channels WHERE id=$1 LIMIT 2`,[processing.modelChannel]);
@@ -448,6 +452,43 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
 export async function withPostgresTaskReadAuthorization<T>(client:Client,principal:Principal,taskId:string,policyDigest:string,
   action:(authorization:PostgresTaskReadAuthorization)=>Promise<T>,builder?:StagedKernelBuilder):Promise<T>{
   return withTaskAuthorization(client,principal,taskId,policyDigest,action,builder);
+}
+
+/** The authenticated PA's original process scope. This does not grant result
+ * query, model delivery, or owner-wide object access. Every value still needs
+ * its exact current task binding, field policy and agent_response clearance. */
+export async function withPostgresTaskProcessAuthorization<T>(client:Client,principal:Principal,taskId:string,policyDigest:string,
+  action:(authorization:PostgresTaskReadAuthorization,admission:PostgresTaskReadAdmission)=>Promise<T>,builder?:StagedKernelBuilder):Promise<T>{
+  const captured=structuredClone(principal);
+  return withPostgresTaskProcessSnapshot(client,captured,taskId,policyDigest,admission=>
+    withTaskAuthorization(client,captured,taskId,policyDigest,auth=>action(auth,admission),builder,undefined,admission));
+}
+
+/** Agent query values retain the exact task.query grant and PA channel;
+ * discovering task metadata is not an implicit task.result.read permission. */
+export async function withPostgresTaskQueryAuthorization<T>(client:Client,principal:Principal,taskId:string,policyDigest:string,
+  action:(authorization:PostgresTaskReadAuthorization,admission:PostgresTaskReadAdmission)=>Promise<T>,builder?:StagedKernelBuilder):Promise<T>{
+  const captured=structuredClone(principal);
+  return withPostgresTaskPermissionSnapshot(client,captured,taskId,policyDigest,'task.query',admission=>
+    withTaskAuthorization(client,captured,taskId,policyDigest,auth=>action(auth,admission),builder,undefined,admission));
+}
+
+/** A non-model Worker scope is available only for the original immutable
+ * caller template under the actual registered declarative implementation.
+ * A request JSON marker cannot select this channel. */
+export async function withPostgresCallerEvidenceAuthorization<T>(client:Client,claim:PostgresWorkReference,policyDigest:string,
+  action:(authorization:PostgresTaskReadAuthorization,admission:PostgresTaskReadAdmission,principal:Principal)=>Promise<T>,builder?:StagedKernelBuilder,
+  inspectLease?:(claim:PostgresWorkReference)=>Promise<{validUntil:number}|undefined>):Promise<T>{
+  return withPostgresWorkerReadSnapshot(client,claim,policyDigest,async(principal,admission)=>{
+    const job=await new PostgresTaskStorage(client,builder).get(claim.owner,claim.job.id),state=job.delegation?.agent;
+    const plan=state?.plans.find(value=>value.id===state.pendingPlanId),ontology=await postgresTaskReadOntology(client,principal,claim.job.id,policyDigest,builder);
+    const program=new DynamicOntologyProgram(ontology.model,ontology.ref,claim.owner);
+    if(!job.delegation?.callerAction||!plan?.callerDecision||!state||state.composition||!program.permitted(claim.owner)
+      ||digest(state.programRef)!==digest(program.ref)||state.programDigest!==program.configurationDigest
+      ||digest(plan.programRef)!==digest(program.ref)||plan.programDigest!==program.configurationDigest)throw new SecurityError('AUTHORIZATION_REQUIRED');
+    assertAgentDecisionOrigin(program,job,claim.owner,plan);
+    return withTaskAuthorization(client,principal,claim.job.id,policyDigest,auth=>action(auth,admission,principal),builder,{admission,caller:true});
+  },inspectLease);
 }
 
 export type PostgresTaskPermissionAuthorization=Pick<PostgresTaskReadAuthorization,'bindingMetadata'|'artifacts'>;

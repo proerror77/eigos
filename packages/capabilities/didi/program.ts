@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../../ontology/graph-program.js';
 import { objectResultProjection } from '../../core/composed-actions.js';
 import {permitsPersonalSource} from '../../core/source-owner.js';
 import { randomUUID } from 'node:crypto';
@@ -90,7 +91,7 @@ export class DidiAgentProgram implements AgentProgram {
     if (!Object.hasOwn(rideEstimateActionSchemas, action)) throw new DomainError('FORBIDDEN', 'DiDi action is not registered');
     return rideEstimateActionSchemas[action as RideEstimateAction];
   }
-  definition(graph: OntologyObjectStore, action: string) {
+  definition(graph: ProjectionMetadata, action: string) {
     const definition = graph.model.action(action);
     if (!this.actionIds.includes(action as RideEstimateAction) || definition.read?.effect !== 'read' || !equal(definition.read.inputSchema, z.toJSONSchema(this.schema(action))) || !equal(definition.read.module, { ...didiReadDefinitionRef, completion: didiReadDefinition.completion }) || !equal(definition.read.mcp, didiReadDefinition.actions.find(a => a.id === action)?.mcp)) invalid('DiDi action definition changed');
     return definition;

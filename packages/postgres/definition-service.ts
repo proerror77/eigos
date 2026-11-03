@@ -22,6 +22,7 @@ import {storedSourceSchema} from '../security/source-policy.js';
 import {reviewedFieldPolicy} from '../security/field-policy.js';
 import type {PostgresDatabase} from './database.js';
 import {PostgresDefinitionStore} from './definition-store.js';
+import {discoverPostgresTaskActions} from './action-discovery.js';
 import {PostgresTaskStorage} from './task-storage.js';
 import {postgresTaskView} from './task-view.js';
 import {postgresBusinessSchema,postgresBusinessToken,postgresConstrainReadDeadline} from './runtime-transaction.js';
@@ -95,7 +96,7 @@ export class PostgresDefinitionService implements DefinitionServicePort {
         return envelope({...ref,publication:selected.publication,release:selected.release,intake:await ctx.store.pipeline.intake(query.ontologyId,ref)});
       }
       if(query.operation==='get_action_task')return this.withTask(ctx,query.ontologyId,query.taskId,'task.result.read',async(_job,visible)=>envelope({task:taskSummary(visible)}));
-      if(query.operation==='discover_task_actions')return this.withTask(ctx,query.ontologyId,query.taskId,'task.query',async()=>{throw new SecurityError('AUTHORITY_UNAVAILABLE','This PostgreSQL runtime has no installed Agent action-discovery storage adapter');});
+      if(query.operation==='discover_task_actions')return envelope(await discoverPostgresTaskActions(ctx.client,ctx.principal,query.taskId,query.ontologyId,query.query,{catalog:this.options.catalog,policyDigest:this.options.policyDigest,builder:this.options.builder}));
       if(query.operation==='get_pipeline_task_uses')return this.withTask(ctx,query.ontologyId,query.taskId,'task.query',async(job,_visible,_auth,admission)=>{
         const uses=await ctx.store.pipeline.uses(ctx.owner,job.id),sources=await this.querySources(ctx,admission),items=[];
         for(const use of uses){

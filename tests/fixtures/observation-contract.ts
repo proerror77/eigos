@@ -10,11 +10,11 @@ import type { PrepareObservation } from '../../packages/ontology/observation-con
 
 /** Known synthetic source data and a completed fixture task. No model, source
  * call, business operation or live account is used to prepare a contract. */
-export function observationContractFixture(permanent=false) {
+export function observationContractFixture(permanent=false,base?:ReturnType<typeof securityFixture>) {
   const source = participantFixture();
   let sourceCalls = 0;
   source.source.call = async () => { sourceCalls++; throw new Error('Contract preparation must not call a provider'); };
-  const f = securedProgramFixture(() => new ParticipantBookingProgram(source.source), source.input, () => { throw new Error('No model may run for a contract'); }, securityFixture(() => Date.now()), permanent ? { grantExpiresAt: null } : {});
+  const f = securedProgramFixture(() => new ParticipantBookingProgram(source.source), source.input, () => { throw new Error('No model may run for a contract'); }, base??securityFixture(() => Date.now()), permanent ? { grantExpiresAt: null } : {});
   const graph = f.jobs.ontology, now = Date.now(), at = new Date(now).toISOString();
   const intake = participantIntake(graph.model, f.program);
   const event = { type: 'Event', id: 'private-synthetic-event' }, scope = { type: 'RegistrationTask', id: 'private-synthetic-read-scope' };

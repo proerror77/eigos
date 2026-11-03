@@ -8,7 +8,7 @@ import {objectRefSchema,type ObjectRef,type OntologyModel,type PropertyDefinitio
 import {ontologyReleaseRefSchema,type OntologyReleaseRef} from '../ontology/definition-contracts.js';
 import {isVirtualRef,networkLinkIds} from '../ontology/network-model.js';
 import {IncompleteRelationshipRead,linkSnapshotDigest,objectQuerySchema,ontologyCursorSchema,ontologyBatchSchema,ontologySourceSchema,
-  type ObjectBatch,type ObjectSource,type ObjectView,type ObjectQuery,type OntologyQueryResult,type ReadBudget,type LinkWrite} from '../ontology/object-store.js';
+  type ObjectBatch,type ManagedObjectBatch,type ObjectTombstone,type ObjectSource,type ObjectView,type ObjectQuery,type OntologyQueryResult,type ReadBudget,type LinkWrite} from '../ontology/object-store.js';
 import {runGraphProgramAsync,type GraphProgram,type GraphStorage,type ProjectionMetadata} from '../ontology/graph-program.js';
 import type {StagedKernelBuilder} from '../ontology/seed-definition.js';
 import {postgresBusinessSchema,postgresBusinessToken} from './runtime-transaction.js';
@@ -275,16 +275,16 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     return {model:this.model.ref,items,page:{limit:args.limit,scanned,hasMore,cursor},datasetRevision:revision,...('type'in args&&args.currentDefinitionsOnly?{definitionScope:'current_definitions_only' as const}:{})};
   }
   async related(owner:string,from:ObjectRef,link:string,budget:ReadBudget):Promise<ObjectView[]>{const result=await this.query(owner,{from,link,limit:50},budget);if(result.page.hasMore)throw new IncompleteRelationshipRead();return result.items;}
-  private async persistObject(ref:ObjectRef,revision:number,definitionDigest:string,body:string,old?:RawObject){
-    const versions=[...(old?[{revision:old.view.revision,definition_digest:old.definitionDigest,release_id:null,release_digest:null,body:old.body}]:[]),
-      {revision,definition_digest:definitionDigest,release_id:this.releaseRef.releaseId,release_digest:this.releaseRef.digest,body}];
+  private async persistObject(ref:ObjectRef,revision:number,definitionDigest:string,body:string,old?:RawObject,deleted=false){
+    const versions=[...(old?[{revision:old.view.revision,definition_digest:old.definitionDigest,release_id:null,release_digest:null,body:old.body,deleted:0}]:[]),
+      {revision,definition_digest:definitionDigest,release_id:this.releaseRef.releaseId,release_digest:this.releaseRef.digest,body,deleted:deleted?1:0}];
     const columns=(this.scoped?'ontology_id,':'')+'owner,type,id,revision,definition_digest,body',conflict=(this.scoped?'ontology_id,':'')+'owner,type,id';
     const row=this.one(await this.sql(`WITH expected AS(
         SELECT $1::text AS ontology_id,$2::text AS owner,$3::text AS type,$4::text AS id,v.*,
           "${this.schema}".eigos_try_jsonb(v.body) IS NOT NULL AS compatible
-        FROM jsonb_to_recordset($9::jsonb) AS v(revision bigint,definition_digest text,release_id text,release_digest text,body text)),
+        FROM jsonb_to_recordset($9::jsonb) AS v(revision bigint,definition_digest text,release_id text,release_digest text,body text,deleted integer)),
       remembered AS(INSERT INTO "${this.schema}".ontology_object_versions(ontology_id,owner,type,id,revision,definition_digest,release_id,release_digest,body,deleted)
-        SELECT ontology_id,owner,type,id,revision,definition_digest,release_id,release_digest,body,0 FROM expected WHERE compatible ORDER BY revision
+        SELECT ontology_id,owner,type,id,revision,definition_digest,release_id,release_digest,body,deleted FROM expected WHERE compatible ORDER BY revision
         ON CONFLICT(ontology_id,owner,type,id,revision) DO NOTHING RETURNING revision),
       written AS(INSERT INTO ${this.table('objects')} AS dataset_row(${columns}) SELECT ${this.scoped?'$1,':''}$2,$3,$4,$5,$6,$7 WHERE(SELECT bool_and(compatible) FROM expected)
         ON CONFLICT(${conflict}) DO UPDATE SET revision=excluded.revision,definition_digest=excluded.definition_digest,body=excluded.body
@@ -295,7 +295,7 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
         COALESCE((SELECT bool_and(matches) FROM written),false) AS matches,
         NOT EXISTS(SELECT 1 FROM expected e WHERE NOT EXISTS(SELECT 1 FROM remembered r WHERE r.revision=e.revision)
           AND NOT EXISTS(SELECT 1 FROM "${this.schema}".ontology_object_versions v WHERE v.ontology_id=e.ontology_id AND v.owner=e.owner
-            AND v.type=e.type AND v.id=e.id AND v.revision=e.revision AND v.definition_digest=e.definition_digest AND v.body=e.body AND v.deleted=0)) AS versions_valid`,
+            AND v.type=e.type AND v.id=e.id AND v.revision=e.revision AND v.definition_digest=e.definition_digest AND v.body=e.body AND v.deleted=e.deleted)) AS versions_valid`,
       [this.ontologyId,this.owner,ref.type,ref.id,revision,definitionDigest,body,old?.view.revision??0,JSON.stringify(versions),old?.definitionDigest??null,old?.body??null]));
     if(row.body_valid!==true)fail('Ontology object JSON is not representable in PostgreSQL storage');
     if(row.versions_valid!==true)throw new DomainError('CONFLICT','An immutable object writer version already differs');
@@ -331,7 +331,57 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     if(rows.rows.some(row=>row.kind!=='deleted'||typeof row.type!=='string'||typeof row.id!=='string'))throw new DomainError('CONFLICT','Invalid relationship check result');
     return new Set(rows.rows.map(row=>JSON.stringify([row.type,row.id])));
   }
-  async ingest(owner:string,input:ObjectBatch,provenance:ObjectSource):Promise<void>{
+  async managedObject(owner:string,ref:ObjectRef):Promise<ObjectView|undefined>{
+    this.assertOpen(owner);
+    if(this.model.objectWritePolicy(ref.type)!=='managed'||isVirtualRef(ref))throw new DomainError('FORBIDDEN','Generic actions cannot access protected write targets');
+    try{return await this.read(owner,ref);}catch(error){if(error instanceof DomainError&&error.code==='NOT_FOUND')return undefined;throw error;}
+  }
+  async previewManaged(owner:string,input:ManagedObjectBatch,source:ObjectSource):Promise<void>{
+    this.assertOpen(owner);if(this.readOnly)throw new SecurityError('AUTHORIZATION_REQUIRED');
+    await this.sql('SAVEPOINT eigos_managed_preview');
+    try{await this.writeManaged(owner,input,source);}
+    finally{
+      this.objects.clear();this.deleted.clear();this.objectBytes=0;this.readRows.clear();this.readRowBytes=0;this.readRevision=undefined;
+      try{await this.sql('ROLLBACK TO SAVEPOINT eigos_managed_preview');await this.sql('RELEASE SAVEPOINT eigos_managed_preview');}
+      catch(error){throw new Error('Managed preview rollback failed; discard the transaction',{cause:error});}
+    }
+  }
+  async applyManaged(owner:string,input:ManagedObjectBatch,source:ObjectSource):Promise<void>{
+    this.assertOpen(owner);if(this.readOnly)throw new SecurityError('AUTHORIZATION_REQUIRED');
+    await this.writeManaged(owner,input,source);
+  }
+  private async writeManaged(owner:string,input:ManagedObjectBatch,source:ObjectSource):Promise<void>{
+    this.assertOpen(owner);if(this.readOnly)throw new SecurityError('AUTHORIZATION_REQUIRED');
+    if(source.kind!=='user'&&source.kind!=='task')throw new DomainError('FORBIDDEN','Managed actions cannot fabricate provider provenance');
+    const batch=ontologyBatchSchema.parse(structuredClone({objects:input.objects,links:input.links,removeLinks:input.removeLinks}));
+    const creates=z.array(objectRefSchema).max(200).parse(input.creates??[]),tombstones=z.array(z.strictObject({ref:objectRefSchema,expectedRevision:z.number().int().positive()})).max(64).parse(input.tombstones??[]);
+    const key=(ref:ObjectRef)=>JSON.stringify([ref.type,ref.id]),createKeys=new Set(creates.map(key)),deletedKeys=new Set(tombstones.map(item=>key(item.ref)));
+    if(createKeys.size!==creates.length||deletedKeys.size!==tombstones.length||batch.objects.some(item=>deletedKeys.has(key(item.ref))))fail('Duplicate or contradictory managed mutation');
+    for(const ref of creates)if(!batch.objects.some(item=>key(item.ref)===key(ref))||await this.managedObject(owner,ref)||await this.tombstone(owner,ref))throw new DomainError('CONFLICT','Create requires an unused object identity');
+    for(const object of batch.objects){
+      const previous=await this.managedObject(owner,object.ref);
+      if(!previous&&!createKeys.has(key(object.ref)))throw new DomainError('CONFLICT','Creation must be explicitly declared');
+      if(previous&&object.expectedRevision!==previous.revision)throw new DomainError('CONFLICT','Managed writes require the exact current revision');
+      const stored=previous?(await this.raw(object.ref,{remaining:1})).view.properties:{};
+      for(const field of Object.keys(object.properties))if(digest(stored[field]??null)!==digest(object.properties[field]??null)||!Object.hasOwn(stored,field)){
+        const property=this.model.properties(object.ref.type)[field];
+        if(!property||property.derived||property.restricted||this.model.propertyAuthority(object.ref.type,field)==='source')throw new DomainError('FORBIDDEN','Managed writes cannot change protected fields');
+      }
+      if(previous)object.properties={...stored,...object.properties};
+    }
+    for(const deletion of tombstones){
+      const object=await this.managedObject(owner,deletion.ref);
+      if(!object||object.revision!==deletion.expectedRevision)throw new DomainError('CONFLICT','Tombstone requires the exact current revision');
+      if(Object.keys(this.model.properties(deletion.ref.type)).some(field=>this.model.propertyAuthority(deletion.ref.type,field)==='source'))throw new DomainError('FORBIDDEN','Objects containing source-authority fields cannot be generically deleted');
+    }
+    for(const link of [...batch.links,...batch.removeLinks]){
+      const personalAddress=link.type==='PreferenceAddress'&&link.from.type==='PersonalPreference'&&link.to.type==='SavedAddress'&&this.model.hasType('Person');
+      if(this.model.linkWritePolicy(link.type)!=='managed'||this.model.objectWritePolicy(link.from.type)!=='managed'||!personalAddress&&this.model.objectWritePolicy(link.to.type)!=='managed')throw new DomainError('FORBIDDEN','Managed actions cannot change protected relationships');
+    }
+    await this.ingestBatch(owner,batch,source,tombstones);
+  }
+  async ingest(owner:string,input:ObjectBatch,provenance:ObjectSource):Promise<void>{return this.ingestBatch(owner,input,provenance);}
+  private async ingestBatch(owner:string,input:ObjectBatch,provenance:ObjectSource,tombstones:ObjectTombstone[]=[]):Promise<void>{
     this.assertOpen(owner);if(this.readOnly)throw new SecurityError('AUTHORIZATION_REQUIRED');
     if(Buffer.byteLength(JSON.stringify(input))>1000000)fail('Ontology import byte limit exceeded');
     const batch=ontologyBatchSchema.parse(structuredClone(input)),source=ontologySourceSchema.parse(structuredClone(provenance));
@@ -406,6 +456,18 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
           const columns=(this.scoped?'ontology_id,':'')+'owner,type,from_type,from_id,to_type,to_id,definition_digest';
           changed=!!(await this.sql(`INSERT INTO ${this.table('links')}(${columns}) VALUES(${insert.map((_,i)=>'$'+(i+1)).join(',')}) ON CONFLICT DO NOTHING`,insert)).rowCount||changed;
         }
+      }
+      for(const deletion of tombstones){
+        const old=await this.raw(deletion.ref,{remaining:1});
+        if(old.view.revision!==deletion.expectedRevision)throw new DomainError('CONFLICT','Object revision changed before tombstone');
+        const values:unknown[]=[],where=this.owned(values);values.push(deletion.ref.type,deletion.ref.id);const n=values.length;
+        const remaining=await this.sql(`SELECT DISTINCT type FROM ${this.table('links')} WHERE ${where} AND((from_type=$${n-1} AND from_id=$${n})OR(to_type=$${n-1} AND to_id=$${n})) LIMIT 201`,values);
+        if(remaining.rows.length>200||remaining.rows.some(link=>this.model.linkWritePolicy(String(link.type))!=='source'))throw new DomainError('CONFLICT','Remove all owned links explicitly before tombstoning an object');
+        const revision=old.view.revision+1;if(!Number.isSafeInteger(revision))throw new DomainError('CONFLICT','Object revision exceeds its supported range');
+        await this.persistObject(deletion.ref,revision,old.definitionDigest,old.body,old,true);
+        await this.sql(`INSERT INTO "${this.schema}".ontology_tombstones(ontology_id,owner,type,id,revision,definition_digest,body,deleted_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[this.ontologyId,this.owner,deletion.ref.type,deletion.ref.id,revision,old.definitionDigest,old.body,source.observedAt]);
+        const marker={ref:structuredClone(deletion.ref),revision,deletedAt:source.observedAt};this.deleted.set(key(deletion.ref),marker);
+        this.cacheObject(deletion.ref,{...old,view:{...old.view,revision,tombstone:{revision,deletedAt:source.observedAt}}});changed=true;
       }
       const inspect=async(value:unknown):Promise<void>=>{
         if(!value||typeof value!=='object')return;const ref=objectRefSchema.safeParse(value);

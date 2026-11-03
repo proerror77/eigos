@@ -25,10 +25,10 @@ const changeSchema = z.strictObject({ id: z.string().min(1).max(200), componentI
   semanticRevision: z.number().int().positive().safe(), at: z.iso.datetime({ offset: true }) });
 
 /** Same scope fingerprint used by the synchronous secured model reader. */
-export function postgresPlanningAccessDigest(admission:PostgresTaskReadAdmission){
+export function postgresPlanningAccessDigest(admission:PostgresTaskReadAdmission,operation?:'task.process'){
   return digest({installation:admission.actor.installationId,epoch:admission.actor.authEpoch,
     grant:{id:admission.grant.id,revision:admission.grant.revision},policyRevision:admission.policyRevision,
-    operation:admission.actor.actorKind==='worker'?'task.process':'task.query'});
+    operation:operation??(admission.actor.actorKind==='worker'?'task.process':'task.query')});
 }
 
 /** Host-only reader for the shared planning programs. It has no business write,

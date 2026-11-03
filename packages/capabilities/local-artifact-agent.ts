@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../ontology/graph-program.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -59,7 +60,7 @@ export class LocalArtifactProgram implements AgentProgram {
       || scope.properties.configurationDigest !== this.configurationDigest || scope.properties.requestRevision !== ctx.request.revision || !same(scope.properties.input, ctx.state.input)) fail('Original local component or input changed');
   }
   schema(action: string): z.ZodType<Record<string, unknown>> { if (!this.actionIds.includes(action)) return fail('Action is outside this local component'); return localActionSchemas[action as keyof typeof localActionSchemas]; }
-  definition(graph: OntologyObjectStore, action: string) { const definition = graph.model.action(action), operation = definition.read ?? definition.operation; if (!operation || !same(operation.inputSchema, z.toJSONSchema(this.schema(action)))) fail('Local action differs from its published contract'); return definition; }
+  definition(graph: ProjectionMetadata, action: string) { const definition = graph.model.action(action), operation = definition.read ?? definition.operation; if (!operation || !same(operation.inputSchema, z.toJSONSchema(this.schema(action)))) fail('Local action differs from its published contract'); return definition; }
   private source(ctx: AgentProgramContext, raw: unknown) {
     const object = objectRefSchema.parse(raw), view = ctx.graph.readPrivate(ctx.owner, object), snapshot = csvSourceSchema.parse(view.properties.snapshot);
     const intent = ctx.intents?.find(value => value.id === snapshot.intentId && value.state === 'effect_confirmed' && same(value.acceptedOutput?.object, object));

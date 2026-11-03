@@ -6,11 +6,18 @@ import { withIntegrity } from '../security/context.js';
 
 type PlanningOperationName='revision'|'evaluate'|'virtualMembership'|'pipelineChanges';
 type OperationName='read'|'readPrivate'|'query'|'related'|'ingest'|'containsLinks'|'relationshipDigest'|'evidencePropertiesDigest'|'tombstone';
+type ManagedOperationName='managedObject'|'previewManaged'|'applyManaged';
 export type ProjectionMetadata=Pick<OntologyObjectStore,'model'|'now'|'releaseRef'> & {
   /** Truthy for an authority-bound graph. Policy execution stays in storage. */
   readonly security?:unknown;
 };
-export type SyncGraphStorage=Pick<OntologyObjectStore,OperationName> & Partial<Pick<OntologyObjectStore,PlanningOperationName>>;
+export interface ManagedDispatchInvocation {requestId:string;planId:string;intentId:string;attemptId:string}
+interface ManagedDispatchStorage {
+  /** Host authority only. The SQL driver binds the original claim and awaits
+   * its journal fence; neither model arguments nor a preview supply this port. */
+  managedDispatchCheck?:(owner:string,invocation:ManagedDispatchInvocation)=>void|Promise<void>;
+}
+export type SyncGraphStorage=Pick<OntologyObjectStore,OperationName> & Partial<Pick<OntologyObjectStore,PlanningOperationName|ManagedOperationName>> & ManagedDispatchStorage;
 export type PlanningGraphStorage={ [K in PlanningOperationName]?:(...args:Parameters<OntologyObjectStore[K]>)=>ReturnType<OntologyObjectStore[K]>|Promise<ReturnType<OntologyObjectStore[K]>> } & {
   call?:(tool:string,input:unknown,options?:{origin:'worker_context';maxOutputBytes:number})=>unknown;
   recordRead?:(receipt:PlanningReadReceipt)=>void|Promise<void>;
@@ -21,11 +28,14 @@ export type GraphStorage={
 } & { planning?:PlanningGraphStorage } & {
   /** Only a trusted proof program can enter this internal validation scope. */
   withGraphIntegrity?<T>(action:()=>Promise<T>):Promise<T>;
-};
-type StorageOperation={ [K in OperationName|PlanningOperationName]:{method:K;args:Parameters<OntologyObjectStore[K]>} }[OperationName|PlanningOperationName]
+} & {
+  [K in ManagedOperationName]?:(...args:Parameters<OntologyObjectStore[K]>)=>ReturnType<OntologyObjectStore[K]>|Promise<ReturnType<OntologyObjectStore[K]>>;
+} & ManagedDispatchStorage;
+type StorageOperation={ [K in OperationName|PlanningOperationName|ManagedOperationName]:{method:K;args:Parameters<OntologyObjectStore[K]>} }[OperationName|PlanningOperationName|ManagedOperationName]
   |{method:'planningCall';tool:string;input:unknown;options?:{origin:'worker_context';maxOutputBytes:number}}
   |{method:'planningRead';receipt:PlanningReadReceipt}
-  |{method:'discoverActions';owner:string;request:ServiceRequest;query:ActionDiscoveryQuery};
+  |{method:'discoverActions';owner:string;request:ServiceRequest;query:ActionDiscoveryQuery}
+  |{method:'managedDispatchCheck';owner:string;invocation:ManagedDispatchInvocation};
 type Operation=StorageOperation|{method:'integrity';program:GraphProgram<unknown>};
 export type GraphProgram<T>=Generator<Operation,T,unknown>;
 
@@ -78,6 +88,12 @@ export function* graphMap<T,R>(values:readonly T[],project:(value:T,index:number
 export function* graphTombstone(...args:Parameters<OntologyObjectStore['tombstone']>):GraphProgram<ReturnType<OntologyObjectStore['tombstone']>> {
   return (yield {method:'tombstone',args}) as ReturnType<OntologyObjectStore['tombstone']>;
 }
+export function* graphManagedObject(...args:Parameters<OntologyObjectStore['managedObject']>):GraphProgram<ReturnType<OntologyObjectStore['managedObject']>> {
+  return (yield {method:'managedObject',args}) as ReturnType<OntologyObjectStore['managedObject']>;
+}
+export function* graphPreviewManaged(...args:Parameters<OntologyObjectStore['previewManaged']>):GraphProgram<void>{yield {method:'previewManaged',args};}
+export function* graphApplyManaged(...args:Parameters<OntologyObjectStore['applyManaged']>):GraphProgram<void>{yield {method:'applyManaged',args};}
+export function* graphManagedDispatchCheck(owner:string,invocation:ManagedDispatchInvocation):GraphProgram<void>{yield {method:'managedDispatchCheck',owner,invocation};}
 export function* graphRevision(...args:Parameters<OntologyObjectStore['revision']>):GraphProgram<ReturnType<OntologyObjectStore['revision']>> {
   return (yield {method:'revision',args}) as ReturnType<OntologyObjectStore['revision']>;
 }
@@ -102,6 +118,7 @@ function perform(graph:GraphStorage,operation:StorageOperation,planning:Planning
     case 'planningCall':if(!planning?.call)throw new Error('Planning read dispatch is unavailable');return planning.call(operation.tool,operation.input,operation.options);
     case 'planningRead':if(!planning?.recordRead)throw new Error('Planning receipt persistence is unavailable');return planning.recordRead(operation.receipt);
     case 'discoverActions':if(!planning?.discoverActions)throw new Error('Action discovery is unavailable');return planning.discoverActions(operation.owner,operation.request,operation.query);
+    case 'managedDispatchCheck':if(!graph.managedDispatchCheck)throw new Error('Managed dispatch authority is unavailable');return graph.managedDispatchCheck(operation.owner,operation.invocation);
     case 'revision':if(!planning?.revision)throw new Error('Graph does not support revision');return planning.revision(...operation.args);
     case 'evaluate':if(!planning?.evaluate)throw new Error('Graph does not support evaluate');return planning.evaluate(...operation.args);
     case 'virtualMembership':if(!planning?.virtualMembership)throw new Error('Graph does not support virtualMembership');return planning.virtualMembership(...operation.args);
@@ -115,6 +132,9 @@ function perform(graph:GraphStorage,operation:StorageOperation,planning:Planning
     case 'relationshipDigest':return graph.relationshipDigest(...operation.args);
     case 'evidencePropertiesDigest':return graph.evidencePropertiesDigest(...operation.args);
     case 'tombstone':return graph.tombstone(...operation.args);
+    case 'managedObject':if(!graph.managedObject)throw new Error('Managed object access is unavailable');return graph.managedObject(...operation.args);
+    case 'previewManaged':if(!graph.previewManaged)throw new Error('Managed preview is unavailable');return graph.previewManaged(...operation.args);
+    case 'applyManaged':if(!graph.applyManaged)throw new Error('Managed writes are unavailable');return graph.applyManaged(...operation.args);
   }
 }
 

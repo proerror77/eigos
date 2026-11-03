@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../ontology/graph-program.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
@@ -108,7 +109,7 @@ export class PaotuiAgentProgram implements AgentProgram {
     return this.kind === 'quote' ? refs : { provider: refs.provider, channel: refs.channel };
   }
   schema(action: string): z.ZodType<Record<string, unknown>> { if (!this.actionIds.some(a => a === action)) throw new DomainError('FORBIDDEN', 'Unregistered Paotui read'); return paotuiActionSchemas[action as PaotuiAction]; }
-  definition(graph: OntologyObjectStore, action: string) { const def = graph.model.action(action); if (def.read?.effect !== 'read' || def.read.version !== '2' || !equal(def.read.inputSchema, z.toJSONSchema(this.schema(action)))) invalid('Read definition differs from the binding'); return def; }
+  definition(graph: ProjectionMetadata, action: string) { const def = graph.model.action(action); if (def.read?.effect !== 'read' || def.read.version !== '2' || !equal(def.read.inputSchema, z.toJSONSchema(this.schema(action)))) invalid('Read definition differs from the binding'); return def; }
   private scope(ctx: AgentProgramContext): { grant?: SourceGrant; connectionDigest: string; selectionContext: string } {
     if (!this.permitted(ctx.owner) || !equal(ctx.state.programRef, this.ref) || ctx.state.programDigest !== this.configurationDigest || ctx.state.requestRevision !== ctx.request.revision) invalid('Owned read scope changed');
     const s = ctx.graph.readPrivate(ctx.owner, ctx.state.scope), p = s.properties, root = ctx.graph.related(ctx.owner, s.ref, 'request', { remaining: 1000 });

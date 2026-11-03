@@ -93,13 +93,13 @@ node scripts/relocate-primary.mjs --input /absolute/private/relocation-input.jso
 
 ## 固定版本的容器与发布产物
 
-`Dockerfile` 提供独立的 `gateway`、`relay`、`worker`、`worker-codex` 目标；默认目标为 Gateway。镜像使用 Node.js 22.22.3 和锁文件 `npm ci`，运行用户为 `node`（UID 1000）。`worker-codex` 另安装固定 Codex CLI 0.164.0；基础 `worker` 不包含模型 CLI。当前主线没有已整合的 Harness adapter，因此发布入口明确拒绝 `backend=harness`，不能以安装 DSH 二进制冒充支持 PR #73。
+`Dockerfile` 提供独立的 `gateway`、`relay`、`worker`、`worker-codex` 目标；默认目标为 Gateway。镜像使用 Node.js 22.22.3 和锁文件 `npm ci`，运行用户为 `node`（UID 1000）。`worker-codex` 另安装固定 Codex CLI 0.164.0；基础 `worker` 不包含模型 CLI。当前镜像发布流程只接受 `backend=codex`。已接入的 Harness Linux 运行时按独立启动配置部署；其专用镜像发布支持仍须完成，不能仅安装 DSH 二进制就宣称容器验收通过。
 
 构建上下文默认拒绝未列出的文件，包含构建必需的 PA Skill 源资产；运行镜像只复制实际 `releaseFiles` 白名单和生产依赖。数据库、`.env`、私有配置、认证文件和本机工具目录不进入镜像。`/var/lib/eigos` 用于外部持久状态；`CODEX_HOME=/home/node/.codex` 的认证须在运行时注入，`auth.json` 必须属于 UID 1000、为普通文件且权限为 `0600`。模型进程继续使用既有凭据白名单、任务范围和注册模型通道检查；安装 CLI 不授予业务或数据权限。
 
 按需发布使用 GitHub Actions 的 **Release artifacts** 手动入口，明确提供完整源 SHA 与 backend。它先要求该准确 SHA 的最新 CI 及全部必要检查成功，包括类型、构建和进程级验证；缺失、运行中或跳过必要检查均停止发布。普通 PR／push 不触发 GHCR 发布。针对 Docker、发布脚本及构建源资产的 PR，独立的 **Container build smoke** 只构建 Gateway／固定 Codex Worker 并读取镜像内文件与非 root 身份；`push: false`、不登录 registry、不启动模型或服务。它用于给当前 PR 留下真实远端镜像构建证据，不代表已发布或完成部署。镜像先用 `sha-<完整SHA>-codex` 标签写入 GHCR，再记录构建实际返回的 `@sha256:` 引用与 provenance／SBOM；已有标签不会被此流程覆盖，部分失败时仅重跑失败的角色任务。
 
-产物下载包 `release-<SHA>-codex` 包含 `manifest.json`、实际 runtime/source/lockfile 摘要、13 阶段官方内核的离线 `ontology/package.json`、固定 document/model digest 及供应商模块引用。`payloadDigest` 固定镜像内的代码与本体文件，`manifestDigest` 另外绑定外部 OCI 引用和准确源 CI，避免镜像包含自身摘要的循环。缺少任一镜像 digest 或 CI 记录时只能是 `candidate`；`artifact-ready` 只表示这些发布产物已齐备。
+产物下载包 `release-<SHA>-codex` 包含 `manifest.json`、实际 runtime/source/lockfile 摘要、14 阶段官方内核的离线 `ontology/package.json`、固定 document/model digest 及供应商模块引用。`payloadDigest` 固定镜像内的代码与本体文件，`manifestDigest` 另外绑定外部 OCI 引用和准确源 CI，避免镜像包含自身摘要的循环。缺少任一镜像 digest 或 CI 记录时只能是 `candidate`；`artifact-ready` 只表示这些发布产物已齐备。
 
 产物可用以下只读入口复核，不能据此推定实例已部署：
 

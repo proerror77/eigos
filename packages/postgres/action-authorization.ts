@@ -6,7 +6,8 @@ import {canRecoverReadOnly} from '../core/task-recovery.js';
 import {executionBudgetStatus} from '../core/execution-budget.js';
 import type {Job} from '../core/domain.js';
 import type {AgentProgram,AgentActionAuthority,AgentActionResult} from '../core/agent-program.js';
-import {agentOperation,hasSimulationApproval,matchesAgentGrant} from '../core/agent-authorization.js';
+import {agentOperation,assertAgentDecisionOrigin,hasSimulationApproval,matchesAgentGrant} from '../core/agent-authorization.js';
+import {DynamicOntologyProgram} from '../capabilities/dynamic-ontology.js';
 import {stepBindingRef,stepInputDigest} from '../core/composed-actions.js';
 import {assertGoalContract,assertGoalEffects} from '../core/goal-contract.js';
 import {assertGoalCoverage} from '../ontology/goal-coverage.js';
@@ -29,11 +30,13 @@ import {postgresBusinessSchema,postgresBusinessToken,postgresConstrainReadDeadli
 import {assertFreshPostgresActionIntent,type PostgresActionJournalOptions} from './action-journal.js';
 import {PostgresTaskStorage} from './task-storage.js';
 import {PostgresProjectionGraph} from './projection-graph.js';
-import {withPostgresWorkerEvidenceAuthorization} from './task-output.js';
+import {withPostgresWorkerEvidenceAuthorization,withPostgresCallerEvidenceAuthorization} from './task-output.js';
 import {withPostgresPlanningReadGraph,postgresPlanningAccessDigest} from './planning-read-graph.js';
 import {withPostgresTaskDefinitionAccess} from './ontology-metadata.js';
 import {postgresTaskReadOntology,postgresTaskResourcePermissionValidUntil} from './task-read-access.js';
 import {postgresTaskReadHistory} from './task-lineage.js';
+import {withPostgresCallerActionGraph} from './caller-action.js';
+import {postgresWorkerAdmission} from './worker-admission.js';
 
 type Check=Parameters<PostgresActionJournalOptions['authorize']>[0];
 type ProgramMetadata=Pick<AgentProgram,'ref'|'configurationDigest'|'actionIds'|'capability'|'schema'|'callerManagedActions'|'liveFreeReservation'>;
@@ -101,8 +104,17 @@ function normalizedResponse(response:AgentActionResult,attempt:ExecutionAttempt)
  * journal. Missing semantic or provider-verification ports fail closed with
  * AUTHORITY_UNAVAILABLE; none is interpreted as an allowed business action. */
 export function createPostgresActionAuthorization(client:Client,options:PostgresActionAuthorizationOptions):PostgresActionJournalOptions['authorize']{
+  return actionAuthorization(client,options,false);
+}
+/** Caller-only factory has no model channel. Its actual implementation and
+ * persisted origin must match; this cannot admit a model-origin plan. */
+export function createPostgresCallerActionAuthorization(client:Client,options:Omit<PostgresActionAuthorizationOptions,'modelChannel'>):PostgresActionJournalOptions['authorize']{
+  if(options.programs.length!==1||!(options.programs[0]!.program instanceof DynamicOntologyProgram))throw new Error('Caller authorization requires the real managed implementation');
+  return actionAuthorization(client,{...options,modelChannel:''},true);
+}
+function actionAuthorization(client:Client,options:PostgresActionAuthorizationOptions,callerOnly:boolean):PostgresActionJournalOptions['authorize']{
   const schema=postgresBusinessSchema(client),token=postgresBusinessToken(client),q=`"${schema}"`;
-  if(!/^[a-f0-9]{64}$/.test(options.policyDigest)||!options.modelChannel||typeof options.inspectClaim!=='function'||options.programs.length>200)throw new Error('Explicit PostgreSQL action authority configuration is required');
+  if(!/^[a-f0-9]{64}$/.test(options.policyDigest)||!callerOnly&&!options.modelChannel||typeof options.inspectClaim!=='function'||options.programs.length>200)throw new Error('Explicit PostgreSQL action authority configuration is required');
   const maximum=options.maxTaskMs??86400000;if(!Number.isSafeInteger(maximum)||maximum<1||maximum>86400000)throw new Error('Invalid fixed action deadline');
   const programs=[...options.programs],proof=options.observation&&structuredClone(options.observation);
   if(new Set(programs.map(item=>digest([item.program.ref,item.program.configurationDigest]))).size!==programs.length)throw new Error('Ambiguous PostgreSQL action program registration');
@@ -118,6 +130,7 @@ export function createPostgresActionAuthorization(client:Client,options:Postgres
     const plans=state.plans.filter(plan=>plan.digest===check.intent.planDigest),plan=plans[0],steps=plan?.steps.filter(step=>step.intentId===check.intent.id),step=steps?.[0];
     if(plans.length!==1||!plan||steps?.length!==1||!step||!same(plan.programRef,state.programRef)||plan.programDigest!==state.programDigest||plan.requestId!==job.id||plan.requestRevision!==request.revision||state.requestRevision!==request.revision)deny();
     const {digest:planDigest,...planBody}=plan;
+    if(callerOnly&&!plan.callerDecision)deny('AUTHORIZATION_REQUIRED');
     if(digest(planBody)!==planDigest||check.intent.stepId!==step.id||check.intent.businessOperationKey!==step.operationKey||check.intent.inputDigest!==stepInputDigest(step)
       ||!same(check.intent.bindingRef,stepBindingRef(plan,step))||check.intent.effect!==step.effect||!same(check.intent.additionalEffects??[],step.additionalEffects??[])
       ||check.intent.privateDigest!==digest(check.intent.privateData)||check.intent.privateDigest!==(step.privateDigest??digest({})))deny('POLICY_CHANGED');
@@ -129,11 +142,8 @@ export function createPostgresActionAuthorization(client:Client,options:Postgres
     if(registered.length!==1)deny('SOURCE_NOT_AUTHORIZED');const registration=registered[0]!,program=registration.program,capability=program.capability();
     // Pure origin checks need only this metadata marker, never a SecurityStore.
     if(plan.callerDecision){
-      if(!program.callerManagedActions)deny();
-      const envelope=job.delegation.callerAction;
-      if(!envelope||plan.modelRunId||plan.modelDecision||plan.ontologyPlanning.mode!=='trusted_template'||plan.callerDecision.envelopeDigest!==digest(envelope)||plan.callerDecision.requestId!==envelope.requestId
-        ||envelope.ownerDigest!==digest(check.claim.owner)||!same(envelope.ontologyRelease,job.delegation.ontologyRelease)||!same(envelope.programRef,plan.programRef)||envelope.inputDigest!==digest(envelope.input)
-        ||!request.messages.some(message=>message.id===envelope.requestId)||plan.steps.length!==1||step.effect!=='object_write'||step.action!==envelope.action||digest(step.input)!==envelope.inputDigest)deny('POLICY_CHANGED');
+      if(!(program instanceof DynamicOntologyProgram))deny();
+      assertAgentDecisionOrigin(program,job,check.claim.owner,plan);
     }else{
       if(!plan.modelRunId||!plan.modelDecision||job.delegation.callerAction||!['model_queries','worker_context','worker_context_with_queries'].includes(plan.ontologyPlanning.mode))deny('POLICY_CHANGED');
       if(plan.initialSelection){
@@ -167,7 +177,22 @@ export function createPostgresActionAuthorization(client:Client,options:Postgres
       const resolved=state.inputResolutions?.find(value=>value.planId===plan.id&&value.stepId===step.id&&value.intentId===check.intent.id&&value.inputDigest===digest(input));
       if(!check.intent.dispatchInput||!resolved)deny('AUTHORITY_UNAVAILABLE','Exact PostgreSQL accepted-input derivation proof is required');
     }
-    return withPostgresWorkerEvidenceAuthorization(client,check.claim,options.policyDigest,async(auth,admission,principal)=>{
+    // Caller semantics use their own short read scopes. The rollback-only
+    // tentative graph check must not run inside a retained read snapshot.
+    const callerSemantic=plan.callerDecision?await withPostgresCallerActionGraph(client,{claim:check.claim,inspectClaim:options.inspectClaim},job.id,options,async(graph)=>{
+      if(!registration.validate)deny('AUTHORITY_UNAVAILABLE');
+      const admission=await postgresWorkerAdmission(client,check.claim.owner,job.id,options.policyDigest),context:PostgresActionSemanticContext={model:graph.model,graph,owner:check.claim.owner,
+        intents:await store.intents(check.claim.owner,job.id),validUntil:Math.min(admission.validUntil,Date.parse(job.createdAt)+maximum),job:structuredClone(job),plan:structuredClone(plan),step:structuredClone(step),intent:structuredClone(check.intent),input:structuredClone(input),operation:check.operation,...(check.attempt?{attempt:structuredClone(check.attempt)}:{})};
+      const semantic=await runGraphProgramAsync(graph,registration.validate(context));
+      if(check.operation==='accept'&&check.result?.kind!=='unknown'){
+        if(!check.result||!check.attempt||!check.verified||!proof||proof.attemptId!==check.attempt.id||!same(normalizedResponse(proof.response,check.attempt),check.result)||!registration.verifyObservation)deny('SOURCE_NOT_AUTHORIZED');
+        await runGraphProgramAsync(graph,registration.verifyObservation(context,check.attempt,structuredClone(proof.response),check.result));
+      }
+      return semantic;
+    }):undefined;
+    const evidence:typeof withPostgresWorkerEvidenceAuthorization=plan.callerDecision?
+      (client,claim,policy,action,builder,_modelChannel,inspect)=>withPostgresCallerEvidenceAuthorization(client,claim,policy,action,builder,inspect):withPostgresWorkerEvidenceAuthorization;
+    return evidence(client,check.claim,options.policyDigest,async(auth,admission,principal)=>{
       if(admission.actor.actorKind!=='worker'||admission.actor.taskId!==job.id||admission.grant.taskId!==job.id||admission.grant.requestRevision!==request.revision||!admission.grant.operations.includes('task.process')
         ||![program.ref.id,capability.ref.id].some(id=>admission.parent.capabilityIds.includes(id)))deny();
       const currentIntents=await store.intents(check.claim.owner,job.id),readOnly=canRecoverReadOnly(job,[...currentIntents,check.intent])&&!state.paPayment;
@@ -229,7 +254,7 @@ export function createPostgresActionAuthorization(client:Client,options:Postgres
         const context:PostgresActionSemanticContext={model:graph.model,graph:{model:graph.model,now:graph.now,releaseRef:graph.releaseRef,security:true},owner:check.claim.owner,intents:structuredClone(currentIntents),validUntil,
           job:structuredClone(job),plan:structuredClone(plan),step:structuredClone(step),intent:structuredClone(check.intent),input:structuredClone(input),operation:check.operation,...(check.attempt?{attempt:structuredClone(check.attempt)}:{})};
         if(plan.initialSelection)await runGraphProgramAsync(graph,registration.verifyInitialSelection!(context));
-        const semantic=await runGraphProgramAsync(graph,registration.validate(context));deadline(semantic.validUntil);
+        const semantic=callerSemantic??await runGraphProgramAsync(graph,registration.validate(context));deadline(semantic.validUntil);
         if(semantic.privateDigest!==check.intent.privateDigest)deny('POLICY_CHANGED');
         if((step.inputRefs.length||step.acceptedInputs?.length)&&semantic.materializedInputDigest!==digest(input))deny('AUTHORITY_UNAVAILABLE','PostgreSQL current accepted-input derivation semantic proof is not installed');
         if(fresh&&['read','local'].includes(step.effect)){
@@ -243,7 +268,7 @@ export function createPostgresActionAuthorization(client:Client,options:Postgres
           }
         }
         if(fresh&&!['read','local'].includes(step.effect)){
-          if(!semantic.authority||!same(semantic.authority.operationScope,step.operationScope)||!same(semantic.authority.cost,step.cost)||!same(semantic.authority.budgetImpact??null,step.budgetImpact??null)
+          if(!semantic.authority||!same(semantic.authority.operationScope??null,step.operationScope??null)||!same(semantic.authority.cost??null,step.cost??null)||!same(semantic.authority.budgetImpact??null,step.budgetImpact??null)
             ||!same(semantic.authority.objectWrite??null,step.objectWrite??null)||!same(semantic.authority.externalDraft??null,step.externalDraft??null)
             ||!same(('confirmation'in semantic.authority?semantic.authority.confirmation:undefined)??null,step.confirmation??null))deny('POLICY_CHANGED');
           const executing=check.operation!=='create';
@@ -280,7 +305,7 @@ export function createPostgresActionAuthorization(client:Client,options:Postgres
           }else{
             if(!check.verified||!proof||proof.attemptId!==check.attempt.id||!same(normalizedResponse(proof.response,check.attempt),check.result))deny('SOURCE_NOT_AUTHORIZED');
             if(!registration.verifyObservation)deny('AUTHORITY_UNAVAILABLE','PostgreSQL trusted provider-result semantic verifier is not installed');
-            await runGraphProgramAsync(graph,registration.verifyObservation(context,check.attempt,structuredClone(proof.response),check.result));
+            if(!plan.callerDecision)await runGraphProgramAsync(graph,registration.verifyObservation(context,check.attempt,structuredClone(proof.response),check.result));
           }
         }
         const influenced=graph.evidence();if(influenced)inputEvidence.push(influenced);

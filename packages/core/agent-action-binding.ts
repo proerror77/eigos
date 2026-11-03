@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../ontology/graph-program.js';
 import { z } from 'zod';
 import { agentOperation } from './agent-authorization.js';
 import type { JsonSchema } from '../ontology/definition-contracts.js';
@@ -5,14 +6,13 @@ import { compositionCompiler } from '../ontology/composition-contract.js';
 import { digest } from './delegation.js';
 import { DomainError } from './domain.js';
 import type { AgentProgram } from './agent-program.js';
-import type { OntologyObjectStore } from '../ontology/object-store.js';
 
 /** Read-only contract methods; this surface cannot initialize or execute a program. */
 export type AgentActionMetadata = Pick<AgentProgram, 'callerManagedActions' | 'initialReadFrontier' | 'capability' | 'definition' | 'schema'>;
 
 /** A program binds registered Ontology Actions; it cannot redefine their effects
  * or schemas. Discoverability alone never grants permission to a connector. */
-export function boundAgentAction(graph: OntologyObjectStore, program: AgentActionMetadata, id: string) {
+export function boundAgentAction(graph: ProjectionMetadata, program: AgentActionMetadata, id: string) {
   const bindings = program.capability().actions.filter(a => a.ref.id === id);
   const definition = graph.model.action(id), operation = agentOperation(definition), declarative = definition.implementation?.kind === 'declarative';
   if (declarative && (!program.callerManagedActions || digest(definition.effects) !== digest(['object_write']))) throw new DomainError('FORBIDDEN', 'Declarative bindings require the trusted managed-data program and exact object_write effect');
@@ -24,7 +24,7 @@ export function boundAgentAction(graph: OntologyObjectStore, program: AgentActio
   }
   return definition;
 }
-export function boundAgentActionIds(graph: OntologyObjectStore, program: AgentActionMetadata) {
+export function boundAgentActionIds(graph: ProjectionMetadata, program: AgentActionMetadata) {
   const ids = program.capability().actions.map(a => a.ref.id);
   if (new Set(ids).size !== ids.length) throw new DomainError('CONFLICT', 'Duplicate program Action binding');
   for (const id of ids) boundAgentAction(graph, program, id);

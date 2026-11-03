@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../ontology/graph-program.js';
 import {commerceEntitySchemas} from '../ontology/commerce-journey.js';
 import {permitsPersonalSource} from '../core/source-owner.js';
 import { z } from 'zod';
@@ -89,7 +90,7 @@ export class CommerceAgentProgram implements AgentProgram {
     return { scope, input };
   }
   schema(action: string) { if (!this.actionIds.includes(action)) throw new DomainError('FORBIDDEN', 'Unknown or disabled commerce action'); return Object.hasOwn(stripePaymentActionSchemas, action) ? stripePaymentActionSchemas[action as StripePaymentAction] : commerceJourneyActionSchemas[action as CommerceJourneyAction]; }
-  definition(graph: OntologyObjectStore, action: string) {
+  definition(graph: ProjectionMetadata, action: string) {
     const schema = this.schema(action), definition = graph.model.action(action), metadata = definition.read ?? definition.operation;
     if (!metadata || !equal(metadata.inputSchema, z.toJSONSchema(schema))) fail('Commerce action schema differs from its published Ontology definition');
     return definition;
