@@ -1,3 +1,4 @@
+import { consentDeadline } from './consent-lifetime.js';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
@@ -65,7 +66,7 @@ export class RelayReadAuthority {
     if (!this.security.enabled || scope?.actor.actorKind !== 'worker' || scope.policies.security !== this.security || !scope.grant) throw new SecurityError('AUTHORIZATION_REQUIRED');
     scope.assertCurrent();
     const request = sourceReadRequestSchema.parse({ ...input, protocol: SOURCE_RELAY_PROTOCOL, kind: 'source.read', callId: randomUUID(),
-      expiresAt: Math.min(this.security.now() + 120000, Date.parse(scope.grant.expiresAt)) });
+      expiresAt: Math.min(this.security.now() + 120000, consentDeadline(scope.grant.expiresAt)) });
     const parsedInput = didiToolInputs[request.tool].parse(request.input);
     if (digest(parsedInput) !== digest(request.input)) throw new SecurityError('AUTHORIZATION_REQUIRED');
     const retryKey = digest([peerId, input]);

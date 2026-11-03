@@ -12,6 +12,7 @@ import { withAuthorization, type AuthorizationScope } from './context.js';
 import {RecoveryStore} from './recovery.js';
 import { RelayAuthority } from './relay.js';
 import { RelayReadAuthority } from './relay-service.js';
+import { consentDeadline, consentExpiryIndex } from './consent-lifetime.js';
 import {businessTransaction,hasTransaction} from '../core/transaction.js';
 
 export type SecurityMode = 'legacy' | 'foundation';
@@ -232,7 +233,8 @@ export class SecurityStore {
     this.requireSubject(installationId);
     const row = this.db.prepare("SELECT * FROM security_grants WHERE installation_id=? AND kind='agent_access' AND state='active' AND expires_at>?").get(installationId, this.now());
     if (!row) throw new SecurityError('AUTHORIZATION_REQUIRED');
-    return agentAccessGrantSchema.parse(grant(row));
+    const value = agentAccessGrantSchema.parse(grant(row));
+    this.policies.assertConsentExpiry(value.expiresAt); return value;
   }
   listGrants(owner: string): (AgentAccessGrant | TaskDataGrant)[] { return this.db.prepare('SELECT * FROM security_grants WHERE owner=? ORDER BY rowid').all(owner).map(r => r.kind === 'agent_access' ? agentAccessGrantSchema.parse(grant(r)) : taskDataGrantSchema.parse(grant(r))); }
   /** History for an explicit member review, never evidence of current authority. */
@@ -242,16 +244,17 @@ export class SecurityStore {
   }
   issueAgentGrant(input: unknown): AgentAccessGrant {
     const g = agentAccessGrantSchema.parse(input);
+    this.policies.assertConsentExpiry(g.expiresAt);
     return this.atomic(() => {
       const s = this.requireSubject(g.installationId);
-      if (s.ownerKey !== g.ownerKey || s.memberId !== g.memberId || g.status !== 'active' || g.revision !== 1 || Date.parse(g.issuedAt) > this.now() || Date.parse(g.expiresAt) <= this.now()) throw new SecurityError('ACCESS_REVOKED');
+      if (s.ownerKey !== g.ownerKey || s.memberId !== g.memberId || g.status !== 'active' || g.revision !== 1 || Date.parse(g.issuedAt) > this.now() || consentDeadline(g.expiresAt) <= this.now()) throw new SecurityError('ACCESS_REVOKED');
       if (this.db.prepare("SELECT 1 FROM security_grants WHERE installation_id=? AND kind='agent_access' AND state='active'").get(g.installationId)) throw new DomainError('CONFLICT', 'Revoke the current installation grant before approving a replacement');
       this.insertGrant(g); this.event('agent_grant_issued', g.id, g.revision); return g;
     });
   }
   private insertGrant(g: AgentAccessGrant | TaskDataGrant) {
     this.db.prepare('INSERT INTO security_grants VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(g.id, g.kind, g.ownerKey, g.memberId, g.installationId,
-      'parentGrant' in g ? g.parentGrant.id : null, 'parentGrant' in g ? g.parentGrant.revision : null, g.revision, g.status, Date.parse(g.expiresAt), JSON.stringify(g));
+      'parentGrant' in g ? g.parentGrant.id : null, 'parentGrant' in g ? g.parentGrant.revision : null, g.revision, g.status, consentExpiryIndex(g.expiresAt), JSON.stringify(g));
   }
   revokeGrant(owner: string, id: string, expectedRevision: number) {
     this.atomic(() => {
@@ -266,12 +269,13 @@ export class SecurityStore {
   /** Internal provisioning seam for S2. No S1 public endpoint can attach a task. */
   issueTaskGrant(input: unknown): TaskDataGrant {
     const g = taskDataGrantSchema.parse(input);
+    this.policies.assertConsentExpiry(g.expiresAt);
     return this.atomic(() => {
       const parent = this.agentGrant(g.installationId);
       const same = parent.id === g.parentGrant.id && parent.revision === g.parentGrant.revision && parent.ownerKey === g.ownerKey && parent.memberId === g.memberId;
       const permitted = (type: string, fields: string[]) => fields.every(f => parent.resources.some(r => r.type === type && r.fields.includes(f)));
-      if (!same || g.status !== 'active' || g.revision !== 1 || Date.parse(g.issuedAt) > this.now() || Date.parse(g.expiresAt) <= this.now()
-        || Date.parse(g.expiresAt) > Date.parse(parent.expiresAt) || !g.channels.every(c => parent.channels.includes(c))
+      if (!same || g.status !== 'active' || g.revision !== 1 || Date.parse(g.issuedAt) > this.now() || consentDeadline(g.expiresAt) <= this.now()
+        || consentDeadline(g.expiresAt) > consentDeadline(parent.expiresAt) || !g.channels.every(c => parent.channels.includes(c))
         || !g.inputs.every(i => permitted(i.object.type, i.fields)) || !g.outputs.every(o => permitted(o.type, o.fields) && parent.sourceBindingIds.includes(o.sourceBindingId))) throw new SecurityError('ACCESS_REVOKED');
       const job = this.db.prepare('SELECT owner,body FROM jobs WHERE id=?').get(g.taskId);
       if (!job || job.owner !== g.ownerKey || JSON.parse(String(job.body)).delegation?.request?.revision !== g.requestRevision) throw new DomainError('CONFLICT', 'Grant must bind the current owned request revision');
@@ -285,6 +289,7 @@ export class SecurityStore {
   }
   attachTaskAuthority(input: unknown): TaskAuthority {
     const a = taskExecutionAuthoritySchema.parse(input);
+    this.policies.assertConsentExpiry(a.expiresAt);
     return this.atomic(() => {
       const s = this.requireSubject(a.installationId, a.authEpoch), p = this.agentGrant(a.installationId);
       const row = this.db.prepare("SELECT * FROM security_grants WHERE id=? AND kind='task_data' AND state='active' AND expires_at>?").get(a.dataGrant.id, this.now());
@@ -294,8 +299,8 @@ export class SecurityStore {
         || d.installationId !== a.installationId || d.ownerKey !== a.ownerKey || d.memberId !== a.memberId || d.revision !== a.dataGrant.revision
         || d.parentGrant.id !== p.id || d.parentGrant.revision !== p.revision || d.taskId !== a.taskId || d.requestRevision !== a.requestRevision
         || !d.operations.includes('task.process') || (a.authorityOrigin==='agent_submission' ? !a.submittedScopes.includes('tasks:write') || d.inputs.length > 0 && !a.submittedScopes.includes('tasks:read') : a.submittedScopes.length!==0)
-        || a.revision !== 1 || Date.parse(a.issuedAt) > this.now() || Date.parse(a.expiresAt) <= this.now() || Date.parse(a.expiresAt) > Math.min(Date.parse(d.expiresAt), Date.parse(p.expiresAt))) throw new SecurityError('ACCESS_REVOKED');
-      this.db.prepare("INSERT INTO security_task_authorities VALUES(?,?,?,?,?,?,?,?,?,?,?,'active',?,?)").run(a.id, a.ownerKey, a.memberId, a.installationId, a.taskId, a.requestRevision, p.id, p.revision, d.id, d.revision, s.epoch, Date.parse(a.expiresAt), JSON.stringify(a));
+        || a.revision !== 1 || Date.parse(a.issuedAt) > this.now() || consentDeadline(a.expiresAt) <= this.now() || consentDeadline(a.expiresAt) > Math.min(consentDeadline(d.expiresAt), consentDeadline(p.expiresAt))) throw new SecurityError('ACCESS_REVOKED');
+      this.db.prepare("INSERT INTO security_task_authorities VALUES(?,?,?,?,?,?,?,?,?,?,?,'active',?,?)").run(a.id, a.ownerKey, a.memberId, a.installationId, a.taskId, a.requestRevision, p.id, p.revision, d.id, d.revision, s.epoch, consentExpiryIndex(a.expiresAt), JSON.stringify(a));
       this.event('task_authority_attached', a.id, a.revision); return a;
     });
   }
@@ -304,7 +309,9 @@ export class SecurityStore {
     if (!this.enabled) return;
     try{this.policies.revision();}catch{return;}
     const row = this.db.prepare(`SELECT a.body ${authorityQuery} AND a.owner=? AND a.task_id=?`).get({ securityNow: now,securityDefinition:this.policies.definitionDigest }, owner, jobId);
-    return row ? taskExecutionAuthoritySchema.parse(JSON.parse(String(row.body))) : undefined;
+    if (!row) return;
+    const value = taskExecutionAuthoritySchema.parse(JSON.parse(String(row.body)));
+    this.policies.assertConsentExpiry(value.expiresAt); return value;
   }
   agentContext(principal: Principal): Extract<AccessContext, { actorKind: 'agent' }> {
     const actor = accessContextSchema.parse(principal.access);
@@ -321,7 +328,8 @@ export class SecurityStore {
     const rows = this.db.prepare(`SELECT d.* FROM security_grants d JOIN jobs j ON j.id=json_extract(d.body,'$.taskId') AND j.owner=d.owner WHERE d.owner=? AND d.installation_id=? AND d.kind='task_data' AND d.state='active' AND d.expires_at>? AND d.parent_id=? AND d.parent_revision=? AND json_extract(d.body,'$.taskId')=? AND json_extract(d.body,'$.requestRevision')=${requestRevisionSql('j.body')} ORDER BY d.rowid DESC`)
       .all(actor.ownerKey, actor.installationId, this.now(), parent.id, parent.revision, taskId);
     if (rows.length !== 1) throw new SecurityError('AUTHORIZATION_REQUIRED');
-    return taskDataGrantSchema.parse(grant(rows[0]!));
+    const value = taskDataGrantSchema.parse(grant(rows[0]!));
+    this.policies.assertConsentExpiry(value.expiresAt); return value;
   }
   scope(actor: Extract<AccessContext, { actorKind: 'agent' | 'worker' }>, taskId: string | undefined, operation: AuthorizationScope['operation'], options: {inheritLineage?:boolean} = {}): AuthorizationScope {
     const data = taskId ? this.taskGrant(actor, taskId) : undefined, policyRevision = this.policies.revision();

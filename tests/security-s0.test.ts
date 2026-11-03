@@ -28,7 +28,7 @@ test('S0 inventories every definition and nested subtree without changing runtim
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
   assert.equal(report.counts.objectTypes, 202); assert.equal(report.counts.properties, 1852); assert.equal(report.counts.interfaces, 14);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 202);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 204);
   const harness = report.surfaces.find(surface => surface.id === 'harness-executor');
   assert(harness); assert.equal(harness.file, 'packages/capabilities/harness-executor.ts');
   assert.deepEqual(harness.channels, ['registered_model', 'private_file']);

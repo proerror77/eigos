@@ -1,3 +1,4 @@
+import { consentDeadline } from '../packages/security/consent-lifetime.js';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {randomUUID} from 'node:crypto';
@@ -14,6 +15,7 @@ import {Coordinator} from '../packages/coordinator/coordinator.js';
 import {AuthorizationCoordinator} from '../packages/security/coordinator.js';
 import {taskContextFields} from '../packages/security/task-context-contract.js';
 import {scheduleTaskRecovery} from '../packages/core/task-recovery.js';
+import type { ActionIntent, ExecutionAttempt } from '../packages/ontology/actions.js';
 import {preparePermissionReview,permissionReviewPage} from '../apps/gateway/members/permissions-page.js';
 
 function fixture(legacyFields=false) {
@@ -57,9 +59,79 @@ function fixture(legacyFields=false) {
       operations:originalGrant.operations,channels:originalGrant.channels,expiresAt:originalGrant.expiresAt,
       expectedSources:[{programId:profile.programId,programDigest:profile.programDigest,bindingId:profile.bindingId}]};
   }
+  function makePersistent() {
+    manager.revokeGrant(f.member.id, parent.id, parent.revision);
+    parent=manager.approveAgentGrant(f.member.id,{...ceiling(),expiresAt:null});
+    manager.approveSource(f.member.id,{installationId:install.id,bindingId:profile.bindingId,programId:profile.programId,operations:program.actionIds,
+      outputTypes:profile.outputTypes,expiresAt:null,expectedRevision:policy.revision(),expectedAgentGrant:{id:parent.id,revision:parent.revision}});
+    principal={...f.principal,access:manager.authenticate(f.principal,install.token)};
+  }
   return {...f,source,program,manager,catalog,tasks,task,install,profile,originalGrant,originalAuthority,pause,approveCurrentSource,renewal,
-    principal:()=>principal,close:()=>{manager.close();f.close();source.close();}};
+    makePersistent,principal:()=>principal,close:()=>{manager.close();f.close();source.close();}};
 }
+
+test('explicit persistent consent restores an expired original paused task without changing its request or starting work',()=>{
+  const f=fixture(),db=new DatabaseSync(f.database);
+  try {
+    f.pause();
+    // Existing synthetic read operations model the original task's two
+    // confirmed place reads and rejected, undispatched estimate.
+    for (const [index,state] of (['effect_confirmed','effect_confirmed','rejected'] as const).entries()) {
+      const intent:ActionIntent={id:randomUUID(),owner:f.owner,jobId:f.task.id,stepId:`read-${index}`,businessOperationKey:`synthetic-read-${index}`,
+        planDigest:'a'.repeat(64),bindingRef:f.program.ref,inputDigest:'b'.repeat(64),privateDigest:'c'.repeat(64),privateData:null,
+        effect:'read',state,nextAt:0,createdAt:new Date().toISOString()};
+      const {privateData,...body}=intent;
+      db.prepare('INSERT INTO action_intents VALUES(?,?,?,?,?,?,?)').run(intent.id,f.owner,f.task.id,intent.businessOperationKey,state,JSON.stringify(privateData),JSON.stringify(body));
+      if(index<2) {
+        const attempt:ExecutionAttempt={id:randomUUID(),intentId:intent.id,kind:'dispatch',requestKey:randomUUID(),startedAt:intent.createdAt,
+          claimToken:'synthetic-historical-claim',requestRevision:1,inputDigest:intent.inputDigest,planDigest:intent.planDigest,ordinal:1};
+        db.prepare('INSERT INTO action_attempts VALUES(?,?,?,?)').run(attempt.id,f.owner,intent.id,JSON.stringify(attempt));
+      }
+    }
+    const ledger=()=>({intents:db.prepare('SELECT * FROM action_intents WHERE job_id=? ORDER BY id').all(f.task.id),
+      attempts:db.prepare('SELECT * FROM action_attempts WHERE intent_id IN (SELECT id FROM action_intents WHERE job_id=?) ORDER BY id').all(f.task.id)});
+    const beforeLedger=ledger();
+    const expiresAt=new Date(Date.now()-1).toISOString();
+    for(const [table,id] of [['security_grants',f.originalGrant.id],['security_task_authorities',f.originalAuthority.id]] as const) {
+      const body=JSON.parse(String(db.prepare(`SELECT body FROM ${table} WHERE id=?`).get(id)!.body));body.expiresAt=expiresAt;
+      db.prepare(`UPDATE ${table} SET expires_at=?,body=? WHERE id=?`).run(consentDeadline(expiresAt),JSON.stringify(body),id);
+    }
+    assert.throws(()=>new TaskSecurity(f.jobs).get(f.principal(),f.task.id),/AUTHORIZATION_REQUIRED/);
+    const before=f.jobs.get(f.owner,f.task.id);
+    f.makePersistent();
+    const view=f.manager.managementView(f.member.id),review=preparePermissionReview(view,{kind:'task',installationId:f.install.id,taskId:f.task.id,
+      renewOriginal:'yes',programs:[f.program.ref.id]});
+    assert.equal(review.input.expiresAt,null);
+    assert(permissionReviewPage(review,view,f.member,'synthetic-csrf','synthetic-review').includes('持续有效，直到你主动撤销'));
+    const grant=f.manager.approveTaskGrant(f.member.id,review.input),after=f.jobs.get(f.owner,f.task.id);
+    assert.equal(grant.expiresAt,null);
+    assert.deepEqual(grant.inputs,f.originalGrant.inputs);assert.deepEqual(grant.operations,f.originalGrant.operations);
+    assert.deepEqual(grant.channels,f.originalGrant.channels);
+    assert.deepEqual(after.delegation!.request,before.delegation!.request);
+    assert.deepEqual(after.messages,before.messages);assert.deepEqual(after.runs,before.runs);
+    assert.equal(after.state,'paused');assert.equal(after.id,before.id);assert.equal(after.contextId,before.contextId);
+    assert.equal(f.jobs.security.workAuthority(f.owner,f.task.id)!.expiresAt,null);
+    assert.deepEqual(ledger(),beforeLedger,'Consent conversion cannot replay or rewrite prior read operations');
+    assert.equal(new TaskSecurity(f.jobs).get(f.principal(),f.task.id).state,'paused');
+    assert.equal(f.source.calls.length,0);
+  }finally{db.close();f.close();}
+});
+
+for(const mode of ['write','additional_write'] as const)test(`persistent original-PA conversion rejects ${mode} operations`,()=>{
+  const f=fixture(),db=new DatabaseSync(f.database);
+  try {
+    f.pause();f.makePersistent();
+    const intent:ActionIntent={id:randomUUID(),owner:f.owner,jobId:f.task.id,stepId:'unsafe',businessOperationKey:'synthetic-unsafe',planDigest:'a'.repeat(64),
+      bindingRef:f.program.ref,inputDigest:'b'.repeat(64),privateDigest:'c'.repeat(64),privateData:null,effect:mode==='write'?'order':'read',
+      ...(mode==='additional_write'?{additionalEffects:['payment'] as const}:{}),state:'ready',nextAt:0,createdAt:new Date().toISOString()};
+    const {privateData,...body}=intent;
+    db.prepare('INSERT INTO action_intents VALUES(?,?,?,?,?,?,?)').run(intent.id,f.owner,f.task.id,intent.businessOperationKey,intent.state,JSON.stringify(privateData),JSON.stringify(body));
+    const before=f.jobs.security.listGrants(f.owner);
+    assert.throws(()=>f.manager.approveTaskGrant(f.member.id,{...f.renewal(),expiresAt:null}),/read-only task/);
+    assert.deepEqual(f.jobs.security.listGrants(f.owner),before);
+    assert.equal(f.source.calls.length,0);
+  }finally{db.close();f.close();}
+});
 
 for(const replaceCeiling of [false,true])test(`member-reviewed source renewal keeps the original PA and completes its original task${replaceCeiling?' after an explicit field-ceiling replacement':''}`,{timeout:60000},async t=>{
   const f=fixture(replaceCeiling);try {
@@ -104,13 +176,13 @@ test('original-PA renewal rejects changed rights, extended deadlines, stale appr
     f.pause();f.approveCurrentSource();
     const input=f.renewal(),count=()=>f.jobs.security.listGrants(f.owner).length;
     for(const change of [{takeover:true},{expectedRequestRevision:2},{operations:['task.process']},{channels:['registered_model']},
-      {expiresAt:new Date(Date.parse(input.expiresAt)+1).toISOString()},{expectedSources:[{...input.expectedSources[0]!,programDigest:'0'.repeat(64)}]},
+      {expiresAt:new Date(consentDeadline(input.expiresAt)+1).toISOString()},{expectedSources:[{...input.expectedSources[0]!,programDigest:'0'.repeat(64)}]},
       {replaces:{...input.replaces,revision:99}},{programIds:[f.program.ref.id,f.program.ref.id]}]) {
       const n=count();assert.throws(()=>f.manager.approveTaskGrant(f.member.id,{...input,...change}));assert.equal(count(),n);
       assert.equal(f.jobs.get(f.owner,f.task.id).state,'paused');
     }
     f.jobs.security.revokeGrant(f.owner,f.originalGrant.id,f.originalGrant.revision);
-    assert.throws(()=>f.manager.approveTaskGrant(f.member.id,f.renewal()),/unexpired, undispatched/);
+    assert.throws(()=>f.manager.approveTaskGrant(f.member.id,f.renewal()),/paused task for its original PA/);
     assert.equal(f.source.calls.length,0);
   }finally{f.close();}
 });
@@ -121,7 +193,7 @@ for(const mode of ['expired','claimed','operation'] as const)test(`original-PA r
     if(mode==='expired') {
       const row=db.prepare('SELECT body FROM security_task_authorities WHERE id=?').get(f.originalAuthority.id)!;
       const body=JSON.parse(String(row.body));body.expiresAt=new Date(Date.now()-1).toISOString();
-      db.prepare('UPDATE security_task_authorities SET expires_at=?,body=? WHERE id=?').run(Date.parse(body.expiresAt),JSON.stringify(body),f.originalAuthority.id);
+      db.prepare('UPDATE security_task_authorities SET expires_at=?,body=? WHERE id=?').run(consentDeadline(body.expiresAt),JSON.stringify(body),f.originalAuthority.id);
     } else if(mode==='claimed') {
       const job=f.jobs.get(f.owner,f.task.id);job.state='submitted';f.jobs.save(f.owner,job);assert(f.jobs.claim(['eigos.delegate'],30000));
     } else {
