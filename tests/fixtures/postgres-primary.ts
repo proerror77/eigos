@@ -12,6 +12,9 @@ import {PostgresMembershipDatabase} from '../../packages/postgres/members-databa
 import {PostgresMemberStore} from '../../packages/postgres/member-store.js';
 import {PostgresAuthorizationPublisher} from '../../packages/postgres/authority-publisher.js';
 import {preparePostgresKernel} from '../../packages/postgres/kernel-runtime.js';
+import {stagedKernelComponents} from '../../packages/ontology/seed-definition.js';
+import {prepareDefinitionMetadata} from '../../packages/security/definition-view.js';
+import {projectionFields} from '../../packages/security/projections.js';
 import {PostgresDatabase} from '../../packages/postgres/database.js';
 import {supabaseProxyOptions} from '../../packages/postgres/supabase-proxy.js';
 
@@ -20,8 +23,9 @@ import {supabaseProxyOptions} from '../../packages/postgres/supabase-proxy.js';
  * All grants are the originals explicitly approved before the snapshot. */
 export async function importPostgresPrimaryFixture(f:ReturnType<typeof securityFixture>){
   if(!f.authority)throw new Error('Unified fixture authority is required');
-  const kernel=await preparePostgresKernel();
   f.coordinator.close();
+  const kernel=await preparePostgresKernel(),model=stagedKernelComponents(kernel).model;
+  prepareDefinitionMetadata(model,type=>({...model.properties(type),...projectionFields(type)}));
   const schema=`eigos_business_${randomUUID().replaceAll('-','')}`,membershipSchema=`eigos_membership_${randomUUID().replaceAll('-','')}`;
   const authority={id:f.authority.id,revision:f.authority.revision,digest:runtimeAuthorityDigest(f.authority)},policy=f.jobs.security.policies.definitionDigest;
   const snapshots=[f.database,f.membership].map((source,index)=>{
