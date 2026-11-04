@@ -136,16 +136,19 @@ export class OntologyObjectStore {
     active: boolean;
     generation: number | undefined;
     values: Map<string, unknown>;
+    contexts: WeakMap<object,number>;
+    nextContext: number;
   };
   /** Pure synchronous reads share data only until their graph/authority fence. */
   withReadMemo<T>(owner: string, action: () => T): T {
     this.assertReaderOwner(owner);
     if (this.readWindow?.active && this.readWindow.owner === owner) return action();
     const run = () => {
+      authorizationScope()?.assertCurrent();
       const previous = this.readWindow;
       const epoch = this.db.prepare('SELECT COALESCE(sum(revision),0) AS value FROM ontology_projection_epochs WHERE ontology_id=? AND owner=?');
       const before = Number(epoch.get(this.ontologyId,owner)!.value);
-      const window = { owner, active: true, generation: authorizationScope()?.readGeneration?.(), values: new Map<string,unknown>() };
+      const window = { owner, active: true, generation: authorizationScope()?.readGeneration?.(), values: new Map<string,unknown>(), contexts: new WeakMap<object,number>(), nextContext: 0 };
       this.readWindow = window;
       try {
         const value = action();
@@ -154,24 +157,31 @@ export class OntologyObjectStore {
         if (window.generation !== authorizationScope()?.readGeneration?.()
           || Number(epoch.get(this.ontologyId,owner)!.value) !== before) throw new DomainError('CONFLICT', 'Facts or authority changed during the read; retry against current evidence');
         return value;
-      } finally { window.active = false; this.readWindow = previous; }
+      } finally { window.active = false; window.values.clear(); this.readWindow = previous; }
     };
     return this.security ? this.security.readSnapshot(run) : run();
   }
   /** Rechecks current authority on every hit. Graph changes reject the whole read. */
   reuseRead<T>(owner: string, key: string, action: () => T): T {
+    if (!this.readWindow?.active || this.readWindow.owner !== owner) return action();
+    const value = this.readMemoValue(owner,key,action);
+    return value && typeof value === 'object' ? structuredClone(value) : value;
+  }
+  /** Internal row values remain private; callers parse their immutable JSON body. */
+  private readMemoValue<T>(owner: string, key: string, action: () => T): T {
     const window = this.readWindow;
     if (!window?.active || window.owner !== owner) return action();
     this.assertReaderOwner(owner);
     this.guard()?.scope(owner).assertCurrent();
     const scope = authorizationScope();
     if (window.generation !== scope?.readGeneration?.()) throw new SecurityError('POLICY_CHANGED');
-    const qualified = digest({ key, model: this.model.ref, release: this.releaseRef,
-      reader: this.readOverlay?.taskId, access: accessDigest(), integrity: scope?.integrity,
-      inference: scope?.inference, projection: scope?.projection });
-    if (window.values.has(qualified)) return structuredClone(window.values.get(qualified)) as T;
+    for (const context of [this,scope ?? this]) {
+      if (!window.contexts.has(context)) window.contexts.set(context,++window.nextContext);
+    }
+    const qualified = `${window.contexts.get(this)}:${window.contexts.get(scope ?? this)}:${key}`;
+    if (window.values.has(qualified)) return window.values.get(qualified) as T;
     const value = action();
-    if (window.values.size < 256) window.values.set(qualified,structuredClone(value));
+    if (window.values.size < 256) window.values.set(qualified,value);
     return value;
   }
   private delta?: ProjectionDelta;
@@ -295,14 +305,12 @@ export class OntologyObjectStore {
     objectRefSchema.parse(ref); this.model.object(ref.type); this.charge(budget);
     this.assertReaderOwner(owner);
     if (isVirtualRef(ref)) return this.overlay(owner).read(ref, budget);
-    return this.reuseRead(owner, 'raw:' + JSON.stringify([ref,allowTombstone]), () => {
-      const row = this.db.prepare(`SELECT o.*, deleted.revision AS tombstone_revision, deleted.deleted_at AS tombstone_deleted_at FROM ${this.objectTable} o LEFT JOIN ontology_tombstones deleted ON deleted.ontology_id=? AND deleted.owner=o.owner AND deleted.type=o.type AND deleted.id=o.id WHERE ${this.owned('o.')} AND o.type=? AND o.id=?`).get(this.ontologyId, ...this.ownerParameters(owner), ref.type, ref.id);
-      if (!row) throw new DomainError('NOT_FOUND', 'Ontology object not found');
-      const deleted = row.tombstone_revision == null ? undefined : { revision: row.tombstone_revision, deleted_at: row.tombstone_deleted_at };
-      if (deleted && !allowTombstone) throw new DomainError('NOT_FOUND', 'Ontology object was tombstoned');
-      const body = JSON.parse(String(row.body)); this.assertObjectDefinition(ref.type, String(row.definition_digest), body.properties);
-      return { ref, revision: Number(row.revision), ...body, ...(deleted ? { tombstone: { revision: Number(deleted.revision), deletedAt: String(deleted.deleted_at) } } : {}) };
-    });
+    const row = this.readMemoValue(owner, 'raw-row:' + JSON.stringify([ref,allowTombstone]), () => this.db.prepare(`SELECT o.*, deleted.revision AS tombstone_revision, deleted.deleted_at AS tombstone_deleted_at FROM ${this.objectTable} o LEFT JOIN ontology_tombstones deleted ON deleted.ontology_id=? AND deleted.owner=o.owner AND deleted.type=o.type AND deleted.id=o.id WHERE ${this.owned('o.')} AND o.type=? AND o.id=?`).get(this.ontologyId, ...this.ownerParameters(owner), ref.type, ref.id));
+    if (!row) throw new DomainError('NOT_FOUND', 'Ontology object not found');
+    const deleted = row.tombstone_revision == null ? undefined : { revision: row.tombstone_revision, deleted_at: row.tombstone_deleted_at };
+    if (deleted && !allowTombstone) throw new DomainError('NOT_FOUND', 'Ontology object was tombstoned');
+    const body = JSON.parse(String(row.body)); this.assertObjectDefinition(ref.type, String(row.definition_digest), body.properties);
+    return { ref, revision: Number(row.revision), ...body, ...(deleted ? { tombstone: { revision: Number(deleted.revision), deletedAt: String(deleted.deleted_at) } } : {}) };
   }
   read(owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 1000 }): ObjectView {
     const guard=this.guard();
@@ -795,7 +803,7 @@ export class OntologyObjectStore {
       if (historical) {
         if (row.tombstone_revision != null) object.tombstone = { revision: Number(row.tombstone_revision), deletedAt: String(row.tombstone_deleted_at) };
       }
-      if (!object.tombstone) this.reuseRead(owner, 'raw:' + JSON.stringify([ref,false]), () => object);
+      if (!object.tombstone) this.readMemoValue(owner, 'raw-row:' + JSON.stringify([ref,false]), () => row);
       const binding = guard?.requireObject(owner, ref, object.revision);
       if (binding && args.where.some(f => !binding.fields.includes(this.model.propertyName(ref.type, target, f.property)))) throw new SecurityError('INSUFFICIENT_ACCESS');
       const matches = args.where.every(f => {

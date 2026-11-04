@@ -5,10 +5,11 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import { z } from 'zod';
+import { taskObjectMembership } from '../packages/coordinator/task-context.js';
 import { OntologyModel } from '../packages/ontology/model.js';
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
 
-function fixture(path = ':memory:') {
+function fixture(path = ':memory:', computed = false) {
   const field = {
     kind: 'string' as const,
     schema: z.string().min(1),
@@ -28,13 +29,13 @@ function fixture(path = ':memory:') {
         description: 'Read fixture',
         primaryKey: 'id',
         titleKey: 'label',
-        properties: { id: field, label: field },
+        properties: { id: field, label: field, ...(computed ? {requestId:{...field,required:false,derived:'temporalRequest'}} : {}) },
       },
     ],
     interfaces: [],
     links: [],
     actions: [],
-    functions: [],
+    functions: computed ? [{id:'temporalRequest',version:'1',inputTypes:['Node'],description:'Time-dependent request association'}] : [],
   });
   const db = new DatabaseSync(path),
     graph = new OntologyObjectStore(db, model, Date.now, undefined, {
@@ -119,3 +120,18 @@ for (const connection of ['same', 'other'] as const)
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+
+test('time-dependent request association is recomputed within a read window', t => {
+  const f=fixture(':memory:',true); let calls=0;
+  t.mock.method(f.graph,'read',()=>({ref:f.ref,revision:1,createdAt:new Date().toISOString(),
+    source:{kind:'synthetic' as const,id:'fixture',observedAt:new Date().toISOString()},
+    properties:{id:'n',label:'label',requestId:++calls===1?'request':'changed'}}));
+  try {
+    f.graph.withReadMemo('alice',()=>{
+      assert.equal(taskObjectMembership(f.graph,'alice',{id:'request',revision:1},f.ref),'shared');
+      assert.equal(taskObjectMembership(f.graph,'alice',{id:'request',revision:1},f.ref),'foreign');
+    });
+    assert.equal(calls,2);
+  } finally {f.db.close();}
+});

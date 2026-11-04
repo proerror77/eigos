@@ -135,7 +135,7 @@ export function taskObjectMembership(graph: OntologyObjectStore, owner: string, 
   if (ref.type === 'ServiceRequest') return ref.id === request.id ? 'current' : 'foreign';
   const virtual = graph.virtualMembership(owner, request, ref);
   if (virtual) return virtual;
-  return graph.reuseRead(owner, 'task-membership:' + JSON.stringify([request.id,request.revision,ref]), () => {
+  const read = () => {
     const object = graph.read(owner, ref);
     // Attempt.requestRevision is the durable Job/claim fence. A technical resume
     // can advance it without changing the business request. Membership follows
@@ -154,7 +154,10 @@ export function taskObjectMembership(graph: OntologyObjectStore, owner: string, 
       return roots?.length === 1 && roots[0]!.ref.id === request.id ? 'current' : 'foreign';
     }
     return 'shared';
-  });
+  };
+  const properties = graph.model.properties(ref.type);
+  return properties.requestId?.derived || properties.requestRevision?.derived ? read()
+    : graph.reuseRead(owner, 'task-membership:' + JSON.stringify([request.id,request.revision,ref]), read);
 }
 
 function safeDefinition(type: object, relevantTypes: Set<string>): object {

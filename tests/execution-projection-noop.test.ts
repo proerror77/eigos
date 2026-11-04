@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import type { Job } from '../packages/core/domain.js';
 import { BACKEND_VERSION, type ServiceRequest } from '../packages/ontology/execution.js';
+import { businessSavepoint } from '../packages/core/transaction.js';
 import { executionContextRef, projectExecution } from '../packages/ontology/execution-projection.js';
 import { OntologyObjectStore, type ObjectBatch, type ObjectSource } from '../packages/ontology/object-store.js';
 import { projectTask } from '../packages/ontology/task-projection.js';
@@ -26,13 +27,11 @@ function fixture(path = ':memory:') {
   const source: ObjectSource = { kind: 'task', id: request.id, observedAt: at };
   projectTask(graph, owner, job);
   const project = (incremental = false, selected = graph) => {
-    db.exec('SAVEPOINT fixture_projection');
-    try {
+    businessSavepoint(db,'fixture_projection',() => {
       const action = () => projectExecution(selected, owner, job);
       if (incremental) selected.withProjectionDelta(owner, job.id, action);
       else action();
-      db.exec('RELEASE fixture_projection'); }
-    catch (error) { db.exec('ROLLBACK TO fixture_projection; RELEASE fixture_projection'); throw error; }
+    });
   };
   return { db, graph, owner, job, request, source, project };
 }
@@ -112,10 +111,11 @@ test('incremental checkpoints follow savepoint rollback and failed projection', 
   const f = fixture();
   try {
     f.project(true);
-    f.db.exec('SAVEPOINT rolled_back_state');
-    f.job.state = 'paused'; f.job.delegation!.phase = 'paused';
-    f.project(true);
-    f.db.exec('ROLLBACK TO rolled_back_state; RELEASE rolled_back_state');
+    assert.throws(()=>businessSavepoint(f.db,'rolled_back_state',()=>{
+      f.job.state = 'paused'; f.job.delegation!.phase = 'paused';
+      f.project(true);
+      throw Error('roll back projected state');
+    }),/roll back projected state/);
     assert.equal(f.graph.read(f.owner,executionContextRef(f.request.id,1)).properties.state,'working');
     f.project(true);
     assert.equal(f.graph.read(f.owner,executionContextRef(f.request.id,1)).properties.state,'paused');
@@ -135,9 +135,7 @@ test('incremental checkpoints survive a new connection and invalidate on another
     f.project(true);
     other=new DatabaseSync(path);
     const reopened=new CountingObjectStore(other);
-    other.exec('SAVEPOINT reopen_projection');
-    reopened.withProjectionDelta(f.owner,f.job.id,()=>projectExecution(reopened,f.owner,f.job));
-    other.exec('RELEASE reopen_projection');
+    businessSavepoint(other,'reopen_projection',()=>reopened.withProjectionDelta(f.owner,f.job.id,()=>projectExecution(reopened,f.owner,f.job)));
     assert.deepEqual(reopened.imports,[]);
     other.prepare("UPDATE ontology_objects SET body=json_set(body,'$.properties.text','outside mutation') WHERE owner=? AND type='RequestInstruction'").run(f.owner);
     assert.throws(()=>f.project(true), /Immutable execution graph data changed/);
@@ -152,9 +150,7 @@ test('projection checkpoints are isolated by owner and ontology namespace', t =>
     const other = new CountingObjectStore(f.db, f.graph.model, Date.now, undefined, {ontologyId:'other.namespace',skipLegacyMigration:true});
     for(const [graph,owner] of [[f.graph,'other-owner'],[other,f.owner]] as const){
       projectTask(graph,owner,f.job);
-      f.db.exec('SAVEPOINT other_projection');
-      graph.withProjectionDelta(owner,f.job.id,()=>projectExecution(graph,owner,f.job));
-      f.db.exec('RELEASE other_projection');
+      businessSavepoint(f.db,'other_projection',()=>graph.withProjectionDelta(owner,f.job.id,()=>projectExecution(graph,owner,f.job)));
     }
     let reads=0;
     const read=f.graph.read.bind(f.graph);

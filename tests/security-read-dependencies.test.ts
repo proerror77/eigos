@@ -210,3 +210,16 @@ test('a fenced graph read never reuses an object after its grant is revoked',()=
     })),/POLICY_CHANGED|AUTHORIZATION_REQUIRED|INSUFFICIENT_ACCESS/);
   } finally {f.close();}
 });
+
+
+test('a new read window rechecks an intervening external metadata commit',()=>{
+  const f=fixture(2);
+  try {
+    f.within(()=>{
+      f.jobs.ontology.withReadMemo(f.owner,()=>f.jobs.ontology.read(f.owner,f.inputs[0]!.object));
+      f.db.prepare('UPDATE security_manager SET expires_at=expires_at+1 WHERE slot=1').run();
+      const current=f.jobs.ontology.withReadMemo(f.owner,()=>f.jobs.ontology.read(f.owner,f.inputs[0]!.object));
+      assert.equal(current.properties.name,'dependency-0');
+    });
+  } finally {f.close();}
+});

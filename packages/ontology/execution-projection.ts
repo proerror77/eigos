@@ -172,8 +172,10 @@ export function readOntologyRequest(graph: OntologyObjectStore, owner: string, r
 }
 /** The same verified projection supplies both the request and instruction index. */
 export function readRequestProjection(graph: OntologyObjectStore, owner: string, requestId: string) {
-  return graph.withReadMemo(owner, () => graph.reuseRead(owner, 'request-projection:' + requestId,
-    () => readOntologyRequestRaw(graph, owner, requestId)));
+  const read = () => readOntologyRequestRaw(graph, owner, requestId);
+  const computed = ['ServiceRequest','RequestSpecification','RequestInstruction','RequestConstraint','RequestFact','RequestCondition']
+    .filter(type => graph.model.hasType(type)).some(type => Object.values(graph.model.properties(type)).some(property => property.derived));
+  return graph.withReadMemo(owner, () => computed ? read() : graph.reuseRead(owner, 'request-projection:' + requestId, read));
 }
 function readOntologyRequestRaw(graph: OntologyObjectStore, owner: string, requestId: string) {
   const request = graph.read(owner, root(requestId)), revision = Number(request.properties.revision);

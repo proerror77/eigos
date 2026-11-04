@@ -106,4 +106,4 @@ jobs:
           node-version: 22.13.0
           cache: npm
       - run: npm ci
-      - run: node --import tsx --test tests/transaction-savepoints.test.ts
+      - run: node --import tsx --test tests/transaction-savepoints.test.ts tests/execution-projection-noop.test.ts tests/graph-read-window.test.ts
