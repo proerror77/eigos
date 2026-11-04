@@ -9,6 +9,9 @@ import { DIDI_PROGRAM_REF } from '../packages/capabilities/didi/program.js';
 import { digest } from '../packages/core/delegation.js';
 import type { ServiceRequest } from '../packages/ontology/execution.js';
 import { DomainError } from '../packages/core/domain.js';
+import { z } from 'zod';
+import { OntologyModel, type ActionDefinition } from '../packages/ontology/model.js';
+import type { ActionDiscoveryPage } from '../packages/core/action-bindings.js';
 
 type Plan = ReturnType<typeof planServices>;
 const source = { messageId: 'instruction', quote: 'Plan the explicitly requested Tokyo round trip.' };
@@ -36,6 +39,42 @@ test('round-trip rules expand only explicitly selected services and preserve dis
   const booked = expandServiceNeeds(servicePlanningSchema.parse(trip({ phase: 'commitment', dining: true })));
   assert.equal(booked.at(-1)!.need.output.type, 'DiningReservation');
   assert.equal(booked[0]!.need.output.type, 'FlightReservation');
+});
+
+test('a complete synthetic Tokyo metadata catalog yields six distinct need plans without claiming bookings or availability', () => {
+  // These additional types and bindings exist only in this isolated fixture;
+  // they are not installed as real flight or restaurant capabilities.
+  const types = ['FlightOffer', 'HotelOption', 'VehicleOption', 'DiningOffer'];
+  const actions: ActionDefinition[] = types.map(type => ({ id: `Read${type}`, version: '1', kind: 'source_read', description: 'Synthetic contract only',
+    inputs: {}, changes: [type], submissionCriteria: ['same_owner'], resultTypes: [type], effects: ['read'],
+    read: { version: '1', effect: 'read', resultType: type, inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+    composition: { version: '1', inputs: {}, outputs: { result: { kind: 'object', type, cardinality: 'one', semantics: { role: type, phase: 'quote' }, evidence: { origins: ['synthetic'] } } },
+      checks: [], effectScope: { effects: ['read'], targetInputs: [], recovery: { kind: 'none' }, compensation: [] } },
+  }));
+  const model = new OntologyModel({ id: 'synthetic.travel', version: '1', objects: types.map(id => ({ id, version: '1', name: id, description: 'Isolated synthetic planning output', aliases: [], primaryKey: 'id', titleKey: 'id',
+    properties: { id: { kind: 'string', schema: z.string().min(1), description: 'Synthetic identity', source: 'isolated synthetic fixture', required: true } } })), actions, interfaces: [], links: [], functions: [] });
+  const release = { ontologyId: model.ref.id, releaseId: 'synthetic-release', digest: model.ref.digest };
+  const request: ServiceRequest = { id: 'synthetic-task', revision: 1, originalGoal: source.quote, requirements: [], executionEnvironment: 'sandbox',
+    messages: [{ id: source.messageId, text: source.quote, receivedAt: new Date().toISOString() }] };
+  const plan = planServices(request, model, trip({ lodging: true, arrivalTransfer: true, departureTransfer: true, dining: true }), query => {
+    const matches = actions.filter(action => action.resultTypes!.includes(query.outputType!));
+    const items: ActionDiscoveryPage['items'] = matches.map(action => {
+      const body = { ref: { id: `synthetic:${action.id}`, version: '1' }, actionId: action.id, actionVersion: '1', definitionDigest: digest(action), compositionDigest: digest(action.composition),
+        programRef: { id: `synthetic.${action.id}`, version: '1' }, configurationDigest: digest('synthetic-only'), ontologyRelease: release,
+        ownerDigest: digest(owner), requestId: request.id, requestRevision: request.revision };
+      return { action, status: 'available', bindings: [{ pin: { ...body, digest: digest(body) }, readiness: 'ready', reason: 'Synthetic configured contract',
+        environment: 'sandbox', inputSchema: action.read!.inputSchema, completionSchema: {}, guidance: 'Synthetic fixture only' }] };
+    });
+    return { ontologyRelease: release, requestId: request.id, requestRevision: request.revision, items,
+      page: { limit: 10, hasMore: false }, authorization: 'per_action_required', allowedEffects: ['read'], snapshotDigest: digest(items) };
+  });
+  assert.equal(plan.needs.length, 6); assert(plan.needs.every(value => value.alternatives.length === 1 && !value.gaps.length));
+  assert.equal(new Set(plan.needs.flatMap(value => value.alternatives[0]!.steps.map(step => step.id))).size, 6);
+  const incoming = plan.needs.find(value => value.need.id === 'arrival_transfer')!, outgoing = plan.needs.find(value => value.need.id === 'departure_transfer')!;
+  assert.deepEqual(incoming.alternatives[0]!.bindingDigests, outgoing.alternatives[0]!.bindingDigests, 'The same provider may serve both needs');
+  assert.notEqual(incoming.alternatives[0]!.rootStepId, outgoing.alternatives[0]!.rootStepId);
+  assert.equal(plan.executionAllowed, false); assert.equal(plan.businessCompletion, false); assert.equal(plan.availabilityProof, false);
+  assert(plan.needs.every(value => value.applicability.every(check => check.result === 'unknown')));
 });
 
 test('the task tool derives both declared place reads and exact output links without a model or provider call', () => {
