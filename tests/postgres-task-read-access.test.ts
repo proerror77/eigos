@@ -653,9 +653,23 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await assert.rejects(sourceAllowed(),/OUTPUT_NOT_ALLOWED/);
     await client.query(`UPDATE "${schema}".security_bindings SET body=$1 WHERE grant_id=$2 AND type=$3 AND object_id=$4`,[bindingRow.body,task.grant.id,ref.type,ref.id]);
     assert.equal(await sourceAllowed(),false,'task-owned bindings are not provider source permissions');
-    const labels=await postgresBusinessTransaction(client,schema,authority,c=>stagedReader.currentLabels(c,principal,task.job.id,policy,ref,1,['originalGoal']));
+    let labelRoundTrips=0;
+    const observedLabels=new Proxy(client,{get(target,property){
+      if(property==='query')return async(sql:string,values?:unknown[])=>{
+        if(values?.[0]===f.owner&&values[1]===ref.type&&values[2]===ref.id
+          &&(sql.includes(`FROM "${schema}".ontology_objects`)||sql.includes(`FROM "${schema}".security_labels`)))labelRoundTrips++;
+        return target.query(sql,values);
+      };
+      const value=Reflect.get(target,property,target);return typeof value==='function'?value.bind(target):value;
+    }});
+    const labels=await postgresBusinessTransaction(observedLabels,schema,authority,c=>stagedReader.currentLabels(c,principal,task.job.id,policy,ref,1,['originalGoal']));
+    assert.equal(labelRoundTrips,1,'A current object revision and its labels use one database round trip');
     const expectedLabels=sqlite.prepare("SELECT field,body FROM security_labels WHERE owner=? AND type=? AND object_id=? AND field IN ('*','originalGoal') ORDER BY field").all(f.owner,ref.type,ref.id).map(row=>({field:row.field,...JSON.parse(String(row.body))}));
     assert.deepEqual(labels,expectedLabels);
+    await assert.rejects(postgresBusinessTransaction(client,schema,authority,c=>stagedReader.currentLabels(c,principal,task.job.id,policy,{...ref,id:randomUUID()},1,['originalGoal'])),/POLICY_CHANGED/);
+    const duplicateObjectRow=(await client.query(`INSERT INTO "${schema}".ontology_objects SELECT * FROM "${schema}".ontology_objects WHERE owner=$1 AND type=$2 AND id=$3 RETURNING ctid::text AS ctid`,[f.owner,ref.type,ref.id])).rows[0].ctid;
+    try {await assert.rejects(postgresBusinessTransaction(client,schema,authority,c=>stagedReader.currentLabels(c,principal,task.job.id,policy,ref,1,['originalGoal'])),/POLICY_CHANGED/);}
+    finally {await client.query(`DELETE FROM "${schema}".ontology_objects WHERE ctid=$1::tid`,[duplicateObjectRow]);}
     await assert.rejects(postgresBusinessTransaction(client,schema,authority,c=>stagedReader.currentLabels(c,principal,task.job.id,policy,ref,2,['originalGoal'])),/POLICY_CHANGED/);
     await client.query(`UPDATE "${schema}".security_labels SET body=repeat('x',65537) WHERE owner=$1 AND type=$2 AND object_id=$3 AND field='originalGoal'`,[f.owner,ref.type,ref.id]);
     await assert.rejects(postgresBusinessTransaction(client,schema,authority,c=>stagedReader.currentLabels(c,principal,task.job.id,policy,ref,1,['originalGoal'])),/OUTPUT_NOT_ALLOWED/);
@@ -673,6 +687,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await client.query(`UPDATE "${schema}".security_labels SET body=$1 WHERE owner=$2 AND type=$3 AND object_id=$4 AND field='originalGoal'`,[originalLabel.body,f.owner,ref.type,ref.id]);
     const projected={type:'RollingGoSearchObservation',id:'synthetic-label-projection'};
     await client.query(`INSERT INTO "${schema}".ontology_objects(owner,type,id,revision,definition_digest,body) VALUES($1,$2,$3,1,$4,'{}')`,[f.owner,projected.type,projected.id,'a'.repeat(64)]);
+    assert.deepEqual(await postgresBusinessTransaction(client,schema,authority,c=>stagedReader.currentLabels(c,principal,task.job.id,policy,projected,1,['observedData'])),[],'An existing unlabeled object stays distinct from a missing object');
     await client.query(`INSERT INTO "${schema}".security_labels(owner,type,object_id,field,body) VALUES($1,$2,$3,'snapshot',$4)`,[f.owner,projected.type,projected.id,originalLabel.body]);
     const projectedLabels=await postgresBusinessTransaction(client,schema,authority,c=>stagedReader.currentLabels(c,principal,task.job.id,policy,projected,1,['observedData']));
     assert.deepEqual(projectedLabels.map(label=>label.field),['snapshot']);

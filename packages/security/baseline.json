@@ -5416,7 +5416,7 @@
       "currentControl": "Owned offline snapshot, exact authority and policy digests, claim fences, validated original draft references, byte-bounded hashing and no row output; retain and fingerprint original hidden row order",
       "targetControl": "Preserve all authority, historical evidence, sequence and policy invariants at migration",
       "stage": "S5",
-      "sourceDigest": "47830fb6584eab6a1a1c7de886767d34cf642831352d66402182cec7b2eec812"
+      "sourceDigest": "4e367b2a2c5dbab8639b12a3cde38972d802239362f89eb269bd4da9cccb9e8d"
     },
     {
       "id": "business-postgres-preflight-cli",
@@ -5697,7 +5697,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "5f1145e96e114b21a717e011f27b3fa31bdf1ee10fc88d2637353c45eb9c09b7",
+      "sourceDigest": "bf7075c74da2c83a57304ea060eb1219dd6faf4928cc31566fadab0975c22a87",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current task, identity, source and expiry checks remain. Under optional29, resource roles resolve against the checked task release while consent validates against the current reviewed policy, preserving old27 pins without new function grants.",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"

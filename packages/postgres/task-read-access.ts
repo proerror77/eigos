@@ -426,15 +426,20 @@ export async function postgresTaskCurrentLabels(client: Client, principal: Princ
     await postgresTaskReadOntology(client,captured,taskId,policyDigest,builder);
     const schema=postgresBusinessSchema(client),owner=ownerKey(captured);
     const load=async()=>{
-      const object=await client.query(`SELECT revision FROM "${schema}".ontology_objects WHERE owner=$1 AND type=$2 AND id=$3`,[owner,ref.type,ref.id]);
-      if(object.rowCount!==1)throw new SecurityError('POLICY_CHANGED');
-      const current=Number(object.rows[0].revision);
-      if(!Number.isSafeInteger(current)||current<1)throw new SecurityError('POLICY_CHANGED');
-      const labels=await client.query(`SELECT field,CASE WHEN octet_length(body)<=65536 THEN body END AS body
-        FROM "${schema}".security_labels WHERE owner=$1 AND type=$2 AND object_id=$3
-        ORDER BY field LIMIT 257`,[owner,ref.type,ref.id]);
-      if(labels.rows.length>256||labels.rows.some(row=>row.body===null))throw new SecurityError('OUTPUT_NOT_ALLOWED');
-      try{return freezeData({revision:current,values:labels.rows.map(row=>({field:String(row.field),...storedLabelSchema.parse(JSON.parse(String(row.body)))}))});}
+      // Resolve the revision and its bounded labels in one SQL snapshot and
+      // round trip. The outer row remains present when the object has no labels.
+      const result=await client.query(`SELECT object.revision,object.object_count,labels.present AS label_present,labels.field,labels.body
+        FROM (SELECT revision,count(*) OVER() AS object_count FROM "${schema}".ontology_objects
+          WHERE owner=$1 AND type=$2 AND id=$3 LIMIT 2) object
+        LEFT JOIN LATERAL (SELECT true AS present,field,CASE WHEN octet_length(body)<=65536 THEN body END AS body
+          FROM "${schema}".security_labels WHERE owner=$1 AND type=$2 AND object_id=$3
+          ORDER BY field LIMIT 257) labels ON true`,[owner,ref.type,ref.id]);
+      const current=Number(result.rows[0]?.revision);
+      if(!result.rowCount||!Number.isSafeInteger(current)||current<1
+        ||result.rows.some(row=>String(row.object_count)!=='1'||Number(row.revision)!==current))throw new SecurityError('POLICY_CHANGED');
+      const labels=result.rows.filter(row=>row.label_present===true);
+      if(labels.length>256||labels.some(row=>row.body===null))throw new SecurityError('OUTPUT_NOT_ALLOWED');
+      try{return freezeData({revision:current,values:labels.map(row=>({field:String(row.field),...storedLabelSchema.parse(JSON.parse(String(row.body)))}))});}
       catch{throw new SecurityError('OUTPUT_NOT_ALLOWED');}
     };
     const snapshot=snapshots.get(client),key=JSON.stringify([ref.type,ref.id]);
