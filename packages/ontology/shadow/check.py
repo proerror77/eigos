@@ -13,7 +13,7 @@ from time import monotonic
 import jdk4py
 import jpype
 import rdflib
-from rdflib import Graph, RDFS, URIRef
+from rdflib import Graph, RDF, RDFS, SH, URIRef
 from pyshacl import validate
 from mapping import cls, project
 from cases import EXPECT, inputs
@@ -79,6 +79,7 @@ def check(name, schema, data, estimate, shared, producer, factories, path):
         if isinstance(sup, URIRef):
             facts.add((sub, RDFS.subClassOf, sup))
     shapes = []
+    violations = []
     for shape in (shared, producer):
         if name == "schema-only":
             shapes.append(None)
@@ -89,6 +90,17 @@ def check(name, schema, data, estimate, shared, producer, factories, path):
             if not isinstance(report, Graph):
                 raise ValueError("Invalid SHACL report")
             shapes.append(bool(ok))
+            for result in report.subjects(RDF.type, SH.ValidationResult):
+                violations.append(
+                    {
+                        "shapeSet": "shared" if shape is shared else "didi",
+                        "focus": str(report.value(result, SH.focusNode)),
+                        "path": str(report.value(result, SH.resultPath) or ""),
+                        "constraint": str(
+                            report.value(result, SH.sourceConstraintComponent)
+                        ),
+                    }
+                )
     (schema + data).serialize(destination=path, format="xml")
     J = jpype.JClass
     manager = J(
@@ -136,6 +148,8 @@ def check(name, schema, data, estimate, shared, producer, factories, path):
         "engines": observed,
         "expectedOWL": oracle,
         "shacl": shapes,
+        "violations": violations[:20],
+        "violationCount": len(violations),
         "expectedSHACL": [native, didi],
     }
 

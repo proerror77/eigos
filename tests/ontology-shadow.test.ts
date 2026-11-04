@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { JobStore } from "../packages/core/store.js";
 import { setupDidi } from "./fixtures/didi.js";
 import { owner } from "./backend-fixture.js";
 
@@ -64,6 +65,56 @@ test("committed candidate publication is inspected without activating it, with i
         true,
       );
       assert.equal(report().bindings.estimateEndpoints, true);
+      const candidateStore = new JobStore(db);
+      let badDigest: string;
+      try {
+        const definitions = candidateStore.definitions;
+        let next = definitions.createDraft(
+          owner,
+          active.ontologyId,
+          "Require a new source link",
+          true,
+        );
+        next = definitions.putResource(
+          owner,
+          next.id,
+          next.revision,
+          "link",
+          {
+            resourceId: "test:link:shadow-source-route",
+            id: "ShadowSourceRoute",
+            description: "Required source link absent from the frozen sample",
+            from: {
+              type: "RideEstimate",
+              name: "shadowSourceRoute",
+              many: false,
+              required: true,
+            },
+            to: { type: "RideRoute", name: "shadowSourceQuotes", many: true },
+            writePolicy: "source",
+          },
+          true,
+        );
+        badDigest = definitions.publish(owner, next.id, next.revision, true)
+          .release.digest;
+      } finally {
+        candidateStore.close();
+      }
+      assert.match(run(true), /FAIL/);
+      const badFile = readdirSync(out).find((file) =>
+        file.startsWith(badDigest),
+      );
+      assert.ok(badFile);
+      const bad = JSON.parse(readFileSync(join(out, badFile), "utf8"));
+      const normal = bad.cases.find(
+        (c: { case: string }) => c.case === "projected",
+      );
+      assert.equal(normal.status, "FAIL");
+      assert.ok(
+        normal.violations.some((v: { path: string }) =>
+          v.path.endsWith("/ShadowSourceRoute"),
+        ),
+      );
     }
     const copy = new DatabaseSync(db, { readOnly: true });
     try {
