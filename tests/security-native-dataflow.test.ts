@@ -38,8 +38,8 @@ function fixture(mutate?:(decision:AgentDecision)=>void){
 }
 
 test('foundation planning uses current authorized metadata and leaves source execution to the original verified decision',{timeout:180000},async t=>{
-  t.mock.timers.enable({apis:['Date'],now:Date.now()});const f=fixture(),ground=f.reasoner.ground;
-  let planned=false;
+  t.mock.timers.enable({apis:['Date'],now:Date.now()});const f=fixture(),ground=f.reasoner.ground,act=f.reasoner.act!;
+  let planned=false,consumed=false;
   f.reasoner.ground=async(request,caps,signal,access)=>{
     observeTaskContext(access);
     const before=f.source.calls.length;
@@ -52,9 +52,29 @@ test('foundation planning uses current authorized metadata and leaves source exe
     assert.equal(f.source.calls.length,before);planned=true;
     const response=await ground(request,caps,signal,access);acknowledgeReads(access);return response;
   };
+  f.reasoner.act=async(ctx,signal,access)=>{
+    const response=await act(ctx,signal,access),decision=response.decision;
+    if(decision.kind==='execute'&&decision.plannedGoalCompletion){
+      const result=access.session.call('plan_services',{goal:{kind:'needs',needs:[{id:'estimate',role:'ride.estimate',
+        source:{messageId:ctx.request.messages[0]!.id,quote:ctx.request.messages[0]!.text},output:{type:'RideEstimateObservation',phase:'quote'}}]}}) as ReturnType<typeof planServices>;
+      const steps=result.needs[0]!.alternatives[0]!.steps,oldIds=new Map<string,string>();
+      const selected=steps.map(step=>{
+        // The synthetic interpreter supplies literal current scope/keywords.
+        // The host planner supplies the dependency edges, named ports and
+        // registered scalar derivations consumed by the actual Worker.
+        const original=decision.steps.find(value=>value.action===step.action&&(step.action!=='SearchDidiPlaces'||JSON.parse(value.argumentsJson).role===step.role))!;
+        assert(original);oldIds.set(original.id,step.id);
+        return {...original,id:step.id,bindingDigest:step.bindingDigest,dependsOn:step.dependsOn,
+          inputRefs:step.inputBindings.map(binding=>({stepId:binding.stepId,targetKey:binding.targetKey,port:binding.port,...(binding.derive?{compute:binding.derive}:{})}))};
+      });
+      for(const component of decision.plannedGoalCompletion.components)for(const ref of component.inputRefs)ref.stepId=oldIds.get(ref.stepId)!;
+      decision.steps=selected;consumed=true;acknowledgeReads(access);
+    }
+    return {...response,evidence:{...response.evidence,decisionDigest:digest(decision)}};
+  };
   try{
     await runNativeDidiTask(f.jobs,f.coordinator,f.owner,f.task.id,t.signal,()=>t.mock.timers.tick(20));
-    const job=f.jobs.get(f.owner,f.task.id);assert(planned);
+    const job=f.jobs.get(f.owner,f.task.id);assert(planned);assert(consumed);
     assert.equal(job.state,'completed',JSON.stringify(job.delegation!.agent?.feedback));
     assert.equal(job.delegation!.acceptance?.accepted,true);
     assert.equal(f.source.calls.filter(call=>call.name==='maps_textsearch').length,2);
