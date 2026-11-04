@@ -77,7 +77,7 @@ export class PostgresCoordinator {
     if(configured.reasoner.securityChannelId!==configured.modelChannel||configured.executor.securityChannelId!==configured.modelChannel)throw new Error('The existing registered model channel must match both configured model ports');
     this.runtime=configured.registry??new PostgresReadProgramRegistry(configured.policyDigest,{documentSourceBindingId:configured.sourceBindingId});
     if(!(this.runtime instanceof PostgresReadProgramRegistry)||this.runtime.policyDigest!==configured.policyDigest)throw new Error('Actual current PostgreSQL program registry is required');
-    this.options={registry:this.runtime,policyDigest:configured.policyDigest,modelChannel:configured.modelChannel,builder:configured.builder,sourceBindingId:configured.sourceBindingId,inspectClaim:claim=>configured.database.inspectClaim(claim,configured.policyDigest)};
+    this.options={semantic:configured.semantic,registry:this.runtime,policyDigest:configured.policyDigest,modelChannel:configured.modelChannel,builder:configured.builder,sourceBindingId:configured.sourceBindingId,inspectClaim:claim=>configured.database.inspectClaim(claim,configured.policyDigest)};
     this.maximum=configured.maxTaskMs??86400000;if(!Number.isSafeInteger(this.maximum)||this.maximum<1||this.maximum>86400000)throw new Error('Invalid original task execution deadline');
     this.execution=new PostgresDocumentExecution({...configured,modelChannel:configured.modelChannel,policyDigest:configured.policyDigest});
     this.didi=new PostgresDidiExecution({...configured,registry:this.runtime,modelChannel:configured.modelChannel,policyDigest:configured.policyDigest});

@@ -6743,7 +6743,7 @@
     {
       "id": "postgres-coordinator",
       "file": "packages/postgres/coordinator.ts",
-      "sourceDigest": "55872ff0f0e0cf6e043afdfd35352850673845265a183089c7dd20782df37a2c",
+      "sourceDigest": "d2e9b2acd9463959579bb04d55cef3bb6f1422dff5ce9e9e500cff3667c8bbce",
       "channels": [
         "internal"
       ],
