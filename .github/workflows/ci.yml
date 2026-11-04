@@ -107,6 +107,46 @@ jobs:
       - run: npm ci
       - run: node scripts/postgres-tests.mjs run --group storage
 
+  postgres-vectors:
+    needs: scope
+    if: ${{ needs.scope.result == 'success' && needs.scope.outputs.postgres == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.2-pg17@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966
+        env:
+          POSTGRES_PASSWORD: synthetic-vectors-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      EIGOS_TEST_RELAY_POSTGRES: '1'
+      EIGOS_TEST_PG_LOCAL: '1'
+      EIGOS_TEST_LARGE_ROW: '1'
+      EIGOS_TEST_VECTOR_PG: '1'
+      EIGOS_TEST_VECTOR_PGPORT: '5432'
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGPASSWORD: synthetic-vectors-only
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: node scripts/postgres-tests.mjs run --group vectors
+
   postgres-access:
     needs: scope
     if: ${{ needs.scope.result == 'success' && needs.scope.outputs.postgres == 'true' }}
@@ -257,7 +297,7 @@ jobs:
         run: node scripts/postgres-tests.mjs aggregate-coordinator
 
   relay-postgres:
-    needs: [scope, postgres-storage, postgres-access, postgres-execution, postgres-coordinator]
+    needs: [scope, postgres-storage, postgres-access, postgres-execution, postgres-coordinator, postgres-vectors]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

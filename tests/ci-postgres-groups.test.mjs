@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync,readdirSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {parse} from 'yaml';
-import {POSTGRES_TEST_GROUPS,POSTGRES_GROUP_JOBS,POSTGRES_TEST_FILES,POSTGRES_PURE_TEST_FILES,POSTGRES_EXECUTION_GROUPS,POSTGRES_EXECUTION_JOBS,POSTGRES_COORDINATOR_CASES,POSTGRES_COORDINATOR_JOBS,postgresTestsRequired,assertPostgresGroups,assertExecutionCases,assertCoordinatorCases,coordinatorTestPattern,assertCoordinatorTap} from '../scripts/postgres-tests.mjs';
+import {POSTGRES_TEST_GROUPS,POSTGRES_GROUP_JOBS,POSTGRES_TEST_FILES,POSTGRES_PURE_TEST_FILES,POSTGRES_EXECUTION_GROUPS,POSTGRES_EXECUTION_JOBS,POSTGRES_COORDINATOR_CASES,POSTGRES_COORDINATOR_JOBS,POSTGRES_VECTOR_CASES,postgresTestsRequired,assertPostgresGroups,assertExecutionCases,assertCoordinatorCases,coordinatorTestPattern,assertCoordinatorTap,assertVectorTap,vectorTestFixtureOptions} from '../scripts/postgres-tests.mjs';
 import {proveExactCi} from '../scripts/release-artifacts.mjs';
 import {testFiles,shardFiles} from '../scripts/test-scope.mjs';
 
@@ -14,10 +14,10 @@ const success=()=>Object.fromEntries(['scope',...POSTGRES_GROUP_JOBS].map(name=>
 
 test('real PostgreSQL suites have one deterministic group with no missing or duplicate files',()=>{
   assert.equal(POSTGRES_TEST_FILES.length,new Set(POSTGRES_TEST_FILES).size);
-  const flagged=readdirSync(new URL('.',import.meta.url)).filter(name=>name.endsWith('.test.ts')).filter(name=>/process\.env\.(?:EIGOS_TEST_PG_LOCAL|EIGOS_TEST_RELAY_POSTGRES|EIGOS_TEST_LARGE_ROW)/.test(readFileSync(new URL(name,import.meta.url),'utf8'))).map(name=>'tests/'+name);
+  const flagged=readdirSync(new URL('.',import.meta.url)).filter(name=>name.endsWith('.test.ts')).filter(name=>/process\.env\.(?:EIGOS_TEST_PG_LOCAL|EIGOS_TEST_RELAY_POSTGRES|EIGOS_TEST_LARGE_ROW|EIGOS_TEST_VECTOR_PG)/.test(readFileSync(new URL(name,import.meta.url),'utf8'))).map(name=>'tests/'+name);
   assert.deepEqual(flagged.filter(path=>!POSTGRES_TEST_FILES.includes(path)),[]);
   for(const path of POSTGRES_TEST_FILES)assert(readFileSync(new URL('../'+path,import.meta.url),'utf8').length);
-  assert.deepEqual(Object.keys(POSTGRES_TEST_GROUPS),['storage','access','execution','coordinator']);
+  assert.deepEqual(Object.keys(POSTGRES_TEST_GROUPS),['storage','access','execution','coordinator','vectors']);
   assert.deepEqual(POSTGRES_TEST_GROUPS.coordinator,['tests/postgres-coordinator.test.ts']);
   const all=testFiles(fileURLToPath(new URL('../',import.meta.url)));
   assert.equal(postgresTestsRequired(shardFiles(all)),true,'the actual full test-scope shards must remain schedulable');
@@ -26,8 +26,29 @@ test('real PostgreSQL suites have one deterministic group with no missing or dup
 
 test('PG scope selection rejects unknown suites instead of silently dropping a required check',()=>{
   assert.equal(postgresTestsRequired(needed),true);assert.equal(postgresTestsRequired(JSON.stringify(empty)),false);
+  assert.equal(postgresTestsRequired({'1':['tests/postgres-embedding-index.test.ts']}),true);
   assert.equal(postgresTestsRequired({'1':[...POSTGRES_PURE_TEST_FILES]}),false);
   for(const value of [null,[],{'1':'not-an-array'},{'1':['tests/postgres-unregistered.test.ts']}])assert.throws(()=>postgresTestsRequired(value));
+});
+
+test('vector validation pins its actual service, guarded loopback fixture and mandatory non-skipped case',()=>{
+  assert.deepEqual(POSTGRES_TEST_GROUPS.vectors,['tests/postgres-embedding-index.test.ts']);
+  const job=workflow.jobs['postgres-vectors'];
+  assert.equal(job.services.postgres.image,'pgvector/pgvector:0.8.2-pg17@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966');
+  assert.equal(job.services.postgres.env.POSTGRES_PASSWORD,'synthetic-vectors-only');
+  assert.equal(job.env.EIGOS_TEST_VECTOR_PG,'1');assert.equal(job.env.EIGOS_TEST_VECTOR_PGPORT,job.env.PGPORT);
+  assert.equal(job.env.PGPASSWORD,job.services.postgres.env.POSTGRES_PASSWORD);
+  assert(job.steps.some(step=>step.run==='npm run build'),'the actual CLI previews require emitted code');
+  assert.deepEqual([...readFileSync(new URL('./postgres-embedding-index.test.ts',import.meta.url),'utf8').matchAll(/^test\('([^']+)'/gm)].map(match=>match[1]),[...POSTGRES_VECTOR_CASES]);
+  const valid=[...POSTGRES_VECTOR_CASES.map((name,i)=>`ok ${i+1} - ${name}`),'# tests 1','# pass 1','# fail 0','# cancelled 0','# skipped 0','# todo 0'];
+  assert.doesNotThrow(()=>assertVectorTap(valid));
+  assert.throws(()=>assertVectorTap(valid.map(line=>line.startsWith('ok ')?line+' # SKIP':line)),/actually pass/);
+  assert.throws(()=>assertVectorTap(valid.filter(line=>line!=='# skipped 0')),/complete non-skipped/);
+  assert.throws(()=>assertVectorTap(valid.map(line=>line==='# skipped 0'?'# skipped 1':line)),/complete non-skipped/);
+  assert.throws(()=>assertVectorTap([]),/actually pass/);
+  const env={EIGOS_TEST_VECTOR_PG:'1',EIGOS_TEST_PG_LOCAL:'1',EIGOS_TEST_VECTOR_PGPORT:'5432',PGHOST:'127.0.0.1',PGPORT:'5432',PGUSER:'postgres',PGDATABASE:'postgres',PGPASSWORD:'synthetic-vectors-only'};
+  assert.equal(vectorTestFixtureOptions(env).port,5432);
+  for(const delta of [{EIGOS_TEST_VECTOR_PG:'0'},{PGHOST:'db.remote.example'},{PGPASSWORD:'not-the-test-password'},{PGPORT:'5433'},{PGOPTIONS:'-c role=other'},{EIGOS_TEST_VECTOR_PGPORT:undefined}])assert.throws(()=>vectorTestFixtureOptions({...env,...delta}),/isolated synthetic/);
 });
 
 test('the relay-postgres aggregate rejects missing, skipped, failed or canceled required groups',()=>{
@@ -81,7 +102,7 @@ test('Coordinator success requires actual non-skipped TAP cases and all four rev
 test('immutable release proof requires the actual successful PG groups as well as their aggregate',()=>{
   const sha='1'.repeat(40),run={id:17,head_sha:sha,status:'completed',conclusion:'success',html_url:'https://github.com/example/eigos/actions/runs/17',head_repository:{full_name:'example/eigos'}};
   const names=['scope','verify','relay-postgres',...POSTGRES_GROUP_JOBS,...POSTGRES_COORDINATOR_JOBS,...POSTGRES_EXECUTION_JOBS,...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
-  const jobs=names.map(name=>({name,status:'completed',conclusion:'success',...(name==='verify'?{steps:['npm run check','npm run build','npm run test:e2e:run'].map(command=>({name:'Run '+command,status:'completed',conclusion:'success'}))}:{})}));
+  const jobs=names.map(name=>({name,status:'completed',conclusion:'success',...(name==='verify'?{steps:['npm run check','npm run build','npm run test:e2e:run'].map(command=>({name:'Run '+command,status:'completed',conclusion:'success'}))}:name==='postgres-vectors'?{steps:[{name:'Run node scripts/postgres-tests.mjs run --group vectors',status:'completed',conclusion:'success'}]}:{})}));
   assert.deepEqual(proveExactCi(run,jobs,sha,'example/eigos').jobs,names);
   for(const name of [...POSTGRES_GROUP_JOBS,...POSTGRES_COORDINATOR_JOBS,...POSTGRES_EXECUTION_JOBS])assert.throws(()=>proveExactCi(run,jobs.filter(job=>job.name!==name),sha,'example/eigos'),/Required CI job/);
 });

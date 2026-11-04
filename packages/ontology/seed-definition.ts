@@ -1,4 +1,5 @@
 import { extendPaymentCommerceKernel } from './payment-commerce-kernel.js';
+import {extendSemanticRetrievalKernel} from './semantic-retrieval-kernel.js';
 import { extendBusinessDescriptions } from './business-descriptions.js';
 import { extendRollingGoKernel } from './rollinggo-kernel.js';
 import { extendBusinessFactsKernel } from './business-facts-kernel.js';
@@ -153,6 +154,9 @@ export function createConsolidatedKernelDefinition(registry = new TrustedDefinit
 export function createCurrentKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   return createBusinessDescriptionsKernelDefinition(registry);
 }
+export function createSemanticRetrievalKernelDefinition(registry=new TrustedDefinitionRegistry()):SeedDefinition{
+  return complete(extendSemanticRetrievalKernel(createBusinessDescriptionsKernelDefinition(registry).document,registry),registry,false);
+}
 export function createBusinessDescriptionsKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const described = complete(extendBusinessDescriptions(createPaymentCommerceKernelDefinition(registry).document), registry, false);
   if (digest(described.audit.model) !== digest(BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'The original v28 description kernel fingerprint changed');
@@ -186,11 +190,11 @@ export class StagedKernelBuilder {
   #model?: OntologyModel;
   #documentDigest?: string;
   static readonly stages = 15;
-  readonly #targetVersion: '27' | '28';
+  readonly #targetVersion: '27' | '28' | '29';
   readonly #stageCount: number;
-  constructor(targetVersion: '27' | '28' = CURRENT_KERNEL_VERSION) {
-    if (targetVersion !== '27' && targetVersion !== '28') throw new Error('Unsupported reviewed kernel target');
-    this.#targetVersion = targetVersion; this.#stageCount = targetVersion === '27' ? 14 : 15;
+  constructor(targetVersion: '27' | '28' | '29' = CURRENT_KERNEL_VERSION) {
+    if (targetVersion !== '27' && targetVersion !== '28' && targetVersion !== '29') throw new Error('Unsupported reviewed kernel target');
+    this.#targetVersion = targetVersion; this.#stageCount = targetVersion === '27' ? 14 : targetVersion==='28'?15:16;
   }
 
   step(expected: number): { completed: number; total: number; ready: boolean } {
@@ -241,7 +245,11 @@ export class StagedKernelBuilder {
         case 14:
           this.#current = complete(extendBusinessDescriptions(this.#current!.document),this.#registry,false,model=>{this.#model=model;});
           if (digest(this.#current.audit.model) !== digest(BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT','The reviewed v28 description fingerprint changed');
-          this.#documentDigest=digest(this.#current.document); this.#registry.seal();
+          if(this.#targetVersion==='28'){this.#documentDigest=digest(this.#current.document); this.#registry.seal();}
+          break;
+        case 15:
+          this.#current=complete(extendSemanticRetrievalKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
+          this.#documentDigest=digest(this.#current.document);this.#registry.seal();
           break;
         default: throw new Error('Unknown kernel stage');
       }
