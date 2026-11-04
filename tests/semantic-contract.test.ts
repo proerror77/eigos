@@ -5,7 +5,7 @@ import {actionDiscoverySchema} from '../packages/core/action-bindings.js';
 import {validateVector} from '../packages/semantic/local-embedding.js';
 
 test('semantic configuration and input mode are explicit without changing default storage',()=>{
-  const environment={OAUTH_ISSUER:'https://issuer.example',OAUTH_JWKS_URL:'https://issuer.example/jwks',OAUTH_AUDIENCE:'https://audience.example/eigos'};
+  const environment={PUBLIC_URL:'https://eigos.example',OAUTH_ISSUER:'https://issuer.example',OAUTH_JWKS_URL:'https://issuer.example/jwks',OAUTH_AUDIENCE:'https://audience.example/eigos'};
   assert.equal(readConfig(environment).EIGOS_SEMANTIC_MODEL_DIR,undefined);
   assert.throws(()=>readConfig({...environment,EIGOS_SEMANTIC_MODEL_DIR:'/absolute/model'}),/Semantic discovery requires PostgreSQL/);
   assert.equal(actionDiscoverySchema.parse({search:'车型价格',searchMode:'semantic'}).searchMode,'semantic');
