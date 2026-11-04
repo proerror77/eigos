@@ -47,6 +47,43 @@ test('a returned host checkpoint uses one atomic release instead of a second act
   finally{await loop.close();}
 });
 
+test('a committed checkpoint cannot be mistaken for heartbeat lease loss while its response is pending',async context=>{
+  context.mock.timers.enable({apis:['setInterval','setTimeout']});
+  const claim=syntheticClaim(),store=schedulingStore(claim);let committed=false,afterRelease=0,observed:unknown;
+  let acknowledge!:()=>void,entered!:()=>void;
+  const acknowledgement=new Promise<void>(resolve=>{acknowledge=resolve;}),releaseEntered=new Promise<void>(resolve=>{entered=resolve;});
+  store.renew=async()=>{if(committed)afterRelease++;return !committed;};
+  store.releaseCheckpoint=async(_claim,signal)=>{committed=true;entered();await acknowledgement;signal?.throwIfAborted();return true;};
+  const loop=new PostgresTaskWorker(store,{run:async()=>{},onError:async(_claim,error)=>{observed=error;},leaseMs:150,pollMs:10000,timeoutMs:5000});
+  try{
+    await loop.tick();await releaseEntered;
+    context.mock.timers.tick(1000);await Promise.resolve();await Promise.resolve();
+    acknowledge();await loop.pauseClaims();
+    assert.equal(afterRelease,0,'A naturally released claim must not receive another heartbeat');
+    assert.equal(observed,undefined,'Delayed checkpoint acknowledgement is not a lost execution authority');
+  }finally{acknowledge();await loop.close();}
+});
+
+test('checkpoint release drains an already started heartbeat and retains a real failed renewal',async context=>{
+  for(const valid of [true,false])await context.test(String(valid),async t=>{
+    t.mock.timers.enable({apis:['setInterval','setTimeout']});
+    const claim=syntheticClaim(),store=schedulingStore(claim);let releases=0,observed:unknown;
+    let finishHandler!:()=>void,renewed!:(valid:boolean)=>void,started!:()=>void,renewStarted!:()=>void;
+    const handler=new Promise<void>(resolve=>{finishHandler=resolve;}),renewal=new Promise<boolean>(resolve=>{renewed=resolve;});
+    const handlerStarted=new Promise<void>(resolve=>{started=resolve;}),heartbeatStarted=new Promise<void>(resolve=>{renewStarted=resolve;});
+    store.renew=()=>{renewStarted();return renewal;};
+    store.releaseCheckpoint=async(_claim,signal)=>{signal?.throwIfAborted();releases++;return true;};
+    const loop=new PostgresTaskWorker(store,{run:async()=>{started();await handler;},onError:async(_claim,error)=>{observed=error;},leaseMs:150,pollMs:10000,timeoutMs:5000});
+    try{
+      await loop.tick();await handlerStarted;t.mock.timers.tick(50);await heartbeatStarted;finishHandler();
+      for(let i=0;i<8;i++)await Promise.resolve();
+      assert.equal(releases,0,'The outstanding renewal must settle before releasing its original claim');
+      renewed(valid);await loop.pauseClaims();assert.equal(releases,valid?1:0);
+      if(valid)assert.equal(observed,undefined);else{assert(observed instanceof Error);assert.equal(observed.message,'The original Worker lease or authority ended');}
+    }finally{finishHandler();renewed(valid);await loop.close();}
+  });
+});
+
 test('checkpoint release retains the original execution-budget abort',async()=>{
   const claim=syntheticClaim(),store=schedulingStore(claim);let aborted=false,finished=0;let observed:unknown;
   store.releaseCheckpoint=async(_claim,signal)=>{aborted=signal?.aborted===true;signal?.throwIfAborted();return true;};
@@ -69,6 +106,41 @@ async function until(check: () => boolean | Promise<boolean>, timeout = 10000) {
   const deadline = Date.now() + timeout;
   while (!await check()) { if (Date.now() >= deadline) throw new Error('Synthetic Worker condition did not complete'); await delay(25); }
 }
+
+test('real PostgreSQL checkpoint acknowledgement cannot lose an already released original Worker token',
+  {skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'},async context=>{
+   for(const mode of ['checkpoint','finished'] as const)await context.test(mode,async()=>{
+    const f=securityFixture(Date.now,{unified:true});let target:Awaited<ReturnType<typeof importPostgresFixture>>|undefined,loop:PostgresTaskWorker|undefined;
+    let acknowledge!:()=>void;const acknowledgement=new Promise<void>(resolve=>{acknowledge=resolve;});
+    try{
+      const installation=f.installation('Synthetic checkpoint acknowledgement',3600000);f.approve(installation.id);
+      const principal={...f.principal,scopes:['tasks:write'],access:f.coordinator.authenticate({...f.principal,scopes:['tasks:write']},installation.token)};
+      target=await importPostgresFixture(f);const t=target,q=`"${t.schema}"`;
+      const task=await new PostgresTaskCommandService(t.database,t.policy).submit(principal,{requestId:'checkpoint-heartbeat-race',goal:'Synthetic scheduling fixture; no model or business effect.'});
+      const store=new PostgresWorkerStore(t.database,t.policy),release=store.releaseCheckpoint.bind(store),finish=store.finish.bind(store),renew=store.renew.bind(store);
+      let committed=false,renewalsAfterCommit=0,body:unknown;const failures:unknown[]=[];
+      store.renew=(...args)=>{if(committed)renewalsAfterCommit++;return renew(...args);};
+      if(mode==='checkpoint')store.releaseCheckpoint=async(claim,signal)=>{
+        const result=await release(claim,signal);assert.equal(result,true);committed=true;
+        await acknowledgement;signal?.throwIfAborted();return result;
+      };
+      else store.finish=async(...args)=>{
+        const result=await finish(...args);assert.equal(result,true);
+        body=(await t.client.query(`SELECT body FROM ${q}.jobs WHERE id=$1`,[task.id])).rows[0].body;committed=true;
+        await acknowledgement;return result;
+      };
+      loop=new PostgresTaskWorker(store,{leaseMs:5000,pollMs:10000,timeoutMs:30000,
+        run:async claim=>{if(mode==='finished')await store.finish(claim,job=>{job.state='paused';});else body=(await t.client.query(`SELECT body FROM ${q}.jobs WHERE id=$1`,[task.id])).rows[0].body;},
+        onError:async(_claim,error)=>{failures.push(error);}});
+      await loop.tick();await until(()=>committed);await delay(2000);acknowledge();await loop.pauseClaims();
+      assert.equal(renewalsAfterCommit,0,'An actual committed checkpoint must not be renewed by its finished Worker');assert.deepEqual(failures,[]);
+      assert.equal(Number((await t.client.query(`SELECT count(*) AS n FROM ${q}.work_claims`)).rows[0].n),0);
+      assert.equal(Number((await t.client.query(`SELECT count(*) AS n FROM ${q}.runtime_work_claims`)).rows[0].n),0);
+      assert.equal((await t.client.query(`SELECT body FROM ${q}.jobs WHERE id=$1`,[task.id])).rows[0].body,body,'Checkpoint acknowledgement cannot rewrite the original task');
+    }finally{acknowledge();await loop?.close();if(target)await target.close();f.close();}
+   });
+  });
+
 test('the SQL Worker drains its two original claims, renews while executing, and aborts canceled work before writeback',
   { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async () => {
     const f = securityFixture(Date.now, { unified: true }); let target: Awaited<ReturnType<typeof importPostgresFixture>> | undefined, loop: PostgresTaskWorker | undefined;

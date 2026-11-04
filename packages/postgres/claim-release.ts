@@ -1,6 +1,7 @@
 import type { Client } from 'pg';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
+import {notifyWorkerClaimRelease} from '../core/worker-claim-lifecycle.js';
 import { reservePostgresTransactionClient, postgresBusinessSchema, postgresBusinessAuthorityDigest } from './runtime-transaction.js';
 
 function receipt(owner:string,id:string,token:string,runtime:string){
@@ -10,6 +11,7 @@ function receipt(owner:string,id:string,token:string,runtime:string){
 /** Part of the result commit. No raw token enters an operation receipt. */
 export async function postgresRecordClaimRelease(client:Client,owner:string,id:string,token:string){
   const q=`"${postgresBusinessSchema(client)}"`,key=receipt(owner,id,token,postgresBusinessAuthorityDigest(client));
+  await notifyWorkerClaimRelease(owner,id,token);
   const result=await client.query(`INSERT INTO ${q}.requests AS existing(owner,operation,request_id,fingerprint,response)
     VALUES($1,$2,$3,$4,$5) ON CONFLICT(owner,operation,request_id) DO UPDATE SET fingerprint=existing.fingerprint
       WHERE existing.fingerprint=excluded.fingerprint AND existing.response=excluded.response RETURNING fingerprint`,

@@ -1,6 +1,7 @@
 import type { WorkClaim } from '../../packages/core/store.js';
 import { DomainError } from '../../packages/core/domain.js';
 import { withModelUsage } from '../../packages/core/model-usage-context.js';
+import { withWorkerClaimRelease } from '../../packages/core/worker-claim-lifecycle.js';
 import type { PostgresWorkerStore } from '../../packages/postgres/worker-store.js';
 
 type WorkerStore = Pick<PostgresWorkerStore, 'claim' | 'renew' | 'active' | 'finish' | 'releaseCheckpoint' | 'beginModelUsage' | 'finishModelUsage'>;
@@ -57,6 +58,7 @@ export class PostgresTaskWorker {
       renewal = this.store.renew(claim, this.leaseMs).then(ok => { if (!ok) lost(); }).catch(lost).finally(() => { renewal = undefined; });
     }, Math.max(25, Math.min(5000, Math.floor(this.leaseMs / 3))));
     const stopHeartbeat = () => { clearInterval(heartbeat); };
+    const stopAndDrainHeartbeat = async () => { stopHeartbeat(); if (renewal) await renewal; };
     controller.signal.addEventListener('abort', stopHeartbeat, { once: true });
     const timeout = setTimeout(() => controller.abort(new DomainError('CONFLICT', 'Worker execution time budget ended')), this.timeoutMs);
     const run: Running = { controller, done: Promise.resolve() };
@@ -64,11 +66,16 @@ export class PostgresTaskWorker {
     run.done = Promise.resolve().then(async () => {
       if (!await this.store.active(claim)) { lost(); return; }
       controller.signal.throwIfAborted();
-      await withModelUsage({ begin: (id, runtime, at) => this.store.beginModelUsage(claim, id, runtime, at),
+      await withWorkerClaimRelease(claim,async()=>{
+        await stopAndDrainHeartbeat();controller.signal.throwIfAborted();
+      },()=>withModelUsage({ begin: (id, runtime, at) => this.store.beginModelUsage(claim, id, runtime, at),
         finish: (id, evidence, outcome) => this.store.finishModelUsage(claim, id, evidence, outcome) },
-      () => this.options.run(claim, controller.signal));
+      () => this.options.run(claim, controller.signal)));
       // A handler may checkpoint a next phase instead of ending the task. Its
       // original claim is still released before any subsequent polling cycle.
+      // The handler has returned. Finish any already-started renewal before
+      // releasing its token; a later false heartbeat is then no longer a loss.
+      await stopAndDrainHeartbeat();
       await this.store.releaseCheckpoint(claim,controller.signal);
     }).catch(async error => {
       if (this.options.onError) { await this.options.onError(claim, error, controller.signal); return; }

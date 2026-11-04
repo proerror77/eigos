@@ -6311,7 +6311,7 @@
     {
       "id": "postgres-claim-release",
       "file": "packages/postgres/claim-release.ts",
-      "sourceDigest": "1e872980da4d3a090dd44babfd3303693b1183d3b1590cc3ad4e21d1cdf67439",
+      "sourceDigest": "a627c4886d1c21b98fc66783238c4dd504fff359aee9594c8fbb4667dfa45c8d",
       "channels": [
         "internal"
       ],
@@ -6371,7 +6371,7 @@
     {
       "id": "postgres-worker-loop",
       "file": "apps/worker/postgres-worker.ts",
-      "sourceDigest": "9b6fd10a53093aa8330682fb986fa64d271e651524d768d26edb0cd814ede0fd",
+      "sourceDigest": "c7237b8bf9d6baba57d12f2487edca2dd2b82bfe3533ae2ce986f19490a1ad4d",
       "channels": [
         "internal"
       ],
@@ -7472,6 +7472,18 @@
       "content": "Explicit pgvector administrator preview, installation and independent verification",
       "currentControl": "Offline preview by default; exact review digest and private operation, environment-only admin credentials, separate verified TLS readback and fresh immutable receipt; unknown commit never retried, semantic retrieval and runtime role compatibility remain unverified",
       "targetControl": "Offline preview by default; exact review digest and private operation, environment-only admin credentials, separate verified TLS readback and fresh immutable receipt; unknown commit never retried, semantic retrieval and runtime role compatibility remain unverified",
+      "stage": "S5"
+    },
+    {
+      "id": "worker-claim-release-lifecycle",
+      "file": "packages/core/worker-claim-lifecycle.ts",
+      "sourceDigest": "3ddcfcc460f4cadfee1a1340cba8de5228461b505d2e111a5d77ca59377004a9",
+      "channels": [
+        "internal"
+      ],
+      "content": "Original Worker heartbeat lifecycle before its own claim release",
+      "currentControl": "Callback-scoped original owner, task and token identity; await and coalesce heartbeat drain before a release receipt; closed and mismatched scopes cannot notify another Worker; no lease renewal, permission grant or timeout extension",
+      "targetControl": "Retain the database claim, authority, revocation, execution deadline and late-result guards while quiescing only the releasing Worker heartbeat",
       "stage": "S5"
     }
   ]
