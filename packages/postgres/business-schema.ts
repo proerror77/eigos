@@ -104,6 +104,11 @@ BEGIN
 END; $$`;
 
 
+/** Reviewed compiler metadata for base-bound physical readback. This exports
+ * no installer, caller-selected SQL or additional execution capability. */
+export const POSTGRES_PROJECTION_EPOCH_CONTRACT = Object.freeze({ functionSql: projectionEpochFunction,
+  tables: Object.freeze([...projectionTables]), events: Object.freeze([...projectionEvents]) });
+
 type Column = { name: string; type: string; notNull: boolean; pk: number; defaultValue: unknown; hidden: number };
 export interface BusinessSchemaMapping { tables: number; indexes: number; triggers: number; statements: string[]; schemaStatements: string[]; triggerStatements: string[]; identities: { table: string; column: string; usesSqliteSequence: boolean }[]; requiresDataValidation: true; requiresRuntimePort: true }
 

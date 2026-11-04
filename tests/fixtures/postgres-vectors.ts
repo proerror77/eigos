@@ -25,7 +25,7 @@ import {PostgresDefinitionStore} from '../../packages/postgres/definition-store.
 export const vectorConnection=()=>({host:'127.0.0.1',port:Number(process.env.EIGOS_TEST_VECTOR_PGPORT??52746),database:'postgres',user:'postgres',password:'synthetic-vectors-only',ssl:false as const});
 /** Real offline import, independent row/identity verification, base handoff,
  * reviewed extension and isolated runtime role. Only this lane's synthetic PG. */
-export async function postgresVectorFixture(source:ReturnType<typeof securityFixture>){
+export async function postgresVectorFixture(source:ReturnType<typeof securityFixture>,options:{legacyProjection?:boolean}={}){
   const nonce=randomUUID().replaceAll('-',''),schema=`eigos_business_${nonce}`,memberSchema=`eigos_membership_${nonce}`,role=`eigos_vectors_${nonce}`;
   const client=new pg.Client(vectorConnection());await client.connect();let database:PostgresDatabase|undefined,members:PostgresMemberStore|undefined,publisher:PostgresAuthorizationPublisher|undefined,controlPool:pg.Pool|undefined;
   let closing:Promise<void>|undefined;
@@ -33,6 +33,13 @@ export async function postgresVectorFixture(source:ReturnType<typeof securityFix
     await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE; DROP SCHEMA IF EXISTS "${memberSchema}" CASCADE; DROP ROLE IF EXISTS "${role}"`);}finally{await client.end();}})();
   try{
     source.jobs.createMessagingStore();source.jobs.createNetworkStore();source.coordinator.close();const fencedAt=new Date().toISOString();
+    if(options.legacyProjection){
+      const legacy=new DatabaseSync(source.database);try{
+        legacy.exec('BEGIN IMMEDIATE');
+        for(const table of ['ontology_objects','ontology_links','ontology_scoped_objects','ontology_scoped_links'])for(const event of ['insert','update','delete'])legacy.exec(`DROP TRIGGER ${table}_projection_${event}`);
+        legacy.exec('DROP TABLE ontology_projection_epochs; DROP TABLE ontology_projection_checkpoints; COMMIT');
+      }finally{legacy.close();}
+    }
     const snapshot=join(source.directory,'vector-source.sqlite'),memberSnapshot=join(source.directory,'vector-members.sqlite');
     for(const [from,to] of [[source.database,snapshot],[source.membership,memberSnapshot]]){const db=new DatabaseSync(from!);try{db.exec('PRAGMA wal_checkpoint(TRUNCATE)');}finally{db.close();}copyFileSync(from!,to!);const copy=new DatabaseSync(to!);try{copy.exec('PRAGMA journal_mode=DELETE');}finally{copy.close();}chmodSync(to!,0o600);}
     if(!source.authority)throw new Error('Unified synthetic authority required');

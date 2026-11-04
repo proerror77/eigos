@@ -1,3 +1,4 @@
+import {assertPostgresProjectionEpochBase} from './projection-epoch-schema.js';
 import pg,{type Client} from 'pg';
 import type {Config} from '../core/config.js';
 import {digest} from '../core/delegation.js';
@@ -160,6 +161,7 @@ export async function verifyPostgresPrimaryActivation(client:Client,binding:Post
     const s=await client.query(`SELECT CASE WHEN octet_length(body::text)<=1048576 THEN body END AS body FROM ${q}.eigos_runtime_schema_receipt WHERE slot=1 LIMIT 2`);
     const imported=await client.query(`SELECT CASE WHEN octet_length(body::text)<=8388608 THEN body END AS body FROM ${q}.eigos_migration_receipt WHERE slot=1 LIMIT 2`);
     if(a.rowCount!==1||s.rowCount!==1||imported.rowCount!==1)throw new Error('PostgreSQL primary is not ready: activation or runtime schema receipt is missing');
+    assertReviewedPostgresActivation(binding,{handoff,sourceFence,businessVerification,identityAudit,runtimeSchema:s.rows[0].body,activation:a.rows[0].body,businessImport:imported.rows[0].body});
     const base=businessReceipt.parse(imported.rows[0].body),expectedTables=[...base.tables.map(table=>table.name),'eigos_migration_receipt','eigos_business_mutex',runtimeContract.activationTable,runtimeContract.schemaReceiptTable,...runtimeContract.messagingNode.tables,...(vectorFeature?embeddingTableNames:[])].sort();
     if(!runtimeContract.messagingNode.originalTables.every(table=>base.tables.some(value=>value.name===table)))throw new Error('Original imported messaging tables are missing from the reviewed base');
     const inventory=await client.query(`SELECT c.relname FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relkind IN('r','p','v','m','f') ORDER BY c.relname COLLATE "C" LIMIT 10001`,[binding.business.schema]);
@@ -168,7 +170,8 @@ export async function verifyPostgresPrimaryActivation(client:Client,binding:Post
     if(!same(inventory.rows.map(row=>row.relname).sort(),expectedTables))throw new Error('PostgreSQL runtime relation inventory differs from the installed reviewed contract');
     await assertPostgresMessagingStorageSchema(client,binding.business.schema);
     const functions=await client.query(`SELECT p.proname,pg_catalog.oidvectortypes(p.proargtypes) AS args FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1 ORDER BY p.proname,p.oid LIMIT 10001`,[binding.business.schema]);
-    const requiredFunctions=[...runtimeContract.baseFunctions,[runtimeContract.triggerFunction,''],['eigos_guard_relay_node_immutable',''],...(vectorFeature?[['eigos_vector_from_values','real[]'],['eigos_vector_cosine_values','extensions.vector, real[]'],['eigos_immutable_embedding','']]:[])],allowedFunctions=[...requiredFunctions,...runtimeContract.conditionalBaseFunctions];
+    const projectionEpoch=await assertPostgresProjectionEpochBase(client,binding,base.tables.map(table=>table.name));
+    const requiredFunctions=[...runtimeContract.baseFunctions,...(projectionEpoch?[['eigos_projection_epoch_invalidate','']]:[]),[runtimeContract.triggerFunction,''],['eigos_guard_relay_node_immutable',''],...(vectorFeature?[['eigos_vector_from_values','real[]'],['eigos_vector_cosine_values','extensions.vector, real[]'],['eigos_immutable_embedding','']]:[])],allowedFunctions=[...requiredFunctions,...runtimeContract.conditionalBaseFunctions];
     const names=functions.rows.map(row=>[row.proname,row.args]);
     if(requiredFunctions.some(expected=>!names.some(actual=>same(actual,expected)))||names.some(actual=>!allowedFunctions.some(expected=>same(actual,expected)))||new Set(names.map(value=>JSON.stringify(value))).size!==names.length)throw new Error('PostgreSQL runtime function inventory differs from the reviewed code');
     const sequences=await client.query(`SELECT c.relname,owned.table_name,owned.column_name,owned.identity,owned.primary_key FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
@@ -180,7 +183,6 @@ export async function verifyPostgresPrimaryActivation(client:Client,binding:Post
     if(baseSequences.length!==verified.sequenceObservation.checked||new Set(sequences.rows.map(row=>row.relname)).size!==sequences.rows.length
       ||baseSequences.some(row=>!base.tables.some(table=>table.name===row.table_name)||!(row.identity==='a'&&row.column_name==='__eigos_rowid'||row.identity==='d'&&row.primary_key===true))
       ||base.tables.some(table=>baseSequences.filter(row=>row.table_name===table.name&&row.column_name==='__eigos_rowid'&&row.identity==='a').length!==1))throw new Error('PostgreSQL runtime sequence inventory differs from its verified base and node extension');
-    assertReviewedPostgresActivation(binding,{handoff,sourceFence,businessVerification,identityAudit,runtimeSchema:s.rows[0].body,activation:a.rows[0].body,businessImport:imported.rows[0].body});
     if(vectorFeature){
       assertFeatureBinding(vectorFeature,binding);await assertPostgresEmbeddingSchema(client,vectorFeature);await assertPostgresRuntimeRole(client,binding,embeddingRuntimeGrantPlan(binding,base.tables.map(table=>table.name)),'granted');
       if(!builder)throw new Error('Task vectors require their actual prepared semantic kernel');await assertPostgresSemanticRelease(client,binding.business.schema,builder);

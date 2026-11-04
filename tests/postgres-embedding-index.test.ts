@@ -33,6 +33,71 @@ import {digest} from '../packages/core/delegation.js';
 import {BACKEND_VERSION} from '../packages/ontology/execution.js';
 import {POLICY_VERSION,SECURITY_CONTRACT} from '../packages/security/contracts.js';
 import type {Job} from '../packages/core/domain.js';
+import {POSTGRES_PROJECTION_EPOCH_CONTRACT} from '../packages/postgres/business-schema.js';
+
+async function rejectChangedEpochBase(t:Awaited<ReturnType<typeof postgresVectorFixture>>){
+  const q=`"${t.schema}"`,signature=`${q}.eigos_projection_epoch_invalidate()`,reader=new pg.Client(vectorConnection());await reader.connect();
+  try{
+  const original=(await t.client.query(`SELECT pg_get_functiondef(p.oid) AS sql FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1 AND p.proname='eigos_projection_epoch_invalidate'`,[t.schema])).rows[0].sql as string;
+  const triggers=(await t.client.query(`SELECT c.relname,t.tgname,pg_get_triggerdef(t.oid) AS sql FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_proc p ON p.oid=t.tgfoid WHERE n.nspname=$1 AND p.proname='eigos_projection_epoch_invalidate'`,[t.schema])).rows;
+  assert.equal(triggers.length,12);
+  const verify=(binding=t.binding)=>verifyPostgresEmbeddingExtension(reader,binding,t.feature);
+  const restore=async()=>{await t.client.query(`ALTER FUNCTION ${signature} OWNER TO postgres; ${original}; REVOKE ALL ON FUNCTION ${signature} FROM PUBLIC,"${t.role}"`);};
+  const rejected=async(sql:string)=>{await t.client.query(sql);try{await assert.rejects(verify(),/Original projection epoch/);}finally{await restore();}};
+    assert(Object.isFrozen(POSTGRES_PROJECTION_EPOCH_CONTRACT));assert(Object.isFrozen(POSTGRES_PROJECTION_EPOCH_CONTRACT.tables));assert(Object.isFrozen(POSTGRES_PROJECTION_EPOCH_CONTRACT.events));
+    assert(original.includes('RETURN NULL;'));
+    await rejected(original.replace('RETURN NULL;','PERFORM 1; RETURN NULL;'));
+    for(const change of ['SECURITY DEFINER','STABLE','PARALLEL SAFE','SET search_path TO public,pg_catalog',`OWNER TO "${t.role}"`])await rejected(`ALTER FUNCTION ${signature} ${change}`);
+    await rejected(`GRANT EXECUTE ON FUNCTION ${signature} TO PUBLIC`);
+    await rejected(`GRANT EXECUTE ON FUNCTION ${signature} TO "${t.role}"`);
+    const trigger=triggers.find(row=>row.tgname==='ontology_links_projection_insert')!;
+    for(const row of triggers)await t.client.query(`DROP TRIGGER "${row.tgname}" ON ${q}."${row.relname}"`);
+    await t.client.query(`DROP FUNCTION ${signature}`);
+    try{await assert.rejects(verify(),/Original projection epoch helper is missing from its reviewed base/);}
+    finally{await t.client.query(`${original}; REVOKE ALL ON FUNCTION ${signature} FROM PUBLIC,"${t.role}"`);for(const row of triggers)await t.client.query(row.sql);}
+    for(const replacement of ['',`CREATE TRIGGER "${trigger.tgname}" AFTER UPDATE ON ${q}."${trigger.relname}" FOR EACH ROW EXECUTE FUNCTION ${signature}`,
+      `CREATE TRIGGER "${trigger.tgname}" AFTER INSERT ON ${q}."${trigger.relname}" FOR EACH ROW EXECUTE FUNCTION ${q}.eigos_immutable_history()`]){
+      await t.client.query(`DROP TRIGGER "${trigger.tgname}" ON ${q}."${trigger.relname}"; ${replacement}`);
+      try{await assert.rejects(verify(),/Original projection epoch trigger source differs/);}
+      finally{await t.client.query(`DROP TRIGGER IF EXISTS "${trigger.tgname}" ON ${q}."${trigger.relname}"; ${trigger.sql}`);}
+    }
+    await t.client.query(`CREATE FUNCTION ${q}.unreviewed_vector_neighbor() RETURNS integer LANGUAGE sql AS 'SELECT 1'`);
+    try{await assert.rejects(verify(),/unreviewed functions/);}finally{await t.client.query(`DROP FUNCTION ${q}.unreviewed_vector_neighbor()`);}
+    await assert.rejects(verify({...t.binding,activation:{...t.binding.activation!,runtimeSchemaReceiptDigest:'0'.repeat(64)}}),/Base activation belongs to a different primary/);
+    await assert.rejects(verify({...t.binding,business:{...t.binding.business,schemaDigest:'0'.repeat(64)}}),/Base activation belongs to a different primary/);
+    await verify();
+  }finally{await reader.end();}
+}
+
+async function oldBaseCannotAdoptPosthocEpochs(){
+  const source=securityFixture(Date.now,{unified:true});let target:Awaited<ReturnType<typeof postgresVectorFixture>>|undefined;
+  try{
+    target=await postgresVectorFixture(source,{legacyProjection:true});const t=target,q=`"${t.schema}"`,reader=new pg.Client(vectorConnection());await reader.connect();
+    try{
+      await t.publisher.close();
+      const before=(await t.client.query(`SELECT body FROM ${q}.eigos_migration_receipt WHERE slot=1`)).rows[0].body;
+      assert(before.tables.every((row:{name:string})=>!['ontology_projection_epochs','ontology_projection_checkpoints'].includes(row.name)));
+      await verifyPostgresEmbeddingExtension(reader,t.binding,t.feature);
+      const contract=POSTGRES_PROJECTION_EPOCH_CONTRACT;
+      await t.client.query(`BEGIN; SET LOCAL search_path TO ${q},pg_catalog,pg_temp;
+        CREATE TABLE ${q}.ontology_projection_epochs(ontology_id text NOT NULL,owner text NOT NULL,type text NOT NULL,revision bigint NOT NULL,PRIMARY KEY(ontology_id,owner,type));
+        CREATE TABLE ${q}.ontology_projection_checkpoints(ontology_id text NOT NULL,owner text NOT NULL,task_id text NOT NULL,model_digest text NOT NULL,epochs text NOT NULL,entries text NOT NULL,PRIMARY KEY(ontology_id,owner,task_id));
+        ${contract.functionSql}; REVOKE ALL ON FUNCTION ${q}.eigos_projection_epoch_invalidate() FROM PUBLIC; COMMIT`);
+      try{
+        // Even the exact reviewed function with the proper owner/config/ACL
+        // cannot claim to have belonged to this original immutable import.
+        await assert.rejects(verifyPostgresEmbeddingExtension(reader,t.binding,t.feature),/absent from the original base import/);
+        for(const table of contract.tables)for(const event of contract.events)await t.client.query(`CREATE TRIGGER ${table}_projection_${event.toLowerCase()} AFTER ${event} ON ${q}.${table} FOR EACH ROW EXECUTE FUNCTION ${q}.eigos_projection_epoch_invalidate()`);
+        await assert.rejects(verifyPostgresEmbeddingExtension(reader,t.binding,t.feature),/absent from the original base import/);
+      }finally{
+        for(const table of contract.tables)for(const event of contract.events)await t.client.query(`DROP TRIGGER IF EXISTS ${table}_projection_${event.toLowerCase()} ON ${q}.${table}`);
+        await t.client.query(`DROP FUNCTION ${q}.eigos_projection_epoch_invalidate(); DROP TABLE ${q}.ontology_projection_epochs; DROP TABLE ${q}.ontology_projection_checkpoints`);
+      }
+      assert.deepEqual((await t.client.query(`SELECT body FROM ${q}.eigos_migration_receipt WHERE slot=1`)).rows[0].body,before);
+      await verifyPostgresEmbeddingExtension(reader,t.binding,t.feature);
+    }finally{await reader.end();}
+  }finally{await target?.close();source.close();}
+}
 
 test('supplied task vectors use actual pgvector through a restricted runtime, exact field grants and complete current index',
   {skip:process.env.EIGOS_TEST_VECTOR_PG!=='1'},async()=>{
@@ -209,5 +274,7 @@ test('supplied task vectors use actual pgvector through a restricted runtime, ex
       await t.client.query(`UPDATE ${q}.security_grants SET state='revoked' WHERE id=$1`,[grant.id]);
       await assert.rejects(read(),/AUTHORIZATION_REQUIRED|ACCESS_REVOKED/);
       const verifier=new pg.Client(vectorConnection());await verifier.connect();try{await verifyPostgresEmbeddingExtension(verifier,t.binding,t.feature);}finally{await verifier.end();}
+      await rejectChangedEpochBase(t);
     }finally{await gateway?.close();if(target)await target.close();sqlite.close();source.close();}
+    await oldBaseCannotAdoptPosthocEpochs();
   });
