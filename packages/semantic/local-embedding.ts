@@ -116,6 +116,7 @@ export async function loadLocalEmbedding(
   });
   let pending: Promise<unknown> = Promise.resolve(),
     closed = false;
+  let closing: Promise<void> | undefined;
   return {
     modelId: digest({
       manifest,
@@ -139,10 +140,12 @@ export async function loadLocalEmbedding(
       pending = run.catch(() => {});
       return run;
     },
-    async close() {
+    close() {
       closed = true;
-      await pending;
-      await encoder.dispose();
+      return (closing ??= (async () => {
+        await pending;
+        await encoder.dispose();
+      })());
     },
   };
 }

@@ -7550,7 +7550,7 @@
     {
       "id": "local-semantic-embedding",
       "file": "packages/semantic/local-embedding.ts",
-      "sourceDigest": "c51fbac57662e4508132433e90ed300bcc7f70cf0067824142ccede78661a189",
+      "sourceDigest": "dac837097b39810bb5ea554acf74a997fda4d2a34330a08f256e55bc384bafb7",
       "channels": [
         "internal",
         "operator_cli"

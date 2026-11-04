@@ -223,6 +223,7 @@ test(
       await f.t.client.query(`DROP SCHEMA ${sqlIdentifier(schema)} CASCADE`);
       await f.close();
       await model.close();
+      await model.close(); // Startup cleanup and shutdown may share the runtime.
     }
   },
 );
