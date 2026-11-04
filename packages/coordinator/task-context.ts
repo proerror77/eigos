@@ -1,5 +1,5 @@
 import { runGraphProgram, type ProjectionMetadata, type GraphProgram, graphQuery, graphVirtualMembership, graphRead, graphRelated, graphTombstone, graphPipelineChanges } from '../ontology/graph-program.js';
-import { readOntologyRequestProgram, readExecutionContextProgram } from '../ontology/execution-projection.js';
+import { readOntologyRequestProgram, readRequestProjectionProgram, readExecutionContextProgram } from '../ontology/execution-projection.js';
 import { readCapabilityCatalogProgram, readPreparedResolutionProgram, readPreparedCapabilityProgram } from '../ontology/capability-catalog.js';
 import { personalResourceRoles } from '../ontology/personal-context.js';
 import { authorizationScope } from '../security/context.js';
@@ -74,15 +74,9 @@ const conflict = (message: string): never => { throw new DomainError('CONFLICT',
 const requestLinks = ['specifications', 'capabilities', 'currentResolution'] as const;
 export const instructionCoverageDigest = (refs: ObjectRef[]) => digest([...new Set(refs.map(refKey))].sort());
 
-function* instructionRowsProgram(graph: ProjectionMetadata, owner: string, request: ServiceRequest): GraphProgram<{ specification: ObjectView; rows: ObjectView[] }> {
-  const specifications = (yield* graphQuery(owner, { from: { type: 'ServiceRequest', id: request.id }, link: 'specifications', where: [{ property: 'requestRevision', op: 'eq', value: request.revision }], limit: 2 }));
-  if (specifications.items.length !== 1 || specifications.page.hasMore) return conflict('Current request specification is missing or ambiguous');
-  const specification = specifications.items[0]!, rows: ObjectView[] = []; let cursor: string | undefined;
-  do {
-    const page = (yield* graphQuery(owner, { from: specification.ref, link: 'instructions', limit: 50, ...(cursor ? { cursor } : {}) }));
-    rows.push(...page.items); cursor = page.page.cursor;
-    if (rows.length > 2000) return conflict('Instruction index exceeds the supported task bound');
-  } while (cursor);
+function instructionRows(request: ServiceRequest, projection: { request: ServiceRequest; specification: ObjectView; instructions: ObjectView[] }): { specification: ObjectView; rows: ObjectView[] } {
+  if (projection.request.revision !== request.revision) return conflict('Current request revision changed');
+  const specification = projection.specification, rows = projection.instructions;
   rows.sort((a, b) => Number(a.properties.sequence) - Number(b.properties.sequence));
   if (rows.length !== request.messages.length || rows.some((row, index) => row.properties.sequence !== index || row.properties.messageId !== request.messages[index]!.id || row.properties.text !== request.messages[index]!.text)) return conflict('Current instruction graph differs from its authenticated request');
   return { specification, rows };
@@ -106,13 +100,15 @@ function initialInstructions(request: ServiceRequest, rows: ObjectView[]) {
   const delivered = new Set([...selected, ...(goalSource ? [0] : [])]);
   return { selected, delivered, goalSource, missing: rows.findIndex((_row, index) => !delivered.has(index)) };
 }
-export function readTaskInstructions(graph: OntologyObjectStore, owner: string, requestId: string, requestRevision: number, input: z.infer<typeof taskInstructionsSchema>) { return runGraphProgram(graph, readTaskInstructionsProgram(graph, owner, requestId, requestRevision, input)); }
+export function readTaskInstructions(graph: OntologyObjectStore, owner: string, requestId: string, requestRevision: number, input: z.infer<typeof taskInstructionsSchema>) {
+  return graph.withReadMemo(owner, () => runGraphProgram(graph, readTaskInstructionsProgram(graph, owner, requestId, requestRevision, input)));
+}
 
 export function* readTaskInstructionsProgram(graph: ProjectionMetadata, owner: string, requestId: string, requestRevision: number, input: z.infer<typeof taskInstructionsSchema>) {
   if (input.cursor && input.messageIds) throw new DomainError('INVALID_INPUT', 'Choose an instruction page or exact message IDs');
-  const request = (yield* readOntologyRequestProgram(graph, owner, requestId));
+  const projection = yield* readRequestProjectionProgram(graph, owner, requestId), request = projection.request;
   if (request.revision !== requestRevision) return conflict('Instruction request revision changed');
-  const { rows } = (yield* instructionRowsProgram(graph, owner, request));
+  const { rows } = instructionRows(request, projection);
   let after = -1;
   if (input.cursor) {
     let cursor: z.infer<typeof instructionCursorSchema>;
@@ -139,30 +135,59 @@ export function* readTaskInstructionsProgram(graph: ProjectionMetadata, owner: s
 /** Task membership is distinct from owner visibility. Shared provider, channel,
  * address and action metadata can be read exactly, but cannot be used as a
  * reverse-navigation bridge into another task. */
-export function taskObjectMembership(graph: OntologyObjectStore, owner: string, request: Pick<ServiceRequest, 'id' | 'revision'>, ref: ObjectRef): 'current' | 'foreign' | 'shared' { return runGraphProgram(graph, taskObjectMembershipProgram(graph, owner, request, ref)); }
-
-export function* taskObjectMembershipProgram(graph: ProjectionMetadata, owner: string, request: Pick<ServiceRequest, 'id' | 'revision'>, ref: ObjectRef): GraphProgram<'current' | 'foreign' | 'shared'> {
+type TaskMembership = 'current' | 'foreign' | 'shared';
+const executionMembershipParents: Record<string, string> = { ExecutionStep: 'plan', ExecutionInput: 'step', ExecutionAttempt: 'step', ExecutionResult: 'step' };
+export function taskObjectMembership(graph: OntologyObjectStore, owner: string, request: Pick<ServiceRequest, 'id' | 'revision'>, ref: ObjectRef): TaskMembership {
   if (ref.type === 'ServiceRequest') return ref.id === request.id ? 'current' : 'foreign';
-  const virtual = (yield* graphVirtualMembership(owner, request, ref));
+  const virtual = graph.virtualMembership(owner, request, ref);
   if (virtual) return virtual;
-  const object = (yield* graphRead(owner, ref));
-  // Attempt.requestRevision is the durable Job/claim fence. A technical resume
-  // can advance it without changing the business request. Membership follows
-  // the sealed step and plan instead of conflating those two revision domains.
-  const executionParent: Record<string, string> = { ExecutionStep: 'plan', ExecutionInput: 'step', ExecutionAttempt: 'step', ExecutionResult: 'step' };
-  const parentName = executionParent[ref.type];
-  if (parentName) {
-    const parents = (yield* graphRelated(owner, ref, parentName, { remaining: 1000 }));
-    return parents?.length === 1 ? (yield* taskObjectMembershipProgram(graph, owner, request, parents[0]!.ref)) : 'foreign';
-  }
-  if (typeof object.properties.requestRevision === 'number' && object.properties.requestRevision !== request.revision) return 'foreign';
-  if (typeof object.properties.requestId === 'string' && object.properties.requestId !== request.id) return 'foreign';
-  const navigation = graph.model.sides(ref.type).find(side => side.side.name === 'request' && side.other.type === 'ServiceRequest');
-  if (navigation) {
-    const roots = (yield* graphRelated(owner, ref, 'request', { remaining: 1000 }));
-    return roots?.length === 1 && roots[0]!.ref.id === request.id ? 'current' : 'foreign';
-  }
-  return 'shared';
+  const read = () => runGraphProgram(graph, taskObjectMembershipProgram(graph, owner, request, ref));
+  const properties = graph.model.properties(ref.type);
+  return executionMembershipParents[ref.type] || properties.requestId?.derived || properties.requestRevision?.derived ? read()
+    : graph.reuseRead(owner, 'task-membership:' + JSON.stringify([request.id, request.revision, ref]), read);
+}
+
+/** The memo is private to one read-only program invocation. It is never stored
+ * in planning-session state or shared with another receipt/authority window.
+ * Storage drivers retain their original read/commit fences around the program. */
+function taskMembershipReader(graph: ProjectionMetadata, owner: string, request: Pick<ServiceRequest, 'id' | 'revision'>) {
+  const memo = new Map<string, TaskMembership>();
+  const read = function* (ref: ObjectRef): GraphProgram<TaskMembership> {
+    if (ref.type === 'ServiceRequest') return ref.id === request.id ? 'current' : 'foreign';
+    const virtual = yield* graphVirtualMembership(owner, request, ref);
+    if (virtual) return virtual;
+    const properties = graph.model.properties(ref.type), parentName = executionMembershipParents[ref.type];
+    // Parent membership may depend on derived request fields farther up its
+    // execution chain. Keep those traversals fresh as well as direct derives.
+    const cacheable = !parentName && !properties.requestId?.derived && !properties.requestRevision?.derived;
+    const key = JSON.stringify([owner, graph.model.ref, request.id, request.revision, ref]);
+    if (cacheable && memo.has(key)) return memo.get(key)!;
+    const inspect = function* (): GraphProgram<TaskMembership> {
+      const object = yield* graphRead(owner, ref);
+      // Attempt.requestRevision is the durable Job/claim fence, distinct from
+      // the business request revision sealed into its parent step and plan.
+      if (parentName) {
+        const parents = yield* graphRelated(owner, ref, parentName, { remaining: 1000 });
+        return parents?.length === 1 ? yield* read(parents[0]!.ref) : 'foreign';
+      }
+      if (typeof object.properties.requestRevision === 'number' && object.properties.requestRevision !== request.revision) return 'foreign';
+      if (typeof object.properties.requestId === 'string' && object.properties.requestId !== request.id) return 'foreign';
+      const navigation = graph.model.sides(ref.type).find(side => side.side.name === 'request' && side.other.type === 'ServiceRequest');
+      if (navigation) {
+        const roots = yield* graphRelated(owner, ref, 'request', { remaining: 1000 });
+        return roots?.length === 1 && roots[0]!.ref.id === request.id ? 'current' : 'foreign';
+      }
+      return 'shared';
+    };
+    const membership = yield* inspect();
+    if (cacheable) memo.set(key, membership);
+    return membership;
+  };
+  return read;
+}
+
+export function* taskObjectMembershipProgram(graph: ProjectionMetadata, owner: string, request: Pick<ServiceRequest, 'id' | 'revision'>, ref: ObjectRef): GraphProgram<TaskMembership> {
+  return yield* taskMembershipReader(graph, owner, request)(ref);
 }
 
 function safeDefinition(type: object, relevantTypes: Set<string>): object {
@@ -240,12 +265,15 @@ function priorDefinition(receipts: readonly PlanningReadReceipt[], requested: st
 /** Read only persisted, public Ontology projections. The caller supplies an
  * authority boundary, never the request, execution state or source response. */
 export function readTaskContext(graph: OntologyObjectStore, owner: string, requestId: string, requestRevision: number, binding: TaskContextBinding,
-  receiptId: string, previousReads: readonly PlanningReadReceipt[] = [], input: z.infer<typeof taskContextSchema> = {}): TaskContextRead { return runGraphProgram(graph, readTaskContextProgram(graph, owner, requestId, requestRevision, binding, receiptId, previousReads, input, graph.security && input.includeDefinitions !== false ? authorizedDefinitions(graph.security.security, authorizationScope()!, graph.model) : undefined)); }
+  receiptId: string, previousReads: readonly PlanningReadReceipt[] = [], input: z.infer<typeof taskContextSchema> = {}): TaskContextRead {
+  return graph.withReadMemo(owner, () => runGraphProgram(graph, readTaskContextProgram(graph, owner, requestId, requestRevision, binding, receiptId, previousReads, input, graph.security && input.includeDefinitions !== false ? authorizedDefinitions(graph.security.security, authorizationScope()!, graph.model) : undefined)));
+}
 
 export function* readTaskContextProgram(graph: ProjectionMetadata, owner: string, requestId: string, requestRevision: number, binding: TaskContextBinding, receiptId: string, previousReads: readonly PlanningReadReceipt[] = [], input: z.infer<typeof taskContextSchema> = {}, visibleDefinitions?: ReturnType<typeof authorizedDefinitions>): GraphProgram<TaskContextRead> {
-  const request = (yield* readOntologyRequestProgram(graph, owner, requestId));
+  const projection = yield* readRequestProjectionProgram(graph, owner, requestId), request = projection.request;
+  const membership = taskMembershipReader(graph, owner, request);
   if (request.revision !== requestRevision) return conflict('The current Ontology request revision changed');
-  const instructionProjection = (yield* instructionRowsProgram(graph, owner, request)), initial = initialInstructions(request, instructionProjection.rows);
+  const instructionProjection = instructionRows(request, projection), initial = initialInstructions(request, instructionProjection.rows);
   const executionView = (yield* readExecutionContextProgram(graph, owner, requestId, requestRevision));
   let actions: ActionDefinition[] = [];
   if (binding.program) {
@@ -280,7 +308,7 @@ export function* readTaskContextProgram(graph: ProjectionMetadata, owner: string
   // Omitted objects remain navigable references, never delivered evidence.
   let objectBytes = 0;
   const addObject = function* (object: ObjectView, required = true): GraphProgram<boolean>{
-    if ((yield* taskObjectMembershipProgram(graph, owner, request, object.ref)) === 'foreign') throw new DomainError('FORBIDDEN', 'Task context cannot include another request or revision');
+    if ((yield* membership(object.ref)) === 'foreign') throw new DomainError('FORBIDDEN', 'Task context cannot include another request or revision');
     if (object.ref.type === 'RequestInstruction') {
       const sequence = Number(object.properties.sequence);
       if (!initial.delivered.has(sequence) || instructionProjection.rows[sequence]?.ref.id !== object.ref.id) {
@@ -404,12 +432,12 @@ export function* readTaskContextProgram(graph: ProjectionMetadata, owner: string
   for (const object of objects.values()) {
     if (expanded.has(refKey(object.ref)) || isExecutionBookkeepingType(object.ref.type) || object.ref.type === 'ServiceRequest') continue;
     expanded.add(refKey(object.ref));
-    if ((yield* taskObjectMembershipProgram(graph, owner, request, object.ref)) !== 'current') continue;
+    if ((yield* membership(object.ref)) !== 'current') continue;
     for (const navigation of graph.model.sides(object.ref.type).filter(side => side.direction === 'forward' && side.side.name !== 'supersedes' && !(object.ref.type === 'RequestSpecification' && side.side.name === 'instructions'))) {
       const page = (yield* graphQuery(owner, { from: object.ref, link: navigation.side.name, limit: 12 }, { remaining: 1000 }));
       if (page.page.hasMore) pendingRelationships.push({ from: object.ref, link: navigation.side.name, ...(page.page.cursor ? { cursor: page.page.cursor } : {}) });
       for (const target of page.items) {
-        if ((yield* taskObjectMembershipProgram(graph, owner, request, target.ref)) === 'foreign') continue;
+        if ((yield* membership(target.ref)) === 'foreign') continue;
         (yield* addObject(target, false)); addLink({ type: navigation.link.id, from: object.ref, to: target.ref });
       }
     }

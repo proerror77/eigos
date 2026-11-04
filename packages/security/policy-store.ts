@@ -728,8 +728,12 @@ export class SecurityPolicies {
       if (!row) throw new SecurityError('POLICY_CHANGED'); return objectRefSchema.parse(JSON.parse(String(row.body)));
     }
     if (!value) return;
-    const id = randomUUID(); this.db.prepare('DELETE FROM security_cursors WHERE expires_at<=?').run(this.security.now());
-    this.db.prepare('INSERT INTO security_cursors VALUES(?,?,?,?)').run(id, context, Math.min(this.security.now() + 300000, consentDeadline(scope.grant!.expiresAt)), JSON.stringify(value)); return id;
+    const id = randomUUID();
+    const removed = this.db.prepare('DELETE FROM security_cursors WHERE expires_at<=?').run(this.security.now());
+    const written = this.db.prepare('INSERT INTO security_cursors VALUES(?,?,?,?)').run(id, context, Math.min(this.security.now() + 300000, consentDeadline(scope.grant!.expiresAt)), JSON.stringify(value));
+    // Count only these metadata rows. Trigger side effects still invalidate reads.
+    readBookkeepingChanges.set(this.db,(readBookkeepingChanges.get(this.db) ?? 0) + Number(removed.changes) + Number(written.changes));
+    return id;
   }
   recordProjection(owner: string, batch: ObjectBatch, _source: ObjectSource) {
     const scope = this.scope(owner), origin = scope.projection;

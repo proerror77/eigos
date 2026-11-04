@@ -1,3 +1,4 @@
+import { projectionFragmentProgram, projectionDeltaMetadata } from './projection-delta.js';
 import {graphRead,graphQuery,graphIngest,graphContainsLinks,runGraphProgram,type GraphProgram,type ProjectionMetadata} from './graph-program.js';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -23,12 +24,14 @@ export function* businessRelatedProgram(graph: ProjectionMetadata, owner: string
 }
 /** Internal, transactional mapping only. Identical facts do not churn revisions. */
 export function* writeBusinessProgram(graph: ProjectionMetadata, owner: string, ref: ObjectRef, values: Record<string, unknown>, links: LinkWrite[], source: ObjectSource, immutable = false): GraphProgram<void> {
-  const previous = (yield* optionalObjectProgram(graph, owner, ref));
-  const properties = { [graph.model.object(ref.type).primaryKey]: ref.id, displayTitle: ref.type, ...values };
-  const unchanged = previous && digest(previous.properties) === digest(properties);
-  if (immutable && previous && !unchanged) throw new DomainError('CONFLICT', `Immutable ${ref.type} facts changed`);
-  if (unchanged && (yield* graphContainsLinks(owner, links))) return;
-  (yield* graphIngest(owner, { objects: unchanged ? [] : [{ ref, properties, ...(previous ? { expectedRevision: previous.revision } : {}) }], links }, source));
+  yield* projectionFragmentProgram(graph, 'business-write:' + JSON.stringify(ref), [values, links, source.kind, source.id, immutable], function* () {
+    const previous = (yield* optionalObjectProgram(graph, owner, ref));
+    const properties = { [graph.model.object(ref.type).primaryKey]: ref.id, displayTitle: ref.type, ...values };
+    const unchanged = previous && digest(previous.properties) === digest(properties);
+    if (immutable && previous && !unchanged) throw new DomainError('CONFLICT', `Immutable ${ref.type} facts changed`);
+    if (unchanged && (yield* graphContainsLinks(owner, links))) return;
+    (yield* graphIngest(owner, { objects: unchanged ? [] : [{ ref, properties, ...(previous ? { expectedRevision: previous.revision } : {}) }], links }, source));
+  });
 }
 
 export function optionalObject(graph: OntologyObjectStore, owner: string, ref: ObjectRef): ObjectView | undefined {
@@ -40,5 +43,5 @@ export function businessRelated(graph: OntologyObjectStore, owner: string, from:
 }
 
 export function writeBusiness(graph: OntologyObjectStore, owner: string, ref: ObjectRef, values: Record<string, unknown>, links: LinkWrite[], source: ObjectSource, immutable = false): void {
-  return runGraphProgram(graph,writeBusinessProgram(graph,owner,ref,values,links,source,immutable));
+  return runGraphProgram(graph,writeBusinessProgram(projectionDeltaMetadata(graph),owner,ref,values,links,source,immutable));
 }

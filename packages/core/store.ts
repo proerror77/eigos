@@ -3,7 +3,7 @@ import { ObservationContractStore } from './observation-store.js';
 import { personalSourceAdmitted, sourceOwner, type PersonalSource } from './personal-source.js';
 import { didiSourceOwner, type DidiMemberConnection } from './didi-source.js';
 import { initializeMemberSources, MemberSourceVault } from './member-source.js';
-import { businessTransaction, assertBusinessTransaction } from './transaction.js';
+import { businessTransaction, businessSavepoint, assertBusinessTransaction } from './transaction.js';
 import { NetworkStore } from '../network/store.js';
 import { MessagingStore } from '../agent-messaging/store.js';
 import { createTaskNetworkOntologyReader } from '../ontology/network-read.js';
@@ -324,7 +324,7 @@ export class JobStore {
   /** The execution graph and durable ledger share this transaction; neither is
    * a second executor. Fenced Agent reads keep late receipts audit-only; fixed
    * business effects can update ledger truth without advancing the task. */
-  private projectExecution(owner: string, job: Job): void {
+  private projectExecution(owner: string, job: Job, beforeTask?: ReturnType<OntologyObjectStore['projectionEpochs']>): void {
     if (job.service !== 'eigos.delegate' || job.delegation?.backendVersion !== BACKEND_VERSION) return;
     const graph = this.projectionForJob(owner, job);
     if (job.service === 'eigos.delegate' && job.delegation?.backendVersion === BACKEND_VERSION && job.state === 'completed'
@@ -335,29 +335,29 @@ export class JobStore {
       // Fresh dispatch still requires its complete sealed execution graph.
       return;
     }
-    const current = this.intents(owner, job.id);
-    const archived = this.db.prepare(`SELECT v.body FROM action_intent_versions v
-      JOIN action_intents i ON i.id=v.intent_id AND i.owner=v.owner WHERE v.owner=? AND i.job_id=?`).all(owner, job.id).map(row => JSON.parse(String(row.body)) as ActionIntent);
-    const attempts = this.db.prepare(`SELECT a.body FROM action_attempts a JOIN action_intents i ON i.id=a.intent_id AND i.owner=a.owner
-      WHERE a.owner=? AND i.job_id=? ORDER BY a.rowid`).all(owner, job.id).map(row => JSON.parse(String(row.body)) as ExecutionAttempt);
-    const observations: ExecutionLedger['observations'] = this.db.prepare(`SELECT o.* FROM action_observations o
-      JOIN action_intents i ON i.id=o.intent_id AND i.owner=o.owner WHERE o.owner=? AND i.job_id=? ORDER BY o.rowid`).all(owner, job.id).map(row => {
-      const result = JSON.parse(String(row.body)) as ActionResult;
-      // recordObservation only applies non-unknown results after verification.
-      // A later accepted observation does not revoke this historical fact.
-      // Unapplied/unknown rows do not prove either verification or rejection.
-      return { id: String(row.id), intentId: String(row.intent_id), attemptId: String(row.attempt_id), receivedAt: String(row.received_at), digest: String(row.digest), applied: row.applied === 1,
-        verified: row.applied === 1 && result.kind !== 'unknown' ? true : undefined, result };
-    });
-    const ledger = { intents: [...archived, ...current], attempts, observations };
-    projectExecution(graph, owner, job, ledger);
-    const cases = this.db.prepare('SELECT body FROM aftersales_cases WHERE owner=? AND (original_job_id=? OR remedy_job_id=?)').all(owner, job.id, job.id).map(row => JSON.parse(String(row.body)) as AfterSalesCase);
-    projectBusinessChain(graph, owner, job, { ...ledger, grants: this.grants(owner, job.id), cases });
+    graph.withProjectionDelta(owner, job.id, () => {
+      const current = this.intents(owner, job.id);
+      const archived = this.db.prepare(`SELECT v.body FROM action_intent_versions v
+        JOIN action_intents i ON i.id=v.intent_id AND i.owner=v.owner WHERE v.owner=? AND i.job_id=?`).all(owner, job.id).map(row => JSON.parse(String(row.body)) as ActionIntent);
+      const attempts = this.db.prepare(`SELECT a.body FROM action_attempts a JOIN action_intents i ON i.id=a.intent_id AND i.owner=a.owner
+        WHERE a.owner=? AND i.job_id=? ORDER BY a.rowid`).all(owner, job.id).map(row => JSON.parse(String(row.body)) as ExecutionAttempt);
+      const observations: ExecutionLedger['observations'] = this.db.prepare(`SELECT o.* FROM action_observations o
+        JOIN action_intents i ON i.id=o.intent_id AND i.owner=o.owner WHERE o.owner=? AND i.job_id=? ORDER BY o.rowid`).all(owner, job.id).map(row => {
+        const result = JSON.parse(String(row.body)) as ActionResult;
+        // recordObservation only applies non-unknown results after verification.
+        // A later accepted observation does not revoke this historical fact.
+        // Unapplied/unknown rows do not prove either verification or rejection.
+        return { id: String(row.id), intentId: String(row.intent_id), attemptId: String(row.attempt_id), receivedAt: String(row.received_at), digest: String(row.digest), applied: row.applied === 1,
+          verified: row.applied === 1 && result.kind !== 'unknown' ? true : undefined, result };
+      });
+      const ledger = { intents: [...archived, ...current], attempts, observations };
+      projectExecution(graph, owner, job, ledger);
+      const cases = this.db.prepare('SELECT body FROM aftersales_cases WHERE owner=? AND (original_job_id=? OR remedy_job_id=?)').all(owner, job.id, job.id).map(row => JSON.parse(String(row.body)) as AfterSalesCase);
+      projectBusinessChain(graph, owner, job, { ...ledger, grants: this.grants(owner, job.id), cases });
+    }, beforeTask);
   }
   private executionMutation<T>(action: () => T): T {
-    this.db.exec('SAVEPOINT execution_ontology');
-    try { const result = action(); this.db.exec('RELEASE execution_ontology'); return result; }
-    catch (error) { this.db.exec('ROLLBACK TO execution_ontology; RELEASE execution_ontology'); throw error; }
+    return businessSavepoint(this.db, 'execution_ontology', action);
   }
 
   preparationContext<T>(owner: string, jobId: string, key: string): T | undefined {
@@ -737,17 +737,17 @@ export class JobStore {
     }
   }
   private saveRecoveredWork(owner: string, job: Job, now: number): boolean {
-    this.db.exec('SAVEPOINT recovered_work');
     try {
-      // Reject overflowing historical state before reconstructing it, then
-      // check the root version created by this recovery before committing.
-      if (this.security.enabled) this.security.policies.assertTaskReadHistoryCapacity(owner, job.id, job.delegation!.request.revision);
-      this.save(owner, job);
-      if (this.security.enabled) this.security.policies.assertTaskReadHistoryCapacity(owner, job.id, job.delegation!.request.revision);
-      this.db.exec('RELEASE recovered_work'); return true;
+      return businessSavepoint(this.db, 'recovered_work', () => {
+        // Reject overflowing historical state before reconstructing it, then
+        // check the root version created by this recovery before committing.
+        if (this.security.enabled) this.security.policies.assertTaskReadHistoryCapacity(owner, job.id, job.delegation!.request.revision);
+        this.save(owner, job);
+        if (this.security.enabled) this.security.policies.assertTaskReadHistoryCapacity(owner, job.id, job.delegation!.request.revision);
+        return true;
+      });
     }
     catch (error) {
-      this.db.exec('ROLLBACK TO recovered_work; RELEASE recovered_work');
       if (!(error instanceof SecurityLineageLimitError)) throw error;
       const previous = { state: job.state, phase: job.delegation!.phase, question: job.question, error: job.error };
       scheduleTaskRecovery(job, 'validation_stalled', '当前任务暂时无法完成安全核验。原任务与证据已保留，修复运行环境后可继续。', { now, automatic: false, operation: 'security_lineage_capacity' });
@@ -1029,8 +1029,7 @@ export class JobStore {
     // The old Worker queue selector must not claim a foundation task even if an
     // operator accidentally starts an old binary against this new database.
     if (this.security.enabled) job.executionMode = 'worker-security-v2';
-    this.db.exec('SAVEPOINT task_and_ontology');
-    try {
+    businessSavepoint(this.db, 'task_and_ontology', () => {
       const previous = this.db.prepare('SELECT owner,body FROM jobs WHERE id=?').get(job.id);
       if (this.authority && !previous && job.delegation?.backendVersion === BACKEND_VERSION) job.authorityId = this.authority.id;
       if (this.authority && job.authorityId !== undefined && job.authorityId !== this.authority.id) throw new DomainError('CONFLICT', 'Task belongs to another runtime authority');
@@ -1049,8 +1048,11 @@ export class JobStore {
       job.id, owner, job.contextId, job.state, job.createdAt, job.updatedAt, JSON.stringify(job),
       );
       if (!saved.changes) throw new DomainError('FORBIDDEN', 'Task owner mismatch');
-      if (job.service === 'eigos.delegate' && job.delegation?.backendVersion === BACKEND_VERSION) projectTask(this.projectionForJob(owner, job), owner, job);
-      this.projectExecution(owner, job);
+      const projection = job.service === 'eigos.delegate' && job.delegation?.backendVersion === BACKEND_VERSION
+        ? this.projectionForJob(owner, job) : undefined;
+      const beforeTask = projection?.projectionEpochs(owner);
+      if (projection) projectTask(projection, owner, job);
+      this.projectExecution(owner, job, beforeTask);
       if (this.security.enabled) this.security.policies.bindTaskProjection(owner, job.id);
       const scope=authorizationScope();
       if (this.security.enabled && scope?.actor.actorKind==='worker' && scope.grant?.taskId===job.id && scope.lineage.size) {
@@ -1062,8 +1064,7 @@ export class JobStore {
         if(job.delegation?.agent?.paPayment) this.security.policies.recordOutput(owner,job.id,'payment',job.delegation.agent.paPayment.request,envelope);
       }
       if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.agent) this.recordFeedback(owner, job, job.delegation.outcome?.evidenceLevel ?? 'unverified');
-      this.db.exec('RELEASE task_and_ontology');
-    } catch (error) { this.db.exec('ROLLBACK TO task_and_ontology; RELEASE task_and_ontology'); throw error; }
+    });
   }
 
   private listRows(owner: string, filter: ListFilter, taskIds: string[] | undefined, projection: 'body' | 'permissions') {

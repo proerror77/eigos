@@ -33,7 +33,12 @@ export interface PlanningAuthority {
  requireResource(kind:string,id:string):void;
  receipt():{accessDigest?:string;securityEnvelope?:SecurityEnvelope};
 }
-export type PlanningMetadata=ProjectionMetadata & {readonly authorization?:PlanningAuthority};
+export type PlanningMetadata=ProjectionMetadata & {
+ readonly authorization?:PlanningAuthority;
+ /** Host-only synchronous read window. Async storage omits this port and
+  * continues yielding checked operations inside its existing transaction. */
+ readonly runReadWindow?:<T>(owner:string,program:GraphProgram<T>)=>T;
+};
 function authority(graph:PlanningMetadata):PlanningAuthority {if(!graph.authorization)throw new DomainError('FORBIDDEN','Planning authority is unavailable');return graph.authorization;}
 export interface PreparedPlanningContext {
  entries:{call:{tool:string;argumentsJson:string};result:unknown;receiptId:string}[];
@@ -282,6 +287,7 @@ private *requestedFactsProgram(input: RequestedFacts):GraphProgram<RequestedFact
     let actionDiscovery: ActionDiscoveryPage | undefined;
     let instructionRefs: ObjectRef[] = [], instructionPage = false;
     try {
+      const read = function* (this: PlanningSessionState): GraphProgram<void> {
       if (this.contextBudgetExhausted) throw new ContextReadBudgetExceeded();
       if (tool === 'read_task_context') {
         if (!this.options.taskContext) throw new DomainError('FORBIDDEN', 'This session has no task-context binding');
@@ -417,6 +423,11 @@ private *requestedFactsProgram(input: RequestedFacts):GraphProgram<RequestedFact
         const proposal: DecisionActionProposal = { action: args.action, definitionDigest: digest(definition), inputs, changes: definition.changes, checks, execution: 'proposal_only', executionAllowed: false };
         this.proposals.push(proposal); output = proposal;
       } else throw new DomainError('INVALID_INPUT', 'Unregistered planning tool');
+      };
+      const program = read.call(this);
+      if (this.graph.runReadWindow && ['read_task_context', 'read_task_instructions', 'query_ontology', 'evaluate_ontology', 'assess_conditions'].includes(tool))
+        this.graph.runReadWindow(this.owner, program);
+      else yield* program;
       if (tool !== 'describe_ontology' && (yield* graphRevision(this.owner)) !== datasetRevision) throw new DomainError('CONFLICT', 'Objects changed during the planning read');
       if (!instructionPage && this.bytes + Buffer.byteLength(JSON.stringify(output)) > MAX_CONTEXT_READ_BYTES - contextFeedbackReserve) {
         this.contextBudgetExhausted = true;

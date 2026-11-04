@@ -11,7 +11,8 @@ import { isVirtualRef, networkLinkIds } from './network-model.js';
 import type { NetworkOntologyReadAdapter } from './network-read.js';
 import { assertIdentityAssertionWrite } from './identity-mapping.js';
 import { assertTransactionPartyRoleWrite } from './errand-domain.js';
-import { assertBusinessTransaction } from '../core/transaction.js';
+import { initializeProjectionDelta, projectionEpochs, ProjectionDelta } from './projection-delta.js';
+import { assertBusinessTransaction, hasTransaction } from '../core/transaction.js';
 import type { OntologyReleaseRef } from './definition-contracts.js';
 import type { SecurityPolicies } from '../security/policy-store.js';
 import { authorizationScope } from '../security/context.js';
@@ -129,17 +130,90 @@ export class OntologyObjectStore {
       CREATE TRIGGER IF NOT EXISTS ontology_object_versions_no_update BEFORE UPDATE ON ontology_object_versions BEGIN SELECT RAISE(ABORT,'Object writer history is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS ontology_object_versions_no_delete BEFORE DELETE ON ontology_object_versions BEGIN SELECT RAISE(ABORT,'Object writer history is immutable'); END;
     `);
+    initializeProjectionDelta(this.db);
     if (model.ref.id === 'eigos.business' && model.ref.version === '15' && !context.skipLegacyMigration) migrateIntegratedOntology(this.db, businessModelV9, model);
   }
   get security() { return this.context.security; }
   private get scoped() { return this.ontologyId !== 'eigos.business'; }
   private get objectTable() { return this.scoped ? 'ontology_scoped_objects' : 'ontology_objects'; }
+  private readWindow?: {
+    owner: string;
+    active: boolean;
+    generation: number | undefined;
+    values: Map<string, unknown>;
+    contexts: WeakMap<object,number>;
+    nextContext: number;
+  };
+  /** Pure synchronous reads share data only until their graph/authority fence. */
+  withReadMemo<T>(owner: string, action: () => T): T {
+    this.assertReaderOwner(owner);
+    if (this.readWindow?.active && this.readWindow.owner === owner) return action();
+    const run = () => {
+      authorizationScope()?.assertCurrent();
+      const previous = this.readWindow;
+      const epoch = this.db.prepare('SELECT COALESCE(sum(revision),0) AS value FROM ontology_projection_epochs WHERE ontology_id=? AND owner=?');
+      const before = Number(epoch.get(this.ontologyId,owner)!.value);
+      const window = { owner, active: true, generation: authorizationScope()?.readGeneration?.(), values: new Map<string,unknown>(), contexts: new WeakMap<object,number>(), nextContext: 0 };
+      this.readWindow = window;
+      try {
+        const value = action();
+        if (value && typeof value === 'object' && 'then' in value) throw new DomainError('FORBIDDEN', 'Memoized reads must remain synchronous');
+        authorizationScope()?.assertCurrent();
+        if (window.generation !== authorizationScope()?.readGeneration?.()
+          || Number(epoch.get(this.ontologyId,owner)!.value) !== before) throw new DomainError('CONFLICT', 'Facts or authority changed during the read; retry against current evidence');
+        return value;
+      } finally { window.active = false; window.values.clear(); this.readWindow = previous; }
+    };
+    return this.security ? this.security.readSnapshot(run) : run();
+  }
+  /** Rechecks current authority on every hit. Graph changes reject the whole read. */
+  reuseRead<T>(owner: string, key: string, action: () => T): T {
+    if (!this.readWindow?.active || this.readWindow.owner !== owner) return action();
+    const value = this.readMemoValue(owner,'value:' + key,action);
+    return value && typeof value === 'object' ? structuredClone(value) : value;
+  }
+  /** Internal row values remain private; callers parse their immutable JSON body. */
+  private readMemoValue<T>(owner: string, key: string, action: () => T): T {
+    const window = this.readWindow;
+    if (!window?.active || window.owner !== owner) return action();
+    this.assertReaderOwner(owner);
+    this.guard()?.scope(owner).assertCurrent();
+    const scope = authorizationScope();
+    if (window.generation !== scope?.readGeneration?.()) throw new SecurityError('POLICY_CHANGED');
+    for (const context of [this,scope ?? this]) {
+      if (!window.contexts.has(context)) window.contexts.set(context,++window.nextContext);
+    }
+    const qualified = `${window.contexts.get(this)}:${window.contexts.get(scope ?? this)}:${key}`;
+    if (window.values.has(qualified)) return window.values.get(qualified) as T;
+    const value = action();
+    if (window.values.size < 256) window.values.set(qualified,value);
+    return value;
+  }
+  private delta?: ProjectionDelta;
+  projectionEpochs(owner: string) { return projectionEpochs(this.db,this.ontologyId,owner); }
+  withProjectionDelta(owner: string, taskId: string, action: () => unknown, beforeTask?: ReturnType<typeof projectionEpochs>): void {
+    if (this.readOverlay || this.security && !authorizationScope()?.projection) throw new SecurityError('AUTHORIZATION_REQUIRED');
+    if (!hasTransaction(this.db)) throw new DomainError('CONFLICT', 'Incremental projection requires a transaction');
+    if (this.delta) throw new DomainError('CONFLICT', 'Nested incremental projection is unsupported');
+    this.delta = new ProjectionDelta(this.db,this.ontologyId,owner,taskId,digest({model:this.model.ref,release:this.releaseRef}),beforeTask);
+    try {
+      const result = action();
+      if (result && typeof result === 'object' && 'then' in result) throw new DomainError('FORBIDDEN', 'Projection must remain synchronous');
+      this.delta.finish();
+    }
+    finally { this.delta = undefined; }
+  }
+  projectFragment(key: string, input: unknown, action: () => unknown): void {
+    if (this.delta) this.delta.apply(key,input,action);
+    else action();
+  }
   private get linkTable() { return this.scoped ? 'ontology_scoped_links' : 'ontology_links'; }
   private get revisionTable() { return this.scoped ? 'ontology_scoped_revisions' : 'ontology_revisions'; }
   private owned(alias = '') { return this.scoped ? `${alias}ontology_id=? AND ${alias}owner=?` : `${alias}owner=?`; }
   private ownerParameters(owner: string): string[] { return this.scoped ? [this.ontologyId, owner] : [owner]; }
   forModel(model: OntologyModel, context: OntologyGraphContext & { ontologyId: string; releaseRef: OntologyReleaseRef }): OntologyObjectStore {
     const view = new OntologyObjectStore(this.db, model, this.now, this.readOverlay, { ...context, security: this.security, skipLegacyMigration: true }, false);
+    view.readWindow = this.readWindow;
     view.readerFactory = this.readerFactory;
     if (this.backingStore) view.backingStore = this.backingStore.forModel(model, context);
     return view;
@@ -228,12 +302,15 @@ export class OntologyObjectStore {
     budget.remaining -= count;
     if (budget.remaining < 0) throw new DomainError('CONFLICT', 'Ontology read work budget exhausted; narrow the query');
   }
-  revision(owner: string): number { return this.guard()?.visibleRevision(owner) ?? Number(this.db.prepare(`SELECT revision FROM ${this.revisionTable} WHERE ${this.owned()}`).get(...this.ownerParameters(owner))?.revision ?? 0); }
+  revision(owner: string): number {
+    return this.reuseRead(owner, 'dataset-revision', () => this.guard()?.visibleRevision(owner)
+      ?? Number(this.db.prepare(`SELECT revision FROM ${this.revisionTable} WHERE ${this.owned()}`).get(...this.ownerParameters(owner))?.revision ?? 0));
+  }
   private raw(owner: string, ref: ObjectRef, budget: ReadBudget, allowTombstone = false): StoredObject {
     objectRefSchema.parse(ref); this.model.object(ref.type); this.charge(budget);
     this.assertReaderOwner(owner);
     if (isVirtualRef(ref)) return this.overlay(owner).read(ref, budget);
-    const row = this.db.prepare(`SELECT o.*, deleted.revision AS tombstone_revision, deleted.deleted_at AS tombstone_deleted_at FROM ${this.objectTable} o LEFT JOIN ontology_tombstones deleted ON deleted.ontology_id=? AND deleted.owner=o.owner AND deleted.type=o.type AND deleted.id=o.id WHERE ${this.owned('o.')} AND o.type=? AND o.id=?`).get(this.ontologyId, ...this.ownerParameters(owner), ref.type, ref.id);
+    const row = this.readMemoValue(owner, 'raw-row:' + JSON.stringify([ref,allowTombstone]), () => this.db.prepare(`SELECT o.*, deleted.revision AS tombstone_revision, deleted.deleted_at AS tombstone_deleted_at FROM ${this.objectTable} o LEFT JOIN ontology_tombstones deleted ON deleted.ontology_id=? AND deleted.owner=o.owner AND deleted.type=o.type AND deleted.id=o.id WHERE ${this.owned('o.')} AND o.type=? AND o.id=?`).get(this.ontologyId, ...this.ownerParameters(owner), ref.type, ref.id));
     if (!row) throw new DomainError('NOT_FOUND', 'Ontology object not found');
     const deleted = row.tombstone_revision == null ? undefined : { revision: row.tombstone_revision, deleted_at: row.tombstone_deleted_at };
     if (deleted && !allowTombstone) throw new DomainError('NOT_FOUND', 'Ontology object was tombstoned');
@@ -277,18 +354,26 @@ export class OntologyObjectStore {
   relationshipDigest(owner: string, ref: ObjectRef, budget: ReadBudget): string {
     if (isVirtualRef(ref)) return this.overlay(owner).relationshipDigest(ref, budget);
     this.guard()?.requireObject(owner, ref);
-    this.raw(owner, ref, budget);
-    const rows = this.db.prepare(`SELECT * FROM ${this.linkTable} WHERE ${this.owned()} AND from_type=? AND from_id=? AND to_type<>'SourceReceipt' ORDER BY type,to_type,to_id LIMIT 201`).all(...this.ownerParameters(owner), ref.type, ref.id);
-    this.charge(budget, rows.length);
-    if (rows.length > 200) throw new DomainError('CONFLICT', 'Relationship evidence exceeds the read bound');
-    return linkSnapshotDigest(ref, rows.filter(row => {
-      const guard = this.guard(); if (!guard || authorizationScope()?.integrity) return true;
-      const scope = guard.scope(owner);
-      return guard.resourceAllowed(scope, 'linkType', String(row.type)) && !!guard.binding(scope, { type: String(row.to_type), id: String(row.to_id) });
-    }).map(row => {
-      this.assertLinkDefinition(String(row.type), String(row.definition_digest));
-      return { type: String(row.type), from: ref, to: { type: String(row.to_type), id: String(row.to_id) } };
-    }));
+    const before = budget.remaining;
+    let performed = false;
+    const entry = this.reuseRead(owner, 'relationship-digest:' + JSON.stringify(ref), () => {
+      performed = true;
+      this.raw(owner, ref, budget);
+      const rows = this.db.prepare(`SELECT * FROM ${this.linkTable} WHERE ${this.owned()} AND from_type=? AND from_id=? AND to_type<>'SourceReceipt' ORDER BY type,to_type,to_id LIMIT 201`).all(...this.ownerParameters(owner), ref.type, ref.id);
+      this.charge(budget, rows.length);
+      if (rows.length > 200) throw new DomainError('CONFLICT', 'Relationship evidence exceeds the read bound');
+      const value = linkSnapshotDigest(ref, rows.filter(row => {
+        const guard = this.guard(); if (!guard || authorizationScope()?.integrity) return true;
+        const scope = guard.scope(owner);
+        return guard.resourceAllowed(scope, 'linkType', String(row.type)) && !!guard.binding(scope, { type: String(row.to_type), id: String(row.to_id) });
+      }).map(row => {
+        this.assertLinkDefinition(String(row.type), String(row.definition_digest));
+        return { type: String(row.type), from: ref, to: { type: String(row.to_type), id: String(row.to_id) } };
+      }));
+      return { value, work: before - budget.remaining };
+    });
+    if (!performed) this.charge(budget,entry.work);
+    return entry.value;
   }
   /** Seal the resulting relationships of a trusted source batch, including
    * retained edges. This preview grants no read or mutation access to tools. */
@@ -395,8 +480,24 @@ export class OntologyObjectStore {
   }
   /** Atomic import with schema, identity, revision, endpoint and cardinality checks. */
   ingest(owner: string, input: ObjectBatch, provenance: ObjectSource): void { this.ingestBatch(owner, input, provenance); }
+  private assertRelationshipCardinality(owner: string, ref: ObjectRef): void {
+    const sides = this.model.sides(ref.type);
+    for (const direction of ['forward', 'reverse'] as const) {
+      // Zero, one and at least two matches distinguish every supported bound.
+      const rules = sides.filter(s => s.direction === direction && (s.side.required || !s.side.many))
+        .map(({ link, side }) => ({ id: link.id, min: side.required ? 1 : 0, max: side.many ? 2 : 1 }));
+      if (!rules.length) continue;
+      const endpoint = direction === 'forward' ? 'from' : 'to';
+      const violation = this.db.prepare(`SELECT 1 AS cardinality_violation FROM json_each(?) AS rule
+        WHERE (SELECT count(*) FROM (SELECT 1 FROM ${this.linkTable}
+          WHERE ${this.owned()} AND type=json_extract(rule.value,'$.id') AND ${endpoint}_type=? AND ${endpoint}_id=? LIMIT 2))
+          NOT BETWEEN json_extract(rule.value,'$.min') AND json_extract(rule.value,'$.max') LIMIT 1`)
+        .get(JSON.stringify(rules), ...this.ownerParameters(owner), ref.type, ref.id);
+      if (violation) failure('Relationship cardinality violation');
+    }
+  }
   private ingestBatch(owner: string, input: ObjectBatch, provenance: ObjectSource, tombstones: ObjectTombstone[] = []): void {
-    if (this.readOverlay) throw new DomainError('FORBIDDEN', 'Read views cannot import facts');
+    if (this.readOverlay || this.readWindow?.active) throw new DomainError('FORBIDDEN', 'Read views cannot import facts');
     if (this.security && !authorizationScope()?.projection) throw new SecurityError('AUTHORIZATION_REQUIRED');
     z.string().min(1).max(2000).parse(owner);
     if (Buffer.byteLength(JSON.stringify(input)) > 1_000_000) failure('Ontology import byte limit exceeded');
@@ -480,13 +581,15 @@ export class OntologyObjectStore {
         }
         const def = this.model.link(edge.type);
         if (!this.model.implements(edge.from.type, def.from.type) || !this.model.implements(edge.to.type, def.to.type)) failure('Link endpoint type mismatch');
-        const historicalEdge = source.kind === 'task' && this.model.linkWritePolicy(edge.type) === 'source' && this.containsLinks(owner, [edge]);
+        const checkHistory = source.kind === 'task' && this.model.linkWritePolicy(edge.type) === 'source';
+        const historicalEdge = checkHistory && this.containsLinks(owner, [edge]);
         for (const ref of [edge.from, edge.to]) { this.raw(owner, ref, { remaining: 1 }, historicalEdge); touched.set(key(ref), ref); }
         if (remove) {
           changed = !!this.db.prepare(`DELETE FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND from_type=? AND from_id=? AND to_type=? AND to_id=?`).run(...this.ownerParameters(owner), edge.type, edge.from.type, edge.from.id, edge.to.type, edge.to.id).changes || changed;
         } else {
-          const existing = this.db.prepare(`SELECT definition_digest FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND from_type=? AND from_id=? AND to_type=? AND to_id=?`).get(...this.ownerParameters(owner), edge.type, edge.from.type, edge.from.id, edge.to.type, edge.to.id);
-          if (existing) this.assertLinkDefinition(edge.type, String(existing.definition_digest));
+          // containsLinks checks the stored definition as well as exact edge membership.
+          // The historical lookup above used this same edge in the same savepoint.
+          if (!checkHistory) this.containsLinks(owner, [edge]);
           const result = this.scoped
             ? this.db.prepare('INSERT OR IGNORE INTO ontology_scoped_links VALUES(?,?,?,?,?,?,?,?)').run(this.ontologyId, owner, edge.type, edge.from.type, edge.from.id, edge.to.type, edge.to.id, digest(def))
             : this.db.prepare('INSERT OR IGNORE INTO ontology_links VALUES(?,?,?,?,?,?,?)').run(owner, edge.type, edge.from.type, edge.from.id, edge.to.type, edge.to.id, digest(def));
@@ -518,15 +621,7 @@ export class OntologyObjectStore {
       }
       for (const ref of touched.values()) {
         if (deleted.has(key(ref)) || this.db.prepare('SELECT 1 FROM ontology_tombstones WHERE ontology_id=? AND owner=? AND type=? AND id=?').get(this.ontologyId, owner, ref.type, ref.id)) continue;
-        for (const { link, side, direction } of this.model.sides(ref.type)) {
-          // Optional, unbounded relationships have no cardinality condition to
-          // violate. Declaring another such link must not add a database query
-          // to every update of either endpoint.
-          if (side.many && !side.required) continue;
-          const prefix = direction === 'forward' ? 'from' : 'to';
-          const count = Number(this.db.prepare(`SELECT count(*) AS n FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND ${prefix}_type=? AND ${prefix}_id=?`).get(...this.ownerParameters(owner), link.id, ref.type, ref.id)!.n);
-          if ((!side.many && count > 1) || (side.required && count === 0)) failure('Relationship cardinality violation');
-        }
+        this.assertRelationshipCardinality(owner, ref);
         if (ref.type === 'Proposal') {
           const proposal = this.raw(owner, ref, { remaining: 1 });
           if (proposal.properties.kind === 'goal') {
@@ -725,6 +820,7 @@ export class OntologyObjectStore {
       if (historical) {
         if (row.tombstone_revision != null) object.tombstone = { revision: Number(row.tombstone_revision), deletedAt: String(row.tombstone_deleted_at) };
       }
+      if (!object.tombstone) this.readMemoValue(owner, 'raw-row:' + JSON.stringify([ref,false]), () => row);
       const binding = guard?.requireObject(owner, ref, object.revision);
       if (binding && args.where.some(f => !binding.fields.includes(this.model.propertyName(ref.type, target, f.property)))) throw new SecurityError('INSUFFICIENT_ACCESS');
       const matches = args.where.every(f => {

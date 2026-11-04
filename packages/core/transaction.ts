@@ -23,3 +23,23 @@ export function businessTransaction<T>(db: Connection, action: () => T): T {
   }
   finally { active.delete(db); }
 }
+
+
+/** Register savepoint ownership on runtimes that cannot inspect SQLite state. */
+export function businessSavepoint<T>(db: Connection, name: string, action: () => T): T {
+  if (!/^[a-z_]+$/.test(name)) throw new DomainError('CONFLICT', 'Invalid business savepoint');
+  const registered = active.has(db);
+  db.exec(`SAVEPOINT ${name}`);
+  active.add(db);
+  try {
+    const result = action();
+    db.exec(`RELEASE ${name}`);
+    return result;
+  } catch (error) {
+    try { if (db.isTransaction !== false) db.exec(`ROLLBACK TO ${name}; RELEASE ${name}`); }
+    catch (rollbackError) { throw new AggregateError([error, rollbackError], 'Business savepoint and rollback failed'); }
+    throw error;
+  } finally {
+    if (!registered) active.delete(db);
+  }
+}

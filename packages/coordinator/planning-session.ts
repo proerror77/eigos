@@ -30,7 +30,7 @@ export function snapshotObject(graph: OntologyObjectStore, owner: string, ref: O
 export function validatePlanningSnapshot(graph: OntologyObjectStore, owner: string, request: ServiceRequest, snapshot: PlanningSnapshot, fresh: boolean): void {
   const check = () => {
     const scoped = graph.forRequestReader(owner, request.id);
-    return runGraphProgram(scoped, validatePlanningSnapshotProgram(metadata(scoped), owner, request, snapshot, fresh));
+    return scoped.withReadMemo(owner, () => runGraphProgram(scoped, validatePlanningSnapshotProgram(metadata(scoped), owner, request, snapshot, fresh)));
   };
   return graph.security ? graph.security.readSnapshot(check) : check();
 }
@@ -44,7 +44,9 @@ export class OntologyPlanningSession {
     private readScope: 'owner' | 'request' = 'owner', private boundRefs: ObjectRef[] = [], private options: PlanningSessionOptions = {}) {
     this.graph = graph.forRequestReader(owner, request.id);
     if (graph.security) this.boundRefs = [...new Map([...boundRefs, ...(authorizationScope()?.grant?.inputs.map(input => input.object) ?? [])].map(ref => [JSON.stringify(ref), ref])).values()];
-    this.state = new PlanningSessionState(metadata(this.graph), owner, request, candidates, active, readScope, this.boundRefs, options);
+    this.state = new PlanningSessionState({ ...metadata(this.graph),
+      runReadWindow: (value, program) => this.graph.withReadMemo(value, () => runGraphProgram(this.graph, program, this.planning)),
+    }, owner, request, candidates, active, readScope, this.boundRefs, options);
     this.planning = { call: (...args) => this.call(...args), revision: value => this.graph.revision(value), evaluate: (...args) => this.graph.evaluate(...args),
       virtualMembership: (...args) => this.graph.virtualMembership(...args), pipelineChanges: (...args) => this.graph.pipelineChanges(...args),
       recordRead: onRead, discoverActions: (value, current, query) => {

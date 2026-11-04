@@ -2945,7 +2945,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "78c0bffe93a0fb7e8f1456bbd1c93fc658d891092326bbddbbe62053473d0b84",
+      "sourceDigest": "6e1b3393034193c40a974a6c529e3ce23455063ef2cb35c59b206ee244fe7860",
       "channels": [
         "sqlite",
         "idempotency"
@@ -2958,13 +2958,13 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "80546d0280194c4a76c0a29b0f693bab8cedf163e0ffdb176b738200f829b722",
+      "sourceDigest": "ddf565b0183f85a63efdc20ac4e1236183ebbb3b27e097933f29b11417fee333",
       "channels": [
         "query",
         "function"
       ],
       "content": "Direct read, query, related, evaluate, derived values, source metadata and cursors",
-      "currentControl": "Current row/field/source authorization; policy-equivalent immutable release labels only; readable removal notices survive while restricted fields remain hidden; conditional source/validity indexes preserve stored object contents; internal relationship reads reject incomplete pages or authorization-filtered sets without exposing hidden counts",
+      "currentControl": "Current row/field/source authorization; policy-equivalent immutable release labels only; readable removal notices survive while restricted fields remain hidden; conditional source/validity indexes preserve stored object contents; internal relationship reads reject incomplete pages or authorization-filtered sets without exposing hidden counts; cardinality batches remain owner- and namespace-scoped inside the import savepoint; projection checkpoints use owner/namespace/model keys with transactional graph mutation clocks and current dispatch checks",
       "targetControl": "AuthorizedOntologyView and safe pagination/provenance projection",
       "stage": "S2"
     },
@@ -3043,7 +3043,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "72a54932022a8ac2352e5f3b726d854290492a8940ed688376716b801795db7f",
+      "sourceDigest": "292260804bf435c97cb6de8913a315cab523122c916391be385cbd88c7454ddd",
       "channels": [
         "model",
         "query"
@@ -3495,7 +3495,7 @@
     {
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "f7f5ac1caf2e143d24cbfbf85370e8dd7c9c821c44f2af7c0ac9c2fcc7b26231",
+      "sourceDigest": "72e35411d7b54d54261e4b18b3073aaf8a0d08db2e9c6c10b5f753a87d4a1271",
       "stage": "S2",
       "content": "Resource roles, fields, bindings, source grants, derived lineage, artifacts and opaque cursors",
       "currentControl": "Current roles, fields, source and output lineage remain mandatory. Optional semantic-v29 reuses only the exact unchanged descriptions-v28 field policy; the distinct v27-to-description28 upgrade remains explicit and new functions require their own rights.",
@@ -4204,7 +4204,7 @@
     {
       "id": "execution-projection",
       "file": "packages/ontology/execution-projection.ts",
-      "sourceDigest": "46c6bda07fd066d4321b8f6e407890b3ea5c0f5c4eeafc0ccbd06986ffaab666",
+      "sourceDigest": "9874226b347a8f1412ef45d61504e7d5ee6314801c62baff4d8063d1da8ea3a4",
       "channels": [
         "model",
         "artifact"
@@ -4217,7 +4217,7 @@
     {
       "id": "native-task-context",
       "file": "packages/coordinator/task-context.ts",
-      "sourceDigest": "4affce3a996596c0b8dd153a58fc3f44bb6039405eec406346ad0898c150e35c",
+      "sourceDigest": "154abc1f7b71ffc0e4a64d4a35695137c3e7fc70cfea6c1a2102065f948296d2",
       "channels": [
         "model"
       ],
@@ -6335,7 +6335,7 @@
     {
       "id": "planning-session-program",
       "file": "packages/coordinator/planning-program.ts",
-      "sourceDigest": "cb697a4b183015dc1ad368decd4e2130e3fe274870a46d729b5af7c13688bb14",
+      "sourceDigest": "30d693e22f80d0b3a5b527d1dac5a7a735925738ef2a90c69f35d7382d913247",
       "channels": [
         "internal"
       ],
@@ -7714,6 +7714,60 @@
       "currentControl": "Existing private target binding and verified TLS; separate non-owner NOINHERIT login with no primary role membership, business/membership access, broad table rights or embedding column SELECT; bounded read-only index transactions and explicit disposal; business authority retained around candidate read",
       "targetControl": "Existing private target binding and verified TLS; separate non-owner NOINHERIT login with no primary role membership, business/membership access, broad table rights or embedding column SELECT; bounded read-only index transactions and explicit disposal; business authority retained around candidate read",
       "stage": "S5"
+    },
+    {
+      "id": "business-transaction",
+      "file": "packages/core/transaction.ts",
+      "sourceDigest": "4a13b7906ce81af52aa1b560f84d2289a5ec7c723f000b17ecb6ed76a3915342",
+      "channels": [
+        "sqlite",
+        "transactions"
+      ],
+      "content": "Shared graph projection and transaction integrity",
+      "currentControl": "Shared connection transaction and savepoint ownership; checked savepoint names; automatic SQLite rollback retains the original failure and uncertain rollback retains both failures; ownership is released in finally.",
+      "targetControl": "Shared connection transaction and savepoint ownership; checked savepoint names; automatic SQLite rollback retains the original failure and uncertain rollback retains both failures; ownership is released in finally.",
+      "stage": "S2"
+    },
+    {
+      "id": "ontology-business-chain-projection",
+      "file": "packages/ontology/business-chain-projection.ts",
+      "sourceDigest": "132f4a115ae3d43924f8d1ba43c4f2d1f5877edf15f9ff338d604382ddc62516",
+      "channels": [
+        "model",
+        "query",
+        "projection"
+      ],
+      "content": "Shared graph projection and transaction integrity",
+      "currentControl": "One checked GraphProgram for both stores. SQLite alone uses exact projection fragments; PostgreSQL executes the original awaited operations. Request revisions, cardinality, complete bundles and lineage remain checked.",
+      "targetControl": "One checked GraphProgram for both stores. SQLite alone uses exact projection fragments; PostgreSQL executes the original awaited operations. Request revisions, cardinality, complete bundles and lineage remain checked.",
+      "stage": "S2"
+    },
+    {
+      "id": "ontology-business-chain-write",
+      "file": "packages/ontology/business-chain-write.ts",
+      "sourceDigest": "9ec7410f380282d94d60d20985db9012e88754a2f18e2fb1794f4f2d4d27d4d1",
+      "channels": [
+        "sqlite",
+        "postgres",
+        "projection"
+      ],
+      "content": "Shared graph projection and transaction integrity",
+      "currentControl": "Fixed business-chain projection writes through the shared checked GraphProgram and the actual store adapter; no model-selected SQL, new business permission or alternate task authority.",
+      "targetControl": "Fixed business-chain projection writes through the shared checked GraphProgram and the actual store adapter; no model-selected SQL, new business permission or alternate task authority.",
+      "stage": "S2"
+    },
+    {
+      "id": "ontology-projection-delta",
+      "file": "packages/ontology/projection-delta.ts",
+      "sourceDigest": "d840037b973cb81eb32bc3f31c710cc53f653203b2af9ef626fedfdfd419dcce",
+      "channels": [
+        "sqlite",
+        "projection"
+      ],
+      "content": "Shared graph projection and transaction integrity",
+      "currentControl": "Durable fragment checkpoints bind exact input and graph epochs inside the shared transaction. Changed evidence, rollback or external mutation invalidates reuse; cache hits do not authorize business access.",
+      "targetControl": "Durable fragment checkpoints bind exact input and graph epochs inside the shared transaction. Changed evidence, rollback or external mutation invalidates reuse; cache hits do not authorize business access.",
+      "stage": "S2"
     }
   ]
 }
