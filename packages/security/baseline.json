@@ -2945,7 +2945,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "bdfe4ccc3a7f4bc276f06775a76412ebe1b71706518f4f08bf7f73d17ed8a5e0",
+      "sourceDigest": "eb07ee11d39e6fafb01929bcb883a11255ded1be14a82afa0de9fc47fb6ca629",
       "channels": [
         "sqlite",
         "idempotency"
@@ -2958,7 +2958,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "2ad07cc9d317d2705a01b1b66b316dfb50fe7733b360c652acb3a5b4cc10bee7",
+      "sourceDigest": "b593af3679548ae50e4656a348be3853b8fc727368ec1498bcda2ea9beed5741",
       "channels": [
         "query",
         "function"
@@ -3043,7 +3043,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "c6bda564a5df502559b568b4da067f6f469197a9b512591e79173f0143333ff0",
+      "sourceDigest": "057cbe5e273e71b6a3bef0bee1bab1f88ea22191e2ba423d897df318374fc9c4",
       "channels": [
         "model",
         "query"
@@ -3495,7 +3495,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "110dfd6df4e7e4c76996337aac63289b7d081716fd05f7726b70bb3717259180",
+      "sourceDigest": "84f188e9928a7b107fe8943821df2893405508f8f1d7db4cb63a19571041af86",
       "channels": [
         "all-reads"
       ],
@@ -4204,7 +4204,7 @@
     {
       "id": "execution-projection",
       "file": "packages/ontology/execution-projection.ts",
-      "sourceDigest": "356c60bc84e7140a4bb2dc0e4537f56b810772057a4a7a5321c6b08002b3887b",
+      "sourceDigest": "4098694e503a548b53b769b4639dedcbdb43af32267459bd125a5da4ad7f16fb",
       "channels": [
         "model",
         "artifact"
@@ -4217,7 +4217,7 @@
     {
       "id": "native-task-context",
       "file": "packages/coordinator/task-context.ts",
-      "sourceDigest": "f96a4f000cdc1c285da19b1a1f36276a6a2007f8ec8eb1bfa64d8e4da82087ee",
+      "sourceDigest": "00117bc7e4c67dd2e2f92654ade23828dc081a523c41586e2356344c1acc8163",
       "channels": [
         "model"
       ],

@@ -66,7 +66,7 @@ export function snapshotObject(graph: OntologyObjectStore, owner: string, ref: O
   return { ref, revision: object.revision, propertiesDigest: digest(relevantProperties(ref, object.properties, request)), linksDigest: graph.relationshipDigest(owner, ref, { remaining: 1000 }) };
 }
 export function validatePlanningSnapshot(graph: OntologyObjectStore, owner: string, request: ServiceRequest, snapshot: PlanningSnapshot, fresh: boolean): void {
-  const check = () => validatePlanningSnapshotRaw(graph, owner, request, snapshot, fresh);
+  const check = () => graph.withReadMemo(owner, () => validatePlanningSnapshotRaw(graph, owner, request, snapshot, fresh));
   return graph.security ? graph.security.readSnapshot(check) : check();
 }
 function validatePlanningSnapshotRaw(graph: OntologyObjectStore, owner: string, request: ServiceRequest, snapshot: PlanningSnapshot, fresh: boolean): void {
@@ -265,141 +265,145 @@ export class OntologyPlanningSession {
     let actionDiscovery: ActionDiscoveryPage | undefined;
     let instructionRefs: ObjectRef[] = [], instructionPage = false;
     try {
-      if (this.contextBudgetExhausted) throw new ContextReadBudgetExceeded();
-      if (tool === 'read_task_context') {
-        if (!this.options.taskContext) throw new DomainError('FORBIDDEN', 'This session has no task-context binding');
-        const args = taskContextSchema.parse(input);
-        contextRead = readTaskContext(this.graph, this.owner, this.request.id, this.request.revision, this.options.taskContext, receiptId, [...(this.options.priorReads ?? []), ...this.reads], args);
-        for (const ref of contextRead.deliveredRefs) this.remember(ref, undefined, true);
-        for (const ref of contextRead.data.graph.unreadRefs) this.knownRefs.set(key(ref), ref);
-        instructionRefs = contextRead.instructionRefs;
-        if (args.facts) contextRead.data.requestedFacts = this.requestedFacts(args.facts);
-        output = contextRead.data;
-      } else if (tool === 'read_task_instructions') {
-        if (!this.options.taskContext || !this.reads.some(receipt => receipt.tool === 'read_task_context' && receipt.status === 'ok')) throw new DomainError('FORBIDDEN', 'Read the current task context before its original instruction pages');
-        const result = readTaskInstructions(this.graph, this.owner, this.request.id, this.request.revision, taskInstructionsSchema.parse(input));
-        for (const object of result.items) this.remember(object.ref, object.revision, true);
-        instructionRefs = result.items.map(object => object.ref); instructionPage = true; output = result;
-      } else if (tool === 'discover_actions') {
-        if (!this.options.actionCatalog) throw new DomainError('FORBIDDEN', 'This planning session has no action catalog binding');
-        if (this.usesTaskContext() && !this.reads.some(read => read.tool === 'read_task_context' && read.status === 'ok')) throw new DomainError('FORBIDDEN', 'Read the current task context before discovering action bindings');
-        actionDiscovery = this.options.actionCatalog.discoverActions(this.graph, this.owner, this.request, actionDiscoverySchema.parse(input));
-        output = actionDiscovery;
-      } else if (tool === 'describe_ontology') {
-        const { includeSchemas = false, includeLinks = true, includeConditionSchema = false, actions, functions, ...args } = describeSchema.parse(input), result = this.graph.model.describe(args);
-        if (this.graph.security) {
-          const visible=describeAuthorized(this.graph.security.security,authorizationScope()!,{...args, actions, functions},this.graph.model);
-          if (actions?.some(id=>!visible.actions.some(a=>a.id===id)) || functions?.some(id=>!visible.functions.some(f=>f.id===id))) throw new DomainError('FORBIDDEN','Definition is not available');
-          const selected=actions?visible.actions.filter(a=>actions.includes(a.id)):visible.actions;
-          output={...visible,schemaDetail:includeSchemas?'full':'summary',types:visible.types.map(({properties,links,...definition})=>({
-            ...definition,...(includeLinks?{links}:{linksAvailable:true}),properties:includeSchemas?properties:Object.fromEntries(Object.entries(properties).map(([name,{schema:_schema,...metadata}])=>[name,metadata])),
-          })),actions:selected.map(action=>{
-            if(includeSchemas || actions)return action;
-            const {read,operation,...summary}=action;
-            const compact=(metadata:NonNullable<typeof read|typeof operation>)=>{const {inputSchema,...rest}=metadata;return {...rest,inputKeys:Object.keys((inputSchema as {properties?:object}).properties??{}),schemaAvailable:true};};
-            return {...summary,...(read?{read:compact(read)}:{}),...(operation?{operation:compact(operation)}:{})};
-          }),functions:(functions?visible.functions.filter(f=>functions.includes(f.id)):visible.functions).map(fn=>{
-            if(includeSchemas || functions)return fn;
-            const {inputSchema,...summary}=fn;return {...summary,...(inputSchema?{schemaAvailable:true}:{})};
-          }),
-            ...(includeConditionSchema?{conditionSchema:z.toJSONSchema(businessConditionSchema)}:{})};
-        } else {
-        const selected = actions ? actions.map(id => ({ ...this.graph.model.action(id), execution: 'definition_only' })) : result.actions;
-        const describedActions = selected.filter(action => !this.options.taskContext?.program || this.options.taskContext.program.actionIds.includes(action.id)).map(action => {
-          if (includeSchemas || actions) return action;
-          const { read, operation, inputSchema, implementation, composition, ...summary } = action;
-          const compact = (metadata: NonNullable<typeof read | typeof operation>) => {
-            const { inputSchema, ...rest } = metadata;
-            return { ...rest, inputKeys: Object.keys((inputSchema as { properties?: object }).properties ?? {}), schemaAvailable: true };
-          };
-          return { ...summary, ...(read ? { read: compact(read) } : {}), ...(operation ? { operation: compact(operation) } : {}),
-            ...(composition ? { compositionSummary: compositionSummary(composition) } : {}),
-            ...(inputSchema ? { inputKeys: Object.keys((inputSchema as { properties?: object }).properties ?? {}), inputSchemaAvailable: true } : {}),
-            ...(implementation ? { implementationSummary: implementation.kind === 'declarative' ? { kind: implementation.kind, version: implementation.version, mutations: implementation.mutations.length, conditions: implementation.conditions.length, ...(implementation.resultFacts ? { resultFacts: implementation.resultFacts } : {}) } : { kind: implementation.kind, handlerRef: implementation.handlerRef } } : {}) };
-        });
-        output = { ...result, schemaDetail: includeSchemas ? 'full' : 'summary', types: result.types.map(type => {
-          const value = type as { properties: Record<string, Record<string, unknown>>; links?: unknown };
-          const { links, ...definition } = value;
-          return { ...definition, ...(includeLinks ? { links } : { linksAvailable: true }), properties: includeSchemas ? value.properties : Object.fromEntries(Object.entries(value.properties).map(([name, p]) => { const { schema: _schema, ...metadata } = p; return [name, metadata]; })) };
-        }), actions: describedActions, functions: functions ? functions.map(id => this.graph.model.function(id)) : result.functions, ...(includeConditionSchema ? { conditionSchema: z.toJSONSchema(businessConditionSchema) } : {}) };
-        }
-      }
-      else if (tool === 'query_ontology') {
-        const parsed = planningQuerySchema.parse(input);
-        if ('facts' in parsed) output = this.requestedFacts(parsed.facts);
-        else {
-          const result = this.queryData(parsed);
-          for (const object of result.items) if (object.ref.type === 'RequestInstruction' && typeof object.properties.text === 'string') instructionRefs.push(object.ref);
-          instructionPage = !!result.items.length && result.items.every(object => object.ref.type === 'RequestInstruction');
-          output = this.graph.security ? { items: result.items.map(({ref, revision, properties, derived}) => ({ref, revision, properties, ...(derived ? {derived} : {})})), page: {limit: result.page.limit, hasMore: result.page.hasMore, cursor: result.page.cursor} } : result;
-        }
-      } else if (tool === 'evaluate_ontology') {
-        if (this.graph.security) { const candidate = secureFunctionCallSchema.parse(input); this.graph.security.requireResource(authorizationScope()!, 'function', candidate.function); }
-        const args = functionCallSchema.parse(input);
-        for (const value of Object.values(args)) { const ref = objectRefSchema.safeParse(value); if (ref.success) this.retrieved(ref.data); }
-        const result = this.graph.evaluate(this.owner, args);
-        for (const ref of [args.object, ...result.evidenceRefs]) this.remember(ref);
-        output = result;
-      } else if (tool === 'assess_conditions') {
-        const args = assessmentSchema.parse(input), candidate = this.candidates.find(c => c.id === args.candidateId);
-        if (args.candidateId && !candidate) throw new DomainError('FORBIDDEN', 'Unknown candidate');
-        if (args.subject) this.retrieved(args.subject);
-        if (args.subject && candidate?.ontologySubject && key(args.subject) !== key(candidate.ontologySubject)) throw new DomainError('CONFLICT', 'Candidate and selected condition subject differ');
-        const checks = assessConditions(this.graph, this.owner, this.request, args.subject ?? candidate?.ontologySubject, args.phase);
-        for (const check of checks) for (const ref of [...(check.subject ? [check.subject] : []), ...check.evidenceRefs]) this.remember(ref);
-        output = { checks, grantsAuthority: false };
-      } else if (tool === 'propose_action') {
-        const args = actionSchema.parse(input), definition = this.graph.model.action(args.action);
-        if (this.graph.security) this.graph.security.requireResource(authorizationScope()!, 'actionType', args.action);
-        if (definition.read || definition.operation || this.graph.model.actionImplementation(definition.id)?.kind === 'declarative') throw new DomainError('INVALID_INPUT', 'Source reads, managed writes and sandbox operations are selected in an agent execute decision with their registered input and authorization checks; this tool only describes business decision proposals');
-        if (args.inputs.length !== Object.keys(definition.inputs).length || new Set(args.inputs.map(i => i.name)).size !== args.inputs.length) throw new DomainError('INVALID_INPUT', 'Action inputs must match the registered definition');
-        const inputs: DecisionActionProposal['inputs'] = {};
-        for (const item of args.inputs) {
-          this.retrieved(item.object);
-          if (!definition.inputs[item.name] || !this.graph.model.implements(item.object.type, definition.inputs[item.name]!)) throw new DomainError('INVALID_INPUT', 'Action input type mismatch');
-          const actual = this.graph.read(this.owner, item.object);
-          if (actual.revision !== item.revision) throw new DomainError('CONFLICT', 'Action proposal references a stale object revision');
-          this.remember(item.object); inputs[item.name] = { object: item.object, revision: item.revision };
-        }
-        if (inputs.request?.object.id !== this.request.id) throw new DomainError('FORBIDDEN', 'Action belongs to another request');
-        if (this.graph.read(this.owner, inputs.request.object).properties.revision !== this.request.revision) throw new DomainError('CONFLICT', 'Action request revision changed');
-        const checks: DecisionActionProposal['checks'] = definition.submissionCriteria.map(criterion => ({ criterion, result: ['same_owner', 'current_request_revision'].includes(criterion) ? 'pass' : 'unknown' }));
-        const domain = serviceDomains.find(d => d.action === args.action);
-        if (domain) {
-          const option = inputs.option!.object, requirements = inputs.requirements!.object;
-          const related = this.graph.related(this.owner, option, 'requirements', { remaining: 1000 });
-          const requestLinks = [option, requirements].map(ref => this.graph.related(this.owner, ref, 'request', { remaining: 1000 }));
-          checks.find(c => c.criterion === 'same_request')!.result = requestLinks.every(rows => rows?.length === 1 && rows[0]!.ref.id === this.request.id) ? 'pass' : 'fail';
-          checks.find(c => c.criterion === 'current_requirements')!.result = related?.length === 1 && key(related[0]!.ref) === key(requirements) && related[0]!.properties.requestRevision === this.request.revision ? 'pass' : 'fail';
-          const eligibility = this.graph.evaluate(this.owner, { function: domain.eligibleFunction, object: option });
-          for (const ref of eligibility.evidenceRefs) this.remember(ref);
-          const status = (eligibility.value as DomainAssessment | undefined)?.status;
-          checks.find(c => c.criterion === 'eligible_option')!.result = eligibility.status === 'unknown' || status === 'unknown' ? 'unknown' : status === 'satisfied' ? 'pass' : 'fail';
-          // Proposal tools cannot manufacture a dispatch permit, even for a local itinerary.
-        }
-        if (['PrepareCheckout', 'CompleteCheckout'].includes(args.action)) {
-          const requirements = this.graph.read(this.owner, inputs.requirements!.object), root = this.graph.related(this.owner, requirements.ref, 'request', { remaining: 1000 });
-          checks.find(c => c.criterion === 'current_requirements')!.result = requirements.properties.requestRevision === this.request.revision && root?.length === 1 && root[0]!.ref.id === this.request.id ? 'pass' : 'fail';
-          if (args.action === 'CompleteCheckout') {
-            const session = this.graph.related(this.owner, requirements.ref, 'session', { remaining: 1000 });
-            if (session?.length !== 1 || key(session[0]!.ref) !== key(inputs.checkout!.object)) checks.find(c => c.criterion === 'current_requirements')!.result = 'fail';
-            const ready = this.graph.evaluate(this.owner, { function: 'checkoutReadiness', object: inputs.checkout!.object });
-            for (const ref of ready.evidenceRefs) this.remember(ref);
-            const status = (ready.value as { status?: string } | undefined)?.status;
-            checks.find(c => c.criterion === 'checkout_ready')!.result = ready.status === 'unknown' || status === 'unknown' ? 'unknown' : status === 'satisfied' ? 'pass' : 'fail';
+      const read = () => {
+        if (this.contextBudgetExhausted) throw new ContextReadBudgetExceeded();
+        if (tool === 'read_task_context') {
+          if (!this.options.taskContext) throw new DomainError('FORBIDDEN', 'This session has no task-context binding');
+          const args = taskContextSchema.parse(input);
+          contextRead = readTaskContext(this.graph, this.owner, this.request.id, this.request.revision, this.options.taskContext, receiptId, [...(this.options.priorReads ?? []), ...this.reads], args);
+          for (const ref of contextRead.deliveredRefs) this.remember(ref, undefined, true);
+          for (const ref of contextRead.data.graph.unreadRefs) this.knownRefs.set(key(ref), ref);
+          instructionRefs = contextRead.instructionRefs;
+          if (args.facts) contextRead.data.requestedFacts = this.requestedFacts(args.facts);
+          output = contextRead.data;
+        } else if (tool === 'read_task_instructions') {
+          if (!this.options.taskContext || !this.reads.some(receipt => receipt.tool === 'read_task_context' && receipt.status === 'ok')) throw new DomainError('FORBIDDEN', 'Read the current task context before its original instruction pages');
+          const result = readTaskInstructions(this.graph, this.owner, this.request.id, this.request.revision, taskInstructionsSchema.parse(input));
+          for (const object of result.items) this.remember(object.ref, object.revision, true);
+          instructionRefs = result.items.map(object => object.ref); instructionPage = true; output = result;
+        } else if (tool === 'discover_actions') {
+          if (!this.options.actionCatalog) throw new DomainError('FORBIDDEN', 'This planning session has no action catalog binding');
+          if (this.usesTaskContext() && !this.reads.some(read => read.tool === 'read_task_context' && read.status === 'ok')) throw new DomainError('FORBIDDEN', 'Read the current task context before discovering action bindings');
+          actionDiscovery = this.options.actionCatalog.discoverActions(this.graph, this.owner, this.request, actionDiscoverySchema.parse(input));
+          output = actionDiscovery;
+        } else if (tool === 'describe_ontology') {
+          const { includeSchemas = false, includeLinks = true, includeConditionSchema = false, actions, functions, ...args } = describeSchema.parse(input), result = this.graph.model.describe(args);
+          if (this.graph.security) {
+            const visible=describeAuthorized(this.graph.security.security,authorizationScope()!,{...args, actions, functions},this.graph.model);
+            if (actions?.some(id=>!visible.actions.some(a=>a.id===id)) || functions?.some(id=>!visible.functions.some(f=>f.id===id))) throw new DomainError('FORBIDDEN','Definition is not available');
+            const selected=actions?visible.actions.filter(a=>actions.includes(a.id)):visible.actions;
+            output={...visible,schemaDetail:includeSchemas?'full':'summary',types:visible.types.map(({properties,links,...definition})=>({
+              ...definition,...(includeLinks?{links}:{linksAvailable:true}),properties:includeSchemas?properties:Object.fromEntries(Object.entries(properties).map(([name,{schema:_schema,...metadata}])=>[name,metadata])),
+            })),actions:selected.map(action=>{
+              if(includeSchemas || actions)return action;
+              const {read,operation,...summary}=action;
+              const compact=(metadata:NonNullable<typeof read|typeof operation>)=>{const {inputSchema,...rest}=metadata;return {...rest,inputKeys:Object.keys((inputSchema as {properties?:object}).properties??{}),schemaAvailable:true};};
+              return {...summary,...(read?{read:compact(read)}:{}),...(operation?{operation:compact(operation)}:{})};
+            }),functions:(functions?visible.functions.filter(f=>functions.includes(f.id)):visible.functions).map(fn=>{
+              if(includeSchemas || functions)return fn;
+              const {inputSchema,...summary}=fn;return {...summary,...(inputSchema?{schemaAvailable:true}:{})};
+            }),
+              ...(includeConditionSchema?{conditionSchema:z.toJSONSchema(businessConditionSchema)}:{})};
+          } else {
+          const selected = actions ? actions.map(id => ({ ...this.graph.model.action(id), execution: 'definition_only' })) : result.actions;
+          const describedActions = selected.filter(action => !this.options.taskContext?.program || this.options.taskContext.program.actionIds.includes(action.id)).map(action => {
+            if (includeSchemas || actions) return action;
+            const { read, operation, inputSchema, implementation, composition, ...summary } = action;
+            const compact = (metadata: NonNullable<typeof read | typeof operation>) => {
+              const { inputSchema, ...rest } = metadata;
+              return { ...rest, inputKeys: Object.keys((inputSchema as { properties?: object }).properties ?? {}), schemaAvailable: true };
+            };
+            return { ...summary, ...(read ? { read: compact(read) } : {}), ...(operation ? { operation: compact(operation) } : {}),
+              ...(composition ? { compositionSummary: compositionSummary(composition) } : {}),
+              ...(inputSchema ? { inputKeys: Object.keys((inputSchema as { properties?: object }).properties ?? {}), inputSchemaAvailable: true } : {}),
+              ...(implementation ? { implementationSummary: implementation.kind === 'declarative' ? { kind: implementation.kind, version: implementation.version, mutations: implementation.mutations.length, conditions: implementation.conditions.length, ...(implementation.resultFacts ? { resultFacts: implementation.resultFacts } : {}) } : { kind: implementation.kind, handlerRef: implementation.handlerRef } } : {}) };
+          });
+          output = { ...result, schemaDetail: includeSchemas ? 'full' : 'summary', types: result.types.map(type => {
+            const value = type as { properties: Record<string, Record<string, unknown>>; links?: unknown };
+            const { links, ...definition } = value;
+            return { ...definition, ...(includeLinks ? { links } : { linksAvailable: true }), properties: includeSchemas ? value.properties : Object.fromEntries(Object.entries(value.properties).map(([name, p]) => { const { schema: _schema, ...metadata } = p; return [name, metadata]; })) };
+          }), actions: describedActions, functions: functions ? functions.map(id => this.graph.model.function(id)) : result.functions, ...(includeConditionSchema ? { conditionSchema: z.toJSONSchema(businessConditionSchema) } : {}) };
           }
         }
-        if (inputs.offer) {
-          const requests = this.graph.related(this.owner, inputs.offer.object, 'request', { remaining: 1000 });
-          const sameRequest = checks.find(c => c.criterion === 'same_request'); if (sameRequest) sameRequest.result = requests?.length === 1 && requests[0]!.ref.id === this.request.id ? 'pass' : 'fail';
-          const fresh = this.graph.evaluate(this.owner, { function: 'offerFreshness', object: inputs.offer.object });
-          const freshness = checks.find(c => c.criterion === 'fresh_offer'); if (freshness) freshness.result = fresh.status === 'known' ? fresh.value ? 'pass' : 'fail' : 'unknown';
-          const preconditions = checks.find(c => c.criterion === 'hard_preconditions_pass');
-          if (preconditions) { const assessment = assessConditions(this.graph, this.owner, this.request, inputs.offer.object, 'precondition'); preconditions.result = assessment.some(c => c.strength === 'hard' && c.result === 'fail') ? 'fail' : hardConditionsPass(assessment, 'precondition') ? 'pass' : 'unknown'; }
-        }
-        const proposal: DecisionActionProposal = { action: args.action, definitionDigest: digest(definition), inputs, changes: definition.changes, checks, execution: 'proposal_only', executionAllowed: false };
-        this.proposals.push(proposal); output = proposal;
-      } else throw new DomainError('INVALID_INPUT', 'Unregistered planning tool');
+        else if (tool === 'query_ontology') {
+          const parsed = planningQuerySchema.parse(input);
+          if ('facts' in parsed) output = this.requestedFacts(parsed.facts);
+          else {
+            const result = this.queryData(parsed);
+            for (const object of result.items) if (object.ref.type === 'RequestInstruction' && typeof object.properties.text === 'string') instructionRefs.push(object.ref);
+            instructionPage = !!result.items.length && result.items.every(object => object.ref.type === 'RequestInstruction');
+            output = this.graph.security ? { items: result.items.map(({ref, revision, properties, derived}) => ({ref, revision, properties, ...(derived ? {derived} : {})})), page: {limit: result.page.limit, hasMore: result.page.hasMore, cursor: result.page.cursor} } : result;
+          }
+        } else if (tool === 'evaluate_ontology') {
+          if (this.graph.security) { const candidate = secureFunctionCallSchema.parse(input); this.graph.security.requireResource(authorizationScope()!, 'function', candidate.function); }
+          const args = functionCallSchema.parse(input);
+          for (const value of Object.values(args)) { const ref = objectRefSchema.safeParse(value); if (ref.success) this.retrieved(ref.data); }
+          const result = this.graph.evaluate(this.owner, args);
+          for (const ref of [args.object, ...result.evidenceRefs]) this.remember(ref);
+          output = result;
+        } else if (tool === 'assess_conditions') {
+          const args = assessmentSchema.parse(input), candidate = this.candidates.find(c => c.id === args.candidateId);
+          if (args.candidateId && !candidate) throw new DomainError('FORBIDDEN', 'Unknown candidate');
+          if (args.subject) this.retrieved(args.subject);
+          if (args.subject && candidate?.ontologySubject && key(args.subject) !== key(candidate.ontologySubject)) throw new DomainError('CONFLICT', 'Candidate and selected condition subject differ');
+          const checks = assessConditions(this.graph, this.owner, this.request, args.subject ?? candidate?.ontologySubject, args.phase);
+          for (const check of checks) for (const ref of [...(check.subject ? [check.subject] : []), ...check.evidenceRefs]) this.remember(ref);
+          output = { checks, grantsAuthority: false };
+        } else if (tool === 'propose_action') {
+          const args = actionSchema.parse(input), definition = this.graph.model.action(args.action);
+          if (this.graph.security) this.graph.security.requireResource(authorizationScope()!, 'actionType', args.action);
+          if (definition.read || definition.operation || this.graph.model.actionImplementation(definition.id)?.kind === 'declarative') throw new DomainError('INVALID_INPUT', 'Source reads, managed writes and sandbox operations are selected in an agent execute decision with their registered input and authorization checks; this tool only describes business decision proposals');
+          if (args.inputs.length !== Object.keys(definition.inputs).length || new Set(args.inputs.map(i => i.name)).size !== args.inputs.length) throw new DomainError('INVALID_INPUT', 'Action inputs must match the registered definition');
+          const inputs: DecisionActionProposal['inputs'] = {};
+          for (const item of args.inputs) {
+            this.retrieved(item.object);
+            if (!definition.inputs[item.name] || !this.graph.model.implements(item.object.type, definition.inputs[item.name]!)) throw new DomainError('INVALID_INPUT', 'Action input type mismatch');
+            const actual = this.graph.read(this.owner, item.object);
+            if (actual.revision !== item.revision) throw new DomainError('CONFLICT', 'Action proposal references a stale object revision');
+            this.remember(item.object); inputs[item.name] = { object: item.object, revision: item.revision };
+          }
+          if (inputs.request?.object.id !== this.request.id) throw new DomainError('FORBIDDEN', 'Action belongs to another request');
+          if (this.graph.read(this.owner, inputs.request.object).properties.revision !== this.request.revision) throw new DomainError('CONFLICT', 'Action request revision changed');
+          const checks: DecisionActionProposal['checks'] = definition.submissionCriteria.map(criterion => ({ criterion, result: ['same_owner', 'current_request_revision'].includes(criterion) ? 'pass' : 'unknown' }));
+          const domain = serviceDomains.find(d => d.action === args.action);
+          if (domain) {
+            const option = inputs.option!.object, requirements = inputs.requirements!.object;
+            const related = this.graph.related(this.owner, option, 'requirements', { remaining: 1000 });
+            const requestLinks = [option, requirements].map(ref => this.graph.related(this.owner, ref, 'request', { remaining: 1000 }));
+            checks.find(c => c.criterion === 'same_request')!.result = requestLinks.every(rows => rows?.length === 1 && rows[0]!.ref.id === this.request.id) ? 'pass' : 'fail';
+            checks.find(c => c.criterion === 'current_requirements')!.result = related?.length === 1 && key(related[0]!.ref) === key(requirements) && related[0]!.properties.requestRevision === this.request.revision ? 'pass' : 'fail';
+            const eligibility = this.graph.evaluate(this.owner, { function: domain.eligibleFunction, object: option });
+            for (const ref of eligibility.evidenceRefs) this.remember(ref);
+            const status = (eligibility.value as DomainAssessment | undefined)?.status;
+            checks.find(c => c.criterion === 'eligible_option')!.result = eligibility.status === 'unknown' || status === 'unknown' ? 'unknown' : status === 'satisfied' ? 'pass' : 'fail';
+            // Proposal tools cannot manufacture a dispatch permit, even for a local itinerary.
+          }
+          if (['PrepareCheckout', 'CompleteCheckout'].includes(args.action)) {
+            const requirements = this.graph.read(this.owner, inputs.requirements!.object), root = this.graph.related(this.owner, requirements.ref, 'request', { remaining: 1000 });
+            checks.find(c => c.criterion === 'current_requirements')!.result = requirements.properties.requestRevision === this.request.revision && root?.length === 1 && root[0]!.ref.id === this.request.id ? 'pass' : 'fail';
+            if (args.action === 'CompleteCheckout') {
+              const session = this.graph.related(this.owner, requirements.ref, 'session', { remaining: 1000 });
+              if (session?.length !== 1 || key(session[0]!.ref) !== key(inputs.checkout!.object)) checks.find(c => c.criterion === 'current_requirements')!.result = 'fail';
+              const ready = this.graph.evaluate(this.owner, { function: 'checkoutReadiness', object: inputs.checkout!.object });
+              for (const ref of ready.evidenceRefs) this.remember(ref);
+              const status = (ready.value as { status?: string } | undefined)?.status;
+              checks.find(c => c.criterion === 'checkout_ready')!.result = ready.status === 'unknown' || status === 'unknown' ? 'unknown' : status === 'satisfied' ? 'pass' : 'fail';
+            }
+          }
+          if (inputs.offer) {
+            const requests = this.graph.related(this.owner, inputs.offer.object, 'request', { remaining: 1000 });
+            const sameRequest = checks.find(c => c.criterion === 'same_request'); if (sameRequest) sameRequest.result = requests?.length === 1 && requests[0]!.ref.id === this.request.id ? 'pass' : 'fail';
+            const fresh = this.graph.evaluate(this.owner, { function: 'offerFreshness', object: inputs.offer.object });
+            const freshness = checks.find(c => c.criterion === 'fresh_offer'); if (freshness) freshness.result = fresh.status === 'known' ? fresh.value ? 'pass' : 'fail' : 'unknown';
+            const preconditions = checks.find(c => c.criterion === 'hard_preconditions_pass');
+            if (preconditions) { const assessment = assessConditions(this.graph, this.owner, this.request, inputs.offer.object, 'precondition'); preconditions.result = assessment.some(c => c.strength === 'hard' && c.result === 'fail') ? 'fail' : hardConditionsPass(assessment, 'precondition') ? 'pass' : 'unknown'; }
+          }
+          const proposal: DecisionActionProposal = { action: args.action, definitionDigest: digest(definition), inputs, changes: definition.changes, checks, execution: 'proposal_only', executionAllowed: false };
+          this.proposals.push(proposal); output = proposal;
+        } else throw new DomainError('INVALID_INPUT', 'Unregistered planning tool');
+      };
+      if (['read_task_context','read_task_instructions','query_ontology','evaluate_ontology','assess_conditions'].includes(tool)) this.graph.withReadMemo(this.owner,read);
+      else read();
       if (tool !== 'describe_ontology' && this.graph.revision(this.owner) !== datasetRevision) throw new DomainError('CONFLICT', 'Objects changed during the planning read');
       if (!instructionPage && this.bytes + Buffer.byteLength(JSON.stringify(output)) > MAX_CONTEXT_READ_BYTES - contextFeedbackReserve) {
         this.contextBudgetExhausted = true;

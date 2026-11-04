@@ -34,7 +34,7 @@ test('incremental DiDi estimate stays within its read budget with exact routes a
     const done = await f.finish(job.id);
     assert.equal(done.state, 'completed');
     assert(
-      selects <= 10500,
+      selects <= 8000,
       `Single-estimate SELECT budget exceeded: ${selects}`,
     );
     assert.deepEqual(

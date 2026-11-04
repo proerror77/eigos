@@ -3,7 +3,7 @@ import { ObservationContractStore } from './observation-store.js';
 import { personalSourceAdmitted, sourceOwner, type PersonalSource } from './personal-source.js';
 import { didiSourceOwner, type DidiMemberConnection } from './didi-source.js';
 import { initializeMemberSources, MemberSourceVault } from './member-source.js';
-import { businessTransaction, assertBusinessTransaction } from './transaction.js';
+import { businessTransaction, businessSavepoint, assertBusinessTransaction } from './transaction.js';
 import { NetworkStore } from '../network/store.js';
 import { MessagingStore } from '../agent-messaging/store.js';
 import { createTaskNetworkOntologyReader } from '../ontology/network-read.js';
@@ -356,9 +356,7 @@ export class JobStore {
     }, beforeTask);
   }
   private executionMutation<T>(action: () => T): T {
-    this.db.exec('SAVEPOINT execution_ontology');
-    try { const result = action(); this.db.exec('RELEASE execution_ontology'); return result; }
-    catch (error) { this.db.exec('ROLLBACK TO execution_ontology; RELEASE execution_ontology'); throw error; }
+    return businessSavepoint(this.db, 'execution_ontology', action);
   }
 
   preparationContext<T>(owner: string, jobId: string, key: string): T | undefined {
@@ -741,17 +739,17 @@ export class JobStore {
     }
   }
   private saveRecoveredWork(owner: string, job: Job, now: number): boolean {
-    this.db.exec('SAVEPOINT recovered_work');
     try {
-      // Reject overflowing historical state before reconstructing it, then
-      // check the root version created by this recovery before committing.
-      if (this.security.enabled) this.security.policies.assertTaskReadHistoryCapacity(owner, job.id, job.delegation!.request.revision);
-      this.save(owner, job);
-      if (this.security.enabled) this.security.policies.assertTaskReadHistoryCapacity(owner, job.id, job.delegation!.request.revision);
-      this.db.exec('RELEASE recovered_work'); return true;
+      return businessSavepoint(this.db, 'recovered_work', () => {
+        // Reject overflowing historical state before reconstructing it, then
+        // check the root version created by this recovery before committing.
+        if (this.security.enabled) this.security.policies.assertTaskReadHistoryCapacity(owner, job.id, job.delegation!.request.revision);
+        this.save(owner, job);
+        if (this.security.enabled) this.security.policies.assertTaskReadHistoryCapacity(owner, job.id, job.delegation!.request.revision);
+        return true;
+      });
     }
     catch (error) {
-      this.db.exec('ROLLBACK TO recovered_work; RELEASE recovered_work');
       if (!(error instanceof SecurityLineageLimitError)) throw error;
       const previous = { state: job.state, phase: job.delegation!.phase, question: job.question, error: job.error };
       scheduleTaskRecovery(job, 'validation_stalled', '当前任务暂时无法完成安全核验。原任务与证据已保留，修复运行环境后可继续。', { now, automatic: false, operation: 'security_lineage_capacity' });
@@ -1033,8 +1031,7 @@ export class JobStore {
     // The old Worker queue selector must not claim a foundation task even if an
     // operator accidentally starts an old binary against this new database.
     if (this.security.enabled) job.executionMode = 'worker-security-v2';
-    this.db.exec('SAVEPOINT task_and_ontology');
-    try {
+    businessSavepoint(this.db, 'task_and_ontology', () => {
       const previous = this.db.prepare('SELECT owner,body FROM jobs WHERE id=?').get(job.id);
       if (this.authority && !previous && job.delegation?.backendVersion === BACKEND_VERSION) job.authorityId = this.authority.id;
       if (this.authority && job.authorityId !== undefined && job.authorityId !== this.authority.id) throw new DomainError('CONFLICT', 'Task belongs to another runtime authority');
@@ -1069,8 +1066,7 @@ export class JobStore {
         if(job.delegation?.agent?.paPayment) this.security.policies.recordOutput(owner,job.id,'payment',job.delegation.agent.paPayment.request,envelope);
       }
       if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.agent) this.recordFeedback(owner, job, job.delegation.outcome?.evidenceLevel ?? 'unverified');
-      this.db.exec('RELEASE task_and_ontology');
-    } catch (error) { this.db.exec('ROLLBACK TO task_and_ontology; RELEASE task_and_ontology'); throw error; }
+    });
   }
 
   private listRows(owner: string, filter: ListFilter, taskIds: string[] | undefined, projection: 'body' | 'permissions') {

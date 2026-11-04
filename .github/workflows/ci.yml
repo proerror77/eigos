@@ -94,3 +94,16 @@ jobs:
       - name: Empty shard
         if: env.EIGOS_TEST_FILES == '[]'
         run: echo 'No affected tests assigned to this shard.'
+  minimum-node:
+    needs: scope
+    if: needs.scope.outputs.verify == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - run: npm ci
+      - run: node --import tsx --test tests/transaction-savepoints.test.ts
