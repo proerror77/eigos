@@ -1,5 +1,7 @@
 # 共享 Ontology
 
+开发与审查入口见 [Ontology 中台](../../docs/guides/ontology-workbench.md)：浏览固定版本的对象、关系、接口、Function 与 Action 合同，以及草稿、差异和独立启用流程。
+
 EIGOS 维护一个运行权威来源：共享业务 SQLite 中的本体注册库。对象类型、关系类型、接口、动作及其发布版本在这里统一解析。Gateway、Worker 和 Ontology MCP 使用同一任务固定的 `ontologyId / releaseId / digest`。
 
 ```mermaid

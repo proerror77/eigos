@@ -96,6 +96,12 @@ test('Foundation intake publication cannot adopt unreviewed business definitions
   const f = foundationValidationFixture();
   try {
     const active = f.jobs.definitions.namespace('eigos.business');
+    for (const input of [
+      { operation: 'workspace_summary' },
+      { operation: 'list_definitions', kind: 'function' },
+      { operation: 'get_definition', kind: 'function', resourceId: 'function:selectDidiPlace' },
+      { operation: 'list_definition_relations', kind: 'function', resourceId: 'function:selectDidiPlace' },
+    ]) assert.throws(() => f.definitions.query(f.p, { ...input, ontologyId: active.id }), /separately reviewed Foundation interface/);
     let draft = f.jobs.definitions.createDraft(f.owner, active.id, 'Unreviewed schema candidate', true);
     assert.throws(() => f.definitions.command(f.p, { operation: 'put_definition', ontologyId: active.id, draftId: draft.id,
       expectedRevision: draft.revision, kind: 'object', definition: pipelineEventType }), /separately reviewed Foundation interface/);
