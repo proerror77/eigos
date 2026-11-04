@@ -2,6 +2,7 @@
 FROM node:22.22.3-bookworm-slim AS build
 WORKDIR /app
 ARG SOURCE_SHA
+ARG RELEASE_BACKEND=codex
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY tsconfig.json Dockerfile .dockerignore ./
@@ -14,7 +15,7 @@ COPY scripts/relocate-primary.mjs scripts/refresh-harness-login.mjs scripts/post
 COPY integrations/grok/eigos-delegate ./integrations/grok/eigos-delegate
 COPY integrations/grok/eigos-native/client.mjs ./integrations/grok/eigos-native/client.mjs
 RUN npm run build
-RUN node scripts/release-artifacts.mjs create --root /app --out /app/release --source-sha "${SOURCE_SHA}" --backend codex
+RUN node scripts/release-artifacts.mjs create --root /app --out /app/release --source-sha "${SOURCE_SHA}" --backend "${RELEASE_BACKEND}"
 RUN npm prune --omit=dev && npm cache clean --force
 
 FROM scratch AS release-package

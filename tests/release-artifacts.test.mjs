@@ -5,7 +5,7 @@ import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,symlinkSync} fro
 import {tmpdir} from 'node:os';
 import {dirname,join} from 'node:path';
 import {parse} from 'yaml';
-import {artifactDigest,canonical,createReleaseManifest,createReleaseArtifacts,validateReleaseManifest,readReleaseManifest,verifyReleaseArtifacts,finalizeReleaseArtifacts,selectExactCiRun,proveExactCi,HARNESS_RELEASE_TOOLS} from '../scripts/release-artifacts.mjs';
+import {artifactDigest,canonical,createReleaseManifest,createReleaseArtifacts,validateReleaseManifest,readReleaseManifest,verifyReleaseArtifacts,verifyRuntimeImagePayload,finalizeReleaseArtifacts,selectExactCiRun,proveExactCi,HARNESS_RELEASE_TOOLS} from '../scripts/release-artifacts.mjs';
 
 const sourceSha='1'.repeat(40),rawDigest=bytes=>createHash('sha256').update(bytes).digest('hex'),roles=['gateway','relay','worker'];
 const jobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)','postgres-execution-cases (contracts)','postgres-execution-cases (planning)','postgres-execution-cases (documents)','postgres-execution-cases (didi)','postgres-execution-cases (transitions)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
@@ -41,6 +41,20 @@ test('verification reads actual bytes, lockfile, ontology package and fixed docu
     const manifest=createReleaseManifest({...x.input,images,ci});writeFileSync(join(x.directory,'manifest.json'),canonical(manifest)+'\n');assert.equal(readReleaseManifest(join(x.directory,'manifest.json'),{requireReady:true}).manifestDigest,manifest.manifestDigest);assert.equal(verifyReleaseArtifacts(x.directory).manifestDigest,manifest.manifestDigest);
     writeFileSync(join(x.directory,'runtime/package-lock.json'),'changed lock');assert.throws(()=>verifyReleaseArtifacts(x.directory),/differs/);
   }finally{x.close();}
+});
+
+test('installed image proof verifies actual runtime bytes and rejects a different release backend or source',()=>{
+  for(const backend of ['codex','harness']){
+    const x=fixture(backend);try{
+      const candidate=createReleaseManifest({...x.input,backend}),root=join(x.directory,'runtime');
+      mkdirSync(join(root,'release'));writeFileSync(join(root,'release/manifest.json'),canonical(candidate)+'\n');
+      assert.deepEqual(verifyRuntimeImagePayload(root,{sourceSha,backend}),{sourceSha,backend,payloadDigest:candidate.payloadDigest,buildDigest:candidate.runtime.buildDigest});
+      assert.throws(()=>verifyRuntimeImagePayload(root,{sourceSha,backend:backend==='codex'?'harness':'codex'}),/selected source or release backend/);
+      assert.throws(()=>verifyRuntimeImagePayload(root,{sourceSha:'2'.repeat(40),backend}),/selected source or release backend/);
+      writeFileSync(join(root,'dist/apps/gateway/main.js'),'different installed runtime');
+      assert.throws(()=>verifyRuntimeImagePayload(root,{sourceSha,backend}),/Installed image runtime differs/);
+    }finally{x.close();}
+  }
 });
 
 test('artifact inventories reject private state, traversal, symlinks and invented database publication refs',()=>{
@@ -148,4 +162,9 @@ test('manual Harness publication checks native images before push and again at t
   assert(sdk[1].env.IMAGE.includes('steps.build.outputs.digest'));
   const finish=workflow.jobs.package.steps.find(step=>step.name==='Finalize immutable OCI references without republishing Ontology');
   assert(finish.run.includes('--harness-image-proof'));assert(workflow.jobs.package.steps.some(step=>step.with?.target?.includes('release-package-harness')));
+  for(const job of [workflow.jobs.image,workflow.jobs.package])for(const step of job.steps.filter(step=>step.uses?.startsWith('docker/build-push-action@'))){
+    assert(step.with['build-args'].includes('RELEASE_BACKEND=${{ inputs.backend }}'),'Every role and downloaded package must embed the selected backend');
+  }
+  assert(workflow.jobs.image.steps.some(step=>step.run?.includes('verify-image --root /app')));
+  assert(finish.run.includes('proof.payloadDigest!==candidate.payloadDigest'));assert(finish.run.includes('proof.buildDigest!==candidate.runtime.buildDigest'));
 });

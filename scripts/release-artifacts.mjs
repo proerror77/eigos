@@ -97,6 +97,20 @@ export function validateReleaseManifest(input,{requireReady=false}={}){
   if(input.payloadDigest!==artifactDigest(payloadOf(input)))fail('Release payload digest does not match');const {manifestDigest,...body}=input;if(manifestDigest!==artifactDigest(body))fail('Release manifest digest does not match');return structuredClone(input);
 }
 export function readReleaseManifest(path,options){if(lstatSync(path).isSymbolicLink()||!lstatSync(path).isFile()||lstatSync(path).size>16_000_000)fail('Manifest must be a bounded regular file');return validateReleaseManifest(JSON.parse(readFileSync(path,'utf8')),options);}
+/** Run inside the actual image. Source packaging is deliberately absent from
+ * runtime images; validate their installed whitelist against the embedded,
+ * exact-source candidate before the outer release can bind its OCI digest. */
+export function verifyRuntimeImagePayload(root,{sourceSha,backend}){
+  const value=readReleaseManifest(join(root,'release/manifest.json'));backendTools(backend);
+  if(!commit.test(sourceSha)||value.source.sha!==sourceSha||value.backend!==backend||value.state!=='candidate')fail('Embedded image candidate differs from the selected source or release backend');
+  const build=createHash('sha256');
+  for(const file of value.runtime.files){
+    if(canonical(fileDescriptor(root,file.path))!==canonical(file))fail('Installed image runtime differs from its candidate manifest');
+    build.update(file.path+'\0');build.update(readFileSync(checkedFile(root,file.path)));
+  }
+  if(build.digest('hex')!==value.runtime.buildDigest)fail('Installed image runtime build digest differs');
+  return {sourceSha,backend,payloadDigest:value.payloadDigest,buildDigest:value.runtime.buildDigest};
+}
 export function verifyReleaseArtifacts(directory,manifest=readReleaseManifest(join(directory,'manifest.json'))){
   const value=validateReleaseManifest(manifest);for(const [prefix,list] of [['runtime',value.runtime.files],['source',value.sourceFiles]])for(const file of list)if(canonical(fileDescriptor(join(directory,prefix),file.path))!==canonical(file))fail('Artifact file differs from its fixed manifest');
   const hash=createHash('sha256');for(const file of value.runtime.files){hash.update(file.path+'\0');hash.update(readFileSync(checkedFile(join(directory,'runtime'),file.path)));}if(hash.digest('hex')!==value.runtime.buildDigest)fail('Runtime differs from the reviewed releaseFiles build digest');
@@ -139,7 +153,8 @@ async function main(){
   if(command==='select-ci'){const run=selectExactCiRun(JSON.parse(readFileSync(values.runs,'utf8')),values['source-sha']);console.log(run.id);return;}
   if(command==='ci-proof'){const runs=JSON.parse(readFileSync(values.runs,'utf8')),run=selectExactCiRun(runs,values['source-sha']),raw=JSON.parse(readFileSync(values.jobs,'utf8')),proof=proveExactCi(run,Array.isArray(raw)?raw:raw.jobs,values['source-sha'],values.repository);writeJson(values.out,proof);console.log(canonical(proof));return;}
   if(command==='verify'){const value=verifyReleaseArtifacts(values.root??process.cwd(),values.manifest?readReleaseManifest(values.manifest,{requireReady:values['require-ready']}):undefined);if(values['require-ready'])validateReleaseManifest(value,{requireReady:true});console.log(canonical({state:value.state,sourceSha:value.source.sha,payloadDigest:value.payloadDigest,manifestDigest:value.manifestDigest}));return;}
-  if(!['create','finalize'].includes(command))fail('Use create, finalize, verify, select-ci or ci-proof');const images=Object.fromEntries(roles.filter(role=>values[`image-${role}`]).map(role=>[role,values[`image-${role}`]]));
+  if(command==='verify-image'){console.log(canonical(verifyRuntimeImagePayload(values.root??process.cwd(),{sourceSha:values['source-sha'],backend:values.backend})));return;}
+  if(!['create','finalize'].includes(command))fail('Use create, finalize, verify, verify-image, select-ci or ci-proof');const images=Object.fromEntries(roles.filter(role=>values[`image-${role}`]).map(role=>[role,values[`image-${role}`]]));
   if(command==='finalize'){const value=finalizeReleaseArtifacts(values.root??process.cwd(),{images,ci:values['ci-proof']?JSON.parse(readFileSync(values['ci-proof'],'utf8')):undefined,harnessImage:values['harness-image-proof']?JSON.parse(readFileSync(values['harness-image-proof'],'utf8')):undefined});console.log(canonical({state:value.state,payloadDigest:value.payloadDigest,manifestDigest:value.manifestDigest}));return;}
   const value=await createReleaseArtifacts({root:values.root,output:values.out,sourceSha:values['source-sha'],backend:values.backend,images,ci:values['ci-proof']?JSON.parse(readFileSync(values['ci-proof'],'utf8')):undefined});console.log(canonical({state:value.state,sourceSha:value.source.sha,payloadDigest:value.payloadDigest,manifestDigest:value.manifestDigest}));
 }

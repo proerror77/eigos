@@ -6731,7 +6731,7 @@
     {
       "id": "release-artifacts-cli",
       "file": "scripts/release-artifacts.mjs",
-      "sourceDigest": "4107b7392a17ca7e9d123504ab3faad5f07367d36b6b0c7c274ce031a8883cd7",
+      "sourceDigest": "c7fec5267b1fbabf06b6273571b87b2184251be1dcb8c89b82971a4ceabf2db6",
       "channels": [
         "internal"
       ],
