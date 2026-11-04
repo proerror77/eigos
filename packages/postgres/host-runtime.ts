@@ -30,7 +30,7 @@ import {postgresGoalProgram} from './goal-contexts.js';
 import {assertPostgresMessagingStorageSchema} from './messaging-schema.js';
 import {observePostgresClient} from './client-errors.js';
 import {readPostgresVectorFeature,assertFeatureBinding,embeddingRuntimeGrantPlan} from '../deployment/postgres-vector-index.js';
-import {assertPostgresRuntimeRole} from '../deployment/postgres-handoff.js';
+import {assertPostgresRuntimeRole,postgresRuntimeGrantPlan} from '../deployment/postgres-handoff.js';
 import {assertPostgresEmbeddingSchema,assertPostgresSemanticRelease,embeddingTableNames,type PostgresVectorFeature} from './embedding-schema.js';
 import {PostgresEmbeddingIndex} from './embedding-index.js';
 import {PostgresTaskRelay} from './task-relay.js';
@@ -184,9 +184,10 @@ export async function verifyPostgresPrimaryActivation(client:Client,binding:Post
       ||baseSequences.some(row=>!base.tables.some(table=>table.name===row.table_name)||!(row.identity==='a'&&row.column_name==='__eigos_rowid'||row.identity==='d'&&row.primary_key===true))
       ||base.tables.some(table=>baseSequences.filter(row=>row.table_name===table.name&&row.column_name==='__eigos_rowid'&&row.identity==='a').length!==1))throw new Error('PostgreSQL runtime sequence inventory differs from its verified base and node extension');
     if(vectorFeature){
-      assertFeatureBinding(vectorFeature,binding);await assertPostgresEmbeddingSchema(client,vectorFeature);await assertPostgresRuntimeRole(client,binding,embeddingRuntimeGrantPlan(binding,base.tables.map(table=>table.name)),'granted');
+      assertFeatureBinding(vectorFeature,binding);await assertPostgresEmbeddingSchema(client,vectorFeature);
       if(!builder)throw new Error('Task vectors require their actual prepared semantic kernel');await assertPostgresSemanticRelease(client,binding.business.schema,builder);
     }
+    await assertPostgresRuntimeRole(client,binding,vectorFeature?embeddingRuntimeGrantPlan(binding,base.tables.map(table=>table.name)):postgresRuntimeGrantPlan(binding,base.tables.map(table=>table.name)),'granted');
     await client.query('COMMIT');opened=false;
   }catch(error){if(opened)try{await client.query('ROLLBACK');}catch(rollback){throw new AggregateError([error,rollback],'PostgreSQL activation verification rollback failed',{cause:error});}throw error;}
 }

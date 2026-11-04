@@ -138,6 +138,25 @@ async function gateway(f:Awaited<ReturnType<typeof fixture>>,issuer?:{principal:
   }catch(error){await resources.close();throw error;}
 }
 
+test('default TLS primary rejects runtime privilege drift after activation for Gateway and Worker',local,async()=>{
+  const f=await fixture();
+  const table=`"${f.binding.business.schema}".ontology_object_versions`,role=`"${f.source.role}"`;
+  try{
+    await f.admin.query(`GRANT TRUNCATE ON TABLE ${table} TO ${role}`);
+    for(const host of ['gateway','worker'] as const){
+      await assert.rejects(async()=>{
+        const unexpected=await createPostgresPrimaryHostResources(f.config,host,f.environment);
+        await unexpected.close();
+      },/Runtime effective table or column privileges differ/,`${host} must reject extra effective privileges`);
+    }
+    await f.admin.query(`REVOKE TRUNCATE ON TABLE ${table} FROM ${role}`);
+    for(const host of ['gateway','worker'] as const){
+      const resources=await createPostgresPrimaryHostResources(f.config,host,f.environment);
+      await resources.close();
+    }
+  }finally{await f.close();}
+});
+
 test('verified TLS primary uses only the reviewed runtime role and one publisher across TaskService, MCP and A2A',local,async()=>{
   const f=await fixture();let host:Awaited<ReturnType<typeof gateway>>|undefined,worker:Awaited<ReturnType<typeof createPostgresPrimaryHostResources>>|undefined;
   const principal:Principal={issuer:'https://synthetic-identity.example/',tenant:'synthetic',subject:'tls-runtime-pa',clientId:'synthetic-connector',scopes:[...SCOPES]},token='synthetic-tls-host-token';
