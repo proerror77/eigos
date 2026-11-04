@@ -1,0 +1,148 @@
+@prefix ns1: <https://example.org/eigos-audit/field/RideEstimate/> .
+@prefix ns2: <https://example.org/eigos-audit/field/SourceReceipt/> .
+@prefix ns3: <https://example.org/eigos-audit/link/> .
+@prefix ns4: <https://example.org/eigos-audit/field/RideRoute/> .
+@prefix ns5: <https://example.org/eigos-audit/audit/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/AssessmentFinding/e5b329d333733499f9da2cf893c05989a6002cf794a257eef8f92514792be0c0> a <https://example.org/eigos-audit/type/AssessmentFinding> ;
+    ns3:FindingEvidence <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A875c269e-9dc5-472c-8ef3-a3212745799e> .
+
+<https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/BusinessResult/0974e0fecd8ef983ca8c1927602719852fe7870fbc87745c290c83549b866808> a <https://example.org/eigos-audit/type/BusinessResult> ;
+    ns3:BusinessResultEvidence <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A565f8ca0-2a1c-4f69-bb82-4affb34dc0c9> .
+
+<https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/BusinessResult/1a91a4b9dabb22da04116c7d9b5a4ddfa3bede8be70b3a89dbb68f45949f150e> a <https://example.org/eigos-audit/type/BusinessResult> ;
+    ns3:BusinessResultEvidence <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A2700bd67-f941-4c8b-a29a-c27eeb7d9cc2> .
+
+<https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/BusinessResult/5cee598026caf9225996a31477da45646ff77f1a2cc1382bca1ba121f9286d1e> a <https://example.org/eigos-audit/type/BusinessResult> ;
+    ns3:BusinessResultEvidence <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A875c269e-9dc5-472c-8ef3-a3212745799e> .
+
+<https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/OutcomeAssessment/ccdb227696af1c0ab7fc813d2cda00b225c5b32afec10a46b1f8e8735b008247> a <https://example.org/eigos-audit/type/OutcomeAssessment> ;
+    ns3:AssessmentEvidence <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A875c269e-9dc5-472c-8ef3-a3212745799e> .
+
+<https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/DidiPlaceObservation/2700bd67-f941-4c8b-a29a-c27eeb7d9cc2> a <https://example.org/eigos-audit/type/DidiPlaceObservation> ;
+    ns3:DidiPlaceObservationEvidence <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A2700bd67-f941-4c8b-a29a-c27eeb7d9cc2> .
+
+<https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/DidiPlaceObservation/565f8ca0-2a1c-4f69-bb82-4affb34dc0c9> a <https://example.org/eigos-audit/type/DidiPlaceObservation> ;
+    ns3:DidiPlaceObservationEvidence <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A565f8ca0-2a1c-4f69-bb82-4affb34dc0c9> .
+
+<https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/Place/91b714c907e7d0ade8a15fd1f3e59c9140ed2ed88d4b2ad83b9d5a39519f6c71> a <https://example.org/eigos-audit/type/Place> ;
+    ns3:PlaceEvidence <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A2700bd67-f941-4c8b-a29a-c27eeb7d9cc2> .
+
+<https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/RideEstimateObservation/875c269e-9dc5-472c-8ef3-a3212745799e> a <https://example.org/eigos-audit/type/RideEstimateObservation> ;
+    ns3:RideEstimateObservationEvidence <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A875c269e-9dc5-472c-8ef3-a3212745799e> ;
+    ns3:RideEstimateRoute <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/RideRoute/7741634845c3b4d894645e756ca342df02d00a86e515fd367e53aad94b3b2ef4> ;
+    ns3:RideObservationEstimates <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/RideEstimate/c2bfdac208c426ff1debcb146f6a8552d3d759d34ccac983c9ec2ab308a3c215>,
+        <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/RideEstimate/d37f2fcf15230bc60bd36cab3da3e68b475b670dfa2862327dcd0ef271a69b92> .
+
+<https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/Provider/9659c343ccc48b8065fd45241612ce4d5d59e747f838edbd166c5bd3967d31ec> a <https://example.org/eigos-audit/type/Provider> .
+
+<https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/RideEstimate/c2bfdac208c426ff1debcb146f6a8552d3d759d34ccac983c9ec2ab308a3c215> a <https://example.org/eigos-audit/type/RideEstimate> ;
+    ns1:amountUnit "major"^^xsd:string ;
+    ns1:currency "CNY"^^xsd:string ;
+    ns1:displayTitle "快车"^^xsd:string ;
+    ns1:estimatedAmount "73.05"^^xsd:string ;
+    ns1:expiresAt "2026-11-04T00:35:04.402Z"^^xsd:dateTime ;
+    ns1:feesComplete "unknown"^^xsd:string ;
+    ns1:id "c2bfdac208c426ff1debcb146f6a8552d3d759d34ccac983c9ec2ab308a3c215"^^xsd:string ;
+    ns1:observedAt "2026-11-04T00:30:04.403Z"^^xsd:dateTime ;
+    ns1:priceBasis "total"^^xsd:string ;
+    ns1:priceKind "estimate"^^xsd:string ;
+    ns1:priceText "73.05"^^xsd:string ;
+    ns1:productCategory "native-fast"^^xsd:string ;
+    ns1:productName "快车"^^xsd:string ;
+    ns1:requestRevision 1 ;
+    ns3:RideEstimateBusinessProvider <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/Provider/9659c343ccc48b8065fd45241612ce4d5d59e747f838edbd166c5bd3967d31ec> ;
+    ns3:RideEstimateBusinessRoute <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/RideRoute/7741634845c3b4d894645e756ca342df02d00a86e515fd367e53aad94b3b2ef4> ;
+    ns3:RideEstimateEvidence <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A875c269e-9dc5-472c-8ef3-a3212745799e> ;
+    ns3:RideEstimateRequest <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/ServiceRequest/cb2059a7-4fc1-43f4-b940-875cd3a13301> .
+
+<https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/RideEstimate/d37f2fcf15230bc60bd36cab3da3e68b475b670dfa2862327dcd0ef271a69b92> a <https://example.org/eigos-audit/type/RideEstimate> ;
+    ns1:amountUnit "major"^^xsd:string ;
+    ns1:displayTitle "专车"^^xsd:string ;
+    ns1:expiresAt "2026-11-04T00:35:04.402Z"^^xsd:dateTime ;
+    ns1:feesComplete "unknown"^^xsd:string ;
+    ns1:id "d37f2fcf15230bc60bd36cab3da3e68b475b670dfa2862327dcd0ef271a69b92"^^xsd:string ;
+    ns1:observedAt "2026-11-04T00:30:04.403Z"^^xsd:dateTime ;
+    ns1:priceBasis "total"^^xsd:string ;
+    ns1:priceKind "estimate"^^xsd:string ;
+    ns1:priceText "100-120元"^^xsd:string ;
+    ns1:productCategory "native-premium"^^xsd:string ;
+    ns1:productName "专车"^^xsd:string ;
+    ns1:requestRevision 1 ;
+    ns3:RideEstimateBusinessProvider <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/Provider/9659c343ccc48b8065fd45241612ce4d5d59e747f838edbd166c5bd3967d31ec> ;
+    ns3:RideEstimateBusinessRoute <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/RideRoute/7741634845c3b4d894645e756ca342df02d00a86e515fd367e53aad94b3b2ef4> ;
+    ns3:RideEstimateEvidence <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A875c269e-9dc5-472c-8ef3-a3212745799e> ;
+    ns3:RideEstimateRequest <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/ServiceRequest/cb2059a7-4fc1-43f4-b940-875cd3a13301> .
+
+<https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A565f8ca0-2a1c-4f69-bb82-4affb34dc0c9> a <https://example.org/eigos-audit/type/SourceReceipt> ;
+    ns5:receiptSubject <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/DidiPlaceObservation/565f8ca0-2a1c-4f69-bb82-4affb34dc0c9>,
+        <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/Place/898b7663a2520c7273cb3a2471a02ce2edb8535d8452f7600e9ff6ad0d14d90f> ;
+    ns2:contentDigest "b68ee0c15a172bf2bd42c379815a5c060b49d79b2f30cf2c7dac79549b11781a"^^xsd:string ;
+    ns2:displayTitle "滴滴只读来源回执"^^xsd:string ;
+    ns2:evidenceLevel "synthetic"^^xsd:string ;
+    ns2:observedAt "2026-11-04T00:30:04.119Z"^^xsd:dateTime ;
+    ns2:receiptId "didi:565f8ca0-2a1c-4f69-bb82-4affb34dc0c9"^^xsd:string ;
+    ns2:safeSummary "一次地点或车型估价读取；价格是预估，完整费用、叫车可用性与接送承诺未知"^^xsd:string ;
+    ns2:scope "domain_ride"^^xsd:string ;
+    ns2:sourceEventId "565f8ca0-2a1c-4f69-bb82-4affb34dc0c9"^^xsd:string ;
+    ns2:sourceIdentity "didi-mcp:production:synthetic-didi"^^xsd:string ;
+    ns2:subjects "[{\"digest\":\"52f2eee971bb4e744f088cf6eb762db5a30bb622c48dc0c9b4967197b1cc320e\",\"linksDigest\":\"240599dd04bd24d8d3afee4969d59a6f3064795b67f9e8b6cf048c3f5d519209\",\"object\":{\"id\":\"565f8ca0-2a1c-4f69-bb82-4affb34dc0c9\",\"type\":\"DidiPlaceObservation\"}},{\"digest\":\"4f19cec4d7757d6e2ff22911416962a7d012009afa470dc4e1cb970305e07185\",\"linksDigest\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\",\"object\":{\"id\":\"898b7663a2520c7273cb3a2471a02ce2edb8535d8452f7600e9ff6ad0d14d90f\",\"type\":\"Place\"}}]"^^xsd:string ;
+    ns3:ReceiptRequest <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/ServiceRequest/cb2059a7-4fc1-43f4-b940-875cd3a13301> .
+
+<https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/Place/4e6ffa503826493fd6c2c60a66b95e4058a21ee2c0ba2de9366253cb45e81f96> a <https://example.org/eigos-audit/type/Place> ;
+    ns3:PlaceEvidence <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A875c269e-9dc5-472c-8ef3-a3212745799e> .
+
+<https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/Place/898b7663a2520c7273cb3a2471a02ce2edb8535d8452f7600e9ff6ad0d14d90f> a <https://example.org/eigos-audit/type/Place> ;
+    ns3:PlaceEvidence <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A875c269e-9dc5-472c-8ef3-a3212745799e> .
+
+<https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A2700bd67-f941-4c8b-a29a-c27eeb7d9cc2> a <https://example.org/eigos-audit/type/SourceReceipt> ;
+    ns5:receiptSubject <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/DidiPlaceObservation/2700bd67-f941-4c8b-a29a-c27eeb7d9cc2>,
+        <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/Place/4e6ffa503826493fd6c2c60a66b95e4058a21ee2c0ba2de9366253cb45e81f96>,
+        <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/Place/91b714c907e7d0ade8a15fd1f3e59c9140ed2ed88d4b2ad83b9d5a39519f6c71> ;
+    ns2:contentDigest "c52dabc84ba489efdd5c2d746dddebd951b2607b30cdddf562ed5ce43ee80148"^^xsd:string ;
+    ns2:displayTitle "滴滴只读来源回执"^^xsd:string ;
+    ns2:evidenceLevel "synthetic"^^xsd:string ;
+    ns2:observedAt "2026-11-04T00:30:04.120Z"^^xsd:dateTime ;
+    ns2:receiptId "didi:2700bd67-f941-4c8b-a29a-c27eeb7d9cc2"^^xsd:string ;
+    ns2:safeSummary "一次地点或车型估价读取；价格是预估，完整费用、叫车可用性与接送承诺未知"^^xsd:string ;
+    ns2:scope "domain_ride"^^xsd:string ;
+    ns2:sourceEventId "2700bd67-f941-4c8b-a29a-c27eeb7d9cc2"^^xsd:string ;
+    ns2:sourceIdentity "didi-mcp:production:synthetic-didi"^^xsd:string ;
+    ns2:subjects "[{\"digest\":\"b58ef8f35bb8953b4a6b52f942caba9441794f127c413c90087a3e878e68c273\",\"linksDigest\":\"3c0a046088b89ab4c425a28581328034e7f66eeace647fe9e04c22c8d37ec40f\",\"object\":{\"id\":\"2700bd67-f941-4c8b-a29a-c27eeb7d9cc2\",\"type\":\"DidiPlaceObservation\"}},{\"digest\":\"4300a50f0b99d9c1b7f9ccc363e63af53636523ff06955642f03379ed706e101\",\"linksDigest\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\",\"object\":{\"id\":\"91b714c907e7d0ade8a15fd1f3e59c9140ed2ed88d4b2ad83b9d5a39519f6c71\",\"type\":\"Place\"}},{\"digest\":\"626a412a39128ff9266a474479cece07713fd6dc2a351cb29ce559afa3a3d879\",\"linksDigest\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\",\"object\":{\"id\":\"4e6ffa503826493fd6c2c60a66b95e4058a21ee2c0ba2de9366253cb45e81f96\",\"type\":\"Place\"}}]"^^xsd:string ;
+    ns3:ReceiptRequest <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/ServiceRequest/cb2059a7-4fc1-43f4-b940-875cd3a13301> .
+
+<https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/RideRoute/7741634845c3b4d894645e756ca342df02d00a86e515fd367e53aad94b3b2ef4> a <https://example.org/eigos-audit/type/RideRoute> ;
+    ns4:destination "西二旗地铁站"^^xsd:string ;
+    ns4:displayTitle "北京西站 → 西二旗地铁站"^^xsd:string ;
+    ns4:objectId "7741634845c3b4d894645e756ca342df02d00a86e515fd367e53aad94b3b2ef4"^^xsd:string ;
+    ns4:origin "北京西站"^^xsd:string ;
+    ns3:RideRouteDestinationPlace <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/Place/4e6ffa503826493fd6c2c60a66b95e4058a21ee2c0ba2de9366253cb45e81f96> ;
+    ns3:RideRouteEvidence <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A875c269e-9dc5-472c-8ef3-a3212745799e> ;
+    ns3:RideRouteOriginPlace <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/Place/898b7663a2520c7273cb3a2471a02ce2edb8535d8452f7600e9ff6ad0d14d90f> .
+
+<https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/ServiceRequest/cb2059a7-4fc1-43f4-b940-875cd3a13301> a <https://example.org/eigos-audit/type/ServiceRequest> .
+
+<https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A875c269e-9dc5-472c-8ef3-a3212745799e> a <https://example.org/eigos-audit/type/SourceReceipt> ;
+    ns5:receiptSubject <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/Place/4e6ffa503826493fd6c2c60a66b95e4058a21ee2c0ba2de9366253cb45e81f96>,
+        <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/Place/898b7663a2520c7273cb3a2471a02ce2edb8535d8452f7600e9ff6ad0d14d90f>,
+        <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/RideEstimate/c2bfdac208c426ff1debcb146f6a8552d3d759d34ccac983c9ec2ab308a3c215>,
+        <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/RideEstimate/d37f2fcf15230bc60bd36cab3da3e68b475b670dfa2862327dcd0ef271a69b92>,
+        <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/RideEstimateObservation/875c269e-9dc5-472c-8ef3-a3212745799e>,
+        <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/RideRoute/7741634845c3b4d894645e756ca342df02d00a86e515fd367e53aad94b3b2ef4> ;
+    ns2:contentDigest "e26378fa99f4c87a72a17422658bbe098edae3f777a62124287a531dc5673a91"^^xsd:string ;
+    ns2:displayTitle "滴滴只读来源回执"^^xsd:string ;
+    ns2:evidenceLevel "synthetic"^^xsd:string ;
+    ns2:observedAt "2026-11-04T00:30:04.403Z"^^xsd:dateTime ;
+    ns2:receiptId "didi:875c269e-9dc5-472c-8ef3-a3212745799e"^^xsd:string ;
+    ns2:safeSummary "一次地点或车型估价读取；价格是预估，完整费用、叫车可用性与接送承诺未知"^^xsd:string ;
+    ns2:scope "domain_ride"^^xsd:string ;
+    ns2:sourceEventId "875c269e-9dc5-472c-8ef3-a3212745799e"^^xsd:string ;
+    ns2:sourceIdentity "didi-mcp:production:synthetic-didi"^^xsd:string ;
+    ns2:subjects "[{\"digest\":\"a1149006f362e0171d486c7f7f05d5a684ff61b7b545fd1cbea68288eed15830\",\"linksDigest\":\"2f2ef979cbeccda985f5487f1dbdc0697f92adb5eea548e0264a8816a153ccc3\",\"object\":{\"id\":\"875c269e-9dc5-472c-8ef3-a3212745799e\",\"type\":\"RideEstimateObservation\"}},{\"digest\":\"b3adcfad01153430a6d70fc1456cd75cf763f4a57a8c567aef44bb525e1164bf\",\"linksDigest\":\"d28b41a521cd4f246148257786c9549bb6c12c2cd7917bf29a544c97df72a7ab\",\"object\":{\"id\":\"7741634845c3b4d894645e756ca342df02d00a86e515fd367e53aad94b3b2ef4\",\"type\":\"RideRoute\"}},{\"digest\":\"4f19cec4d7757d6e2ff22911416962a7d012009afa470dc4e1cb970305e07185\",\"linksDigest\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\",\"object\":{\"id\":\"898b7663a2520c7273cb3a2471a02ce2edb8535d8452f7600e9ff6ad0d14d90f\",\"type\":\"Place\"}},{\"digest\":\"626a412a39128ff9266a474479cece07713fd6dc2a351cb29ce559afa3a3d879\",\"linksDigest\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\",\"object\":{\"id\":\"4e6ffa503826493fd6c2c60a66b95e4058a21ee2c0ba2de9366253cb45e81f96\",\"type\":\"Place\"}},{\"digest\":\"ea7753d19552a8ab1812e2a5dfe1eb6cbb81c8b086c03994780cb26cfd2d9efc\",\"linksDigest\":\"fcd3bb3460447557a1dc6f8ba840370732123d29221d887b13c84656b4090d90\",\"object\":{\"id\":\"c2bfdac208c426ff1debcb146f6a8552d3d759d34ccac983c9ec2ab308a3c215\",\"type\":\"RideEstimate\"}},{\"digest\":\"7e6c3a6c98b7cf121032eb648a51bcd2cc6d330d9bb2d455231a1a08721dc61e\",\"linksDigest\":\"fcd3bb3460447557a1dc6f8ba840370732123d29221d887b13c84656b4090d90\",\"object\":{\"id\":\"d37f2fcf15230bc60bd36cab3da3e68b475b670dfa2862327dcd0ef271a69b92\",\"type\":\"RideEstimate\"}}]"^^xsd:string ;
+    ns3:ReceiptRequest <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/ServiceRequest/cb2059a7-4fc1-43f4-b940-875cd3a13301> .
+
+[] a owl:AllDifferent ;
+    owl:distinctMembers ( <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/AssessmentFinding/e5b329d333733499f9da2cf893c05989a6002cf794a257eef8f92514792be0c0> <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/BusinessResult/0974e0fecd8ef983ca8c1927602719852fe7870fbc87745c290c83549b866808> <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/BusinessResult/1a91a4b9dabb22da04116c7d9b5a4ddfa3bede8be70b3a89dbb68f45949f150e> <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/BusinessResult/5cee598026caf9225996a31477da45646ff77f1a2cc1382bca1ba121f9286d1e> <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/DidiPlaceObservation/2700bd67-f941-4c8b-a29a-c27eeb7d9cc2> <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/DidiPlaceObservation/565f8ca0-2a1c-4f69-bb82-4affb34dc0c9> <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/OutcomeAssessment/ccdb227696af1c0ab7fc813d2cda00b225c5b32afec10a46b1f8e8735b008247> <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/Place/4e6ffa503826493fd6c2c60a66b95e4058a21ee2c0ba2de9366253cb45e81f96> <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/Place/898b7663a2520c7273cb3a2471a02ce2edb8535d8452f7600e9ff6ad0d14d90f> <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/Place/91b714c907e7d0ade8a15fd1f3e59c9140ed2ed88d4b2ad83b9d5a39519f6c71> <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/Provider/9659c343ccc48b8065fd45241612ce4d5d59e747f838edbd166c5bd3967d31ec> <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/RideEstimate/c2bfdac208c426ff1debcb146f6a8552d3d759d34ccac983c9ec2ab308a3c215> <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/RideEstimate/d37f2fcf15230bc60bd36cab3da3e68b475b670dfa2862327dcd0ef271a69b92> <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/RideEstimateObservation/875c269e-9dc5-472c-8ef3-a3212745799e> <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/RideRoute/7741634845c3b4d894645e756ca342df02d00a86e515fd367e53aad94b3b2ef4> <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/ServiceRequest/cb2059a7-4fc1-43f4-b940-875cd3a13301> <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A2700bd67-f941-4c8b-a29a-c27eeb7d9cc2> <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A565f8ca0-2a1c-4f69-bb82-4affb34dc0c9> <https://example.org/eigos-audit/instance/eigos.business/%5B%22local-development%22%2C%22local%22%2C%22developer%22%5D/SourceReceipt/didi%3A875c269e-9dc5-472c-8ef3-a3212745799e> ) .

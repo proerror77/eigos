@@ -1,0 +1,49 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://example.org/eigos-audit/shape/RideEstimate> a sh:NodeShape ;
+    sh:property [ sh:maxCount 1 ;
+            sh:minCount 1 ;
+            sh:path [ sh:inversePath <https://example.org/eigos-audit/link/RideObservationEstimates> ] ],
+        [ sh:hasValue "total"^^xsd:string ;
+            sh:path <https://example.org/eigos-audit/field/RideEstimate/priceBasis> ],
+        [ sh:hasValue "major"^^xsd:string ;
+            sh:path <https://example.org/eigos-audit/field/RideEstimate/amountUnit> ] ;
+    sh:sparql [ sh:message "Amount and currency must be present together in this projection." ;
+            sh:select "SELECT $this WHERE { FILTER(EXISTS { $this <https://example.org/eigos-audit/field/RideEstimate/estimatedAmount> ?a } != EXISTS { $this <https://example.org/eigos-audit/field/RideEstimate/currency> ?c }) }" ],
+        [ sh:message "Linked receipt must identify this estimate in its own subject list." ;
+            sh:select "SELECT $this WHERE { FILTER NOT EXISTS { $this <https://example.org/eigos-audit/link/RideEstimateEvidence> ?r . ?r <https://example.org/eigos-audit/audit/receiptSubject> $this } }" ] ;
+    sh:targetClass <https://example.org/eigos-audit/type/RideEstimate> .
+
+<https://example.org/eigos-audit/shape/RideRoute> a sh:NodeShape ;
+    sh:property [ sh:minCount 1 ;
+            sh:path <https://example.org/eigos-audit/link/RideRouteEvidence> ],
+        [ sh:minCount 1 ;
+            sh:path <https://example.org/eigos-audit/link/RideRouteOriginPlace> ],
+        [ sh:minCount 1 ;
+            sh:path <https://example.org/eigos-audit/link/RideRouteDestinationPlace> ] ;
+    sh:targetClass <https://example.org/eigos-audit/type/RideRoute> .
+
+<https://example.org/eigos-audit/shape/SourceReceipt> a sh:NodeShape ;
+    sh:property [ sh:minCount 1 ;
+            sh:path <https://example.org/eigos-audit/field/SourceReceipt/sourceEventId> ],
+        [ sh:minCount 1 ;
+            sh:path <https://example.org/eigos-audit/field/SourceReceipt/scope> ],
+        [ sh:hasValue "domain_ride"^^xsd:string ;
+            sh:path <https://example.org/eigos-audit/field/SourceReceipt/scope> ],
+        [ sh:minCount 1 ;
+            sh:path <https://example.org/eigos-audit/field/SourceReceipt/sourceIdentity> ],
+        [ sh:minCount 1 ;
+            sh:path <https://example.org/eigos-audit/field/SourceReceipt/contentDigest> ],
+        [ sh:minCount 1 ;
+            sh:path <https://example.org/eigos-audit/link/ReceiptRequest> ],
+        [ sh:in ( "synthetic"^^xsd:string "provider_test"^^xsd:string "live_readonly"^^xsd:string ) ;
+            sh:path <https://example.org/eigos-audit/field/SourceReceipt/evidenceLevel> ],
+        [ sh:minCount 1 ;
+            sh:path <https://example.org/eigos-audit/field/SourceReceipt/observedAt> ],
+        [ sh:minCount 1 ;
+            sh:path <https://example.org/eigos-audit/field/SourceReceipt/subjects> ],
+        [ sh:minCount 1 ;
+            sh:path <https://example.org/eigos-audit/field/SourceReceipt/evidenceLevel> ] ;
+    sh:targetClass <https://example.org/eigos-audit/type/SourceReceipt> .
