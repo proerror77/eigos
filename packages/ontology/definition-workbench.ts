@@ -58,6 +58,10 @@ export function workbenchRelations(document: OntologyDocument): WorkbenchRelatio
     for (const parent of iface.parents ?? []) edge('interface', iface.id, 'interface', parent, 'extends');
     for (const [name, property] of Object.entries(iface.properties)) edge('interface', iface.id, 'function', property.derived, `derived:${name}`);
     for (const link of iface.links ?? []) typeEdge('interface', iface.id, link.target, `link:${link.name}`);
+    for (const action of iface.actions ?? []) {
+      for (const [name, type] of Object.entries(action.inputs)) typeEdge('interface', iface.id, type, `input:${action.id}.${name}`);
+      for (const type of action.resultTypes ?? []) typeEdge('interface', iface.id, type, `result:${action.id}`);
+    }
   }
   for (const link of document.links) {
     typeEdge('link', link.id, link.from.type, `from:${link.from.name}`);

@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { Script } from 'node:vm';
 import { ontologyManagerPage, ontologyManagerScript } from '../apps/gateway/ontology/page.js';
 import { workbenchEntries, workbenchRelations, workbenchSummary } from '../packages/ontology/definition-workbench.js';
+import type { OntologyDocument } from '../packages/ontology/definition-contracts.js';
 import { startOntologyManagementFixture, officeManagementResources } from './fixtures/ontology-management.js';
 
 test('HTTP and MCP expose version-bound Functions, source dependencies and bounded relation navigation', async () => {
@@ -62,6 +63,16 @@ test('workbench reads preserve namespace ownership, immutable history, draft iso
     assert.equal((await f.post('/ontology/v1/query', { operation: 'list_definition_relations', ...source, kind: 'function', resourceId: 'function:selectDidiPlace', limit: 51 })).status, 400);
     assert.equal(f.gateway.store.definitions.draft(draft.id).revision, draft.revision);
   } finally { await f.close(); }
+});
+
+test('interface Action contracts retain input and result roles in dependency navigation', () => {
+  const document: OntologyDocument = { formatVersion: 1, id: 'test', version: '1', objects: [], links: [], actions: [], functions: [], interfaces: [
+    { resourceId: 'test:resource', id: 'Resource', description: 'A requested resource', properties: {}, actions: [{ id: 'RequestUse', inputs: { resource: 'Resource' }, effects: ['object_write'], resultTypes: ['UseRequest'] }] },
+    { resourceId: 'test:request', id: 'UseRequest', description: 'A resource use request', properties: {} },
+  ] };
+  const edges = workbenchRelations(document);
+  assert(edges.some(edge => edge.from.id === 'Resource' && edge.to.id === 'Resource' && edge.role === 'input:RequestUse.resource'));
+  assert(edges.some(edge => edge.from.id === 'Resource' && edge.to.id === 'UseRequest' && edge.role === 'result:RequestUse'));
 });
 
 test('static workbench compiles and keeps untrusted metadata and credentials out of HTML and persistent browser storage', () => {

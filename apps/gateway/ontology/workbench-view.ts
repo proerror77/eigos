@@ -30,7 +30,7 @@ export const workbenchScript = String.raw`
   }
   function selectedKind(kind) { state.kind = kind; document.querySelectorAll('[data-kind]').forEach(node => { const selected = node.dataset.kind === kind; node.setAttribute('aria-selected', String(selected)); node.tabIndex = selected ? 0 : -1; }); document.querySelectorAll('[data-count-kind]').forEach(node => node.setAttribute('aria-current', String(node.dataset.countKind === kind))); }
   async function navigateResource(ref) {
-    selectedKind(ref.kind); state.offset = 0; $('search').value = ''; if (ref.kind === 'function' || /^(builtin:|generated:)/.test(ref.resourceId)) $('custom-only').checked = false;
+    selectedKind(ref.kind); state.offset = 0; $('search').value = ref.id; if (ref.kind === 'function' || /^(builtin:|generated:)/.test(ref.resourceId)) $('custom-only').checked = false;
     await showResource(ref);
   }
   async function loadWorkspaceSummary() {
