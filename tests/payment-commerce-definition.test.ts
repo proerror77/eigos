@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {commerceReadDefinition,commerceReadModule} from '../packages/ontology/payment-commerce.js';
 import {loadMcpReadModule,mcpReadModuleRef,parseBundledMcpReadModule} from '../packages/ontology/mcp-read.js';
-import {createCurrentKernelDefinition} from '../packages/ontology/seed-definition.js';
+import {createPaymentCommerceKernelDefinition} from '../packages/ontology/seed-definition.js';
 import {compileOntologyDocument} from '../packages/ontology/model-compiler.js';
 import {digest} from '../packages/core/delegation.js';
 
@@ -22,7 +22,7 @@ test('bundled payment definitions still reject unknown schema properties and ove
 test('static payment loading preserves the original v27 kernel document and model fingerprints',()=>{
   // Observed from the unchanged 5b79c44 implementation. These assertions catch
   // a loader change that silently changes the already published definition.
-  const kernel=createCurrentKernelDefinition();
+  const kernel=createPaymentCommerceKernelDefinition();
   assert.equal(digest(kernel.document),'e8d2a5b2912af497f962c559a5872a22679af40f771a0d7f002f05dc9c68d76c');
   assert.deepEqual(compileOntologyDocument(kernel.document,kernel.registry).ref,{id:'eigos.business',version:'27',digest:'8e5b11eb6b25d873b12f05d67232899f97af6af929b143397aa19e75379fc5e6'});
 });
