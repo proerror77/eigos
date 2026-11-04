@@ -21,7 +21,7 @@ Init requires a database transaction and a dedicated `eigos_semantic` or `eigos_
 
 Index builds embeddings outside its write transaction, rechecks the immutable release content, then replaces that release/model projection atomically under an advisory lock. The watch reader follows durable `published` events, advancing only after acknowledged indexing. Restart can replay events safely. The active release is indexed at startup, and `--release <digest>` selects an exact retained release. Metadata contains actions, object types and Functions; current Agent semantic discovery ranks the permitted action subset. Operator search supports `--kind action|object|function --query <text>`.
 
-Enable both Node Gateway and Worker with the same artifact directory, semantic schema and model:
+Enable the Node Worker with the prepared artifact directory, semantic schema and model:
 
 ```sh
 EIGOS_STORAGE_BACKEND=postgres
@@ -29,7 +29,7 @@ EIGOS_SEMANTIC_MODEL_DIR=/absolute/models/multilingual-e5-small
 EIGOS_SEMANTIC_SCHEMA=eigos_semantic
 ```
 
-The hosts load the model before serving and dispose it on shutdown. Existing PostgreSQL readiness, task, role, namespace, source, model-channel and claim checks surround each discovery. Ranking receives only actions allowed by those checks. SQL joins the exact permitted metadata digests and pinned namespace/release/model, then the original catalog builds current contracts and binding pins. A missing/stale index rejects the semantic read. It does not become an empty successful discovery. A similarity score is candidate metadata and grants no effect.
+The Worker loads the model before serving and disposes it on shutdown. The native Agent's task-scoped Ontology MCP uses this runtime. Gateway retains exact/keyword discovery and does not load an embedding model; an explicit semantic request there reports that semantic discovery is unavailable. Existing PostgreSQL readiness, task, role, namespace, source, model-channel and claim checks surround each Agent discovery. Ranking receives only actions allowed by those checks. SQL joins the exact permitted metadata digests and pinned namespace/release/model, then the original catalog builds current contracts and binding pins. A missing/stale index rejects the semantic read. It does not become an empty successful discovery. A similarity score is candidate metadata and grants no effect.
 
 Changing model weights, encoder version, text projection or release requires rebuilding the corresponding projection. Keep retained release indexes needed by pinned tasks. The exact lookup, Function evaluation, argument validation, action authorization and independent readback remain the acceptance path. Business instances and private task history are outside this first index corpus.
 

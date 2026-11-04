@@ -7031,7 +7031,7 @@
     {
       "id": "postgres-definition-service",
       "file": "packages/postgres/definition-service.ts",
-      "sourceDigest": "4cd1c703045ac6c2d20cc38ecd9ec4bcc9a6d1ce44429d4a19b51a0210809a4d",
+      "sourceDigest": "ecae25155ac8a1ecb59dce864d566c9e4d8c9f6b09975bb465ca2b6cfe76c8b7",
       "channels": [
         "internal",
         "ontology_metadata"
@@ -7109,7 +7109,7 @@
     {
       "id": "postgres-action-discovery",
       "file": "packages/postgres/action-discovery.ts",
-      "sourceDigest": "b1bea156b6c825a01b955e74ebdb4adbc07f0473b97566f58801ce632f704a15",
+      "sourceDigest": "5e8d6381bf8922abb87004212fe7028fe5ae314a9d66829df30184cfa33e8c05",
       "channels": [
         "internal",
         "agent_response"
@@ -7170,7 +7170,7 @@
     {
       "id": "postgres-host-runtime",
       "file": "packages/postgres/host-runtime.ts",
-      "sourceDigest": "d6c51c6980c64b854170dfe66cfb013a5f205c9db6eb734fb9bfb2ca87eb57d3",
+      "sourceDigest": "6c3232af3fe753da4e68cc6843ae4d72596630c534ab770eb8e2d8b5e8fc1d23",
       "channels": [
         "internal"
       ],

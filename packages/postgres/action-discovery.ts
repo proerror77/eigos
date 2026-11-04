@@ -1,4 +1,3 @@
-import type {SemanticActionRanker} from '../semantic/catalog.js';
 import type {Client} from 'pg';
 import {z} from 'zod';
 import {DomainError,ownerKey,taskIdSchema,type Principal} from '../core/domain.js';
@@ -28,7 +27,7 @@ const pipelineKey=(program:ActionDiscoveryProgram,actionId:string)=>digest({ref:
  * can select only the existing directory filters. A binding is metadata and
  * every later invocation must reacquire its exact action permission. */
 export async function discoverPostgresTaskActions(client:Client,principal:Principal,taskId:string,ontologyId:string,input:ActionDiscoveryQuery,
-  options:{semantic?:SemanticActionRanker;catalog:ExecutionCatalog;policyDigest:string;builder?:StagedKernelBuilder}):Promise<ActionDiscoveryPage>{
+  options:{catalog:ExecutionCatalog;policyDigest:string;builder?:StagedKernelBuilder}):Promise<ActionDiscoveryPage>{
   const captured=structuredClone(principal),id=taskIdSchema.parse(taskId),owner=ownerKey(captured),token=postgresBusinessToken(client),q=`"${postgresBusinessSchema(client)}"`;
   const active=()=>{if(postgresBusinessToken(client)!==token)throw new SecurityError('AUTHORIZATION_REQUIRED');};
   const sql=async(text:string,values:unknown[]=[])=>{active();const rows=await client.query(text,values);active();return rows;};
@@ -90,12 +89,9 @@ export async function discoverPostgresTaskActions(client:Client,principal:Princi
               &&source.outputTypes.includes(output.type)&&output.fields.every(field=>admission.parent.resources.some(resource=>resource.type===output.type&&resource.fields.includes(field)))));
           if(source)postgresConstrainConsent(client,source.expiresAt,options.policyDigest);return !!source;
         };
-        const ranking=options.semantic&&query.search&&query.searchMode!=='keyword'&&!query.actionId
-          ? await options.semantic.rank(client,selected.ref,model.actionDefinitions().filter(action=>allowed.has(action.id)&&eligible.some(program=>program.actionIds.includes(action.id))),query.search):undefined;
-        active();
         const page=discoverActionMetadata(graph,owner,request,query,eligible,permitted,action=>allowed.has(action.id),(program,actionId)=>{
           const status=pipelines.get(pipelineKey(program,actionId));if(!status)throw new DomainError('CONFLICT','Action discovery metadata is incomplete');return status;
-        },sourceAllowed,ranking);
+        },sourceAllowed);
         active();return page;
       },options.builder);
     },options.builder));
