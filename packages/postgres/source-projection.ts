@@ -32,7 +32,8 @@ import {postgresBusinessSchema,postgresBusinessToken,postgresConstrainReadDeadli
 import {postgresWorkReference,postgresClaimSnapshotMatches,type PostgresWorkReference} from './work-claim.js';
 import {postgresWorkerAdmission} from './worker-admission.js';
 import {postgresWorkerRequest} from './worker-input.js';
-import {withPostgresWorkerEvidenceAuthorization,withPostgresCallerEvidenceAuthorization} from './task-output.js';
+import {withPostgresWorkerEvidenceAuthorization,withPostgresWorkerRequestAuthorization,withPostgresCallerEvidenceAuthorization} from './task-output.js';
+import {withPostgresOntologyReleaseSnapshot} from './ontology-release.js';
 import {withPostgresCallerActionGraph,assertPostgresCallerAction,postgresCallerActionAuthority} from './caller-action.js';
 import {PostgresActionJournal} from './action-journal.js';
 import {DynamicOntologyProgram} from '../capabilities/dynamic-ontology.js';
@@ -151,14 +152,17 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
     if(envelope.submission?.taskId!==request.id||envelope.submission.requestRevision!==request.revision||envelope.submission.contentDigest!==submissionDigest(request))throw new SecurityError('POLICY_CHANGED');
     return authorize(client,claim,options.policyDigest,auth=>auth.authorizeEvidence(envelope),options.builder,options.modelChannel,options.inspectClaim);
   };
+  // Only this read-only graph command opts in. The scope closes before the
+  // mapper can ingest, and source admission/write checks always stay fresh.
+  const readAuthorize=caller?authorize:withPostgresWorkerRequestAuthorization;
   const read=<R>(operation:(graph:Parameters<Parameters<typeof withPostgresPlanningReadGraph>[6]>[0])=>Promise<R>)=>
-    authorize(client,claim,options.policyDigest,(auth,admission,principal)=>
+    withPostgresOntologyReleaseSnapshot(client,()=>readAuthorize(client,claim,options.policyDigest,(auth,admission,principal)=>
       withPostgresPlanningReadGraph(client,principal,request.id,options.policyDigest,auth,admission,async graph=>{
         const result=await operation(graph),influence=graph.evidence();
         if(influence){const approved=await auth.authorizeEvidence(influence);await client.query(`INSERT INTO ${q}.security_reads(grant_id,digest,body) VALUES($1,$2,$3) ON CONFLICT(grant_id,digest) DO NOTHING`,[admission.grant.id,digest(approved),JSON.stringify(approved)]);
           onInfluence?.(structuredClone(approved));}
         return result;
-      },options.builder),options.builder,options.modelChannel,options.inspectClaim);
+      },options.builder),options.builder,options.modelChannel,options.inspectClaim));
   const permission=async(type:string)=>authorize(client,claim,options.policyDigest,async(_auth,_admission,principal)=>{
     const until=await postgresTaskResourceViewValidUntil(client,principal,request.id,options.policyDigest,'linkType',type,options.builder);
     if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');postgresConstrainReadDeadline(client,until);

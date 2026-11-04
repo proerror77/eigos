@@ -3627,7 +3627,7 @@
     {
       "id": "model-turn-channel",
       "file": "packages/coordinator/reasoning-loop.ts",
-      "sourceDigest": "e4868fd5cf69c8113a8135b048498eeade9bee3d0a8d4f6ba2e53888a7ec4349",
+      "sourceDigest": "44104963933db25efd2bce8001b439556cdb091d5af1320e7d2f5f1c2fb4750a",
       "channels": [
         "model"
       ],
@@ -5864,7 +5864,7 @@
     {
       "id": "postgres-task-output-authorization",
       "file": "packages/postgres/task-output.ts",
-      "sourceDigest": "05fd26f255be511d8cf9cc5f694bf8e144031b5c1ba72ee2dcf154058d6f3b17",
+      "sourceDigest": "d542a07d4ebf7aee3ea4f9810290a14d081190f7ab1335287a90040a3aa7def2",
       "channels": [
         "internal"
       ],
@@ -6032,7 +6032,7 @@
     {
       "id": "postgres-worker-store",
       "file": "packages/postgres/worker-store.ts",
-      "sourceDigest": "877c3b06bc618858392de013d20175f5b62ec464221b6ff1cd083a4b64a2c25f",
+      "sourceDigest": "c8f3a034917cc21c214132da3b1b63d7287b39691f3b51c8ec16fa429161b7bc",
       "channels": [
         "internal"
       ],
@@ -6587,7 +6587,7 @@
     {
       "id": "postgres-source-projection",
       "file": "packages/postgres/source-projection.ts",
-      "sourceDigest": "ae5ccf2fdf778827267ae0687f33f2146eea9424176f3c6c1b55cbf11d8aedd5",
+      "sourceDigest": "5ba54f83bbf6e40bb989dca9ffdea898ba2a7e5deec6b518cd9ec7ff8bbf66ce",
       "channels": [
         "internal"
       ],
@@ -6647,7 +6647,7 @@
     {
       "id": "postgres-agent-plan",
       "file": "packages/postgres/agent-plan.ts",
-      "sourceDigest": "2635cc8c511c95dee0e14147b90c424352fa42dac3b855cc6278dc33f95219b1",
+      "sourceDigest": "354f7294d13a58fe8c13ed469ac3c6b9af935e4ece677049a961f8a8bdb6b524",
       "channels": [
         "internal"
       ],
@@ -6707,7 +6707,7 @@
     {
       "id": "postgres-goal-contexts",
       "file": "packages/postgres/goal-contexts.ts",
-      "sourceDigest": "cfd0726ffc8b4e53a041ce38c4b527381f70f47ae8a6317070e8c74c9aadd16c",
+      "sourceDigest": "6b685ab4457c960aec54eb3453f968d4dcac0dead2994bbc3b304e0ec2e09521",
       "channels": [
         "internal"
       ],
@@ -6779,7 +6779,7 @@
     {
       "id": "postgres-ci-groups",
       "file": "scripts/postgres-tests.mjs",
-      "sourceDigest": "6be721a35b0ed48b98156b9bfde02e2f2d6311c40485e2a08f606798d4f779e0",
+      "sourceDigest": "142106204ef96a80543cb3e8bf413fd7d9d4c0423003911698e9964f0c96567b",
       "channels": [
         "internal"
       ],

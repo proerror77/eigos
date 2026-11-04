@@ -30,6 +30,7 @@ import {DocumentAgentProgram} from '../packages/capabilities/document-agent.js';
 import {taskContextFields} from '../packages/security/task-context-contract.js';
 import {PostgresTaskCommandService} from '../packages/postgres/task-command-service.js';
 import {PostgresWorkerStore} from '../packages/postgres/worker-store.js';
+import {postgresOntologyRelease} from '../packages/postgres/ontology-release.js';
 
 test('Worker request row reuse expires with its immutable scope and never covers source writers',
   {skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'},async()=>{
@@ -100,6 +101,48 @@ test('Worker request row reuse expires with its immutable scope and never covers
           await c.query(`UPDATE ${q}.security_bindings SET body=$1 WHERE owner=$2 AND task_id=$3 AND type='ServiceRequest' AND object_id=$3`,[original,claim.owner,task.id]);
         },undefined,channel,inspect);
       });
+      const request=await worker.readRequest(claim,channel),counts={members:0,releases:0,submissions:0},direct=new Map<string,number>();
+      const reading=new PostgresWorkerStore({
+        run:action=>t.database.run(async c=>{
+          const original=c.query;
+          c.query=new Proxy(original,{apply(method,thisArg,args){
+            const sql=typeof args[0]==='string'?args[0]:args[0]?.text;
+            if(typeof sql==='string'){
+              if(sql.startsWith('WITH candidates AS MATERIALIZED'))counts.members++;
+              if(sql.startsWith('SELECT body,model_digest,created_at,sequence FROM '))counts.releases++;
+              if(sql.startsWith("SELECT CASE WHEN octet_length((body.value#>'{delegation,request}')::text)<=8388608"))counts.submissions++;
+              if(sql.startsWith('SELECT b.owner,b.task_id,b.request_revision,b.object_revision,')){
+                const key=JSON.stringify(typeof args[0]==='string'?args[1]:args[0]?.values);direct.set(key,(direct.get(key)??0)+1);
+              }
+            }
+            return Reflect.apply(method,thisArg,args);
+          }});
+          try{return await action(c);}finally{c.query=original;}
+        }),
+        renewClaim:t.database.renewClaim.bind(t.database),inspectClaim:t.database.inspectClaim.bind(t.database),
+        cleanupReleasedClaims:t.database.cleanupReleasedClaims.bind(t.database),
+      },t.policy);
+      let escaped:PostgresTaskReadAuthorization|undefined;
+      await reading.readEvidence(claim,channel,async(auth,_admission,actor,c)=>{
+        escaped=auth;
+        const ontology=await postgresTaskReadOntology(c,actor,task.id,t.policy);
+        await postgresOntologyRelease(c,ontology.ref);await postgresOntologyRelease(c,ontology.ref);
+        for(const ref of members)await auth.readObject(ref);
+        const read=await auth.readObject(root,['originalGoal']);
+        const submitted={...read.envelope,submission:{taskId:task.id,requestRevision:request.revision,contentDigest:submissionDigest(request)}};
+        await auth.authorizeEvidence(submitted);await auth.authorizeEvidence(structuredClone(submitted));
+        await assert.rejects(auth.authorizeEvidence({...submitted,submission:{...submitted.submission,contentDigest:'0'.repeat(64)}}),/OUTPUT_NOT_ALLOWED/);
+        await postgresTaskDirectBindingEvidence(c,actor,task.id,t.policy,root);
+        await postgresTaskDirectBindingEvidence(c,actor,task.id,t.policy,root);
+      });
+      assert.deepEqual(counts,{members:1,releases:1,submissions:1},'A planning tool reads each immutable metadata set and submitted request once');
+      assert([...direct.values()].every(count=>count===1),'Planning row reuse does not repeatedly fetch the same direct binding');
+      await assert.rejects(escaped!.readTaskRoot(),/AUTHORIZATION_REQUIRED/);
+      const rootBinding=(await t.client.query(`SELECT body FROM ${q}.security_bindings WHERE owner=$1 AND task_id=$2 AND type='ServiceRequest' AND object_id=$2`,[claim.owner,task.id])).rows[0].body;
+      await t.client.query(`UPDATE ${q}.security_bindings SET body=jsonb_set(body::jsonb,'{fields}','[]'::jsonb)::text WHERE owner=$1 AND task_id=$2 AND type='ServiceRequest' AND object_id=$2`,[claim.owner,task.id]);
+      await assert.rejects(reading.readEvidence(claim,channel,auth=>auth.readTaskRoot()),/AUTHORIZATION_REQUIRED/);
+      await t.client.query(`UPDATE ${q}.security_bindings SET body=$1 WHERE owner=$2 AND task_id=$3 AND type='ServiceRequest' AND object_id=$3`,[rootBinding,claim.owner,task.id]);
+      await reading.readEvidence(claim,channel,auth=>auth.readTaskRoot());
       const read=()=>worker.readRequest(claim,channel);await read();
       await assert.rejects(worker.readRequest({...claim,token:'wrong-original-claim'},channel),/ACCESS_REVOKED/);
       const model=(await t.client.query(`SELECT body FROM ${q}.security_model_channels WHERE id=$1`,[channel])).rows[0].body;

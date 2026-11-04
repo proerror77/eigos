@@ -78,6 +78,23 @@ test('a source frame rechecks tightened current labels after its own writes and 
   }finally{await x.close();}
 });
 
+test('mapper readonly reuse closes before its next write and label change in the same source frame',local,async()=>{
+  const x=await fixture();try{
+    const initialized=await x.initialize(),before=await x.counts(),original=await x.run(graph=>graph.read(x.f.owner,initialized.scope));
+    await assert.rejects(x.t.run(client=>withPostgresSourceProjection(client,x.claim,x.options,async graph=>{
+      const current=await graph.read(x.f.owner,initialized.scope);
+      await graph.ingest(x.f.owner,{objects:[{ref:initialized.scope,expectedRevision:current.revision,properties:{...current.properties,displayTitle:'Synthetic revised title'}}],links:[]},current.source);
+      const revised=await graph.read(x.f.owner,initialized.scope);
+      assert.equal(revised.revision,current.revision+1);assert.equal(revised.properties.displayTitle,'Synthetic revised title');
+      await client.query(`INSERT INTO ${x.q}.security_labels(owner,type,object_id,field,body) VALUES($1,$2,$3,'*',$4)
+        ON CONFLICT(owner,type,object_id,field) DO UPDATE SET body=excluded.body`,[x.f.owner,initialized.scope.type,initialized.scope.id,JSON.stringify({classification:'internal',requiredMarkings:[],channels:['registered_model']})]);
+      await graph.read(x.f.owner,initialized.scope);
+    })),/AUTHORIZATION_REQUIRED|OUTPUT_NOT_ALLOWED|INSUFFICIENT_ACCESS/);
+    assert.deepEqual(await x.counts(),before);
+    assert.deepEqual(await x.run(graph=>graph.read(x.f.owner,initialized.scope)),original,'Rejected source frames roll back the earlier write as well');
+  }finally{await x.close();}
+});
+
 test('only a readonly shared-lineage limit falls back to fully authenticating every original edge',local,async t=>{
   for(const mode of ['limit','denied'] as const)await t.test(mode,async context=>{
     const x=await fixture();try{

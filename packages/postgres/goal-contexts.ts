@@ -17,7 +17,8 @@ import {SecurityError} from '../security/errors.js';
 import {postgresBusinessToken,postgresBusinessSchema,postgresConstrainReadDeadline,postgresRequireLeaseAtCommit} from './runtime-transaction.js';
 import {postgresClaimSnapshotMatches,postgresWorkReference,type PostgresWorkReference} from './work-claim.js';
 import {PostgresTaskStorage} from './task-storage.js';
-import {withPostgresWorkerEvidenceAuthorization} from './task-output.js';
+import {withPostgresWorkerRequestAuthorization} from './task-output.js';
+import {withPostgresOntologyReleaseSnapshot} from './ontology-release.js';
 import {withPostgresPlanningReadGraph,postgresPlanningAccessDigest} from './planning-read-graph.js';
 import {withPostgresTaskDefinitionAccess} from './ontology-metadata.js';
 import {withPostgresSourceProjection} from './source-projection.js';
@@ -69,10 +70,10 @@ export async function preparePostgresGoalContexts(client:Client,input:PostgresWo
     const until=Date.parse(canRecoverReadOnly(job,intents)&&!state.paPayment?executionBudgetStatus(job).window.startedAt:job.createdAt)+maximum;postgresConstrainReadDeadline(client,until);
     if(state.composition!.contexts.length+decision.contexts.length>16)fail('Task component context limit reached');
     const ids=new Set([...state.composition!.contexts.map(value=>value.id),...(state.composition!.retiredContexts??[]).map(value=>value.id)]),contexts:AgentComponentContext[]=[],registry=postgresReadRegistry(options),goalDigest=state.composition!.goal.digest,requestDigest=digest(d.request);
-    await withPostgresWorkerEvidenceAuthorization(client,claim,options.policyDigest,(auth,admission,principal)=>withPostgresPlanningReadGraph(client,principal,job.id,options.policyDigest,auth,admission,graph=>withPostgresTaskDefinitionAccess(client,principal,job.id,options.policyDigest,async(access,selected)=>{
+    await withPostgresOntologyReleaseSnapshot(client,()=>withPostgresWorkerRequestAuthorization(client,claim,options.policyDigest,(auth,admission,principal)=>withPostgresPlanningReadGraph(client,principal,job.id,options.policyDigest,auth,admission,graph=>withPostgresTaskDefinitionAccess(client,principal,job.id,options.policyDigest,async(access,selected)=>{
       const meta:PlanningMetadata={model:graph.model,now:graph.now,releaseRef:graph.releaseRef,security:true,authorization:{accessDigest:()=>postgresPlanningAccessDigest(admission),definitions:()=>authorizedDefinitionCatalogue(access,selected),describe:value=>describeDefinitionCatalogue(access,value,selected),binding:ref=>(reads.deliveredObjects??reads.objects).some(value=>same(value.ref,ref)),requireResource:(kind,id)=>{if(!access.resourceAllowed(kind,id))throw new SecurityError('AUTHORIZATION_REQUIRED');},receipt:()=>({accessDigest:postgresPlanningAccessDigest(admission),securityEnvelope:graph.evidence()})}};
       await runGraphProgramAsync(graph,validatePlanningSnapshotProgram(meta,claim.owner,d.request,reads,true));
-    },options.builder),options.builder),options.builder,options.modelChannel,options.inspectClaim);
+    },options.builder),options.builder),options.builder,options.modelChannel,options.inspectClaim));
     for(const selected of decision.contexts){
       if(ids.has(selected.id))fail('A component context cannot be replaced or initialized twice');ids.add(selected.id);
       const pin=discoveredBinding(reads,selected.bindingDigest),registered=options.programs.filter(value=>same(value.program.ref,pin.programRef)&&value.program.configurationDigest===pin.configurationDigest);

@@ -165,16 +165,24 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
       if (!dependency.fields) throw new SecurityError('OUTPUT_NOT_ALLOWED');
       return digest(Object.fromEntries(await Promise.all(dependency.fields.map(async field => [field, await value(dependency.object, field, properties)]))));
     };
+    let submittedRequest:{revision:number;contentDigest:string}|undefined;
     const validateSubmission = async (envelope: SecurityEnvelope) => {
       if (!envelope.submission) return;
       if (envelope.ownerKey !== owner || envelope.submission.taskId !== taskId || envelope.submission.requestRevision !== admission.grant.requestRevision) throw new SecurityError('OUTPUT_NOT_ALLOWED');
-      const rows = await client.query(`SELECT CASE WHEN octet_length((body.value#>'{delegation,request}')::text)<=8388608
+      // Only explicit immutable Worker reads reuse the submitted request. The
+      // source/writer API keeps resolving it freshly, even in this transaction.
+      let current=processing?.requestRows?submittedRequest:undefined;
+      if(!current){
+        const rows = await client.query(`SELECT CASE WHEN octet_length((body.value#>'{delegation,request}')::text)<=8388608
         THEN (body.value#>'{delegation,request}')::text END AS request FROM ${q}.jobs j
         CROSS JOIN LATERAL (SELECT CASE WHEN ${q}.eigos_try_jsonb(j.body) IS NOT NULL THEN j.body::json ELSE '{}'::json END AS value OFFSET 0) body
         WHERE j.owner=$1 AND j.id=$2`, [owner, taskId]);
-      if (rows.rowCount !== 1 || typeof rows.rows[0].request !== 'string') throw new SecurityError('OUTPUT_NOT_ALLOWED');
-      const request = JSON.parse(rows.rows[0].request) as ServiceRequest;
-      if (request.revision !== admission.grant.requestRevision || submissionDigest(request) !== envelope.submission.contentDigest) throw new SecurityError('OUTPUT_NOT_ALLOWED');
+        if (rows.rowCount !== 1 || typeof rows.rows[0].request !== 'string') throw new SecurityError('OUTPUT_NOT_ALLOWED');
+        const request = JSON.parse(rows.rows[0].request) as ServiceRequest;
+        current={revision:request.revision,contentDigest:submissionDigest(request)};
+        if(processing?.requestRows)submittedRequest=current;
+      }
+      if (current.revision !== admission.grant.requestRevision || current.contentDigest !== envelope.submission.contentDigest) throw new SecurityError('OUTPUT_NOT_ALLOWED');
     };
     const binding = async (input: ObjectRef, historical = false): Promise<Binding | undefined> => {
       const ref = objectRefSchema.parse(input), cacheKey = JSON.stringify([historical, ref.type, ref.id]);
@@ -511,8 +519,9 @@ export async function withPostgresWorkerEvidenceAuthorization<T>(client:Client,c
     withTaskAuthorization(client,principal,claim.job.id,policyDigest,auth=>action(auth,admission,principal),builder,{admission,modelChannel}),inspectLease);
 }
 
-/** Only the pure Worker request reader opts in. Every source/graph writer and
- * general evidence reader keeps its existing fresh-read lifecycle. */
+/** Pure Worker request/planning reads and their receipt bookkeeping only.
+ * Source/graph writers keep the general evidence API's fresh-read lifecycle;
+ * immutable row reuse never survives this callback or replaces authorization. */
 export async function withPostgresWorkerRequestAuthorization<T>(client:Client,claim:PostgresWorkReference,policyDigest:string,
   action:(authorization:PostgresTaskReadAuthorization,admission:PostgresTaskReadAdmission,principal:Principal)=>Promise<T>,builder?:StagedKernelBuilder,modelChannel?:string,
   inspectLease?:(claim:PostgresWorkReference)=>Promise<{validUntil:number}|undefined>):Promise<T>{

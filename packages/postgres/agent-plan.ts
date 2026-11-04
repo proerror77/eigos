@@ -27,7 +27,8 @@ import type {PostgresReadProgramRegistry,PostgresReadRegistration} from './didi-
 import {PostgresTaskStorage} from './task-storage.js';
 import {PostgresActionJournal} from './action-journal.js';
 import {createPostgresActionAuthorization,type PostgresActionAuthorizationOptions,type PostgresActionProgramPolicy} from './action-authorization.js';
-import {withPostgresWorkerEvidenceAuthorization} from './task-output.js';
+import {withPostgresWorkerRequestAuthorization} from './task-output.js';
+import {withPostgresOntologyReleaseSnapshot} from './ontology-release.js';
 import {withPostgresPlanningReadGraph} from './planning-read-graph.js';
 
 type Registration=PostgresActionProgramPolicy&{program:PostgresActionProgramPolicy['program']&Pick<AgentProgram,'limits'|'privateInput'|'simulatedApproval'>};
@@ -73,12 +74,12 @@ export async function installPostgresAgentPlan(client:Client,input:PostgresWorkR
     if(intents.some(intent=>!['read','local','object_write'].includes(intent.effect)&&['dispatching','awaiting_remote','effect_unknown','needs_review'].includes(intent.state)))fail('An unconfirmed original business effect blocks new planning');
     const delivered=reads.deliveredObjects??reads.objects,preceding=new Set<string>(),planId=randomUUID();
     if(!delivered.some(value=>same(value.ref,state.scope)))fail('Read the task scope before selecting actions');
-    const data=await withPostgresWorkerEvidenceAuthorization(client,claim,options.policyDigest,(auth,admission,principal)=>
+    const data=await withPostgresOntologyReleaseSnapshot(client,()=>withPostgresWorkerRequestAuthorization(client,claim,options.policyDigest,(auth,admission,principal)=>
       withPostgresPlanningReadGraph(client,principal,job.id,options.policyDigest,auth,admission,async graph=>{
         const scope=await graph.read(claim.owner,state.scope);postgresConstrainReadDeadline(client,admission.validUntil);
         const request=state.composition?await runGraphProgramAsync(graph,readOntologyRequestProgram(graph,claim.owner,job.id)):d.request;
         return {scopeDigest:state.composition?digest(request):digest(scope.properties),model:graph.model,request};
-      },options.builder),options.builder,options.modelChannel,options.inspectClaim);
+      },options.builder),options.builder,options.modelChannel,options.inspectClaim));
     const steps:AgentActionPlan['steps']=[];
     for(const selected of decision.steps){
       if(preceding.has(selected.id)||new Set(selected.dependsOn).size!==selected.dependsOn.length||selected.dependsOn.some(id=>!preceding.has(id)))fail('Step IDs must be unique and dependencies must precede their consumers');
@@ -95,7 +96,7 @@ export async function installPostgresAgentPlan(client:Client,input:PostgresWorkR
         const scoped=componentContext(context,component,resolved.program);
         if(component.managedActionIds&&!component.managedActionIds.includes(selected.action))fail('Action is outside its explicitly selected managed context');
         if(!delivered.some(value=>same(value.ref,component.scope)))fail('Read this component scope before selecting its actions');
-        const scopeDigest=await withPostgresWorkerEvidenceAuthorization(client,claim,options.policyDigest,(auth,admission,principal)=>withPostgresPlanningReadGraph(client,principal,job.id,options.policyDigest,auth,admission,graph=>runGraphProgramAsync(graph,componentScopeDigestProgram(scoped,component.scope)),options.builder),options.builder,options.modelChannel,options.inspectClaim);
+        const scopeDigest=await withPostgresOntologyReleaseSnapshot(client,()=>withPostgresWorkerRequestAuthorization(client,claim,options.policyDigest,(auth,admission,principal)=>withPostgresPlanningReadGraph(client,principal,job.id,options.policyDigest,auth,admission,graph=>runGraphProgramAsync(graph,componentScopeDigestProgram(scoped,component.scope)),options.builder),options.builder,options.modelChannel,options.inspectClaim));
         pinned={binding:pin,contextDigest:component.digest,contextScope:component.scope,scopeDigest};
       }
       const definition=data.model.action(selected.action),operation=agentOperation(definition);

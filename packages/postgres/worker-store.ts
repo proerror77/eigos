@@ -16,7 +16,8 @@ import {postgresWorkerAdmission} from './worker-admission.js';
 import {PostgresTaskStorage} from './task-storage.js';
 import {postgresWorkerRequest} from './worker-input.js';
 import {postgresPrepareWorkerSeal,postgresRecordWorkerOutputs} from './worker-output.js';
-import {withPostgresWorkerEvidenceAuthorization,type PostgresTaskReadAuthorization} from './task-output.js';
+import {withPostgresWorkerEvidenceAuthorization,withPostgresWorkerRequestAuthorization,type PostgresTaskReadAuthorization} from './task-output.js';
+import {withPostgresOntologyReleaseSnapshot} from './ontology-release.js';
 import type {PostgresTaskReadAdmission} from './task-read-access.js';
 import {postgresBeginModelUsage,postgresFinishModelUsage,postgresRecordModelResponse} from './model-usage.js';
 import type {ModelUsageEvidence} from '../core/model-usage-context.js';
@@ -152,8 +153,8 @@ export class PostgresWorkerStore {
   readEvidence<T>(claim:PostgresWorkReference,modelChannel:string,action:(authorization:PostgresTaskReadAuthorization,admission:PostgresTaskReadAdmission,
     principal:Principal,client:Client)=>Promise<T>):Promise<T>{
     const reference=postgresWorkReference(claim);
-    return this.db.run(client=>withPostgresWorkerEvidenceAuthorization(client,reference,this.policy,
-      (auth,admission,principal)=>action(auth,admission,principal,client),this.kernel,modelChannel,fence=>this.db.inspectClaim(fence,this.policy)));
+    return this.db.run(client=>withPostgresOntologyReleaseSnapshot(client,()=>withPostgresWorkerRequestAuthorization(client,reference,this.policy,
+      (auth,admission,principal)=>action(auth,admission,principal,client),this.kernel,modelChannel,fence=>this.db.inspectClaim(fence,this.policy))));
   }
   private withUsageClaim<T>(input:PostgresWorkReference,action:(client:Client,claim:PostgresWorkReference)=>Promise<T>):Promise<T>{
     const claim=postgresWorkReference(input);

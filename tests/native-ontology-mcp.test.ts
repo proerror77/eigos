@@ -13,6 +13,10 @@ import {SecurityError} from '../packages/security/store.js';
 import type {PlanningReadReceipt} from '../packages/ontology/planning-contract.js';
 import type {AsyncNativePlanningSession,AsyncPlanningSession,NativePlanningSession} from '../packages/coordinator/native-planning-session.js';
 import {setTimeout as delay} from 'node:timers/promises';
+import {securityFixture} from './fixtures/security.js';
+import {ExecutionCatalog} from '../packages/core/catalog.js';
+import {TaskService} from '../packages/core/tasks.js';
+import {withAuthorization} from '../packages/security/context.js';
 
 async function fixture(finalSchema?: object,onRead?:(receipt:PlanningReadReceipt)=>void,adapt?:(session:OntologyPlanningSession)=>NativePlanningSession) {
   const b = backend(createExecutionCatalog()), job = b.submit(), other = b.submit({ requestId: 'another-owned-task' });
@@ -230,20 +234,22 @@ test('plain model JSON cannot replace native MCP completion and the attempted ru
 });
 
 test('native reasoning awaits SQL-shaped authorization and durable run evidence around the model call',async()=>{
- const f=await fixture();let channelChecks=0,recorded=false,reading=false;
+ const f=await fixture();let channelChecks=0,catalogueReads=0,recorded=false,reading=false;
  const session:AsyncPlanningSession={asynchronous:true,graph:{security:true},request:f.session.request,
   usesTaskContext:()=>f.session.usesTaskContext(),receipts:()=>f.session.receipts(),lastReceipt:()=>f.session.lastReceipt(),readBudget:()=>f.session.readBudget(),
   modelSessionKey:()=>f.session.modelSessionKey(),
   async prepareContext(...args){await delay(5);return f.session.prepareContext(...args);},
-  async catalog(){await delay(5);return f.session.catalog();},
+  async catalog(){await delay(5);catalogueReads++;return f.session.catalog();},
   async authorizeModel(){await delay(5);channelChecks++;},
   async call(...args){assert(reading);await delay(5);return f.session.call(...args);},
   async acceptReceipts(ids){assert(reading);await delay(5);f.session.acceptReceipts(ids);},
   async runNativeRead(action){assert.equal(reading,false);reading=true;try{return await action();}finally{reading=false;}},
  };
  try{
-  const result=await reasonWithOntology({ontologyTransport:'native-mcp',async runStructured(_prompt,_schema,_signal,options){
+  const result=await reasonWithOntology({ontologyTransport:'native-mcp',async runStructured(prompt,_schema,_signal,options){
    assert(channelChecks>=1);assert.equal(reading,false,'no database read scope remains open during a model call');
+   assert.equal(catalogueReads,1,'Use the actual MCP directory without a second authorized catalogue read');
+   assert.equal(prompt.includes('Use discover_actions to find current service bindings.'),options!.mcp!.tools.includes('discover_actions'));
    const connection=options!.mcp!,client=new Client({name:'async-reasoning-contract',version:'1'});
    const transport=new StreamableHTTPClientTransport(new URL(connection.url),{requestInit:{headers:{Authorization:`Bearer ${connection.token}`}}});
    await client.connect(transport);
@@ -256,8 +262,42 @@ test('native reasoning awaits SQL-shaped authorization and durable run evidence 
    await delay(20);assert.equal(run.ontologyMcp?.decisionSubmitted,true);assert(channelChecks>=2);recorded=true;
   });
   assert.equal(recorded,true,'the reasoning result cannot escape before its run evidence commits');
+  assert.equal(catalogueReads,1);
   assert.deepEqual(result.output,{message:'Actual transport receipt'});
  }finally{await f.close();}
+});
+
+test('reusing native tool metadata keeps the actual model-channel guards before dispatch and after a late response',async t=>{
+ for(const revokedAt of ['after-catalogue','after-model-response'] as const)await t.test(revokedAt,async()=>{
+  const f=securityFixture(),installation=f.installation('Native directory guards'),policy=f.jobs.security.policies;
+  const until=new Date(Date.now()+3600000).toISOString(),channel='native-directory-guard';
+  try{
+   f.coordinator.approveAgentGrant(f.member.id,{installationId:installation.id,capabilityIds:['brief.prepare'],
+    resources:[{type:'ServiceRequest',fields:['requestId','displayTitle','originalGoal','revision','conditions','progress','createdAt']}],
+    sourceBindingIds:[],channels:['agent_response','registered_model'],expiresAt:until});
+   policy.setRole({subjectKind:'installation',subjectId:installation.id,resource:{kind:'namespace',id:policy.model.ref.id,version:policy.model.ref.digest},role:'Viewer',expiresAt:until},policy.revision());
+   policy.setRecipient(installation.id,{classification:'sensitive',markings:['member_private','personal_data'],channels:['agent_response','registered_model'],expiresAt:until},policy.revision());
+   policy.setModelChannel(channel,{classification:'sensitive',markings:['member_private','personal_data'],expiresAt:until},policy.revision());
+   const principal={...f.principal,access:f.coordinator.authenticate(f.principal,installation.token)};
+   const tasks=new TaskService(f.jobs,{catalog:new ExecutionCatalog([],[],[])}),task=tasks.submit(principal,{service:'eigos.delegate',goal:'Synthetic original task guard',requestId:revokedAt});
+   const claim=f.jobs.claim(['eigos.delegate'],30000);assert(claim);assert.equal(claim.job.id,task.id);
+   const authority=f.jobs.security.workerScope(f.owner,task.id,claim.securityAuthorityId!,claim.token);
+   const session=new OntologyPlanningSession(f.jobs.ontology,f.owner,claim.job.delegation!.request);
+   let catalogueReads=0,guardCalls=0,modelCalls=0,recorded=0;
+   const revoke=()=>policy.setModelChannel(channel,{classification:'private',markings:[],expiresAt:until},policy.revision());
+   const catalog=session.catalog.bind(session),authorize=session.authorizeModel.bind(session);
+   session.catalog=()=>{const directory=catalog();catalogueReads++;if(revokedAt==='after-catalogue')revoke();return directory;};
+   session.authorizeModel=selected=>{guardCalls++;return authorize(selected);};
+   await assert.rejects(withAuthorization(authority,()=>reasonWithOntology({ontologyTransport:'native-mcp',securityChannelId:channel,
+    async runStructured(){modelCalls++;if(revokedAt==='after-model-response')revoke();return {output:{decisionDigest:'a'.repeat(64)},evidence:evidence()};},
+   },'Synthetic task, no provider operation.',{},session,new AbortController().signal,()=>{recorded++;})),
+   error=>error instanceof SecurityError&&['POLICY_CHANGED','OUTPUT_NOT_ALLOWED'].includes(error.reason));
+   assert.equal(catalogueReads,1);
+   assert.equal(modelCalls,revokedAt==='after-catalogue'?0:1);
+   assert.equal(guardCalls,revokedAt==='after-catalogue'?1:2,'The production authorization method must reject the revoked channel');
+   assert.equal(recorded,0);assert.equal(f.jobs.get(f.owner,task.id).artifact,undefined);assert.equal(f.jobs.intents(f.owner,task.id).length,0);
+  }finally{f.close();}
+ });
 });
 
 test('native decision remains unfrozen when the outer read or transaction fails after receipt acceptance',async()=>{
