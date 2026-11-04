@@ -59,7 +59,7 @@ function freezeJson<T>(value: T): T {
   }
   return value;
 }
-let templates: { registry: TrustedDefinitionRegistry; legacy: OntologyDocument; kernel: OntologyDocument; legacyModel: OntologyModel } | undefined;
+let templates: { registry: TrustedDefinitionRegistry; legacy: OntologyDocument; kernel: OntologyDocument; legacyModel: OntologyModel; kernelModel: OntologyModel } | undefined;
 // This cache contains definitions only. Database identity, data compatibility and
 // current permission checks still run separately for each store and request.
 const compiledModels = new WeakMap<TrustedDefinitionRegistry, Map<string, OntologyModel>>();
@@ -82,13 +82,13 @@ function trustedTemplates() {
     const legacyModel = compiledSeedModel(legacy, legacy.registry), kernelModel = compiledSeedModel(kernel, legacy.registry);
     const models = modelsFor(legacy.registry);
     models.set(digest(legacy.document), legacyModel); models.set(digest(kernel.document), kernelModel);
-    templates = { registry: legacy.registry, legacy: freezeJson(legacy.document), kernel: freezeJson(kernel.document), legacyModel };
+    templates = { registry: legacy.registry, legacy: freezeJson(legacy.document), kernel: freezeJson(kernel.document), legacyModel, kernelModel };
   }
   return templates;
 }
 
 /** Canonical reviewed kernel, independent of owner-authored active releases. */
-export function currentKernelImplementation(): OntologyModel { const value = trustedTemplates(); return compiledModel(value.kernel, value.registry); }
+export function currentKernelImplementation(): OntologyModel { return trustedTemplates().kernelModel; }
 
 /** Persistent metadata, independent of facts and authority. All returned models
  * are immutable release compilations; authorization is never cached here. */

@@ -1,11 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import { syncBuiltinESMExports } from 'node:module';
 import { BUSINESS_MODEL_DEFINITION } from '../packages/ontology/business-model.js';
 import { TrustedDefinitionRegistry } from '../packages/ontology/model-compiler.js';
 import { compiledSeedModel, createHistoricalKernelDefinition, createSeedDefinition, LEGACY_SEED_MODEL_REF } from '../packages/ontology/seed-definition.js';
 import frozenV16 from '../packages/ontology/history/business-v16.json' with { type: 'json' };
+import { currentKernelImplementation } from '../packages/ontology/definition-store.js';
 
 const seed = createSeedDefinition();
+
+test('canonical kernel lookup returns its reviewed compiled model without rehashing the static document', t => {
+  const model = currentKernelImplementation(), original = crypto.createHash;
+  let hashes = 0;
+  t.mock.method(crypto, 'createHash', (...args: Parameters<typeof original>) => { hashes++; return Reflect.apply(original, crypto, args); });
+  syncBuiltinESMExports();
+  try {
+    for (let index = 0; index < 20; index++) assert.equal(currentKernelImplementation(), model);
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+  assert.equal(hashes, 0, 'already frozen canonical definitions need no repeated whole-document fingerprint');
+});
 
 test('a genuine completed seed reuses its actual compiled model', () => {
   const model = compiledSeedModel(seed, seed.registry);

@@ -12,7 +12,7 @@ import { combineEnvelopes, type SecurityEnvelope } from '../security/envelope.js
 import { SecurityError } from '../security/errors.js';
 import { secureQuerySchema } from '../security/view-contracts.js';
 import { postgresEvaluateAuthorizedFunction } from './ontology-functions.js';
-import { postgresQueryAuthorizedObjects, type PostgresOntologyCursor } from './ontology-read-query.js';
+import { postgresQueryAuthorizedObjects, PostgresPlanningReadRows, type PostgresOntologyCursor } from './ontology-read-query.js';
 import { PostgresProjectionGraph } from './projection-graph.js';
 import { postgresBusinessSchema, postgresConstrainReadDeadline } from './runtime-transaction.js';
 import { postgresTaskReadOntology, postgresTaskResourceViewValidUntil, type PostgresTaskReadAdmission } from './task-read-access.js';
@@ -43,10 +43,12 @@ class PlanningReadGraph implements GraphStorage, ProjectionMetadata {
   private readonly owner: string;
   private readonly cursors = new Map<string, PostgresOntologyCursor>();
   private readonly inputs = new Map<string, SecurityEnvelope>();
+  private readonly readRows: PostgresPlanningReadRows;
   constructor(private readonly client: Client, private readonly principal: Principal, private readonly taskId: string,
     private readonly policy: string, private readonly auth: PostgresTaskReadAuthorization, private readonly admission: PostgresTaskReadAdmission,
     private readonly storage: PostgresProjectionGraph, private readonly builder?: StagedKernelBuilder,private readonly functionScope?:{id:string;authorization:import('./task-output.js').PostgresFunctionReadAuthorization}) {
     this.owner = ownerKey(principal); this.model = storage.model; this.releaseRef = storage.releaseRef;
+    this.readRows = new PostgresPlanningReadRows(client);
     this.planning = { revision: (owner: string) => this.revision(owner),
       evaluate: (owner: string, input: unknown, budget?: ReadBudget) => this.evaluate(owner, input, budget),
       virtualMembership: (owner: string, request: { id: string; revision: number }, ref: ObjectRef) => {
@@ -54,7 +56,7 @@ class PlanningReadGraph implements GraphStorage, ProjectionMetadata {
         return undefined;
       }, pipelineChanges: (owner: string, id: string, revision: number) => this.pipelineChanges(owner, id, revision) };
   }
-  close() { this.open = false; this.cursors.clear(); }
+  close() { this.open = false; this.cursors.clear(); this.readRows.close(); }
   private active(owner = this.owner) { if (!this.open || owner !== this.owner) throw new SecurityError('AUTHORIZATION_REQUIRED'); }
   private charge(budget: ReadBudget) { if (--budget.remaining < 0) throw new DomainError('CONFLICT', 'Ontology read work budget exhausted; narrow the query'); }
   private capture = (input: SecurityEnvelope) => { this.active(); this.inputs.set(digest(input), structuredClone(input)); };
@@ -64,15 +66,16 @@ class PlanningReadGraph implements GraphStorage, ProjectionMetadata {
     this.active(owner); this.charge(budget); objectRefSchema.parse(ref);
     // Absence may satisfy an optional projection. A present but forbidden row
     // must retain its authorization error rather than becoming empty context.
-    const exists = await this.client.query(`SELECT 1 FROM "${postgresBusinessSchema(this.client)}".ontology_objects WHERE owner=$1 AND type=$2 AND id=$3 LIMIT 1`, [owner, ref.type, ref.id]);
-    if (!exists.rowCount) throw new DomainError('NOT_FOUND', 'Ontology object is unavailable');
+    const exists = await this.readRows.read(this.client, ['exists', owner, ref], async () =>
+      (await this.client.query(`SELECT 1 FROM "${postgresBusinessSchema(this.client)}".ontology_objects WHERE owner=$1 AND type=$2 AND id=$3 LIMIT 1`, [owner, ref.type, ref.id])).rows);
+    if (!exists.length) throw new DomainError('NOT_FOUND', 'Ontology object is unavailable');
     const result = await this.auth.readObject(ref); this.capture(result.envelope); return result.object;
   }
   async query(owner: string, query: ObjectQuery, budget: ReadBudget = { remaining: 1000 }, readScope?: string) {
     this.active(owner);
     const result = await postgresQueryAuthorizedObjects(this.client, this.principal, secureQuerySchema.parse({ version: 2, taskId: this.taskId,
       expectedRequestRevision: this.admission.grant.requestRevision, query }), this.policy, this.auth, this.builder,
-    { budget, readScope, cursors: this.cursors, graph: this.storage, onRead: this.capture,
+    { budget, readScope, cursors: this.cursors, graph: this.storage, readRows: this.readRows, onRead: this.capture,
       derive: (id, object, nextBudget) => postgresEvaluateAuthorizedFunction(this.client, this.principal, this.taskId,
         this.admission.grant.requestRevision, { function: id, object }, this.policy, this.auth, this.builder,
         { graph: this.storage, budget: nextBudget, accessErrors: 'throw' }) });

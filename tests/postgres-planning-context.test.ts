@@ -12,6 +12,7 @@ import { runGraphProgramAsync } from '../packages/ontology/graph-program.js';
 import { readTaskContextProgram, assertTaskContextCurrentProgram, readTaskInstructionsProgram } from '../packages/coordinator/task-context.js';
 import { taskContextFields } from '../packages/security/task-context-contract.js';
 import { assessConditionsProgram } from '../packages/coordinator/conditions.js';
+import { PostgresPlanningReadRows } from '../packages/postgres/ontology-read-query.js';
 
 test('a processing-only PostgreSQL Worker reconstructs the original graph context without a user read token',
   { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async () => {
@@ -43,8 +44,11 @@ test('a processing-only PostgreSQL Worker reconstructs the original graph contex
           [claim.owner, `eigos.worker.finish:${t.authority.digest}`, digest([claim.job.id, claim.token])])).rowCount, 1);
       }).catch(error => { heartbeatFailure = error; }).finally(() => { heartbeat = undefined; }); }, 5000); timer.unref();
       let escaped: Parameters<Parameters<typeof withPostgresPlanningReadGraph>[6]>[0] | undefined;
+      let objectReads = 0;
       const context = await worker.readEvidence(claim, 'synthetic:planning-context', (auth, admission, principal, client) =>
-        withPostgresPlanningReadGraph(client, principal, task.id, t.policy, auth, admission, async graph => {
+        withPostgresPlanningReadGraph(client, principal, task.id, t.policy, {
+          ...auth, async readObject(...args) { objectReads++; return auth.readObject(...args); },
+        }, admission, async graph => {
           escaped = graph;
           assert.equal(principal.access?.actorKind, 'worker'); assert(!principal.scopes.includes('tasks:read'));
           assert.deepEqual(admission.grant.operations.includes('task.query'), false);
@@ -54,6 +58,31 @@ test('a processing-only PostgreSQL Worker reconstructs the original graph contex
           assert.deepEqual(context.data.sourceChanges, [change]);
           assert.equal(context.context.requestId, task.id); assert.equal(context.context.instructionCount, 1);
           assert(context.instructionRefs.length); assert(graph.evidence()!.lineage.length);
+          const originalQuery = client.query, physical = { exists: 0, related: 0 };
+          client.query = new Proxy(originalQuery, { apply(method, receiver, args) {
+            const sql = typeof args[0] === 'string' ? args[0] : args[0]?.text;
+            if (typeof sql === 'string') {
+              if (sql.startsWith(`SELECT 1 FROM ${q}.ontology_objects WHERE`)) physical.exists++;
+              if (sql.startsWith('SELECT selected.type,selected.object_id')) physical.related++;
+            }
+            return Reflect.apply(method, receiver, args);
+          } });
+          try {
+            const root = { type: 'ServiceRequest', id: task.id }, budget = { remaining: 2 }, before = objectReads;
+            const first = await graph.read(claim.owner, root, budget);
+            first.properties.originalGoal = 'A caller cannot change the next checked view';
+            assert.equal((await graph.read(claim.owner, root, budget)).properties.originalGoal, goal);
+            assert.equal(objectReads - before, 2, 'each logical read still checks the object authorization');
+            assert.equal(budget.remaining, 0);
+            await assert.rejects(graph.read(claim.owner, root, budget), /work budget/);
+            assert(physical.exists <= 1, 'repeated existence checks share only raw rows in this callback');
+            const navigation = graph.model.sides(root.type).find(side => side.other.type === 'RequestSpecification')!;
+            const query = { from: root, link: navigation.side.name, limit: 1,
+              select: [graph.model.object('RequestSpecification').primaryKey, graph.model.object('RequestSpecification').titleKey] };
+            const firstQuery = await graph.query(claim.owner, query), secondQuery = await graph.query(claim.owner, query);
+            assert.equal(firstQuery.items.length, 1); assert.deepEqual(secondQuery.items, firstQuery.items);
+            assert(physical.related <= 1, 'each checked relationship query reuses only its raw candidate rows');
+          } finally { client.query = originalQuery; }
           const selection = await postgresTaskQuerySelection(client, principal, task.id, t.policy), size = selection.rows.length, revision = selection.revision;
           selection.rows.length = 0; selection.revision = 0;
           const again = await postgresTaskQuerySelection(client, principal, task.id, t.policy);
@@ -65,6 +94,22 @@ test('a processing-only PostgreSQL Worker reconstructs the original graph contex
           return context;
         }));
       await assert.rejects(escaped!.read(claim.owner, { type: 'ServiceRequest', id: task.id }), /AUTHORIZATION_REQUIRED/);
+      let rawRows: PostgresPlanningReadRows | undefined, loaded = 0;
+      await t.run(async client => {
+        rawRows = new PostgresPlanningReadRows(client);
+        const load = async () => { loaded++; return (await client.query<{ marker: string }>("SELECT 'synthetic original'::text AS marker")).rows; };
+        const first = await rawRows.read(client, ['synthetic-row'], load); first[0]!.marker = 'changed by caller';
+        assert.equal((await rawRows.read(client, ['synthetic-row'], load))[0]!.marker, 'synthetic original');
+        assert.equal(loaded, 1);
+      });
+      await t.database.run(async client => {
+        await assert.rejects(rawRows!.read(client, ['synthetic-row'], async () => []), /AUTHORIZATION_REQUIRED/, 'another client cannot use the original raw rows');
+      });
+      await t.run(async client => {
+        await assert.rejects(rawRows!.read(client, ['synthetic-row'], async () => []), /AUTHORIZATION_REQUIRED/, 'the same client cannot lend a new transaction to an old cache');
+        rawRows!.close();
+        await assert.rejects(rawRows!.read(client, ['synthetic-row'], async () => []), /AUTHORIZATION_REQUIRED/);
+      });
       // Native tools own separate snapshots; a preceding call cannot lend its
       // identity projection lifetime or cached permission to a later RPC.
       await worker.readEvidence(claim, 'synthetic:planning-context', (auth, admission, principal, client) =>

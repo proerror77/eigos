@@ -14,7 +14,7 @@ import { projectionFields } from '../security/projections.js';
 import type { SecurityEnvelope } from '../security/envelope.js';
 import { secureQuerySchema } from '../security/view-contracts.js';
 import { PostgresProjectionGraph } from './projection-graph.js';
-import { postgresBusinessSchema, postgresConstrainReadDeadline } from './runtime-transaction.js';
+import { postgresBusinessSchema, postgresBusinessToken, postgresConstrainReadDeadline } from './runtime-transaction.js';
 import { withPostgresTaskReadGrant, postgresTaskReadOntology, postgresTaskQuerySelection, postgresTaskResourceViewValidUntil } from './task-read-access.js';
 import type { PostgresTaskReadAuthorization, PostgresDerivedRead } from './task-output.js';
 
@@ -22,11 +22,40 @@ const hidden = (error: unknown) => error instanceof SecurityError && ['AUTHORIZA
   || error instanceof DomainError && error.code === 'NOT_FOUND';
 
 export interface PostgresOntologyCursor{id:string;context:string;expiresAt:number;body:string}
+
+/** Raw selection rows in one explicitly immutable planning callback. This
+ * carries no object/field/source/output permission; every logical query still
+ * runs its normal checks. A pooled client cannot lend this to a new transaction. */
+export class PostgresPlanningReadRows {
+  private readonly token: object;
+  private closed = false;
+  private bytes = 0;
+  private readonly rows = new Map<string, { value: unknown[]; bytes: number }>();
+  constructor(private readonly client: Client) { this.token = postgresBusinessToken(client); }
+  private active(client: Client) {
+    if (this.closed || client !== this.client || postgresBusinessToken(client) !== this.token) throw new SecurityError('AUTHORIZATION_REQUIRED');
+  }
+  async read<T>(client: Client, identity: unknown, load: () => Promise<T[]>): Promise<T[]> {
+    this.active(client); const key = digest(identity), cached = this.rows.get(key);
+    if (cached) return structuredClone(cached.value) as T[];
+    const value = await load(); this.active(client);
+    const bytes = Buffer.byteLength(JSON.stringify(value));
+    if (bytes <= 4194304) {
+      while (this.rows.size >= 128 || this.bytes + bytes > 8388608) {
+        const first = this.rows.keys().next().value; if (first === undefined) break;
+        this.bytes -= this.rows.get(first)!.bytes; this.rows.delete(first);
+      }
+      this.rows.set(key, { value: structuredClone(value), bytes }); this.bytes += bytes;
+    }
+    return value;
+  }
+  close() { this.closed = true; this.rows.clear(); this.bytes = 0; }
+}
 /** Internal checked query on the caller's existing read snapshot. Calculation
  * cursors stay in that callback; public cursors are persisted after it closes. */
 export async function postgresQueryAuthorizedObjects(client:Client,principal:Principal,input:z.output<typeof secureQuerySchema>,
   policyDigest:string,auth:PostgresTaskReadAuthorization,builder?:StagedKernelBuilder,
-  options:{budget?:ReadBudget;readScope?:string;cursors?:Map<string,PostgresOntologyCursor>;graph?:PostgresProjectionGraph;onRead?:(envelope:SecurityEnvelope)=>void;derive?:(functionId:string,ref:ObjectRef,budget:ReadBudget)=>Promise<PostgresDerivedRead>}={}){
+  options:{budget?:ReadBudget;readScope?:string;cursors?:Map<string,PostgresOntologyCursor>;graph?:PostgresProjectionGraph;readRows?:PostgresPlanningReadRows;onRead?:(envelope:SecurityEnvelope)=>void;derive?:(functionId:string,ref:ObjectRef,budget:ReadBudget)=>Promise<PostgresDerivedRead>}={}){
   const p=structuredClone(principal),args=secureQuerySchema.parse(input),owner=ownerKey(p);
   let cursorWrite:PostgresOntologyCursor|undefined;
   const budget=options.budget??{remaining:1000};
@@ -71,13 +100,14 @@ export async function postgresQueryAuthorizedObjects(client:Client,principal:Pri
       // Narrow the already admitted inventory, without reading object bodies or
       // granting access. queryVisible still validates every stored definition
       // and relationship; checkedRead retains each candidate's full boundary.
-      const related=await client.query<{type:string;object_id:string}>(`SELECT selected.type,selected.object_id
+      const values=[JSON.stringify(selection.rows),owner,type,from.type,from.id,...(scoped?[ontology.ref.ontologyId]:[])];
+      const load=async()=>(await client.query<{type:string;object_id:string}>(`SELECT selected.type,selected.object_id
         FROM jsonb_to_recordset($1::jsonb) AS selected(type text,object_id text)
         WHERE EXISTS(SELECT 1 FROM ${q}.ontology_${scoped?'scoped_':''}links l
           WHERE l.owner=$2 AND l.type=$3 AND l.${side}_type=$4 AND l.${side}_id=$5
             AND l.${other}_type=selected.type AND l.${other}_id=selected.object_id${scoped?' AND l.ontology_id=$6':''})`,
-      [JSON.stringify(selection.rows),owner,type,from.type,from.id,...(scoped?[ontology.ref.ontologyId]:[])]);
-      candidates=related.rows;
+      values)).rows;
+      candidates=options.readRows?await options.readRows.read(client,['related-candidates',q,side,other,values],load):await load();
     }
     for (const row of candidates) {
       if (!types.has(String(row.type)) || 'object' in query && (row.type !== query.object.type || row.object_id !== query.object.id)) continue;
