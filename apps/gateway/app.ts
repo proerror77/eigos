@@ -27,6 +27,7 @@ import { JobStore } from '../../packages/core/store.js';
 import { TaskService } from '../../packages/core/tasks.js';
 import { publicTask as taskSummary } from './task-view.js';
 import { AuthorizationCoordinator } from '../../packages/security/coordinator.js';
+import { prepareDefinitionMetadata } from '../../packages/security/definition-view.js';
 import { SecurityError } from '../../packages/security/store.js';
 import { securityErrorResponse } from '../../packages/security/error-guidance.js';
 import { accessContextSchema } from '../../packages/security/contracts.js';
@@ -101,6 +102,7 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
   try {
     const relayConfig = config.EIGOS_TASK_RELAY_FILE ? readTaskRelayConfig(config.EIGOS_TASK_RELAY_FILE) : undefined;
     relay = relayConfig ? new TaskRelayGateway(store, tasks, config.PUBLIC_URL, relayConfig, config.EIGOS_DIDI_RELAY_AGENT_ID) : undefined;
+    if (security) prepareDefinitionMetadata(store.security.model, type => store.security.policies.fields(type));
     security?.start();
     if (config.EIGOS_MESSAGING_ENABLED === 'true') {
       if (!config.authority || !security || !relay?.enrollment || !relayConfig || !config.EIGOS_MESSAGING_NODE_DIR)
