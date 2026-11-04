@@ -101,8 +101,14 @@ test('Coordinator success requires actual non-skipped TAP cases and all four rev
 
 test('immutable release proof requires the actual successful PG groups as well as their aggregate',()=>{
   const sha='1'.repeat(40),run={id:17,head_sha:sha,status:'completed',conclusion:'success',html_url:'https://github.com/example/eigos/actions/runs/17',head_repository:{full_name:'example/eigos'}};
-  const names=['scope','verify','relay-postgres',...POSTGRES_GROUP_JOBS,...POSTGRES_COORDINATOR_JOBS,...POSTGRES_EXECUTION_JOBS,...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
-  const jobs=names.map(name=>({name,status:'completed',conclusion:'success',...(name==='verify'?{steps:['npm run check','npm run build','npm run test:e2e:run'].map(command=>({name:'Run '+command,status:'completed',conclusion:'success'}))}:name==='postgres-vectors'?{steps:[{name:'Run node scripts/postgres-tests.mjs run --group vectors',status:'completed',conclusion:'success'}]}:{})}));
+  const names=['scope','verify','relay-postgres',...POSTGRES_GROUP_JOBS,...POSTGRES_COORDINATOR_JOBS,...POSTGRES_EXECUTION_JOBS,...Array.from({length:8},(_,i)=>`tests (${i+1})`),'minimum-node'];
+  const minimumSteps=['Verify exact source','Run node --import tsx --test tests/transaction-savepoints.test.ts tests/execution-projection-noop.test.ts tests/graph-read-window.test.ts'];
+  const jobs=names.map(name=>({name,status:'completed',conclusion:'success',...(name==='verify'?{steps:['npm run check','npm run build','npm run test:e2e:run'].map(command=>({name:'Run '+command,status:'completed',conclusion:'success'}))}:name==='postgres-vectors'?{steps:[{name:'Run node scripts/postgres-tests.mjs run --group vectors',status:'completed',conclusion:'success'}]}:name==='minimum-node'?{steps:minimumSteps.map(name=>({name,status:'completed',conclusion:'success'}))}:{})}));
+  assert.equal(names.length,25);
   assert.deepEqual(proveExactCi(run,jobs,sha,'example/eigos').jobs,names);
-  for(const name of [...POSTGRES_GROUP_JOBS,...POSTGRES_COORDINATOR_JOBS,...POSTGRES_EXECUTION_JOBS])assert.throws(()=>proveExactCi(run,jobs.filter(job=>job.name!==name),sha,'example/eigos'),/Required CI job/);
+  for(const name of [...POSTGRES_GROUP_JOBS,...POSTGRES_COORDINATOR_JOBS,...POSTGRES_EXECUTION_JOBS,'minimum-node']){
+    assert.throws(()=>proveExactCi(run,jobs.filter(job=>job.name!==name),sha,'example/eigos'),/Required CI job/);
+    assert.throws(()=>proveExactCi(run,jobs.map(job=>job.name===name?{...job,conclusion:'skipped'}:job),sha,'example/eigos'),/Required CI job/);
+  }
+  for(const name of minimumSteps)assert.throws(()=>proveExactCi(run,jobs.map(job=>job.name==='minimum-node'?{...job,steps:job.steps.map(step=>step.name===name?{...step,conclusion:'skipped'}:step)}:job),sha,'example/eigos'),/minimum-node runtime validation/);
 });
