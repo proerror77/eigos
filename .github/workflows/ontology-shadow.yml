@@ -1,0 +1,27 @@
+name: Ontology candidate shadow
+on:
+  pull_request:
+    paths:
+      - 'packages/ontology/**'
+      - 'scripts/ontology-shadow.mts'
+      - 'tests/ontology-shadow.test.ts'
+      - '.github/workflows/ontology-shadow.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  didi-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: astral-sh/setup-uv@v6
+      - run: npm ci
+      - run: mvn -q -f packages/ontology/shadow/pom.xml org.apache.maven.plugins:maven-dependency-plugin:3.8.1:build-classpath
+      - run: node --import tsx --test tests/ontology-shadow.test.ts
+        env:
+          EIGOS_TEST_SHADOW_ENGINES: '1'
