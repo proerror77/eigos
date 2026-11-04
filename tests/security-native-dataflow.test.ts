@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {digest} from '../packages/core/delegation.js';
-import {acknowledgeReads} from './backend-fixture.js';
+import {acknowledgeReads,observeTaskContext} from './backend-fixture.js';
 import {securityFixture} from './fixtures/security.js';
 import {didiFixture,input as rideInput} from './fixtures/didi.js';
 import {securedDidiReasoner,runNativeDidiTask} from './fixtures/secured-didi.js';
@@ -16,6 +16,7 @@ import {Coordinator} from '../packages/coordinator/coordinator.js';
 import type {AgentDecision} from '../packages/ontology/agent-actions.js';
 import type {DidiData} from '../packages/capabilities/didi/contracts.js';
 import type {ActionDiscoveryPage} from '../packages/core/action-bindings.js';
+import type {planServices} from '../packages/coordinator/service-planner.js';
 
 function fixture(mutate?:(decision:AgentDecision)=>void){
   const f=securityFixture(),source=didiFixture({booking:true}),program=new DidiAgentProgram(source.binding,{connector:source.connector});
@@ -35,6 +36,51 @@ function fixture(mutate?:(decision:AgentDecision)=>void){
   const {reasoner}=securedDidiReasoner(program,'native-goal',{dataflow:true,mutate}),coordinator=new Coordinator(f.jobs,reasoner,catalog,{allowSandbox:true});
   return {...f,source,program,policy,profile,install,principal,tasks,task,coordinator,reasoner,close:()=>{manager.close();f.close();source.close();}};
 }
+
+test('foundation planning uses current authorized metadata and leaves source execution to the original verified decision',{timeout:180000},async t=>{
+  t.mock.timers.enable({apis:['Date'],now:Date.now()});const f=fixture(),ground=f.reasoner.ground,act=f.reasoner.act!;
+  let planned=false,consumed=false;
+  f.reasoner.ground=async(request,caps,signal,access)=>{
+    observeTaskContext(access);
+    const before=f.source.calls.length;
+    const result=access.session.call('plan_services',{goal:{kind:'needs',needs:[{id:'estimate',role:'ride.estimate',
+      source:{messageId:request.messages[0]!.id,quote:request.messages[0]!.text},
+      output:{type:'RideEstimateObservation',phase:'quote'},payment:{instrument:'synthetic-wallet',currency:'JPY'}}]}}) as ReturnType<typeof planServices>;
+    assert.equal(result.executionAllowed,false);assert.equal(result.availabilityProof,false);
+    assert.equal(result.needs[0]!.alternatives[0]!.steps.length,3);
+    assert.equal(result.needs[0]!.applicability.find(check=>check.check==='payment_acceptance')!.result,'unknown');
+    assert.equal(f.source.calls.length,before);planned=true;
+    const response=await ground(request,caps,signal,access);acknowledgeReads(access);return response;
+  };
+  f.reasoner.act=async(ctx,signal,access)=>{
+    const response=await act(ctx,signal,access),decision=response.decision;
+    if(decision.kind==='execute'&&decision.plannedGoalCompletion){
+      const result=access.session.call('plan_services',{goal:{kind:'needs',needs:[{id:'estimate',role:'ride.estimate',
+        source:{messageId:ctx.request.messages[0]!.id,quote:ctx.request.messages[0]!.text},output:{type:'RideEstimateObservation',phase:'quote'}}]}}) as ReturnType<typeof planServices>;
+      const steps=result.needs[0]!.alternatives[0]!.steps,oldIds=new Map<string,string>();
+      const selected=steps.map(step=>{
+        // The synthetic interpreter supplies literal current scope/keywords.
+        // The host planner supplies the dependency edges, named ports and
+        // registered scalar derivations consumed by the actual Worker.
+        const original=decision.steps.find(value=>value.action===step.action&&(step.action!=='SearchDidiPlaces'||JSON.parse(value.argumentsJson).role===step.role))!;
+        assert(original);oldIds.set(original.id,step.id);
+        return {...original,id:step.id,bindingDigest:step.bindingDigest,dependsOn:step.dependsOn,
+          inputRefs:step.inputBindings.map(binding=>({stepId:binding.stepId,targetKey:binding.targetKey,port:binding.port,...(binding.derive?{compute:binding.derive}:{})}))};
+      });
+      for(const component of decision.plannedGoalCompletion.components)for(const ref of component.inputRefs)ref.stepId=oldIds.get(ref.stepId)!;
+      decision.steps=selected;consumed=true;acknowledgeReads(access);
+    }
+    return {...response,evidence:{...response.evidence,decisionDigest:digest(decision)}};
+  };
+  try{
+    await runNativeDidiTask(f.jobs,f.coordinator,f.owner,f.task.id,t.signal,()=>t.mock.timers.tick(20));
+    const job=f.jobs.get(f.owner,f.task.id);assert(planned);assert(consumed);
+    assert.equal(job.state,'completed',JSON.stringify(job.delegation!.agent?.feedback));
+    assert.equal(job.delegation!.acceptance?.accepted,true);
+    assert.equal(f.source.calls.filter(call=>call.name==='maps_textsearch').length,2);
+    assert.equal(f.source.calls.filter(call=>call.name==='taxi_estimate').length,1);
+  }finally{f.close();}
+});
 
 test('a native mixed frontier retains model-read inputs beside accepted deferred outputs',{timeout:180000},async t=>{
   t.mock.timers.enable({apis:['Date'],now:Date.now()});const f=fixture(),act=f.reasoner.act!;

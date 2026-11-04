@@ -3043,7 +3043,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "16eb5ae0c1f0e4e7c511918c5411128cad609f4b82735f4826c6afa3394821a3",
+      "sourceDigest": "22b134e4a3afca72785d7db3a4724518fcb7480b9cee6a98c3bb96ec5bcd429a",
       "channels": [
         "model",
         "query"
@@ -3615,7 +3615,7 @@
     {
       "id": "planning-authority-contract",
       "file": "packages/ontology/planning-contract.ts",
-      "sourceDigest": "bef56b18705e79ac53d7fb4dba2f534762d607f8c1c8ba825547f964698d5af0",
+      "sourceDigest": "0b09955cb536e752df3ea28e6058ea666e1cb747f10274ae000d81bdffe2d875",
       "channels": [
         "internal"
       ],
@@ -3627,7 +3627,7 @@
     {
       "id": "model-turn-channel",
       "file": "packages/coordinator/reasoning-loop.ts",
-      "sourceDigest": "be0698b854289df561cbff637ec0013a203468f735e8b6faa014529a0cc02ed2",
+      "sourceDigest": "6c2e1defe8d92f6fbe62a31a02240e85846f1da01195762b91de24b55e260510",
       "channels": [
         "model"
       ],
@@ -4229,7 +4229,7 @@
     {
       "id": "native-model-mcp",
       "file": "packages/coordinator/ontology-mcp.ts",
-      "sourceDigest": "9d2010493002025ad203058a10a6e09e9f477998ce0c4f135df6ed296ff51159",
+      "sourceDigest": "2aabb57d3df5f9a07794b57e13474d133178d483b5f872341c6b7ac27e37927a",
       "channels": [
         "model"
       ],
@@ -5669,6 +5669,32 @@
       "targetControl": "Accurate release construction and immutable historical interpretation",
       "stage": "S2",
       "sourceDigest": "494425fc3c0146ac23dc782ee863a5e4f683743067d4f62c9b489a15b3f902fc"
+    },
+    {
+      "id": "service-planning-contract",
+      "file": "packages/ontology/service-planning.ts",
+      "channels": [
+        "model_input",
+        "model_output"
+      ],
+      "content": "Typed bounded service needs, source quotations, roles, phases, targets and contract-only planning results.",
+      "currentControl": "Strict bounded schemas; current task quotations; no credentials, live observations, grants or execution.",
+      "targetControl": "Task-scoped contracts and independent actual source, authority and outcome checks.",
+      "stage": "S2",
+      "sourceDigest": "7abd2a8833f1e7d0e10cd926c53860b5e29715656b1a9f0c327af22c04233d8a"
+    },
+    {
+      "id": "bounded-service-planner",
+      "file": "packages/coordinator/service-planner.ts",
+      "channels": [
+        "model_input",
+        "model_output"
+      ],
+      "content": "Deterministic explicit-scope need expansion and bounded discovery of published named action dependencies.",
+      "currentControl": "Current authorized task catalog and type visibility; exact bindings, phase checks, graph bounds, no provider calls or executable plan.",
+      "targetControl": "Current source and task authority on every read; proposals never establish availability or business completion.",
+      "stage": "S3",
+      "sourceDigest": "4b72720f49b9595fc9d335fea142bc78f596cab86c6e8d7b9353a29174280ba2"
     }
   ]
 }
