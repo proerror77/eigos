@@ -15,7 +15,7 @@ const harnessImagePending=`Harness remains a candidate until the native dsh ${HA
 const sha=/^[a-f0-9]{64}$/,commit=/^(?!0{40}$)[a-f0-9]{40}$/;
 const image=/^[a-z0-9][a-z0-9.:-]*(?:\/[a-z0-9][a-z0-9._-]*)+@sha256:[a-f0-9]{64}$/;
 const roles=['gateway','relay','worker'];
-const requiredJobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)','postgres-execution-cases (contracts)','postgres-execution-cases (planning)','postgres-execution-cases (documents)','postgres-execution-cases (didi)','postgres-execution-cases (transitions)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
+const requiredJobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-vectors','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)','postgres-execution-cases (contracts)','postgres-execution-cases (planning)','postgres-execution-cases (documents)','postgres-execution-cases (didi)','postgres-execution-cases (transitions)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
 function fail(message){throw new Error(message);}
 function backendTools(backend){if(backend==='codex')return RELEASE_TOOLS;if(backend==='harness')return HARNESS_RELEASE_TOOLS;fail('Only the registered codex or harness release backend is supported');}
 function assertHarnessInventory(value){
@@ -66,6 +66,7 @@ export function proveExactCi(run,jobs,sourceSha,repository){
   if(!commit.test(sourceSha)||run.head_sha!==sourceSha||run.status!=='completed'||run.conclusion!=='success'||run.head_repository?.full_name!==repository||!Array.isArray(jobs))fail('CI must belong to the exact source and repository');
   for(const name of requiredJobs){const matches=jobs.filter(job=>job.name===name);if(matches.length!==1||matches[0].status!=='completed'||matches[0].conclusion!=='success')fail(`Required CI job is not successful: ${name}`);}
   const verify=jobs.find(job=>job.name==='verify');for(const command of ['npm run check','npm run build','npm run test:e2e:run'])if(!verify.steps?.some(step=>step.name===`Run ${command}`&&step.status==='completed'&&step.conclusion==='success'))fail('Release CI must include runtime validation; run the CI workflow manually for this source');
+  const vectors=jobs.find(job=>job.name==='postgres-vectors');if(!vectors.steps?.some(step=>step.name==='Run node scripts/postgres-tests.mjs run --group vectors'&&step.status==='completed'&&step.conclusion==='success'))fail('Release CI must include actual non-skipped vector validation');
   return ciProof({sourceSha,runId:run.id,url:run.html_url,jobs:requiredJobs},sourceSha);
 }
 function payloadOf(value){return {format:value.format,source:value.source,backend:value.backend,tools:value.tools,runtime:value.runtime,sourceFiles:value.sourceFiles,lockfile:value.lockfile,ontology:value.ontology};}

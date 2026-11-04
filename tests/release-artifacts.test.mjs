@@ -8,7 +8,7 @@ import {parse} from 'yaml';
 import {artifactDigest,canonical,createReleaseManifest,createReleaseArtifacts,validateReleaseManifest,readReleaseManifest,verifyReleaseArtifacts,verifyRuntimeImagePayload,finalizeReleaseArtifacts,selectExactCiRun,proveExactCi,HARNESS_RELEASE_TOOLS} from '../scripts/release-artifacts.mjs';
 
 const sourceSha='1'.repeat(40),rawDigest=bytes=>createHash('sha256').update(bytes).digest('hex'),roles=['gateway','relay','worker'];
-const jobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)','postgres-execution-cases (contracts)','postgres-execution-cases (planning)','postgres-execution-cases (documents)','postgres-execution-cases (didi)','postgres-execution-cases (transitions)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
+const jobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-vectors','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)','postgres-execution-cases (contracts)','postgres-execution-cases (planning)','postgres-execution-cases (documents)','postgres-execution-cases (didi)','postgres-execution-cases (transitions)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
 const ci={sourceSha,runId:17,url:'https://github.com/example/eigos/actions/runs/17',jobs};
 const images=Object.fromEntries(roles.map((role,i)=>[role,`ghcr.io/example/eigos/${role}@sha256:${String(i+1).repeat(64)}`]));
 const harnessImage={sourceSha,image:images.worker,version:HARNESS_RELEASE_TOOLS.harness,providers:['deepseek-official','openai-codex'],initialize:'acknowledged',modelTurns:0,compiledAdapter:'present',state:'candidate'};
@@ -66,11 +66,13 @@ test('artifact inventories reject private state, traversal, symlinks and invente
 });
 
 test('latest exact CI, all required jobs and real runtime validation are gates before publishing',()=>{
-  const run={id:17,run_number:4,run_attempt:1,head_sha:sourceSha,status:'completed',conclusion:'success',html_url:ci.url,head_repository:{full_name:'example/eigos'}},checks=jobs.map(name=>({name,status:'completed',conclusion:'success',...(name==='verify'?{steps:['npm run check','npm run build','npm run test:e2e:run'].map(command=>({name:`Run ${command}`,status:'completed',conclusion:'success'}))}:{})}));
+  const run={id:17,run_number:4,run_attempt:1,head_sha:sourceSha,status:'completed',conclusion:'success',html_url:ci.url,head_repository:{full_name:'example/eigos'}},checks=jobs.map(name=>({name,status:'completed',conclusion:'success',...(name==='verify'?{steps:['npm run check','npm run build','npm run test:e2e:run'].map(command=>({name:`Run ${command}`,status:'completed',conclusion:'success'}))}:name==='postgres-vectors'?{steps:[{name:'Run node scripts/postgres-tests.mjs run --group vectors',status:'completed',conclusion:'success'}]}:{})}));
   assert.equal(selectExactCiRun({workflow_runs:[run]},sourceSha).id,17);assert.deepEqual(proveExactCi(run,checks,sourceSha,'example/eigos'),ci);
   assert.throws(()=>selectExactCiRun({workflow_runs:[run,{...run,id:18,run_number:5,status:'in_progress',conclusion:null}]},sourceSha),/latest CI/);
   assert.throws(()=>proveExactCi(run,checks.filter(job=>job.name!=='relay-postgres'),sourceSha,'example/eigos'),/Required CI job/);
   assert.throws(()=>proveExactCi(run,checks.map(job=>job.name==='verify'?{...job,steps:[]}:job),sourceSha,'example/eigos'),/runtime validation/);
+  assert.throws(()=>proveExactCi(run,checks.map(job=>job.name==='postgres-vectors'?{...job,steps:[]}:job),sourceSha,'example/eigos'),/vector validation/);
+  assert.throws(()=>proveExactCi(run,checks.map(job=>job.name==='postgres-vectors'?{...job,steps:job.steps.map(step=>({...step,conclusion:'skipped'}))}:job),sourceSha,'example/eigos'),/vector validation/);
   assert.throws(()=>proveExactCi({...run,head_repository:{full_name:'foreign/repo'}},checks,sourceSha,'example/eigos'),/exact source and repository/);
 });
 
@@ -140,6 +142,8 @@ test('container build inputs include PA assets and role images retain nonroot an
   const docker=readFileSync(new URL('../Dockerfile',import.meta.url),'utf8'),ignore=readFileSync(new URL('../.dockerignore',import.meta.url),'utf8');
   assert.match(docker,/COPY integrations\/grok\/eigos-delegate/);assert.match(docker,/node:22\.22\.3-bookworm-slim/);assert.match(docker,/@openai\/codex@0\.164\.0/);assert.match(docker,/npm ci/);assert.match(docker,/USER node/);assert.match(docker,/AS gateway/);assert.match(docker,/AS relay/);assert.match(docker,/AS worker-codex/);assert.match(docker,/AS worker-harness/);assert.match(docker,/@deepseek-ai\/dsh@0\.2\.1-rc\.5/);assert.match(docker,/@deepseek-ai\/dsh-llm-pi-ai@0\.2\.1-rc\.5/);
   for(const pattern of ['**/.env*','**/*sqlite*','**/auth.json','**/private.config*'])assert(ignore.includes(pattern));
+  assert(ignore.includes('!scripts/postgres-task-vectors.mjs'));
+  assert(docker.split('\n').some(line=>line.startsWith('COPY scripts/')&&line.includes('scripts/postgres-task-vectors.mjs')),'the actual operator CLI must enter the build context, not merely the source tree');
 });
 
 test('PR container smoke cannot publish while release publication requires explicit manual dispatch',()=>{
