@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { randomBytes, randomUUID } from 'node:crypto';
+import crypto, { randomBytes, randomUUID } from 'node:crypto';
+import { syncBuiltinESMExports } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { networkFixture, type NetworkFixture } from './fixtures/network-pilot.js';
 import { NetworkStore } from '../packages/network/store.js';
@@ -9,6 +10,13 @@ import { commands } from '../packages/network/contracts.js';
 import { ownerKey } from '../packages/core/domain.js';
 
 const code = (v: string) => (e: unknown) => !!e && typeof e === 'object' && 'code' in e && e.code === v;
+function assertPublicActivityFields(value: unknown): void {
+  if (Array.isArray(value)) { for (const item of value) assertPublicActivityFields(item); return; }
+  if (value && typeof value === 'object') for (const [key, child] of Object.entries(value)) {
+    assert(!['seq', 'owner', 'ownerKey', 'highWater', 'total'].includes(key), `Internal activity field exposed: ${key}`);
+    assertPublicActivityFields(child);
+  }
+}
 const feed = (f: NetworkFixture, input: object = {}, user = f.b) => f.service.updates(user.p, user.token, { version: 1, spaceId: f.store.spaceId, ...input });
 function share(f: NetworkFixture, content?: object, recipients = [f.b.member.id, f.c.member.id], lifetime = 3600000, previous?: string) {
   const draftId = content ? f.command({ operation: 'draft.create', content }).refs[0]!.id : f.draft();
@@ -78,7 +86,7 @@ test('fixed high water and checkpoints recover every new visible event without m
     assert.deepEqual(feed(f, { cursor: last.page.checkpoint }).items, incremental.items);
     assert.deepEqual(feed(f, { cursor: incremental.page.checkpoint }).items, []);
     assert.equal(f.store.visibilityRevision(), eventCount); assert.equal(f.db.prepare('SELECT count(*) AS n FROM network_commands').get()!.n, commandsBefore);
-    assert(!('seq' in incremental)); assert(!('highWater' in incremental));
+    assertPublicActivityFields(incremental);
   } finally { f.close(); }
 });
 
@@ -93,16 +101,39 @@ test('closed needs emit their current state, never old open projections or priva
   } finally { f.close(); }
 });
 
-test('empty pages advance across hidden events; response size and scan budgets stay bounded', () => {
+test('empty pages advance across hidden events; response size and scan budgets stay bounded', t => {
   const f = networkFixture(); try {
-    f.store.transaction(() => { for (let n = 0; n < 205; n++) f.store.event('draft_created', randomUUID()); });
+    const hiddenIds = Array.from({ length: 205 }, () => randomUUID());
+    f.store.transaction(() => { for (const id of hiddenIds) f.store.event('draft_created', id); });
     share(f);
-    const first = feed(f); assert.deepEqual(first.items, []); assert.equal(first.page.hasMore, true); assert(first.page.cursor);
+    // Select one test-only IV whose opaque encoding contains the substring.
+    // The real service still constructs and authenticates this cursor itself.
+    const iv = Buffer.from('seqAAAAAAAAAAAAA', 'base64url'), original = crypto.randomBytes;
+    const entropy = t.mock.method(crypto, 'randomBytes', (size: number) => size === 12 ? Buffer.from(iv) : original(size));
+    let first: ReturnType<typeof feed>;
+    try { syncBuiltinESMExports(); first = feed(f); }
+    finally { entropy.mock.restore(); syncBuiltinESMExports(); }
+    assert.deepEqual(first.items, []); assert.equal(first.page.hasMore, true); assert(first.page.cursor);
+    assert(first.page.cursor.startsWith('seq'));
     const next = feed(f, { cursor: first.page.cursor }); assert.equal(next.items.length, 1); assert.equal(next.page.hasMore, false);
-    const encoded = JSON.stringify(first); assert(!encoded.includes('draft_created')); assert(!encoded.includes('seq')); assert(!('total' in first));
+    const encoded = JSON.stringify({ first, next }); assert(encoded.includes('seq'), 'The old substring assertion would reject this valid opaque cursor');
+    assertPublicActivityFields(first); assertPublicActivityFields(next);
+    assert(!encoded.includes('draft_created'));
+    for (const id of hiddenIds) assert(!encoded.includes(id));
+    for (const user of [f.a, f.b, f.c]) assert(!encoded.includes(ownerKey(user.p)));
     assert(Buffer.byteLength(JSON.stringify(next)) < 65536);
     assert.throws(() => feed(f, { limit: 21 }));
   } finally { f.close(); }
+});
+
+test('activity privacy assertions permit opaque seq values but reject real internal fields recursively', () => {
+  const visible = { items: [{ eventId: 'opaque-seq-event', publication: { ref: { id: 'opaque-seq-publication' } } }], page: { cursor: 'opaque-seq-cursor' } };
+  assertPublicActivityFields(visible);
+  for (const field of ['seq', 'owner', 'ownerKey', 'highWater', 'total']) {
+    assert.throws(() => assertPublicActivityFields({ ...visible, [field]: 1 }), /Internal activity field exposed/);
+    assert.throws(() => assertPublicActivityFields({ ...visible, page: { ...visible.page, [field]: 1 } }), /Internal activity field exposed/);
+    assert.throws(() => assertPublicActivityFields({ ...visible, items: [{ publication: { representations: [{ [field]: 1 }] } }] }), /Internal activity field exposed/);
+  }
 });
 
 test('cursor context rejects another viewer, filter, private ontology token, tampering and expiration', () => {
