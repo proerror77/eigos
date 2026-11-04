@@ -9,6 +9,17 @@ export const nameSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/).refine
 export const objectRefSchema = z.object({ type: nameSchema, id: z.string().min(1).max(200) }).strict();
 export type ObjectRef = z.infer<typeof objectRefSchema>;
 export type ScalarKind = 'string' | 'integer' | 'boolean' | 'timestamp' | 'decimal' | 'struct' | 'array';
+export const linkSearchSchema = z.string().trim().min(1).max(100).optional().describe('Filter relationships by a substring of their visible names, target API IDs or descriptions. A filtered list does not prove that other relationships or data are absent.');
+/** Filter only metadata already selected by the caller's authorization layer. */
+export function filterRelationshipMetadata<T extends object>(definition: T, search?: string): T {
+  if (!search) return definition;
+  const result = { ...definition } as Record<string, unknown>, needle = search.toLowerCase();
+  for (const key of ['links', 'linkConstraints']) if (Array.isArray(result[key])) {
+    result[key] = (result[key] as Record<string, unknown>[]).filter(link => [link.id, link.name, link.target, link.description].filter(value => typeof value === 'string').join(' ').toLowerCase().includes(needle));
+    result.linksFiltered = true;
+  }
+  return result as T;
+}
 export interface PropertyDefinition {
   description: string;
   kind: ScalarKind;
@@ -50,6 +61,8 @@ export interface ObjectTypeDefinition {
   aliases: string[];
   description: string;
   primaryKey: string;
+  /** Versioned discovery explanation; does not change the stored data contract. */
+  businessDescription?: string;
   titleKey: string;
   properties: Record<string, PropertyDefinition>;
   interfaces?: { id: string; propertyMap?: Record<string, string>; linkMap?: Record<string, string>; actionMap?: Record<string, InterfaceActionMapping> }[];
@@ -219,6 +232,9 @@ export class OntologyModel {
       }
       for (const implementation of item.interfaces ?? []) if (Object.entries(implementation.linkMap ?? {}).some(([alias, actual]) => !this.interfaceLinks(implementation.id).some(link => link.name === alias) || !nameSchema.safeParse(actual).success)) invalid('Unknown interface relationship mapping');
       const { links: _links, visibility: _visibility, ...objectDefinition } = this.describeType(item.id) as Record<string, unknown>;
+      // Editorial explanations enter the release/model digest through describeType,
+      // while existing facts retain their original, reviewed writer fingerprint.
+      objectDefinition.description = item.description;
       // Read views expose existing fields and relationships without relabelling
       // their historical writer. Their mappings still enter the model digest.
       objectDefinition.interfaces = storedInterfaces;
@@ -305,7 +321,10 @@ export class OntologyModel {
         } else if (mapping.outputMap) invalid('Output port mappings require an interface port contract');
       }
     }
-    this.ref = Object.freeze({ id: definition.id, version: definition.version, digest: digest({ objects: [...this.objects.keys()].map(id => this.describeType(id)), interfaces: [...this.interfaces.keys()].map(id => this.describeType(id)), links: this.links, actions: this.actions, functions: this.functions }) });
+    const documented = [...this.objects.values()].filter(type => type.businessDescription !== undefined);
+    this.ref = Object.freeze({ id: definition.id, version: definition.version, digest: digest({ objects: [...this.objects.keys()].map(id => this.describeType(id)), interfaces: [...this.interfaces.keys()].map(id => this.describeType(id)), links: this.links, actions: this.actions, functions: this.functions,
+      // A display override must not conceal a different underlying data contract.
+      ...(documented.length ? { documentedContracts: documented.map(type => ({ id: type.id, fingerprint: this.fingerprint(type.id) })) } : {}) }) });
     Object.defineProperty(this, 'ref', { writable: false, configurable: false });
   }
   private interfaceProperties(id: string, active = new Set<string>()): Record<string, PropertyDefinition> {
@@ -420,7 +439,7 @@ export class OntologyModel {
     if (cached) return structuredClone(cached);
     const i = this.interfaces.get(id), o = this.objects.get(id);
     if (!i && !o) invalid('Unknown ontology type');
-    const description = { kind: i ? 'interface' : 'object', id, ...(o ? { version: o.version, name: o.name, aliases: o.aliases, description: o.description, primaryKey: o.primaryKey, titleKey: o.titleKey, interfaces: o.interfaces ?? [], ...(o.visibility ? { visibility: o.visibility } : {}), ...(o.writePolicy ? { writePolicy: o.writePolicy } : {}) } : { description: i!.description, parents: i!.parents ?? [], linkConstraints: this.interfaceLinks(id), ...(i!.optionalProperties ? { optionalProperties: this.interfaceOptionalProperties(id) } : {}), ...(this.interfaceActions(id).length ? { actionConstraints: this.interfaceActions(id) } : {}) }),
+    const description = { kind: i ? 'interface' : 'object', id, ...(o ? { version: o.version, name: o.name, aliases: o.aliases, description: o.businessDescription ?? o.description, primaryKey: o.primaryKey, titleKey: o.titleKey, interfaces: o.interfaces ?? [], ...(o.visibility ? { visibility: o.visibility } : {}), ...(o.writePolicy ? { writePolicy: o.writePolicy } : {}) } : { description: i!.description, parents: i!.parents ?? [], linkConstraints: this.interfaceLinks(id), ...(i!.optionalProperties ? { optionalProperties: this.interfaceOptionalProperties(id) } : {}), ...(this.interfaceActions(id).length ? { actionConstraints: this.interfaceActions(id) } : {}) }),
       ...(i?.propertyCompatibility ? { propertyCompatibility: i.propertyCompatibility } : {}),
       ...(i?.projectionOnly ? { projectionOnly: true } : {}),
       properties: Object.fromEntries(Object.entries(this.properties(id)).map(([k, p]) => [k, propertyMetadata(p)])),
@@ -430,8 +449,8 @@ export class OntologyModel {
   }
   actionDefinitions() { return structuredClone(this.actions); }
   functionDefinitions() { return structuredClone(this.functions); }
-  describe(input: { search?: string; limit?: number; after?: string; kind?: 'types' | 'actions' | 'functions' } = {}) {
-    const args = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).default(3), after: nameSchema.optional(), kind: z.enum(['types', 'actions', 'functions']).default('types') }).strict().parse(input);
+  describe(input: { search?: string; linkSearch?: string; limit?: number; after?: string; kind?: 'types' | 'actions' | 'functions' } = {}) {
+    const args = z.object({ search: z.string().max(100).optional(), linkSearch: linkSearchSchema, limit: z.number().int().min(1).max(5).default(3), after: nameSchema.optional(), kind: z.enum(['types', 'actions', 'functions']).default('types') }).strict().parse(input);
     const search = args.search?.trim().toLowerCase();
     const matched = (values: (string | undefined)[]) => !search || values.filter(Boolean).join(' ').toLowerCase().includes(search);
     const page = <T extends { id: string }>(values: T[]) => {
@@ -451,7 +470,7 @@ export class OntologyModel {
     const matches = [...this.objects.keys(), ...this.interfaces.keys()].sort().filter(id => {
       const o = this.objects.get(id), i = this.interfaces.get(id);
       return (!args.after || id > args.after) && (search
-        ? matched([id, o?.name, o?.description, ...(o?.aliases ?? []), i?.description])
+        ? matched([id, o?.name, o?.businessDescription, o?.description, ...(o?.aliases ?? []), i?.description])
         : o?.visibility !== 'technical');
     });
     const ids = matches.slice(0, args.limit);
@@ -464,7 +483,7 @@ export class OntologyModel {
       || !!a.read && relevant(a.read.resultType) || !!a.operation && relevant(a.operation.resultType)
       || !!search && matched([a.id]));
     const functions = this.functions.filter(f => f.inputTypes.some(relevant) || !!search && matched([f.id]));
-    return { model: { ...this.ref }, kind: args.kind, catalog, types: ids.map(id => this.describeType(id)), functions: structuredClone(functions), actions: structuredClone(actions).map(a => ({ ...a, execution: 'definition_only' })), hasMore: matches.length > ids.length, next: matches.length > ids.length ? ids.at(-1) : undefined };
+    return { model: { ...this.ref }, kind: args.kind, catalog, types: ids.map(id => filterRelationshipMetadata(this.describeType(id), args.linkSearch)), functions: structuredClone(functions), actions: structuredClone(actions).map(a => ({ ...a, execution: 'definition_only' })), hasMore: matches.length > ids.length, next: matches.length > ids.length ? ids.at(-1) : undefined };
   }
   action(id: string) { const a = this.actions.find(a => a.id === id); return a ? structuredClone(a) : invalid('Unknown ontology action'); }
   actionImplementation(id: string): ActionImplementation | undefined { const implementation = this.action(id).implementation ?? this.options.trustedActionImplementations?.[id]; return implementation ? structuredClone(implementation) : undefined; }

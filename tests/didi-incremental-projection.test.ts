@@ -32,6 +32,7 @@ test('incremental DiDi estimate stays within its read budget with exact routes a
       goal: '只查北京西站到西二旗地铁站的滴滴估价，不下单不付款',
     });
     const done = await f.finish(job.id);
+    t.diagnostic(JSON.stringify({selectStatements:selects,sourceCalls:f.calls.filter(c=>c.method==='tools/call').map(c=>c.name)}));
     assert.equal(done.state, 'completed');
     assert(
       selects <= 8000,

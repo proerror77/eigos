@@ -1,14 +1,14 @@
 import { consentDeadline } from './consent-lifetime.js';
 import type { DatabaseSync } from 'node:sqlite';
 import { digest } from '../core/delegation.js';
-import { businessTransaction } from '../core/transaction.js';
+import { businessTransaction, hasTransaction, assertBusinessTransaction } from '../core/transaction.js';
 import type { OntologyModel } from '../ontology/model.js';
 
 /** Internal implementation for named, code-reviewed migrations only. No HTTP
  * command accepts arbitrary contracts or models for this function. */
 export function upgradeReviewedPolicy(db: DatabaseSync, previous: OntologyModel, model: OntologyModel, contracts: { before: string; after: string },
   expected: { digest: string; revision: number }, apply = false, now = Date.now()) {
-  return businessTransaction(db, () => {
+  const upgrade = () => {
     const settings = db.prepare('SELECT version,mode FROM security_settings WHERE slot=1').get();
     if (settings?.version !== 2 || settings.mode !== 'foundation') throw new Error('An existing Foundation authority is required');
     const stored = db.prepare('SELECT digest FROM security_policy_definitions WHERE slot=1').get()?.digest;
@@ -43,5 +43,8 @@ export function upgradeReviewedPolicy(db: DatabaseSync, previous: OntologyModel,
       || db.prepare('UPDATE security_policy SET revision=revision+1 WHERE slot=1 AND revision=?').run(revision).changes !== 1) throw new Error('Policy changed during upgrade');
     db.prepare('INSERT INTO security_policy_upgrade_receipts VALUES(?,?)').run(digest(summary), JSON.stringify({ ...summary, at: new Date(now).toISOString() }));
     return summary;
-  });
+  };
+  // Named installers can activate the ontology in the same registered transaction.
+  if (hasTransaction(db)) { assertBusinessTransaction(db); return upgrade(); }
+  return businessTransaction(db, upgrade);
 }

@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { compositionSummary } from '../ontology/composition-contract.js';
 import { DomainError } from '../core/domain.js';
 import { digest } from '../core/delegation.js';
-import { objectRefSchema, type ObjectRef } from '../ontology/model.js';
+import { objectRefSchema, linkSearchSchema, type ObjectRef } from '../ontology/model.js';
 import { objectQuerySchema, type OntologyObjectStore, type ObjectQuery, type OntologyQueryResult } from '../ontology/object-store.js';
 import { functionCallSchema } from '../ontology/object-functions.js';
 import { planningSnapshot, type PlanningReadReceipt, type ObjectSnapshot, type DecisionActionProposal, type PlanningSnapshot } from '../ontology/planning-contract.js';
@@ -24,12 +24,16 @@ import { authorizationScope } from '../security/context.js';
 import { accessDigest, secureRequest, assertModelChannel } from '../security/model.js';
 import { authorizedDefinitions, describeAuthorized, secureFunctionCallSchema } from '../security/view.js';
 
-const describeSchema = z.object({ functions: z.array(z.string().min(1).max(80)).max(20).optional(), includeLinks: z.boolean().optional(), kind: z.enum(['types', 'actions', 'functions']).optional().describe('Types return related contracts only; actions/functions pages enumerate their complete catalogues'), search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), actions: z.array(z.string().min(1).max(80)).max(8).optional().describe('Exact action IDs whose complete input schemas are needed; otherwise concise action summaries'), includeConditionSchema: z.boolean().optional().describe('Request the full typed business-condition contract when grounding domain conditions'), includeSchemas: z.boolean().optional().describe('Request full property and action schemas; default returns concise names, semantics and links') }).strict();
+const describeSchema = z.object({ functions: z.array(z.string().min(1).max(80)).max(20).optional(), includeLinks: z.boolean().optional(), linkSearch: linkSearchSchema, kind: z.enum(['types', 'actions', 'functions']).optional().describe('Types return related contracts only; actions/functions pages enumerate their complete catalogues'), search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), actions: z.array(z.string().min(1).max(80)).max(8).optional().describe('Exact action IDs whose complete input schemas are needed; otherwise concise action summaries'), includeConditionSchema: z.boolean().optional().describe('Request the full typed business-condition contract when grounding domain conditions'), includeSchemas: z.boolean().optional().describe('Request full property and action schemas; default returns concise names, semantics and links') }).strict();
 const assessmentSchema = z.object({ candidateId: z.string().max(200).optional(), subject: objectRefSchema.optional(), phase: z.enum(['precondition', 'result']).optional() }).strict();
 const actionSchema = z.object({ action: z.string().min(1).max(80), inputs: z.array(z.object({ name: z.string().min(1).max(80), object: objectRefSchema, revision: z.number().int().positive() }).strict()).min(1).max(8) }).strict();
 export const planningQuerySchema = z.union([...objectQuerySchema.options, z.object({ facts: requestedFactsSchema }).strict()]);
 export const planningToolSchemas = { read_task_context: taskContextSchema, read_task_instructions: taskInstructionsSchema, describe_ontology: describeSchema, discover_actions: actionDiscoverySchema, query_ontology: planningQuerySchema, evaluate_ontology: functionCallSchema, assess_conditions: assessmentSchema, propose_action: actionSchema };
-export const planningToolCatalog = (taskContext = false, actionCatalog = false, secured = false) => Object.entries(planningToolSchemas).filter(([name]) => (taskContext || !['read_task_context', 'read_task_instructions'].includes(name)) && (actionCatalog || name !== 'discover_actions')).map(([name, schema]) => ({ name, inputSchema: compactSchema(z.toJSONSchema(secured && name === 'evaluate_ontology' ? secureFunctionCallSchema : schema)), readOnly: true, executionAllowed: false }));
+export const planningToolCatalog = (taskContext = false, actionCatalog = false, secured = false) => Object.entries(planningToolSchemas).filter(([name]) => (taskContext || !['read_task_context', 'read_task_instructions'].includes(name)) && (actionCatalog || name !== 'discover_actions')).map(([name, schema]) => {
+  const input = secured && name === 'evaluate_ontology' ? secureFunctionCallSchema : schema;
+  const described = name === 'evaluate_ontology' ? input.describe('Outer status known means the computation returned a result; inspect value for the business verdict. Source-specific observation checks validate their own snapshot, not whether a newer observation supersedes it. Check current business facts through their registered observation contract.') : input;
+  return { name, inputSchema: compactSchema(z.toJSONSchema(described)), readOnly: true, executionAllowed: false };
+});
 const key = (ref: ObjectRef) => JSON.stringify(ref);
 const contextLimits = { reads: 10, bytes: 80000, resultBytes: 30000, refs: 8 } as const;
 export const modelSessionKey = (owner: string, request: ServiceRequest, model: OntologyObjectStore['model']['ref']) => digest({ owner, requestId: request.id, revision: request.revision, model, accessDigest: accessDigest() });
@@ -245,6 +249,7 @@ export class OntologyPlanningSession {
   private requestedFacts(input: RequestedFacts) {
     const before = this.graph.revision(this.owner);
     const facts = readRequestedFacts(input, query => this.queryData(query), object => {
+      if (!this.graph.model.implements(object.ref.type, 'ObservedFact')) return undefined;
       const result = this.graph.evaluate(this.owner, { function: 'businessFactStatus', object: object.ref });
       for (const ref of [object.ref, ...result.evidenceRefs]) this.remember(ref);
       return result;
