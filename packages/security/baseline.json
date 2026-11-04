@@ -5243,7 +5243,7 @@
       ],
       "content": "Immutable runtime manifest including complete public Skill assets",
       "currentControl": "Current source-derived runtime files and explicit reviewed Skill assets; no private configuration or credentials included; type-only declarations are excluded from the runtime manifest",
-      "sourceDigest": "86dd9ad3152543c2e0fd55b640c6a8af98b533e3e13ed70e120e700db0642ab6",
+      "sourceDigest": "56af77b95e9f3907c5d703cca5d878f5d1cd59c8aede023ee776cb97e65ded4f",
       "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
       "stage": "S5"
     },
@@ -5440,10 +5440,10 @@
         "authorization_control"
       ],
       "content": "Fail-closed PostgreSQL schema mapping for business and network records",
-      "currentControl": "Explicit reviewed type, uniqueness, JSON index and immutable or network-trigger mappings; generated row-order identities have a database update guard; unknown schema forms are rejected",
+      "currentControl": "Explicit reviewed type, uniqueness, JSON index, immutable history, network and projection-epoch trigger mappings; exact source SQL and epoch table keys are checked; generated row identities remain guarded and unknown schema forms are rejected",
       "targetControl": "Preserve authority and evidence invariants while requiring data compatibility and runtime-port verification",
       "stage": "S5",
-      "sourceDigest": "2e438f4f23a3e70c6f295670e5eb21073a0992f859c43a3d8f247342b95b0af1"
+      "sourceDigest": "7165e338c7565f248f1a6e98d86e280473f6f1a60d4eafd6cc79c224306507e0"
     },
     {
       "id": "business-postgres-json-compat",
@@ -6731,7 +6731,7 @@
     {
       "id": "release-artifacts-cli",
       "file": "scripts/release-artifacts.mjs",
-      "sourceDigest": "fd2ce792d32a48dcb717cc8b700dadc7ab35d727514386f025976ef2249ff4f8",
+      "sourceDigest": "3be2a11297a8bb9b70f06daae19d592d3c6d6f882e146a9203c9d22a68064815",
       "channels": [
         "internal"
       ],
@@ -7326,12 +7326,12 @@
     {
       "id": "postgres-runtime-handoff",
       "file": "packages/deployment/postgres-handoff.ts",
-      "sourceDigest": "2f5d48605aa40a329e6d63b4c3522bb2b44401f71985f6a2614caa7e438f6639",
+      "sourceDigest": "8d3d31fdfd8296653a2e3f400400bc1a33fc1cc5578b1f2ef37699d429b854cb",
       "channels": [
         "internal"
       ],
       "content": "Explicit preview and separate admin schema/least-privilege/activation phases; actual strict source row and sequence equivalence, exact physical extensions and immutable receipts, no publisher or automatic retry of uncertain commit",
-      "currentControl": "Explicit preview and separate admin schema/least-privilege/activation phases; actual strict source row and sequence equivalence, exact physical extensions and immutable receipts, no publisher or automatic retry of uncertain commit",
+      "currentControl": "Explicit preview and separate admin schema/least-privilege/activation phases; actual strict source row and sequence equivalence, exact physical extensions and immutable receipts, no publisher or automatic retry of uncertain commit Projection epoch helper inventory is derived from the pinned source; restricted runtime mutation adds only derived epoch INSERT/UPDATE, with no checkpoint writes or additional helper EXECUTE.",
       "targetControl": "Preserve full original data, permissions, transaction and independent acceptance; no implicit activation or lossy read",
       "stage": "S5"
     },
@@ -7694,7 +7694,7 @@
     {
       "id": "semantic-catalog-cli",
       "file": "scripts/semantic-catalog.mjs",
-      "sourceDigest": "d8c0175eccf06a951511af6b8d3aef65731e03c50d13e8b09238ea39e5a440f5",
+      "sourceDigest": "fab65da7f8865c6b6246065b31a12099b041badaec04773c11e77e0f6cba31a7",
       "channels": [
         "operator_cli"
       ],
