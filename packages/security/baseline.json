@@ -5416,7 +5416,7 @@
       "currentControl": "Owned offline snapshot, exact authority and policy digests, claim fences, validated original draft references, byte-bounded hashing and no row output; retain and fingerprint original hidden row order",
       "targetControl": "Preserve all authority, historical evidence, sequence and policy invariants at migration",
       "stage": "S5",
-      "sourceDigest": "9fc0907549cc279f4df7db34360683fb971972295ae06051056971b1d91f9901"
+      "sourceDigest": "47830fb6584eab6a1a1c7de886767d34cf642831352d66402182cec7b2eec812"
     },
     {
       "id": "business-postgres-preflight-cli",
@@ -5443,7 +5443,7 @@
       "currentControl": "Explicit reviewed type, uniqueness, JSON index, immutable history, network and projection-epoch trigger mappings; exact source SQL and epoch table keys are checked; generated row identities remain guarded and unknown schema forms are rejected",
       "targetControl": "Preserve authority and evidence invariants while requiring data compatibility and runtime-port verification",
       "stage": "S5",
-      "sourceDigest": "7165e338c7565f248f1a6e98d86e280473f6f1a60d4eafd6cc79c224306507e0"
+      "sourceDigest": "518a3662ca7461e06fad1afef5095c188b39ceb574fb588763b036fdbbef5515"
     },
     {
       "id": "business-postgres-json-compat",
@@ -6731,7 +6731,7 @@
     {
       "id": "release-artifacts-cli",
       "file": "scripts/release-artifacts.mjs",
-      "sourceDigest": "3be2a11297a8bb9b70f06daae19d592d3c6d6f882e146a9203c9d22a68064815",
+      "sourceDigest": "f3173f81dd3674b633276a36898ef7e84bbeeee2b1e7fd11c8917fed4aecdc06",
       "channels": [
         "internal"
       ],
@@ -7170,7 +7170,7 @@
     {
       "id": "postgres-host-runtime",
       "file": "packages/postgres/host-runtime.ts",
-      "sourceDigest": "74cd5f05af3734a3945b62990e9760b4b9d0b50fb0e0b5dc154a1de4e2a50ab6",
+      "sourceDigest": "64e3d31d93eea65305d410626695a9da187385b347654063d9a12a851897b4cb",
       "channels": [
         "internal"
       ],
@@ -7640,7 +7640,7 @@
     {
       "id": "postgres-vector-index-deployment",
       "file": "packages/deployment/postgres-vector-index.ts",
-      "sourceDigest": "ec7472bb2beda984a3c139df182b4ddca5f9f228b33886cf1829ada034e806f5",
+      "sourceDigest": "d4aadaddbd52c0c477836b939ae3c35f4940454ad94482004fa9fa163d09adb9",
       "channels": [
         "private_file",
         "postgres",
@@ -7768,6 +7768,19 @@
       "currentControl": "Durable fragment checkpoints bind exact input and graph epochs inside the shared transaction. Changed evidence, rollback or external mutation invalidates reuse; cache hits do not authorize business access.",
       "targetControl": "Durable fragment checkpoints bind exact input and graph epochs inside the shared transaction. Changed evidence, rollback or external mutation invalidates reuse; cache hits do not authorize business access.",
       "stage": "S2"
+    },
+    {
+      "id": "postgres-projection-epoch-catalogue",
+      "file": "packages/postgres/projection-epoch-schema.ts",
+      "sourceDigest": "eee36bf01214045a5f7cafb2c78e2c5dcad5ef5ce0d65190c20d61b40cfde785",
+      "channels": [
+        "postgres",
+        "authorization_control"
+      ],
+      "content": "Base-bound read-only projection epoch catalogue verification",
+      "currentControl": "Only after the original activation/schema/import receipt chain is verified: require the original epoch table inventory, exact reviewed compiler helper body/config/owner/ACL and complete twelve-trigger group; legacy bases cannot gain helper permissions from target self-report. No DDL, grants or independent source re-audit is performed here.",
+      "targetControl": "Preserve immutable base receipts, current runtime authority and rejection of unreviewed target extensions.",
+      "stage": "S5"
     }
   ]
 }
