@@ -24,6 +24,12 @@ export interface BusinessSnapshotPlan {
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 const hash = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex');
 const digestPattern = /^[a-f0-9]{64}$/;
+/** These synchronous readers never mutate the bytes. Keep the exact slice
+ * without copying a potentially large SQLite value a second time. */
+function readOnlyBytes(value: Uint8Array): Buffer {
+  if (typeof SharedArrayBuffer !== 'undefined' && value.buffer instanceof SharedArrayBuffer) return Buffer.from(value);
+  return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+}
 function hashFile(path: string, expected: Stats): string {
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
@@ -49,7 +55,7 @@ function encoded(value: unknown, column: BusinessColumn, backend: 'sqlite' | 'po
     if (backend === 'postgres' && typeof value === 'number' && Number.isSafeInteger(value)) return { integer: String(value) };
   }
   if (column.type === 'TEXT' && typeof value === 'string' && !value.includes('\0')) return { text: value };
-  if (column.type === 'BLOB' && value instanceof Uint8Array) return { bytes: Buffer.from(value).toString('base64') };
+  if (column.type === 'BLOB' && value instanceof Uint8Array) return { bytes: readOnlyBytes(value).toString('base64') };
   throw new Error(`Unsupported database value for ${column.name}`);
 }
 
@@ -179,7 +185,7 @@ export function planBusinessSnapshot(snapshot: string, expectedAuthorityDigest: 
         const sourceRowid=row.__eigos_rowid;
         if (typeof sourceRowid !== 'bigint') throw new Error(`Invalid hidden row identity in ${name}`);
         if (maxRowid === null || sourceRowid > maxRowid) maxRowid=sourceRowid;
-        for (const [index, column] of textFields.entries()) if (typeof row[column.name] === 'string' && !Buffer.from(String(row[column.name]), 'utf8').equals(Buffer.from(row[`__eigos_migration_raw_${index}`] as Uint8Array))) throw new Error(`Invalid UTF-8 text in ${name}`);
+        for (const [index, column] of textFields.entries()) if (typeof row[column.name] === 'string' && !Buffer.from(String(row[column.name]), 'utf8').equals(readOnlyBytes(row[`__eigos_migration_raw_${index}`] as Uint8Array))) throw new Error(`Invalid UTF-8 text in ${name}`);
         const encodedRow = encodeBusinessRow(row, columns, 'sqlite');
         const bytes = Buffer.byteLength(encodedRow); totalEncodedBytes += bytes;
         if (!Number.isSafeInteger(totalEncodedBytes)) throw new Error(`Snapshot table ${name} is too large to inventory safely`);

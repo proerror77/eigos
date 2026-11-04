@@ -174,6 +174,17 @@ test('source and PostgreSQL row fingerprints preserve 64-bit integer and binary 
   assert.throws(() => encodeBusinessRow({ ...target, value: Number.MAX_SAFE_INTEGER + 1 }, columns, 'postgres'), /Unsupported database value/);
 });
 
+test('canonical BLOB encoding preserves only the selected byte view without changing its backing data', () => {
+  const columns = [{ name: 'blob', type: 'BLOB', notNull: true, primaryKey: 0 }];
+  const backing = Uint8Array.from([17, 0, 255, 34]), before = backing.slice();
+  assert.equal(encodeBusinessRow({ blob: backing.subarray(1, 3) }, columns, 'sqlite'), '[{"bytes":"AP8="}]');
+  assert.equal(encodeBusinessRow({ blob: Buffer.from(backing.buffer, 1, 2) }, columns, 'postgres'), '[{"bytes":"AP8="}]');
+  assert.deepEqual(backing, before);
+  const shared = new Uint8Array(new SharedArrayBuffer(4)); shared.set(backing);
+  assert.equal(encodeBusinessRow({ blob: shared.subarray(1, 3) }, columns, 'sqlite'), '[{"bytes":"AP8="}]');
+  assert.deepEqual(shared, before);
+});
+
 test('business import CLI requires explicit apply and rejects TLS overrides without exposing credentials', () => {
   const script = fileURLToPath(new URL('../scripts/business-postgres-import.mjs', import.meta.url));
   const secret = 'synthetic-not-for-output';
