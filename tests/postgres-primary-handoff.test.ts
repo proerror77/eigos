@@ -69,7 +69,16 @@ test('PostgreSQL handoff prepares exact schema and least privileges before a sep
   const f=await fixture();let runtime:pg.Client|undefined;
   try{
     const prepared=await preparePostgresRuntimeSchema(f.client,f.operation);assert.equal(prepared.status,'schema-prepared-not-activated');assert.equal(prepared.runtimeActivated,false);
-    const independent=new pg.Client(connection());await independent.connect();try{const verified=await verifyPreparedPostgresRuntimeSchema(independent,f.operation);assert.equal(verified.schemaReceiptDigest,prepared.schemaReceiptDigest);}finally{await independent.end();}
+    const independent=new pg.Client(connection());await independent.connect();try{
+      const helper=`"${f.binding.business.schema}".eigos_projection_epoch_invalidate()`;
+      await f.client.query(`ALTER FUNCTION ${helper} SET search_path TO public,pg_catalog`);
+      await assert.rejects(verifyPreparedPostgresRuntimeSchema(independent,f.operation),/projection epoch function configuration differs/);
+      await f.client.query(`ALTER FUNCTION ${helper} SET search_path TO "${f.binding.business.schema}",pg_catalog,pg_temp`);
+      await f.client.query(`ALTER FUNCTION ${helper} SECURITY DEFINER`);
+      await assert.rejects(verifyPreparedPostgresRuntimeSchema(independent,f.operation),/Original immutable\/history trigger inventory differs/);
+      await f.client.query(`ALTER FUNCTION ${helper} SECURITY INVOKER`);
+      const verified=await verifyPreparedPostgresRuntimeSchema(independent,f.operation);assert.equal(verified.schemaReceiptDigest,prepared.schemaReceiptDigest);
+    }finally{await independent.end();}
     const schema=`"${f.binding.business.schema}"`;
     assert.equal((await f.client.query(`SELECT count(*)::int AS n FROM ${schema}.eigos_runtime_activation`)).rows[0]?.n,0);
     assert.equal((await f.client.query(`SELECT revision FROM ${schema}.runtime_authority`)).rows[0]?.revision,'4');

@@ -64,6 +64,45 @@ BEGIN
   RETURN NULL;
 END; $$`;
 
+const projectionTables = ['ontology_objects', 'ontology_links', 'ontology_scoped_objects', 'ontology_scoped_links'] as const;
+const projectionEvents = ['INSERT', 'UPDATE', 'DELETE'] as const;
+const projectionEpochTable = `CREATE TABLE ontology_projection_epochs (
+  ontology_id TEXT NOT NULL, owner TEXT NOT NULL, type TEXT NOT NULL, revision INTEGER NOT NULL,
+  PRIMARY KEY(ontology_id,owner,type))`;
+// Whitespace inside SQL literals remains significant (for example an epoch
+// namespace or prefix); only formatting outside quoted tokens is ignored.
+const projectionSql = (sql: string) => (sql.match(/'(?:''|[^'])*'|"(?:""|[^"])*"|\s+|./gs) ?? []).filter(token => !/^\s+$/.test(token)).join('');
+function projectionTriggerSource(table: typeof projectionTables[number], event: typeof projectionEvents[number]) {
+  const scoped = table.includes('_scoped_'), links = table.endsWith('_links');
+  const rows = event === 'UPDATE' ? ['OLD', 'NEW'] : [event === 'DELETE' ? 'OLD' : 'NEW'];
+  const changes = rows.map(row => `INSERT INTO ontology_projection_epochs VALUES(
+    ${scoped ? row + '.ontology_id' : "'eigos.business'"},${row}.owner,
+    ${links ? "'link/' || " : "'object/' || "}${row}.type,1)
+    ON CONFLICT(ontology_id,owner,type) DO UPDATE SET revision=revision+1;`).join('\n');
+  return `CREATE TRIGGER ${table}_projection_${event.toLowerCase()} AFTER ${event} ON ${table} BEGIN ${changes} END`;
+}
+// Captured search_path is the importer's exact target schema, pg_catalog and
+// pg_temp. No caller-selected relation or SECURITY DEFINER capability is used.
+const projectionEpochFunction = `CREATE FUNCTION eigos_projection_epoch_invalidate() RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path FROM CURRENT AS $$
+DECLARE namespace TEXT; prefix TEXT;
+BEGIN
+  IF TG_TABLE_NAME NOT IN ('ontology_objects','ontology_links','ontology_scoped_objects','ontology_scoped_links') THEN
+    RAISE EXCEPTION 'Unreviewed projection epoch relation' USING ERRCODE='55000';
+  END IF;
+  prefix := CASE WHEN TG_TABLE_NAME IN ('ontology_links','ontology_scoped_links') THEN 'link/' ELSE 'object/' END;
+  IF TG_OP IN ('UPDATE','DELETE') THEN
+    IF TG_TABLE_NAME IN ('ontology_scoped_objects','ontology_scoped_links') THEN namespace := OLD.ontology_id; ELSE namespace := 'eigos.business'; END IF;
+    INSERT INTO ontology_projection_epochs(ontology_id,owner,type,revision) VALUES(namespace,OLD.owner,prefix||OLD.type,1)
+      ON CONFLICT(ontology_id,owner,type) DO UPDATE SET revision=ontology_projection_epochs.revision+1;
+  END IF;
+  IF TG_OP IN ('INSERT','UPDATE') THEN
+    IF TG_TABLE_NAME IN ('ontology_scoped_objects','ontology_scoped_links') THEN namespace := NEW.ontology_id; ELSE namespace := 'eigos.business'; END IF;
+    INSERT INTO ontology_projection_epochs(ontology_id,owner,type,revision) VALUES(namespace,NEW.owner,prefix||NEW.type,1)
+      ON CONFLICT(ontology_id,owner,type) DO UPDATE SET revision=ontology_projection_epochs.revision+1;
+  END IF;
+  RETURN NULL;
+END; $$`;
+
 
 type Column = { name: string; type: string; notNull: boolean; pk: number; defaultValue: unknown; hidden: number };
 export interface BusinessSchemaMapping { tables: number; indexes: number; triggers: number; statements: string[]; schemaStatements: string[]; triggerStatements: string[]; identities: { table: string; column: string; usesSqliteSequence: boolean }[]; requiresDataValidation: true; requiresRuntimePort: true }
@@ -71,12 +110,26 @@ export interface BusinessSchemaMapping { tables: number; indexes: number; trigge
 export function compileBusinessSchema(db: DatabaseSync): BusinessSchemaMapping {
   const objects = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
   if (objects.some(row => !['table','index','trigger'].includes(String(row.type)))) throw new Error('Unsupported schema object');
-  if (objects.some(row => ['eigos_try_jsonb', 'eigos_immutable_history', 'eigos_network_evidence_invalidate', 'eigos_preserve_rowid'].includes(String(row.name)))) throw new Error('Source collides with a PostgreSQL migration helper');
+  if (objects.some(row => ['eigos_try_jsonb', 'eigos_immutable_history', 'eigos_network_evidence_invalidate', 'eigos_preserve_rowid', 'eigos_projection_epoch_invalidate'].includes(String(row.name)))) throw new Error('Source collides with a PostgreSQL migration helper');
   const tableRows = objects.filter(row => row.type === 'table');
+  const projectionTriggers = objects.filter(row => row.type === 'trigger' && projectionTables.some(table => String(row.name).startsWith(table + '_projection_')));
+  if (projectionTriggers.length) {
+    const expected = projectionTables.flatMap(table => projectionEvents.map(event => ({ name: `${table}_projection_${event.toLowerCase()}`, table, event })));
+    if (projectionTriggers.length !== expected.length || projectionTriggers.some(row => !expected.some(value => row.name === value.name && row.tbl_name === value.table && projectionSql(String(row.sql)) === projectionSql(projectionTriggerSource(value.table, value.event)))))
+      throw new Error('Unreviewed projection trigger inventory or SQL');
+    if (!tableRows.some(row => row.name === 'ontology_projection_epochs' && projectionSql(String(row.sql)) === projectionSql(projectionEpochTable)))
+      throw new Error('Unreviewed projection epoch table');
+    for (const table of projectionTables) {
+      const columns = db.prepare(`PRAGMA table_xinfo(${q(table)})`).all();
+      if (['owner', 'type', ...(table.includes('_scoped_') ? ['ontology_id'] : [])].some(name => !columns.some(row => row.name === name && row.type === 'TEXT' && row.notnull === 1)))
+        throw new Error('Unreviewed projection epoch key columns');
+    }
+  }
   const flags = db.prepare('PRAGMA table_list').all();
   const statements: string[] = [jsonFunction, immutableFunction, rowidFunction], triggerStatements: string[] = [];
   const identities: BusinessSchemaMapping['identities'] = [];
   if (objects.some(row => row.type === 'trigger' && String(row.name).startsWith('network_evidence_'))) statements.push(networkEvidenceFunction);
+  if (projectionTriggers.length) statements.push(projectionEpochFunction);
   for (const table of tableRows) {
     const name = String(table.name), source = String(table.sql), nameQuoted = q(name);
     const state = flags.find(row => row.schema === 'main' && row.name === name);
@@ -167,6 +220,10 @@ export function compileBusinessSchema(db: DatabaseSync): BusinessSchemaMapping {
   const triggers = objects.filter(row => row.type === 'trigger');
   for (const trigger of triggers) {
     const name = String(trigger.name), table = String(trigger.tbl_name), sql = String(trigger.sql).replace(/\s+/g, ' ').trim();
+    if (projectionTriggers.some(row => row.name === name)) {
+      const event = projectionEvents.find(value => name === `${table}_projection_${value.toLowerCase()}`)!;
+      triggerStatements.push(`CREATE TRIGGER ${q(name)} AFTER ${event} ON ${q(table)} FOR EACH ROW EXECUTE FUNCTION eigos_projection_epoch_invalidate()`); continue;
+    }
     const networkMatch = /^network_evidence_(jobs|outcome_feedback|action_intents|ontology_objects|ontology_links)_(insert|update|delete)$/.exec(name);
     if (networkMatch) {
       const networkTable = networkMatch[1]!, action = networkMatch[2]!.toUpperCase(), record = action === 'DELETE' ? 'OLD' : 'NEW';

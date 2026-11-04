@@ -36,6 +36,7 @@ const mutations:Readonly<Record<string,readonly string[]>>=Object.freeze({
   jobs:['INSERT','UPDATE'],requests:['INSERT','UPDATE'],work_claims:['INSERT','UPDATE','DELETE'],runtime_work_claims:['INSERT','DELETE'],member_model_usage:['INSERT','UPDATE'],
   action_intents:['INSERT','UPDATE'],action_intent_versions:['INSERT'],action_attempts:['INSERT'],action_observations:['INSERT','UPDATE'],budget_reservations:['INSERT','UPDATE'],plan_grants:['INSERT','UPDATE'],
   ontology_objects:['INSERT','UPDATE'],ontology_links:['INSERT','DELETE'],ontology_revisions:['INSERT','UPDATE'],ontology_scoped_objects:['INSERT','UPDATE'],ontology_scoped_links:['INSERT','DELETE'],ontology_scoped_revisions:['INSERT','UPDATE'],ontology_object_versions:['INSERT'],ontology_tombstones:['INSERT'],
+  ontology_projection_epochs:['INSERT','UPDATE'],
   ontology_namespaces:['INSERT','UPDATE'],ontology_definition_drafts:['INSERT','UPDATE'],ontology_definition_events:['INSERT'],ontology_definition_fingerprints:['INSERT'],ontology_definition_lineage:['INSERT'],ontology_definition_names:['INSERT'],ontology_definition_promotions:['INSERT'],ontology_definition_releases:['INSERT'],ontology_definition_revisions:['INSERT'],ontology_pipeline_events:['INSERT'],ontology_pipeline_intakes:['INSERT'],ontology_pipeline_verifications:['INSERT'],
   security_manager:['INSERT','UPDATE'],security_subjects:['INSERT','UPDATE'],security_grants:['INSERT','UPDATE'],security_sources:['INSERT','UPDATE'],security_task_authorities:['INSERT','UPDATE'],security_fences:['INSERT','UPDATE'],security_events:['INSERT'],security_policy:['UPDATE'],security_bindings:['INSERT','UPDATE'],security_outputs:['INSERT','UPDATE'],security_reads:['INSERT'],security_object_origins:['INSERT'],security_cursors:['INSERT','DELETE'],
   security_relay_identities:['INSERT','UPDATE'],security_relay_proofs:['INSERT','DELETE'],security_relay_reads:['INSERT','UPDATE'],security_relay_requests:['INSERT','UPDATE'],
@@ -186,8 +187,12 @@ async function verifyOriginalRows(client:Client,checked:ReturnType<typeof readPo
   if(triggers.rowCount!==expected.length||triggers.rows.some(row=>!expected.some(value=>value.table===row.relname&&value.name===row.tgname&&value.fn===row.proname&&value.type===Number(row.tgtype))||row.tgenabled!=='O'||row.attributes!==''||row.unconditional!==true||Number(row.tgnargs)!==0||row.prosecdef!==false||row.nspname!==binding.business.schema))throw new Error('Original immutable/history trigger inventory differs');
   for(const sql of mapping.schemaStatements.filter(value=>value.startsWith('CREATE FUNCTION '))){
     const match=/CREATE FUNCTION (\w+)\(/.exec(sql),body=sql.split('$$')[1];if(!match||!body)throw new Error('Unreviewed original function mapping');
-    const rows=await client.query(`SELECT p.prosrc,p.prosecdef FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1 AND p.proname=$2`,[binding.business.schema,match[1]]);
+    const rows=await client.query(`SELECT p.prosrc,p.prosecdef,p.proconfig,p.pronargs,p.provolatile,p.prokind,l.lanname FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace JOIN pg_catalog.pg_language l ON l.oid=p.prolang WHERE n.nspname=$1 AND p.proname=$2`,[binding.business.schema,match[1]]);
     if(rows.rowCount!==1||rows.rows[0]?.prosrc.trim()!==body.trim()||rows.rows[0]?.prosecdef!==false)throw new Error('Original immutable/history function differs');
+    if(match[1]==='eigos_projection_epoch_invalidate'){
+      const fn=rows.rows[0],paths=[`search_path=${q(binding.business.schema)}, pg_catalog, pg_temp`,`search_path=${binding.business.schema}, pg_catalog, pg_temp`];
+      if(fn.pronargs!==0||fn.provolatile!=='v'||fn.prokind!=='f'||fn.lanname!=='plpgsql'||!Array.isArray(fn.proconfig)||fn.proconfig.length!==1||!paths.includes(fn.proconfig[0]))throw new Error('Original projection epoch function configuration differs');
+    }
   }
   for(const [name,suffix] of [['eigos_lock_runtime_authority',' FOR UPDATE'],['eigos_current_runtime_authority','']] as const){
     const rows=await client.query(`SELECT p.prosrc,p.prosecdef,p.proretset,p.proisstrict,p.proleakproof,p.provolatile,p.proparallel,p.prokind,p.pronargs,p.proconfig,p.proowner=n.nspowner AS owner_matches,l.lanname FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace JOIN pg_catalog.pg_language l ON l.oid=p.prolang WHERE n.nspname=$1 AND p.proname=$2`,[binding.business.schema,name]);
@@ -205,6 +210,10 @@ async function assertTargetInventory(client:Client,checked:ReturnType<typeof rea
   const functions=await client.query(`SELECT p.proname,pg_catalog.oidvectortypes(p.proargtypes) AS args FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1 ORDER BY p.proname,p.oid`,[binding.business.schema]);
   const expected=[...contract.baseFunctions,[contract.triggerFunction,''],['eigos_guard_relay_node_immutable','']];
   if(functions.rows.some(row=>row.proname==='eigos_network_evidence_invalidate'))expected.push(['eigos_network_evidence_invalidate','']);
+  // Optional original-source helpers are determined from the pinned snapshot,
+  // never from a function that happens to exist in the target schema.
+  const source=new DatabaseSync(checked.operation.businessSnapshot.path,{readOnly:true});
+  try{source.exec('PRAGMA query_only=ON; BEGIN');if(compileBusinessSchema(source).schemaStatements.some(sql=>sql.startsWith('CREATE FUNCTION eigos_projection_epoch_invalidate(')))expected.push(['eigos_projection_epoch_invalidate','']);}finally{source.close();}
   if(!equal(functions.rows.map(row=>[row.proname,row.args]).sort(),expected.sort()))throw new Error('Runtime function inventory differs from its reviewed extension');
   const sequences=await client.query(`SELECT c.relname,count(d.objid)::int AS owners,min(t.relname) AS table_name FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_catalog.pg_depend d ON d.classid='pg_catalog.pg_class'::regclass AND d.objid=c.oid AND d.refclassid='pg_catalog.pg_class'::regclass AND d.deptype IN('a','i') LEFT JOIN pg_catalog.pg_class t ON t.oid=d.refobjid AND t.relnamespace=n.oid WHERE n.nspname=$1 AND c.relkind='S' GROUP BY c.oid,c.relname`,[binding.business.schema]);
   const nodeSequences=new Set<string>(contract.messagingNode.sequences);

@@ -9,6 +9,8 @@ import pg from 'pg';
 import { JobStore } from '../packages/core/store.js';
 import { compileBusinessSchema } from '../packages/postgres/business-schema.js';
 import { validateBusinessJsonCompatibility } from '../packages/postgres/business-json-compat.js';
+import { postgresHandoffFixture } from './fixtures/postgres-handoff.js';
+import { postgresRuntimeGrantPlan } from '../packages/deployment/postgres-handoff.js';
 
 test('business schema compiler refuses unreviewed indexes, triggers and conflict rules', () => {
   const db = new DatabaseSync(':memory:');
@@ -24,6 +26,88 @@ test('business schema compiler refuses unreviewed indexes, triggers and conflict
     db.exec('DROP TABLE sample; CREATE TABLE sample(id TEXT PRIMARY KEY,__eigos_rowid TEXT)');
     assert.throws(() => compileBusinessSchema(db), /Hidden row identity/);
   } finally { db.close(); }
+});
+
+test('projection epoch translation requires the exact complete source triggers and preserves legacy snapshots',()=>{
+  const legacy=new DatabaseSync(':memory:');try{legacy.exec('CREATE TABLE sample(id TEXT PRIMARY KEY)');assert(!compileBusinessSchema(legacy).schemaStatements.some(sql=>sql.includes('eigos_projection_epoch_invalidate')));}finally{legacy.close();}
+  const f=postgresHandoffFixture(),db=new DatabaseSync(f.business);
+  try{
+    const original=db.prepare("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").all().filter(row=>/^ontology_(?:scoped_)?(?:objects|links)_projection_(?:insert|update|delete)$/.test(String(row.name)));assert.equal(original.length,12);
+    const mapping=compileBusinessSchema(db);assert.equal(mapping.triggerStatements.filter(sql=>sql.includes('eigos_projection_epoch_invalidate')).length,12);
+    db.exec('SAVEPOINT legacy_snapshot');try{
+      for(const trigger of original)db.exec(`DROP TRIGGER ${String(trigger.name)}`);
+      db.exec('DROP TABLE ontology_projection_epochs; DROP TABLE ontology_projection_checkpoints');
+      const beforeDelta=compileBusinessSchema(db);assert.equal(beforeDelta.tables,mapping.tables-2);
+      assert(!beforeDelta.schemaStatements.some(sql=>sql.includes('eigos_projection_epoch_invalidate')));
+    }finally{db.exec('ROLLBACK TO legacy_snapshot; RELEASE legacy_snapshot');}
+    const changed=(name:string,replace:(sql:string)=>string)=>{
+      const sql=String(original.find(row=>row.name===name)!.sql);assert.notEqual(replace(sql),sql);
+      db.exec('SAVEPOINT tamper');try{db.exec(`DROP TRIGGER ${name}; ${replace(sql)}`);assert.throws(()=>compileBusinessSchema(db),/Unreviewed projection/);}finally{db.exec('ROLLBACK TO tamper; RELEASE tamper');}
+    };
+    changed('ontology_objects_projection_insert',sql=>sql.replace('AFTER INSERT','BEFORE INSERT'));
+    changed('ontology_objects_projection_insert',sql=>sql.replace('revision=revision+1','revision=revision+2'));
+    changed('ontology_links_projection_insert',sql=>sql.replace("'link/'","'object/'"));
+    changed('ontology_objects_projection_insert',sql=>sql.replace("'object/'","'object/ '"));
+    changed('ontology_scoped_objects_projection_insert',sql=>sql.replace('NEW.ontology_id',"'eigos.business'"));
+    changed('ontology_objects_projection_update',sql=>sql.replace(/INSERT INTO ontology_projection_epochs VALUES\([\s\S]*?OLD\.type,1\)\s*ON CONFLICT\(ontology_id,owner,type\) DO UPDATE SET revision=revision\+1;/,''));
+    db.exec('SAVEPOINT missing');try{db.exec('DROP TRIGGER ontology_links_projection_delete');assert.throws(()=>compileBusinessSchema(db),/Unreviewed projection/);}finally{db.exec('ROLLBACK TO missing; RELEASE missing');}
+  }finally{db.close();f.close();}
+});
+
+test('PostgreSQL projection epochs match SQLite updates, rollback and preserved rowids under the fixed runtime role',
+  {skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'},async()=>{
+  assert.equal(process.env.PGHOST,'127.0.0.1');
+  const f=postgresHandoffFixture(),sqlite=new DatabaseSync(f.business),schema=f.binding.business.schema,q=`"${schema}"`,role=f.role;
+  const client=new pg.Client({host:'127.0.0.1',port:Number(process.env.PGPORT),database:'postgres',user:'postgres',password:process.env.PGPASSWORD,ssl:false});
+  const owners=['synthetic-epoch-owner-a','synthetic-epoch-owner-b'];let connected=false;
+  try{
+    await client.connect();connected=true;await client.query('BEGIN');
+    await client.query(`CREATE SCHEMA ${q}; SET LOCAL search_path TO ${q}, pg_catalog, pg_temp`);
+    const path=(await client.query("SELECT current_setting('search_path') AS path")).rows[0].path;
+    const mapping=compileBusinessSchema(sqlite);await client.query(mapping.statements.join(';\n'));
+    const fn=(await client.query(`SELECT p.prosecdef,p.proconfig FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1 AND p.proname='eigos_projection_epoch_invalidate'`,[schema])).rows[0];
+    assert.equal(fn.prosecdef,false);assert.deepEqual(fn.proconfig,[`search_path=${path}`]);
+    const compare=async()=>{
+      const source=sqlite.prepare('SELECT ontology_id,owner,type,revision FROM ontology_projection_epochs WHERE owner IN (?,?) ORDER BY ontology_id,owner,type').all(...owners);
+      const target=(await client.query(`SELECT ontology_id,owner,type,revision::int AS revision FROM ${q}.ontology_projection_epochs WHERE owner=ANY($1::text[]) ORDER BY ontology_id,owner,type`,[owners])).rows;
+      assert.deepEqual(target,source.map(row=>({...row})));
+    };
+    const both=async(sql:string,values:(string|number)[]=[])=>{
+      sqlite.prepare(sql).run(...values);let n=0;await client.query(sql.replaceAll('?',()=>'$'+(++n)),values);await compare();
+    };
+    const insert=async(table:string,id:string,preserve=true)=>{
+      const scoped=table.includes('_scoped_'),links=table.endsWith('_links');
+      const value:Record<string,string|number>={ontology_id:'synthetic.epoch.one',owner:owners[0]!,type:links?'EpochRelation':'EpochNode',id,revision:1,definition_digest:'synthetic-digest',body:'{}',from_type:'EpochNode',from_id:id,to_type:'EpochNode',to_id:'other'};
+      const columns=sqlite.prepare(`PRAGMA table_info(${table})`).all().map(row=>String(row.name)),values=columns.map(name=>value[name]!);
+      assert.equal(columns.includes('ontology_id'),scoped);
+      const result=sqlite.prepare(`INSERT INTO ${table}(${columns.join(',')}) VALUES(${columns.map(()=>'?').join(',')})`).run(...values);
+      const target=await client.query(`INSERT INTO ${table}(${columns.join(',')}${preserve?',__eigos_rowid':''}) ${preserve?'OVERRIDING SYSTEM VALUE ':''}VALUES(${[...values,...(preserve?[String(result.lastInsertRowid)]:[])].map((_,i)=>'$'+(i+1)).join(',')}) RETURNING __eigos_rowid`,[...values,...(preserve?[String(result.lastInsertRowid)]:[])]);
+      if(preserve)assert.equal(target.rows[0].__eigos_rowid,String(result.lastInsertRowid));await compare();return target.rows[0].__eigos_rowid;
+    };
+    for(const table of ['ontology_objects','ontology_links','ontology_scoped_objects','ontology_scoped_links']){
+      const rowid=await insert(table,'original-rowid');
+      await both(`UPDATE ${table} SET definition_digest=? WHERE owner=?`,['changed-digest',owners[0]!]);
+      assert.equal((await client.query(`SELECT __eigos_rowid FROM ${table} WHERE owner=$1`,[owners[0]])).rows[0].__eigos_rowid,rowid);
+      await both(`UPDATE ${table} SET owner=?,type=?${table.includes('_scoped_')?',ontology_id=?':''} WHERE owner=?`,[owners[1]!,table.endsWith('_links')?'ChangedRelation':'ChangedNode',...(table.includes('_scoped_')?['synthetic.epoch.two']:[]),owners[0]!]);
+      assert.equal((await client.query(`SELECT __eigos_rowid FROM ${table} WHERE owner=$1`,[owners[1]])).rows[0].__eigos_rowid,rowid);
+      await both(`DELETE FROM ${table} WHERE owner=?`,[owners[1]!]);
+    }
+    sqlite.exec('SAVEPOINT rolled_back');await client.query('SAVEPOINT rolled_back');
+    await insert('ontology_objects','rolled-back-object');
+    sqlite.exec('ROLLBACK TO rolled_back; RELEASE rolled_back');await client.query('ROLLBACK TO SAVEPOINT rolled_back; RELEASE SAVEPOINT rolled_back');await compare();
+    await client.query(`CREATE ROLE "${role}" NOINHERIT LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION; GRANT USAGE ON SCHEMA ${q} TO "${role}"; REVOKE ALL ON ALL FUNCTIONS IN SCHEMA ${q} FROM PUBLIC`);
+    const grants=postgresRuntimeGrantPlan(f.binding,f.plan.tables.map(table=>table.name));
+    for(const table of f.plan.tables){const allowed=grants.business.tables[table.name];if(allowed?.length)await client.query(`GRANT ${allowed.join(',')} ON ${q}."${table.name}" TO "${role}"`);}
+    await client.query(`GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA ${q} TO "${role}"; GRANT EXECUTE ON FUNCTION ${q}.eigos_try_jsonb(text) TO "${role}"; SET LOCAL ROLE "${role}"`);
+    assert.equal((await client.query('SELECT current_user AS role')).rows[0].role,role);
+    assert.equal((await client.query(`SELECT has_function_privilege(current_user,$1,'EXECUTE') AS allowed`,[`${schema}.eigos_projection_epoch_invalidate()`])).rows[0].allowed,false);
+    await insert('ontology_objects','runtime-owned',false);await both('UPDATE ontology_objects SET definition_digest=? WHERE owner=?',['runtime-update',owners[0]!]);
+    await insert('ontology_links','runtime-link',false);await both('DELETE FROM ontology_links WHERE owner=?',[owners[0]!]);
+    for(const sql of ['DELETE FROM ontology_projection_epochs','INSERT INTO ontology_projection_checkpoints VALUES(\'x\',\'x\',\'x\',\'x\',\'[]\',\'{}\')','DELETE FROM ontology_objects','UPDATE ontology_links SET definition_digest=\'forbidden\'','CREATE TABLE forbidden(id integer)']){
+      await client.query('SAVEPOINT forbidden');try{await assert.rejects(client.query(sql),error=>!!error&&typeof error==='object'&&'code'in error&&error.code==='42501');}finally{await client.query('ROLLBACK TO SAVEPOINT forbidden; RELEASE SAVEPOINT forbidden');}
+    }
+    await compare();
+  }finally{if(connected)await client.query('ROLLBACK');await client.end();sqlite.close();f.close();}
 });
 
 test('synthetic business schema maps to PostgreSQL with guarded history and security uniqueness', { skip: process.env.EIGOS_TEST_RELAY_POSTGRES !== '1' }, async () => {

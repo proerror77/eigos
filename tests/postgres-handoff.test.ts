@@ -33,6 +33,8 @@ test('fixed runtime ACL plan preserves authority, history and activation protect
     const grants=postgresRuntimeGrantPlan(f.binding,f.plan.tables.map(t=>t.name)),tables=grants.business.tables;
     assert.deepEqual(tables.runtime_authority,[]);assert.deepEqual(tables.eigos_runtime_activation,['SELECT']);assert.deepEqual(tables.eigos_runtime_schema_receipt,['SELECT']);assert.deepEqual(tables.security_policy_definitions,['SELECT']);
     assert.deepEqual(tables.action_attempts,['SELECT','INSERT']);assert.deepEqual(tables.ontology_object_versions,['SELECT','INSERT']);assert.deepEqual(tables.eigos_relay_node_state,['SELECT','INSERT']);
+    assert.deepEqual(tables.ontology_projection_epochs,['SELECT','INSERT','UPDATE']);assert.deepEqual(tables.ontology_projection_checkpoints,['SELECT']);
+    assert(!grants.business.functions.includes('eigos_projection_epoch_invalidate()'));
     for(const group of [grants.business,grants.membership])for(const privileges of Object.values(group.tables))assert(privileges.every(value=>['SELECT','INSERT','UPDATE','DELETE'].includes(value)));
     assert(!grants.business.functions.includes('eigos_immutable_history()'));assert(!grants.business.sequencePrivileges.includes('UPDATE'));
     assert.throws(()=>postgresRuntimeGrantPlan(f.binding,['jobs; DROP SCHEMA public CASCADE']),/Invalid reviewed/);
