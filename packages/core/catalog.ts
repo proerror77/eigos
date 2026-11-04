@@ -1,3 +1,4 @@
+import type {SemanticActionRanking} from './action-bindings.js';
 import type { ProjectionMetadata } from '../ontology/graph-program.js';
 import type { PipelineStatus } from '../ontology/pipeline/contracts.js';
 import { authorizationScope } from '../security/context.js';
@@ -381,8 +382,11 @@ export function actionProgramReadiness(graph: ProjectionMetadata, owner: string,
 export function discoverActionMetadata(graph:ProjectionMetadata,owner:string,request:ServiceRequest,input:ActionDiscoveryQuery,programs:readonly ActionDiscoveryProgram[],
   programAllowed:(program:ActionDiscoveryProgram)=>boolean,actionAllowed:(action:ActionDefinition)=>boolean,
   pipelineStatus:(program:ActionDiscoveryProgram,actionId:string)=>PipelineStatus,
-  sourceAllowed:(program:ActionDiscoveryProgram,actionId:string)=>boolean=()=>true):ActionDiscoveryPage {
+  sourceAllowed:(program:ActionDiscoveryProgram,actionId:string)=>boolean=()=>true, ranking?:SemanticActionRanking):ActionDiscoveryPage {
     const {cursor,...query}=actionDiscoverySchema.parse(input);
+    if(query.searchMode==='semantic'&&!ranking)throw new DomainError('CONFLICT','Semantic discovery is not configured for this request');
+    const ranks=ranking?new Map(ranking.actionIds.map((id,index)=>[id,index])):undefined;
+    if(ranking&&(ranks!.size!==ranking.actionIds.length||!ranking.scores.every(s=>Number.isFinite(s.score))||! /^[a-f0-9]{64}$/.test(ranking.contextDigest)))throw new DomainError('CONFLICT','Invalid semantic discovery proof');
     if(!graph.releaseRef)throw new DomainError('CONFLICT','Action discovery requires a published ontology release');
     for (const type of [query.inputType, query.outputType]) if (type && !graph.model.hasType(type)) throw new DomainError('INVALID_INPUT', 'Unknown action discovery type');
     const environment = request.executionEnvironment ?? 'live';
@@ -395,7 +399,7 @@ export function discoverActionMetadata(graph:ProjectionMetadata,owner:string,req
       return pipelineViews.get(key)!;
     };
     const definitions = graph.model.actionDefinitions().filter(action => {
-      if (!actionAllowed(action)) return false;
+      if (!actionAllowed(action) || ranks && !ranks.has(action.id)) return false;
       if (query.actionId && action.id !== query.actionId) return false;
       if (query.inputType && !Object.values(action.inputs).some(type => graph.model.assignableType(query.inputType!, type))) return false;
       if (query.outputType && !(action.resultTypes ?? (action.read ? [action.read.resultType] : action.operation ? [action.operation.resultType] : [])).some(type => graph.model.assignableType(type, query.outputType!))) return false;
@@ -403,15 +407,15 @@ export function discoverActionMetadata(graph:ProjectionMetadata,owner:string,req
       const serviceText = permittedPrograms.filter(program => program.actionIds.includes(action.id)).map(program => {
         const capability = program.capability(); return `${capability.name} ${capability.description} ${capability.tags.join(' ')} ${pipelineFor(program, action.id).terms?.join(' ') ?? ''}`;
       }).join(' ');
-      return !query.search || `${action.id} ${action.description} ${serviceText}`.toLocaleLowerCase().includes(query.search.toLocaleLowerCase());
-    }).sort((a, b) => a.id.localeCompare(b.id));
+      return !!ranking || !query.search || `${action.id} ${action.description} ${serviceText}`.toLocaleLowerCase().includes(query.search.toLocaleLowerCase());
+    }).sort((a, b) => (ranks ? ranks.get(a.id)!-ranks.get(b.id)! : 0) || a.id.localeCompare(b.id));
     const items: ActionDiscoveryEntry[] = definitions.map(action => {
       const bindings: DiscoveredActionBinding[] = [];
       const implementation = graph.model.actionImplementation(action.id);
       for (const program of permittedPrograms) {
         const capability = program.capability();
         if (!program.actionIds.includes(action.id) || !program.permitted(owner) || (environment === 'sandbox' ? capability.environment === 'live' : capability.environment === 'sandbox')) continue;
-        if (query.search && !`${action.id} ${action.description} ${capability.name} ${capability.description} ${capability.tags.join(' ')} ${pipelineFor(program, action.id).terms?.join(' ') ?? ''}`.toLocaleLowerCase().includes(query.search.toLocaleLowerCase())) continue;
+        if (!ranking && query.search && !`${action.id} ${action.description} ${capability.name} ${capability.description} ${capability.tags.join(' ')} ${pipelineFor(program, action.id).terms?.join(' ') ?? ''}`.toLocaleLowerCase().includes(query.search.toLocaleLowerCase())) continue;
         if (implementation?.kind === 'declarative' && !program.callerManagedActions || implementation?.kind === 'trusted' && program.callerManagedActions) continue;
         const provider = program.listingBinding?.(), sourceAuthorization = program.sourceAuthorization?.(owner);
         const body: Omit<ActionBindingPin, 'digest'> = {
@@ -439,7 +443,7 @@ export function discoverActionMetadata(graph:ProjectionMetadata,owner:string,req
     // Page binding rows, not just action names: many providers of one action
     // must not bypass the normal response and model-context bounds.
     const rows = items.flatMap(item => item.bindings.length ? item.bindings.map(binding => ({ ...item, bindings: [binding] })) : [item]);
-    const snapshotDigest = digest({ owner, requestId: request.id, revision: request.revision, environment, release: graph.releaseRef, query: { ...query, limit: undefined }, items });
+    const snapshotDigest = digest({ owner, requestId: request.id, revision: request.revision, environment, release: graph.releaseRef, query: { ...query, limit: undefined }, items, ...(ranking?{ranking}: {}) });
     let offset = 0;
     if (cursor) {
       let parsed: unknown; try { parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString()); } catch { throw new DomainError('INVALID_INPUT', 'Invalid action discovery cursor'); }
@@ -455,6 +459,7 @@ export function discoverActionMetadata(graph:ProjectionMetadata,owner:string,req
       else selected.push({ ...row, bindings: [...row.bindings] });
     }
     return { ontologyRelease: structuredClone(graph.releaseRef), requestId: request.id, requestRevision: request.revision, items: structuredClone(selected),
+      ...(ranking?{retrieval:{mode:'semantic' as const,modelId:ranking.modelId,contextDigest:ranking.contextDigest,scores:ranking.scores.filter(s=>selected.some(item=>item.action.id===s.actionId))}}:{}),
       page: { limit: query.limit, hasMore, ...(hasMore ? { cursor: Buffer.from(JSON.stringify({ snapshot: snapshotDigest, offset: offset + selectedRows.length })).toString('base64url') } : {}) },
       authorization: 'per_action_required', allowedEffects: query.effects ?? ['local', 'read', 'object_write', ...(environment === 'sandbox' ? ['reserve', 'order', 'payment', 'change', 'cancel', 'refund'] as const : [])], snapshotDigest };
   }

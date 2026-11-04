@@ -1,3 +1,4 @@
+import {createSemanticRuntime} from '../../packages/semantic/runtime.js';
 import { createGateway,createPostgresApp } from './app.js';
 import { readConfig } from '../../packages/core/config.js';
 import type {GatewayApplicationFactory,GatewayRuntimePorts} from './runtime-ports.js';
@@ -10,13 +11,15 @@ const postgres:GatewayApplicationFactory=async selected=>{
   const {createPostgresPrimaryHostResources,createPostgresGatewayServices,createPostgresRelayServices,assertPostgresBuiltinSourceConfiguration}=await import('../../packages/postgres/host-runtime.js');
   assertPostgresBuiltinSourceConfiguration(selected);
   const resources=await createPostgresPrimaryHostResources(selected,'gateway');
+  let semantic:Awaited<ReturnType<typeof createSemanticRuntime>>;
   let communications:Awaited<ReturnType<typeof createPostgresRelayServices>>,relay:TaskRelayGateway|undefined,closing:Promise<void>|undefined;
   const close=()=>closing??=(async()=>{const errors:unknown[]=[];
-    for(const action of [()=>communications?.close(),()=>relay?.close(),()=>resources.close()])try{await action();}catch(error){errors.push(error);}
+    for(const action of [()=>communications?.close(),()=>relay?.close(),()=>semantic?.close(),()=>resources.close()])try{await action();}catch(error){errors.push(error);}
     if(errors.length)throw new AggregateError(errors,'PostgreSQL Gateway runtime shutdown failed');
   })();
   try{
-    const services=createPostgresGatewayServices(selected,resources);
+    semantic=await createSemanticRuntime(selected);
+    const services=createPostgresGatewayServices(selected,resources,undefined,semantic?.catalog);
     communications=await createPostgresRelayServices(selected,resources,process.env,services.programTransport);
     if(communications)relay=new TaskRelayGateway(communications.port,services.tasks,selected.PUBLIC_URL,communications.configuration,selected.EIGOS_DIDI_RELAY_AGENT_ID,
       {openClient:communications.openClient,enrollmentKey:communications.enrollmentKey});

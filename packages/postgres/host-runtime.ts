@@ -1,3 +1,4 @@
+import type {SemanticActionRanker} from '../semantic/catalog.js';
 import pg,{type Client} from 'pg';
 import type {Config} from '../core/config.js';
 import {digest} from '../core/delegation.js';
@@ -285,8 +286,9 @@ export async function createPostgresPrimaryHostResources(config:Config,role:'gat
 /** Real Gateway metadata/task services; no executor or model is constructed.
  * Other source runtimes must be installed explicitly instead of substituting
  * a different program, model, owner or task when a binding is unavailable. */
-export function createPostgresGatewayServices(config:Config,resources:Awaited<ReturnType<typeof createPostgresHostResources>>,programTransport=createPostgresProgramTransport(config,{database:resources.database,policyDigest:resources.binding.policyDigest,authority:resources.binding.authority,builder:resources.kernel,role:'gateway'})){
+export function createPostgresGatewayServices(config:Config,resources:Awaited<ReturnType<typeof createPostgresHostResources>>,programTransport=createPostgresProgramTransport(config,{database:resources.database,policyDigest:resources.binding.policyDigest,authority:resources.binding.authority,builder:resources.kernel,role:'gateway'}),semantic?:SemanticActionRanker){
   assertPostgresBuiltinSourceConfiguration(config);
+  if(config.EIGOS_SEMANTIC_MODEL_DIR&&!semantic)throw new Error('The configured semantic runtime must be loaded before creating Gateway services');
   const publisher=resources.publisher;if(!publisher)throw new Error('Gateway services require the sole Gateway authorization publisher');
   if(programTransport.role!=='gateway'||programTransport.database!==resources.database||!(programTransport.registry instanceof PostgresReadProgramRegistry)||programTransport.registry.policyDigest!==resources.binding.policyDigest)throw new Error('Gateway requires its own actual shared program transport');
   const catalog=programTransport.registry.catalog;
@@ -309,7 +311,7 @@ export function createPostgresGatewayServices(config:Config,resources:Awaited<Re
     resolveObservationProgram:(client,owner,release,ref)=>checkedProgram(client,owner,release,ref),
   });
   const permissions=new PostgresPermissionManagement({database:resources.database,members:resources.members,publisher,catalog,policyDigest:resources.binding.policyDigest,builder:resources.kernel});
-  const definitions=new PostgresDefinitionService({database:resources.database,tasks,catalog,publisher,policyDigest:resources.binding.policyDigest,builder:resources.kernel});
+  const definitions=new PostgresDefinitionService({semantic,database:resources.database,tasks,catalog,publisher,policyDigest:resources.binding.policyDigest,builder:resources.kernel});
   return {tasks,members:resources.members,publisher,permissions,definitions,catalog,programTransport,
     assertSourceCurrent:()=>assertPostgresProgramSourceCurrent(programTransport,resources),
     ontologyRelease:()=>resources.database.run(async client=>(await new PostgresDefinitionStore(client,{builder:resources.kernel}).active('eigos.business')).ref),

@@ -3387,7 +3387,7 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "d112e2921cbe104aebf1de8136073d94552b41b1b51f52f6c633e6016a825637",
+      "sourceDigest": "0fcf72d8a00ab8784230110a7a3b62442939f290988991646850a6f5c69238cc",
       "channels": [
         "authorization_control"
       ],
@@ -3567,7 +3567,7 @@
     {
       "id": "execution-catalog",
       "file": "packages/core/catalog.ts",
-      "sourceDigest": "11c26c69ad42330e92600755b9d4863e2d96c8a506e511b2af6fc5b0fa577a83",
+      "sourceDigest": "fd0bb48f25ea9dfb68cdd3b0123d608025ddafb77e8eff4cbed1c293d5f3c26a",
       "channels": [
         "worker"
       ],
@@ -4280,7 +4280,7 @@
     {
       "id": "ontology-action-discovery-contract",
       "file": "packages/core/action-bindings.ts",
-      "sourceDigest": "3d299b9b54ed59a482fe968f1d6a451023a0b14751c5f1748b21093073d83de8",
+      "sourceDigest": "16d9c1bbbdb4b38b89bf0b6b81a29746a360e229e4ad35fbce0d5daac43426ae",
       "channels": [
         "model",
         "dispatch"
@@ -6695,7 +6695,7 @@
     {
       "id": "postgres-document-bindings",
       "file": "packages/postgres/document-bindings.ts",
-      "sourceDigest": "1843e89a74b527a2b5390ae2e3966678687c130b29b3828b146cd705db4b7302",
+      "sourceDigest": "db4e66369e7b4dd9e94a756ab6fa9c1a528d8c107c728d3a451ef3fbfe7983ee",
       "channels": [
         "internal"
       ],
@@ -6767,7 +6767,7 @@
     {
       "id": "postgres-worker-runtime",
       "file": "apps/worker/postgres-runtime.ts",
-      "sourceDigest": "f9aa1199a47b56a7ae21a6ece11c039a72026daecef9abd5c54627a785dd42f2",
+      "sourceDigest": "7e30c196276d40a4d8e0209fdc72f875c1b04e27b20df0638a3971df8572a20c",
       "channels": [
         "internal"
       ],
@@ -7031,7 +7031,7 @@
     {
       "id": "postgres-definition-service",
       "file": "packages/postgres/definition-service.ts",
-      "sourceDigest": "ecae25155ac8a1ecb59dce864d566c9e4d8c9f6b09975bb465ca2b6cfe76c8b7",
+      "sourceDigest": "4cd1c703045ac6c2d20cc38ecd9ec4bcc9a6d1ce44429d4a19b51a0210809a4d",
       "channels": [
         "internal",
         "ontology_metadata"
@@ -7109,7 +7109,7 @@
     {
       "id": "postgres-action-discovery",
       "file": "packages/postgres/action-discovery.ts",
-      "sourceDigest": "5e8d6381bf8922abb87004212fe7028fe5ae314a9d66829df30184cfa33e8c05",
+      "sourceDigest": "b1bea156b6c825a01b955e74ebdb4adbc07f0473b97566f58801ce632f704a15",
       "channels": [
         "internal",
         "agent_response"
@@ -7170,7 +7170,7 @@
     {
       "id": "postgres-host-runtime",
       "file": "packages/postgres/host-runtime.ts",
-      "sourceDigest": "33018dda4f8480872a465a6b47f7d283d0326816528441fcb974413552bc3ca5",
+      "sourceDigest": "7ae2a08e9b1ed6a1361effb17d862e39542f47ea70fae2929618c586d844c198",
       "channels": [
         "internal"
       ],
@@ -7484,6 +7484,45 @@
       "content": "Original Worker heartbeat lifecycle before its own claim release",
       "currentControl": "Callback-scoped original owner, task and token identity; await and coalesce heartbeat drain before a release receipt; closed and mismatched scopes cannot notify another Worker; no lease renewal, permission grant or timeout extension",
       "targetControl": "Retain the database claim, authority, revocation, execution deadline and late-result guards while quiescing only the releasing Worker heartbeat",
+      "stage": "S5"
+    },
+    {
+      "id": "local-semantic-embedding",
+      "file": "packages/semantic/local-embedding.ts",
+      "sourceDigest": "c51fbac57662e4508132433e90ed300bcc7f70cf0067824142ccede78661a189",
+      "channels": [
+        "internal",
+        "operator_cli"
+      ],
+      "content": "Pinned local embedding preparation and CPU inference",
+      "currentControl": "Pinned public artifact revision and local hashes; fixed dimensions/pooling/prefix/normalization; runtime remote loading disabled; bounded serialized input and explicit disposal",
+      "targetControl": "Pinned public artifact revision and local hashes; fixed dimensions/pooling/prefix/normalization; runtime remote loading disabled; bounded serialized input and explicit disposal",
+      "stage": "S5"
+    },
+    {
+      "id": "semantic-catalog",
+      "file": "packages/semantic/catalog.ts",
+      "sourceDigest": "180fd00df1cf59696e3d2139a3613d89a765aa36bb729e92c05d7604872c8b0d",
+      "channels": [
+        "internal",
+        "agent_response",
+        "operator_cli"
+      ],
+      "content": "Versioned pgvector metadata projection and authorized candidate ranking",
+      "currentControl": "Exact namespace/release/model and permitted descriptor hashes; complete coverage and bounded results; original contracts and authority rechecked; transactional replacement; isolated schema and fixed definer function with narrow reader grants",
+      "targetControl": "Exact namespace/release/model and permitted descriptor hashes; complete coverage and bounded results; original contracts and authority rechecked; transactional replacement; isolated schema and fixed definer function with narrow reader grants",
+      "stage": "S5"
+    },
+    {
+      "id": "semantic-catalog-cli",
+      "file": "scripts/semantic-catalog.mjs",
+      "sourceDigest": "1bceeaee6bc5b58c9e92d60f6b4c61d75d6603b907199b10a3a63774a26912e1",
+      "channels": [
+        "operator_cli"
+      ],
+      "content": "Operator model setup, release indexing, publication watch and metadata search",
+      "currentControl": "Private reviewed remote binding and verified TLS; existing admin identity for setup/index, runtime identity for search; localhost-only synthetic environment mode; release content checked before and after encoding; projection-only writes",
+      "targetControl": "Private reviewed remote binding and verified TLS; existing admin identity for setup/index, runtime identity for search; localhost-only synthetic environment mode; release content checked before and after encoding; projection-only writes",
       "stage": "S5"
     }
   ]

@@ -1,3 +1,4 @@
+import {createSemanticRuntime} from '../../packages/semantic/runtime.js';
 import { readWorkerConfig } from '../../packages/core/config.js';
 import { createWorker } from './runtime.js';
 
@@ -8,7 +9,9 @@ async function createConfiguredWorker(){
   const {createPostgresPrimaryHostResources,assertPostgresBuiltinSourceConfiguration,assertPostgresRelayHostConfiguration,createPostgresProgramTransport,assertPostgresProgramSourceCurrent}=await import('../../packages/postgres/host-runtime.js');
   assertPostgresBuiltinSourceConfiguration(config);
   const resources=await createPostgresPrimaryHostResources(config,'worker');
+  let semantic:Awaited<ReturnType<typeof createSemanticRuntime>>;
   try{
+    semantic=await createSemanticRuntime(config);
     // Validate the same reviewed feature binding without opening Relay node
     // credentials or creating another publisher/network client in the Worker.
     assertPostgresRelayHostConfiguration(config,resources.binding);
@@ -19,11 +22,11 @@ async function createConfiguredWorker(){
     if(config.EIGOS_EXECUTOR==='harness'&&typeof factory.postgresHarnessReasoner!=='function')throw new Error('The configured PostgreSQL Harness runtime is not installed');
     // Pass the original model/backend configuration through unchanged. This
     // host owns pools only; it never starts a second publisher or grants rights.
-    const candidate=factory.createPostgresWorker(config,{database:resources.database,policyDigest:resources.binding.policyDigest,builder:resources.kernel,registry:programTransport.registry});
+    const candidate=factory.createPostgresWorker(config,{semantic:semantic?.catalog,database:resources.database,policyDigest:resources.binding.policyDigest,builder:resources.kernel,registry:programTransport.registry});
     let closing:Promise<void>|undefined;
-    const close=()=>closing??=(async()=>{const errors:unknown[]=[];try{await candidate.close();}catch(error){errors.push(error);}try{await resources.close();}catch(error){errors.push(error);}if(errors.length)throw new AggregateError(errors,'PostgreSQL Worker shutdown failed');})();
+    const close=()=>closing??=(async()=>{const errors:unknown[]=[];try{await candidate.close();}catch(error){errors.push(error);}try{await semantic?.close();}catch(error){errors.push(error);}try{await resources.close();}catch(error){errors.push(error);}if(errors.length)throw new AggregateError(errors,'PostgreSQL Worker shutdown failed');})();
     try{candidate.start();return {worker:candidate.worker,close};}catch(error){await close();throw error;}
-  }catch(error){try{await resources.close();}catch(cleanup){throw new AggregateError([error,cleanup],'PostgreSQL Worker startup failed',{cause:error});}throw error;}
+  }catch(error){const failures=[error];for(const close of [()=>semantic?.close(),()=>resources.close()])try{await close();}catch(cleanup){failures.push(cleanup);}if(failures.length>1)throw new AggregateError(failures,'PostgreSQL Worker startup failed',{cause:error});throw error;}
 }
 const runtime = await createConfiguredWorker();
 console.log('EIGOS Worker started; waiting for durable tasks');
