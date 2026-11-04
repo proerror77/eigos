@@ -47,6 +47,25 @@ export function workbenchRelations(document: OntologyDocument): WorkbenchRelatio
   const typeEdge = (kind: WorkbenchKind, id: string, target: string, role: string) => {
     edge(kind, id, index.has(`object:${target}`) ? 'object' : 'interface', target, role);
   };
+  const typeParents = new Map([
+    ...document.objects.map(object => [object.id, (object.interfaces ?? []).map(value => value.id)] as const),
+    ...document.interfaces.map(iface => [iface.id, iface.parents ?? []] as const),
+  ]);
+  const lineages = new Map<string, Set<string>>();
+  const lineage = (type: string) => {
+    let found = lineages.get(type);
+    if (!found) {
+      found = new Set<string>(); const pending = [type];
+      while (pending.length) {
+        const current = pending.pop()!;
+        if (found.has(current)) continue;
+        found.add(current); pending.push(...(typeParents.get(current) ?? []));
+      }
+      lineages.set(type, found);
+    }
+    return found;
+  };
+  const relationshipFields = new Map<string, Set<string>>();
   for (const object of document.objects) {
     for (const implementation of object.interfaces ?? []) {
       edge('object', object.id, 'interface', implementation.id, 'implements');
@@ -66,13 +85,24 @@ export function workbenchRelations(document: OntologyDocument): WorkbenchRelatio
   for (const link of document.links) {
     typeEdge('link', link.id, link.from.type, `from:${link.from.name}`);
     typeEdge('link', link.id, link.to.type, `to:${link.to.name}`);
+    for (const side of [link.from, link.to]) {
+      const key = `${side.type}.${side.name}`;
+      if (!relationshipFields.has(key)) relationshipFields.set(key, new Set());
+      relationshipFields.get(key)!.add(link.id);
+    }
   }
   for (const action of document.actions) {
     for (const [name, type] of Object.entries(action.inputs)) typeEdge('action', action.id, type, `input:${name}`);
     for (const type of action.resultTypes ?? []) typeEdge('action', action.id, type, 'result');
     const resultType = action.read?.resultType ?? action.operation?.resultType;
     if (resultType) typeEdge('action', action.id, resultType, 'result');
-    for (const change of action.changes) typeEdge('action', action.id, change.split('.')[0]!, `changes:${change}`);
+    for (const change of action.changes) {
+      const path = change.split('.'), type = path[0]!;
+      typeEdge('action', action.id, type, `changes:${change}`);
+      if (path.length === 2 && path[1]) for (const endpointType of lineage(type)) {
+        for (const link of relationshipFields.get(`${endpointType}.${path[1]}`) ?? []) edge('action', action.id, 'link', link, `changes:${change}`);
+      }
+    }
     for (const dependency of action.read?.mcp?.requires ?? []) {
       edge('action', action.id, 'action', dependency.action, `requires:${dependency.name}`);
       typeEdge('action', action.id, dependency.objectType, `evidence:${dependency.name}`);

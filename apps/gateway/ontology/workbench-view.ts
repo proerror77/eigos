@@ -76,7 +76,7 @@ export const workbenchScript = String.raw`
       panel.append(text('p', '先补齐未声明的合同，再据此验证执行路径；这里不会从名称推断读取依赖。', 'notice'));
     } else {
       const read = definition.read, operation = definition.operation, mcp = read && read.mcp;
-      const effects = definition.effects || (read ? ['read'] : operation ? [operation.effect] : []);
+      const effects = definition.effects ?? (read ? ['read'] : operation ? [operation.effect, ...(operation.additionalEffects ?? [])] : []);
       const tags = text('div', ''); effects.forEach(effect => tags.append(text('span', humanEffects[effect] || effect, 'effect' + (['read','local'].includes(effect) ? '' : ' write')))); if (!effects.length) tags.append(text('span', '效果未声明', 'effect')); panel.append(tags);
       facts(panel, [['结果类型', read && read.resultType || operation && operation.resultType || (definition.resultTypes || []).join(', ') || undefined], ['实现方式', mcp ? 'MCP 来源操作' : definition.implementation && definition.implementation.kind], ['版本', read && read.version || operation && operation.version || definition.version]]);
       panel.append(text('h3', '参数合同'));

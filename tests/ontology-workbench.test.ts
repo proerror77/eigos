@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Script } from 'node:vm';
+import { readFileSync } from 'node:fs';
 import { ontologyManagerPage, ontologyManagerScript } from '../apps/gateway/ontology/page.js';
+import { workbenchScript } from '../apps/gateway/ontology/workbench-view.js';
 import { workbenchEntries, workbenchRelations, workbenchSummary } from '../packages/ontology/definition-workbench.js';
-import type { OntologyDocument } from '../packages/ontology/definition-contracts.js';
+import { parseOntologyDocument, type OntologyDocument } from '../packages/ontology/definition-contracts.js';
+import { actionEffects } from '../packages/ontology/composition-contract.js';
 import { startOntologyManagementFixture, officeManagementResources } from './fixtures/ontology-management.js';
 
 test('HTTP and MCP expose version-bound Functions, source dependencies and bounded relation navigation', async () => {
@@ -35,8 +38,71 @@ test('HTTP and MCP expose version-bound Functions, source dependencies and bound
     assert(page1.page.hasMore); assert.deepEqual(page1.release, page2.release); assert.notDeepEqual(page1.items[0], page2.items[0]);
     const reverse = await f.http('/ontology/v1/query', { operation: 'list_definition_relations', ...source, kind: 'function', resourceId: fn.definition.resourceId, limit: 50 });
     assert(reverse.items.some((edge: any) => edge.from.id === 'EstimateDidiRide'));
+    const delivery = workbenchEntries(document).find(value => value.kind === 'action' && value.definition.id === 'RequestDeliveryQuote')!;
+    const route = workbenchEntries(document).find(value => value.kind === 'link' && value.definition.id === 'SelectedRoute')!;
+    const forwardLink = await f.http('/ontology/v1/query', { operation: 'list_definition_relations', ...source, kind: 'action', resourceId: delivery.definition.resourceId, search: 'changes:ServiceRequest.selectedRoute', limit: 50 });
+    assert(forwardLink.items.some((edge: any) => edge.to.kind === 'link' && edge.to.resourceId === route.definition.resourceId));
+    const reverseLink = await f.mcp('query_ontology_definitions', { operation: 'list_definition_relations', ...source, kind: 'link', resourceId: route.definition.resourceId, search: 'RequestDeliveryQuote', limit: 50 });
+    assert(reverseLink.items.some((edge: any) => edge.from.kind === 'action' && edge.from.resourceId === delivery.definition.resourceId));
+    assert.deepEqual(forwardLink.release, reverseLink.release);
     assert.equal(new Set(workbenchRelations(document).map(edge => JSON.stringify(edge))).size, workbenchRelations(document).length);
   } finally { await f.close(); }
+});
+
+/** DOM sink for exercising the browser renderer and its effect labels. */
+class InspectorNode {
+  children: InspectorNode[] = [];
+  constructor(readonly tag: string, public textContent = '', public className = '') {}
+  append(...children: InspectorNode[]) { this.children.push(...children); }
+  replaceChildren(...children: InspectorNode[]) { this.children = children; }
+  addEventListener() {}
+}
+function historicalDocument(): OntologyDocument {
+  return parseOntologyDocument(JSON.parse(readFileSync(new URL('../packages/ontology/history/business-v16.json', import.meta.url), 'utf8')).document);
+}
+function renderedEffects(definition: OntologyDocument['actions'][number]): InspectorNode[] {
+  const elements = new Map<string, InspectorNode>();
+  const element = (id: string) => { if (!elements.has(id)) elements.set(id, new InspectorNode('div')); return elements.get(id)!; };
+  new Script(workbenchScript + '\nrenderReadableDefinition(resource);').runInNewContext({
+    $: element, text: (tag: string, value: string, className: string) => new InspectorNode(tag, value, className),
+    document: { querySelectorAll: () => [] }, state: { namespace: { id: 'eigos.business' } },
+    source: () => ({ release: { ontologyId: 'eigos.business', releaseId: 'history-v16', digest: '0'.repeat(64) } }),
+    resource: { kind: 'action', definition, publication: 'published', readOnly: true },
+  }, { timeout: 1000 });
+  const flatten = (node: InspectorNode): InspectorNode[] => [node, ...node.children.flatMap(flatten)];
+  return flatten(element('readable-definition')).filter(node => node.className.split(' ').includes('effect'));
+}
+
+test('historical v16 Action inspector renders additional effects and honors explicit effect contracts', () => {
+  const action = historicalDocument().actions.find(value => value.id === 'SubmitCommerceOrder')!;
+  assert.equal(action.effects, undefined); assert.deepEqual(action.operation!.additionalEffects, ['payment']);
+  for (const definition of [action, { ...action, effects: ['read' as const] }]) {
+    const tags = renderedEffects(definition);
+    assert.deepEqual(tags.map(node => node.textContent.split(' · ')[0]), actionEffects(definition));
+    assert.deepEqual(tags.map(node => node.className.includes('write')), actionEffects(definition).map(effect => !['read', 'local'].includes(effect)));
+  }
+});
+
+test('historical relationship changes resolve Link endpoints in both directions using only the selected document', () => {
+  const document = historicalDocument(), original = JSON.stringify(document);
+  const action = document.actions.find(value => value.id === 'RequestDeliveryQuote')!;
+  const route = document.links.find(value => value.id === 'SelectedRoute')!;
+  for (const path of ['ServiceRequest.selectedRoute', 'DeliveryRoute.selectedForRequest', 'ServiceRequest.progress', 'Parcel.selectedRoute']) {
+    const selected = { ...document, actions: [{ ...action, changes: [path] }] };
+    const refs = workbenchRelations(selected).filter(edge => edge.from.kind === 'action' && edge.from.id === action.id);
+    const matches = refs.filter(edge => edge.to.kind === 'link' && edge.to.resourceId === route.resourceId && edge.role === 'changes:' + path);
+    assert.equal(matches.length, path === 'ServiceRequest.selectedRoute' || path === 'DeliveryRoute.selectedForRequest' ? 1 : 0, path);
+    assert(refs.some(edge => edge.to.kind === 'object' && edge.role === 'changes:' + path), 'Retain the object dependency');
+  }
+  const inherited = structuredClone(document);
+  inherited.interfaces.push({ id: 'SelectionHolder', resourceId: 'test:interface:SelectionHolder', description: 'A route selection holder', properties: {} },
+    { id: 'SelectionHolderChild', resourceId: 'test:interface:SelectionHolderChild', description: 'Inherited route selection holder', properties: {}, parents: ['SelectionHolder'] });
+  inherited.objects.find(value => value.id === 'ServiceRequest')!.interfaces = [{ id: 'SelectionHolderChild' }];
+  inherited.links.find(value => value.id === route.id)!.from.type = 'SelectionHolder';
+  assert(workbenchRelations(inherited).some(edge => edge.from.id === action.id && edge.to.kind === 'link' && edge.to.id === route.id && edge.role === 'changes:ServiceRequest.selectedRoute'));
+  inherited.links.find(value => value.id === route.id)!.from.name = 'otherRoute';
+  assert(!workbenchRelations(inherited).some(edge => edge.from.id === action.id && edge.to.kind === 'link' && edge.to.id === route.id));
+  assert.equal(JSON.stringify(document), original, 'Historical definitions remain untouched');
 });
 
 test('workbench reads preserve namespace ownership, immutable history, draft isolation and Function write restrictions', async () => {
