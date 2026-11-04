@@ -48,7 +48,7 @@ Worker 可显式选择 `EIGOS_EXECUTOR=harness`。适配采用 Super-agent 原�
 
 `codex-oauth` 读取现有 Codex 登录 JSON 中当前的 ChatGPT access token，通过 Harness 的 `openai-codex` 通道调用所选模型；不把 refresh token、原 Codex home、Gateway 令牌或供应商凭据传入模型进程。原登录仍是刷新凭据的唯一写入方。远程副本过期时调用停止，须由原登录刷新后更新私密副本；不能以重建任务、切换凭据来源或自动换模型掩盖失败。`api-key` 使用私有纯文本文件和明确的 DeepSeek 模型；两种方式都不会在缺失或过期时回退至其他模型。
 
-每次调用使用新的私有 home、随机会话 ID 和只含当前任务的配置。Shell、文件工具和工作目录工具在宿主配置层关闭；原生规划仅接入 Worker 创建的 loopback Ontology MCP，并保留实际服务端读取与决策回执。文档及单次只读决策不接入工具。调用只在原提示已入会话、唯一模型回合成功结束、输出符合 JSON Schema 后返回；入队、空闲通知或模型文字不能单独证明业务完成。初始化最多 15 秒，MCP 单次调用最多 30 秒，总调用仍受原执行截止约束。
+每次调用使用新的私有 home、随机会话 ID 和只含当前任务的配置。Shell、文件工具和工作目录工具在宿主配置层关闭；原生规划仅接入 Worker 创建的 loopback Ontology MCP，并保留实际服务端读取与决策回执。文档及单次只读决策不接入工具。调用只在原提示已入会话、唯一模型回合成功结束、输出符合 JSON Schema 后返回；入队、空闲通知或模型文字不能单独证明业务完成。Harness SDK 初始化默认最多 45 秒，可通过 `EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS` 配置为 1–90 秒；它包含进程和 SDK 装载，并取原总调用截止的剩余时间上限，不在原执行预算外另加时间。MCP 单次调用最多 30 秒。
 
 SDK 没有单会话取消接口，因此每次调用独占进程；取消、超时和关闭会终止并回收该进程组，再清理私有 home。外部来源返回后的执行与验收仍独立检查 EIGOS 原任务权限和领取身份。Harness Worker 固定一个并发领取，原 Codex Worker 保持已有两个并发上限。
 

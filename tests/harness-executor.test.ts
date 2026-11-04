@@ -26,7 +26,13 @@ const reply=(id,result)=>console.log(JSON.stringify({jsonrpc:'2.0',id,result}));
 const event=(type,data)=>console.log(JSON.stringify({jsonrpc:'2.0',method:'session.event',params:{sessionId:mode==='other-session'?'another-session':session,event:{type,data}}}));
 readline.createInterface({input:process.stdin}).on('line',line=>{
  const q=JSON.parse(line);
- if(q.method==='initialize'){writeBoot({...JSON.parse(fs.readFileSync(log,'utf8')),initialization:q.params});reply(q.id,{serverInfo:{name:'deepseek-harness-sdk-runtime',version:'0.0.1'}});return;}
+ const boot=JSON.parse(fs.readFileSync(log,'utf8'));writeBoot({...boot,methods:[...(boot.methods??[]),q.method]});
+ if(q.method==='initialize'){
+  writeBoot({...JSON.parse(fs.readFileSync(log,'utf8')),initialization:q.params});
+  const acknowledge=()=>reply(q.id,{serverInfo:{name:'deepseek-harness-sdk-runtime',version:'0.0.1'}});
+  if(mode==='hold-initialize'){const timer=setInterval(()=>{if(fs.existsSync(log+'.ack')){clearInterval(timer);acknowledge();}},5);}
+  else acknowledge();return;
+ }
  if(q.method==='session/prompt'){
   session=q.params.sessionId;
   if(mode!=='unread')event('user/message',{id:messageId});
@@ -57,10 +63,53 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
 });
 `.replace('MODE_VALUE', JSON.stringify(mode)).replace('LOG_VALUE', JSON.stringify(log)), { mode: 0o700 });
   const model = new HarnessExecutor(binary, mode === 'hang' ? 1200 : 5000, { credentialFile: key, credentialKind: 'api-key' });
-  return { root, key, binary, model, log, boot: () => JSON.parse(readFileSync(log, 'utf8')) as { pid: number; childPid?: number; args: string[]; home: string; dshHome: string; initialization?:{model:string;provider:string;maxTokens:number;reasoningEffort?:string};patch: { id?: string; disabled?: boolean; insert?: { name: string; config?: unknown }[] }[]; env: string[]; hasCredential: boolean },
+  return { root, key, binary, model, log, boot: () => JSON.parse(readFileSync(log, 'utf8')) as { pid: number; childPid?: number; methods?:string[];args: string[]; home: string; dshHome: string; initialization?:{model:string;provider:string;maxTokens:number;reasoningEffort?:string};patch: { id?: string; disabled?: boolean; insert?: { name: string; config?: unknown }[] }[]; env: string[]; hasCredential: boolean },
     close: () => rmSync(root, { recursive: true, force: true }) };
 }
 const schema = { type: 'object', properties: { ok: { const: true } }, required: ['ok'], additionalProperties: false };
+
+async function waitForInitialization(f:ReturnType<typeof fixture>) {
+  const deadline=Date.now()+8000;
+  while((!existsSync(f.log)||!f.boot().initialization)&&Date.now()<deadline)await new Promise<void>(resolve=>setImmediate(resolve));
+  assert(existsSync(f.log)&&f.boot().initialization,'Observe the actual synthetic child receiving initialize');
+}
+
+test('Harness default initialization accepts a 20s ACK inside the original invocation budget',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});let now=0;t.mock.method(performance,'now',()=>now);
+  const f=fixture('hold-initialize'),controller=new AbortController();t.after(f.close);t.after(()=>controller.abort());
+  const model=new HarnessExecutor(f.binary,180000,{credentialFile:f.key,credentialKind:'api-key',model:'original-model',reasoningEffort:'medium',maxTokens:8192});
+  let settled=false;const pending=model.runStructured('synthetic',schema,controller.signal,{toolFree:true});
+  void pending.then(()=>{settled=true;},()=>{settled=true;});
+  await waitForInitialization(f);now=20000;t.mock.timers.tick(20000);
+  await new Promise<void>(resolve=>setImmediate(resolve));assert.equal(settled,false,'The old 15s timer must no longer kill initialization');
+  writeFileSync(f.log+'.ack','ack');const result=await pending;
+  assert.deepEqual(result.output,{ok:true});assert.equal(result.evidence.model,'original-model');assert.equal(result.evidence.durationMs,20000);
+  assert.deepEqual(f.boot().initialization,{cwd:f.boot().home,provider:'deepseek-official',model:'original-model',reasoningEffort:'medium',maxTokens:8192});
+  assert.deepEqual(f.boot().methods,['initialize','session/prompt','session/wait','shutdown']);assert(!existsSync(f.boot().home));
+});
+
+for(const mode of ['initialize-timeout','cancel','invocation-timeout','late-initialize-ack','late-invocation-ack'] as const)
+test('Harness initialization '+mode+' cannot dispatch a prompt or revive completion',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});let now=0;t.mock.method(performance,'now',()=>now);
+  const f=fixture('hold-initialize'),controller=new AbortController(),outcomes:string[]=[];t.after(f.close);t.after(()=>controller.abort());
+  const overall=mode==='invocation-timeout'?2000:180000;
+  const model=new HarnessExecutor(f.binary,overall,{credentialFile:f.key,credentialKind:'api-key',initializeTimeoutMs:mode==='invocation-timeout'?45000:1000});
+  const pending=withModelUsage({begin:async()=>{},finish:async(_id,_evidence,outcome)=>{outcomes.push(outcome);}},()=>
+    withModelDispatchGuard({channelId:model.securityChannelId,authorize:async()=>{if(mode==='invocation-timeout')now=1500;}},()=>model.runStructured('synthetic',schema,controller.signal,{toolFree:true})));
+  void pending.catch(()=>{});await waitForInitialization(f);
+  if(mode==='cancel')controller.abort();
+  else if(mode==='late-initialize-ack'||mode==='late-invocation-ack'){
+    // An overdue ACK can arrive before a delayed timer callback. The absolute
+    // bounds must reject it without writing session/prompt.
+    now=mode==='late-initialize-ack'?1001:180001;writeFileSync(f.log+'.ack','late ack');
+  }else if(mode==='invocation-timeout'){
+    now=1999;t.mock.timers.tick(499);await new Promise<void>(resolve=>setImmediate(resolve));
+    assert.deepEqual(f.boot().methods,['initialize']);now=2000;t.mock.timers.tick(1);
+  }else{now=1000;t.mock.timers.tick(1000);}
+  await assert.rejects(pending,mode==='cancel'?/canceled/:mode.includes('invocation')?/invocation timed out/:/initialization timed out/);
+  assert.deepEqual(outcomes,[mode==='cancel'?'interrupted':'failed']);assert.deepEqual(f.boot().methods,['initialize']);
+  assert(!existsSync(f.boot().home));assert.throws(()=>process.kill(f.boot().pid,0),{code:'ESRCH'});
+});
 
 test('Harness preserves Chinese and emoji split inside UTF-8 bytes across stdout chunks', async t => {
   const f = fixture('split-utf8'); t.after(f.close);
@@ -134,6 +183,7 @@ test('PostgreSQL factory honors Harness selection without starting or connecting
   const config=readWorkerConfig({EIGOS_EXECUTOR:'harness',EIGOS_HARNESS_BIN:f.binary,EIGOS_HARNESS_CREDENTIAL_FILE:f.key,EIGOS_HARNESS_CREDENTIAL_KIND:'api-key',EIGOS_HARNESS_MODEL:'kept-model'});
   const runtime=createPostgresWorker(config,{database,policyDigest:'a'.repeat(64),modelChannel:HARNESS_DEEPSEEK_SECURITY_CHANNEL_ID});
   await runtime.close();assert.equal(connected,0);assert(!existsSync(f.log));
+  assert.throws(()=>createPostgresWorker({...config,EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS:999},{database,policyDigest:'a'.repeat(64)}),/initialization timeout/);
   const legacy=createPostgresWorker({...config,EIGOS_EXECUTOR:undefined,EIGOS_CODEX_BIN:'must-not-start-legacy-codex'},{database,policyDigest:'a'.repeat(64),modelChannel:new CodexExecutor('must-not-start-channel-probe').securityChannelId});
   await legacy.close();assert.equal(connected,0);
   assert.throws(()=>createPostgresWorker({...config,EIGOS_HARNESS_CREDENTIAL_FILE:undefined},{database,policyDigest:'a'.repeat(64)}),/absolute private credential/);
@@ -244,5 +294,11 @@ test('Harness configuration is opt-in, with no credential requirement on the pro
   assert.throws(() => readWorkerConfig({ EIGOS_EXECUTOR: 'harness', EIGOS_HARNESS_CREDENTIAL_FILE: 'relative.key' }), /absolute private credential/);
   const config = readWorkerConfig({ EIGOS_EXECUTOR: 'harness', EIGOS_HARNESS_CREDENTIAL_FILE: '/private/key' });
   assert.equal(config.EIGOS_EXECUTOR, 'harness');
+  assert.equal(config.EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS,45000);
+  assert.equal(readWorkerConfig({EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS:'60000'}).EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS,60000);
+  for(const value of ['999','90001','1500.5','NaN'])assert.throws(()=>readWorkerConfig({EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS:value}));
+  assert.equal(readWorkerConfig({EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS:'1000'}).EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS,1000);
+  assert.equal(readWorkerConfig({EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS:'90000'}).EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS,90000);
+  assert.equal(config.EIGOS_EXECUTOR_TIMEOUT_MS,120000,'Initialization does not change the configured invocation default');
   assert.equal(readConfig({ EIGOS_EXECUTOR: 'harness', EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'a'.repeat(32) }).EIGOS_HARNESS_CREDENTIAL_FILE, undefined);
 });

@@ -2895,7 +2895,7 @@
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "782a12d26407bbe85f9a77147596942cdbc42b6c77eb1ffc0ec7775e54c2e7f8",
+      "sourceDigest": "4209322bb0ff1889b2219378c7223c3efebe13c62768126fdaf9f8c8cfa5fe91",
       "channels": [
         "http"
       ],
@@ -3387,7 +3387,7 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "a34a85dbbaa03bed04c2d144c8bd4b6065aa216343462e294794a3851dec69a5",
+      "sourceDigest": "c40bebd7af2a223c2a217cec5f14b269aeb58bb950009fe90166d334ff88c530",
       "channels": [
         "authorization_control"
       ],
@@ -3399,7 +3399,7 @@
     {
       "id": "security-worker-runtime",
       "file": "apps/worker/runtime.ts",
-      "sourceDigest": "f0a30896a76c931fa267a38eb4a7ddf9003ddeed89acabc3be8cacf0d4cec49c",
+      "sourceDigest": "caeabf32063978cce06d3f7c58cf3f90fde0e2e91cf83390a116b9c05cee3a0e",
       "channels": [
         "authorization_control"
       ],
@@ -6227,7 +6227,7 @@
     {
       "id": "security-definition-view",
       "file": "packages/security/definition-view.ts",
-      "sourceDigest": "4105ddee9517d8945e906e43746746594878625f263ccf174a1db1399b0beed1",
+      "sourceDigest": "48a00912620a789295cf41f48da65ac0149df9b370efc713fbacb4023873db04",
       "channels": [
         "internal"
       ],
@@ -6767,7 +6767,7 @@
     {
       "id": "postgres-worker-runtime",
       "file": "apps/worker/postgres-runtime.ts",
-      "sourceDigest": "18d882534df6e72216b6e4c285d63dbaac94d9d794e8df7bbfe9d55793a42d01",
+      "sourceDigest": "63cd92c7492794e99168bd233ab0c0fca23cf053da43bedbe37592c4293a28bf",
       "channels": [
         "internal"
       ],
@@ -6901,7 +6901,7 @@
     {
       "id": "harness-executor",
       "file": "packages/capabilities/harness-executor.ts",
-      "sourceDigest": "420ec2236571a3813a6aabf1c12290a2b4dd21440e8d7156c83810c035d2db47",
+      "sourceDigest": "bca154caa90f870c4e6d3493e50346e1613f36e0b12b6688d993f78d40f01b35",
       "channels": [
         "registered_model",
         "private_file"
@@ -7170,7 +7170,7 @@
     {
       "id": "postgres-host-runtime",
       "file": "packages/postgres/host-runtime.ts",
-      "sourceDigest": "52c92b31f0cb037685dc34b21d775faf5538596288f818386eda8da4a33598c5",
+      "sourceDigest": "74cd5f05af3734a3945b62990e9760b4b9d0b50fb0e0b5dc154a1de4e2a50ab6",
       "channels": [
         "internal"
       ],

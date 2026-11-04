@@ -33,13 +33,14 @@ export function postgresHarnessReasoner(model:HarnessExecutor):PostgresReasoner{
 }
 
 type PostgresModelConfig=Pick<Config,'EIGOS_CODEX_BIN'|'EIGOS_EXECUTOR_TIMEOUT_MS'|'EIGOS_CODEX_MODEL'|'EIGOS_CODEX_REASONING_EFFORT'|'EIGOS_CODEX_SERVICE_TIER'|'EIGOS_TASK_MAX_MS'>
-  &Partial<Pick<Config,'EIGOS_EXECUTOR'|'EIGOS_HARNESS_BIN'|'EIGOS_HARNESS_CREDENTIAL_FILE'|'EIGOS_HARNESS_CREDENTIAL_KIND'|'EIGOS_HARNESS_MODEL'|'EIGOS_HARNESS_REASONING_EFFORT'|'EIGOS_HARNESS_MAX_TOKENS'>>;
+  &Partial<Pick<Config,'EIGOS_EXECUTOR'|'EIGOS_HARNESS_BIN'|'EIGOS_HARNESS_CREDENTIAL_FILE'|'EIGOS_HARNESS_CREDENTIAL_KIND'|'EIGOS_HARNESS_MODEL'|'EIGOS_HARNESS_REASONING_EFFORT'|'EIGOS_HARNESS_MAX_TOKENS'|'EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS'>>;
 function configuredModel(config:PostgresModelConfig):CodexExecutor|HarnessExecutor{
   if(config.EIGOS_EXECUTOR==='harness'){
     if(!config.EIGOS_HARNESS_CREDENTIAL_FILE||!isAbsolute(config.EIGOS_HARNESS_CREDENTIAL_FILE))throw new Error('PostgreSQL Harness Worker requires an absolute private credential file');
     return new HarnessExecutor(config.EIGOS_HARNESS_BIN??'dsh',config.EIGOS_EXECUTOR_TIMEOUT_MS,{
       credentialFile:config.EIGOS_HARNESS_CREDENTIAL_FILE,credentialKind:config.EIGOS_HARNESS_CREDENTIAL_KIND,
       model:config.EIGOS_HARNESS_MODEL,reasoningEffort:config.EIGOS_HARNESS_REASONING_EFFORT,maxTokens:config.EIGOS_HARNESS_MAX_TOKENS,
+      initializeTimeoutMs:config.EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS,
     });
   }
   if(config.EIGOS_EXECUTOR!==undefined&&config.EIGOS_EXECUTOR!=='codex')throw new Error('PostgreSQL Worker model execution is disabled');

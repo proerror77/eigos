@@ -7,6 +7,8 @@ import {readPostgresBinding,assertPostgresBindingAuthority,postgresConnectionOpt
 import {preparePostgresKernel} from './kernel-runtime.js';
 import {stagedKernelComponents,type StagedKernelBuilder} from '../ontology/seed-definition.js';
 import {reviewedKernelVersionForPolicy} from '../security/policy-store.js';
+import {prepareDefinitionMetadata} from '../security/definition-view.js';
+import {projectionFields} from '../security/projections.js';
 import {PostgresDatabase} from './database.js';
 import {PostgresMembershipDatabase} from './members-database.js';
 import {PostgresMemberStore} from './member-store.js';
@@ -239,6 +241,8 @@ export async function createPostgresHostResources(config:Config,role:'gateway'|'
   const targetVersion=reviewedKernelVersionForPolicy(binding.policyDigest);
   if(vectorFeature&&targetVersion!=='28')throw new Error('Task vectors require the explicit descriptions-v28 policy upgrade');
   const kernel=await preparePostgresKernel(undefined,vectorFeature?'29':targetVersion);
+  const metadataModel=stagedKernelComponents(kernel).model;
+  prepareDefinitionMetadata(metadataModel,type=>({...metadataModel.properties(type),...projectionFields(type)}));
   const businessPool=new pg.Pool({...connection,max:3}),leasePool=new pg.Pool({...connection,max:2}),eligibilityPool=new pg.Pool({...connection,max:2}),controlPool=new pg.Pool({...connection,max:2}),membershipPool=new pg.Pool({...connection,max:2});
   const database=new PostgresDatabase(businessPool,binding.business.schema,binding.authority,{leasePool,eligibilityPool,kernel,vectorFeature});
   const members=new PostgresMemberStore(new PostgresMembershipDatabase(membershipPool,binding.membership.schema,binding.membership.sourceFileDigest));
