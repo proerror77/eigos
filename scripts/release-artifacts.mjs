@@ -15,7 +15,9 @@ const harnessImagePending=`Harness remains a candidate until the native dsh ${HA
 const sha=/^[a-f0-9]{64}$/,commit=/^(?!0{40}$)[a-f0-9]{40}$/;
 const image=/^[a-z0-9][a-z0-9.:-]*(?:\/[a-z0-9][a-z0-9._-]*)+@sha256:[a-f0-9]{64}$/;
 const roles=['gateway','relay','worker'];
-const requiredJobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-vectors','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)','postgres-execution-cases (contracts)','postgres-execution-cases (planning)','postgres-execution-cases (documents)','postgres-execution-cases (didi)','postgres-execution-cases (transitions)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
+const legacyRequiredJobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-vectors','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)','postgres-execution-cases (contracts)','postgres-execution-cases (planning)','postgres-execution-cases (documents)','postgres-execution-cases (didi)','postgres-execution-cases (transitions)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
+const minimumNodeJob='minimum-node',minimumNodeCommand='Run node --import tsx --test tests/transaction-savepoints.test.ts tests/execution-projection-noop.test.ts tests/graph-read-window.test.ts';
+const requiredJobs=[...legacyRequiredJobs,minimumNodeJob];
 const semanticJob='local-embedding-pgvector';
 function fail(message){throw new Error(message);}
 function backendTools(backend){if(backend==='codex')return RELEASE_TOOLS;if(backend==='harness')return HARNESS_RELEASE_TOOLS;fail('Only the registered codex or harness release backend is supported');}
@@ -56,7 +58,7 @@ export function validateOntologyPackage(input){
   if(new Set(input.providerModules.map(x=>x.file.path)).size!==input.providerModules.length)fail('Duplicate provider module path');return structuredClone(input);
 }
 function ciProof(input,sourceSha){
-  record(input,['sourceSha','runId','url','jobs','semantic'],'CI proof');if(input.sourceSha!==sourceSha||!Number.isSafeInteger(input.runId)||input.runId<1||!/^https:\/\/github\.com\/[^/]+\/[^/]+\/actions\/runs\/\d+$/.test(input.url)||!Array.isArray(input.jobs)||requiredJobs.some(name=>input.jobs.filter(x=>x===name).length!==1)||input.jobs.length!==requiredJobs.length)fail('Exact-source successful CI proof is required');
+  record(input,['sourceSha','runId','url','jobs','semantic'],'CI proof');if(input.sourceSha!==sourceSha||!Number.isSafeInteger(input.runId)||input.runId<1||!/^https:\/\/github\.com\/[^/]+\/[^/]+\/actions\/runs\/\d+$/.test(input.url)||!Array.isArray(input.jobs)||![legacyRequiredJobs,requiredJobs].some(names=>input.jobs.length===names.length&&names.every(name=>input.jobs.filter(x=>x===name).length===1)))fail('Exact-source successful CI proof is required');
   if(input.semantic)semanticCiProof(input.semantic,sourceSha);return structuredClone(input);
 }
 function semanticCiProof(input,sourceSha){
@@ -65,7 +67,9 @@ function semanticCiProof(input,sourceSha){
   return structuredClone(input);
 }
 const needsSemanticCi=value=>value.runtime.files.some(file=>file.path.startsWith('dist/packages/semantic/'))||value.sourceFiles.some(file=>file.path.startsWith('packages/semantic/'));
-function artifactReady(value){return (value.backend==='codex'||!!value.harnessImage)&&roles.every(role=>value.images[role])&&!!value.ci&&(!needsSemanticCi(value)||!!value.ci.semantic);}
+const needsMinimumNodeCi=value=>value.runtime.files.some(file=>file.path==='dist/packages/ontology/projection-delta.js');
+const hasMinimumNodeCi=value=>Array.isArray(value.ci?.jobs)&&value.ci.jobs.includes(minimumNodeJob);
+function artifactReady(value){return (value.backend==='codex'||!!value.harnessImage)&&roles.every(role=>value.images[role])&&!!value.ci&&(!needsSemanticCi(value)||!!value.ci.semantic)&&(!needsMinimumNodeCi(value)||hasMinimumNodeCi(value));}
 export function selectExactCiRun(input,sourceSha){
   if(!commit.test(sourceSha)||!Array.isArray(input?.workflow_runs))fail('Invalid CI run query');
   const selected=input.workflow_runs.filter(run=>run.head_sha===sourceSha).sort((a,b)=>b.run_number-a.run_number||b.run_attempt-a.run_attempt)[0];
@@ -73,9 +77,12 @@ export function selectExactCiRun(input,sourceSha){
 }
 export function proveExactCi(run,jobs,sourceSha,repository,semantic){
   if(!commit.test(sourceSha)||run.head_sha!==sourceSha||run.status!=='completed'||run.conclusion!=='success'||run.head_repository?.full_name!==repository||!Array.isArray(jobs))fail('CI must belong to the exact source and repository');
+  if(jobs.length!==requiredJobs.length)fail('Required CI job inventory differs from this release');
   for(const name of requiredJobs){const matches=jobs.filter(job=>job.name===name);if(matches.length!==1||matches[0].status!=='completed'||matches[0].conclusion!=='success')fail(`Required CI job is not successful: ${name}`);}
   const verify=jobs.find(job=>job.name==='verify');for(const command of ['npm run check','npm run build','npm run test:e2e:run'])if(!verify.steps?.some(step=>step.name===`Run ${command}`&&step.status==='completed'&&step.conclusion==='success'))fail('Release CI must include runtime validation; run the CI workflow manually for this source');
   const vectors=jobs.find(job=>job.name==='postgres-vectors');if(!vectors.steps?.some(step=>step.name==='Run node scripts/postgres-tests.mjs run --group vectors'&&step.status==='completed'&&step.conclusion==='success'))fail('Release CI must include actual non-skipped vector validation');
+  const minimum=jobs.find(job=>job.name===minimumNodeJob);
+  for(const name of ['Verify exact source',minimumNodeCommand]){const steps=minimum.steps?.filter(step=>step.name===name);if(steps?.length!==1||steps[0].status!=='completed'||steps[0].conclusion!=='success')fail('Release CI must include exact-checkout and actual non-skipped minimum-node runtime validation');}
   return ciProof({sourceSha,runId:run.id,url:run.html_url,jobs:requiredJobs,...(semantic?{semantic:proveExactSemanticCi(semantic.run,semantic.jobs,sourceSha,repository)}:{})},sourceSha);
 }
 export function proveExactSemanticCi(run,jobs,sourceSha,repository){
@@ -110,6 +117,7 @@ export function validateReleaseManifest(input,{requireReady=false}={}){
   if(input.ci)ciProof(input.ci,input.source.sha);
   if(input.harnessImage){if(input.backend!=='harness')fail('Only Harness releases may contain a Harness image proof');validateHarnessImageProof(input.harnessImage,input.source.sha,input.images.worker);}
   const ready=artifactReady(input);
+  if(needsMinimumNodeCi(input)&&!hasMinimumNodeCi(input)&&(requireReady||input.state==='artifact-ready'))fail('An artifact-ready incremental projection runtime requires exact-source minimum-node CI');
   if(needsSemanticCi(input)&&!input.ci?.semantic&&(requireReady||input.state==='artifact-ready'))fail('An artifact-ready semantic runtime requires exact-source local semantic CI');
   if(input.backend==='harness'&&!input.harnessImage&&(input.state==='artifact-ready'||requireReady))fail(harnessImagePending);
   if(input.state!==(ready?'artifact-ready':'candidate')||requireReady&&!ready)fail('An artifact-ready release requires all OCI digests and exact-source CI');

@@ -349,8 +349,15 @@ jobs:
     if: needs.scope.outputs.verify == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact source
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
       - uses: actions/setup-node@v4
         with:
           node-version: 22.13.0

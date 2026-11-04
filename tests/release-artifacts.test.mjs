@@ -10,15 +10,18 @@ import {artifactDigest,canonical,createReleaseManifest,createReleaseArtifacts,va
 
 const sourceSha='1'.repeat(40),rawDigest=bytes=>createHash('sha256').update(bytes).digest('hex'),roles=['gateway','relay','worker'];
 const jobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-vectors','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)','postgres-execution-cases (contracts)','postgres-execution-cases (planning)','postgres-execution-cases (documents)','postgres-execution-cases (didi)','postgres-execution-cases (transitions)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
-const ci={sourceSha,runId:17,url:'https://github.com/example/eigos/actions/runs/17',jobs};
+const legacyJobs=jobs.slice();jobs.push('minimum-node');
+const minimumNodeCommand='Run node --import tsx --test tests/transaction-savepoints.test.ts tests/execution-projection-noop.test.ts tests/graph-read-window.test.ts';
+const ci={sourceSha,runId:17,url:'https://github.com/example/eigos/actions/runs/17',jobs},legacyCi={...ci,jobs:legacyJobs};
 const images=Object.fromEntries(roles.map((role,i)=>[role,`ghcr.io/example/eigos/${role}@sha256:${String(i+1).repeat(64)}`]));
 const harnessImage={sourceSha,image:images.worker,version:HARNESS_RELEASE_TOOLS.harness,providers:['deepseek-official','openai-codex'],initialize:'acknowledged',modelTurns:0,compiledAdapter:'present',state:'candidate'};
 const harnessPaths=['dist/packages/capabilities/harness-executor.js','dist/apps/worker/postgres-runtime.js','dist/packages/core/model-usage-context.js','dist/packages/core/model-dispatch-context.js','dist/packages/postgres/coordinator.js'];
-function fixture(backend='codex',semantic=false){
+function fixture(backend='codex',semantic=false,incremental=false){
   const directory=mkdtempSync(join(tmpdir(),'eigos-release-artifacts-')),put=(prefix,path,bytes)=>{const file=join(directory,prefix,path);mkdirSync(dirname(file),{recursive:true});writeFileSync(file,bytes);return {path,sha256:rawDigest(bytes),bytes:Buffer.byteLength(bytes)};};
   const runtimeFiles=[put('runtime','dist/apps/gateway/main.js','// explicit synthetic runtime fixture\n'),put('runtime','package.json','{"name":"eigos","version":"0.1.0"}\n'),put('runtime','package-lock.json','{"lockfileVersion":3}\n')],sourceFiles=[put('source','apps/gateway/main.ts','// explicit synthetic source fixture\n')];
   if(backend==='harness')for(const path of harnessPaths){runtimeFiles.push(put('runtime',path,'// explicit synthetic Harness runtime inventory\n'));sourceFiles.push(put('source',path.replace(/^dist\//,'').replace(/\.js$/,'.ts'),'// explicit synthetic Harness source inventory\n'));}
   if(semantic){runtimeFiles.push(put('runtime','dist/packages/semantic/runtime.js','// synthetic optional local semantic module\n'));sourceFiles.push(put('source','packages/semantic/runtime.ts','// synthetic optional local semantic source\n'));}
+  if(incremental){runtimeFiles.push(put('runtime','dist/packages/ontology/projection-delta.js','// synthetic incremental projection runtime\n'));sourceFiles.push(put('source','packages/ontology/projection-delta.ts','// synthetic incremental projection source\n'));}
   const document={formatVersion:1,id:'synthetic.ontology',version:'1',objects:[],interfaces:[],links:[],actions:[],functions:[]},kernelBytes=canonical(document)+'\n',file=put('ontology','kernel.json',kernelBytes),pkg={format:'eigos.ontology-package/1',kernel:{id:document.id,version:document.version,documentDigest:artifactDigest(document),modelDigest:'a'.repeat(64),file},providerModules:[]},packageFile=put('','ontology/package.json',canonical(pkg)+'\n');
   const build=createHash('sha256');for(const file of runtimeFiles){build.update(file.path+'\0');build.update(readFileSync(join(directory,'runtime',file.path)));}
   const input={sourceSha,version:'0.1.0',buildDigest:build.digest('hex'),runtimeFiles,sourceFiles,lockfile:runtimeFiles[2],ontology:{packageFile,package:pkg}};
@@ -68,14 +71,60 @@ test('artifact inventories reject private state, traversal, symlinks and invente
 });
 
 test('latest exact CI, all required jobs and real runtime validation are gates before publishing',()=>{
-  const run={id:17,run_number:4,run_attempt:1,head_sha:sourceSha,status:'completed',conclusion:'success',html_url:ci.url,head_repository:{full_name:'example/eigos'}},checks=jobs.map(name=>({name,status:'completed',conclusion:'success',...(name==='verify'?{steps:['npm run check','npm run build','npm run test:e2e:run'].map(command=>({name:`Run ${command}`,status:'completed',conclusion:'success'}))}:name==='postgres-vectors'?{steps:[{name:'Run node scripts/postgres-tests.mjs run --group vectors',status:'completed',conclusion:'success'}]}:{})}));
+  const run={id:17,run_number:4,run_attempt:1,head_sha:sourceSha,status:'completed',conclusion:'success',html_url:ci.url,head_repository:{full_name:'example/eigos'}},checks=jobs.map(name=>({name,status:'completed',conclusion:'success',...(name==='verify'?{steps:['npm run check','npm run build','npm run test:e2e:run'].map(command=>({name:`Run ${command}`,status:'completed',conclusion:'success'}))}:name==='postgres-vectors'?{steps:[{name:'Run node scripts/postgres-tests.mjs run --group vectors',status:'completed',conclusion:'success'}]}:name==='minimum-node'?{steps:['Verify exact source',minimumNodeCommand].map(name=>({name,status:'completed',conclusion:'success'}))}:{})}));
   assert.equal(selectExactCiRun({workflow_runs:[run]},sourceSha).id,17);assert.deepEqual(proveExactCi(run,checks,sourceSha,'example/eigos'),ci);
   assert.throws(()=>selectExactCiRun({workflow_runs:[run,{...run,id:18,run_number:5,status:'in_progress',conclusion:null}]},sourceSha),/latest CI/);
   assert.throws(()=>proveExactCi(run,checks.filter(job=>job.name!=='relay-postgres'),sourceSha,'example/eigos'),/Required CI job/);
   assert.throws(()=>proveExactCi(run,checks.map(job=>job.name==='verify'?{...job,steps:[]}:job),sourceSha,'example/eigos'),/runtime validation/);
   assert.throws(()=>proveExactCi(run,checks.map(job=>job.name==='postgres-vectors'?{...job,steps:[]}:job),sourceSha,'example/eigos'),/vector validation/);
   assert.throws(()=>proveExactCi(run,checks.map(job=>job.name==='postgres-vectors'?{...job,steps:job.steps.map(step=>({...step,conclusion:'skipped'}))}:job),sourceSha,'example/eigos'),/vector validation/);
+  assert.throws(()=>proveExactCi(run,checks.filter(job=>job.name!=='minimum-node'),sourceSha,'example/eigos'),/Required CI job/);
+  assert.throws(()=>proveExactCi(run,[...checks,{name:'unregistered-job',status:'completed',conclusion:'success'}],sourceSha,'example/eigos'),/Required CI job inventory/);
+  assert.throws(()=>proveExactCi({...run,head_sha:'2'.repeat(40)},checks,sourceSha,'example/eigos'),/exact source and repository/);
+  assert.throws(()=>proveExactCi({...run,conclusion:'failure'},checks,sourceSha,'example/eigos'),/exact source and repository/);
+  for(const invalid of [{...checks.find(job=>job.name==='minimum-node'),conclusion:'skipped'},
+    ...['Verify exact source',minimumNodeCommand].flatMap(name=>['missing','skipped','wrong-command'].map(kind=>({...checks.find(job=>job.name==='minimum-node'),steps:checks.find(job=>job.name==='minimum-node').steps.flatMap(step=>step.name!==name?[step]:kind==='missing'?[]:[{...step,...(kind==='skipped'?{conclusion:'skipped'}:{name:step.name+' --test-name-pattern=partial'})}])})))]){
+    assert.throws(()=>proveExactCi(run,checks.map(job=>job.name==='minimum-node'?invalid:job),sourceSha,'example/eigos'),/minimum-node/);
+  }
   assert.throws(()=>proveExactCi({...run,head_repository:{full_name:'foreign/repo'}},checks,sourceSha,'example/eigos'),/exact source and repository/);
+});
+
+test('published legacy 24-job manifests remain readable without rewriting their immutable records',()=>{
+  const x=fixture();try{
+    const ready=createReleaseManifest({...x.input,images,ci:legacyCi});assert.equal(ready.state,'artifact-ready');
+    const path=join(x.directory,'manifest.json'),bytes=canonical(ready)+'\n';writeFileSync(path,bytes);
+    const read=readReleaseManifest(path,{requireReady:true});assert.deepEqual(read,ready);assert.deepEqual(read.ci.jobs,legacyJobs);
+    assert.equal(verifyReleaseArtifacts(x.directory).manifestDigest,ready.manifestDigest);
+    assert.equal(readFileSync(path,'utf8'),bytes);assert.equal(read.payloadDigest,ready.payloadDigest);
+  }finally{x.close();}
+});
+
+test('incremental runtime inventories require current minimum-node proof before readiness or finalization',()=>{
+  const x=fixture('codex',false,true);try{
+    const candidate=createReleaseManifest({...x.input,images,ci:legacyCi});assert.equal(candidate.state,'candidate');
+    assert.throws(()=>validateReleaseManifest(candidate,{requireReady:true}),/exact-source minimum-node CI/);
+    assert.throws(()=>validateReleaseManifest({...candidate,state:'artifact-ready'}),/minimum-node CI/);
+    const path=join(x.directory,'manifest.json'),bytes=canonical(candidate)+'\n';writeFileSync(path,bytes);
+    assert.throws(()=>finalizeReleaseArtifacts(x.directory,{images,ci:legacyCi}),/minimum-node CI/);
+    assert.equal(readFileSync(path,'utf8'),bytes,'Refused finalization must preserve the existing candidate');
+    for(const invalid of [[...jobs,'minimum-node'],[...legacyJobs.slice(0,-1),'unregistered-job']]){
+      assert.throws(()=>createReleaseManifest({...x.input,images,ci:{...ci,jobs:invalid}}),/Exact-source successful CI proof/);
+    }
+    const ready=finalizeReleaseArtifacts(x.directory,{images,ci});assert.equal(ready.state,'artifact-ready');
+    assert.equal(ready.payloadDigest,candidate.payloadDigest);assert.deepEqual(ready.ci.jobs,jobs);
+    assert.equal(readReleaseManifest(path,{requireReady:true}).manifestDigest,ready.manifestDigest);
+  }finally{x.close();}
+});
+
+test('minimum-node validates the actual exact PR checkout before running its complete regression command',()=>{
+  const workflow=parse(readFileSync(new URL('../.github/workflows/ci.yml',import.meta.url),'utf8')),job=workflow.jobs['minimum-node'];
+  const checkout=job.steps.find(step=>step.uses?.startsWith('actions/checkout@'));
+  assert.equal(checkout.with.ref,'${{ github.event.pull_request.head.sha || github.sha }}');
+  assert.equal(checkout.with['persist-credentials'],false);assert.equal(job.env.SOURCE_SHA,checkout.with.ref);
+  const verify=job.steps.find(step=>step.name==='Verify exact source');assert.equal(verify.run,'test "$(git rev-parse HEAD)" = "$SOURCE_SHA"');
+  assert(job.steps.indexOf(verify)>job.steps.indexOf(checkout));
+  assert(job.steps.some(step=>step.run===minimumNodeCommand.slice(4)));
+  assert.equal(job.steps.find(step=>step.uses?.startsWith('actions/setup-node@')).with['node-version'],'22.13.0');
 });
 
 test('local semantic CI proves exact checkout and real non-skipped model retrieval separately from core CI',()=>{
