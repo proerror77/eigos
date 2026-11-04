@@ -25,6 +25,7 @@ import type { ServiceRequest } from '../ontology/execution.js';
 import {postgresWorkReference,type PostgresWorkReference} from './work-claim.js';
 import {postgresWorkerAdmission} from './worker-admission.js';
 import {postgresClaimActive,postgresClaimSnapshotMatches} from './work-claim.js';
+import {assertReviewedModel} from '../security/model-review.js';
 
 const storedLabelSchema=z.strictObject({classification:securityEnvelopeSchema.shape.classification,
   requiredMarkings:securityEnvelopeSchema.shape.requiredMarkings,channels:securityEnvelopeSchema.shape.channels});
@@ -347,7 +348,9 @@ export async function postgresTaskResourcePermissionValidUntil(client: Client, p
   const captured = structuredClone(principal);
   const checked=await withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission => {
     const schema = postgresBusinessSchema(client);
-    await postgresTaskReadOntology(client,captured,taskId,policyDigest,builder);
+    const ontology=await postgresTaskReadOntology(client,captured,taskId,policyDigest,builder);
+    const current=builder===undefined?currentKernelImplementation():stagedKernelComponents(builder).model;
+    if(current.ref.version==='28')assertReviewedModel(current,ontology.model);
     const load=async()=>{
       const result=await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${schema}".security_roles WHERE subject_id IN ($1,$2) LIMIT 257`,[admission.actor.memberId,admission.actor.installationId]);
       if(result.rows.length>256||result.rows.some(row=>row.body===null))throw new SecurityError('OUTPUT_NOT_ALLOWED');
@@ -355,7 +358,7 @@ export async function postgresTaskResourcePermissionValidUntil(client: Client, p
     };
     const snapshot=snapshots.get(client);
     const roles=await(snapshot?(snapshot.roles??=load()):load());
-    return {roles,actor:admission.actor,model:builder === undefined ? currentKernelImplementation() : stagedKernelComponents(builder).model};
+    return {roles,actor:admission.actor,model:current.ref.version==='28'?ontology.model:current};
   });
   const now=Date.now(),matching=checked.roles.filter(role=>roleAllows(checked.model,[role],checked.actor.memberId,checked.actor.installationId,kind,id,permission,()=>now));
   return matching.reduce((latest,role)=>Math.max(latest,postgresConsentIndex(role.expiresAt,policyDigest,checked.model)),0);

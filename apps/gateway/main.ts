@@ -22,6 +22,7 @@ const postgres:GatewayApplicationFactory=async selected=>{
       {openClient:communications.openClient,enrollmentKey:communications.enrollmentKey});
     const messaging=communications?.messaging,taskRelay=relay,relayPort=communications?.port;
     const runtime:GatewayRuntimePorts={backend:'postgres',authority:resources.binding.authority,tasks:services.tasks,members:services.members,definitions:services.definitions,
+      vectors:services.vectors,
       security:{permissions:services.permissions,authenticate:(principal,bearer)=>services.publisher.authenticate(principal,bearer),available:services.available,onUnavailable:resources.onUnavailable},
       relay:taskRelay&&relayPort?{status:()=>taskRelay.status,mount:(app,authenticate,principal)=>mountTaskRelay(app,taskRelay,relayPort,authenticate,principal)}:undefined,
       messaging:messaging?{service:messaging,mountMembers:app=>mountMessagingMemberRoutes(app,selected,services.members,messaging)}:undefined,

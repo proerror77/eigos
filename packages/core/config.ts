@@ -42,6 +42,7 @@ const schema = z.object({
   EIGOS_AUTHORITY_FILE: z.string().optional(),
   EIGOS_STORAGE_BACKEND: z.enum(['sqlite','postgres']).default('sqlite'),
   EIGOS_POSTGRES_BINDING_FILE: z.string().optional(),
+  EIGOS_POSTGRES_VECTOR_FEATURE_FILE: z.string().optional(),
   EIGOS_TASK_RELAY_FILE: z.string().optional(),
   EIGOS_DIDI_RELAY_AGENT_ID: z.string().regex(/^agent_[A-Za-z0-9_-]{43}$/).optional(),
   EIGOS_COORDINATOR: z.literal('codex').default('codex'),
@@ -146,6 +147,7 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
   const c: Config = parsed.EIGOS_AUTHORITY_FILE ? { ...parsed, authority: readRuntimeAuthority(parsed.EIGOS_AUTHORITY_FILE) } : parsed;
   if(c.EIGOS_STORAGE_BACKEND==='postgres'&&(!c.EIGOS_POSTGRES_BINDING_FILE||!isAbsolute(c.EIGOS_POSTGRES_BINDING_FILE)||!c.authority||c.EIGOS_AUTH_MODE!=='jwt'||c.EIGOS_SECURITY_MODE!=='foundation'))throw new Error('PostgreSQL startup requires an absolute private binding and the existing foundation JWT authority');
   if(c.EIGOS_STORAGE_BACKEND==='sqlite'&&c.EIGOS_POSTGRES_BINDING_FILE)throw new Error('A PostgreSQL binding requires explicit PostgreSQL backend selection');
+  if(c.EIGOS_POSTGRES_VECTOR_FEATURE_FILE&&(c.EIGOS_STORAGE_BACKEND!=='postgres'||!isAbsolute(c.EIGOS_POSTGRES_VECTOR_FEATURE_FILE)))throw new Error('Task vectors require PostgreSQL and an absolute private reviewed feature manifest');
   if (role === 'worker' && c.EIGOS_EXECUTOR === 'harness' && (!c.EIGOS_HARNESS_CREDENTIAL_FILE || !isAbsolute(c.EIGOS_HARNESS_CREDENTIAL_FILE)))
     throw new Error('Harness Worker requires an absolute private credential file');
   if (c.EIGOS_TASK_RELAY_FILE && (!c.authority || !isAbsolute(c.EIGOS_TASK_RELAY_FILE))) throw new Error('Task Relay requires the existing primary authority and an absolute private configuration file');

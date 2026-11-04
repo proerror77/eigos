@@ -10,6 +10,7 @@ import { projectionFields } from '../security/projections.js';
 import { roleAllows, roleSchema } from '../security/resource-role.js';
 import { secureDescribeSchema } from '../security/view-contracts.js';
 import { SecurityError } from '../security/errors.js';
+import {assertReviewedModel} from '../security/model-review.js';
 import { postgresBusinessSchema, postgresBusinessToken, postgresConstrainReadDeadline } from './runtime-transaction.js';
 import { postgresTaskReadOntology, withPostgresAgentMetadata, withPostgresTaskReadSnapshot,
   withPostgresTaskReadGrant, type PostgresTaskReadAdmission } from './task-read-access.js';
@@ -51,7 +52,8 @@ export async function withPostgresTaskDefinitionAccess<T>(client: Client, princi
     if (!admission.grant.operations.includes(admission.actor.actorKind === 'worker' ? 'task.process' : 'task.query')) throw new SecurityError('AUTHORIZATION_REQUIRED');
     const selected = (await postgresTaskReadOntology(client, captured, taskId, policyDigest, builder)).model;
     const model = builder === undefined ? currentKernelImplementation() : stagedKernelComponents(builder).model;
-    return withDefinitionAccess(client, admission, model, policyDigest, access => action(access, selected));
+    if(model.ref.version==='28')assertReviewedModel(model,selected);
+    return withDefinitionAccess(client, admission, model.ref.version==='28'?selected:model, policyDigest, access => action(access, selected));
   });
 }
 

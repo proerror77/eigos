@@ -1,4 +1,5 @@
 import { extendPaymentCommerceKernel } from './payment-commerce-kernel.js';
+import { extendSemanticRetrievalKernel } from './semantic-retrieval-kernel.js';
 import { extendRollingGoKernel } from './rollinggo-kernel.js';
 import { extendBusinessFactsKernel } from './business-facts-kernel.js';
 import { extendPersonalContextKernel } from './personal-context-kernel.js';
@@ -134,6 +135,9 @@ export function createConsolidatedKernelDefinition(registry = new TrustedDefinit
 export function createCurrentKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   return complete(extendPaymentCommerceKernel(createSingleReadKernelDefinition(registry).document, registry), registry, false);
 }
+export function createSemanticRetrievalKernelDefinition(registry = new TrustedDefinitionRegistry()):SeedDefinition{
+  return complete(extendSemanticRetrievalKernel(createCurrentKernelDefinition(registry).document,registry),registry,false);
+}
 export function createSingleReadKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const previous = complete(extendSingleReadKernel(createPersonalContextKernelDefinition(registry).document, registry), registry, false);
   if (digest(previous.audit.model) !== digest(SINGLE_READ_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'The original v26 kernel fingerprint changed');
@@ -157,6 +161,8 @@ export class StagedKernelBuilder {
   #model?: OntologyModel;
   #documentDigest?: string;
   static readonly stages = 14;
+  private readonly semanticRetrieval:boolean;
+  constructor(options:{semanticRetrieval?:boolean}={}){this.semanticRetrieval=options.semanticRetrieval===true;}
 
   step(expected: number): { completed: number; total: number; ready: boolean } {
     if (this.#failed) throw new Error('Failed kernel builder must be discarded');
@@ -199,7 +205,8 @@ export class StagedKernelBuilder {
           if (digest(this.#current.audit.model) !== digest(SINGLE_READ_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT','The original v26 kernel fingerprint changed');
           break;
         case 13:
-          this.#current = complete(extendPaymentCommerceKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
+          this.#current = complete(extendPaymentCommerceKernel(this.#current!.document,this.#registry),this.#registry,false,this.semanticRetrieval?undefined:model=>{this.#model=model;});
+          if(this.semanticRetrieval)this.#current=complete(extendSemanticRetrievalKernel(this.#current.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
           this.#documentDigest=digest(this.#current.document);
           this.#registry.seal();
           break;

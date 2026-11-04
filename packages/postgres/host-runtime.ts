@@ -25,6 +25,10 @@ import {PostgresDefinitionStore} from './definition-store.js';
 import {postgresGoalProgram} from './goal-contexts.js';
 import {assertPostgresMessagingStorageSchema} from './messaging-schema.js';
 import {observePostgresClient} from './client-errors.js';
+import {readPostgresVectorFeature,assertFeatureBinding,embeddingRuntimeGrantPlan} from '../deployment/postgres-vector-index.js';
+import {assertPostgresRuntimeRole} from '../deployment/postgres-handoff.js';
+import {assertPostgresEmbeddingSchema,assertPostgresSemanticRelease,embeddingTableNames,type PostgresVectorFeature} from './embedding-schema.js';
+import {PostgresEmbeddingIndex} from './embedding-index.js';
 import {PostgresTaskRelay} from './task-relay.js';
 import {PostgresAgentMessagingService,postgresMessagingNodeId} from './messaging-service.js';
 import {PostgresRelayNodeStore,openPostgresRelayNode,relayNodeWrappingKey,listPostgresRelayNodeIdentities} from './relay-node-store.js';
@@ -105,7 +109,10 @@ export function assertReviewedPostgresActivation(binding:PostgresBinding,input:{
     handoffDigest:binding.handoff.sha256,sourceFenceDigest:handoff.sourceFence.sha256,businessVerificationDigest:handoff.businessVerification.sha256,identityAuditDigest:handoff.identityAudit.sha256,runtimeSchemaReceiptDigest:binding.activation.runtimeSchemaReceiptDigest,reviewDigest:handoff.reviewDigest};
   if(!same(activation,expected)||digest(activation)!==binding.activation.receiptDigest)throw new Error('PostgreSQL activation record differs from the reviewed evidence');
 }
-export async function checkActivationSchema(client:Client,schema:string){
+/** Startup checks its actual connection role. A controlled administrator can
+ * name the runtime role for catalog-only inspection without impersonation. */
+export async function checkActivationSchema(client:Client,schema:string,runtimeRole?:string){
+  if(runtimeRole!==undefined&&!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}$/.test(runtimeRole))throw new Error('Invalid runtime role inspection subject');
   const tables=[runtimeContract.activationTable,runtimeContract.schemaReceiptTable];
   for(const [index,table] of tables.entries()){
     const rows=await client.query(`SELECT a.attname,pg_catalog.format_type(a.atttypid,a.atttypmod) AS type,a.attnotnull,a.atthasdef,a.attgenerated,a.attidentity FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
@@ -123,19 +130,20 @@ export async function checkActivationSchema(client:Client,schema:string){
       WHERE n.nspname=$1 AND c.relname=$2 AND NOT t.tgisinternal`,[schema,table]);
     const trigger=triggers.rows[0];if(triggers.rowCount!==1||Number(trigger.tgtype)!==27||trigger.tgenabled!=='O'||trigger.attributes!==''||trigger.unconditional!==true||Number(trigger.tgnargs)!==0||trigger.nspname!==schema||trigger.proname!==runtimeContract.triggerFunction||trigger.prosecdef!==false||trigger.lanname!=='plpgsql'||String(trigger.prosrc).trim()!==runtimeContract.triggerBody)throw new Error('PostgreSQL activation immutable-history guard differs');
   }
-  const privilege=await client.query(`SELECT r.rolsuper,r.rolbypassrls,r.rolcreaterole,r.rolcreatedb,pg_catalog.has_schema_privilege(current_user,$1,'CREATE') AS schema_create,
-    pg_catalog.has_table_privilege(current_user,format('%I.%I',$1::text,$2::text),'INSERT,UPDATE,DELETE,TRUNCATE') AS activation_write,
-    pg_catalog.has_table_privilege(current_user,format('%I.%I',$1::text,$3::text),'INSERT,UPDATE,DELETE,TRUNCATE') AS schema_receipt_write,
-    EXISTS(SELECT 1 FROM pg_catalog.pg_namespace n WHERE n.nspname=$1 AND pg_catalog.pg_has_role(current_user,n.nspowner,'MEMBER')) AS schema_owner,
-    EXISTS(SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname IN($2,$3) AND pg_catalog.pg_has_role(current_user,c.relowner,'MEMBER')) AS table_owner,
-    EXISTS(SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1 AND p.proname IN($4,$6) AND pg_catalog.pg_has_role(current_user,p.proowner,'MEMBER')) AS guard_owner,
-    EXISTS(SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname=ANY($5::text[]) AND pg_catalog.pg_has_role(current_user,c.relowner,'MEMBER')) AS node_ddl_owner
-    FROM pg_catalog.pg_roles r WHERE r.rolname=current_user`,[schema,...tables,runtimeContract.triggerFunction,[...runtimeContract.messagingNode.tables,...runtimeContract.messagingNode.sequences],'eigos_guard_relay_node_immutable']);
+  const role=runtimeRole===undefined?'current_user':'$7::name';
+  const privilege=await client.query(`SELECT r.rolsuper,r.rolbypassrls,r.rolcreaterole,r.rolcreatedb,pg_catalog.has_schema_privilege(${role},$1,'CREATE') AS schema_create,
+    pg_catalog.has_table_privilege(${role},format('%I.%I',$1::text,$2::text),'INSERT,UPDATE,DELETE,TRUNCATE') AS activation_write,
+    pg_catalog.has_table_privilege(${role},format('%I.%I',$1::text,$3::text),'INSERT,UPDATE,DELETE,TRUNCATE') AS schema_receipt_write,
+    EXISTS(SELECT 1 FROM pg_catalog.pg_namespace n WHERE n.nspname=$1 AND pg_catalog.pg_has_role(${role},n.nspowner,'MEMBER')) AS schema_owner,
+    EXISTS(SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname IN($2,$3) AND pg_catalog.pg_has_role(${role},c.relowner,'MEMBER')) AS table_owner,
+    EXISTS(SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1 AND p.proname IN($4,$6) AND pg_catalog.pg_has_role(${role},p.proowner,'MEMBER')) AS guard_owner,
+    EXISTS(SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname=ANY($5::text[]) AND pg_catalog.pg_has_role(${role},c.relowner,'MEMBER')) AS node_ddl_owner
+    FROM pg_catalog.pg_roles r WHERE r.rolname=${role}`,[schema,...tables,runtimeContract.triggerFunction,[...runtimeContract.messagingNode.tables,...runtimeContract.messagingNode.sequences],'eigos_guard_relay_node_immutable',...(runtimeRole===undefined?[]:[runtimeRole])]);
   const row=privilege.rows[0];if(privilege.rowCount!==1||Object.values(row).some(value=>value!==false))throw new Error('PostgreSQL primary runtime role can alter its activation authority');
 }
 /** No activation table is created here. Missing records, schema upgrade or
  * reviewed source-fence material leave formal startup explicitly not ready. */
-export async function verifyPostgresPrimaryActivation(client:Client,binding:PostgresBinding):Promise<void>{
+export async function verifyPostgresPrimaryActivation(client:Client,binding:PostgresBinding,vectorFeature?:PostgresVectorFeature,builder?:StagedKernelBuilder):Promise<void>{
   if(!binding.handoff||!binding.activation)throw new Error('PostgreSQL primary is not ready: reviewed activation is absent');
   const handoff=postgresHandoffSchema.parse(readPinnedPostgresJson(binding.handoff,65536));
   const sourceFence=readPinnedPostgresJson(handoff.sourceFence,1048576),businessVerification=readPinnedPostgresJson(handoff.businessVerification),identityAudit=readPinnedPostgresJson(handoff.identityAudit,1048576);
@@ -149,7 +157,7 @@ export async function verifyPostgresPrimaryActivation(client:Client,binding:Post
     const s=await client.query(`SELECT CASE WHEN octet_length(body::text)<=1048576 THEN body END AS body FROM ${q}.eigos_runtime_schema_receipt WHERE slot=1 LIMIT 2`);
     const imported=await client.query(`SELECT CASE WHEN octet_length(body::text)<=8388608 THEN body END AS body FROM ${q}.eigos_migration_receipt WHERE slot=1 LIMIT 2`);
     if(a.rowCount!==1||s.rowCount!==1||imported.rowCount!==1)throw new Error('PostgreSQL primary is not ready: activation or runtime schema receipt is missing');
-    const base=businessReceipt.parse(imported.rows[0].body),expectedTables=[...base.tables.map(table=>table.name),'eigos_migration_receipt','eigos_business_mutex',runtimeContract.activationTable,runtimeContract.schemaReceiptTable,...runtimeContract.messagingNode.tables].sort();
+    const base=businessReceipt.parse(imported.rows[0].body),expectedTables=[...base.tables.map(table=>table.name),'eigos_migration_receipt','eigos_business_mutex',runtimeContract.activationTable,runtimeContract.schemaReceiptTable,...runtimeContract.messagingNode.tables,...(vectorFeature?embeddingTableNames:[])].sort();
     if(!runtimeContract.messagingNode.originalTables.every(table=>base.tables.some(value=>value.name===table)))throw new Error('Original imported messaging tables are missing from the reviewed base');
     const inventory=await client.query(`SELECT c.relname FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relkind IN('r','p','v','m','f') ORDER BY c.relname COLLATE "C" LIMIT 10001`,[binding.business.schema]);
     // New messaging/node relations require their actual registered DDL module
@@ -157,7 +165,7 @@ export async function verifyPostgresPrimaryActivation(client:Client,binding:Post
     if(!same(inventory.rows.map(row=>row.relname).sort(),expectedTables))throw new Error('PostgreSQL runtime relation inventory differs from the installed reviewed contract');
     await assertPostgresMessagingStorageSchema(client,binding.business.schema);
     const functions=await client.query(`SELECT p.proname,pg_catalog.oidvectortypes(p.proargtypes) AS args FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1 ORDER BY p.proname,p.oid LIMIT 10001`,[binding.business.schema]);
-    const requiredFunctions=[...runtimeContract.baseFunctions,[runtimeContract.triggerFunction,''],['eigos_guard_relay_node_immutable','']],allowedFunctions=[...requiredFunctions,...runtimeContract.conditionalBaseFunctions];
+    const requiredFunctions=[...runtimeContract.baseFunctions,[runtimeContract.triggerFunction,''],['eigos_guard_relay_node_immutable',''],...(vectorFeature?[['eigos_vector_from_values','real[]'],['eigos_vector_cosine_values','extensions.vector, real[]'],['eigos_immutable_embedding','']]:[])],allowedFunctions=[...requiredFunctions,...runtimeContract.conditionalBaseFunctions];
     const names=functions.rows.map(row=>[row.proname,row.args]);
     if(requiredFunctions.some(expected=>!names.some(actual=>same(actual,expected)))||names.some(actual=>!allowedFunctions.some(expected=>same(actual,expected)))||new Set(names.map(value=>JSON.stringify(value))).size!==names.length)throw new Error('PostgreSQL runtime function inventory differs from the reviewed code');
     const sequences=await client.query(`SELECT c.relname,owned.table_name,owned.column_name,owned.identity,owned.primary_key FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
@@ -170,6 +178,10 @@ export async function verifyPostgresPrimaryActivation(client:Client,binding:Post
       ||baseSequences.some(row=>!base.tables.some(table=>table.name===row.table_name)||!(row.identity==='a'&&row.column_name==='__eigos_rowid'||row.identity==='d'&&row.primary_key===true))
       ||base.tables.some(table=>baseSequences.filter(row=>row.table_name===table.name&&row.column_name==='__eigos_rowid'&&row.identity==='a').length!==1))throw new Error('PostgreSQL runtime sequence inventory differs from its verified base and node extension');
     assertReviewedPostgresActivation(binding,{handoff,sourceFence,businessVerification,identityAudit,runtimeSchema:s.rows[0].body,activation:a.rows[0].body,businessImport:imported.rows[0].body});
+    if(vectorFeature){
+      assertFeatureBinding(vectorFeature,binding);await assertPostgresEmbeddingSchema(client,vectorFeature);await assertPostgresRuntimeRole(client,binding,embeddingRuntimeGrantPlan(binding,base.tables.map(table=>table.name)),'granted');
+      if(!builder)throw new Error('Task vectors require their actual prepared semantic kernel');await assertPostgresSemanticRelease(client,binding.business.schema,builder);
+    }
     await client.query('COMMIT');opened=false;
   }catch(error){if(opened)try{await client.query('ROLLBACK');}catch(rollback){throw new AggregateError([error,rollback],'PostgreSQL activation verification rollback failed',{cause:error});}throw error;}
 }
@@ -221,10 +233,11 @@ export async function preflightPostgresBinding(client:Client,binding:PostgresBin
 export async function createPostgresHostResources(config:Config,role:'gateway'|'worker',environment:NodeJS.ProcessEnv=process.env){
   if(config.EIGOS_STORAGE_BACKEND!=='postgres'||!config.EIGOS_POSTGRES_BINDING_FILE)throw new Error('Explicit PostgreSQL backend and private binding are required');
   const {binding,fileDigest}=readPostgresBinding(config.EIGOS_POSTGRES_BINDING_FILE);assertPostgresBindingAuthority(config,binding);
+  const vectorFeature=config.EIGOS_POSTGRES_VECTOR_FEATURE_FILE?readPostgresVectorFeature(config.EIGOS_POSTGRES_VECTOR_FEATURE_FILE,binding):undefined;
   const connection={...supabaseProxyOptions(binding.connection.host,binding.connection.port,binding.connection.proxyUrl),...postgresConnectionOptions(binding,environment)};
-  const kernel=await preparePostgresKernel();
+  const kernel=await preparePostgresKernel(undefined,{semanticRetrieval:!!vectorFeature});
   const businessPool=new pg.Pool({...connection,max:3}),leasePool=new pg.Pool({...connection,max:2}),eligibilityPool=new pg.Pool({...connection,max:2}),controlPool=new pg.Pool({...connection,max:2}),membershipPool=new pg.Pool({...connection,max:2});
-  const database=new PostgresDatabase(businessPool,binding.business.schema,binding.authority,{leasePool,eligibilityPool,kernel});
+  const database=new PostgresDatabase(businessPool,binding.business.schema,binding.authority,{leasePool,eligibilityPool,kernel,vectorFeature});
   const members=new PostgresMemberStore(new PostgresMembershipDatabase(membershipPool,binding.membership.schema,binding.membership.sourceFileDigest));
   const publisher=role==='gateway'?new PostgresAuthorizationPublisher({database,controlPool,schema:binding.business.schema,runtime:binding.authority,policyDigest:binding.policyDigest,members}):undefined;
   let closing:Promise<void>|undefined,unavailable=false,failure:unknown;
@@ -260,8 +273,8 @@ export async function createPostgresHostResources(config:Config,role:'gateway'|'
         WHERE m.slot=1 AND m.expires_at>floor(extract(epoch FROM clock_timestamp())*1000)::bigint AND p.digest=$1 LIMIT 1`,[binding.policyDigest])).rowCount===1);
       if(!ready)throw new Error('PostgreSQL Worker is not ready: the existing Gateway publisher is unavailable');
     };
-    return {binding,bindingFileDigest:fileDigest,kernel,database,members,publisher,preflight,close,authorityCurrent,requireWorkerReadiness,assertAvailable,get failure(){return failure;},
-      requirePrimaryActivation:()=>readControl(client=>verifyPostgresPrimaryActivation(client,binding)),
+    return {binding,bindingFileDigest:fileDigest,kernel,database,members,publisher,preflight,vectorFeature,close,authorityCurrent,requireWorkerReadiness,assertAvailable,get failure(){return failure;},
+      requirePrimaryActivation:()=>readControl(client=>verifyPostgresPrimaryActivation(client,binding,vectorFeature,kernel)),
       onUnavailable:(handler:()=>void)=>{unavailableHandlers.add(handler);if(unavailable)handler();},
       startPublisher:async()=>{if(!publisher)throw new Error('A Worker cannot start a second authorization publisher');assertAvailable();await publisher.start();assertAvailable();},
     };
@@ -310,7 +323,8 @@ export function createPostgresGatewayServices(config:Config,resources:Awaited<Re
   });
   const permissions=new PostgresPermissionManagement({database:resources.database,members:resources.members,publisher,catalog,policyDigest:resources.binding.policyDigest,builder:resources.kernel});
   const definitions=new PostgresDefinitionService({database:resources.database,tasks,catalog,publisher,policyDigest:resources.binding.policyDigest,builder:resources.kernel});
-  return {tasks,members:resources.members,publisher,permissions,definitions,catalog,programTransport,
+  const vectors=resources.vectorFeature?new PostgresEmbeddingIndex(resources.database,resources.binding.policyDigest,resources.vectorFeature,resources.kernel):undefined;
+  return {tasks,members:resources.members,publisher,permissions,definitions,catalog,programTransport,vectors,
     assertSourceCurrent:()=>assertPostgresProgramSourceCurrent(programTransport,resources),
     ontologyRelease:()=>resources.database.run(async client=>(await new PostgresDefinitionStore(client,{builder:resources.kernel}).active('eigos.business')).ref),
     available:async()=>{try{resources.assertAvailable();return await resources.database.run(client=>publisher.withManagement(client,async()=>{resources.assertAvailable();return true;}));}catch{return false;}},

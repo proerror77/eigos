@@ -7,7 +7,7 @@ import {definitionKindSchema,ontologyIdSchema,ontologyReleaseRefSchema,parseOnto
   type DefinitionKind,type OntologyDocument,type OntologyReleaseRef} from '../ontology/definition-contracts.js';
 import type {DefinitionDraft,DefinitionResource,DefinitionValidation,OntologyNamespace} from '../ontology/definition-store.js';
 import {compileOntologyDocument,normalizeOntologyDocument,type TrustedDefinitionRegistry} from '../ontology/model-compiler.js';
-import {createSeedDefinition,createCurrentKernelDefinition,stagedKernelComponents,type StagedKernelBuilder} from '../ontology/seed-definition.js';
+import {createSeedDefinition,createCurrentKernelDefinition,stagedKernelComponents,StagedKernelBuilder} from '../ontology/seed-definition.js';
 import {SecurityError} from '../security/errors.js';
 import type {ActionIntent} from '../ontology/actions.js';
 import type {OntologyModel} from '../ontology/model.js';
@@ -65,6 +65,21 @@ export class PostgresDefinitionStore {
     const result=[];for(const row of rows.rows)result.push(await this.namespace(String(row.id)));return result;
   }
   async active(id='eigos.business'){return this.resolve((await this.namespace(id)).active);}
+  /** Explicit software installation, never startup or request JSON. The host
+   * must separately prove its real namespace-owner administrator identity. */
+  async installSemanticRetrieval(owner:string,expected:OntologyReleaseRef,expectedGeneration:number,admin=false){
+    const namespace=await this.assertManagement(owner,expected.ontologyId,admin);
+    if(!admin||digest(namespace.active)!==digest(expected)||namespace.generation!==expectedGeneration)throw new DomainError('CONFLICT','The reviewed active release changed before semantic installation');
+    const template=this.options.builder?StagedKernelBuilder.prototype.result.call(this.options.builder).document:trusted().document;
+    if(template.version!=='28'||template.functions.filter(fn=>fn.id==='semanticCandidates').length!==1)throw new DomainError('CONFLICT','The actual semantic software kernel is unavailable');
+    const current=await this.resolve(namespace.active);
+    if(digest(current.document)===digest(template))throw new DomainError('CONFLICT','Semantic kernel is already installed; independently verify the existing release');
+    const predecessor=structuredClone(template);predecessor.version='27';predecessor.functions=predecessor.functions.filter(fn=>fn.id!=='semanticCandidates');
+    if(digest(predecessor)!==digest(current.document))throw new DomainError('CONFLICT','Semantic installation requires its exact reviewed v27 predecessor');
+    await this.sql('SAVEPOINT eigos_semantic_kernel_install');
+    try{const release=await this.insertRelease(template,owner,current.ref),activated=await this.activate(owner,release.ref,expectedGeneration,true);await this.sql('RELEASE SAVEPOINT eigos_semantic_kernel_install');return activated;}
+    catch(error){await this.sql('ROLLBACK TO SAVEPOINT eigos_semantic_kernel_install');await this.sql('RELEASE SAVEPOINT eigos_semantic_kernel_install');throw error;}
+  }
   async createNamespace(owner:string,input:{id?:string;name:string}){
     const id=ontologyIdSchema.parse(input.id??`ontology-${randomUUID()}`);
     if(!owner||owner.length>2000||!input.name.trim()||input.name.length>200)return invalid('Invalid ontology owner or name');

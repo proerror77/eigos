@@ -3,6 +3,10 @@ import type { ServiceRequest } from './execution.js';
 import type { ActionDiscoveryQuery, ActionDiscoveryPage } from '../core/action-bindings.js';
 import type { OntologyObjectStore } from './object-store.js';
 import { withIntegrity } from '../security/context.js';
+import type {SemanticRetrievalStorage} from './semantic-retrieval-port.js';
+import type {SemanticCandidatesCall} from './semantic-retrieval.js';
+import type {Computation} from './object-functions.js';
+import type {ReadBudget} from './object-store.js';
 
 type PlanningOperationName='revision'|'evaluate'|'virtualMembership'|'pipelineChanges';
 type OperationName='read'|'readPrivate'|'query'|'related'|'ingest'|'containsLinks'|'relationshipDigest'|'evidencePropertiesDigest'|'tombstone';
@@ -34,13 +38,14 @@ type CoreGraphStorage={
   withGraphIntegrity?<T>(action:()=>Promise<T>):Promise<T>;
 } & {
   [K in ManagedOperationName]?:(...args:Parameters<OntologyObjectStore[K]>)=>ReturnType<OntologyObjectStore[K]>|Promise<ReturnType<OntologyObjectStore[K]>>;
-} & ManagedDispatchStorage & ProjectedRelationshipStorage;
+} & ManagedDispatchStorage & ProjectedRelationshipStorage & SemanticRetrievalStorage;
 export type GraphStorage=CoreGraphStorage & {withGraphFunction?<T>(owner:string,id:string,action:(scope:GraphStorage)=>Promise<T>):Promise<T>};
 type StorageOperation={ [K in OperationName|PlanningOperationName|ManagedOperationName]:{method:K;args:Parameters<OntologyObjectStore[K]>} }[OperationName|PlanningOperationName|ManagedOperationName]
   |{method:'planningCall';tool:string;input:unknown;options?:{origin:'worker_context';maxOutputBytes:number}}
   |{method:'planningRead';receipt:PlanningReadReceipt}
   |{method:'discoverActions';owner:string;request:ServiceRequest;query:ActionDiscoveryQuery}
   |{method:'managedDispatchCheck';owner:string;invocation:ManagedDispatchInvocation}
+  |{method:'semanticCandidates';owner:string;input:SemanticCandidatesCall;budget:ReadBudget}
   |{method:'projectedRelationshipDigest';args:Parameters<OntologyObjectStore['projectedRelationshipDigest']>};
 type Operation=StorageOperation|{method:'integrity';program:GraphProgram<unknown>}|{method:'registeredFunction';owner:string;id:string;program:GraphProgram<unknown>};
 export type GraphProgram<T>=Generator<Operation,T,unknown>;
@@ -108,6 +113,9 @@ export function* graphRevision(...args:Parameters<OntologyObjectStore['revision'
 export function* graphEvaluate(...args:Parameters<OntologyObjectStore['evaluate']>):GraphProgram<ReturnType<OntologyObjectStore['evaluate']>> {
   return (yield {method:'evaluate',args}) as ReturnType<OntologyObjectStore['evaluate']>;
 }
+export function* graphSemanticCandidates(owner:string,input:SemanticCandidatesCall,budget:ReadBudget):GraphProgram<Computation>{
+  return (yield {method:'semanticCandidates',owner,input,budget}) as Computation;
+}
 export function* graphVirtualMembership(...args:Parameters<OntologyObjectStore['virtualMembership']>):GraphProgram<ReturnType<OntologyObjectStore['virtualMembership']>> {
   return (yield {method:'virtualMembership',args}) as ReturnType<OntologyObjectStore['virtualMembership']>;
 }
@@ -123,6 +131,7 @@ export function* graphDiscoverActions(owner:string,request:ServiceRequest,query:
 }
 function perform(graph:CoreGraphStorage,operation:StorageOperation,planning:PlanningGraphStorage|undefined):unknown {
   switch(operation.method) {
+    case 'semanticCandidates':return graph.semanticCandidates?graph.semanticCandidates(operation.owner,operation.input,operation.budget):{status:'unknown',reason:'semantic_retrieval_not_installed',evidenceRefs:[],evidenceLevels:[]};
     case 'planningCall':if(!planning?.call)throw new Error('Planning read dispatch is unavailable');return planning.call(operation.tool,operation.input,operation.options);
     case 'planningRead':if(!planning?.recordRead)throw new Error('Planning receipt persistence is unavailable');return planning.recordRead(operation.receipt);
     case 'discoverActions':if(!planning?.discoverActions)throw new Error('Action discovery is unavailable');return planning.discoverActions(operation.owner,operation.request,operation.query);

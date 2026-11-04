@@ -15,6 +15,8 @@ import { postgresTaskReadOntology, postgresTaskResourceViewValidUntil, withPostg
 import { withPostgresTaskReadAuthorization, type PostgresFunctionReadAuthorization, type PostgresTaskReadAuthorization } from './task-output.js';
 import { PostgresProjectionGraph } from './projection-graph.js';
 import { postgresQueryAuthorizedObjects, type PostgresOntologyCursor } from './ontology-read-query.js';
+import {postgresSemanticCandidates} from './embedding-index.js';
+import type {SemanticCandidatesCall} from '../ontology/semantic-retrieval.js';
 
 const unavailable=(error:unknown)=>error instanceof SecurityError&&['AUTHORIZATION_REQUIRED','INSUFFICIENT_ACCESS','OUTPUT_NOT_ALLOWED'].includes(error.reason)
   ||error instanceof DomainError&&error.code==='NOT_FOUND';
@@ -45,6 +47,9 @@ class FunctionGraph implements GraphStorage,ProjectionMetadata {
   }
   async read(owner:string,ref:ObjectRef,budget:ReadBudget={remaining:1000}){
     this.active(owner);this.charge(budget);const value=await this.auth.readObject(ref);this.capture(value.envelope);return value.object;
+  }
+  async semanticCandidates(owner:string,input:SemanticCandidatesCall,budget:ReadBudget){
+    this.active(owner);return postgresSemanticCandidates(this.client,this.principal,this.taskId,input,this.policy,this.auth,budget,this.capture,this.builder);
   }
   async readPrivate(owner:string,ref:ObjectRef,budget:ReadBudget={remaining:1000}){
     this.active(owner);this.charge(budget);return this.auth.readPrivate(ref);
