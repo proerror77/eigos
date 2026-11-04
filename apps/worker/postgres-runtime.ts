@@ -1,3 +1,4 @@
+import type {SemanticActionRanker} from '../../packages/semantic/catalog.js';
 import {CodexExecutor,type Executor} from '../../packages/capabilities/executor.js';
 import {HarnessExecutor} from '../../packages/capabilities/harness-executor.js';
 import {isAbsolute} from 'node:path';
@@ -50,6 +51,7 @@ function configuredModel(config:PostgresModelConfig):CodexExecutor|HarnessExecut
  * creating it does not start polling, switch primary, or change Gateway. The
  * caller owns the injected database/publisher lifecycle. */
 export function createPostgresWorker(config:PostgresModelConfig,options:{
+  semantic?:SemanticActionRanker;
   database:PostgresDatabase;policyDigest:string;sourceBindingId?:string;builder?:StagedKernelBuilder;registry?:PostgresReadProgramRegistry;
   reasoner?:PostgresReasoner;executor?:PostgresExecutor;modelChannel?:string;
   timing?:{leaseMs?:number;pollMs?:number;timeoutMs?:number};

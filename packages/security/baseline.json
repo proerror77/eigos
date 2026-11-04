@@ -3387,7 +3387,7 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "675c1aebdf219f17cbda52fc33e5b6461ae7aaa68df3ba5fc86fd5dc3cb37136",
+      "sourceDigest": "c40bebd7af2a223c2a217cec5f14b269aeb58bb950009fe90166d334ff88c530",
       "channels": [
         "authorization_control"
       ],
@@ -3567,7 +3567,7 @@
     {
       "id": "execution-catalog",
       "file": "packages/core/catalog.ts",
-      "sourceDigest": "11c26c69ad42330e92600755b9d4863e2d96c8a506e511b2af6fc5b0fa577a83",
+      "sourceDigest": "fd0bb48f25ea9dfb68cdd3b0123d608025ddafb77e8eff4cbed1c293d5f3c26a",
       "channels": [
         "worker"
       ],
@@ -4280,7 +4280,7 @@
     {
       "id": "ontology-action-discovery-contract",
       "file": "packages/core/action-bindings.ts",
-      "sourceDigest": "3d299b9b54ed59a482fe968f1d6a451023a0b14751c5f1748b21093073d83de8",
+      "sourceDigest": "16d9c1bbbdb4b38b89bf0b6b81a29746a360e229e4ad35fbce0d5daac43426ae",
       "channels": [
         "model",
         "dispatch"
@@ -6695,7 +6695,7 @@
     {
       "id": "postgres-document-bindings",
       "file": "packages/postgres/document-bindings.ts",
-      "sourceDigest": "1843e89a74b527a2b5390ae2e3966678687c130b29b3828b146cd705db4b7302",
+      "sourceDigest": "db4e66369e7b4dd9e94a756ab6fa9c1a528d8c107c728d3a451ef3fbfe7983ee",
       "channels": [
         "internal"
       ],
@@ -6743,7 +6743,7 @@
     {
       "id": "postgres-coordinator",
       "file": "packages/postgres/coordinator.ts",
-      "sourceDigest": "55872ff0f0e0cf6e043afdfd35352850673845265a183089c7dd20782df37a2c",
+      "sourceDigest": "d2e9b2acd9463959579bb04d55cef3bb6f1422dff5ce9e9e500cff3667c8bbce",
       "channels": [
         "internal"
       ],
@@ -6767,7 +6767,7 @@
     {
       "id": "postgres-worker-runtime",
       "file": "apps/worker/postgres-runtime.ts",
-      "sourceDigest": "9f986c016946006b7eb6c6c7cfa92dc5507066d3082f913369c2417c5c703ee9",
+      "sourceDigest": "63cd92c7492794e99168bd233ab0c0fca23cf053da43bedbe37592c4293a28bf",
       "channels": [
         "internal"
       ],
@@ -7662,6 +7662,57 @@
       "content": "Supplied-vector operator CLI",
       "currentControl": "Default preview has no credential/database access; explicit apply uses existing verified-TLS administrator environment, pinned inputs and exclusive private proof files, independent readback, no unknown-commit retry and no publisher/model startup.",
       "targetControl": "Default preview has no credential/database access; explicit apply uses existing verified-TLS administrator environment, pinned inputs and exclusive private proof files, independent readback, no unknown-commit retry and no publisher/model startup.",
+      "stage": "S5"
+    },
+    {
+      "id": "local-semantic-embedding",
+      "file": "packages/semantic/local-embedding.ts",
+      "sourceDigest": "dac837097b39810bb5ea554acf74a997fda4d2a34330a08f256e55bc384bafb7",
+      "channels": [
+        "internal",
+        "operator_cli"
+      ],
+      "content": "Pinned local embedding preparation and CPU inference",
+      "currentControl": "Pinned public artifact revision and local hashes; fixed dimensions/pooling/prefix/normalization; runtime remote loading disabled; bounded serialized input and explicit disposal",
+      "targetControl": "Pinned public artifact revision and local hashes; fixed dimensions/pooling/prefix/normalization; runtime remote loading disabled; bounded serialized input and explicit disposal",
+      "stage": "S5"
+    },
+    {
+      "id": "semantic-catalog",
+      "file": "packages/semantic/catalog.ts",
+      "sourceDigest": "180fd00df1cf59696e3d2139a3613d89a765aa36bb729e92c05d7604872c8b0d",
+      "channels": [
+        "internal",
+        "agent_response",
+        "operator_cli"
+      ],
+      "content": "Versioned pgvector metadata projection and authorized candidate ranking",
+      "currentControl": "Exact namespace/release/model and permitted descriptor hashes; complete coverage and bounded results; original contracts and authority rechecked; transactional replacement; isolated schema and fixed definer function with narrow reader grants",
+      "targetControl": "Exact namespace/release/model and permitted descriptor hashes; complete coverage and bounded results; original contracts and authority rechecked; transactional replacement; isolated schema and fixed definer function with narrow reader grants",
+      "stage": "S5"
+    },
+    {
+      "id": "semantic-catalog-cli",
+      "file": "scripts/semantic-catalog.mjs",
+      "sourceDigest": "d8c0175eccf06a951511af6b8d3aef65731e03c50d13e8b09238ea39e5a440f5",
+      "channels": [
+        "operator_cli"
+      ],
+      "content": "Operator model setup, release indexing, publication watch and metadata search",
+      "currentControl": "Private reviewed remote binding and verified TLS; existing admin identity for setup/index, runtime identity for search; localhost-only synthetic environment mode; release content checked before and after encoding; projection-only writes",
+      "targetControl": "Private reviewed remote binding and verified TLS; existing admin identity for setup/index, runtime identity for search; localhost-only synthetic environment mode; release content checked before and after encoding; projection-only writes",
+      "stage": "S5"
+    },
+    {
+      "id": "semantic-runtime",
+      "file": "packages/semantic/runtime.ts",
+      "sourceDigest": "56f90f2da9c837132f83e8c3426627e48d9fc3e91b9bb2dd201001310d7008c8",
+      "channels": [
+        "internal"
+      ],
+      "content": "Worker-owned local model and independent read-only semantic index pool",
+      "currentControl": "Existing private target binding and verified TLS; separate non-owner NOINHERIT login with no primary role membership, business/membership access, broad table rights or embedding column SELECT; bounded read-only index transactions and explicit disposal; business authority retained around candidate read",
+      "targetControl": "Existing private target binding and verified TLS; separate non-owner NOINHERIT login with no primary role membership, business/membership access, broad table rights or embedding column SELECT; bounded read-only index transactions and explicit disposal; business authority retained around candidate read",
       "stage": "S5"
     }
   ]

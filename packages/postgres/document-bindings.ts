@@ -1,3 +1,4 @@
+import type {SemanticActionRanker} from '../semantic/catalog.js';
 import type {Client} from 'pg';
 import {z} from 'zod';
 import {digest} from '../core/delegation.js';
@@ -22,6 +23,7 @@ import {PostgresTaskStorage} from './task-storage.js';
 import {PostgresDefinitionStore} from './definition-store.js';
 
 export interface PostgresDocumentBindingOptions {
+  semantic?:SemanticActionRanker;
   policyDigest:string;modelChannel:string;builder?:StagedKernelBuilder;sourceBindingId?:string;registry?:PostgresReadProgramRegistry;
   inspectClaim:(claim:PostgresWorkReference)=>Promise<{validUntil:number}|undefined>;
 }
@@ -73,11 +75,14 @@ export async function discoverPostgresReadBindings(client:Client,input:PostgresW
           if(status.verificationIds.length){const proofs=await client.query(`SELECT CASE WHEN octet_length(body)<=1048576 THEN body END AS body FROM ${q}.ontology_pipeline_verifications WHERE ontology_id=$1 AND id=ANY($2::text[])`,[release.ref.ontologyId,status.verificationIds]);if(proofs.rowCount!==new Set(status.verificationIds).size||proofs.rows.some(row=>typeof row.body!=='string'))throw new SecurityError('SOURCE_NOT_AUTHORIZED');for(const row of proofs.rows){const value=z.object({expiresAt:z.iso.datetime({offset:true})}).parse(JSON.parse(row.body)),until=Date.parse(value.expiresAt);if(until<=Date.now())throw new SecurityError('SOURCE_NOT_AUTHORIZED');postgresConstrainReadDeadline(client,until);}}
         }
       }
+      const ranking=options.semantic&&query.search&&query.searchMode!=='keyword'&&!query.actionId
+        ? await options.semantic.rank(client,release.ref,model.actionDefinitions().filter(action=>definitions.has(action.id)&&eligible.some(program=>program.actionIds.includes(action.id))),query.search):undefined;
+      active();
       const page=discoverActionMetadata(graph,claim.owner,request,query,eligible,allowed,action=>definitions.has(action.id),(program,actionId)=>pipelines.get(key(program,actionId))??fail('Registered program Pipeline metadata is incomplete'),(program,actionId)=>{
         if(!accountAllowed.get(digest(program.ref)))return false;const entry=registry.require(program.ref,program.configurationDigest),bindingId=entry.sourceBindingId??(entry.kind==='document'?options.sourceBindingId:undefined);
         const source=sources.find(source=>source.programId===program.ref.id&&source.programDigest===program.configurationDigest&&source.operations.includes(actionId)&&(!bindingId||source.bindingId===bindingId)&&admission.parent.sourceBindingIds.includes(source.bindingId)&&admission.grant.outputs.some(output=>output.programId===source.programId&&output.programDigest===source.programDigest&&output.sourceBindingId===source.bindingId&&source.outputTypes.includes(output.type)&&output.fields.every(field=>admission.parent.resources.some(resource=>resource.type===output.type&&resource.fields.includes(field)))));
         if(source)postgresConstrainConsent(client,source.expiresAt,options.policyDigest);return !!source;
-      });active();return page;
+      },ranking);active();return page;
     },options.builder);
   };
   return scope?read(scope.authorization,scope.admission,scope.principal):withPostgresWorkerEvidenceAuthorization(client,claim,options.policyDigest,read,options.builder,options.modelChannel,options.inspectClaim);

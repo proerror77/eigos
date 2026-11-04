@@ -1,8 +1,10 @@
 # Task-local supplied vectors
 
-PA or Worker code can supply numeric vectors it has already generated. EIGOS
-does not select an embedding provider, receive a provider key, or start an
-embedding model. A supplied model name is a producer assertion, not proof of
+PA or Worker code can supply numeric vectors it has already generated. This
+supplied-vector interface does not select or start an embedding model. The optional
+[local capability index](../../packages/semantic/README.md) generates embeddings for
+published capability metadata in the Worker through a separate read identity.
+A supplied model name here is a producer assertion, not proof of
 model execution or business correctness.
 
 This PostgreSQL feature ranks an explicit set of at most 50 objects already
