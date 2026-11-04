@@ -378,6 +378,22 @@ export class OntologyObjectStore {
   }
   /** Atomic import with schema, identity, revision, endpoint and cardinality checks. */
   ingest(owner: string, input: ObjectBatch, provenance: ObjectSource): void { this.ingestBatch(owner, input, provenance); }
+  private assertRelationshipCardinality(owner: string, ref: ObjectRef): void {
+    const sides = this.model.sides(ref.type);
+    for (const direction of ['forward', 'reverse'] as const) {
+      // Zero, one and at least two matches distinguish every supported bound.
+      const rules = sides.filter(s => s.direction === direction && (s.side.required || !s.side.many))
+        .map(({ link, side }) => ({ id: link.id, min: side.required ? 1 : 0, max: side.many ? 2 : 1 }));
+      if (!rules.length) continue;
+      const endpoint = direction === 'forward' ? 'from' : 'to';
+      const violation = this.db.prepare(`SELECT 1 AS cardinality_violation FROM json_each(?) AS rule
+        WHERE (SELECT count(*) FROM (SELECT 1 FROM ${this.linkTable}
+          WHERE ${this.owned()} AND type=json_extract(rule.value,'$.id') AND ${endpoint}_type=? AND ${endpoint}_id=? LIMIT 2))
+          NOT BETWEEN json_extract(rule.value,'$.min') AND json_extract(rule.value,'$.max') LIMIT 1`)
+        .get(JSON.stringify(rules), ...this.ownerParameters(owner), ref.type, ref.id);
+      if (violation) failure('Relationship cardinality violation');
+    }
+  }
   private ingestBatch(owner: string, input: ObjectBatch, provenance: ObjectSource, tombstones: ObjectTombstone[] = []): void {
     if (this.readOverlay) throw new DomainError('FORBIDDEN', 'Read views cannot import facts');
     if (this.security && !authorizationScope()?.projection) throw new SecurityError('AUTHORIZATION_REQUIRED');
@@ -463,13 +479,15 @@ export class OntologyObjectStore {
         }
         const def = this.model.link(edge.type);
         if (!this.model.implements(edge.from.type, def.from.type) || !this.model.implements(edge.to.type, def.to.type)) failure('Link endpoint type mismatch');
-        const historicalEdge = source.kind === 'task' && this.model.linkWritePolicy(edge.type) === 'source' && this.containsLinks(owner, [edge]);
+        const checkHistory = source.kind === 'task' && this.model.linkWritePolicy(edge.type) === 'source';
+        const historicalEdge = checkHistory && this.containsLinks(owner, [edge]);
         for (const ref of [edge.from, edge.to]) { this.raw(owner, ref, { remaining: 1 }, historicalEdge); touched.set(key(ref), ref); }
         if (remove) {
           changed = !!this.db.prepare(`DELETE FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND from_type=? AND from_id=? AND to_type=? AND to_id=?`).run(...this.ownerParameters(owner), edge.type, edge.from.type, edge.from.id, edge.to.type, edge.to.id).changes || changed;
         } else {
-          const existing = this.db.prepare(`SELECT definition_digest FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND from_type=? AND from_id=? AND to_type=? AND to_id=?`).get(...this.ownerParameters(owner), edge.type, edge.from.type, edge.from.id, edge.to.type, edge.to.id);
-          if (existing) this.assertLinkDefinition(edge.type, String(existing.definition_digest));
+          // containsLinks checks the stored definition as well as exact edge membership.
+          // The historical lookup above used this same edge in the same savepoint.
+          if (!checkHistory) this.containsLinks(owner, [edge]);
           const result = this.scoped
             ? this.db.prepare('INSERT OR IGNORE INTO ontology_scoped_links VALUES(?,?,?,?,?,?,?,?)').run(this.ontologyId, owner, edge.type, edge.from.type, edge.from.id, edge.to.type, edge.to.id, digest(def))
             : this.db.prepare('INSERT OR IGNORE INTO ontology_links VALUES(?,?,?,?,?,?,?)').run(owner, edge.type, edge.from.type, edge.from.id, edge.to.type, edge.to.id, digest(def));
@@ -501,15 +519,7 @@ export class OntologyObjectStore {
       }
       for (const ref of touched.values()) {
         if (deleted.has(key(ref)) || this.db.prepare('SELECT 1 FROM ontology_tombstones WHERE ontology_id=? AND owner=? AND type=? AND id=?').get(this.ontologyId, owner, ref.type, ref.id)) continue;
-        for (const { link, side, direction } of this.model.sides(ref.type)) {
-          // Optional, unbounded relationships have no cardinality condition to
-          // violate. Declaring another such link must not add a database query
-          // to every update of either endpoint.
-          if (side.many && !side.required) continue;
-          const prefix = direction === 'forward' ? 'from' : 'to';
-          const count = Number(this.db.prepare(`SELECT count(*) AS n FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND ${prefix}_type=? AND ${prefix}_id=?`).get(...this.ownerParameters(owner), link.id, ref.type, ref.id)!.n);
-          if ((!side.many && count > 1) || (side.required && count === 0)) failure('Relationship cardinality violation');
-        }
+        this.assertRelationshipCardinality(owner, ref);
         if (ref.type === 'Proposal') {
           const proposal = this.raw(owner, ref, { remaining: 1 });
           if (proposal.properties.kind === 'goal') {
