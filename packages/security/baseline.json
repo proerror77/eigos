@@ -4113,7 +4113,7 @@
     {
       "id": "definition-registry",
       "file": "packages/ontology/definition-store.ts",
-      "sourceDigest": "e5513759c82ba846b79ec03218191d639efd58eefa9c41b9b5a17f2137f2cb37",
+      "sourceDigest": "b7b3262a0522f86ad90b5711413e6912242dbf32e53915d5a1ead6a31b1d14f2",
       "channels": [
         "model",
         "artifact"
@@ -6275,7 +6275,7 @@
     {
       "id": "postgres-ontology-read-query",
       "file": "packages/postgres/ontology-read-query.ts",
-      "sourceDigest": "16f01a4d19ee236da08ce4c92f500c9d2d419cae19dfcec431b51262c71e0a27",
+      "sourceDigest": "ac9d9ef8dbfd1694845b8f540cd6b0dcbd237db63810cc5d84c1d2c4a2e9bc16",
       "channels": [
         "internal"
       ],
@@ -6323,7 +6323,7 @@
     {
       "id": "postgres-planning-read-graph",
       "file": "packages/postgres/planning-read-graph.ts",
-      "sourceDigest": "2d8d997780420a1020bc554b39d8ecf925ad30128b7159132a0b678688cb7486",
+      "sourceDigest": "89c759c250ecca00fed432caf3132274f4522e36b532e44becfcd5845a799e06",
       "channels": [
         "internal"
       ],
@@ -6901,7 +6901,7 @@
     {
       "id": "harness-executor",
       "file": "packages/capabilities/harness-executor.ts",
-      "sourceDigest": "bca154caa90f870c4e6d3493e50346e1613f36e0b12b6688d993f78d40f01b35",
+      "sourceDigest": "3b256779e8912ede77717d2d0d237da10627d7342105343c84aeaeb6407fb475",
       "channels": [
         "registered_model",
         "private_file"
