@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {installPostgresAuthorityLock} from '../packages/postgres/authority-lock.js';
 import {preparePostgresKernel} from '../packages/postgres/kernel-runtime.js';
-import {StagedKernelBuilder,stagedKernelComponents} from '../packages/ontology/seed-definition.js';
+import {StagedKernelBuilder,stagedKernelComponents,PAYMENT_COMMERCE_KERNEL_MODEL_REF,BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF} from '../packages/ontology/seed-definition.js';
 import {PostgresDatabase} from '../packages/postgres/database.js';
 import {postgresBusinessTransaction,postgresBusinessKernel,postgresBusinessToken} from '../packages/postgres/runtime-transaction.js';
 import {postgresOntologyRelease,postgresOntologyReadContext} from '../packages/postgres/ontology-release.js';
 import {postgresWorkerAdmission} from '../packages/postgres/worker-admission.js';
 import {securityFixture} from './fixtures/security.js';
 import {importPostgresFixture} from './fixtures/postgres-business.js';
+import {persistentConsentPolicyContracts,reviewedKernelVersionForPolicy} from '../packages/security/policy-store.js';
 import {currentKernelImplementation} from '../packages/ontology/definition-store.js';
 
 const local={skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'};
@@ -26,6 +27,22 @@ test('PostgreSQL kernel preparation yields between all genuine stages and reject
   assert(stagedKernelComponents(kernel).model.actionIds().includes('ComposeDocument'));
   assert.deepEqual(stagedKernelComponents(kernel).model.ref,currentKernelImplementation().ref,'The staged PG compiler must include every current trusted kernel extension');
   const controller=new AbortController(),reason=new Error('Synthetic startup canceled');controller.abort(reason);await assert.rejects(preparePostgresKernel(controller.signal),error=>error===reason);
+});
+
+test('reviewed policy selects the exact v27 or descriptions-v28 kernel without upgrading grants',async()=>{
+  const legacy=await preparePostgresKernel(undefined,'27'),legacyModel=stagedKernelComponents(legacy).model;
+  assert.deepEqual(legacyModel.ref,PAYMENT_COMMERCE_KERNEL_MODEL_REF);assert.equal(legacy.step(14).total,14);
+  const current=await preparePostgresKernel(),currentModel=stagedKernelComponents(current).model;
+  assert.deepEqual(currentModel.ref,BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF);assert.equal(current.step(15).total,15);
+  for(const [model,version] of [[legacyModel,'27'],[currentModel,'28']] as const){
+    const contracts=persistentConsentPolicyContracts(model);
+    assert.equal(reviewedKernelVersionForPolicy(contracts.before),version);
+    assert.equal(reviewedKernelVersionForPolicy(contracts.after),version);
+  }
+  assert.notEqual(persistentConsentPolicyContracts(legacyModel).after,persistentConsentPolicyContracts(currentModel).after);
+  assert.throws(()=>reviewedKernelVersionForPolicy('0'.repeat(64)),/explicit supported kernel review/);
+  assert.throws(()=>new StagedKernelBuilder('29' as never),/Unsupported reviewed kernel target/);
+  assert.throws(()=>stagedKernelComponents(Object.setPrototypeOf({},StagedKernelBuilder.prototype)),/private|read|member/i);
 });
 
 test('prepared kernel is bound to the exact callback token and explicit builders retain priority',local,async()=>{

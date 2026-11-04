@@ -20,8 +20,8 @@ const resources = (document: OntologyDocument) => [
 const coreType = (id: string) => /^(?:Execution|Registered|Network)/.test(id) || ['Authorization', 'SourceReceipt', 'ServiceRequest', 'RequestInstruction', 'RequestConstraint', 'OutcomeAssessment', 'EntityIdentityAssertion', 'TransactionPartyRole'].includes(id);
 function compatibleBusinessObject(original: SerializableObjectType, candidate: SerializableObjectType, document: OntologyDocument): boolean {
   if (coreType(original.id)) return false;
-  const { name: _name, description: _description, aliases: _aliases, properties, interfaces: previousViews = [], ...identity } = original;
-  const { name: _newName, description: _newDescription, aliases: _newAliases, properties: next, interfaces: nextViews = [], ...nextIdentity } = candidate;
+  const { name: _name, description: _description, businessDescription: _businessDescription, aliases: _aliases, properties, interfaces: previousViews = [], ...identity } = original;
+  const { name: _newName, description: _newDescription, businessDescription: _newBusinessDescription, aliases: _newAliases, properties: next, interfaces: nextViews = [], ...nextIdentity } = candidate;
   if (digest(identity) !== digest(nextIdentity)) return false;
   if (previousViews.some(view => !nextViews.some(next => digest(view) === digest(next)))) return false;
   if (nextViews.filter(view => !previousViews.some(old => old.id === view.id)).some(view => !document.interfaces.find(iface => iface.id === view.id)?.projectionOnly)) return false;
@@ -112,10 +112,16 @@ export class TrustedDefinitionRegistry {
     if (!this.#protectedKernels.length) return;
     const byResource = new Map(actual.map(resource => [resource.value.resourceId, resource]));
     const byFunction = new Map(document.functions.map(fn => [fn.id, fn]));
+    const actualDigests = new Map<object, string>();
+    const actualDigest = (value: object): string => {
+      let valueDigest = actualDigests.get(value);
+      if (valueDigest === undefined) { valueDigest = digest(value); actualDigests.set(value, valueDigest); }
+      return valueDigest;
+    };
     const match = this.#protectedKernels.some(kernel => [...kernel.resources].every(([resourceId, expected]) => {
       const value = byResource.get(resourceId);
-      return value && value.kind === expected.kind && value.value.id === expected.id && (digest(value.value) === expected.digest || value.kind === 'object' && compatibleBusinessObject(expected.value as SerializableObjectType, value.value as SerializableObjectType, document));
-    }) && [...kernel.functions].every(([id, expected]) => { const fn = byFunction.get(id); return !!fn && digest(fn) === expected; }));
+      return value && value.kind === expected.kind && value.value.id === expected.id && (actualDigest(value.value) === expected.digest || value.kind === 'object' && compatibleBusinessObject(expected.value as SerializableObjectType, value.value as SerializableObjectType, document));
+    }) && [...kernel.functions].every(([id, expected]) => { const fn = byFunction.get(id); return !!fn && actualDigest(fn) === expected; }));
     if (!match) fail('Trusted ontology kernel resources cannot be changed, mixed or removed');
   }
 }

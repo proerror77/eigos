@@ -3,8 +3,8 @@
   "enforcement": "not_installed",
   "model": {
     "id": "eigos.business",
-    "version": "27",
-    "digest": "8e5b11eb6b25d873b12f05d67232899f97af6af929b143397aa19e75379fc5e6"
+    "version": "28",
+    "digest": "04606f93dc6cfd9045ac6b9a0c3dcfa4c8f330689ecbdd3cdfa7556df15202c5"
   },
   "types": {
     "ServiceRequest": {
@@ -2907,12 +2907,12 @@
     {
       "id": "mcp",
       "file": "apps/gateway/mcp.ts",
-      "sourceDigest": "befd0e871e90942f02f0a59de93ddaa44b7f41fabe46d293bb9cec601af375ca",
+      "sourceDigest": "97941c4e0cb0780f2d5d82a6e17c64c55e93aeafc6dd019f75de5a9396d926aa",
       "channels": [
         "mcp"
       ],
       "content": "All task/ontology tools including submit, reply, cancel, payment, reconcile and remediation",
-      "currentControl": "Foundation task-bound reads and TaskView; operator-scoped Pipeline tools use operation allowlists without enabling generic definition editing or managed actions Original-PA read-only technical resume uses the shared current-grant, authority, revision and fixed-budget checks; tool discovery grants no authority. Service instructions describe intent-based discovery and preserve capability, source and task authorization checks. Messaging-only discovery exposes communication tools only; communication grants never manufacture business access.",
+      "currentControl": "Foundation task-bound reads and TaskView; operator-scoped Pipeline tools use operation allowlists without enabling generic definition editing or managed actions Original-PA read-only technical resume uses the shared current-grant, authority, revision and fixed-budget checks; tool discovery grants no authority. Service instructions describe intent-based discovery and preserve capability, source and task authorization checks. Messaging-only discovery exposes communication tools only; communication grants never manufacture business access. Optional relationship metadata filtering retains existing namespace and task authorization; discovery grants no source or business permission.",
       "targetControl": "Shared policy and response projection on every tool",
       "stage": "S4"
     },
@@ -2931,14 +2931,14 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "23a2086a2e1d078d43eeeacf48f4f91e7c9665e9e2c7660f9a39a616e34a180a",
+      "sourceDigest": "fe8892fd2448f4bd636fea4e338a6dc1bfd46fe1a8b05c872143c132c8bda267",
       "channels": [
         "http",
         "mcp",
         "a2a"
       ],
       "content": "Queries, mutations, blocking wait and internal Job response",
-      "currentControl": "Current parent/source grants and namespace publish/read/task scopes; prepare the selected intake atomically with an exact release/runtime and a task window capped at ten minutes; Technical resume rechecks an already selected source before retaining the original task grant and execution authority.",
+      "currentControl": "Current parent/source grants and namespace publish/read/task scopes; prepare the selected intake atomically with an exact release/runtime and a task window capped at ten minutes; Technical resume rechecks an already selected source before retaining the original task grant and execution authority. Shared HTTP/MCP discovery supports bounded relationship filtering after the existing authorization boundary.",
       "targetControl": "TaskDataGrant, current projection and operation-specific scope",
       "stage": "S2"
     },
@@ -3049,7 +3049,7 @@
         "query"
       ],
       "content": "Planning tools, reads, seen references, functions, receipts and session key",
-      "currentControl": "Foundation v2 authorized definitions/data and access-qualified receipts/session keys",
+      "currentControl": "Foundation v2 authorized definitions/data and access-qualified receipts/session keys Unsupported automatic fact evaluation retains read data and defers only that item; per-object conclusions and relationship filters preserve read budgets, current authority and version checks.",
       "targetControl": "Uniform task view; grants and policy epoch in snapshots/session key",
       "stage": "S3"
     },
@@ -3271,12 +3271,12 @@
     {
       "id": "ontology-definitions",
       "file": "packages/ontology/model.ts",
-      "sourceDigest": "b3dd1e1b784b87d1be54347155b53ff7cac89a75c8576d27ffbaf5d0fd1344ee",
+      "sourceDigest": "30b9993512478b5349395fe2fef3dfaadcae29ca47c93f92da64fae222a8bb88",
       "channels": [
         "definition"
       ],
       "content": "Types, interfaces, links, action/function schemas and binding metadata",
-      "currentControl": "Authenticated describe call; no per-type policy",
+      "currentControl": "Authenticated describe call; no per-type policy Versioned business explanations affect discovery/model digests while preserving original stored fact fingerprints; both underlying contracts and display metadata remain pinned.",
       "targetControl": "Resource policy filtering including all action/function dependencies",
       "stage": "S2"
     },
@@ -3495,10 +3495,10 @@
     {
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "f070e5a43aa1f96f5cdf4c20d9e952331cae1a3d069b30339b89da52c7ce5315",
+      "sourceDigest": "7e0b2ffc988177296814a8a7cfbbad1cf66c244e568eae8bff1180f29db4ab1d",
       "stage": "S2",
       "content": "Resource roles, fields, bindings, source grants, derived lineage, artifacts and opaque cursors",
-      "currentControl": "Current resource roles, fields, source grants and output lineage; release labels may differ only with identical reviewed model content and action implementations; long task projections report checked Worker progress without changing the original lease, authority or evidence",
+      "currentControl": "Current resource roles, fields, source grants and output lineage; release labels may differ only with identical reviewed model content and action implementations; long task projections report checked Worker progress without changing the original lease, authority or evidence The exact v27 predecessor remains readable under the reviewed v28 description-only successor; field labels, source grants and business permissions remain unchanged.",
       "id": "security-data-policy",
       "channels": [
         "all-reads"
@@ -3548,7 +3548,7 @@
         "http-mcp-model"
       ],
       "content": "Version 2 task-bound reads, authorized definitions and check_access",
-      "currentControl": "Task-bound authorized definitions and fields; exact policy-equivalent model content and current grants remain required across release labels",
+      "currentControl": "Task-bound authorized definitions and fields; exact policy-equivalent model content and current grants remain required across release labels Authorized discovery uses the release-pinned business explanation and filters only already-permitted relationship metadata.",
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "stage": "S2"
     },
@@ -4113,13 +4113,13 @@
     {
       "id": "definition-registry",
       "file": "packages/ontology/definition-store.ts",
-      "sourceDigest": "8cb1dbe06d119f51512a21474778beca910a7fab0314e6b9a0f94c70231a4827",
+      "sourceDigest": "e5513759c82ba846b79ec03218191d639efd58eefa9c41b9b5a17f2137f2cb37",
       "channels": [
         "model",
         "artifact"
       ],
       "content": "Canonical immutable releases, reviewed kernel and per-task release views",
-      "currentControl": "Immutable definitions and historical aliases; intake program/source/action identities survive editing and activation, including rollback",
+      "currentControl": "Immutable definitions and historical aliases; intake program/source/action identities survive editing and activation, including rollback Explicit matching v27 definitions and active-generation preconditions are required for description activation; old task pins, facts and grants remain unchanged.",
       "targetControl": "Reviewed resource/field/channel grants; no automatic historical grants",
       "stage": "S5"
     },
@@ -4229,7 +4229,7 @@
     {
       "id": "native-model-mcp",
       "file": "packages/coordinator/ontology-mcp.ts",
-      "sourceDigest": "38dda9b6a1bbe937346bce688f3179435961cf2713d267abecf36b82f36088d9",
+      "sourceDigest": "bd1fe01b908d23e9796ca524de48d388956f0b3c749a435c1c1d0154bb037a37",
       "channels": [
         "model"
       ],
@@ -4254,13 +4254,13 @@
     {
       "id": "ontology-definition-contracts",
       "file": "packages/ontology/definition-contracts.ts",
-      "sourceDigest": "d626b7771f5abc5debe25de267a6326aedfbbee3941702ebc106456c4a6023ca",
+      "sourceDigest": "66350d39becb53b71e42151aea052fa5d8f398c2dae0cb6a773e7202c68a5866",
       "channels": [
         "management",
         "sqlite"
       ],
       "content": "Optional immutable intake references alongside exact definition schemas",
-      "currentControl": "No executable code or grants in JSON; historical definitions remain byte-compatible when intake metadata is absent",
+      "currentControl": "No executable code or grants in JSON; historical definitions remain byte-compatible when intake metadata is absent The optional bounded businessDescription is non-executable metadata; source fields and authority remain independently validated.",
       "targetControl": "Preserve current source, task, field and effect authorization; no automatic historical grants",
       "stage": "S3"
     },
@@ -4951,12 +4951,12 @@
     {
       "id": "packages-security-reviewed-policy-upgrade",
       "file": "packages/security/reviewed-policy-upgrade.ts",
-      "sourceDigest": "6edef088eb32ece5dc72f83c8d841e6dfc61bd713ee7d2c079b19e1d4aaacdca",
+      "sourceDigest": "92b9230a88ad8edffa7495b0ac89f3046acf4d3c43f049d228d1c79b9d998001",
       "channels": [
         "sqlite"
       ],
       "content": "Source-derived reusable business facts or explicit offline policy migration",
-      "currentControl": "Exact source scope, field policy, owner and task authorization; no automatic grants",
+      "currentControl": "Exact source scope, field policy, owner and task authorization; no automatic grants Named reviewed migrations may reuse only an asserted shared transaction, allowing policy plus ontology activation to roll back together without granting permissions.",
       "targetControl": "Retain original evidence and validate both endpoints on every relationship read",
       "stage": "S1"
     },
@@ -5012,13 +5012,13 @@
     {
       "id": "packages-coordinator-requested-facts",
       "file": "packages/coordinator/requested-facts.ts",
-      "sourceDigest": "716a6b5443210a98417d86b94c7e84dd7af0b42d5fba0a9002f55a5112bfb108",
+      "sourceDigest": "55b62389e1b93fa2c147ff1583b3ea1054eac7434e01155d5da3228c0ac12b8f",
       "channels": [
         "sqlite",
         "registered_model"
       ],
       "content": "Shared semantic projections and bounded task fact reads",
-      "currentControl": "Concrete field and endpoint permissions; request membership and current versions",
+      "currentControl": "Concrete field and endpoint permissions; request membership and current versions Unsupported evaluation is explicit and never implies source refresh; successful and failed per-object checks remain separate, and permission errors still abort the read.",
       "targetControl": "No new authority or provider invocation from interface projection",
       "stage": "S1"
     },
@@ -5729,7 +5729,7 @@
     {
       "id": "trusted-kernel-bootstrap",
       "file": "packages/ontology/seed-definition.ts",
-      "sourceDigest": "c1d6d8657c1b6889ccd00e26420c962fa91df161a3824edd1f417082d5eba411",
+      "sourceDigest": "fe2ace1ac4b10b449dd41b66b95a99e90471f6bf3cf9e6b2f88f725fae113f8d",
       "channels": [
         "authorization_control"
       ],
@@ -5741,7 +5741,7 @@
     {
       "id": "trusted-definition-registry",
       "file": "packages/ontology/model-compiler.ts",
-      "sourceDigest": "dee57344339ee7be74992e5e8206d357f9b80400b85f566455403bf84375d72c",
+      "sourceDigest": "2119d87a9dbf05e8e16e56da46414d93e04aca2c17d6dada952e1eea2e40daeb",
       "channels": [
         "authorization_control"
       ],
@@ -6215,7 +6215,7 @@
     {
       "id": "security-model-review",
       "file": "packages/security/model-review.ts",
-      "sourceDigest": "48dfbbf964bf246610eacfddf42b9c0a68835a04692d96f79570cd0201bf5295",
+      "sourceDigest": "884813e72d625f93080e41462aa0e8d53a9d27a5ea76dfa36cbe5bbbc57cda97",
       "channels": [
         "internal"
       ],
@@ -6227,7 +6227,7 @@
     {
       "id": "security-definition-view",
       "file": "packages/security/definition-view.ts",
-      "sourceDigest": "07f8711a7568b037306f031390c9a952362284724e36b3b06510ca3f36e450fa",
+      "sourceDigest": "4105ddee9517d8945e906e43746746594878625f263ccf174a1db1399b0beed1",
       "channels": [
         "internal"
       ],
@@ -6239,7 +6239,7 @@
     {
       "id": "security-view-contracts",
       "file": "packages/security/view-contracts.ts",
-      "sourceDigest": "82952e21626b979f6a39dc0e4f999e30d65818edb280e875bbacd754ab62218e",
+      "sourceDigest": "8440323d916132562a196c8ffdb0922f32ac7d2313bfb8946bdd2d2431a031ae",
       "channels": [
         "internal"
       ],
@@ -6335,7 +6335,7 @@
     {
       "id": "planning-session-program",
       "file": "packages/coordinator/planning-program.ts",
-      "sourceDigest": "5a9af551d6b9afaf37a163486b1aa38f2b39b77e15c0aeb2865fd5f4f213e8ff",
+      "sourceDigest": "cb697a4b183015dc1ad368decd4e2130e3fe274870a46d729b5af7c13688bb14",
       "channels": [
         "internal"
       ],
@@ -6659,7 +6659,7 @@
     {
       "id": "postgres-kernel-runtime",
       "file": "packages/postgres/kernel-runtime.ts",
-      "sourceDigest": "3cf40bf48620dede95e46921c4be2854b4f43e3f11e95ea6ed36d07da9ce2ce5",
+      "sourceDigest": "e5fca9dda55ab136835aa4f5d716c357518f5d32cf73f9b9f4fe10c7572b1999",
       "channels": [
         "internal"
       ],
@@ -6889,12 +6889,12 @@
     {
       "id": "payment-commerce-policy-upgrade",
       "file": "packages/security/payment-commerce-upgrade.ts",
-      "sourceDigest": "54003310074d0a9bbf37877afea11478424ee49d21eb8d7eb80bb621414c696e",
+      "sourceDigest": "fca662f27cd7c04d511cf2de3b087e232f21ae5d1f366167037d0696880ff886",
       "channels": [
         "private_file"
       ],
       "content": "Offline v26 to v27 policy transition without new source grants",
-      "currentControl": "Owner/task/revision and fingerprint checks; no order or payment operation; explicit migration and source grants",
+      "currentControl": "Owner/task/revision and fingerprint checks; no order or payment operation; explicit migration and source grants The explicit v26 read-policy upgrade also accepts the reviewed description-only successor; source consent and action permissions are preserved.",
       "targetControl": "Maintain exact source authority and independent readback",
       "stage": "S5"
     },
@@ -7170,7 +7170,7 @@
     {
       "id": "postgres-host-runtime",
       "file": "packages/postgres/host-runtime.ts",
-      "sourceDigest": "7ae2a08e9b1ed6a1361effb17d862e39542f47ea70fae2929618c586d844c198",
+      "sourceDigest": "d6c51c6980c64b854170dfe66cfb013a5f205c9db6eb734fb9bfb2ca87eb57d3",
       "channels": [
         "internal"
       ],
@@ -7485,6 +7485,67 @@
       "currentControl": "Callback-scoped original owner, task and token identity; await and coalesce heartbeat drain before a release receipt; closed and mismatched scopes cannot notify another Worker; no lease renewal, permission grant or timeout extension",
       "targetControl": "Retain the database claim, authority, revocation, execution deadline and late-result guards while quiescing only the releasing Worker heartbeat",
       "stage": "S5"
+    },
+    {
+      "id": "ontology-business-descriptions",
+      "file": "packages/ontology/business-descriptions.ts",
+      "channels": [
+        "definition_metadata"
+      ],
+      "content": "Reviewed explanations for 68 business-visible object types",
+      "currentControl": "Only discovery explanations change; data schemas, facts, interfaces, actions and permissions retain their exact contracts.",
+      "targetControl": "Release-pinned business semantics and original stored writer fingerprints",
+      "stage": "S2",
+      "sourceDigest": "eb74d8a4a24d4979385304e42f1a8b07be494d69982a2a3c7b014327ccd7c42a"
+    },
+    {
+      "id": "business-descriptions-policy-upgrade",
+      "file": "packages/security/business-descriptions-upgrade.ts",
+      "channels": [
+        "sqlite"
+      ],
+      "content": "Explicit v27 to v28 description-only security-policy transition",
+      "currentControl": "Exact before/after reviewed contracts, stopped runtime, current revision, unchanged fields and consent; no new action or source grant.",
+      "targetControl": "Owned offline policy activation in the shared business transaction",
+      "stage": "S2",
+      "sourceDigest": "d2d4bc885f0fc518ca8aae03747cb5925ed34ed854b7fa6b0cb28d64ca196ed8"
+    },
+    {
+      "id": "business-descriptions-installer",
+      "file": "scripts/install-business-descriptions.mjs",
+      "channels": [
+        "private_file",
+        "sqlite"
+      ],
+      "content": "Operator preview and atomic policy plus ontology description activation",
+      "currentControl": "Owned private regular database, matching installed authority, exact policy and ontology preconditions, stopped claims, and transactional rollback; no business calls.",
+      "targetControl": "Explicit reviewed deployment operation",
+      "stage": "S2",
+      "sourceDigest": "4d04fd60a0acfa00eaedf9870434255b8ecb5f0e713af73187f191ef017037f4"
+    },
+    {
+      "id": "ontology-definition-compiler",
+      "file": "packages/ontology/model-compiler.ts",
+      "channels": [
+        "definition_metadata"
+      ],
+      "content": "Trusted schema, handler and core-resource validation including compatible display extensions",
+      "currentControl": "Core resources remain protected; ordinary business display text cannot change data schemas, source binding or execution authority.",
+      "targetControl": "Immutable compiled definitions and exact trusted handler contracts",
+      "stage": "S2",
+      "sourceDigest": "2119d87a9dbf05e8e16e56da46414d93e04aca2c17d6dada952e1eea2e40daeb"
+    },
+    {
+      "id": "ontology-kernel-seed",
+      "file": "packages/ontology/seed-definition.ts",
+      "channels": [
+        "definition_metadata"
+      ],
+      "content": "Accurate historical constructors and current description release",
+      "currentControl": "The v27 digest is preserved explicitly and registered before the v28 metadata-only successor; historical releases are never rewritten.",
+      "targetControl": "Accurate release construction and immutable historical interpretation",
+      "stage": "S2",
+      "sourceDigest": "fe2ace1ac4b10b449dd41b66b95a99e90471f6bf3cf9e6b2f88f725fae113f8d"
     },
     {
       "id": "local-semantic-embedding",
