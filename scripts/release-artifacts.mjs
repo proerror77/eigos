@@ -16,6 +16,7 @@ const sha=/^[a-f0-9]{64}$/,commit=/^(?!0{40}$)[a-f0-9]{40}$/;
 const image=/^[a-z0-9][a-z0-9.:-]*(?:\/[a-z0-9][a-z0-9._-]*)+@sha256:[a-f0-9]{64}$/;
 const roles=['gateway','relay','worker'];
 const requiredJobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-vectors','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)','postgres-execution-cases (contracts)','postgres-execution-cases (planning)','postgres-execution-cases (documents)','postgres-execution-cases (didi)','postgres-execution-cases (transitions)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
+const semanticJob='local-embedding-pgvector';
 function fail(message){throw new Error(message);}
 function backendTools(backend){if(backend==='codex')return RELEASE_TOOLS;if(backend==='harness')return HARNESS_RELEASE_TOOLS;fail('Only the registered codex or harness release backend is supported');}
 function assertHarnessInventory(value){
@@ -55,19 +56,34 @@ export function validateOntologyPackage(input){
   if(new Set(input.providerModules.map(x=>x.file.path)).size!==input.providerModules.length)fail('Duplicate provider module path');return structuredClone(input);
 }
 function ciProof(input,sourceSha){
-  record(input,['sourceSha','runId','url','jobs'],'CI proof');if(input.sourceSha!==sourceSha||!Number.isSafeInteger(input.runId)||input.runId<1||!/^https:\/\/github\.com\/[^/]+\/[^/]+\/actions\/runs\/\d+$/.test(input.url)||!Array.isArray(input.jobs)||requiredJobs.some(name=>input.jobs.filter(x=>x===name).length!==1)||input.jobs.length!==requiredJobs.length)fail('Exact-source successful CI proof is required');return structuredClone(input);
+  record(input,['sourceSha','runId','url','jobs','semantic'],'CI proof');if(input.sourceSha!==sourceSha||!Number.isSafeInteger(input.runId)||input.runId<1||!/^https:\/\/github\.com\/[^/]+\/[^/]+\/actions\/runs\/\d+$/.test(input.url)||!Array.isArray(input.jobs)||requiredJobs.some(name=>input.jobs.filter(x=>x===name).length!==1)||input.jobs.length!==requiredJobs.length)fail('Exact-source successful CI proof is required');
+  if(input.semantic)semanticCiProof(input.semantic,sourceSha);return structuredClone(input);
 }
+function semanticCiProof(input,sourceSha){
+  record(input,['sourceSha','runId','url','jobs'],'semantic CI proof');
+  if(input.sourceSha!==sourceSha||!Number.isSafeInteger(input.runId)||input.runId<1||!/^https:\/\/github\.com\/[^/]+\/[^/]+\/actions\/runs\/\d+$/.test(input.url)||!input.url.endsWith(`/runs/${input.runId}`)||canonical(input.jobs)!==canonical([semanticJob]))fail('Exact-source successful local semantic CI proof is required');
+  return structuredClone(input);
+}
+const needsSemanticCi=value=>value.runtime.files.some(file=>file.path.startsWith('dist/packages/semantic/'))||value.sourceFiles.some(file=>file.path.startsWith('packages/semantic/'));
+function artifactReady(value){return (value.backend==='codex'||!!value.harnessImage)&&roles.every(role=>value.images[role])&&!!value.ci&&(!needsSemanticCi(value)||!!value.ci.semantic);}
 export function selectExactCiRun(input,sourceSha){
   if(!commit.test(sourceSha)||!Array.isArray(input?.workflow_runs))fail('Invalid CI run query');
   const selected=input.workflow_runs.filter(run=>run.head_sha===sourceSha).sort((a,b)=>b.run_number-a.run_number||b.run_attempt-a.run_attempt)[0];
   if(!selected||selected.status!=='completed'||selected.conclusion!=='success')fail('The latest CI run for this exact source must finish successfully');return selected;
 }
-export function proveExactCi(run,jobs,sourceSha,repository){
+export function proveExactCi(run,jobs,sourceSha,repository,semantic){
   if(!commit.test(sourceSha)||run.head_sha!==sourceSha||run.status!=='completed'||run.conclusion!=='success'||run.head_repository?.full_name!==repository||!Array.isArray(jobs))fail('CI must belong to the exact source and repository');
   for(const name of requiredJobs){const matches=jobs.filter(job=>job.name===name);if(matches.length!==1||matches[0].status!=='completed'||matches[0].conclusion!=='success')fail(`Required CI job is not successful: ${name}`);}
   const verify=jobs.find(job=>job.name==='verify');for(const command of ['npm run check','npm run build','npm run test:e2e:run'])if(!verify.steps?.some(step=>step.name===`Run ${command}`&&step.status==='completed'&&step.conclusion==='success'))fail('Release CI must include runtime validation; run the CI workflow manually for this source');
   const vectors=jobs.find(job=>job.name==='postgres-vectors');if(!vectors.steps?.some(step=>step.name==='Run node scripts/postgres-tests.mjs run --group vectors'&&step.status==='completed'&&step.conclusion==='success'))fail('Release CI must include actual non-skipped vector validation');
-  return ciProof({sourceSha,runId:run.id,url:run.html_url,jobs:requiredJobs},sourceSha);
+  return ciProof({sourceSha,runId:run.id,url:run.html_url,jobs:requiredJobs,...(semantic?{semantic:proveExactSemanticCi(semantic.run,semantic.jobs,sourceSha,repository)}:{})},sourceSha);
+}
+export function proveExactSemanticCi(run,jobs,sourceSha,repository){
+  if(!commit.test(sourceSha)||run.head_sha!==sourceSha||run.status!=='completed'||run.conclusion!=='success'||run.head_repository?.full_name!==repository||!Array.isArray(jobs))fail('Semantic CI must belong to the exact source and repository');
+  const matches=jobs.filter(job=>job.name===semanticJob),job=matches[0];
+  if(matches.length!==1||job.status!=='completed'||job.conclusion!=='success')fail('Required local semantic CI job is not successful');
+  for(const name of ['Verify exact source','Prepare pinned public model artifacts','Actual offline embedding and authorized Agent retrieval'])if(!job.steps?.some(step=>step.name===name&&step.status==='completed'&&step.conclusion==='success'))fail('Semantic CI must verify the exact checkout and run actual non-skipped local embedding and retrieval');
+  return semanticCiProof({sourceSha,runId:run.id,url:run.html_url,jobs:[semanticJob]},sourceSha);
 }
 function payloadOf(value){return {format:value.format,source:value.source,backend:value.backend,tools:value.tools,runtime:value.runtime,sourceFiles:value.sourceFiles,lockfile:value.lockfile,ontology:value.ontology};}
 export function validateHarnessImageProof(input,sourceSha,workerImage){
@@ -79,7 +95,8 @@ export function validateHarnessImageProof(input,sourceSha,workerImage){
 }
 export function createReleaseManifest(input){
   const backend=input.backend??'codex';
-  const value={format:RELEASE_ARTIFACT_FORMAT,source:{sha:input.sourceSha,version:input.version},backend,tools:{...backendTools(backend)},runtime:{buildDigest:input.buildDigest,files:input.runtimeFiles},sourceFiles:input.sourceFiles,lockfile:input.lockfile,ontology:input.ontology,images:input.images??{},...(input.ci?{ci:input.ci}:{}),...(input.harnessImage?{harnessImage:input.harnessImage}:{}),state:(backend==='codex'||!!input.harnessImage)&&roles.every(role=>input.images?.[role])&&!!input.ci?'artifact-ready':'candidate'};
+  const value={format:RELEASE_ARTIFACT_FORMAT,source:{sha:input.sourceSha,version:input.version},backend,tools:{...backendTools(backend)},runtime:{buildDigest:input.buildDigest,files:input.runtimeFiles},sourceFiles:input.sourceFiles,lockfile:input.lockfile,ontology:input.ontology,images:input.images??{},...(input.ci?{ci:input.ci}:{}),...(input.harnessImage?{harnessImage:input.harnessImage}:{}),state:'candidate'};
+  if(artifactReady(value))value.state='artifact-ready';
   value.payloadDigest=artifactDigest(payloadOf(value));value.manifestDigest=artifactDigest(value);return validateReleaseManifest(value);
 }
 export function validateReleaseManifest(input,{requireReady=false}={}){
@@ -92,7 +109,8 @@ export function validateReleaseManifest(input,{requireReady=false}={}){
   record(input.images,roles,'OCI references');for(const ref of Object.values(input.images))if(typeof ref!=='string'||!image.test(ref))fail('Image references must use an immutable OCI sha256 digest');
   if(input.ci)ciProof(input.ci,input.source.sha);
   if(input.harnessImage){if(input.backend!=='harness')fail('Only Harness releases may contain a Harness image proof');validateHarnessImageProof(input.harnessImage,input.source.sha,input.images.worker);}
-  const ready=(input.backend==='codex'||!!input.harnessImage)&&roles.every(role=>input.images[role])&&!!input.ci;
+  const ready=artifactReady(input);
+  if(needsSemanticCi(input)&&!input.ci?.semantic&&(requireReady||input.state==='artifact-ready'))fail('An artifact-ready semantic runtime requires exact-source local semantic CI');
   if(input.backend==='harness'&&!input.harnessImage&&(input.state==='artifact-ready'||requireReady))fail(harnessImagePending);
   if(input.state!==(ready?'artifact-ready':'candidate')||requireReady&&!ready)fail('An artifact-ready release requires all OCI digests and exact-source CI');
   if(input.payloadDigest!==artifactDigest(payloadOf(input)))fail('Release payload digest does not match');const {manifestDigest,...body}=input;if(manifestDigest!==artifactDigest(body))fail('Release manifest digest does not match');return structuredClone(input);
@@ -149,10 +167,15 @@ export async function createReleaseArtifacts({root=process.cwd(),output,sourceSh
 }
 
 async function main(){
-  const command=process.argv[2],{values}=parseArgs({args:process.argv.slice(3),options:{root:{type:'string'},out:{type:'string'},'source-sha':{type:'string'},backend:{type:'string'},manifest:{type:'string'},'image-gateway':{type:'string'},'image-relay':{type:'string'},'image-worker':{type:'string'},'ci-proof':{type:'string'},'harness-image-proof':{type:'string'},'require-ready':{type:'boolean'},runs:{type:'string'},jobs:{type:'string'},repository:{type:'string'}}});
+  const command=process.argv[2],{values}=parseArgs({args:process.argv.slice(3),options:{root:{type:'string'},out:{type:'string'},'source-sha':{type:'string'},backend:{type:'string'},manifest:{type:'string'},'image-gateway':{type:'string'},'image-relay':{type:'string'},'image-worker':{type:'string'},'ci-proof':{type:'string'},'harness-image-proof':{type:'string'},'require-ready':{type:'boolean'},runs:{type:'string'},jobs:{type:'string'},'semantic-runs':{type:'string'},'semantic-jobs':{type:'string'},repository:{type:'string'}}});
   if(values['harness-image-proof']&&command!=='finalize')fail('Harness image proof is admitted only during finalization');
   if(command==='select-ci'){const run=selectExactCiRun(JSON.parse(readFileSync(values.runs,'utf8')),values['source-sha']);console.log(run.id);return;}
-  if(command==='ci-proof'){const runs=JSON.parse(readFileSync(values.runs,'utf8')),run=selectExactCiRun(runs,values['source-sha']),raw=JSON.parse(readFileSync(values.jobs,'utf8')),proof=proveExactCi(run,Array.isArray(raw)?raw:raw.jobs,values['source-sha'],values.repository);writeJson(values.out,proof);console.log(canonical(proof));return;}
+  if(command==='ci-proof'){
+    if(!!values['semantic-runs']!==!!values['semantic-jobs'])fail('Semantic run and job evidence must be supplied together');
+    let semantic;
+    if(values['semantic-runs']){const raw=JSON.parse(readFileSync(values['semantic-jobs'],'utf8'));semantic={run:selectExactCiRun(JSON.parse(readFileSync(values['semantic-runs'],'utf8')),values['source-sha']),jobs:Array.isArray(raw)?raw:raw.jobs};}
+    const runs=JSON.parse(readFileSync(values.runs,'utf8')),run=selectExactCiRun(runs,values['source-sha']),raw=JSON.parse(readFileSync(values.jobs,'utf8')),proof=proveExactCi(run,Array.isArray(raw)?raw:raw.jobs,values['source-sha'],values.repository,semantic);writeJson(values.out,proof);console.log(canonical(proof));return;
+  }
   if(command==='verify'){const value=verifyReleaseArtifacts(values.root??process.cwd(),values.manifest?readReleaseManifest(values.manifest,{requireReady:values['require-ready']}):undefined);if(values['require-ready'])validateReleaseManifest(value,{requireReady:true});console.log(canonical({state:value.state,sourceSha:value.source.sha,payloadDigest:value.payloadDigest,manifestDigest:value.manifestDigest}));return;}
   if(command==='verify-image'){console.log(canonical(verifyRuntimeImagePayload(values.root??process.cwd(),{sourceSha:values['source-sha'],backend:values.backend})));return;}
   if(!['create','finalize'].includes(command))fail('Use create, finalize, verify, verify-image, select-ci or ci-proof');const images=Object.fromEntries(roles.filter(role=>values[`image-${role}`]).map(role=>[role,values[`image-${role}`]]));

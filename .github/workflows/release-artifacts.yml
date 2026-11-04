@@ -40,6 +40,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22.22.3
+      - name: Install locked packaging dependencies
+        run: npm ci --no-audit --no-fund
       - name: Validate exact checkout and packaging logic
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
@@ -58,7 +60,11 @@ jobs:
           CI_RUN=$(node scripts/release-artifacts.mjs select-ci --source-sha "$SOURCE_SHA" --runs "$RUNNER_TEMP/ci-runs.json")
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN/jobs?filter=latest&per_page=100" > "$RUNNER_TEMP/ci-job-pages.json"
           node -e 'const fs=require("node:fs"),p=process.env.RUNNER_TEMP;fs.writeFileSync(p+"/ci-jobs.json",JSON.stringify({jobs:JSON.parse(fs.readFileSync(p+"/ci-job-pages.json")).flatMap(page=>page.jobs)}))'
-          node scripts/release-artifacts.mjs ci-proof --source-sha "$SOURCE_SHA" --repository "$GITHUB_REPOSITORY" --runs "$RUNNER_TEMP/ci-runs.json" --jobs "$RUNNER_TEMP/ci-jobs.json" --out "$RUNNER_TEMP/ci-proof.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/semantic.yml/runs?head_sha=$SOURCE_SHA&per_page=100" > "$RUNNER_TEMP/semantic-runs.json"
+          SEMANTIC_RUN=$(node scripts/release-artifacts.mjs select-ci --source-sha "$SOURCE_SHA" --runs "$RUNNER_TEMP/semantic-runs.json")
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$SEMANTIC_RUN/jobs?filter=latest&per_page=100" > "$RUNNER_TEMP/semantic-job-pages.json"
+          node -e 'const fs=require("node:fs"),p=process.env.RUNNER_TEMP;fs.writeFileSync(p+"/semantic-jobs.json",JSON.stringify({jobs:JSON.parse(fs.readFileSync(p+"/semantic-job-pages.json")).flatMap(page=>page.jobs)}))'
+          node scripts/release-artifacts.mjs ci-proof --source-sha "$SOURCE_SHA" --repository "$GITHUB_REPOSITORY" --runs "$RUNNER_TEMP/ci-runs.json" --jobs "$RUNNER_TEMP/ci-jobs.json" --semantic-runs "$RUNNER_TEMP/semantic-runs.json" --semantic-jobs "$RUNNER_TEMP/semantic-jobs.json" --out "$RUNNER_TEMP/ci-proof.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ci-proof-${{ inputs.source_sha }}

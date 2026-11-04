@@ -104,11 +104,15 @@ UID 1000 只是镜像默认值，不能假定它与原 ECS 账户配置匹配。
 
 按需发布使用 GitHub Actions 的 **Release artifacts** 手动入口，明确提供完整源 SHA 与 `codex`／`harness` backend。它先要求该准确 SHA 的最新 CI 及全部必要检查成功，包括类型、构建和进程级验证；缺失、运行中或跳过必要检查均停止发布。普通 PR／push 不触发 GHCR 发布。针对 Docker、发布脚本及构建源资产的 PR，独立的 **Container build smoke** 构建 Gateway、固定 Codex Worker 和 Harness Worker，读取镜像内文件与非 root 身份，并对 Harness 执行无网络、无凭据的 SDK 初始化检查；`push: false`、不登录 registry、不启动模型或服务。它不代表已发布或完成部署。镜像使用 `sha-<完整SHA>-<backend>` 标签写入 GHCR，再记录构建实际返回的 `@sha256:` 引用与 provenance／SBOM；已有标签不会被此流程覆盖。
 
+包含 `packages/semantic/` 运行模块的新产物还须绑定同一 SHA 的 **Local semantic discovery** 成功记录，保存在 `ci.semantic`。该工作流核对实际 checkout，准备固定公共模型，并实际执行 `local-embedding-pgvector`，不接受缺失或跳过的步骤。主线及迁移分支的相关代码 push 会运行此检查；其他待发布 SHA 可手动运行该工作流。核心 CI 通过不能代替这份独立证明，缺少时产物保持 candidate。旧的不含此模块的只读清单沿用原有核验。
+
+`scripts/semantic-catalog.mjs` 随最小发布包和两种执行器镜像交付，通过 `dist/` 加载实际运行模块；`node scripts/semantic-catalog.mjs --help` 不加载模型或连接数据库。源代码环境继续使用 `npm run semantic:catalog`。模型准备、索引安装及查询仍是显式操作，打包不启用 E5、不包含权重或凭据，也不授予来源或业务权限。
+
 Harness 发布先在本地构建产物中检查原生 SDK，再对 registry 返回的准确 Worker digest 重新执行同一检查。两次均使用非 root、只读容器、临时可执行目录和 `--network none`；实际版本、两种既有 provider 的 initialize／shutdown、编译适配入口、准确源 SHA 与零模型轮次写入 `harnessImage` 证明。只有证明绑定该 Worker OCI digest、所有角色镜像及准确源 CI 时，`finalize --harness-image-proof` 才能将产物变为 `artifact-ready`。缺失或不匹配的证明保留 candidate；SDK 初始化不证明真实模型、数据库权限或业务执行成功。镜像已写入 registry 后若验证失败，停止发布并保留失败证据，不覆盖原标签。
 
 同一发布中的 Gateway、Relay、Worker 与下载包均显式构建为所选 backend。工作流从每个准确 OCI digest 启动只读 `verify-image`，核对实际安装的全部 runtime 白名单字节和 build digest；下载包的 source、backend、payloadDigest 与 buildDigest 必须逐项相同，才能完成最终清单。不能把 Gateway 的 Codex candidate 与 Harness 下载包拼成同一已验证发布。
 
-产物下载包 `release-<SHA>-<backend>` 包含 `manifest.json`、实际 runtime/source/lockfile 摘要、14 阶段官方内核的离线 `ontology/package.json`、固定 document/model digest 及供应商模块引用。`payloadDigest` 固定镜像内的代码与本体文件，`manifestDigest` 另外绑定外部 OCI 引用、准确源 CI 和适用的 Harness 镜像证明，避免镜像包含自身摘要的循环。缺少任一必要证明时只能是 `candidate`；`artifact-ready` 只表示这些发布产物已齐备。
+产物下载包 `release-<SHA>-<backend>` 包含 `manifest.json`、实际 runtime/source/lockfile 摘要、官方内核的离线 `ontology/package.json`、固定 document/model digest 及供应商模块引用。`payloadDigest` 固定镜像内的代码与本体文件，`manifestDigest` 另外绑定外部 OCI 引用、准确源 CI 和适用的 Harness 镜像证明，避免镜像包含自身摘要的循环。缺少任一必要证明时只能是 `candidate`；`artifact-ready` 只表示这些发布产物已齐备。
 
 产物可用以下只读入口复核，不能据此推定实例已部署：
 

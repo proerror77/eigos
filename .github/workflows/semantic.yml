@@ -13,6 +13,20 @@ on:
       - 'scripts/semantic-catalog.mjs'
       - 'package*.json'
       - '.github/workflows/semantic.yml'
+  push:
+    branches: [main, codex/cloudflare-postgres-migration]
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+      - 'scripts/**'
+      - 'package*.json'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'tsconfig.json'
+      - 'tests/fixtures/**'
+      - 'tests/semantic*.test.ts'
+      - '.github/workflows/semantic.yml'
+      - '.github/workflows/release-artifacts.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -39,11 +53,17 @@ jobs:
       PGPASSWORD: fixture-only-password
       EIGOS_TEST_SEMANTIC: '1'
       EIGOS_SEMANTIC_MODEL_DIR: ${{ github.workspace }}/data/semantic-model
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          node-version: 22
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact source
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.22.3
           cache: npm
       - run: npm ci
       - uses: actions/cache@v4
@@ -56,4 +76,4 @@ jobs:
             npm run semantic:catalog -- model --model-dir "$EIGOS_SEMANTIC_MODEL_DIR"
           fi
       - name: Actual offline embedding and authorized Agent retrieval
-        run: node --import tsx --test tests/semantic-discovery.test.ts
+        run: EIGOS_TEST_SEMANTIC=1 node --import tsx --test tests/semantic-discovery.test.ts

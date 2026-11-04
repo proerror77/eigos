@@ -1,11 +1,12 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,symlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname,join} from 'node:path';
 import {parse} from 'yaml';
-import {artifactDigest,canonical,createReleaseManifest,createReleaseArtifacts,validateReleaseManifest,readReleaseManifest,verifyReleaseArtifacts,verifyRuntimeImagePayload,finalizeReleaseArtifacts,selectExactCiRun,proveExactCi,HARNESS_RELEASE_TOOLS} from '../scripts/release-artifacts.mjs';
+import {artifactDigest,canonical,createReleaseManifest,createReleaseArtifacts,validateReleaseManifest,readReleaseManifest,verifyReleaseArtifacts,verifyRuntimeImagePayload,finalizeReleaseArtifacts,selectExactCiRun,proveExactCi,proveExactSemanticCi,HARNESS_RELEASE_TOOLS} from '../scripts/release-artifacts.mjs';
 
 const sourceSha='1'.repeat(40),rawDigest=bytes=>createHash('sha256').update(bytes).digest('hex'),roles=['gateway','relay','worker'];
 const jobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-vectors','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)','postgres-execution-cases (contracts)','postgres-execution-cases (planning)','postgres-execution-cases (documents)','postgres-execution-cases (didi)','postgres-execution-cases (transitions)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
@@ -13,10 +14,11 @@ const ci={sourceSha,runId:17,url:'https://github.com/example/eigos/actions/runs/
 const images=Object.fromEntries(roles.map((role,i)=>[role,`ghcr.io/example/eigos/${role}@sha256:${String(i+1).repeat(64)}`]));
 const harnessImage={sourceSha,image:images.worker,version:HARNESS_RELEASE_TOOLS.harness,providers:['deepseek-official','openai-codex'],initialize:'acknowledged',modelTurns:0,compiledAdapter:'present',state:'candidate'};
 const harnessPaths=['dist/packages/capabilities/harness-executor.js','dist/apps/worker/postgres-runtime.js','dist/packages/core/model-usage-context.js','dist/packages/core/model-dispatch-context.js','dist/packages/postgres/coordinator.js'];
-function fixture(backend='codex'){
+function fixture(backend='codex',semantic=false){
   const directory=mkdtempSync(join(tmpdir(),'eigos-release-artifacts-')),put=(prefix,path,bytes)=>{const file=join(directory,prefix,path);mkdirSync(dirname(file),{recursive:true});writeFileSync(file,bytes);return {path,sha256:rawDigest(bytes),bytes:Buffer.byteLength(bytes)};};
   const runtimeFiles=[put('runtime','dist/apps/gateway/main.js','// explicit synthetic runtime fixture\n'),put('runtime','package.json','{"name":"eigos","version":"0.1.0"}\n'),put('runtime','package-lock.json','{"lockfileVersion":3}\n')],sourceFiles=[put('source','apps/gateway/main.ts','// explicit synthetic source fixture\n')];
   if(backend==='harness')for(const path of harnessPaths){runtimeFiles.push(put('runtime',path,'// explicit synthetic Harness runtime inventory\n'));sourceFiles.push(put('source',path.replace(/^dist\//,'').replace(/\.js$/,'.ts'),'// explicit synthetic Harness source inventory\n'));}
+  if(semantic){runtimeFiles.push(put('runtime','dist/packages/semantic/runtime.js','// synthetic optional local semantic module\n'));sourceFiles.push(put('source','packages/semantic/runtime.ts','// synthetic optional local semantic source\n'));}
   const document={formatVersion:1,id:'synthetic.ontology',version:'1',objects:[],interfaces:[],links:[],actions:[],functions:[]},kernelBytes=canonical(document)+'\n',file=put('ontology','kernel.json',kernelBytes),pkg={format:'eigos.ontology-package/1',kernel:{id:document.id,version:document.version,documentDigest:artifactDigest(document),modelDigest:'a'.repeat(64),file},providerModules:[]},packageFile=put('','ontology/package.json',canonical(pkg)+'\n');
   const build=createHash('sha256');for(const file of runtimeFiles){build.update(file.path+'\0');build.update(readFileSync(join(directory,'runtime',file.path)));}
   const input={sourceSha,version:'0.1.0',buildDigest:build.digest('hex'),runtimeFiles,sourceFiles,lockfile:runtimeFiles[2],ontology:{packageFile,package:pkg}};
@@ -74,6 +76,31 @@ test('latest exact CI, all required jobs and real runtime validation are gates b
   assert.throws(()=>proveExactCi(run,checks.map(job=>job.name==='postgres-vectors'?{...job,steps:[]}:job),sourceSha,'example/eigos'),/vector validation/);
   assert.throws(()=>proveExactCi(run,checks.map(job=>job.name==='postgres-vectors'?{...job,steps:job.steps.map(step=>({...step,conclusion:'skipped'}))}:job),sourceSha,'example/eigos'),/vector validation/);
   assert.throws(()=>proveExactCi({...run,head_repository:{full_name:'foreign/repo'}},checks,sourceSha,'example/eigos'),/exact source and repository/);
+});
+
+test('local semantic CI proves exact checkout and real non-skipped model retrieval separately from core CI',()=>{
+  const run={id:23,head_sha:sourceSha,status:'completed',conclusion:'success',html_url:'https://github.com/example/eigos/actions/runs/23',head_repository:{full_name:'example/eigos'}},
+    job={name:'local-embedding-pgvector',status:'completed',conclusion:'success',steps:['Verify exact source','Prepare pinned public model artifacts','Actual offline embedding and authorized Agent retrieval'].map(name=>({name,status:'completed',conclusion:'success'}))};
+  assert.deepEqual(proveExactSemanticCi(run,[job],sourceSha,'example/eigos'),{sourceSha,runId:23,url:run.html_url,jobs:[job.name]});
+  for(const change of [{head_sha:'2'.repeat(40)},{conclusion:'failure'},{head_repository:{full_name:'foreign/repo'}}])assert.throws(()=>proveExactSemanticCi({...run,...change},[job],sourceSha,'example/eigos'),/exact source and repository/);
+  for(const jobs of [[],[job,job],[{...job,conclusion:'skipped'}]])assert.throws(()=>proveExactSemanticCi(run,jobs,sourceSha,'example/eigos'),/semantic CI job/);
+  for(const step of job.steps)assert.throws(()=>proveExactSemanticCi(run,[{...job,steps:job.steps.map(value=>value===step?{...value,conclusion:'skipped'}:value)}],sourceSha,'example/eigos'),/actual non-skipped/);
+});
+
+test('runtime inventory with local semantic code cannot finalize using only legacy core CI',()=>{
+  const x=fixture('codex',true),semantic={sourceSha,runId:23,url:'https://github.com/example/eigos/actions/runs/23',jobs:['local-embedding-pgvector']};
+  try{
+    const candidate=createReleaseManifest({...x.input,images,ci});assert.equal(candidate.state,'candidate');
+    assert.throws(()=>validateReleaseManifest(candidate,{requireReady:true}),/exact-source local semantic CI/);
+    assert.throws(()=>validateReleaseManifest({...candidate,state:'artifact-ready'}),/semantic CI/);
+    writeFileSync(join(x.directory,'manifest.json'),canonical(candidate)+'\n');
+    assert.throws(()=>finalizeReleaseArtifacts(x.directory,{images,ci}),/semantic CI/);
+    assert.equal(readReleaseManifest(join(x.directory,'manifest.json')).manifestDigest,candidate.manifestDigest);
+    const ready=finalizeReleaseArtifacts(x.directory,{images,ci:{...ci,semantic}});
+    assert.equal(ready.state,'artifact-ready');assert.equal(ready.payloadDigest,candidate.payloadDigest);
+    assert.deepEqual(readReleaseManifest(join(x.directory,'manifest.json'),{requireReady:true}).ci.semantic,semantic);
+    assert.throws(()=>createReleaseManifest({...x.input,images,ci:{...ci,semantic:{...semantic,sourceSha:'2'.repeat(40)}}}),/Exact-source/);
+  }finally{x.close();}
 });
 
 
@@ -146,6 +173,31 @@ test('container build inputs include PA assets and role images retain nonroot an
   assert(docker.split('\n').some(line=>line.startsWith('COPY scripts/')&&line.includes('scripts/postgres-task-vectors.mjs')),'the actual operator CLI must enter the build context, not merely the source tree');
   assert(ignore.includes('!scripts/install-business-descriptions.mjs'));
   assert(docker.split('\n').some(line=>line.startsWith('COPY scripts/')&&line.includes('scripts/install-business-descriptions.mjs')),'the legitimate description installer must travel with the immutable package');
+  assert(ignore.includes('!scripts/semantic-catalog.mjs'));
+  assert(docker.split('\n').some(line=>line.startsWith('COPY scripts/')&&line.includes('scripts/semantic-catalog.mjs')),'local semantic management must travel with both executor packages');
+});
+
+test('relocated semantic CLI help needs no source modules, model, database or credentials',()=>{
+  const root=mkdtempSync(join(tmpdir(),'eigos-semantic-cli-'));
+  try{
+    mkdirSync(join(root,'scripts'));writeFileSync(join(root,'scripts/semantic-catalog.mjs'),readFileSync(new URL('../scripts/semantic-catalog.mjs',import.meta.url)));
+    assert.match(execFileSync(process.execPath,['scripts/semantic-catalog.mjs','--help'],{cwd:root,encoding:'utf8',timeout:10000}),/Use model\|init\|index\|search/);
+  }finally{rmSync(root,{recursive:true,force:true});}
+});
+
+test('semantic publication records actual source and model validation before any image publication',()=>{
+  const semantic=parse(readFileSync(new URL('../.github/workflows/semantic.yml',import.meta.url),'utf8')),
+    release=parse(readFileSync(new URL('../.github/workflows/release-artifacts.yml',import.meta.url),'utf8')),
+    job=semantic.jobs['local-embedding-pgvector'],checkout=job.steps.find(step=>step.uses?.startsWith('actions/checkout@'));
+  assert.equal(checkout.with.ref,'${{ github.event.pull_request.head.sha || github.sha }}');
+  assert.equal(job.env.SOURCE_SHA,checkout.with.ref);assert(job.steps.some(step=>step.name==='Verify exact source'&&step.run.includes('git rev-parse HEAD')));
+  assert.match(job.steps.find(step=>step.name==='Actual offline embedding and authorized Agent retrieval').run,/EIGOS_TEST_SEMANTIC=1 node/);
+  assert(semantic.on.push.branches.includes('main'));
+  const proof=release.jobs.gate.steps.find(step=>step.name==='Require terminal CI on this exact source');
+  assert(proof.run.includes('actions/workflows/semantic.yml/runs'));
+  assert(proof.run.includes('--semantic-runs'));assert(proof.run.includes('--semantic-jobs'));
+  const install=release.jobs.gate.steps.findIndex(step=>step.name==='Install locked packaging dependencies'),validate=release.jobs.gate.steps.findIndex(step=>step.name==='Validate exact checkout and packaging logic');
+  assert(install>=0&&install<validate,'the real packaging tests import locked dependencies');
 });
 
 test('PR container smoke cannot publish while release publication requires explicit manual dispatch',()=>{

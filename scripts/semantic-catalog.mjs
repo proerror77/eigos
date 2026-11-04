@@ -1,27 +1,12 @@
 import { parseArgs } from 'node:util';
 import { isAbsolute } from 'node:path';
-import pg from 'pg';
+import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
-import {
-  prepareLocalEmbedding,
-  loadLocalEmbedding,
-} from '../packages/semantic/local-embedding.js';
-import {
-  SemanticCatalog,
-  catalogDocuments,
-  sqlIdentifier,
-} from '../packages/semantic/catalog.js';
-import {
-  readPostgresBinding,
-  postgresConnectionOptions,
-} from '../packages/deployment/postgres-binding.js';
-import { supabaseProxyOptions } from '../packages/postgres/supabase-proxy.js';
-import { digest } from '../packages/core/delegation.js';
-import { parseOntologyDocument } from '../packages/ontology/definition-contracts.js';
-import { assertSemanticIndexReader } from '../packages/semantic/runtime.js';
+const usage = 'Use model|init|index|search --model-dir /absolute/directory [--binding /private/binding.json --schema eigos_semantic --reader-role runtime_role --ontology ID --release digest --watch]';
 const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
+    help: { type: 'boolean' },
     'model-dir': { type: 'string' },
     binding: { type: 'string' },
     'business-schema': { type: 'string' },
@@ -34,6 +19,7 @@ const { values, positionals } = parseArgs({
     watch: { type: 'boolean' },
   },
 });
+if (values.help) { console.log(usage); process.exit(0); }
 const command = positionals[0],
   directory = values['model-dir'];
 if (
@@ -42,9 +28,25 @@ if (
   positionals.length !== 1 ||
   !['model', 'init', 'index', 'search'].includes(command ?? '')
 )
-  throw Error(
-    'Use model|init|index|search --model-dir /absolute/directory [--binding /private/binding.json --schema eigos_semantic --reader-role runtime_role --ontology ID --release digest --watch]',
-  );
+  throw Error(usage);
+// Immutable packages contain dist/, while source commands use the existing
+// tsx entrypoint. Help and argument validation never load a model or database.
+const runtimeModule = path => {
+  const source = new URL(`../${path.replace(/\.js$/, '.ts')}`, import.meta.url);
+  const built = new URL(`../dist/${path}`, import.meta.url);
+  return import(existsSync(source) ? source.href : built.href);
+};
+const [
+  { default: pg },
+  { prepareLocalEmbedding, loadLocalEmbedding },
+  { SemanticCatalog, catalogDocuments, sqlIdentifier },
+  { readPostgresBinding, postgresConnectionOptions },
+  { supabaseProxyOptions }, { digest }, { parseOntologyDocument }, { assertSemanticIndexReader },
+] = await Promise.all([
+  import('pg'), runtimeModule('packages/semantic/local-embedding.js'), runtimeModule('packages/semantic/catalog.js'),
+  runtimeModule('packages/deployment/postgres-binding.js'), runtimeModule('packages/postgres/supabase-proxy.js'),
+  runtimeModule('packages/core/delegation.js'), runtimeModule('packages/ontology/definition-contracts.js'), runtimeModule('packages/semantic/runtime.js'),
+]);
 if (command === 'model') {
   console.log(JSON.stringify(await prepareLocalEmbedding(directory)));
 } else {
