@@ -2945,7 +2945,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "cf710409fa634471c72d0ce413ea76573486dfb2dda604246282d85ef0dfb677",
+      "sourceDigest": "bdfe4ccc3a7f4bc276f06775a76412ebe1b71706518f4f08bf7f73d17ed8a5e0",
       "channels": [
         "sqlite",
         "idempotency"
@@ -2958,13 +2958,13 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "c51f6dcb3e02ba1a351b6a5cda90c5d6eb79cac7eb44176e184e52ed56d04b9e",
+      "sourceDigest": "2ad07cc9d317d2705a01b1b66b316dfb50fe7733b360c652acb3a5b4cc10bee7",
       "channels": [
         "query",
         "function"
       ],
       "content": "Direct read, query, related, evaluate, derived values, source metadata and cursors",
-      "currentControl": "Current row/field/source authorization; policy-equivalent immutable release labels only; readable removal notices survive while restricted fields remain hidden; conditional source/validity indexes preserve stored object contents; internal relationship reads reject incomplete pages or authorization-filtered sets without exposing hidden counts; cardinality batches remain owner- and namespace-scoped inside the import savepoint",
+      "currentControl": "Current row/field/source authorization; policy-equivalent immutable release labels only; readable removal notices survive while restricted fields remain hidden; conditional source/validity indexes preserve stored object contents; internal relationship reads reject incomplete pages or authorization-filtered sets without exposing hidden counts; cardinality batches remain owner- and namespace-scoped inside the import savepoint; projection checkpoints use owner/namespace/model keys with transactional graph mutation clocks and current dispatch checks",
       "targetControl": "AuthorizedOntologyView and safe pagination/provenance projection",
       "stage": "S2"
     },
@@ -4204,7 +4204,7 @@
     {
       "id": "execution-projection",
       "file": "packages/ontology/execution-projection.ts",
-      "sourceDigest": "a0d0489a15a84f6d9bb71d96c5d451a9163dac2c5fa99d5d4ca2bec0195739aa",
+      "sourceDigest": "356c60bc84e7140a4bb2dc0e4537f56b810772057a4a7a5321c6b08002b3887b",
       "channels": [
         "model",
         "artifact"

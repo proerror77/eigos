@@ -24,6 +24,11 @@ export interface BusinessLedger extends ExecutionLedger { grants: PlanGrant[]; c
 export function projectBusinessChain(graph: OntologyObjectStore, owner: string, job: Job, ledger: BusinessLedger): void {
   const d = job.delegation;
   if (job.service !== 'eigos.delegate' || d?.backendVersion !== BACKEND_VERSION) return;
+  graph.projectFragment('business-chain', { state: job.state, createdAt: job.createdAt, artifact: job.artifact, coverage: d.goalCoverage, request: d.request, plans: d.planHistory, plan: d.plan, agent: d.agent, agentHistory: d.agentHistory, outcome: d.outcome, acceptance: d.acceptance, checks: d.conditionChecks, callerAction: d.callerAction, resolution: d.resolution, events: d.events.filter(e => ['plan_authorized','authorization_revoked'].includes(e.event)), ledger }, () => projectBusinessChainDelta(graph, owner, job, ledger));
+}
+
+function projectBusinessChainDelta(graph: OntologyObjectStore, owner: string, job: Job, ledger: BusinessLedger): void {
+  const d = job.delegation!;
   const request = { type: 'ServiceRequest', id: job.id }, party = node('RequestingParty', owner);
   const source: ObjectSource = { kind: 'task', id: job.id, observedAt: job.updatedAt };
   const plans = [...(d.planHistory ?? []), ...(d.plan ? [d.plan] : [])];
@@ -56,23 +61,26 @@ export function projectBusinessChain(graph: OntologyObjectStore, owner: string, 
   decide('SubmitServiceRequest', 'owner_instruction', job.id, d.request.messages[0]?.receivedAt ?? job.createdAt, 1, { requestId: job.id, owner: digest(owner) }, undefined, 'requester');
   const engagements = new Map<string, ObjectRef>();
   const engagement = (binding: ObjectRef, proposal: ObjectRef, at: string, planDigests: string[], subject?: ObjectRef) => {
-    const data = graph.read(owner, binding).properties;
-    const ref = node('ServiceEngagement', { requestId: job.id, binding }), previous = optionalObject(graph, owner, ref);
-    const providerContract = data.providerContract as { providerId: string; channelId: string } | undefined;
-    const fixed = plans.find(plan => planDigests.includes(plan.digest));
-    const sandbox = fixed?.capabilityRef.id === 'service.fulfillment.sandbox' && providerContract
-      ? sandboxPartyRefs(fixed, data.bindingRef as ExecutionPlan['bindingRef'], providerContract.providerId, providerContract.channelId) : undefined;
-    const sourceRelation = (name: string) => subject && graph.model.sides(subject.type).some(side => side.side.name === name) ? related(graph, owner, subject, name)[0]?.ref : undefined;
-    const provider = (previous && related(graph, owner, ref, 'provider')[0]?.ref) || sourceRelation('provider') || sandbox?.provider || node('Provider', { provider: providerContract?.providerId ?? data.bindingRef, configuration: data.configurationDigest ?? data.bindingDigest });
-    const channel = (previous && related(graph, owner, ref, 'channel')[0]?.ref) || sourceRelation('channel') || sandbox?.channel || node('Channel', { provider, channel: providerContract?.channelId ?? data.bindingRef });
-    if (!optionalObject(graph, owner, provider)) write(graph, owner, provider, { name: providerContract?.providerId ?? 'Configured service' }, [], source, true);
-    if (!optionalObject(graph, owner, channel)) write(graph, owner, channel, { name: providerContract?.channelId ?? 'Configured agent program', supportedOperationRefs: data.actionIds ?? [] }, [], source, true);
-    const intents = ledger.intents.filter(intent => planDigests.includes(intent.planDigest) && digest(intent.bindingRef) === digest(data.bindingRef));
-    const returned = ledger.observations.some(observation => observation.applied && intents.some(intent => intent.id === observation.intentId));
-    write(graph, owner, ref, { progress: returned || previous?.properties.progress === 'returned' ? 'returned' : 'waiting', startedAt: previous?.properties.startedAt ?? at },
-      [edge('EngagementRequest', ref, request), edge('EngagementProvider', ref, provider), edge('EngagementRequester', ref, party),
-        edge('EngagementChannel', ref, channel), edge('EngagementBinding', ref, binding), edge('ProposalEngagement', proposal, ref)], source);
+    const ref = node('ServiceEngagement', { requestId: job.id, binding });
     engagements.set(`${proposal.id}:${binding.id}`, ref);
+    graph.projectFragment('engagement:' + proposal.id + ':' + binding.id, { binding, proposal, planDigests, subject, intents: ledger.intents.filter(i => planDigests.includes(i.planDigest)), observations: ledger.observations.filter(o => ledger.intents.some(i => i.id === o.intentId && planDigests.includes(i.planDigest))) }, () => {
+      const data = graph.read(owner, binding).properties;
+      const previous = optionalObject(graph, owner, ref);
+      const providerContract = data.providerContract as { providerId: string; channelId: string } | undefined;
+      const fixed = plans.find(plan => planDigests.includes(plan.digest));
+      const sandbox = fixed?.capabilityRef.id === 'service.fulfillment.sandbox' && providerContract
+        ? sandboxPartyRefs(fixed, data.bindingRef as ExecutionPlan['bindingRef'], providerContract.providerId, providerContract.channelId) : undefined;
+      const sourceRelation = (name: string) => subject && graph.model.sides(subject.type).some(side => side.side.name === name) ? related(graph, owner, subject, name)[0]?.ref : undefined;
+      const provider = (previous && related(graph, owner, ref, 'provider')[0]?.ref) || sourceRelation('provider') || sandbox?.provider || node('Provider', { provider: providerContract?.providerId ?? data.bindingRef, configuration: data.configurationDigest ?? data.bindingDigest });
+      const channel = (previous && related(graph, owner, ref, 'channel')[0]?.ref) || sourceRelation('channel') || sandbox?.channel || node('Channel', { provider, channel: providerContract?.channelId ?? data.bindingRef });
+      if (!optionalObject(graph, owner, provider)) write(graph, owner, provider, { name: providerContract?.providerId ?? 'Configured service' }, [], source, true);
+      if (!optionalObject(graph, owner, channel)) write(graph, owner, channel, { name: providerContract?.channelId ?? 'Configured agent program', supportedOperationRefs: data.actionIds ?? [] }, [], source, true);
+      const intents = ledger.intents.filter(intent => planDigests.includes(intent.planDigest) && digest(intent.bindingRef) === digest(data.bindingRef));
+      const returned = ledger.observations.some(observation => observation.applied && intents.some(intent => intent.id === observation.intentId));
+      write(graph, owner, ref, { progress: returned || previous?.properties.progress === 'returned' ? 'returned' : 'waiting', startedAt: previous?.properties.startedAt ?? at },
+        [edge('EngagementRequest', ref, request), edge('EngagementProvider', ref, provider), edge('EngagementRequester', ref, party),
+          edge('EngagementChannel', ref, channel), edge('EngagementBinding', ref, binding), edge('ProposalEngagement', proposal, ref)], source);
+    });
   };
   const planProposals = new Map<string, ObjectRef>();
   for (const [index, plan] of plans.entries()) {
@@ -168,35 +176,37 @@ export function projectBusinessChain(graph: OntologyObjectStore, owner: string, 
     if (!attempt || !intent || !proposal) continue;
     const plan = plans.find(plan => plan.digest === attempt.planDigest) ?? states.flatMap(state => state.plans).find(plan => plan.digest === attempt.planDigest);
     if (!plan) continue;
-    const ref = node('BusinessResult', { requestId: job.id, observationId: observation.id });
-    const normalized = projectSandboxBusiness(graph, owner, job, intent, observation, ledger.cases);
-    const existing = optionalObject(graph, owner, ref);
-    const agentPointer = states.some(state => state.plans.some(plan => plan.digest === intent.planDigest)) && intent.latestObservationId === observation.id ? intent.acceptedOutput?.object as ObjectRef | undefined : undefined;
-    const pointer = intent.ontologyOutput?.observationId === observation.id ? intent.ontologyOutput.object : agentPointer;
-    // Fixed domain/UCP normalization is fenced separately after observation commit.
-    // Do not seal an incomplete classification before that source mapping exists.
-    if (!existing && !pointer && (observation.result.output?.domainSnapshot !== undefined || observation.result.output?.ucpSnapshot !== undefined)) continue;
-    const subjects = existing ? related(graph, owner, ref, 'subjects').map(item => item.ref) : normalized?.subjects ?? (pointer && graph.model.implements(pointer.type, 'EvidenceBacked') ? [pointer] : []);
-    const receipts = existing ? related(graph, owner, ref, 'sourceReceipts').map(item => item.ref) : normalized?.receipts ?? subjects.flatMap(subject => related(graph, owner, subject, 'sourceReceipts').map(item => item.ref));
-    const levels = receipts.map(receipt => graph.read(owner, receipt).properties.evidenceLevel);
-    const evidenceLevel = existing?.properties.evidenceLevel ?? (normalized ? 'synthetic' : levels.includes('live_fulfillment') ? 'live_fulfillment' : levels.includes('live_operation') ? 'live_operation' : levels.includes('live_readonly') ? 'live_readonly' : levels.includes('provider_test') ? 'provider_test' : levels.includes('synthetic') ? 'synthetic' : intent.effect === 'local' ? 'internal' : 'unknown');
-    const links = [edge('BusinessResultRequest', ref, request), edge('BusinessResultProposal', ref, proposal),
-      edge('BusinessResultStep', ref, executionStepRef(plan, intent.stepId)), edge('BusinessResultObservation', ref, resultRef(job.id, attempt, observation)),
-      ...subjects.map(subject => edge('BusinessResultSubject', ref, subject)), ...receipts.map(receipt => edge('BusinessResultEvidence', ref, receipt))];
-    const state = states.find(state => state.plans.some(value => value.digest === plan.digest));
-    const action = !('bindingDigests' in plan) ? plan.steps.find(step => step.intentId === intent.id) : undefined;
-    const binding = 'bindingDigests' in plan ? fixedBindingRef(plan, intent.bindingRef) : action?.binding ? composedBindingRef(action) : state ? bindingRef(job.id, state) : undefined;
-    const engaged = binding && engagements.get(`${proposal.id}:${binding.id}`); if (engaged) links.push(edge('BusinessResultEngagement', ref, engaged));
-    const artifact = observation.result.delivery?.artifact;
-    if (artifact) {
-      const artifactRef = node('ServiceArtifact', { requestId: job.id, artifactDigest: digest(artifact) });
-      write(graph, owner, artifactRef, { name: artifact.name, contentDigest: digest(artifact), contentReference: `task:${job.id}:observation:${observation.id}:artifact` }, [edge('ServiceArtifactRequest', artifactRef, request)], source, true);
-      links.push(edge('BusinessResultArtifact', ref, artifactRef));
-    }
-    write(graph, owner, ref, { requestRevision: plan.requestRevision, planDigest: plan.digest, intentId: intent.id, observationId: observation.id,
-      kind: observation.result.kind, effect: intent.effect, sourceVersion: observation.result.sourceVersion, observedAt: observation.receivedAt, evidenceLevel,
-      evidenceIds: observation.result.evidenceRefs, states: Object.fromEntries(Object.entries(observation.result.business ?? {}).filter(([, value]) => typeof value === 'string')),
-      ...(normalized?.deliveredQuantity ? { deliveredQuantity: normalized.deliveredQuantity } : {}) }, links, source, true);
+    graph.projectFragment('business-result:' + observation.id, { observation, intent, plan, proposal, cases: ledger.cases, request: d.request }, () => {
+      const ref = node('BusinessResult', { requestId: job.id, observationId: observation.id });
+      const normalized = projectSandboxBusiness(graph, owner, job, intent, observation, ledger.cases);
+      const existing = optionalObject(graph, owner, ref);
+      const agentPointer = states.some(state => state.plans.some(plan => plan.digest === intent.planDigest)) && intent.latestObservationId === observation.id ? intent.acceptedOutput?.object as ObjectRef | undefined : undefined;
+      const pointer = intent.ontologyOutput?.observationId === observation.id ? intent.ontologyOutput.object : agentPointer;
+      // Fixed domain/UCP normalization is fenced separately after observation commit.
+      // Do not seal an incomplete classification before that source mapping exists.
+      if (!existing && !pointer && (observation.result.output?.domainSnapshot !== undefined || observation.result.output?.ucpSnapshot !== undefined)) return;
+      const subjects = existing ? related(graph, owner, ref, 'subjects').map(item => item.ref) : normalized?.subjects ?? (pointer && graph.model.implements(pointer.type, 'EvidenceBacked') ? [pointer] : []);
+      const receipts = existing ? related(graph, owner, ref, 'sourceReceipts').map(item => item.ref) : normalized?.receipts ?? subjects.flatMap(subject => related(graph, owner, subject, 'sourceReceipts').map(item => item.ref));
+      const levels = receipts.map(receipt => graph.read(owner, receipt).properties.evidenceLevel);
+      const evidenceLevel = existing?.properties.evidenceLevel ?? (normalized ? 'synthetic' : levels.includes('live_fulfillment') ? 'live_fulfillment' : levels.includes('live_operation') ? 'live_operation' : levels.includes('live_readonly') ? 'live_readonly' : levels.includes('provider_test') ? 'provider_test' : levels.includes('synthetic') ? 'synthetic' : intent.effect === 'local' ? 'internal' : 'unknown');
+      const links = [edge('BusinessResultRequest', ref, request), edge('BusinessResultProposal', ref, proposal),
+        edge('BusinessResultStep', ref, executionStepRef(plan, intent.stepId)), edge('BusinessResultObservation', ref, resultRef(job.id, attempt, observation)),
+        ...subjects.map(subject => edge('BusinessResultSubject', ref, subject)), ...receipts.map(receipt => edge('BusinessResultEvidence', ref, receipt))];
+      const state = states.find(state => state.plans.some(value => value.digest === plan.digest));
+      const action = !('bindingDigests' in plan) ? plan.steps.find(step => step.intentId === intent.id) : undefined;
+      const binding = 'bindingDigests' in plan ? fixedBindingRef(plan, intent.bindingRef) : action?.binding ? composedBindingRef(action) : state ? bindingRef(job.id, state) : undefined;
+      const engaged = binding && engagements.get(`${proposal.id}:${binding.id}`); if (engaged) links.push(edge('BusinessResultEngagement', ref, engaged));
+      const artifact = observation.result.delivery?.artifact;
+      if (artifact) {
+        const artifactRef = node('ServiceArtifact', { requestId: job.id, artifactDigest: digest(artifact) });
+        write(graph, owner, artifactRef, { name: artifact.name, contentDigest: digest(artifact), contentReference: `task:${job.id}:observation:${observation.id}:artifact` }, [edge('ServiceArtifactRequest', artifactRef, request)], source, true);
+        links.push(edge('BusinessResultArtifact', ref, artifactRef));
+      }
+      write(graph, owner, ref, { requestRevision: plan.requestRevision, planDigest: plan.digest, intentId: intent.id, observationId: observation.id,
+        kind: observation.result.kind, effect: intent.effect, sourceVersion: observation.result.sourceVersion, observedAt: observation.receivedAt, evidenceLevel,
+        evidenceIds: observation.result.evidenceRefs, states: Object.fromEntries(Object.entries(observation.result.business ?? {}).filter(([, value]) => typeof value === 'string')),
+        ...(normalized?.deliveredQuantity ? { deliveredQuantity: normalized.deliveredQuantity } : {}) }, links, source, true);
+    });
   }
   const currentProposal = d.agent ? agentProposalRef(job.id, d.agent) : d.plan ? proposalRef(d.plan) : undefined;
   const acceptance = d.acceptance;

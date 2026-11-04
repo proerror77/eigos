@@ -323,7 +323,7 @@ export class JobStore {
   /** The execution graph and durable ledger share this transaction; neither is
    * a second executor. Fenced Agent reads keep late receipts audit-only; fixed
    * business effects can update ledger truth without advancing the task. */
-  private projectExecution(owner: string, job: Job): void {
+  private projectExecution(owner: string, job: Job, beforeTask?: ReturnType<OntologyObjectStore['projectionEpochs']>): void {
     if (job.service !== 'eigos.delegate' || job.delegation?.backendVersion !== BACKEND_VERSION) return;
     const graph = this.projectionForJob(owner, job);
     if (job.service === 'eigos.delegate' && job.delegation?.backendVersion === BACKEND_VERSION && job.state === 'completed'
@@ -334,24 +334,26 @@ export class JobStore {
       // Fresh dispatch still requires its complete sealed execution graph.
       return;
     }
-    const current = this.intents(owner, job.id);
-    const archived = this.db.prepare(`SELECT v.body FROM action_intent_versions v
-      JOIN action_intents i ON i.id=v.intent_id AND i.owner=v.owner WHERE v.owner=? AND i.job_id=?`).all(owner, job.id).map(row => JSON.parse(String(row.body)) as ActionIntent);
-    const attempts = this.db.prepare(`SELECT a.body FROM action_attempts a JOIN action_intents i ON i.id=a.intent_id AND i.owner=a.owner
-      WHERE a.owner=? AND i.job_id=? ORDER BY a.rowid`).all(owner, job.id).map(row => JSON.parse(String(row.body)) as ExecutionAttempt);
-    const observations: ExecutionLedger['observations'] = this.db.prepare(`SELECT o.* FROM action_observations o
-      JOIN action_intents i ON i.id=o.intent_id AND i.owner=o.owner WHERE o.owner=? AND i.job_id=? ORDER BY o.rowid`).all(owner, job.id).map(row => {
-      const result = JSON.parse(String(row.body)) as ActionResult;
-      // recordObservation only applies non-unknown results after verification.
-      // A later accepted observation does not revoke this historical fact.
-      // Unapplied/unknown rows do not prove either verification or rejection.
-      return { id: String(row.id), intentId: String(row.intent_id), attemptId: String(row.attempt_id), receivedAt: String(row.received_at), digest: String(row.digest), applied: row.applied === 1,
-        verified: row.applied === 1 && result.kind !== 'unknown' ? true : undefined, result };
-    });
-    const ledger = { intents: [...archived, ...current], attempts, observations };
-    projectExecution(graph, owner, job, ledger);
-    const cases = this.db.prepare('SELECT body FROM aftersales_cases WHERE owner=? AND (original_job_id=? OR remedy_job_id=?)').all(owner, job.id, job.id).map(row => JSON.parse(String(row.body)) as AfterSalesCase);
-    projectBusinessChain(graph, owner, job, { ...ledger, grants: this.grants(owner, job.id), cases });
+    graph.withProjectionDelta(owner, job.id, () => {
+      const current = this.intents(owner, job.id);
+      const archived = this.db.prepare(`SELECT v.body FROM action_intent_versions v
+        JOIN action_intents i ON i.id=v.intent_id AND i.owner=v.owner WHERE v.owner=? AND i.job_id=?`).all(owner, job.id).map(row => JSON.parse(String(row.body)) as ActionIntent);
+      const attempts = this.db.prepare(`SELECT a.body FROM action_attempts a JOIN action_intents i ON i.id=a.intent_id AND i.owner=a.owner
+        WHERE a.owner=? AND i.job_id=? ORDER BY a.rowid`).all(owner, job.id).map(row => JSON.parse(String(row.body)) as ExecutionAttempt);
+      const observations: ExecutionLedger['observations'] = this.db.prepare(`SELECT o.* FROM action_observations o
+        JOIN action_intents i ON i.id=o.intent_id AND i.owner=o.owner WHERE o.owner=? AND i.job_id=? ORDER BY o.rowid`).all(owner, job.id).map(row => {
+        const result = JSON.parse(String(row.body)) as ActionResult;
+        // recordObservation only applies non-unknown results after verification.
+        // A later accepted observation does not revoke this historical fact.
+        // Unapplied/unknown rows do not prove either verification or rejection.
+        return { id: String(row.id), intentId: String(row.intent_id), attemptId: String(row.attempt_id), receivedAt: String(row.received_at), digest: String(row.digest), applied: row.applied === 1,
+          verified: row.applied === 1 && result.kind !== 'unknown' ? true : undefined, result };
+      });
+      const ledger = { intents: [...archived, ...current], attempts, observations };
+      projectExecution(graph, owner, job, ledger);
+      const cases = this.db.prepare('SELECT body FROM aftersales_cases WHERE owner=? AND (original_job_id=? OR remedy_job_id=?)').all(owner, job.id, job.id).map(row => JSON.parse(String(row.body)) as AfterSalesCase);
+      projectBusinessChain(graph, owner, job, { ...ledger, grants: this.grants(owner, job.id), cases });
+    }, beforeTask);
   }
   private executionMutation<T>(action: () => T): T {
     this.db.exec('SAVEPOINT execution_ontology');
@@ -1051,8 +1053,11 @@ export class JobStore {
       job.id, owner, job.contextId, job.state, job.createdAt, job.updatedAt, JSON.stringify(job),
       );
       if (!saved.changes) throw new DomainError('FORBIDDEN', 'Task owner mismatch');
-      if (job.service === 'eigos.delegate' && job.delegation?.backendVersion === BACKEND_VERSION) projectTask(this.projectionForJob(owner, job), owner, job);
-      this.projectExecution(owner, job);
+      const projection = job.service === 'eigos.delegate' && job.delegation?.backendVersion === BACKEND_VERSION
+        ? this.projectionForJob(owner, job) : undefined;
+      const beforeTask = projection?.projectionEpochs(owner);
+      if (projection) projectTask(projection, owner, job);
+      this.projectExecution(owner, job, beforeTask);
       if (this.security.enabled) this.security.policies.bindTaskProjection(owner, job.id);
       const scope=authorizationScope();
       if (this.security.enabled && scope?.actor.actorKind==='worker' && scope.grant?.taskId===job.id && scope.lineage.size) {

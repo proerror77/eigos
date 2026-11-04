@@ -10,7 +10,8 @@ import { isVirtualRef, networkLinkIds } from './network-model.js';
 import type { NetworkOntologyReadAdapter } from './network-read.js';
 import { assertIdentityAssertionWrite } from './identity-mapping.js';
 import { assertTransactionPartyRoleWrite } from './errand-domain.js';
-import { assertBusinessTransaction } from '../core/transaction.js';
+import { initializeProjectionDelta, projectionEpochs, ProjectionDelta } from './projection-delta.js';
+import { assertBusinessTransaction, hasTransaction } from '../core/transaction.js';
 import type { OntologyReleaseRef } from './definition-contracts.js';
 import type { SecurityPolicies } from '../security/policy-store.js';
 import { authorizationScope } from '../security/context.js';
@@ -124,11 +125,30 @@ export class OntologyObjectStore {
       CREATE TRIGGER IF NOT EXISTS ontology_object_versions_no_update BEFORE UPDATE ON ontology_object_versions BEGIN SELECT RAISE(ABORT,'Object writer history is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS ontology_object_versions_no_delete BEFORE DELETE ON ontology_object_versions BEGIN SELECT RAISE(ABORT,'Object writer history is immutable'); END;
     `);
+    initializeProjectionDelta(this.db);
     if (model.ref.id === 'eigos.business' && model.ref.version === '15' && !context.skipLegacyMigration) migrateIntegratedOntology(this.db, businessModelV9, model);
   }
   get security() { return this.context.security; }
   private get scoped() { return this.ontologyId !== 'eigos.business'; }
   private get objectTable() { return this.scoped ? 'ontology_scoped_objects' : 'ontology_objects'; }
+  private delta?: ProjectionDelta;
+  projectionEpochs(owner: string) { return projectionEpochs(this.db,this.ontologyId,owner); }
+  withProjectionDelta(owner: string, taskId: string, action: () => unknown, beforeTask?: ReturnType<typeof projectionEpochs>): void {
+    if (this.readOverlay || this.security && !authorizationScope()?.projection) throw new SecurityError('AUTHORIZATION_REQUIRED');
+    if (!hasTransaction(this.db)) throw new DomainError('CONFLICT', 'Incremental projection requires a transaction');
+    if (this.delta) throw new DomainError('CONFLICT', 'Nested incremental projection is unsupported');
+    this.delta = new ProjectionDelta(this.db,this.ontologyId,owner,taskId,digest({model:this.model.ref,release:this.releaseRef}),beforeTask);
+    try {
+      const result = action();
+      if (result && typeof result === 'object' && 'then' in result) throw new DomainError('FORBIDDEN', 'Projection must remain synchronous');
+      this.delta.finish();
+    }
+    finally { this.delta = undefined; }
+  }
+  projectFragment(key: string, input: unknown, action: () => unknown): void {
+    if (this.delta) this.delta.apply(key,input,action);
+    else action();
+  }
   private get linkTable() { return this.scoped ? 'ontology_scoped_links' : 'ontology_links'; }
   private get revisionTable() { return this.scoped ? 'ontology_scoped_revisions' : 'ontology_revisions'; }
   private owned(alias = '') { return this.scoped ? `${alias}ontology_id=? AND ${alias}owner=?` : `${alias}owner=?`; }
