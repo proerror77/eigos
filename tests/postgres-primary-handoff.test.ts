@@ -1,6 +1,9 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
+import {readFileSync} from 'node:fs';
+import {DatabaseSync} from 'node:sqlite';
+import {MemberStore} from '../packages/members/store.js';
 import pg from 'pg';
 import {postgresHandoffFixture} from './fixtures/postgres-handoff.js';
 import {importBusinessSnapshot} from '../packages/postgres/business-import.js';
@@ -26,19 +29,41 @@ import {roleSchema} from '../packages/security/resource-role.js';
 
 const local={skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'};
 const connection=()=>({host:'127.0.0.1',port:Number(process.env.PGPORT??52744),user:'postgres',database:'postgres',password:process.env.PGPASSWORD,ssl:false as const});
-async function fixture(){
+async function fixture(options:{populatedMembership?:boolean}={}){
   const f=postgresHandoffFixture(),client=new pg.Client(connection());await client.connect();
   try{
+    let sourceFence=f.operation.sourceFence;
+    if(options.populatedMembership){
+      const members=new MemberStore(f.membership);
+      try{const principal={issuer:'https://synthetic-populated.example/',tenant:'synthetic',subject:'synthetic-source-member',clientId:'synthetic-handoff-client',scopes:[...SCOPES]};
+        const member=members.login(principal);members.apply(member.id,{displayName:'Synthetic populated source',locale:'zh-CN',timezone:'Asia/Shanghai',consent:true},false);members.authorize(principal);
+      }finally{members.close();}
+      const sqlite=new DatabaseSync(f.membership);try{sqlite.exec('PRAGMA journal_mode=DELETE');}finally{sqlite.close();}
+      f.binding.membership.sourceFileDigest=createHash('sha256').update(readFileSync(f.membership)).digest('hex');
+      sourceFence=f.write('source-fence.json',{...JSON.parse(readFileSync(sourceFence.path,'utf8')),membershipSnapshotDigest:f.binding.membership.sourceFileDigest,fencedAt:new Date().toISOString()});
+    }
     await client.query(`CREATE ROLE "${f.role}" LOGIN PASSWORD 'synthetic-handoff-runtime-only' NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION`);
     const imported=await importBusinessSnapshot(client,{snapshot:f.business,schema:f.binding.business.schema,expectedFileDigest:f.plan.fileDigest,expectedAuthorityDigest:f.binding.sourceAuthority.digest,expectedPolicyDigest:f.plan.policyDigest,maxDatabaseBytes:1000000000});
     const membership=await importMembershipSnapshot(client,f.membership,f.binding.membership.schema,f.binding.membership.sourceFileDigest,1000000000);
+    if(options.populatedMembership)f.binding.membership.receiptDigest=digest(membership);
     assert.equal(digest(imported),f.binding.business.receiptDigest);assert.equal(digest(membership),f.binding.membership.receiptDigest);
     const verified=await verifyBusinessSnapshot(client,{snapshot:f.business,schema:f.binding.business.schema,expectedFileDigest:f.plan.fileDigest,expectedAuthorityDigest:f.binding.sourceAuthority.digest,expectedPolicyDigest:f.plan.policyDigest});
     const audit=await auditImportedIdentities(client,{businessSchema:f.binding.business.schema,membershipSchema:f.binding.membership.schema,businessFileDigest:f.plan.fileDigest,membershipFileDigest:f.binding.membership.sourceFileDigest,now:Date.now()});
-    const operation={...f.operation,businessVerification:f.write('verification.json',verified),identityAudit:f.write('identity-audit.json',audit)};
+    const operation={...f.operation,binding:f.write('binding.json',f.binding),sourceFence,membershipSnapshot:{path:f.membership,sha256:f.binding.membership.sourceFileDigest},businessVerification:f.write('verification.json',verified),identityAudit:f.write('identity-audit.json',audit)};
     return {...f,client,operation,close:async()=>{try{await client.query(`DROP SCHEMA IF EXISTS "${f.binding.business.schema}" CASCADE; DROP SCHEMA IF EXISTS "${f.binding.membership.schema}" CASCADE; DROP ROLE IF EXISTS "${f.role}"`);}finally{await client.end();f.close();}}};
   }catch(error){try{await client.query(`DROP SCHEMA IF EXISTS "${f.binding.business.schema}" CASCADE; DROP SCHEMA IF EXISTS "${f.binding.membership.schema}" CASCADE; DROP ROLE IF EXISTS "${f.role}"`);}finally{await client.end();f.close();}throw error;}
 }
+
+test('PostgreSQL handoff independently verifies populated source membership TEXT and INTEGER columns before installing runtime schema',local,async()=>{
+  const f=await fixture({populatedMembership:true});try{
+    const q=`"${f.binding.membership.schema}"`;
+    const row=(await f.client.query(`SELECT m.display_name,c.blocked FROM ${q}.members m JOIN ${q}.member_connections c ON c.member_id=m.id`)).rows[0];
+    assert.equal(row?.display_name,'Synthetic populated source');assert.equal(row?.blocked,'0');
+    const prepared=await preparePostgresRuntimeSchema(f.client,f.operation);assert.equal(prepared.status,'schema-prepared-not-activated');
+    const independent=new pg.Client(connection());await independent.connect();try{const verified=await verifyPreparedPostgresRuntimeSchema(independent,f.operation);assert.equal(verified.schemaReceiptDigest,prepared.schemaReceiptDigest);}finally{await independent.end();}
+    assert.equal((await f.client.query(`SELECT count(*)::int AS n FROM ${q}.members`)).rows[0]?.n,1);
+  }finally{await f.close();}
+});
 
 test('PostgreSQL handoff prepares exact schema and least privileges before a separately reviewed activation without changing original rows',local,async()=>{
   const f=await fixture();let runtime:pg.Client|undefined;
