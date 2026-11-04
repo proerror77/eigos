@@ -23,13 +23,15 @@ import type { ExecutionCatalog } from '../core/catalog.js';
 import { authorizationScope } from '../security/context.js';
 import { accessDigest, secureRequest, assertModelChannel } from '../security/model.js';
 import { authorizedDefinitions, describeAuthorized, secureFunctionCallSchema } from '../security/view.js';
+import { servicePlanningSchema } from '../ontology/service-planning.js';
+import { planServices } from './service-planner.js';
 
 const describeSchema = z.object({ functions: z.array(z.string().min(1).max(80)).max(20).optional(), includeLinks: z.boolean().optional(), linkSearch: linkSearchSchema, kind: z.enum(['types', 'actions', 'functions']).optional().describe('Types return related contracts only; actions/functions pages enumerate their complete catalogues'), search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), actions: z.array(z.string().min(1).max(80)).max(8).optional().describe('Exact action IDs whose complete input schemas are needed; otherwise concise action summaries'), includeConditionSchema: z.boolean().optional().describe('Request the full typed business-condition contract when grounding domain conditions'), includeSchemas: z.boolean().optional().describe('Request full property and action schemas; default returns concise names, semantics and links') }).strict();
 const assessmentSchema = z.object({ candidateId: z.string().max(200).optional(), subject: objectRefSchema.optional(), phase: z.enum(['precondition', 'result']).optional() }).strict();
 const actionSchema = z.object({ action: z.string().min(1).max(80), inputs: z.array(z.object({ name: z.string().min(1).max(80), object: objectRefSchema, revision: z.number().int().positive() }).strict()).min(1).max(8) }).strict();
 export const planningQuerySchema = z.union([...objectQuerySchema.options, z.object({ facts: requestedFactsSchema }).strict()]);
-export const planningToolSchemas = { read_task_context: taskContextSchema, read_task_instructions: taskInstructionsSchema, describe_ontology: describeSchema, discover_actions: actionDiscoverySchema, query_ontology: planningQuerySchema, evaluate_ontology: functionCallSchema, assess_conditions: assessmentSchema, propose_action: actionSchema };
-export const planningToolCatalog = (taskContext = false, actionCatalog = false, secured = false) => Object.entries(planningToolSchemas).filter(([name]) => (taskContext || !['read_task_context', 'read_task_instructions'].includes(name)) && (actionCatalog || name !== 'discover_actions')).map(([name, schema]) => {
+export const planningToolSchemas = { read_task_context: taskContextSchema, read_task_instructions: taskInstructionsSchema, describe_ontology: describeSchema, discover_actions: actionDiscoverySchema, plan_services: servicePlanningSchema, query_ontology: planningQuerySchema, evaluate_ontology: functionCallSchema, assess_conditions: assessmentSchema, propose_action: actionSchema };
+export const planningToolCatalog = (taskContext = false, actionCatalog = false, secured = false) => Object.entries(planningToolSchemas).filter(([name]) => (taskContext || !['read_task_context', 'read_task_instructions'].includes(name)) && (actionCatalog || !['discover_actions', 'plan_services'].includes(name))).map(([name, schema]) => {
   const input = secured && name === 'evaluate_ontology' ? secureFunctionCallSchema : schema;
   const described = name === 'evaluate_ontology' ? input.describe('Outer status known means the computation returned a result; inspect value for the business verdict. Source-specific observation checks validate their own snapshot, not whether a newer observation supersedes it. Check current business facts through their registered observation contract.') : input;
   return { name, inputSchema: compactSchema(z.toJSONSchema(described)), readOnly: true, executionAllowed: false };
@@ -268,6 +270,7 @@ export class OntologyPlanningSession {
     let output: unknown, status: PlanningReadReceipt['status'] = 'ok';
     let contextRead: TaskContextRead | undefined;
     let actionDiscovery: ActionDiscoveryPage | undefined;
+    let servicePlanBindings: PlanningReadReceipt['actionBindings'];
     let instructionRefs: ObjectRef[] = [], instructionPage = false;
     try {
       if (this.contextBudgetExhausted) throw new ContextReadBudgetExceeded();
@@ -290,6 +293,21 @@ export class OntologyPlanningSession {
         if (this.usesTaskContext() && !this.reads.some(read => read.tool === 'read_task_context' && read.status === 'ok')) throw new DomainError('FORBIDDEN', 'Read the current task context before discovering action bindings');
         actionDiscovery = this.options.actionCatalog.discoverActions(this.graph, this.owner, this.request, actionDiscoverySchema.parse(input));
         output = actionDiscovery;
+      } else if (tool === 'plan_services') {
+        if (!this.options.actionCatalog) throw new DomainError('FORBIDDEN', 'This planning session has no action catalog binding');
+        if (this.usesTaskContext() && !this.reads.some(read => read.tool === 'read_task_context' && read.status === 'ok')) throw new DomainError('FORBIDDEN', 'Read the current task context before planning services');
+        const task = this.graph.read(this.owner, { type: 'ServiceRequest', id: this.request.id });
+        if (task.properties.revision !== this.request.revision) throw new DomainError('CONFLICT', 'Service planning requires the current owned task revision');
+        this.remember(task.ref, task.revision);
+        const request = secureRequest(this.graph, this.owner, this.request);
+        const visibleTypes = this.graph.security ? new Set(authorizedDefinitions(this.graph.security.security, authorizationScope()!, this.graph.model).types.map(type => type.id)) : undefined;
+        const plan = planServices(request, this.graph.model, input,
+          query => this.options.actionCatalog!.discoverActions(this.graph, this.owner, this.request, query), this.active,
+          type => visibleTypes ? visibleTypes.has(type) : this.graph.model.hasType(type));
+        // Only pins actually delivered in this bounded result can later be
+        // selected. Planning is neither an observation nor execution authority.
+        servicePlanBindings = { snapshotDigest: plan.digest, pins: structuredClone(plan.contracts.map(contract => contract.binding)) };
+        output = plan;
       } else if (tool === 'describe_ontology') {
         const { includeSchemas = false, includeLinks = true, includeConditionSchema = false, actions, functions, ...args } = describeSchema.parse(input), result = this.graph.model.describe(args);
         if (this.graph.security) {
@@ -414,7 +432,7 @@ export class OntologyPlanningSession {
       if (!(error instanceof DomainError || error instanceof z.ZodError)) throw error;
       status = 'rejected'; output = error instanceof ContextReadBudgetExceeded ? { ...contextBudgetFeedback } : { error: error instanceof DomainError ? error.code : 'INVALID_INPUT', message: error instanceof DomainError ? error.message : 'Input does not match the published tool schema' };
       this.seen = before; this.knownRefs = knownBefore; this.proposals.length = proposalCount;
-      this.callObjects.clear(); this.callDelivered.clear(); contextRead = undefined; actionDiscovery = undefined;
+      this.callObjects.clear(); this.callDelivered.clear(); contextRead = undefined; actionDiscovery = undefined; servicePlanBindings = undefined;
       instructionRefs = []; instructionPage = false;
       if (!(error instanceof ContextReadBudgetExceeded)) {
         const failure = digest({ tool, input, output }), count = (this.failures.get(failure) ?? 0) + 1; this.failures.set(failure, count);
@@ -424,7 +442,7 @@ export class OntologyPlanningSession {
     if (options && Buffer.byteLength(JSON.stringify(output)) > options.maxOutputBytes) {
       this.seen = before; this.knownRefs = knownBefore; this.proposals.length = proposalCount;
       this.callObjects.clear(); this.callDelivered.clear();
-      contextRead = undefined; actionDiscovery = undefined; instructionRefs = []; instructionPage = false;
+      contextRead = undefined; actionDiscovery = undefined; servicePlanBindings = undefined; instructionRefs = []; instructionPage = false;
       status = 'rejected'; output = { error: 'CONTEXT_NOT_INCLUDED', message: 'The result exceeds the bounded initial Worker context. Request a narrower selection.' };
     }
     if (instructionPage) this.instructionBytes += Buffer.byteLength(JSON.stringify(output));
@@ -434,7 +452,7 @@ export class OntologyPlanningSession {
     this.active();
     const receipt: PlanningReadReceipt = { id: receiptId, at: new Date().toISOString(), tool, inputDigest: digest(input), outputDigest: digest(output), datasetRevision: this.graph.revision(this.owner), status, origin: options?.origin ?? 'model', ...(this.graph.security ? { accessDigest: accessDigest(), ...(authorizationScope()!.lineage.size ? {securityEnvelope: this.graph.security.outputEnvelope(this.owner)} : {}) } : {}), outputBytes: Buffer.byteLength(JSON.stringify(output)),
       objects: [...this.callObjects.values()], deliveredObjects: [...this.callDelivered.values()], instructionRefs, ...(contextRead ? { context: contextRead.context, definitions: contextRead.definitions } : {}),
-      ...(actionDiscovery ? { actionBindings: { snapshotDigest: actionDiscovery.snapshotDigest, pins: actionDiscovery.items.flatMap(item => item.bindings.map(binding => binding.pin)) } } : {}) };
+      ...(servicePlanBindings ? { actionBindings: servicePlanBindings } : actionDiscovery ? { actionBindings: { snapshotDigest: actionDiscovery.snapshotDigest, pins: actionDiscovery.items.flatMap(item => item.bindings.map(binding => binding.pin)) } } : {}) };
     try { this.onRead(receipt); }
     catch (error) {
       // An uncommitted receipt cannot authorize a later decision or consume a
