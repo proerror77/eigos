@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isDeepStrictEqual } from 'node:util';
 import { digest } from '../core/delegation.js';
 import { filterRelationshipMetadata } from '../ontology/model.js';
 import type { OntologyModel, PropertyDefinition } from '../ontology/model.js';
@@ -16,11 +17,50 @@ export interface DefinitionAccess {
 }
 export interface DefinitionDescriptionInput { kind?: 'types' | 'actions' | 'functions'; search?: string; linkSearch?: string; limit?: number; after?: string; actions?: string[]; functions?: string[] }
 
+// Only immutable schema presentation is reused. Access decisions and the
+// authorized catalogue are rebuilt inside each caller's current scope.
+type DefinitionSchema = z.core.JSONSchema.JSONSchema;
+const schemaMetadata = new WeakMap<OntologyModel, { schemas: WeakMap<z.ZodType, DefinitionSchema>; conversions: number }>();
+function equivalentMetadata(pinned: Record<string, unknown>, converted: DefinitionSchema): pinned is DefinitionSchema {
+  return isDeepStrictEqual(pinned, converted);
+}
+function metadataFor(model: OntologyModel) {
+  let metadata = schemaMetadata.get(model);
+  if (!metadata) { metadata = { schemas: new WeakMap(), conversions: 0 }; schemaMetadata.set(model, metadata); }
+  return metadata;
+}
+function definitionSchema(model: OntologyModel, schema: z.ZodType, pinned?: Record<string, unknown>) {
+  const metadata = metadataFor(model);
+  let json = metadata.schemas.get(schema);
+  if (!json) {
+    const converted = z.toJSONSchema(schema);
+    // Some historical compiler pins omit $schema. Preserve the previous public
+    // JSON exactly unless the compiled metadata is strictly equivalent.
+    json = pinned && equivalentMetadata(pinned, converted) ? structuredClone(pinned) : converted;
+    metadata.schemas.set(schema, json); metadata.conversions++;
+  }
+  return structuredClone(json);
+}
+
+/** Pure startup preparation, before acquiring a publisher lease. This does not
+ * select or authorize resources. Supply policy fields to include projections. */
+export function prepareDefinitionMetadata(model: OntologyModel, fields: (type: string) => Record<string, PropertyDefinition> = type => model.properties(type)) {
+  const metadata = metadataFor(model), before = metadata.conversions;
+  let properties = 0;
+  for (const type of model.typeIds()) for (const property of Object.values(fields(type))) {
+    definitionSchema(model, property.schema, property.schemaMetadata); properties++;
+  }
+  for (const schema of functionCallSchema.options) definitionSchema(model, schema);
+  return { properties, conversions: metadata.conversions - before };
+}
+
 export function authorizedDefinitionCatalogue(access: DefinitionAccess, model: OntologyModel = access.model) {
   assertReviewedModel(access.model, model);
   const policy = access, parent = access.parent;
   const reviewedType = (id: string) => { try {
-    if (!model.hasType(id) || !access.model.hasType(id) || model.isInterface(id) !== access.model.isInterface(id)) return false;
+    if (!model.hasType(id) || !access.model.hasType(id)) return false;
+    if (model === access.model) return true;
+    if (model.isInterface(id) !== access.model.isInterface(id)) return false;
     return model.isInterface(id) ? digest(model.describeType(id)) === digest(access.model.describeType(id)) : model.fingerprint(id) === access.model.fingerprint(id);
   } catch { return false; } };
   const typeAllowed = (id: string): boolean => reviewedType(id) && policy.resourceAllowed(model.isInterface(id) ? 'interface' : 'objectType', id)
@@ -30,7 +70,7 @@ export function authorizedDefinitionCatalogue(access: DefinitionAccess, model: O
     const concrete = model.concreteTypes(type).filter(t => typeAllowed(t));
     return concrete.some(t => { const field = model.propertyName(t, type, name); return parent.resources.some(r => r.type === t && r.fields.includes(field)) && policy.fieldPolicy(t, field) !== 'internal_only'; });
   }).map(([name, property]) => [name, { description: property.description, kind: property.kind, required: !!property.required,
-    ...(property.derived && policy.resourceAllowed('function', property.derived) ? { derived: property.derived } : {}), schema: z.toJSONSchema(property.schema) }]));
+    ...(property.derived && policy.resourceAllowed('function', property.derived) ? { derived: property.derived } : {}), schema: definitionSchema(access.model, property.schema, property.schemaMetadata) }]));
   const definitions = types.map(id => {
     const concrete = !model.isInterface(id), def = concrete ? model.object(id) : undefined;
     return { kind: concrete ? 'object' : 'interface', id, ...(def ? { version: def.version, name: def.name, description: def.businessDescription ?? def.description,primaryKey:def.primaryKey,titleKey:def.titleKey,
@@ -48,7 +88,7 @@ export function authorizedDefinitionCatalogue(access: DefinitionAccess, model: O
       ...(a.operation ? { operation: { effect: a.operation.effect, resultType: a.operation.resultType, inputSchema: a.operation.inputSchema } } : {}) }));
   const functions = model.functionIds().map(id => model.function(id)).filter(f => policy.resourceAllowed('function', f.id) && f.inputTypes.every(typeAllowed)).map(f=>{
     const schema=functionCallSchema.options.find(schema=>schema.shape.function.value===f.id);
-    return {...f,...(schema?{inputSchema:z.toJSONSchema(schema)}:{})};
+    return {...f,...(schema?{inputSchema:definitionSchema(access.model, schema)}:{})};
   });
   // Build one authorized definition set for internal context selection and public paging.
   return { model: { id: model.ref.id, version: 'authorized.v2', digest: digest({ types: definitions, actions, functions }) }, types: definitions, actions, functions };
