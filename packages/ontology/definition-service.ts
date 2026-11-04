@@ -5,8 +5,8 @@ import type { JobStore } from '../core/store.js';
 import type { TaskService } from '../core/tasks.js';
 import type { ExecutionCatalog } from '../core/catalog.js';
 import { taskSummary } from '../core/task-summary.js';
-import { definitionKindSchema, ontologyIdSchema, ontologyReleaseRefSchema, resourceIdSchema, type DefinitionKind, type OntologyDocument } from './definition-contracts.js';
-import type { DefinitionDraft, DefinitionResource } from './definition-store.js';
+import { definitionKindSchema, ontologyIdSchema, ontologyReleaseRefSchema, resourceIdSchema } from './definition-contracts.js';
+import type { DefinitionDraft } from './definition-store.js';
 import { previewDeclarativeAction } from './declarative-actions.js';
 import type { ManagedActionPreview } from './declarative-actions.js';
 import { objectWriteScopeSchema } from './actions.js';
@@ -14,16 +14,20 @@ import { objectRefSchema } from './model.js';
 import { actionDiscoverySchema } from '../core/action-bindings.js';
 import { pipelineIntakeSchema, pipelineValidationRequestSchema } from './pipeline/contracts.js';
 import { SecurityError } from '../security/store.js';
+import { workbenchEntries, workbenchRelations, workbenchSummary, type WorkbenchEntry, type WorkbenchKind } from './definition-workbench.js';
 
 const ontology = { ontologyId: ontologyIdSchema.default('eigos.business') };
 const page = { limit: z.number().int().min(1).max(50).default(20), offset: z.number().int().min(0).max(10000).default(0) };
 const draftId = z.uuid(), expectedRevision = z.number().int().positive();
 const source = { ...ontology, draftId: draftId.optional(), release: ontologyReleaseRefSchema.optional() };
+const readKindSchema = z.enum(['object', 'interface', 'link', 'action', 'function']);
 export const definitionQuerySchema = z.discriminatedUnion('operation', [
   z.strictObject({ operation: z.literal('list_ontologies'), ...page }),
   z.strictObject({ operation: z.literal('get_ontology'), ...ontology }),
-  z.strictObject({ operation: z.literal('list_definitions'), ...source, ...page, kind: definitionKindSchema.optional(), search: z.string().max(100).optional(), customOnly: z.boolean().default(false) }),
-  z.strictObject({ operation: z.literal('get_definition'), ...source, kind: definitionKindSchema, resourceId: resourceIdSchema }),
+  z.strictObject({ operation: z.literal('workspace_summary'), ...source }),
+  z.strictObject({ operation: z.literal('list_definitions'), ...source, ...page, kind: readKindSchema.optional(), search: z.string().max(100).optional(), customOnly: z.boolean().default(false) }),
+  z.strictObject({ operation: z.literal('get_definition'), ...source, kind: readKindSchema, resourceId: resourceIdSchema }),
+  z.strictObject({ operation: z.literal('list_definition_relations'), ...source, ...page, kind: readKindSchema, resourceId: resourceIdSchema, search: z.string().max(100).optional() }),
   z.strictObject({ operation: z.literal('list_drafts'), ...ontology, ...page }),
   z.strictObject({ operation: z.literal('get_draft'), ...ontology, draftId }),
   z.strictObject({ operation: z.literal('validate_draft'), ...ontology, draftId }),
@@ -61,8 +65,6 @@ export const foundationDefinitionQuerySchema = z.discriminatedUnion('operation',
 export const foundationDefinitionCommandSchema = z.discriminatedUnion('operation', [firstFoundationCommand, ...otherFoundationCommands]);
 export const prepareOntologyActionSchema = z.strictObject({ ...ontology, action: z.string().min(1).max(80).optional(), interface: z.strictObject({ object: objectRefSchema, interfaceId: z.string().min(1).max(80), actionId: z.string().min(1).max(80) }).optional(), input: z.record(z.string(), z.unknown()), requestId: z.string().min(1).max(128) }).refine(value => !!value.action !== !!value.interface, 'Choose one concrete action or interface action');
 export const approveOntologyActionSchema = z.strictObject({ taskId: taskIdSchema, requestId: z.string().min(1).max(128), planDigest: z.string().regex(/^[a-f0-9]{64}$/), objectWrite: objectWriteScopeSchema, expiresAt: z.iso.datetime({ offset: true }) });
-const categories = { object: 'objects', interface: 'interfaces', link: 'links', action: 'actions' } as const;
-const resources = (document: OntologyDocument) => (Object.keys(categories) as DefinitionKind[]).flatMap(kind => document[categories[kind]].map(definition => ({ kind, definition })));
 const summary = ({ document: _document, ...draft }: DefinitionDraft) => draft;
 const immutable = (resourceId: string) => resourceId.startsWith('generated:');
 function invalid(message: string): never { throw new DomainError('INVALID_INPUT', message); }
@@ -165,19 +167,31 @@ export class DefinitionService {
       });
     }
     if (query.operation === 'get_ontology') { const namespace = store.namespace(query.ontologyId); return envelope({ ...namespace, permissions: this.permission(principal, namespace) }); }
-    if (query.operation === 'list_definitions' || query.operation === 'get_definition') {
-      const selected = this.document(principal, query), all = resources(selected.document);
+    if (query.operation === 'workspace_summary') {
+      const selected = this.document(principal, query);
+      return envelope({ ...workbenchSummary(selected.document), release: selected.release, publication: selected.publication });
+    }
+    if (query.operation === 'list_definitions' || query.operation === 'get_definition' || query.operation === 'list_definition_relations') {
+      const selected = this.document(principal, query), all = workbenchEntries(selected.document);
+      if (query.operation === 'list_definition_relations') {
+        const item = all.find(item => item.kind === query.kind && item.definition.resourceId === query.resourceId);
+        if (!item) throw new DomainError('NOT_FOUND', 'Definition is not available');
+        const search = query.search?.toLowerCase();
+        const matches = workbenchRelations(selected.document).filter(edge => [edge.from, edge.to].some(ref => ref.kind === item.kind && ref.resourceId === item.definition.resourceId))
+          .filter(edge => !search || [edge.role, edge.from.id, edge.from.name, edge.to.id, edge.to.name].some(value => value.toLowerCase().includes(search)));
+        return envelope({ ...paginate(matches, query), release: selected.release, publication: selected.publication });
+      }
       if (query.operation === 'get_definition') {
         const item = all.find(item => item.kind === query.kind && item.definition.resourceId === query.resourceId);
         if (!item) throw new DomainError('NOT_FOUND', 'Definition is not available');
-        const graph = selected.release ? this.jobs.ontologyForRelease(selected.release) : undefined;
-        return envelope({ ...item, publication: selected.publication, release: selected.release, readOnly: immutable(item.definition.resourceId),
+        const graph = item.kind === 'action' && selected.release ? this.jobs.ontologyForRelease(selected.release) : undefined;
+        return envelope({ ...item, publication: selected.publication, release: selected.release, readOnly: item.kind === 'function' || immutable(item.definition.resourceId),
           ...(item.kind === 'action' ? { availability: graph ? this.catalog.actionAvailability(graph, ownerKey(principal), item.definition.id) : { status: 'definition_only', reason: 'Drafts are not executable' } } : {}),
           dependencies: this.dependencies(item.kind, item.definition) });
       }
       const search = query.search?.toLowerCase();
-      const items = all.filter(item => (!query.kind || item.kind === query.kind) && (!query.customOnly || !/^(builtin:|generated:)/.test(item.definition.resourceId)) && (!search || [item.definition.id, item.definition.description, 'name' in item.definition ? item.definition.name : ''].some(value => String(value).toLowerCase().includes(search))))
-        .map(item => ({ kind: item.kind, resourceId: item.definition.resourceId, id: item.definition.id, name: 'name' in item.definition ? item.definition.name : item.definition.id, description: item.definition.description.slice(0, 400), readOnly: immutable(item.definition.resourceId), publication: selected.publication }))
+      const items = all.filter(item => (!query.kind || item.kind === query.kind) && (!query.customOnly || item.kind !== 'function' && !/^(builtin:|generated:)/.test(item.definition.resourceId)) && (!search || [item.definition.id, item.definition.description, 'name' in item.definition ? item.definition.name : ''].some(value => String(value).toLowerCase().includes(search))))
+        .map(item => ({ kind: item.kind, resourceId: item.definition.resourceId, id: item.definition.id, name: 'name' in item.definition ? item.definition.name : item.definition.id, description: item.definition.description.slice(0, 400), readOnly: item.kind === 'function' || immutable(item.definition.resourceId), publication: selected.publication }))
         .sort((a, b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id));
       return envelope({ ...paginate(items, query), release: selected.release, publication: selected.publication });
     }
@@ -249,7 +263,7 @@ export class DefinitionService {
       }));
     }
     if (command.operation === 'put_definition') {
-      const existing = resources(currentDraft.document).find(item => item.kind === command.kind && (item.definition.resourceId === command.definition.resourceId || item.definition.id === command.definition.id));
+      const existing = workbenchEntries(currentDraft.document).find(item => item.kind === command.kind && (item.definition.resourceId === command.definition.resourceId || item.definition.id === command.definition.id));
       if (immutable(String(command.definition.resourceId ?? '')) || existing && immutable(existing.definition.resourceId)) throw new DomainError('FORBIDDEN', 'Generated execution relationships are read-only');
       return envelope(summary(store.putResource(owner, command.draftId, command.expectedRevision, command.kind, command.definition, admin)));
     }
@@ -304,8 +318,9 @@ export class DefinitionService {
     const authorized = this.tasks.authorize(principal, taskId, { ...permit, action: 'approve_object_write', environment: 'managed' });
     return envelope({ task: taskSummary(this.secured ? authorized : this.jobs.get(ownerKey(principal), authorized.id)) });
   }
-  private dependencies(kind: DefinitionKind, definition: DefinitionResource): string[] {
+  private dependencies(kind: WorkbenchKind, definition: WorkbenchEntry['definition']): string[] {
     const value = definition as unknown as Record<string, unknown>;
+    if (kind === 'function') return [...(value.inputTypes as string[])];
     if (kind === 'link') return [(value.from as { type: string }).type, (value.to as { type: string }).type];
     const dependencies = new Set<string>();
     if (kind === 'action') {
