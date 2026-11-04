@@ -21,6 +21,7 @@ export function createWorker(config: Config, overrides: {
     const model = config.EIGOS_EXECUTOR === 'harness' ? new HarnessExecutor(config.EIGOS_HARNESS_BIN ?? 'dsh', config.EIGOS_EXECUTOR_TIMEOUT_MS, {
       credentialFile: config.EIGOS_HARNESS_CREDENTIAL_FILE!, credentialKind: config.EIGOS_HARNESS_CREDENTIAL_KIND,
       model: config.EIGOS_HARNESS_MODEL, reasoningEffort: config.EIGOS_HARNESS_REASONING_EFFORT, maxTokens: config.EIGOS_HARNESS_MAX_TOKENS,
+      initializeTimeoutMs: config.EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS,
     }) : new CodexExecutor(config.EIGOS_CODEX_BIN, config.EIGOS_EXECUTOR_TIMEOUT_MS, {
       model: config.EIGOS_CODEX_MODEL, reasoningEffort: config.EIGOS_CODEX_REASONING_EFFORT, serviceTier: config.EIGOS_CODEX_SERVICE_TIER,
     });

@@ -122,6 +122,7 @@ const schema = z.object({
   EIGOS_HARNESS_MODEL: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/).optional(),
   EIGOS_HARNESS_REASONING_EFFORT: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
   EIGOS_HARNESS_MAX_TOKENS: z.coerce.number().int().min(128).max(32768).optional(),
+  EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS: z.coerce.number().int().min(1000).max(90000).default(45000),
   EIGOS_MESSAGING_ENABLED: z.enum(['false', 'true']).default('false'),
   EIGOS_MESSAGING_NODE_DIR: z.string().optional(),
   EIGOS_CODEX_BIN: z.string().default('codex'),
@@ -131,9 +132,10 @@ const schema = z.object({
   EIGOS_EXECUTOR_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300000).default(120000),
   EIGOS_AUDIT_PATH: z.string().optional(),
 });
-// Older in-process SQLite callers may omit the newly selected backend. Parsed
-// host configuration always supplies its explicit default from the schema.
-export type Config = Omit<z.infer<typeof schema>,'EIGOS_STORAGE_BACKEND'> & { EIGOS_STORAGE_BACKEND?:'sqlite'|'postgres'; authority?: RuntimeAuthority };
+// Older in-process SQLite callers may omit the backend and Harness boot bound.
+// Parsed host configuration supplies both defaults; the executor also retains
+// its bounded boot default for callers constructing their existing Config.
+export type Config = Omit<z.infer<typeof schema>,'EIGOS_STORAGE_BACKEND'|'EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS'> & { EIGOS_STORAGE_BACKEND?:'sqlite'|'postgres'; EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS?:number; authority?: RuntimeAuthority };
 
 export function allowsBoundPersonalSource(config: Config, nodeEnv: string | undefined): boolean {
   return config.EIGOS_SECURITY_MODE === 'foundation' && config.EIGOS_AUTH_MODE === 'jwt'
