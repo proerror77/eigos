@@ -205,6 +205,43 @@ test('snapshot UTF-8 byte checks preserve BOM and surrogate boundaries and rejec
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
 });
 
+test('snapshot streamed fingerprints match the canonical row encoding across text and base64 boundaries', () => {
+  const f = fixture();
+  try {
+    const db = new DatabaseSync(f.path);
+    db.exec('CREATE TABLE migration_stream_probe(id TEXT PRIMARY KEY, body TEXT, payload BLOB, value INTEGER NOT NULL)');
+    const insert = db.prepare('INSERT INTO migration_stream_probe VALUES(?,?,?,?)');
+    insert.run('empty', '', Buffer.alloc(0), -9223372036854775808n);
+    insert.run('null', null, null, 9223372036854775807n);
+    const text = 'a'.repeat(65535) + '🚕' + '\\"\b\f\n\r\t\u0001\u2028水é'.repeat(12000) + '終';
+    const backing = Buffer.alloc(3 * 65536 + 5, 0xa5);
+    insert.run('large', text, backing.subarray(1, -1), 9007199254740993n);
+    insert.run('tail-one', 'base64 remainder one', backing.subarray(1, -3), 1n);
+    insert.run('tail-two', 'base64 remainder two', backing.subarray(1, -2), 2n);
+    db.close();
+    const table = planBusinessSnapshot(f.path, f.authorityDigest, f.policy).tables.find(item => item.name === 'migration_stream_probe')!;
+    const source = new DatabaseSync(f.path, { readOnly: true });
+    let total = 0, maximum = 0;
+    const fingerprint = createHash('sha256');
+    try {
+      const statement = source.prepare('SELECT id,body,payload,value,rowid AS __eigos_rowid FROM migration_stream_probe ORDER BY id COLLATE BINARY');
+      statement.setReadBigInts(true);
+      for (const row of statement.iterate()) {
+        const canonical = encodeBusinessRow(row, table.columns, 'sqlite'), bytes = Buffer.byteLength(canonical);
+        total += bytes; maximum = Math.max(maximum, bytes);
+        fingerprint.update(`${bytes}:`).update(canonical);
+      }
+    } finally { source.close(); }
+    assert.equal(table.rows, 5);
+    assert.equal(table.totalEncodedBytes, total);
+    assert.equal(table.maxRowBytes, maximum);
+    assert.equal(table.digest, fingerprint.digest('hex'));
+    const invalid = new DatabaseSync(f.path);
+    invalid.prepare("UPDATE migration_stream_probe SET payload=1.5 WHERE id='large'").run(); invalid.close();
+    assert.throws(() => planBusinessSnapshot(f.path, f.authorityDigest, f.policy), /Unsupported database value/);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
 test('business import CLI requires explicit apply and rejects TLS overrides without exposing credentials', () => {
   const script = fileURLToPath(new URL('../scripts/business-postgres-import.mjs', import.meta.url));
   const secret = 'synthetic-not-for-output';

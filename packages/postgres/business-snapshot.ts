@@ -30,16 +30,19 @@ function readOnlyBytes(value: Uint8Array): Buffer {
   if (typeof SharedArrayBuffer !== 'undefined' && value.buffer instanceof SharedArrayBuffer) return Buffer.from(value);
   return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
 }
-function* utf8Chunks(value: string): Generator<Buffer> {
+function* stringChunks(value: string): Generator<string> {
   const chunkCharacters = 64 * 1024;
   for (let start = 0; start < value.length;) {
     let end = Math.min(value.length, start + chunkCharacters);
-    // Buffer's UTF-8 encoding must see a surrogate pair together, exactly as
-    // it does when encoding the original complete string.
+    // UTF-8 encoding and JSON escaping must see a surrogate pair together,
+    // exactly as they do when encoding the original complete string.
     if (end < value.length && value.charCodeAt(end - 1) >= 0xd800 && value.charCodeAt(end - 1) <= 0xdbff
       && value.charCodeAt(end) >= 0xdc00 && value.charCodeAt(end) <= 0xdfff) end++;
-    yield Buffer.from(value.slice(start, end), 'utf8'); start = end;
+    yield value.slice(start, end); start = end;
   }
+}
+function* utf8Chunks(value: string): Generator<Buffer> {
+  for (const chunk of stringChunks(value)) yield Buffer.from(chunk, 'utf8');
 }
 function exactUtf8Bytes(value: string, original: Uint8Array): boolean {
   const bytes = readOnlyBytes(original); let offset = 0;
@@ -81,6 +84,28 @@ function encoded(value: unknown, column: BusinessColumn, backend: 'sqlite' | 'po
 /** Canonical source/target encoding; target BIGINT values are strings in pg. */
 export function encodeBusinessRow(row: Record<string, unknown>, columns: readonly BusinessColumn[], backend: 'sqlite' | 'postgres'): string {
   return JSON.stringify(columns.map(column => encoded(row[column.name], column, backend)));
+}
+
+/** Same canonical bytes as encodeBusinessRow, without retaining an entire
+ * escaped historical row just to count or fingerprint it. */
+function* businessRowChunks(row: Record<string, unknown>, columns: readonly BusinessColumn[]): Generator<string> {
+  yield '[';
+  for (const [index, column] of columns.entries()) {
+    if (index) yield ',';
+    const value = row[column.name];
+    if (column.type === 'TEXT' && typeof value === 'string' && !value.includes('\0')) {
+      yield '{"text":"';
+      for (const chunk of stringChunks(value)) yield JSON.stringify(chunk).slice(1, -1);
+      yield '"}';
+    } else if (column.type === 'BLOB' && value instanceof Uint8Array) {
+      const bytes = readOnlyBytes(value), chunkBytes = 3 * 64 * 1024;
+      yield '{"bytes":"';
+      // Only the last piece may contain base64 padding.
+      for (let offset = 0; offset < bytes.length; offset += chunkBytes) yield bytes.subarray(offset, offset + chunkBytes).toString('base64');
+      yield '"}';
+    } else yield JSON.stringify(encoded(value, column, 'sqlite'));
+  }
+  yield ']';
 }
 
 /** Read-only evidence for a stopped, self-contained business snapshot. This is
@@ -205,12 +230,13 @@ export function planBusinessSnapshot(snapshot: string, expectedAuthorityDigest: 
         if (typeof sourceRowid !== 'bigint') throw new Error(`Invalid hidden row identity in ${name}`);
         if (maxRowid === null || sourceRowid > maxRowid) maxRowid=sourceRowid;
         for (const [index, column] of textFields.entries()) if (typeof row[column.name] === 'string' && !exactUtf8Bytes(String(row[column.name]), row[`__eigos_migration_raw_${index}`] as Uint8Array)) throw new Error(`Invalid UTF-8 text in ${name}`);
-        const encodedRow = encodeBusinessRow(row, columns, 'sqlite');
-        const bytes = Buffer.byteLength(encodedRow); totalEncodedBytes += bytes;
+        let bytes = 0;
+        for (const chunk of businessRowChunks(row, columns)) bytes += Buffer.byteLength(chunk);
+        totalEncodedBytes += bytes;
         if (!Number.isSafeInteger(totalEncodedBytes)) throw new Error(`Snapshot table ${name} is too large to inventory safely`);
         maxRowBytes = Math.max(maxRowBytes, bytes);
         fingerprint.update(`${bytes}:`);
-        for (const chunk of utf8Chunks(encodedRow)) fingerprint.update(chunk);
+        for (const chunk of businessRowChunks(row, columns)) fingerprint.update(chunk);
         rows++;
       }
       const uniqueKeys = db.prepare(`PRAGMA index_list(${quote(name)})`).all().filter(row => Number(row.unique) === 1).map(row => {
