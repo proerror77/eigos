@@ -11,6 +11,7 @@ import { persistentConsentPolicyContracts } from '../packages/security/policy-st
 import { upgradeBusinessDescriptionsPolicy } from '../packages/security/business-descriptions-upgrade.js';
 import { securityFixture } from './fixtures/security.js';
 import { DatabaseSync } from 'node:sqlite';
+import { businessTransaction } from '../packages/core/transaction.js';
 
 test('all 68 previously label-only business types expose explanations without changing any v27 data, action or function contract', () => {
   const previous = createPaymentCommerceKernelDefinition(), next = createCurrentKernelDefinition();
@@ -74,6 +75,9 @@ test('offline description policy upgrade preserves grants, bindings, consent and
     const rows = () => tables.map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
     const original = digest(rows()), expected = { digest: before, revision };
     assert.equal(upgradeBusinessDescriptionsPolicy(db, expected).applied, false);
+    assert.throws(() => businessTransaction(db, () => { upgradeBusinessDescriptionsPolicy(db, expected, true); throw new Error('Ontology activation failed'); }), /Ontology activation failed/);
+    assert.equal(db.prepare('SELECT digest FROM security_policy_definitions WHERE slot=1').get()!.digest, before);
+    assert.equal(Number(db.prepare('SELECT revision FROM security_policy WHERE slot=1').get()!.revision), revision);
     const upgraded = upgradeBusinessDescriptionsPolicy(db, expected, true);
     assert.equal(upgraded.actionsAdded, 0); assert.equal(upgraded.functionsAdded, 0); assert.equal(upgraded.expiryExtended, false);
     assert.equal(digest(rows()), original);

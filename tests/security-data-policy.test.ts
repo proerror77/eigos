@@ -103,6 +103,13 @@ test('authorized discovery exposes shared contracts and pages each catalogue wit
     assert.equal(monetary.types[0]!.id, 'MonetaryFact'); assert(Object.hasOwn(monetary.types[0]!.properties, 'amount'));
     const located = f.va.describe({ search: 'Located', limit: 1 });
     assert(located.types[0]!.links.some(link => link.name === 'location' && link.target === 'Place'));
+    const hotel = f.va.describe({ search: 'HotelProperty', limit: 5 }).types.find(type => type.id === 'HotelProperty')!;
+    assert.equal(hotel.description, (f.jobs.security.model.describeType('HotelProperty') as { description: string }).description);
+    assert.notEqual(hotel.description, '酒店物业', 'Authorized discovery must expose the published business explanation');
+    const narrowed = f.va.describe({ search: 'Located', linkSearch: 'location', limit: 1 });
+    assert.deepEqual(narrowed.types[0]!.links, located.types[0]!.links.filter(link => link.name.includes('location')));
+    assert.deepEqual(narrowed.model, located.model, 'Filtering does not alter or expand the authorized catalogue');
+    assert.equal(f.va.describe({ search: 'Located', linkSearch: 'unavailable-secret-catalogue', limit: 1 }).types[0]!.links.length, 0);
     assert.equal(f.va.describe({ search: 'Scheduled' }).types.length, 0, 'An interface requires a visible concrete implementation');
     assert.equal(f.va.describe({ kind: 'functions', search: 'businessFactStatus', limit: 1 }).functions[0]!.id, 'businessFactStatus');
     assert.equal(f.va.describe({ kind: 'actions', search: 'SelectOffer', limit: 1 }).actions[0]!.id, 'SelectOffer');

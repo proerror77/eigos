@@ -78,3 +78,22 @@ test('a partial local fact page requests continuation rather than another provid
     assert.equal(next.facts[0]!.status, 'present'); assert.equal(next.facts[0]!.items.length, 2); assert.equal(queries, 2);
   } finally { db.close(); }
 });
+
+test('mixed fact batches retain supported evaluations and identify each object without refreshing unsupported types', () => {
+  const model = new OntologyModel(definition()), db = new DatabaseSync(':memory:'), graph = new OntologyObjectStore(db, model);
+  const place = { type: 'Place', id: 'place' }, venues = ['current', 'stale'].map(id => ({ ref: { type: 'Venue', id }, properties: { id, title: id, caption: id } }));
+  try {
+    graph.ingest('owner', { objects: [{ ref: place, properties: { id: 'place', title: 'Place' } }, ...venues], links: venues.map(venue => ({ type: 'VenuePlace', from: venue.ref, to: place })) },
+      { kind: 'synthetic', id: 'mixed-evaluation', observedAt: new Date().toISOString() });
+    const requests = requestedFactsSchema.parse([{ key: 'venues', query: { from: place, link: 'venues' }, evaluate: true }, { key: 'place', query: { object: place }, evaluate: true }]);
+    const result = readRequestedFacts(requests, query => graph.query('owner', query), object => object.ref.type === 'Place' ? undefined : {
+      status: object.ref.id === 'current' ? 'known' : 'unknown', reason: object.ref.id === 'stale' ? 'expired' : undefined, evidenceRefs: [object.ref], evidenceLevels: ['synthetic'],
+    });
+    assert.deepEqual(result.needsRefresh, ['venues']); assert.deepEqual(result.needsEvaluation, ['place']);
+    assert.equal(result.facts[1]!.status, 'evaluation_unavailable'); assert.equal(result.facts[1]!.items.length, 1);
+    assert.match(result.facts[1]!.evaluationReason!, /No source refresh is implied/);
+    assert.deepEqual(result.facts[1]!.evaluationUnavailable, [place]);
+    assert.deepEqual(result.facts[0]!.evaluations!.map(check => [check.object.id, check.status]), [['current', 'known'], ['stale', 'unknown']]);
+    assert.throws(() => readRequestedFacts(requests, query => graph.query('owner', query), () => { throw new Error('Permission changed'); }), /Permission changed/);
+  } finally { db.close(); }
+});

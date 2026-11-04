@@ -37,10 +37,12 @@ export async function createDrillHost(directory: string, datasets: (asOf: number
   app.post('/cases/:id/tools', (req, res) => {
     const item = sessions.get(String(req.params.id)); if (!item) { res.status(404).json({ error: 'unknown_case' }); return; }
     item.firstAt ??= new Date().toISOString();
+    item.calls++;
     try {
       const call = z.object({ tool: z.string().max(80), input: z.unknown() }).strict().parse(req.body);
-      const output = item.session.call(call.tool, call.input); item.calls++;
-      appendFileSync(join(directory, 'queries.jsonl'), JSON.stringify({ at: new Date().toISOString(), caseId: req.params.id, ...call, output, receipt: item.session.receipts().at(-1) }) + '\n', { mode: 0o600 });
+      const output = item.session.call(call.tool, call.input);
+      const rejected = !!output && typeof output === 'object' && Object.hasOwn(output, 'error');
+      appendFileSync(join(directory, 'queries.jsonl'), JSON.stringify({ at: new Date().toISOString(), caseId: req.params.id, ...call, output, ...(rejected ? { rejected: true } : {}), receipt: item.session.receipts().at(-1) }) + '\n', { mode: 0o600 });
       res.json(output);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Invalid query';

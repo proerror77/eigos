@@ -9,7 +9,7 @@ import { definitionKindSchema, ontologyIdSchema, ontologyReleaseRefSchema, parse
   type DefinitionKind, type OntologyDocument, type OntologyReleaseRef, type SerializableAction, type SerializableInterface,
   type SerializableLink, type SerializableObjectType } from './definition-contracts.js';
 import { compileOntologyDocument, normalizeOntologyDocument, validateBusinessDefinitionExtensions, type TrustedDefinitionRegistry } from './model-compiler.js';
-import { createCurrentKernelDefinition, createSingleReadKernelDefinition, createSeedDefinition, createRollingGoKernelDefinition, createTaskClosureKernelDefinition, createBusinessFactsKernelDefinition, createPersonalContextKernelDefinition, PAYMENT_COMMERCE_KERNEL_MODEL_REF } from './seed-definition.js';
+import { createCurrentKernelDefinition, createSingleReadKernelDefinition, createSeedDefinition, createRollingGoKernelDefinition, createTaskClosureKernelDefinition, createBusinessFactsKernelDefinition, createPersonalContextKernelDefinition, PAYMENT_COMMERCE_KERNEL_MODEL_REF, BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF } from './seed-definition.js';
 import { extendBusinessDescriptions } from './business-descriptions.js';
 import { SINGLE_READ_PREDECESSOR } from './single-read-kernel.js';
 import { personalObjects, personalActions, personalLinks, PERSONAL_CONTEXT_PREDECESSOR } from './personal-context-kernel.js';
@@ -278,8 +278,8 @@ export class DefinitionStore {
       const namespace = this.namespace();
       if (digest(namespace.active) !== digest(expected) || namespace.generation !== expectedGeneration) return conflict('Active ontology changed before business-description installation');
       const current = this.resolve(namespace.active);
-      if (current.model.ref.digest === compiledModel(trustedTemplates().kernel, trustedTemplates().registry).ref.digest) return namespace;
-      if (digest(current.model.ref) !== digest(PAYMENT_COMMERCE_KERNEL_MODEL_REF)) return conflict('Business descriptions require the exact reviewed v27 predecessor');
+      if (current.model.ref.id === BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF.id && current.model.ref.digest === BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF.digest) return namespace;
+      if (current.model.ref.id !== PAYMENT_COMMERCE_KERNEL_MODEL_REF.id || current.model.ref.digest !== PAYMENT_COMMERCE_KERNEL_MODEL_REF.digest) return conflict('Business descriptions require the exact reviewed v27 predecessor');
       const release = this.insertRelease(extendBusinessDescriptions(current.document), 'system:install-business-descriptions', namespace.active);
       return this.activate('system:install-business-descriptions', release.ref, expectedGeneration, true);
     });

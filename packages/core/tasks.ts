@@ -22,7 +22,7 @@ import { externalDraftPermitSchema } from '../ontology/external-draft.js';
 import { paPaymentReportSchema, paPaymentRouteSchema, recordPAPaymentSelection, verifyPAPaymentRequest, paymentRouteQuestion } from './pa-payment.js';
 import { ontologyIdSchema, ontologyReleaseRefSchema, type OntologyReleaseRef } from '../ontology/definition-contracts.js';
 import { objectWriteScopeSchema } from '../ontology/actions.js';
-import { objectRefSchema } from '../ontology/model.js';
+import { objectRefSchema, linkSearchSchema } from '../ontology/model.js';
 import type { AgentActionPlan, AgentDecision, AgentExecutionState } from '../ontology/agent-actions.js';
 import { resolveManagedInterfaceAction } from '../ontology/declarative-actions.js';
 import { GoalProgram } from '../coordinator/goal-program.js';
@@ -146,7 +146,7 @@ export class TaskService {
       return new AuthorizedOntologyView(taskId?this.store.ontologyForTaskRead(ownerKey(p),taskId):this.store.ontology,this.store.security,p).describe(input);
     }
     const scoped = this.ontologyInput(input, context);
-    const query = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().optional(), kind: z.enum(['types', 'actions', 'functions']).optional() }).strict().parse(scoped.query);
+    const query = z.object({ search: z.string().max(100).optional(), linkSearch: linkSearchSchema, limit: z.number().int().min(1).max(5).optional(), after: z.string().optional(), kind: z.enum(['types', 'actions', 'functions']).optional() }).strict().parse(scoped.query);
     return this.ontologyContext(p, scoped.context).model.describe(query);
   }
   queryOntology(p: Principal, input: unknown, reader?: import('../ontology/network-read.js').NetworkOntologyReadAdapter, context?: OntologyReadContext) {

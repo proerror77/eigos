@@ -9,6 +9,17 @@ export const nameSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/).refine
 export const objectRefSchema = z.object({ type: nameSchema, id: z.string().min(1).max(200) }).strict();
 export type ObjectRef = z.infer<typeof objectRefSchema>;
 export type ScalarKind = 'string' | 'integer' | 'boolean' | 'timestamp' | 'decimal' | 'struct' | 'array';
+export const linkSearchSchema = z.string().trim().min(1).max(100).optional().describe('Filter relationships by a substring of their visible names, target API IDs or descriptions. A filtered list does not prove that other relationships or data are absent.');
+/** Filter only metadata already selected by the caller's authorization layer. */
+export function filterRelationshipMetadata<T extends object>(definition: T, search?: string): T {
+  if (!search) return definition;
+  const result = { ...definition } as Record<string, unknown>, needle = search.toLowerCase();
+  for (const key of ['links', 'linkConstraints']) if (Array.isArray(result[key])) {
+    result[key] = (result[key] as Record<string, unknown>[]).filter(link => [link.id, link.name, link.target, link.description].filter(value => typeof value === 'string').join(' ').toLowerCase().includes(needle));
+    result.linksFiltered = true;
+  }
+  return result as T;
+}
 export interface PropertyDefinition {
   description: string;
   kind: ScalarKind;
@@ -438,8 +449,8 @@ export class OntologyModel {
   }
   actionDefinitions() { return structuredClone(this.actions); }
   functionDefinitions() { return structuredClone(this.functions); }
-  describe(input: { search?: string; limit?: number; after?: string; kind?: 'types' | 'actions' | 'functions' } = {}) {
-    const args = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).default(3), after: nameSchema.optional(), kind: z.enum(['types', 'actions', 'functions']).default('types') }).strict().parse(input);
+  describe(input: { search?: string; linkSearch?: string; limit?: number; after?: string; kind?: 'types' | 'actions' | 'functions' } = {}) {
+    const args = z.object({ search: z.string().max(100).optional(), linkSearch: linkSearchSchema, limit: z.number().int().min(1).max(5).default(3), after: nameSchema.optional(), kind: z.enum(['types', 'actions', 'functions']).default('types') }).strict().parse(input);
     const search = args.search?.trim().toLowerCase();
     const matched = (values: (string | undefined)[]) => !search || values.filter(Boolean).join(' ').toLowerCase().includes(search);
     const page = <T extends { id: string }>(values: T[]) => {
@@ -472,7 +483,7 @@ export class OntologyModel {
       || !!a.read && relevant(a.read.resultType) || !!a.operation && relevant(a.operation.resultType)
       || !!search && matched([a.id]));
     const functions = this.functions.filter(f => f.inputTypes.some(relevant) || !!search && matched([f.id]));
-    return { model: { ...this.ref }, kind: args.kind, catalog, types: ids.map(id => this.describeType(id)), functions: structuredClone(functions), actions: structuredClone(actions).map(a => ({ ...a, execution: 'definition_only' })), hasMore: matches.length > ids.length, next: matches.length > ids.length ? ids.at(-1) : undefined };
+    return { model: { ...this.ref }, kind: args.kind, catalog, types: ids.map(id => filterRelationshipMetadata(this.describeType(id), args.linkSearch)), functions: structuredClone(functions), actions: structuredClone(actions).map(a => ({ ...a, execution: 'definition_only' })), hasMore: matches.length > ids.length, next: matches.length > ids.length ? ids.at(-1) : undefined };
   }
   action(id: string) { const a = this.actions.find(a => a.id === id); return a ? structuredClone(a) : invalid('Unknown ontology action'); }
   actionImplementation(id: string): ActionImplementation | undefined { const implementation = this.action(id).implementation ?? this.options.trustedActionImplementations?.[id]; return implementation ? structuredClone(implementation) : undefined; }

@@ -8,7 +8,7 @@ import { gunzipSync } from 'node:zlib';
 import { JobStore } from '../packages/core/store.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { currentKernelImplementation } from '../packages/ontology/definition-store.js';
-import { CURRENT_KERNEL_VERSION, SINGLE_READ_KERNEL_MODEL_REF } from '../packages/ontology/seed-definition.js';
+import { CURRENT_KERNEL_VERSION, SINGLE_READ_KERNEL_MODEL_REF, PAYMENT_COMMERCE_KERNEL_MODEL_REF } from '../packages/ontology/seed-definition.js';
 test('a parent-created v22 database opens and retains active and task-pinned releases with RollingGo disabled', () => {
   const fixture = JSON.parse(
     readFileSync(
@@ -75,10 +75,15 @@ test('a parent-created v22 database opens and retains active and task-pinned rel
       assert.deepEqual(store.definitions.installSingleReadContract(readContract.active, readContract.generation), readContract);
       assert.equal(store.ontologyForJob(fixture.owner, job).model.ref.version, '22');
       const commerce = store.definitions.installPaymentCommerceReads(readContract.active, readContract.generation);
-      assert.equal(store.definitions.active().model.ref.digest, currentKernelImplementation().ref.digest);
+      assert.equal(store.definitions.active().model.ref.digest, PAYMENT_COMMERCE_KERNEL_MODEL_REF.digest);
       assert.deepEqual(store.definitions.installPaymentCommerceReads(commerce.active, commerce.generation), commerce);
+      assert.throws(() => store.definitions.installBusinessDescriptions(commerce.active, commerce.generation + 1), /changed/);
+      const described = store.definitions.installBusinessDescriptions(commerce.active, commerce.generation);
+      assert.equal(store.definitions.active().model.ref.digest, currentKernelImplementation().ref.digest);
+      assert.deepEqual(store.definitions.installBusinessDescriptions(described.active, described.generation), described);
+      assert.notEqual((store.definitions.active().model.describeType('HotelProperty') as { description: string }).description, '酒店物业');
       assert.deepEqual(store.get(fixture.owner, fixture.taskId).delegation!.ontologyRelease, fixture.release);
-      assert.equal(CURRENT_KERNEL_VERSION, '27');
+      assert.equal(CURRENT_KERNEL_VERSION, '28');
     } finally {
       store.close();
     }

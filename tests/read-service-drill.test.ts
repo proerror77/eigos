@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { readServiceDrillDatasets } from './fixtures/read-service-drill.js';
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
+import { OntologyPlanningSession } from '../packages/coordinator/planning-session.js';
+import type { readRequestedFacts } from '../packages/coordinator/requested-facts.js';
 
 // Maintainer oracle only. Independent participants receive the question and
 // general query API; they must not read this test or the fixture implementation.
@@ -33,6 +35,18 @@ test('frozen ride and hotel investigations preserve source identity, supersessio
           assert.equal(rides.length, 4);
           assert.equal(status(rides.find(item => item.properties.estimatedAmount === '73.05')!.ref).status, 'unknown');
           assert.equal(status(rides.find(item => item.properties.estimatedAmount === '89.10')!.ref).status, 'known');
+          const session = new OntologyPlanningSession(graph, actor, data.request);
+          const batch = session.call('query_ontology', { facts: [
+            { key: 'prices', query: { from: { type: 'ServiceRequest', id: data.request.id }, link: 'rideEstimateFacts' }, evaluate: true },
+            { key: 'raw', query: { from: { type: 'ServiceRequest', id: data.request.id }, link: 'RideEstimateObservationResults' }, evaluate: true },
+          ] }) as ReturnType<typeof readRequestedFacts>;
+          assert.deepEqual(batch.needsRefresh, ['prices']); assert.deepEqual(batch.needsEvaluation, ['raw']);
+          assert.equal(batch.facts[1]!.status, 'evaluation_unavailable');
+          assert.equal(batch.facts[0]!.evaluations!.filter(item => item.status === 'known').length, 2);
+          const described = session.call('describe_ontology', { search: 'ServiceRequest', linkSearch: 'hotel', limit: 5 }) as { types: { id: string; links: { name: string }[]; linksFiltered?: boolean }[] };
+          const root = described.types.find(type => type.id === 'ServiceRequest')!;
+          assert.equal(root.linksFiltered, true); assert(root.links.length > 0);
+          assert(root.links.every(link => link.name.toLowerCase().includes('hotel') || ['rollingGoResults'].includes(link.name)));
         }
         if (data.id === 'R3') assert(rides.every(item => status(item.ref).status === 'unknown'));
         if (data.id.startsWith('H')) {

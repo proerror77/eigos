@@ -12,6 +12,7 @@ import {secureDescribeSchema,secureQuerySchema,secureEvaluateSchema,checkAccessS
 import { SecurityError } from '../../packages/security/store.js';
 import { securityErrorResponse } from '../../packages/security/error-guidance.js';
 import { objectQuerySchema } from '../../packages/ontology/object-store.js';
+import { linkSearchSchema } from '../../packages/ontology/model.js';
 import { functionCallSchema } from '../../packages/ontology/object-functions.js';
 import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
 import type { DefinitionService } from '../../packages/ontology/definition-service.js';
@@ -60,14 +61,14 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
   }
   server.registerTool('describe_ontology', {
     description: 'Read bounded business object/interface definitions, properties, source semantics and bidirectional links. Definitions do not grant access or prove live supply.',
-    inputSchema: tasks.secured ? secureDescribeSchema : z.object({ ...ontologyContext, search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().optional(), kind: z.enum(['types', 'actions', 'functions']).optional().describe('Discover types with related contracts by default; use actions or functions to page through their complete catalogues') }).strict(), annotations: read,
+    inputSchema: tasks.secured ? secureDescribeSchema : z.object({ ...ontologyContext, search: z.string().max(100).optional(), linkSearch: linkSearchSchema, limit: z.number().int().min(1).max(5).optional(), after: z.string().optional(), kind: z.enum(['types', 'actions', 'functions']).optional().describe('Discover types with related contracts by default; use actions or functions to page through their complete catalogues') }).strict(), annotations: read,
   }, (args: unknown) => result(() => tasks.describeOntology(principal, args)));
   server.registerTool('query_ontology', {
     description: 'Read only owned business objects or one named relationship. Filters and projections use registered fields; private fields are forbidden. Inspect hasMore/cursor, source kind and evidence level.',
     inputSchema: tasks.secured ? secureQuerySchema : z.union(objectQuerySchema.options.map(schema => schema.safeExtend(ontologyContext))), annotations: read,
   }, (args: unknown) => result(() => tasks.queryOntology(principal, args, network?.service.ontologyReader(principal, network.token))));
   server.registerTool('evaluate_ontology', {
-    description: 'Run a registered, bounded, read-only business calculation. Missing or incompatible evidence stays unknown; synthetic evidence is never live fulfillment.',
+    description: 'Run a registered, bounded, read-only business calculation. Outer known means the calculation returned a result; inspect value for the business verdict. A valid historical source snapshot may have been superseded. Missing or incompatible evidence stays unknown; synthetic evidence is never live fulfillment.',
     inputSchema: tasks.secured ? secureEvaluateSchema : z.union(functionCallSchema.options.map(schema => schema.safeExtend(ontologyContext))), annotations: read,
   }, (args: unknown) => result(() => tasks.evaluateOntology(principal, args, network?.service.ontologyReader(principal, network.token))));
   if (tasks.secured) server.registerTool('check_access',{description:'Check current access to your granted task and selected fields; this grants no authority.',inputSchema:checkAccessSchema,annotations:read},args=>result(()=>tasks.checkAccess(principal,args)));
