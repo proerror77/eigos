@@ -15,7 +15,7 @@ export function ontologyManagerPage(): string {
 <div class="stack"><section class="card inspector"><div class="row between"><h2 id="resource-name">选择一个定义</h2><span id="resource-kind" class="badge">定义详情</span></div><p id="resource-description" class="muted">从左侧目录查看字段、依赖和可用状态。</p><p id="resource-availability" class="notice" hidden></p><p id="resource-dependencies" class="meta"></p>${workbenchPanels}
 <div class="actions"><button id="edit-definition" type="button" disabled>在草稿中编辑</button><button id="retire-definition" type="button" disabled>在草稿中退役</button></div><details><summary>查看完整定义 · JSON</summary><pre id="definition-json">尚未选择定义</pre></details><details id="editor"><summary>编辑定义 · 高级</summary><p class="section-note">修改只进入选中的草稿。Function 后端由受信任注册库维护。</p><label class="field">定义 JSON<textarea id="definition-editor" spellcheck="false" aria-label="定义 JSON"></textarea></label><button id="save-definition" class="primary" type="button" disabled>保存到草稿</button></details>
 <details id="action-panel" hidden><summary>预览一次数据操作</summary><p class="section-note">审查准确的对象与字段变更，再独立批准。</p><label class="field">操作参数 · JSON<textarea id="action-input" spellcheck="false">{}</textarea></label><button id="prepare-action" type="button">生成预览</button><div id="action-changes" hidden></div><details id="action-authorization" hidden><summary id="action-detail-title">查看准确授权范围</summary><pre id="action-preview" hidden></pre></details><div class="actions"><button id="approve-action" class="primary" type="button" hidden>批准这次数据变更</button><button id="read-action" type="button" hidden>更新执行结果</button></div><p id="action-status" class="meta"></p></details></section></div></div></div>
-<div id="review-view" hidden><div class="view-intro"><h2>变更与发布</h2><p>在草稿中审查，在发布后启用。已有任务继续使用原来的版本。</p></div><div class="review-grid"><section class="card"><h2>变更审查</h2><div class="process"><strong>草稿</strong> → <strong>检查</strong> → <strong>发布</strong> → <strong>启用</strong></div><label class="field">选择草稿<select id="draft-select"><option value="">当前已启用版本</option></select></label><form id="new-draft" class="row"><input id="draft-title" class="fill" placeholder="说明这次修改的目的" aria-label="草稿说明" maxlength="160" required><button type="submit">新建草稿</button></form><p id="draft-status" class="meta"></p><div id="diff-list"></div><button id="more-diff" type="button" hidden>查看更多变更</button><div id="diff-detail" class="pair" hidden><div><h3>发布前</h3><pre id="diff-before"></pre></div><div><h3>草稿内容</h3><pre id="diff-after"></pre></div></div><div id="validation"></div><p class="section-note">当前检查结构、依赖与兼容性。外部 OWL／SHACL 校验尚未接入本页。</p><div class="actions"><button id="validate-draft" type="button" disabled>检查此草稿</button><button id="publish-draft" class="primary" type="button" disabled>发布此版本</button><button id="discard-draft" type="button" disabled>放弃草稿</button></div></section>
+<div id="review-view" hidden><div class="view-intro"><h2>变更与发布</h2><p>在草稿中审查，在发布后启用。已有任务继续使用原来的版本。</p></div><div class="review-grid"><section class="card"><h2>变更审查</h2><div class="process"><strong>草稿</strong> → <strong>检查</strong> → <strong>发布</strong> → <strong>启用</strong></div><label class="field">选择草稿<select id="draft-select"><option value="">未选择草稿</option></select></label><form id="new-draft" class="row"><input id="draft-title" class="fill" placeholder="说明这次修改的目的" aria-label="草稿说明" maxlength="160" required><button type="submit">新建草稿</button></form><p id="draft-status" class="meta"></p><div id="diff-list"></div><button id="more-diff" type="button" hidden>查看更多变更</button><div id="diff-detail" class="pair" hidden><div><h3>发布前</h3><pre id="diff-before"></pre></div><div><h3>草稿内容</h3><pre id="diff-after"></pre></div></div><div id="validation"></div><p class="section-note">当前检查结构、依赖与兼容性。外部 OWL／SHACL 校验尚未接入本页。</p><div class="actions"><button id="validate-draft" type="button" disabled>检查此草稿</button><button id="publish-draft" class="primary" type="button" disabled>发布此版本</button><button id="discard-draft" type="button" disabled>放弃草稿</button></div></section>
 <section class="card"><h2>版本与记录</h2><p class="section-note">启用只决定新任务的定义版本。发布不会授予业务执行权限。</p><div id="releases"></div><details><summary>查看操作记录</summary><div id="history" class="history"></div></details></section></div></div>
 <p class="footer">定义已发布、操作可执行、业务结果已完成分别核验。浏览本工作区不会调用供应商或执行 Function。</p></div></fieldset></main></body></html>`;
 }
@@ -69,7 +69,7 @@ export const ontologyManagerScript = String.raw`'use strict';
     clearSelection(); await loadWorkspaceSummary(); await loadResources(); status('已连接 ' + state.namespace.name + '。');
   }
   function renderDrafts(items, selected) {
-    const empty = text('option', '当前已启用版本'); empty.value = '';
+    const empty = text('option', '未选择草稿'); empty.value = '';
     $('draft-select').replaceChildren(empty, ...items.map(item => { const node = text('option', item.title + ' · ' + ({ open: '草稿', published: '已发布', discarded: '已放弃' }[item.status]) + ' · r' + item.revision); node.value = item.id; return node; }));
     $('draft-select').value = selected || '';
   }
@@ -95,7 +95,7 @@ export const ontologyManagerScript = String.raw`'use strict';
   async function loadDraft(id) {
     state.validation = null; state.diffOffset = 0; $('validation').replaceChildren(); $('diff-detail').hidden = true;
     state.draft = id ? await query('get_draft', { draftId: id }) : null;
-    $('draft-status').textContent = state.draft ? state.draft.title + ' · ' + ({ open: '待审查', published: '已发布，启用状态见下方', discarded: '已放弃' }[state.draft.status]) + ' · 当前修订 r' + state.draft.revision : '当前浏览已启用版本。';
+    $('draft-status').textContent = state.draft ? state.draft.title + ' · ' + ({ open: '待审查', published: '已发布，启用状态见下方', discarded: '已放弃' }[state.draft.status]) + ' · 当前修订 r' + state.draft.revision : state.viewRelease ? '当前浏览选定的历史版本。' : '当前浏览已启用版本。';
     state.offset = 0; clearSelection(); if (state.draft) await loadDiff(); else $('diff-list').replaceChildren(); await Promise.all([loadWorkspaceSummary(), loadResources()]);
   }
   async function loadDiff(append = false) {
@@ -111,7 +111,7 @@ export const ontologyManagerScript = String.raw`'use strict';
     $('diff-before').textContent = values[0] ? JSON.stringify(values[0], null, 2) : '原版本无此定义'; $('diff-after').textContent = values[1] ? JSON.stringify(values[1], null, 2) : '此定义已从草稿移除'; $('diff-detail').hidden = false;
   }
   function renderReleases(items) {
-    state.releases = items; const activeOption = text('option', '当前已启用版本'); activeOption.value = ''; $('release-select').replaceChildren(activeOption, ...items.filter(release => release.ref.digest !== state.namespace.active.digest).map(release => { const option = text('option', '版本 ' + release.sequence + ' · ' + release.ref.releaseId.slice(0, 12)); option.value = release.ref.releaseId; return option; }));
+    state.releases = items; syncVersionSelect();
     $('releases').replaceChildren(...items.map(release => {
       const active = release.ref.digest === state.namespace.active.digest, row = text('div', '', 'release'), top = text('div', '', 'row between'), info = text('div', '', 'fill');
       info.append(text('strong', '版本 ' + release.sequence + (active ? ' · 当前已启用' : ' · 已发布')), text('p', new Date(release.createdAt).toLocaleString() + ' · ' + release.ref.releaseId.slice(0, 8), 'meta'));
@@ -175,7 +175,7 @@ export const ontologyManagerScript = String.raw`'use strict';
   let searchTimer; $('search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => guard(async () => { state.offset = 0; await loadResources(); }), 250); });
   $('custom-only').addEventListener('change', () => guard(async () => { state.offset = 0; await loadResources(); }));
   $('previous').addEventListener('click', () => guard(async () => { state.offset = Math.max(0, state.offset - 12); await loadResources(); })); $('next').addEventListener('click', () => guard(async () => { state.offset += 12; await loadResources(); }));
-  $('draft-select').addEventListener('change', () => guard(() => loadDraft($('draft-select').value)));
+  $('draft-select').addEventListener('change', () => guard(async () => { if (!$('draft-select').value) state.viewRelease = null; await loadDraft($('draft-select').value); }));
   $('new-draft').addEventListener('submit', event => { event.preventDefault(); guard(async () => { const draft = await command('create_draft', { title: $('draft-title').value }); await refreshDrafts(draft.id); await loadDraft(draft.id); status('草稿已创建，可以开始添加或编辑定义。'); }); });
   $('new-definition').addEventListener('click', () => { $('definition-editor').value = JSON.stringify(sample(state.kind), null, 2); $('editor').open = true; $('definition-editor').focus(); });
   $('edit-definition').addEventListener('click', () => { $('definition-editor').value = JSON.stringify(state.resource.definition, null, 2); $('editor').open = true; $('definition-editor').focus(); });

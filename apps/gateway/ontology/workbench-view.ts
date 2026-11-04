@@ -29,12 +29,21 @@ export const workbenchScript = String.raw`
     if (!review) detailTab(view === 'dependencies' ? 'relations' : view === 'query' ? 'query' : 'definition');
   }
   function selectedKind(kind) { state.kind = kind; document.querySelectorAll('[data-kind]').forEach(node => { const selected = node.dataset.kind === kind; node.setAttribute('aria-selected', String(selected)); node.tabIndex = selected ? 0 : -1; }); document.querySelectorAll('[data-count-kind]').forEach(node => node.setAttribute('aria-current', String(node.dataset.countKind === kind))); }
+  function syncVersionSelect() {
+    const active = text('option', '当前已启用版本'); active.value = '';
+    const options = [active, ...state.releases.filter(item => item.ref.digest !== state.namespace.active.digest).map(item => { const option = text('option', '版本 ' + item.sequence + ' · ' + item.ref.releaseId.slice(0, 12)); option.value = item.ref.releaseId; return option; })];
+    let selected = '';
+    if (openDraft()) { const draft = text('option', '草稿 · r' + state.draft.revision); draft.value = 'draft:' + state.draft.id; options.push(draft); selected = draft.value; }
+    else { const ref = source().release; if (ref && ref.digest !== state.namespace.active.digest) { selected = ref.releaseId; if (!options.some(option => option.value === selected)) { const option = text('option', '已发布 · ' + ref.releaseId.slice(0, 12)); option.value = selected; options.push(option); } } }
+    $('release-select').replaceChildren(...options); $('release-select').value = selected;
+  }
   async function navigateResource(ref) {
     selectedKind(ref.kind); state.offset = 0; $('search').value = ref.id; if (ref.kind === 'function' || /^(builtin:|generated:)/.test(ref.resourceId)) $('custom-only').checked = false;
     await showResource(ref);
   }
   async function loadWorkspaceSummary() {
     const data = await query('workspace_summary', source());
+    syncVersionSelect();
     $('model-version').textContent = 'v' + data.model.version;
     $('view-source').textContent = data.publication === 'draft' ? '正在浏览草稿 r' + state.draft.revision + ' · 尚未发布' : '正在浏览已发布版本 · ' + data.release.releaseId + ' · ' + data.release.digest.slice(0, 12);
     $('workspace-stats').replaceChildren(...Object.entries(data.counts).map(([kind, count]) => { const node = button('', async () => { setView('model'); selectedKind(kind); state.offset = 0; $('search').value = ''; $('custom-only').checked = false; clearSelection(); await loadResources(); }, 'stat'); node.dataset.countKind = kind; node.setAttribute('aria-current', String(state.kind === kind)); node.append(text('span', labels[kind]), text('strong', String(count))); return node; }));
@@ -116,5 +125,5 @@ export const workbenchScript = String.raw`
   $('relation-search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => guard(async () => { relationsOffset = 0; await loadRelations(); }), 250); });
   $('copy-query').addEventListener('click', () => guard(async () => { await navigator.clipboard.writeText($('metadata-query').textContent); status('查询已复制。'); }));
   $('export-definition').addEventListener('click', () => { if (!state.resource) return; const blob = new Blob([JSON.stringify({ ontologyId: state.namespace.id, ...source(), kind: state.resource.kind, definition: state.resource.definition }, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = state.resource.definition.id + '.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 0); });
-  $('release-select').addEventListener('change', () => guard(async () => { state.viewRelease = state.releases.find(item => item.ref.releaseId === $('release-select').value)?.ref || null; $('draft-select').value = ''; await loadDraft(''); }));
+  $('release-select').addEventListener('change', () => guard(async () => { if (state.draft && $('release-select').value === 'draft:' + state.draft.id) return; state.viewRelease = state.releases.find(item => item.ref.releaseId === $('release-select').value)?.ref || null; $('draft-select').value = ''; await loadDraft(''); }));
 `;
