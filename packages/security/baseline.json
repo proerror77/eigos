@@ -2945,7 +2945,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "cf710409fa634471c72d0ce413ea76573486dfb2dda604246282d85ef0dfb677",
+      "sourceDigest": "eb07ee11d39e6fafb01929bcb883a11255ded1be14a82afa0de9fc47fb6ca629",
       "channels": [
         "sqlite",
         "idempotency"
@@ -2958,13 +2958,13 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "576884a4121de7fef6a758e05c78b6e5de6768f7e06d22b609220dcb650857e3",
+      "sourceDigest": "dd4e1468ae15a58bf010e163961e7b5d4c758595cd53562bea9ad299b66409b2",
       "channels": [
         "query",
         "function"
       ],
       "content": "Direct read, query, related, evaluate, derived values, source metadata and cursors",
-      "currentControl": "Current row/field/source authorization; policy-equivalent immutable release labels only; readable removal notices survive while restricted fields remain hidden; conditional source/validity indexes preserve stored object contents; internal relationship reads reject incomplete pages or authorization-filtered sets without exposing hidden counts",
+      "currentControl": "Current row/field/source authorization; policy-equivalent immutable release labels only; readable removal notices survive while restricted fields remain hidden; conditional source/validity indexes preserve stored object contents; internal relationship reads reject incomplete pages or authorization-filtered sets without exposing hidden counts; cardinality batches remain owner- and namespace-scoped inside the import savepoint; projection checkpoints use owner/namespace/model keys with transactional graph mutation clocks and current dispatch checks",
       "targetControl": "AuthorizedOntologyView and safe pagination/provenance projection",
       "stage": "S2"
     },
@@ -3043,7 +3043,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "4922748f3d6eda4bc8474882066235135d2928b3d45c91166df420e323cbb6ef",
+      "sourceDigest": "22b134e4a3afca72785d7db3a4724518fcb7480b9cee6a98c3bb96ec5bcd429a",
       "channels": [
         "model",
         "query"
@@ -3495,7 +3495,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "b666328323ac25174b6b886a44a9fc5b2365ae789d4735f6f37a3ba8219590c6",
+      "sourceDigest": "07a58fa7bc1499a2b16e78acf3c8f2e38fb42edfb2b22065d1227977540ad230",
       "channels": [
         "all-reads"
       ],
@@ -4204,7 +4204,7 @@
     {
       "id": "execution-projection",
       "file": "packages/ontology/execution-projection.ts",
-      "sourceDigest": "a0d0489a15a84f6d9bb71d96c5d451a9163dac2c5fa99d5d4ca2bec0195739aa",
+      "sourceDigest": "f22795ecf233d2b9d8121efbba06e955314c3b0d014c221ffbfde38b5dd028b1",
       "channels": [
         "model",
         "artifact"
@@ -4217,7 +4217,7 @@
     {
       "id": "native-task-context",
       "file": "packages/coordinator/task-context.ts",
-      "sourceDigest": "f96a4f000cdc1c285da19b1a1f36276a6a2007f8ec8eb1bfa64d8e4da82087ee",
+      "sourceDigest": "011a00e068fb0e716263a6604aeea144c54bbadb6b0225bc43300545d6d5476a",
       "channels": [
         "model"
       ],
