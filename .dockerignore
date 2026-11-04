@@ -23,6 +23,7 @@
 !scripts/postgres-node-migrate.mjs
 !scripts/postgres-vector.mjs
 !scripts/postgres-task-vectors.mjs
+!scripts/install-business-descriptions.mjs
 !integrations/
 !integrations/grok/
 !integrations/grok/eigos-delegate/

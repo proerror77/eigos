@@ -6,6 +6,7 @@ import {z} from 'zod';
 import {readPostgresBinding,assertPostgresBindingAuthority,postgresConnectionOptions,postgresBindingIdentity,postgresHandoffSchema,postgresActivationSchema,postgresRuntimeSchemaReceiptSchema,POSTGRES_RUNTIME_SCHEMA_CONTRACT,readPinnedPostgresJson,readPostgresTaskRelayConfiguration,readPostgresRelaySourceInventory,readPostgresRelaySecrets,type PostgresBinding} from '../deployment/postgres-binding.js';
 import {preparePostgresKernel} from './kernel-runtime.js';
 import {stagedKernelComponents,type StagedKernelBuilder} from '../ontology/seed-definition.js';
+import {reviewedKernelVersionForPolicy} from '../security/policy-store.js';
 import {PostgresDatabase} from './database.js';
 import {PostgresMembershipDatabase} from './members-database.js';
 import {PostgresMemberStore} from './member-store.js';
@@ -235,7 +236,9 @@ export async function createPostgresHostResources(config:Config,role:'gateway'|'
   const {binding,fileDigest}=readPostgresBinding(config.EIGOS_POSTGRES_BINDING_FILE);assertPostgresBindingAuthority(config,binding);
   const vectorFeature=config.EIGOS_POSTGRES_VECTOR_FEATURE_FILE?readPostgresVectorFeature(config.EIGOS_POSTGRES_VECTOR_FEATURE_FILE,binding):undefined;
   const connection={...supabaseProxyOptions(binding.connection.host,binding.connection.port,binding.connection.proxyUrl),...postgresConnectionOptions(binding,environment)};
-  const kernel=await preparePostgresKernel(undefined,{semanticRetrieval:!!vectorFeature});
+  const targetVersion=reviewedKernelVersionForPolicy(binding.policyDigest);
+  if(vectorFeature&&targetVersion!=='28')throw new Error('Task vectors require the explicit descriptions-v28 policy upgrade');
+  const kernel=await preparePostgresKernel(undefined,vectorFeature?'29':targetVersion);
   const businessPool=new pg.Pool({...connection,max:3}),leasePool=new pg.Pool({...connection,max:2}),eligibilityPool=new pg.Pool({...connection,max:2}),controlPool=new pg.Pool({...connection,max:2}),membershipPool=new pg.Pool({...connection,max:2});
   const database=new PostgresDatabase(businessPool,binding.business.schema,binding.authority,{leasePool,eligibilityPool,kernel,vectorFeature});
   const members=new PostgresMemberStore(new PostgresMembershipDatabase(membershipPool,binding.membership.schema,binding.membership.sourceFileDigest));

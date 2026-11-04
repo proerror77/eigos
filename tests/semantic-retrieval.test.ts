@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {checkedEmbeddingVector,embeddedFieldInput,embeddingSpaceSchema} from '../packages/ontology/semantic-retrieval.js';
-import {createCurrentKernelDefinition,createSemanticRetrievalKernelDefinition} from '../packages/ontology/seed-definition.js';
+import {createCurrentKernelDefinition,createSemanticRetrievalKernelDefinition,createPaymentCommerceKernelDefinition,compiledSeedModel,BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF} from '../packages/ontology/seed-definition.js';
 import {extendPaymentCommerceKernel} from '../packages/ontology/payment-commerce-kernel.js';
 import {compileOntologyDocument} from '../packages/ontology/model-compiler.js';
 import {assertReviewedModel} from '../packages/security/model-review.js';
@@ -21,15 +21,17 @@ test('supplied vectors retain exact model-space, float32 and authorized field in
   const space={modelId:'synthetic-local',modelRevision:'1',dimensions:2,metric:'cosine',inputFormat:'canonical-fields-json-v1'};
   assert.notEqual(digest(embeddingSpaceSchema.parse(space)),digest(embeddingSpaceSchema.parse({...space,modelRevision:'2'})));
 });
-test('semantic retrieval is an additive forward release, preserving its exact v27 predecessor',()=>{
+test('semantic retrieval is an additive forward release, preserving the exact descriptions-v28 predecessor and its distinct policy',()=>{
   const current=createSemanticRetrievalKernelDefinition(),prior=createCurrentKernelDefinition(current.registry).document;
-  assert.equal(current.document.version,'28');assert.equal(prior.version,'27');
+  assert.equal(current.document.version,'29');assert.equal(prior.version,'28');
   const model=compileOntologyDocument(current.document,current.registry),old=compileOntologyDocument(prior,current.registry);
   assert.doesNotThrow(()=>assertReviewedModel(model,old));assert.equal(old.functionIds().includes('semanticCandidates'),false);
   const contracts=persistentConsentPolicyContracts(old);
+  assert.deepEqual(old.ref,BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF);
+  const legacy=createPaymentCommerceKernelDefinition();assert.notEqual(persistentConsentPolicyContracts(compiledSeedModel(legacy,legacy.registry)).after,contracts.after,'description28 policy remains a separately reviewed upgrade');
   assert.deepEqual(persistentConsentPolicyContracts(model),contracts,'the unchanged field contract preserves finite and until-revoked policies');
   assert.equal(postgresConsentDeadline(null,contracts.after,model),Infinity);assert.throws(()=>postgresConsentDeadline(null,contracts.before,model),error=>error instanceof SecurityError&&error.reason==='POLICY_CHANGED');
   assert.deepEqual(current.document.objects,prior.objects);assert.deepEqual(current.document.actions,prior.actions);assert.deepEqual(current.document.links,prior.links);
-  const changed=structuredClone(prior);changed.version='28';changed.functions.push(current.document.functions.find(fn=>fn.id==='semanticCandidates')!);changed.objects[0]!.description+=' changed';
+  const changed=structuredClone(prior);changed.version='29';changed.functions.push(current.document.functions.find(fn=>fn.id==='semanticCandidates')!);changed.objects[0]!.description+=' changed';
   assert.throws(()=>assertReviewedModel(model,compileOntologyDocument(changed,current.registry)));
 });

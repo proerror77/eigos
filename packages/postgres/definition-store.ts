@@ -71,11 +71,11 @@ export class PostgresDefinitionStore {
     const namespace=await this.assertManagement(owner,expected.ontologyId,admin);
     if(!admin||digest(namespace.active)!==digest(expected)||namespace.generation!==expectedGeneration)throw new DomainError('CONFLICT','The reviewed active release changed before semantic installation');
     const template=this.options.builder?StagedKernelBuilder.prototype.result.call(this.options.builder).document:trusted().document;
-    if(template.version!=='28'||template.functions.filter(fn=>fn.id==='semanticCandidates').length!==1)throw new DomainError('CONFLICT','The actual semantic software kernel is unavailable');
+    if(template.version!=='29'||template.functions.filter(fn=>fn.id==='semanticCandidates').length!==1)throw new DomainError('CONFLICT','The actual semantic software kernel is unavailable');
     const current=await this.resolve(namespace.active);
     if(digest(current.document)===digest(template))throw new DomainError('CONFLICT','Semantic kernel is already installed; independently verify the existing release');
-    const predecessor=structuredClone(template);predecessor.version='27';predecessor.functions=predecessor.functions.filter(fn=>fn.id!=='semanticCandidates');
-    if(digest(predecessor)!==digest(current.document))throw new DomainError('CONFLICT','Semantic installation requires its exact reviewed v27 predecessor');
+    const predecessor=structuredClone(template);predecessor.version='28';predecessor.functions=predecessor.functions.filter(fn=>fn.id!=='semanticCandidates');
+    if(digest(predecessor)!==digest(current.document))throw new DomainError('CONFLICT','Semantic installation requires its exact reviewed descriptions-v28 predecessor');
     await this.sql('SAVEPOINT eigos_semantic_kernel_install');
     try{const release=await this.insertRelease(template,owner,current.ref),activated=await this.activate(owner,release.ref,expectedGeneration,true);await this.sql('RELEASE SAVEPOINT eigos_semantic_kernel_install');return activated;}
     catch(error){await this.sql('ROLLBACK TO SAVEPOINT eigos_semantic_kernel_install');await this.sql('RELEASE SAVEPOINT eigos_semantic_kernel_install');throw error;}

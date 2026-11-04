@@ -22,13 +22,17 @@ import {jwtVerifier} from '../apps/gateway/auth.js';
 import {postgresVectorGateway} from './fixtures/postgres-vector-gateway.js';
 import {assertPostgresEmbeddingSchema} from '../packages/postgres/embedding-schema.js';
 import {PostgresEmbeddingIndex} from '../packages/postgres/embedding-index.js';
-import {stagedKernelComponents} from '../packages/ontology/seed-definition.js';
+import {stagedKernelComponents,createPaymentCommerceKernelDefinition,compiledSeedModel} from '../packages/ontology/seed-definition.js';
 import {roleSchema} from '../packages/security/resource-role.js';
 import {PostgresPermissionManagement} from '../packages/postgres/permission-management.js';
 import {ExecutionCatalog} from '../packages/core/catalog.js';
 import {DocumentAgentProgram} from '../packages/capabilities/document-agent.js';
 import {spawnSync} from 'node:child_process';
 import {resolve} from 'node:path';
+import {digest} from '../packages/core/delegation.js';
+import {BACKEND_VERSION} from '../packages/ontology/execution.js';
+import {POLICY_VERSION,SECURITY_CONTRACT} from '../packages/security/contracts.js';
+import type {Job} from '../packages/core/domain.js';
 
 test('supplied task vectors use actual pgvector through a restricted runtime, exact field grants and complete current index',
   {skip:process.env.EIGOS_TEST_VECTOR_PG!=='1'},async()=>{
@@ -56,7 +60,22 @@ test('supplied task vectors use actual pgvector through a restricted runtime, ex
         links:refs.map(ref=>({type:'PlaceEvidence',from:ref,to:{type:'SourceReceipt',id:'receipt-'+ref.id}}))},{kind:'synthetic',id:'vector-fixture',observedAt:new Date().toISOString()});
       // This independent legacy task remains pinned to v27 with original
       // until-revoked consent. It is not replaced or declared completed.
-      const oldTask=source.task(installation.id);
+      const legacySeed=createPaymentCommerceKernelDefinition(),legacyModel=compiledSeedModel(legacySeed,legacySeed.registry),legacyId=randomUUID(),at=new Date().toISOString();
+      // Initial synthetic history contains the genuine, independently hashed
+      // prior release. No existing release or task pin is relabelled.
+      sqlite.prepare('INSERT INTO ontology_definition_releases(id,ontology_id,sequence,digest,model_digest,body,created_at) VALUES(?,?,(SELECT coalesce(max(sequence),0)+1 FROM ontology_definition_releases WHERE ontology_id=?),?,?,?,?)')
+        .run(legacyId,legacySeed.document.id,legacySeed.document.id,digest(legacySeed.document),legacyModel.ref.digest,JSON.stringify(legacySeed.document),at);
+      sqlite.prepare('INSERT INTO ontology_definition_promotions(ontology_id,release_id,at) VALUES(?,?,?)').run(legacySeed.document.id,legacyId,at);
+      const oldId=randomUUID(),oldJob:Job={id:oldId,contextId:randomUUID(),service:'eigos.delegate',goal:'Synthetic historical v27 input',state:'submitted',messages:[],createdAt:at,updatedAt:at,revision:1,executionMode:'worker',runs:[],
+        delegation:{backendVersion:BACKEND_VERSION,ontologyRelease:{ontologyId:legacySeed.document.id,releaseId:legacyId,digest:digest(legacySeed.document)},ontologyReadScope:'request' as const,phase:'grounding' as const,events:[],request:{id:oldId,revision:1,originalGoal:'Synthetic historical v27 input',requirements:[],messages:[]}}};
+      source.jobs.save(source.owner,oldJob);
+      const originalGrant=source.jobs.security.issueTaskGrant({version:SECURITY_CONTRACT,id:randomUUID(),revision:1,kind:'task_data',status:'active',ownerKey:source.owner,memberId:source.member.id,approvedByMemberId:source.member.id,installationId:installation.id,
+        issuedAt:at,expiresAt:null,parentGrant:{id:parent.id,revision:parent.revision},taskId:oldId,requestRevision:1,purpose:'delegated_task',operations:['task.process'],inputs:[],outputs:[],channels:['registered_model']});
+      source.jobs.security.attachTaskAuthority({version:SECURITY_CONTRACT,id:randomUUID(),revision:1,ownerKey:source.owner,memberId:source.member.id,installationId:installation.id,taskId:oldId,requestRevision:1,agentGrant:{id:parent.id,revision:parent.revision},dataGrant:{id:originalGrant.id,revision:1},
+        submittedScopes:['tasks:write'],authEpoch:source.jobs.security.requireSubject(installation.id).epoch,policyVersion:POLICY_VERSION,issuedAt:at,expiresAt:null});
+      const oldTask={job:oldJob,grant:originalGrant};
+      const oldRole=roleSchema.parse({subjectKind:'installation',subjectId:installation.id,role:'Viewer',resource:{kind:'namespace',id:legacyModel.ref.id,version:legacyModel.ref.digest},expiresAt:null});
+      sqlite.prepare('INSERT INTO security_roles(id,subject_id,body) VALUES(?,?,?)').run(randomUUID(),installation.id,JSON.stringify(oldRole));
       source.coordinator.close();const controller=new AuthorizationCoordinator(source.jobs.security,source.members,source.jobs);controller.start();
       let grant:ReturnType<AuthorizationCoordinator['approveTaskGrant']>;
       try{grant=controller.approveTaskGrant(source.member.id,{taskId:oldTask.job.id,installationId:installation.id,expectedRequestRevision:1,replaces:{id:oldTask.grant.id,revision:1},expectedAgentGrant:{id:parent.id,revision:parent.revision},takeover:true,
@@ -65,7 +84,7 @@ test('supplied task vectors use actual pgvector through a restricted runtime, ex
       }finally{controller.close();}
       target=await postgresVectorFixture(source);const t=target,q=`"${t.schema}"`;let principal={...source.principal,access:await t.publisher.authenticate(source.principal,installation.token)};
       const service=new PostgresTaskReadService(t.database,t.policy,t.kernel),newModel=stagedKernelComponents(t.kernel).model;
-      assert.equal(model.ref.version,'27');assert.equal(newModel.ref.version,'28');assert.equal(t.published.generation,t.prior.generation+1);
+      assert.equal(model.ref.version,'28');assert.equal(newModel.ref.version,'29');assert.equal(t.published.generation,t.prior.generation+1);
       const oldPin=(await t.client.query(`SELECT body::jsonb#>'{delegation,ontologyRelease}' AS pin FROM ${q}.jobs WHERE id=$1`,[oldTask.job.id])).rows[0].pin;
       assert.deepEqual(oldPin,oldTask.job.delegation!.ontologyRelease);
       assert.equal((await service.queryOntology(principal,{version:2,taskId:oldTask.job.id,query:{type:'Place'}})).items.length,2,'real v27 persistent task consent still reads its original objects under the v28-enabled host');

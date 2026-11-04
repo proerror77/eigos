@@ -14,11 +14,17 @@ Its coverage statement applies to the requested set, not the owner's corpus.
 
 ## Controlled installation
 
-The ordinary v27 kernel and startup behavior remain the default. The feature
+The ordinary descriptions-v28 kernel remains the default; an exact legacy-v27 policy selects its genuine historical compiler. The feature
 requires an existing reviewed PostgreSQL primary activation, exact pgvector
 0.8.2 in `extensions`, a separately reviewed schema extension, and explicit
-forward installation of the v28 function release. Existing task pins, grants,
+forward installation of the v29 function release. Existing task pins, grants,
 deadlines and primary activation receipts are preserved.
+
+The vectors feature requires the reviewed descriptions-v28 policy. It does not
+convert v27 policy hashes or change the primary binding to make them match.
+`scripts/install-business-descriptions.mjs` is the separate explicit offline
+description/policy installer; use its reviewed authority workflow first. A
+PostgreSQL binding and activation must already represent the reviewed policy.
 
 Use `scripts/postgres-task-vectors.mjs` after building. An operator input file
 has `version:1`, `kind:"eigos.task-vector-operation"`, `action`, a pinned
@@ -33,7 +39,7 @@ also requires a pinned `feature:{path,sha256}` and
    separate new `--feature-output /private/task-vectors.json`.
 3. The command verifies committed schema/ACLs through an independent connection.
    A separate `--readback` operation can verify the pinned feature again.
-4. Preview and explicitly apply `publish-kernel` against the exact prior v27
+4. Preview and explicitly apply `publish-kernel` against the exact prior descriptions-v28
    release/generation. It appends the real software release and activates it
    for future tasks; it does not retarget old tasks.
 5. Set `EIGOS_POSTGRES_VECTOR_FEATURE_FILE` to the private feature manifest for
@@ -89,7 +95,7 @@ is not installed by this API.
 
 ## Retrieving candidates
 
-Call ordinary `evaluate_ontology` on a task pinned to the installed v28 release:
+Call ordinary `evaluate_ontology` on a task pinned to the installed v29 release:
 `call.function="semanticCandidates"`, with `call.object` equal to that task's
 ServiceRequest. Supply the same `space`, a `queryVector`, `limit`, and
 `candidates`. Each candidate supplies its object/revision/field digests plus
@@ -109,3 +115,17 @@ Cancelled/terminal tasks reject new index writes. Old v27 tasks keep their
 original permissions and cannot acquire the new Function from a software
 upgrade. Re-read current permitted facts before any later business action;
 similarity does not validate evidence, fulfill a Goal, or authorize an order.
+
+## Validation and shipping
+
+The selected PostgreSQL CI inventory includes a dedicated `postgres-vectors`
+job on the pinned pgvector 0.8.2 PostgreSQL17 image. Its runner requires the
+isolated loopback fixture flags and actual successful, non-skipped TAP case;
+the aggregate and exact-source release proof reject a missing/skipped job or
+validation step. This tests synthetic numbers and real permission boundaries,
+not an embedding provider or semantic quality.
+
+The immutable runtime whitelist and Docker build context include both
+`postgres-task-vectors.mjs` and `install-business-descriptions.mjs`. Shipping
+these tools or compiled optional v29 support does not install the schema,
+activate the release, configure an emitter or start a service.

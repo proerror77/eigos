@@ -18,10 +18,10 @@ const decisionSchema = z.object({ receiptIds: z.array(z.string().min(1)).max(20)
 const descriptions: Record<keyof typeof planningToolSchemas, string> = {
   read_task_context: 'Read the current owned task, instructions, facts, execution state and bounded Ontology definitions once at the start of a decision. Optional facts selects known properties and mapped relationships. Reuse this receipt after instruction paging; use query_ontology.facts for later focused reads instead of rereading the full context.',
   read_task_instructions: 'Read original instructions missing from read_task_context, following instructions.nextCursor. When instructions.complete is true, all exact instructions are already delivered; do not reread them unless an explicitly needed message is absent from the current model context.',
-  describe_ontology: 'Discover registered types, relationships, functions and action schemas. Definitions grant no authority.',
+  describe_ontology: 'Discover registered types, relationships, functions and action schemas. Use linkSearch to narrow long relationship lists; a filtered list is not evidence that other relationships are absent. Definitions grant no authority.',
   discover_actions: 'Discover current task-bound service actions, exact binding pins, context input schemas and completion contracts.',
-  query_ontology: 'Read current task-owned objects or mapped interface relationships. A facts batch combines known references and reports missing/stale fields without provider calls. Only authorized evidence can support decisions.',
-  evaluate_ontology: 'Evaluate a registered read-only Ontology function against actual objects. Missing evidence remains unknown.',
+  query_ontology: 'Read current task-owned objects or mapped interface relationships. A facts batch reports each object separately; unsupported automatic evaluation keeps the data and does not require a source refresh. A group may contain both valid and stale facts. No provider calls occur here.',
+  evaluate_ontology: 'Evaluate a registered read-only Ontology function against actual objects. Outer known means the computation returned a result; inspect value for the business verdict. A valid historical observation may have been superseded, and a valid missing-price observation does not establish an amount. Missing evidence remains unknown.',
   assess_conditions: 'Assess typed business conditions against current candidate or subject evidence.',
   propose_action: 'Propose a registered Ontology decision action using observed object revisions. This does not execute a business effect.',
 };

@@ -34,7 +34,7 @@ try{
     const verification=await verifyPostgresEmbeddingExtension(reader,binding,feature);readerErrors.check();
     let semanticVerification;
     if(operation.action==='publish-kernel'){
-      const kernel=await preparePostgresKernel(undefined,{semanticRetrieval:true});pool=new pg.Pool({...connection,max:1});pool.on('error',error=>{poolFailure??=error;});
+      const kernel=await preparePostgresKernel(undefined,'29');pool=new pg.Pool({...connection,max:1});pool.on('error',error=>{poolFailure??=error;});
       database=new PostgresDatabase(pool,binding.business.schema,binding.authority,{kernel,vectorFeature:feature});
       if(values.apply){started=true;result=await installPostgresSemanticKernel(database,binding,feature,{adminRole:operation.adminIdentity.role,expected:operation.expectedActive.ref,expectedGeneration:operation.expectedActive.generation,reviewDigest:operation.reviewDigest},kernel);commitAcknowledged=true;}
       semanticVerification=await verifyPostgresSemanticKernel(reader,binding,feature,operation.expectedActive,kernel);readerErrors.check();if(poolFailure)throw poolFailure;

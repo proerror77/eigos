@@ -47,6 +47,7 @@ test('immutable release retains JSON assets required by relocated runtime import
     put(join(source, 'scripts/postgres-node-migrate.mjs'), 'console.log("Postgres node migration fixture");');
     put(join(source, 'scripts/postgres-vector.mjs'), 'console.log("Postgres vector fixture");');
     put(join(source, 'scripts/postgres-task-vectors.mjs'), "import {label} from '../dist/packages/deployment/postgres-vector-index.js'; console.log(label);");
+    put(join(source, 'scripts/install-business-descriptions.mjs'), 'console.log("Business description installer fixture; not applied");');
     put(join(source, 'packages/deployment/postgres-vector-index.ts'), "export const label = 'Supplied vectors operator fixture; not installed';");
     put(join(source, 'dist/packages/deployment/postgres-vector-index.js'), "export const label = 'Supplied vectors operator fixture; not installed';");
     put(join(source, 'packages/members/ontology-operator.ts'), "export const label = 'Operator transport fixture';");
@@ -63,6 +64,7 @@ test('immutable release retains JSON assets required by relocated runtime import
     assert(files.includes('scripts/postgres-node-migrate.mjs'));
     assert(files.includes('scripts/postgres-vector.mjs'));
     assert(files.includes('scripts/postgres-task-vectors.mjs'));
+    assert(files.includes('scripts/install-business-descriptions.mjs'));
     assert(files.includes('dist/packages/deployment/postgres-vector-index.js'));
     assert(!files.some(path => path.endsWith('/orphan.js')));
     for (const name of PA_SKILL_FILES) assert(files.includes(`dist/${PA_SKILL_DIRECTORY}/${name}`));
@@ -75,6 +77,7 @@ test('immutable release retains JSON assets required by relocated runtime import
     assert.equal(execFileSync(process.execPath, ['scripts/postgres-node-migrate.mjs'], { cwd: release, encoding: 'utf8' }).trim(), 'Postgres node migration fixture');
     assert.equal(execFileSync(process.execPath, ['scripts/postgres-vector.mjs'], { cwd: release, encoding: 'utf8' }).trim(), 'Postgres vector fixture');
     assert.equal(execFileSync(process.execPath, ['scripts/postgres-task-vectors.mjs'], { cwd: release, encoding: 'utf8' }).trim(), 'Supplied vectors operator fixture; not installed');
+    assert.equal(execFileSync(process.execPath, ['scripts/install-business-descriptions.mjs'], { cwd: release, encoding: 'utf8' }).trim(), 'Business description installer fixture; not applied');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

@@ -350,18 +350,18 @@ export async function postgresTaskResourcePermissionValidUntil(client: Client, p
     const schema = postgresBusinessSchema(client);
     const ontology=await postgresTaskReadOntology(client,captured,taskId,policyDigest,builder);
     const current=builder===undefined?currentKernelImplementation():stagedKernelComponents(builder).model;
-    if(current.ref.version==='28')assertReviewedModel(current,ontology.model);
+    if(current.ref.version==='29')assertReviewedModel(current,ontology.model);
     const load=async()=>{
       const result=await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${schema}".security_roles WHERE subject_id IN ($1,$2) LIMIT 257`,[admission.actor.memberId,admission.actor.installationId]);
       if(result.rows.length>256||result.rows.some(row=>row.body===null))throw new SecurityError('OUTPUT_NOT_ALLOWED');
-      return freezeData(result.rows.map(row=>{const role=roleSchema.parse(JSON.parse(String(row.body)));postgresConsentDeadline(role.expiresAt,policyDigest);return role;}));
+      return freezeData(result.rows.map(row=>{const role=roleSchema.parse(JSON.parse(String(row.body)));postgresConsentDeadline(role.expiresAt,policyDigest,current);return role;}));
     };
     const snapshot=snapshots.get(client);
     const roles=await(snapshot?(snapshot.roles??=load()):load());
-    return {roles,actor:admission.actor,model:current.ref.version==='28'?ontology.model:current};
+    return {roles,actor:admission.actor,model:current.ref.version==='29'?ontology.model:current,policyModel:current};
   });
   const now=Date.now(),matching=checked.roles.filter(role=>roleAllows(checked.model,[role],checked.actor.memberId,checked.actor.installationId,kind,id,permission,()=>now));
-  return matching.reduce((latest,role)=>Math.max(latest,postgresConsentIndex(role.expiresAt,policyDigest,checked.model)),0);
+  return matching.reduce((latest,role)=>Math.max(latest,postgresConsentIndex(role.expiresAt,policyDigest,checked.policyModel)),0);
 }
 
 export async function postgresTaskResourceViewAllowed(client: Client, principal: Principal, taskId: string, policyDigest: string, kind: string, id: string, builder?: StagedKernelBuilder): Promise<boolean> {

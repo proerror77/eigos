@@ -9,7 +9,8 @@ import { definitionKindSchema, ontologyIdSchema, ontologyReleaseRefSchema, parse
   type DefinitionKind, type OntologyDocument, type OntologyReleaseRef, type SerializableAction, type SerializableInterface,
   type SerializableLink, type SerializableObjectType } from './definition-contracts.js';
 import { compileOntologyDocument, normalizeOntologyDocument, type TrustedDefinitionRegistry } from './model-compiler.js';
-import { createCurrentKernelDefinition, createSingleReadKernelDefinition, createSeedDefinition, createRollingGoKernelDefinition, createTaskClosureKernelDefinition, createBusinessFactsKernelDefinition, createPersonalContextKernelDefinition } from './seed-definition.js';
+import { compiledSeedModel, createCurrentKernelDefinition, createSingleReadKernelDefinition, createSeedDefinition, createRollingGoKernelDefinition, createTaskClosureKernelDefinition, createBusinessFactsKernelDefinition, createPersonalContextKernelDefinition, PAYMENT_COMMERCE_KERNEL_MODEL_REF, BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF } from './seed-definition.js';
+import { extendBusinessDescriptions } from './business-descriptions.js';
 import { SINGLE_READ_PREDECESSOR } from './single-read-kernel.js';
 import { personalObjects, personalActions, personalLinks, PERSONAL_CONTEXT_PREDECESSOR } from './personal-context-kernel.js';
 import { businessFactTypes, businessFactLinks } from './business-facts.js';
@@ -61,19 +62,27 @@ function freezeJson<T>(value: T): T {
 let templates: { registry: TrustedDefinitionRegistry; legacy: OntologyDocument; kernel: OntologyDocument; legacyModel: OntologyModel } | undefined;
 // This cache contains definitions only. Database identity, data compatibility and
 // current permission checks still run separately for each store and request.
-const compiledModels = new Map<string, OntologyModel>();
+const compiledModels = new WeakMap<TrustedDefinitionRegistry, Map<string, OntologyModel>>();
+function modelsFor(registry: TrustedDefinitionRegistry): Map<string, OntologyModel> {
+  let models = compiledModels.get(registry);
+  if (!models) { models = new Map(); compiledModels.set(registry, models); }
+  return models;
+}
 function compiledModel(document: OntologyDocument, registry: TrustedDefinitionRegistry): OntologyModel {
-  const key = digest(document), cached = compiledModels.get(key);
-  if (cached) { compiledModels.delete(key); compiledModels.set(key, cached); return cached; }
+  const models = modelsFor(registry), key = digest(document), cached = models.get(key);
+  if (cached) { models.delete(key); models.set(key, cached); return cached; }
   const model = compileOntologyDocument(document, registry);
-  compiledModels.set(key, model);
-  if (compiledModels.size > 16) compiledModels.delete(compiledModels.keys().next().value!);
+  models.set(key, model);
+  if (models.size > 16) models.delete(models.keys().next().value!);
   return model;
 }
 function trustedTemplates() {
   if (!templates) {
     const legacy = createSeedDefinition(), kernel = createCurrentKernelDefinition(legacy.registry);
-    templates = { registry: legacy.registry, legacy: freezeJson(legacy.document), kernel: freezeJson(kernel.document), legacyModel: compiledModel(legacy.document, legacy.registry) };
+    const legacyModel = compiledSeedModel(legacy, legacy.registry), kernelModel = compiledSeedModel(kernel, legacy.registry);
+    const models = modelsFor(legacy.registry);
+    models.set(digest(legacy.document), legacyModel); models.set(digest(kernel.document), kernelModel);
+    templates = { registry: legacy.registry, legacy: freezeJson(legacy.document), kernel: freezeJson(kernel.document), legacyModel };
   }
   return templates;
 }
@@ -270,6 +279,19 @@ export class DefinitionStore {
       document.version = `payment-commerce-reads-${namespace.generation + 1}`;
       const release = this.insertRelease(document, 'system:install-payment-commerce-reads', namespace.active);
       return this.activate('system:install-payment-commerce-reads', release.ref, expectedGeneration, true);
+    });
+  }
+  /** Operator-only v27 -> v28 metadata activation. Existing facts, task pins,
+   * grants and provider operations are preserved; startup never calls this. */
+  installBusinessDescriptions(expected: OntologyReleaseRef, expectedGeneration: number): OntologyNamespace {
+    return this.transaction(() => {
+      const namespace = this.namespace();
+      if (digest(namespace.active) !== digest(expected) || namespace.generation !== expectedGeneration) return conflict('Active ontology changed before business-description installation');
+      const current = this.resolve(namespace.active);
+      if (current.model.ref.id === BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF.id && current.model.ref.digest === BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF.digest) return namespace;
+      if (current.model.ref.id !== PAYMENT_COMMERCE_KERNEL_MODEL_REF.id || current.model.ref.digest !== PAYMENT_COMMERCE_KERNEL_MODEL_REF.digest) return conflict('Business descriptions require the exact reviewed v27 predecessor');
+      const release = this.insertRelease(extendBusinessDescriptions(current.document), 'system:install-business-descriptions', namespace.active);
+      return this.activate('system:install-business-descriptions', release.ref, expectedGeneration, true);
     });
   }
   namespace(id = DEFAULT_ONTOLOGY): OntologyNamespace {

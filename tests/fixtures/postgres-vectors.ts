@@ -63,7 +63,7 @@ export async function postgresVectorFixture(source:ReturnType<typeof securityFix
     await activatePostgresPrimary(client,{...operation,phase:'activate',binding:write('vector-active-binding.json',activeBinding)});
     const installed=await installPostgresEmbeddingExtension(client,activeBinding,{adminRole:'postgres',reviewDigest:'b'.repeat(64)});
     const independent=new pg.Client(vectorConnection());await independent.connect();try{await verifyPostgresEmbeddingExtension(independent,activeBinding,installed.feature);}finally{await independent.end();}
-    const connection={...vectorConnection(),user:role,password:'synthetic-vector-runtime-only'},kernel=await preparePostgresKernel(undefined,{semanticRetrieval:true});
+    const connection={...vectorConnection(),user:role,password:'synthetic-vector-runtime-only'},kernel=await preparePostgresKernel(undefined,'29');
     const admin=new PostgresDatabase(new pg.Pool({...vectorConnection(),max:1}),schema,authority,{kernel,vectorFeature:installed.feature});
     let prior:Awaited<ReturnType<PostgresDefinitionStore['namespace']>>,published:Awaited<ReturnType<typeof installPostgresSemanticKernel>>;
     try{prior=await admin.run(c=>new PostgresDefinitionStore(c,{builder:kernel}).namespace());

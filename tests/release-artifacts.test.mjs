@@ -144,6 +144,8 @@ test('container build inputs include PA assets and role images retain nonroot an
   for(const pattern of ['**/.env*','**/*sqlite*','**/auth.json','**/private.config*'])assert(ignore.includes(pattern));
   assert(ignore.includes('!scripts/postgres-task-vectors.mjs'));
   assert(docker.split('\n').some(line=>line.startsWith('COPY scripts/')&&line.includes('scripts/postgres-task-vectors.mjs')),'the actual operator CLI must enter the build context, not merely the source tree');
+  assert(ignore.includes('!scripts/install-business-descriptions.mjs'));
+  assert(docker.split('\n').some(line=>line.startsWith('COPY scripts/')&&line.includes('scripts/install-business-descriptions.mjs')),'the legitimate description installer must travel with the immutable package');
 });
 
 test('PR container smoke cannot publish while release publication requires explicit manual dispatch',()=>{

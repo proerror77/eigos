@@ -11,6 +11,7 @@ import {StagedKernelBuilder} from '../ontology/seed-definition.js';
 import {PostgresDefinitionStore} from '../postgres/definition-store.js';
 import {postgresBusinessSchema,postgresBusinessAuthorityDigest} from '../postgres/runtime-transaction.js';
 import {ontologyReleaseRefSchema,type OntologyReleaseRef} from '../ontology/definition-contracts.js';
+import {reviewedKernelVersionForPolicy} from '../security/policy-store.js';
 
 const file=z.strictObject({path:z.string().refine(path=>isAbsolute(path)&&resolve(path)===path),sha256:z.string().regex(/^[a-f0-9]{64}$/)});
 export const postgresVectorIndexOperationSchema=z.strictObject({version:z.literal(1),kind:z.literal('eigos.task-vector-operation'),action:z.enum(['prepare-schema','publish-kernel']),
@@ -22,7 +23,7 @@ export function readPostgresVectorIndexOperation(input:unknown){
   if(feature)assertFeatureBinding(feature,binding);
   if(operation.action==='publish-kernel'&&(!feature||!operation.expectedActive))throw new Error('Kernel installation requires the independently verified feature and exact prior release');
   const preview=operation.action==='prepare-schema'?previewPostgresEmbeddingExtension(binding,operation.reviewDigest):{version:1,status:'preview-only',action:operation.action,
-    baseActivation:binding.activation,feature,expectedActive:operation.expectedActive,reviewDigest:operation.reviewDigest,targetVersion:'28',runtimeStarted:false,businessTasksChanged:false};
+    baseActivation:binding.activation,feature,expectedActive:operation.expectedActive,reviewDigest:operation.reviewDigest,targetVersion:'29',runtimeStarted:false,businessTasksChanged:false};
   return {operation,binding,feature,preview,previewDigest:digest(preview)};
 }
 
@@ -31,6 +32,7 @@ export function readPostgresVectorFeature(path:string,binding:PostgresBinding){
   assertFeatureBinding(feature,binding);return feature;
 }
 export function assertFeatureBinding(feature:PostgresVectorFeature,binding:PostgresBinding){
+  if(reviewedKernelVersionForPolicy(binding.policyDigest)!=='28')throw new Error('Task vectors require the explicit descriptions-v28 policy upgrade');
   if(!binding.activation||feature.businessSchema!==binding.business.schema||feature.runtimeRole!==binding.connection.role||digest(feature.authority)!==digest(binding.authority)
     ||feature.baseActivation.id!==binding.activation.id||feature.baseActivation.digest!==binding.activation.receiptDigest||feature.contractDigest!==embeddingSchemaContractDigest)throw new Error('Vector feature differs from its original activated primary');
 }
@@ -71,6 +73,7 @@ async function inventory(client:Client,binding:PostgresBinding,tables:string[],e
 function idle(client:Client){if(client.getTransactionStatus()!=='I'||client.pipeline!==false)throw new Error('Derived schema operation requires an idle owned connection');}
 export function previewPostgresEmbeddingExtension(binding:PostgresBinding,reviewDigest:string){
   z.string().regex(/^[a-f0-9]{64}$/).parse(reviewDigest);if(!binding.activation)throw new Error('Actual base activation is required');
+  if(reviewedKernelVersionForPolicy(binding.policyDigest)!=='28')throw new Error('Task vectors require the explicit descriptions-v28 policy upgrade');
   return {version:1,status:'preview-only',baseActivation:binding.activation,contractDigest:embeddingSchemaContractDigest,reviewDigest,
     ddl:EMBEDDING_SCHEMA_DDL.map(sql=>sql.replaceAll('__SCHEMA__',quote(binding.business.schema))),runtimeStarted:false,businessObjectsChanged:false};
 }
@@ -131,7 +134,7 @@ export async function installPostgresSemanticKernel(database:Pick<PostgresDataba
 export async function verifyPostgresSemanticKernel(client:Client,binding:PostgresBinding,feature:PostgresVectorFeature,
   expected:{ref:OntologyReleaseRef;generation:number},builder:StagedKernelBuilder){
   assertFeatureBinding(feature,binding);idle(client);const document=StagedKernelBuilder.prototype.result.call(builder).document;
-  if(document.version!=='28'||expected.ref.ontologyId!==document.id)throw new Error('Actual semantic software release is unavailable');
+  if(document.version!=='29'||expected.ref.ontologyId!==document.id)throw new Error('Actual semantic software release is unavailable');
   let open=false;
   try{await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');open=true;await client.query('SET LOCAL search_path=pg_catalog');await base(client,binding);await assertPostgresEmbeddingSchema(client,feature);
     const observed=await assertPostgresSemanticRelease(client,binding.business.schema,builder,expected.generation+1);

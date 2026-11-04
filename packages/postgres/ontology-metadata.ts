@@ -16,13 +16,13 @@ import { postgresTaskReadOntology, withPostgresAgentMetadata, withPostgresTaskRe
   withPostgresTaskReadGrant, type PostgresTaskReadAdmission } from './task-read-access.js';
 
 async function withDefinitionAccess<T>(client: Client, admission: Pick<PostgresTaskReadAdmission, 'actor' | 'parent'>,
-  model: OntologyModel, policyDigest:string, action: (access: DefinitionAccess) => Promise<T>): Promise<T> {
+  model: OntologyModel, policyDigest:string, action: (access: DefinitionAccess) => Promise<T>,policyModel:OntologyModel=model): Promise<T> {
   const token = postgresBusinessToken(client);
   const rows = await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body
     FROM "${postgresBusinessSchema(client)}".security_roles WHERE subject_id IN ($1,$2) LIMIT 257`,
   [admission.actor.memberId, admission.actor.installationId]);
   if (rows.rows.length > 256 || rows.rows.some(row => row.body === null)) throw new DomainError('CONFLICT', 'Resource role read bound exceeded');
-  const roles = rows.rows.map(row => {const role=roleSchema.parse(JSON.parse(String(row.body)));postgresConsentDeadline(role.expiresAt,policyDigest,model);return role;});
+  const roles = rows.rows.map(row => {const role=roleSchema.parse(JSON.parse(String(row.body)));postgresConsentDeadline(role.expiresAt,policyDigest,policyModel);return role;});
   let available = true, validUntil = Infinity;
   const active = () => {
     if (!available || postgresBusinessToken(client) !== token || validUntil <= Date.now()) throw new SecurityError('AUTHORIZATION_REQUIRED');
@@ -33,7 +33,7 @@ async function withDefinitionAccess<T>(client: Client, admission: Pick<PostgresT
       const matching = roles.filter(role => roleAllows(model, [role], admission.actor.memberId,
         admission.actor.installationId, kind, id, 'resource.view', () => now));
       if (!matching.length) return false;
-      validUntil = Math.min(validUntil, Math.max(...matching.map(role => postgresConsentIndex(role.expiresAt,policyDigest,model))));
+      validUntil = Math.min(validUntil, Math.max(...matching.map(role => postgresConsentIndex(role.expiresAt,policyDigest,policyModel))));
       postgresConstrainReadDeadline(client, validUntil); return true;
     },
     fields(type) { active(); return { ...model.properties(type), ...projectionFields(type) }; },
@@ -52,8 +52,8 @@ export async function withPostgresTaskDefinitionAccess<T>(client: Client, princi
     if (!admission.grant.operations.includes(admission.actor.actorKind === 'worker' ? 'task.process' : 'task.query')) throw new SecurityError('AUTHORIZATION_REQUIRED');
     const selected = (await postgresTaskReadOntology(client, captured, taskId, policyDigest, builder)).model;
     const model = builder === undefined ? currentKernelImplementation() : stagedKernelComponents(builder).model;
-    if(model.ref.version==='28')assertReviewedModel(model,selected);
-    return withDefinitionAccess(client, admission, model.ref.version==='28'?selected:model, policyDigest, access => action(access, selected));
+    if(model.ref.version==='29')assertReviewedModel(model,selected);
+    return withDefinitionAccess(client, admission, model.ref.version==='29'?selected:model, policyDigest, access => action(access, selected),model);
   });
 }
 
