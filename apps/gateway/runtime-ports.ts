@@ -11,6 +11,7 @@ import type {OntologyReleaseRef} from '../../packages/ontology/definition-contra
 import type {NetworkService} from '../../packages/network/service.js';
 import type {MemberSourceService} from '../../packages/members/source-service.js';
 import type {TaskRelayGateway} from './relay.js';
+import type {OntologyVectorPort} from '../../packages/ontology/semantic-retrieval-port.js';
 
 export type {DefinitionServicePort} from '../../packages/ontology/definition-service-port.js';
 export type {AgentMessagingExecutionPort,AgentMessagingGatewayPort} from '../../packages/agent-messaging/ports.js';
@@ -44,6 +45,7 @@ export interface GatewayRuntimePorts {
   members:MemberStoragePort;
   security?:GatewaySecurityPort;
   definitions:DefinitionServicePort;
+  vectors?:OntologyVectorPort;
   relay?:GatewayRelayPort;
   messaging?:GatewayMessagingPort;
   authorityCurrent():GatewayAwaitable<boolean>;

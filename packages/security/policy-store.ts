@@ -1,4 +1,5 @@
 import { assertReviewedModel } from './model-review.js';
+import {semanticFieldPolicyRef} from '../ontology/semantic-retrieval-kernel.js';
 import {taskContextFields,TASK_CONTEXT_BINDING_VERSION} from './task-context-contract.js';
 import { selfPersonRef, personalPreferenceRef, personalInputFields, personalContextInputSchema, isPersonalAction } from '../ontology/personal-context.js';
 import {taskContextMembers} from './task-context.js';
@@ -67,8 +68,9 @@ function policyContract(model: SecurityStore['model']['ref'], fields: typeof bas
 }
 export function persistentConsentPolicyContracts(model: SecurityStore['model']) {
   const fields = Object.fromEntries(Object.entries(baseline.types).filter(([id]) => model.hasType(id)));
-  return { before: policyContract(model.ref, fields, projectionContract, model.hasType('RideEstimate')),
-    after: policyContract(model.ref, fields, projectionContract, model.hasType('RideEstimate'), true) };
+  const ref=semanticFieldPolicyRef(model);
+  return { before: policyContract(ref, fields, projectionContract, model.hasType('RideEstimate')),
+    after: policyContract(ref, fields, projectionContract, model.hasType('RideEstimate'), true) };
 }
 export function businessFactsPolicyContracts(model: SecurityStore['model']) {
   if (model.ref.version !== '24' || !model.hasType('RideEstimate') || !model.hasType('EventRegistration')) throw new Error('Expected the reviewed business-facts v24 kernel');

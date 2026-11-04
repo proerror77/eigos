@@ -10,6 +10,7 @@ import {PostgresWorkerStore} from '../../packages/postgres/worker-store.js';
 import {PostgresCoordinator,type PostgresReasoner,type PostgresExecutor} from '../../packages/postgres/coordinator.js';
 import type {PostgresReadProgramRegistry} from '../../packages/postgres/didi-registry.js';
 import {PostgresTaskWorker} from './postgres-worker.js';
+import {PostgresEmbeddingIndex} from '../../packages/postgres/embedding-index.js';
 
 /** The app-server session transport still has synchronous-recorder behavior.
  * Keep it out of this PostgreSQL port. Both native reasoning and the separate
@@ -61,5 +62,6 @@ export function createPostgresWorker(config:PostgresModelConfig,options:{
   const executor=options.executor??Object.assign(model!,{postgresModelDispatch:'acknowledged-v1' as const}),reasoner=options.reasoner??(model instanceof HarnessExecutor?postgresHarnessReasoner(model):postgresCodexReasoner(model!)),modelChannel=options.modelChannel??reasoner.securityChannelId??executor.securityChannelId;
   const store=new PostgresWorkerStore(options.database,options.policyDigest,options.builder),coordinator=new PostgresCoordinator({...options,store,executor,reasoner,modelChannel,maxTaskMs:config.EIGOS_TASK_MAX_MS});
   const worker=new PostgresTaskWorker(store,{...options.timing,maxConcurrent:config.EIGOS_EXECUTOR==='harness'||executor instanceof HarnessExecutor?1:2,run:(claim,signal)=>coordinator.run(claim,signal),onError:(claim,error,signal)=>coordinator.onError(claim,error,signal)});
-  return {worker,coordinator,store,start:()=>worker.start(),pause:()=>worker.pauseClaims(),resume:()=>worker.resumeClaims(),close:async()=>{await worker.close();await coordinator.closeModelContexts();}};
+  const vectors=options.database.taskVectorFeature?new PostgresEmbeddingIndex(options.database,options.policyDigest,options.database.taskVectorFeature,options.builder):undefined;
+  return {worker,coordinator,store,vectors,start:()=>worker.start(),pause:()=>worker.pauseClaims(),resume:()=>worker.resumeClaims(),close:async()=>{await worker.close();await coordinator.closeModelContexts();}};
 }

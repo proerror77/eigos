@@ -18,6 +18,7 @@ import {
 import { supabaseProxyOptions } from '../packages/postgres/supabase-proxy.js';
 import { digest } from '../packages/core/delegation.js';
 import { parseOntologyDocument } from '../packages/ontology/definition-contracts.js';
+import { assertSemanticIndexReader } from '../packages/semantic/runtime.js';
 const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
@@ -48,9 +49,10 @@ if (command === 'model') {
   console.log(JSON.stringify(await prepareLocalEmbedding(directory)));
 } else {
   let business = values['business-schema'],
-    connection;
+    connection, boundBinding;
   if (values.binding) {
     const { binding } = readPostgresBinding(values.binding);
+    boundBinding = binding;
     business = binding.business.schema;
     const admin = command === 'init' || command === 'index',
       user = admin
@@ -96,12 +98,20 @@ if (command === 'model') {
   const embedding = await loadLocalEmbedding(directory),
     catalog = new SemanticCatalog(embedding, values.schema),
     client = new pg.Client(connection);
+  let indexClient;
   try {
     await client.connect();
     if (command === 'init') {
+      if(boundBinding&&(!values['reader-role']||values['reader-role']===boundBinding.connection.role))
+        throw Error('Initialize with an independent existing semantic reader role');
       await client.query('BEGIN');
       try {
         await catalog.initialize(client, values['reader-role']);
+        if(boundBinding){
+          await client.query(`SET LOCAL ROLE ${sqlIdentifier(values['reader-role'])}`);
+          await assertSemanticIndexReader(client,catalog,{role:boundBinding.connection.role,business:boundBinding.business.schema,membership:boundBinding.membership.schema});
+          await client.query('SET LOCAL ROLE NONE');
+        }
         await client.query('COMMIT');
       } catch (error) {
         await client.query('ROLLBACK');
@@ -187,15 +197,22 @@ if (command === 'model') {
           docs = catalogDocuments(document).filter(
             (d) => d.kind === (values.kind ?? 'action'),
           );
+        if(boundBinding){
+          const user=process.env.EIGOS_SEMANTIC_READER_USER,password=process.env.EIGOS_SEMANTIC_READER_PASSWORD;
+          if(!user||!password||user===boundBinding.connection.user||user===boundBinding.connection.role)throw Error('Search requires the independent semantic index reader');
+          indexClient=new pg.Client({...connection,user,password});await indexClient.connect();await indexClient.query('BEGIN READ ONLY');
+          await assertSemanticIndexReader(indexClient,catalog,{role:boundBinding.connection.role,business:boundBinding.business.schema,membership:boundBinding.membership.schema});
+        }
         console.log(
           JSON.stringify({
             release: ref,
             modelId: embedding.modelId,
             candidates: (
-              await catalog.search(client, ref, docs, values.query)
+              await catalog.search(indexClient??client, ref, docs, values.query)
             ).slice(0, 5),
           }),
         );
+        if(indexClient)await indexClient.query('COMMIT');
       } else await index(values.release);
       if (values.watch) {
         let cursor = 0;
@@ -215,7 +232,6 @@ if (command === 'model') {
       }
     }
   } finally {
-    await client.end();
-    await embedding.close();
+    try{await client.end();}finally{try{await indexClient?.end();}finally{await embedding.close();}}
   }
 }

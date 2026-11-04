@@ -25,6 +25,8 @@ import { validateCallerOutcomeProofProgram } from './caller-outcome-proof.js';
 import { sourceProofProgram as proofProgram } from './object-evidence.js';
 
 import { productAttributeFunctionSchemas } from './product-attributes.js';
+import {semanticCandidatesSchema} from './semantic-retrieval.js';
+import {graphSemanticCandidates} from './graph-program.js';
 
 import { identityFunctionSchemas } from './identity-model.js';
 
@@ -42,6 +44,7 @@ import type { OntologyObjectStore, ObjectView, ReadBudget } from './object-store
 export interface Computation { status: 'known' | 'unknown'; value?: unknown; reason?: string; evidenceRefs: ObjectRef[]; evidenceLevels: string[] }
 const simple = (name: string) => z.object({ function: z.literal(name), object: objectRefSchema }).strict();
 export const functionCallSchema = z.union([
+  semanticCandidatesSchema,
   ...productAttributeFunctionSchemas, ...identityFunctionSchemas, ...errandFunctionSchemas,
   simple('authorizationStatus'), simple('bookingObservationStatus'), simple('stripePaymentStatus'),
   simple('registrationStatus'), simple('rollingGoSearchStatus'), simple('businessFactStatus'), simple('paymentCommerceReadStatus'),
@@ -94,6 +97,7 @@ function* freshnessProgram(store: ProjectionMetadata, owner: string, object: Obj
 export function evaluateFunction(store: OntologyObjectStore, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): Computation { return runGraphProgram(store, evaluateFunctionProgram(store, owner, input, budget)); }
 
 export function* evaluateFunctionProgram(store: ProjectionMetadata, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): GraphProgram<Computation> {
+  if(input.function==='semanticCandidates')return yield* graphSemanticCandidates(owner,semanticCandidatesSchema.parse(input),budget);
   const commerceRead = (yield* evaluateCommerceReadProgram(store, owner, input, budget));
   if (commerceRead) return commerceRead;
   const orderTestResult = (yield* evaluateOrderTestProgram(store, owner, input, budget));

@@ -3,6 +3,8 @@ import { promisify } from 'node:util';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
+import pg from 'pg';
+import {assertSemanticIndexReader,createReadOnlySemanticRanker} from '../packages/semantic/runtime.js';
 import { digest } from '../packages/core/delegation.js';
 import { loadLocalEmbedding } from '../packages/semantic/local-embedding.js';
 import {
@@ -29,6 +31,8 @@ test(
     const schema = 'eigos_semantic_' + randomUUID().replaceAll('-', '');
     const semantic = new SemanticCatalog(model, schema);
     const f = await postgresDidiFixture();
+    const reader = 'sem_reader_' + randomUUID().replaceAll('-', '');
+    let readerCreated = false, indexPool: pg.Pool | undefined;
     try {
       await f.t.client.query(
         'CREATE SCHEMA IF NOT EXISTS extensions; CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions',
@@ -71,8 +75,8 @@ test(
         { env: process.env, timeout: 180000 },
       );
       assert.equal(JSON.parse(indexed.stdout).documents, docs.length);
-      const reader = 'sem_reader_' + randomUUID().replaceAll('-', '');
-      await f.t.client.query(`CREATE ROLE ${sqlIdentifier(reader)}`);
+      await f.t.client.query(`CREATE ROLE ${sqlIdentifier(reader)} LOGIN NOINHERIT PASSWORD 'fixture-semantic-reader'`);
+      readerCreated = true;
       try {
         await f.t.client.query('BEGIN');
         try {
@@ -83,6 +87,8 @@ test(
           throw e;
         }
         await f.t.client.query(`SET ROLE ${sqlIdentifier(reader)}`);
+        await assertSemanticIndexReader(f.t.client,semantic,{role:process.env.PGUSER!,business:f.t.schema,membership:f.t.membershipSchema});
+        await assert.rejects(()=>assertSemanticIndexReader(f.t.client,semantic,{role:reader,business:f.t.schema,membership:f.t.membershipSchema}),/independent/);
         assert.equal(
           (
             await f.t.client.query(
@@ -100,10 +106,17 @@ test(
         assert.deepEqual(limited.actionIds, ['EstimateDidiRide']);
       } finally {
         await f.t.client.query('RESET ROLE');
-        await f.t.client.query(`DROP OWNED BY ${sqlIdentifier(reader)}`);
-        await f.t.client.query(`DROP ROLE ${sqlIdentifier(reader)}`);
       }
-      Object.assign(f.options, { semantic });
+      await f.t.client.query(`GRANT USAGE ON SCHEMA ${f.q} TO ${sqlIdentifier(reader)}`);
+      await f.t.client.query(`SET ROLE ${sqlIdentifier(reader)}`);
+      try{await assert.rejects(()=>assertSemanticIndexReader(f.t.client,semantic,{role:process.env.PGUSER!,business:f.t.schema,membership:f.t.membershipSchema}),/independent/);}
+      finally{await f.t.client.query('RESET ROLE');await f.t.client.query(`REVOKE USAGE ON SCHEMA ${f.q} FROM ${sqlIdentifier(reader)}`);}
+      indexPool = new pg.Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),database:process.env.PGDATABASE,
+        user:reader,password:'fixture-semantic-reader',max:2});
+      const ranker=createReadOnlySemanticRanker(semantic,indexPool);
+      const independent=await ranker.rank(new pg.Client(),ref,[document.actions.find(a=>a.id==='EstimateDidiRide')!],'车型预估价格');
+      assert.deepEqual(independent.actionIds,['EstimateDidiRide'],'The business connection is unused by the independent index reader');
+      Object.assign(f.options, { semantic:ranker });
       const { value: session } = await f.session();
       const context = await session.call('read_task_context', {
         includeDefinitions: false,
@@ -220,6 +233,9 @@ test(
         }),
       );
     } finally {
+      await indexPool?.end();
+      await f.t.client.query('RESET ROLE');
+      if(readerCreated){await f.t.client.query(`DROP OWNED BY ${sqlIdentifier(reader)}`);await f.t.client.query(`DROP ROLE ${sqlIdentifier(reader)}`);}
       await f.t.client.query(`DROP SCHEMA ${sqlIdentifier(schema)} CASCADE`);
       await f.close();
       await model.close();

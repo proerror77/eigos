@@ -320,6 +320,16 @@ function createGatewayHttpApp(config:Config,runtime:GatewayRuntimePorts,verify?:
   });
 
   // Same authentication, membership, scopes and owner as MCP/A2A; no object-write endpoint.
+  app.post('/ontology/vectors/sync',authenticate,async(req,res,next)=>{
+    try{
+      if(!runtime.vectors){res.status(503).json({error:'AUTHORITY_UNAVAILABLE',message:'The reviewed task vector extension is not installed'});return;}
+      res.json(await runtime.vectors.sync(principals.get(req)!,req.body));
+    }catch(error){
+      if(error instanceof z.ZodError){res.status(400).json({error:'invalid_vector_input'});return;}
+      if(error instanceof DomainError){res.status(error.code==='FORBIDDEN'?403:error.code==='INVALID_INPUT'?400:409).json({error:error.code,message:error.message,...securityAdvice(error)});return;}
+      next(error);
+    }
+  });
   for (const operation of ['describe', 'query', 'evaluate','check-access'] as const) app.post(`/ontology/${operation}`, authenticate, async (req, res, next) => {
     try {
       const p = principals.get(req)!;
@@ -434,6 +444,7 @@ export async function createPostgresApp(config:Config,runtime:GatewayRuntimePort
   if(digest(runtime.authority??null)!==digest(expected))throw new Error('Gateway ports do not match the existing primary authority');
   if(runtime.legacy||config.EIGOS_NETWORK_ENABLED==='true')throw new Error('PostgreSQL Gateway has no installed legacy network/source-route adapter');
   if(!runtime.tasks?.secured||!runtime.security||!runtime.definitions?.secured)throw new Error('PostgreSQL Gateway requires task, member permission and definition adapters');
+  if(config.EIGOS_POSTGRES_VECTOR_FEATURE_FILE&&!runtime.vectors||runtime.vectors&&typeof runtime.vectors.sync!=='function')throw new Error('Configured task vectors require their actual PostgreSQL adapter');
   if(!!config.EIGOS_TASK_RELAY_FILE!==!!runtime.relay)throw new Error('Configured Task Relay requires its installed PostgreSQL adapter');
   if((config.EIGOS_MESSAGING_ENABLED==='true')!==!!runtime.messaging)throw new Error('Configured messaging requires its installed PostgreSQL adapter');
   for(const method of ['describeOntology','queryOntology','evaluateOntology','checkAccess','usage','submit','get','getAfterWait','wait','list','reply','amend','resume','authorize','selectPaymentRoute','reportPayment','cancel','reconcile','revokeAuthorization','requestRemediation','prepareObservationContract','downloadArtifact','close','services'] as const){

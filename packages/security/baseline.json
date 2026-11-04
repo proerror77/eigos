@@ -2895,12 +2895,12 @@
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "0b2f6a0cbcd46df88e15e086114f439cd3bf062ee6c194d2a86f26eddf4ef7dc",
+      "sourceDigest": "782a12d26407bbe85f9a77147596942cdbc42b6c77eb1ffc0ec7775e54c2e7f8",
       "channels": [
         "http"
       ],
       "content": "Ontology describe/query/evaluate and task authorization/reconcile responses; error and HTTP audit",
-      "currentControl": "Foundation authenticated TaskView, controlled downloads and sanitized audit; Pipeline-only metadata entrypoints retain current installation and namespace authority; authentication failures provide public onboarding and canonical member-permission links without grants. Canonical redirects include the public PA guide and downloads; authenticated task routing and projections are unchanged. Opt-in PA communication uses explicit RPC dispatch and current member/installation facts; all business requests retain the original Foundation authentication. Explicit Harness selection preserves the Worker-owned task, current model recipient and authorization boundary; the Gateway never starts a model.",
+      "currentControl": "Same registered ingress, JWT/member identity and task boundaries; optional supplied-vector synchronization requires current task.process and exact field checks. Missing adapters refuse; Gateway never starts a model.",
       "targetControl": "AccessContext plus resource/data policies and TaskView",
       "stage": "S2"
     },
@@ -3387,7 +3387,7 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "0fcf72d8a00ab8784230110a7a3b62442939f290988991646850a6f5c69238cc",
+      "sourceDigest": "a34a85dbbaa03bed04c2d144c8bd4b6065aa216343462e294794a3851dec69a5",
       "channels": [
         "authorization_control"
       ],
@@ -3495,10 +3495,10 @@
     {
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "7e0b2ffc988177296814a8a7cfbbad1cf66c244e568eae8bff1180f29db4ab1d",
+      "sourceDigest": "f7f5ac1caf2e143d24cbfbf85370e8dd7c9c821c44f2af7c0ac9c2fcc7b26231",
       "stage": "S2",
       "content": "Resource roles, fields, bindings, source grants, derived lineage, artifacts and opaque cursors",
-      "currentControl": "Current resource roles, fields, source grants and output lineage; release labels may differ only with identical reviewed model content and action implementations; long task projections report checked Worker progress without changing the original lease, authority or evidence The exact v27 predecessor remains readable under the reviewed v28 description-only successor; field labels, source grants and business permissions remain unchanged.",
+      "currentControl": "Current roles, fields, source and output lineage remain mandatory. Optional semantic-v29 reuses only the exact unchanged descriptions-v28 field policy; the distinct v27-to-description28 upgrade remains explicit and new functions require their own rights.",
       "id": "security-data-policy",
       "channels": [
         "all-reads"
@@ -5243,7 +5243,7 @@
       ],
       "content": "Immutable runtime manifest including complete public Skill assets",
       "currentControl": "Current source-derived runtime files and explicit reviewed Skill assets; no private configuration or credentials included; type-only declarations are excluded from the runtime manifest",
-      "sourceDigest": "18341dffd2b0380ee6b93f739602a999448136a2a888df6400a7714f995c3703",
+      "sourceDigest": "86dd9ad3152543c2e0fd55b640c6a8af98b533e3e13ed70e120e700db0642ab6",
       "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
       "stage": "S5"
     },
@@ -5697,9 +5697,9 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "5ca8e4174a9f8a5d1e11b4b5ba1d3efa3ac9f857b1516d67bdd53d33fb7680b8",
+      "sourceDigest": "5f1145e96e114b21a717e011f27b3fa31bdf1ee10fc88d2637353c45eb9c09b7",
       "content": "PostgreSQL agent task-read admission",
-      "currentControl": "Current identity/task admission and deadlines, frozen request-scoped read snapshots, pinned ontology, roles, labels, direct/retained evidence and current source checks",
+      "currentControl": "Current task, identity, source and expiry checks remain. Under optional29, resource roles resolve against the checked task release while consent validates against the current reviewed policy, preserving old27 pins without new function grants.",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
     },
     {
@@ -5729,12 +5729,12 @@
     {
       "id": "trusted-kernel-bootstrap",
       "file": "packages/ontology/seed-definition.ts",
-      "sourceDigest": "fe2ace1ac4b10b449dd41b66b95a99e90471f6bf3cf9e6b2f88f725fae113f8d",
+      "sourceDigest": "4b27e25da5c23dc4beb5582c0415868dcc64d6149884dac87c529fd15813a88c",
       "channels": [
         "authorization_control"
       ],
       "content": "Trusted historical and staged ontology registry construction",
-      "currentControl": "Historical fingerprints, validators and protected contracts verified before use; incomplete builders deny",
+      "currentControl": "Default descriptions-v28 remains genuine15 stages; exact legacy policy selects genuine v27/14 stages. Optional semantic29 adds its true sealed16th stage from actual description28, retaining private compiled-seed identity and historical hashes.",
       "targetControl": "Historical fingerprints, validators and protected contracts verified before use; incomplete builders deny",
       "stage": "S5"
     },
@@ -5900,7 +5900,7 @@
     {
       "id": "postgres-database-runtime",
       "file": "packages/postgres/database.ts",
-      "sourceDigest": "fe5ace1c20a7d22592da00d7523700ce7a76f7a0b605c31580fa5b7de8870e6d",
+      "sourceDigest": "783b02e28f999ca9a7789db6aa28da6bb24281b881e9fa4f2c12bbcb4361406e",
       "channels": [
         "internal"
       ],
@@ -5924,7 +5924,7 @@
     {
       "id": "ontology-graph-program",
       "file": "packages/ontology/graph-program.ts",
-      "sourceDigest": "b38a7c33fd2266e89e5b5362fadbb1eccaa92a4c6ec0438f0294144373e30a94",
+      "sourceDigest": "5ef6ac76b72f1eed62a83a595ce22441fe07b8fb4da0f34035a17fd794dbe706",
       "channels": [
         "internal"
       ],
@@ -6215,7 +6215,7 @@
     {
       "id": "security-model-review",
       "file": "packages/security/model-review.ts",
-      "sourceDigest": "884813e72d625f93080e41462aa0e8d53a9d27a5ea76dfa36cbe5bbbc57cda97",
+      "sourceDigest": "27374473cb4184775d964b95afd437d593e12601810ba004ee4363db2a2d23d8",
       "channels": [
         "internal"
       ],
@@ -6251,7 +6251,7 @@
     {
       "id": "postgres-ontology-metadata",
       "file": "packages/postgres/ontology-metadata.ts",
-      "sourceDigest": "a9d2af05983b958690ef2e27f0fa01d78c73a395f19194e89ea6d54b264959dc",
+      "sourceDigest": "4247474ed1c8d2054d6d2436f995f8de120dcc7d90a2ae49b2cbb0c449cb8d0e",
       "channels": [
         "internal"
       ],
@@ -6287,7 +6287,7 @@
     {
       "id": "postgres-ontology-functions",
       "file": "packages/postgres/ontology-functions.ts",
-      "sourceDigest": "bf5bc7fd3594ea06907db7dd92ed1fb3c6d82bcb6750c956f7e20ef5fd777c52",
+      "sourceDigest": "c6ea9d3a2d47fbb323012057067211c34fab3334e8a961c62acd340da938e7d2",
       "channels": [
         "internal"
       ],
@@ -6659,12 +6659,12 @@
     {
       "id": "postgres-kernel-runtime",
       "file": "packages/postgres/kernel-runtime.ts",
-      "sourceDigest": "e5fca9dda55ab136835aa4f5d716c357518f5d32cf73f9b9f4fe10c7572b1999",
+      "sourceDigest": "e24ce1bb8318c7eae51593f5be17aea5fddd1015dfe8b5b498214e100cfdf6c3",
       "channels": [
         "internal"
       ],
       "content": "Yielded pre-publication PostgreSQL compiler preparation",
-      "currentControl": "Existing exact 13-stage trusted kernel, ready-brand checks and cancellation between stages; prepared before qualification publishing and passed through exact transaction token; original release row/body/digest/model checks remain authoritative, with no permission or data caching",
+      "currentControl": "Yielded actual staged targets27,28 or optional29 preserve exact completion/registry identity. Host selects27 or28 only from the reviewed policy; vector29 requires verified feature configuration and an explicitly upgraded description28 policy.",
       "targetControl": "Existing exact 13-stage trusted kernel, ready-brand checks and cancellation between stages; prepared before qualification publishing and passed through exact transaction token; original release row/body/digest/model checks remain authoritative, with no permission or data caching",
       "stage": "S5"
     },
@@ -6731,12 +6731,12 @@
     {
       "id": "release-artifacts-cli",
       "file": "scripts/release-artifacts.mjs",
-      "sourceDigest": "c7fec5267b1fbabf06b6273571b87b2184251be1dcb8c89b82971a4ceabf2db6",
+      "sourceDigest": "fd2ce792d32a48dcb717cc8b700dadc7ab35d727514386f025976ef2249ff4f8",
       "channels": [
         "internal"
       ],
       "content": "Immutable container and Ontology release artifact manifest and CI proof",
-      "currentControl": "Exact-source terminal runtime CI, pinned backend/tools, bounded credential-free releaseFiles inventory and byte digests, immutable OCI references and offline Ontology package; publication and activation remain separate; Harness candidates bind actual adapter inventory and require independent native image verification before readiness",
+      "currentControl": "Exact-source terminal full runtime CI plus actual non-skipped pgvector validation, immutable role/backend/tools and credential-free releaseFiles inventory. Optional semantic code/CLI shipping does not claim installed schema, active release or configured emitter.",
       "targetControl": "Exact-source terminal runtime CI, pinned backend/tools, bounded credential-free releaseFiles inventory and byte digests, immutable OCI references and offline Ontology package; publication and activation remain separate; Harness candidates bind actual adapter inventory and require independent native image verification before readiness",
       "stage": "S5"
     },
@@ -6767,7 +6767,7 @@
     {
       "id": "postgres-worker-runtime",
       "file": "apps/worker/postgres-runtime.ts",
-      "sourceDigest": "7e30c196276d40a4d8e0209fdc72f875c1b04e27b20df0638a3971df8572a20c",
+      "sourceDigest": "18d882534df6e72216b6e4c285d63dbaac94d9d794e8df7bbfe9d55793a42d01",
       "channels": [
         "internal"
       ],
@@ -6779,12 +6779,12 @@
     {
       "id": "postgres-ci-groups",
       "file": "scripts/postgres-tests.mjs",
-      "sourceDigest": "142106204ef96a80543cb3e8bf413fd7d9d4c0423003911698e9964f0c96567b",
+      "sourceDigest": "8451963d51f66c055873bf96e508d7ff61c2df6e8dc132cedba0fc404c37ba05",
       "channels": [
         "internal"
       ],
       "content": "Deterministic PostgreSQL CI selection, bounded scheduling and required aggregation",
-      "currentControl": "Static exhaustive real-PostgreSQL test groups, one test file at a time on independent fixture services, strict selected-suite registration and always-run required aggregate; missing/skipped/failed/cancelled required groups never become successful release evidence",
+      "currentControl": "Deterministic selected PG inventory and exact-source checkout, dedicated pinned pgvector0.8.2 synthetic service, explicit flags/loopback guard and mandatory non-skipped vector TAP; aggregate rejects missing, failed, canceled or skipped-required groups.",
       "targetControl": "Static exhaustive real-PostgreSQL test groups, one test file at a time on independent fixture services, strict selected-suite registration and always-run required aggregate; missing/skipped/failed/cancelled required groups never become successful release evidence",
       "stage": "S5"
     },
@@ -7019,7 +7019,7 @@
     {
       "id": "gateway-runtime-ports",
       "file": "apps/gateway/runtime-ports.ts",
-      "sourceDigest": "f631592ae90872873093f00b4048e87dd38367df38ca56b83eb88b9bfeab4844",
+      "sourceDigest": "f2d893f74b3cdcee21f6b2214321dad0b6e69570878150c94404dab62ca09221",
       "channels": [
         "internal"
       ],
@@ -7044,13 +7044,13 @@
     {
       "id": "postgres-definition-store",
       "file": "packages/postgres/definition-store.ts",
-      "sourceDigest": "e76e63077aabe7f1a2fc98590b3d5deddbc422ba3728aff31c60f5af6387566a",
+      "sourceDigest": "140ae6b23c09f1a5e99702b960bf1c3627cc0bd7a1ab3d0ce4084abce93b8969",
       "channels": [
         "internal",
         "ontology_metadata"
       ],
       "content": "Serialized PostgreSQL immutable definition publication and explicit activation",
-      "currentControl": "Exact original transaction, owner, published refs and guarded runtime; explicit scope and namespace permission remain at the service boundary; immutable release history, CAS generations, complete bounded facts/proofs and rollback; unknown or expired evidence cannot certify publication or execution",
+      "currentControl": "Same owner/namespace, immutable published metadata and original task pins. Controlled semantic installation requires exact description28 predecessor, current generation, real administrator and receipt proof; no startup upgrade.",
       "targetControl": "Preserve original task pins and current source/role/recipient authorization; no implicit activation or fake evidence",
       "stage": "S5"
     },
@@ -7170,12 +7170,12 @@
     {
       "id": "postgres-host-runtime",
       "file": "packages/postgres/host-runtime.ts",
-      "sourceDigest": "6c3232af3fe753da4e68cc6843ae4d72596630c534ab770eb8e2d8b5e8fc1d23",
+      "sourceDigest": "52c92b31f0cb037685dc34b21d775faf5538596288f818386eda8da4a33598c5",
       "channels": [
         "internal"
       ],
       "content": "Actual same-authority Gateway/Worker assembly, independent pools, exact imported identities and physical schema/ACL checks; immutable reviewed activation before one publisher and original node startup; missing configured adapters refuse startup",
-      "currentControl": "Actual same-authority Gateway/Worker assembly, independent pools, exact imported identities and physical schema/ACL checks; immutable reviewed activation before one publisher and original node startup; missing configured adapters refuse startup",
+      "currentControl": "Same reviewed primary/authority, strict import/activation and physical schema/role proofs. Optional vectors require separate exact base-bound schema receipt, isolated numeric wrappers and explicit semantic29 release; startup never installs or grants.",
       "targetControl": "Preserve one current primary, original task/node identities and full data/authorization semantics; no silent fallback or activation claim",
       "stage": "S5"
     },
@@ -7545,7 +7545,124 @@
       "currentControl": "The v27 digest is preserved explicitly and registered before the v28 metadata-only successor; historical releases are never rewritten.",
       "targetControl": "Accurate release construction and immutable historical interpretation",
       "stage": "S2",
-      "sourceDigest": "fe2ace1ac4b10b449dd41b66b95a99e90471f6bf3cf9e6b2f88f725fae113f8d"
+      "sourceDigest": "4b27e25da5c23dc4beb5582c0415868dcc64d6149884dac87c529fd15813a88c"
+    },
+    {
+      "id": "gateway-primary-startup",
+      "file": "apps/gateway/main.ts",
+      "sourceDigest": "a6305887ffbc287e796f606203e82781ac56a3612c9249cb8a0e6398796700c9",
+      "channels": [
+        "http",
+        "authorization_control"
+      ],
+      "content": "Shared primary Gateway assembly",
+      "currentControl": "Verified common authority/activation, actual asynchronous ports and optional vector adapter; original Relay/Messaging readiness and close ownership remain, with no Gateway model execution.",
+      "targetControl": "Verified common authority/activation, actual asynchronous ports and optional vector adapter; original Relay/Messaging readiness and close ownership remain, with no Gateway model execution.",
+      "stage": "S5"
+    },
+    {
+      "id": "ontology-registered-calculations",
+      "file": "packages/ontology/object-functions.ts",
+      "sourceDigest": "b83c1f563e83b231fd16939a05f11896fbe2435c90518ee3f7d727a1c683f332",
+      "channels": [
+        "internal"
+      ],
+      "content": "Typed registered calculation dispatch",
+      "currentControl": "Fixed registered call schemas and graph programs preserve unknown/incomplete results; semantic storage is explicit and absent ports never fabricate candidates. Storage retains permission and output authority.",
+      "targetControl": "Fixed registered call schemas and graph programs preserve unknown/incomplete results; semantic storage is explicit and absent ports never fabricate candidates. Storage retains permission and output authority.",
+      "stage": "S5"
+    },
+    {
+      "id": "ontology-semantic-retrieval-contract",
+      "file": "packages/ontology/semantic-retrieval.ts",
+      "sourceDigest": "a6d2695d8d817950d5774981ac46a241ca0b0429eb6587e3e06f4a7156731a83",
+      "channels": [
+        "http",
+        "mcp",
+        "registered_model"
+      ],
+      "content": "Supplied numeric-vector and candidate ObjectSet contracts",
+      "currentControl": "Explicit model/revision/dimension/input format, finite canonical float32 values, exact field digests and request bounds; producer claims do not prove embedding execution or business facts.",
+      "targetControl": "Explicit model/revision/dimension/input format, finite canonical float32 values, exact field digests and request bounds; producer claims do not prove embedding execution or business facts.",
+      "stage": "S5"
+    },
+    {
+      "id": "ontology-semantic-retrieval-port",
+      "file": "packages/ontology/semantic-retrieval-port.ts",
+      "sourceDigest": "a96f73080064bf608139d8c1926c3cdf26f1047f62f31c65d66f30d354938cc3",
+      "channels": [
+        "internal"
+      ],
+      "content": "Task-scoped vector synchronization and semantic storage ports",
+      "currentControl": "Typed numeric/data contracts convey no portable graph, grant, claim or business-action authority; actual runtime adapters remain mandatory.",
+      "targetControl": "Typed numeric/data contracts convey no portable graph, grant, claim or business-action authority; actual runtime adapters remain mandatory.",
+      "stage": "S5"
+    },
+    {
+      "id": "ontology-semantic-retrieval-kernel",
+      "file": "packages/ontology/semantic-retrieval-kernel.ts",
+      "sourceDigest": "d6618377b80182d912a45a3052325363bee5161e0cb7b64f6bb8c57552e4bc3b",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Optional additive semantic-v29 kernel",
+      "currentControl": "Exact genuine descriptions-v28 predecessor including documentedContracts; only the registered candidate function is added. No description28-to27 policy fold, role expansion or stored pin mutation.",
+      "targetControl": "Exact genuine descriptions-v28 predecessor including documentedContracts; only the registered candidate function is added. No description28-to27 policy fold, role expansion or stored pin mutation.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-embedding-index",
+      "file": "packages/postgres/embedding-index.ts",
+      "sourceDigest": "baa45048523c944ffb0dcbf743018551021e5079ec64327c173a0b178f295e77",
+      "channels": [
+        "postgres",
+        "http",
+        "registered_model"
+      ],
+      "content": "Task-local derived vector ingestion and candidate retrieval",
+      "currentControl": "Real PA task.process or original live Worker claim, current owner/task/release/revision/fields/source/recipient checks, bounded atomic immutable batches, full requested-set coverage and all ranking influences; revoked or incomplete inputs refuse or stay unknown.",
+      "targetControl": "Real PA task.process or original live Worker claim, current owner/task/release/revision/fields/source/recipient checks, bounded atomic immutable batches, full requested-set coverage and all ranking influences; revoked or incomplete inputs refuse or stay unknown.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-embedding-schema",
+      "file": "packages/postgres/embedding-schema.ts",
+      "sourceDigest": "d25bff48656f8a543620d40d9b7978baafd567313cfc46c614051de9ae9363a2",
+      "channels": [
+        "postgres",
+        "authorization_control"
+      ],
+      "content": "Exact derived-index schema and numeric wrapper proof",
+      "currentControl": "Immutable base-bound receipt, exact columns/constraints/indexes/triggers/ACL and actual vector0.8.2 membership; two fixed pure numeric wrappers preserve external namespace denial and grant no business-table authority.",
+      "targetControl": "Immutable base-bound receipt, exact columns/constraints/indexes/triggers/ACL and actual vector0.8.2 membership; two fixed pure numeric wrappers preserve external namespace denial and grant no business-table authority.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-vector-index-deployment",
+      "file": "packages/deployment/postgres-vector-index.ts",
+      "sourceDigest": "ec7472bb2beda984a3c139df182b4ddca5f9f228b33886cf1829ada034e806f5",
+      "channels": [
+        "private_file",
+        "postgres",
+        "authorization_control"
+      ],
+      "content": "Controlled derived schema and optional semantic publication",
+      "currentControl": "Offline preview; explicit actual non-runtime owner, original activation/authority and independent physical schema/role/readback before publication. No implicit policy upgrade, task replacement, source import, model or service start.",
+      "targetControl": "Offline preview; explicit actual non-runtime owner, original activation/authority and independent physical schema/role/readback before publication. No implicit policy upgrade, task replacement, source import, model or service start.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-task-vector-cli",
+      "file": "scripts/postgres-task-vectors.mjs",
+      "sourceDigest": "7ae0ce9cdc788880ff44cfd686d79f394a3b66749f2e792aaeec84e2e20461c1",
+      "channels": [
+        "private_file",
+        "postgres"
+      ],
+      "content": "Supplied-vector operator CLI",
+      "currentControl": "Default preview has no credential/database access; explicit apply uses existing verified-TLS administrator environment, pinned inputs and exclusive private proof files, independent readback, no unknown-commit retry and no publisher/model startup.",
+      "targetControl": "Default preview has no credential/database access; explicit apply uses existing verified-TLS administrator environment, pinned inputs and exclusive private proof files, independent readback, no unknown-commit retry and no publisher/model startup.",
+      "stage": "S5"
     },
     {
       "id": "local-semantic-embedding",
@@ -7577,13 +7694,25 @@
     {
       "id": "semantic-catalog-cli",
       "file": "scripts/semantic-catalog.mjs",
-      "sourceDigest": "1bceeaee6bc5b58c9e92d60f6b4c61d75d6603b907199b10a3a63774a26912e1",
+      "sourceDigest": "d8c0175eccf06a951511af6b8d3aef65731e03c50d13e8b09238ea39e5a440f5",
       "channels": [
         "operator_cli"
       ],
       "content": "Operator model setup, release indexing, publication watch and metadata search",
       "currentControl": "Private reviewed remote binding and verified TLS; existing admin identity for setup/index, runtime identity for search; localhost-only synthetic environment mode; release content checked before and after encoding; projection-only writes",
       "targetControl": "Private reviewed remote binding and verified TLS; existing admin identity for setup/index, runtime identity for search; localhost-only synthetic environment mode; release content checked before and after encoding; projection-only writes",
+      "stage": "S5"
+    },
+    {
+      "id": "semantic-runtime",
+      "file": "packages/semantic/runtime.ts",
+      "sourceDigest": "56f90f2da9c837132f83e8c3426627e48d9fc3e91b9bb2dd201001310d7008c8",
+      "channels": [
+        "internal"
+      ],
+      "content": "Worker-owned local model and independent read-only semantic index pool",
+      "currentControl": "Existing private target binding and verified TLS; separate non-owner NOINHERIT login with no primary role membership, business/membership access, broad table rights or embedding column SELECT; bounded read-only index transactions and explicit disposal; business authority retained around candidate read",
+      "targetControl": "Existing private target binding and verified TLS; separate non-owner NOINHERIT login with no primary role membership, business/membership access, broad table rights or embedding column SELECT; bounded read-only index transactions and explicit disposal; business authority retained around candidate read",
       "stage": "S5"
     }
   ]
