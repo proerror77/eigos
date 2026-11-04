@@ -12,6 +12,8 @@ on:
         options: [codex, harness]
         default: codex
         required: true
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
 permissions:
   contents: read
   actions: read

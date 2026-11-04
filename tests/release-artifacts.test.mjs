@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
+import {createRequire} from 'node:module';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,symlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname,join} from 'node:path';
@@ -224,6 +225,49 @@ test('container build inputs include PA assets and role images retain nonroot an
   assert(docker.split('\n').some(line=>line.startsWith('COPY scripts/')&&line.includes('scripts/install-business-descriptions.mjs')),'the legitimate description installer must travel with the immutable package');
   assert(ignore.includes('!scripts/semantic-catalog.mjs'));
   assert(docker.split('\n').some(line=>line.startsWith('COPY scripts/')&&line.includes('scripts/semantic-catalog.mjs')),'local semantic management must travel with both executor packages');
+});
+
+test('every CPU CI and Docker installation skips only optional ONNX downloads while preserving lifecycle scripts',()=>{
+  for(const name of ['ci.yml','semantic.yml','release-artifacts.yml']){
+    const workflow=parse(readFileSync(new URL('../.github/workflows/'+name,import.meta.url),'utf8'));let installs=0;
+    for(const job of Object.values(workflow.jobs))for(const step of job.steps??[]){
+      if(!/\bnpm\s+(?:ci|install)\b/.test(step.run??''))continue;
+      installs++;assert.equal({...workflow.env,...job.env,...step.env}.ONNXRUNTIME_NODE_INSTALL,'skip',`${name} must retain the CPU-only installer setting`);
+      assert(!/--ignore-scripts/.test(step.run),'Other package installation scripts must still run');
+    }
+    assert(installs>0);
+  }
+  const docker=readFileSync(new URL('../Dockerfile',import.meta.url),'utf8');
+  const installs=docker.split('\n').filter(line=>/^RUN .*\bnpm (?:ci|install|prune)\b/.test(line));
+  assert.equal(installs.length,4);
+  for(const line of installs){assert.match(line,/^RUN ONNXRUNTIME_NODE_INSTALL=skip npm /);assert(!line.includes('--ignore-scripts'));}
+  const semantic=parse(readFileSync(new URL('../.github/workflows/semantic.yml',import.meta.url),'utf8')).jobs['local-embedding-pgvector'];
+  assert.equal(semantic.env.EIGOS_TEST_SEMANTIC,'1');
+  assert.match(semantic.steps.find(step=>step.name==='Actual offline embedding and authorized Agent retrieval').run,/EIGOS_TEST_SEMANTIC=1 node/);
+});
+
+test('the official pinned ONNX installer selects optional CUDA for fresh Linux x64, and skip bypasses that selection',()=>{
+  const require=createRequire(import.meta.url),packageFile=require.resolve('onnxruntime-node/package.json'),root=dirname(packageFile);
+  assert.equal(JSON.parse(readFileSync(packageFile,'utf8')).version,'1.30.0');
+  const probe=String.raw`
+    const path=require('node:path'),fs=require('node:fs'),os=require('node:os'),root=process.argv[1];
+    os.platform=()=> 'linux';os.arch=()=> 'x64';
+    const utils=require(path.join(root,'script/install-utils.js'));let packages=[],manifests=[],exit=null;
+    // Intercept only the official installer's download boundary. No request,
+    // native binding, inference session or model is executed in this check.
+    utils.installPackages=(values,files)=>{packages=[...values].map(value=>value.name);manifests=files.map(file=>path.basename(file.filepath));};
+    const exists=fs.existsSync;fs.existsSync=p=>typeof p==='string'&&p.startsWith(path.join(root,'bin/napi-v6/linux/x64'))&&/providers_(?:cuda|shared|tensorrt)\.so$/.test(p)?false:exists(p);
+    const stopped={},originalExit=process.exit;process.exit=code=>{exit=code;throw stopped;};
+    try{require(path.join(root,'script/install.js'));}catch(error){if(error!==stopped)throw error;}finally{process.exit=originalExit;}
+    console.log(JSON.stringify({packages,manifests,exit,cpuBinding:exists(path.join(root,'bin/napi-v6/linux/x64/onnxruntime_binding.node')),cpuLibrary:exists(path.join(root,'bin/napi-v6/linux/x64/libonnxruntime.so.1'))}));
+  `;
+  const env={...process.env};for(const key of ['ONNXRUNTIME_NODE_INSTALL','ONNXRUNTIME_NODE_INSTALL_CUDA','npm_config_onnxruntime_node_install','npm_config_onnxruntime_node_install_cuda','npm_config_local_prefix','npm_package_json'])delete env[key];
+  const run=extra=>JSON.parse(execFileSync(process.execPath,['-e',probe,root],{env:{...env,...extra},encoding:'utf8',timeout:10000}));
+  const ordinary=run({}),cpu=run({ONNXRUNTIME_NODE_INSTALL:'skip'});
+  assert.deepEqual(ordinary.packages,['Microsoft.ML.OnnxRuntime.Gpu.Linux']);
+  assert(ordinary.manifests.includes('libonnxruntime_providers_cuda.so'));
+  assert.deepEqual(cpu.packages,[]);assert.deepEqual(cpu.manifests,[]);assert.equal(cpu.exit,0);
+  assert(ordinary.cpuBinding&&ordinary.cpuLibrary&&cpu.cpuBinding&&cpu.cpuLibrary,'CPU files are already bundled; installer selection is not an inference proof');
 });
 
 test('relocated semantic CLI help needs no source modules, model, database or credentials',()=>{

@@ -4,7 +4,8 @@ WORKDIR /app
 ARG SOURCE_SHA
 ARG RELEASE_BACKEND=codex
 COPY package.json package-lock.json ./
-RUN npm ci
+# CPU binaries are bundled; skip only ONNX Runtime's optional CUDA download.
+RUN ONNXRUNTIME_NODE_INSTALL=skip npm ci
 COPY tsconfig.json Dockerfile .dockerignore ./
 COPY apps ./apps
 COPY packages ./packages
@@ -16,7 +17,7 @@ COPY integrations/grok/eigos-delegate ./integrations/grok/eigos-delegate
 COPY integrations/grok/eigos-native/client.mjs ./integrations/grok/eigos-native/client.mjs
 RUN npm run build
 RUN node scripts/release-artifacts.mjs create --root /app --out /app/release --source-sha "${SOURCE_SHA}" --backend "${RELEASE_BACKEND}"
-RUN npm prune --omit=dev && npm cache clean --force
+RUN ONNXRUNTIME_NODE_INSTALL=skip npm prune --omit=dev && npm cache clean --force
 
 FROM scratch AS release-package
 COPY --from=build /app/release /
@@ -53,7 +54,7 @@ CMD ["node", "dist/apps/worker/main.js"]
 
 FROM worker AS worker-codex
 USER root
-RUN npm install --global --omit=dev @openai/codex@0.164.0 \
+RUN ONNXRUNTIME_NODE_INSTALL=skip npm install --global --omit=dev @openai/codex@0.164.0 \
     && test "$(codex --version)" = "codex-cli 0.164.0" \
     && npm cache clean --force
 ENV EIGOS_CODEX_BIN=/usr/local/bin/codex
@@ -74,7 +75,7 @@ FROM worker AS worker-harness
 USER root
 # pi-ai is the actual existing codex-oauth provider plugin. Keep it beside dsh
 # so native profile resolution also supports that selected account backend.
-RUN npm install --prefix /opt/eigos-harness --omit=dev --save-exact --no-audit --no-fund \
+RUN ONNXRUNTIME_NODE_INSTALL=skip npm install --prefix /opt/eigos-harness --omit=dev --save-exact --no-audit --no-fund \
       @deepseek-ai/dsh@0.2.1-rc.5 @deepseek-ai/dsh-llm-pi-ai@0.2.1-rc.5 \
     && ln -s /opt/eigos-harness/node_modules/.bin/dsh /usr/local/bin/dsh \
     && test "$(dsh --version)" = "0.2.1-rc.5" \

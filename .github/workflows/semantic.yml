@@ -28,6 +28,8 @@ on:
       - '.github/workflows/semantic.yml'
       - '.github/workflows/release-artifacts.yml'
   workflow_dispatch:
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
 permissions:
   contents: read
 jobs:
