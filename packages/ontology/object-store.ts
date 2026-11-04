@@ -164,7 +164,7 @@ export class OntologyObjectStore {
   /** Rechecks current authority on every hit. Graph changes reject the whole read. */
   reuseRead<T>(owner: string, key: string, action: () => T): T {
     if (!this.readWindow?.active || this.readWindow.owner !== owner) return action();
-    const value = this.readMemoValue(owner,key,action);
+    const value = this.readMemoValue(owner,'value:' + key,action);
     return value && typeof value === 'object' ? structuredClone(value) : value;
   }
   /** Internal row values remain private; callers parse their immutable JSON body. */

@@ -135,3 +135,14 @@ test('time-dependent request association is recomputed within a read window', t 
     assert.equal(calls,2);
   } finally {f.db.close();}
 });
+
+
+test('public read values cannot alias the private physical-row cache',()=>{
+  const f=fixture();
+  try {
+    f.graph.withReadMemo('alice',()=>{
+      f.graph.read('alice',f.ref);
+      assert.equal(f.graph.reuseRead('alice','raw-row:' + JSON.stringify([f.ref,false]),()=> 'separate-public-value'),'separate-public-value');
+    });
+  } finally {f.db.close();}
+});
