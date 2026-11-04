@@ -50,6 +50,7 @@ export async function postgresQueryAuthorizedObjects(client:Client,principal:Pri
     };
     if ('as' in query && query.as) await requireResource('interface', query.as);
     let target: string;
+    let relationship: { from:ObjectRef; type:string; side:'from'|'to'; other:'from'|'to' } | undefined;
     if ('object' in query) {
       await checkedRead(query.object,[model.object(query.object.type).primaryKey,model.object(query.object.type).titleKey]);
       target = query.as ?? query.object.type;
@@ -58,11 +59,27 @@ export async function postgresQueryAuthorizedObjects(client:Client,principal:Pri
       const nav = model.navigation(query.from.type, query.link, query.as);
       await requireResource('linkType', nav.link.id);
       target = nav.viewType ?? nav.other.type;
+      const side=nav.direction==='forward'?'from':'to';
+      relationship={from:query.from,type:nav.link.id,side,other:side==='from'?'to':'from'};
     } else target = query.type;
     await requireResource(model.isInterface(target) ? 'interface' : 'objectType', target);
     const selection=await postgresTaskQuerySelection(client,p,args.taskId,policyDigest);
     const types = new Set(model.concreteTypes(target)), visible: ObjectRef[] = [];
-    for (const row of selection.rows) {
+    let candidates=selection.rows;
+    if(relationship){
+      const {from,type,side,other}=relationship,scoped=ontology.ref.ontologyId!=='eigos.business';
+      // Narrow the already admitted inventory, without reading object bodies or
+      // granting access. queryVisible still validates every stored definition
+      // and relationship; checkedRead retains each candidate's full boundary.
+      const related=await client.query<{type:string;object_id:string}>(`SELECT selected.type,selected.object_id
+        FROM jsonb_to_recordset($1::jsonb) AS selected(type text,object_id text)
+        WHERE EXISTS(SELECT 1 FROM ${q}.ontology_${scoped?'scoped_':''}links l
+          WHERE l.owner=$2 AND l.type=$3 AND l.${side}_type=$4 AND l.${side}_id=$5
+            AND l.${other}_type=selected.type AND l.${other}_id=selected.object_id${scoped?' AND l.ontology_id=$6':''})`,
+      [JSON.stringify(selection.rows),owner,type,from.type,from.id,...(scoped?[ontology.ref.ontologyId]:[])]);
+      candidates=related.rows;
+    }
+    for (const row of candidates) {
       if (!types.has(String(row.type)) || 'object' in query && (row.type !== query.object.type || row.object_id !== query.object.id)) continue;
       const ref = objectRefSchema.parse({ type: row.type, id: row.object_id });
       const definition = model.object(ref.type), fields = [...new Set([definition.primaryKey, definition.titleKey,

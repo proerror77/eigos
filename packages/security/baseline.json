@@ -6275,7 +6275,7 @@
     {
       "id": "postgres-ontology-read-query",
       "file": "packages/postgres/ontology-read-query.ts",
-      "sourceDigest": "0ca1762234ab712bce93b7d860d4ca9aa32631ef9dd9f1544b33f50a008c1c97",
+      "sourceDigest": "16f01a4d19ee236da08ce4c92f500c9d2d419cae19dfcec431b51262c71e0a27",
       "channels": [
         "internal"
       ],
@@ -6731,7 +6731,7 @@
     {
       "id": "release-artifacts-cli",
       "file": "scripts/release-artifacts.mjs",
-      "sourceDigest": "77c68bb3a3cbe226e6a329e7d871053d38273e6ac3bebd263b575aaec8900fe5",
+      "sourceDigest": "4107b7392a17ca7e9d123504ab3faad5f07367d36b6b0c7c274ce031a8883cd7",
       "channels": [
         "internal"
       ],

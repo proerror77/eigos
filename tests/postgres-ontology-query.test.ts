@@ -106,3 +106,72 @@ test('PostgreSQL task queries filter visibility before predicates and pages, ret
       await assert.rejects(service.queryOntology(p, input({ type: 'Place' })), /POLICY_CHANGED/);
     } finally { if (target) await target.close(); sqlite.close(); f.close(); }
   });
+
+test('PostgreSQL relationship queries authorize only related admitted candidates, preserving pages and the full selection revision',
+  { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async () => {
+    const f=securityFixture(Date.now,{unified:true}),sqlite=new DatabaseSync(f.database);
+    let target:Awaited<ReturnType<typeof importPostgresFixture>>|undefined;
+    try {
+      const model=currentKernelImplementation(),raw=new OntologyObjectStore(sqlite,model,Date.now,undefined,{skipLegacyMigration:true});
+      const installation=f.installation('Synthetic relationship query',3600000),expiresAt=new Date(Date.now()+3600000).toISOString();
+      f.coordinator.approveAgentGrant(f.member.id,{installationId:installation.id,capabilityIds:['brief.prepare'],resources:[
+        {type:'ServiceRequest',fields:['requestId','originalGoal']},{type:'Place',fields:['placeId','displayTitle','name']},
+        {type:'SourceReceipt',fields:['receiptId','displayTitle','safeSummary','evidenceLevel']}],sourceBindingIds:[],
+        channels:['agent_response','registered_model'],expiresAt});
+      f.jobs.security.policies.setRecipient(installation.id,{classification:'sensitive',markings:['member_private','personal_data'],
+        channels:['agent_response'],expiresAt},f.jobs.security.policies.revision());
+      f.jobs.security.policies.setRole({subjectKind:'installation',subjectId:installation.id,role:'Viewer',expiresAt,
+        resource:{kind:'namespace',id:model.ref.id,version:model.ref.digest}},f.jobs.security.policies.revision());
+      const p={...f.principal,access:f.coordinator.authenticate(f.principal,installation.token)};
+      const refs=Array.from({length:24},(_,index)=>({type:'Place',id:`candidate-${String(index).padStart(2,'0')}`}));
+      const unbound={type:'Place',id:'unbound-related'},receipt={type:'SourceReceipt',id:'related-receipt'},otherReceipt={type:'SourceReceipt',id:'other-receipt'};
+      raw.ingest(f.owner,{objects:[...[...refs,unbound].map(ref=>({ref,properties:{placeId:ref.id,displayTitle:ref.id,name:ref.id}})),
+        ...[receipt,otherReceipt].map(ref=>({ref,properties:{receiptId:ref.id,displayTitle:'Synthetic receipt',safeSummary:'Synthetic',evidenceLevel:'synthetic'}}))],
+        links:[...refs,unbound].map((ref,index)=>({type:'PlaceEvidence',from:ref,to:index<3||ref===unbound?receipt:otherReceipt}))},
+      {kind:'synthetic',id:'fixture',observedAt:new Date().toISOString()});
+      const task=f.task(installation.id);
+      f.jobs.security.revokeGrant(f.owner,task.grant.id,1);
+      const grant=f.jobs.security.issueTaskGrant({...task.grant,id:randomUUID(),operations:['task.query','task.process','task.result.read','member_asset.read'],
+        channels:['agent_response','registered_model'],inputs:[...refs.map((object,index)=>({object,objectRevision:1,
+          fields:index===2?['placeId']:['placeId','displayTitle','name']})),
+        {object:receipt,objectRevision:1,fields:['receiptId','displayTitle','safeSummary','evidenceLevel']}]});
+      const input=(query:ObjectQuery)=>({version:2,taskId:task.job.id,expectedRequestRevision:1,query});
+      const source=new AuthorizedOntologyView(f.jobs.ontology,f.jobs.security,p),relationship={from:receipt,link:'places',limit:1};
+      const expected=source.query(input(relationship));
+      target=await importPostgresFixture(f);
+      const t=target,q=`"${t.schema}"`,bindings=new Set<string>(),labels=new Set<string>();
+      // Observe the real client without replacing any authorization result.
+      const service=new PostgresTaskReadService({run:action=>t.database.run(async client=>{
+        const original=client.query;
+        client.query=(async(...args:unknown[])=>{
+          const [sql,values]=args;
+          if(typeof sql==='string'&&Array.isArray(values)&&values[1]==='Place'&&typeof values[2]==='string'){
+            if(sql.includes('.security_bindings b JOIN'))bindings.add(values[2]);
+            if(sql.includes('.security_labels WHERE'))labels.add(values[2]);
+          }
+          return Reflect.apply(original,client,args);
+        }) as typeof client.query;
+        try{return await action(client);}finally{client.query=original;}
+      })},t.policy);
+      const query=async(value:ObjectQuery)=>{bindings.clear();labels.clear();await t.refreshEligibility();return service.queryOntology(p,input(value));};
+      const assertNarrow=()=>{
+        assert.deepEqual([...bindings].sort(),refs.slice(0,3).map(ref=>ref.id),'only the three related task-bound objects reach per-object authorization, independent of the 24-object inventory');
+        assert(labels.size>=2&&labels.size<=3,'current label reads remain bounded by the related candidates');
+        assert([...labels].every(id=>refs.slice(0,3).some(ref=>ref.id===id)),'no unrelated or unbound object labels are read');
+      };
+      const first=await query(relationship);
+      assert.deepEqual({...first,page:{...first.page,cursor:undefined}},{...expected,page:{...expected.page,cursor:undefined}});
+      assert(expected.page.cursor);assertNarrow();assert(first.page.cursor);
+      const second=await query({...relationship,cursor:first.page.cursor});
+      assert.deepEqual(second.items.map(item=>item.ref),[refs[1]]);assert.equal(second.page.hasMore,false);assertNarrow();
+      const filtered=await query({from:receipt,link:'places',where:[{property:'name',op:'eq',value:refs[1]!.id}]});
+      assert.deepEqual(filtered.items.map(item=>item.ref),[refs[1]]);assertNarrow();
+      const forward=await query({from:refs[0]!,link:'sourceReceipts'});
+      assert.deepEqual(forward.items.map(item=>item.ref),[receipt],'forward navigation preserves the endpoint direction');
+      await assert.rejects(query({from:unbound,link:'sourceReceipts'}),/AUTHORIZATION_REQUIRED|not available/);
+      await assert.rejects(query({from:receipt,link:'places',select:['address']}),/INSUFFICIENT_ACCESS/);
+      await t.client.query(`UPDATE ${q}.security_bindings SET object_revision=2 WHERE grant_id=$1 AND type='Place' AND object_id=$2`,[grant.id,refs[23]!.id]);
+      await assert.rejects(query({...relationship,cursor:first.page.cursor}),/POLICY_CHANGED/,
+        'a changed unrelated binding still invalidates the original full-selection cursor context');
+    }finally{if(target)await target.close();sqlite.close();f.close();}
+  });

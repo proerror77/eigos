@@ -7,7 +7,7 @@ on:
         type: string
         required: true
       backend:
-        description: Worker backend; Harness is gated until its actual adapter is integrated
+        description: Fixed Worker backend; native image checks run without credentials or model turns
         type: choice
         options: [codex, harness]
         default: codex
@@ -31,10 +31,7 @@ jobs:
           BACKEND: ${{ inputs.backend }}
         run: |
           [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
-          if [ "$BACKEND" != codex ]; then
-            echo 'Harness adapter is not integrated in this release; installing a CLI is insufficient.' >&2
-            exit 1
-          fi
+          [[ "$BACKEND" == codex || "$BACKEND" == harness ]]
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.source_sha }}
@@ -85,7 +82,7 @@ jobs:
           - role: relay
             target: relay
           - role: worker
-            target: worker-codex
+            target: ${{ inputs.backend == 'harness' && 'worker-harness' || 'worker-codex' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -102,9 +99,10 @@ jobs:
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
           ROLE: ${{ matrix.role }}
+          BACKEND: ${{ inputs.backend }}
         run: |
           REPOSITORY="ghcr.io/${GITHUB_REPOSITORY,,}/$ROLE"
-          TAG="$REPOSITORY:sha-$SOURCE_SHA-codex"
+          TAG="$REPOSITORY:sha-$SOURCE_SHA-$BACKEND"
           if RESULT=$(docker buildx imagetools inspect "$TAG" 2>&1); then
             echo 'This immutable source tag is already published. Re-run only failed jobs instead of overwriting it.' >&2
             exit 1
@@ -114,6 +112,25 @@ jobs:
           fi
           echo "repository=$REPOSITORY" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - name: Build the native Worker for isolated validation before publication
+        if: inputs.backend == 'harness' && matrix.role == 'worker'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          target: worker-harness
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: eigos-harness-release-check:${{ inputs.source_sha }}
+          build-args: SOURCE_SHA=${{ inputs.source_sha }}
+          provenance: false
+          cache-from: type=gha,scope=release-${{ inputs.source_sha }}
+      - name: Check the actual native SDK before registry publication
+        if: inputs.backend == 'harness' && matrix.role == 'worker'
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          docker run --rm --network none --read-only --tmpfs /tmp:rw,exec,mode=1777 --entrypoint node --env SOURCE_SHA --mount "type=bind,src=$PWD/scripts/smoke-harness-image.mjs,dst=/opt/eigos-smoke.mjs,readonly" "eigos-harness-release-check:$SOURCE_SHA" /opt/eigos-smoke.mjs
       - id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
@@ -131,14 +148,24 @@ jobs:
           sbom: true
           cache-from: type=gha,scope=release-${{ inputs.source_sha }}
           cache-to: type=gha,mode=max,scope=release-${{ inputs.source_sha }}
+      - name: Verify the published native Worker by its returned immutable digest
+        if: inputs.backend == 'harness' && matrix.role == 'worker'
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          IMAGE: ${{ steps.reference.outputs.repository }}@${{ steps.build.outputs.digest }}
+        run: |
+          [[ "$IMAGE" =~ @sha256:[a-f0-9]{64}$ ]]
+          docker pull "$IMAGE"
+          docker run --rm --network none --read-only --tmpfs /tmp:rw,exec,mode=1777 --entrypoint node --env SOURCE_SHA --mount "type=bind,src=$PWD/scripts/smoke-harness-image.mjs,dst=/opt/eigos-smoke.mjs,readonly" "$IMAGE" /opt/eigos-smoke.mjs > "$RUNNER_TEMP/harness-image-smoke.json"
       - name: Record the returned digest and provenance metadata
         env:
           ROLE: ${{ matrix.role }}
           REPOSITORY: ${{ steps.reference.outputs.repository }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
           BUILD_METADATA: ${{ steps.build.outputs.metadata }}
+          BACKEND: ${{ inputs.backend }}
         run: |
-          node -e 'const fs=require("node:fs"),e=process.env;if(!/^sha256:[a-f0-9]{64}$/.test(e.IMAGE_DIGEST))throw Error("Missing returned OCI digest");fs.mkdirSync("image-result",{recursive:true});fs.writeFileSync(`image-result/${e.ROLE}.json`,JSON.stringify({role:e.ROLE,reference:`${e.REPOSITORY}@${e.IMAGE_DIGEST}`})+"\n");fs.writeFileSync(`image-result/${e.ROLE}-provenance.json`,e.BUILD_METADATA+"\n")'
+          node -e 'const fs=require("node:fs"),e=process.env;if(!/^sha256:[a-f0-9]{64}$/.test(e.IMAGE_DIGEST))throw Error("Missing returned OCI digest");const reference=`${e.REPOSITORY}@${e.IMAGE_DIGEST}`;fs.mkdirSync("image-result",{recursive:true});fs.writeFileSync(`image-result/${e.ROLE}.json`,JSON.stringify({role:e.ROLE,reference})+"\n");fs.writeFileSync(`image-result/${e.ROLE}-provenance.json`,e.BUILD_METADATA+"\n");if(e.BACKEND==="harness"&&e.ROLE==="worker"){const proof=JSON.parse(fs.readFileSync(`${e.RUNNER_TEMP}/harness-image-smoke.json`));fs.writeFileSync("image-result/worker-harness-proof.json",JSON.stringify({...proof,image:reference})+"\n");}'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: image-${{ matrix.role }}-${{ inputs.source_sha }}
@@ -171,20 +198,22 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          target: release-package
+          target: ${{ inputs.backend == 'harness' && 'release-package-harness' || 'release-package' }}
           platforms: linux/amd64
           push: false
           build-args: SOURCE_SHA=${{ inputs.source_sha }}
           outputs: type=local,dest=release-package
           cache-from: type=gha,scope=release-${{ inputs.source_sha }}
       - name: Finalize immutable OCI references without republishing Ontology
+        env:
+          BACKEND: ${{ inputs.backend }}
         run: |
           sudo chown -R "$(id -u):$(id -g)" release-package
-          node -e 'const fs=require("node:fs"),cp=require("node:child_process"),roles=["gateway","relay","worker"],args=["scripts/release-artifacts.mjs","finalize","--root","release-package","--ci-proof","release-input/ci-proof.json"];for(const role of roles){const result=JSON.parse(fs.readFileSync(`release-input/${role}.json`));if(result.role!==role)throw Error("Image role mismatch");args.push(`--image-${role}`,result.reference);}cp.execFileSync(process.execPath,args,{stdio:"inherit"})'
+          node -e 'const fs=require("node:fs"),cp=require("node:child_process"),roles=["gateway","relay","worker"],args=["scripts/release-artifacts.mjs","finalize","--root","release-package","--ci-proof","release-input/ci-proof.json"];for(const role of roles){const result=JSON.parse(fs.readFileSync(`release-input/${role}.json`));if(result.role!==role)throw Error("Image role mismatch");args.push(`--image-${role}`,result.reference);}if(process.env.BACKEND==="harness")args.push("--harness-image-proof","release-input/worker-harness-proof.json");cp.execFileSync(process.execPath,args,{stdio:"inherit"})'
           node scripts/release-artifacts.mjs verify --root release-package --require-ready
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-${{ inputs.source_sha }}-codex
+          name: release-${{ inputs.source_sha }}-${{ inputs.backend }}
           path: release-package/
           # Only the verified whitelist directory, including source/.dockerignore.
           include-hidden-files: true

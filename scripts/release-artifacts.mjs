@@ -11,7 +11,7 @@ export const ONTOLOGY_PACKAGE_FORMAT='eigos.ontology-package/1';
 export const RELEASE_TOOLS=Object.freeze({node:'22.22.3',codex:'0.164.0'});
 export const HARNESS_RELEASE_TOOLS=Object.freeze({node:RELEASE_TOOLS.node,harness:'0.2.1-rc.5'});
 const harnessRuntimeFiles=['dist/packages/capabilities/harness-executor.js','dist/apps/worker/postgres-runtime.js','dist/packages/core/model-usage-context.js','dist/packages/core/model-dispatch-context.js','dist/packages/postgres/coordinator.js'];
-const harnessImagePending=`Harness remains a candidate until the native dsh ${HARNESS_RELEASE_TOOLS.harness} installation and worker image compatibility are independently verified`;
+const harnessImagePending=`Harness remains a candidate until the native dsh ${HARNESS_RELEASE_TOOLS.harness} installation and worker image compatibility are independently verified against its exact OCI digest`;
 const sha=/^[a-f0-9]{64}$/,commit=/^(?!0{40}$)[a-f0-9]{40}$/;
 const image=/^[a-z0-9][a-z0-9.:-]*(?:\/[a-z0-9][a-z0-9._-]*)+@sha256:[a-f0-9]{64}$/;
 const roles=['gateway','relay','worker'];
@@ -69,21 +69,30 @@ export function proveExactCi(run,jobs,sourceSha,repository){
   return ciProof({sourceSha,runId:run.id,url:run.html_url,jobs:requiredJobs},sourceSha);
 }
 function payloadOf(value){return {format:value.format,source:value.source,backend:value.backend,tools:value.tools,runtime:value.runtime,sourceFiles:value.sourceFiles,lockfile:value.lockfile,ontology:value.ontology};}
+export function validateHarnessImageProof(input,sourceSha,workerImage){
+  record(input,['sourceSha','image','version','providers','initialize','modelTurns','compiledAdapter','state'],'Harness image proof');
+  if(input.sourceSha!==sourceSha||!image.test(workerImage??'')||input.image!==workerImage
+    ||input.version!==HARNESS_RELEASE_TOOLS.harness||canonical(input.providers)!==canonical(['deepseek-official','openai-codex'])
+    ||input.initialize!=='acknowledged'||input.modelTurns!==0||input.compiledAdapter!=='present'||input.state!=='candidate')fail('Harness image proof must match the exact source, OCI digest and actual initialize-only SDK checks');
+  return structuredClone(input);
+}
 export function createReleaseManifest(input){
   const backend=input.backend??'codex';
-  const value={format:RELEASE_ARTIFACT_FORMAT,source:{sha:input.sourceSha,version:input.version},backend,tools:{...backendTools(backend)},runtime:{buildDigest:input.buildDigest,files:input.runtimeFiles},sourceFiles:input.sourceFiles,lockfile:input.lockfile,ontology:input.ontology,images:input.images??{},...(input.ci?{ci:input.ci}:{}),state:backend==='codex'&&roles.every(role=>input.images?.[role])&&!!input.ci?'artifact-ready':'candidate'};
+  const value={format:RELEASE_ARTIFACT_FORMAT,source:{sha:input.sourceSha,version:input.version},backend,tools:{...backendTools(backend)},runtime:{buildDigest:input.buildDigest,files:input.runtimeFiles},sourceFiles:input.sourceFiles,lockfile:input.lockfile,ontology:input.ontology,images:input.images??{},...(input.ci?{ci:input.ci}:{}),...(input.harnessImage?{harnessImage:input.harnessImage}:{}),state:(backend==='codex'||!!input.harnessImage)&&roles.every(role=>input.images?.[role])&&!!input.ci?'artifact-ready':'candidate'};
   value.payloadDigest=artifactDigest(payloadOf(value));value.manifestDigest=artifactDigest(value);return validateReleaseManifest(value);
 }
 export function validateReleaseManifest(input,{requireReady=false}={}){
-  record(input,['format','source','backend','tools','runtime','sourceFiles','lockfile','ontology','images','ci','state','payloadDigest','manifestDigest'],'release manifest');
+  record(input,['format','source','backend','tools','runtime','sourceFiles','lockfile','ontology','images','ci','harnessImage','state','payloadDigest','manifestDigest'],'release manifest');
   if(input.format!==RELEASE_ARTIFACT_FORMAT||!commit.test(input.source?.sha))fail('A fixed source SHA is required');record(input.source,['sha','version'],'source');text(input.source.version,'package version');
   if(canonical(input.tools)!==canonical(backendTools(input.backend)))fail('Release tool versions must remain pinned for the selected backend');
   record(input.runtime,['buildDigest','files'],'runtime inventory');if(!sha.test(input.runtime.buildDigest))fail('Invalid runtime build digest');files(input.runtime.files);files(input.sourceFiles);descriptor(input.lockfile);if(input.lockfile.path!=='package-lock.json')fail('Release lockfile must be package-lock.json');
   if(input.backend==='harness')assertHarnessInventory(input);
   record(input.ontology,['packageFile','package'],'ontology artifact');descriptor(input.ontology.packageFile);if(input.ontology.packageFile.path!=='ontology/package.json')fail('Invalid ontology package path');validateOntologyPackage(input.ontology.package);
   record(input.images,roles,'OCI references');for(const ref of Object.values(input.images))if(typeof ref!=='string'||!image.test(ref))fail('Image references must use an immutable OCI sha256 digest');
-  if(input.ci)ciProof(input.ci,input.source.sha);const ready=input.backend==='codex'&&roles.every(role=>input.images[role])&&!!input.ci;
-  if(input.backend==='harness'&&(input.state==='artifact-ready'||requireReady))fail(harnessImagePending);
+  if(input.ci)ciProof(input.ci,input.source.sha);
+  if(input.harnessImage){if(input.backend!=='harness')fail('Only Harness releases may contain a Harness image proof');validateHarnessImageProof(input.harnessImage,input.source.sha,input.images.worker);}
+  const ready=(input.backend==='codex'||!!input.harnessImage)&&roles.every(role=>input.images[role])&&!!input.ci;
+  if(input.backend==='harness'&&!input.harnessImage&&(input.state==='artifact-ready'||requireReady))fail(harnessImagePending);
   if(input.state!==(ready?'artifact-ready':'candidate')||requireReady&&!ready)fail('An artifact-ready release requires all OCI digests and exact-source CI');
   if(input.payloadDigest!==artifactDigest(payloadOf(input)))fail('Release payload digest does not match');const {manifestDigest,...body}=input;if(manifestDigest!==artifactDigest(body))fail('Release manifest digest does not match');return structuredClone(input);
 }
@@ -98,10 +107,10 @@ export function verifyReleaseArtifacts(directory,manifest=readReleaseManifest(jo
   const document=JSON.parse(readFileSync(checkedFile(join(directory,'ontology'),parsed.kernel.file.path),'utf8'));if(artifactDigest(document)!==parsed.kernel.documentDigest||document.id!==parsed.kernel.id||document.version!==parsed.kernel.version)fail('Ontology document digest or identity differs');return value;
 }
 
-export function finalizeReleaseArtifacts(directory,{images,ci}){
+export function finalizeReleaseArtifacts(directory,{images,ci,harnessImage}){
   const current=verifyReleaseArtifacts(directory);if(current.state!=='candidate')fail('Only a verified candidate can be finalized once');
-  if(current.backend==='harness')fail(harnessImagePending);
-  const value=createReleaseManifest({sourceSha:current.source.sha,version:current.source.version,backend:current.backend,buildDigest:current.runtime.buildDigest,runtimeFiles:current.runtime.files,sourceFiles:current.sourceFiles,lockfile:current.lockfile,ontology:current.ontology,images,ci});
+  if(current.backend==='harness'&&!harnessImage)fail(harnessImagePending);
+  const value=createReleaseManifest({sourceSha:current.source.sha,version:current.source.version,backend:current.backend,buildDigest:current.runtime.buildDigest,runtimeFiles:current.runtime.files,sourceFiles:current.sourceFiles,lockfile:current.lockfile,ontology:current.ontology,images,ci,harnessImage});
   validateReleaseManifest(value,{requireReady:true});if(value.payloadDigest!==current.payloadDigest)fail('Finalization cannot change the image payload');writeJson(join(directory,'manifest.json'),value);return value;
 }
 
@@ -125,12 +134,13 @@ export async function createReleaseArtifacts({root=process.cwd(),output,sourceSh
 }
 
 async function main(){
-  const command=process.argv[2],{values}=parseArgs({args:process.argv.slice(3),options:{root:{type:'string'},out:{type:'string'},'source-sha':{type:'string'},backend:{type:'string'},manifest:{type:'string'},'image-gateway':{type:'string'},'image-relay':{type:'string'},'image-worker':{type:'string'},'ci-proof':{type:'string'},'require-ready':{type:'boolean'},runs:{type:'string'},jobs:{type:'string'},repository:{type:'string'}}});
+  const command=process.argv[2],{values}=parseArgs({args:process.argv.slice(3),options:{root:{type:'string'},out:{type:'string'},'source-sha':{type:'string'},backend:{type:'string'},manifest:{type:'string'},'image-gateway':{type:'string'},'image-relay':{type:'string'},'image-worker':{type:'string'},'ci-proof':{type:'string'},'harness-image-proof':{type:'string'},'require-ready':{type:'boolean'},runs:{type:'string'},jobs:{type:'string'},repository:{type:'string'}}});
+  if(values['harness-image-proof']&&command!=='finalize')fail('Harness image proof is admitted only during finalization');
   if(command==='select-ci'){const run=selectExactCiRun(JSON.parse(readFileSync(values.runs,'utf8')),values['source-sha']);console.log(run.id);return;}
   if(command==='ci-proof'){const runs=JSON.parse(readFileSync(values.runs,'utf8')),run=selectExactCiRun(runs,values['source-sha']),raw=JSON.parse(readFileSync(values.jobs,'utf8')),proof=proveExactCi(run,Array.isArray(raw)?raw:raw.jobs,values['source-sha'],values.repository);writeJson(values.out,proof);console.log(canonical(proof));return;}
   if(command==='verify'){const value=verifyReleaseArtifacts(values.root??process.cwd(),values.manifest?readReleaseManifest(values.manifest,{requireReady:values['require-ready']}):undefined);if(values['require-ready'])validateReleaseManifest(value,{requireReady:true});console.log(canonical({state:value.state,sourceSha:value.source.sha,payloadDigest:value.payloadDigest,manifestDigest:value.manifestDigest}));return;}
   if(!['create','finalize'].includes(command))fail('Use create, finalize, verify, select-ci or ci-proof');const images=Object.fromEntries(roles.filter(role=>values[`image-${role}`]).map(role=>[role,values[`image-${role}`]]));
-  if(command==='finalize'){const value=finalizeReleaseArtifacts(values.root??process.cwd(),{images,ci:values['ci-proof']?JSON.parse(readFileSync(values['ci-proof'],'utf8')):undefined});console.log(canonical({state:value.state,payloadDigest:value.payloadDigest,manifestDigest:value.manifestDigest}));return;}
+  if(command==='finalize'){const value=finalizeReleaseArtifacts(values.root??process.cwd(),{images,ci:values['ci-proof']?JSON.parse(readFileSync(values['ci-proof'],'utf8')):undefined,harnessImage:values['harness-image-proof']?JSON.parse(readFileSync(values['harness-image-proof'],'utf8')):undefined});console.log(canonical({state:value.state,payloadDigest:value.payloadDigest,manifestDigest:value.manifestDigest}));return;}
   const value=await createReleaseArtifacts({root:values.root,output:values.out,sourceSha:values['source-sha'],backend:values.backend,images,ci:values['ci-proof']?JSON.parse(readFileSync(values['ci-proof'],'utf8')):undefined});console.log(canonical({state:value.state,sourceSha:value.source.sha,payloadDigest:value.payloadDigest,manifestDigest:value.manifestDigest}));
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(error=>{console.error(error.message);process.exitCode=1;});

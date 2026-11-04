@@ -4,12 +4,14 @@ import {createHash} from 'node:crypto';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,symlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname,join} from 'node:path';
+import {parse} from 'yaml';
 import {artifactDigest,canonical,createReleaseManifest,createReleaseArtifacts,validateReleaseManifest,readReleaseManifest,verifyReleaseArtifacts,finalizeReleaseArtifacts,selectExactCiRun,proveExactCi,HARNESS_RELEASE_TOOLS} from '../scripts/release-artifacts.mjs';
 
 const sourceSha='1'.repeat(40),rawDigest=bytes=>createHash('sha256').update(bytes).digest('hex'),roles=['gateway','relay','worker'];
 const jobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)','postgres-execution-cases (contracts)','postgres-execution-cases (planning)','postgres-execution-cases (documents)','postgres-execution-cases (didi)','postgres-execution-cases (transitions)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
 const ci={sourceSha,runId:17,url:'https://github.com/example/eigos/actions/runs/17',jobs};
 const images=Object.fromEntries(roles.map((role,i)=>[role,`ghcr.io/example/eigos/${role}@sha256:${String(i+1).repeat(64)}`]));
+const harnessImage={sourceSha,image:images.worker,version:HARNESS_RELEASE_TOOLS.harness,providers:['deepseek-official','openai-codex'],initialize:'acknowledged',modelTurns:0,compiledAdapter:'present',state:'candidate'};
 const harnessPaths=['dist/packages/capabilities/harness-executor.js','dist/apps/worker/postgres-runtime.js','dist/packages/core/model-usage-context.js','dist/packages/core/model-dispatch-context.js','dist/packages/postgres/coordinator.js'];
 function fixture(backend='codex'){
   const directory=mkdtempSync(join(tmpdir(),'eigos-release-artifacts-')),put=(prefix,path,bytes)=>{const file=join(directory,prefix,path);mkdirSync(dirname(file),{recursive:true});writeFileSync(file,bytes);return {path,sha256:rawDigest(bytes),bytes:Buffer.byteLength(bytes)};};
@@ -78,6 +80,23 @@ test('Harness candidates bind the actual adapter inventory and selected tool pin
   }finally{x.close();}
 });
 
+test('Harness finalization binds the actual initialize-only image proof to its source and worker OCI digest',()=>{
+  const x=fixture('harness');try{
+    const candidate=createReleaseManifest({...x.input,backend:'harness'});
+    for(const change of [{sourceSha:'2'.repeat(40)},{image:images.gateway},{version:'unverified'},{providers:['deepseek-official']},
+      {initialize:'failed'},{modelTurns:1},{compiledAdapter:'absent'},{state:'artifact-ready'}]){
+      assert.throws(()=>createReleaseManifest({...x.input,backend:'harness',images,ci,harnessImage:{...harnessImage,...change}}),/image proof.*exact source/);
+    }
+    assert.throws(()=>createReleaseManifest({...x.input,images,ci,harnessImage}),/Only Harness/);
+    writeFileSync(join(x.directory,'manifest.json'),canonical(candidate)+'\n');
+    const ready=finalizeReleaseArtifacts(x.directory,{images,ci,harnessImage});
+    assert.equal(ready.state,'artifact-ready');assert.equal(ready.payloadDigest,candidate.payloadDigest);
+    assert.deepEqual(ready.harnessImage,harnessImage);assert.equal(verifyReleaseArtifacts(x.directory).manifestDigest,ready.manifestDigest);
+    assert.equal(readReleaseManifest(join(x.directory,'manifest.json'),{requireReady:true}).backend,'harness');
+    assert.throws(()=>finalizeReleaseArtifacts(x.directory,{images,ci,harnessImage}),/finalized once/);
+  }finally{x.close();}
+});
+
 function packagingFixture({version=HARNESS_RELEASE_TOOLS.harness,adapter=true}={}){
   const root=mkdtempSync(join(tmpdir(),'eigos-harness-package-')),output=join(root,'candidate'),put=(path,value)=>{const full=join(root,path);mkdirSync(dirname(full),{recursive:true});writeFileSync(full,value);};
   const paths=[...harnessPaths,'package.json','package-lock.json'];
@@ -113,4 +132,20 @@ test('PR container smoke cannot publish while release publication requires expli
   const release=readFileSync(new URL('../.github/workflows/release-artifacts.yml',import.meta.url),'utf8'),smoke=readFileSync(new URL('../.github/workflows/container-smoke.yml',import.meta.url),'utf8');
   assert.match(release,/on:\n  workflow_dispatch:/);assert(!release.includes('  pull_request:'));assert.match(release,/needs: gate/);assert.match(release,/ci-proof/);assert.match(release,/include-hidden-files: true/);
   assert.match(smoke,/on:\n  pull_request:\n    paths:/);assert.match(smoke,/push: false/);assert.match(smoke,/github.event.pull_request.head.sha/);assert.match(smoke,/gateway, worker-codex/);assert(!smoke.includes('packages: write'));assert(!smoke.includes('login-action'));assert(!smoke.includes('push: true'));
+});
+
+test('manual Harness publication checks native images before push and again at the returned digest without model credentials',()=>{
+  const workflow=parse(readFileSync(new URL('../.github/workflows/release-artifacts.yml',import.meta.url),'utf8'));
+  assert.deepEqual(workflow.on.workflow_dispatch.inputs.backend.options,['codex','harness']);
+  const worker=workflow.jobs.image.strategy.matrix.include.find(role=>role.role==='worker');
+  assert(worker.target.includes("inputs.backend == 'harness'"));assert(worker.target.includes('worker-harness'));
+  const steps=workflow.jobs.image.steps,publish=steps.findIndex(step=>step.id==='build');
+  const sdk=steps.filter(step=>step.run?.includes('/opt/eigos-smoke.mjs'));
+  assert.equal(sdk.length,2);assert(steps.indexOf(sdk[0])<publish);assert(steps.indexOf(sdk[1])>publish);
+  for(const step of sdk){assert.equal(step.if,"inputs.backend == 'harness' && matrix.role == 'worker'");
+    for(const flag of ['--network none','--read-only','--entrypoint node','--env SOURCE_SHA'])assert(step.run.includes(flag));
+    assert(!/TOKEN|PASSWORD|api.?key/i.test(step.run));}
+  assert(sdk[1].env.IMAGE.includes('steps.build.outputs.digest'));
+  const finish=workflow.jobs.package.steps.find(step=>step.name==='Finalize immutable OCI references without republishing Ontology');
+  assert(finish.run.includes('--harness-image-proof'));assert(workflow.jobs.package.steps.some(step=>step.with?.target?.includes('release-package-harness')));
 });

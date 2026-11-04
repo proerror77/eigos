@@ -66,6 +66,9 @@ FROM build AS harness-release
 ARG SOURCE_SHA
 RUN node scripts/release-artifacts.mjs create --root /app --out /app/release-harness --source-sha "${SOURCE_SHA}" --backend harness
 
+FROM scratch AS release-package-harness
+COPY --from=harness-release /app/release-harness /
+
 FROM worker AS worker-harness
 USER root
 # pi-ai is the actual existing codex-oauth provider plugin. Keep it beside dsh
