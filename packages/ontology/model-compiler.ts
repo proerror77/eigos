@@ -20,8 +20,8 @@ const resources = (document: OntologyDocument) => [
 const coreType = (id: string) => /^(?:Execution|Registered|Network)/.test(id) || ['Authorization', 'SourceReceipt', 'ServiceRequest', 'RequestInstruction', 'RequestConstraint', 'OutcomeAssessment', 'EntityIdentityAssertion', 'TransactionPartyRole'].includes(id);
 function compatibleBusinessObject(original: SerializableObjectType, candidate: SerializableObjectType, document: OntologyDocument): boolean {
   if (coreType(original.id)) return false;
-  const { name: _name, description: _description, aliases: _aliases, properties, interfaces: previousViews = [], ...identity } = original;
-  const { name: _newName, description: _newDescription, aliases: _newAliases, properties: next, interfaces: nextViews = [], ...nextIdentity } = candidate;
+  const { name: _name, description: _description, businessDescription: _businessDescription, aliases: _aliases, properties, interfaces: previousViews = [], ...identity } = original;
+  const { name: _newName, description: _newDescription, businessDescription: _newBusinessDescription, aliases: _newAliases, properties: next, interfaces: nextViews = [], ...nextIdentity } = candidate;
   if (digest(identity) !== digest(nextIdentity)) return false;
   if (previousViews.some(view => !nextViews.some(next => digest(view) === digest(next)))) return false;
   if (nextViews.filter(view => !previousViews.some(old => old.id === view.id)).some(view => !document.interfaces.find(iface => iface.id === view.id)?.projectionOnly)) return false;

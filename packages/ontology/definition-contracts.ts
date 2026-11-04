@@ -47,6 +47,7 @@ const interfaceImplementation = z.strictObject({ id: nameSchema, propertyMap: z.
 export const serializableObjectTypeSchema = z.strictObject({
   resourceId: resourceIdSchema, id: nameSchema, version: versionSchema, name: text, aliases: z.array(z.string().min(1).max(500)).max(100), description: text,
   primaryKey: nameSchema, titleKey: nameSchema, properties, interfaces: z.array(interfaceImplementation).max(100).optional(),
+  businessDescription: text.optional(),
   visibility: z.enum(['business', 'technical']).optional(), writePolicy: z.enum(['managed', 'source']),
 });
 export const serializableInterfaceSchema = z.strictObject({

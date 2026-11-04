@@ -4,7 +4,8 @@ import { compileOntologyDocument } from '../ontology/model-compiler.js';
 import { paymentCommercePolicyContracts } from './policy-store.js';
 import { upgradeReviewedPolicy } from './reviewed-policy-upgrade.js';
 
-/** Offline, exact v26 -> v27 transition; preserves grants and expiry without
+/** Offline v26 -> current reviewed read kernel transition (including the v28
+ * description-only successor); preserves grants and expiry without
  * authorizing any newly installed provider operation. Keep the existing finite
  * or until-revoked consent representation on both sides of this transition. */
 export function upgradePaymentCommercePolicy(db: DatabaseSync, expected: { digest: string; revision: number }, apply = false, now = Date.now()) {

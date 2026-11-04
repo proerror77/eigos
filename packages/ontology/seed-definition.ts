@@ -1,4 +1,5 @@
 import { extendPaymentCommerceKernel } from './payment-commerce-kernel.js';
+import { extendBusinessDescriptions } from './business-descriptions.js';
 import { extendRollingGoKernel } from './rollinggo-kernel.js';
 import { extendBusinessFactsKernel } from './business-facts-kernel.js';
 import { extendPersonalContextKernel } from './personal-context-kernel.js';
@@ -22,7 +23,8 @@ import { parseOntologyDocument, type DefinitionKind, type JsonSchema, type Ontol
 import type { ActionDefinition, InterfaceDefinition, ModelDefinition, ObjectTypeDefinition, PropertyDefinition } from './model.js';
 
 export const LEGACY_SEED_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '15', digest: 'efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776' });
-export const CURRENT_KERNEL_VERSION = '27';
+export const CURRENT_KERNEL_VERSION = '28';
+export const PAYMENT_COMMERCE_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '27', digest: '8e5b11eb6b25d873b12f05d67232899f97af6af929b143397aa19e75379fc5e6' });
 export const SINGLE_READ_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '26', digest: '78e73e56caaed8c894b716a0ed486dd98442beed1234a7c29e557821ba2f4020' });
 export const PA_PAYMENT_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '19', digest: '60287d4b34e950c24e6479812e3a8fd0be6ba19402917a2f3ff9db63798065df' });
 export const PROVIDER_READ_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '20', digest: 'ef3a604ace56a5617bfe67b93686ec5a19ac94ba2c06ebc37676e4b1c3efa5a4' });
@@ -131,7 +133,12 @@ export function createConsolidatedKernelDefinition(registry = new TrustedDefinit
   return predecessor;
 }
 export function createCurrentKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
-  return complete(extendPaymentCommerceKernel(createSingleReadKernelDefinition(registry).document, registry), registry, false);
+  return complete(extendBusinessDescriptions(createPaymentCommerceKernelDefinition(registry).document), registry, false);
+}
+export function createPaymentCommerceKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
+  const previous = complete(extendPaymentCommerceKernel(createSingleReadKernelDefinition(registry).document, registry), registry, false);
+  if (digest(previous.audit.model) !== digest(PAYMENT_COMMERCE_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'The original v27 kernel fingerprint changed');
+  return previous;
 }
 export function createSingleReadKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const previous = complete(extendSingleReadKernel(createPersonalContextKernelDefinition(registry).document, registry), registry, false);
