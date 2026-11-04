@@ -30,6 +30,26 @@ type Packet = Record<string, unknown>;
 const object = (value: unknown): Packet => value && typeof value === 'object' && !Array.isArray(value) ? value as Packet : {};
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
+// rc.5 TokenUsage is disjoint: input excludes cache, reasoning is already in
+// output, and total is optional. Preserve only actual counters; never derive
+// totals or mix uncached input with Codex's aggregate input_tokens metric.
+const usageUnits = { inputTokens: 'uncached_input_tokens', outputTokens: 'output_tokens', totalTokens: 'total_tokens',
+  cacheReadTokens: 'cached_input_tokens', cacheWriteTokens: 'cache_write_input_tokens', reasoningTokens: 'reasoning_output_tokens' } as const;
+function accumulateUsage(usage: Record<string, number>, invalid: Set<string>, input: unknown): void {
+  const reported = object(input);
+  for (const [field, unit] of Object.entries(usageUnits)) {
+    const value = reported[field];
+    if (value === undefined || invalid.has(unit)) continue;
+    const total = typeof value === 'number' ? (usage[unit] ?? 0) + value : NaN;
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || !Number.isSafeInteger(total)) {
+      // An invalid step cannot leave a plausible partial counter behind or
+      // resurrect it on a later step in this invocation.
+      delete usage[unit]; invalid.add(unit); continue;
+    }
+    usage[unit] = total;
+  }
+}
+
 /** Read only the current access token. The original login remains the sole
  * owner of OAuth refresh; no refresh token enters Harness or its private home. */
 async function credential(config: HarnessConfiguration): Promise<string> {
@@ -114,7 +134,7 @@ export class HarnessExecutor implements Executor {
     if (options.toolFree && options.mcp) throw new Error('A tool-free Harness invocation cannot attach MCP');
     const id = randomUUID(), sessionId = 'eigos-' + id, startedAt = new Date().toISOString(), started = performance.now();
     const recorder = modelUsageRecorder(); await recorder?.begin(id, 'harness-sdk', startedAt);
-    const usage: Record<string, number> = {};
+    const usage: Record<string, number> = {}, invalidUsage = new Set<string>();
     let directory: string | undefined, recorded: RunEvidence | undefined, success = false;
     const model = this.configuration.model ?? (this.configuration.credentialKind === 'api-key' ? 'deepseek-flash' : 'gpt-6-luna');
     try {
@@ -194,6 +214,7 @@ export class HarnessExecutor implements Executor {
             if (name) calls.push({ server: 'eigos_ontology', tool: name, status: data.failure ? 'failed' : 'completed' });
           }
           if (event.type === 'assistant/message') {
+            accumulateUsage(usage, invalidUsage, data.usage);
             if (data.interrupted) { fail('Harness returned interrupted model output'); return; }
             const message = object(data.message), content = message.content;
             if (Array.isArray(content)) {
@@ -202,7 +223,6 @@ export class HarnessExecutor implements Executor {
               }).join('');
               if (text) finalText = text;
             }
-            for (const [key, value] of Object.entries(object(data.usage))) if (typeof value === 'number' && Number.isFinite(value)) usage[key] = (usage[key] ?? 0) + value;
           }
           if (event.type === 'turn/end') { turns++; finalReason = object(data.reason).kind; }
         }
