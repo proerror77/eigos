@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
+import { filterRelationshipMetadata } from '../ontology/model.js';
 import type { OntologyModel, PropertyDefinition } from '../ontology/model.js';
 import { functionCallSchema } from '../ontology/object-functions.js';
 import type { AgentAccessGrant } from './store.js';
@@ -13,7 +14,7 @@ export interface DefinitionAccess {
   fields(type: string): Record<string, PropertyDefinition>;
   fieldPolicy(type: string, field: string): string;
 }
-export interface DefinitionDescriptionInput { kind?: 'types' | 'actions' | 'functions'; search?: string; limit?: number; after?: string; actions?: string[]; functions?: string[] }
+export interface DefinitionDescriptionInput { kind?: 'types' | 'actions' | 'functions'; search?: string; linkSearch?: string; limit?: number; after?: string; actions?: string[]; functions?: string[] }
 
 export function authorizedDefinitionCatalogue(access: DefinitionAccess, model: OntologyModel = access.model) {
   assertReviewedModel(access.model, model);
@@ -32,7 +33,7 @@ export function authorizedDefinitionCatalogue(access: DefinitionAccess, model: O
     ...(property.derived && policy.resourceAllowed('function', property.derived) ? { derived: property.derived } : {}), schema: z.toJSONSchema(property.schema) }]));
   const definitions = types.map(id => {
     const concrete = !model.isInterface(id), def = concrete ? model.object(id) : undefined;
-    return { kind: concrete ? 'object' : 'interface', id, ...(def ? { version: def.version, name: def.name, description: def.description,primaryKey:def.primaryKey,titleKey:def.titleKey,
+    return { kind: concrete ? 'object' : 'interface', id, ...(def ? { version: def.version, name: def.name, description: def.businessDescription ?? def.description,primaryKey:def.primaryKey,titleKey:def.titleKey,
       interfaces: (def.interfaces ?? []).filter(view => typeAllowed(view.id)).map(view => ({ id: view.id })) } : { description: (model.describeType(id) as { description: string }).description }), properties: fields(id),
       links: concrete ? model.sides(id).filter(s => typeAllowed(s.other.type) && policy.resourceAllowed('linkType', s.link.id)).map(s => ({ id: s.link.id, name: s.side.name, target: s.other.type, many: s.side.many }))
         : ((model.describeType(id) as { linkConstraints: { name: string; target: string; many: boolean }[] }).linkConstraints).filter(link => typeAllowed(link.target) && model.concreteTypes(id).filter(typeAllowed).some(type => {
@@ -72,7 +73,7 @@ export function describeDefinitionCatalogue(access: DefinitionAccess, input: Def
   // The external digest depends only on the authorized definitions. No private
   // model fingerprint or hidden count/continuation is exposed.
   return { model: catalogue.model,
-    kind, types: typePage.items,
+    kind, types: typePage.items.map(type => filterRelationshipMetadata(type, input.linkSearch)),
     actions: input.actions ? actions.filter(action => input.actions!.includes(action.id)) : kind === 'actions' ? actionPage.items : kind === 'types' ? relatedActions : [],
     functions: input.functions ? functions.filter(fn => input.functions!.includes(fn.id)) : kind === 'functions' ? functionPage.items : kind === 'types' ? relatedFunctions : [],
     hasMore: paging.hasMore, next: paging.next };

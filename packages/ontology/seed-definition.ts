@@ -1,4 +1,5 @@
 import { extendPaymentCommerceKernel } from './payment-commerce-kernel.js';
+import { extendBusinessDescriptions } from './business-descriptions.js';
 import { extendRollingGoKernel } from './rollinggo-kernel.js';
 import { extendBusinessFactsKernel } from './business-facts-kernel.js';
 import { extendPersonalContextKernel } from './personal-context-kernel.js';
@@ -22,7 +23,9 @@ import { parseOntologyDocument, type DefinitionKind, type JsonSchema, type Ontol
 import type { ActionDefinition, InterfaceDefinition, ModelDefinition, ObjectTypeDefinition, OntologyModel, PropertyDefinition } from './model.js';
 
 export const LEGACY_SEED_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '15', digest: 'efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776' });
-export const CURRENT_KERNEL_VERSION = '27';
+export const CURRENT_KERNEL_VERSION = '28';
+export const BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '28', digest: '04606f93dc6cfd9045ac6b9a0c3dcfa4c8f330689ecbdd3cdfa7556df15202c5' });
+export const PAYMENT_COMMERCE_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '27', digest: '8e5b11eb6b25d873b12f05d67232899f97af6af929b143397aa19e75379fc5e6' });
 export const SINGLE_READ_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '26', digest: '78e73e56caaed8c894b716a0ed486dd98442beed1234a7c29e557821ba2f4020' });
 export const PA_PAYMENT_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '19', digest: '60287d4b34e950c24e6479812e3a8fd0be6ba19402917a2f3ff9db63798065df' });
 export const PROVIDER_READ_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '20', digest: 'ef3a604ace56a5617bfe67b93686ec5a19ac94ba2c06ebc37676e4b1c3efa5a4' });
@@ -44,12 +47,26 @@ export interface SeedDefinitionAudit {
   propertyCount: number; trustedValidatorCount: number; legacyMetadataPreserved: boolean;
 }
 export interface SeedDefinition { document: OntologyDocument; registry: TrustedDefinitionRegistry; audit: SeedDefinitionAudit }
+const compiledSeeds = new WeakMap<SeedDefinition, { registry: TrustedDefinitionRegistry; documentDigest: string; model: OntologyModel }>();
+
+/** Reuse only a genuine completion for this exact registry and unchanged document.
+ * This is immutable definition metadata, never a database or permission snapshot. */
+export function compiledSeedModel(seed: SeedDefinition, registry: TrustedDefinitionRegistry): OntologyModel {
+  const compiled = compiledSeeds.get(seed);
+  if (!compiled || compiled.registry !== registry || seed.registry !== registry || digest(seed.document) !== compiled.documentDigest
+    || digest(seed.audit.model) !== digest(compiled.model.ref)) throw new DomainError('CONFLICT', 'The compiled seed identity or document changed');
+  return compiled.model;
+}
 const resourceId = (kind: DefinitionKind, id: string) => `builtin:eigos.business:${kind}:${id}`;
 const hasTrustedActionContract = (value: ActionDefinition) => !!(value.read || value.operation || value.providerOperation && value.kind === 'business' && value.version);
 
 /** Only the known additive kernel effect is accepted as current-code drift from v15. */
 function isSupportedKernelWidening(old: unknown, current: unknown, key = '', managedEnvironment = false): boolean {
   if (digest(old) === digest(current)) return true;
+  return isSupportedKernelDifference(old, current, key, managedEnvironment);
+}
+
+function isSupportedKernelDifference(old: unknown, current: unknown, key = '', managedEnvironment = false): boolean {
   if (Array.isArray(old) && Array.isArray(current)) {
     if (key === 'enum' && old.includes('item_quantity') && current.length === old.length + 1 && current.includes('result_count')) return old.every(value => current.includes(value));
     if (key === 'enum' && old.includes('local') && old.includes('read') && current.length === old.length + 1 && current.includes('object_write')) return old.every(value => current.includes(value));
@@ -66,7 +83,7 @@ function isSupportedKernelWidening(old: unknown, current: unknown, key = '', man
 function frozenValidator(type: string, name: string, schema: JsonSchema, current: PropertyDefinition): z.ZodType {
   const currentMetadata = current.schemaMetadata ?? z.toJSONSchema(current.schema);
   if (digest(schema) === digest(currentMetadata)) return current.schema;
-  if (!isSupportedKernelWidening(schema, currentMetadata, '', type === 'Authorization' && name === 'environment')) throw new DomainError('CONFLICT', `Current validator no longer provides the pinned v15 contract: ${type}.${name}`);
+  if (!isSupportedKernelDifference(schema, currentMetadata, '', type === 'Authorization' && name === 'environment')) throw new DomainError('CONFLICT', `Current validator no longer provides the pinned v15 contract: ${type}.${name}`);
   const old = z.fromJSONSchema(schema as Parameters<typeof z.fromJSONSchema>[0]);
   // Run the original trusted parse first to preserve refinements and normalization.
   // The frozen guard only narrows newly supported effects and never rewrites its result.
@@ -113,7 +130,9 @@ function complete(document: OntologyDocument, registry: TrustedDefinitionRegistr
   onCompiled?.(model);
   if (original && digest(model.ref) !== digest(LEGACY_SEED_MODEL_REF)) throw new DomainError('CONFLICT', 'Original v15 seed changed its model digest');
   const propertyCount = [...document.objects, ...document.interfaces].reduce((sum, type) => sum + Object.keys(type.properties).length, 0);
-  return { document, registry, audit: { model: { ...model.ref }, counts: { objects: document.objects.length, interfaces: document.interfaces.length, links: document.links.length, actions: document.actions.length, functions: document.functions.length }, propertyCount, trustedValidatorCount: propertyCount, legacyMetadataPreserved: original } };
+  const seed: SeedDefinition = { document, registry, audit: { model: { ...model.ref }, counts: { objects: document.objects.length, interfaces: document.interfaces.length, links: document.links.length, actions: document.actions.length, functions: document.functions.length }, propertyCount, trustedValidatorCount: propertyCount, legacyMetadataPreserved: original } };
+  compiledSeeds.set(seed, { registry, documentDigest: digest(document), model });
+  return seed;
 }
 
 /** Always reconstruct the exact original release; it never follows the evolving active model. */
@@ -132,7 +151,17 @@ export function createConsolidatedKernelDefinition(registry = new TrustedDefinit
   return predecessor;
 }
 export function createCurrentKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
-  return complete(extendPaymentCommerceKernel(createSingleReadKernelDefinition(registry).document, registry), registry, false);
+  return createBusinessDescriptionsKernelDefinition(registry);
+}
+export function createBusinessDescriptionsKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
+  const described = complete(extendBusinessDescriptions(createPaymentCommerceKernelDefinition(registry).document), registry, false);
+  if (digest(described.audit.model) !== digest(BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'The original v28 description kernel fingerprint changed');
+  return described;
+}
+export function createPaymentCommerceKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
+  const previous = complete(extendPaymentCommerceKernel(createSingleReadKernelDefinition(registry).document, registry), registry, false);
+  if (digest(previous.audit.model) !== digest(PAYMENT_COMMERCE_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'The original v27 kernel fingerprint changed');
+  return previous;
 }
 export function createSingleReadKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const previous = complete(extendSingleReadKernel(createPersonalContextKernelDefinition(registry).document, registry), registry, false);
@@ -156,12 +185,18 @@ export class StagedKernelBuilder {
   #current?: SeedDefinition;
   #model?: OntologyModel;
   #documentDigest?: string;
-  static readonly stages = 14;
+  static readonly stages = 15;
+  readonly #targetVersion: '27' | '28';
+  readonly #stageCount: number;
+  constructor(targetVersion: '27' | '28' = CURRENT_KERNEL_VERSION) {
+    if (targetVersion !== '27' && targetVersion !== '28') throw new Error('Unsupported reviewed kernel target');
+    this.#targetVersion = targetVersion; this.#stageCount = targetVersion === '27' ? 14 : 15;
+  }
 
   step(expected: number): { completed: number; total: number; ready: boolean } {
     if (this.#failed) throw new Error('Failed kernel builder must be discarded');
     if (!Number.isSafeInteger(expected) || expected < 0 || expected > this.#position) throw new Error('Invalid kernel stage');
-    if (expected < this.#position || this.#position === StagedKernelBuilder.stages) return this.progress();
+    if (expected < this.#position || this.#position === this.#stageCount) return this.progress();
     try {
       switch (this.#position) {
         case 0: createSeedDefinition(this.#registry); break;
@@ -200,8 +235,13 @@ export class StagedKernelBuilder {
           break;
         case 13:
           this.#current = complete(extendPaymentCommerceKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
-          this.#documentDigest=digest(this.#current.document);
-          this.#registry.seal();
+          if (digest(this.#current.audit.model) !== digest(PAYMENT_COMMERCE_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT','The original v27 kernel fingerprint changed');
+          if (this.#targetVersion === '27') { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
+          break;
+        case 14:
+          this.#current = complete(extendBusinessDescriptions(this.#current!.document),this.#registry,false,model=>{this.#model=model;});
+          if (digest(this.#current.audit.model) !== digest(BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT','The reviewed v28 description fingerprint changed');
+          this.#documentDigest=digest(this.#current.document); this.#registry.seal();
           break;
         default: throw new Error('Unknown kernel stage');
       }
@@ -211,17 +251,17 @@ export class StagedKernelBuilder {
   }
 
   result(): SeedDefinition {
-    if (this.#failed || this.#position !== StagedKernelBuilder.stages || !this.#current) throw new Error('Kernel builder is not ready');
+    if (this.#failed || this.#position !== this.#stageCount || !this.#current) throw new Error('Kernel builder is not ready');
     return {document:structuredClone(this.#current.document),registry:this.#registry,audit:structuredClone(this.#current.audit)};
   }
 
   /** Internal immutable model and sealed trusted registry for edge readers. */
   trusted(): {registry:TrustedDefinitionRegistry;model:OntologyModel;documentDigest:string} {
-    if (this.#failed || this.#position !== StagedKernelBuilder.stages || !this.#model || !this.#documentDigest) throw new Error('Kernel builder is not ready');
+    if (this.#failed || this.#position !== this.#stageCount || !this.#model || !this.#documentDigest) throw new Error('Kernel builder is not ready');
     return {registry:this.#registry,model:this.#model,documentDigest:this.#documentDigest};
   }
 
-  private progress() { return { completed:this.#position,total:StagedKernelBuilder.stages,ready:this.#position===StagedKernelBuilder.stages }; }
+  private progress() { return { completed:this.#position,total:this.#stageCount,ready:this.#position===this.#stageCount }; }
 }
 
 /** Read only a genuinely completed builder, bypassing overridable methods. */
@@ -277,9 +317,13 @@ export function createHistoricalKernelDefinition(registry = new TrustedDefinitio
     for (const [name, property] of Object.entries(type.properties)) {
       if (!property.validatorRef || !current.properties[name]) throw new DomainError('CONFLICT', 'Historical v16 validator is unavailable');
       const schema = property.schema, live = current.properties[name]!, metadata = live.schemaMetadata ?? z.toJSONSchema(live.schema);
-      if (!isSupportedKernelWidening(schema, metadata)) throw new DomainError('CONFLICT', `Current validator cannot preserve v16: ${type.id}.${name}`);
-      const guard = z.fromJSONSchema(schema as Parameters<typeof z.fromJSONSchema>[0]);
-      const validator = digest(schema) === digest(metadata) ? live.schema : live.schema.superRefine((value, context) => { if (!guard.safeParse(value).success) context.addIssue({ code: 'custom', message: 'Value is outside the pinned v16 schema' }); });
+      const unchanged = digest(schema) === digest(metadata);
+      if (!unchanged && !isSupportedKernelDifference(schema, metadata)) throw new DomainError('CONFLICT', `Current validator cannot preserve v16: ${type.id}.${name}`);
+      let validator = live.schema;
+      if (!unchanged) {
+        const guard = z.fromJSONSchema(schema as Parameters<typeof z.fromJSONSchema>[0]);
+        validator = live.schema.superRefine((value, context) => { if (!guard.safeParse(value).success) context.addIssue({ code: 'custom', message: 'Value is outside the pinned v16 schema' }); });
+      }
       const registered = registry.registerValidator(property.validatorRef.id, property.validatorRef.version, validator, schema);
       if (digest(registered) !== digest(property.validatorRef)) throw new DomainError('CONFLICT', 'Historical v16 validator identity changed');
     }

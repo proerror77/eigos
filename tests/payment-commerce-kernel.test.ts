@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSingleReadKernelDefinition, createCurrentKernelDefinition, SINGLE_READ_KERNEL_MODEL_REF } from '../packages/ontology/seed-definition.js';
+import { createSingleReadKernelDefinition, createPaymentCommerceKernelDefinition, SINGLE_READ_KERNEL_MODEL_REF } from '../packages/ontology/seed-definition.js';
 import { compileOntologyDocument } from '../packages/ontology/model-compiler.js';
 import { commerceReadDefinition } from '../packages/ontology/payment-commerce.js';
 import { singleReadPolicyContracts, paymentCommercePolicyContracts, persistentConsentPolicyContracts } from '../packages/security/policy-store.js';
@@ -11,7 +11,7 @@ import { upgradePaymentCommercePolicy } from '../packages/security/payment-comme
 import { securityFixture } from './fixtures/security.js';
 
 test('v27 adds only provider query definitions and keeps the exact v26 model and policy predecessor', { timeout: 300000 }, () => {
-  const previous = createSingleReadKernelDefinition(), next = createCurrentKernelDefinition();
+  const previous = createSingleReadKernelDefinition(), next = createPaymentCommerceKernelDefinition();
   const before = compileOntologyDocument(previous.document, previous.registry), after = compileOntologyDocument(next.document, next.registry);
   assert.deepEqual(before.ref, SINGLE_READ_KERNEL_MODEL_REF); assert.equal(after.ref.version, '27');
   for (const type of previous.document.objects) assert.equal(after.fingerprint(type.id), before.fingerprint(type.id));
