@@ -2,6 +2,8 @@
 
 这四类供应商通过同一 Ontology、任务、授权和 Worker 执行路径供 MCP／A2A 使用。默认全部关闭。当前实现只查询已有商户交易或商品，不创建订单、签约、付款、退款、关单或发送短信；也不读取 PA 钱包凭据。
 
+买家侧的支付宝 Agent Pay 准备工具与淘宝模拟购物联调运行在 PA，见[淘宝购物演练与 PA 支付](../integrations/taobao-pa-alipay.md)。该连接器禁止真实订单和付款，不改变本页商户查单与商品查询的范围。
+
 | 供应商 | 能力与 Action | 执行入口 | 当前范围 |
 | --- | --- | --- | --- |
 | 支付宝 | `alipay.trade.query` / `QueryAlipayTrade` | 官方 `@alipay/mcp-server-alipay` 的 `query-alipay-payment` | 按原商户订单号查单 |
