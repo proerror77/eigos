@@ -30,6 +30,25 @@ function readOnlyBytes(value: Uint8Array): Buffer {
   if (typeof SharedArrayBuffer !== 'undefined' && value.buffer instanceof SharedArrayBuffer) return Buffer.from(value);
   return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
 }
+function* utf8Chunks(value: string): Generator<Buffer> {
+  const chunkCharacters = 64 * 1024;
+  for (let start = 0; start < value.length;) {
+    let end = Math.min(value.length, start + chunkCharacters);
+    // Buffer's UTF-8 encoding must see a surrogate pair together, exactly as
+    // it does when encoding the original complete string.
+    if (end < value.length && value.charCodeAt(end - 1) >= 0xd800 && value.charCodeAt(end - 1) <= 0xdbff
+      && value.charCodeAt(end) >= 0xdc00 && value.charCodeAt(end) <= 0xdfff) end++;
+    yield Buffer.from(value.slice(start, end), 'utf8'); start = end;
+  }
+}
+function exactUtf8Bytes(value: string, original: Uint8Array): boolean {
+  const bytes = readOnlyBytes(original); let offset = 0;
+  for (const encoded of utf8Chunks(value)) {
+    if (encoded.length > bytes.length - offset || !encoded.equals(bytes.subarray(offset, offset + encoded.length))) return false;
+    offset += encoded.length;
+  }
+  return offset === bytes.length;
+}
 function hashFile(path: string, expected: Stats): string {
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
@@ -185,12 +204,14 @@ export function planBusinessSnapshot(snapshot: string, expectedAuthorityDigest: 
         const sourceRowid=row.__eigos_rowid;
         if (typeof sourceRowid !== 'bigint') throw new Error(`Invalid hidden row identity in ${name}`);
         if (maxRowid === null || sourceRowid > maxRowid) maxRowid=sourceRowid;
-        for (const [index, column] of textFields.entries()) if (typeof row[column.name] === 'string' && !Buffer.from(String(row[column.name]), 'utf8').equals(readOnlyBytes(row[`__eigos_migration_raw_${index}`] as Uint8Array))) throw new Error(`Invalid UTF-8 text in ${name}`);
+        for (const [index, column] of textFields.entries()) if (typeof row[column.name] === 'string' && !exactUtf8Bytes(String(row[column.name]), row[`__eigos_migration_raw_${index}`] as Uint8Array)) throw new Error(`Invalid UTF-8 text in ${name}`);
         const encodedRow = encodeBusinessRow(row, columns, 'sqlite');
         const bytes = Buffer.byteLength(encodedRow); totalEncodedBytes += bytes;
         if (!Number.isSafeInteger(totalEncodedBytes)) throw new Error(`Snapshot table ${name} is too large to inventory safely`);
         maxRowBytes = Math.max(maxRowBytes, bytes);
-        fingerprint.update(`${bytes}:`).update(encodedRow); rows++;
+        fingerprint.update(`${bytes}:`);
+        for (const chunk of utf8Chunks(encodedRow)) fingerprint.update(chunk);
+        rows++;
       }
       const uniqueKeys = db.prepare(`PRAGMA index_list(${quote(name)})`).all().filter(row => Number(row.unique) === 1).map(row => {
         const indexName = String(row.name);

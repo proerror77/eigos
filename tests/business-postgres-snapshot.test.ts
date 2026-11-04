@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -183,6 +183,26 @@ test('canonical BLOB encoding preserves only the selected byte view without chan
   const shared = new Uint8Array(new SharedArrayBuffer(4)); shared.set(backing);
   assert.equal(encodeBusinessRow({ blob: shared.subarray(1, 3) }, columns, 'sqlite'), '[{"bytes":"AP8="}]');
   assert.deepEqual(shared, before);
+});
+
+test('snapshot UTF-8 byte checks preserve BOM and surrogate boundaries and reject incomplete bytes', () => {
+  const f = fixture();
+  try {
+    const text = '\ufeff' + 'a'.repeat(65534) + '🚕' + '水é\\\"\n'.repeat(20) + '終';
+    let db = new DatabaseSync(f.path);
+    db.exec('CREATE TABLE migration_utf8_probe(id INTEGER PRIMARY KEY, body TEXT NOT NULL)');
+    db.prepare('INSERT INTO migration_utf8_probe VALUES(1,?)').run(text); db.close();
+    const table = planBusinessSnapshot(f.path, f.authorityDigest, f.policy).tables.find(table => table.name === 'migration_utf8_probe')!;
+    const canonical = JSON.stringify([{ integer: '1' }, { text }, { integer: '1' }]);
+    assert.equal(table.maxRowBytes, Buffer.byteLength(canonical));
+    assert.equal(table.digest, createHash('sha256').update(`${Buffer.byteLength(canonical)}:`).update(canonical).digest('hex'));
+    const valid = Buffer.from(text, 'utf8');
+    for (const invalid of [valid.subarray(0, valid.length - 1), Buffer.concat([Buffer.from('a'.repeat(65535)), Buffer.from([0xf0, 0x9f, 0x9a])])]) {
+      db = new DatabaseSync(f.path);
+      db.prepare('UPDATE migration_utf8_probe SET body=CAST(? AS TEXT) WHERE id=1').run(invalid); db.close();
+      assert.throws(() => planBusinessSnapshot(f.path, f.authorityDigest, f.policy), /Invalid UTF-8/);
+    }
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
 });
 
 test('business import CLI requires explicit apply and rejects TLS overrides without exposing credentials', () => {
