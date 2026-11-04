@@ -22,10 +22,12 @@ export function businessRelated(graph: OntologyObjectStore, owner: string, from:
 }
 /** Internal, transactional mapping only. Identical facts do not churn revisions. */
 export function writeBusiness(graph: OntologyObjectStore, owner: string, ref: ObjectRef, values: Record<string, unknown>, links: LinkWrite[], source: ObjectSource, immutable = false): void {
-  const previous = optionalObject(graph, owner, ref);
-  const properties = { [graph.model.object(ref.type).primaryKey]: ref.id, displayTitle: ref.type, ...values };
-  const unchanged = previous && digest(previous.properties) === digest(properties);
-  if (immutable && previous && !unchanged) throw new DomainError('CONFLICT', `Immutable ${ref.type} facts changed`);
-  if (unchanged && graph.containsLinks(owner, links)) return;
-  graph.ingest(owner, { objects: unchanged ? [] : [{ ref, properties, ...(previous ? { expectedRevision: previous.revision } : {}) }], links }, source);
+  graph.projectFragment('business-write:' + JSON.stringify(ref), [values, links, source.kind, source.id, immutable], () => {
+    const previous = optionalObject(graph, owner, ref);
+    const properties = { [graph.model.object(ref.type).primaryKey]: ref.id, displayTitle: ref.type, ...values };
+    const unchanged = previous && digest(previous.properties) === digest(properties);
+    if (immutable && previous && !unchanged) throw new DomainError('CONFLICT', `Immutable ${ref.type} facts changed`);
+    if (unchanged && graph.containsLinks(owner, links)) return;
+    graph.ingest(owner, { objects: unchanged ? [] : [{ ref, properties, ...(previous ? { expectedRevision: previous.revision } : {}) }], links }, source);
+  });
 }

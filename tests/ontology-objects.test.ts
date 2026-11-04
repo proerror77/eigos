@@ -20,11 +20,12 @@ function fixture() {
   return { ...data, db, graph };
 }
 
-test('optional many-valued relationships add no cardinality queries while constrained links remain atomic', t => {
+test('cardinality checks batch constrained relationships by endpoint and roll back invalid imports', t => {
   const property = { kind: 'string' as const, schema: z.string().min(1), description: 'Synthetic field', source: 'Synthetic fixture', required: true };
   const model = new OntologyModel({ id: 'fixture.cardinality', version: '1', objects: [{ id: 'Node', version: '1', name: 'Node', aliases: ['Node'], description: 'Synthetic node',
     primaryKey: 'id', titleKey: 'label', properties: { id: property, label: property } }], interfaces: [], actions: [], functions: [], links: [
     ...Array.from({ length: 100 }, (_, i) => ({ id: `Peer${i}`, description: 'Unconstrained synthetic relation', from: { type: 'Node', name: `out${i}`, many: true }, to: { type: 'Node', name: `in${i}`, many: true } })),
+    ...Array.from({ length: 8 }, (_, i) => ({ id: `Single${i}`, description: 'Another singleton', from: { type: 'Node', name: `singleOut${i}`, many: false }, to: { type: 'Node', name: `singleIn${i}`, many: true } })),
     { id: 'OneParent', description: 'At most one parent', from: { type: 'Node', name: 'parent', many: false }, to: { type: 'Node', name: 'children', many: true } },
   ] });
   const db = new DatabaseSync(':memory:'), graph = new OntologyObjectStore(db, model, Date.now, undefined, { skipLegacyMigration: true });
@@ -32,15 +33,27 @@ test('optional many-valued relationships add no cardinality queries while constr
   const source = { kind: 'synthetic' as const, id: 'fixture', observedAt: new Date().toISOString() };
   let counts = 0;
   const prepare = db.prepare.bind(db);
-  t.mock.method(db, 'prepare', (sql: string) => { if (sql.startsWith('SELECT count(*) AS n FROM ontology_')) counts++; return prepare(sql); });
+  t.mock.method(db, 'prepare', (sql: string) => { if (sql.startsWith('SELECT 1 AS cardinality_violation') || sql.startsWith('SELECT count(*) AS n FROM ontology_')) counts++; return prepare(sql); });
   try {
     graph.ingest('alice', { objects: [object('a'), object('b')] }, source);
-    assert.equal(counts, 2, 'Only the actual at-most-one constraint needs a query for each node');
+    assert.equal(counts, 2, 'All forward singleton constraints share one check per endpoint');
     assert.throws(() => graph.ingest('alice', { objects: [object('c')], links: [
       { type: 'OneParent', from: { type: 'Node', id: 'a' }, to: { type: 'Node', id: 'b' } },
       { type: 'OneParent', from: { type: 'Node', id: 'a' }, to: { type: 'Node', id: 'c' } },
     ] }, source), /cardinality/);
     assert.throws(() => graph.read('alice', { type: 'Node', id: 'c' }), /not found/i);
+    // Run the same invariant in reverse. Edges with matching IDs in another
+    // owner's graph cannot satisfy a required side after removal.
+    const incoming = new OntologyModel({ id: 'fixture.reverse', version: '1', objects: [model.object('Node')], interfaces: [], actions: [], functions: [],
+      links: [{ id: 'Member', description: 'Required incoming members', from: { type: 'Node', name: 'groups', many: true }, to: { type: 'Node', name: 'members', many: true, required: true } }] });
+    const reverse = new OntologyObjectStore(db, incoming, Date.now, undefined, { skipLegacyMigration: true, ontologyId: 'fixture.reverse' });
+    const members = ['a', 'b', 'c'].map(object);
+    const self = members.map(({ ref }) => ({ type: 'Member', from: ref, to: ref }));
+    for (const who of ['alice', 'bob']) reverse.ingest(who, { objects: members, links: [...self,
+      ...members.slice(1).map(({ ref }) => ({ type: 'Member', from: ref, to: members[0]!.ref }))] }, source);
+    assert.throws(() => reverse.ingest('alice', { objects: [], removeLinks: [self[1]!] }, source), /cardinality/);
+    assert.ok(reverse.containsLinks('alice', [self[1]!]));
+
   } finally { db.close(); }
 });
 

@@ -182,3 +182,44 @@ test(`a checked Worker renewal during a dependency read ${mutation === 'none' ? 
     else { assert.equal(value, undefined); assert.match(String(error), /POLICY_CHANGED/); }
   } finally { await worker.close(); f.close(); }
 });
+
+
+for (const cursorTrigger of [false,true]) test(`cursor bookkeeping ${cursorTrigger ? 'cannot hide graph mutations' : 'preserves a fenced read'}`,()=>{
+  const f=fixture(2);
+  try {
+    if(cursorTrigger)f.db.exec("CREATE TRIGGER cursor_business_change AFTER INSERT ON security_cursors BEGIN UPDATE ontology_objects SET body=json_set(body,'$.properties.name','changed by cursor trigger') WHERE type='Place'; END");
+    const read=()=>f.within(()=>f.jobs.ontology.withReadMemo(f.owner,()=>{
+      const before=f.jobs.ontology.read(f.owner,f.inputs[0]!.object);
+      const token=f.policy.cursor(f.owner,'cursor-memo-test',undefined,f.inputs[0]!.object);
+      assert.equal(typeof token,'string');
+      assert.deepEqual(f.policy.cursor(f.owner,'cursor-memo-test',token as string),f.inputs[0]!.object);
+      assert.equal(f.jobs.ontology.read(f.owner,f.inputs[0]!.object).properties.name,before.properties.name);
+    }));
+    if(cursorTrigger)assert.throws(read,/POLICY_CHANGED|Facts or authority changed|OUTPUT_NOT_ALLOWED|not available/);
+    else read();
+  } finally {f.close();}
+});
+
+test('a fenced graph read never reuses an object after its grant is revoked',()=>{
+  const f=fixture(2);
+  try {
+    assert.throws(()=>f.within(()=>f.jobs.ontology.withReadMemo(f.owner,()=>{
+      f.jobs.ontology.read(f.owner,f.inputs[0]!.object);
+      f.jobs.security.revokeGrant(f.owner,f.grant.id,f.grant.revision);
+      f.jobs.ontology.read(f.owner,f.inputs[0]!.object);
+    })),/POLICY_CHANGED|AUTHORIZATION_REQUIRED|INSUFFICIENT_ACCESS/);
+  } finally {f.close();}
+});
+
+
+test('a new read window rechecks an intervening external metadata commit',()=>{
+  const f=fixture(2);
+  try {
+    f.within(()=>{
+      f.jobs.ontology.withReadMemo(f.owner,()=>f.jobs.ontology.read(f.owner,f.inputs[0]!.object));
+      f.db.prepare('UPDATE security_manager SET expires_at=expires_at+1 WHERE slot=1').run();
+      const current=f.jobs.ontology.withReadMemo(f.owner,()=>f.jobs.ontology.read(f.owner,f.inputs[0]!.object));
+      assert.equal(current.properties.name,'dependency-0');
+    });
+  } finally {f.close();}
+});
