@@ -4267,7 +4267,7 @@
     {
       "id": "ontology-definition-service",
       "file": "packages/ontology/definition-service.ts",
-      "sourceDigest": "6dd789f910f152e9744fb096701fa03d947fc93d1093b566c2b7d9dc08167ca4",
+      "sourceDigest": "032539633dfcb036e967d3ed7ba157443d17a056dd1af7a1b28eceaf57bec092",
       "channels": [
         "http",
         "mcp"
@@ -4433,7 +4433,7 @@
     {
       "id": "ontology-metadata-mcp",
       "file": "apps/gateway/ontology/mcp.ts",
-      "sourceDigest": "c9d80c7b59e05cbc6fa84547fb4e6be3e1f46921ccabeea5dd59833af5d5bb86",
+      "sourceDigest": "3ae35d957fe686d74ad1444c2344bd6c7eaed90bfa59935fc13932aa86d4baf7",
       "channels": [
         "mcp"
       ],
