@@ -60,33 +60,35 @@ function related(graph: OntologyObjectStore, owner: string, from: ObjectRef, lin
   return items;
 }
 function write(graph: OntologyObjectStore, owner: string, ref: ObjectRef, properties: Record<string, unknown>, links: LinkWrite[], source: ObjectSource, removeLinks: LinkWrite[] = []): void {
-  const previous = readOptional(graph, owner, ref), values: Record<string, unknown> = { [graph.model.object(ref.type).primaryKey]: ref.id, displayTitle: ref.type, ...properties };
-  const mutable: Record<string, string[]> = {
-    RequestInstruction: [], RequestConstraint: [],
-    RegisteredActionType: [], ActionBinding: ['active'], ExecutionPlan: ['state'], ExecutionStep: ['state', 'acceptedOutput'],
-    ExecutionInput: [], ExecutionAttempt: ['state'], ExecutionResult: ['verification', 'output'],
-  };
-  const omitted = mutable[ref.type];
-  let linksVerified = false;
-  if (previous && omitted) {
-    const bindingIntent = ref.type === 'ExecutionStep' && previous.properties.intentId === undefined && typeof values.intentId === 'string';
-    const immutable = (record: Record<string, unknown>) => Object.fromEntries(Object.entries(record).filter(([name]) => !omitted.includes(name) && !(bindingIntent && name === 'intentId')));
-    if (!same(immutable(previous.properties), immutable(values))) fail('Immutable execution graph data changed');
-    const existingLinks = ref.type === 'ExecutionResult' && !previous.properties.output ? links.filter(link => !link.type.startsWith('ExecutionResultOutput')) : links;
-    assertLinks(graph, owner, ref, existingLinks);
-    linksVerified = existingLinks.length === links.length;
-  }
-  const unchanged = previous && same(previous.properties, values);
-  if (unchanged && !removeLinks.length && links.every(link => link.from.type === ref.type && link.from.id === ref.id)) {
-    // The sealed-property and relationship checks above still run for every
-    // historical node. Avoid another import/cardinality pass only when nothing
-    // can change. relationshipDigest excludes SourceReceipt edges, so types
-    // that can carry those edges conservatively retain the normal import path.
-    const excludesNoEdges = !graph.model.sides(ref.type).some(side => side.direction === 'forward' && graph.model.implements('SourceReceipt', side.other.type));
-    if (excludesNoEdges && (linksVerified || graph.relationshipDigest(owner, ref, { remaining: 1000 }) === linkSnapshotDigest(ref, links))) return;
-  }
-  const objects = unchanged ? [] : [{ ref, properties: values, ...(previous ? { expectedRevision: previous.revision } : {}) }];
-  graph.ingest(owner, { objects, links, removeLinks }, source);
+  graph.projectFragment('execution-write:' + JSON.stringify(ref), [properties, links, removeLinks, source.kind, source.id], () => {
+    const previous = readOptional(graph, owner, ref), values: Record<string, unknown> = { [graph.model.object(ref.type).primaryKey]: ref.id, displayTitle: ref.type, ...properties };
+    const mutable: Record<string, string[]> = {
+      RequestInstruction: [], RequestConstraint: [],
+      RegisteredActionType: [], ActionBinding: ['active'], ExecutionPlan: ['state'], ExecutionStep: ['state', 'acceptedOutput'],
+      ExecutionInput: [], ExecutionAttempt: ['state'], ExecutionResult: ['verification', 'output'],
+    };
+    const omitted = mutable[ref.type];
+    let linksVerified = false;
+    if (previous && omitted) {
+      const bindingIntent = ref.type === 'ExecutionStep' && previous.properties.intentId === undefined && typeof values.intentId === 'string';
+      const immutable = (record: Record<string, unknown>) => Object.fromEntries(Object.entries(record).filter(([name]) => !omitted.includes(name) && !(bindingIntent && name === 'intentId')));
+      if (!same(immutable(previous.properties), immutable(values))) fail('Immutable execution graph data changed');
+      const existingLinks = ref.type === 'ExecutionResult' && !previous.properties.output ? links.filter(link => !link.type.startsWith('ExecutionResultOutput')) : links;
+      assertLinks(graph, owner, ref, existingLinks);
+      linksVerified = existingLinks.length === links.length;
+    }
+    const unchanged = previous && same(previous.properties, values);
+    if (unchanged && !removeLinks.length && links.every(link => link.from.type === ref.type && link.from.id === ref.id)) {
+      // The sealed-property and relationship checks above still run for every
+      // historical node. Avoid another import/cardinality pass only when nothing
+      // can change. relationshipDigest excludes SourceReceipt edges, so types
+      // that can carry those edges conservatively retain the normal import path.
+      const excludesNoEdges = !graph.model.sides(ref.type).some(side => side.direction === 'forward' && graph.model.implements('SourceReceipt', side.other.type));
+      if (excludesNoEdges && (linksVerified || graph.relationshipDigest(owner, ref, { remaining: 1000 }) === linkSnapshotDigest(ref, links))) return;
+    }
+    const objects = unchanged ? [] : [{ ref, properties: values, ...(previous ? { expectedRevision: previous.revision } : {}) }];
+    graph.ingest(owner, { objects, links, removeLinks }, source);
+  });
 }
 function registered(graph: OntologyObjectStore, action: string): ActionDefinition | undefined {
   return graph.model.actionForOperation(action);
@@ -110,67 +112,72 @@ function safeRequest(request: ServiceRequest): ServiceRequest {
     messages: structuredClone(request.messages) };
 }
 function projectRequest(graph: OntologyObjectStore, owner: string, request: ServiceRequest, source: ObjectSource): void {
-  const specification = node('RequestSpecification', { requestId: request.id, requestRevision: request.revision });
-  const view = safeRequest(request), specificationProperties = { requestRevision: request.revision, requestDigest: digest(view), instructionCount: request.messages.length,
-    assertionSnapshotVersion: '1', factCount: Object.values(request.confirmedInputs ?? {}).reduce((n, family) => n + Object.keys(family.fields).length, 0), conditionCount: request.conditions?.length ?? 0,
-    factFamilies: Object.fromEntries(Object.entries(request.confirmedInputs ?? {}).map(([namespace, {version, revision, messageDigest}]) => [namespace, {version, revision, messageDigest}])),
-    constraintCount: request.requirements.length + (request.successCriteria?.length ?? 0), confirmedInputDigests: Object.fromEntries(Object.entries(request.confirmedInputs ?? {}).map(([name, value]) => [name, value.messageDigest])),
-    ...Object.fromEntries(['requestedDeliverable', 'executionEnvironment', 'outcome', 'businessScopeId', 'capabilityRef'].filter(name => view[name as keyof ServiceRequest] !== undefined).map(name => [name, view[name as keyof ServiceRequest]])),
-  };
-  const specificationLinks = [requestEdge(specification, request.id)];
-  const previousSpecification = readOptional(graph, owner, specification);
-  const priorActiveConstraints = previousSpecification ? related(graph, owner, specification, 'constraints') : [];
-  const instructions = new Map<string, ObjectRef>();
-  for (const [sequence, message] of request.messages.entries()) {
-    if (instructions.has(message.id)) fail('Request instructions require unique stable message identities');
-    const ref = node('RequestInstruction', { requestId: request.id, messageId: message.id }), previous = readOptional(graph, owner, ref);
-    instructions.set(message.id, ref); specificationLinks.push(edge('RequestSpecificationInstruction', specification, ref));
-    write(graph, owner, ref, { introducedRevision: previous?.properties.introducedRevision ?? request.revision, messageId: message.id, sequence, text: message.text, receivedAt: message.receivedAt }, [requestEdge(ref, request.id)], source);
-  }
-  for (const [group, values] of [['requirement', request.requirements], ['success_criterion', request.successCriteria ?? []]] as const) for (const [sequence, requirement] of values.entries()) {
-    const { provenance, ...body } = requirement; requirementSchema.parse(body);
-    const ref = node('RequestConstraint', { requestId: request.id, group, requirement, sequence });
-    specificationLinks.push(edge('RequestSpecificationConstraint', specification, ref));
-    const previous = readOptional(graph, owner, ref);
-    const predecessor = previous
-      ? related(graph, owner, ref, 'supersedes')[0]
-      : priorActiveConstraints.find(value => value.properties.requirementId === requirement.id && value.properties.group === group)
-        ?? related(graph, owner, root(request.id), 'constraints', [{ property: 'requirementId', op: 'eq', value: requirement.id }, { property: 'group', op: 'eq', value: group }])
-          .filter(value => Number(value.properties.introducedRevision) <= request.revision).sort((a, b) => Number(a.properties.introducedRevision) - Number(b.properties.introducedRevision)).at(-1);
-    const links = [requestEdge(ref, request.id), ...(instructions.has(provenance.messageId) ? [edge('RequestConstraintInstruction', ref, instructions.get(provenance.messageId)!)] : []),
-      ...(predecessor && !same(predecessor.ref, ref) ? [edge('RequestConstraintPredecessor', ref, predecessor.ref)] : [])];
-    write(graph, owner, ref, { introducedRevision: previous?.properties.introducedRevision ?? request.revision, requirementId: requirement.id, sequence, group, kind: requirement.kind, strength: requirement.strength,
-      ...('role' in requirement && requirement.role ? { role: requirement.role } : {}), expected: requirement.expected, provenance }, links, source);
-  }
-  for (const [namespace, family] of Object.entries(request.confirmedInputs ?? {})) for (const fact of Object.values(family.fields)) {
-    const ref = node('RequestFact', { requestId: request.id, namespace, fact });
-    const links = [edge('FactRequest', ref, root(request.id)), ...(instructions.has(fact.source.messageId) ? [edge('FactInstruction', ref, instructions.get(fact.source.messageId)!)] : [])];
-    for (const basis of fact.personalBasis?.sources ?? []) if (basis.authority === 'eigos') links.push(edge('RequestFactPreference', ref, basis.object));
-    write(graph, owner, ref, { namespace, field: fact.field, status: fact.status, ...(fact.value !== undefined ? { value: fact.value } : {}), quote: fact.quote, source: fact.source, factRevision: fact.revision, ...(fact.personalBasis ? { personalBasis: fact.personalBasis } : {}) }, links, source);
-    specificationLinks.push(edge('SpecificationFact', specification, ref));
-  }
-  for (const [sequence, condition] of (request.conditions ?? []).entries()) {
-    const ref = node('RequestCondition', { requestId: request.id, condition, sequence });
-    write(graph, owner, ref, { condition, sequence }, [edge('ConditionRequest', ref, root(request.id)), ...(instructions.has(condition.source.messageId) ? [edge('ConditionInstruction', ref, instructions.get(condition.source.messageId)!)] : [])], source);
-    specificationLinks.push(edge('SpecificationCondition', specification, ref));
-  }
-  const removeLinks: LinkWrite[] = [];
-  if (previousSpecification) for (const [name, type] of [['instructions', 'RequestSpecificationInstruction'], ['constraints', 'RequestSpecificationConstraint'], ['facts', 'SpecificationFact'], ['conditions', 'SpecificationCondition']] as const) {
-    for (const previous of related(graph, owner, specification, name)) {
-      const old = edge(type, specification, previous.ref); if (!specificationLinks.some(next => same(next, old))) removeLinks.push(old);
+  graph.projectFragment('request:' + request.id, request, () => {
+    const specification = node('RequestSpecification', { requestId: request.id, requestRevision: request.revision });
+    const view = safeRequest(request), specificationProperties = { requestRevision: request.revision, requestDigest: digest(view), instructionCount: request.messages.length,
+      assertionSnapshotVersion: '1', factCount: Object.values(request.confirmedInputs ?? {}).reduce((n, family) => n + Object.keys(family.fields).length, 0), conditionCount: request.conditions?.length ?? 0,
+      factFamilies: Object.fromEntries(Object.entries(request.confirmedInputs ?? {}).map(([namespace, {version, revision, messageDigest}]) => [namespace, {version, revision, messageDigest}])),
+      constraintCount: request.requirements.length + (request.successCriteria?.length ?? 0), confirmedInputDigests: Object.fromEntries(Object.entries(request.confirmedInputs ?? {}).map(([name, value]) => [name, value.messageDigest])),
+      ...Object.fromEntries(['requestedDeliverable', 'executionEnvironment', 'outcome', 'businessScopeId', 'capabilityRef'].filter(name => view[name as keyof ServiceRequest] !== undefined).map(name => [name, view[name as keyof ServiceRequest]])),
+    };
+    const specificationLinks = [requestEdge(specification, request.id)];
+    const previousSpecification = readOptional(graph, owner, specification);
+    const priorActiveConstraints = previousSpecification ? related(graph, owner, specification, 'constraints') : [];
+    const instructions = new Map<string, ObjectRef>();
+    for (const [sequence, message] of request.messages.entries()) {
+      if (instructions.has(message.id)) fail('Request instructions require unique stable message identities');
+      const ref = node('RequestInstruction', { requestId: request.id, messageId: message.id }), previous = readOptional(graph, owner, ref);
+      instructions.set(message.id, ref); specificationLinks.push(edge('RequestSpecificationInstruction', specification, ref));
+      write(graph, owner, ref, { introducedRevision: previous?.properties.introducedRevision ?? request.revision, messageId: message.id, sequence, text: message.text, receivedAt: message.receivedAt }, [requestEdge(ref, request.id)], source);
     }
-  }
-  write(graph, owner, specification, specificationProperties, specificationLinks, source, removeLinks);
+    for (const [group, values] of [['requirement', request.requirements], ['success_criterion', request.successCriteria ?? []]] as const) for (const [sequence, requirement] of values.entries()) {
+      const { provenance, ...body } = requirement; requirementSchema.parse(body);
+      const ref = node('RequestConstraint', { requestId: request.id, group, requirement, sequence });
+      specificationLinks.push(edge('RequestSpecificationConstraint', specification, ref));
+      const previous = readOptional(graph, owner, ref);
+      const predecessor = previous
+        ? related(graph, owner, ref, 'supersedes')[0]
+        : priorActiveConstraints.find(value => value.properties.requirementId === requirement.id && value.properties.group === group)
+          ?? related(graph, owner, root(request.id), 'constraints', [{ property: 'requirementId', op: 'eq', value: requirement.id }, { property: 'group', op: 'eq', value: group }])
+            .filter(value => Number(value.properties.introducedRevision) <= request.revision).sort((a, b) => Number(a.properties.introducedRevision) - Number(b.properties.introducedRevision)).at(-1);
+      const links = [requestEdge(ref, request.id), ...(instructions.has(provenance.messageId) ? [edge('RequestConstraintInstruction', ref, instructions.get(provenance.messageId)!)] : []),
+        ...(predecessor && !same(predecessor.ref, ref) ? [edge('RequestConstraintPredecessor', ref, predecessor.ref)] : [])];
+      write(graph, owner, ref, { introducedRevision: previous?.properties.introducedRevision ?? request.revision, requirementId: requirement.id, sequence, group, kind: requirement.kind, strength: requirement.strength,
+        ...('role' in requirement && requirement.role ? { role: requirement.role } : {}), expected: requirement.expected, provenance }, links, source);
+    }
+    for (const [namespace, family] of Object.entries(request.confirmedInputs ?? {})) for (const fact of Object.values(family.fields)) {
+      const ref = node('RequestFact', { requestId: request.id, namespace, fact });
+      const links = [edge('FactRequest', ref, root(request.id)), ...(instructions.has(fact.source.messageId) ? [edge('FactInstruction', ref, instructions.get(fact.source.messageId)!)] : [])];
+      for (const basis of fact.personalBasis?.sources ?? []) if (basis.authority === 'eigos') links.push(edge('RequestFactPreference', ref, basis.object));
+      write(graph, owner, ref, { namespace, field: fact.field, status: fact.status, ...(fact.value !== undefined ? { value: fact.value } : {}), quote: fact.quote, source: fact.source, factRevision: fact.revision, ...(fact.personalBasis ? { personalBasis: fact.personalBasis } : {}) }, links, source);
+      specificationLinks.push(edge('SpecificationFact', specification, ref));
+    }
+    for (const [sequence, condition] of (request.conditions ?? []).entries()) {
+      const ref = node('RequestCondition', { requestId: request.id, condition, sequence });
+      write(graph, owner, ref, { condition, sequence }, [edge('ConditionRequest', ref, root(request.id)), ...(instructions.has(condition.source.messageId) ? [edge('ConditionInstruction', ref, instructions.get(condition.source.messageId)!)] : [])], source);
+      specificationLinks.push(edge('SpecificationCondition', specification, ref));
+    }
+    const removeLinks: LinkWrite[] = [];
+    if (previousSpecification) for (const [name, type] of [['instructions', 'RequestSpecificationInstruction'], ['constraints', 'RequestSpecificationConstraint'], ['facts', 'SpecificationFact'], ['conditions', 'SpecificationCondition']] as const) {
+      for (const previous of related(graph, owner, specification, name)) {
+        const old = edge(type, specification, previous.ref); if (!specificationLinks.some(next => same(next, old))) removeLinks.push(old);
+      }
+    }
+    write(graph, owner, specification, specificationProperties, specificationLinks, source, removeLinks);
+  });
 }
 /** Reconstruct the current safe request from typed graph records, never a Job JSON blob. */
 export function readOntologyRequest(graph: OntologyObjectStore, owner: string, requestId: string): ServiceRequest {
-  const read = () => readOntologyRequestRaw(graph, owner, requestId);
-  // The specification and its instructions/facts are one synchronous read.
-  // Reuse their checked dependencies only within this call; every database or
-  // authority invalidation still clears the existing snapshot caches.
-  return graph.security ? graph.security.readSnapshot(read) : read();
+  return readRequestProjection(graph, owner, requestId).request;
 }
-function readOntologyRequestRaw(graph: OntologyObjectStore, owner: string, requestId: string): ServiceRequest {
+/** The same verified projection supplies both the request and instruction index. */
+export function readRequestProjection(graph: OntologyObjectStore, owner: string, requestId: string) {
+  const read = () => readOntologyRequestRaw(graph, owner, requestId);
+  const computed = ['ServiceRequest','RequestSpecification','RequestInstruction','RequestConstraint','RequestFact','RequestCondition']
+    .filter(type => graph.model.hasType(type)).some(type => Object.values(graph.model.properties(type)).some(property => property.derived));
+  return graph.withReadMemo(owner, () => computed ? read() : graph.reuseRead(owner, 'request-projection:' + requestId, read));
+}
+function readOntologyRequestRaw(graph: OntologyObjectStore, owner: string, requestId: string) {
   const request = graph.read(owner, root(requestId)), revision = Number(request.properties.revision);
   const filter = [{ property: 'requestRevision', op: 'eq' as const, value: revision }];
   const specs = related(graph, owner, request.ref, 'specifications', filter);
@@ -203,7 +210,7 @@ function readOntologyRequestRaw(graph: OntologyObjectStore, owner: string, reque
     confirmedInputs: Object.fromEntries(Object.entries(confirmed ?? {}).map(([name, value]) => [name, { ...structuredClone(value), messageDigest: inputDigests[name] ?? fail('Confirmed input provenance is missing'), history: [] }])),
     messages: instructions.map(({ properties: p }) => ({ id: String(p.messageId), text: String(p.text), receivedAt: String(p.receivedAt) })) };
   if (digest(safeRequest(view)) !== specification.requestDigest) fail('Current request graph differs from its sealed specification');
-  return view;
+  return { request: view, specification: specs[0]!, instructions };
 }
 
 interface StepShape {
@@ -391,50 +398,52 @@ function fixedGraphShape(graph: OntologyObjectStore, owner: string, plan: Execut
     ...(primary ? { binding: primary.ref } : {}), steps }, bindings };
 }
 function projectPlan(graph: OntologyObjectStore, owner: string, plan: PlanShape, ledger: ExecutionLedger, source: ObjectSource): void {
-  const ref = executionPlanRef(plan), context = executionContextRef(plan.requestId, plan.requestRevision);
-  write(graph, owner, ref, { planId: plan.id, planDigest: plan.digest, requestRevision: plan.requestRevision, kind: plan.kind, sequence: plan.sequence, state: plan.state,
-    structureDigest: digest(planStructure(plan)), createdAt: plan.createdAt, ...(plan.modelRunId ? { modelRunId: plan.modelRunId } : {}) },
-  [requestEdge(ref, plan.requestId), edge('ExecutionPlanContext', ref, context), ...(plan.binding ? [edge('ExecutionPlanBinding', ref, plan.binding)] : [])], source);
-  const seen = new Set<string>();
-  for (const [sequence, step] of plan.steps.entries()) {
-    if (seen.has(step.id) || step.dependsOn.some(id => !seen.has(id))) fail('Execution graph has duplicate or unordered dependencies');
-    seen.add(step.id);
-    const matchingIntents = ledger.intents.filter(i => i.planDigest === plan.digest && (step.intentId ? i.id === step.intentId : i.stepId === step.id));
-    if (matchingIntents.length > 1 || matchingIntents.some(i => i.owner !== owner || i.jobId !== plan.requestId || i.stepId !== step.id)) fail('Execution graph intent binding is ambiguous or belongs to another task');
-    const intent = matchingIntents[0];
-    const definition = registered(graph, step.action), stepRef = executionStepRef(plan, step.id), output = acceptedObject(intent, plan.kind === 'fixed');
-    const contract = step.contract ?? (definition ? { ref: actionRef(plan.requestId, definition), properties: actionProperties(definition) } : undefined);
-    if (contract) write(graph, owner, contract.ref, contract.properties, [requestEdge(contract.ref, plan.requestId)], source);
-    const shape = immutableStep(step);
-    write(graph, owner, stepRef, { stepId: step.id, sequence, actionId: step.action, ...(step.definitionDigest ? { definitionDigest: step.definitionDigest } : {}),
-      inputDigest: shape.inputDigest, ...(step.intentId ? { intentId: step.intentId } : intent ? { intentId: intent.id } : {}),
-      planDigest: plan.digest, effect: step.effect, state: intent?.state ?? 'unprepared', structureDigest: digest(shape), ...(output ? { acceptedOutput: output } : {}) },
-    stepLinks(plan, step, definition), source);
-    for (const properties of inputValues(step)) write(graph, owner, inputRef(stepRef, properties.parameter), properties, inputLinks(plan, step, properties), source);
-    if (!intent) continue;
-    for (const attempt of ledger.attempts.filter(a => a.intentId === intent.id && a.planDigest === plan.digest)) {
-      const attemptNode = attemptRef(plan.requestId, attempt), observations = ledger.observations.filter(o => o.intentId === intent.id && o.attemptId === attempt.id);
-      const submission = attempt.submission ? executionSubmissionSchema.parse({
-        action: attempt.submission.action, definitionDigest: attempt.submission.definitionDigest,
-        ...(attempt.submission.subject ? { subject: attempt.submission.subject } : {}),
-        checks: attempt.submission.checks.map(check => ({ criterion: check.criterion, result: check.result })),
-        evidenceRefs: attempt.submission.evidenceRefs.map(ref => ({ type: ref.type, id: ref.id })),
-      }) : undefined;
-      write(graph, owner, attemptNode, { attemptId: attempt.id, intentId: attempt.intentId, planDigest: attempt.planDigest, ordinal: attempt.ordinal,
-        requestRevision: plan.requestRevision, taskRevision: attempt.requestRevision, kind: attempt.kind, inputDigest: attempt.inputDigest, startedAt: attempt.startedAt,
-        state: observations.some(o => o.applied) ? 'observed' : observations.length ? 'audit_only' : 'started', ...(submission ? { submission } : {}) }, [edge('ExecutionAttemptStep', attemptNode, stepRef), ...(attempt.authorizationId ? [edge('ExecutionAttemptAuthorization', attemptNode, { type: 'Authorization', id: attempt.authorizationId })] : [])], source);
-      for (const observation of observations) {
-        const result = resultRef(plan.requestId, attempt, observation);
-        const oldResult = readOptional(graph, owner, result);
-        const accepted = observation.applied && observation.verified !== false && observation.result.kind === 'confirmed'
-          ? intent.latestObservationId === observation.id ? output : oldResult?.properties.output as ObjectRef | undefined : undefined;
-        write(graph, owner, result, { resultId: observation.id, resultDigest: observation.digest, receivedAt: observation.receivedAt, kind: observation.result.kind,
-          sourceVersion: observation.result.sourceVersion, applied: observation.applied, verification: observation.verified === undefined ? oldResult?.properties.verification ?? 'not_recorded' : observation.verified ? 'verified' : 'unverified',
-          ...(accepted ? { output: accepted } : {}) },
-        [edge('ExecutionResultAttempt', result, attemptNode), edge('ExecutionResultStep', result, stepRef), ...(accepted ? [referenceEdge('output', result, accepted)] : [])], source);
+  graph.projectFragment('plan:' + plan.digest, { plan, intents: ledger.intents.filter(i => i.planDigest === plan.digest), attempts: ledger.attempts.filter(a => a.planDigest === plan.digest), observations: ledger.observations.filter(o => ledger.attempts.some(a => a.id === o.attemptId && a.planDigest === plan.digest)) }, () => {
+    const ref = executionPlanRef(plan), context = executionContextRef(plan.requestId, plan.requestRevision);
+    write(graph, owner, ref, { planId: plan.id, planDigest: plan.digest, requestRevision: plan.requestRevision, kind: plan.kind, sequence: plan.sequence, state: plan.state,
+      structureDigest: digest(planStructure(plan)), createdAt: plan.createdAt, ...(plan.modelRunId ? { modelRunId: plan.modelRunId } : {}) },
+    [requestEdge(ref, plan.requestId), edge('ExecutionPlanContext', ref, context), ...(plan.binding ? [edge('ExecutionPlanBinding', ref, plan.binding)] : [])], source);
+    const seen = new Set<string>();
+    for (const [sequence, step] of plan.steps.entries()) {
+      if (seen.has(step.id) || step.dependsOn.some(id => !seen.has(id))) fail('Execution graph has duplicate or unordered dependencies');
+      seen.add(step.id);
+      const matchingIntents = ledger.intents.filter(i => i.planDigest === plan.digest && (step.intentId ? i.id === step.intentId : i.stepId === step.id));
+      if (matchingIntents.length > 1 || matchingIntents.some(i => i.owner !== owner || i.jobId !== plan.requestId || i.stepId !== step.id)) fail('Execution graph intent binding is ambiguous or belongs to another task');
+      const intent = matchingIntents[0];
+      const definition = registered(graph, step.action), stepRef = executionStepRef(plan, step.id), output = acceptedObject(intent, plan.kind === 'fixed');
+      const contract = step.contract ?? (definition ? { ref: actionRef(plan.requestId, definition), properties: actionProperties(definition) } : undefined);
+      if (contract) write(graph, owner, contract.ref, contract.properties, [requestEdge(contract.ref, plan.requestId)], source);
+      const shape = immutableStep(step);
+      write(graph, owner, stepRef, { stepId: step.id, sequence, actionId: step.action, ...(step.definitionDigest ? { definitionDigest: step.definitionDigest } : {}),
+        inputDigest: shape.inputDigest, ...(step.intentId ? { intentId: step.intentId } : intent ? { intentId: intent.id } : {}),
+        planDigest: plan.digest, effect: step.effect, state: intent?.state ?? 'unprepared', structureDigest: digest(shape), ...(output ? { acceptedOutput: output } : {}) },
+      stepLinks(plan, step, definition), source);
+      for (const properties of inputValues(step)) write(graph, owner, inputRef(stepRef, properties.parameter), properties, inputLinks(plan, step, properties), source);
+      if (!intent) continue;
+      for (const attempt of ledger.attempts.filter(a => a.intentId === intent.id && a.planDigest === plan.digest)) {
+        const attemptNode = attemptRef(plan.requestId, attempt), observations = ledger.observations.filter(o => o.intentId === intent.id && o.attemptId === attempt.id);
+        const submission = attempt.submission ? executionSubmissionSchema.parse({
+          action: attempt.submission.action, definitionDigest: attempt.submission.definitionDigest,
+          ...(attempt.submission.subject ? { subject: attempt.submission.subject } : {}),
+          checks: attempt.submission.checks.map(check => ({ criterion: check.criterion, result: check.result })),
+          evidenceRefs: attempt.submission.evidenceRefs.map(ref => ({ type: ref.type, id: ref.id })),
+        }) : undefined;
+        write(graph, owner, attemptNode, { attemptId: attempt.id, intentId: attempt.intentId, planDigest: attempt.planDigest, ordinal: attempt.ordinal,
+          requestRevision: plan.requestRevision, taskRevision: attempt.requestRevision, kind: attempt.kind, inputDigest: attempt.inputDigest, startedAt: attempt.startedAt,
+          state: observations.some(o => o.applied) ? 'observed' : observations.length ? 'audit_only' : 'started', ...(submission ? { submission } : {}) }, [edge('ExecutionAttemptStep', attemptNode, stepRef), ...(attempt.authorizationId ? [edge('ExecutionAttemptAuthorization', attemptNode, { type: 'Authorization', id: attempt.authorizationId })] : [])], source);
+        for (const observation of observations) {
+          const result = resultRef(plan.requestId, attempt, observation);
+          const oldResult = readOptional(graph, owner, result);
+          const accepted = observation.applied && observation.verified !== false && observation.result.kind === 'confirmed'
+            ? intent.latestObservationId === observation.id ? output : oldResult?.properties.output as ObjectRef | undefined : undefined;
+          write(graph, owner, result, { resultId: observation.id, resultDigest: observation.digest, receivedAt: observation.receivedAt, kind: observation.result.kind,
+            sourceVersion: observation.result.sourceVersion, applied: observation.applied, verification: observation.verified === undefined ? oldResult?.properties.verification ?? 'not_recorded' : observation.verified ? 'verified' : 'unverified',
+            ...(accepted ? { output: accepted } : {}) },
+          [edge('ExecutionResultAttempt', result, attemptNode), edge('ExecutionResultStep', result, stepRef), ...(accepted ? [referenceEdge('output', result, accepted)] : [])], source);
+        }
       }
     }
-  }
+  });
 }
 
 /** Internal projection. The caller owns the business transaction shared with the task/intent ledger. */
@@ -447,36 +456,41 @@ export function projectExecution(graph: OntologyObjectStore, owner: string, job:
   const states = [...(delegation.agentHistory ?? []), ...(delegation.agent ? [delegation.agent] : [])];
   const revisions = new Set([request.revision, ...states.map(s => s.requestRevision), ...(delegation.planHistory ?? []).map(p => p.requestRevision), ...(delegation.plan ? [delegation.plan.requestRevision] : [])]);
   for (const revision of revisions) {
-    const current = revision === request.revision ? delegation.agent : undefined, context = executionContextRef(request.id, revision), previous = readOptional(graph, owner, context);
-    const links = [requestEdge(context, request.id), ...(current ? [referenceEdge('scope', context, current.scope), ...current.observations.map(ref => referenceEdge('observation', context, ref))] : [])];
-    const oldScope = previous?.properties.scope as ObjectRef | undefined, oldObservations = (previous?.properties.observationOrder ?? []) as ObjectRef[];
-    const removeLinks = [...(oldScope ? [referenceEdge('scope', context, oldScope)] : []), ...oldObservations.map(ref => referenceEdge('observation', context, ref))].filter(old => !links.some(next => same(old, next)));
-    // Historical context keeps its old scope/observations; it is never returned as current.
-    if (revision !== request.revision && previous) continue;
-    write(graph, owner, context, { requestRevision: revision, phase: revision === request.revision ? delegation.phase : 'historical', state: revision === request.revision ? job.state : 'historical',
-      ...(current ? { programRef: current.programRef, programDigest: current.programDigest, scope: current.scope, activeBinding: bindingRef(request.id, current),
-        ...(current.composition ? { goal: { digest: current.composition.goal.digest, criteria: current.composition.goal.criteria }, components: current.composition.contexts.map(component => ({ id: component.id, programRef: component.programRef, configurationDigest: component.programDigest, scope: component.scope, digest: component.digest, ...(current.composition!.retiredContexts?.some(value => value.id === component.id) ? { retired: true } : {}) })),
-          ...(current.composition.assessment ? { goalAssessment: { version: current.composition.assessment.version, goalDigest: current.composition.assessment.goalDigest, at: current.composition.assessment.at,
-            accepted: current.composition.assessment.accepted, criteria: current.composition.assessment.criteria, requirements: current.composition.assessment.requirements, conditions: current.composition.assessment.conditions,
-            components: current.composition.assessment.components.map(({contextId,status,reason})=>({contextId,status,...(reason?{reason}:{})})) } } : {}) } : {}),
-        ...(current.pendingPlanId ? { pendingPlanId: current.pendingPlanId } : {}) } : {}),
-      observationOrder: current?.observations ?? [], feedback: current?.feedback.slice(-20) ?? [] }, links, source, removeLinks);
+    graph.projectFragment('context:' + revision, { revision, requestRevision: request.revision, state: job.state, phase: delegation.phase, current: revision === request.revision ? delegation.agent : undefined }, () => {
+      const current = revision === request.revision ? delegation.agent : undefined, context = executionContextRef(request.id, revision), previous = readOptional(graph, owner, context);
+      const links = [requestEdge(context, request.id), ...(current ? [referenceEdge('scope', context, current.scope), ...current.observations.map(ref => referenceEdge('observation', context, ref))] : [])];
+      const oldScope = previous?.properties.scope as ObjectRef | undefined, oldObservations = (previous?.properties.observationOrder ?? []) as ObjectRef[];
+      const removeLinks = [...(oldScope ? [referenceEdge('scope', context, oldScope)] : []), ...oldObservations.map(ref => referenceEdge('observation', context, ref))].filter(old => !links.some(next => same(old, next)));
+      // Historical context keeps its old scope/observations; it is never returned as current.
+      if (revision !== request.revision && previous) return;
+      write(graph, owner, context, { requestRevision: revision, phase: revision === request.revision ? delegation.phase : 'historical', state: revision === request.revision ? job.state : 'historical',
+        ...(current ? { programRef: current.programRef, programDigest: current.programDigest, scope: current.scope, activeBinding: bindingRef(request.id, current),
+          ...(current.composition ? { goal: { digest: current.composition.goal.digest, criteria: current.composition.goal.criteria }, components: current.composition.contexts.map(component => ({ id: component.id, programRef: component.programRef, configurationDigest: component.programDigest, scope: component.scope, digest: component.digest, ...(current.composition!.retiredContexts?.some(value => value.id === component.id) ? { retired: true } : {}) })),
+            ...(current.composition.assessment ? { goalAssessment: { version: current.composition.assessment.version, goalDigest: current.composition.assessment.goalDigest, at: current.composition.assessment.at,
+              accepted: current.composition.assessment.accepted, criteria: current.composition.assessment.criteria, requirements: current.composition.assessment.requirements, conditions: current.composition.assessment.conditions,
+              components: current.composition.assessment.components.map(({contextId,status,reason})=>({contextId,status,...(reason?{reason}:{})})) } } : {}) } : {}),
+          ...(current.pendingPlanId ? { pendingPlanId: current.pendingPlanId } : {}) } : {}),
+        observationOrder: current?.observations ?? [], feedback: current?.feedback.slice(-20) ?? [] }, links, source, removeLinks);
+    });
   }
   for (const state of states) {
-    const scope = graph.read(owner, state.scope);
-    if (state.managedActionIds) {
-      const release = graph.releaseRef, all = graph.model.actionDefinitions().filter(action => graph.model.actionImplementation(action.id)?.kind === 'declarative').map(action => action.id).sort();
-      if (!release || state.programRef.id !== `ontology.managed.${release.ontologyId}` || state.programRef.version !== release.digest
-        || state.programDigest !== digest({ engine: 'eigos.declarative-actions@1', releaseRef: release, modelDigest: graph.model.ref.digest, actionIds: all })
-        || new Set(state.managedActionIds).size !== state.managedActionIds.length || !state.managedActionIds.length || state.managedActionIds.some(id => !all.includes(id))) fail('Managed action binding differs from its exact registered engine and release');
-    }
-    const candidates = state.managedActionIds ?? (Array.isArray(scope.properties.allowedActions) ? scope.properties.allowedActions as string[] : []);
-    const definitions = candidates.map(id => registered(graph, id)).filter((value): value is ActionDefinition => !!value);
-    for (const definition of definitions) write(graph, owner, actionRef(request.id, definition), actionProperties(definition), [requestEdge(actionRef(request.id, definition), request.id)], source);
-    const binding = bindingRef(request.id, state), context = executionContextRef(request.id, state.requestRevision);
-    write(graph, owner, binding, { requestRevision: state.requestRevision, bindingRef: state.programRef, configurationDigest: state.programDigest, kind: 'agent_program',
-      actionIds: definitions.map(d => d.id), active: state === delegation.agent, authorization: 'runtime_check_required' },
-    [requestEdge(binding, request.id), edge('ExecutionContextBinding', binding, context), ...definitions.map(d => edge('ExecutionBindingAction', binding, actionRef(request.id, d)))], source);
+    const context = executionContextRef(request.id, state.requestRevision);
+    graph.projectFragment('binding:' + bindingRef(request.id, state).id, { scope: state.scope, program: state.programRef, programDigest: state.programDigest, managed: state.managedActionIds, active: state === delegation.agent }, () => {
+      const scope = graph.read(owner, state.scope);
+      if (state.managedActionIds) {
+        const release = graph.releaseRef, all = graph.model.actionDefinitions().filter(action => graph.model.actionImplementation(action.id)?.kind === 'declarative').map(action => action.id).sort();
+        if (!release || state.programRef.id !== `ontology.managed.${release.ontologyId}` || state.programRef.version !== release.digest
+          || state.programDigest !== digest({ engine: 'eigos.declarative-actions@1', releaseRef: release, modelDigest: graph.model.ref.digest, actionIds: all })
+          || new Set(state.managedActionIds).size !== state.managedActionIds.length || !state.managedActionIds.length || state.managedActionIds.some(id => !all.includes(id))) fail('Managed action binding differs from its exact registered engine and release');
+      }
+      const candidates = state.managedActionIds ?? (Array.isArray(scope.properties.allowedActions) ? scope.properties.allowedActions as string[] : []);
+      const definitions = candidates.map(id => registered(graph, id)).filter((value): value is ActionDefinition => !!value);
+      for (const definition of definitions) write(graph, owner, actionRef(request.id, definition), actionProperties(definition), [requestEdge(actionRef(request.id, definition), request.id)], source);
+      const binding = bindingRef(request.id, state);
+      write(graph, owner, binding, { requestRevision: state.requestRevision, bindingRef: state.programRef, configurationDigest: state.programDigest, kind: 'agent_program',
+        actionIds: definitions.map(d => d.id), active: state === delegation.agent, authorization: 'runtime_check_required' },
+      [requestEdge(binding, request.id), edge('ExecutionContextBinding', binding, context), ...definitions.map(d => edge('ExecutionBindingAction', binding, actionRef(request.id, d)))], source);
+    });
     for (const plan of state.plans) {
       for (const step of plan.steps.filter(step => !!step.binding)) {
         const pinned = step.binding!, ref = composedBindingRef(step), definition = graph.model.action(step.action);
