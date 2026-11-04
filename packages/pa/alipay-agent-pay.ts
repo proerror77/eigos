@@ -36,7 +36,7 @@ export const taobaoCatalogReadSchema = z.strictObject({
   noBusinessWrites: z.literal(true), paymentPerformedByEigos: z.literal(false),
 });
 export const noSpendAuthoritySchema = z.strictObject({
-  taskId: z.uuid(), itemId: id, quantity: z.number().int().min(1).max(99),
+  taskId: z.uuid(), itemId: id, skuId: id.optional(), quantity: z.number().int().min(1).max(99),
   maximumMinor: minor, currency: z.literal('CNY'), payeeId: id.optional(), expiresAt: time,
   mode: z.literal('rehearsal_only'), allowRealOrders: z.literal(false), allowRealPayments: z.literal(false),
 });
@@ -50,10 +50,11 @@ export function prepareTaobaoShopping(rawRead: unknown, rawAuthority: unknown, n
   return {
     version: 1 as const, taskId: authority.taskId, mode: 'rehearsal_only' as const,
     item: { itemId: rows[0]!.itemId, title: rows[0]!.title, quantity: authority.quantity,
+      ...(authority.skuId ? { skuId: authority.skuId } : {}),
       ...(rows[0]!.referenceAmount ? { referenceAmount: rows[0]!.referenceAmount, currency: 'CNY' as const } : {}) },
     catalogDigest: fingerprint(read), authorityDigest: fingerprint(authority),
     status: 'awaiting_order_material' as const,
-    missing: ['selected_sku', 'stock', 'shipping', 'final_total', 'payee', 'original_order', 'payment_material'],
+    missing: [...(authority.skuId ? [] : ['selected_sku']), 'stock', 'shipping', 'final_total', 'payee', 'original_order', 'payment_material'],
     realOrderCreated: false as const, realPaymentSubmitted: false as const,
   };
 }
@@ -82,9 +83,9 @@ export function prepareAlipayRehearsal(rawRead: unknown, rawAuthority: unknown, 
   const draft = prepareTaobaoShopping(rawRead, rawAuthority, now), authority = noSpendAuthoritySchema.parse(rawAuthority);
   const order = rehearsalOrderSchema.parse(rawOrder);
   z.uuid().parse(sessionId); fresh(order.observedAt, order.expiresAt, now);
-  if (order.taskId !== draft.taskId || order.itemId !== draft.item.itemId || order.quantity !== draft.item.quantity
+  if (order.taskId !== draft.taskId || order.itemId !== draft.item.itemId || !authority.skuId || order.skuId !== authority.skuId || order.quantity !== draft.item.quantity
     || !authority.payeeId || authority.payeeId !== order.payeeId || BigInt(order.amount.minor) > BigInt(authority.maximumMinor)) {
-    fail('The original order does not match the PA task, selected item, quantity, payee or exact budget');
+    fail('The original order does not match the PA task, selected item/SKU, quantity, payee or exact budget');
   }
   const cents = BigInt(order.amount.minor), major = `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`;
   const orderDigest = fingerprint(order), operationId = fingerprint({ task: draft.taskId, orderDigest, sessionId, authority: draft.authorityDigest });

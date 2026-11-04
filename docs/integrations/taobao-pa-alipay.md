@@ -16,7 +16,7 @@ EIGOS 淘宝只读任务 → 原商品观察 → PA 购物草稿（等待正式�
 
 淘宝客返回的价格是参考价，不能当作含运费结算价、库存、SKU 或付款授权。真实商品观察只能生成 `awaiting_order_material` 草稿。演练订单须显式标注 `synthetic`，使用 `sim-` 订单号及保留域名 `cashier.alipay.invalid`；实际支付宝收银台链接会被本版本拒绝。
 
-授权固定原任务、商品、数量、预算、币种、收款方和有效期，并要求 `mode=rehearsal_only`、`allowRealOrders=false`、`allowRealPayments=false`。它是 PA 本地演练合同，**不是支付宝或淘宝官方 API 字段**，也不是用户的真实消费授权。确认状态始终带 `evidenceLevel=synthetic`、`businessCompleted=false`、`officialPaymentVerified=false`。
+授权固定原任务、商品、选定 SKU、数量、预算、币种、收款方和有效期，并要求 `mode=rehearsal_only`、`allowRealOrders=false`、`allowRealPayments=false`。生成商品草稿时可尚未选择 SKU，但准备付款必须提供且精确匹配。它是 PA 本地演练合同，**不是支付宝或淘宝官方 API 字段**，也不是用户的真实消费授权。确认状态始终带 `evidenceLevel=synthetic`、`businessCompleted=false`、`officialPaymentVerified=false`。
 
 ## PA 工具
 

@@ -24,13 +24,13 @@ test('Taobao source prices stop at a PA draft; only full synthetic order terms p
 test('Reject real materials, expired observations, changed identity, unknown fees and authority escalation', () => {
   const now = Date.now(), read = fixtureRead(now), authority = fixtureAuthority(undefined, now), order = fixtureOrder(authority, now), session = randomUUID();
   const prepare = (a: unknown = authority, o: unknown = order, r: unknown = read) => prepareAlipayRehearsal(r, a, o, session, now);
-  for (const change of [{ itemId: 'other' }, { quantity: 2 }, { taskId: randomUUID() }, { payeeId: 'other' },
+  for (const change of [{ itemId: 'other' }, { skuId: 'sim-sku-other' }, { quantity: 2 }, { taskId: randomUUID() }, { payeeId: 'other' },
     { amount: { minor: '4001', currency: 'CNY' } }, { shippingIncluded: false }, { stockConfirmed: false },
     { expiresAt: new Date(now - 1).toISOString() }, { observedAt: new Date(now + 1).toISOString() },
     { paymentLink: 'https://cashier.alipay.com/real' }, { paymentLink: 'https://cashier.alipay.invalid.evil.test/' },
     { environment: 'production' }, { walletToken: 'secret' }]) assert.throws(() => prepare(authority, { ...order, ...change }));
   for (const change of [{ allowRealPayments: true }, { allowRealOrders: true }, { mode: 'production' },
-    { payeeId: undefined }, { expiresAt: new Date(now).toISOString() }]) assert.throws(() => prepare({ ...authority, ...change }));
+    { payeeId: undefined }, { skuId: undefined }, { expiresAt: new Date(now).toISOString() }]) assert.throws(() => prepare({ ...authority, ...change }));
   assert.throws(() => prepare(authority, order, { ...read, expiresAt: new Date(now).toISOString() }));
   assert.throws(() => prepare(authority, order, { ...read, query: { ...read.query, walletToken: 'not-accepted' } }));
   assert.throws(() => prepare(authority, order, { ...read, result: { ...read.result, items: [read.result.items[0], read.result.items[0]] } }));

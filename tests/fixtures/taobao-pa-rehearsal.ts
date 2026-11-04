@@ -18,7 +18,7 @@ export function fixtureRead(now = Date.now()) {
     evidenceKind: 'fixture', noBusinessWrites: true, paymentPerformedByEigos: false });
 }
 export function fixtureAuthority(taskId: string = randomUUID(), now = Date.now()): NoSpendAuthority {
-  return { taskId, itemId: fixtureItem.itemId, quantity: 1, maximumMinor: '4000', currency: 'CNY', payeeId: 'sim-merchant',
+  return { taskId, itemId: fixtureItem.itemId, skuId: 'sim-sku-blue', quantity: 1, maximumMinor: '4000', currency: 'CNY', payeeId: 'sim-merchant',
     expiresAt: new Date(now + 300_000).toISOString(), mode: 'rehearsal_only', allowRealOrders: false, allowRealPayments: false };
 }
 export function fixtureOrder(authority = fixtureAuthority(), now = Date.now()): RehearsalOrder {
