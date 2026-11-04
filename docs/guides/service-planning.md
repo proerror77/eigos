@@ -58,7 +58,7 @@ Worker 的任务专属 Ontology MCP 提供只读 `plan_services`。结构化执�
 
 原生 goal 路径可以为同一 program 准备不同 context。规划器为两个接送生成不同 need 与 step 身份，不合并其路线或业务结果。消费候选时仍须创建各自正确的上下文、执行操作及独立结果校验。
 
-`phase=quote` 需要真正的报价阶段输出；`commitment` 需要承诺阶段输出。参考价、外卖和行程制品不能自动匹配酒店确认、餐厅订位或出票。当前没有允许的 FlightOffer／FlightReservation、DiningOffer／DiningReservation 定义时，会返回 `definition_missing`；这些名称表达所需结果，不会自动创建类型或供应商绑定。没有配置绑定时保留 `binding_unavailable`；不声称市场上不存在供给。
+`phase=quote` 需要真正的报价阶段输出；`commitment` 需要承诺阶段输出。参考价、外卖和行程制品不能自动匹配酒店确认、餐厅订位或出票。餐厅复用已有 `ReservationOffer`／`Reservation`，不另建 Dining 同义类型；定义存在但没有兼容配置绑定时返回 `binding_unavailable`。当前没有允许的 FlightOffer／FlightReservation 定义时，返回 `definition_missing`；这些名称表达所需结果，不会自动创建类型或供应商绑定。两种缺口均不证明市场上不存在供给。
 
 JPY 可作为本规划合同的预算币种，minor 沿用通用 Money 的最小单位整数，不按小数金额猜测缩放。根预算保留在 plan.totalBudget，不复制为每项服务独占的额度；当前没有读取完整报价、汇率、费用和结算证据，因此 budgetStatus=unknown。现有领域沙箱的 CNY／USD／EUR 限制没有被此工具改写；要以 JPY 执行该领域，仍须单独发布兼容的新业务合同和适配器。
 

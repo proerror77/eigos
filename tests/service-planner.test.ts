@@ -37,14 +37,14 @@ test('round-trip rules expand only explicitly selected services and preserve dis
   assert(needs.every(value => value.derivedBy?.rule === 'travel.round_trip' && value.need.budget === undefined));
   assert.equal(expandServiceNeeds(servicePlanningSchema.parse(trip())).length, 2, 'A flight-only request does not manufacture paid extras');
   const booked = expandServiceNeeds(servicePlanningSchema.parse(trip({ phase: 'commitment', dining: true })));
-  assert.equal(booked.at(-1)!.need.output.type, 'DiningReservation');
+  assert.equal(booked.at(-1)!.need.output.type, 'Reservation');
   assert.equal(booked[0]!.need.output.type, 'FlightReservation');
 });
 
 test('a complete synthetic Tokyo metadata catalog yields six distinct need plans without claiming bookings or availability', () => {
   // These additional types and bindings exist only in this isolated fixture;
   // they are not installed as real flight or restaurant capabilities.
-  const types = ['FlightOffer', 'HotelOption', 'VehicleOption', 'DiningOffer'];
+  const types = ['FlightOffer', 'HotelOption', 'VehicleOption', 'ReservationOffer'];
   const actions: ActionDefinition[] = types.map(type => ({ id: `Read${type}`, version: '1', kind: 'source_read', description: 'Synthetic contract only',
     inputs: {}, changes: [type], submissionCriteria: ['same_owner'], resultTypes: [type], effects: ['read'],
     read: { version: '1', effect: 'read', resultType: type, inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
@@ -123,14 +123,19 @@ test('the same program can serve two needs without merging their step, role or t
   } finally { t.close(); }
 });
 
-test('missing flight and dining definitions remain explicit gaps, and a total JPY ceiling is never allocated to every component', () => {
+test('missing flight definitions differ from unavailable restaurant bindings, and a total JPY ceiling is never allocated to every component', () => {
   const t = setupDidi();
   try {
     const job = t.b.submit(), request = job.delegation!.request;
     const args = trip({ source: taskSource(request), lodging: true, arrivalTransfer: true, departureTransfer: true, dining: true, budget: { minor: '500000', currency: 'JPY' } });
     const plan = session(t, request).call('plan_services', args) as Plan;
     assert.equal(plan.needs.length, 6);
-    for (const id of ['outbound_flight', 'return_flight', 'dining']) assert.equal(plan.needs.find(value => value.need.id === id)!.gaps[0]!.code, 'definition_missing');
+    for (const id of ['outbound_flight', 'return_flight']) assert.equal(plan.needs.find(value => value.need.id === id)!.gaps[0]!.code, 'definition_missing');
+    const dining = plan.needs.find(value => value.need.id === 'dining')!;
+    assert.equal(dining.need.output.type, 'ReservationOffer');
+    assert.equal(dining.gaps[0]!.code, 'binding_unavailable', 'The published restaurant type exists; only a compatible configured action is absent');
+    const booked = session(t, request).call('plan_services', trip({ source: taskSource(request), phase: 'commitment', dining: true })) as Plan;
+    assert.equal(booked.needs.find(value => value.need.id === 'dining')!.gaps[0]!.code, 'binding_unavailable');
     assert.equal(plan.totalBudget!.currency, 'JPY'); assert.equal(plan.budgetStatus, 'unknown');
     assert(plan.needs.every(value => value.need.budget === undefined));
     assert(plan.needs.every(value => value.applicability.every(check => check.result === 'unknown')));

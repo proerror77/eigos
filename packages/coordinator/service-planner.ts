@@ -29,7 +29,7 @@ export function expandServiceNeeds(input: ServicePlanningInput): ServiceNeedPlan
     { destination: goal.destination }, ['outbound_flight', ...(goal.lodging ? ['lodging'] : [])]));
   if (goal.departureTransfer) needs.push(make('departure_transfer', 'transfer.departure', output('VehicleOption', 'VehicleBooking'), goal.destinationRegion,
     { origin: goal.destination }, ['return_flight', ...(goal.lodging ? ['lodging'] : [])]));
-  if (goal.dining) needs.push(make('dining', 'dining.reservation', output('DiningOffer', 'DiningReservation'), goal.destinationRegion,
+  if (goal.dining) needs.push(make('dining', 'dining.reservation', output('ReservationOffer', 'Reservation'), goal.destinationRegion,
     { destination: goal.destination }, goal.lodging ? ['lodging'] : []));
   // A root ceiling is not an allocation to every service. It is returned at
   // plan level and remains unknown until complete, de-duplicated costs exist.

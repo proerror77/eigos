@@ -5694,7 +5694,7 @@
       "currentControl": "Current authorized task catalog and type visibility; exact bindings, phase checks, graph bounds, no provider calls or executable plan.",
       "targetControl": "Current source and task authority on every read; proposals never establish availability or business completion.",
       "stage": "S3",
-      "sourceDigest": "fa1aa714b6faa0eab22dad370b841a858a2a36b27016baa703e6ac46964ba32c"
+      "sourceDigest": "4b72720f49b9595fc9d335fea142bc78f596cab86c6e8d7b9353a29174280ba2"
     }
   ]
 }
