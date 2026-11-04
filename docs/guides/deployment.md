@@ -150,7 +150,21 @@ node scripts/postgres-identity-audit.mjs --business-schema eigos_business_exampl
 
 分别保存实际导入回执、独立业务逐表／序列验证和会员身份核对结果。身份 audit 只检查其声明范围，不证明完整授权或外部效果。导入器只创建新私有 schema，不激活服务、不授予运行角色，也不修改源。容量预算不包含 PostgreSQL WAL 或托管平台额外开销；可导入的大行也不等于运行时／HTTP 能在原有读取界限内处理，不可截断历史或放宽默认界限来验收。
 
-### 预览并准备 schema
+### pgvector 扩展的独立准备
+
+语义检索使用 PostgreSQL 的 `vector` 扩展。先以目标库实际提供的版本填写私有 operation 文件；文件结构见 [`vector-extension.ts`](../../packages/postgres/vector-extension.ts)。目标包含主机、端口、数据库、CA 文件及其摘要，管理员登录与实际数据库角色分别填写；密码仅从 `EIGOS_POSTGRES_ADMIN_PASSWORD` 读取，登录名使用 `EIGOS_POSTGRES_ADMIN_USER`。
+
+```sh
+node scripts/postgres-vector.mjs --input /absolute/private/vector-operation.json
+node scripts/postgres-vector.mjs --input /absolute/private/vector-operation.json --apply --expected-preview-digest "$VECTOR_PREVIEW_DIGEST" --output /absolute/private/new-vector-install.json
+node scripts/postgres-vector.mjs --input /absolute/private/vector-operation.json --readback --expected-preview-digest "$VECTOR_PREVIEW_DIGEST" --output /absolute/private/new-vector-readback.json
+```
+
+默认预览不读凭据、不连接数据库。应用仅在既有 `extensions` schema 安装准确版本，不自动升级或迁移其他安装；提交后用独立连接核对扩展归属、C 函数、类型、距离运算符及合成向量运算。回执区分扩展可用、运行角色兼容和语义检索配置；安装成功不证明 embedding 已生成或 RAG 已接通。
+
+此工具不发运行角色 GRANT。扩展自身可能有默认 PUBLIC ACL，因此不能把“工具未发 GRANT”理解为权限目录完全不变。正式运行角色仍须通过 handoff 的 schema／routine 检查；不得为绕过检查而豁免整个 `extensions` schema。embedding 模型、维度、资料外发许可及候选过滤需依[建模指南](ontology-modeling.md#postgresql与pgvector语义检索目标)另行配置和验收。[Supabase pgvector](https://supabase.com/docs/guides/database/extensions/pgvector)
+
+### 业务运行 schema 的准备
 
 handoff 使用两个不同的已审查输入：`phase=prepare-schema` 安装运行扩展和最小权限，`phase=activate` 另行写入不可变激活记录。输入 schema 见 [`postgres-handoff.ts`](../../packages/deployment/postgres-handoff.ts)；绑定 schema 见 [`postgres-binding.ts`](../../packages/deployment/postgres-binding.ts)。输入固定目标身份、两份原快照、导入回执、独立验证和真实源围栏文件。目标运行登录须预先隔离配置，不能用数据库 owner 测过就当作运行账号验收。
 

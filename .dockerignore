@@ -21,6 +21,7 @@
 !scripts/refresh-harness-login.mjs
 !scripts/postgres-primary-handoff.mjs
 !scripts/postgres-node-migrate.mjs
+!scripts/postgres-vector.mjs
 !integrations/
 !integrations/grok/
 !integrations/grok/eigos-delegate/

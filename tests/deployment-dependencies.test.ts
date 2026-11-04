@@ -45,6 +45,7 @@ test('immutable release retains JSON assets required by relocated runtime import
     put(join(source, 'scripts/refresh-harness-login.mjs'), '');
     put(join(source, 'scripts/postgres-primary-handoff.mjs'), 'console.log("Postgres handoff fixture");');
     put(join(source, 'scripts/postgres-node-migrate.mjs'), 'console.log("Postgres node migration fixture");');
+    put(join(source, 'scripts/postgres-vector.mjs'), 'console.log("Postgres vector fixture");');
     put(join(source, 'packages/members/ontology-operator.ts'), "export const label = 'Operator transport fixture';");
     put(join(source, 'dist/packages/members/ontology-operator.js'), "export const label = 'Operator transport fixture';");
     put(join(source, 'integrations/grok/eigos-delegate/scripts/eigos_a2a.py'), '');
@@ -57,6 +58,7 @@ test('immutable release retains JSON assets required by relocated runtime import
     assert(files.includes('scripts/relocate-primary.mjs'));
     assert(files.includes('scripts/postgres-primary-handoff.mjs'));
     assert(files.includes('scripts/postgres-node-migrate.mjs'));
+    assert(files.includes('scripts/postgres-vector.mjs'));
     assert(!files.some(path => path.endsWith('/orphan.js')));
     for (const name of PA_SKILL_FILES) assert(files.includes(`dist/${PA_SKILL_DIRECTORY}/${name}`));
     for (const path of files) { mkdirSync(dirname(join(release, path)), { recursive: true }); cpSync(join(source, path), join(release, path)); }
@@ -66,6 +68,7 @@ test('immutable release retains JSON assets required by relocated runtime import
     assert.equal(execFileSync(process.execPath, ['scripts/ontology-operator.mjs'], { cwd: release, encoding: 'utf8' }).trim(), 'Operator transport fixture');
     assert.equal(execFileSync(process.execPath, ['scripts/postgres-primary-handoff.mjs'], { cwd: release, encoding: 'utf8' }).trim(), 'Postgres handoff fixture');
     assert.equal(execFileSync(process.execPath, ['scripts/postgres-node-migrate.mjs'], { cwd: release, encoding: 'utf8' }).trim(), 'Postgres node migration fixture');
+    assert.equal(execFileSync(process.execPath, ['scripts/postgres-vector.mjs'], { cwd: release, encoding: 'utf8' }).trim(), 'Postgres vector fixture');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

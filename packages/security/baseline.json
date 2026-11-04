@@ -5243,7 +5243,7 @@
       ],
       "content": "Immutable runtime manifest including complete public Skill assets",
       "currentControl": "Current source-derived runtime files and explicit reviewed Skill assets; no private configuration or credentials included; type-only declarations are excluded from the runtime manifest",
-      "sourceDigest": "be94587d27b40b85ff516a62bab10ab46dc4e19783b0ef3f0f2a112672c69fec",
+      "sourceDigest": "18341dffd2b0380ee6b93f739602a999448136a2a888df6400a7714f995c3703",
       "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
       "stage": "S5"
     },
@@ -7446,6 +7446,32 @@
       "content": "Native Harness image installation and SDK compatibility verification",
       "currentControl": "Actual pinned native CLI and compiled EIGOS API checks, nonroot readonly isolated container, exact source and candidate backend manifest; bounded SDK initialize/shutdown for existing backends without credentials, model turns, prompts, provider dispatch or task claims",
       "targetControl": "Actual pinned native CLI and compiled EIGOS API checks, nonroot readonly isolated container, exact source and candidate backend manifest; bounded SDK initialize/shutdown for existing backends without credentials, model turns, prompts, provider dispatch or task claims",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-vector-admin",
+      "file": "packages/postgres/vector-extension.ts",
+      "sourceDigest": "089125726660e9ade1901f4c6bd9a4107f79221571da844518cc1ab3465b757b",
+      "channels": [
+        "operator_cli",
+        "internal"
+      ],
+      "content": "Administrator-only reviewed pgvector bootstrap and catalog readback",
+      "currentControl": "Exact existing target/admin identity/CA/version/namespace; acknowledged TLS and transaction, actual extension-owned type/C routines/operators and synthetic arithmetic; no source business data, runtime role grants, model calls or automatic version upgrade",
+      "targetControl": "Exact existing target/admin identity/CA/version/namespace; acknowledged TLS and transaction, actual extension-owned type/C routines/operators and synthetic arithmetic; no source business data, runtime role grants, model calls or automatic version upgrade",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-vector-admin-cli",
+      "file": "scripts/postgres-vector.mjs",
+      "sourceDigest": "b51c8ee417477b420f10ae25a064bb4eb692540a9e1b9b746465e3b8f3191453",
+      "channels": [
+        "operator_cli",
+        "internal"
+      ],
+      "content": "Explicit pgvector administrator preview, installation and independent verification",
+      "currentControl": "Offline preview by default; exact review digest and private operation, environment-only admin credentials, separate verified TLS readback and fresh immutable receipt; unknown commit never retried, semantic retrieval and runtime role compatibility remain unverified",
+      "targetControl": "Offline preview by default; exact review digest and private operation, environment-only admin credentials, separate verified TLS readback and fresh immutable receipt; unknown commit never retried, semantic retrieval and runtime role compatibility remain unverified",
       "stage": "S5"
     }
   ]
