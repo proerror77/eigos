@@ -1,7 +1,7 @@
 import type { McpServer, CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { MESSAGING_TOOLS, MessagingError, messagingOperationSchema, operationScope, type MessagingIdentity } from '../../../packages/agent-messaging/contracts.js';
-import type { AgentMessagingService } from '../../../packages/agent-messaging/service.js';
+import type {AgentMessagingExecutionPort} from '../../../packages/agent-messaging/ports.js';
 
 const descriptions: Record<keyof typeof MESSAGING_TOOLS, string> = {
   find_agents: 'Find your own or explicitly discoverable Personal Agent communication endpoints. Names may be ambiguous; use exact endpoint IDs. This does not create a service task.',
@@ -14,7 +14,7 @@ const descriptions: Record<keyof typeof MESSAGING_TOOLS, string> = {
   get_agent_message_status: 'Read actual stored, delivered, read or replied communication status. A transport receipt never proves a model response or business completion.',
   mark_agent_message_read: 'Explicitly record that this receiving endpoint has read a message. This does not report that a model has replied or a task has completed.',
 };
-export function mountMessagingMcp(server: McpServer, service: AgentMessagingService, identity: MessagingIdentity) {
+export function mountMessagingMcp(server: McpServer, service: AgentMessagingExecutionPort, identity: MessagingIdentity) {
   for (const [name, action] of Object.entries(MESSAGING_TOOLS)) {
     const schema = messagingOperationSchema.options.find(value => value.shape.action.value === action)!;
     const shape: Record<string, z.ZodType> = { ...schema.shape }; delete shape.action;

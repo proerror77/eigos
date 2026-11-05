@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { MAX_SECURITY_LINEAGE_ITEMS, POLICY_VERSION, SECURITY_CONTRACT, securityEnvelopeSchema } from './contracts.js';
-import { SecurityError, SecurityLineageLimitError } from './store.js';
+import { SecurityError, SecurityLineageLimitError } from './errors.js';
 
 export type SecurityEnvelope = z.infer<typeof securityEnvelopeSchema>;
 export type Channel = SecurityEnvelope['channels'][number];

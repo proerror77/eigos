@@ -90,7 +90,7 @@ _Avoid_：将排队号、团购券或推荐列表称为已确认的餐厅预订�
 
 **本次可用性（RuntimeAvailability）**：某项能力对当前需求、用户和时间是否可用的观察；历史成功不保证本次有库存、产能或时段。
 
-**动作类型（ActionType）**：用户或 Agent 的业务决策所触发的一组受控对象、属性或关系变更，包含提交条件与规定副作用，例如选择报价、请求预订、申请退款。
+**动作类型（ActionType）**：用户或 Agent 的业务决策所触发的一组受控对象、属性或关系变更，包含提交条件与规定副作用，例如选择报价、请求预订、申请退款。Palantir 将 Action Type 定义为可一次提交的本体编辑及其副作用；其本体编辑以单个事务提交。外部供应商调用的成功与本地编辑是否原子完成，需要各自的执行契约与回执，不能从该术语推定。[Palantir Action types](https://www.palantir.com/docs/foundry/action-types/overview)
 _Avoid_：把供应商端点或协议方法直接当成跨服务统一业务语义。
 
 **提供者绑定（ProviderBinding）**：一项业务能力由哪个渠道和服务主体提供，以及如何对应其实际执行方式的约定。
@@ -116,7 +116,9 @@ _Avoid_：把供应商端点或协议方法直接当成跨服务统一业务语�
 
 **对象集（Object Set）**：在获准范围内按明确条件得到的一组业务对象，例如当前需求的有效报价。
 
-**本体函数（Function）**：应用中基于业务对象、关系和规则运行的只读计算，例如比较报价或计算未交付数量。这里的程序 Function 不对应 BFO 的功能类别；受控业务动作继续独立表达。
+**本体函数（Function）**：接收参数并产生输出的可执行领域逻辑，输入和输出可以包含业务值、对象或对象集，例如查询关联对象、比较报价或计算未交付数量。[Palantir Core concepts](https://www.palantir.com/docs/foundry/ontology/core-concepts)
+
+Function 不是普遍只读的概念：Palantir 也支持访问外部系统，以及通过 function-backed actions 执行本体编辑。编辑仍需对应的动作提交和权限边界。EIGOS 当前只读函数子集及受控写入方式见[实现指南](../guides/ontology-modeling.md#function与action-type的边界)。程序 Function 不对应 BFO 的功能类别。[Palantir Functions](https://www.palantir.com/docs/foundry/functions/overview)
 
 
 ## 领域属性与来源身份

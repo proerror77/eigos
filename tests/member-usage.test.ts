@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JobStore } from '../packages/core/store.js';
@@ -77,4 +77,26 @@ test('concurrent model execution records the correct owner, including failed att
     tasks.cancel(principal, alice.job.id); await assert.rejects(run(alice, 'alice'), /lease/);
     assert.equal(tasks.usage(principal).models.attempts, 2, 'A fenced dispatch adds no usage record');
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a model process starts only after durable attempt registration and returns only after durable completion', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'eigos-async-usage-')), binary = join(directory, 'fixture-model'), marker = join(directory, 'spawned');
+  writeFileSync(binary, `#!${process.execPath}\nconst fs=require('node:fs');fs.writeFileSync(${JSON.stringify(marker)},'started');process.stdin.resume();process.stdin.on('end',()=>{fs.writeFileSync(process.argv[process.argv.indexOf('--output-last-message')+1],'{}');console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:1,output_tokens:1}}));});`, { mode: 0o700 });
+  let begin!: () => void, finish!: () => void, enteredBegin!: () => void, enteredFinish!: () => void;
+  const registered = new Promise<void>(resolve => { begin = resolve; }), committed = new Promise<void>(resolve => { finish = resolve; });
+  const sawBegin = new Promise<void>(resolve => { enteredBegin = resolve; }), sawFinish = new Promise<void>(resolve => { enteredFinish = resolve; });
+  let settled = false;
+  const pending = withModelUsage({ async begin() { enteredBegin(); await registered; }, async finish() { enteredFinish(); await committed; } },
+    () => new CodexExecutor(binary).runStructured('Synthetic durable model boundary', {}, new AbortController().signal));
+  void pending.then(() => { settled = true; }, () => { settled = true; });
+  try {
+    await sawBegin; assert.equal(existsSync(marker), false, 'failed or pending registration cannot dispatch a process');
+    begin(); await sawFinish; assert.equal(existsSync(marker), true); assert.equal(settled, false, 'uncommitted completion cannot escape');
+    finish(); await pending; assert.equal(settled, true);
+    rmSync(marker);
+    let completions = 0;
+    await assert.rejects(withModelUsage({ async begin() { throw new Error('Registration denied'); }, async finish() { completions++; } },
+      () => new CodexExecutor(binary).runStructured('Must never dispatch', {}, new AbortController().signal)), /Registration denied/);
+    assert.equal(existsSync(marker), false); assert.equal(completions, 0);
+  } finally { begin(); finish(); await pending.catch(() => {}); rmSync(directory, { recursive: true, force: true }); }
 });

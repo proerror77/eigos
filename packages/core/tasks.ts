@@ -1,3 +1,8 @@
+import {runRecoveryProgram,reconcileTransition,revokeAuthorizationTransition} from './recovery-commands.js';
+import {taskScopedServices} from './service-metadata.js';
+import {assertTechnicalResume,assertTechnicalResumeState,applyTechnicalResume} from './technical-resume.js';
+import {runReplyProgram,replyTransition,assertReplyTaskContext} from './reply-program.js';
+import { createSubmittedTask } from './task-submission.js';
 import { DELEGATE, digest, actionOperationKey } from './delegation.js';
 import { ObservationTasks } from './observation-tasks.js';
 import { isActionAdapter, type ExecutionCatalog } from './catalog.js';
@@ -16,7 +21,7 @@ import { validatePlanningSnapshot } from '../coordinator/planning-session.js';
 import { initialExecutionBudget, continueExecutionBudget, executionBudgetStatus, remainingModelTurns, pauseExecutionBudget, MIN_REASONING_TURNS } from './execution-budget.js';
 import { canRecoverReadOnly, canResumeSource } from './task-recovery.js';
 import { projectPreparedResolution } from '../ontology/capability-catalog.js';
-import { restoreOriginalDeliverableInstruction, submissionInstructions } from './request-instructions.js';
+import { restoreOriginalDeliverableInstruction } from './request-instructions.js';
 import { assertAgentDecisionOrigin, agentPlanAuthorization, createAgentObjectWriteGrant, createAgentSandboxGrant, createAgentExternalDraftGrant, validateAgentAuthority } from './agent-authorization.js';
 import { externalDraftPermitSchema } from '../ontology/external-draft.js';
 import { paPaymentReportSchema, paPaymentRouteSchema, recordPAPaymentSelection, verifyPAPaymentRequest, paymentRouteQuestion } from './pa-payment.js';
@@ -26,12 +31,11 @@ import { objectRefSchema, linkSearchSchema } from '../ontology/model.js';
 import type { AgentActionPlan, AgentDecision, AgentExecutionState } from '../ontology/agent-actions.js';
 import { resolveManagedInterfaceAction } from '../ontology/declarative-actions.js';
 import { GoalProgram } from '../coordinator/goal-program.js';
-import { addLocationContext, prepareLocationContext } from './location-context.js';
 import { componentContext, resolveComposedStep } from './composed-actions.js';
 import { AuthorizedOntologyView } from '../security/view.js';
 import { TaskSecurity } from '../security/task-service.js';
 import { selectPersonalContext } from './personal-context.js';
-import { isPersonalAction, selfPersonRef, personalPreferenceRef, personalPreferenceKey, mergePersonalContext } from '../ontology/personal-context.js';
+import { isPersonalAction, selfPersonRef, personalPreferenceRef, personalPreferenceKey } from '../ontology/personal-context.js';
 import { compileJsonSchema } from '../ontology/model-compiler.js';
 import { authorizationScope } from '../security/context.js';
 import { accessDigest } from '../security/model.js';
@@ -79,7 +83,7 @@ export class TaskService {
   }
 
   services() {
-    if (this.security) return [{id:'eigos.delegate',name:'Task-scoped EIGOS execution',description:'Delegate within the current installation and task grants. Resources, source operations, model processing and delivery channels require independent permission.',requiredInputs:['goal'],tags:['delegation'],examples:[],inputModes:['text/plain','application/json'],outputModes:['application/json','text/markdown']}];
+    if (this.security) return taskScopedServices();
     return [this.options.catalog.delegationService(), ...(this.options.catalog.hasRemediation() ? [{ id: 'eigos.aftersales', name: 'Owned service after-sales', description: 'Separate linked after-sales task for owned sandbox operations only. No real order, payment, cancellation or refund.', requiredInputs: ['originalTaskId', 'action', 'reason'], tags: ['aftersales'], examples: [], inputModes: ['application/json'], outputModes: ['application/json'] }] : [])];
   }
 
@@ -302,29 +306,8 @@ export class TaskService {
       if (contextId && !this.store.hasContext(owner, contextId)) throw new DomainError('NOT_FOUND', 'Context not found');
       this.store.definitions.assertAccess(owner, args.ontologyId ?? 'eigos.business', p.scopes.includes('ontology:admin'));
       const ontologyRelease = this.store.definitions.active(args.ontologyId).ref;
-      const now = new Date().toISOString();
-      const job: Job = {
-        id: randomUUID(), contextId: contextId || randomUUID(), service: args.service,
-        goal: args.goal, deliverable: 'deliverable' in args ? args.deliverable : undefined, state: 'input-required',
-        messages: [{ id: args.requestId, role: 'user', text: args.goal, at: now }],
-        createdAt: now, updatedAt: now,
-      };
-        job.state = 'submitted'; job.revision = 1; job.runs = [];
-        job.executionMode = 'worker';
-        job.delegation = { backendVersion: BACKEND_VERSION, ontologyRelease, ontologyReadScope: p.scopes.includes('tasks:read') ? 'owner' : 'request', request: { id: job.id, revision: 1, originalGoal: args.goal,
-          executionEnvironment: args.executionEnvironment ?? 'live',
-          ...(args.capabilityRef ? { capabilityRef: args.capabilityRef } : {}),
-          requestedDeliverable: job.deliverable, messages: submissionInstructions(job.id, { id: args.requestId, text: args.goal, receivedAt: now }, job.deliverable),
-          requirements: (args.requirements ?? []).map(r => ({ ...r, provenance: { source: 'pa' as const, interpretation: 'structured' as const, messageId: args.requestId, receivedAt: now } })) },
-          executionBudget: initialExecutionBudget(now, args.executionBudget), phase: 'grounding', events: [{ at: now, event: 'delegation_received' }] };
-      if (args.personalContext) {
-        job.delegation.request.personalContext = mergePersonalContext(args.personalContext);
-        if (!this.security) selectPersonalContext(this.store.ontologyForRelease(ontologyRelease), owner, job.delegation.request, args.personalContext);
-      }
-      if (args.locationContext) {
-        addLocationContext(job.delegation.request, args.locationContext, args.requestId, now);
-        job.delegation.events.push({ at: now, event: 'location_context_recorded' });
-      }
+      const job = createSubmittedTask(p,args,ontologyRelease,contextId);
+      if (args.personalContext && !this.security) selectPersonalContext(this.store.ontologyForRelease(ontologyRelease), owner, job.delegation!.request, args.personalContext);
       this.store.save(owner, job);
       return job;
     });
@@ -349,26 +332,11 @@ export class TaskService {
     requireScope(p, 'tasks:write');
     const args = resumeTaskSchema.parse(input), owner = ownerKey(p);
     return this.store.once(owner, `technical_resume:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
-      const job = this.store.get(owner, args.taskId), d = job.delegation;
-      if (d?.observationContract) throw new DomainError('CONFLICT', 'Observation contracts remain inactive until a reviewed observer is installed');
-      if (contextId && contextId !== job.contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
-      if (d?.backendVersion !== BACKEND_VERSION || job.state !== 'paused' || job.revision !== args.expectedRevision) throw new DomainError('CONFLICT', 'Read the current technical pause before resuming this original task');
-      const intents = this.store.intents(owner, job.id);
-      if (!canRecoverReadOnly(job, intents)) throw new DomainError('FORBIDDEN', 'Unknown business effects require their original reconciliation path');
-      if(this.security) {
-        const previous=d.groundingDecisions?.at(-1)?.decision;
-        const selected=d.agent?.programRef ?? d.suspendedAgent?.programRef ?? d.request.capabilityRef
-          ?? (previous?.kind==='resolve' && previous.requestRevision===d.request.revision?previous.capabilityRef:undefined);
-        if(selected && selected.id!=='eigos.goal')this.catalogForJob(owner,job).agentProgram(selected,owner);
-      }
-      job.updatedAt = new Date().toISOString(); job.revision = (job.revision ?? 0) + 1;
-      continueExecutionBudget(job, 'recovery', args.executionBudget);
-      if (remainingModelTurns(job) < MIN_REASONING_TURNS) throw new DomainError('CONFLICT', 'Task safety budget requires a policy change; confirmed facts must not be resubmitted');
-      const restoredInstruction = restoreOriginalDeliverableInstruction(job, intents.length > 0);
-      if (restoredInstruction) d.events.push({ at: job.updatedAt, event: 'original_submission_instruction_restored', evidence: restoredInstruction });
-      if (d.recovery) { d.recovery.state = 'scheduled'; d.recovery.retryAt = job.updatedAt; d.recovery.nextAction = 'wait_for_retry'; }
-      job.state = 'working'; d.phase = 'recovering'; d.nextAt = 0; delete job.question; delete job.error;
-      d.events.push({ at: job.updatedAt, event: 'technical_resume_requested' });
+      const job=this.store.get(owner,args.taskId);assertTechnicalResumeState(job,args,contextId);
+      const intents=this.store.intents(owner,job.id);
+      const selected=assertTechnicalResume(job,args,intents,contextId,!!this.security);
+      if(selected)this.catalogForJob(owner,job).agentProgram(selected,owner);
+      applyTechnicalResume(job,args,intents.length);
       this.store.save(owner, job); return job;
     });
   }
@@ -386,82 +354,15 @@ export class TaskService {
     const args = replySchema.parse(input);
     const owner = ownerKey(p);
     const current = this.store.get(owner, args.taskId);
-    if (current.delegation?.observationContract) throw new DomainError('CONFLICT', 'An immutable observation contract cannot become an execution task through replies or amendments');
-    if (current.service !== DELEGATE) throw new DomainError('CONFLICT', 'Historical prototype tasks are read-only in the ontology backend');
-    if (current.service === DELEGATE && current.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks are read-only; submit a new request');
-    if ('requirements' in args && args.requirements && current.service !== DELEGATE) throw new DomainError('INVALID_INPUT', 'Structured requirements belong to the ontology execution service');
-    if (contextId && current.contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
+    assertReplyTaskContext(current,contextId);
     const replied = this.store.once(owner, `${amendment ? 'amend' : 'reply'}:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
-      const job = this.store.get(owner, args.taskId);
-      // The browser's displayed question must still be current under the write lock.
-      if (expected && (job.revision !== expected.revision || job.updatedAt !== expected.updatedAt)) throw new DomainError('CONFLICT', 'Task changed; refresh before replying');
-      if (args.expectedRevision !== undefined && job.revision !== args.expectedRevision) throw new DomainError('CONFLICT', 'This reply belongs to an older task question or revision');
-      if (job.delegation?.agent?.paPayment) throw new DomainError('CONFLICT', 'Use select_payment_route, report_payment_result or reconcile_task for the original PA payment; text is not payment evidence');
-      if ((args.locationContext || args.personalContext) && (job.delegation?.plan || this.store.intents(owner, job.id).some(intent => !['read', 'local'].includes(intent.effect)))) throw new DomainError('CONFLICT', 'An address correction cannot change a fixed business operation; reconcile its original operation first');
-      if (job.delegation) job.delegation.ontologyReadScope = p.scopes.includes('tasks:read') ? 'owner' : 'request';
-      const keepSourceWait = amendment && job.state === 'auth-required' && !!job.delegation?.sourceAuthorization;
-      if (amendment) {
-        if (/^(?:请|帮我)?(?:继续|重试|恢复|再试一次|resume|retry|continue)[。.!！\s]*$/iu.test(args.answer.trim())) throw new DomainError('INVALID_INPUT', 'Technical continuation uses resume_task and must not become a new business confirmation');
-        if (!['submitted', 'working', 'input-required', 'paused', 'auth-required'].includes(job.state) || job.state === 'auth-required' && !keepSourceWait || job.delegation?.plan
-          || this.store.intents(owner, job.id).some(i => !['read', 'local'].includes(i.effect))) throw new DomainError('CONFLICT', 'Only an open read-only task may accept a versioned correction; fixed business operations retain their reconciliation boundary');
-      } else {
-        if (job.service === DELEGATE && job.state === 'auth-required') throw new DomainError('CONFLICT', 'Use the task authorization endpoint to approve the plan; cancel the task to decline');
-        if (job.state !== 'input-required') throw new DomainError('CONFLICT', 'Task is not waiting for input');
-      }
-      job.updatedAt = new Date().toISOString();
-      job.messages.push({ id: args.requestId, role: 'user', text: args.answer, at: job.updatedAt });
-      if (job.service === DELEGATE) {
-        if (job.delegation!.plan) {
-          if (args.requirements?.length) throw new DomainError('CONFLICT', 'Fixed business requirements cannot be changed while an original action requires reconciliation');
-          const d = job.delegation!;
-          if (d.pendingActionInput) {
-            d.actionReply = { intentId: d.pendingActionInput.intentId, messageId: args.requestId, answer: args.answer };
-            const waiting = this.store.intent(owner, d.pendingActionInput.intentId); waiting.nextAt = Date.now(); this.store.saveIntent(owner, waiting);
-          }
-          else for (const intent of this.store.intents(owner, job.id)) if (intent.state === 'needs_review' || intent.state === 'effect_unknown') { intent.state = 'effect_unknown'; intent.failedQueries = 0; intent.nextAt = Date.now(); this.store.saveIntent(owner, intent); }
-          d.nextAt = 0; d.phase = 'executing'; job.state = 'working'; job.revision = (job.revision ?? 0) + 1; delete job.question;
-          continueExecutionBudget(job, 'input', args.executionBudget);
-          this.store.save(owner, job); return job;
-        }
-        const request = job.delegation!.request;
-        const previousProgram = job.delegation!.agent?.programRef ?? job.delegation!.suspendedAgent?.programRef;
-        delete job.delegation!.suspendedAgent;
-        if (job.delegation!.agent) {
-          const intents = this.store.intents(owner, job.id);
-          const fixedEffect = intents.some(i => (['order', 'payment', 'reserve', 'object_write'].includes(i.effect) || ['effect_unknown', 'awaiting_remote', 'dispatching', 'needs_review'].includes(i.state) && !['read', 'local'].includes(i.effect)) && !['ready', 'canceled_before_dispatch', 'rejected'].includes(i.state));
-          if (fixedEffect) {
-            if (args.requirements?.length) throw new DomainError('CONFLICT', 'An original business operation is fixed or uncertain; reconcile it before creating changed requirements');
-            request.messages.push({ id: args.requestId, text: args.answer, receivedAt: job.updatedAt });
-            for (const intent of intents) if (!['read', 'local'].includes(intent.effect) && ['needs_review', 'effect_unknown'].includes(intent.state)) { intent.state = 'effect_unknown'; intent.failedQueries = 0; intent.nextAt = 0; this.store.saveIntent(owner, intent); }
-            job.delegation!.nextAt = 0; job.delegation!.phase = 'executing'; job.state = 'working'; job.revision = (job.revision ?? 0) + 1; delete job.question;
-            this.store.save(owner, job); return job;
-          }
-          this.store.cancelActions(owner, job.id);
-          job.delegation!.agentHistory = [...(job.delegation!.agentHistory ?? []), job.delegation!.agent!];
-          delete job.delegation!.agent;
-        }
-        request.revision++; request.messages.push({ id: args.requestId, text: args.answer, receivedAt: job.updatedAt });
-        if (args.personalContext) {
-          request.personalContext = mergePersonalContext(args.personalContext, request.personalContext);
-          if (!this.security) selectPersonalContext(this.store.ontologyForJob(owner, job), owner, request, args.personalContext);
-        }
-        if (args.locationContext) addLocationContext(request, args.locationContext, args.requestId, job.updatedAt);
-        else prepareLocationContext(request);
-        for (const r of args.requirements ?? []) {
-          const previous = request.requirements.findIndex(x => x.id === r.id);
-          const next = { ...r, provenance: { source: 'pa' as const, interpretation: 'structured' as const, messageId: args.requestId, receivedAt: job.updatedAt } };
-          if (previous < 0) request.requirements.push(next); else { request.supersededRequirements = [...(request.supersededRequirements ?? []), request.requirements[previous]!]; request.requirements[previous] = next; }
-        }
-        if (request.requirements.length > 40) throw new DomainError('INVALID_INPUT', 'Too many task requirements');
-        if (previousProgram) job.delegation!.request = this.catalogForJob(owner, job).agentProgram(previousProgram, owner)?.prepareRequest?.(request) ?? request;
-        job.state = 'submitted'; job.executionMode = 'worker'; job.revision = (job.revision ?? 0) + 1; delete job.question; job.delegation!.phase = 'grounding';
-        continueExecutionBudget(job, 'input', args.executionBudget);
-        if (remainingModelTurns(job) < MIN_REASONING_TURNS) pauseExecutionBudget(job, 'modelTurns', 'task');
-        if (job.delegation!.recovery) { job.delegation!.recoveryHistory = [...(job.delegation!.recoveryHistory ?? []), job.delegation!.recovery!]; delete job.delegation!.recovery; }
-        if (keepSourceWait) { job.state = 'auth-required'; job.delegation!.phase = 'awaiting_authorization'; }
-      }
-      this.store.save(owner, job);
-      return job;
+      const job = this.store.get(owner,args.taskId);
+      return runReplyProgram({
+        intents:this.store.intents.bind(this.store),intent:this.store.intent.bind(this.store),saveIntent:this.store.saveIntent.bind(this.store),
+        cancelActions:this.store.cancelActions.bind(this.store),saveTask:this.store.save.bind(this.store),
+        personal:(owner,job,input)=>selectPersonalContext(this.store.ontologyForJob(owner,job),owner,job.delegation!.request,input),
+        prepare:(owner,job,program,request)=>this.catalogForJob(owner,job).agentProgram(program,owner)?.prepareRequest?.(request)??request,
+      },replyTransition(job,owner,args,{foundation:!!this.security,canRead:p.scopes.includes('tasks:read'),amendment,expected}));
     });
     return replied;
   }
@@ -666,67 +567,19 @@ export class TaskService {
   private reconcileRaw(p: Principal, id: string, requestId: string): Job {
     requireScope(p, 'tasks:write'); taskIdSchema.parse(id); const owner = ownerKey(p);
     return this.store.once(owner, `reconcile:${id}`, requestId, id, () => {
-      const job = this.store.get(owner, id);
-      if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.agent?.paPayment) {
-        const payment = verifyPAPaymentRequest(job, owner);
-      if (this.security && payment.request.version !== '2') throw new DomainError('FORBIDDEN','This payment handoff needs a reviewed foundation projection');
-        if (job.state === 'completed' || job.state === 'working' || job.state === 'submitted') return this.view(owner, job);
-        const terminal = ['canceled', 'failed', 'rejected'].includes(job.state);
-        payment.recoveryAttempts = 0; payment.readbackSequence++; payment.status = terminal ? 'withdrawn' : 'reported';
-        job.delegation.manualReconciliation = requestId; job.delegation.nextAt = 0; job.delegation.recoveryPending = terminal;
-        if (!terminal) { job.state = 'submitted'; job.delegation.phase = 'planning'; delete job.question; }
-        job.revision = (job.revision ?? 0) + 1; job.updatedAt = new Date().toISOString();
-        this.store.save(owner, job); return this.view(owner, job);
-      }
-      if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.agent) {
-        const pending = this.store.intents(owner, id).filter(i => !['read', 'local'].includes(i.effect) && ['needs_review', 'effect_unknown', 'awaiting_remote', 'dispatching'].includes(i.state));
-        if (!pending.length) return job;
-        for (const intent of pending) { intent.state = 'effect_unknown'; intent.failedQueries = 0; intent.nextAt = 0; this.store.saveIntent(owner, intent); }
-        job.delegation.manualReconciliation = requestId; job.delegation.nextAt = 0;
-        const terminal = ['canceled', 'failed', 'completed', 'auth-required'].includes(job.state);
-        job.delegation.recoveryPending = terminal; job.revision = (job.revision ?? 0) + 1;
-        if (!terminal) { job.state = 'working'; delete job.question; }
-        job.updatedAt = new Date().toISOString(); this.store.save(owner, job); return job;
-      }
-      if (job.delegation?.backendVersion !== BACKEND_VERSION || !job.delegation.plan) throw new DomainError('CONFLICT', 'No current business operation to reconcile');
-      let pending = false;
-      for (const intent of this.store.intents(owner, id)) if (['needs_review', 'effect_unknown', 'awaiting_remote', 'dispatching'].includes(intent.state)) { pending = true; intent.state = 'effect_unknown'; intent.failedQueries = 0; intent.nextAt = Date.now(); this.store.saveIntent(owner, intent); }
-      else if (intent.state === 'effect_confirmed' && intent.remoteRef && !['read', 'local'].includes(intent.effect)) { pending = true; intent.needsObservation = true; intent.nextAt = Date.now(); this.store.saveIntent(owner, intent); }
-      if (!pending) return job;
-      job.delegation.manualReconciliation = requestId;
-      const terminal = ['canceled', 'failed', 'completed', 'auth-required'].includes(job.state);
-      job.delegation.recoveryPending = terminal; job.delegation.nextAt = 0; job.revision = (job.revision ?? 0) + 1;
-      if (!terminal) { job.state = 'working'; delete job.question; } job.updatedAt = new Date().toISOString(); this.store.save(owner, job); return job;
+      const result=runRecoveryProgram({intents:this.store.intents.bind(this.store),saveIntent:this.store.saveIntent.bind(this.store),
+        revokeGrants:this.store.revokeGrants.bind(this.store),saveTask:this.store.save.bind(this.store)},
+        reconcileTransition(this.store.get(owner,id),owner,requestId,{foundation:!!this.security}));
+      return result.legacyView?this.view(owner,result.job):result.job;
     });
   }
   revokeAuthorization(p:Principal,id:string,requestId:string):Job {taskIdSchema.parse(id);return this.security?this.security.mutate(p,id,()=>this.revokeAuthorizationRaw(p,id,requestId)):this.revokeAuthorizationRaw(p,id,requestId);}
   private revokeAuthorizationRaw(p: Principal, id: string, requestId: string): Job {
     requireScope(p, 'tasks:write'); taskIdSchema.parse(id); const owner = ownerKey(p);
     return this.store.once(owner, `revoke:${id}`, requestId, id, () => {
-      const job = this.store.get(owner, id); const d = job.delegation;
-      const simulationPlan = d?.agent?.plans.find(plan => plan.id === d.agent?.pendingPlanId && plan.quote);
-      if (d?.backendVersion === BACKEND_VERSION && simulationPlan && !['completed', 'failed', 'canceled'].includes(job.state)) {
-        delete d.approval; job.revision = (job.revision ?? 0) + 1; d.nextAt = 0;
-        job.state = 'auth-required'; d.phase = 'awaiting_authorization'; job.updatedAt = new Date().toISOString();
-        d.events.push({ at: job.updatedAt, event: 'authorization_revoked', evidence: simulationPlan.digest });
-        this.store.save(owner, job); return job;
-      }
-      if (d?.backendVersion === BACKEND_VERSION && d.agent && d.authorizationRequest && !['completed', 'failed', 'canceled'].includes(job.state)) {
-        this.store.revokeGrants(owner, id);
-        const intents = this.store.intents(owner, id);
-        const pendingWrite = intents.some(i => !['read', 'local'].includes(i.effect) && ['ready', 'dispatching', 'awaiting_remote', 'effect_unknown', 'needs_review'].includes(i.state));
-        if (!pendingWrite) { job.updatedAt = new Date().toISOString(); d.events.push({ at: job.updatedAt, event: 'agent_authority_revoked_readback_continues', evidence: requestId }); this.store.save(owner, job); return job; }
-        job.revision = (job.revision ?? 0) + 1;
-        for (const intent of intents) if (intent.state === 'dispatching' && !['read', 'local'].includes(intent.effect)) { intent.state = 'effect_unknown'; intent.nextAt = 0; this.store.saveIntent(owner, intent); }
-        d.recoveryPending = intents.some(i => !['read', 'local'].includes(i.effect) && ['dispatching', 'awaiting_remote', 'effect_unknown'].includes(i.state)); d.nextAt = 0;
-        job.state = 'auth-required'; d.phase = 'awaiting_authorization'; job.updatedAt = new Date().toISOString(); this.store.save(owner, job); return job;
-      }
-      if (d?.backendVersion !== BACKEND_VERSION || !d.plan || (!d.authorizationRequest && !d.plan.quote) || ['completed', 'failed', 'canceled'].includes(job.state)) throw new DomainError('CONFLICT', 'No open plan authorization to revoke');
-      this.store.revokeGrants(owner, id); delete d.approval; job.revision = (job.revision ?? 0) + 1;
-      d.recoveryPending = this.store.intents(owner, id).some(i => ['dispatching', 'awaiting_remote', 'effect_unknown'].includes(i.state)); d.nextAt = 0;
-      job.state = 'auth-required'; d.phase = 'awaiting_authorization'; job.updatedAt = new Date().toISOString();
-      d.events.push({ at: job.updatedAt, event: 'authorization_revoked', evidence: d.plan.digest });
-      this.store.save(owner, job); return job;
+      return runRecoveryProgram({intents:this.store.intents.bind(this.store),saveIntent:this.store.saveIntent.bind(this.store),
+        revokeGrants:this.store.revokeGrants.bind(this.store),saveTask:this.store.save.bind(this.store)},
+        revokeAuthorizationTransition(this.store.get(owner,id),owner,requestId)).job;
     });
   }
   requestRemediation(p:Principal,input:unknown):Job {const args=remediationSchema.parse(input);return this.security?this.security.mutate(p,args.originalTaskId,()=>this.requestRemediationRaw(p,args)):this.requestRemediationRaw(p,args);}

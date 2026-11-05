@@ -14,7 +14,13 @@ export function businessTransaction<T>(db: Connection, action: () => T): T {
   if (active.has(db)) throw new DomainError('CONFLICT', 'Nested business transactions are not supported');
   db.exec('BEGIN IMMEDIATE'); active.add(db);
   try { const result = action(); db.exec('COMMIT'); return result; }
-  catch (error) { db.exec('ROLLBACK'); throw error; }
+  catch (error) {
+    // SQLite can roll back the transaction itself after an I/O or constraint
+    // failure. A second rollback would hide the actual failure.
+    try { if (db.isTransaction !== false) db.exec('ROLLBACK'); }
+    catch (rollbackError) { throw new AggregateError([error, rollbackError], 'Business transaction and rollback failed'); }
+    throw error;
+  }
   finally { active.delete(db); }
 }
 
@@ -30,7 +36,8 @@ export function businessSavepoint<T>(db: Connection, name: string, action: () =>
     db.exec(`RELEASE ${name}`);
     return result;
   } catch (error) {
-    db.exec(`ROLLBACK TO ${name}; RELEASE ${name}`);
+    try { if (db.isTransaction !== false) db.exec(`ROLLBACK TO ${name}; RELEASE ${name}`); }
+    catch (rollbackError) { throw new AggregateError([error, rollbackError], 'Business savepoint and rollback failed'); }
     throw error;
   } finally {
     if (!registered) active.delete(db);

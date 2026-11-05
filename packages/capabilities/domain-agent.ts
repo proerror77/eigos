@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../ontology/graph-program.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -65,7 +66,7 @@ export class DomainAgentProgram implements AgentProgram {
       || ctx.graph.related(ctx.owner, scope.ref, 'request', { remaining: 1000 })?.[0]?.ref.id !== ctx.request.id) fail('Domain scope changed its fixed input or request');
   }
   schema(action: string): z.ZodType<Record<string, unknown>> { if (action === this.metadata.read) return this.metadata.readSchema; if (action === this.metadata.execute) return this.metadata.executeSchema; return fail('Unknown domain operation'); }
-  definition(graph: OntologyObjectStore, action: string) { const definition = graph.model.action(action), operation = definition.read ?? definition.operation; if (!operation || !same(operation.inputSchema, z.toJSONSchema(this.schema(action)))) fail('Domain atomic action differs from its exact published definition'); return definition; }
+  definition(graph: ProjectionMetadata, action: string) { const definition = graph.model.action(action), operation = definition.read ?? definition.operation; if (!operation || !same(operation.inputSchema, z.toJSONSchema(this.schema(action)))) fail('Domain atomic action differs from its exact published definition'); return definition; }
   private prepared(ctx: AgentProgramContext, raw: unknown) {
     const object = objectRefSchema.parse(raw), view = ctx.graph.readPrivate(ctx.owner, object);
     const prepared = domainPreparedReceiptSchema.parse(view.properties.preparedReceipt);

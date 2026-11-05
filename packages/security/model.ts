@@ -10,14 +10,9 @@ import type {ObjectRef} from '../ontology/model.js';
 import type {GoalReviewContext} from '../ontology/goal-coverage.js';
 import {compositionInputSchema} from '../ontology/composition.js';
 import {readExecutionContext} from '../ontology/execution-projection.js';
+import {submissionDigest} from './submission-digest.js';
+export {submissionDigest} from './submission-digest.js';
 
-// User-submitted text and structured constraints belong to the accepted task
-// contract. Derived interpretations do not silently create new submitted data.
-export function submissionDigest(request:ServiceRequest) {
-  return digest({id:request.id,revision:request.revision,originalGoal:request.originalGoal,messages:request.messages,
-    requirements:request.requirements.filter(r=>r.provenance.interpretation==='structured'),
-    requestedDeliverable:request.requestedDeliverable,executionEnvironment:request.executionEnvironment});
-}
 export function accessDigest() {
   const scope=authorizationScope();
   return scope?digest({installation:scope.actor.installationId,epoch:scope.actor.authEpoch,grant:scope.grant&&{id:scope.grant.id,revision:scope.grant.revision},policyRevision:scope.policyRevision,operation:scope.operation}):undefined;

@@ -161,16 +161,32 @@ export interface PortReadContext {
   readObject(ref: ObjectRef): { revision: number; digest: string };
   schema(schema: JsonSchema): z.ZodType;
 }
-export function readAcceptedPort(model: OntologyModel, value: AcceptedPortValue, consumer: CompositionPort, context: PortReadContext): unknown {
+/** Rechecking this deadline never renews the original evidence lease. Async
+ * proof drivers must also call it after their awaited snapshot reads. */
+export function assertAcceptedPortFreshness(value:AcceptedPortValue,consumer:CompositionPort,now:number):void{
+  const observedAt=Date.parse(value.evidence.observedAt),expiresAt=value.evidence.expiresAt?Date.parse(value.evidence.expiresAt):undefined;
+  if(!Number.isFinite(now)||!Number.isFinite(observedAt)||observedAt>now||expiresAt!==undefined&&(!Number.isFinite(expiresAt)||expiresAt<=now)
+    ||[value.definition.evidence.maxAgeMs,consumer.evidence.maxAgeMs].some(age=>age!==undefined&&now-observedAt>age))fail('Composition evidence is stale or has an invalid observation time');
+}
+/** An exclusive, conservative bound for a transaction/dispatch fence. The
+ * caller must also keep its independent grant, role and claim deadlines. */
+export function acceptedPortValidUntil(value:AcceptedPortValue,consumer:CompositionPort):number{
+  const observedAt=Date.parse(value.evidence.observedAt);
+  return Math.min(value.evidence.expiresAt?Date.parse(value.evidence.expiresAt):Infinity,
+    ...[value.definition.evidence.maxAgeMs,consumer.evidence.maxAgeMs].flatMap(age=>age===undefined?[]:[observedAt+age]));
+}
+/** The accepted-port contract is independent of synchronous object storage.
+ * Each yielded ref requires its current admitted snapshot; no receipt or
+ * private field can stand in for a missing proof. */
+export type AcceptedPortReadProgram=Generator<ObjectRef,unknown,{revision:number;digest:string}>;
+export function* readAcceptedPortProgram(model:OntologyModel,value:AcceptedPortValue,consumer:CompositionPort,context:Omit<PortReadContext,'readObject'>):AcceptedPortReadProgram {
   const { digest: receiptDigest, ...receipt } = value;
   if (receiptDigest !== digest(receipt) || !context.isAccepted(value)) fail('Composition needs the original accepted action observation');
   if (value.owner !== context.owner || value.requestId !== context.requestId || value.requestRevision !== context.requestRevision || digest(value.ontologyRelease) !== digest(context.ontologyRelease)) fail('Composition evidence belongs to another owner, task, request revision or ontology release');
   assertPortCompatible(model, value.definition, consumer);
   if (!value.evidence.refs.length || !value.observationId) fail('Composition output has no source evidence');
   if (!value.definition.evidence.origins.includes(value.evidence.origin) || !consumer.evidence.origins.includes(value.evidence.origin)) fail('Composition evidence origin is not accepted');
-  const observedAt = Date.parse(value.evidence.observedAt), expiresAt = value.evidence.expiresAt ? Date.parse(value.evidence.expiresAt) : undefined;
-  if (!Number.isFinite(observedAt) || observedAt > context.now || expiresAt !== undefined && (!Number.isFinite(expiresAt) || expiresAt <= context.now)
-    || [value.definition.evidence.maxAgeMs, consumer.evidence.maxAgeMs].some(age => age !== undefined && context.now - observedAt > age)) fail('Composition evidence is stale or has an invalid observation time');
+  assertAcceptedPortFreshness(value,consumer,context.now);
   const items = consumer.cardinality === 'many' ? value.value : [value.value];
   if (!Array.isArray(items) || items.length > 200) fail('Invalid composition output cardinality');
   for (const item of items) {
@@ -178,9 +194,21 @@ export function readAcceptedPort(model: OntologyModel, value: AcceptedPortValue,
     const ref = z.strictObject({ type: name, id: z.string().min(1).max(200) }).parse(item);
     if (!model.implements(ref.type, consumer.type)) fail('Composition output object has a different type');
     const snapshot = value.objects.find(object => digest(object.ref) === digest(ref));
-    if (!snapshot || digest(context.readObject(ref)) !== digest({ revision: snapshot.revision, digest: snapshot.digest })) fail('Composition object changed since its accepted observation');
+    if (!snapshot || digest(yield ref) !== digest({ revision: snapshot.revision, digest: snapshot.digest })) fail('Composition object changed since its accepted observation');
   }
   return structuredClone(value.value);
+}
+
+export function readAcceptedPort(model: OntologyModel, value: AcceptedPortValue, consumer: CompositionPort, context: PortReadContext): unknown {
+  const program=readAcceptedPortProgram(model,value,consumer,context);let step=program.next();
+  while(!step.done){
+    let current:{revision:number;digest:string};
+    try{current=context.readObject(step.value);
+      if(current&&typeof current==='object'&&'then'in current)throw new Error('Synchronous accepted-port validation cannot await a snapshot');
+    }catch(error){step=program.throw(error);continue;}
+    step=program.next(current);
+  }
+  return step.value;
 }
 
 export function evaluateCompositionChecks(contract: ActionCompositionContract, phase: 'before' | 'after', inputs: Record<string, unknown>, outputs: Record<string, unknown>, compiler: CompositionCompiler): void {

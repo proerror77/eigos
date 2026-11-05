@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
-import { loadMcpReadModule } from './mcp-read.js';
+import { parseBundledMcpReadModule } from './mcp-read.js';
+import orderTestDefinition from './definitions/didi-order-test.json' with { type: 'json' };
 import { objectRefSchema, type ActionDefinition, type ObjectTypeDefinition, type LinkDefinition, type PropertyDefinition, type FunctionDefinition } from './model.js';
 import { didiPlaceSchema, didiPriceSchema, didiReceiptSchema } from '../capabilities/didi/contracts.js';
 import { mockOrderReceiptSchema } from '../capabilities/didi/order-test-contracts.js';
-export const orderTestModule = loadMcpReadModule(new URL('./definitions/didi-order-test.json', import.meta.url));
+export const orderTestModule = parseBundledMcpReadModule(orderTestDefinition);
 export const orderTestModuleRef = { id: orderTestModule.id, version: orderTestModule.version, digest: digest(orderTestModule) };
 export const ORDER_TEST_REF = { id: 'ride.order.test', version: '1' } as const;
 const text = z.string().min(1).max(500), sha = z.string().regex(/^[a-f0-9]{64}$/);

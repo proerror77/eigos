@@ -2,11 +2,12 @@ import express, { type ErrorRequestHandler, type Request, type Response } from '
 import { setTimeout as sleep } from 'node:timers/promises';
 import { z } from 'zod';
 import { RelayStore } from '../../packages/relay/store.js';
+import type { PostgresRelayStore } from '../../packages/relay/postgres-store.js';
 import { agentIdSchema, fail, hashSchema, MAX_CONTENT_BYTES, MAX_ENVELOPE_BYTES, MAX_MESSAGE_MS, ownerKey, RELAY_PROTOCOL, RelayError, uuidSchema } from '../../packages/relay/contracts.js';
 import { verifyCard, verifyEnvelope, verifyProof } from '../../packages/agent-transport/crypto.js';
 import { createOwnerVerifier, type RelayConfig, type VerifyOwner } from './config.js';
 
-export function createRelayApp(config: RelayConfig, options: { verifyOwner?: VerifyOwner; store?: RelayStore } = {}) {
+export function createRelayApp(config: RelayConfig, options: { verifyOwner?: VerifyOwner; store?: RelayStore | PostgresRelayStore; trustedIngressAddress?: string } = {}) {
   const store = options.store ?? new RelayStore(config.databasePath), verifyOwner = options.verifyOwner ?? createOwnerVerifier(config);
   const app = express(), waits = new Map<string, number>(), ingress = new Map<string, { bucket: number; count: number }>();
   let closed = false, storageClosed = false;
@@ -23,23 +24,28 @@ export function createRelayApp(config: RelayConfig, options: { verifyOwner?: Ver
     if (req.headers.origin && req.headers.origin !== config.publicUrl) { res.status(403).json({ error: 'ORIGIN_NOT_ALLOWED' }); return; }
     next();
   });
+  // This value is supplied only by the Cloudflare adapter from its trusted
+  // request metadata; arbitrary forwarded headers are never trusted here.
+  if (options.trustedIngressAddress && 'rateIngress' in store) app.use((req, res, next) => {
+    void store.rateIngress(options.trustedIngressAddress!).then(() => next(), next);
+  });
   app.use(express.json({ limit: '128kb', strict: true }));
   const pathId = (value: unknown) => agentIdSchema.parse(value);
   const bearer = (req: Request) => /^Bearer ([A-Za-z0-9._~-]+)$/.exec(req.headers.authorization ?? '')?.[1] ?? fail('OWNER_AUTHENTICATION_REQUIRED', 401);
   const owner = async (req: Request) => {
-    try { const identity = await verifyOwner(bearer(req)); store.rate('owner:' + ownerKey(identity), 30); return identity; }
+    try { const identity = await verifyOwner(bearer(req)); await store.rate('owner:' + ownerKey(identity), 30); return identity; }
     catch (error) { if (error instanceof RelayError) throw error; return fail('OWNER_AUTHENTICATION_REQUIRED', 401); }
   };
   const proof = async (req: Request, agentId: string, token: string) => {
     const value = typeof req.headers.dpop === 'string' ? req.headers.dpop : fail('INVALID_DPOP_PROOF', 401);
     const checked = await verifyProof(value, token, req.method, config.publicUrl + req.path, agentId, store.now());
-    store.consumeProof(agentId, checked.jti, checked.expiresAt);
+    await store.consumeProof(agentId, checked.jti, checked.expiresAt);
   };
   const node = async (req: Request) => {
     const id = pathId(req.headers['x-eigos-agent-id']), token = /^DPoP ([A-Za-z0-9_-]{43})$/.exec(req.headers.authorization ?? '')?.[1] ?? fail('NODE_AUTHENTICATION_REQUIRED', 401);
-    store.authenticate(id, token); await proof(req, id, token); store.rate('node:' + id);
+    await store.authenticate(id, token); await proof(req, id, token); await store.rate('node:' + id);
     // A node can be revoked while asynchronous signature verification is in progress.
-    store.assertActive(id); return id;
+    await store.assertActive(id); return id;
   };
   const route = (fn: (req: Request, res: Response) => Promise<void> | void) => (req: Request, res: Response, next: (error?: unknown) => void) => { Promise.resolve().then(() => fn(req, res)).catch(next); };
 
@@ -52,50 +58,57 @@ export function createRelayApp(config: RelayConfig, options: { verifyOwner?: Ver
   app.post('/v1/agents', route(async (req, res) => {
     const who = await owner(req), input = z.strictObject({ signedCard: z.string().max(4096), credentialHash: hashSchema, requestId: uuidSchema }).parse(req.body);
     const card = await verifyCard(input.signedCard); await proof(req, card.card.agentId, bearer(req));
-    res.json(store.register(who, card, input.credentialHash, input.requestId));
+    res.json(await store.register(who, card, input.credentialHash, input.requestId));
   }));
-  app.get('/v1/owned-agents', route(async (req, res) => { res.json({ agents: store.owned(await owner(req)) }); }));
+  app.get('/v1/owned-agents', route(async (req, res) => { res.json({ agents: await store.owned(await owner(req)) }); }));
   app.post('/v1/agents/:agentId/renew', route(async (req, res) => {
     const who = await owner(req), id = pathId(req.params.agentId), input = z.strictObject({ requestId: uuidSchema }).parse(req.body);
-    await proof(req, id, bearer(req)); res.json(store.renew(who, id, input.requestId));
+    await proof(req, id, bearer(req)); res.json(await store.renew(who, id, input.requestId));
   }));
   app.post('/v1/agents/:agentId/revoke', route(async (req, res) => {
-    const who = await owner(req); z.strictObject({}).parse(req.body); res.json(store.revoke(who, pathId(req.params.agentId)));
+    const who = await owner(req); z.strictObject({}).parse(req.body); res.json(await store.revoke(who, pathId(req.params.agentId)));
   }));
-  app.get('/v1/agents/:agentId', route(async (req, res) => { await node(req); res.json(store.publicAgent(pathId(req.params.agentId))); }));
-  app.get('/v1/contacts', route(async (req, res) => { res.json({ connections: store.contacts(await node(req)) }); }));
+  app.get('/v1/agents/:agentId', route(async (req, res) => { await node(req); res.json(await store.publicAgent(pathId(req.params.agentId))); }));
+  app.get('/v1/contacts', route(async (req, res) => { res.json({ connections: await store.contacts(await node(req)) }); }));
   app.post('/v1/contacts', route(async (req, res) => {
     const actor = await node(req), input = z.strictObject({ peerId: agentIdSchema, requestId: uuidSchema }).parse(req.body);
-    res.json(store.requestContact(actor, input.peerId, input.requestId));
+    res.json(await store.requestContact(actor, input.peerId, input.requestId));
   }));
   app.post('/v1/contacts/:id', route(async (req, res) => {
     const actor = await node(req), input = z.strictObject({ action: z.enum(['accept', 'reject', 'revoke']) }).parse(req.body);
-    res.json(store.respondContact(actor, uuidSchema.parse(req.params.id), input.action));
+    res.json(await store.respondContact(actor, uuidSchema.parse(req.params.id), input.action));
   }));
   app.post('/v1/messages', route(async (req, res) => {
     const actor = await node(req), input = z.strictObject({ signedEnvelope: z.string().max(MAX_ENVELOPE_BYTES) }).parse(req.body);
-    const envelope = await verifyEnvelope(input.signedEnvelope, store.identity(actor));
-    res.json(store.send(actor, envelope, input.signedEnvelope));
+    const envelope = await verifyEnvelope(input.signedEnvelope, await store.identity(actor));
+    res.json(await store.send(actor, envelope, input.signedEnvelope));
   }));
   app.get('/v1/inbox', route(async (req, res) => {
     const actor = await node(req), query = z.strictObject({ wait: z.coerce.number().int().min(0).max(25).default(0), limit: z.coerce.number().int().min(1).max(20).default(20) }).parse(req.query);
-    if ((waits.get(actor) ?? 0) >= 2 || [...waits.values()].reduce((a, b) => a + b, 0) >= 100) fail('POLL_LIMIT', 429);
-    waits.set(actor, (waits.get(actor) ?? 0) + 1);
+    let lease: string | undefined;
+    if ('acquirePoll' in store) lease = await store.acquirePoll(actor);
+    else {
+      if ((waits.get(actor) ?? 0) >= 2 || [...waits.values()].reduce((a, b) => a + b, 0) >= 100) fail('POLL_LIMIT', 429);
+      waits.set(actor, (waits.get(actor) ?? 0) + 1);
+    }
     const end = Date.now() + query.wait * 1000;
     try {
       while (!closed && !res.destroyed) {
-        const items = store.inbox(actor, query.limit);
+        const items = await store.inbox(actor, query.limit);
         if (items.length || Date.now() >= end) { res.json({ items }); return; }
         await sleep(Math.min(250, Math.max(1, end - Date.now())));
       }
       if (!res.destroyed) res.status(503).json({ error: 'RELAY_UNAVAILABLE' });
-    } finally { const remaining = (waits.get(actor) ?? 1) - 1; if (remaining) waits.set(actor, remaining); else waits.delete(actor); }
+    } finally {
+      if (lease && 'releasePoll' in store) await store.releasePoll(lease);
+      else { const remaining = (waits.get(actor) ?? 1) - 1; if (remaining) waits.set(actor, remaining); else waits.delete(actor); }
+    }
   }));
   app.post('/v1/messages/:sender/:id/ack', route(async (req, res) => {
     const actor = await node(req), input = z.strictObject({ digest: hashSchema }).parse(req.body);
-    res.json(store.acknowledge(actor, pathId(req.params.sender), uuidSchema.parse(req.params.id), input.digest));
+    res.json(await store.acknowledge(actor, pathId(req.params.sender), uuidSchema.parse(req.params.id), input.digest));
   }));
-  app.get('/v1/messages/:sender/:id', route(async (req, res) => { res.json(store.messageReceipt(await node(req), pathId(req.params.sender), uuidSchema.parse(req.params.id))); }));
+  app.get('/v1/messages/:sender/:id', route(async (req, res) => { res.json(await store.messageReceipt(await node(req), pathId(req.params.sender), uuidSchema.parse(req.params.id))); }));
   const errors: ErrorRequestHandler = (error, _req, res, _next) => {
     if (res.headersSent) return;
     if (error instanceof RelayError) { if (error.status === 401) res.setHeader('WWW-Authenticate', error.code === 'OWNER_AUTHENTICATION_REQUIRED' ? 'Bearer realm="eigos-relay-enrollment"' : 'DPoP realm="eigos-relay"'); if (error.status === 429) res.setHeader('Retry-After', '60'); res.status(error.status).json({ error: error.code }); }

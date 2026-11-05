@@ -1,0 +1,81 @@
+name: Local semantic discovery
+on:
+  pull_request:
+    paths:
+      - 'packages/semantic/**'
+      - 'packages/postgres/**'
+      - 'packages/core/catalog.ts'
+      - 'packages/core/action-bindings.ts'
+      - 'packages/core/config.ts'
+      - 'apps/worker/**'
+      - 'apps/gateway/main.ts'
+      - 'tests/semantic-discovery.test.ts'
+      - 'scripts/semantic-catalog.mjs'
+      - 'package*.json'
+      - '.github/workflows/semantic.yml'
+  push:
+    branches: [main, codex/cloudflare-postgres-migration]
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+      - 'scripts/**'
+      - 'package*.json'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'tsconfig.json'
+      - 'tests/fixtures/**'
+      - 'tests/semantic*.test.ts'
+      - '.github/workflows/semantic.yml'
+      - '.github/workflows/release-artifacts.yml'
+  workflow_dispatch:
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
+permissions:
+  contents: read
+jobs:
+  local-embedding-pgvector:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector@sha256:7d0a41464797aeb9862dfdc0bbf1526b82cfd324cdd8036df19e3545f4a9ccb8
+        env:
+          POSTGRES_PASSWORD: fixture-only-password
+          POSTGRES_DB: eigos_semantic_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d eigos_semantic_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGDATABASE: eigos_semantic_test
+      PGUSER: postgres
+      PGPASSWORD: fixture-only-password
+      EIGOS_TEST_SEMANTIC: '1'
+      EIGOS_SEMANTIC_MODEL_DIR: ${{ github.workspace }}/data/semantic-model
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact source
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.22.3
+          cache: npm
+      - run: npm ci
+      - uses: actions/cache@v4
+        with:
+          path: data/semantic-model
+          key: multilingual-e5-small-761b726dd34fb83930e26aab4e9ac3899aa1fa78
+      - name: Prepare pinned public model artifacts
+        run: |
+          if [ ! -f "$EIGOS_SEMANTIC_MODEL_DIR/manifest.json" ]; then
+            npm run semantic:catalog -- model --model-dir "$EIGOS_SEMANTIC_MODEL_DIR"
+          fi
+      - name: Actual offline embedding and authorized Agent retrieval
+        run: EIGOS_TEST_SEMANTIC=1 node --import tsx --test tests/semantic-discovery.test.ts

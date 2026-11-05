@@ -5,11 +5,12 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import { z } from 'zod';
-import { taskObjectMembership } from '../packages/coordinator/task-context.js';
+import { taskObjectMembership, taskObjectMembershipProgram } from '../packages/coordinator/task-context.js';
+import { runGraphProgramAsync } from '../packages/ontology/graph-program.js';
 import { OntologyModel } from '../packages/ontology/model.js';
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
 
-function fixture(path = ':memory:', computed = false) {
+function fixture(path = ':memory:', computed: boolean | 'stored' = false) {
   const field = {
     kind: 'string' as const,
     schema: z.string().min(1),
@@ -29,13 +30,13 @@ function fixture(path = ':memory:', computed = false) {
         description: 'Read fixture',
         primaryKey: 'id',
         titleKey: 'label',
-        properties: { id: field, label: field, ...(computed ? {requestId:{...field,required:false,derived:'temporalRequest'}} : {}) },
+        properties: { id: field, label: field, ...(computed ? {requestId:{...field,required:false,...(computed===true?{derived:'temporalRequest'}:{})}} : {}) },
       },
     ],
     interfaces: [],
     links: [],
     actions: [],
-    functions: computed ? [{id:'temporalRequest',version:'1',inputTypes:['Node'],description:'Time-dependent request association'}] : [],
+    functions: computed===true ? [{id:'temporalRequest',version:'1',inputTypes:['Node'],description:'Time-dependent request association'}] : [],
   });
   const db = new DatabaseSync(path),
     graph = new OntologyObjectStore(db, model, Date.now, undefined, {
@@ -44,7 +45,7 @@ function fixture(path = ':memory:', computed = false) {
   const ref = { type: 'Node', id: 'n' };
   graph.ingest(
     'alice',
-    { objects: [{ ref, properties: { id: 'n', label: 'before' } }] },
+    { objects: [{ ref, properties: { id: 'n', label: 'before',...(computed==='stored'?{requestId:'request'}:{}) } }] },
     { kind: 'synthetic', id: 'fixture', observedAt: new Date().toISOString() },
   );
   return { db, graph, ref };
@@ -134,6 +135,38 @@ test('time-dependent request association is recomputed within a read window', t 
     });
     assert.equal(calls,2);
   } finally {f.db.close();}
+});
+
+test('stored request membership is reused only inside one unchanged read window', t => {
+  const f=fixture(':memory:','stored'),read=f.graph.read.bind(f.graph);let reads=0;
+  t.mock.method(f.graph,'read',(...args:Parameters<typeof f.graph.read>)=>{reads++;return read(...args);});
+  try{
+    const request={id:'request',revision:1};
+    f.graph.withReadMemo('alice',()=>{
+      assert.equal(taskObjectMembership(f.graph,'alice',request,f.ref),'shared');
+      assert.equal(taskObjectMembership(f.graph,'alice',request,f.ref),'shared');
+    });
+    assert.equal(reads,1,'The shared program facade reuses a proven non-derived membership result');
+    assert.throws(()=>f.graph.withReadMemo('alice',()=>{
+      taskObjectMembership(f.graph,'alice',request,f.ref);
+      f.db.prepare("UPDATE ontology_objects SET body=json_set(body,'$.properties.requestId','another-request') WHERE owner='alice'").run();
+      taskObjectMembership(f.graph,'alice',request,f.ref);
+    }),/Facts or authority changed during the read/);
+    assert.equal(f.graph.withReadMemo('alice',()=>taskObjectMembership(f.graph,'alice',request,f.ref)),'foreign');
+  }finally{f.db.close();}
+});
+
+test('the shared asynchronous membership program reads afresh after a completed call', async () => {
+  const f=fixture(':memory:','stored');
+  // Actual SQLite storage through the awaited program interpreter; no PG,
+  // model or substituted authorization port belongs to this regression.
+  const storage=Object.assign(f.graph,{planning:{virtualMembership:f.graph.virtualMembership.bind(f.graph)}});
+  const read=()=>runGraphProgramAsync(storage,taskObjectMembershipProgram(f.graph,'alice',{id:'request',revision:1},f.ref));
+  try{
+    assert.equal(await read(),'shared');
+    f.db.prepare("UPDATE ontology_objects SET body=json_set(body,'$.properties.requestId','another-request') WHERE owner='alice'").run();
+    assert.equal(await read(),'foreign');
+  }finally{f.db.close();}
 });
 
 

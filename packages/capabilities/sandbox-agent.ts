@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../ontology/graph-program.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError, type Job } from '../core/domain.js';
@@ -42,7 +43,7 @@ export class SandboxAgentProgram implements AgentProgram {
   }
   assertContext(ctx: AgentProgramContext) { const view = ctx.graph.read(ctx.owner, ctx.state.scope); if (!this.permitted(ctx.owner) || ctx.request.executionEnvironment !== 'sandbox' || ctx.state.programDigest !== this.configurationDigest || !same(ctx.state.programRef, this.ref) || view.ref.type !== 'SandboxTask' || view.properties.configurationDigest !== this.configurationDigest || view.properties.requestRevision !== ctx.request.revision || !same(view.properties.input, ctx.state.input)) fail('Sandbox scope or configured source changed'); if ('caseId' in ctx.state.input) this.remedy(ctx.owner, ctx.request, String(ctx.state.input.caseId)); }
   schema(action: string): z.ZodType<Record<string, unknown>> { return sandboxActionSchemas[action as keyof typeof sandboxActionSchemas] ?? fail('Unknown simulator action'); }
-  definition(graph: OntologyObjectStore, action: string) { const value = graph.model.action(action); if (!same((value.read ?? value.operation)?.inputSchema, z.toJSONSchema(this.schema(action)))) fail('Simulator action differs from its published contract'); return value; }
+  definition(graph: ProjectionMetadata, action: string) { const value = graph.model.action(action); if (!same((value.read ?? value.operation)?.inputSchema, z.toJSONSchema(this.schema(action)))) fail('Simulator action differs from its published contract'); return value; }
   private remedy(owner: string, request: ServiceRequest, caseId: string) {
     const store = this.store ?? fail('Original after-sales ledger is unavailable'), job = store.get(owner, request.id), item = store.afterSalesCase(owner, caseId);
     if (!item || item.remedyJobId !== request.id || job.delegation?.afterSalesCaseId !== caseId || item.configurationDigest !== this.configurationDigest || !same(item.programRef, this.ref) || item.action !== request.outcome || !item.originalIntentId || !item.reason) return fail('After-sales scope is not this task\'s current owned original case');

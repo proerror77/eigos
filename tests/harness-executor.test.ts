@@ -6,13 +6,21 @@ import { join } from 'node:path';
 import { HarnessExecutor, HARNESS_SECURITY_CHANNEL_ID, HARNESS_DEEPSEEK_SECURITY_CHANNEL_ID, type HarnessConfiguration } from '../packages/capabilities/harness-executor.js';
 import { readConfig, readWorkerConfig } from '../packages/core/config.js';
 import { withModelUsage } from '../packages/core/model-usage-context.js';
+import {withModelDispatchGuard} from '../packages/core/model-dispatch-context.js';
+import {createPostgresWorker,postgresHarnessReasoner} from '../apps/worker/postgres-runtime.js';
+import {PostgresDatabase} from '../packages/postgres/database.js';
+import {DocumentAgentProgram} from '../packages/capabilities/document-agent.js';
+import type {Pool} from 'pg';
+import {CodexExecutor} from '../packages/capabilities/executor.js';
+import {DatabaseSync} from 'node:sqlite';
+import {initializeMemberUsage,beginModelUsage,finishModelUsage} from '../packages/core/member-usage.js';
 
-function fixture(mode = 'success') {
+function fixture(mode = 'success', usageFrames:unknown[]=[{inputTokens:3,outputTokens:2}]) {
   const root = mkdtempSync(join(tmpdir(), 'eigos-harness-test-')), binary = join(root, 'harness.cjs'), log = join(root, 'boot.json'), key = join(root, 'model.key');
   writeFileSync(key, 'synthetic-model-credential', { mode: 0o600 });
   writeFileSync(binary, '#!' + process.execPath + '\n' + String.raw`
 const fs=require('node:fs'), readline=require('node:readline'), {spawn}=require('node:child_process');
-const mode=MODE_VALUE, log=LOG_VALUE, patch=JSON.parse(fs.readFileSync(process.argv[process.argv.indexOf('--patch')+1],'utf8'));
+const mode=MODE_VALUE, log=LOG_VALUE, usageFrames=USAGE_VALUE, patch=JSON.parse(fs.readFileSync(process.argv[process.argv.indexOf('--patch')+1],'utf8'));
 const writeBoot=value=>{fs.writeFileSync(log+'.next',JSON.stringify(value));fs.renameSync(log+'.next',log)};
 writeBoot({pid:process.pid,args:process.argv.slice(2),home:process.env.HOME,dshHome:process.env.DSH_HOME,patch,env:Object.keys(process.env),hasCredential:!!process.env.EIGOS_HARNESS_MODEL_TOKEN});
 let session, messageId='prompt-receipt';
@@ -20,7 +28,13 @@ const reply=(id,result)=>console.log(JSON.stringify({jsonrpc:'2.0',id,result}));
 const event=(type,data)=>console.log(JSON.stringify({jsonrpc:'2.0',method:'session.event',params:{sessionId:mode==='other-session'?'another-session':session,event:{type,data}}}));
 readline.createInterface({input:process.stdin}).on('line',line=>{
  const q=JSON.parse(line);
- if(q.method==='initialize'){reply(q.id,{serverInfo:{name:'deepseek-harness-sdk-runtime',version:'0.0.1'}});return;}
+ const boot=JSON.parse(fs.readFileSync(log,'utf8'));writeBoot({...boot,methods:[...(boot.methods??[]),q.method]});
+ if(q.method==='initialize'){
+  writeBoot({...JSON.parse(fs.readFileSync(log,'utf8')),initialization:q.params});
+  const acknowledge=()=>reply(q.id,{serverInfo:{name:'deepseek-harness-sdk-runtime',version:'0.0.1'}});
+  if(mode==='hold-initialize'){const timer=setInterval(()=>{if(fs.existsSync(log+'.ack')){clearInterval(timer);acknowledge();}},5);}
+  else acknowledge();return;
+ }
  if(q.method==='session/prompt'){
   session=q.params.sessionId;
   if(mode!=='unread')event('user/message',{id:messageId});
@@ -42,19 +56,105 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
     process.stdout.write(frame.subarray(emoji));event('turn/end',{turn:1,reason:{kind:'completed'}});reply(q.id,{});
    },30);},30);return;
   }
-  const output=mode==='bad-json'?'invalid':JSON.stringify({ok:mode!=='bad-schema'});
-  event('assistant/message',{message:{role:'assistant',content:[{type:'text',text:output}]},usage:{inputTokens:3,outputTokens:2}});
+  const output=mode==='bad-json'?'invalid':JSON.stringify(mode==='review'?{requestRevision:1,verdict:'covered',message:'Synthetic transport review only',clauses:[{messageId:'message',quote:'Write a draft',disposition:'covered',inputKeys:['format'],requirementIds:[],conditionIds:[],reason:'Explicit fixture'}]}:{ok:mode!=='bad-schema'});
+  for(const usage of usageFrames.length?usageFrames:[undefined])event('assistant/message',{
+   message:{role:'assistant',content:[{type:'text',text:output}],...(mode==='usage-decoys'?{usage:{inputTokens:99999}}:{})},
+   ...(usage===undefined?{}:{usage}),...(mode==='interrupted'?{interrupted:true}:{})});
   if(mode!=='no-completion')event('turn/end',{turn:1,reason:{kind:mode==='failed'?'failed':'completed'}});
-  reply(q.id,{});return;
+  reply(q.id,mode==='usage-decoys'?{usage:{inputTokens:99999}}:{});return;
  }
  if(q.method==='shutdown'){reply(q.id,{});return;}
 });
-`.replace('MODE_VALUE', JSON.stringify(mode)).replace('LOG_VALUE', JSON.stringify(log)), { mode: 0o700 });
+`.replace('MODE_VALUE', JSON.stringify(mode)).replace('LOG_VALUE', JSON.stringify(log)).replace('USAGE_VALUE',JSON.stringify(usageFrames)), { mode: 0o700 });
   const model = new HarnessExecutor(binary, mode === 'hang' ? 1200 : 5000, { credentialFile: key, credentialKind: 'api-key' });
-  return { root, key, binary, model, log, boot: () => JSON.parse(readFileSync(log, 'utf8')) as { pid: number; childPid?: number; args: string[]; home: string; dshHome: string; patch: { id?: string; disabled?: boolean; insert?: { name: string; config?: unknown }[] }[]; env: string[]; hasCredential: boolean },
+  return { root, key, binary, model, log, boot: () => JSON.parse(readFileSync(log, 'utf8')) as { pid: number; childPid?: number; methods?:string[];args: string[]; home: string; dshHome: string; initialization?:{model:string;provider:string;maxTokens:number;reasoningEffort?:string};patch: { id?: string; disabled?: boolean; insert?: { name: string; config?: unknown }[] }[]; env: string[]; hasCredential: boolean },
     close: () => rmSync(root, { recursive: true, force: true }) };
 }
 const schema = { type: 'object', properties: { ok: { const: true } }, required: ['ok'], additionalProperties: false };
+
+test('rc.5 assistant usage survives Harness evidence and the shared persisted accounting without inferred counts',async()=>{
+  const cases:{name:string;frames:unknown[];expected:Record<string,number>;mode?:string}[]=[
+    // Synthetic SDK-shaped replays of approved integer-only diagnostics. No
+    // original task/run identity, provider response or customer text is stored.
+    {name:'uncached grounding',frames:[{inputTokens:25272,totalTokens:79616,outputTokens:584,cacheReadTokens:53760}],
+      expected:{uncached_input_tokens:25272,total_tokens:79616,output_tokens:584,cached_input_tokens:53760}},
+    {name:'coverage without cache',frames:[{inputTokens:1987,totalTokens:2460,outputTokens:473}],
+      expected:{uncached_input_tokens:1987,total_tokens:2460,output_tokens:473}},
+    {name:'disjoint multi-step counters',frames:[{inputTokens:2,cacheReadTokens:3,cacheWriteTokens:4,outputTokens:5,reasoningTokens:1,totalTokens:14,input_tokens:999,billedTokens:999,injected_tokens:999},
+      {inputTokens:1,cacheReadTokens:0,cacheWriteTokens:1,outputTokens:2,reasoningTokens:1,totalTokens:4}],
+      expected:{uncached_input_tokens:3,cached_input_tokens:3,cache_write_input_tokens:5,output_tokens:7,reasoning_output_tokens:2,total_tokens:18}},
+    {name:'no fabricated total',frames:[{inputTokens:2,outputTokens:5}],expected:{uncached_input_tokens:2,output_tokens:5}},
+    {name:'explicit zero is not absence',frames:[{inputTokens:0,outputTokens:0,totalTokens:0,cacheReadTokens:0}],expected:{uncached_input_tokens:0,output_tokens:0,total_tokens:0,cached_input_tokens:0}},
+    {name:'absent usage',frames:[],expected:{}},
+    {name:'empty usage',frames:[{}],expected:{}},
+    {name:'nested and wait values are not accounting',mode:'usage-decoys',frames:[],expected:{}},
+    {name:'invalid counters',frames:[{inputTokens:-1,outputTokens:1.5,totalTokens:Number.MAX_SAFE_INTEGER+1,cacheReadTokens:'3',cacheWriteTokens:null,reasoningTokens:true}],expected:{}},
+    {name:'nonfinite counters have no valid wire number',frames:[{inputTokens:NaN,outputTokens:Infinity,totalTokens:-Infinity}],expected:{}},
+    {name:'invalid step cannot leave a partial count',frames:[{inputTokens:7},{inputTokens:-1},{inputTokens:2}],expected:{}},
+    {name:'overflow cannot resurrect a partial count',frames:[{inputTokens:Number.MAX_SAFE_INTEGER},{inputTokens:1},{inputTokens:1}],expected:{}},
+    {name:'interrupted text remains rejected while actual usage is retained',mode:'interrupted',frames:[{inputTokens:2,outputTokens:3,totalTokens:5}],expected:{uncached_input_tokens:2,output_tokens:3,total_tokens:5}},
+  ];
+  for(const value of cases){
+    const f=fixture(value.mode??'success',value.frames),db=new DatabaseSync(':memory:');
+    try{
+      db.exec('CREATE TABLE jobs(owner TEXT,id TEXT,body TEXT)');initializeMemberUsage(db);
+      const recorder={begin:(id:string,runtime:string,at:string)=>beginModelUsage(db,'synthetic-owner','synthetic-task',id,runtime,at,'synthetic-claim-digest'),
+        finish:(id:string,evidence:Parameters<typeof finishModelUsage>[4],outcome:Parameters<typeof finishModelUsage>[5])=>finishModelUsage(db,'synthetic-owner','synthetic-task',id,evidence,outcome)};
+      const run=()=>withModelUsage(recorder,()=>f.model.runStructured('synthetic supplied text only',schema,new AbortController().signal,{toolFree:true}));
+      let response:Awaited<ReturnType<typeof run>>|undefined;
+      if(value.mode==='interrupted')await assert.rejects(run(),/interrupted model output/);else response=await run();
+      const row=db.prepare('SELECT state,body FROM member_model_usage').get()!,stored=JSON.parse(String(row.body));
+      assert.equal(stored.usageReported,Object.keys(value.expected).length>0,value.name);
+      assert.deepEqual(stored.usage,value.expected,value.name);assert.equal(row.state,value.mode==='interrupted'?'failed':'completed');
+      if(response){assert.deepEqual(response.evidence.usage,value.expected);assert.deepEqual(response.output,{ok:true});}
+      assert.equal(db.prepare('SELECT count(*) AS n FROM jobs').get()!.n,0,'Accounting never creates or advances business work');
+      assert(!existsSync(f.boot().home));
+    }finally{db.close();f.close();}
+  }
+});
+
+async function waitForInitialization(f:ReturnType<typeof fixture>) {
+  const deadline=Date.now()+8000;
+  while((!existsSync(f.log)||!f.boot().initialization)&&Date.now()<deadline)await new Promise<void>(resolve=>setImmediate(resolve));
+  assert(existsSync(f.log)&&f.boot().initialization,'Observe the actual synthetic child receiving initialize');
+}
+
+test('Harness default initialization accepts a 20s ACK inside the original invocation budget',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});let now=0;t.mock.method(performance,'now',()=>now);
+  const f=fixture('hold-initialize'),controller=new AbortController();t.after(f.close);t.after(()=>controller.abort());
+  const model=new HarnessExecutor(f.binary,180000,{credentialFile:f.key,credentialKind:'api-key',model:'original-model',reasoningEffort:'medium',maxTokens:8192});
+  let settled=false;const pending=model.runStructured('synthetic',schema,controller.signal,{toolFree:true});
+  void pending.then(()=>{settled=true;},()=>{settled=true;});
+  await waitForInitialization(f);now=20000;t.mock.timers.tick(20000);
+  await new Promise<void>(resolve=>setImmediate(resolve));assert.equal(settled,false,'The old 15s timer must no longer kill initialization');
+  writeFileSync(f.log+'.ack','ack');const result=await pending;
+  assert.deepEqual(result.output,{ok:true});assert.equal(result.evidence.model,'original-model');assert.equal(result.evidence.durationMs,20000);
+  assert.deepEqual(f.boot().initialization,{cwd:f.boot().home,provider:'deepseek-official',model:'original-model',reasoningEffort:'medium',maxTokens:8192});
+  assert.deepEqual(f.boot().methods,['initialize','session/prompt','session/wait','shutdown']);assert(!existsSync(f.boot().home));
+});
+
+for(const mode of ['initialize-timeout','cancel','invocation-timeout','late-initialize-ack','late-invocation-ack'] as const)
+test('Harness initialization '+mode+' cannot dispatch a prompt or revive completion',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});let now=0;t.mock.method(performance,'now',()=>now);
+  const f=fixture('hold-initialize'),controller=new AbortController(),outcomes:string[]=[];t.after(f.close);t.after(()=>controller.abort());
+  const overall=mode==='invocation-timeout'?2000:180000;
+  const model=new HarnessExecutor(f.binary,overall,{credentialFile:f.key,credentialKind:'api-key',initializeTimeoutMs:mode==='invocation-timeout'?45000:1000});
+  const pending=withModelUsage({begin:async()=>{},finish:async(_id,_evidence,outcome)=>{outcomes.push(outcome);}},()=>
+    withModelDispatchGuard({channelId:model.securityChannelId,authorize:async()=>{if(mode==='invocation-timeout')now=1500;}},()=>model.runStructured('synthetic',schema,controller.signal,{toolFree:true})));
+  void pending.catch(()=>{});await waitForInitialization(f);
+  if(mode==='cancel')controller.abort();
+  else if(mode==='late-initialize-ack'||mode==='late-invocation-ack'){
+    // An overdue ACK can arrive before a delayed timer callback. The absolute
+    // bounds must reject it without writing session/prompt.
+    now=mode==='late-initialize-ack'?1001:180001;writeFileSync(f.log+'.ack','late ack');
+  }else if(mode==='invocation-timeout'){
+    now=1999;t.mock.timers.tick(499);await new Promise<void>(resolve=>setImmediate(resolve));
+    assert.deepEqual(f.boot().methods,['initialize']);now=2000;t.mock.timers.tick(1);
+  }else{now=1000;t.mock.timers.tick(1000);}
+  await assert.rejects(pending,mode==='cancel'?/canceled/:mode.includes('invocation')?/invocation timed out/:/initialization timed out/);
+  assert.deepEqual(outcomes,[mode==='cancel'?'interrupted':'failed']);assert.deepEqual(f.boot().methods,['initialize']);
+  assert(!existsSync(f.boot().home));assert.throws(()=>process.kill(f.boot().pid,0),{code:'ESRCH'});
+});
 
 test('Harness preserves Chinese and emoji split inside UTF-8 bytes across stdout chunks', async t => {
   const f = fixture('split-utf8'); t.after(f.close);
@@ -63,21 +163,79 @@ test('Harness preserves Chinese and emoji split inside UTF-8 bytes across stdout
   assert.deepEqual(result.output, { message: '东京你好 👋🧪' });
 });
 
-test('Harness waits for durable dispatch acknowledgement and accounting before returning', async t => {
+test('Harness waits for durable begin, current dispatch authorization and final accounting', async t => {
   const f = fixture(); t.after(f.close);
-  let admit!: () => void, finish!: () => void, began!: () => void, accounting!: () => void;
+  let admit!: () => void, finish!: () => void, began!: () => void, accounting!: () => void,authorize!:()=>void,checking!:()=>void;
   const admitted = new Promise<void>(resolve => { admit = resolve; });
   const finished = new Promise<void>(resolve => { finish = resolve; });
   const started = new Promise<void>(resolve => { began = resolve; });
   const ending = new Promise<void>(resolve => { accounting = resolve; });
+  const authorized=new Promise<void>(resolve=>{authorize=resolve;}),checked=new Promise<void>(resolve=>{checking=resolve;});
   let settled = false;
   const pending = withModelUsage({ begin: async () => { began(); await admitted; }, finish: async () => { accounting(); await finished; } },
-    () => f.model.runStructured('synthetic', schema, t.signal, { toolFree: true })).finally(() => { settled = true; });
-  t.after(() => { admit(); finish(); });
+    () => withModelDispatchGuard({channelId:f.model.securityChannelId,authorize:async()=>{checking();await authorized;}},()=>f.model.runStructured('synthetic', schema, t.signal, { toolFree: true }))).finally(() => { settled = true; });
+  t.after(() => { admit(); authorize();finish(); });
   await started; assert(!existsSync(f.log), 'No model process before the durable begin acknowledgement');
-  admit(); await ending; assert.equal(settled, false, 'Completion must wait for accounting acknowledgement');
+  admit();await checked;assert(!existsSync(f.log),'No process before the current authorization finishes');authorize(); await ending; assert.equal(settled, false, 'Completion must wait for accounting acknowledgement');
   finish(); assert.deepEqual((await pending).output, { ok: true });
   assert(!existsSync(f.boot().home));
+});
+
+test('Harness pre-spawn denial, channel mismatch and abort cannot dispatch a prompt',async t=>{
+  for(const mode of ['denied','channel','abort'] as const){
+    const f=fixture(),controller=new AbortController(),events:string[]=[];t.after(f.close);
+    await assert.rejects(withModelUsage({begin:async()=>{events.push('begin');},finish:async(_id,_evidence,outcome)=>{events.push(outcome);}},()=>
+      withModelDispatchGuard({channelId:mode==='channel'?'wrong-channel':f.model.securityChannelId,authorize:async()=>{
+        events.push('authorize');if(mode==='denied')throw new Error('Original permission revoked');if(mode==='abort')controller.abort(new Error('Synthetic canceled before spawn'));
+      }},()=>f.model.runStructured('synthetic',schema,controller.signal))),mode==='channel'?/differs from its admitted boundary/:mode==='denied'?/Original permission revoked/:/Synthetic canceled/);
+    assert(!existsSync(f.log));assert.deepEqual(events,mode==='channel'?['begin','failed']:mode==='abort'?['begin','authorize','interrupted']:['begin','authorize','failed']);
+  }
+});
+
+test('Harness rejects failed finish acknowledgement and cancellation during accounting',async t=>{
+  for(const cancel of [false,true]){
+    const f=fixture(),controller=new AbortController();t.after(f.close);
+    await assert.rejects(withModelUsage({begin:async()=>{},finish:async(_id,_evidence,outcome)=>{
+      assert.equal(outcome,'completed');if(cancel)controller.abort(new Error('Synthetic canceled during finish'));else throw new Error('Finish acknowledgement unknown');
+    }},()=>withModelDispatchGuard({channelId:f.model.securityChannelId,authorize:async()=>{}},()=>f.model.runStructured('synthetic',schema,controller.signal))),cancel?/canceled during finish/:/Finish acknowledgement unknown/);
+    assert(!existsSync(f.boot().home));
+  }
+});
+
+test('Harness never spawns when pre-dispatch preparation exhausts its original timeout',async t=>{
+  const f=fixture();t.after(f.close);
+  const model=new HarnessExecutor(f.binary,10,{credentialFile:f.key,credentialKind:'api-key'});
+  await assert.rejects(withModelUsage({begin:async()=>{},finish:async()=>{}},()=>withModelDispatchGuard({channelId:model.securityChannelId,authorize:async()=>{await new Promise(resolve=>setTimeout(resolve,20));}},()=>model.runStructured('synthetic',schema,t.signal))),/Harness invocation timed out/);
+  assert(!existsSync(f.log));
+});
+
+test('PostgreSQL Harness reasoning uses its selected guarded exec transport and configuration',async t=>{
+  const f=fixture('review');t.after(f.close);
+  const model=new HarnessExecutor(f.binary,5000,{credentialFile:f.key,credentialKind:'api-key',model:'selected-harness-model',reasoningEffort:'high',maxTokens:2048});
+  Object.assign(model,{openStructuredSession:()=>{throw new Error('App-server must not receive a prompt');}});
+  const reasoner=postgresHarnessReasoner(model),events:string[]=[],at=new Date().toISOString();
+  assert.equal(model.postgresModelDispatch,'acknowledged-v1');assert.equal(reasoner.postgresModelDispatch,'acknowledged-v1');assert.equal(reasoner.ontologyContextMode,'task');assert.equal(reasoner.securityChannelId,HARNESS_DEEPSEEK_SECURITY_CHANNEL_ID);
+  const result=await withModelUsage({begin:async()=>{events.push('begin');},finish:async()=>{events.push('finish');}},()=>withModelDispatchGuard({channelId:model.securityChannelId,authorize:async()=>{events.push('authorize');}},()=>reasoner.reviewGoal!({request:{id:'synthetic-review',revision:1,originalGoal:'Write a draft',requirements:[],messages:[{id:'message',text:'Write a draft',receivedAt:at}]},capability:new DocumentAgentProgram().capability(),input:{format:'markdown'}},t.signal)));
+  assert.equal(result.decision.verdict,'covered');assert.deepEqual(events,['begin','authorize','finish']);
+  assert.deepEqual(f.boot().initialization,{cwd:f.boot().home,provider:'deepseek-official',model:'selected-harness-model',maxTokens:2048,reasoningEffort:'high'});
+  assert.equal(result.evidence.model,'selected-harness-model');assert.equal(result.evidence.runtime,'harness-sdk');
+});
+
+test('PostgreSQL factory honors Harness selection without starting or connecting and retains synthetic injection',async t=>{
+  const f=fixture();t.after(f.close);let connected=0;
+  const pool={connect:async()=>{connected++;throw new Error('No database work belongs to model-port construction');},end:async()=>{}} as Pick<Pool,'connect'|'end'>;
+  const database=new PostgresDatabase(pool,'eigos_business_harness_factory',{id:'synthetic-harness',revision:1,digest:'a'.repeat(64)});
+  const config=readWorkerConfig({EIGOS_EXECUTOR:'harness',EIGOS_HARNESS_BIN:f.binary,EIGOS_HARNESS_CREDENTIAL_FILE:f.key,EIGOS_HARNESS_CREDENTIAL_KIND:'api-key',EIGOS_HARNESS_MODEL:'kept-model'});
+  const runtime=createPostgresWorker(config,{database,policyDigest:'a'.repeat(64),modelChannel:HARNESS_DEEPSEEK_SECURITY_CHANNEL_ID});
+  await runtime.close();assert.equal(connected,0);assert(!existsSync(f.log));
+  assert.throws(()=>createPostgresWorker({...config,EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS:999},{database,policyDigest:'a'.repeat(64)}),/initialization timeout/);
+  const legacy=createPostgresWorker({...config,EIGOS_EXECUTOR:undefined,EIGOS_CODEX_BIN:'must-not-start-legacy-codex'},{database,policyDigest:'a'.repeat(64),modelChannel:new CodexExecutor('must-not-start-channel-probe').securityChannelId});
+  await legacy.close();assert.equal(connected,0);
+  assert.throws(()=>createPostgresWorker({...config,EIGOS_HARNESS_CREDENTIAL_FILE:undefined},{database,policyDigest:'a'.repeat(64)}),/absolute private credential/);
+  assert.throws(()=>createPostgresWorker({...config,EIGOS_EXECUTOR:'disabled'},{database,policyDigest:'a'.repeat(64)}),/model execution is disabled/);
+  const unexpected=async()=>{throw new Error('Synthetic model ports must remain idle');};
+  const injected=createPostgresWorker({...config,EIGOS_EXECUTOR:'disabled'},{database,policyDigest:'a'.repeat(64),reasoner:{postgresModelDispatch:'acknowledged-v1',securityChannelId:'synthetic',ontologyContextMode:'task',ground:unexpected,plan:unexpected},executor:{postgresModelDispatch:'acknowledged-v1',securityChannelId:'synthetic',run:unexpected}});
+  await injected.close();assert.equal(connected,0);await database.close();
 });
 
 test('Harness never dispatches when the durable begin acknowledgement fails or is unknown', async t => {
@@ -89,9 +247,9 @@ test('Harness never dispatches when the durable begin acknowledgement fails or i
 
 test('Harness confines the original turn, credentials, profile and receipt to its invocation', async t => {
   const f = fixture(); t.after(f.close);
-  const previousGateway=process.env.EIGOS_DEV_TOKEN,previousModel=process.env.DEEPSEEK_API_KEY;
-  process.env.EIGOS_DEV_TOKEN='gateway-secret';process.env.DEEPSEEK_API_KEY='unrelated-host-key';
-  t.after(()=>{if(previousGateway===undefined)delete process.env.EIGOS_DEV_TOKEN;else process.env.EIGOS_DEV_TOKEN=previousGateway;if(previousModel===undefined)delete process.env.DEEPSEEK_API_KEY;else process.env.DEEPSEEK_API_KEY=previousModel;});
+  const privateKeys=['EIGOS_DEV_TOKEN','DEEPSEEK_API_KEY','PGPASSWORD','PGHOST','DATABASE_URL','SUPABASE_SERVICE_ROLE_KEY'],previous=new Map(privateKeys.map(key=>[key,process.env[key]]));
+  for(const key of privateKeys)process.env[key]='synthetic-unrelated-host-secret';
+  t.after(()=>{for(const [key,value] of previous){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
   const recorded: unknown[] = [];
   const result = await withModelUsage({ begin: () => {}, finish: (...args) => { recorded.push(args); } },
     () => f.model.runStructured('Only synthetic supplied information', schema, t.signal, { toolFree: true }));
@@ -99,9 +257,10 @@ test('Harness confines the original turn, credentials, profile and receipt to it
   assert.equal(result.evidence.runtime, 'harness-sdk'); assert.equal(f.model.securityChannelId, HARNESS_DEEPSEEK_SECURITY_CHANNEL_ID);
   assert.notEqual(f.model.securityChannelId, HARNESS_SECURITY_CHANNEL_ID, 'A different model recipient must not inherit the GPT channel');
   assert.deepEqual(result.evidence.toolFreeInvocation, { completedTurns: 1, toolCalls: 0 });
-  assert.deepEqual(result.evidence.usage, { inputTokens: 3, outputTokens: 2 }); assert.equal(recorded.length, 1);
+  assert.deepEqual(result.evidence.usage, { uncached_input_tokens: 3, output_tokens: 2 }); assert.equal(recorded.length, 1);
   const boot = f.boot();
   assert(boot.hasCredential); assert(!boot.env.includes('EIGOS_DEV_TOKEN')); assert(!boot.env.includes('DEEPSEEK_API_KEY')); assert(!boot.env.includes('CODEX_HOME'));
+  for(const key of privateKeys)assert(!boot.env.includes(key),'Host credentials are not Harness invocation credentials');
   assert(boot.args.includes('sdk-minimal')); assert(!boot.args.join(' ').includes('synthetic-model-credential'));
   for (const id of ['tool-fs', 'tool-working-directory', 'persistent-bash', 'persistent-pwsh']) assert(boot.patch.some(x => x.id === id && x.disabled));
   assert(!existsSync(boot.home)); assert(!existsSync(boot.dshHome)); assert(existsSync(f.key));
@@ -170,7 +329,8 @@ test('Harness MCP confines endpoints and keeps the task bearer out of command ar
   await assert.rejects(f.model.runStructured('synthetic', schema, t.signal, { toolFree: true, mcp }), /cannot attach/);
   await f.model.runStructured('synthetic', schema, t.signal, { mcp: { ...mcp, url: 'http://127.0.0.1:12345/mcp' } });
   const boot = f.boot(); assert(!boot.args.join(' ').includes(mcp.token));
-  assert(boot.patch.flatMap(x => x.insert ?? []).some(x => x.name === '@deepseek-ai/dsh-mcp-client'));
+  const plugin=boot.patch.flatMap(x => x.insert ?? []).find(x => x.name === '@deepseek-ai/dsh-mcp-client');assert(plugin);
+  assert(plugin.config&&typeof plugin.config==='object');assert.equal(Reflect.get(plugin.config,'toolCallTimeoutMs'),30000,'The native Harness tool budget stays unchanged');
 });
 
 test('Harness configuration is opt-in, with no credential requirement on the protocol-only Gateway', () => {
@@ -179,5 +339,11 @@ test('Harness configuration is opt-in, with no credential requirement on the pro
   assert.throws(() => readWorkerConfig({ EIGOS_EXECUTOR: 'harness', EIGOS_HARNESS_CREDENTIAL_FILE: 'relative.key' }), /absolute private credential/);
   const config = readWorkerConfig({ EIGOS_EXECUTOR: 'harness', EIGOS_HARNESS_CREDENTIAL_FILE: '/private/key' });
   assert.equal(config.EIGOS_EXECUTOR, 'harness');
+  assert.equal(config.EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS,45000);
+  assert.equal(readWorkerConfig({EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS:'60000'}).EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS,60000);
+  for(const value of ['999','90001','1500.5','NaN'])assert.throws(()=>readWorkerConfig({EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS:value}));
+  assert.equal(readWorkerConfig({EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS:'1000'}).EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS,1000);
+  assert.equal(readWorkerConfig({EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS:'90000'}).EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS,90000);
+  assert.equal(config.EIGOS_EXECUTOR_TIMEOUT_MS,120000,'Initialization does not change the configured invocation default');
   assert.equal(readConfig({ EIGOS_EXECUTOR: 'harness', EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'a'.repeat(32) }).EIGOS_HARNESS_CREDENTIAL_FILE, undefined);
 });

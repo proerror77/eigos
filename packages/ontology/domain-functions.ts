@@ -1,33 +1,34 @@
+import { runGraphProgram, type ProjectionMetadata, type GraphProgram, graphRead, graphRelated, graphMap } from './graph-program.js';
+import { sourceProofProgram } from './object-evidence.js';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import type { ObjectRef } from './model.js';
 import type { OntologyObjectStore, ReadBudget } from './object-store.js';
 import type { Computation } from './object-functions.js';
-import { sourceProof } from './object-evidence.js';
+
 import { assessDomain, domainResourceCriteria, requiredDomainResourceTypes, quoteRoleCriteria, type DomainAssessment, type DomainResultResources } from './domain-rules.js';
 import { domainBusinessLinksFor, domainEntityLinkName, parseDomainParameters, serviceDomains, type DomainDefinition } from './service-domains.js';
 import type { ObjectView } from './object-store.js';
 
-function candidateEntityChecks(store: OntologyObjectStore, owner: string, definition: DomainDefinition, candidate: ObjectView,
-  requirement: ObjectView, parameters: Record<string, unknown>, budget: ReadBudget): { criteria: DomainAssessment['criteria']; refs: ObjectRef[]; levels: string[] } {
+function* candidateEntityChecksProgram(store: ProjectionMetadata, owner: string, definition: DomainDefinition, candidate: ObjectView, requirement: ObjectView, parameters: Record<string, unknown>, budget: ReadBudget): GraphProgram<{ criteria: DomainAssessment['criteria']; refs: ObjectRef[]; levels: string[] }> {
   const criteria: DomainAssessment['criteria'] = [], refs: ObjectRef[] = [], levels: string[] = [];
   const check = (id: string, result: 'pass' | 'fail' | 'unknown', reason: string) => criteria.push({ id, result, reason });
-  const providers = store.related(owner, candidate.ref, 'provider', budget);
-  const resources = new Map(definition.objects.map(type => {
+  const providers = (yield* graphRelated(owner, candidate.ref, 'provider', budget));
+  const resources = new Map((yield* graphMap(definition.objects, function* (type){
     const name = domainEntityLinkName(type);
-    return [type, { name, entities: store.related(owner, candidate.ref, name, budget),
-      observations: store.related(owner, candidate.ref, `${name}Observations`, budget), explicit: store.related(owner, requirement.ref, name, budget) }];
-  }));
+    return [type, { name, entities: (yield* graphRelated(owner, candidate.ref, name, budget)),
+      observations: (yield* graphRelated(owner, candidate.ref, `${name}Observations`, budget)), explicit: (yield* graphRelated(owner, requirement.ref, name, budget)) }];
+  })));
   const explicitNamespaces = new Set<string>();
   for (const { explicit } of resources.values()) for (const selected of explicit ?? []) {
-    const current = store.related(owner, selected.ref, 'currentObservation', budget);
-    const provider = current?.length === 1 ? store.related(owner, current[0]!.ref, 'provider', budget) : undefined;
-    if (!sourceProof(store, owner, selected.ref, budget) || provider?.length !== 1) check('resource_selection_source', 'unknown', 'An explicit resource selection lacks source-qualified identity evidence');
+    const current = (yield* graphRelated(owner, selected.ref, 'currentObservation', budget));
+    const provider = current?.length === 1 ? (yield* graphRelated(owner, current[0]!.ref, 'provider', budget)) : undefined;
+    if (!(yield* sourceProofProgram(store, owner, selected.ref, budget)) || provider?.length !== 1) check('resource_selection_source', 'unknown', 'An explicit resource selection lacks source-qualified identity evidence');
     else explicitNamespaces.add(provider[0]!.ref.id);
   }
   if (explicitNamespaces.size > 1) check('resource_selection_namespace', 'unknown', 'Resources from different provider namespaces need an explicit verified identity mapping');
   else if (explicitNamespaces.size === 1 && (providers?.length !== 1 || !explicitNamespaces.has(providers[0]!.ref.id))) check('resource_selection_namespace', 'fail', 'The candidate provider does not match the explicitly selected resource namespace');
-  const alternatives = store.related(owner, requirement.ref, 'options', budget);
+  const alternatives = (yield* graphRelated(owner, requirement.ref, 'options', budget));
   const validated = new Map<string, ObjectView[]>();
   for (const type of definition.objects) {
     const { name, entities, observations, explicit } = resources.get(type)!;
@@ -46,7 +47,7 @@ function candidateEntityChecks(store: OntologyObjectStore, owner: string, defini
     }
     const observationEntities = new Map<string, ObjectView[]>();
     for (const observation of observations) {
-      const linked = store.related(owner, observation.ref, 'entity', budget);
+      const linked = (yield* graphRelated(owner, observation.ref, 'entity', budget));
       if (linked?.length === 1 && linked[0]!.ref.type === type) {
         const id = linked[0]!.ref.id; observationEntities.set(id, [...(observationEntities.get(id) ?? []), observation]);
       }
@@ -54,8 +55,8 @@ function candidateEntityChecks(store: OntologyObjectStore, owner: string, defini
     for (const entity of entities) {
       const matched = observationEntities.get(entity.ref.id) ?? [];
       if (matched.length !== 1) { check(`${name}_scope`, 'unknown', 'An exact resource observation is missing or ambiguous'); continue; }
-      const observation = matched[0]!, observationProvider = store.related(owner, observation.ref, 'provider', budget);
-      const entityProof = sourceProof(store, owner, entity.ref, budget), observationProof = sourceProof(store, owner, observation.ref, budget);
+      const observation = matched[0]!, observationProvider = (yield* graphRelated(owner, observation.ref, 'provider', budget));
+      const entityProof = (yield* sourceProofProgram(store, owner, entity.ref, budget)), observationProof = (yield* sourceProofProgram(store, owner, observation.ref, budget));
       refs.push(entity.ref, observation.ref, ...(entityProof?.refs ?? []), ...(observationProof?.refs ?? []));
       levels.push(...(entityProof?.levels ?? []), ...(observationProof?.levels ?? []));
       const p = entity.properties, o = observation.properties;
@@ -72,7 +73,7 @@ function candidateEntityChecks(store: OntologyObjectStore, owner: string, defini
         const matching = new Set<string>();
         for (const alternative of alternatives ?? []) {
           if (alternative.properties.requestRevision !== candidate.properties.requestRevision || !alternative.properties.expiresAt || Date.parse(String(alternative.properties.expiresAt)) <= store.now()) continue;
-          const otherEntities = store.related(owner, alternative.ref, name, budget);
+          const otherEntities = (yield* graphRelated(owner, alternative.ref, name, budget));
           if (!otherEntities) { check(`${name}_namespace`, 'unknown', 'Resource identity alternatives exceed the bounded comparison'); continue; }
           for (const other of otherEntities) if (other.properties.sourceId === parameters[identity[type]!]) matching.add(other.ref.id);
         }
@@ -109,25 +110,25 @@ function candidateEntityChecks(store: OntologyObjectStore, owner: string, defini
   return { criteria, refs, levels };
 }
 
-function resultEntityChecks(store: OntologyObjectStore, owner: string, definition: DomainDefinition, result: ObjectView, option: ObjectView, budget: ReadBudget) {
+function* resultEntityChecksProgram(store: ProjectionMetadata, owner: string, definition: DomainDefinition, result: ObjectView, option: ObjectView, budget: ReadBudget) {
   const resources: DomainResultResources = { entities: [], relationships: [] }, criteria: DomainAssessment['criteria'] = [], refs: ObjectRef[] = [], levels: string[] = [];
-  const providers = store.related(owner, result.ref, 'provider', budget);
+  const providers = (yield* graphRelated(owner, result.ref, 'provider', budget));
   if (definition.id === 'hotel') {
     resources.preparedEntities = [];
-    const observations = store.related(owner, option.ref, 'hotelRatePlanObservations', budget);
+    const observations = (yield* graphRelated(owner, option.ref, 'hotelRatePlanObservations', budget));
     if (!observations) criteria.push({ id: 'selected_rate_plan_scope', result: 'unknown', reason: 'Selected rate-plan observations exceed the bounded read contract' });
     for (const observation of observations ?? []) {
-      const proof = sourceProof(store, owner, observation.ref, budget), snapshot = observation.properties.snapshot as Record<string, unknown>, provider = store.related(owner, observation.ref, 'provider', budget);
+      const proof = (yield* sourceProofProgram(store, owner, observation.ref, budget)), snapshot = observation.properties.snapshot as Record<string, unknown>, provider = (yield* graphRelated(owner, observation.ref, 'provider', budget));
       if (!proof || !snapshot || provider?.length !== 1 || providers?.length !== 1 || provider[0]!.ref.id !== providers[0]!.ref.id || observation.properties.valuesDigest !== digest(snapshot) || snapshot.sourceId !== observation.properties.nativeIdentity) { criteria.push({ id: 'selected_rate_plan_source', result: 'unknown', reason: 'The selected rate plan lacks exact immutable source evidence' }); continue; }
       resources.preparedEntities.push({ type: 'HotelRatePlan', id: String(observation.properties.nativeIdentity), properties: snapshot });
       refs.push(observation.ref, ...proof.refs); levels.push(...proof.levels);
     }
   }
   for (const type of definition.resultObjects) {
-    const name = domainEntityLinkName(type), entities = store.related(owner, result.ref, name, budget), observations = store.related(owner, result.ref, `${name}Observations`, budget);
+    const name = domainEntityLinkName(type), entities = (yield* graphRelated(owner, result.ref, name, budget)), observations = (yield* graphRelated(owner, result.ref, `${name}Observations`, budget));
     if (!entities || !observations || entities.length !== observations.length) { criteria.push({ id: `${name}_scope`, result: 'unknown', reason: 'Result resources need bounded, one-to-one source observations' }); continue; }
     for (const observation of observations) {
-      const proof = sourceProof(store, owner, observation.ref, budget), entity = store.related(owner, observation.ref, 'entity', budget), provider = store.related(owner, observation.ref, 'provider', budget);
+      const proof = (yield* sourceProofProgram(store, owner, observation.ref, budget)), entity = (yield* graphRelated(owner, observation.ref, 'entity', budget)), provider = (yield* graphRelated(owner, observation.ref, 'provider', budget));
       const snapshot = observation.properties.snapshot as Record<string, unknown> | undefined, nativeId = observation.properties.nativeIdentity;
       if (!proof || !snapshot || !nativeId || entity?.length !== 1 || !entities.some(value => value.ref.type === entity[0]!.ref.type && value.ref.id === entity[0]!.ref.id) || provider?.length !== 1 || providers?.length !== 1 || provider[0]!.ref.id !== providers[0]!.ref.id || observation.properties.valuesDigest !== digest(snapshot) || snapshot.sourceId !== nativeId || snapshot.sourceRevision !== observation.properties.sourceRevision) {
         criteria.push({ id: `${name}_source`, result: 'unknown', reason: 'Actual resource identity, provider or immutable observation proof is missing or inconsistent' }); continue;
@@ -135,7 +136,7 @@ function resultEntityChecks(store: OntologyObjectStore, owner: string, definitio
       refs.push(observation.ref, entity[0]!.ref, ...proof.refs); levels.push(...proof.levels);
       resources.entities.push({ type, id: String(nativeId), properties: snapshot });
       for (const relation of domainBusinessLinksFor(definition.id).filter(relation => relation.from === type && ['TransportAssignment', 'VehicleInspection'].includes(type))) {
-        const targets = store.related(owner, observation.ref, relation.name, budget);
+        const targets = (yield* graphRelated(owner, observation.ref, relation.name, budget));
         if (targets?.length === 1) resources.relationships.push({ type: relation.id, fromId: String(nativeId), toId: String(targets[0]!.properties.sourceId) });
       }
     }
@@ -143,33 +144,35 @@ function resultEntityChecks(store: OntologyObjectStore, owner: string, definitio
   return { resources, criteria, refs, levels };
 }
 
-export function evaluateDomainFunction(store: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined {
+export function evaluateDomainFunction(store: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined { return runGraphProgram(store, evaluateDomainFunctionProgram(store, owner, input, budget)); }
+
+export function* evaluateDomainFunctionProgram(store: ProjectionMetadata, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): GraphProgram<Computation | undefined> {
   const definition = serviceDomains.find(d => [d.eligibleFunction, d.outcomeFunction].includes(input.function));
   if (!definition) return;
   const outcome = input.function === definition.outcomeFunction;
   if (input.object.type !== (outcome ? definition.resultType : definition.candidateType)) throw new DomainError('INVALID_INPUT', 'Function requires its registered domain object type');
-  const object = store.read(owner, input.object, budget), proof = sourceProof(store, owner, object.ref, budget);
+  const object = (yield* graphRead(owner, input.object, budget)), proof = (yield* sourceProofProgram(store, owner, object.ref, budget));
   const refs: ObjectRef[] = [object.ref, ...(proof?.refs ?? [])], levels = proof?.levels ?? [];
   const unknown = (reason: string): Computation => ({ status: 'unknown', reason, evidenceRefs: refs, evidenceLevels: levels });
   if (!proof) return unknown('Domain observation lacks current, scope-bound source evidence');
-  const requirements = store.related(owner, object.ref, 'requirements', budget), requests = store.related(owner, object.ref, 'request', budget);
+  const requirements = (yield* graphRelated(owner, object.ref, 'requirements', budget)), requests = (yield* graphRelated(owner, object.ref, 'request', budget));
   if (requirements?.length !== 1 || requests?.length !== 1) return unknown('Domain request binding is incomplete');
   const requirement = requirements[0]!, request = requests[0]!;
-  const requirementRequest = store.related(owner, requirement.ref, 'request', budget);
+  const requirementRequest = (yield* graphRelated(owner, requirement.ref, 'request', budget));
   if (requirementRequest?.length !== 1 || requirementRequest[0]!.ref.id !== request.ref.id || requirement.properties.requestRevision !== request.properties.revision || object.properties.requestRevision !== request.properties.revision) return unknown('Domain facts belong to another request or an obsolete requirement revision');
   refs.push(requirement.ref, request.ref);
   const { objectId: _id, displayTitle: _title, requestRevision: _revision, capturedAt: _captured, ...raw } = requirement.properties;
   let parameters: ReturnType<typeof parseDomainParameters>;
   try { parameters = parseDomainParameters(definition.id, raw); } catch { return unknown('Domain requirements are incomplete or inconsistent'); }
   if (outcome) {
-    const options = store.related(owner, object.ref, 'selectedOption', budget);
+    const options = (yield* graphRelated(owner, object.ref, 'selectedOption', budget));
     if (options?.length !== 1 || options[0]!.properties.parametersDigest !== digest(parameters)) return unknown('The result does not retain its selected option and exact requirement snapshot');
-    const optionRequest = store.related(owner, options[0]!.ref, 'request', budget);
-    const optionRequirements = store.related(owner, options[0]!.ref, 'requirements', budget);
+    const optionRequest = (yield* graphRelated(owner, options[0]!.ref, 'request', budget));
+    const optionRequirements = (yield* graphRelated(owner, options[0]!.ref, 'requirements', budget));
     if (optionRequest?.length !== 1 || optionRequest[0]!.ref.id !== request.ref.id || optionRequirements?.length !== 1 || optionRequirements[0]!.ref.id !== requirement.ref.id) return unknown('The selected option belongs to another business request');
     refs.push(options[0]!.ref);
     const { objectId: _a, displayTitle: _b, requestRevision: _c, sourceVersion: _v, ...result } = object.properties;
-    const entities = resultEntityChecks(store, owner, definition, object, options[0]!, budget);
+    const entities = (yield* resultEntityChecksProgram(store, owner, definition, object, options[0]!, budget));
     refs.push(...entities.refs); levels.push(...entities.levels);
     let value: DomainAssessment;
     try { value = assessDomain(definition.id, parameters, result, store.now(), entities.resources); } catch { return unknown('Domain result does not satisfy the registered observation schema'); }
@@ -188,7 +191,7 @@ export function evaluateDomainFunction(store: OntologyObjectStore, owner: string
     { id: 'complete_price', result: p.feesComplete !== true || !price?.minor || price.currency !== maximum.currency ? 'unknown' : BigInt(price.minor) <= BigInt(maximum.minor) ? 'pass' : 'fail', reason: 'All mandatory fees in the requested currency' },
     { id: 'terms', result: p.termsMatch === true ? 'pass' : p.termsMatch === false ? 'fail' : 'unknown', reason: 'The fixed cancellation, service and data terms must be covered' },
   ];
-  const entities = candidateEntityChecks(store, owner, definition, object, requirement, parameters, budget);
+  const entities = (yield* candidateEntityChecksProgram(store, owner, definition, object, requirement, parameters, budget));
   criteria.push(...entities.criteria); refs.push(...entities.refs); levels.push(...entities.levels);
   criteria.push(...quoteRoleCriteria(definition.id, parameters, p));
   const value: DomainAssessment = { status: criteria.some(c => c.result === 'fail') ? 'unsatisfied' : criteria.some(c => c.result === 'unknown') ? 'unknown' : 'satisfied', criteria, endpoint: 'eligible_option' };

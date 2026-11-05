@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../../ontology/graph-program.js';
 import { z } from 'zod';
 import { digest } from '../../core/delegation.js';
 import { DomainError } from '../../core/domain.js';
@@ -49,7 +50,7 @@ export class UcpAgentProgram implements AgentProgram {
   }
   assertContext(ctx: AgentProgramContext) { const scope = ctx.graph.read(ctx.owner, ctx.state.scope); if (!this.permitted(ctx.owner) || ctx.request.executionEnvironment !== 'sandbox' || ctx.state.programDigest !== this.configurationDigest || !same(ctx.state.programRef, this.ref) || scope.ref.type !== 'UcpTask' || scope.properties.mode !== this.adapter.mode || scope.properties.requestRevision !== ctx.request.revision || scope.properties.configurationDigest !== this.configurationDigest || !same(scope.properties.input, ctx.state.input)) fail('UCP context or merchant configuration changed'); }
   schema(action: string): z.ZodType<Record<string, unknown>> { return this.actionIds.includes(action) ? ucpSchemas[action as keyof typeof ucpSchemas] : fail('Unknown UCP operation'); }
-  definition(graph: OntologyObjectStore, action: string) { const definition = graph.model.action(action); if (!same((definition.read ?? definition.operation)?.inputSchema, z.toJSONSchema(this.schema(action)))) fail('UCP action definition differs from its bound handler'); return definition; }
+  definition(graph: ProjectionMetadata, action: string) { const definition = graph.model.action(action); if (!same((definition.read ?? definition.operation)?.inputSchema, z.toJSONSchema(this.schema(action)))) fail('UCP action definition differs from its bound handler'); return definition; }
   private checkout(ctx: AgentProgramContext, raw: unknown) {
     const ref = objectRefSchema.parse(raw), object = ctx.graph.read(ctx.owner, ref), snapshot = commerceSnapshotSchema.parse(object.properties.snapshot);
     const original = (ctx.taskIntents ?? ctx.intents)?.find(intent => intent.id === object.properties.intentId && intent.state === 'effect_confirmed' && same(intent.acceptedOutput?.object, ref));

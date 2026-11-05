@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
-import { ExecutionCatalog } from '../packages/core/catalog.js';
+import { ExecutionCatalog,discoverActionMetadata } from '../packages/core/catalog.js';
 import type { AgentProgram } from '../packages/core/agent-program.js';
 import type { ActionDiscoveryPage } from '../packages/core/action-bindings.js';
 import { digest } from '../packages/core/delegation.js';
@@ -62,6 +62,32 @@ test('one action has distinct versioned bindings and discovery performs no provi
     const sandbox = f.catalog.discoverActions(f.graph, 'alice', { ...request, executionEnvironment: 'sandbox' }, { actionId: 'ReadA' });
     assert.equal(sandbox.items[0]!.bindings.length, 3);
   } finally { f.db.close(); }
+});
+
+test('metadata-only discovery shares exact binding pins, pages and readiness without a storage facade',()=>{
+  const f=fixture(3,true);try{
+    const graph={model:f.graph.model,releaseRef:f.graph.releaseRef,now:Date.now};
+    const discover=(input:Parameters<typeof discoverActionMetadata>[3])=>discoverActionMetadata(graph,'alice',request,input,f.catalog.actionDiscoveryPrograms(graph,'alice'),()=>true,()=>true,
+      (program,actionId)=>f.graph.pipelineStatus('alice',program.ref,program.configurationDigest,actionId));
+    const input={actionId:'ReadA',limit:1};
+    const first=discover(input);assert.deepEqual(first,f.catalog.discoverActions(f.graph,'alice',request,input));assert(first.page.hasMore);
+    const second=discover({...input,cursor:first.page.cursor});assert.deepEqual(second,f.catalog.discoverActions(f.graph,'alice',request,{...input,cursor:first.page.cursor}));
+    for(const program of f.catalog.actionDiscoveryPrograms(graph,'alice'))for(const method of ['invoke','initialize','project','complete','privateInput'])assert(!Object.hasOwn(program,method));
+    f.flags.connected=false;assert.equal(discover(input).items[0]!.bindings[0]!.readiness,'source_authorization_required');assert.throws(()=>discover({...input,cursor:first.page.cursor}),/cursor/);
+    f.flags.connected=true;f.flags.enabled=false;assert.equal(discover(input).items[0]!.bindings[0]!.readiness,'disabled');assert.equal(f.flags.invokes,0);
+  }finally{f.db.close();}
+});
+
+test('metadata discovery cannot turn missing source approval or incomplete Pipeline metadata into ready bindings',()=>{
+  const f=fixture();try{
+    const graph={model:f.graph.model,releaseRef:f.graph.releaseRef,now:Date.now},programs=f.catalog.actionDiscoveryPrograms(graph,'alice'),input={actionId:'ReadA'};
+    const unapproved=discoverActionMetadata(graph,'alice',request,input,programs,()=>true,()=>true,
+      (program,actionId)=>f.graph.pipelineStatus('alice',program.ref,program.configurationDigest,actionId),()=>false);
+    assert.equal(unapproved.items[0]!.status,'not_ready');assert(unapproved.items[0]!.bindings.every(binding=>binding.readiness==='source_authorization_required'));
+    assert.throws(()=>discoverActionMetadata(graph,'alice',request,input,programs,()=>true,()=>true,()=>{throw new Error('Incomplete Pipeline metadata');}),/Incomplete Pipeline/);
+    const absent=discoverActionMetadata(graph,'alice',request,input,[],()=>true,()=>true,()=>{throw new Error('No registered binding should request Pipeline metadata');});
+    assert.equal(absent.items[0]!.status,'binding_unavailable');assert.equal(f.flags.invokes,0);
+  }finally{f.db.close();}
 });
 
 test('typed discovery uses explicit pages and rejects cursors after permission or configuration changes', () => {

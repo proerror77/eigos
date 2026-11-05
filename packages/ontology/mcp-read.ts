@@ -78,6 +78,12 @@ export function loadMcpReadModule(file: string | URL): McpReadModule {
   if (bytes.length > 128000) invalid('Ontology MCP definition exceeds its size limit');
   return parseMcpReadModule(JSON.parse(bytes.toString('utf8')));
 }
+/** Static trusted definitions retain schema and size validation when bundled. */
+export function parseBundledMcpReadModule(value: unknown): McpReadModule {
+  const json = JSON.stringify(value);
+  if (typeof json !== 'string' || new TextEncoder().encode(json).byteLength > 128000) invalid('Ontology MCP definition exceeds its size limit');
+  return parseMcpReadModule(value);
+}
 export const mcpReadModuleRef = (module: McpReadModule) => ({ id: module.id, version: module.version, digest: digest(module) });
 function at(value: unknown, keys: string[]): unknown {
   for (const key of keys) {

@@ -20,7 +20,7 @@ import { assertAgentPlanProjection, executionStepRef, readExecutionContext, read
 
 import { assertAgentDecisionOrigin, agentOperation, agentPlanAuthorization, agentDispatchGrant, validateAgentAuthority, hasSimulationApproval, isLiveFreeOperation } from '../core/agent-authorization.js';
 import { templatePlanning } from '../ontology/planning-contract.js';
-import { acceptedInput, assertAcceptedOutputCurrent, componentContext, componentScopeDigest, composedInputs, prepareComponentContexts, resolveComposedStep, sealComposedOutputs, selectComposedStep, stepBindingRef, stepInputDigest, validateCompositionInputs, validateCompositionLink, validateDerivedCompositionLink } from '../core/composed-actions.js';
+import { acceptedInput, assertAcceptedOutputCurrent, componentContext, componentScopeDigest, composedInputsAsync, prepareComponentContexts, resolveComposedStep, sealComposedOutputs, selectComposedStep, stepBindingRef, stepInputDigest, validateCompositionInputs, validateCompositionLink, validateDerivedCompositionLink } from '../core/composed-actions.js';
 import { assessGoal, GoalProgram, partialGoalArtifact } from './goal-program.js';
 import { assertGoalEffects } from '../core/goal-contract.js';
 import { actionBudgetImpactSchema } from '../ontology/actions.js';
@@ -28,18 +28,14 @@ import { bindInitialSelection, recordedInitialSelection, verifyInitialPlan } fro
 import { secureAgentContext, secureRequest } from '../security/model.js';
 import { assertGoalCoverage, assertReadContractResult } from '../ontology/goal-coverage.js';
 import { boundAgentAction, boundAgentActionIds } from '../core/agent-action-binding.js';
-import { bindAcceptedObjects, dataflowArguments, dataflowValue, validateReadBindings, validatePlannedCompletion, validateKnownReadDependencies } from './read-dataflow.js';
+import { bindAcceptedObjectsAsync, dataflowArguments, dataflowValue, validateReadBindings, validatePlannedCompletion, validateKnownReadDependencies } from './read-dataflow.js';
 import type { PlanningSnapshot } from '../ontology/planning-contract.js';
 import { externalDraftScopeSchema } from '../ontology/external-draft.js';
 import { assertPipelineReady } from '../ontology/pipeline/contracts.js';
 import { bindGoalCompletion, validateGoalDataflow } from './goal-dataflow.js';
 
-export const AGENT_LIMITS = { modelTurns: 32, plans: 8, actions: 16 } as const;
-export function agentLimits(program?: AgentProgram) {
-  const limits = program?.limits ?? AGENT_LIMITS;
-  if (!Number.isInteger(limits.modelTurns) || limits.modelTurns < 1 || limits.modelTurns > 80 || !Number.isInteger(limits.plans) || limits.plans < 1 || limits.plans > 24 || !Number.isInteger(limits.actions) || limits.actions < 1 || limits.actions > 64) throw new DomainError('CONFLICT', 'Agent execution limits are outside the bounded host policy');
-  return limits;
-}
+import {AGENT_LIMITS,agentLimits} from '../core/agent-limits.js';
+export {AGENT_LIMITS,agentLimits} from '../core/agent-limits.js';
 class RecoverableAgentReadFailure extends Error { constructor(readonly action: string) { super('A source read requires recovery'); } }
 const equal = (a: unknown, b: unknown) => digest(a) === digest(b);
 const failure = (message: string): never => { throw new DomainError('CONFLICT', message); };
@@ -58,7 +54,7 @@ function sourceObservation(response: AgentActionResult, attempt: ExecutionAttemp
  * vendor operation, product selection or step recipe is encoded here. */
 export class AgentRuntime {
   constructor(private store: JobStore, private catalog: ExecutionCatalog, private reasoner: Reasoner,
-    private access: (claim: WorkClaim, signal: AbortSignal) => PlanningAccess, private options: { maxTaskMs?: number; allowSandbox?: boolean; allowExternalDrafts?: boolean } = {}) {}
+    private access: (claim: WorkClaim, signal: AbortSignal) => PlanningAccess | Promise<PlanningAccess>, private options: { maxTaskMs?: number; allowSandbox?: boolean; allowExternalDrafts?: boolean } = {}) {}
   private withinTaskBudget(claim: WorkClaim) {
     const job = this.store.get(claim.owner, claim.job.id);
     const readOnly = canRecoverReadOnly(job, this.store.intents(claim.owner, job.id)) && !job.delegation?.agent?.paPayment;
@@ -198,7 +194,7 @@ export class AgentRuntime {
     if (!ctx.state.initialSelectionPending && remainingModelTurns(job) < MIN_REASONING_TURNS) {
       this.store.finish(claim, current => pauseExecutionBudget(current, 'modelTurns', executionBudgetExceeded(current, 'modelTurns', MIN_REASONING_TURNS) ?? 'window')); return;
     }
-    const access = this.access(claim, signal);
+    const access = (await this.access(claim, signal));
     const reasoningContext = { sourceChanges: ctx.graph.pipelineChanges(claim.owner, ctx.request.id, ctx.request.revision), request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), components: program.describeComponents?.(ctx), prepareContext: program.preparePlanningContext, planningObservationTypes: program.planningObservationTypes, actionIds: [...(ctx.state.managedActionIds ?? program.actionIds)], guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object,
       ...(ctx.state.composition ? { ports: ((intent.acceptedOutput?.ports ?? []) as import('../ontology/composition-contract.js').AcceptedPortValue[]).map(port => ({ name: port.port, definition: port.definition, value: port.value, receiptDigest: port.digest })) } : {}) })) };
     signal.throwIfAborted();
@@ -215,9 +211,9 @@ export class AgentRuntime {
         // dispatch uses the fresh scope snapshot and the pinned initial proof.
         const decision = bindInitialSelection(ctx.graph, program, ctx.state.scope, source);
         const bindingReads = access.session.hostEvidenceSession();
-        bindingReads.prepareContext({ actions: [...new Set(decision.steps.map(step => step.action))], refs: [ctx.state.scope] });
-        bindingReads.acceptReceipts(bindingReads.receipts().filter(read => read.status === 'ok').map(read => read.id));
-        preparedReads = bindingReads.finish();
+        (await bindingReads.prepareContext({ actions: [...new Set(decision.steps.map(step => step.action))], refs: [ctx.state.scope] }));
+        (await bindingReads.acceptReceipts(bindingReads.receipts().filter(read => read.status === 'ok').map(read => read.id)));
+        preparedReads = (await bindingReads.finish());
         response = { decision, evidence: job.runs!.find(run => run.id === initialSelection.modelRunId)! };
       } catch (error) {
         signal.throwIfAborted();
@@ -226,10 +222,10 @@ export class AgentRuntime {
       }
     } else {
       const safeContext = secureAgentContext(reasoningContext, ctx.graph);
-      access.session.authorizeModel(this.reasoner.securityChannelId);
+      (await access.session.authorizeModel(this.reasoner.securityChannelId));
       response = await this.reasoner.act(safeContext, signal, access);
-      access.session.authorizeModel(this.reasoner.securityChannelId);
-      signal.throwIfAborted(); access.record(response.evidence);
+      (await access.session.authorizeModel(this.reasoner.securityChannelId));
+      signal.throwIfAborted(); (await access.record(response.evidence));
     }
     if (!this.withinTaskBudget(claim)) return;
     const decision = agentDecisionSchema.parse(response.decision);
@@ -237,7 +233,7 @@ export class AgentRuntime {
     if (!ctx.state.composition) validatePlannedCompletion(ctx.graph, program, decision);
     if (!initialSelection && response.evidence.decisionDigest !== digest(decision)) failure('Agent decision differs from the recorded model output');
     if (decision.requestRevision !== ctx.request.revision) failure('Stale agent decision');
-    const reads = preparedReads ?? access.session.finish();
+    const reads = preparedReads ?? (await access.session.finish());
     if(decision.plannedGoalCompletion){
       try{validateGoalDataflow(this.catalog,ctx,decision);}
       catch(error){
@@ -467,11 +463,11 @@ export class AgentRuntime {
         validatePlannedCompletion(this.store.ontologyForJob(claim.owner, claim.job), program, plan.modelDecision!);
         const selected = plan.modelDecision!.plannedCompletion;
         const accepted = (id: string) => this.store.intent(claim.owner, plan.steps.find(step => step.id === id)!.intentId).acceptedOutput?.object;
-        const proposal = bindAcceptedObjects(dataflowArguments(selected.argumentsJson), selected.inputRefs, accepted);
-        const originalAccess = this.access(claim, signal), access = {...originalAccess, session: originalAccess.session.hostEvidenceSession()};
-        access.session.prepareContext({ actions: selected.inputRefs.map(ref => plan.steps.find(step => step.id === ref.stepId)!.action), refs: [plan.scope, ...selected.inputRefs.map(ref => objectRefSchema.parse(accepted(ref.stepId)))] });
-        access.session.acceptReceipts(access.session.receipts().filter(read=>read.status==='ok').map(read=>read.id));
-        this.accept(claim, program, { mode: 'planned', planId: plan.id, modelRunId: plan.modelRunId!, modelDecision: plan.modelDecision!, proposal, ontologyPlanning: access.session.finish() });
+        const proposal = await bindAcceptedObjectsAsync(dataflowArguments(selected.argumentsJson), selected.inputRefs, accepted);
+        const originalAccess = (await this.access(claim, signal)), access = {...originalAccess, session: originalAccess.session.hostEvidenceSession()};
+        (await access.session.prepareContext({ actions: selected.inputRefs.map(ref => plan.steps.find(step => step.id === ref.stepId)!.action), refs: [plan.scope, ...selected.inputRefs.map(ref => objectRefSchema.parse(accepted(ref.stepId)))] }));
+        (await access.session.acceptReceipts(access.session.receipts().filter(read=>read.status==='ok').map(read=>read.id)));
+        this.accept(claim, program, { mode: 'planned', planId: plan.id, modelRunId: plan.modelRunId!, modelDecision: plan.modelDecision!, proposal, ontologyPlanning: (await access.session.finish()) });
         return;
       } catch (error) {
         signal.throwIfAborted();
@@ -482,10 +478,10 @@ export class AgentRuntime {
     if(this.context(claim).state.composition&&plan.modelDecision?.plannedGoalCompletion&&plan.steps.every(step=>this.store.intent(claim.owner,step.intentId).state==='effect_confirmed')){
       try{
         const bound=bindGoalCompletion(this.catalog,this.context(claim),plan,id=>this.store.intent(claim.owner,id));
-        const originalAccess=this.access(claim,signal),access={...originalAccess,session:originalAccess.session.hostEvidenceSession()};
-        access.session.prepareContext({actions:bound.actions,refs:bound.refs});
-        access.session.acceptReceipts(access.session.receipts().filter(read=>read.status==='ok').map(read=>read.id));
-        this.accept(claim,program,{mode:'planned',planId:plan.id,modelRunId:plan.modelRunId!,modelDecision:plan.modelDecision!,proposal:bound.proposal,ontologyPlanning:access.session.finish()});
+        const originalAccess=(await this.access(claim,signal)),access={...originalAccess,session:originalAccess.session.hostEvidenceSession()};
+        (await access.session.prepareContext({actions:bound.actions,refs:bound.refs}));
+        (await access.session.acceptReceipts(access.session.receipts().filter(read=>read.status==='ok').map(read=>read.id)));
+        this.accept(claim,program,{mode:'planned',planId:plan.id,modelRunId:plan.modelRunId!,modelDecision:plan.modelDecision!,proposal:bound.proposal,ontologyPlanning:(await access.session.finish())});
         return;
       }catch(error){
         signal.throwIfAborted();if(!this.store.claimActive(claim))return;
@@ -573,25 +569,25 @@ export class AgentRuntime {
       });
       if (root.state.composition) {
         const derived=step.inputRefs.some(ref=>ref.compute);
-        const access=derived?this.access(claim,signal).session.hostEvidenceSession():undefined;
-        if(access)access.prepareContext({actions:[step.action],refs:[plan.scope,step.contextScope!,...knownRefs,...dependencies.map(intent=>objectRefSchema.parse(intent.acceptedOutput?.object))]});
-        input=composedInputs(this.catalog,root,plan,step,id=>this.store.intent(claim.owner,id),access?(ref,object)=>{
-          const result=access.call('evaluate_ontology',{function:ref.compute!.function,object},{origin:'worker_context',maxOutputBytes:30000}) as {status?:string;value?:unknown;reason?:string};
+        const access=derived?(await this.access(claim,signal)).session.hostEvidenceSession():undefined;
+        if(access)(await access.prepareContext({actions:[step.action],refs:[plan.scope,step.contextScope!,...knownRefs,...dependencies.map(intent=>objectRefSchema.parse(intent.acceptedOutput?.object))]}));
+        input=await composedInputsAsync(this.catalog,root,plan,step,id=>this.store.intent(claim.owner,id),access?async(ref,object)=>{
+          const result=(await access.call('evaluate_ontology',{function:ref.compute!.function,object},{origin:'worker_context',maxOutputBytes:30000})) as {status?:string;value?:unknown;reason?:string};
           if(result.status!=='known')failure(result.reason??'Deferred source input requires a new decision');
           return dataflowValue(result.value,ref.compute!.path);
         }:undefined);
-        if(access){access.acceptReceipts(access.receipts().filter(read=>read.status==='ok').map(read=>read.id));inputPlanning=access.finish();}
+        if(access){(await access.acceptReceipts(access.receipts().filter(read=>read.status==='ok').map(read=>read.id)));inputPlanning=(await access.finish());}
       }
       else if (step.inputRefs.length) {
         validateReadBindings(root.graph, program, step, program.definition(root.graph, step.action), step.input, new Map(plan.steps.filter(item=>item.id!==step.id).map(item=>[item.id,item])));
-        const originalAccess=this.access(claim,signal), access={...originalAccess,session:originalAccess.session.hostEvidenceSession()};
-        access.session.prepareContext({actions:[step.action],refs:[plan.scope,...knownRefs,...dependencies.map(intent=>objectRefSchema.parse(intent.acceptedOutput?.object))]});
-        input=bindAcceptedObjects(input,step.inputRefs,id=>dependencies.find(intent=>intent.stepId===id)?.acceptedOutput?.object,(ref,object)=>{
-          const result=access.session.call('evaluate_ontology',{function:ref.compute!.function,object},{origin:'worker_context',maxOutputBytes:30000}) as {status?:string;value?:unknown;reason?:string};
+        const originalAccess=(await this.access(claim,signal)), access={...originalAccess,session:originalAccess.session.hostEvidenceSession()};
+        (await access.session.prepareContext({actions:[step.action],refs:[plan.scope,...knownRefs,...dependencies.map(intent=>objectRefSchema.parse(intent.acceptedOutput?.object))]}));
+        input=await bindAcceptedObjectsAsync(input,step.inputRefs,id=>dependencies.find(intent=>intent.stepId===id)?.acceptedOutput?.object,async(ref,object)=>{
+          const result=(await access.session.call('evaluate_ontology',{function:ref.compute!.function,object},{origin:'worker_context',maxOutputBytes:30000})) as {status?:string;value?:unknown;reason?:string};
           if(result.status!=='known')failure(result.reason??'Deferred source input requires a new decision');
           return dataflowValue(result.value,ref.compute!.path);
         });
-        access.session.acceptReceipts(access.session.receipts().filter(read=>read.status==='ok').map(read=>read.id)); inputPlanning=access.session.finish();
+        (await access.session.acceptReceipts(access.session.receipts().filter(read=>read.status==='ok').map(read=>read.id))); inputPlanning=(await access.session.finish());
       }
       const current = this.boundStep(claim, program, step).context;
       validatePlanningSnapshot(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, current.request, plan.ontologyPlanning, true);

@@ -4,7 +4,7 @@ import type { OutcomeAssessment } from './actions.js';
 import type { OntologyObjectStore } from './object-store.js';
 import type { CallerOutcomeProof } from './caller-outcome-proof.js';
 
-export function hasTaskClosureProjection(graph: OntologyObjectStore): boolean {
+export function hasTaskClosureProjection(graph: Pick<OntologyObjectStore,'model'>): boolean {
   return graph.model.hasType('GoalCoverage') && graph.model.hasType('OutcomeAssessment')
     && Object.hasOwn(graph.model.properties('ServiceRequest'), 'currentAssessment')
     && ['taskState', 'evidenceLevel', 'evidenceRefs'].every(field => Object.hasOwn(graph.model.properties('OutcomeAssessment'), field));

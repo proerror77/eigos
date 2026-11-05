@@ -33,13 +33,20 @@ export const actionDiscoverySchema = z.strictObject({
   inputType: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/).optional(),
   outputType: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/).optional(),
   effects: z.array(z.enum(['local', 'read', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'external_draft'])).max(10).optional(),
-  search: z.string().max(100).optional(), limit: z.number().int().min(1).max(10).default(5), cursor: z.string().max(1000).optional(),
+  search: z.string().max(100).optional(), searchMode: z.enum(['keyword','semantic']).optional(), limit: z.number().int().min(1).max(10).default(5), cursor: z.string().max(1000).optional(),
   serviceConditions: z.strictObject({ region: z.string().min(1).max(100).optional(), paymentModes: z.array(z.enum(['not_required', 'pa_owned', 'external_app'])).min(1).max(3).optional(), operatorAvailable: z.boolean().optional() }).optional(),
 });
 export type ActionDiscoveryQuery = z.input<typeof actionDiscoverySchema>;
 export interface ActionDiscoveryPage {
   ontologyRelease: OntologyReleaseRef; requestId: string; requestRevision: number;
+  retrieval?: {mode:'semantic';modelId:string;contextDigest:string;scores:{actionId:string;score:number}[]};
   items: ActionDiscoveryEntry[]; page: { limit: number; hasMore: boolean; cursor?: string };
   /** Readiness describes a configured implementation. No read result grants an effect. */
   authorization: 'per_action_required'; allowedEffects: EffectClass[]; snapshotDigest: string;
+}
+
+
+export interface SemanticActionRanking {
+  actionIds: string[]; modelId: string; contextDigest: string;
+  scores: {actionId:string;score:number}[];
 }

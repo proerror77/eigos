@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../ontology/graph-program.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -37,7 +38,7 @@ export class GeoAgentProgram implements AgentProgram {
   }
   assertContext(ctx: AgentProgramContext) { const scope = ctx.graph.read(ctx.owner, ctx.state.scope); if (!this.permitted(ctx.owner) || ctx.state.programDigest !== this.configurationDigest || !same(ctx.state.programRef, this.ref) || scope.ref.type !== 'GeoQueryTask' || scope.properties.requestRevision !== ctx.request.revision || scope.properties.configurationDigest !== this.configurationDigest || !same(scope.properties.input, ctx.state.input)) fail('Public query scope or source changed'); }
   schema(action: string) { if (action !== 'ReadPublicLocations') return fail('Unsupported public query operation'); return geoActionSchema; }
-  definition(graph: OntologyObjectStore, action: string) { const definition = graph.model.action(action); if (!definition.read || !same(definition.read.inputSchema, z.toJSONSchema(this.schema(action)))) fail('Public query action contract changed'); return definition; }
+  definition(graph: ProjectionMetadata, action: string) { const definition = graph.model.action(action); if (!definition.read || !same(definition.read.inputSchema, z.toJSONSchema(this.schema(action)))) fail('Public query action contract changed'); return definition; }
   validate(ctx: AgentProgramContext, action: string, input: Record<string, unknown>) { this.assertContext(ctx); if (!same(this.schema(action).parse(input).scope, ctx.state.scope)) fail('Public query uses another context'); }
   async invoke(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult> {
     this.validate(ctx, action, input); const prepared = await this.adapter.prepare(ctx, ctx.state.input, signal);

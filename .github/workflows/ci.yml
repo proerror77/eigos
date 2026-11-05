@@ -4,6 +4,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
 permissions:
   contents: read
 concurrency:
@@ -17,9 +19,11 @@ jobs:
       verify: ${{ steps.scope.outputs.verify }}
       shards: ${{ steps.scope.outputs.shards }}
       e2e: ${{ steps.scope.outputs.e2e }}
+      postgres: ${{ steps.postgres.outputs.required }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -32,6 +36,10 @@ jobs:
         env:
           CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: node scripts/test-scope.mjs --ci
+      - id: postgres
+        env:
+          PG_TEST_SHARDS: ${{ steps.scope.outputs.shards }}
+        run: node scripts/postgres-tests.mjs needed
   verify:
     needs: scope
     if: ${{ !cancelled() }}
@@ -44,6 +52,8 @@ jobs:
         run: test "$SCOPE_RESULT" = success
       - uses: actions/checkout@v4
         if: needs.scope.outputs.verify == 'true'
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         if: needs.scope.outputs.verify == 'true'
         with:
@@ -62,6 +72,246 @@ jobs:
       - name: Documentation scope
         if: needs.scope.outputs.verify == 'false'
         run: echo 'Documentation-only change; no runtime checks required.'
+  postgres-storage:
+    needs: scope
+    if: ${{ needs.scope.result == 'success' && needs.scope.outputs.postgres == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: fixture-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      EIGOS_TEST_RELAY_POSTGRES: '1'
+      EIGOS_TEST_PG_LOCAL: '1'
+      EIGOS_TEST_LARGE_ROW: '1'
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGPASSWORD: fixture-only-password
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/postgres-tests.mjs run --group storage
+
+  postgres-vectors:
+    needs: scope
+    if: ${{ needs.scope.result == 'success' && needs.scope.outputs.postgres == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.2-pg17@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966
+        env:
+          POSTGRES_PASSWORD: synthetic-vectors-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      EIGOS_TEST_RELAY_POSTGRES: '1'
+      EIGOS_TEST_PG_LOCAL: '1'
+      EIGOS_TEST_LARGE_ROW: '1'
+      EIGOS_TEST_VECTOR_PG: '1'
+      EIGOS_TEST_VECTOR_PGPORT: '5432'
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGPASSWORD: synthetic-vectors-only
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: node scripts/postgres-tests.mjs run --group vectors
+
+  postgres-access:
+    needs: scope
+    if: ${{ needs.scope.result == 'success' && needs.scope.outputs.postgres == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: fixture-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      EIGOS_TEST_RELAY_POSTGRES: '1'
+      EIGOS_TEST_PG_LOCAL: '1'
+      EIGOS_TEST_LARGE_ROW: '1'
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGPASSWORD: fixture-only-password
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/postgres-tests.mjs run --group access
+
+  postgres-execution-cases:
+    needs: scope
+    if: ${{ needs.scope.result == 'success' && needs.scope.outputs.postgres == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [contracts, planning, documents, didi, transitions]
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: fixture-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      EIGOS_TEST_RELAY_POSTGRES: '1'
+      EIGOS_TEST_PG_LOCAL: '1'
+      EIGOS_TEST_LARGE_ROW: '1'
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGPASSWORD: fixture-only-password
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/postgres-tests.mjs run --group execution --case ${{ matrix.case }}
+
+  postgres-execution:
+    needs: [scope, postgres-execution-cases]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Require every selected execution group to succeed
+        env:
+          PG_TEST_SHARDS: ${{ needs.scope.outputs.shards }}
+          PG_CI_NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/postgres-tests.mjs aggregate-execution
+
+  postgres-coordinator-cases:
+    needs: scope
+    if: ${{ needs.scope.result == 'success' && needs.scope.outputs.postgres == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [protocol, revocation, lifecycle]
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: fixture-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      EIGOS_TEST_RELAY_POSTGRES: '1'
+      EIGOS_TEST_PG_LOCAL: '1'
+      EIGOS_TEST_LARGE_ROW: '1'
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGPASSWORD: fixture-only-password
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/postgres-tests.mjs run --group coordinator --case ${{ matrix.case }}
+
+  postgres-coordinator:
+    needs: [scope, postgres-coordinator-cases]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Require every selected Coordinator case set to succeed
+        env:
+          PG_TEST_SHARDS: ${{ needs.scope.outputs.shards }}
+          PG_CI_NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/postgres-tests.mjs aggregate-coordinator
+
+  relay-postgres:
+    needs: [scope, postgres-storage, postgres-access, postgres-execution, postgres-coordinator, postgres-vectors]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Require every selected PostgreSQL group to succeed
+        env:
+          PG_TEST_SHARDS: ${{ needs.scope.outputs.shards }}
+          PG_CI_NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/postgres-tests.mjs aggregate
   # Preserve required check names. Empty shards validate the scope without
   # installing dependencies or invoking Node's automatic test discovery.
   tests:
@@ -82,6 +332,8 @@ jobs:
         run: test "$SCOPE_RESULT" = success
       - uses: actions/checkout@v4
         if: env.EIGOS_TEST_FILES != '[]'
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         if: env.EIGOS_TEST_FILES != '[]'
         with:
@@ -99,8 +351,15 @@ jobs:
     if: needs.scope.outputs.verify == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact source
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
       - uses: actions/setup-node@v4
         with:
           node-version: 22.13.0

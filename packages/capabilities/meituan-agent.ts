@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../ontology/graph-program.js';
 import { objectResultProjection } from '../core/composed-actions.js';
 import {permitsPersonalSource} from '../core/source-owner.js';
 import { randomUUID } from 'node:crypto';
@@ -70,7 +71,7 @@ export class MeituanReadProgram implements AgentProgram {
     if (!this.actionIds.includes(action) || !Object.hasOwn(meituanActionSchemas, action)) throw new DomainError('FORBIDDEN', 'Meituan action is outside the task purpose');
     return meituanActionSchemas[action as MeituanReadAction];
   }
-  definition(graph: OntologyObjectStore, action: string) {
+  definition(graph: ProjectionMetadata, action: string) {
     const definition = graph.model.action(action), source = meituanReadDefinition.actions.find(a => a.id === action);
     if (!source || !this.actionIds.includes(action) || definition.read?.effect !== 'read' || !equal(definition.read.inputSchema, z.toJSONSchema(this.schema(action))) || !equal(definition.read.mcp, source.mcp) || definition.read.module?.digest !== meituanReadDefinitionRef.digest) invalid('Meituan ontology definition changed');
     return definition;

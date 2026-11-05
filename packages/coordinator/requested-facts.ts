@@ -1,3 +1,4 @@
+import { graphMap, type GraphProgram } from '../ontology/graph-program.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -19,10 +20,26 @@ export interface RequestedFactResult {
   missingFields: string[]; evaluations?: (Computation & { object: ObjectRef })[]; evaluationUnavailable?: ObjectRef[]; evaluationReason?: string; hasMore: boolean; continuation?: ObjectQuery;
 }
 
-/** Batch only within this synchronous read. A later decision rechecks authority
+export interface RequestedFactsResult {
+  facts: RequestedFactResult[];
+  reads: { requested: number; performed: number; reused: number };
+  needsRefresh: string[]; needsContinuation: string[]; needsEvaluation?: string[]; evaluationMeaning?: string; sourceCalls: 0;
+}
+
+/** Batch only within this read. A later decision rechecks authority
  * and current data; no old permission, receipt or provider response is reused. */
 export function readRequestedFacts(requests: RequestedFacts, query: (input: ObjectQuery) => OntologyQueryResult,
-  evaluate: (object: ObjectView) => Computation | undefined) {
+  evaluate: (object: ObjectView) => Computation | undefined): RequestedFactsResult {
+  const program = readRequestedFactsProgram(requests, function* (input) { return query(input); }, function* (object) { return evaluate(object); });
+  // The synchronous adapters above yield no storage operations. New effects
+  // must be handled explicitly rather than letting a Promise escape as data.
+  const result = program.next();
+  if (!result.done) throw new Error('Synchronous fact read yielded an unhandled storage operation');
+  return result.value;
+}
+
+export function* readRequestedFactsProgram(requests: RequestedFacts, query: (input: ObjectQuery) => GraphProgram<OntologyQueryResult>,
+  evaluate: (object: ObjectView) => GraphProgram<Computation | undefined>): GraphProgram<RequestedFactsResult> {
   const normalized = requests.map(request => ({ ...request, query: { ...request.query,
     ...(request.query.select || request.requiredFields?.length ? { select: [...new Set([...(request.query.select ?? []), ...(request.requiredFields ?? [])])] } : {}),
   } }));
@@ -34,25 +51,26 @@ export function readRequestedFacts(requests: RequestedFacts, query: (input: Obje
     return key;
   });
   const evaluated = new Map<string, Computation | undefined>();
-  const facts: RequestedFactResult[] = normalized.map((request, index) => {
+  const facts: RequestedFactResult[] = yield* graphMap(normalized, function* (request, index) {
     const group = groups.get(keys[index]!)!;
-    group.result ??= query(group.query);
+    group.result ??= yield* query(group.query);
     const result = group.result;
     const items = result.items.map(item => ({ ...item, properties: request.query.select
       ? Object.fromEntries(request.query.select.filter(name => Object.hasOwn(item.properties, name)).map(name => [name, item.properties[name]])) : item.properties }));
     const missingFields = [...new Set((request.requiredFields ?? []).filter(name => !items.length || items.some(item => !Object.hasOwn(item.properties, name))))];
     const evaluationUnavailable: ObjectRef[] = [];
-    const evaluations = request.evaluate ? items.flatMap(item => {
+    const checked = request.evaluate ? yield* graphMap(items, function* (item) {
       const key = digest([item.ref, item.revision]);
       if (!evaluated.has(key)) {
-        const result = evaluate(item);
+        const result = yield* evaluate(item);
         if (result) { const { value: _value, ...check } = result; evaluated.set(key, check); }
         else evaluated.set(key, undefined);
       }
       const result = evaluated.get(key);
-      if (!result) { evaluationUnavailable.push(item.ref); return []; }
-      return [{ ...result, object: item.ref }];
+      if (!result) { evaluationUnavailable.push(item.ref); return undefined; }
+      return { ...result, object: item.ref };
     }) : undefined;
+    const evaluations = checked?.filter((value): value is Computation & { object: ObjectRef } => value !== undefined);
     const status = result.page.hasMore ? 'incomplete' : !items.length || missingFields.length ? 'missing' : evaluations?.some(value => value.status !== 'known') ? 'refresh_required' : evaluationUnavailable.length ? 'evaluation_unavailable' : 'present';
     return { key: request.key, status, items, missingFields, ...(evaluations ? { evaluations } : {}), ...(evaluationUnavailable.length ? { evaluationUnavailable,
       evaluationReason: 'Automatic current-observation checks support ObservedFact. These objects were read successfully, but that evaluator does not apply to their types. No source refresh is implied; choose a registered function only if a further business conclusion requires it.' } : {}), hasMore: result.page.hasMore,

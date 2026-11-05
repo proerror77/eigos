@@ -12,11 +12,11 @@ import { MESSAGING_SCOPES, type MessagingIdentity } from '../packages/agent-mess
 import { ownerKey, type Principal } from '../packages/core/domain.js';
 import { RelayClient } from '../packages/agent-transport/client.js';
 
-async function fixture() {
+async function fixture(fetcher?: typeof fetch) {
   const relay = await relayFixture(), db = new DatabaseSync(join(relay.directory, 'authority.sqlite'));
   const members = new MemberStore(join(relay.directory, 'members.sqlite')), store = new MessagingStore(db);
   const options = { relayUrl: relay.baseUrl, nodeDirectory: join(relay.directory, 'nodes'),
-    enrollment: { issueCommunication: async (_owner: string, _tenant: string, agentId: string, expiresAt: number) => ({ accessToken: 'fixture-owner', agentId, expiresAt }) } };
+    enrollment: { issueCommunication: async (_owner: string, _tenant: string, agentId: string, expiresAt: number) => ({ accessToken: 'fixture-owner', agentId, expiresAt }) }, ...(fetcher ? { fetch: fetcher } : {}) };
   let service = new AgentMessagingService(store, members, options);
   function actor(subject: string, tenant = 'fixture') {
     const p: Principal = { issuer: 'https://fixture.example', tenant, subject, clientId: 'connector', scopes: [...MESSAGING_SCOPES] };
@@ -208,4 +208,52 @@ test('current member, installation, scopes, contact and communication grant gate
     await assert.rejects(f.execute(f.b.identity, { action: 'list', limit: 20 }), /MESSAGING_AUTHORIZATION_REQUIRED/);
     assert.equal(f.service.readiness(f.b.id).state, 'authorization_required');
   } finally { await f.close(); }
+});
+
+
+test('closing messaging drains a started delivery and preserves idempotent retry', async () => {
+  let armed=false, entered!:()=>void, release!:()=>void;
+  const started=new Promise<void>(resolve=>{entered=resolve;}), gate=new Promise<void>(resolve=>{release=resolve;});
+  const fetcher:typeof fetch=async (input,init)=>{
+    if(armed && new URL(String(input)).pathname==='/v1/messages' && init?.method==='POST'){armed=false;entered();await gate;}
+    return fetch(input,init);
+  };
+  const f=await fixture(fetcher);
+  try {
+    await f.connect();armed=true;
+    const request={action:'send',endpointId:f.b.grant.id,text:'synthetic-drain',requestId:randomUUID()};
+    const outcome=f.execute(f.a.identity,request).then(value=>({value}),error=>({error}));
+    await started;
+    const closing=f.service.close();
+    assert.strictEqual(f.service.close(),closing);
+    assert.equal(await Promise.race([closing.then(()=> 'closed'),new Promise<string>(resolve=>setTimeout(()=>resolve('pending'),100))]),'pending');
+    await assert.rejects(f.service.execute(f.a.identity,{action:'find',limit:1}),/MESSAGING_UNAVAILABLE/);
+    release();await closing;
+    const interrupted=await outcome;assert('error' in interrupted);assert.match(String(interrupted.error),/MESSAGING_UNAVAILABLE/);
+    await f.restart();
+    const retried=await f.execute(f.a.identity,request);
+    const inbox=await f.execute(f.b.identity,{action:'list',limit:20});
+    assert.equal(inbox.items.length,1);assert.equal(inbox.items[0].messageId,retried.messageId);
+    assert.equal((await f.execute(f.b.identity,{action:'read',messageId:retried.messageId})).text,'synthetic-drain');
+  } finally { release(); await f.close(); }
+});
+
+test('closing messaging drains an in-flight endpoint enrollment before releasing node files', async () => {
+  let armed=false,entered!:()=>void,release!:()=>void;
+  const started=new Promise<void>(resolve=>{entered=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
+  const fetcher:typeof fetch=async(input,init)=>{
+    if(armed && new URL(String(input)).pathname==='/v1/agents' && init?.method==='POST'){armed=false;entered();await gate;}
+    return fetch(input,init);
+  };
+  const f=await fixture(fetcher);
+  try {
+    armed=true;
+    const outcome=f.service.prepareEndpoint(f.a.grant.id).then(value=>({value}),error=>({error}));
+    await started;const closing=f.service.close();
+    assert.equal(await Promise.race([closing.then(()=> 'closed'),new Promise<string>(resolve=>setTimeout(()=>resolve('pending'),100))]),'pending');
+    release();await closing;const interrupted=await outcome;assert('error' in interrupted);assert.match(String(interrupted.error),/MESSAGING_UNAVAILABLE/);
+    await f.restart();const endpoint=await f.service.prepareEndpoint(f.a.grant.id);assert.equal(endpoint.endpointId,f.a.grant.id);
+    const source=new DatabaseSync(join(f.relay.directory,'relay.sqlite'),{readOnly:true});
+    try {assert.equal(source.prepare('SELECT count(*) AS n FROM relay_agents').get()?.n,1);} finally {source.close();}
+  } finally {release();await f.close();}
 });

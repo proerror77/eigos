@@ -143,6 +143,13 @@ test('public onboarding, OAuth and A2A point to the same guide without authentic
     const response = await get('/connect'); assert.equal(response.status, 200);
     assert(response.headers.get('content-security-policy')?.includes("script-src 'self'"));
     const html = await response.text();
+    const canonical = c.PUBLIC_URL + '/connect';
+    assert(html.includes(`<link rel="canonical" href="${canonical}">`));
+    assert(html.includes('name="description"'));
+    const sitemap = await get('/sitemap.xml'); assert.equal(sitemap.status,200);
+    assert(sitemap.headers.get('content-type')?.includes('application/xml'));
+    const urls = await sitemap.text(); assert(urls.includes(`<loc>${canonical}</loc>`));
+    for (const value of [secret,directory,'untrusted.example','/members','/tasks']) assert(!urls.includes(value));
     for (const link of ['/members', '/connect/agent.json', '/connect/eigos-delegate.tar.gz', '/connect/onboarding.js']) assert(html.includes(link));
     for (const value of [secret, directory, 'untrusted.example']) assert(!html.includes(value));
     assert.equal((await get('/')).status, 200);

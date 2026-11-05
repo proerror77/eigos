@@ -1,6 +1,24 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { DomainError } from '../core/domain.js';
 import { digest } from '../core/delegation.js';
+import { runGraphProgram, type GraphProgram, type ProjectionMetadata } from './graph-program.js';
+import type { OntologyObjectStore } from './object-store.js';
+
+/** Host-only synchronous optimization. Async storage runs every original
+ * operation unless it explicitly supplies an equivalent transactional adapter. */
+type ProjectionDeltaMetadata = ProjectionMetadata & {
+  projectionFragment?: (key: string, value: unknown, program: () => GraphProgram<void>) => GraphProgram<void>;
+};
+export function* projectionFragmentProgram(graph: ProjectionDeltaMetadata, key: string, value: unknown, program: () => GraphProgram<void>): GraphProgram<void> {
+  if (graph.projectionFragment) yield* graph.projectionFragment(key, value, program);
+  else yield* program();
+}
+export function projectionDeltaMetadata(graph: OntologyObjectStore): ProjectionDeltaMetadata {
+  return { model: graph.model, now: () => graph.now(), releaseRef: graph.releaseRef, security: graph.security,
+    *projectionFragment(key, value, program) {
+      graph.projectFragment(key, value, () => runGraphProgram(graph, program()));
+    } };
+}
 
 const implementation = 'execution-projection-delta-v1';
 type Epoch = { type: string; revision: number };

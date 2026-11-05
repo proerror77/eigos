@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../../ontology/graph-program.js';
 import {permitsPersonalSource} from '../../core/source-owner.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -53,7 +54,7 @@ export class BookingAgentProgram implements AgentProgram {
     return { scope, input };
   }
   schema(action: string) { if (!Object.hasOwn(bookingActionSchemas, action)) throw new DomainError('FORBIDDEN', 'Unknown booking action; EIGOS cannot pay for the PA'); return bookingActionSchemas[action as BookingAction]; }
-  definition(graph: OntologyObjectStore, action: string) {
+  definition(graph: ProjectionMetadata, action: string) {
     const definition = graph.model.action(action), op = definition.read ?? definition.operation;
     if (!op || !same(op.inputSchema, z.toJSONSchema(this.schema(action)))) fail('Booking action differs from its published definition');
     return definition;

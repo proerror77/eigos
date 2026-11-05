@@ -1,3 +1,4 @@
+import type {SyncGraphStorage} from './graph-program.js';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
@@ -64,6 +65,10 @@ function failure(message: string): never { throw new DomainError('INVALID_INPUT'
 export class IncompleteRelationshipRead extends DomainError {
   constructor() { super('CONFLICT', 'Relationship read is incomplete; narrow the investigation'); }
 }
+
+// Shared storage contracts; exporting these does not install an import tool or
+// authorize writes. Runtime adapters retain their own transaction/actor fence.
+export {sourceSchema as ontologySourceSchema,batchSchema as ontologyBatchSchema,cursorSchema as ontologyCursorSchema};
 
 /** Owned business objects only. Writes are internal source mappings, never public query operations. */
 export class OntologyObjectStore {
@@ -319,6 +324,18 @@ export class OntologyObjectStore {
       return this.project(owner, this.raw(owner, ref, budget), ref.type, undefined, budget);
     };
     return guard ? guard.readSnapshot(read) : read();
+  }
+  /** Only trusted nested domain validators use this registered function frame.
+   * It grants no model tool or new storage operation. */
+  withGraphFunction<T>(owner:string,id:string,action:(scope:SyncGraphStorage)=>T):T{
+    this.assertReaderOwner(owner);this.model.function(id);let open=true;
+    const admitted=<A extends unknown[],R>(read:(...args:A)=>R)=>(...args:A):R=>{if(!open)throw new SecurityError('AUTHORIZATION_REQUIRED');const value=read(...args);if(!open)throw new SecurityError('AUTHORIZATION_REQUIRED');return value;};
+    const denied=():never=>{throw new SecurityError('AUTHORIZATION_REQUIRED');};
+    const scope:SyncGraphStorage={read:admitted(this.read.bind(this)),readPrivate:admitted(this.readPrivate.bind(this)),query:admitted(this.query.bind(this)),related:admitted(this.related.bind(this)),
+      relationshipDigest:admitted(this.relationshipDigest.bind(this)),evidencePropertiesDigest:admitted(this.evidencePropertiesDigest.bind(this)),containsLinks:admitted(this.containsLinks.bind(this)),
+      revision:admitted(this.revision.bind(this)),evaluate:admitted(this.evaluate.bind(this)),virtualMembership:admitted(this.virtualMembership.bind(this)),pipelineChanges:admitted(this.pipelineChanges.bind(this)),
+      ingest:denied,tombstone:denied,withGraphFunction:<R>(reader:string,functionId:string,nested:(graph:SyncGraphStorage)=>R)=>{if(!open)throw new SecurityError('AUTHORIZATION_REQUIRED');return this.withGraphFunction(reader,functionId,nested);}};
+    try{return this.security?this.security.infer(owner,id,()=>action(scope)):action(scope);}finally{open=false;}
   }
   /** Trusted source validators only. Never expose this through a query or model tool. */
   readPrivate(owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 1000 }): ObjectView {

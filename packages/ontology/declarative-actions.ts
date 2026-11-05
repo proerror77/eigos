@@ -1,5 +1,5 @@
 import { digest } from '../core/delegation.js';
-import { assertPersonalAction, isPersonalAction } from './personal-context.js';
+import { assertPersonalActionProgram, isPersonalAction } from './personal-context.js';
 import { DomainError } from '../core/domain.js';
 import { compileJsonSchema } from './model-compiler.js';
 import { objectRefSchema, type ObjectRef } from './model.js';
@@ -9,6 +9,8 @@ import type { LinkWrite, ManagedObjectBatch, ObjectSource, OntologyObjectStore }
 import { assertActionDataBounds, declarativeActionImplementationSchema, validateActionImplementation, type ActionObjectRef, type ActionValue } from './action-dsl.js';
 import { readManagedResultFacts } from './managed-result-facts.js';
 import type { CandidateFacts } from './execution.js';
+import {graphRead,graphRelated,graphRelationshipDigest,graphManagedObject,graphTombstone,graphContainsLinks,graphPreviewManaged,graphApplyManaged,runGraphProgram,type GraphProgram,type ProjectionMetadata} from './graph-program.js';
+import type {ObjectView} from './object-store.js';
 
 function fail(message: string): never { throw new DomainError('CONFLICT', message); }
 const equal = (a: unknown, b: unknown) => digest(a) === digest(b);
@@ -32,7 +34,10 @@ export interface ManagedActionPreview {
 
 /** Resolve an interface capability using the actual owned concrete target. */
 export function resolveManagedInterfaceAction(graph: OntologyObjectStore, owner: string, args: { object: ObjectRef; interfaceId: string; actionId: string; input: Record<string, unknown> }): { actionId: string; input: Record<string, unknown> } {
-  const target = graph.read(owner, objectRefSchema.parse(args.object));
+  return runGraphProgram(graph,resolveManagedInterfaceActionProgram(graph,owner,args));
+}
+export function* resolveManagedInterfaceActionProgram(graph:ProjectionMetadata,owner:string,args:{object:ObjectRef;interfaceId:string;actionId:string;input:Record<string,unknown>}):GraphProgram<{actionId:string;input:Record<string,unknown>}>{
+  const target = yield* graphRead(owner,objectRefSchema.parse(args.object));
   const mapping = graph.model.resolveInterfaceAction(target.ref.type, args.interfaceId, args.actionId);
   const input: Record<string, unknown> = {};
   for (const [concrete, abstract] of Object.entries(mapping.inputMap)) {
@@ -53,6 +58,9 @@ export function resolveManagedInterfaceAction(graph: OntologyObjectStore, owner:
 
 /** Pure, deterministic action preview. It validates the full tentative graph and rolls it back. */
 export function previewDeclarativeAction(graph: OntologyObjectStore, owner: string, actionId: string, rawInput: Record<string, unknown>): ManagedActionPreview {
+  return runGraphProgram(graph,previewDeclarativeActionProgram(graph,owner,actionId,rawInput));
+}
+export function* previewDeclarativeActionProgram(graph:ProjectionMetadata,owner:string,actionId:string,rawInput:Record<string,unknown>):GraphProgram<ManagedActionPreview>{
   if (!graph.releaseRef) fail('Dynamic actions require an exact ontology release');
   const action = graph.model.action(actionId), declared = graph.model.actionImplementation(actionId);
   if (declared?.kind !== 'declarative' || !action.inputSchema) throw new DomainError('FORBIDDEN', 'Action has no executable declarative binding');
@@ -62,18 +70,18 @@ export function previewDeclarativeAction(graph: OntologyObjectStore, owner: stri
   const input = compileJsonSchema(action.inputSchema).parse(rawInput) as Record<string, unknown>;
   if (!equal(input, rawInput)) fail('Action inputs cannot be silently normalized');
   const reads = new Map<string, ManagedActionRead>();
-  const read = (ref: ObjectRef) => {
-    const object = graph.read(owner, ref);
-    reads.set(key(ref), { ref: structuredClone(ref), revision: object.revision, propertiesDigest: digest(object.properties), relationshipsDigest: graph.relationshipDigest(owner, ref, { remaining: 500 }) });
+  function* read(ref:ObjectRef):GraphProgram<ObjectView>{
+    const object = yield* graphRead(owner,ref);
+    reads.set(key(ref), { ref: structuredClone(ref), revision: object.revision, propertiesDigest: digest(object.properties), relationshipsDigest: yield* graphRelationshipDigest(owner,ref,{remaining:500}) });
     return object;
   };
   for (const [parameter, type] of Object.entries(action.inputs)) {
     const ref = objectRefSchema.parse(input[parameter]);
     if (!graph.model.implements(ref.type, type)) fail('Object input does not implement its declared type');
-    read(ref);
+    yield* read(ref);
   }
-  if (isPersonalAction(actionId)) for (const ref of assertPersonalAction(graph, owner, actionId, input)) read(ref);
-  const value = (expression: ActionValue): unknown => {
+  if (isPersonalAction(actionId)) for (const ref of (yield* assertPersonalActionProgram(graph,owner,actionId,input))) yield* read(ref);
+  function* value(expression:ActionValue):GraphProgram<unknown>{
     if ('literal' in expression) return structuredClone(expression.literal);
     if ('parameter' in expression) {
       if (!Object.hasOwn(input, expression.parameter)) return undefined;
@@ -84,17 +92,17 @@ export function previewDeclarativeAction(graph: OntologyObjectStore, owner: stri
       }
       return item === undefined ? undefined : structuredClone(item);
     }
-    const ref = reference(expression.object), property = graph.model.properties(ref.type)[expression.property];
+    const ref = yield* reference(expression.object), property = graph.model.properties(ref.type)[expression.property];
     if (!property || property.restricted || property.derived) throw new DomainError('FORBIDDEN', 'Action cannot read a protected or derived property');
-    return read(ref).properties[expression.property];
+    return (yield* read(ref)).properties[expression.property];
   };
-  const reference = (expression: ActionObjectRef): ObjectRef => {
-    if ('parameter' in expression) return objectRefSchema.parse(value({ parameter: expression.parameter }));
-    const id = value(expression.id);
+  function* reference(expression:ActionObjectRef):GraphProgram<ObjectRef>{
+    if ('parameter' in expression) return objectRefSchema.parse(yield* value({parameter:expression.parameter}));
+    const id = yield* value(expression.id);
     return objectRefSchema.parse({ type: expression.type, id });
   };
   for (const condition of implementation.conditions) {
-    const left = value(condition.left), right = condition.right ? value(condition.right) : undefined;
+    const left = yield* value(condition.left), right = condition.right ? yield* value(condition.right) : undefined;
     let pass: boolean;
     if (condition.op === 'exists') pass = left !== undefined;
     else if (left === undefined || right === undefined) pass = false;
@@ -108,10 +116,12 @@ export function previewDeclarativeAction(graph: OntologyObjectStore, owner: stri
   const batch: ManagedObjectBatch = { objects: [], links: [], removeLinks: [], creates: [], tombstones: [] };
   const objects: ManagedObjectChange[] = [], links: ManagedLinkChange[] = [];
   const mutated = new Set<string>(), changedLinks = new Set<string>();
-  const revision = (expression: ActionValue) => { const result = value(expression); if (!Number.isSafeInteger(result) || Number(result) <= 0) fail('Mutation requires an explicit positive expected revision'); return Number(result); };
-  const properties = (expressions: Record<string, ActionValue>) => Object.fromEntries(Object.entries(expressions).map(([name, expression]) => {
-    const item = value(expression); if (item === undefined) fail('A changed field cannot have an unknown value'); return [name, item];
-  }));
+  function* revision(expression:ActionValue):GraphProgram<number>{ const result = yield* value(expression); if (!Number.isSafeInteger(result) || Number(result) <= 0) fail('Mutation requires an explicit positive expected revision'); return Number(result); };
+  function* properties(expressions:Record<string,ActionValue>):GraphProgram<Record<string,unknown>>{
+    const result:Record<string,unknown>={};
+    for(const [name,expression] of Object.entries(expressions)){const item=yield* value(expression);if(item===undefined)fail('A changed field cannot have an unknown value');result[name]=item;}
+    return result;
+  }
   const target = (ref: ObjectRef) => {
     if (graph.model.objectWritePolicy(ref.type) !== 'managed') throw new DomainError('FORBIDDEN', 'Generic action target is source controlled');
     if (mutated.has(key(ref))) fail('One action cannot mutate an object more than once');
@@ -119,17 +129,17 @@ export function previewDeclarativeAction(graph: OntologyObjectStore, owner: stri
   };
   for (const mutation of implementation.mutations) {
     if (mutation.op === 'create') {
-      const ref = reference({ type: mutation.type, id: mutation.id }); target(ref);
-      if (graph.managedObject(owner, ref) || graph.tombstone(owner, ref)) fail('Create requires an unused object identity');
-      const after = properties(mutation.properties);
+      const ref = yield* reference({type:mutation.type,id:mutation.id}); target(ref);
+      if ((yield* graphManagedObject(owner,ref)) || (yield* graphTombstone(owner,ref))) fail('Create requires an unused object identity');
+      const after = yield* properties(mutation.properties);
       batch.objects.push({ ref, properties: after }); batch.creates!.push(ref);
       objects.push({ operation: 'create', ref, expectedRevision: null, fields: Object.keys(after).sort(), after });
     } else if (mutation.op === 'update' || mutation.op === 'tombstone') {
-      const ref = reference(mutation.object); target(ref);
-      const before = read(ref), expectedRevision = revision(mutation.expectedRevision);
+      const ref = yield* reference(mutation.object); target(ref);
+      const before = yield* read(ref), expectedRevision = yield* revision(mutation.expectedRevision);
       if (before.revision !== expectedRevision) fail('Object revision changed before action preview');
       if (mutation.op === 'update') {
-        const patch = properties(mutation.properties), after = { ...before.properties, ...patch };
+        const patch = yield* properties(mutation.properties), after = { ...before.properties, ...patch };
         if (equal(before.properties, after)) fail('Update has no changed managed fields');
         batch.objects.push({ ref, properties: patch, expectedRevision });
         objects.push({ operation: 'update', ref, expectedRevision, fields: Object.keys(patch).sort(), before: before.properties, after });
@@ -137,37 +147,40 @@ export function previewDeclarativeAction(graph: OntologyObjectStore, owner: stri
         batch.tombstones!.push({ ref, expectedRevision }); objects.push({ operation: 'tombstone', ref, expectedRevision, fields: [], before: before.properties });
       }
     } else {
-      const link = { type: mutation.type, from: reference(mutation.from), to: reference(mutation.to) };
+      const link = { type: mutation.type, from: yield* reference(mutation.from), to: yield* reference(mutation.to) };
       if (changedLinks.has(edgeKey(link))) fail('One action cannot change a relationship more than once');
       changedLinks.add(edgeKey(link));
-      for (const ref of [link.from, link.to]) if (!batch.creates!.some(created => key(created) === key(ref))) read(ref);
-      const existed = graph.containsLinks(owner, [link]);
+      for (const ref of [link.from, link.to]) if (!batch.creates!.some(created => key(created) === key(ref))) yield* read(ref);
+      // A newly created endpoint was already proved unused above. It has no
+      // readable current binding or existing relationship before the preview.
+      const createdEndpoint=[link.from,link.to].some(ref=>batch.creates!.some(created=>key(created)===key(ref)));
+      const existed = createdEndpoint ? false : yield* graphContainsLinks(owner,[link]);
       if (mutation.op === 'add_link' && existed || mutation.op === 'remove_link' && !existed) fail('Requested relationship mutation has no change');
       (mutation.op === 'add_link' ? batch.links! : batch.removeLinks!).push(link);
       links.push({ operation: mutation.op === 'add_link' ? 'add' : 'remove', link, existed });
     }
   }
-  const result = implementation.result ? reference(implementation.result) : objects.find(change => change.operation !== 'tombstone')?.ref;
+  const result = implementation.result ? yield* reference(implementation.result) : objects.find(change => change.operation !== 'tombstone')?.ref;
   if (result) {
     if (batch.tombstones!.some(item => key(item.ref) === key(result))) fail('Action result cannot reference a tombstoned object');
-    if (!batch.creates!.some(ref => key(ref) === key(result))) read(result);
+    if (!batch.creates!.some(ref => key(ref) === key(result))) yield* read(result);
   }
   if (isPersonalAction(actionId) && actionId !== 'BindSelfPerson') {
     const preference = actionId === 'CreatePersonalPreference' ? { type: 'PersonalPreference', id: String(input.preferenceId) } : objectRefSchema.parse(input.preference);
-    const old = actionId === 'CreatePersonalPreference' ? [] : graph.related(owner, preference, 'address', { remaining: 1000 });
+    const old = actionId === 'CreatePersonalPreference' ? [] : yield* graphRelated(owner,preference,'address',{remaining:1000});
     if (!old) fail('Personal address relationships exceed their bound');
     const value = input.value as { kind?: string; address?: ObjectRef } | undefined;
     const next = actionId !== 'ClearPersonalPreference' && value?.kind === 'deliveryAddress' ? value.address : undefined;
     for (const target of old) if (!next || !equal(target.ref, next)) {
-      read(target.ref); const link = { type: 'PreferenceAddress', from: preference, to: target.ref };
+      yield* read(target.ref); const link = { type: 'PreferenceAddress', from: preference, to: target.ref };
       batch.removeLinks!.push(link); links.push({ operation: 'remove', link, existed: true });
     }
     if (next && !old.some(target => equal(target.ref, next))) {
-      read(next); const link = { type: 'PreferenceAddress', from: preference, to: next };
+      yield* read(next); const link = { type: 'PreferenceAddress', from: preference, to: next };
       batch.links!.push(link); links.push({ operation: 'add', link, existed: false });
     }
   }
-  graph.previewManaged(owner, batch, previewSource);
+  yield* graphPreviewManaged(owner,batch,previewSource);
   const resultChange = result && objects.find(change => key(change.ref) === key(result) && change.operation !== 'tombstone');
   if (implementation.resultFacts && !resultChange?.after) fail('Result facts must bind an object changed by this action');
   const resultFacts = implementation.resultFacts ? readManagedResultFacts(resultChange!.after!, implementation.resultFacts) : undefined;
@@ -181,8 +194,11 @@ export function previewDeclarativeAction(graph: OntologyObjectStore, owner: stri
 
 /** Authority is checked by the existing plan grant immediately before this transaction-bound apply. */
 export function applyDeclarativeAction(graph: OntologyObjectStore, owner: string, actionId: string, input: Record<string, unknown>, preview: ManagedActionPreview, authority: ObjectWriteScope, source: ObjectSource): { result?: ObjectRef; previewDigest: string } {
-  const current = previewDeclarativeAction(graph, owner, actionId, input);
+  return runGraphProgram(graph,applyDeclarativeActionProgram(graph,owner,actionId,input,preview,authority,source));
+}
+export function* applyDeclarativeActionProgram(graph:ProjectionMetadata,owner:string,actionId:string,input:Record<string,unknown>,preview:ManagedActionPreview,authority:ObjectWriteScope,source:ObjectSource):GraphProgram<{result?:ObjectRef;previewDigest:string}>{
+  const current = yield* previewDeclarativeActionProgram(graph,owner,actionId,input);
   if (!equal(current, preview) || !equal(current.scope, authority)) throw new DomainError('FORBIDDEN', 'Managed action differs from its exact authorized preview');
-  graph.applyManaged(owner, current.batch, source);
+  yield* graphApplyManaged(owner,current.batch,source);
   return { ...(current.result ? { result: current.result } : {}), previewDigest: current.digest };
 }

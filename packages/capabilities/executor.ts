@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import type { Job } from '../core/domain.js';
 import { createModelProcessFiles, modelEnvironment, modelFeatureArgs } from './model-process.js';
+import {authorizeModelDispatch} from '../core/model-dispatch-context.js';
 import { openCodexModelSession } from './model-session.js';
 import { ModelSessionPool } from './model-session-pool.js';
 import type { PromptDataMetrics } from '../coordinator/prompt-data.js';
@@ -13,14 +14,8 @@ import type { ModelTiming } from './model-timing.js';
 import { modelUsageRecorder } from '../core/model-usage-context.js';
 import { NativeModelTrace, type NativeModelTiming, type NativeModelOutcome } from './native-model-timing.js';
 
-export const decisionSchema = z.object({
-  decision: z.enum(['ask_user', 'complete']),
-  message: z.string().trim().min(1).max(8000),
-  artifact: z.string().max(40000),
-}).strict().superRefine((value, ctx) => {
-  if (value.decision === 'complete' && !value.artifact.trim()) ctx.addIssue({ code: 'custom', message: 'Completed execution requires a deliverable' });
-  if (value.decision === 'ask_user' && value.artifact) ctx.addIssue({ code: 'custom', message: 'A clarification is not a completed deliverable' });
-});
+export {decisionSchema} from './model-output.js';
+import {decisionSchema} from './model-output.js';
 
 export interface RunEvidence {
   id: string;
@@ -61,7 +56,7 @@ export interface RunEvidence {
     calls: { tool: string; receiptId: string; status: string; inputDigest: string; outputDigest: string }[]; decisionSubmitted: boolean;
     rejections?: { tool: string; stage: 'authority' | 'tool' | 'model_output'; code: string; origins: string[] }[] };
 }
-export interface NativeMcpConnection { name: 'eigos_ontology'; url: string; token: string; tools: string[]; trace?: NativeModelTrace }
+export interface NativeMcpConnection { name: 'eigos_ontology'; url: string; token: string; tools: string[]; trace?: NativeModelTrace; startupTimeoutSeconds?: number; toolTimeoutSeconds?: number }
 export interface ModelRunOptions { mcp?: NativeMcpConnection; toolFree?: true }
 export interface CodexModelConfiguration {
   model: string;
@@ -122,7 +117,7 @@ export class CodexExecutor implements Executor {
     const startedAt = new Date().toISOString();
     const started = performance.now(), trace = options.mcp?.trace ?? new NativeModelTrace();
     trace.mark('runStarted'); trace.inputBytes(Buffer.byteLength(prompt));
-    const recorder = modelUsageRecorder(); recorder?.begin(id, 'codex-exec', startedAt);
+    const recorder = modelUsageRecorder(); await recorder?.begin(id, 'codex-exec', startedAt);
     let recorded: RunEvidence | undefined, succeeded = false;
     let directory: string | undefined;
     let outcome: NativeModelOutcome = 'failed', stderr = '';
@@ -146,16 +141,24 @@ export class CodexExecutor implements Executor {
       if (options.mcp) {
         const url = new URL(options.mcp.url);
         if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.pathname !== '/mcp' || url.username || url.password || url.search || url.hash) throw new Error('Native Ontology MCP must use the Worker loopback endpoint');
+        const timeout = (value: number | undefined, fallback: number) => {
+          if (value === undefined) return fallback;
+          if (!Number.isSafeInteger(value) || value < 1 || value > 300) throw new Error('Invalid native MCP timeout');
+          return value;
+        };
         args.splice(args.length - 1, 0,
           '-c', `mcp_servers.eigos_ontology.url=${JSON.stringify(options.mcp.url)}`,
           '-c', 'mcp_servers.eigos_ontology.bearer_token_env_var="EIGOS_ONTOLOGY_MCP_TOKEN"',
           '-c', `mcp_servers.eigos_ontology.enabled_tools=${JSON.stringify(options.mcp.tools)}`,
           // Optional MCP startup may finish after Codex builds its initial tool catalog.
           '-c', 'mcp_servers.eigos_ontology.required=true',
-          '-c', 'mcp_servers.eigos_ontology.startup_timeout_sec=15',
-          '-c', 'mcp_servers.eigos_ontology.tool_timeout_sec=30');
+          '-c', `mcp_servers.eigos_ontology.startup_timeout_sec=${timeout(options.mcp.startupTimeoutSeconds, 15)}`,
+          '-c', `mcp_servers.eigos_ontology.tool_timeout_sec=${timeout(options.mcp.toolTimeoutSeconds, 30)}`);
       }
       const nativeMcpCalls: NonNullable<RunEvidence['nativeMcpCalls']> = [];
+      signal.throwIfAborted();
+      await authorizeModelDispatch(this.securityChannelId);
+      signal.throwIfAborted();
       await new Promise<void>((resolve, reject) => {
         if (signal.aborted) { reject(new Error('Executor canceled')); return; }
         // A small allowlist prevents gateway credentials from entering the child.
@@ -243,7 +246,7 @@ export class CodexExecutor implements Executor {
       succeeded = true;
       return { output, evidence: recorded };
     } finally {
-      try { recorder?.finish(id, recorded ?? { id, runtime: 'codex-exec', startedAt, completedAt: new Date().toISOString(), model: /^model:\s*(\S+)/m.exec(stderr)?.[1], usage: usage(), nativeTiming: trace.finish(signal.aborted ? 'interrupted' : outcome) }, succeeded ? 'completed' : signal.aborted ? 'interrupted' : 'failed'); }
+      try { await recorder?.finish(id, recorded ?? { id, runtime: 'codex-exec', startedAt, completedAt: new Date().toISOString(), model: /^model:\s*(\S+)/m.exec(stderr)?.[1], usage: usage(), nativeTiming: trace.finish(signal.aborted ? 'interrupted' : outcome) }, succeeded ? 'completed' : signal.aborted ? 'interrupted' : 'failed'); }
       finally { if (directory) await rm(directory, { recursive: true, force: true }); }
     }
   }

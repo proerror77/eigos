@@ -1,10 +1,11 @@
+import { runGraphProgram, type ProjectionMetadata, type GraphProgram, graphReadPrivate, graphRelated } from './graph-program.js';
+import { sourceProofProgram } from './object-evidence.js';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import { shopCheckoutSnapshotSchema, shopLookupArguments, shopCreateArguments, checkoutIdempotencyKey, type ShopCheckoutSnapshot } from '../capabilities/shopify/checkout-contracts.js';
 import type { Computation } from './object-functions.js';
 import type { ObjectRef } from './model.js';
 import type { OntologyObjectStore, ReadBudget } from './object-store.js';
-import { sourceProof } from './object-evidence.js';
 
 export function checkedShopCheckoutSnapshot(value: unknown): ShopCheckoutSnapshot {
   const snapshot = shopCheckoutSnapshotSchema.parse(value), { contentDigest, ...body } = snapshot;
@@ -34,16 +35,18 @@ export function checkedShopCheckoutSnapshot(value: unknown): ShopCheckoutSnapsho
   return snapshot;
 }
 
-export function evaluateShopCheckoutFunction(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined {
+export function evaluateShopCheckoutFunction(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined { return runGraphProgram(graph, evaluateShopCheckoutFunctionProgram(graph, owner, input, budget)); }
+
+export function* evaluateShopCheckoutFunctionProgram(graph: ProjectionMetadata, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): GraphProgram<Computation | undefined> {
   if (input.function !== 'shopifyCheckoutObservationStatus') return;
   if (!['ShopifyCheckoutProducts', 'ShopifyCheckoutObservation'].includes(input.object.type)) throw new DomainError('INVALID_INPUT', 'Shopify status requires an owned source observation');
   const unknown = (reason: string): Computation => ({ status: 'unknown', reason, evidenceRefs: [input.object], evidenceLevels: [] });
-  const record = graph.readPrivate(owner, input.object, budget), proof = sourceProof(graph, owner, input.object, budget);
+  const record = (yield* graphReadPrivate(owner, input.object, budget)), proof = (yield* sourceProofProgram(graph, owner, input.object, budget));
   if (!proof) return unknown('Shopify public projection or source receipt changed');
   let snapshot: ShopCheckoutSnapshot;
   try { snapshot = checkedShopCheckoutSnapshot(record.properties.snapshot); } catch { return unknown('Shopify original source snapshot is invalid'); }
   if (snapshot.ownerDigest !== digest(owner) || Date.parse(snapshot.observedAt) > graph.now() || Date.parse(snapshot.expiresAt) <= graph.now()) return unknown('Shopify evidence is foreign, expired or from the future');
-  const roots = graph.related(owner, input.object, 'request', budget), scopes = graph.related(owner, input.object, 'scope', budget), receipts = graph.related(owner, input.object, 'sourceReceipts', budget);
+  const roots = (yield* graphRelated(owner, input.object, 'request', budget)), scopes = (yield* graphRelated(owner, input.object, 'scope', budget)), receipts = (yield* graphRelated(owner, input.object, 'sourceReceipts', budget));
   const level = snapshot.evidenceKind === 'fixture' ? 'synthetic' : snapshot.receipt.tool === 'create_checkout' ? 'live_operation' : 'live_readonly';
   if (roots?.length !== 1 || roots[0]!.ref.id !== snapshot.requestId || roots[0]!.properties.revision !== snapshot.requestRevision
     || scopes?.length !== 1 || scopes[0]!.ref.id !== snapshot.scopeId || scopes[0]!.properties.configurationDigest !== snapshot.configurationDigest

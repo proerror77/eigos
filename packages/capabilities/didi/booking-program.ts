@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../../ontology/graph-program.js';
 import { projectRideOrder } from '../../ontology/ride-booking-functions.js';
 import { randomUUID } from 'node:crypto';
 import type { Delivery } from '../../core/catalog.js';
@@ -48,7 +49,7 @@ export class DidiBookingProgram extends DidiAgentProgram {
     return super.initialize(graph, owner, request, parsed, component);
   }
   override schema(action: string): z.ZodType<Record<string, unknown>> { return Object.hasOwn(rideBookingActionSchemas, action) ? rideBookingActionSchemas[action as keyof typeof rideBookingActionSchemas] : super.schema(action); }
-  override definition(graph: OntologyObjectStore, action: string) {
+  override definition(graph: ProjectionMetadata, action: string) {
     if (!Object.hasOwn(rideBookingActionSchemas, action)) return super.definition(graph, action);
     const definition = graph.model.action(action), op = definition.read ?? definition.operation;
     if (!op || !same(op.inputSchema, z.toJSONSchema(this.schema(action))) || action === 'CreateDidiRide' && (definition.operation?.effect !== 'order' || definition.operation.environment !== 'sandbox')) fail('DiDi order definition changed');

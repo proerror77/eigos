@@ -37,4 +37,8 @@ git diff --check
 
 选中 `stripe-payment.test.ts` 时，让其独占最后一个分片，其余文件均匀分配到其他分片。该串行交易模拟套件曾在与其他文件叠加时触发 30 分钟作业时限；隔离其调度，不跳过用例、不放宽时限。只有一个分片时仍运行全部选中文件。
 
+真实 PostgreSQL 回归由 `scripts/postgres-tests.mjs` 登记为 storage、access、execution、coordinator 四组，使用独立的临时数据库服务；每组一次只执行一个测试文件。Execution 依据实际用例耗时划为契约、规划、文档执行和任务迁移四个独立分区，不把尚未执行的文件按零耗时忽略。Coordinator 再按协议、撤销和生命周期分摊独立用例，并核对实际 TAP 成功记录，包括四种撤销子项，不能以名称匹配或跳过记录代替执行。所有实际测试作业保留 30 分钟时限。
+
+`postgres-execution`、`postgres-coordinator` 和 `relay-postgres` 聚合检查始终回读其依赖结果。选择器要求运行 PostgreSQL 时，缺少、跳过、失败或取消的必要组都会阻止成功；未登记的新 PostgreSQL 测试也会使门禁失败。镜像发布的 CI 证明同时要求实际分组和聚合成功。PR 的选择、类型／构建、SQL 和普通分片统一检出准确的 PR head SHA；影响范围仍与实际 base 比较，避免把 merge ref 的测试结果当作镜像源码的证明。
+
 类型检查和构建在代码 PR 中始终运行。独立进程测试使用合成来源与隔离数据，不代表真实商家下单、付款或履约完成。

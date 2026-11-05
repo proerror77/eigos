@@ -1,3 +1,8 @@
+import { graphRead, graphRelated, graphContainsLinks, graphEvery } from './graph-program.js';
+import { sourceProofProgram } from './object-evidence.js';
+import { evaluateAgentCatalogFunctionProgram } from './catalog-agent-functions.js';
+import { readCommerceObservationProgram } from './commerce-journey-functions.js';
+import {graphReadPrivate,runGraphProgram,type GraphProgram,type ProjectionMetadata} from './graph-program.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -6,8 +11,7 @@ import { linkSnapshotDigest, type OntologyObjectStore, type ObjectSource, type O
 import type { Computation } from './object-functions.js';
 import { sourceProof } from './object-evidence.js';
 import { catalogEntityRefs, checkedAgentCatalogObservation } from './catalog-agent-projection.js';
-import { evaluateAgentCatalogFunction } from './catalog-agent-functions.js';
-import { readCommerceObservation } from './commerce-journey-functions.js';
+
 import { parseCommerceEntity } from './commerce-journey.js';
 import { commerceProductVariantValues } from './product-attributes.js';
 
@@ -19,30 +23,32 @@ function fail(message: string): never { throw new DomainError('CONFLICT', messag
 const same = (a: unknown, b: unknown) => digest(a) === digest(b);
 /** Internal mapper utility. The evidence object is an actual source observation,
  * not a title, a buyer assertion or a fabricated source identifier. */
-export function pinIdentityEndpoint(graph: OntologyObjectStore, owner: string, ref: ObjectRef, evidenceObject: ObjectRef, budget: ReadBudget = { remaining: 1000 }): z.infer<typeof identityEndpointSchema> {
-  const subject = graph.read(owner, ref, budget), evidence = graph.read(owner, evidenceObject, budget);
-  const proof = sourceProof(graph, owner, evidenceObject, budget);
+export function pinIdentityEndpoint(graph: OntologyObjectStore, owner: string, ref: ObjectRef, evidenceObject: ObjectRef, budget: ReadBudget = { remaining: 1000 }): z.infer<typeof identityEndpointSchema> { return runGraphProgram(graph, pinIdentityEndpointProgram(graph, owner, ref, evidenceObject, budget)); }
+
+export function* pinIdentityEndpointProgram(graph: ProjectionMetadata, owner: string, ref: ObjectRef, evidenceObject: ObjectRef, budget: ReadBudget = { remaining: 1000 }): GraphProgram<z.infer<typeof identityEndpointSchema>> {
+  const subject = (yield* graphRead(owner, ref, budget)), evidence = (yield* graphRead(owner, evidenceObject, budget));
+  const proof = (yield* sourceProofProgram(graph, owner, evidenceObject, budget));
   if (!proof || proof.refs.length !== 1) fail('Identity endpoint needs one exact source receipt');
-  const receipt = graph.read(owner, proof.refs[0]!, budget);
+  const receipt = (yield* graphRead(owner, proof.refs[0]!, budget));
   let sourceIdentity: string, sourceRecordId: string, sourceVersion: string;
   if (ref.type === 'ProductVariant' && evidenceObject.type === 'CatalogObservation') {
-    if (evaluateAgentCatalogFunction(graph, owner, { function: 'catalogObservationStatus', object: evidenceObject }, budget)?.status !== 'known') fail('Catalog identity evidence is stale or out of scope');
+    if ((yield* evaluateAgentCatalogFunctionProgram(graph, owner, { function: 'catalogObservationStatus', object: evidenceObject }, budget))?.status !== 'known') fail('Catalog identity evidence is stale or out of scope');
     const snapshot = checkedAgentCatalogObservation(evidence.properties.snapshot), item = snapshot.items.find(item => same(catalogEntityRefs(snapshot, item.variantId).variant, ref));
-    if (!item || !(graph.related(owner, ref, 'currentCatalogObservation', budget) ?? []).some(o => same(o.ref, evidenceObject))) fail('Catalog identity evidence does not describe the current variant');
+    if (!item || !((yield* graphRelated(owner, ref, 'currentCatalogObservation', budget)) ?? []).some(o => same(o.ref, evidenceObject))) fail('Catalog identity evidence does not describe the current variant');
     const specification = [{ name: 'variant_id', value: item.variantId }, ...(item.sku ? [{ name: 'sku', value: item.sku }] : [])];
     if (subject.properties.name !== item.title.slice(0, 500) || !same(subject.properties.specification, specification)
       || !same(subject.properties.typedAttributes ?? null, item.typedAttributes ?? null)) fail('Catalog variant changed outside its source observation');
     sourceIdentity = `shopify:${snapshot.merchant.shopId}`; sourceRecordId = item.variantId; sourceVersion = snapshot.contentDigest;
   } else if (ref.type === 'ProductVariant' && evidenceObject.type === 'CommerceProduct') {
-    const snapshot = readCommerceObservation(graph, owner, evidenceObject, { budget }), data = parseCommerceEntity('CommerceProduct', snapshot.data);
+    const snapshot = (yield* readCommerceObservationProgram(graph, owner, evidenceObject, { budget })), data = parseCommerceEntity('CommerceProduct', snapshot.data);
     const values = commerceProductVariantValues(data);
-    if (!(graph.related(owner, evidenceObject, 'productVariant', budget) ?? []).some(o => same(o.ref, ref))
-      || !(graph.related(owner, ref, 'currentCommerceProduct', budget) ?? []).some(o => same(o.ref, evidenceObject))
+    if (!((yield* graphRelated(owner, evidenceObject, 'productVariant', budget)) ?? []).some(o => same(o.ref, ref))
+      || !((yield* graphRelated(owner, ref, 'currentCommerceProduct', budget)) ?? []).some(o => same(o.ref, evidenceObject))
       || subject.properties.specificationRevision !== digest(values)) fail('Commerce identity evidence does not describe the current variant');
     sourceIdentity = snapshot.receipt.sourceIdentity; sourceRecordId = `${data.merchantId}:${data.variantId}`; sourceVersion = `${snapshot.sourceVersion}:${snapshot.contentDigest}`;
   } else {
-    if (!sourceProof(graph, owner, ref, budget) || evidence.ref.type !== `${ref.type}Observation` || !(graph.related(owner, evidenceObject, 'entity', budget) ?? []).some(o => same(o.ref, ref))
-      || !(graph.related(owner, ref, 'currentObservation', budget) ?? []).some(o => same(o.ref, evidenceObject))
+    if (!(yield* sourceProofProgram(graph, owner, ref, budget)) || evidence.ref.type !== `${ref.type}Observation` || !((yield* graphRelated(owner, evidenceObject, 'entity', budget)) ?? []).some(o => same(o.ref, ref))
+      || !((yield* graphRelated(owner, ref, 'currentObservation', budget)) ?? []).some(o => same(o.ref, evidenceObject))
       || evidence.properties.valuesDigest !== digest(subject.properties) || !same(evidence.properties.snapshot, subject.properties)) fail('Identity endpoint evidence does not bind the current domain object');
     sourceIdentity = text.parse(evidence.properties.sourceIdentity); sourceRecordId = text.parse(evidence.properties.nativeIdentity); sourceVersion = `${text.parse(evidence.properties.sourceRevision)}:${String(evidence.properties.sourceVersion)}`;
   }
@@ -90,29 +96,31 @@ export function projectEntityIdentityAssertion(graph: OntologyObjectStore, owner
 }
 
 /** Also call from the central ingestion boundary for this concrete type. */
-export function assertIdentityAssertionWrite(graph: OntologyObjectStore, owner: string, object: ObjectWrite, source: ObjectSource): void {
+export function* assertIdentityAssertionWriteProgram(graph: ProjectionMetadata, owner: string, object: ObjectWrite, source: ObjectSource):GraphProgram<void> {
   if (object.ref.type !== 'EntityIdentityAssertion') return;
   const assertion = entityIdentityAssertionSchema.parse(object.properties.assertion);
   if (assertion.ownerDigest !== digest(owner) || !['synthetic', 'provider'].includes(source.kind) || source.id !== assertion.issuerIdentity || source.observedAt !== assertion.observedAt) fail('Identity assertions require a trusted owned source mapping');
   try {
-    const old = graph.readPrivate(owner, object.ref);
+    const old = (yield* graphReadPrivate(owner, object.ref));
     if (!same(old.properties, object.properties) || !same(old.source, source)) fail('Identity assertions are immutable; append a source-versioned successor');
   } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
 }
 
-export function evaluateIdentityFunction(graph: OntologyObjectStore, owner: string, raw: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined {
+export function evaluateIdentityFunction(graph: OntologyObjectStore, owner: string, raw: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined { return runGraphProgram(graph, evaluateIdentityFunctionProgram(graph, owner, raw, budget)); }
+
+export function* evaluateIdentityFunctionProgram(graph: ProjectionMetadata, owner: string, raw: { function: string; object: ObjectRef }, budget: ReadBudget): GraphProgram<Computation | undefined> {
   if (!['entityIdentityBetween', 'entityIdentityStatus'].includes(raw.function)) return;
   const input = z.union(identityFunctionSchemas).parse(raw);
   let left: ObjectRef, right: ObjectRef, kind: z.infer<typeof identityKindSchema>;
   let requested: ObjectRef | undefined;
   if (input.function === 'entityIdentityStatus') {
-    const object = graph.read(owner, input.object, budget), assertion = entityIdentityAssertionSchema.parse(object.properties.assertion);
+    const object = (yield* graphRead(owner, input.object, budget)), assertion = entityIdentityAssertionSchema.parse(object.properties.assertion);
     left = assertion.left.object; right = assertion.right.object; kind = assertion.identityKind; requested = object.ref;
   } else { left = input.object; right = input.other; kind = input.identityKind; }
-  graph.read(owner, left, budget); graph.read(owner, right, budget);
+  (yield* graphRead(owner, left, budget)); (yield* graphRead(owner, right, budget));
   if (left.type !== identityTypes[kind] || right.type !== identityTypes[kind]) throw new DomainError('INVALID_INPUT', 'Identity comparison level does not match both subject types');
   const refs: ObjectRef[] = [left, right], levels: string[] = [], reasons: string[] = [];
-  const records = [...(graph.related(owner, left, 'identityAssertionsAsLeft', budget) ?? []), ...(graph.related(owner, left, 'identityAssertionsAsRight', budget) ?? [])];
+  const records = [...((yield* graphRelated(owner, left, 'identityAssertionsAsLeft', budget)) ?? []), ...((yield* graphRelated(owner, left, 'identityAssertionsAsRight', budget)) ?? [])];
   const applicable = records.flatMap(record => {
     const parsed = entityIdentityAssertionSchema.safeParse(record.properties.assertion);
     if (!parsed.success) return [];
@@ -122,15 +130,15 @@ export function evaluateIdentityFunction(graph: OntologyObjectStore, owner: stri
   });
   const states: string[] = [], superseded = new Set(applicable.flatMap(({ a }) => a.supersedes ? [a.supersedes.id] : []));
   for (const { record, a } of applicable) {
-    const proof = sourceProof(graph, owner, record.ref, budget); refs.push(record.ref);
-    if (!proof || a.ownerDigest !== digest(owner) || !graph.containsLinks(owner, identityAssertionLinks(record.ref, a))) { states.push('unknown'); reasons.push('Assertion source receipt or exact relationships changed'); continue; }
+    const proof = (yield* sourceProofProgram(graph, owner, record.ref, budget)); refs.push(record.ref);
+    if (!proof || a.ownerDigest !== digest(owner) || !(yield* graphContainsLinks(owner, identityAssertionLinks(record.ref, a)))) { states.push('unknown'); reasons.push('Assertion source receipt or exact relationships changed'); continue; }
     refs.push(...proof.refs); levels.push(...proof.levels);
     if (superseded.has(record.ref.id)) continue;
     if (Date.parse(a.observedAt) > graph.now()) { states.push('unknown'); reasons.push('Assertion comes from the future'); continue; }
     if (a.lifecycle === 'revoked') { states.push('revoked'); continue; }
     if (Date.parse(a.expiresAt) <= graph.now()) { states.push('expired'); continue; }
     try {
-      if (![a.left, a.right].every(endpoint => same(pinIdentityEndpoint(graph, owner, endpoint.object, endpoint.evidenceObject, budget), endpoint))) fail('Endpoint changed');
+      if (!(yield* graphEvery([a.left, a.right], function* (endpoint){ return same((yield* pinIdentityEndpointProgram(graph, owner, endpoint.object, endpoint.evidenceObject, budget)), endpoint); }))) fail('Endpoint changed');
       states.push(a.relation);
     } catch { states.push('unknown'); reasons.push('An asserted entity version or its source evidence is no longer current'); }
   }
@@ -139,4 +147,8 @@ export function evaluateIdentityFunction(graph: OntologyObjectStore, owner: stri
     : states.includes('revoked') ? 'revoked' : states.includes('expired') ? 'expired' : 'unknown';
   return { status: 'known', value: { status, identityKind: kind, left, right, reasons, ...(requested ? { requestedAssertion: requested, superseded: superseded.has(requested.id) } : {}),
     currentAssertions: applicable.filter(({ record }) => !superseded.has(record.ref.id)).map(({ record }) => record.ref), grantsAuthority: false, mergesObjects: false, transfersTerms: false }, evidenceRefs: refs, evidenceLevels: [...new Set(levels)] };
+}
+
+export function assertIdentityAssertionWrite(graph:OntologyObjectStore,owner:string,object:ObjectWrite,source:ObjectSource):void {
+  return runGraphProgram(graph,assertIdentityAssertionWriteProgram(graph,owner,object,source));
 }

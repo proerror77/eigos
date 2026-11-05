@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { digest } from '../packages/core/delegation.js';
 import type { AgentStep } from '../packages/ontology/agent-actions.js';
 import { didiDataflow, dataflowCompletion } from './fixtures/didi-dataflow.js';
-import { dataflowValue } from '../packages/coordinator/read-dataflow.js';
+import { bindAcceptedObjects, bindAcceptedObjectsAsync, dataflowValue } from '../packages/coordinator/read-dataflow.js';
 import { checkedRideEstimate } from '../packages/ontology/ride-estimate-projection.js';
 import { chooseDidi, input, observeDidi, setupDidi } from './fixtures/didi.js';
 import { owner, principal } from './backend-fixture.js';
@@ -253,4 +253,25 @@ test('Output paths preserve literal data and require an actual own field', () =>
   assert.equal(dataflowValue({ value: null }, ['value']), null);
   assert.throws(() => dataflowValue({}, ['constructor']));
   assert.equal(digest(dataflowValue({ value: { id: 'actual' } }, ['value'])), digest({ id: 'actual' }));
+});
+
+test('an asynchronous declared derivation is awaited once before its scalar enters an accepted input', async () => {
+  const object = { type: 'DidiPlaceObservation', id: 'synthetic-accepted-observation' };
+  const refs = [{ stepId: 'producer', targetKey: 'placeId', port: 'observation', compute: { function: 'selectDidiPlace', path: ['placeId'] } }];
+  let release!: (value: unknown) => void, entered!: () => void, calls = 0, completed = false;
+  const ready = new Promise<void>(resolve => { entered = resolve; }), value = new Promise<unknown>(resolve => { release = resolve; });
+  const pending = bindAcceptedObjectsAsync({ unchanged: 'original' }, refs, () => object, async (ref, actual) => {
+    calls++; assert.equal(ref.targetKey, 'placeId'); assert.deepEqual(actual, object); entered(); return value;
+  });
+  void pending.then(() => { completed = true; });
+  await ready; assert.equal(completed, false); release('actual-selected-place');
+  assert.deepEqual(await pending, { unchanged: 'original', placeId: 'actual-selected-place' }); assert.equal(calls, 1);
+  assert.throws(() => bindAcceptedObjects({}, refs, () => object, async () => 'unawaited'), /cannot await/);
+  await assert.rejects(bindAcceptedObjectsAsync({}, refs, () => object, async () => { throw new Error('Current evidence revoked'); }), /Current evidence revoked/);
+});
+
+test('a producer cannot be rebound while its declared asynchronous scalar is being calculated',async()=>{
+  let current={type:'DidiPlaceObservation',id:'original-accepted'};
+  const refs=[{stepId:'producer',targetKey:'placeId',port:'observation',compute:{function:'selectDidiPlace',path:['placeId']}}];
+  await assert.rejects(bindAcceptedObjectsAsync({},refs,()=>current,async()=>{current={...current,id:'replacement'};return 'old-scalar';}),/producer changed/);
 });

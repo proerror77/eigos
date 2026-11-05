@@ -10,6 +10,47 @@ import {
 import { owner } from './backend-fixture.js';
 import { setupDidi } from './fixtures/didi.js';
 
+test('savepoints retain the original failure when SQLite already rolled back', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE sample(value TEXT UNIQUE); INSERT INTO sample VALUES(\'original\')');
+  try {
+    const canConfirmRollback = typeof db.isTransaction === 'boolean';
+    assert.throws(() => businessSavepoint(db, 'automatic_rollback', () => {
+      db.exec("INSERT OR ROLLBACK INTO sample VALUES('original')");
+    }), (error: unknown) => {
+      let original = error;
+      if (canConfirmRollback) assert(!(error instanceof AggregateError), 'Confirmed automatic rollback retains the original top-level error');
+      else {
+        // Node 22.13 cannot confirm SQLite's automatic rollback. The failed
+        // ROLLBACK TO must remain visible alongside the actual constraint error.
+        assert(error instanceof AggregateError);
+        assert.equal(error.errors.length, 2);
+        const rollback = error.errors[1];
+        assert(rollback instanceof Error);
+        assert.equal(rollback.message, 'no such savepoint: automatic_rollback');
+        assert.equal('code' in rollback && rollback.code, 'ERR_SQLITE_ERROR');
+        assert.equal('errcode' in rollback && rollback.errcode, 1);
+        original = error.errors[0];
+      }
+      assert(original instanceof Error);
+      assert.equal(original.message, 'UNIQUE constraint failed: sample.value');
+      assert.equal('code' in original && original.code, 'ERR_SQLITE_ERROR');
+      assert.equal('errcode' in original && original.errcode, 2067);
+      return true;
+    });
+    assert(!hasTransaction(db));
+    assert.equal(db.prepare('SELECT count(*) AS n FROM sample').get()!.n, 1);
+  } finally { db.close(); }
+});
+
+test('savepoints preserve both failures when rollback cannot be confirmed', () => {
+  const original = Error('original failure'), rollback = Error('rollback failed');
+  const connection = { exec(sql: string) { if (sql.startsWith('ROLLBACK')) throw rollback; } };
+  assert.throws(() => businessSavepoint(connection, 'unconfirmed_rollback', () => { throw original; }),
+    (error: unknown) => error instanceof AggregateError && error.errors[0] === original && error.errors[1] === rollback);
+  assert(!hasTransaction(connection));
+});
+
 test('registered savepoints work without isTransaction and preserve outer ownership and rollback', () => {
   const db = new DatabaseSync(':memory:');
   const connection = { exec: db.exec.bind(db) };

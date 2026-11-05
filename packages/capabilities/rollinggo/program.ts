@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../../ontology/graph-program.js';
 import { objectResultProjection } from '../../core/composed-actions.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -169,7 +170,7 @@ export class RollingGoProgram implements AgentProgram {
     if (action !== 'SearchRollingGoHotels') fail('Unregistered hotel action');
     return rollingGoActionSchema;
   }
-  definition(graph: OntologyObjectStore, action: string) {
+  definition(graph: ProjectionMetadata, action: string) {
     this.schema(action);
     const def = graph.model.action(action),
       expected = rollingGoActions[0]!;

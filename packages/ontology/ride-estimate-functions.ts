@@ -1,20 +1,24 @@
+import { runGraphProgram, type ProjectionMetadata, type GraphProgram, graphRead, graphRelated } from './graph-program.js';
+import { sourceProofProgram } from './object-evidence.js';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import { checkedRideEstimate } from './ride-estimate-projection.js';
 import { rideEstimateActionSchemas, rideEstimateInputSchema } from './ride-estimate.js';
-import { sourceProof } from './object-evidence.js';
+
 import type { Computation } from './object-functions.js';
 import type { ObjectRef } from './model.js';
 import type { OntologyObjectStore, ReadBudget } from './object-store.js';
 
-export function evaluateRideEstimate(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined {
+export function evaluateRideEstimate(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined { return runGraphProgram(graph, evaluateRideEstimateProgram(graph, owner, input, budget)); }
+
+export function* evaluateRideEstimateProgram(graph: ProjectionMetadata, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): GraphProgram<Computation | undefined> {
   if (input.function === 'selectDidiPlace') {
-    const status = evaluateRideEstimate(graph, owner, { ...input, function: 'rideEstimateStatus' }, budget)!;
+    const status = (yield* evaluateRideEstimateProgram(graph, owner, { ...input, function: 'rideEstimateStatus' }, budget))!;
     if (status.status !== 'known') return status;
-    const s = checkedRideEstimate(graph.read(owner, input.object, budget).properties.snapshot);
+    const s = checkedRideEstimate((yield* graphRead(owner, input.object, budget)).properties.snapshot);
     const unknown = (reason: string): Computation => ({ ...status, status: 'unknown', value: undefined, reason });
     if (s.data.kind !== 'places') return unknown('A place selection needs a place-search observation');
-    const scopes = graph.related(owner, input.object, 'scope', budget), roots = graph.related(owner, input.object, 'request', budget);
+    const scopes = (yield* graphRelated(owner, input.object, 'scope', budget)), roots = (yield* graphRelated(owner, input.object, 'request', budget));
     const task = rideEstimateInputSchema.parse(scopes?.[0]?.properties.input), role = s.actionInput.role;
     if (task.mode !== 'estimate' || role !== 'origin' && role !== 'destination') return unknown('A route endpoint role is required');
     const normalize = (value: string) => value.replace(/\s+/g, '').toLowerCase();
@@ -30,32 +34,32 @@ export function evaluateRideEstimate(graph: OntologyObjectStore, owner: string, 
     return { ...status, value: { placeId: matches[0]!.id, observation: input.object, selectionRule: addressed.length ? 'explicit_unique_address' : 'unique_exact_name' } };
   }
   if (input.function !== 'rideEstimateStatus') return;
-  return observationStatus(graph, owner, input.object, budget);
+  return (yield* observationStatusProgram(graph, owner, input.object, budget));
 }
 
-function observationStatus(graph: OntologyObjectStore, owner: string, object: ObjectRef, budget: ReadBudget, freshnessAt?: number): Computation {
+function* observationStatusProgram(graph: ProjectionMetadata, owner: string, object: ObjectRef, budget: ReadBudget, freshnessAt?: number): GraphProgram<Computation> {
   if (!['DidiPlaceObservation', 'RideEstimateObservation'].includes(object.type)) throw new DomainError('INVALID_INPUT', 'Ride estimate status needs a DiDi observation');
   const unknown = (reason: string): Computation => ({ status: 'unknown', reason, evidenceRefs: [object], evidenceLevels: [] });
-  const record = graph.read(owner, object, budget), proof = sourceProof(graph, owner, object, budget);
+  const record = (yield* graphRead(owner, object, budget)), proof = (yield* sourceProofProgram(graph, owner, object, budget));
   if (!proof) return unknown('DiDi source evidence no longer matches');
   let s; try { s = checkedRideEstimate(record.properties.snapshot); } catch { return unknown('DiDi snapshot is invalid'); }
   const observedAt = Date.parse(s.observedAt), expiresAt = Date.parse(s.expiresAt);
   const isFresh = () => { const at = freshnessAt ?? graph.now(); return observedAt <= at && at < expiresAt; };
   if (!isFresh()) return unknown('DiDi read expired under the local freshness policy');
-  const roots = graph.related(owner, object, 'request', budget), scopes = graph.related(owner, object, 'scope', budget);
+  const roots = (yield* graphRelated(owner, object, 'request', budget)), scopes = (yield* graphRelated(owner, object, 'scope', budget));
   if (roots?.length !== 1 || roots[0]!.ref.id !== s.requestId || roots[0]!.properties.revision !== s.requestRevision || scopes?.length !== 1 || digest(scopes[0]!.ref) !== digest(s.scope) || scopes[0]!.properties.configurationDigest !== s.configurationDigest || scopes[0]!.properties.requestRevision !== s.requestRevision) return unknown('DiDi observation belongs to another scope or revision');
   const task = rideEstimateInputSchema.safeParse(scopes[0]!.properties.input);
   if (!task.success) return unknown('DiDi task scope is invalid');
   if (s.route) {
-    const route = graph.related(owner, object, 'route', budget), args = rideEstimateActionSchemas.EstimateDidiRide.parse(s.actionInput);
+    const route = (yield* graphRelated(owner, object, 'route', budget)), args = rideEstimateActionSchemas.EstimateDidiRide.parse(s.actionInput);
     if (route?.length !== 1 || route[0]!.properties.origin !== s.route.origin.name || route[0]!.properties.destination !== s.route.destination.name || task.data.mode !== 'estimate') return unknown('DiDi route projection differs from its source');
     for (const role of ['origin', 'destination'] as const) {
-      const refs = graph.related(owner, object, `${role}Search`, budget), expected = role === 'origin' ? args.originObservation : args.destinationObservation;
+      const refs = (yield* graphRelated(owner, object, `${role}Search`, budget)), expected = role === 'origin' ? args.originObservation : args.destinationObservation;
       if (refs?.length !== 1 || digest(refs[0]!.ref) !== digest(expected)) return unknown('Place source relationship changed');
       // Places supplied coordinates when this quote was requested. Their later
       // expiry cannot invalidate a still-current quote. Only this data timestamp
       // is historical: graph reads, authorization and provenance remain current.
-      const status = observationStatus(graph, owner, expected, budget, Date.parse(s.receipt.startedAt));
+      const status = (yield* observationStatusProgram(graph, owner, expected, budget, Date.parse(s.receipt.startedAt)));
       let place; try { place = checkedRideEstimate(refs[0]!.properties.snapshot); } catch { return unknown('Place source is invalid'); }
       if (status?.status !== 'known' || place.data.kind !== 'places' || place.requestId !== s.requestId || place.requestRevision !== s.requestRevision || digest(place.scope) !== digest(s.scope) || place.actionInput.role !== role || !place.data.places.some(p => digest(p) === digest(s.route![role]))) return unknown('Coordinates are not backed by the owned current place observation');
     }

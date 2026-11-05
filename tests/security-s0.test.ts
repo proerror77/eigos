@@ -28,24 +28,25 @@ test('S0 inventories every definition and nested subtree without changing runtim
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
   assert.equal(report.counts.objectTypes, 204); assert.equal(report.counts.properties, 1863); assert.equal(report.counts.interfaces, 14);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 221);
-  for (const id of ['ontology-business-descriptions', 'business-descriptions-policy-upgrade', 'business-descriptions-installer', 'ontology-definition-compiler', 'ontology-kernel-seed'])
-    assert(report.surfaces.some(surface => surface.id === id), `Unreviewed description-release surface: ${id}`);
-  for (const id of ['consent-lifetime', 'persistent-consent-policy-upgrade']) assert(report.surfaces.some(surface => surface.id === id));
-  for (const id of ['payment-commerce-connection', 'payment-commerce-mcp', 'payment-commerce-http', 'payment-commerce-program', 'payment-commerce-policy-upgrade'])
-    assert(report.surfaces.some(surface => surface.id === id), `Unreviewed payment/commerce boundary: ${id}`);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 392);
+  for(const id of ['gateway-primary-startup','ontology-registered-calculations','ontology-semantic-retrieval-contract','ontology-semantic-retrieval-port','ontology-semantic-retrieval-kernel','postgres-embedding-index','postgres-embedding-schema','postgres-vector-index-deployment','postgres-task-vector-cli'])assert(report.surfaces.some(surface=>surface.id===id),`Missing reviewed supplied-vector surface: ${id}`);
+  for (const id of ['ontology-business-descriptions','business-descriptions-policy-upgrade','business-descriptions-installer','ontology-definition-compiler','ontology-kernel-seed']) assert(report.surfaces.some(surface => surface.id === id), `Missing reviewed description surface: ${id}`);
+  for(const id of ['postgres-didi-account','postgres-didi-policy','postgres-didi-registry','postgres-didi-execution','postgres-node-migration','postgres-node-migration-cli','harness-image-smoke','postgres-vector-admin','postgres-vector-admin-cli','worker-claim-release-lifecycle'])assert(report.surfaces.some(surface=>surface.id===id),`Missing reviewed migration surface: ${id}`);
+  for (const id of ['postgres-projection-epoch-catalogue', 'business-transaction', 'ontology-business-chain-projection', 'ontology-business-chain-write', 'ontology-projection-delta']) assert(report.surfaces.some(surface => surface.id === id));
+  for(const id of ['local-semantic-embedding','semantic-catalog','semantic-catalog-cli','semantic-runtime'])assert(report.surfaces.some(surface=>surface.id===id));
+  assert(report.surfaces.some(surface=>surface.id==='relay-postgres-grant'));
+  assert(report.surfaces.some(surface=>surface.id==='relay-postgres-grant-cli'));
+  for (const id of ['observation-contract-schema', 'observation-contract-storage', 'observation-task-boundary', 'postgres-projection-graph', 'postgres-task-bindings', 'postgres-task-grants', 'postgres-task-personal', 'postgres-task-storage', 'postgres-task-commands', 'postgres-worker-admission', 'postgres-worker-store', 'security-object-envelope', 'task-submission-contract', 'task-intent-cancellation', 'postgres-task-lineage', 'postgres-worker-input', 'postgres-worker-output', 'supabase-postgres-local-proxy', 'task-reply-program', 'postgres-independent-lease-renewal', 'task-technical-resume']) {
+    assert(report.surfaces.some(surface => surface.id === id), `Unreviewed migration or observation surface: ${id}`);
+  }
+  for (const id of ['consent-lifetime', 'persistent-consent-policy-upgrade', 'payment-commerce-connection', 'payment-commerce-mcp', 'payment-commerce-http', 'payment-commerce-program', 'payment-commerce-policy-upgrade', 'primary-service-manager', 'primary-deployment-preflight', 'primary-ingress-readiness', 'primary-relocation', 'primary-relocation-cli', 'primary-harness-login', 'primary-harness-login-cli']) {
+    assert(report.surfaces.some(surface => surface.id === id), `Unreviewed merged runtime boundary: ${id}`);
+  }
   assert.equal(report.types.find(type => type.id === 'PaymentCommerceReadTask')!.properties.find(field => field.name === 'input')!.policy, 'task_sensitive');
   assert.equal(report.types.find(type => type.id === 'PaymentCommerceReadObservation')!.properties.find(field => field.name === 'snapshot')!.policy, 'internal_only');
   const harness = report.surfaces.find(surface => surface.id === 'harness-executor');
   assert(harness); assert.equal(harness.file, 'packages/capabilities/harness-executor.ts');
   assert.deepEqual(harness.channels, ['registered_model', 'private_file']);
-  for (const id of ['primary-service-manager', 'primary-deployment-preflight', 'primary-ingress-readiness', 'primary-relocation', 'primary-relocation-cli']) {
-    assert(report.surfaces.some(surface => surface.id === id), `Unreviewed Linux primary boundary: ${id}`);
-  }
-  for (const id of ['primary-harness-login', 'primary-harness-login-cli']) assert(report.surfaces.some(surface => surface.id === id));
-  for (const id of ['observation-contract-schema', 'observation-contract-storage', 'observation-task-boundary']) {
-    assert(report.surfaces.some(surface => surface.id === id), `Unreviewed observation contract surface: ${id}`);
-  }
   const guidance = report.surfaces.find(surface => surface.id === 'security-error-guidance');
   assert(guidance); assert.equal(guidance.file, 'packages/security/error-guidance.ts');
   assert.deepEqual(guidance.channels, ['http', 'mcp', 'a2a']);
@@ -65,7 +66,7 @@ test('S0 inventories every definition and nested subtree without changing runtim
   for (const id of ['ontology-definition-contracts', 'ontology-definition-service', 'ontology-action-discovery-contract', 'ontology-pipeline-contract', 'ontology-pipeline-registry', 'ontology-pipeline-mapping', 'ontology-pipeline-facts', 'ontology-metadata-http', 'ontology-metadata-mcp']) {
     assert(report.surfaces.some(surface => surface.id === id), `Unreviewed pipeline surface: ${id}`);
   }
-  for (const id of ['relay-http-boundary', 'relay-private-storage']) assert(report.surfaces.some(surface => surface.id === id), `Unreviewed Relay boundary: ${id}`);
+  for (const id of ['relay-http-boundary', 'relay-private-storage', 'relay-postgres-storage', 'relay-cloudflare-entry', 'relay-postgres-import', 'relay-postgres-import-cli', 'business-postgres-snapshot-audit', 'business-postgres-preflight-cli', 'business-postgres-schema-compiler', 'business-postgres-json-compat', 'business-postgres-import', 'business-postgres-import-cli', 'membership-postgres-import', 'membership-postgres-import-cli', 'postgres-identity-audit', 'postgres-identity-audit-cli', 'postgres-runtime-transaction', 'postgres-authority-lock', 'postgres-work-authority', 'postgres-work-claim', 'relay-cloudflare-binding', 'relay-client-repoint-cli']) assert(report.surfaces.some(surface => surface.id === id), `Unreviewed Relay boundary: ${id}`);
   assert.deepEqual(report.surfaces.find(surface => surface.id === 'native-model-timing')!.channels, ['private_diagnostics']);
   assert.deepEqual(report.surfaces.find(surface => surface.id === 'model-usage-accounting')!.channels, ['sqlite', 'task_usage']);
   assert(report.surfaces.some(surface => surface.id === 's5-packages-agent-client-a2a' && surface.file === 'packages/agent-client/a2a.ts'), 'Public A2A discovery must remain in the reviewed security inventory');

@@ -6,7 +6,7 @@ import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { prepareObservationSchema } from '../../packages/ontology/observation-contract.js';
 import { DomainError, versionedReplySchema, resumeTaskSchema, requireScope, submitSchema, ontologySubmitSchema, taskIdSchema, remediationSchema, requestIdSchema, type Principal } from '../../packages/core/domain.js';
-import { TaskService } from '../../packages/core/tasks.js';
+import type { GatewayTaskService } from './task-service.js';
 import { publicTask as taskSummary } from './task-view.js';
 import {secureDescribeSchema,secureQuerySchema,secureEvaluateSchema,checkAccessSchema} from '../../packages/security/view.js';
 import { SecurityError } from '../../packages/security/store.js';
@@ -15,13 +15,13 @@ import { objectQuerySchema } from '../../packages/ontology/object-store.js';
 import { linkSearchSchema } from '../../packages/ontology/model.js';
 import { functionCallSchema } from '../../packages/ontology/object-functions.js';
 import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
-import type { DefinitionService } from '../../packages/ontology/definition-service.js';
+import type {DefinitionServicePort} from '../../packages/ontology/definition-service-port.js';
 import { PA_DISCOVERY_GUIDANCE } from '../../packages/core/services.js';
 import { ontologyIdSchema, ontologyReleaseRefSchema } from '../../packages/ontology/definition-contracts.js';
 import { mountDefinitionMcp } from './ontology/mcp.js';
 import { externalDraftPermitSchema } from '../../packages/ontology/external-draft.js';
 import { mountMessagingMcp } from './messaging/mcp.js';
-import type { AgentMessagingService } from '../../packages/agent-messaging/service.js';
+import type {AgentMessagingExecutionPort} from '../../packages/agent-messaging/ports.js';
 import type { MessagingIdentity } from '../../packages/agent-messaging/contracts.js';
 
 async function toolResult(action: () => unknown, instance?: string): Promise<CallToolResult> {
@@ -38,7 +38,7 @@ async function toolResult(action: () => unknown, instance?: string): Promise<Cal
   }
 }
 
-export function createMcpServer(tasks: TaskService, principal: Principal, network?: { service: NetworkService; token: string }, sources?: { service: MemberSourceService; token: string }, definitions?: DefinitionService, options: { payment?: boolean; externalDrafts?: boolean; messaging?: { service: AgentMessagingService; identity: MessagingIdentity }; messagingOnly?: boolean; runtime?: { instance: string; backend: string; releaseDigest?: string; ontologyTransport: 'native-mcp' } } = {}): McpServer {
+export function createMcpServer(tasks: GatewayTaskService, principal: Principal, network?: { service: NetworkService; token: string }, sources?: { service: MemberSourceService; token: string }, definitions?: DefinitionServicePort, options: { payment?: boolean; externalDrafts?: boolean; messaging?: { service: AgentMessagingExecutionPort; identity: MessagingIdentity }; messagingOnly?: boolean; runtime?: { instance: string; backend: string; releaseDigest?: string; ontologyTransport: 'native-mcp' } } = {}): McpServer {
   const result = (action: () => unknown) => toolResult(action, options.runtime?.instance);
   const communication = 'Use the Personal Agent communication tools for messages to other people’s PAs. Only an explicit service delegation uses submit_task/eigos.delegate. Message delivery does not authorize a business action.';
   const server = new McpServer({ name: 'eigos', version: '0.1.0' }, { instructions: options.messagingOnly ? communication : PA_DISCOVERY_GUIDANCE + (options.messaging ? '\n' + communication : '') });
@@ -80,7 +80,7 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     description: 'Submit the original goal to a discovered service. Include personalContext only when the goal needs authorized stored personal facts or preferences; self requests personal data, not caller identity. Public named-place queries normally omit personalContext and unverified street addresses. For an already bound self whose facts are needed, select only the needed defaults and known references; do not bind again or repeat known facts. Explicit overrides and clears take precedence. Before location-dependent delegation, obtain the actual needed endpoints and city through the PA authorized tools, then supply locationContext. It becomes Ontology RequestFact inputs before planning. Keep ordinary constraints in goal text; structured condition predicates must be discovered registered IDs, never user prose. eigos.delegate uses Ontology + LLM, source actions and independent acceptance. Reuse requestId for identical retries; never replace a pending task. On denial follow the returned authorization guidance, without inferring task-creation permission or requesting unrelated personal access.',
     inputSchema: submitSchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  }, (args: unknown) => result(() => taskSummary(tasks.submit(principal, args))));
+  }, (args: unknown) => result(async () => taskSummary(await tasks.submit(principal, args))));
   server.registerTool('get_task', {
     description: 'Read an owned task business summary with current revision, pending question, authorization/recovery status and intact artifacts. While submitted/working, use waitMs up to 30000 to await a terminal state or needed action without rapid repeated calls. Timeout returns the unchanged original task and never cancels execution. Internal model and ontology histories stay in EIGOS. Technical recovering/paused states do not request business input: preserve this task and confirmed facts; never create a replacement. Only input-required asks for missing owner facts. Works across MCP/A2A.',
     inputSchema: z.object({ taskId: taskIdSchema, waitMs: z.number().int().min(0).max(30000).optional() }).strict(), annotations: read,
@@ -88,12 +88,12 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
   if (tasks.secured) server.registerTool('prepare_observation_contract', {
     description: 'Record an explicitly delegated, bounded observation contract for a completed owned task, creating a separate paused guardian. Requires current task/source/field permissions, exact published mapping and read input, horizon and lifetime budgets. This stage does not start monitoring or authorize source calls, calendar edits, orders or payments. Target account/native identity remains unverified until a trusted observer binds it. Read lifecycle with get_task; cancel_task revokes the contract. Never infer this delegation from task completion.',
     inputSchema: prepareObservationSchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, args => result(() => taskSummary(tasks.prepareObservationContract(principal, args))));
+  }, args => result(async () => taskSummary(await tasks.prepareObservationContract(principal, args))));
   if (!tasks.secured && options.externalDrafts) server.registerTool('authorize_checkout_draft', {
     description: 'Authorize exactly one live unpaid checkout draft for the merchant, items and source preview returned by this owned task. Copy its planDigest and draft unchanged; expiresAt may copy draft.sourceExpiresAt and must not exceed it. This grants no order, payment, customer-data submission or later edit. Reuse requestId for identical retries.',
     inputSchema: externalDraftPermitSchema.omit({ action: true, environment: true }).extend({ taskId: taskIdSchema }).strict(),
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  }, ({ taskId, ...permit }) => result(() => taskSummary(tasks.authorize(principal, taskId, { ...permit, action: 'approve_external_draft', environment: 'live' }))));
+  }, ({ taskId, ...permit }) => result(async () => taskSummary(await tasks.authorize(principal, taskId, { ...permit, action: 'approve_external_draft', environment: 'live' }))));
   if (!tasks.secured) server.registerTool('get_member_usage', {
     description: 'Read only the authenticated member’s recorded EIGOS Worker usage across tasks. Member limits are disabled. Unknown/unreported usage is separate; task safety budgets still apply.',
     inputSchema: z.object({}).strict(), annotations: read,
@@ -102,39 +102,39 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     description: 'List tasks owned by the authenticated user within the authenticated organization.',
     inputSchema: z.object({ limit: z.number().int().min(1).max(100).default(50), offset: z.number().int().min(0).max(1_000_000).default(0) }).strict(),
     annotations: read,
-  }, args => result(() => { const found = tasks.list(principal, args); return { ...found, jobs: found.jobs.map(taskSummary) }; }));
+  }, args => result(async () => { const found = await tasks.list(principal, args); return { ...found, jobs: found.jobs.map(taskSummary) }; }));
   server.registerTool('reply_to_task', {
     description: 'Answer the current owned task question using expectedRevision from get_task. A later explicit correction replaces the corresponding old value and retains unchanged facts. Technical pauses use resume_task, not a fabricated owner reply. A reply never grants business authorization. Reuse requestId only for identical retries.',
     inputSchema: versionedReplySchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, args => result(() => taskSummary(tasks.reply(principal, args))));
+  }, args => result(async () => taskSummary(await tasks.reply(principal, args))));
   server.registerTool('amend_task', {
     description: 'Apply an owner correction to the SAME open read-only task, including while it is working or waiting for source login. In Foundation mode this accepts only an explicit personalContext or locationContext refresh within existing installation permissions. Read current expectedRevision first. Obsolete in-flight results cannot overwrite the correction. Fixed business effects cannot be amended here.',
     inputSchema: versionedReplySchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, args => result(() => taskSummary(tasks.amend(principal, args))));
+  }, args => result(async () => taskSummary(await tasks.amend(principal, args))));
   server.registerTool('resume_task', {
     description: 'Resume the SAME technically paused read-only task after its runtime prerequisite has been restored. In Foundation mode only the original PA with current task-processing permission and execution authority can resume, using the current expectedRevision without increasing its budget or expiry. No owner answer or repeated business confirmation is needed. Preserve history and cumulative usage; this grants no new business authority. Do not repeatedly call while the failure is unchanged. An inactive observation contract cannot be activated with this tool.',
     inputSchema: resumeTaskSchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, args => result(() => taskSummary(tasks.resume(principal, args))));
+  }, args => result(async () => taskSummary(await tasks.resume(principal, args))));
   if (options.payment !== false) server.registerTool('select_payment_route', {
     description: 'Select a route for the original unpaid handoff. Version 2 uses current Link wallet availability; version 3 uses the PA own sandbox Vault or payment-account capability supported by the merchant checkout. Selection is durable and cannot be switched after issuance; no credentials or payment execution are accepted.',
     inputSchema: paPaymentRouteSchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, args => result(() => taskSummary(tasks.selectPaymentRoute(principal, args))));
+  }, args => result(async () => taskSummary(await tasks.selectPaymentRoute(principal, args))));
   if (options.payment !== false) server.registerTool('report_payment_result', {
     description: 'Notify an owned task after the PA used its own payment capability. Exact handoff ID/digest required. Accepts no payment credentials; notifications trigger independent provider readback and never prove payment, order or booking completion.',
     inputSchema: paPaymentReportSchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, args => result(() => taskSummary(tasks.reportPayment(principal, args))));
+  }, args => result(async () => taskSummary(await tasks.reportPayment(principal, args))));
   server.registerTool('cancel_task', {
     description: 'Cancel an owned open ontology task. Completed tasks cannot be canceled. This does not cancel or reverse provider orders.',
     inputSchema: z.object({ taskId: taskIdSchema }).strict(),
     annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  }, ({ taskId }) => result(() => taskSummary(tasks.cancel(principal, taskId))));
+  }, ({ taskId }) => result(async () => taskSummary(await tasks.cancel(principal, taskId))));
   if (tasks.services().some(s => s.id === 'eigos.delegate')) {
-    server.registerTool('reconcile_task', { description: 'Query the original owned business operation after an unknown result; never place a replacement order.', inputSchema: z.object({ taskId: taskIdSchema, requestId: requestIdSchema }).strict(), annotations: { idempotentHint: true, destructiveHint: false } }, ({ taskId, requestId }) => result(() => taskSummary(tasks.reconcile(principal, taskId, requestId))));
-    server.registerTool('revoke_task_authorization', { description: 'Revoke permits for future dispatch. In-flight facts still require reconciliation; this does not reverse an order or payment.', inputSchema: z.object({ taskId: taskIdSchema, requestId: requestIdSchema }).strict(), annotations: { idempotentHint: true, destructiveHint: false } }, ({ taskId, requestId }) => result(() => taskSummary(tasks.revokeAuthorization(principal, taskId, requestId))));
-    if (tasks.services().some(s => s.id === 'eigos.aftersales')) server.registerTool('request_remediation', { description: 'Create a separate linked cancellation/refund task for a verified owned operation. A request or application is not proof of cancellation/refund success. Only explicitly configured sandbox effects are enabled.', inputSchema: remediationSchema, annotations: { idempotentHint: true, destructiveHint: false } }, args => result(() => taskSummary(tasks.requestRemediation(principal, args))));
+    server.registerTool('reconcile_task', { description: 'Query the original owned business operation after an unknown result; never place a replacement order.', inputSchema: z.object({ taskId: taskIdSchema, requestId: requestIdSchema }).strict(), annotations: { idempotentHint: true, destructiveHint: false } }, ({ taskId, requestId }) => result(async () => taskSummary(await tasks.reconcile(principal, taskId, requestId))));
+    server.registerTool('revoke_task_authorization', { description: 'Revoke permits for future dispatch. In-flight facts still require reconciliation; this does not reverse an order or payment.', inputSchema: z.object({ taskId: taskIdSchema, requestId: requestIdSchema }).strict(), annotations: { idempotentHint: true, destructiveHint: false } }, ({ taskId, requestId }) => result(async () => taskSummary(await tasks.revokeAuthorization(principal, taskId, requestId))));
+    if (tasks.services().some(s => s.id === 'eigos.aftersales')) server.registerTool('request_remediation', { description: 'Create a separate linked cancellation/refund task for a verified owned operation. A request or application is not proof of cancellation/refund success. Only explicitly configured sandbox effects are enabled.', inputSchema: remediationSchema, annotations: { idempotentHint: true, destructiveHint: false } }, args => result(async () => taskSummary(await tasks.requestRemediation(principal, args))));
   }
   return server;
 }

@@ -20,7 +20,11 @@ const {values}=parseArgs({options:{config:{type:'string'},apply:{type:'boolean'}
 if(!['darwin','linux'].includes(process.platform) || !values.config)throw new Error('Use --config with the owned primary environment on macOS or systemd Linux');
 if(values['verify-ingresses'] && !values.apply)throw new Error('Ingress verification follows an applied deployment');
 privateDeploymentFile(values.config);
-const source=readFileSync(values.config,'utf8'),settings=parseEnv(source),config=readConfig(settings),authority=config.authority;
+const source=readFileSync(values.config,'utf8'),settings=parseEnv(source);
+// The SQLite deployer must never inspect or create local stores for a selected
+// PostgreSQL primary. The reviewed PostgreSQL handoff owns activation and data.
+if(settings.EIGOS_STORAGE_BACKEND==='postgres')throw new Error('PostgreSQL deployment requires its reviewed migration handoff; SQLite deployment cannot open its stores');
+const config=readConfig(settings),authority=config.authority;
 readWorkerConfig(settings);
 if(settings.EIGOS_TASK_RELAY_FILE && config.EIGOS_TASK_RELAY_FILE!==settings.EIGOS_TASK_RELAY_FILE)throw new Error('Configured Task Relay is unsupported by this checkout');
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..'),runtime=primaryRuntime();

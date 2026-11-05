@@ -1,34 +1,42 @@
-import { evaluateCommerceRead } from './payment-commerce-functions.js';
-import { evaluateRollingGo } from './rollinggo-functions.js';
-import { evaluateBusinessFact } from './business-fact-functions.js';
-import { validateCallerOutcomeProof } from './caller-outcome-proof.js';
-import { evaluateOrderTest } from './didi-order-test-functions.js';
-import { evaluateRegistrationFunction } from './free-booking-functions.js';
-import { evaluateMeituanRead } from './meituan-read-projection.js';
-import { evaluateRideEstimate } from './ride-estimate-functions.js';
-import { evaluateRideOrder } from './ride-booking-functions.js';
-import { evaluateBookingFunction } from './booking-functions.js';
-import { evaluateShopCheckoutFunction } from './shopify-checkout-functions.js';
-import { evaluateShopifyPAFunction } from './shopify-pa-payment-functions.js';
+import { evaluateCommerceReadProgram } from './payment-commerce-functions.js';
+import { runGraphProgram, type ProjectionMetadata, type GraphProgram, graphRead, graphRelated } from './graph-program.js';
+import { evaluateOrderTestProgram } from './didi-order-test-functions.js';
+import { evaluateRollingGoProgram } from './rollinggo-functions.js';
+import { evaluateBusinessFactProgram } from './business-fact-functions.js';
+import { evaluateRideEstimateProgram } from './ride-estimate-functions.js';
+import { evaluateRideOrderProgram } from './ride-booking-functions.js';
+import { evaluateShopifyPAFunctionProgram } from './shopify-pa-payment-functions.js';
+import { evaluateShopCheckoutFunctionProgram } from './shopify-checkout-functions.js';
+import { evaluateProductAttributeFunctionProgram } from './product-attribute-functions.js';
+import { evaluateIdentityFunctionProgram } from './identity-mapping.js';
+import { evaluateErrandFunctionProgram } from './errand-domain.js';
+import { evaluatePaotuiFunctionProgram } from './paotui-agent-functions.js';
+import { evaluateMeituanReadProgram } from './meituan-read-projection.js';
+import { evaluateRegistrationFunctionProgram } from './free-booking-functions.js';
+import { evaluateBookingFunctionProgram } from './booking-functions.js';
+import { evaluateStripePaymentFunctionProgram } from './stripe-payment-functions.js';
+import { evaluateCustomsPolicyFunctionProgram } from './customs-policy-functions.js';
+import { evaluateCommerceJourneyFunctionProgram } from './commerce-journey-functions.js';
+import { evaluateAgentCatalogFunctionProgram } from './catalog-agent-functions.js';
+import { evaluateCatalogFunctionProgram } from './catalog-functions.js';
+import { evaluateCommerceFunctionProgram } from './commerce-functions.js';
+import { evaluateDomainFunctionProgram } from './domain-functions.js';
+import { validateCallerOutcomeProofProgram } from './caller-outcome-proof.js';
+import { sourceProofProgram as proofProgram } from './object-evidence.js';
+
 import { productAttributeFunctionSchemas } from './product-attributes.js';
-import { evaluateProductAttributeFunction } from './product-attribute-functions.js';
+import {semanticCandidatesSchema} from './semantic-retrieval.js';
+import {graphSemanticCandidates} from './graph-program.js';
+
 import { identityFunctionSchemas } from './identity-model.js';
-import { evaluateIdentityFunction } from './identity-mapping.js';
+
 import { errandFunctionSchemas } from './errand-model.js';
-import { evaluateErrandFunction } from './errand-domain.js';
-import { evaluateStripePaymentFunction } from './stripe-payment-functions.js';
+
 import { z } from 'zod';
 import { objectRefSchema, type ObjectRef } from './model.js';
 import { moneyValueSchema, quantitySchema, timeZoneSchema, addressValueSchema } from './business-model.js';
 import { digest } from '../core/delegation.js';
-import { sourceProof as proof } from './object-evidence.js';
-import { evaluateDomainFunction } from './domain-functions.js';
-import { evaluateCommerceFunction } from './commerce-functions.js';
-import { evaluateCatalogFunction } from './catalog-functions.js';
-import { evaluatePaotuiFunction } from './paotui-agent-functions.js';
-import { evaluateAgentCatalogFunction } from './catalog-agent-functions.js';
-import { evaluateCommerceJourneyFunction } from './commerce-journey-functions.js';
-import { evaluateCustomsPolicyFunction } from './customs-policy-functions.js';
+
 import { domainFunctionCallSchemas } from './service-domains.js';
 import { DomainError } from '../core/domain.js';
 import type { OntologyObjectStore, ObjectView, ReadBudget } from './object-store.js';
@@ -36,6 +44,7 @@ import type { OntologyObjectStore, ObjectView, ReadBudget } from './object-store
 export interface Computation { status: 'known' | 'unknown'; value?: unknown; reason?: string; evidenceRefs: ObjectRef[]; evidenceLevels: string[] }
 const simple = (name: string) => z.object({ function: z.literal(name), object: objectRefSchema }).strict();
 export const functionCallSchema = z.union([
+  semanticCandidatesSchema,
   ...productAttributeFunctionSchemas, ...identityFunctionSchemas, ...errandFunctionSchemas,
   simple('authorizationStatus'), simple('bookingObservationStatus'), simple('stripePaymentStatus'),
   simple('registrationStatus'), simple('rollingGoSearchStatus'), simple('businessFactStatus'), simple('paymentCommerceReadStatus'),
@@ -72,63 +81,68 @@ function fromScaled(value: bigint, factor: bigint) {
   return `${whole}${part ? '.' + part : ''}`;
 }
 function requireType(object: ObjectView, type: string) { if (object.ref.type !== type) throw new DomainError('INVALID_INPUT', 'Function requires its registered object type'); }
-function one(store: OntologyObjectStore, owner: string, ref: ObjectRef, link: string, budget: ReadBudget) {
-  const values = store.related(owner, ref, link, budget); return values?.length === 1 ? values[0] : undefined;
+
+function* oneProgram(store: ProjectionMetadata, owner: string, ref: ObjectRef, link: string, budget: ReadBudget) {
+  const values = (yield* graphRelated(owner, ref, link, budget)); return values?.length === 1 ? values[0] : undefined;
 }
-function freshness(store: OntologyObjectStore, owner: string, object: ObjectView, budget: ReadBudget): Computation {
+
+function* freshnessProgram(store: ProjectionMetadata, owner: string, object: ObjectView, budget: ReadBudget): GraphProgram<Computation> {
   if (!store.model.implements(object.ref.type, 'Offer')) throw new DomainError('INVALID_INPUT', 'Freshness requires an Offer implementation');
-  const evidence = proof(store, owner, object.ref, budget), p = object.properties;
+  const evidence = (yield* proofProgram(store, owner, object.ref, budget)), p = object.properties;
   if (!evidence || !p.observedAt || !p.expiresAt || p.validityBasis === 'unknown' || Date.parse(String(p.observedAt)) > store.now()) return unknown('Freshness lacks a compatible, evidenced validity window', [object.ref]);
   return known(Date.parse(String(p.expiresAt)) > store.now(), [object.ref, ...evidence.refs], evidence.levels);
 }
 
 /** Registered read-only functions. Missing evidence is never replaced by zero or a model inference. */
-export function evaluateFunction(store: OntologyObjectStore, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): Computation {
-  const commerceRead = evaluateCommerceRead(store, owner, input, budget);
+export function evaluateFunction(store: OntologyObjectStore, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): Computation { return runGraphProgram(store, evaluateFunctionProgram(store, owner, input, budget)); }
+
+export function* evaluateFunctionProgram(store: ProjectionMetadata, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): GraphProgram<Computation> {
+  if(input.function==='semanticCandidates')return yield* graphSemanticCandidates(owner,semanticCandidatesSchema.parse(input),budget);
+  const commerceRead = (yield* evaluateCommerceReadProgram(store, owner, input, budget));
   if (commerceRead) return commerceRead;
-  const orderTestResult = evaluateOrderTest(store, owner, input, budget);
+  const orderTestResult = (yield* evaluateOrderTestProgram(store, owner, input, budget));
   if (orderTestResult) return orderTestResult;
-  const hotelResult = evaluateRollingGo(store, owner, input, budget);
-  const businessFactResult = evaluateBusinessFact(store, owner, input, budget);
+  const hotelResult = (yield* evaluateRollingGoProgram(store, owner, input, budget));
+  const businessFactResult = (yield* evaluateBusinessFactProgram(store, owner, input, budget));
   if (businessFactResult) return businessFactResult;
   if (hotelResult) return hotelResult;
-  const rideResult = evaluateRideEstimate(store, owner, input, budget);
+  const rideResult = (yield* evaluateRideEstimateProgram(store, owner, input, budget));
   if (rideResult) return rideResult;
-  const orderResult = evaluateRideOrder(store, owner, input, budget);
+  const orderResult = (yield* evaluateRideOrderProgram(store, owner, input, budget));
   if (orderResult) return orderResult;
-  const paCheckoutResult = evaluateShopifyPAFunction(store, owner, input, budget);
+  const paCheckoutResult = (yield* evaluateShopifyPAFunctionProgram(store, owner, input, budget));
   if (paCheckoutResult) return paCheckoutResult;
-  const shopCheckoutResult = evaluateShopCheckoutFunction(store, owner, input, budget);
+  const shopCheckoutResult = (yield* evaluateShopCheckoutFunctionProgram(store, owner, input, budget));
   if (shopCheckoutResult) return shopCheckoutResult;
-  const productResult = evaluateProductAttributeFunction(store, owner, input, budget);
+  const productResult = (yield* evaluateProductAttributeFunctionProgram(store, owner, input, budget));
   if (productResult) return productResult;
-  const identityResult = evaluateIdentityFunction(store, owner, input, budget);
+  const identityResult = (yield* evaluateIdentityFunctionProgram(store, owner, input, budget));
   if (identityResult) return identityResult;
-  const errandResult = evaluateErrandFunction(store, owner, input, budget);
+  const errandResult = (yield* evaluateErrandFunctionProgram(store, owner, input, budget));
   if (errandResult) return errandResult;
-  const paotuiResult = evaluatePaotuiFunction(store, owner, input, budget);
+  const paotuiResult = (yield* evaluatePaotuiFunctionProgram(store, owner, input, budget));
   if (paotuiResult) return paotuiResult;
-  const meituanResult = evaluateMeituanRead(store, owner, input, budget);
+  const meituanResult = (yield* evaluateMeituanReadProgram(store, owner, input, budget));
   if (meituanResult) return meituanResult;
-  const registrationResult = evaluateRegistrationFunction(store, owner, input, budget);
+  const registrationResult = (yield* evaluateRegistrationFunctionProgram(store, owner, input, budget));
   if (registrationResult) return registrationResult;
-  const bookingResult = evaluateBookingFunction(store, owner, input, budget);
+  const bookingResult = (yield* evaluateBookingFunctionProgram(store, owner, input, budget));
   if (bookingResult) return bookingResult;
-  const stripeResult = evaluateStripePaymentFunction(store, owner, input, budget);
+  const stripeResult = (yield* evaluateStripePaymentFunctionProgram(store, owner, input, budget));
   if (stripeResult) return stripeResult;
-  const customsResult = evaluateCustomsPolicyFunction(store, owner, input, budget);
+  const customsResult = (yield* evaluateCustomsPolicyFunctionProgram(store, owner, input, budget));
   if (customsResult) return customsResult;
-  const journeyResult = evaluateCommerceJourneyFunction(store, owner, input, budget);
+  const journeyResult = (yield* evaluateCommerceJourneyFunctionProgram(store, owner, input, budget));
   if (journeyResult) return journeyResult;
-  const agentCatalogResult = evaluateAgentCatalogFunction(store, owner, input, budget);
+  const agentCatalogResult = (yield* evaluateAgentCatalogFunctionProgram(store, owner, input, budget));
   if (agentCatalogResult) return agentCatalogResult;
-  const catalogResult = evaluateCatalogFunction(store, owner, input, budget);
+  const catalogResult = (yield* evaluateCatalogFunctionProgram(store, owner, input, budget));
   if (catalogResult) return catalogResult;
-  const commerceResult = evaluateCommerceFunction(store, owner, input, budget);
+  const commerceResult = (yield* evaluateCommerceFunctionProgram(store, owner, input, budget));
   if (commerceResult) return commerceResult;
-  const domainResult = evaluateDomainFunction(store, owner, input, budget);
+  const domainResult = (yield* evaluateDomainFunctionProgram(store, owner, input, budget));
   if (domainResult) return domainResult;
-  const object = store.read(owner, input.object, budget), p = object.properties;
+  const object = (yield* graphRead(owner, input.object, budget)), p = object.properties;
   if (input.function === 'authorizationStatus') {
     requireType(object, 'Authorization');
     if (!p.kind || !p.ledgerDigest || !p.approvedAt || !p.expiresAt || p.revoked === undefined) return known('unknown', [object.ref]);
@@ -138,11 +152,11 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
     requireType(object, 'ServiceRequest');
     const ref = objectRefSchema.safeParse(p.currentAssessment);
     if (!ref.success || ref.data.type !== 'OutcomeAssessment') return unknown('No current task assessment', [object.ref]);
-    const assessment = store.read(owner, ref.data, budget), request = one(store, owner, assessment.ref, 'request', budget);
+    const assessment = (yield* graphRead(owner, ref.data, budget)), request = (yield* oneProgram(store, owner, assessment.ref, 'request', budget));
     if (!request || !same(request.ref, object.ref) || assessment.properties.requestRevision !== p.revision) return unknown('Assessment does not match the current request revision', [object.ref]);
-    const coverage = one(store, owner, assessment.ref, 'goalCoverage', budget);
+    const coverage = (yield* oneProgram(store, owner, assessment.ref, 'goalCoverage', budget));
     const review = coverage?.properties.review as { verdict?: string } | undefined;
-    const callerProof = assessment.properties.callerProof === undefined ? undefined : validateCallerOutcomeProof(store,owner,object,assessment,budget);
+    const callerProof = assessment.properties.callerProof === undefined ? undefined : (yield* validateCallerOutcomeProofProgram(store, owner, object, assessment, budget));
     const covered = assessment.properties.callerProof !== undefined ? !coverage && !!callerProof
       : !!coverage && coverage.properties.requestRevision === p.revision && review?.verdict === 'covered';
     if (assessment.properties.judgment === 'satisfied' && (p.progress !== 'accepted' || !covered)) return unknown('Completed outcome lacks its current covered goal or verified caller contract', [object.ref, assessment.ref]);
@@ -152,22 +166,22 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
       assessedAt: assessment.properties.assessedAt, meaning: 'Historical task acceptance, not a fresh provider observation or new authority' },
     [object.ref, assessment.ref, ...(coverage ? [coverage.ref] : []), ...(callerProof ?? [])], [String(assessment.properties.evidenceLevel ?? 'unverified')]);
   }
-  if (input.function === 'offerFreshness') return freshness(store, owner, object, budget);
+  if (input.function === 'offerFreshness') return (yield* freshnessProgram(store, owner, object, budget));
   if (input.function === 'remainingQuantity') {
     requireType(object, 'OrderLine'); const ordered = quantity(p.quantityOrdered);
-    const allocations = store.related(owner, object.ref, 'allocations', budget);
+    const allocations = (yield* graphRelated(owner, object.ref, 'allocations', budget));
     if (!ordered || !allocations) return unknown('Quantity or bounded allocation coverage is unavailable', [object.ref]);
     if (!allocations.length) return unknown('No delivery allocation observations; absence does not prove zero delivery', [object.ref]);
     let delivered = 0n; const eventKeys = new Set<string>(), refs = [object.ref], levels: string[] = [];
-    const order = one(store, owner, object.ref, 'order', budget);
+    const order = (yield* oneProgram(store, owner, object.ref, 'order', budget));
     for (const allocation of allocations) {
       if (allocation.properties.verificationState === 'revoked' || allocation.properties.verificationState === 'rejected') continue;
       if (allocation.properties.verificationState !== 'accepted') return unknown('An allocation has not been verified', refs);
-      const amount = quantity(allocation.properties.deliveredQuantity), event = one(store, owner, allocation.ref, 'deliveryEvent', budget), shipment = one(store, owner, allocation.ref, 'shipment', budget);
+      const amount = quantity(allocation.properties.deliveredQuantity), event = (yield* oneProgram(store, owner, allocation.ref, 'deliveryEvent', budget)), shipment = (yield* oneProgram(store, owner, allocation.ref, 'shipment', budget));
       if (!amount || amount.dimension !== ordered.dimension || !event || !shipment || !order) return unknown('Allocation unit or relationship is unresolved', refs);
-      const shipmentOrder = one(store, owner, shipment.ref, 'order', budget), eventShipment = one(store, owner, event.ref, 'shipment', budget);
+      const shipmentOrder = (yield* oneProgram(store, owner, shipment.ref, 'order', budget)), eventShipment = (yield* oneProgram(store, owner, event.ref, 'shipment', budget));
       if (!shipmentOrder || !eventShipment || !same(shipmentOrder.ref, order.ref) || !same(eventShipment.ref, shipment.ref)) return unknown('Delivery evidence belongs to another business object', refs);
-      const evidence = proof(store, owner, event.ref, budget), allocationProof = proof(store, owner, allocation.ref, budget), eventKey = event.properties.sourceEventKey;
+      const evidence = (yield* proofProgram(store, owner, event.ref, budget)), allocationProof = (yield* proofProgram(store, owner, allocation.ref, budget)), eventKey = event.properties.sourceEventKey;
       if (!evidence || !allocationProof || !eventKey || !['delivered', 'partial'].includes(String(event.properties.eventKind)) || !event.properties.occurredAt || Date.parse(String(event.properties.occurredAt)) > store.now() || allocation.properties.acceptedSpecificationRef !== p.agreedSpecificationRef) return unknown('Delivery evidence or specification is incompatible', refs);
       if (eventKeys.has(String(eventKey))) return unknown('Duplicate source event allocation cannot be counted twice', refs);
       eventKeys.add(String(eventKey)); delivered += amount.scaled;
@@ -179,15 +193,15 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
     return amount === undefined ? unknown('Unit conversion exceeds supported precision', refs, levels) : known({ amount, unit: ordered.unit }, refs, levels);
   }
   if (input.function === 'actualArrival') {
-    requireType(object, 'Shipment'); const events = store.related(owner, object.ref, 'deliveryEvents', budget);
+    requireType(object, 'Shipment'); const events = (yield* graphRelated(owner, object.ref, 'deliveryEvents', budget));
     if (!events) return unknown('Delivery event coverage exceeds the read bound', [object.ref]);
     const accepted: { time: string; refs: ObjectRef[]; levels: string[] }[] = [];
     for (const event of events) {
       if (event.properties.eventKind !== 'delivered' || !event.properties.occurredAt || Date.parse(String(event.properties.occurredAt)) > store.now()) continue;
-      const allocations = store.related(owner, event.ref, 'allocations', budget), evidence = proof(store, owner, event.ref, budget);
+      const allocations = (yield* graphRelated(owner, event.ref, 'allocations', budget)), evidence = (yield* proofProgram(store, owner, event.ref, budget));
       if (!allocations || !evidence) return unknown('Delivery evidence is incomplete', [object.ref]);
       for (const allocation of allocations.filter(a => a.properties.verificationState === 'accepted')) {
-        const shipment = one(store, owner, allocation.ref, 'shipment', budget), allocationProof = proof(store, owner, allocation.ref, budget);
+        const shipment = (yield* oneProgram(store, owner, allocation.ref, 'shipment', budget)), allocationProof = (yield* proofProgram(store, owner, allocation.ref, budget));
         if (!shipment || !same(shipment.ref, object.ref) || !allocationProof) return unknown('Arrival allocation is not evidenced for this shipment', [object.ref, event.ref]);
         accepted.push({ time: String(event.properties.occurredAt), refs: [event.ref, allocation.ref, ...evidence.refs, ...allocationProof.refs], levels: [...evidence.levels, ...allocationProof.levels] });
       }
@@ -196,22 +210,22 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
     return final ? known(final.time, [object.ref, ...final.refs], final.levels) : unknown('No accepted actual arrival event', [object.ref]);
   }
   if (input.function === 'reservationStatus') {
-    requireType(object, 'Reservation'); const evidence = proof(store, owner, object.ref, budget);
+    requireType(object, 'Reservation'); const evidence = (yield* proofProgram(store, owner, object.ref, budget));
     if (!evidence) return unknown('Reservation lacks a verified source receipt', [object.ref]);
     const refs = [object.ref, ...evidence.refs], levels = [...evidence.levels];
     if (p.reservationState === 'held' && p.holdExpiresAt && Date.parse(String(p.holdExpiresAt)) <= store.now()) return known('expired', refs, levels);
     if (p.reservationState !== 'confirmed') return p.reservationState && p.reservationState !== 'unknown' ? known(p.reservationState, refs, levels) : unknown('Confirmation state is unknown', refs, levels);
     if (!p.providerReference || !p.confirmedAt || Date.parse(String(p.confirmedAt)) > store.now() || !p.partySize) return unknown('Provider confirmation identity, time or party size is missing', refs, levels);
-    const slot = one(store, owner, object.ref, 'slot', budget);
+    const slot = (yield* oneProgram(store, owner, object.ref, 'slot', budget));
     if (!slot || p.confirmedSlotRevision !== slot.revision) return unknown('Confirmed slot snapshot changed', refs, levels);
     if (p.depositRequired === false) return known('confirmed', refs, levels);
     const deposit = moneyValueSchema.safeParse(p.requiredDeposit);
     if (p.depositRequired !== true || !deposit.success) return unknown('Reservation effectiveness conditions are missing', refs, levels);
-    const payments = store.related(owner, object.ref, 'depositPayments', budget);
+    const payments = (yield* graphRelated(owner, object.ref, 'depositPayments', budget));
     if (!payments) return unknown('Payment coverage exceeds the read bound', refs, levels);
     let paid = 0n;
     for (const payment of payments) {
-      const amount = moneyValueSchema.safeParse(payment.properties.amount), paymentProof = proof(store, owner, payment.ref, budget);
+      const amount = moneyValueSchema.safeParse(payment.properties.amount), paymentProof = (yield* proofProgram(store, owner, payment.ref, budget));
       if (payment.properties.paymentState !== 'paid') continue;
       if (!amount.success || amount.data.currency !== deposit.data.currency || payment.properties.purpose !== 'deposit' || !paymentProof) return unknown('Deposit payment evidence is incompatible', refs, levels);
       paid += BigInt(amount.data.minor); refs.push(payment.ref, ...paymentProof.refs); levels.push(...paymentProof.levels);
@@ -219,19 +233,19 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
     return paid >= BigInt(deposit.data.minor) ? known('confirmed', refs, levels) : unknown('Required deposit has not been evidenced in full', refs, levels);
   }
   if (input.function === 'deliveryQuoteMatches' && 'request' in input) {
-    requireType(object, 'DeliveryQuote'); const request = store.read(owner, input.request, budget); requireType(request, 'ServiceRequest');
-    const parcel = one(store, owner, object.ref, 'parcel', budget), route = one(store, owner, object.ref, 'route', budget), quoteRequest = one(store, owner, object.ref, 'request', budget), selectedRoute = one(store, owner, request.ref, 'selectedRoute', budget);
-    const fresh = freshness(store, owner, object, budget);
+    requireType(object, 'DeliveryQuote'); const request = (yield* graphRead(owner, input.request, budget)); requireType(request, 'ServiceRequest');
+    const parcel = (yield* oneProgram(store, owner, object.ref, 'parcel', budget)), route = (yield* oneProgram(store, owner, object.ref, 'route', budget)), quoteRequest = (yield* oneProgram(store, owner, object.ref, 'request', budget)), selectedRoute = (yield* oneProgram(store, owner, request.ref, 'selectedRoute', budget));
+    const fresh = (yield* freshnessProgram(store, owner, object, budget));
     if (!parcel || !route || !quoteRequest || !selectedRoute || fresh.status !== 'known' || fresh.value !== true) return unknown('Quote applicability lacks a current route or fresh evidence', [object.ref, request.ref]);
     const declared = quantity(parcel.properties.declaredWeight), priced = quantity(p.quotedWeight);
     if (!declared || !priced || p.requestRevision === undefined || p.parcelRevision === undefined || p.routeRevision === undefined) return unknown('Quote input version or weight evidence is incomplete', [object.ref]);
-    const parcelRequest = one(store, owner, parcel.ref, 'request', budget), routeRequest = one(store, owner, route.ref, 'request', budget);
-    const origin = one(store, owner, route.ref, 'originAddress', budget), destination = one(store, owner, route.ref, 'destinationAddress', budget);
+    const parcelRequest = (yield* oneProgram(store, owner, parcel.ref, 'request', budget)), routeRequest = (yield* oneProgram(store, owner, route.ref, 'request', budget));
+    const origin = (yield* oneProgram(store, owner, route.ref, 'originAddress', budget)), destination = (yield* oneProgram(store, owner, route.ref, 'destinationAddress', budget));
     if (origin && destination && same(origin.ref, destination.ref)) return known('fail', [object.ref, route.ref, origin.ref], fresh.evidenceLevels);
     const linkedRoute = origin && destination && !same(origin.ref, destination.ref);
     if (!parcelRequest || !routeRequest || !(linkedRoute || route.properties.originSnapshot && route.properties.destinationSnapshot) || !parcel.properties.declaredContents || !parcel.properties.contentsCategory) return unknown('The priced parcel or route is incomplete', [object.ref, parcel.ref, route.ref]);
     for (const [link, property] of [['originAddress', 'originSnapshot'], ['destinationAddress', 'destinationSnapshot']]) {
-      const address = one(store, owner, route.ref, link!, budget);
+      const address = (yield* oneProgram(store, owner, route.ref, link!, budget));
       if (address && route.properties[property!] !== undefined && digest(address.properties.address) !== digest(route.properties[property!])) return known('fail', [object.ref, route.ref, address.ref, ...fresh.evidenceRefs], fresh.evidenceLevels);
     }
     const matches = same(quoteRequest.ref, request.ref) && same(parcelRequest.ref, request.ref) && same(routeRequest.ref, request.ref) && same(route.ref, selectedRoute.ref) && p.requestRevision === request.properties.revision && p.parcelRevision === parcel.revision && p.routeRevision === route.revision && declared.dimension === 'mass' && declared.dimension === priced.dimension && declared.scaled === priced.scaled && p.serviceLevel === input.serviceLevel;
@@ -239,22 +253,22 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
   }
   if (input.function === 'withinBudget' && 'budget' in input) {
     if (!['DeliveryQuote', 'ProductOffer', 'FulfillmentOffer'].includes(object.ref.type)) return unknown('This function compares a scoped total, not a reservation deposit', [object.ref]);
-    const fresh = freshness(store, owner, object, budget), terms = p.pricingTerms as { total?: unknown; scope?: string } | undefined;
+    const fresh = (yield* freshnessProgram(store, owner, object, budget)), terms = p.pricingTerms as { total?: unknown; scope?: string } | undefined;
     const total = moneyValueSchema.safeParse(terms?.total);
     if (fresh.status !== 'known' || !fresh.value || p.priceKind !== input.priceBasis || p.pricingCompleteness !== 'complete' || terms?.scope !== 'all_mandatory_fees' || !total.success || total.data.currency !== input.budget.currency) return unknown('Comparable, complete and current price evidence is missing', [object.ref]);
     return known(BigInt(total.data.minor) <= BigInt(input.budget.minor) ? 'pass' : 'fail', fresh.evidenceRefs, fresh.evidenceLevels);
   }
   if (input.function === 'reservationMatches' && 'venue' in input) {
-    requireType(object, 'Reservation'); const expectedVenue = store.read(owner, input.venue, budget); requireType(expectedVenue, 'Venue');
-    const slot = one(store, owner, object.ref, 'slot', budget), status = evaluateFunction(store, owner, { function: 'reservationStatus', object: object.ref }, budget);
-    const venue = slot && one(store, owner, slot.ref, 'venue', budget);
+    requireType(object, 'Reservation'); const expectedVenue = (yield* graphRead(owner, input.venue, budget)); requireType(expectedVenue, 'Venue');
+    const slot = (yield* oneProgram(store, owner, object.ref, 'slot', budget)), status = (yield* evaluateFunctionProgram(store, owner, { function: 'reservationStatus', object: object.ref }, budget));
+    const venue = slot && (yield* oneProgram(store, owner, slot.ref, 'venue', budget));
     if (!slot || !venue || !p.partySize || p.confirmedSlotRevision !== slot.revision || !slot.properties.startsAt || !slot.properties.timeZone || status.status !== 'known' || status.value !== 'confirmed') return unknown('Effective reservation confirmation is not established', [object.ref]);
     return known(same(venue.ref, expectedVenue.ref) && p.partySize === input.partySize && Date.parse(String(slot.properties.startsAt)) === Date.parse(input.startsAt) && slot.properties.timeZone === input.timeZone ? 'pass' : 'fail', [object.ref, slot.ref, venue.ref, ...status.evidenceRefs], status.evidenceLevels);
   }
   if (input.function === 'productOfferMatches' && 'variant' in input) {
-    requireType(object, 'ProductOffer'); const requestedVariant = store.read(owner, input.variant, budget); requireType(requestedVariant, 'ProductVariant');
-    const variant = one(store, owner, object.ref, 'productVariant', budget), requested = quantity(input.quantity), offered = quantity(p.offeredQuantity);
-    const price = evaluateFunction(store, owner, { function: 'withinBudget', object: object.ref, budget: input.budget, priceBasis: 'firm_quote' }, budget);
+    requireType(object, 'ProductOffer'); const requestedVariant = (yield* graphRead(owner, input.variant, budget)); requireType(requestedVariant, 'ProductVariant');
+    const variant = (yield* oneProgram(store, owner, object.ref, 'productVariant', budget)), requested = quantity(input.quantity), offered = quantity(p.offeredQuantity);
+    const price = (yield* evaluateFunctionProgram(store, owner, { function: 'withinBudget', object: object.ref, budget: input.budget, priceBasis: 'firm_quote' }, budget));
     if (!variant || p.variantRevision !== variant.revision) return unknown('The quoted product specification revision is not current', [object.ref]);
     if (!requested || !offered) return unknown('Requested or quoted quantity is unavailable in a supported unit', [object.ref]);
     if (p.capacity === undefined || p.capacity === 'unknown' || !p.capacityObservationRef) return unknown('Current capacity for the quoted quantity is not evidenced', [object.ref]);
@@ -265,13 +279,15 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
     return known(same(variant.ref, requestedVariant.ref) && offered.dimension === requested.dimension && offered.scaled === requested.scaled && p.capacity === 'confirmed' && price.value === 'pass' && Date.parse(String(p.deliveryCommitment)) <= Date.parse(input.deadline) ? 'pass' : 'fail', [object.ref, variant.ref, ...price.evidenceRefs], price.evidenceLevels);
   }
   if (input.function === 'slotAvailability' && 'venue' in input) {
-    requireType(object, 'ReservationSlot'); const requestedVenue = store.read(owner, input.venue, budget); requireType(requestedVenue, 'Venue');
-    const venue = one(store, owner, object.ref, 'venue', budget), evidence = proof(store, owner, object.ref, budget);
+    requireType(object, 'ReservationSlot'); const requestedVenue = (yield* graphRead(owner, input.venue, budget)); requireType(requestedVenue, 'Venue');
+    const venue = (yield* oneProgram(store, owner, object.ref, 'venue', budget)), evidence = (yield* proofProgram(store, owner, object.ref, budget));
     if (!venue || !evidence || !p.expiresAt || Date.parse(String(p.expiresAt)) <= store.now() || p.partySizeEligibility === undefined || !p.startsAt || !p.timeZone) return unknown('Current slot availability is not evidenced', [object.ref]);
     return known(same(venue.ref, requestedVenue.ref) && Date.parse(String(p.startsAt)) === Date.parse(input.startsAt) && p.timeZone === input.timeZone && Number(p.partySizeEligibility) >= input.partySize ? 'pass' : 'fail', [object.ref, venue.ref, ...evidence.refs], evidence.levels);
   }
   throw new DomainError('INVALID_INPUT', 'Unknown registered ontology function');
 }
-export function deriveProperty(store: OntologyObjectStore, owner: string, ref: ObjectRef, name: string, budget: ReadBudget) {
-  return evaluateFunction(store, owner, { function: name, object: ref }, budget);
+export function deriveProperty(store: OntologyObjectStore, owner: string, ref: ObjectRef, name: string, budget: ReadBudget) { return runGraphProgram(store, derivePropertyProgram(store, owner, ref, name, budget)); }
+
+export function* derivePropertyProgram(store: ProjectionMetadata, owner: string, ref: ObjectRef, name: string, budget: ReadBudget) {
+  return (yield* evaluateFunctionProgram(store, owner, { function: name, object: ref }, budget));
 }

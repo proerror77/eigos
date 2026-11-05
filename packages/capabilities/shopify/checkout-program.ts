@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../../ontology/graph-program.js';
 import { z } from 'zod';
 import { digest, actionOperationKey } from '../../core/delegation.js';
 import { BusinessFactProjection, businessFactsEnabled, sourceEntityRef } from '../../ontology/business-fact-projection.js';
@@ -100,7 +101,7 @@ export class ShopifyCheckoutProgram implements AgentProgram {
   }
   assertContext(ctx: AgentProgramContext) { this.scope(ctx); }
   schema(action: string) { if (!Object.hasOwn(shopCheckoutActionSchemas, action)) fail('Unregistered Shopify action'); return shopCheckoutActionSchemas[action as ShopCheckoutAction]; }
-  definition(graph: OntologyObjectStore, action: string) {
+  definition(graph: ProjectionMetadata, action: string) {
     const def = graph.model.action(action), operation = def.read ?? def.operation;
     if (!this.actionIds.includes(action as ShopCheckoutAction) || !operation || operation.effect !== (action === 'CreateShopifyCheckout' ? 'external_draft' : 'read') || !same(operation.inputSchema, z.toJSONSchema(this.schema(action)))) fail('Shopify action differs from its trusted execution contract');
     return def;

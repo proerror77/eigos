@@ -6,6 +6,7 @@ import { transportAssignmentSchema } from './domain-schemas.js';
 import type { DomainResultResources } from './domain-detail-rules.js';
 import { linkSnapshotDigest, type ObjectBatch, type ObjectWrite, type OntologyObjectStore } from './object-store.js';
 import type { ObjectRef } from './model.js';
+import {graphRead,graphReadPrivate,graphRelated,graphIngest,runGraphProgram,type GraphProgram,type ProjectionMetadata} from './graph-program.js';
 
 export const domainOptionSchema = z.object({ id: z.string().min(1).max(200), providerId: z.string().min(1).max(200), parametersDigest: z.string().regex(/^[a-f0-9]{64}$/), offeredParameters: z.record(z.string(), z.unknown()), commitments: domainCommitmentsSchema.optional(), deposit: z.object({ minor: z.string().regex(/^(0|[1-9]\d{0,17})$/), currency: z.enum(['CNY', 'USD', 'EUR']) }).strict().optional(), availability: z.enum(['available', 'unavailable', 'unknown']), eligibility: z.enum(['verified', 'ineligible', 'unknown']), observedAt: z.iso.datetime({ offset: true }), expiresAt: z.iso.datetime({ offset: true }), total: z.object({ minor: z.string().regex(/^(0|[1-9]\d{0,17})$/), currency: z.enum(['CNY', 'USD', 'EUR']) }).strict(), feesComplete: z.boolean(), commitmentBy: z.iso.datetime({ offset: true }).optional(), termsMatch: z.boolean() }).strict();
 export const domainSourceEntitySchema = z.object({ type: z.string().min(1).max(80), id: z.string().min(1).max(200), title: z.string().min(1).max(500), properties: z.record(z.string(), z.unknown()), observedAt: z.iso.datetime({ offset: true }).optional() }).strict();
@@ -45,7 +46,7 @@ export function publicDomainEntities(entities: DomainSnapshot['entities']): Doma
 }
 
 /** Called only after the active task checkpoint and adapter validation, never by a public import tool. */
-export function projectDomainSnapshot(graph: OntologyObjectStore, owner: string, capabilityId: string, request: { id: string; revision: number }, input: Record<string, unknown>, raw: unknown, componentScope?: ObjectRef): { state: 'typed_result' | 'invalid_source'; subject?: ObjectRef } {
+export function* projectDomainSnapshotProgram(graph: ProjectionMetadata, owner: string, capabilityId: string, request: { id: string; revision: number }, input: Record<string, unknown>, raw: unknown, componentScope?: ObjectRef): GraphProgram<{ state: 'typed_result' | 'invalid_source'; subject?: ObjectRef }> {
   const parsed = domainSnapshotSchema.safeParse(raw);
   if (!parsed.success) return { state: 'invalid_source' };
   const snapshot = parsed.data, definition = serviceDomain(snapshot.domain);
@@ -55,11 +56,11 @@ export function projectDomainSnapshot(graph: OntologyObjectStore, owner: string,
     if (digest(parameters) !== digest(requested) || snapshot.option.parametersDigest !== digest(parameters) || digest(parseDomainParameters(snapshot.domain, snapshot.option.offeredParameters)) !== digest(parameters)) return { state: 'invalid_source' };
     if (!snapshot.observation && (snapshot.resultEntities?.length || snapshot.resultRelationships?.length || snapshot.preparedSource)) return { state: 'invalid_source' };
     if (snapshot.observation) parseDomainResultResources(snapshot.domain, snapshot.observation, snapshot.resultEntities, snapshot.resultRelationships);
-    const root = graph.read(owner, { type: 'ServiceRequest', id: request.id });
+    const root = (yield* graphRead(owner, { type: 'ServiceRequest', id: request.id }));
     if (root.properties.revision !== request.revision) return { state: 'invalid_source' };
     const objects: ObjectWrite[] = [], links: NonNullable<ObjectBatch['links']> = [], removeLinks: NonNullable<ObjectBatch['links']> = [];
     const properties = new Map<string, Record<string, unknown>>();
-    const add = (type: string, id: string, title: string, values: Record<string, unknown>, immutable = false): ObjectRef => {
+    function* addProgram(type: string, id: string, title: string, values: Record<string, unknown>, immutable = false): GraphProgram<ObjectRef> {
       const ref = { type, id }, def = graph.model.object(type), body = { [def.primaryKey]: id, displayTitle: title, ...values };
       const staged = properties.get(JSON.stringify(ref));
       if (staged) {
@@ -67,7 +68,7 @@ export function projectDomainSnapshot(graph: OntologyObjectStore, owner: string,
         return ref;
       }
       let old;
-      try { old = graph.readPrivate(owner, ref); } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
+      try { old = (yield* graphReadPrivate(owner, ref)); } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
       if (old?.properties.preparedReceipt !== undefined && type === definition.candidateType) Object.assign(body, { preparedReceipt: old.properties.preparedReceipt });
       if (old && immutable && digest(old.properties) !== digest(body)) throw new DomainError('INVALID_INPUT', 'An immutable source observation changed');
       properties.set(JSON.stringify(ref), body);
@@ -76,19 +77,19 @@ export function projectDomainSnapshot(graph: OntologyObjectStore, owner: string,
     };
     const connect = (type: string, from: ObjectRef, to: ObjectRef) => links.push({ type, from, to });
     if (componentScope) {
-      const owned = graph.read(owner, componentScope);
+      const owned = (yield* graphRead(owner, componentScope));
       const original = Object.fromEntries(Object.keys(definition.parameters.shape).filter(key => owned.properties[key] !== undefined).map(key => [key, owned.properties[key]]));
       if (componentScope.type !== definition.requestType || owned.properties.requestRevision !== request.revision || digest(parseDomainParameters(snapshot.domain, original)) !== digest(parameters)) return { state: 'invalid_source' };
     }
-    const requirement = componentScope ?? add(definition.requestType, `${request.id}:r${request.revision}:${snapshot.domain}`, `${definition.name}固定要求`, { ...parameters, requestRevision: request.revision, capturedAt: root.createdAt });
+    const requirement = componentScope ?? (yield* addProgram(definition.requestType, `${request.id}:r${request.revision}:${snapshot.domain}`, `${definition.name}固定要求`, { ...parameters, requestRevision: request.revision, capturedAt: root.createdAt }));
     connect(`${definition.requestType}Request`, requirement, root.ref);
-    const provider = add('Provider', `domain:${digest({ source: snapshot.sourceId, provider: snapshot.option.providerId })}`, '合成领域来源', { name: '合成领域来源' });
-    const engagement = add('ServiceEngagement', digest({ request: request.id, domain: snapshot.domain, source: snapshot.sourceId, provider: snapshot.option.providerId, ...(componentScope ? { componentScope } : {}) }), `${definition.name}来源沟通`, { progress: snapshot.observation ? 'returned' : 'waiting', startedAt: snapshot.option.observedAt, ...(snapshot.observation?.providerReference ? { remoteReference: snapshot.observation.providerReference } : {}) });
+    const provider = (yield* addProgram('Provider', `domain:${digest({ source: snapshot.sourceId, provider: snapshot.option.providerId })}`, '合成领域来源', { name: '合成领域来源' }));
+    const engagement = (yield* addProgram('ServiceEngagement', digest({ request: request.id, domain: snapshot.domain, source: snapshot.sourceId, provider: snapshot.option.providerId, ...(componentScope ? { componentScope } : {}) }), `${definition.name}来源沟通`, { progress: snapshot.observation ? 'returned' : 'waiting', startedAt: snapshot.option.observedAt, ...(snapshot.observation?.providerReference ? { remoteReference: snapshot.observation.providerReference } : {}) }));
     connect('EngagementRequest', engagement, root.ref); connect('EngagementProvider', engagement, provider);
     const { id: _optionId, providerId: _providerId, ...optionValues } = snapshot.option;
     const optionIdentity = { request: request.id, requestRevision: request.revision, source: snapshot.sourceId, provider: snapshot.option.providerId, ...(componentScope ? { componentScope } : {}),
       nativeId: snapshot.option.id, sourceEventId: snapshot.preparedSource?.eventId ?? snapshot.sourceEventId, sourceVersion: snapshot.preparedSource?.version ?? snapshot.sourceVersion, option: snapshot.option, entities: publicDomainEntities(snapshot.entities), relationships: snapshot.relationships };
-    const option = add(definition.candidateType, digest(optionIdentity), `${definition.name}合成候选`, { ...optionValues, requestRevision: request.revision }, true);
+    const option = (yield* addProgram(definition.candidateType, digest(optionIdentity), `${definition.name}合成候选`, { ...optionValues, requestRevision: request.revision }, true));
     for (const target of [option]) { connect(`${target.type}Request`, target, root.ref); connect(`${target.type}Requirements`, target, requirement); connect(`${target.type}Provider`, target, provider); }
     const sealed: { ref: ObjectRef; time: string; event: string }[] = [{ ref: option, time: snapshot.option.observedAt, event: snapshot.option.id }];
     let subject = option;
@@ -98,13 +99,13 @@ export function projectDomainSnapshot(graph: OntologyObjectStore, owner: string,
       const resultId = digest({ request: request.id, requestRevision: request.revision, source: snapshot.sourceId, provider: snapshot.option.providerId, reference: observation.providerReference });
       const values = { ...observation, requestRevision: request.revision, sourceVersion: snapshot.sourceVersion };
       try {
-        const old = graph.read(owner, { type: definition.resultType, id: resultId });
+        const old = (yield* graphRead(owner, { type: definition.resultType, id: resultId }));
         const { objectId: _id, displayTitle: _title, ...oldValues } = old.properties;
         if (Number(oldValues.sourceVersion) > snapshot.sourceVersion || Number(oldValues.sourceVersion) === snapshot.sourceVersion && digest(oldValues) !== digest(values)) return { state: 'invalid_source' };
       } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
-      subject = add(definition.resultType, resultId, `${definition.name}合成结果`, values);
+      subject = (yield* addProgram(definition.resultType, resultId, `${definition.name}合成结果`, values));
       try {
-        for (const previous of graph.related(owner, subject, 'selectedOption', { remaining: 1000 }) ?? []) {
+        for (const previous of (yield* graphRelated(owner, subject, 'selectedOption', { remaining: 1000 })) ?? []) {
           if (previous.ref.id !== option.id) removeLinks.push({ type: `${subject.type}Option`, from: subject, to: previous.ref });
         }
       } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
@@ -122,7 +123,7 @@ export function projectDomainSnapshot(graph: OntologyObjectStore, owner: string,
       const ref = domainEntityRef(snapshot.sourceId, snapshot.option.providerId, entity.type, entity.id);
       const entityDefinition = graph.model.object(entity.type);
       let oldEntity;
-      try { oldEntity = graph.readPrivate(owner, ref); } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
+      try { oldEntity = (yield* graphReadPrivate(owner, ref)); } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
       const incoming = { ...entity.properties };
       // A public readback of the same source revision deliberately omits private
       // fields. Retain those exact already-verified fields rather than treating
@@ -146,13 +147,13 @@ export function projectDomainSnapshot(graph: OntologyObjectStore, owner: string,
       // Reuse the original immutable preflight observation instead of replaying
       // stale candidate facts into the current entity or changing the candidate.
       if (!result && snapshot.observation && snapshot.preparedSource && oldEntity) {
-        const oldObservations = graph.related(owner, ref, 'sourceObservations', { remaining: 1000 }) ?? [];
+        const oldObservations = (yield* graphRelated(owner, ref, 'sourceObservations', { remaining: 1000 })) ?? [];
         const exact = oldObservations.find(old => old.properties.sourceIdentity === snapshot.sourceId && old.properties.providerIdentity === snapshot.option.providerId && old.properties.sourceRevision === sourceRevision && old.properties.sourceVersion === snapshot.preparedSource!.version && old.properties.sourceEventId === snapshot.preparedSource!.eventId && old.properties.observedAt === observedAt && old.properties.valuesDigest === digest(publicValues) && digest(old.properties.snapshot) === digest(publicValues));
         const privateFieldsPresent = Object.entries(entityDefinition.properties).some(([name, property]) => property.restricted && Object.hasOwn(entity.properties, name));
         if (exact && (!privateFieldsPresent || exact.properties.contentDigest === contentDigest)) { attach(exact.ref); reusedPreparedEntities.add(`${entity.type}:${entity.id}`); continue; }
       }
       if (oldEntity) {
-        const current = graph.related(owner, ref, 'currentObservation', { remaining: 1000 });
+        const current = (yield* graphRelated(owner, ref, 'currentObservation', { remaining: 1000 }));
         if (current?.length !== 1) return { state: 'invalid_source' };
         const old = current[0]!.properties, previousRevision = String(old.sourceRevision);
         if (old.contentDigest !== digest(oldEntity.properties) || Number(old.sourceVersion) > snapshot.sourceVersion
@@ -162,20 +163,20 @@ export function projectDomainSnapshot(graph: OntologyObjectStore, owner: string,
           || sourceRevision !== previousRevision && !(/^\d+$/.test(sourceRevision) && /^\d+$/.test(previousRevision))
             && snapshot.sourceVersion <= Number(old.sourceVersion) && Date.parse(observedAt) <= Date.parse(String(old.observedAt))) return { state: 'invalid_source' };
       }
-      add(entity.type, ref.id, entity.title, incoming);
+      (yield* addProgram(entity.type, ref.id, entity.title, incoming));
       const observationType = domainEntityObservationType(entity.type);
       const version = result ? snapshot.sourceVersion : snapshot.preparedSource?.version ?? snapshot.sourceVersion, event = result ? snapshot.sourceEventId : snapshot.preparedSource?.eventId ?? snapshot.sourceEventId;
-      const observationRef = add(observationType, digest({ entity: ref, sourceRevision, sourceVersion: version, sourceEventId: event, observedAt, contentDigest }), `${entity.title}来源观察`, {
+      const observationRef = (yield* addProgram(observationType, digest({ entity: ref, sourceRevision, sourceVersion: version, sourceEventId: event, observedAt, contentDigest }), `${entity.title}来源观察`, {
         sourceIdentity: snapshot.sourceId, providerIdentity: snapshot.option.providerId, nativeIdentity: entity.id,
         sourceRevision, sourceVersion: version, sourceEventId: event, observedAt, contentDigest,
         valuesDigest: digest(publicValues), snapshot: publicValues,
-      }, true);
+      }, true));
       // Stable resources remain separate from the immutable observation selected
       // by this candidate. User requirement links are never rewritten by a source.
       attach(observationRef);
       connect(`${observationType}Entity`, observationRef, ref); connect(`${observationType}Provider`, observationRef, provider);
       try {
-        for (const old of graph.related(owner, ref, 'currentObservation', { remaining: 1000 }) ?? []) {
+        for (const old of (yield* graphRelated(owner, ref, 'currentObservation', { remaining: 1000 })) ?? []) {
           if (old.ref.id !== observationRef.id) removeLinks.push({ type: `${entity.type}CurrentObservation`, from: ref, to: old.ref });
         }
       } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
@@ -193,7 +194,7 @@ export function projectDomainSnapshot(graph: OntologyObjectStore, owner: string,
       const from = domainEntityRef(snapshot.sourceId, snapshot.option.providerId, relation.from, relationship.fromId);
       const to = domainEntityRef(snapshot.sourceId, snapshot.option.providerId, relation.to, relationship.toId);
       try {
-        for (const old of graph.related(owner, from, relation.name, { remaining: 1000 }) ?? []) {
+        for (const old of (yield* graphRelated(owner, from, relation.name, { remaining: 1000 })) ?? []) {
           if (old.ref.id !== to.id) removeLinks.push({ type: relation.id, from, to: old.ref });
         }
       } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
@@ -207,7 +208,7 @@ export function projectDomainSnapshot(graph: OntologyObjectStore, owner: string,
     if (snapshot.observation) for (const type of definition.resultObjects) for (const targetType of [type, domainEntityObservationType(type)]) {
       const relationId = `${definition.resultType}${targetType}`, relationName = targetType.endsWith('Observation') ? `${type[0]!.toLowerCase()}${type.slice(1)}Observations` : `${type[0]!.toLowerCase()}${type.slice(1)}`;
       try {
-        for (const previous of graph.related(owner, subject, relationName, { remaining: 1000 }) ?? []) {
+        for (const previous of (yield* graphRelated(owner, subject, relationName, { remaining: 1000 })) ?? []) {
           if (!links.some(relation => relation.type === relationId && relation.from.id === subject.id && relation.to.type === previous.ref.type && relation.to.id === previous.ref.id)) removeLinks.push({ type: relationId, from: subject, to: previous.ref });
         }
       } catch (error) { if (!(error instanceof DomainError) || error.code !== 'NOT_FOUND') throw error; }
@@ -223,17 +224,21 @@ export function projectDomainSnapshot(graph: OntologyObjectStore, owner: string,
       // Never attach a shared receipt to the first task that happened to read it.
       const receiptId = digest({ object: entity.ref, values, linksDigest, source: snapshot.sourceId,
         usage: requestScoped ? { requestId: request.id, requestRevision: request.revision } : 'shared_source_observation' });
-      const receipt = add('SourceReceipt', receiptId, '合成领域来源回执', { sourceIdentity: snapshot.sourceId, sourceEventId: entity.event, scope: domainEvidenceScopes[entity.ref.type], observedAt: entity.time, evidenceLevel: 'synthetic', contentDigest: digest(values), subjects: [{ object: entity.ref, digest: digest(values), linksDigest }], safeSummary: `${definition.name}合成记录；没有真实业务操作` });
+      const receipt = (yield* addProgram('SourceReceipt', receiptId, '合成领域来源回执', { sourceIdentity: snapshot.sourceId, sourceEventId: entity.event, scope: domainEvidenceScopes[entity.ref.type], observedAt: entity.time, evidenceLevel: 'synthetic', contentDigest: digest(values), subjects: [{ object: entity.ref, digest: digest(values), linksDigest }], safeSummary: `${definition.name}合成记录；没有真实业务操作` }));
       try {
-        for (const old of graph.related(owner, entity.ref, 'sourceReceipts', { remaining: 1000 }) ?? []) if (old.ref.id !== receipt.id) removeLinks.push({ type: `${entity.ref.type}Evidence`, from: entity.ref, to: old.ref });
+        for (const old of (yield* graphRelated(owner, entity.ref, 'sourceReceipts', { remaining: 1000 })) ?? []) if (old.ref.id !== receipt.id) removeLinks.push({ type: `${entity.ref.type}Evidence`, from: entity.ref, to: old.ref });
       } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
       connect(`${entity.ref.type}Evidence`, entity.ref, receipt);
       if (requestScoped) connect('ReceiptRequest', receipt, root.ref);
     }
-    graph.ingest(owner, { objects, links, removeLinks }, { kind: 'synthetic', id: snapshot.sourceId, observedAt: snapshot.option.observedAt });
+    (yield* graphIngest(owner, { objects, links, removeLinks }, { kind: 'synthetic', id: snapshot.sourceId, observedAt: snapshot.option.observedAt }));
     return { state: 'typed_result', subject };
   } catch (e) {
     if (e instanceof DomainError && e.code !== 'INVALID_INPUT') throw e;
     return { state: 'invalid_source' };
   }
+}
+
+export function projectDomainSnapshot(graph: OntologyObjectStore, owner: string, capabilityId: string, request: { id: string; revision: number }, input: Record<string, unknown>, raw: unknown, componentScope?: ObjectRef): { state: 'typed_result' | 'invalid_source'; subject?: ObjectRef } {
+  return runGraphProgram(graph,projectDomainSnapshotProgram(graph,owner,capabilityId,request,input,raw,componentScope));
 }

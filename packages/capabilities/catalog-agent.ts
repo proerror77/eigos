@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../ontology/graph-program.js';
 import {permitsPersonalSource} from '../core/source-owner.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -64,7 +65,7 @@ export class CatalogAgentProgram implements AgentProgram {
     if (!Object.hasOwn(catalogActionSchemas, action)) throw new DomainError('FORBIDDEN', 'Unregistered catalog action');
     return catalogActionSchemas[action as CatalogAction];
   }
-  definition(graph: OntologyObjectStore, action: string) {
+  definition(graph: ProjectionMetadata, action: string) {
     const definition = graph.model.action(action);
     if (!this.actionIds.includes(action as CatalogAction) || definition.read?.effect !== 'read' || !equal(definition.read.inputSchema, z.toJSONSchema(this.schema(action))) || !equal(definition.read.mcp, catalogReadDefinition.actions.find(a => a.id === action)?.mcp) || definition.read.module?.digest !== catalogReadDefinitionRef.digest) invalid('Catalog action definition and execution binding differ');
     return definition;

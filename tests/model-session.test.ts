@@ -233,3 +233,20 @@ test('A reused conversation cancellation destroys it, and idle expiry also requi
     assert.notEqual(two.evidence.threadId, three.evidence.threadId);
   } finally { await pool.close(); f.close(); }
 });
+
+test('an app-server conversation stays busy while its durable attempt or completion is pending', async () => {
+  const f = fakeServer(), session = await new CodexExecutor(f.binary, 5000).openStructuredSession(schema, new AbortController().signal);
+  let begin!: () => void, finish!: () => void, enteredBegin!: () => void, enteredFinish!: () => void;
+  const registered = new Promise<void>(resolve => { begin = resolve; }), committed = new Promise<void>(resolve => { finish = resolve; });
+  const sawBegin = new Promise<void>(resolve => { enteredBegin = resolve; }), sawFinish = new Promise<void>(resolve => { enteredFinish = resolve; });
+  let settled = false;
+  const pending = withModelUsage({ async begin() { enteredBegin(); await registered; }, async finish() { enteredFinish(); await committed; } }, () => session.run('Synthetic durable conversation'));
+  void pending.then(() => { settled = true; }, () => { settled = true; });
+  try {
+    await sawBegin; assert.equal(f.events().filter(event => event.method === 'turn/start').length, 0);
+    await assert.rejects(session.run('Cannot overlap pending registration'), /already has a turn/);
+    begin(); await sawFinish; assert.equal(f.events().filter(event => event.method === 'turn/start').length, 1);
+    assert.equal(settled, false); await assert.rejects(session.run('Cannot overlap pending completion'), /already has a turn/);
+    finish(); await pending; assert.equal(settled, true);
+  } finally { begin(); finish(); await pending.catch(() => {}); await session.close(); f.close(); }
+});

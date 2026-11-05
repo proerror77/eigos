@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../../ontology/graph-program.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { digest } from '../../core/delegation.js';
@@ -58,7 +59,7 @@ export class ShopifyPAPaymentProgram implements AgentProgram {
     return { scope, input };
   }
   schema(action: string) { if (!Object.hasOwn(shopifyPAActionSchemas, action)) throw new DomainError('FORBIDDEN', 'Unknown Shopify test action; EIGOS cannot pay'); return shopifyPAActionSchemas[action as ShopifyPAAction]; }
-  definition(graph: OntologyObjectStore, action: string) {
+  definition(graph: ProjectionMetadata, action: string) {
     const definition = graph.model.action(action), operation = definition.read ?? definition.operation;
     if (!operation || !same(operation.inputSchema, z.toJSONSchema(this.schema(action))) || operation.effect !== shopifyPAActionMetadata[action as ShopifyPAAction].effect) fail('Checkout action differs from its published contract');
     return definition;

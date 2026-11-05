@@ -2,7 +2,7 @@ import { CURRENT_KERNEL_VERSION } from '../../packages/ontology/seed-definition.
 // Process/configuration verification only. No model or public Luma page is used.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -27,8 +27,9 @@ test('E2E: one managed launcher starts and stops Gateway, Worker, participant qu
   for (const file of [config.workerTokenFile, config.operatorTokenFile]) writeFileSync(file, randomBytes(32).toString('hex'), { mode: 0o600 });
   const file = join(directory, 'browser.json'); writeFileSync(file, JSON.stringify(config));
   const settings = {...participantDeploymentSettings({ EIGOS_FREE_BOOKING_BROWSER_CONFIG: file }, {}, taskDatabasePath),EIGOS_MANAGED_COMMERCE_SANDBOX:'true',EIGOS_ACTION_SANDBOX:'true',EIGOS_COMMERCE_SANDBOX_PORT:String(commercePort),EIGOS_COMMERCE_SANDBOX_URL:commerce,EIGOS_COMMERCE_SANDBOX_TOKEN_FILE:commerceToken,EIGOS_COMMERCE_SANDBOX_DATABASE:join(directory,'commerce.sqlite')};
-  const child = spawn(process.execPath, [resolve('scripts/run-local.mjs'), '--built'], { env: { PATH: process.env.PATH, HOME: process.env.HOME, NODE_NO_WARNINGS: '1', NODE_ENV: 'development', HOST: '127.0.0.1', PORT: String(gatewayPort), PUBLIC_URL: `http://127.0.0.1:${gatewayPort}`, DATABASE_PATH: taskDatabasePath, EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: bearer, EIGOS_EXECUTOR: 'disabled', EIGOS_RELEASE_DIGEST: release, ...settings }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [resolve('scripts/run-local.mjs'), '--built'], { env: { PATH: process.env.PATH, HOME: process.env.HOME, NODE_NO_WARNINGS: '1', NODE_ENV: 'development', HOST: '127.0.0.1', PORT: String(gatewayPort), PUBLIC_URL: `http://127.0.0.1:${gatewayPort}`, DATABASE_PATH: taskDatabasePath, EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: bearer, EIGOS_EXECUTOR: 'disabled', EIGOS_RELEASE_DIGEST: release, EIGOS_RELAY_CUTOVER_SIGNALS: process.platform === 'win32' ? 'false' : 'true', ...settings }, stdio: ['ignore', 'pipe', 'pipe'] });
   let diagnostics = ''; child.stderr.on('data', bytes => { diagnostics = (diagnostics + bytes).slice(-3000); });
+  let output = ''; child.stdout.on('data', bytes => { output = (output + bytes).slice(-3000); });
   const gateway = `http://127.0.0.1:${gatewayPort}`, bridge = `http://127.0.0.1:${bridgePort}`;
   try {
     let ready = false;
@@ -50,6 +51,29 @@ test('E2E: one managed launcher starts and stops Gateway, Worker, participant qu
     const card = await fetch(gateway + '/.well-known/agent-card.json').then(r => r.json());
     assert.match(card.skills[0].description, /booking\.participant\.free/);
     assert.equal((await fetch(bridge + '/operator/next')).status, 403);
+    if (process.platform !== 'win32') {
+      const workerPid = () => execFileSync('ps',['-axo','pid=,ppid=,command='],{encoding:'utf8'}).split('\n').map(line=>line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)).find(row=>row && Number(row[2])===child.pid && row[3]!.includes('dist/apps/worker/main.js'))?.[1];
+      const originalWorker = workerPid(); assert(originalWorker);
+      for (const deadline=Date.now()+15000;!output.includes('Gateway cutover control ready') && Date.now()<deadline;) await new Promise(done=>setTimeout(done,50));
+      assert.match(output,/Gateway cutover control ready/);
+      child.kill('SIGUSR1');
+      for (const deadline=Date.now()+15000;!output.includes('Gateway paused; Worker claims drained') && Date.now()<deadline;) await new Promise(done=>setTimeout(done,50));
+      assert.match(output,/Gateway paused; Worker claims drained/);
+      assert.equal(workerPid(),originalWorker);
+      await assert.rejects(fetch(gateway+'/health',{signal:AbortSignal.timeout(500)}));
+      child.kill('SIGUSR2');
+      let resumed=false;
+      for (const deadline=Date.now()+15000;Date.now()<deadline;) {
+        try { const health=await fetch(gateway+'/health',{signal:AbortSignal.timeout(500)}).then(r=>r.json()); if(health.releaseDigest===release){resumed=true;break;} } catch { /* Wait for the replacement Gateway. */ }
+        await new Promise(done=>setTimeout(done,50));
+      }
+      assert(resumed,diagnostics); assert.equal(workerPid(),originalWorker);
+      for (const deadline=Date.now()+15000;!output.includes('Gateway ready; Worker claims remain paused') && Date.now()<deadline;) await new Promise(done=>setTimeout(done,50));
+      assert.match(output,/Gateway ready; Worker claims remain paused/);
+      child.kill('SIGUSR2');
+      for (const deadline=Date.now()+15000;!output.includes('Worker claims resumed') && Date.now()<deadline;) await new Promise(done=>setTimeout(done,50));
+      assert.match(output,/Worker claims resumed/); assert.equal(workerPid(),originalWorker);
+    }
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
       const exited = once(child, 'exit'); child.kill('SIGTERM');

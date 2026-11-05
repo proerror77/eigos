@@ -8,6 +8,32 @@ import type { WorkClaim } from '../packages/core/store.js';
 
 const turn = () => new Promise<void>(resolve => setImmediate(resolve));
 
+test('cutover drains current work before pausing new claims and resumes explicitly', { timeout: 60000 }, async () => {
+  const f = securityFixture(), install = f.installation('Cutover drain'); f.approve(install.id); f.task(install.id);
+  let enter!: () => void, release!: () => void, next!: () => void, firstSignal: AbortSignal | undefined, calls=0;
+  const started=new Promise<void>(resolve=>{enter=resolve;}), gate=new Promise<void>(resolve=>{release=resolve;}), nextStarted=new Promise<void>(resolve=>{next=resolve;});
+  const worker=new Worker(f.jobs,{leaseMs:30000,pollMs:20,timeoutMs:60000,coordinator:{
+    run:async (_claim,signal)=>{if(++calls===1){firstSignal=signal;enter();await gate;}else{next();await new Promise<void>(resolve=>signal.addEventListener('abort',()=>resolve(),{once:true}));}},
+  }});
+  try {
+    worker.tick(); await started;
+    const paused=worker.pauseClaims(), later=f.task(install.id);
+    worker.tick(); await new Promise(resolve=>setTimeout(resolve,100));
+    assert.equal(calls,1); assert.equal(firstSignal?.aborted,false);
+    assert.equal(f.jobs.get(f.owner,later.job.id).state,'submitted');
+    assert.equal(await Promise.race([paused.then(()=> 'paused'),new Promise<string>(resolve=>setTimeout(()=>resolve('pending'),100))]),'pending');
+    release(); await paused;
+    assert.equal(firstSignal?.aborted,false); assert.equal(calls,1);
+    f.coordinator.close();
+    assert.equal(f.jobs.security.workAuthority(f.owner,later.job.id),undefined,'Gateway shutdown releases the manager lease');
+    worker.tick(); assert.equal(calls,1);
+    f.coordinator.start();
+    assert(f.jobs.security.workAuthority(f.owner,later.job.id),'Gateway recovery republishes the existing authority');
+    worker.resumeClaims(); await nextStarted;
+    assert.equal(calls,2);
+  } finally { release(); await worker.close(); f.close(); }
+});
+
 test('a model context cleanup rejection is distinguished from committed recovery writeback', async t => {
   const f = securityFixture(), install = f.installation('Cleanup boundary');
   f.approve(install.id); const task = f.task(install.id), warnings: unknown[][] = [];

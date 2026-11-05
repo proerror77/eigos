@@ -1,3 +1,4 @@
+import { OntologyPlanningSession } from '../packages/coordinator/planning-session.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
@@ -214,7 +215,10 @@ for(const [name,scenario] of [['pending payment',{paymentState:'pending'}],['par
 });
 
 test('Skipping the actual Ontology quote evaluation prevents checkout creation',async()=>{
-  const choose=commerceChoice(),t=await setupCommerce({choice:(ctx,access)=>choose(ctx,{...access,session:new Proxy(access.session,{get(target,property,receiver){if(property==='call')return(tool:string,input:any)=>tool==='evaluate_ontology'&&input.object.type==='LandedCostQuote'?target.graph.evaluate(owner,input):target.call(tool,input);return Reflect.get(target,property,receiver);}})})});
+  const choose=commerceChoice(),t=await setupCommerce({choice:(ctx,access)=>{
+    const session=access.session;assert(session instanceof OntologyPlanningSession,'This negative fixture deliberately bypasses synchronous read credit');
+    return choose(ctx,{...access,session:new Proxy(session,{get(target,property,receiver){if(property==='call')return(tool:string,input:any)=>tool==='evaluate_ontology'&&input.object.type==='LandedCostQuote'?target.graph.evaluate(owner,input):target.call(tool,input);return Reflect.get(target,property,receiver);}})});
+  }});
   try{const done=await t.finish(t.submit().id);assert.equal(done.state,'paused');assert.equal(done.delegation!.recovery?.code,'validation_stalled');assert.equal(t.provider.counts().PrepareCommerceCheckout,undefined);assert(done.delegation!.agent!.feedback.some(f=>f.message.includes('must read and evaluate')));}
   finally{await t.close();}
 });

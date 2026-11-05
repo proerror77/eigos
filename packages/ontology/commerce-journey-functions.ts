@@ -1,10 +1,12 @@
+import { runGraphProgram, type ProjectionMetadata, type GraphProgram, graphRead, graphRelated, graphMap } from './graph-program.js';
+import { sourceProofProgram } from './object-evidence.js';
 import { z } from 'zod';
 import { classifyShippingRoute } from './shipping-policy.js';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import { commerceObservationSchema, commerceEntitySchemas, commerceJourneyInputSchema, parseCommerceEntity, type CommerceObservation, type CommerceEntityType, type CommerceEntityData, type PostalAddress } from './commerce-journey.js';
 import { requirementSchema, type RequirementInput } from './execution.js';
-import { sourceProof } from './object-evidence.js';
+
 import type { ObjectRef } from './model.js';
 import type { OntologyObjectStore, ReadBudget } from './object-store.js';
 import type { Computation } from './object-functions.js';
@@ -23,22 +25,24 @@ export function checkedCommerceObservation(raw: unknown): CommerceObservation {
 }
 const contractual = (type: string) => ['CommerceOrderObservation', 'CommercePaymentObservation', 'CommerceDeliveryObservation'].includes(type);
 const businessData = (s: CommerceObservation) => { const { independentRead: _read, ...data } = s.data; return data; };
-export function readCommerceObservation(graph: OntologyObjectStore, owner: string, ref: ObjectRef, options: { at?: number; budget?: ReadBudget; memo?: Map<string, CommerceObservation>; active?: Set<string> } = {}): CommerceObservation {
+export function readCommerceObservation(graph: OntologyObjectStore, owner: string, ref: ObjectRef, options: { at?: number; budget?: ReadBudget; memo?: Map<string, CommerceObservation>; active?: Set<string> } = {}): CommerceObservation { return runGraphProgram(graph, readCommerceObservationProgram(graph, owner, ref, options)); }
+
+export function* readCommerceObservationProgram(graph: ProjectionMetadata, owner: string, ref: ObjectRef, options: { at?: number; budget?: ReadBudget; memo?: Map<string, CommerceObservation>; active?: Set<string> } = {}): GraphProgram<CommerceObservation> {
   if (!Object.hasOwn(commerceEntitySchemas, ref.type)) fail('Not a commerce source observation');
   const at = options.at ?? graph.now(), budget = options.budget ?? { remaining: 5000 }, memo = options.memo ?? new Map<string, CommerceObservation>(), active = options.active ?? new Set<string>();
   const key = digest({ ref, at }); if (memo.has(key)) return memo.get(key)!; if (active.has(key) || active.size >= 24) fail('Cyclic or excessive commerce evidence dependencies');
   active.add(key);
   try {
-    const record = graph.read(owner, ref, budget), s = checkedCommerceObservation(record.properties.snapshot), proof = sourceProof(graph, owner, ref, budget);
+    const record = (yield* graphRead(owner, ref, budget)), s = checkedCommerceObservation(record.properties.snapshot), proof = (yield* sourceProofProgram(graph, owner, ref, budget));
     if (!proof || s.type !== ref.type || !equal(record.properties.data, s.data) || s.receipt.ownerDigest !== digest(owner) || Date.parse(s.observedAt) > at || Date.parse(s.expiresAt) <= at) fail('Commerce facts are unproven, expired or from the future');
-    const scopes = graph.related(owner, ref, 'scope', budget), requests = graph.related(owner, ref, 'request', budget);
+    const scopes = (yield* graphRelated(owner, ref, 'scope', budget)), requests = (yield* graphRelated(owner, ref, 'request', budget));
     if (scopes?.length !== 1 || !equal(scopes[0]!.ref, s.scope) || scopes[0]!.properties.configurationDigest !== s.configurationDigest || scopes[0]!.properties.requestRevision !== s.requestRevision || requests?.length !== 1 || requests[0]!.ref.id !== s.requestId || requests[0]!.properties.revision !== s.requestRevision) fail('Commerce facts are outside the current owner, request or configured scope');
-    const dependencies = graph.related(owner, ref, 'dependsOn', budget) ?? [];
+    const dependencies = (yield* graphRelated(owner, ref, 'dependsOn', budget)) ?? [];
     if (dependencies.length !== s.dependencies.length || s.dependencies.some(d => !dependencies.some(o => equal(o.ref, d.ref)))) fail('Commerce dependency relationships changed');
-    for (const sibling of graph.related(owner, s.scope, `observed${s.type}`, budget) ?? []) {
+    for (const sibling of (yield* graphRelated(owner, s.scope, `observed${s.type}`, budget)) ?? []) {
       if (equal(sibling.ref, ref)) continue;
       const other = checkedCommerceObservation(sibling.properties.snapshot);
-      if (other.sourceId !== s.sourceId || other.receipt.sourceIdentity !== s.receipt.sourceIdentity || Date.parse(other.observedAt) > at || !sourceProof(graph, owner, sibling.ref, budget)) continue;
+      if (other.sourceId !== s.sourceId || other.receipt.sourceIdentity !== s.receipt.sourceIdentity || Date.parse(other.observedAt) > at || !(yield* sourceProofProgram(graph, owner, sibling.ref, budget))) continue;
       if (other.sourceVersion > s.sourceVersion || other.sourceVersion === s.sourceVersion && !equal(businessData(other), businessData(s))) fail('A newer or conflicting source version supersedes this commerce observation');
     }
     if (s.dependencyCheckedAt && Date.parse(s.dependencyCheckedAt) > Date.parse(s.observedAt)) fail('Commerce dependency check occurs after its observation');
@@ -46,14 +50,14 @@ export function readCommerceObservation(graph: OntologyObjectStore, owner: strin
     for (const dependency of s.dependencies) {
       // Once an order is submitted, its agreed contract is verified as it was at
       // dispatch. New order/payment/delivery reads themselves remain current.
-      const childRecord = graph.read(owner, dependency.ref, budget), child = checkedCommerceObservation(childRecord.properties.snapshot);
+      const childRecord = (yield* graphRead(owner, dependency.ref, budget)), child = checkedCommerceObservation(childRecord.properties.snapshot);
       const dependencyAt = dependency.checkedAt ? Date.parse(dependency.checkedAt) : contractual(s.type) && contractual(child.type) ? Date.parse(child.receipt.receivedAt) : parentAt;
       if (dependencyAt > at || dependency.checkedAt && dependencyAt > Date.parse(s.observedAt)) fail('Commerce dependency claims a future validation time');
-      const checked = readCommerceObservation(graph, owner, dependency.ref, { at: dependencyAt, budget, memo, active });
+      const checked = (yield* readCommerceObservationProgram(graph, owner, dependency.ref, { at: dependencyAt, budget, memo, active }));
       if (checked.contentDigest !== dependency.contentDigest) fail('Commerce input facts differ from the pinned source version');
     }
     if (s.projectedFrom) {
-      const parent = readCommerceObservation(graph, owner, s.projectedFrom.parent, { at, budget, memo, active });
+      const parent = (yield* readCommerceObservationProgram(graph, owner, s.projectedFrom.parent, { at, budget, memo, active }));
       let value: unknown = parent.data;
       for (const part of s.projectedFrom.path) { if (!value || typeof value !== 'object' || !Object.hasOwn(value, part)) fail('Derived commerce source path is unavailable'); value = (value as Record<string, unknown>)[part]; }
       if (!equal(value, s.data) || !equal(parent.receipt, s.receipt)) fail('Derived business facts do not match their original source');
@@ -93,23 +97,27 @@ export function assessLandedCost(data: CommerceEntityData<'LandedCostQuote'>, re
   return { status: failed ? 'unsatisfied' : gaps.length ? 'unknown' : 'satisfied', gaps };
 }
 
-export function commerceScopeRequirements(graph: OntologyObjectStore, owner: string, scope: ObjectRef) { return z.array(requirementSchema).parse(graph.read(owner, scope).properties.requirements); }
+export function commerceScopeRequirements(graph: OntologyObjectStore, owner: string, scope: ObjectRef) { return runGraphProgram(graph, commerceScopeRequirementsProgram(graph, owner, scope)); }
+
+export function* commerceScopeRequirementsProgram(graph: ProjectionMetadata, owner: string, scope: ObjectRef) { return z.array(requirementSchema).parse((yield* graphRead(owner, scope)).properties.requirements); }
 export function commerceDestinationChoice(context: CommerceEntityData<'FulfillmentContext'>, requirements: RequirementInput[]) {
   const expected = requirements.filter(r => r.kind === 'location' && r.strength === 'hard' && (!r.role || r.role === 'destination')).map(r => r.kind === 'location' ? r.expected.ref : '');
   if (expected.length) { const matches = context.addresses.filter(a => expected.every(e => e === a.id || e === a.label)); return matches.length === 1 ? matches[0] : undefined; }
   if (context.preferredAddressId) return context.addresses.find(a => a.id === context.preferredAddressId);
   return context.addresses.length === 1 ? context.addresses[0] : undefined;
 }
-export function commerceObservationReadiness(graph: OntologyObjectStore, owner: string, s: CommerceObservation): CommerceReadiness {
-  const dependencies = s.dependencies.map(d => checkedCommerceObservation(graph.read(owner, d.ref).properties.snapshot));
+export function commerceObservationReadiness(graph: OntologyObjectStore, owner: string, s: CommerceObservation): CommerceReadiness { return runGraphProgram(graph, commerceObservationReadinessProgram(graph, owner, s)); }
+
+export function* commerceObservationReadinessProgram(graph: ProjectionMetadata, owner: string, s: CommerceObservation): GraphProgram<CommerceReadiness> {
+  const dependencies = (yield* graphMap(s.dependencies, function* (d){ return checkedCommerceObservation((yield* graphRead(owner, d.ref)).properties.snapshot); }));
   const unknown = (fact: string, source: string, reason: string, actions: string[]): CommerceReadiness => ({ status: 'unknown', gaps: [{ fact, source, reason, suggestedActions: actions }] });
   const invalid = (fact: string, source: string, reason: string, actions: string[]): CommerceReadiness => ({ ...unknown(fact, source, reason, actions), status: 'unsatisfied' });
-  const ancestor = (value: CommerceObservation, type: CommerceEntityType, seen = new Set<string>()): CommerceObservation | undefined => {
+  const ancestorProgram = function* (value: CommerceObservation, type: CommerceEntityType, seen = new Set<string>()): GraphProgram<CommerceObservation | undefined>{
     if (value.type === type) return value; if (seen.has(value.contentDigest) || seen.size > 40) return; seen.add(value.contentDigest);
-    for (const d of value.dependencies) { const found = ancestor(checkedCommerceObservation(graph.read(owner, d.ref).properties.snapshot), type, seen); if (found) return found; }
+    for (const d of value.dependencies) { const found = (yield* ancestorProgram(checkedCommerceObservation((yield* graphRead(owner, d.ref)).properties.snapshot), type, seen)); if (found) return found; }
   };
   if (s.type === 'FulfillmentContext') {
-    const data = parseCommerceEntity(s.type, s.data), selected = commerceDestinationChoice(data, commerceScopeRequirements(graph, owner, s.scope));
+    const data = parseCommerceEntity(s.type, s.data), selected = commerceDestinationChoice(data, (yield* commerceScopeRequirementsProgram(graph, owner, s.scope)));
     if (!data.available || !data.addresses.length) return unknown('delivery_address', 'pa_context', 'The authorized PA context has no delivery address', []);
     if (!selected) return unknown('destination_choice', 'pa_choice', 'Several saved destinations exist without a current user choice', []);
     if (!selected.usable || !addressHasDeliveryStructure(selected.address)) return unknown('delivery_address', 'pa_choice', 'The selected address lacks the source-validated delivery structure', []);
@@ -125,7 +133,7 @@ export function commerceObservationReadiness(graph: OntologyObjectStore, owner: 
     const f = parseCommerceEntity('FulfillmentPlan', route.data), p = parseCommerceEntity('CommerceProduct', product.data), option = f.options.find(o => o.id === data.optionId);
     const inventoryRef = route.dependencies.find(d => d.ref.type === 'InventoryObservation')?.ref;
     if (!inventoryRef) return unknown('shipping_stock_status', 'inventory', 'The route has no warehouse status evidence', ['ReadCommerceInventory']);
-    const inventory = parseCommerceEntity('InventoryObservation', checkedCommerceObservation(graph.read(owner, inventoryRef).properties.snapshot).data);
+    const inventory = parseCommerceEntity('InventoryObservation', checkedCommerceObservation((yield* graphRead(owner, inventoryRef)).properties.snapshot).data);
     const shipping = classifyShippingRoute(f, data.optionId, inventory);
     if (shipping.status === 'unknown') return unknown('shipping_applicability', 'fulfillment', shipping.reason ?? 'Shipping requirements remain unknown', ['ReadCommerceFulfillment']);
     if (data.shippingRegime !== shipping.regime || data.routeDigest !== shipping.routeDigest || (data.status === 'not_applicable') !== (shipping.customsRequired === false)) return invalid('shipping_applicability', 'customs', 'The assessment contradicts its exact route or customs applicability', ['ReadCommerceCustoms']);
@@ -136,7 +144,7 @@ export function commerceObservationReadiness(graph: OntologyObjectStore, owner: 
   if (s.type === 'FulfillmentPlan') {
     const data = parseCommerceEntity(s.type, s.data), context = dependencies.find(d => d.type === 'FulfillmentContext'), inventory = dependencies.find(d => d.type === 'InventoryObservation'), product = dependencies.find(d => d.type === 'CommerceProduct');
     if (!context || !inventory || !product) return unknown('fulfillment_inputs', 'fulfillment', 'Shipping choices lack bound buyer, product or stock evidence', ['ReadCommerceContext', 'ReadCommerceInventory']);
-    const c = parseCommerceEntity('FulfillmentContext', context.data), i = parseCommerceEntity('InventoryObservation', inventory.data), p = parseCommerceEntity('CommerceProduct', product.data), address = commerceDestinationChoice(c, commerceScopeRequirements(graph, owner, s.scope));
+    const c = parseCommerceEntity('FulfillmentContext', context.data), i = parseCommerceEntity('InventoryObservation', inventory.data), p = parseCommerceEntity('CommerceProduct', product.data), address = commerceDestinationChoice(c, (yield* commerceScopeRequirementsProgram(graph, owner, s.scope)));
     if (!address || data.contextKey !== c.contextKey || data.addressId !== address.id || data.addressRevision !== address.revision || !equal(data.destination, address.address) || data.destinationDigest !== postalAddressDigest(address.address) || data.merchantId !== p.merchantId || data.variantId !== p.variantId || data.quantity !== i.requestedQuantity || i.merchantId !== p.merchantId || i.variantId !== p.variantId) return invalid('fulfillment_scope', 'fulfillment', 'Shipping source changed the selected address, goods or quantity', ['ReadCommerceFulfillment']);
     for (const option of data.options.filter(o => o.status === 'available')) {
       if (new Set(option.groups.map(g => g.id)).size !== option.groups.length || option.groups.reduce((n,g)=>n+g.quantity,0) !== data.quantity || option.groups.some(g => g.variantId !== data.variantId || g.destinationDigest !== data.destinationDigest || !i.locations.some(l => l.warehouseId === g.warehouseId && l.dispatchCountry === g.dispatchCountry && l.availability === 'confirmed' && l.quantityState === 'sellable')) || i.locations.some(l => option.groups.filter(g=>g.warehouseId===l.warehouseId).reduce((n,g)=>n+g.quantity,0) > (l.confirmedQuantity ?? 0))) return invalid('package_stock_allocation', 'fulfillment', 'Package quantities or origins exceed the source warehouse capacity', ['ReadCommerceInventory', 'ReadCommerceFulfillment']);
@@ -146,10 +154,10 @@ export function commerceObservationReadiness(graph: OntologyObjectStore, owner: 
   if (s.type === 'LandedCostQuote') {
     const customs = dependencies.find(d => d.type === 'CustomsAssessment'), inventory = dependencies.find(d => d.type === 'InventoryObservation'), route = dependencies.find(d => d.type === 'FulfillmentPlan'), product = dependencies.find(d => d.type === 'CommerceProduct');
     if (!customs || !inventory || !route || !product) return unknown('quote_inputs', 'merchant', 'The quote lacks its bound inventory, route, product and customs observations', ['ReadCommerceInventory', 'ReadCommerceCustoms']);
-    for (const input of [customs, inventory, route]) { const assessment = commerceObservationReadiness(graph, owner, input); if (assessment.status !== 'satisfied') return assessment; }
+    for (const input of [customs, inventory, route]) { const assessment = (yield* commerceObservationReadinessProgram(graph, owner, input)); if (assessment.status !== 'satisfied') return assessment; }
     const q = parseCommerceEntity('LandedCostQuote', s.data), f = parseCommerceEntity('FulfillmentPlan', route.data), p = parseCommerceEntity('CommerceProduct', product.data), c = parseCommerceEntity('CustomsAssessment', customs.data), option = f.options.find(o=>o.id===q.optionId);
     if (!option || q.merchantId !== p.merchantId || q.variantId !== p.variantId || q.quantity !== f.quantity || q.inventoryId !== inventory.sourceId || q.inventoryVersion !== inventory.sourceVersion || !equal(q.unitPrice,p.unitPrice) || q.fulfillmentId !== route.sourceId || q.customsId !== customs.sourceId || q.optionId !== c.optionId || q.destinationDigest !== f.destinationDigest || !equal(q.groups,option.groups) || q.incoterm !== option.incoterm || q.incoterm === 'DDP' && q.components.some(c=>['duty','tax','clearance'].includes(c.category)&&c.payer!=='seller')) return invalid('fixed_quote_scope', 'merchant', 'Quote changed the chosen product, route, allocation, price or responsibility', ['QuoteCommerceLandedCost']);
-    return assessLandedCost(parseCommerceEntity(s.type, s.data), commerceScopeRequirements(graph, owner, s.scope), graph.now());
+    return assessLandedCost(parseCommerceEntity(s.type, s.data), (yield* commerceScopeRequirementsProgram(graph, owner, s.scope)), graph.now());
   }
   if (s.type === 'Cart' && parseCommerceEntity('Cart', s.data).state === 'canceled') return invalid('cart_state', 'merchant', 'This cart is canceled', ['ReadCommerceCart']);
   if (s.type === 'CommerceCheckout') {
@@ -157,7 +165,7 @@ export function commerceObservationReadiness(graph: OntologyObjectStore, owner: 
     if (!quote || checkout.state !== 'ready') return unknown('checkout_ready', 'merchant', 'The checkout does not identify a ready, fixed source quote', ['PrepareCommerceCheckout']);
     const q = parseCommerceEntity('LandedCostQuote', quote.data);
     if (checkout.quoteDigest !== quote.contentDigest || checkout.quoteId !== quote.sourceId || checkout.destinationDigest !== q.destinationDigest || !equal(checkout.total, q.buyerTotal) || !equal(checkout.costComponents, q.components) || checkout.lines.length !== 1 || checkout.lines[0]!.variantId !== q.variantId || checkout.lines[0]!.quantity !== q.quantity || !equal(checkout.lines[0]!.unitPrice, q.unitPrice)) return { status: 'unsatisfied', gaps: [{ fact: 'fixed_checkout_terms', source: 'merchant', reason: 'Checkout changed its selected source quote, item, address or cost allocation', suggestedActions: ['PrepareCommerceCheckout'] }] };
-    return commerceObservationReadiness(graph, owner, quote);
+    return (yield* commerceObservationReadinessProgram(graph, owner, quote));
   }
   if (s.type === 'CommerceOrderObservation') {
     const data = parseCommerceEntity(s.type, s.data), previous = dependencies.find(d => d.type === 'CommerceCheckout' || d.type === 'CommerceOrderObservation');
@@ -174,31 +182,33 @@ export function commerceObservationReadiness(graph: OntologyObjectStore, owner: 
     if (data.state !== 'settled') return unknown('payment_settlement', 'payment', 'Separate settlement evidence is still pending', ['ReadCommercePayment']);
   }
   if (s.type === 'CommerceDeliveryObservation') {
-    const data = parseCommerceEntity(s.type, s.data), prior = dependencies.find(d=>d.type==='CommerceOrderObservation'), quote = prior && ancestor(prior,'LandedCostQuote');
+    const data = parseCommerceEntity(s.type, s.data), prior = dependencies.find(d=>d.type==='CommerceOrderObservation'), quote = prior && (yield* ancestorProgram(prior, 'LandedCostQuote'));
     if (!prior || !quote) return unknown('original_delivery_contract', 'carrier', 'Delivery events lack the original order and package contract', ['ReadCommerceOrder']);
     const o=parseCommerceEntity('CommerceOrderObservation',prior.data), q=parseCommerceEntity('LandedCostQuote',quote.data), arrived=data.events.filter(e=>e.milestone==='delivered');
     if(data.orderId!==o.orderId||data.merchantId!==o.merchantId||data.destinationDigest!==o.destinationDigest||new Set(data.events.map(e=>e.id)).size!==data.events.length||data.events.some(e=>Date.parse(e.occurredAt)>Date.parse(s.observedAt)||e.destinationDigest!==o.destinationDigest||!q.groups.some(g=>g.id===e.groupId&&g.variantId===e.variantId))||q.groups.some(g=>arrived.filter(e=>e.groupId===g.id&&e.variantId===g.variantId).reduce((n,e)=>n+e.quantity,0)>g.quantity))return invalid('delivery_event_identity','carrier','Delivery events are duplicated, future-dated, over-allocated or bound to different goods or destination',['ReadCommerceDelivery']);
     if(data.state==='failed'||data.events.some(e=>e.milestone==='returned'))return invalid('delivery_failed','carrier','A delivery failure or return is evidenced',['ReadCommerceDelivery']);
     if(data.state!=='delivered'||q.groups.some(g=>arrived.filter(e=>e.groupId===g.id&&e.variantId===g.variantId).reduce((n,e)=>n+e.quantity,0)!==g.quantity))return unknown('remaining_delivery','carrier','Not every original package has a matching delivered quantity',['ReadCommerceDelivery']);
-    for(const r of commerceScopeRequirements(graph,owner,s.scope))if(r.kind==='deadline'&&r.strength==='hard'&&(!r.role||['arrival','completion'].includes(r.role))&&arrived.some(e=>Date.parse(e.occurredAt)>Date.parse(r.expected.at)))return invalid('actual_arrival_deadline','carrier','An actual package arrival missed the fixed deadline',[]);
+    for(const r of (yield* commerceScopeRequirementsProgram(graph, owner, s.scope)))if(r.kind==='deadline'&&r.strength==='hard'&&(!r.role||['arrival','completion'].includes(r.role))&&arrived.some(e=>Date.parse(e.occurredAt)>Date.parse(r.expected.at)))return invalid('actual_arrival_deadline','carrier','An actual package arrival missed the fixed deadline',[]);
   }
   return { status: 'satisfied', gaps: [] };
 }
 
-export function evaluateCommerceJourneyFunction(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined {
+export function evaluateCommerceJourneyFunction(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined { return runGraphProgram(graph, evaluateCommerceJourneyFunctionProgram(graph, owner, input, budget)); }
+
+export function* evaluateCommerceJourneyFunctionProgram(graph: ProjectionMetadata, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): GraphProgram<Computation | undefined> {
   if (!['commerceObservationStatus', 'commerceJourneyStatus'].includes(input.function)) return;
   if (input.function === 'commerceObservationStatus') {
     try {
-      const s = readCommerceObservation(graph, owner, input.object, { budget });
-      const assessment = commerceObservationReadiness(graph, owner, s);
+      const s = (yield* readCommerceObservationProgram(graph, owner, input.object, { budget }));
+      const assessment = (yield* commerceObservationReadinessProgram(graph, owner, s));
       return { status: 'known', value: { type: s.type, data: s.data, sourceId: s.sourceId, sourceVersion: s.sourceVersion, observedAt: s.observedAt, expiresAt: s.expiresAt, assessment, evidenceLevel: 'synthetic', realOperationsAllowed: false }, evidenceRefs: [input.object, ...s.dependencies.map(d => d.ref)], evidenceLevels: ['synthetic'] };
     } catch (error) { return { status: 'unknown', reason: error instanceof DomainError ? error.message : 'Commerce source schema or evidence is invalid', evidenceRefs: [input.object], evidenceLevels: [] }; }
   }
   if (input.object.type !== 'CommerceTask') throw new DomainError('INVALID_INPUT', 'Commerce progress requires a CommerceTask');
-  const task = graph.read(owner, input.object, budget), scope = commerceJourneyInputSchema.parse(task.properties.input);
+  const task = (yield* graphRead(owner, input.object, budget)), scope = commerceJourneyInputSchema.parse(task.properties.input);
   const facts: { object: ObjectRef; type: string; sourceId: string; status: string; readiness?: CommerceReadiness }[] = [], refs: ObjectRef[] = [input.object], memo = new Map<string, CommerceObservation>(), at = graph.now();
-  for (const type of Object.keys(commerceEntitySchemas).filter(t => !['FactRequirement', 'DeliveryPromise', 'CartLine', 'FulfillmentGroup', 'InventoryReservation'].includes(t))) for (const record of graph.related(owner, input.object, `observed${type}`, budget) ?? []) {
-    try { const s = readCommerceObservation(graph, owner, record.ref, { at, budget, memo }); facts.push({ object: record.ref, type, sourceId: s.sourceId, status: 'known', readiness: commerceObservationReadiness(graph, owner, s) }); refs.push(record.ref); }
+  for (const type of Object.keys(commerceEntitySchemas).filter(t => !['FactRequirement', 'DeliveryPromise', 'CartLine', 'FulfillmentGroup', 'InventoryReservation'].includes(t))) for (const record of (yield* graphRelated(owner, input.object, `observed${type}`, budget)) ?? []) {
+    try { const s = (yield* readCommerceObservationProgram(graph, owner, record.ref, { at, budget, memo })); facts.push({ object: record.ref, type, sourceId: s.sourceId, status: 'known', readiness: (yield* commerceObservationReadinessProgram(graph, owner, s)) }); refs.push(record.ref); }
     catch { facts.push({ object: record.ref, type, sourceId: '', status: 'unknown' }); }
   }
   const missing: { fact: string; source: string; suggestedActions: string[] }[] = [];

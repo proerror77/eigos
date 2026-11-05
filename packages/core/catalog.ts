@@ -1,3 +1,6 @@
+import type {SemanticActionRanking} from './action-bindings.js';
+import type { ProjectionMetadata } from '../ontology/graph-program.js';
+import type { PipelineStatus } from '../ontology/pipeline/contracts.js';
 import { authorizationScope } from '../security/context.js';
 import { ConnectionAuthorizationRequired, DomainError, type Job } from './domain.js';
 import type { ServiceDefinition } from './services.js';
@@ -16,7 +19,7 @@ import {requireRecovery} from '../security/recovery.js';
 import {SecurityError,type SecurityStore} from '../security/store.js';
 import { CompositionProgram } from '../coordinator/composition-program.js';
 import type { AgentActionMetadata } from './agent-action-binding.js';
-import type { ActionDefinition } from '../ontology/model.js';
+import type { ActionDefinition,OntologyModel } from '../ontology/model.js';
 
 export interface AdapterContext { owner: string; request: ServiceRequest }
 /** A bounded view for reusing one adapter operation. It links to the real sealed
@@ -96,7 +99,7 @@ export class ExecutionCatalog {
   private security?:SecurityStore;
   secureWith(security:SecurityStore) {if(this.security && this.security!==security && (this.security.enabled || security.enabled))throw new Error('A catalog cannot cross security stores');this.security=security;}
   constructor(services: ServiceCapability[], bindings: ProviderBinding[], adapters: RegisteredAdapter[], sources: DiscoverySource[] = [], programs: AgentProgram[] = [],
-    private readonly dynamicFactory?: (graph: OntologyObjectStore, owner: string) => AgentProgram | undefined, security?: SecurityStore) {
+    private readonly dynamicFactory?: (graph: ProjectionMetadata, owner: string) => AgentProgram | undefined, security?: SecurityStore) {
     if(security) this.secureWith(security);
     const composites = (['live', 'sandbox'] as const).flatMap(environment => {
       const eligible = programs.map(program=>({program,capability:program.capability()})).filter(({program:p,capability:c})=>!p.callerManagedActions && digest([...p.actionIds].sort())===digest(c.actions.map(a=>a.ref.id).sort()) && !p.ref.id.startsWith('services.compose.') && p.ref.id!=='eigos.goal' && ['local',environment].includes(c.environment??'local'));
@@ -138,7 +141,8 @@ export class ExecutionCatalog {
   }
   /** A task receives the executable program for its immutable release. Existing
    * adapter permission closures remain live; no mutable global model is swapped. */
-  forOntology(graph: OntologyObjectStore, owner: string): ExecutionCatalog {
+  forOntology(graph: OntologyObjectStore, owner: string): ExecutionCatalog { return this.forMetadata(graph,owner); }
+  private forMetadata(graph: ProjectionMetadata, owner: string): ExecutionCatalog {
     const base = this.dynamicBase ?? this;
     if (!base.dynamicFactory || !graph.releaseRef) return base;
     const scope = digest({ owner, release: graph.releaseRef });
@@ -159,98 +163,27 @@ export class ExecutionCatalog {
     if (programs.length > 1) throw new DomainError('CONFLICT', 'Managed action program is ambiguous');
     return programs[0] ? secureProgram(programs[0], this.security) : undefined;
   }
-  private programReadiness(graph: OntologyObjectStore, owner: string, program: AgentProgram, action: ActionDefinition,
-    pipeline = graph.pipelineStatus(owner, program.ref, program.configurationDigest, action.id)): Pick<DiscoveredActionBinding, 'readiness' | 'reason'> {
-    let readiness: DiscoveredActionBinding['readiness'] = 'ready', reason = 'Exact task-scoped action binding; current inputs and effect authorization must still pass';
-    if (!graph.model.actionImplementation(action.id) || !action.composition) { readiness = 'contract_missing'; reason = 'This definition has not yet supplied the complete executable composition contract'; }
-    if (action.composition?.effectScope.recovery.kind === 'original_intent' && !program.recover) { readiness = 'contract_missing'; reason = 'Original-intent recovery has no configured read-only implementation'; }
-    try {
-      if (digest(program.definition(graph, action.id)) !== digest(action)) { readiness = 'contract_mismatch'; reason = 'Runtime action does not match this task ontology release'; }
-    } catch { readiness = 'contract_mismatch'; reason = 'Runtime cannot resolve this exact action definition'; }
-    const provider = program.listingBinding?.(), sourceAuthorization = program.sourceAuthorization?.(owner);
-    if (provider && (!provider.enabled || provider.configurationDigest !== program.configurationDigest)) { readiness = 'disabled'; reason = 'The registered provider binding is disabled or its configuration changed'; }
-    if (sourceAuthorization && sourceAuthorization.state !== 'connected') { readiness = 'source_authorization_required'; reason = 'The owner must connect or renew this source before invocation'; }
-    if (readiness === 'ready' && !['unmanaged', 'verified', 'validation_only'].includes(pipeline.status)) { readiness = 'pipeline_unverified'; reason = pipeline.reason; }
-    return { readiness, reason };
+  private programReadiness(graph:OntologyObjectStore,owner:string,program:AgentProgram,action:ActionDefinition,pipeline=graph.pipelineStatus(owner,program.ref,program.configurationDigest,action.id)) {
+    return actionProgramReadiness(graph,owner,metadataProgram(program),action,pipeline);
+  }
+  /** Host-only registered contract view. No invocation, projection, secret or
+   * storage handle is returned. Dynamic metadata uses the actual configured
+   * factory and the exact immutable release, never the current kernel. */
+  actionDiscoveryPrograms(graph:ProjectionMetadata,owner:string):ActionDiscoveryProgram[] {
+    return [...this.forMetadata(graph,owner).programs.values()].filter(program=>!(program instanceof CompositionProgram)&&program.permitted(owner)).map(metadataProgram);
   }
   /** Owner, environment and release filtering happens before any binding metadata is returned. */
-  discoverActions(graph: OntologyObjectStore, owner: string, request: ServiceRequest, input: ActionDiscoveryQuery): ActionDiscoveryPage {
-    const { cursor, ...query } = actionDiscoverySchema.parse(input), catalog = this.forOntology(graph, owner);
-    if (!graph.releaseRef) throw new DomainError('CONFLICT', 'Action discovery requires a published ontology release');
-    const current = graph.read(owner, { type: 'ServiceRequest', id: request.id });
-    if (current.properties.revision !== request.revision) throw new DomainError('CONFLICT', 'Action discovery request revision changed');
-    for (const type of [query.inputType, query.outputType]) if (type && !graph.model.hasType(type)) throw new DomainError('INVALID_INPUT', 'Unknown action discovery type');
-    const environment = request.executionEnvironment ?? 'live';
-    const permittedPrograms = [...catalog.programs.values()].filter(program => !(program instanceof CompositionProgram) && permittedProgram(program) && (!query.programRef || sameRef(program.ref, query.programRef)) && program.permitted(owner)
-      && (environment === 'sandbox' ? program.capability().environment !== 'live' : program.capability().environment !== 'sandbox'));
-    const pipelineViews = new Map<string, ReturnType<OntologyObjectStore['pipelineStatus']>>();
-    const pipelineFor = (program: AgentProgram, actionId: string) => {
-      const key = digest({ ref: program.ref, configuration: program.configurationDigest, actionId });
-      if (!pipelineViews.has(key)) pipelineViews.set(key, graph.pipelineStatus(owner, program.ref, program.configurationDigest, actionId));
-      return pipelineViews.get(key)!;
-    };
-    const definitions = graph.model.actionDefinitions().filter(action => {
-      if (catalog.security?.enabled) { const scope = authorizationScope(); if (!scope || scope.policies.security !== catalog.security) throw new DomainError('FORBIDDEN','Current task authority is required for action discovery'); if (!scope.policies.resourceAllowed(scope,'actionType',action.id)) return false; }
-      if (query.actionId && action.id !== query.actionId) return false;
-      if (query.inputType && !Object.values(action.inputs).some(type => graph.model.assignableType(query.inputType!, type))) return false;
-      if (query.outputType && !(action.resultTypes ?? (action.read ? [action.read.resultType] : action.operation ? [action.operation.resultType] : [])).some(type => graph.model.assignableType(type, query.outputType!))) return false;
-      if (query.effects && !actionEffects(action).every(effect => query.effects!.includes(effect))) return false;
-      const serviceText = permittedPrograms.filter(program => program.actionIds.includes(action.id)).map(program => {
-        const capability = program.capability(); return `${capability.name} ${capability.description} ${capability.tags.join(' ')} ${pipelineFor(program, action.id).terms?.join(' ') ?? ''}`;
-      }).join(' ');
-      return !query.search || `${action.id} ${action.description} ${serviceText}`.toLocaleLowerCase().includes(query.search.toLocaleLowerCase());
-    }).sort((a, b) => a.id.localeCompare(b.id));
-    const items: ActionDiscoveryEntry[] = definitions.map(action => {
-      const bindings: DiscoveredActionBinding[] = [];
-      const implementation = graph.model.actionImplementation(action.id);
-      for (const program of permittedPrograms) {
-        const capability = program.capability();
-        if (!program.actionIds.includes(action.id) || !program.permitted(owner) || (environment === 'sandbox' ? capability.environment === 'live' : capability.environment === 'sandbox')) continue;
-        if (query.search && !`${action.id} ${action.description} ${capability.name} ${capability.description} ${capability.tags.join(' ')} ${pipelineFor(program, action.id).terms?.join(' ') ?? ''}`.toLocaleLowerCase().includes(query.search.toLocaleLowerCase())) continue;
-        if (implementation?.kind === 'declarative' && !program.callerManagedActions || implementation?.kind === 'trusted' && program.callerManagedActions) continue;
-        const provider = program.listingBinding?.(), sourceAuthorization = program.sourceAuthorization?.(owner);
-        const body: Omit<ActionBindingPin, 'digest'> = {
-          ref: { id: `action:${digest({ program: program.ref, actionId: action.id })}`, version: actionVersion(action) ?? 'unversioned' },
-          programRef: program.ref, actionId: action.id, actionVersion: actionVersion(action) ?? 'unversioned', definitionDigest: digest(action),
-          ...(action.composition ? { compositionDigest: digest(action.composition) } : {}), configurationDigest: program.configurationDigest,
-          ...(provider ? { providerBinding: provider.ref, providerSnapshot: structuredClone(provider), providerDefinitionDigest: bindingDigest(provider) } : {}), ontologyRelease: graph.releaseRef!, ownerDigest: digest(owner), requestId: request.id, requestRevision: request.revision,
-        };
-        const pipeline = pipelineFor(program, action.id);
-        let { readiness, reason } = catalog.programReadiness(graph, owner, program, action, pipeline);
-        const conditions = query.serviceConditions, declared = pipeline.conditions;
-        if (readiness === 'ready' && conditions && (!declared
-          || conditions.region && !declared.regions.includes(conditions.region)
-          || conditions.paymentModes && (declared.payment === 'unknown' || !conditions.paymentModes.includes(declared.payment))
-          || conditions.operatorAvailable === false && declared.operatorRequired)) { readiness = 'conditions_unmet'; reason = 'The service has not established the requested region, payment path or operator conditions'; }
-        bindings.push({ pin: { ...body, digest: digest(body) }, readiness, reason, environment: capability.environment ?? 'local', inputSchema: capability.inputSchema,
-          capability: { name: capability.name, description: capability.description, predicates: capability.predicates, outcomePredicates: capability.outcomePredicates ?? [], requirementRoles: capability.requirementRoles ?? [],
-            ...(capability.locationSemantics ? { locationSemantics: capability.locationSemantics } : {}), ...(capability.effectConstraints ? { effectConstraints: capability.effectConstraints } : {}) },
-          completionSchema: program.completionSchema, guidance: program.guidance, ...(capability.goalOutcomes ? { goalOutcomes: capability.goalOutcomes } : {}), ...(sourceAuthorization ? { sourceAuthorization } : {}), ...(pipeline.status !== 'unmanaged' ? { pipeline } : {}) });
-      }
-      bindings.sort((a, b) => a.pin.ref.id.localeCompare(b.pin.ref.id));
-      return { action, bindings, status: bindings.some(binding => binding.readiness === 'ready') ? 'available' : bindings.length ? 'not_ready' : implementation ? 'binding_unavailable' : 'definition_only' };
-    });
-    // Page binding rows, not just action names: many providers of one action
-    // must not bypass the normal response and model-context bounds.
-    const rows = items.flatMap(item => item.bindings.length ? item.bindings.map(binding => ({ ...item, bindings: [binding] })) : [item]);
-    const snapshotDigest = digest({ owner, requestId: request.id, revision: request.revision, environment, release: graph.releaseRef, query: { ...query, limit: undefined }, items });
-    let offset = 0;
-    if (cursor) {
-      let parsed: unknown; try { parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString()); } catch { throw new DomainError('INVALID_INPUT', 'Invalid action discovery cursor'); }
-      const page = parsed as { snapshot?: unknown; offset?: unknown };
-      if (!page || typeof page !== 'object' || page.snapshot !== snapshotDigest || !Number.isInteger(page.offset) || Number(page.offset) < 0 || Number(page.offset) > rows.length) throw new DomainError('CONFLICT', 'Action discovery cursor no longer matches the task, permissions or bindings');
-      offset = Number(page.offset);
-    }
-    const selectedRows = rows.slice(offset, offset + query.limit), hasMore = offset + selectedRows.length < rows.length;
-    const selected: ActionDiscoveryEntry[] = [];
-    for (const row of selectedRows) {
-      const existing = selected.find(item => item.action.id === row.action.id);
-      if (existing) existing.bindings.push(...row.bindings);
-      else selected.push({ ...row, bindings: [...row.bindings] });
-    }
-    return { ontologyRelease: structuredClone(graph.releaseRef), requestId: request.id, requestRevision: request.revision, items: structuredClone(selected),
-      page: { limit: query.limit, hasMore, ...(hasMore ? { cursor: Buffer.from(JSON.stringify({ snapshot: snapshotDigest, offset: offset + selectedRows.length })).toString('base64url') } : {}) },
-      authorization: 'per_action_required', allowedEffects: query.effects ?? ['local', 'read', 'object_write', ...(environment === 'sandbox' ? ['reserve', 'order', 'payment', 'change', 'cancel', 'refund'] as const : [])], snapshotDigest };
+  discoverActions(graph:OntologyObjectStore,owner:string,request:ServiceRequest,input:ActionDiscoveryQuery):ActionDiscoveryPage {
+    const query=actionDiscoverySchema.parse(input),catalog=this.forOntology(graph,owner);
+    if(!graph.releaseRef)throw new DomainError('CONFLICT','Action discovery requires a published ontology release');
+    const current=graph.read(owner,{type:'ServiceRequest',id:request.id});
+    if(current.properties.revision!==request.revision)throw new DomainError('CONFLICT','Action discovery request revision changed');
+    const programs=catalog.actionDiscoveryPrograms(graph,owner);
+    return discoverActionMetadata(graph,owner,request,query,programs,program=>program.permittedByCurrentScope(),action=>{
+      if(!catalog.security?.enabled)return true;
+      const scope=authorizationScope();if(!scope||scope.policies.security!==catalog.security)throw new DomainError('FORBIDDEN','Current task authority is required for action discovery');
+      return scope.policies.resourceAllowed(scope,'actionType',action.id);
+    },(program,actionId)=>graph.pipelineStatus(owner,program.ref,program.configurationDigest,actionId));
   }
   /** Resolve the whole pin again. Permission or configuration drift never selects another provider. */
   resolveActionBinding(graph: OntologyObjectStore, owner: string, request: ServiceRequest, pin: ActionBindingPin): { program: AgentProgram; binding: DiscoveredActionBinding } {
@@ -359,6 +292,11 @@ export class ExecutionCatalog {
    * source locators or an implicit grant for programs restricted to another owner. */
   securityProfiles(owner:string) {
     const model = this.security?.model ?? this.ontologyModel ?? currentKernelImplementation();
+    return this.securityProfilesForModel(owner,model);
+  }
+  /** Pure registered-program metadata for an explicitly reviewed published
+   * model. Callers still own namespace, member and source authorization. */
+  securityProfilesForModel(owner:string,model:OntologyModel) {
     return [...this.programs.values()].filter(p=>p.permitted(owner)).map(program=>{
       const ontology=program.capability().ontology;
       const objects=ontology && 'objects' in ontology && Array.isArray(ontology.objects) ? ontology.objects.filter((v):v is string=>typeof v==='string') : [];
@@ -415,3 +353,113 @@ export class ExecutionCatalog {
       tags: ['delegation', 'ontology', 'planning'], examples: [], inputModes: ['text/plain', 'application/json'], outputModes: ['application/json', 'text/markdown'] };
   }
 }
+
+/** Metadata only: runtime methods outside this contract never reach discovery. */
+export interface ActionDiscoveryProgram extends Pick<AgentProgram,'ref'|'configurationDigest'|'actionIds'|'guidance'|'completionSchema'|'callerManagedActions'|'permitted'|'capability'|'listingBinding'|'sourceAuthorization'|'definition'> { readonly recoveryConfigured:boolean; permittedByCurrentScope():boolean }
+function metadataProgram(program:AgentProgram):ActionDiscoveryProgram {
+  return {ref:structuredClone(program.ref),get configurationDigest(){return program.configurationDigest;},actionIds:[...program.actionIds],guidance:program.guidance,completionSchema:structuredClone(program.completionSchema),callerManagedActions:program.callerManagedActions,
+    recoveryConfigured:!!program.recover,permittedByCurrentScope:()=>permittedProgram(program),permitted:program.permitted.bind(program),capability:program.capability.bind(program),definition:program.definition.bind(program),
+    ...(program.listingBinding?{listingBinding:program.listingBinding.bind(program)}:{}),...(program.sourceAuthorization?{sourceAuthorization:program.sourceAuthorization.bind(program)}:{})};
+}
+export function actionProgramReadiness(graph: ProjectionMetadata, owner: string, program: ActionDiscoveryProgram, action: ActionDefinition,
+    pipeline:PipelineStatus): Pick<DiscoveredActionBinding, 'readiness' | 'reason'> {
+    let readiness: DiscoveredActionBinding['readiness'] = 'ready', reason = 'Exact task-scoped action binding; current inputs and effect authorization must still pass';
+    if (!graph.model.actionImplementation(action.id) || !action.composition) { readiness = 'contract_missing'; reason = 'This definition has not yet supplied the complete executable composition contract'; }
+    if (action.composition?.effectScope.recovery.kind === 'original_intent' && !program.recoveryConfigured) { readiness = 'contract_missing'; reason = 'Original-intent recovery has no configured read-only implementation'; }
+    try {
+      if (digest(program.definition(graph, action.id)) !== digest(action)) { readiness = 'contract_mismatch'; reason = 'Runtime action does not match this task ontology release'; }
+    } catch { readiness = 'contract_mismatch'; reason = 'Runtime cannot resolve this exact action definition'; }
+    const provider = program.listingBinding?.(), sourceAuthorization = program.sourceAuthorization?.(owner);
+    if (provider && (!provider.enabled || provider.configurationDigest !== program.configurationDigest)) { readiness = 'disabled'; reason = 'The registered provider binding is disabled or its configuration changed'; }
+    if (sourceAuthorization && sourceAuthorization.state !== 'connected') { readiness = 'source_authorization_required'; reason = 'The owner must connect or renew this source before invocation'; }
+    if (readiness === 'ready' && !['unmanaged', 'verified', 'validation_only'].includes(pipeline.status)) { readiness = 'pipeline_unverified'; reason = pipeline.reason; }
+    return { readiness, reason };
+  }
+
+/** Shared deterministic filtering, exact pins and binding-row cursors. Storage
+ * adapters must establish the current owned task/revision, definition policy,
+ * configured programs and complete Pipeline evidence before calling. */
+export function discoverActionMetadata(graph:ProjectionMetadata,owner:string,request:ServiceRequest,input:ActionDiscoveryQuery,programs:readonly ActionDiscoveryProgram[],
+  programAllowed:(program:ActionDiscoveryProgram)=>boolean,actionAllowed:(action:ActionDefinition)=>boolean,
+  pipelineStatus:(program:ActionDiscoveryProgram,actionId:string)=>PipelineStatus,
+  sourceAllowed:(program:ActionDiscoveryProgram,actionId:string)=>boolean=()=>true, ranking?:SemanticActionRanking):ActionDiscoveryPage {
+    const {cursor,...query}=actionDiscoverySchema.parse(input);
+    if(query.searchMode==='semantic'&&!ranking)throw new DomainError('CONFLICT','Semantic discovery is not configured for this request');
+    const ranks=ranking?new Map(ranking.actionIds.map((id,index)=>[id,index])):undefined;
+    if(ranking&&(ranks!.size!==ranking.actionIds.length||!ranking.scores.every(s=>Number.isFinite(s.score))||! /^[a-f0-9]{64}$/.test(ranking.contextDigest)))throw new DomainError('CONFLICT','Invalid semantic discovery proof');
+    if(!graph.releaseRef)throw new DomainError('CONFLICT','Action discovery requires a published ontology release');
+    for (const type of [query.inputType, query.outputType]) if (type && !graph.model.hasType(type)) throw new DomainError('INVALID_INPUT', 'Unknown action discovery type');
+    const environment = request.executionEnvironment ?? 'live';
+    const permittedPrograms = programs.filter(program => programAllowed(program) && (!query.programRef || sameRef(program.ref, query.programRef)) && program.permitted(owner)
+      && (environment === 'sandbox' ? program.capability().environment !== 'live' : program.capability().environment !== 'sandbox'));
+    const pipelineViews = new Map<string, PipelineStatus>();
+    const pipelineFor = (program: ActionDiscoveryProgram, actionId: string) => {
+      const key = digest({ ref: program.ref, configuration: program.configurationDigest, actionId });
+      if (!pipelineViews.has(key)) pipelineViews.set(key, pipelineStatus(program,actionId));
+      return pipelineViews.get(key)!;
+    };
+    const definitions = graph.model.actionDefinitions().filter(action => {
+      if (!actionAllowed(action) || ranks && !ranks.has(action.id)) return false;
+      if (query.actionId && action.id !== query.actionId) return false;
+      if (query.inputType && !Object.values(action.inputs).some(type => graph.model.assignableType(query.inputType!, type))) return false;
+      if (query.outputType && !(action.resultTypes ?? (action.read ? [action.read.resultType] : action.operation ? [action.operation.resultType] : [])).some(type => graph.model.assignableType(type, query.outputType!))) return false;
+      if (query.effects && !actionEffects(action).every(effect => query.effects!.includes(effect))) return false;
+      const serviceText = permittedPrograms.filter(program => program.actionIds.includes(action.id)).map(program => {
+        const capability = program.capability(); return `${capability.name} ${capability.description} ${capability.tags.join(' ')} ${pipelineFor(program, action.id).terms?.join(' ') ?? ''}`;
+      }).join(' ');
+      return !!ranking || !query.search || `${action.id} ${action.description} ${serviceText}`.toLocaleLowerCase().includes(query.search.toLocaleLowerCase());
+    }).sort((a, b) => (ranks ? ranks.get(a.id)!-ranks.get(b.id)! : 0) || a.id.localeCompare(b.id));
+    const items: ActionDiscoveryEntry[] = definitions.map(action => {
+      const bindings: DiscoveredActionBinding[] = [];
+      const implementation = graph.model.actionImplementation(action.id);
+      for (const program of permittedPrograms) {
+        const capability = program.capability();
+        if (!program.actionIds.includes(action.id) || !program.permitted(owner) || (environment === 'sandbox' ? capability.environment === 'live' : capability.environment === 'sandbox')) continue;
+        if (!ranking && query.search && !`${action.id} ${action.description} ${capability.name} ${capability.description} ${capability.tags.join(' ')} ${pipelineFor(program, action.id).terms?.join(' ') ?? ''}`.toLocaleLowerCase().includes(query.search.toLocaleLowerCase())) continue;
+        if (implementation?.kind === 'declarative' && !program.callerManagedActions || implementation?.kind === 'trusted' && program.callerManagedActions) continue;
+        const provider = program.listingBinding?.(), sourceAuthorization = program.sourceAuthorization?.(owner);
+        const body: Omit<ActionBindingPin, 'digest'> = {
+          ref: { id: `action:${digest({ program: program.ref, actionId: action.id })}`, version: actionVersion(action) ?? 'unversioned' },
+          programRef: program.ref, actionId: action.id, actionVersion: actionVersion(action) ?? 'unversioned', definitionDigest: digest(action),
+          ...(action.composition ? { compositionDigest: digest(action.composition) } : {}), configurationDigest: program.configurationDigest,
+          ...(provider ? { providerBinding: provider.ref, providerSnapshot: structuredClone(provider), providerDefinitionDigest: bindingDigest(provider) } : {}), ontologyRelease: graph.releaseRef!, ownerDigest: digest(owner), requestId: request.id, requestRevision: request.revision,
+        };
+        const pipeline = pipelineFor(program, action.id);
+        let { readiness, reason } = actionProgramReadiness(graph, owner, program, action, pipeline);
+        if(!sourceAllowed(program,action.id)){readiness='source_authorization_required';reason='The exact action binding requires current owner-approved source authorization';}
+        const conditions = query.serviceConditions, declared = pipeline.conditions;
+        if (readiness === 'ready' && conditions && (!declared
+          || conditions.region && !declared.regions.includes(conditions.region)
+          || conditions.paymentModes && (declared.payment === 'unknown' || !conditions.paymentModes.includes(declared.payment))
+          || conditions.operatorAvailable === false && declared.operatorRequired)) { readiness = 'conditions_unmet'; reason = 'The service has not established the requested region, payment path or operator conditions'; }
+        bindings.push({ pin: { ...body, digest: digest(body) }, readiness, reason, environment: capability.environment ?? 'local', inputSchema: capability.inputSchema,
+          capability: { name: capability.name, description: capability.description, predicates: capability.predicates, outcomePredicates: capability.outcomePredicates ?? [], requirementRoles: capability.requirementRoles ?? [],
+            ...(capability.locationSemantics ? { locationSemantics: capability.locationSemantics } : {}), ...(capability.effectConstraints ? { effectConstraints: capability.effectConstraints } : {}) },
+          completionSchema: program.completionSchema, guidance: program.guidance, ...(capability.goalOutcomes ? { goalOutcomes: capability.goalOutcomes } : {}), ...(sourceAuthorization ? { sourceAuthorization } : {}), ...(pipeline.status !== 'unmanaged' ? { pipeline } : {}) });
+      }
+      bindings.sort((a, b) => a.pin.ref.id.localeCompare(b.pin.ref.id));
+      return { action, bindings, status: bindings.some(binding => binding.readiness === 'ready') ? 'available' : bindings.length ? 'not_ready' : implementation ? 'binding_unavailable' : 'definition_only' };
+    });
+    // Page binding rows, not just action names: many providers of one action
+    // must not bypass the normal response and model-context bounds.
+    const rows = items.flatMap(item => item.bindings.length ? item.bindings.map(binding => ({ ...item, bindings: [binding] })) : [item]);
+    const snapshotDigest = digest({ owner, requestId: request.id, revision: request.revision, environment, release: graph.releaseRef, query: { ...query, limit: undefined }, items, ...(ranking?{ranking}: {}) });
+    let offset = 0;
+    if (cursor) {
+      let parsed: unknown; try { parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString()); } catch { throw new DomainError('INVALID_INPUT', 'Invalid action discovery cursor'); }
+      const page = parsed as { snapshot?: unknown; offset?: unknown };
+      if (!page || typeof page !== 'object' || page.snapshot !== snapshotDigest || !Number.isInteger(page.offset) || Number(page.offset) < 0 || Number(page.offset) > rows.length) throw new DomainError('CONFLICT', 'Action discovery cursor no longer matches the task, permissions or bindings');
+      offset = Number(page.offset);
+    }
+    const selectedRows = rows.slice(offset, offset + query.limit), hasMore = offset + selectedRows.length < rows.length;
+    const selected: ActionDiscoveryEntry[] = [];
+    for (const row of selectedRows) {
+      const existing = selected.find(item => item.action.id === row.action.id);
+      if (existing) existing.bindings.push(...row.bindings);
+      else selected.push({ ...row, bindings: [...row.bindings] });
+    }
+    return { ontologyRelease: structuredClone(graph.releaseRef), requestId: request.id, requestRevision: request.revision, items: structuredClone(selected),
+      ...(ranking?{retrieval:{mode:'semantic' as const,modelId:ranking.modelId,contextDigest:ranking.contextDigest,scores:ranking.scores.filter(s=>selected.some(item=>item.action.id===s.actionId))}}:{}),
+      page: { limit: query.limit, hasMore, ...(hasMore ? { cursor: Buffer.from(JSON.stringify({ snapshot: snapshotDigest, offset: offset + selectedRows.length })).toString('base64url') } : {}) },
+      authorization: 'per_action_required', allowedEffects: query.effects ?? ['local', 'read', 'object_write', ...(environment === 'sandbox' ? ['reserve', 'order', 'payment', 'change', 'cancel', 'refund'] as const : [])], snapshotDigest };
+  }

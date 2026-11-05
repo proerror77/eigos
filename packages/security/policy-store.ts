@@ -1,15 +1,17 @@
+import { assertReviewedModel } from './model-review.js';
+import {semanticFieldPolicyRef} from '../ontology/semantic-retrieval-kernel.js';
 import {taskContextFields,TASK_CONTEXT_BINDING_VERSION} from './task-context-contract.js';
 import { selfPersonRef, personalPreferenceRef, personalInputFields, personalContextInputSchema, isPersonalAction } from '../ontology/personal-context.js';
 import {taskContextMembers} from './task-context.js';
 import type { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import baselineJson from './baseline.json' with { type: 'json' };
 import { z } from 'zod';
 import { DomainError,type Job } from '../core/domain.js';
 import { digest } from '../core/delegation.js';
 import { nameSchema, objectRefSchema, type ObjectRef } from '../ontology/model.js';
 import type { ObjectBatch, ObjectSource, ObjectView } from '../ontology/object-store.js';
-import { POLICY_VERSION, SECURITY_CONTRACT, resourceDefaults, resourceRefSchema, securityEnvelopeSchema,grantRefSchema } from './contracts.js';
+import { POLICY_VERSION, SECURITY_CONTRACT, resourceRefSchema, securityEnvelopeSchema } from './contracts.js';
 import { SecurityError, type SecurityStore, type TaskDataGrant } from './store.js';
 import { authorizationScope, withAuthorization,withInference,withIntegrity, type AuthorizationScope } from './context.js';
 import { combineEnvelopes, requireChannel, type SecurityEnvelope, type Channel } from './envelope.js';
@@ -21,9 +23,15 @@ import type {PlanGrant} from '../ontology/actions.js';
 import {actionSources} from './component-authority.js';
 import {compatibleProjectedObject} from '../ontology/task-read-projection.js';
 import {DefinitionStore} from '../ontology/definition-store.js';
-import { SINGLE_READ_PREDECESSOR, PRIOR_GOAL_COVERAGE_FINGERPRINT } from '../ontology/single-read-kernel.js';
-import { SINGLE_READ_KERNEL_MODEL_REF, PAYMENT_COMMERCE_KERNEL_MODEL_REF } from '../ontology/seed-definition.js';
+import { PRIOR_GOAL_COVERAGE_FINGERPRINT } from '../ontology/single-read-kernel.js';
+import { SINGLE_READ_KERNEL_MODEL_REF, PAYMENT_COMMERCE_KERNEL_MODEL_REF, BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF } from '../ontology/seed-definition.js';
 import {assertProjectionOrigin,taskProjectionEvidence,type ProjectionOrigin} from './projection-origin.js';
+import { roleSchema, legacyRoleSchema, resourceVersion, roleAllows } from './resource-role.js';
+import { reviewedFieldPolicy } from './field-policy.js';
+import { sourceAuthorizationSchema, legacySourceAuthorizationSchema, storedSourceSchema, legacyStoredSourceSchema, sourceMatchesObservation } from './source-policy.js';
+import { restrictionsFitRecipient } from './field-restrictions.js';
+import {objectEnvelope,objectEnvelopeDependencies,type ObjectRestriction} from './object-envelope.js';
+export { sourceAuthorizationSchema } from './source-policy.js';
 import { consentExpirySchema, consentDeadline, type ConsentExpiry } from './consent-lifetime.js';
 
 // Count only direct audit writes and checked claim renewals on this connection.
@@ -31,22 +39,10 @@ import { consentExpirySchema, consentDeadline, type ConsentExpiry } from './cons
 // snapshot; every authority/time check remains in place.
 const readBookkeepingChanges = new WeakMap<DatabaseSync, number>();
 
-const id = z.string().min(1).max(200), instant = z.iso.datetime({ offset: true });
-const legacyRoleSchema = z.strictObject({ subjectKind: z.enum(['member', 'installation']), subjectId: z.uuid(),
-  resource: z.union([resourceRefSchema, z.strictObject({ kind: z.literal('namespace'), id, version: id })]),
-  role: z.enum(['Viewer', 'Editor', 'Owner']), executeActions: z.array(nameSchema).max(100).default([]),
-  invokeFunctions: z.array(nameSchema).max(100).default([]), expiresAt: instant });
-const roleSchema = legacyRoleSchema.extend({ expiresAt: consentExpirySchema });
-const legacySourceAuthorizationSchema = z.strictObject({ installationId: z.uuid(), bindingId: id, programId: id,
-  programDigest: z.string().regex(/^[a-f0-9]{64}$/), operations: z.array(id).min(1).max(100),
-  outputTypes: z.array(nameSchema).min(1).max(200), expiresAt: instant });
-export const sourceAuthorizationSchema = legacySourceAuthorizationSchema.extend({ expiresAt: consentExpirySchema });
-const legacyStoredSourceSchema=legacySourceAuthorizationSchema.extend({parentGrant:grantRefSchema,
-  // Operator-reviewed predecessor versions may explain existing observations.
-  // They never authorize dispatch or enter newly provisioned task outputs.
-  readbackVersions:z.array(z.strictObject({sourceBindingId:id,programDigest:z.string().regex(/^[a-f0-9]{64}$/)})).max(32).optional()});
-const storedSourceSchema = legacyStoredSourceSchema.extend({ expiresAt: consentExpirySchema });
-const baseline = JSON.parse(readFileSync(new URL('./baseline.json', import.meta.url), 'utf8')) as {
+const instant = z.iso.datetime({ offset: true });
+// JSON modules are shared objects; keep policy state private just as the former
+// file parse did, so another importer cannot mutate effective policy in place.
+const baseline = structuredClone(baselineJson) as {
   types: Record<string, { fingerprint: string; fields: Record<string, string> }>;
 };
 /** Exact reviewed additive contract transition, for the offline RollingGo installer.
@@ -72,8 +68,9 @@ function policyContract(model: SecurityStore['model']['ref'], fields: typeof bas
 }
 export function persistentConsentPolicyContracts(model: SecurityStore['model']) {
   const fields = Object.fromEntries(Object.entries(baseline.types).filter(([id]) => model.hasType(id)));
-  return { before: policyContract(model.ref, fields, projectionContract, model.hasType('RideEstimate')),
-    after: policyContract(model.ref, fields, projectionContract, model.hasType('RideEstimate'), true) };
+  const ref=semanticFieldPolicyRef(model);
+  return { before: policyContract(ref, fields, projectionContract, model.hasType('RideEstimate')),
+    after: policyContract(ref, fields, projectionContract, model.hasType('RideEstimate'), true) };
 }
 export function businessFactsPolicyContracts(model: SecurityStore['model']) {
   if (model.ref.version !== '24' || !model.hasType('RideEstimate') || !model.hasType('EventRegistration')) throw new Error('Expected the reviewed business-facts v24 kernel');
@@ -90,6 +87,14 @@ export function singleReadPolicyContracts(model: SecurityStore['model']) {
 export function paymentCommercePolicyContracts(model: SecurityStore['model'], persistentConsent = false) {
   if (!['27', '28'].includes(model.ref.version) || !model.hasType('PaymentCommerceReadObservation')) throw new Error('Expected the reviewed payment/commerce kernel or its description-only successor');
   return { before: policyContract(SINGLE_READ_KERNEL_MODEL_REF, baseline.types, projectionContract, true, persistentConsent), after: policyContract(model.ref, baseline.types, projectionContract, true, persistentConsent) };
+}
+/** Select only an exact already-reviewed policy contract. A runtime upgrade
+ * never converts a v27 policy into the descriptions-v28 policy implicitly. */
+export function reviewedKernelVersionForPolicy(policyDigest: string): '27' | '28' {
+  for (const ref of [PAYMENT_COMMERCE_KERNEL_MODEL_REF, BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF]) {
+    if ([false, true].some(persistent => policyContract(ref, baseline.types, projectionContract, true, persistent) === policyDigest)) return ref.version as '27' | '28';
+  }
+  throw new Error('The imported policy requires an explicit supported kernel review');
 }
 const refKey = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);
 export const TASK_PROJECTION_TYPES = ['GoalCoverage','OutcomeAssessment','ExecutionFeedback',...Object.keys(taskContextFields)];
@@ -109,20 +114,7 @@ export class SecurityPolicies {
    * Cache only immutable model identity; row, field and grant checks stay live. */
   assertModel(model: SecurityStore['model']): void {
     if (model === this.model || this.reviewedModels.has(model)) return;
-    // Reviewed v22 -> RollingGo-only v23 compatibility. Historical tasks keep
-    // their own model and action bindings; current data/source grants still gate reads.
-    if ((this.model.ref.digest === '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127' || ['24','25','26','27','28'].includes(this.model.ref.version))
-      && model.ref.id === this.model.ref.id && ['b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4', '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127', '496938a2cf4a6661acab90171d6c3988c890364dee7d4f62c3575b2e2c70d644', SINGLE_READ_PREDECESSOR, SINGLE_READ_KERNEL_MODEL_REF.digest, PAYMENT_COMMERCE_KERNEL_MODEL_REF.digest].includes(model.ref.digest)
-      && model.definitionSnapshot().objects.every(type => this.model.hasType(type.id) && (model.fingerprint(type.id) === this.model.fingerprint(type.id)
-        || this.model.hasType('Person') && type.id === 'RequestFact' && model.fingerprint(type.id) === 'aca8fe3bad913ec40620004cfaf77e1620dbd40d6f59d92a774fc90aca9e1ace'
-        || ['26', '27', '28'].includes(this.model.ref.version) && type.id === 'GoalCoverage' && model.fingerprint(type.id) === PRIOR_GOAL_COVERAGE_FINGERPRINT))
-      && model.definitionSnapshot().links.every(link => digest(link) === digest(this.model.link(link.id)))
-      && model.definitionSnapshot().functions.every(fn => digest(fn) === digest(this.model.function(fn.id)))
-      && model.actionIds().every(id => digest(model.actionImplementation(id) ?? null) === digest(this.model.actionImplementation(id) ?? null))) {
-      this.reviewedModels.add(model); return;
-    }
-    if (model.ref.id !== this.model.ref.id || model.ref.digest !== this.model.ref.digest
-      || model.actionIds().some(id => digest(model.actionImplementation(id) ?? null) !== digest(this.model.actionImplementation(id) ?? null))) throw new SecurityError('POLICY_CHANGED');
+    assertReviewedModel(this.model, model);
     this.reviewedModels.add(model);
   }
   private roleCache=new WeakMap<AuthorizationScope,{generation:number|undefined;roles:z.infer<typeof roleSchema>[]}>();
@@ -204,10 +196,7 @@ export class SecurityPolicies {
     return {allowed:true,candidateDigest:digest(args.candidate),resource:args.resource,policyRevision:expectedRevision,published:false,declassificationAllowed:false};
   }
   resourceVersion(kind: string, id: string): string {
-    if (kind === 'objectType') return this.model.object(id).version;
-    if (kind === 'interface') return digest(this.model.describeType(id));
-    if (kind === 'function') return this.model.function(id).version;
-    return digest(kind === 'actionType' ? this.model.action(id) : this.model.link(id));
+    return resourceVersion(this.model,kind,id);
   }
   resourceAllowed(scope: AuthorizationScope, kind: string, id: string, permission = 'resource.view'): boolean {
     scope.assertCurrent();
@@ -220,13 +209,7 @@ export class SecurityPolicies {
   }
   private roles(memberId:string,installationId:string){return this.db.prepare('SELECT body FROM security_roles WHERE subject_id IN (?,?)').all(memberId,installationId).map(row=>(this.persistentConsentEnabled?roleSchema:legacyRoleSchema).parse(JSON.parse(String(row.body))));}
   private roleAllows(roles:z.infer<typeof roleSchema>[],memberId:string,installationId:string,kind:string,id:string,permission:string) {
-    let version: string; try { version = this.resourceVersion(kind, id); } catch { return false; }
-    return roles.some(value => {
-      const ref = value.resource;
-      if (consentDeadline(value.expiresAt) <= this.security.now() || (value.subjectKind === 'member' ? value.subjectId !== memberId : value.subjectId !== installationId)) return false;
-      const matches = ref.kind === 'namespace' ? ref.id === this.model.ref.id && ref.version === this.model.ref.digest : ref.kind === kind && ref.id === id && ref.version === version;
-      return matches && (permission === 'action.execute' ? value.executeActions.includes(id) : permission === 'function.invoke' ? value.invokeFunctions.includes(id) : (resourceDefaults[value.role] as readonly string[]).includes(permission));
-    });
+    return roleAllows(this.model,roles,memberId,installationId,kind,id,permission,()=>this.security.now());
   }
   requireResource(scope: AuthorizationScope, kind: string, id: string, permission = 'resource.view') {
     if (!this.resourceAllowed(scope, kind, id, permission)) throw new SecurityError('AUTHORIZATION_REQUIRED');
@@ -307,11 +290,7 @@ export class SecurityPolicies {
     return 'ALLOWED';
   }
   fieldPolicy(type: string, field: string) {
-    const value = baseline.types[type];
-    if (!value || value.fingerprint !== this.model.fingerprint(type)) return 'internal_only';
-    if(Object.hasOwn(projectionFields(type),field)) return 'task_sensitive';
-    if (!value.fields[field] || this.model.properties(type)[field]?.restricted) return 'internal_only';
-    return value.fields[field]!;
+    return reviewedFieldPolicy(this.model,type,field);
   }
   fields(type:string) {return {...this.model.properties(type),...projectionFields(type)};}
   value(type:string,field:string,properties:Record<string,unknown>) {
@@ -339,22 +318,15 @@ export class SecurityPolicies {
   }
   integrityAllowed(type:string,field:string,allowed:string[]) {return integrityField(type,field,allowed);}
   envelope(owner: string, ref: ObjectRef, revision: number, fields: string[], properties: Record<string, unknown>, channels: Channel[]): SecurityEnvelope {
-    const policies = fields.map(f => this.fieldPolicy(ref.type, f));
-    const dependencies=fields.filter(f=>(ref.type!=='ServiceRequest' || !['progress','projectionState','currentAssessment','requestedOutcome'].includes(f)) && this.fieldPolicy(ref.type,f)!=='derived_from_inputs').sort();
-    const result:SecurityEnvelope={ version: SECURITY_CONTRACT, ownerKey: owner, policyVersion: POLICY_VERSION, requiredMarkings: policies.includes('task_sensitive') ? ['member_private', 'personal_data'] : ['member_private'],
-      classification: policies.includes('internal_only') ? 'internal' : policies.includes('task_sensitive') ? 'sensitive' : 'private', channels,
-      lineage: [{ object: ref, revision, fields: dependencies, contentDigest: digest(Object.fromEntries(dependencies.map(f => [f, this.value(ref.type,f,properties)]))) }], lineageComplete: true };
-    result.requiredMarkings=[...new Set([...result.requiredMarkings,...fields.flatMap(field=>projectionMarkings(ref.type,field))])];
-    if(fields.some(field=>responseOnlyProjection(ref.type,field)))result.channels=result.channels.filter(channel=>channel!=='registered_model');
     const scope=authorizationScope(),key=JSON.stringify([owner,ref.type,ref.id]);
     const generation=scope?.readGeneration?.();let cached=scope?this.labelCache.get(scope):undefined;
     if(scope&&(!cached||cached.generation!==generation)){cached={generation,labels:new Map()};this.labelCache.set(scope,cached);}
     const cache=cached?.labels;
     let records=cache?.get(key);
     if(!records){records=this.db.prepare('SELECT field,body FROM security_labels WHERE owner=? AND type=? AND object_id=?').all(owner,ref.type,ref.id).map(row=>({field:String(row.field),body:JSON.parse(String(row.body))}));cache?.set(key,records);}
-    const policyFields=new Set([...fields,...fields.flatMap(field=>projectionInputs(ref.type,field))]);
-    const labels=records.filter(row=>row.field==='*' || policyFields.has(row.field)).map(row=>({...result,...row.body} as SecurityEnvelope));
-    return labels.length?combineEnvelopes([result,...labels]):result;
+    return objectEnvelope({owner,ref,revision,fields,channels,policy:field=>this.fieldPolicy(ref.type,field),
+      values:Object.fromEntries(objectEnvelopeDependencies(ref,fields,field=>this.fieldPolicy(ref.type,field)).map(field=>[field,this.value(ref.type,field,properties)])),
+      labels:records.map(row=>({field:row.field,...row.body} as ObjectRestriction))});
   }
   bind(grant: TaskDataGrant, ref: ObjectRef, fields: string[], sourceBindingId: string, evidence?:SecurityEnvelope|(()=>SecurityEnvelope), sourceObservation?: SourceObservationOrigin) {
     if (sourceObservation) {
@@ -640,7 +612,7 @@ export class SecurityPolicies {
       binding.fields=binding.fields.filter(field=>{
         if(!allowed.includes(field) || this.fieldPolicy(ref.type,field)==='internal_only')return false;
         const restrictions=[this.envelope(scope.actor.ownerKey,ref,binding.revision,[field],{},scope.grant!.channels),...(binding.inputEnvelope?[binding.inputEnvelope]:[])];
-        return restrictions.every(e=>this.qualified(e,clearance) && (scope.actor.actorKind!=='agent' || e.channels.includes('agent_response') && !!clearance?.channels.includes('agent_response')));
+        return restrictionsFitRecipient(restrictions,clearance,scope.actor.actorKind==='agent');
       });
       const definition=this.model.object(ref.type);
       if(!binding.fields.includes(definition.primaryKey) || !binding.fields.includes(definition.titleKey))return;
@@ -662,9 +634,7 @@ export class SecurityPolicies {
       } else if(!['task_submission','member_asset'].includes(binding.sourceBindingId)) {
         const row=this.db.prepare('SELECT body FROM security_object_origins WHERE owner=? AND type=? AND object_id=? AND object_revision=?').get(scope.actor.ownerKey,ref.type,ref.id,binding.revision);
         const origin=binding.sourceObservation ?? (row?JSON.parse(String(row.body)) as SourceObservationOrigin:undefined);
-        if(!origin || origin.sourceBindingId!==binding.sourceBindingId || !sources.some(s=>s.programId===origin.programId && s.outputTypes.includes(ref.type)
-          && (s.bindingId===origin.sourceBindingId && s.programDigest===origin.programDigest
-            || s.readbackVersions?.some(version=>version.sourceBindingId===origin.sourceBindingId && version.programDigest===origin.programDigest))))return;
+        if(!origin || origin.sourceBindingId!==binding.sourceBindingId || !sourceMatchesObservation(sources,origin,ref.type))return;
       }
       // Apply dependency visibility before filtering/counting rows. Otherwise a
       // WHERE miss could reveal a bit about data whose inputs were revoked.
@@ -921,10 +891,6 @@ export class SecurityPolicies {
     const value=row?JSON.parse(String(row.body)) as {classification:'private'|'sensitive';markings:SecurityEnvelope['requiredMarkings'];channels:Channel[];expiresAt:ConsentExpiry}:undefined;
     if (value) this.assertConsentExpiry(value.expiresAt);
     return value && consentDeadline(value.expiresAt)>this.security.now()?value:undefined;
-  }
-  private qualified(envelope:SecurityEnvelope,clearance:ReturnType<SecurityPolicies['recipient']>):boolean {
-    const rank={private:0,sensitive:1,internal:2};
-    return !!clearance && rank[envelope.classification]<=rank[clearance.classification] && envelope.requiredMarkings.every(m=>clearance.markings.includes(m));
   }
   /** Trusted policy management only. This operation can only add restrictions;
    * removing a marking or lowering a class has no ordinary API. */

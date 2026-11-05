@@ -1,3 +1,4 @@
+import type { ProjectionMetadata } from '../../ontology/graph-program.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { objectResultProjection } from '../../core/composed-actions.js';
@@ -75,7 +76,7 @@ export class PaymentCommerceReadProgram implements AgentProgram {
     if (!this.actionIds.includes(action)) fail('Unregistered provider read action');
     return commerceReadActionSchema;
   }
-  definition(graph: OntologyObjectStore, action: string) {
+  definition(graph: ProjectionMetadata, action: string) {
     this.schema(action);
     const current = graph.model.action(action), expected = commerceReadActions.find(value => value.id === action)!;
     if (!equal(current.read, expected.read)) fail('Provider Ontology binding changed');

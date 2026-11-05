@@ -1,0 +1,19 @@
+{
+  // Copy into an ignored private config and adjust main relative to its new location.
+  // Keep the database password in Hyperdrive, never in this file.
+  "name": "eigos-relay-example",
+  "main": "cloudflare.ts",
+  "compatibility_date": "2026-10-02",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "workers_dev": true,
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
+  "hyperdrive": [{ "binding": "RELAY_DATABASE", "id": "REPLACE_WITH_HYPERDRIVE_ID" }],
+  "vars": {
+    "RELAY_SCHEMA": "eigos_relay_example",
+    "EIGOS_RELAY_PUBLIC_URL": "https://relay.example.com",
+    "EIGOS_RELAY_OAUTH_ISSUER": "https://issuer.example.com",
+    "EIGOS_RELAY_OAUTH_AUDIENCE": "https://relay.example.com",
+    "EIGOS_RELAY_OAUTH_JWKS_URL": "https://issuer.example.com/.well-known/jwks.json",
+    "EIGOS_RELAY_CLIENT_IDS": "REPLACE_WITH_APPROVED_CLIENT_IDS"
+  }
+}

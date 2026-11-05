@@ -77,6 +77,7 @@ export const resumeTaskSchema = z.object({ taskId: taskIdSchema, requestId: requ
 export const ontologySubmitSchema = submitSchema;
 export type SubmitInput = z.infer<typeof submitSchema>;
 export type ReplyInput = z.infer<typeof replySchema>;
+export type ResumeInput = z.infer<typeof resumeTaskSchema>;
 
 export type JobState = 'submitted' | 'auth-required' | 'rejected' | 'working' | 'paused' | 'input-required' | 'completed' | 'canceled' | 'failed';
 export interface JobMessage {

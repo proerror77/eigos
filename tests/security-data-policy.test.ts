@@ -11,10 +11,21 @@ import { AuthorizedOntologyView } from '../packages/security/view.js';
 import { SECURITY_CONTRACT } from '../packages/security/contracts.js';
 import type { Principal } from '../packages/core/domain.js';
 import {syntheticOntology} from './fixtures/ontology-objects.js';
+import baselineJson from '../packages/security/baseline.json' with { type: 'json' };
 import {authorizationScope,withAuthorization} from '../packages/security/context.js';
 import {SecurityStore} from '../packages/security/store.js';
 import {combineEnvelopes} from '../packages/security/envelope.js';
 import { OntologyPlanningSession } from '../packages/coordinator/planning-session.js';
+
+test('shared JSON module changes cannot mutate the running security baseline', () => {
+  const f=securityFixture(), fields=baselineJson.types.ServiceRequest.fields, original=fields.originalGoal;
+  try {
+    const before=f.jobs.security.policies.fieldPolicy('ServiceRequest','originalGoal');
+    assert.notEqual(before,'internal_only');
+    fields.originalGoal='internal_only';
+    assert.equal(f.jobs.security.policies.fieldPolicy('ServiceRequest','originalGoal'),before);
+  } finally {fields.originalGoal=original;f.close();}
+});
 
 function fixture(extraTypes:string[]=[]) {
   const f = securityFixture(), rawDb = new DatabaseSync(f.database), raw = new OntologyObjectStore(rawDb,businessModel,Date.now,undefined,{skipLegacyMigration:true}), a = f.installation('A'), b = f.installation('B');
