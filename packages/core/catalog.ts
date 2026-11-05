@@ -102,7 +102,7 @@ export class ExecutionCatalog {
     private readonly dynamicFactory?: (graph: ProjectionMetadata, owner: string) => AgentProgram | undefined, security?: SecurityStore) {
     if(security) this.secureWith(security);
     const composites = (['live', 'sandbox'] as const).flatMap(environment => {
-      const eligible = programs.map(program=>({program,capability:program.capability()})).filter(({program:p,capability:c})=>!p.callerManagedActions && digest([...p.actionIds].sort())===digest(c.actions.map(a=>a.ref.id).sort()) && !p.ref.id.startsWith('services.compose.') && p.ref.id!=='eigos.goal' && ['local',environment].includes(c.environment??'local'));
+      const eligible = programs.map(program=>({program,capability:program.capability()})).filter(({program:p,capability:c})=>p.actionIds.length>0 && !p.callerManagedActions && digest([...p.actionIds].sort())===digest(c.actions.map(a=>a.ref.id).sort()) && !p.ref.id.startsWith('services.compose.') && p.ref.id!=='eigos.goal' && ['local',environment].includes(c.environment??'local'));
       // Explicit orchestration selects capability refs, whereas native goals
       // select exact provider pins. Ambiguous capability families stay native.
       const counts=new Map<string,number>();for(const {capability} of eligible)counts.set(key(capability.ref),(counts.get(key(capability.ref))??0)+1);

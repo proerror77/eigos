@@ -3408,7 +3408,7 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "62917ef6a143de75ff805efb4d5985177196a19d4bb0a1f82c4512dde42c64e3",
+      "sourceDigest": "c0d2cc7806c33ad08afc3f15d9f7f36658228f39666e16d5b1bb93559545143f",
       "channels": [
         "authorization_control"
       ],
@@ -3588,7 +3588,7 @@
     {
       "id": "execution-catalog",
       "file": "packages/core/catalog.ts",
-      "sourceDigest": "fd0bb48f25ea9dfb68cdd3b0123d608025ddafb77e8eff4cbed1c293d5f3c26a",
+      "sourceDigest": "0088eb62297f3ce0e18200d297e281f9cdfa20af3f7b6b34b6bba41acf1d5b44",
       "channels": [
         "worker"
       ],
@@ -7191,7 +7191,7 @@
     {
       "id": "postgres-host-runtime",
       "file": "packages/postgres/host-runtime.ts",
-      "sourceDigest": "730e6151a9b59ec68cc06c5257bcb58361718bc65bb20c4b087c4878460501e8",
+      "sourceDigest": "0347d6958993b7fe76e2b639ac3fbe270033b997a8a439a2f0e2ab4c1c007ca2",
       "channels": [
         "internal"
       ],
@@ -7648,7 +7648,7 @@
     {
       "id": "postgres-embedding-schema",
       "file": "packages/postgres/embedding-schema.ts",
-      "sourceDigest": "d25bff48656f8a543620d40d9b7978baafd567313cfc46c614051de9ae9363a2",
+      "sourceDigest": "b0b23167390c9c00ae4b90e8c809590769917b719b4a9d4f76409c6f49739530",
       "channels": [
         "postgres",
         "authorization_control"
@@ -7940,7 +7940,7 @@
     {
       "id": "ride-source-packages-capabilities-rides-program",
       "file": "packages/capabilities/rides/program.ts",
-      "sourceDigest": "118ae0290b65599a25731f0cbf8c4c940f3c7deb733161f338f06f0305f7f58f",
+      "sourceDigest": "3d8ad0207e9c92c0e9a1df86b7032708abde3c79c6ca67e379d32713492f5380",
       "channels": [
         "private_source",
         "authorization_control",
@@ -8045,7 +8045,7 @@
     {
       "id": "ride-source-packages-postgres-ride-sources-upgrade",
       "file": "packages/postgres/ride-sources-upgrade.ts",
-      "sourceDigest": "663944aaca66eb88a1da3187331be2bb35e56744aefc9135598ac80d1f9e067b",
+      "sourceDigest": "d4deb798ed0722c67dbc5d73d2538dbc8f7751cb2591d5460f3f110ef5bfd7dd",
       "channels": [
         "private_source",
         "authorization_control",
@@ -8070,6 +8070,19 @@
       "content": "Ride estimate dispatch, source receipt, metadata or explicit offline upgrade",
       "currentControl": "Code-defined default-disabled estimates; existing owner/source/claim/Pipeline checks remain mandatory. No booking or payment.",
       "targetControl": "Retain actual persisted source proof, current authorization and immutable release/policy transitions; credentials remain on the PA.",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-policy-successor-deployment",
+      "file": "packages/deployment/ride-policy-successor.ts",
+      "sourceDigest": "725f42567a28a12c511fb01a1404838a7ed6aacef9635f08162e04846935e694",
+      "channels": [
+        "postgres",
+        "authorization_control"
+      ],
+      "content": "Protected administrator policy successor tied to unchanged original primary activation and exact immutable ride release lineage",
+      "currentControl": "Read-only original and successor protected receipts, matching publication event, exact current policy and reviewed model; opaque verification result admits no unverified policy override. No credentials or grants created.",
+      "targetControl": "Retain the original activation, connection and vector credential chain and all physical schema/ACL checks across an explicit atomic offline upgrade.",
       "stage": "S5"
     }
   ]

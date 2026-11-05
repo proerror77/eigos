@@ -45,6 +45,7 @@ const schema = z.object({
   EIGOS_SEMANTIC_MODEL_DIR: z.string().refine(isAbsolute).optional(),
   EIGOS_SEMANTIC_SCHEMA: z.string().regex(/^eigos_semantic(?:_[a-z0-9]{1,32})?$/).optional(),
   EIGOS_SEMANTIC_READER_USER: z.string().regex(/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,199}$/).optional(),
+  EIGOS_POSTGRES_RIDE_POLICY_FILE:z.string().optional(),
   EIGOS_POSTGRES_VECTOR_FEATURE_FILE: z.string().optional(),
   EIGOS_TASK_RELAY_FILE: z.string().optional(),
   EIGOS_UBER_RIDES_ENABLED:z.enum(['false','true']).default('false'),

@@ -46,6 +46,10 @@ SQLite `createExecutionCatalog` 和 PostgreSQL `PostgresReadProgramRegistry` 均
 
 SQLite `upgradeRideSources` 只接受精确 v28／v29 前驱、预期 active release／generation、policy digest／revision，并在同一 business transaction 内发布、建立 lineage、激活和更新策略。默认 dry-run。活动 manager／claim 或未清理 fence 会阻止应用。原有 namespace role 只保留已存在且定义未变的动作／函数，绝不新增供应商执行权限、延长有效期或改变来源授权。启动仅识别已一致安装的 v30 本体与策略，不自动迁移。
 
-PostgreSQL `upgradePostgresRideSources` 使用现有序列化 business transaction、实际 schema owner、停止状态和精确前驱校验，在同一事务更新不可变 release、namespace CAS 和 policy CAS，并写不可变 operation receipt。无 DDL、无 GRANT、无启动调用。若 COMMIT 结果未知，现有事务器会丢弃连接；应使用新 client 调用只读 `readPostgresRideUpgrade` 比对真实 receipt、active release 和 policy，返回 applied／not_applied／inconsistent，不能盲目重试。
+PostgreSQL `upgradePostgresRideSources` 使用现有序列化 business transaction、实际 schema owner、停止状态和精确前驱校验，在同一事务更新不可变 release、namespace CAS 和 policy CAS，并写不可变 operation receipt。调用必须提供原始 `baseBinding`；已有向量扩展时还须提供原始 `vectorFeature`，不可省略。升级把同一回执原子写入既有、运行角色只读的 `eigos_runtime_activation` 表，绑定原 activation、schema、authority、前后策略和发布 lineage。无 DDL、无 GRANT、无启动调用。若 COMMIT 结果未知，现有事务器会丢弃连接；应使用新 client 调用只读 `readPostgresRideUpgrade` 比对真实 receipt、active release 和 policy，返回 applied／not_applied／inconsistent，不能盲目重试。
 
 SQLite 原子升级及故障回滚、同步／异步 GraphProgram 语义使用合成夹具验证。异步包装 SQLite 不是 PostgreSQL 引擎测试；实际 PG 驱动、权限、故障提交和 Relay 网络的验证须分别记录终态，不能因类型检查成功而宣称已通过。
+
+升级后保留原 PostgreSQL binding 文件及其 policyDigest、handoff、activation 和 Relay／向量凭据绑定不变。另以私有 `EIGOS_POSTGRES_RIDE_POLICY_FILE` 提供返回的 `activationProof`（严格 `{receipt, sha256}`）。启动在只读快照对照数据库受保护回执、原 activation、发布 lineage 和当前策略，验证后才向执行侧提供新的 policyDigest；仅写配置或普通事件不能绕过验证。已装 v29 向量的升级保留原 schema／ACL／功能回执及检索内核，继续执行完整物理校验；新策略不授予任何供应商权限。
+
+`ride-policy-successor.test.ts` 是只读 SQL 合成响应契约，验证原绑定不变、后继证明、异源／篡改回执与精确 v30 向量发布的拒绝条件；它不是实际 PostgreSQL 启动或 ACL 证明。`ride-program.test.ts` 验证两供应商经过真实共享任务与 Coordinator 的硬起终点要求，另比较同步／awaited GraphProgram 的路线验收。`facts.locations` 仅证明已核验原报价查询的端点，不证明实际接送。

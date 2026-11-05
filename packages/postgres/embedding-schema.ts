@@ -1,7 +1,7 @@
 import type {Client} from 'pg';
 import {digest} from '../core/delegation.js';
 import {z} from 'zod';
-import {stagedKernelComponents,type StagedKernelBuilder} from '../ontology/seed-definition.js';
+import {stagedKernelComponents,RIDE_SOURCES_KERNEL_MODEL_REF,type StagedKernelBuilder} from '../ontology/seed-definition.js';
 
 export const embeddingTableNames=Object.freeze(['ontology_embedding_batches','ontology_object_embeddings','eigos_runtime_schema_extensions'] as const);
 export const embeddingRoutineNames=Object.freeze(['eigos_vector_from_values','eigos_vector_cosine_values','eigos_immutable_embedding'] as const);
@@ -29,7 +29,7 @@ export const embeddingSchemaContractDigest=digest(POSTGRES_EMBEDDING_SCHEMA_CONT
 export const quoteEmbeddingIdentifier=(value:string)=>`"${value.replaceAll('"','""')}"`;
 export async function assertPostgresSemanticRelease(client:Client,schema:string,builder:StagedKernelBuilder,expectedGeneration?:number){
   if(client.getTransactionStatus()!=='T'||client.pipeline!==false||!/^eigos_business_[a-z0-9_]{1,40}$/.test(schema))throw new Error('Semantic release inspection requires the owned transaction snapshot');
-  const kernel=stagedKernelComponents(builder);if(kernel.model.ref.version!=='29')throw new Error('Task vectors require the actual prepared semantic kernel');const q=quoteEmbeddingIdentifier(schema);
+  const kernel=stagedKernelComponents(builder);if(kernel.model.ref.version!=='29'&&(kernel.model.ref.version!=='30'||digest(kernel.model.ref)!==digest(RIDE_SOURCES_KERNEL_MODEL_REF)))throw new Error('Task vectors require the actual prepared semantic kernel');const q=quoteEmbeddingIdentifier(schema);
   const result=await client.query(`SELECT n.active_release_id,n.generation,r.digest,r.model_digest,CASE WHEN octet_length(r.body)<=8388608 THEN r.body END AS body
     FROM ${q}.ontology_namespaces n JOIN ${q}.ontology_definition_releases r ON r.id=n.active_release_id WHERE n.id=$1`,[kernel.model.ref.id]);
   const row=result.rows[0],generation=Number(row?.generation);
