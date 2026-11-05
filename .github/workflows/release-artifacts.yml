@@ -168,7 +168,7 @@ jobs:
         run: |
           [[ "$IMAGE" =~ @sha256:[a-f0-9]{64}$ ]]
           docker pull "$IMAGE"
-          docker run --rm --network none --read-only --entrypoint node "$IMAGE" scripts/release-artifacts.mjs verify-image --root /app --source-sha "$SOURCE_SHA" --backend "$BACKEND" > "$RUNNER_TEMP/image-payload.json"
+          docker run --rm --network none --read-only --entrypoint node --mount "type=bind,src=$PWD/scripts/release-artifacts.mjs,dst=/app/scripts/release-artifacts.mjs,readonly" "$IMAGE" scripts/release-artifacts.mjs verify-image --root /app --source-sha "$SOURCE_SHA" --backend "$BACKEND" > "$RUNNER_TEMP/image-payload.json"
       - name: Verify the published native Worker by its returned immutable digest
         if: inputs.backend == 'harness' && matrix.role == 'worker'
         env:
