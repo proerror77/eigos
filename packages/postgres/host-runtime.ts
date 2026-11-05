@@ -1,3 +1,5 @@
+import {readRidePolicyProof,assertedRideRuntimePolicy,verifyRidePolicyProof,verifiedRideRuntimePolicy,type RidePolicyProof,type VerifiedRidePolicy} from '../deployment/ride-policy-successor.js';
+import {rideConnectionsFromConfig} from '../capabilities/rides/connection.js';
 import {assertPostgresProjectionEpochBase} from './projection-epoch-schema.js';
 import pg,{type Client} from 'pg';
 import type {Config} from '../core/config.js';
@@ -82,11 +84,11 @@ export function readPostgresDidiHostConfiguration(config:Config){
  * and registry; no publisher, durable node, wrapping key or model is created. */
 export function createPostgresProgramTransport(config:Config,options:{database:PostgresDatabase;policyDigest:string;authority:{id:string;revision:number;digest:string};builder?:StagedKernelBuilder;role:'gateway'|'worker'}){
   if(!config.authority||config.authority.id!==options.authority.id||runtimeAuthorityDigest(config.authority)!==options.authority.digest||config.authority.revision!==options.authority.revision||config.PUBLIC_URL!==config.authority.canonicalOrigin)throw new Error('Program transport requires the same original host authority');
-  const selected=readPostgresDidiHostConfiguration(config),account=selected?new PostgresDidiAccount(selected.binding,selected.owner,selected.descriptor):undefined;
+  const rides=rideConnectionsFromConfig(config),selected=readPostgresDidiHostConfiguration(config),account=selected?new PostgresDidiAccount(selected.binding,selected.owner,selected.descriptor):undefined;
   const opts={database:options.database,policyDigest:options.policyDigest,authorityId:options.authority.id,gatewayOrigin:config.PUBLIC_URL,builder:options.builder,didiAccount:account};
   const taskRelay=options.role==='gateway'&&config.EIGOS_TASK_RELAY_FILE?new PostgresTaskRelay(opts):undefined;
-  const reads=selected?(taskRelay?.reads??new PostgresRelayReadAuthority(opts)):undefined;
-  const registry=new PostgresReadProgramRegistry(options.policyDigest,{documentEnabled:config.EIGOS_EXECUTOR!=='disabled',...(selected?{didi:{kind:'relay' as const,binding:selected.binding,owner:selected.owner,account:account!,reads:reads!,peerId:selected.peerId,authority:{id:options.authority.id,gatewayOrigin:config.PUBLIC_URL}}}:{})});
+  const reads=(selected||Object.keys(rides).length)?(taskRelay?.reads??new PostgresRelayReadAuthority(opts)):undefined;
+  const registry=new PostgresReadProgramRegistry(options.policyDigest,{rides:Object.fromEntries(Object.entries(rides).map(([provider,value])=>[provider,{...value,reads:reads!,authority:{id:options.authority.id,gatewayOrigin:config.PUBLIC_URL},kernelReady:options.builder?options.builder.trusted().model.hasType('RideSourceTask'):false}])),documentEnabled:config.EIGOS_EXECUTOR!=='disabled',...(selected?{didi:{kind:'relay' as const,binding:selected.binding,owner:selected.owner,account:account!,reads:reads!,peerId:selected.peerId,authority:{id:options.authority.id,gatewayOrigin:config.PUBLIC_URL}}}:{})});
   return {role:options.role,database:options.database,registry,taskRelay,reads,account,selected};
 }
 const runtimeContract=structuredClone(POSTGRES_RUNTIME_SCHEMA_CONTRACT),runtimeContractDigest=digest(runtimeContract);
@@ -147,8 +149,10 @@ export async function checkActivationSchema(client:Client,schema:string,runtimeR
 }
 /** No activation table is created here. Missing records, schema upgrade or
  * reviewed source-fence material leave formal startup explicitly not ready. */
-export async function verifyPostgresPrimaryActivation(client:Client,binding:PostgresBinding,vectorFeature?:PostgresVectorFeature,builder?:StagedKernelBuilder):Promise<void>{
+export async function verifyPostgresPrimaryActivation(client:Client,binding:PostgresBinding,vectorFeature?:PostgresVectorFeature,builder?:StagedKernelBuilder,ridePolicy?:RidePolicyProof):Promise<void>{
   if(!binding.handoff||!binding.activation)throw new Error('PostgreSQL primary is not ready: reviewed activation is absent');
+  // Cold trusted policy compilation must finish before the bounded DB snapshot.
+  if(ridePolicy)assertedRideRuntimePolicy(binding,ridePolicy);
   const handoff=postgresHandoffSchema.parse(readPinnedPostgresJson(binding.handoff,65536));
   const sourceFence=readPinnedPostgresJson(handoff.sourceFence,1048576),businessVerification=readPinnedPostgresJson(handoff.businessVerification),identityAudit=readPinnedPostgresJson(handoff.identityAudit,1048576);
   assertTls(client);if(client.getTransactionStatus()!=='I'||client.pipeline!==false)throw new Error('Primary activation verification requires an idle client');
@@ -156,7 +160,7 @@ export async function verifyPostgresPrimaryActivation(client:Client,binding:Post
   try{
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');opened=true;
     await client.query("SET LOCAL statement_timeout='10000ms'; SET LOCAL lock_timeout='5000ms'; SET LOCAL idle_in_transaction_session_timeout='10000ms'");
-    await checkActivationSchema(client,binding.business.schema);const q=`"${binding.business.schema}"`;
+    await checkActivationSchema(client,binding.business.schema);if(ridePolicy){if(!builder)throw new Error('Prepared reviewed ride kernel required');await verifyRidePolicyProof(client,binding,ridePolicy,builder);if(ridePolicy.receipt.vectorFeatureDigest&&(!vectorFeature||digest(vectorFeature)!==ridePolicy.receipt.vectorFeatureDigest))throw new Error('Original vector feature cannot be dropped or replaced');}const q=`"${binding.business.schema}"`;
     const a=await client.query(`SELECT CASE WHEN octet_length(body::text)<=1048576 THEN body END AS body FROM ${q}.eigos_runtime_activation WHERE id=$1 LIMIT 2`,[binding.activation.id]);
     const s=await client.query(`SELECT CASE WHEN octet_length(body::text)<=1048576 THEN body END AS body FROM ${q}.eigos_runtime_schema_receipt WHERE slot=1 LIMIT 2`);
     const imported=await client.query(`SELECT CASE WHEN octet_length(body::text)<=8388608 THEN body END AS body FROM ${q}.eigos_migration_receipt WHERE slot=1 LIMIT 2`);
@@ -194,7 +198,7 @@ export async function verifyPostgresPrimaryActivation(client:Client,binding:Post
 
 /** Pure verification of the immutable import identities, never row equivalence,
  * writer fencing or activation. Current grants/data may advance after import. */
-export function assertPostgresImportReceipts(binding:PostgresBinding,input:{business:unknown;membership:unknown;authority:{id:unknown;revision:unknown;configuration_digest:unknown;body?:unknown};policyDigest:unknown}):void{
+export function assertPostgresImportReceipts(binding:PostgresBinding,input:{business:unknown;membership:unknown;authority:{id:unknown;revision:unknown;configuration_digest:unknown;body?:unknown};policyDigest:unknown},successor?:VerifiedRidePolicy):void{
   const business=businessReceipt.parse(input.business),membership=membershipReceipt.parse(input.membership),raw=input.authority.body;
   const authority=raw===undefined?undefined:runtimeAuthoritySchema.parse(typeof raw==='string'?JSON.parse(raw):raw);
   if(business.sourceFileDigest!==binding.business.sourceFileDigest||business.schemaDigest!==binding.business.schemaDigest||business.authorityDigest!==binding.sourceAuthority.digest||business.policyDigest!==binding.business.importPolicyDigest
@@ -202,7 +206,7 @@ export function assertPostgresImportReceipts(binding:PostgresBinding,input:{busi
   if(new Set(business.tables.map(table=>table.name)).size!==business.tables.length||new Set(membership.tables.map(table=>table.table)).size!==6
     ||[...membership.tables.map(table=>table.table)].sort().join(',')!=='agent_access_tokens,agent_registrations,member_connections,member_invitations,member_sessions,members')throw new Error('PostgreSQL import table identities are invalid');
   if(input.authority.id!==binding.authority.id||Number(input.authority.revision)!==binding.authority.revision||input.authority.configuration_digest!==binding.authority.digest
-    ||authority&&(authority.id!==binding.authority.id||authority.revision!==binding.authority.revision||runtimeAuthorityDigest(authority)!==binding.authority.digest)||input.policyDigest!==binding.policyDigest)throw new Error('PostgreSQL target authority or policy differs from the reviewed binding');
+    ||authority&&(authority.id!==binding.authority.id||authority.revision!==binding.authority.revision||runtimeAuthorityDigest(authority)!==binding.authority.digest)||input.policyDigest!==verifiedRideRuntimePolicy(binding,successor))throw new Error('PostgreSQL target authority or policy differs from the reviewed binding');
 }
 function assertTls(client:Client){
   const connection:unknown=Reflect.get(client,'connection'),stream=connection&&typeof connection==='object'?Reflect.get(connection,'stream'):undefined;
@@ -210,9 +214,10 @@ function assertTls(client:Client){
 }
 /** Only read-only SQL over a request-owned idle client. Never initializes an
  * authority, imports data, upgrades policy or writes an activation record. */
-export async function preflightPostgresBinding(client:Client,binding:PostgresBinding){
+export async function preflightPostgresBinding(client:Client,binding:PostgresBinding,ridePolicy?:RidePolicyProof,builder?:StagedKernelBuilder){
   assertTls(client);
   if(client.getTransactionStatus()!=='I'||client.pipeline!==false)throw new Error('PostgreSQL preflight requires an idle client');
+  if(ridePolicy)assertedRideRuntimePolicy(binding,ridePolicy);
   let opened=false;
   try{
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');opened=true;
@@ -225,7 +230,8 @@ export async function preflightPostgresBinding(client:Client,binding:PostgresBin
     const a=await client.query(`SELECT id,revision,configuration_digest FROM ${business}.eigos_current_runtime_authority() LIMIT 2`);
     const p=await client.query(`SELECT d.digest FROM ${business}.security_policy_definitions d JOIN ${business}.security_settings s ON s.slot=d.slot WHERE d.slot=1 AND s.version=2 AND s.mode='foundation' LIMIT 2`);
     if(b.rowCount!==1||m.rowCount!==1||a.rowCount!==1||p.rowCount!==1)throw new Error('PostgreSQL reviewed import metadata is unavailable');
-    assertPostgresImportReceipts(binding,{business:b.rows[0].body,membership:m.rows[0].body,authority:a.rows[0],policyDigest:p.rows[0].digest});
+    if(ridePolicy&&!builder)throw new Error('Prepared ride kernel required for policy successor');const successor=ridePolicy?await verifyRidePolicyProof(client,binding,ridePolicy,builder!):undefined;
+    assertPostgresImportReceipts(binding,{business:b.rows[0].body,membership:m.rows[0].body,authority:a.rows[0],policyDigest:p.rows[0].digest},successor);
     await client.query('COMMIT');opened=false;
     const identities=await auditImportedIdentities(client,{businessSchema:binding.business.schema,membershipSchema:binding.membership.schema,businessFileDigest:binding.business.sourceFileDigest,membershipFileDigest:binding.membership.sourceFileDigest,now:Date.now()});
     if(identities.mismatchedSubjects!==0)throw new Error('PostgreSQL active identity mappings differ from membership');
@@ -239,17 +245,18 @@ export async function preflightPostgresBinding(client:Client,binding:PostgresBin
 export async function createPostgresHostResources(config:Config,role:'gateway'|'worker',environment:NodeJS.ProcessEnv=process.env){
   if(config.EIGOS_STORAGE_BACKEND!=='postgres'||!config.EIGOS_POSTGRES_BINDING_FILE)throw new Error('Explicit PostgreSQL backend and private binding are required');
   const {binding,fileDigest}=readPostgresBinding(config.EIGOS_POSTGRES_BINDING_FILE);assertPostgresBindingAuthority(config,binding);
+  const ridePolicy=config.EIGOS_POSTGRES_RIDE_POLICY_FILE?readRidePolicyProof(config.EIGOS_POSTGRES_RIDE_POLICY_FILE):undefined,policyDigest=ridePolicy?assertedRideRuntimePolicy(binding,ridePolicy):binding.policyDigest;
   const vectorFeature=config.EIGOS_POSTGRES_VECTOR_FEATURE_FILE?readPostgresVectorFeature(config.EIGOS_POSTGRES_VECTOR_FEATURE_FILE,binding):undefined;
   const connection={...supabaseProxyOptions(binding.connection.host,binding.connection.port,binding.connection.proxyUrl),...postgresConnectionOptions(binding,environment)};
-  const targetVersion=reviewedKernelVersionForPolicy(binding.policyDigest);
-  if(vectorFeature&&targetVersion!=='28')throw new Error('Task vectors require the explicit descriptions-v28 policy upgrade');
-  const kernel=await preparePostgresKernel(undefined,vectorFeature?'29':targetVersion);
+  const targetVersion=reviewedKernelVersionForPolicy(policyDigest);
+  if(vectorFeature&&!['28','30'].includes(targetVersion))throw new Error('Task vectors require the explicit descriptions-v28 policy upgrade');
+  const kernel=await preparePostgresKernel(undefined,vectorFeature&&targetVersion==='28'?'29':targetVersion);
   const metadataModel=stagedKernelComponents(kernel).model;
   prepareDefinitionMetadata(metadataModel,type=>({...metadataModel.properties(type),...projectionFields(type)}));
   const businessPool=new pg.Pool({...connection,max:3}),leasePool=new pg.Pool({...connection,max:2}),eligibilityPool=new pg.Pool({...connection,max:2}),controlPool=new pg.Pool({...connection,max:2}),membershipPool=new pg.Pool({...connection,max:2});
   const database=new PostgresDatabase(businessPool,binding.business.schema,binding.authority,{leasePool,eligibilityPool,kernel,vectorFeature});
   const members=new PostgresMemberStore(new PostgresMembershipDatabase(membershipPool,binding.membership.schema,binding.membership.sourceFileDigest));
-  const publisher=role==='gateway'?new PostgresAuthorizationPublisher({database,controlPool,schema:binding.business.schema,runtime:binding.authority,policyDigest:binding.policyDigest,members}):undefined;
+  const publisher=role==='gateway'?new PostgresAuthorizationPublisher({database,controlPool,schema:binding.business.schema,runtime:binding.authority,policyDigest,members}):undefined;
   let closing:Promise<void>|undefined,unavailable=false,failure:unknown;
   const unavailableHandlers=new Set<()=>void>();
   const fail=(cause:unknown)=>{if(unavailable)return;unavailable=true;failure=cause;for(const handler of unavailableHandlers)try{handler();}catch{/* notification cannot restore readiness */}};
@@ -271,7 +278,7 @@ export async function createPostgresHostResources(config:Config,role:'gateway'|'
       catch(error){if(observed.failure)fail(observed.failure);throw observed.annotate(error);}
       finally{try{client.release(observed.failure??(client.getTransactionStatus()==='I'?undefined:new Error('PostgreSQL control connection is not idle')));}finally{observed.close();}}
     };
-    const preflight=await readControl(client=>preflightPostgresBinding(client,binding));
+    const preflight=await readControl(client=>preflightPostgresBinding(client,binding,ridePolicy,kernel));
     const authorityCurrent=async()=>{
       if(closing||unavailable)return false;
       return readControl(async client=>{const result=await client.query(`SELECT id,revision,configuration_digest FROM "${binding.business.schema}".eigos_current_runtime_authority() LIMIT 2`),row=result.rows[0];
@@ -280,11 +287,11 @@ export async function createPostgresHostResources(config:Config,role:'gateway'|'
     const requireWorkerReadiness=async()=>{
       if(!await authorityCurrent())throw new Error('PostgreSQL Worker is not ready: original authority is unavailable');
       const ready=await readControl(async client=>(await client.query(`SELECT 1 FROM "${binding.business.schema}".security_manager m JOIN "${binding.business.schema}".security_policy_definitions p ON p.slot=m.slot
-        WHERE m.slot=1 AND m.expires_at>floor(extract(epoch FROM clock_timestamp())*1000)::bigint AND p.digest=$1 LIMIT 1`,[binding.policyDigest])).rowCount===1);
+        WHERE m.slot=1 AND m.expires_at>floor(extract(epoch FROM clock_timestamp())*1000)::bigint AND p.digest=$1 LIMIT 1`,[policyDigest])).rowCount===1);
       if(!ready)throw new Error('PostgreSQL Worker is not ready: the existing Gateway publisher is unavailable');
     };
-    return {binding,bindingFileDigest:fileDigest,kernel,database,members,publisher,preflight,vectorFeature,close,authorityCurrent,requireWorkerReadiness,assertAvailable,get failure(){return failure;},
-      requirePrimaryActivation:()=>readControl(client=>verifyPostgresPrimaryActivation(client,binding,vectorFeature,kernel)),
+    return {binding,policyDigest,bindingFileDigest:fileDigest,kernel,database,members,publisher,preflight,vectorFeature,close,authorityCurrent,requireWorkerReadiness,assertAvailable,get failure(){return failure;},
+      requirePrimaryActivation:()=>readControl(client=>verifyPostgresPrimaryActivation(client,binding,vectorFeature,kernel,ridePolicy)),
       onUnavailable:(handler:()=>void)=>{unavailableHandlers.add(handler);if(unavailable)handler();},
       startPublisher:async()=>{if(!publisher)throw new Error('A Worker cannot start a second authorization publisher');assertAvailable();await publisher.start();assertAvailable();},
     };
@@ -308,10 +315,10 @@ export async function createPostgresPrimaryHostResources(config:Config,role:'gat
 /** Real Gateway metadata/task services; no executor or model is constructed.
  * Other source runtimes must be installed explicitly instead of substituting
  * a different program, model, owner or task when a binding is unavailable. */
-export function createPostgresGatewayServices(config:Config,resources:Awaited<ReturnType<typeof createPostgresHostResources>>,programTransport=createPostgresProgramTransport(config,{database:resources.database,policyDigest:resources.binding.policyDigest,authority:resources.binding.authority,builder:resources.kernel,role:'gateway'})){
+export function createPostgresGatewayServices(config:Config,resources:Awaited<ReturnType<typeof createPostgresHostResources>>,programTransport=createPostgresProgramTransport(config,{database:resources.database,policyDigest:resources.policyDigest,authority:resources.binding.authority,builder:resources.kernel,role:'gateway'})){
   assertPostgresBuiltinSourceConfiguration(config);
   const publisher=resources.publisher;if(!publisher)throw new Error('Gateway services require the sole Gateway authorization publisher');
-  if(programTransport.role!=='gateway'||programTransport.database!==resources.database||!(programTransport.registry instanceof PostgresReadProgramRegistry)||programTransport.registry.policyDigest!==resources.binding.policyDigest)throw new Error('Gateway requires its own actual shared program transport');
+  if(programTransport.role!=='gateway'||programTransport.database!==resources.database||!(programTransport.registry instanceof PostgresReadProgramRegistry)||programTransport.registry.policyDigest!==resources.policyDigest)throw new Error('Gateway requires its own actual shared program transport');
   const catalog=programTransport.registry.catalog;
   const checkedProgram=async(client:Client,owner:string,releaseRef:Parameters<typeof postgresOntologyRelease>[1],ref:Ref,job?:Job):Promise<AgentProgram>=>{
     const release=await postgresOntologyRelease(client,releaseRef,resources.kernel);assertReviewedModel(stagedKernelComponents(resources.kernel).model,release.model);
@@ -322,18 +329,18 @@ export function createPostgresGatewayServices(config:Config,resources:Awaited<Re
     // Definition implementations are the real registered program metadata.
     // No fake graph or storage object is lent to the synchronous catalogue.
     const registered=programTransport.registry.find(program.ref,program.configurationDigest);
-    for(const action of program.actionIds){const definition=release.model.action(action);if(release.model.actionImplementation(action)?.kind!=='trusted'||definition.operation?.effect!=='local'&&!(registered?.kind==='didi'&&!definition.operation&&definition.read?.effect==='read'))throw new DomainError('CONFLICT','This source program requires its actual installed PostgreSQL adapter');}
+    for(const action of program.actionIds){const definition=release.model.action(action);if(release.model.actionImplementation(action)?.kind!=='trusted'||definition.operation?.effect!=='local'&&!(['didi','ride'].includes(registered?.kind??'')&&!definition.operation&&definition.read?.effect==='read'))throw new DomainError('CONFLICT','This source program requires its actual installed PostgreSQL adapter');}
     return program;
   };
-  const tasks=new PostgresTaskCommandService(resources.database,resources.binding.policyDigest,resources.kernel,{
+  const tasks=new PostgresTaskCommandService(resources.database,resources.policyDigest,resources.kernel,{
     allowSandboxActions:config.EIGOS_ACTION_SANDBOX==='true',
     prepareRequest:async(client,owner,job,ref,request)=>{if(!job.delegation?.ontologyRelease)throw new DomainError('CONFLICT','The original task release is missing');const program=await checkedProgram(client,owner,job.delegation.ontologyRelease,ref,job);return program.prepareRequest?.(request)??request;},
     assertProgram:async(client,owner,job,ref)=>{if(!job.delegation?.ontologyRelease)throw new DomainError('CONFLICT','The original task release is missing');await checkedProgram(client,owner,job.delegation.ontologyRelease,ref,job);},
     resolveObservationProgram:(client,owner,release,ref)=>checkedProgram(client,owner,release,ref),
   });
-  const permissions=new PostgresPermissionManagement({database:resources.database,members:resources.members,publisher,catalog,policyDigest:resources.binding.policyDigest,builder:resources.kernel});
-  const definitions=new PostgresDefinitionService({database:resources.database,tasks,catalog,publisher,policyDigest:resources.binding.policyDigest,builder:resources.kernel});
-  const vectors=resources.vectorFeature?new PostgresEmbeddingIndex(resources.database,resources.binding.policyDigest,resources.vectorFeature,resources.kernel):undefined;
+  const permissions=new PostgresPermissionManagement({database:resources.database,members:resources.members,publisher,catalog,policyDigest:resources.policyDigest,builder:resources.kernel});
+  const definitions=new PostgresDefinitionService({database:resources.database,tasks,catalog,publisher,policyDigest:resources.policyDigest,builder:resources.kernel});
+  const vectors=resources.vectorFeature?new PostgresEmbeddingIndex(resources.database,resources.policyDigest,resources.vectorFeature,resources.kernel):undefined;
   return {tasks,members:resources.members,publisher,permissions,definitions,catalog,programTransport,vectors,
     assertSourceCurrent:()=>assertPostgresProgramSourceCurrent(programTransport,resources),
     ontologyRelease:()=>resources.database.run(async client=>(await new PostgresDefinitionStore(client,{builder:resources.kernel}).active('eigos.business')).ref),
@@ -345,7 +352,7 @@ export function createPostgresGatewayServices(config:Config,resources:Awaited<Re
  * admission. It never self-admits, grants a source or replaces a deadline.
  * Claim/dispatch paths retain their own fresh account.assert checks. */
 export async function assertPostgresProgramSourceCurrent(transport:ReturnType<typeof createPostgresProgramTransport>,resources:Awaited<ReturnType<typeof createPostgresHostResources>>){
-  if(transport.database!==resources.database||transport.registry.policyDigest!==resources.binding.policyDigest)throw new Error('Source readiness requires the same actual primary database');
+  if(transport.database!==resources.database||transport.registry.policyDigest!==resources.policyDigest)throw new Error('Source readiness requires the same actual primary database');
   const account=transport.account,selected=transport.selected;if(!account||!selected)return;
   account.assertBinding(selected.binding,selected.owner);
   const member=await resources.members.get(account.record.memberId);
@@ -367,7 +374,7 @@ export function assertPostgresRelayHostConfiguration(config:Pick<Config,'EIGOS_T
 /** Real package-level Relay services, sharing the original primary database.
  * Assembly does not provision nodes, publish authority or start a poller. The
  * application owns HTTP/network startup after verifyMigrations has succeeded. */
-export async function createPostgresRelayServices(config:Config,resources:Awaited<ReturnType<typeof createPostgresHostResources>>,environment:NodeJS.ProcessEnv=process.env,programTransport=createPostgresProgramTransport(config,{database:resources.database,policyDigest:resources.binding.policyDigest,authority:resources.binding.authority,builder:resources.kernel,role:'gateway'})){
+export async function createPostgresRelayServices(config:Config,resources:Awaited<ReturnType<typeof createPostgresHostResources>>,environment:NodeJS.ProcessEnv=process.env,programTransport=createPostgresProgramTransport(config,{database:resources.database,policyDigest:resources.policyDigest,authority:resources.binding.authority,builder:resources.kernel,role:'gateway'})){
   assertPostgresRelayHostConfiguration(config,resources.binding);
   const binding=resources.binding.relay;if(!binding||!config.EIGOS_TASK_RELAY_FILE)return undefined;
   const publisher=resources.publisher;if(!publisher)throw new Error('A Worker cannot own the primary Relay or a second publisher');
@@ -377,7 +384,7 @@ export async function createPostgresRelayServices(config:Config,resources:Awaite
   try{wrappingKey=await relayNodeWrappingKey(secrets.wrappingKeyBytes);}finally{secrets.wrappingKeyBytes.fill(0);}
   resources.assertAvailable();
   const port=programTransport.taskRelay;
-  if(programTransport.role!=='gateway'||programTransport.database!==resources.database||!port||programTransport.registry.policyDigest!==resources.binding.policyDigest||port.reads.didiAccount!==programTransport.account)throw new Error('Relay requires the actual same-account Gateway program transport');
+  if(programTransport.role!=='gateway'||programTransport.database!==resources.database||!port||programTransport.registry.policyDigest!==resources.policyDigest||port.reads.didiAccount!==programTransport.account)throw new Error('Relay requires the actual same-account Gateway program transport');
   const enrollment=new RelayEnrollmentIssuer(secrets.enrollmentKey,config.PUBLIC_URL,relayConfig.relayUrl,port.enrollment);
   const expected=new Map(binding.endpointImports.map(node=>[postgresMessagingNodeId(node.endpointId),{agentId:node.agentId,importDigest:node.importDigest}]));
   // Even when communication routes are disabled, verify preserved historical

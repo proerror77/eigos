@@ -1,3 +1,4 @@
+import {rideConnectionsFromConfig} from '../../packages/capabilities/rides/connection.js';
 import { commerceConnectionsFromConfig } from '../../packages/capabilities/payment-commerce/connection.js';
 import { createExecutionCatalog } from '../../packages/capabilities/catalog.js';
 import { Coordinator, CodexReasoner, type Reasoner } from '../../packages/coordinator/coordinator.js';
@@ -25,7 +26,7 @@ export function createWorker(config: Config, overrides: {
     }) : new CodexExecutor(config.EIGOS_CODEX_BIN, config.EIGOS_EXECUTOR_TIMEOUT_MS, {
       model: config.EIGOS_CODEX_MODEL, reasoningEffort: config.EIGOS_CODEX_REASONING_EFFORT, serviceTier: config.EIGOS_CODEX_SERVICE_TIER,
     });
-    const catalog = createExecutionCatalog({ paymentCommerce: commerceConnectionsFromConfig(config), store, didiRelayAgentId: config.EIGOS_DIDI_RELAY_AGENT_ID, personalSourceOwner: config.EIGOS_PERSONAL_SOURCE_OWNER, didiOrderTestEnabled: config.EIGOS_DIDI_ORDER_TEST_ENABLED === 'true', csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
+    const catalog = createExecutionCatalog({ rides:rideConnectionsFromConfig(config),paymentCommerce: commerceConnectionsFromConfig(config), store, didiRelayAgentId: config.EIGOS_DIDI_RELAY_AGENT_ID, personalSourceOwner: config.EIGOS_PERSONAL_SOURCE_OWNER, didiOrderTestEnabled: config.EIGOS_DIDI_ORDER_TEST_ENABLED === 'true', csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
       documentEnabled: config.EIGOS_EXECUTOR !== 'disabled', documentExecutor: overrides.executor ?? model,
       paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR, paotuiMemberConnectionFile: config.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE, memberSourceKeyFile: config.EIGOS_MEMBER_SOURCE_KEY_FILE, executionHost: 'worker', ontologyAuditPath: config.EIGOS_ONTOLOGY_AUDIT_PATH,
       publicGeoDiscoveryQueries: config.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES,

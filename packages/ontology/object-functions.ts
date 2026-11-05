@@ -1,3 +1,4 @@
+import {evaluateRideSourceProgram} from './ride-sources-functions.js';
 import { evaluateCommerceReadProgram } from './payment-commerce-functions.js';
 import { runGraphProgram, type ProjectionMetadata, type GraphProgram, graphRead, graphRelated } from './graph-program.js';
 import { evaluateOrderTestProgram } from './didi-order-test-functions.js';
@@ -47,7 +48,7 @@ export const functionCallSchema = z.union([
   semanticCandidatesSchema,
   ...productAttributeFunctionSchemas, ...identityFunctionSchemas, ...errandFunctionSchemas,
   simple('authorizationStatus'), simple('bookingObservationStatus'), simple('stripePaymentStatus'),
-  simple('registrationStatus'), simple('rollingGoSearchStatus'), simple('businessFactStatus'), simple('paymentCommerceReadStatus'),
+  simple('registrationStatus'), simple('rollingGoSearchStatus'), simple('businessFactStatus'), simple('paymentCommerceReadStatus'), simple('rideSourceStatus'),
   simple('shopifyCheckoutObservationStatus'),
   simple('shopifyPAPaymentStatus'),
   simple('didiOrderTestStatus'), simple('didiOrderTestIdentity'), simple('selectDidiOrderTestPlace'), simple('taskOutcomeStatus'),
@@ -98,6 +99,7 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
 
 export function* evaluateFunctionProgram(store: ProjectionMetadata, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): GraphProgram<Computation> {
   if(input.function==='semanticCandidates')return yield* graphSemanticCandidates(owner,semanticCandidatesSchema.parse(input),budget);
+  const rideSource=yield* evaluateRideSourceProgram(store,owner,input,budget);if(rideSource)return rideSource;
   const commerceRead = (yield* evaluateCommerceReadProgram(store, owner, input, budget));
   if (commerceRead) return commerceRead;
   const orderTestResult = (yield* evaluateOrderTestProgram(store, owner, input, budget));

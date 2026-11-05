@@ -1,3 +1,6 @@
+import {type RideBinding,type RideContext,type RideReadResult} from '../capabilities/rides/contracts.js';
+import {anySourceReadRequestSchema,anySourceReadResponseSchema,assertSourceReadInput,assertSourceTaskEnvironment,assertSourceDispatchInput,checkedSourceReply,isRideSourceRequest,type AnySourceReadRequest,type SourceReadInput} from '../agent-transport/source-protocol.js';
+import {rideSourceRequestSchema,checkedRideReply,assertRideRequestBinding,rideSourceResponseSchema,type RideSourceRequest,type RideSourceResponse} from '../agent-transport/ride-contracts.js';
 import type {Client} from 'pg';
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
@@ -54,12 +57,13 @@ export class PostgresRelayReadAuthority {
     if(rows.rowCount!==1||typeof rows.rows[0]?.token!=='string'||digest(rows.rows[0].token)!==actor.claimRef)throw new SecurityError('ACCESS_REVOKED');
     return postgresWorkReference({owner:actor.ownerKey,token:rows.rows[0].token,job,securityAuthorityId:actor.authorityRef.id,securityEpoch:actor.authEpoch,securityPolicyRevision:Number(row.policy_revision)});
   }
-  private async assert(client:Client,row:ReadRow,original?:PostgresWorkReference):Promise<SourceReadRequest>{
-    const request=sourceReadRequestSchema.parse(JSON.parse(row.request)),actor=accessContextSchema.parse(JSON.parse(row.actor)),now=Date.now(),token=postgresBusinessToken(client),q=`"${postgresBusinessSchema(client)}"`;
+  private async assert(client:Client,row:ReadRow,original?:PostgresWorkReference):Promise<AnySourceReadRequest>{
+    const request=anySourceReadRequestSchema.parse(JSON.parse(row.request)),actor=accessContextSchema.parse(JSON.parse(row.actor)),now=Date.now(),token=postgresBusinessToken(client),q=`"${postgresBusinessSchema(client)}"`;
     await this.authority.assertCurrent(client,request.authorityId);
     if(row.id!==request.callId||Number(row.expires_at)!==request.expiresAt||request.gatewayOrigin!==this.options.gatewayOrigin||request.expiresAt<=now||row.state==='revoked')throw new SecurityError('ACCESS_REVOKED');
     const {protocol:_protocol,kind:_kind,callId:_callId,expiresAt:_expires,...selectedInput}=request;
-    if(row.retry_key!==digest([row.peer_id,selectedInput])||!same(didiToolInputs[request.tool].parse(request.input),request.input))throw new SecurityError('POLICY_CHANGED');
+    if(row.retry_key!==digest([row.peer_id,selectedInput]))throw new SecurityError('POLICY_CHANGED');
+    try{assertSourceReadInput(request,actor.ownerKey,row.peer_id);}catch{throw new SecurityError('SOURCE_NOT_AUTHORIZED');}
     if(row.state==='completed'&&row.result===null)throw new SecurityError('POLICY_CHANGED');
     if(!['queued','dispatched','completed'].includes(row.state)||actor.actorKind!=='worker'||actor.taskId!==request.context.requestId||actor.requestRevision!==request.context.requestRevision)throw new SecurityError('AUTHORIZATION_REQUIRED');
     const claim=original?postgresWorkReference(original):await this.claim(client,row);
@@ -68,15 +72,17 @@ export class PostgresRelayReadAuthority {
       const {checkedAt:_old,...stable}=actor,{checkedAt:_fresh,...current}=admission.actor;
       if(!same(stable,current)||admission.policyRevision!==Number(row.policy_revision))throw new SecurityError('POLICY_CHANGED');
       const job=await new PostgresTaskStorage(client,this.options.builder).get(claim.owner,claim.job.id),state=job.delegation?.agent,plan=state?.plans.find(value=>value.id===request.context.planId);
-      await this.options.didiAccount?.assert(client,claim,job,this.options.policyDigest);
+      if(!isRideSourceRequest(request))await this.options.didiAccount?.assert(client,claim,job,this.options.policyDigest);
       const intentRows=await client.query(`SELECT state,CASE WHEN octet_length(body)<=8388608 THEN body END AS body FROM ${q}.action_intents WHERE owner=$1 AND job_id=$2 AND id=$3 AND state='dispatching' LIMIT 2`,[claim.owner,job.id,request.context.intentId]);
       const attemptRows=await client.query(`SELECT CASE WHEN octet_length(body)<=8388608 THEN body END AS body FROM ${q}.action_attempts WHERE owner=$1 AND intent_id=$2 AND id=$3 LIMIT 2`,[claim.owner,request.context.intentId,request.context.attemptId]);
+      try{assertSourceTaskEnvironment(request,job.delegation?.request.executionEnvironment);}catch{throw new SecurityError('SOURCE_NOT_AUTHORIZED');}
       if(!state||!plan||intentRows.rowCount!==1||typeof intentRows.rows[0]?.body!=='string'||attemptRows.rowCount!==1||typeof attemptRows.rows[0]?.body!=='string')throw new SecurityError('ACCESS_REVOKED');
       const intent=intentSchema.parse(JSON.parse(intentRows.rows[0].body)),attempt=attemptSchema.parse(JSON.parse(attemptRows.rows[0].body)),step=plan.steps.find(value=>value.intentId===intent.id),{digest:expected,...body}=plan;
       if(!step||intent.id!==request.context.intentId||intent.owner!==claim.owner||intent.jobId!==job.id||intent.planDigest!==plan.digest||plan.programDigest!==state.programDigest||digest(body)!==expected||step.effect!==intent.effect
         ||intent.effect!=='read'||step.effect!=='read'||step.action!==request.context.action||plan.modelRunId!==request.context.modelRunId||plan.requestId!==job.id||plan.requestRevision!==actor.requestRevision
         ||attempt.id!==request.context.attemptId||attempt.intentId!==intent.id||attempt.kind!=='dispatch'||attempt.claimToken!==claim.token||attempt.requestRevision!==(job.revision??0)||attempt.planDigest!==plan.digest||attempt.inputDigest!==request.context.actionInputDigest
         ||!intent.dispatchInput||digest(intent.dispatchInput)!==request.context.actionInputDigest)throw new SecurityError('AUTHORIZATION_REQUIRED');
+      try{assertSourceDispatchInput(request,intent.dispatchInput);}catch{throw new SecurityError('SOURCE_NOT_AUTHORIZED');}
       const needed=actionSources(state,step.action,step.input,step),binding=needed.find(value=>value.programRef.id===request.context.programId&&value.programDigest===request.context.programDigest);
       if(!binding)throw new SecurityError('SOURCE_NOT_AUTHORIZED');
       for(const permission of ['resource.view','action.execute']as const){const until=await postgresTaskResourcePermissionValidUntil(client,principal,job.id,this.options.policyDigest,'actionType',step.action,permission,this.options.builder);if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');postgresConstrainReadDeadline(client,until);}
@@ -114,17 +120,19 @@ export class PostgresRelayReadAuthority {
       };
       const thisOptions=this.options;
       try{await runGraphProgramAsync(proof,assertPipelineSnapshotsProgram(graph,claim.owner,snapshots,function*(ref){const state=facts.get(key(ref));return state?{...state,health:state.conflicted?'conflicted':Date.parse(state.expiresAt)<=Date.now()?'stale':'fresh'}:undefined;}));}catch(error){if(error instanceof DomainError){const denied=new SecurityError('SOURCE_NOT_AUTHORIZED');Object.defineProperty(denied,'cause',{value:error});throw denied;}throw error;}
-      await this.options.didiAccount?.assert(client,claim,job,this.options.policyDigest);
+      if(!isRideSourceRequest(request))await this.options.didiAccount?.assert(client,claim,job,this.options.policyDigest);
       postgresConstrainReadDeadline(client,Math.min(request.expiresAt,admission.validUntil));if(postgresBusinessToken(client)!==token||request.expiresAt<=Date.now())throw new SecurityError('ACCESS_REVOKED');return request;
     },this.options.builder,undefined,this.inspect);
   }
-  async create(input:PostgresWorkReference,peerId:string,value:Omit<SourceReadRequest,'protocol'|'kind'|'callId'|'expiresAt'>):Promise<SourceReadRequest>{
+  create(input:PostgresWorkReference,peerId:string,value:Omit<SourceReadRequest,'protocol'|'kind'|'callId'|'expiresAt'>):Promise<SourceReadRequest>;
+  create(input:PostgresWorkReference,peerId:string,value:Omit<RideSourceRequest,'protocol'|'kind'|'callId'|'expiresAt'>):Promise<RideSourceRequest>;
+  async create(input:PostgresWorkReference,peerId:string,value:SourceReadInput):Promise<AnySourceReadRequest>{
     const claim=postgresWorkReference(input),peer=agentIdSchema.parse(peerId),captured=structuredClone(value),retry=digest([peer,captured]);
     return this.options.database.run(async client=>{
       const q=`"${postgresBusinessSchema(client)}"`;let actor:unknown,policyRevision=0,expiresAt=0;
       await withPostgresWorkerReadSnapshot(client,claim,this.options.policyDigest,async(_p,admission)=>{actor=admission.actor;policyRevision=admission.policyRevision;expiresAt=Math.min(Date.now()+120000,postgresConsentIndex(admission.grant.expiresAt,this.options.policyDigest));},this.inspect);
-      const request=sourceReadRequestSchema.parse({...captured,protocol:SOURCE_RELAY_PROTOCOL,kind:'source.read',callId:randomUUID(),expiresAt});
-      if(!same(didiToolInputs[request.tool].parse(request.input),request.input))throw new SecurityError('AUTHORIZATION_REQUIRED');
+      const request=anySourceReadRequestSchema.parse({...captured,protocol:SOURCE_RELAY_PROTOCOL,kind:'source.read',callId:randomUUID(),expiresAt});
+      try{assertSourceReadInput(request,claim.owner,peer);}catch{throw new SecurityError('AUTHORIZATION_REQUIRED');}
       const existing=await client.query(`SELECT id FROM ${q}.security_relay_reads WHERE retry_key=$1 LIMIT 2`,[retry]);if(existing.rows.length>1)throw new SecurityError('POLICY_CHANGED');if(existing.rowCount)return this.assert(client,await this.row(client,String(existing.rows[0].id)),claim);
       const row:ReadRow={id:request.callId,retry_key:retry,peer_id:peer,actor:JSON.stringify(actor),policy_revision:policyRevision,request:JSON.stringify(request),state:'queued',connection_id:null,result:null,has_result:false,expires_at:request.expiresAt};await this.assert(client,row,claim);
       await client.query(`INSERT INTO ${q}.security_relay_reads(id,retry_key,peer_id,actor,policy_revision,request,state,connection_id,result,expires_at) VALUES($1,$2,$3,$4,$5,$6,'queued',NULL,NULL,$7)`,[row.id,retry,peer,row.actor,policyRevision,row.request,request.expiresAt]);return request;
@@ -132,7 +140,7 @@ export class PostgresRelayReadAuthority {
   }
   async pending(){
     const rows=await this.options.database.run(async client=>{await this.authority.assertCurrent(client);return(await client.query(`SELECT id FROM "${postgresBusinessSchema(client)}".security_relay_reads WHERE state='queued' ORDER BY __eigos_rowid LIMIT 20`)).rows;});
-    const result:{peerId:string;request:SourceReadRequest}[]=[];
+    const result:{peerId:string;request:AnySourceReadRequest}[]=[];
     for(const item of rows){const id=String(item.id);try{
       const value=await this.options.database.run(async client=>{const row=await this.row(client,id);if(row.state!=='queued')return undefined;return {peerId:row.peer_id,request:await this.assert(client,row)};});
       if(value)result.push(value);
@@ -145,8 +153,19 @@ export class PostgresRelayReadAuthority {
   async route(id:string,connectionId:string){return this.delivery(id,connectionId,false);}
   async dispatched(id:string,connectionId:string){return this.delivery(id,connectionId,true);}
   private async delivery(id:string,connectionId:string,sent:boolean){const connection=z.uuid().parse(connectionId);await this.options.database.run(async client=>{const row=await this.row(client,id);await this.assert(client,row);if(row.connection_id&&row.connection_id!==connection)throw new SecurityError('ACCESS_REVOKED');await client.query(`UPDATE "${postgresBusinessSchema(client)}".security_relay_reads SET connection_id=$1,state=CASE WHEN $2 AND state='queued' THEN 'dispatched' ELSE state END WHERE id=$3`,[connection,sent,id]);});}
-  async accept(peerId:string,connectionId:string,input:unknown){const result=sourceReadResponseSchema.parse(input);await this.options.database.run(async client=>{const row=await this.row(client,result.callId),request=await this.assert(client,row);if(row.peer_id!==peerId||row.connection_id!==connectionId||result.requestDigest!==digest(request)||result.authorityId!==request.authorityId)throw new SecurityError('AUTHORIZATION_REQUIRED');if(row.result!==null&&!same(JSON.parse(row.result),result))throw new SecurityError('POLICY_CHANGED');await client.query(`UPDATE "${postgresBusinessSchema(client)}".security_relay_reads SET state='completed',result=$1 WHERE id=$2`,[JSON.stringify(result),row.id]);});}
+  async accept(peerId:string,connectionId:string,input:unknown){const result=anySourceReadResponseSchema.parse(input);await this.options.database.run(async client=>{const row=await this.row(client,result.callId),request=await this.assert(client,row);try{checkedSourceReply(request,result);}catch{throw new SecurityError('AUTHORIZATION_REQUIRED');}if(row.peer_id!==peerId||row.connection_id!==connectionId||result.requestDigest!==digest(request)||result.authorityId!==request.authorityId)throw new SecurityError('AUTHORIZATION_REQUIRED');if(row.result!==null&&!same(JSON.parse(row.result),result))throw new SecurityError('POLICY_CHANGED');await client.query(`UPDATE "${postgresBusinessSchema(client)}".security_relay_reads SET state='completed',result=$1 WHERE id=$2`,[JSON.stringify(result),row.id]);});}
   async ready(claim:PostgresWorkReference,id:string){return this.options.database.run(async client=>{const row=await this.row(client,id);await this.assert(client,row,claim);return row.result!==null;});}
   async result(claim:PostgresWorkReference,id:string):Promise<SourceReadResponse|undefined>{return this.options.database.run(async client=>{const row=await this.row(client,id);await this.assert(client,row,claim);return row.result!==null?sourceReadResponseSchema.parse(JSON.parse(row.result)):undefined;});}
+  async rideResult(claim:PostgresWorkReference,id:string):Promise<RideSourceResponse|undefined>{return this.options.database.run(async client=>{const row=await this.row(client,id);await this.assert(client,row,claim);return row.result!==null?rideSourceResponseSchema.parse(JSON.parse(row.result)):undefined;});}
+  /** Current claim and actual persisted Relay response, never a Worker hash. */
+  async verifyRideReceipt(claim:PostgresWorkReference,id:string,peerId:string,binding:RideBinding,context:RideContext,result:RideReadResult):Promise<void>{
+    await this.options.database.run(async client=>{
+      const row=await this.row(client,id),request=rideSourceRequestSchema.parse(await this.assert(client,row,claim));
+      if(row.state!=='completed'||row.peer_id!==peerId||!row.connection_id||!row.result)throw new SecurityError('AUTHORIZATION_REQUIRED');
+      try{assertRideRequestBinding(request,binding,result.receipt.evidenceKind);const response=checkedRideReply(request,JSON.parse(row.result));
+        if(digest(request.context)!==digest(context)||!response.result||digest(response.result)!==digest(result))throw new Error('Receipt differs');
+      }catch{throw new SecurityError('SOURCE_NOT_AUTHORIZED');}
+    });
+  }
   async revoke(id:string){await this.options.database.run(client=>client.query(`UPDATE "${postgresBusinessSchema(client)}".security_relay_reads SET state='revoked' WHERE id=$1 AND state<>'completed'`,[z.uuid().parse(id)]).then(()=>{}));}
 }

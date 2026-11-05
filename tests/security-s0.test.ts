@@ -27,8 +27,8 @@ const issuedAt = '2026-10-24T00:00:00Z', expiresAt = '2026-10-24T01:00:00Z';
 test('S0 inventories every definition and nested subtree without changing runtime or granting access', () => {
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
-  assert.equal(report.counts.objectTypes, 204); assert.equal(report.counts.properties, 1863); assert.equal(report.counts.interfaces, 14);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 397);
+  assert.equal(report.counts.objectTypes, 206); assert.equal(report.counts.properties, 1874); assert.equal(report.counts.interfaces, 14);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 417);
   for(const id of ['gateway-primary-startup','ontology-registered-calculations','ontology-semantic-retrieval-contract','ontology-semantic-retrieval-port','ontology-semantic-retrieval-kernel','postgres-embedding-index','postgres-embedding-schema','postgres-vector-index-deployment','postgres-task-vector-cli'])assert(report.surfaces.some(surface=>surface.id===id),`Missing reviewed supplied-vector surface: ${id}`);
   for (const id of ['ontology-business-descriptions','business-descriptions-policy-upgrade','business-descriptions-installer','ontology-definition-compiler','ontology-kernel-seed']) assert(report.surfaces.some(surface => surface.id === id), `Missing reviewed description surface: ${id}`);
   for(const id of ['postgres-didi-account','postgres-didi-policy','postgres-didi-registry','postgres-didi-execution','postgres-node-migration','postgres-node-migration-cli','harness-image-smoke','postgres-vector-admin','postgres-vector-admin-cli','worker-claim-release-lifecycle'])assert(report.surfaces.some(surface=>surface.id===id),`Missing reviewed migration surface: ${id}`);

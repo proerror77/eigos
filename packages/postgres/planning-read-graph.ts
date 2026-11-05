@@ -159,6 +159,7 @@ class PlanningReadGraph implements GraphStorage, ProjectionMetadata {
       try{const value=await action(graph),influence=await graph.authorize();if(influence)this.capture(influence);this.active();return value;}finally{graph.close();}
     });
   }
+  async withGraphIntegrity<T>(action:()=>Promise<T>):Promise<T>{this.active();if(this.functionScope)return this.functionScope.authorization.withIntegrity(action);if(!this.model.hasType('RideSourceTask'))throw new SecurityError('AUTHORIZATION_REQUIRED');return this.auth.withFunction('rideSourceStatus',scoped=>scoped.withIntegrity(action));}
   readPrivate(owner?:string,ref?:ObjectRef,budget:ReadBudget={remaining:1000}){
     this.active();const frame=this.functionScope;if(owner===undefined||ref===undefined||!frame||!['rideEstimateStatus','selectDidiPlace'].includes(frame.id)||!['RideEstimateTask','DidiPlaceObservation','RideEstimateObservation'].includes(ref.type))throw new SecurityError('AUTHORIZATION_REQUIRED');
     this.active(owner);this.charge(budget);return (async()=>{const visible=await frame.authorization.readObject(ref);this.capture(visible.envelope);const result=await frame.authorization.readPrivate(ref);this.active();return result;})();

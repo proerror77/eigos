@@ -11,7 +11,7 @@ import type {DidiMemberConnection} from '../../packages/core/didi-source.js';
 import {DidiAgentProgram} from '../../packages/capabilities/didi/program.js';
 import {taskContextFields} from '../../packages/security/task-context-contract.js';
 import {createNodeKeys,createProof,verifyProof} from '../../packages/agent-transport/crypto.js';
-import {SOURCE_RELAY_PROTOCOL} from '../../packages/agent-transport/service-contracts.js';
+import {SOURCE_RELAY_PROTOCOL,sourceReadRequestSchema} from '../../packages/agent-transport/service-contracts.js';
 import {PostgresRelayReadAuthority} from '../../packages/postgres/relay-read-authority.js';
 import {PostgresDidiAccount} from '../../packages/postgres/didi-account.js';
 import {PostgresReadProgramRegistry} from '../../packages/postgres/didi-registry.js';
@@ -91,7 +91,7 @@ export async function postgresDidiFixture(relay=false,transport:{deliverSource?:
       // receipt remain intact; no verifier/acceptance boolean is injected.
       const handled=new Set<string>();pumpTimer=setInterval(()=>{if(!pumping)pumping=(async()=>{
         for(const item of await reads.pending()){
-          const request=item.request;if(handled.has(request.callId))continue;handled.add(request.callId);const connection=randomUUID();
+          const request=sourceReadRequestSchema.parse(item.request);if(handled.has(request.callId))continue;handled.add(request.callId);const connection=randomUUID();
           await reads.route(request.callId,connection);const url=f.authority!.canonicalOrigin+`/relay/source-reads/${request.callId}/authorize`,proof=await createProof(sourceKeys,request.callId,'POST',url),verified=await verifyProof(proof,request.callId,'POST',url,peerId!);
           await reads.authorizeProof(request.callId,peerId!,verified);await reads.dispatched(request.callId,connection);
           const result=await source.connector.invoke(request.context,request.tool,request.input,new AbortController().signal,async()=>{await reads.authorize(request.callId,peerId!);await t.database.run(async client=>registry.assertConfigured(client,registry.entries[0]!,claim,await new PostgresTaskStorage(client,t.kernel).get(f.owner,claim.job.id)));});

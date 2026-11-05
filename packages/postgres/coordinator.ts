@@ -1,3 +1,4 @@
+import {PostgresRideExecution} from './ride-execution.js';
 import {randomUUID} from 'node:crypto';
 import type {Client} from 'pg';
 import {z} from 'zod';
@@ -69,7 +70,7 @@ function budgetView(job:Job):ReturnType<typeof executionBudgetStatus>{
  * unavailable adapters retain the same original task and fail explicitly. */
 export class PostgresCoordinator {
   private readonly runtime:PostgresReadProgramRegistry;
-  private readonly didi:PostgresDidiExecution;
+  private readonly didi:PostgresDidiExecution;private readonly rides:PostgresRideExecution;
   private readonly options:PostgresDocumentBindingOptions;
   private readonly execution:PostgresDocumentExecution;
   private readonly maximum:number;
@@ -81,6 +82,7 @@ export class PostgresCoordinator {
     this.options={semantic:configured.semantic,registry:this.runtime,policyDigest:configured.policyDigest,modelChannel:configured.modelChannel,builder:configured.builder,sourceBindingId:configured.sourceBindingId,inspectClaim:claim=>configured.database.inspectClaim(claim,configured.policyDigest)};
     this.maximum=configured.maxTaskMs??86400000;if(!Number.isSafeInteger(this.maximum)||this.maximum<1||this.maximum>86400000)throw new Error('Invalid original task execution deadline');
     this.execution=new PostgresDocumentExecution({...configured,modelChannel:configured.modelChannel,policyDigest:configured.policyDigest});
+    this.rides=new PostgresRideExecution({...configured,registry:this.runtime,modelChannel:configured.modelChannel,policyDigest:configured.policyDigest});
     this.didi=new PostgresDidiExecution({...configured,registry:this.runtime,modelChannel:configured.modelChannel,policyDigest:configured.policyDigest});
   }
   private load(claim:WorkClaim){return this.configured.database.run(client=>new PostgresTaskStorage(client,this.options.builder).get(claim.owner,claim.job.id));}
@@ -165,6 +167,7 @@ export class PostgresCoordinator {
         if(intent.state!=='ready')throw new SecurityError('AUTHORITY_UNAVAILABLE','An original dispatched operation must be reconciled; automatic replay is prohibited');
         const entry=this.runtime.require(step.binding?.programRef??plan.programRef,step.binding?.configurationDigest??plan.programDigest);
         if(entry.kind==='document'&&step.action==='ComposeDocument'&&step.effect==='local')await this.execution.execute(claim,intent.id,signal);
+        else if(entry.kind==='ride'&&step.effect==='read')await this.rides.execute(claim,intent.id,signal);
         else if(entry.kind==='didi'&&step.effect==='read')await this.didi.execute(claim,intent.id,signal);
         else throw new SecurityError('AUTHORITY_UNAVAILABLE','The selected program has no installed PostgreSQL execution adapter');
       }

@@ -45,8 +45,15 @@ const schema = z.object({
   EIGOS_SEMANTIC_MODEL_DIR: z.string().refine(isAbsolute).optional(),
   EIGOS_SEMANTIC_SCHEMA: z.string().regex(/^eigos_semantic(?:_[a-z0-9]{1,32})?$/).optional(),
   EIGOS_SEMANTIC_READER_USER: z.string().regex(/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,199}$/).optional(),
+  EIGOS_POSTGRES_RIDE_POLICY_FILE:z.string().optional(),
   EIGOS_POSTGRES_VECTOR_FEATURE_FILE: z.string().optional(),
   EIGOS_TASK_RELAY_FILE: z.string().optional(),
+  EIGOS_UBER_RIDES_ENABLED:z.enum(['false','true']).default('false'),
+  EIGOS_UBER_RIDES_CONNECTION_FILE:z.string().optional(),
+  EIGOS_UBER_RIDES_RELAY_AGENT_ID:z.string().regex(/^agent_[A-Za-z0-9_-]{43}$/).optional(),
+  EIGOS_GRAB_RIDES_ENABLED:z.enum(['false','true']).default('false'),
+  EIGOS_GRAB_RIDES_CONNECTION_FILE:z.string().optional(),
+  EIGOS_GRAB_RIDES_RELAY_AGENT_ID:z.string().regex(/^agent_[A-Za-z0-9_-]{43}$/).optional(),
   EIGOS_DIDI_RELAY_AGENT_ID: z.string().regex(/^agent_[A-Za-z0-9_-]{43}$/).optional(),
   EIGOS_COORDINATOR: z.literal('codex').default('codex'),
   EIGOS_CSV_INPUT_DIR: z.string().optional(),
@@ -138,7 +145,7 @@ const schema = z.object({
 // Older in-process SQLite callers may omit the backend and Harness boot bound.
 // Parsed host configuration supplies both defaults; the executor also retains
 // its bounded boot default for callers constructing their existing Config.
-export type Config = Omit<z.infer<typeof schema>,'EIGOS_STORAGE_BACKEND'|'EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS'> & { EIGOS_STORAGE_BACKEND?:'sqlite'|'postgres'; EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS?:number; authority?: RuntimeAuthority };
+export type Config = Omit<z.infer<typeof schema>,'EIGOS_STORAGE_BACKEND'|'EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS'|'EIGOS_UBER_RIDES_ENABLED'|'EIGOS_GRAB_RIDES_ENABLED'> & { EIGOS_UBER_RIDES_ENABLED?:'false'|'true';EIGOS_GRAB_RIDES_ENABLED?:'false'|'true'; EIGOS_STORAGE_BACKEND?:'sqlite'|'postgres'; EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS?:number; authority?: RuntimeAuthority };
 
 export function allowsBoundPersonalSource(config: Config, nodeEnv: string | undefined): boolean {
   return config.EIGOS_SECURITY_MODE === 'foundation' && config.EIGOS_AUTH_MODE === 'jwt'
@@ -159,6 +166,10 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
   if (c.EIGOS_TASK_RELAY_FILE && (!c.authority || !isAbsolute(c.EIGOS_TASK_RELAY_FILE))) throw new Error('Task Relay requires the existing primary authority and an absolute private configuration file');
   if (c.EIGOS_MESSAGING_ENABLED === 'true' && (!c.authority || !c.EIGOS_TASK_RELAY_FILE || c.EIGOS_STORAGE_BACKEND!=='postgres'&&(!c.EIGOS_MESSAGING_NODE_DIR||!isAbsolute(c.EIGOS_MESSAGING_NODE_DIR)) || c.EIGOS_MESSAGING_NODE_DIR&&!isAbsolute(c.EIGOS_MESSAGING_NODE_DIR)))
     throw new Error(c.EIGOS_STORAGE_BACKEND==='postgres'?'Messaging requires the existing primary Relay and reviewed PostgreSQL node migration binding':'Messaging requires the existing primary Relay and an absolute private node directory');
+  for(const provider of ['UBER','GRAB'] as const){
+    const enabled=c[`EIGOS_${provider}_RIDES_ENABLED`]==='true',path=c[`EIGOS_${provider}_RIDES_CONNECTION_FILE`],peer=c[`EIGOS_${provider}_RIDES_RELAY_AGENT_ID`];
+    if(enabled&&(!path||!isAbsolute(path)||!peer||!c.authority||!c.EIGOS_TASK_RELAY_FILE||!c.EIGOS_PERSONAL_SOURCE_OWNER))throw new Error('Ride estimates require explicit primary Foundation owner, existing Relay and absolute connection metadata');
+  }
   if (c.EIGOS_DIDI_RELAY_AGENT_ID && (!c.EIGOS_TASK_RELAY_FILE || !c.authority || c.EIGOS_DIDI_ENVIRONMENT !== 'production')) throw new Error('Relay source reads require the primary task relay and production read-only DiDi configuration');
   if (c.authority) {
     const primary = c.authority.ingresses.find(value => value.origin === c.authority!.canonicalOrigin)!;

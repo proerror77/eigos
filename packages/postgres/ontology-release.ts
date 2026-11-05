@@ -7,12 +7,12 @@ import { compatibleDefinitionModels } from '../ontology/definition-compatibility
 import type { DefinitionCompatibilityInput } from '../ontology/definition-store.js';
 import { BACKEND_VERSION } from '../ontology/execution.js';
 import { compileOntologyDocument, type TrustedDefinitionRegistry } from '../ontology/model-compiler.js';
-import { createCurrentKernelDefinition, createSeedDefinition, stagedKernelComponents, type StagedKernelBuilder } from '../ontology/seed-definition.js';
+import { createCurrentKernelDefinition, createRideSourcesKernelDefinition, createSeedDefinition, stagedKernelComponents, type StagedKernelBuilder } from '../ontology/seed-definition.js';
 import { validateTaskReadProjection } from '../ontology/task-read-proof.js';
 import type { Job } from '../core/domain.js';
 import { postgresBusinessSchema,postgresBusinessToken,postgresBusinessKernel } from './runtime-transaction.js';
 
-let registry: TrustedDefinitionRegistry | undefined;
+let registry: TrustedDefinitionRegistry | undefined;let rideRegistryReady=false;
 function trustedRegistry(): TrustedDefinitionRegistry {
   if (!registry) {
     const seed = createSeedDefinition();
@@ -169,6 +169,7 @@ async function resolveOntologyRelease(client: Client, input: OntologyReleaseRef,
   catch { return conflict('Stored ontology release is invalid'); }
   const documentDigest = digest(document);
   if (document.id !== ref.ontologyId || documentDigest !== ref.digest) return conflict('Stored ontology release digest is invalid');
+  if(!staged&&document.objects.some(type=>type.id==='RideSourceTask')&&!rideRegistryReady){createRideSourcesKernelDefinition(trustedRegistry());rideRegistryReady=true;}
   const model = staged && documentDigest === staged.documentDigest ? staged.model : compileOntologyDocument(document, staged?.registry ?? trustedRegistry());
   if (model.ref.digest !== row.model_digest) return conflict('Ontology compiler or trusted handler contract changed');
   const sequence = Number(row.sequence);

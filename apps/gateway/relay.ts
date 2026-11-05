@@ -8,7 +8,7 @@ import type { Principal } from '../../packages/core/domain.js';
 import { digest } from '../../packages/core/delegation.js';
 import type { JobStore } from '../../packages/core/store.js';
 import type { TaskRelayTasks,TaskRelayTransport,TaskRelayHostPort } from '../../packages/agent-transport/task-host.js';
-import type { SourceReadRequest,SourceReadResponse } from '../../packages/agent-transport/service-contracts.js';
+import type {AnySourceReadRequest as SourceReadRequest,AnySourceReadResponse as SourceReadResponse} from '../../packages/agent-transport/source-protocol.js';
 import {TaskSecurity} from '../../packages/security/task-service.js';
 import {ownerKey} from '../../packages/core/domain.js';
 import { verifyCard, verifyProof } from '../../packages/agent-transport/crypto.js';
@@ -16,7 +16,7 @@ import { TaskRelayHost } from '../../packages/agent-transport/task-host.js';
 import { TASK_RELAY_PROTOCOL, taskRelayMetadataSchema } from '../../packages/agent-transport/task-contracts.js';
 import { agentIdSchema, relayOrigin, RelayError } from '../../packages/relay/contracts.js';
 import { SecurityError } from '../../packages/security/store.js';
-import { sourceReadResponseSchema } from '../../packages/agent-transport/service-contracts.js';
+import {anySourceReadResponseSchema as sourceReadResponseSchema} from '../../packages/agent-transport/source-protocol.js';
 import { RelayEnrollmentIssuer,type RelayEnrollmentAuthority } from '../../packages/agent-transport/enrollment.js';
 import { readPrivateJson } from '../../packages/relay/files.js';
 

@@ -1,3 +1,7 @@
+import {RideEstimateProgram,initializeRideProgram,assertRideContextProgram,completeRideProgram,rideObservationProgram} from '../capabilities/rides/program.js';
+import {RideRelayConnector} from '../capabilities/rides/relay-connector.js';
+import {rideProviders,type RideBinding,type RideProvider} from '../capabilities/rides/contracts.js';
+import {createPostgresRidePolicy,type PostgresRideConfiguration} from './ride-policy.js';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import type {Client} from 'pg';
 import {digest} from '../core/delegation.js';
@@ -27,8 +31,8 @@ import type {PostgresActionProgramPolicy} from './action-authorization.js';
 import {postgresWorkReference,type PostgresWorkReference} from './work-claim.js';
 
 export interface PostgresReadRegistration {
-  readonly kind:'document'|'didi';readonly program:DocumentAgentProgram|DidiAgentProgram;readonly policy:PostgresActionProgramPolicy;readonly sourceBindingId?:string;
-  readonly didi?:PostgresDidiPolicyOptions;
+  readonly kind:'document'|'didi'|'ride';readonly program:DocumentAgentProgram|DidiAgentProgram|RideEstimateProgram;readonly policy:PostgresActionProgramPolicy;readonly sourceBindingId?:string;
+  readonly didi?:PostgresDidiPolicyOptions;readonly ride?:PostgresRideConfiguration;
   initialize:(metadata:ProjectionMetadata,owner:string,request:ServiceRequest,input:unknown,component:{id:string;scopeKey:string})=>GraphProgram<{scope:ObjectRef;input:Record<string,unknown>}>;
   assertContext:(ctx:DocumentProgramContext)=>GraphProgram<void>;
   complete:(ctx:DocumentProgramContext,value:unknown,reads:PlanningSnapshot)=>GraphProgram<Delivery>;
@@ -44,11 +48,12 @@ export type PostgresDidiRegistryOptions=DidiMetadata&({kind:'relay'|'relay-fixtu
 /** Closed actual program registry, currently Doc plus the enabled DiDi read
  * program. No provider flag/model JSON installs arbitrary code or grants a
  * source. Production DiDi must use the real PostgreSQL Relay authority. */
+export interface PostgresRideRegistryOptions {binding:RideBinding;peerId:string;reads:PostgresRelayReadAuthority;authority:{id:string;gatewayOrigin:string};enabled:boolean;kernelReady:boolean;assertCurrent?:()=>void}
 export class PostgresReadProgramRegistry {
   private readonly claims=new AsyncLocalStorage<PostgresWorkReference>();
   readonly entries:readonly PostgresReadRegistration[];
   readonly catalog:ExecutionCatalog;
-  constructor(readonly policyDigest:string,options:{documentEnabled?:boolean;documentSourceBindingId?:string;didi?:PostgresDidiRegistryOptions}={}){
+  constructor(readonly policyDigest:string,options:{rides?:Partial<Record<RideProvider,PostgresRideRegistryOptions>>;documentEnabled?:boolean;documentSourceBindingId?:string;didi?:PostgresDidiRegistryOptions}={}){
     if(!/^[a-f0-9]{64}$/.test(policyDigest))throw new Error('A reviewed PostgreSQL program registry policy is required');const entries:PostgresReadRegistration[]=[];
     if(options.documentEnabled!==false){const program=new DocumentAgentProgram();entries.push({kind:'document',program,policy:createPostgresDocumentPolicy(),sourceBindingId:options.documentSourceBindingId,
       initialize:(metadata,owner,request,input,component)=>initializeDocumentProgram(program,owner,request,input,component),assertContext:ctx=>assertDocumentContextProgram(program,ctx),complete:(ctx,value,reads)=>completeDocumentProgram(program,ctx,value,reads)});}
@@ -66,7 +71,15 @@ export class PostgresReadProgramRegistry {
         validateOutput:function*(ctx,output){const refs=output.definition.cardinality==='many'?output.value as ObjectRef[]:[output.value as ObjectRef];for(const ref of refs)yield* didiObservationProgram(program,ctx,ref);},
       });
     }
-    this.entries=Object.freeze(entries);this.catalog=new ExecutionCatalog(entries.map(entry=>entry.program.capability()),[],[],[],entries.map(entry=>entry.program));
+    const ridePrograms=rideProviders.map(provider=>{
+      const configured=options.rides?.[provider];
+      if(!configured?.enabled||!configured.kernelReady)return new RideEstimateProgram(provider,{binding:configured?.binding,peerId:configured?.peerId,enabled:configured?.enabled,kernelReady:configured?.kernelReady});
+      if(!(configured.reads instanceof PostgresRelayReadAuthority))throw new Error('Ride registry requires the actual primary PostgreSQL Relay authority');
+      const reads=configured.reads,connector=new RideRelayConnector({create:(peer,input)=>reads.create(this.claim(),peer,input),ready:id=>reads.ready(this.claim(),id),rideResult:id=>reads.rideResult(this.claim(),id),revoke:id=>reads.revoke(id)},configured.peerId,configured.binding,configured.authority,configured.binding.environment==='production'?'live_readonly':'provider_mock');
+      const program=new RideEstimateProgram(provider,{binding:configured.binding,peerId:configured.peerId,enabled:true,kernelReady:true,connector,assertCurrent:configured.assertCurrent}),ride:PostgresRideConfiguration={program,binding:configured.binding,peerId:configured.peerId,authority:configured.authority,assertCurrent:configured.assertCurrent};
+      entries.push({kind:'ride',program,ride,policy:createPostgresRidePolicy(ride),initialize:(metadata,owner,request,input,component)=>initializeRideProgram(program,metadata,owner,request,input,component),assertContext:function*(ctx){yield* assertRideContextProgram(program,ctx);},complete:(ctx,value,reads)=>completeRideProgram(program,ctx,value,reads),validateOutput:function*(ctx,output){const refs=(output.definition.cardinality==='many'?output.value:[output.value]) as ObjectRef[];for(const ref of refs)yield* rideObservationProgram(program,ctx,ref);}});return program;
+    });
+    this.entries=Object.freeze(entries);this.catalog=new ExecutionCatalog([...entries.filter(e=>e.kind!=='ride').map(e=>e.program.capability()),...ridePrograms.map(p=>p.capability())],[],[],[],[...entries.filter(e=>e.kind!=='ride').map(e=>e.program),...ridePrograms]);
   }
   policies(){return this.entries.map(entry=>entry.policy);}
   find(ref:Ref,configurationDigest:string){return this.entries.find(entry=>digest(entry.program.ref)===digest(ref)&&entry.program.configurationDigest===configurationDigest);}
@@ -75,6 +88,6 @@ export class PostgresReadProgramRegistry {
   withClaim<T>(claim:PostgresWorkReference,action:()=>Promise<T>):Promise<T>{return this.claims.run(postgresWorkReference(claim),action);}
   async assertConfigured(client:Client,entry:PostgresReadRegistration,claim:PostgresWorkReference,job:Job){
     const current=this.require(entry.program.ref,entry.program.configurationDigest);if(current!==entry)throw new SecurityError('POLICY_CHANGED');
-    if(!entry.program.permitted(claim.owner))throw new SecurityError('SOURCE_NOT_AUTHORIZED');if(entry.didi)await entry.didi.account.assert(client,claim,job,this.policyDigest);
+    if(!entry.program.permitted(claim.owner))throw new SecurityError('SOURCE_NOT_AUTHORIZED');if(entry.didi)await entry.didi.account.assert(client,claim,job,this.policyDigest);if(entry.ride){entry.ride.assertCurrent?.();entry.ride.program.assertSourceAvailable(claim.owner);}
   }
 }
