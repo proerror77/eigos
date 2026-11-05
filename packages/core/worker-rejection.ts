@@ -16,7 +16,7 @@ export function workerErrorOrigins(error: unknown): string[] {
   if (!(error instanceof Error)) return [];
   try {
     return [...new Set((error.stack ?? '').split('\n', 17).slice(1).flatMap(line => {
-      if (!line.startsWith('    at ')) return [];
+      if (!line.trimStart().startsWith('at ')) return [];
       const match = line.match(/((?:apps|packages)\/[A-Za-z0-9_/-]+)\.(js|ts):(\d{1,7}):(\d{1,5})(?:\)|$)/);
       return match && diagnosticFiles.has(match[1]!) ? [`${match[1]}.${match[2]}:${match[3]}:${match[4]}`] : [];
     }))].slice(0, 4);

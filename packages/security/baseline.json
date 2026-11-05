@@ -7804,7 +7804,7 @@
       "currentControl": "Fixed event and original task id with runtime-allowlisted SecurityError reasons or DomainError codes; policy rejections include at most four reviewed repository file locations, with no raw error, absolute path, function names or caller facts; logging failure cannot alter recovery",
       "targetControl": "Keep rejection diagnostics separate from task state, permission, retry and business acceptance",
       "stage": "S3",
-      "sourceDigest": "8ffcb78e474970e3854a41b3ebffa7a87bfb355506da7e7781b95f0854b9a36f"
+      "sourceDigest": "0d87682a27d4c0654aa6b13748fd71de4e0e150733b2cf6c17aa14521c132fb1"
     },
     {
       "id": "relay-postgres-idle-operations",
