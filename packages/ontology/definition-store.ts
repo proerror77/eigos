@@ -59,7 +59,7 @@ function freezeJson<T>(value: T): T {
   }
   return value;
 }
-let templates: { registry: TrustedDefinitionRegistry; legacy: OntologyDocument; kernel: OntologyDocument; legacyModel: OntologyModel; kernelModel: OntologyModel; rideKernel:OntologyDocument; rideModel:OntologyModel } | undefined;
+let templates: { registry: TrustedDefinitionRegistry; legacy: OntologyDocument; kernel: OntologyDocument; legacyModel: OntologyModel; kernelModel: OntologyModel; rideKernel?:OntologyDocument; rideModel?:OntologyModel } | undefined;
 // This cache contains definitions only. Database identity, data compatibility and
 // current permission checks still run separately for each store and request.
 const compiledModels = new WeakMap<TrustedDefinitionRegistry, Map<string, OntologyModel>>();
@@ -69,6 +69,7 @@ function modelsFor(registry: TrustedDefinitionRegistry): Map<string, OntologyMod
   return models;
 }
 function compiledModel(document: OntologyDocument, registry: TrustedDefinitionRegistry): OntologyModel {
+  if(document.objects.some(type=>type.id==='RideSourceTask')&&registry===trustedTemplates().registry&&!templates?.rideModel)rideTemplates();
   const models = modelsFor(registry), key = digest(document), cached = models.get(key);
   if (cached) { models.delete(key); models.set(key, cached); return cached; }
   const model = compileOntologyDocument(document, registry);
@@ -80,10 +81,9 @@ function trustedTemplates() {
   if (!templates) {
     const legacy = createSeedDefinition(), kernel = createCurrentKernelDefinition(legacy.registry);
     const legacyModel = compiledSeedModel(legacy, legacy.registry), kernelModel = compiledSeedModel(kernel, legacy.registry);
-    const ride=createRideSourcesKernelDefinition(legacy.registry),rideModel=compiledSeedModel(ride,legacy.registry);
     const models = modelsFor(legacy.registry);
     models.set(digest(legacy.document), legacyModel); models.set(digest(kernel.document), kernelModel);
-    templates = { registry: legacy.registry, legacy: freezeJson(legacy.document), kernel: freezeJson(kernel.document), legacyModel, kernelModel,rideKernel:freezeJson(ride.document),rideModel };
+    templates = { registry: legacy.registry, legacy: freezeJson(legacy.document), kernel: freezeJson(kernel.document), legacyModel, kernelModel };
   }
   return templates;
 }
@@ -91,7 +91,8 @@ function trustedTemplates() {
 /** Canonical reviewed kernel, independent of owner-authored active releases. */
 export function currentKernelImplementation(): OntologyModel { return trustedTemplates().kernelModel; }
 
-export function rideSourcesKernelImplementation():OntologyModel{return trustedTemplates().rideModel;}
+function rideTemplates(){const base=trustedTemplates();if(!base.rideModel){const ride=createRideSourcesKernelDefinition(base.registry);base.rideKernel=freezeJson(ride.document);base.rideModel=compiledSeedModel(ride,base.registry);}return {kernel:base.rideKernel!,model:base.rideModel};}
+export function rideSourcesKernelImplementation():OntologyModel{return rideTemplates().model;}
 
 /** Persistent metadata, independent of facts and authority. All returned models
  * are immutable release compilations; authorization is never cached here. */
@@ -290,7 +291,7 @@ export class DefinitionStore {
       const namespace=this.namespace();if(digest(namespace.active)!==digest(expected)||namespace.generation!==expectedGeneration)return conflict('Active ontology changed before ride-source installation');
       const current=this.resolve(namespace.active),prior=current.document.version==='28'?trustedTemplates().kernel:current.document.version==='29'?createSemanticRetrievalKernelDefinition(trustedTemplates().registry).document:undefined;
       if(!prior||digest(prior)!==digest(current.document))return conflict('Ride sources require the exact reviewed v28 or v29 release');
-      const release=this.insertRelease(trustedTemplates().rideKernel,'system:install-ride-sources',namespace.active);
+      const release=this.insertRelease(rideTemplates().kernel,'system:install-ride-sources',namespace.active);
       return this.activate('system:install-ride-sources',release.ref,expectedGeneration,true);
     });
   }

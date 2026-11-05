@@ -26,6 +26,7 @@ import type { ActionDefinition, InterfaceDefinition, ModelDefinition, ObjectType
 
 export const LEGACY_SEED_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '15', digest: 'efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776' });
 export const CURRENT_KERNEL_VERSION = '28';
+export const RIDE_SOURCES_KERNEL_MODEL_REF=Object.freeze({id:'eigos.business',version:'30',digest:'c7a8273844d891f98cd83ccc41c48ce156e9c5e9aef5b6e46490f8d9047b781d'});
 export const BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '28', digest: '04606f93dc6cfd9045ac6b9a0c3dcfa4c8f330689ecbdd3cdfa7556df15202c5' });
 export const PAYMENT_COMMERCE_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '27', digest: '8e5b11eb6b25d873b12f05d67232899f97af6af929b143397aa19e75379fc5e6' });
 export const SINGLE_READ_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '26', digest: '78e73e56caaed8c894b716a0ed486dd98442beed1234a7c29e557821ba2f4020' });
@@ -156,7 +157,7 @@ export function createCurrentKernelDefinition(registry = new TrustedDefinitionRe
   return createBusinessDescriptionsKernelDefinition(registry);
 }
 export function createRideSourcesKernelDefinition(registry=new TrustedDefinitionRegistry()):SeedDefinition{
- return complete(extendRideSourcesKernel(createSemanticRetrievalKernelDefinition(registry).document,registry),registry,false);
+ const next=complete(extendRideSourcesKernel(createSemanticRetrievalKernelDefinition(registry).document,registry),registry,false);if(digest(next.audit.model)!==digest(RIDE_SOURCES_KERNEL_MODEL_REF))throw new DomainError('CONFLICT','Reviewed v30 ride-source fingerprint changed');return next;
 }
 export function createSemanticRetrievalKernelDefinition(registry=new TrustedDefinitionRegistry()):SeedDefinition{
   return complete(extendSemanticRetrievalKernel(createBusinessDescriptionsKernelDefinition(registry).document,registry),registry,false);
@@ -257,6 +258,7 @@ export class StagedKernelBuilder {
           break;
         case 16:
           this.#current=complete(extendRideSourcesKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
+          if(digest(this.#current.audit.model)!==digest(RIDE_SOURCES_KERNEL_MODEL_REF))throw new DomainError('CONFLICT','Reviewed v30 ride-source fingerprint changed');
           this.#documentDigest=digest(this.#current.document);this.#registry.seal();
           break;
         default: throw new Error('Unknown kernel stage');

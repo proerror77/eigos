@@ -4134,7 +4134,7 @@
     {
       "id": "definition-registry",
       "file": "packages/ontology/definition-store.ts",
-      "sourceDigest": "38a691a6f02fac02032cc3d399dde901e82a296f68aba5202f66300244d27553",
+      "sourceDigest": "1a003cc8b65925fcbe1dd08c9deab3f4f58b47bb73a93ca5defb2100a82d68d2",
       "channels": [
         "model",
         "artifact"
@@ -5694,7 +5694,7 @@
       "stage": "S5",
       "id": "postgres-ontology-read",
       "file": "packages/postgres/ontology-release.ts",
-      "sourceDigest": "819a0bfe1530e73d1b24d10f1083b7803d31ecc0b83828a34131c529c9c31d3c",
+      "sourceDigest": "0967f1aa47559c28cb2dc343dee555626c13c33ecf2f058b502b3a63a0a963d4",
       "content": "PostgreSQL ontology release and historical witness reader",
       "currentControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions",
       "targetControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions"
@@ -5750,7 +5750,7 @@
     {
       "id": "trusted-kernel-bootstrap",
       "file": "packages/ontology/seed-definition.ts",
-      "sourceDigest": "7a81331e6b9e76e2052d7e0880750c547b9af7c8e7b548ddafe869d2d6858513",
+      "sourceDigest": "efc56c11a4c6aa556c6288fb8b36b9d1320b9af4d50107de5a4fb03fc72439b5",
       "channels": [
         "authorization_control"
       ],
@@ -7065,7 +7065,7 @@
     {
       "id": "postgres-definition-store",
       "file": "packages/postgres/definition-store.ts",
-      "sourceDigest": "9578a122aa22e8cb88f113b2f7b8ad09394f9a5d228609830851942cde3703b4",
+      "sourceDigest": "845823cc31fa398e9f555d7a3599f1e7d7ffb5009efa85b1437484c5e5433dd3",
       "channels": [
         "internal",
         "ontology_metadata"
@@ -7566,7 +7566,7 @@
       "currentControl": "The v27 digest is preserved explicitly and registered before the v28 metadata-only successor; historical releases are never rewritten.",
       "targetControl": "Accurate release construction and immutable historical interpretation",
       "stage": "S2",
-      "sourceDigest": "7a81331e6b9e76e2052d7e0880750c547b9af7c8e7b548ddafe869d2d6858513"
+      "sourceDigest": "efc56c11a4c6aa556c6288fb8b36b9d1320b9af4d50107de5a4fb03fc72439b5"
     },
     {
       "id": "gateway-primary-startup",
@@ -8060,7 +8060,7 @@
     {
       "id": "ride-source-packages-security-ride-sources-upgrade",
       "file": "packages/security/ride-sources-upgrade.ts",
-      "sourceDigest": "12bd59704a8e5cbd387d1d6c1ce2ff80b49764fd84aea2bd8f8b4e1996935c7e",
+      "sourceDigest": "6b0b872fc26f3509f0715e27401e44574bac941d9d1bb964d27dbbf6147a98e0",
       "channels": [
         "private_source",
         "authorization_control",

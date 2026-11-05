@@ -2,7 +2,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {digest} from '../core/delegation.js';
 import {businessTransaction} from '../core/transaction.js';
 import {DefinitionStore,currentKernelImplementation,rideSourcesKernelImplementation} from '../ontology/definition-store.js';
-import {createSemanticRetrievalKernelDefinition} from '../ontology/seed-definition.js';
+import {RIDE_SOURCES_KERNEL_MODEL_REF,createSemanticRetrievalKernelDefinition} from '../ontology/seed-definition.js';
 import {compileOntologyDocument} from '../ontology/model-compiler.js';
 import type {OntologyReleaseRef} from '../ontology/definition-contracts.js';
 import {persistentConsentPolicyContracts} from './policy-store.js';
@@ -29,7 +29,8 @@ export function upgradeRideSources(db:DatabaseSync,expected:{release:OntologyRel
 export function installedRideSourcesModel(db:DatabaseSync){
  const present=(name:string)=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
  if(!present('security_policy_definitions')||!present('ontology_namespaces')||!present('ontology_definition_releases'))return undefined;
+ const candidate=db.prepare('SELECT r.model_digest FROM ontology_namespaces n JOIN ontology_definition_releases r ON r.id=n.active_release_id WHERE n.id=?').get('eigos.business');if(candidate?.model_digest!==RIDE_SOURCES_KERNEL_MODEL_REF.digest)return undefined;
  const model=rideSourcesKernelImplementation(),contracts=persistentConsentPolicyContracts(model),stored=db.prepare('SELECT digest FROM security_policy_definitions WHERE slot=1').get()?.digest;
  if(stored!==contracts.before&&stored!==contracts.after)return undefined;
- const release=new DefinitionStore(db,Date.now,{readOnly:true}).active();if(digest(release.model.ref)!==digest(model.ref))throw new Error('Ride policy and active ontology differ; explicit recovery is required');return model;
+ const release=new DefinitionStore(db,Date.now,{readOnly:true}).active();if(release.model.ref.id!==model.ref.id||release.model.ref.digest!==model.ref.digest)throw new Error('Ride policy and active ontology differ; explicit recovery is required');return model;
 }
