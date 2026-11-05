@@ -53,3 +53,5 @@ SQLite 原子升级及故障回滚、同步／异步 GraphProgram 语义使用�
 升级后保留原 PostgreSQL binding 文件及其 policyDigest、handoff、activation 和 Relay／向量凭据绑定不变。另以私有 `EIGOS_POSTGRES_RIDE_POLICY_FILE` 提供返回的 `activationProof`（严格 `{receipt, sha256}`）。启动在只读快照对照数据库受保护回执、原 activation、发布 lineage 和当前策略，验证后才向执行侧提供新的 policyDigest；仅写配置或普通事件不能绕过验证。已装 v29 向量的升级保留原 schema／ACL／功能回执及检索内核，继续执行完整物理校验；新策略不授予任何供应商权限。
 
 `ride-policy-successor.test.ts` 是只读 SQL 合成响应契约，验证原绑定不变、后继证明、异源／篡改回执与精确 v30 向量发布的拒绝条件；它不是实际 PostgreSQL 启动或 ACL 证明。`ride-program.test.ts` 验证两供应商经过真实共享任务与 Coordinator 的硬起终点要求，另比较同步／awaited GraphProgram 的路线验收。`facts.locations` 仅证明已核验原报价查询的端点，不证明实际接送。
+
+向量批次仍绑定生成时的策略 revision。升级保留原索引数据、旧任务发布引用与不可变批次；策略更新后旧批次返回 `index_incomplete`，生产者须在当前任务／字段授权下显式提交新 batchId 重新验索引。升级器不修改历史回执，也不将旧策略证据自动视为当前有效授权。
