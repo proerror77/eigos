@@ -3411,12 +3411,12 @@
     {
       "id": "security-worker-loop",
       "file": "apps/worker/worker.ts",
-      "sourceDigest": "5921d559502bcbda6092bf43bd1895221394072dfa08dd265abb51287eb5d59c",
+      "sourceDigest": "88b98e29d5b689f520ac4a0b0c1c20bf3d5c121dc732d611395fc2c1a900bfac",
       "channels": [
         "authorization_control"
       ],
       "content": "Lease renewal, cancellation and completion lifecycle",
-      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit; synchronous progress renews each due active task claim through its original lease, execution deadline and policy fences; A source authorization mismatch produces explicit blocked recovery without automatic resubmission or new permission. Cutover pauses new claims and waits for in-flight work without aborting it. The Harness runtime may select one concurrent claim; existing lease, cancellation and late-result fences remain unchanged. Known rejection reasons are logged privately through a runtime allowlist even after successful recovery writeback; no raw error or public task diagnostic field is added.",
+      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit; synchronous progress renews each due active task claim through its original lease, execution deadline and policy fences; A source authorization mismatch produces explicit blocked recovery without automatic resubmission or new permission. Cutover pauses new claims and waits for in-flight work without aborting it. The Harness runtime may select one concurrent claim; existing lease, cancellation and late-result fences remain unchanged. Known rejection reasons and bounded policy rejection locations are logged privately even after successful recovery writeback; no raw error or public task diagnostic field is added.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
@@ -7801,10 +7801,10 @@
         "internal"
       ],
       "content": "Private Worker rejection classification during existing recovery",
-      "currentControl": "Fixed event and original task id with runtime-allowlisted SecurityError reasons or DomainError codes; no raw error, stack, path or caller facts; logging failure cannot alter recovery",
+      "currentControl": "Fixed event and original task id with runtime-allowlisted SecurityError reasons or DomainError codes; policy rejections include at most four reviewed repository file locations, with no raw error, absolute path, function names or caller facts; logging failure cannot alter recovery",
       "targetControl": "Keep rejection diagnostics separate from task state, permission, retry and business acceptance",
       "stage": "S3",
-      "sourceDigest": "728b804b914bb5fe612de4a9e1afb11b128da7f1ed03bffa4bb417564faf118e"
+      "sourceDigest": "8ffcb78e474970e3854a41b3ebffa7a87bfb355506da7e7781b95f0854b9a36f"
     },
     {
       "id": "relay-postgres-idle-operations",

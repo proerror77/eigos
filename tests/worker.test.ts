@@ -352,9 +352,24 @@ test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, 
 test('Worker privately records bounded rejection reasons even when recovery writeback succeeds', async t => {
   const logs: unknown[][] = [];
   t.mock.method(console, 'error', (...args: unknown[]) => { logs.push(args); });
+  const changed = new SecurityError('POLICY_CHANGED', 'SYNTHETIC_PRIVATE_MESSAGE');
+  changed.stack = [
+    'SYNTHETIC_PRIVATE_MESSAGE',
+    'not a stack frame packages/security/policy-store.js:41:1',
+    '    at elsewhere (file:///SYNTHETIC_PRIVATE_PATH/packages/unreviewed/module.js:2:9)',
+    '    at binding (file:///SYNTHETIC_PRIVATE_PATH/dist/packages/security/policy-store.js:668:15)',
+    '    at binding (file:///SYNTHETIC_PRIVATE_PATH/dist/packages/security/policy-store.js:668:15)',
+    '    at proof (file:///SYNTHETIC_PRIVATE_PATH/dist/packages/security/projection-origin.js:16:75)',
+    '    at read (file:///SYNTHETIC_PRIVATE_PATH/dist/packages/ontology/object-store.js:693:47)',
+    '    at scope (file:///SYNTHETIC_PRIVATE_PATH/dist/packages/core/store.js:934:50)',
+    '    at worker (file:///SYNTHETIC_PRIVATE_PATH/dist/apps/worker/worker.js:150:10)',
+  ].join('\n');
+  const unformattable = new SecurityError('POLICY_CHANGED', 'SYNTHETIC_PRIVATE_MESSAGE');
+  Object.defineProperty(unformattable, 'stack', { get() { throw new Error('SYNTHETIC_PRIVATE_FORMAT_FAILURE'); } });
   for (const [error, reason] of [
     [new DomainError('CONFLICT', 'SYNTHETIC_PRIVATE_MESSAGE'), 'CONFLICT'],
-    [new SecurityError('POLICY_CHANGED', 'SYNTHETIC_PRIVATE_MESSAGE'), 'POLICY_CHANGED'],
+    [changed, 'POLICY_CHANGED'],
+    [unformattable, 'POLICY_CHANGED'],
     [Object.assign(new DomainError('CONFLICT', 'SYNTHETIC_PRIVATE_MESSAGE'), { code: 'SYNTHETIC_PRIVATE_CODE' }), undefined],
     [Object.assign(new SecurityError('POLICY_CHANGED', 'SYNTHETIC_PRIVATE_MESSAGE'), { reason: 'SYNTHETIC_PRIVATE_REASON' }), undefined],
   ] as const) {
@@ -367,7 +382,9 @@ test('Worker privately records bounded rejection reasons even when recovery writ
       await worker.pauseClaims();
       assert.equal(paused.delegation?.recovery?.code, 'validation_stalled');
       const diagnostics = logs.slice(start).filter(args => args[0] === 'Worker execution rejected; original task retained');
-      assert.deepEqual(diagnostics, reason ? [['Worker execution rejected; original task retained', { event: 'worker_execution_rejected', taskId: job.id, reason }]] : []);
+      const origins = error === changed ? { origins: ['packages/security/policy-store.js:668:15',
+        'packages/security/projection-origin.js:16:75', 'packages/ontology/object-store.js:693:47', 'packages/core/store.js:934:50'] } : {};
+      assert.deepEqual(diagnostics, reason ? [['Worker execution rejected; original task retained', { event: 'worker_execution_rejected', taskId: job.id, reason, ...origins }]] : []);
       assert(!JSON.stringify({ logs, paused }).includes('SYNTHETIC_PRIVATE'));
       assert(!paused.delegation?.events.some(event => event.event === 'worker_execution_rejected'), 'Diagnostic categories remain private process logs');
       assert.equal(store.intents(ownerKey(principal), job.id).length, 0);
