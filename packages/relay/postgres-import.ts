@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, type Stats } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import type { Client } from 'pg';
+import { relayIdleFunctions } from './postgres-idle-sql.js';
 
 // The source is an offline, checkpointed copy. Import never updates the source
 // or an existing destination: deployment cutover remains a separate operation.
@@ -89,6 +90,7 @@ CREATE INDEX relay_inbox ON relay_messages(recipient,state,seq);
 CREATE INDEX relay_message_expiry ON relay_messages(expires_at,state);
 CREATE INDEX relay_message_connection ON relay_messages(connection_id,state);
 ${relayCleanupSql}
+${relayIdleFunctions.map(entry => entry.sql).join('\n')}
 `;
 
 function normalize(row: Record<string, unknown>, columns: readonly string[]): string {

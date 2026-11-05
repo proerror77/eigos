@@ -3,6 +3,8 @@ import pg from 'pg';
 import { fail, MAX_ENVELOPE_BYTES, MAX_MESSAGE_MS, SESSION_MS, ownerKey, sha256, validateTimes,
   type Connection, type Envelope, type MailItem, type MessageStatus, type Receipt, type RelayOwner, type VerifiedCard } from './contracts.js';
 import type { RelayLimits } from './store.js';
+import { z } from 'zod';
+import { mailItemSchema } from './contracts.js';
 
 const defaults: RelayLimits = { requestsPerMinute: 120, maxAgents: 10000, maxAgentsPerOwner: 16, maxConnections: 128, maxInboxMessages: 256, maxInboxBytes: 4 * 1024 * 1024 };
 const retentionMs = 30 * 86400000;
@@ -58,11 +60,14 @@ export class PostgresRelayStore {
       .filter(row => !owner.enrollmentAgentId || owner.enrollmentAgentId === row.id).map(row => ({ agentId: String(row.id), ...this.publicRow(row) })));
   }
   async authenticate(id: string, token: string): Promise<VerifiedCard> {
-    return this.atomic(async db => {
-      const row = await this.active(db, id), expected = Buffer.from(String(row.credential_hash)), supplied = Buffer.from(sha256(token));
-      if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) fail('INVALID_CONNECTION_CREDENTIAL', 401);
-      return { card: JSON.parse(String(row.card)), signedCard: String(row.signed_card) };
-    });
+    // Fresh MVCC read, followed by the same constant-time credential check.
+    // Every operation rechecks activity under the shared lock before accessing
+    // messages. No connection or permission snapshot is retained while waiting.
+    const row = (await this.pool.query(`SELECT * FROM "${this.schema}".relay_agents WHERE id=$1`, [id])).rows[0] ?? fail('AGENT_NOT_FOUND', 404);
+    if (row.state !== 'active' || Number(row.expires_at) <= this.now()) fail('AGENT_REVOKED_OR_EXPIRED', 401);
+    const expected = Buffer.from(String(row.credential_hash)), supplied = Buffer.from(sha256(token));
+    if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) fail('INVALID_CONNECTION_CREDENTIAL', 401);
+    return { card: JSON.parse(String(row.card)), signedCard: String(row.signed_card) };
   }
   async consumeProof(id: string, jti: string, expiresAt: number): Promise<void> {
     await this.atomic(async db => {
@@ -82,14 +87,30 @@ export class PostgresRelayStore {
   }
   /** Distributed limits are shared by every Cloudflare instance. */
   async rateIngress(address: string): Promise<void> {
-    await this.atomic(async db => {
-      const bucket = Math.floor(this.now() / 60000), subject = 'ingress:' + sha256(address);
-      await db.query('DELETE FROM relay_limits WHERE bucket<$1', [bucket - 2]);
-      const row = (await db.query('SELECT count FROM relay_limits WHERE subject=$1 AND bucket=$2', [subject, bucket])).rows[0];
-      if (!row && Number((await db.query("SELECT count(*) AS n FROM relay_limits WHERE bucket=$1 AND subject LIKE 'ingress:%'", [bucket])).rows[0].n) >= 2048) fail('RATE_LIMITED', 429);
-      if (Number(row?.count ?? 0) >= 600) fail('RATE_LIMITED', 429);
-      await db.query('INSERT INTO relay_limits VALUES($1,$2,1) ON CONFLICT(subject,bucket) DO UPDATE SET count=relay_limits.count+1', [subject, bucket]);
-    });
+    z.object({}).strict().parse(this.idleResult((await this.pool.query(`SELECT "${this.schema}".relay_idle_ingress($1,$2) AS result`, ['ingress:' + sha256(address), this.now()])).rows[0]?.result));
+  }
+  private idleResult(value: unknown): unknown {
+    const error = z.object({ error: z.string(), status: z.number().int().min(400).max(599) }).safeParse(value);
+    if (error.success) fail(error.data.error, error.data.status);
+    return value;
+  }
+  private async idlePoll(input: Record<string, unknown>): Promise<{ lease: string; items: MailItem[] }> {
+    const result = (await this.pool.query(`SELECT "${this.schema}".relay_idle_poll($1::jsonb,$2,$3,$4) AS result`, [JSON.stringify(input), this.now(), MAX_MESSAGE_MS, retentionMs])).rows[0]?.result;
+    const value = z.object({ lease: z.string().uuid(), items: z.array(mailItemSchema).max(20), actorExpiresAt: z.number().int().positive() }).parse(this.idleResult(result));
+    // A reply can itself be delayed after PG's fresh final read. Apply absolute
+    // expiry conservatively again; no permissions or message state are cached.
+    if (input.finished) {
+      const now = this.now();
+      if (value.actorExpiresAt <= now) fail('AGENT_REVOKED_OR_EXPIRED', 401);
+      value.items = value.items.filter(item => item.receipt.expiresAt > now);
+    }
+    return { lease: value.lease, items: value.items };
+  }
+  async beginIdlePoll(actor: string, proof: { jti: string; expiresAt: number }, limit: number, invalidQuery = false) {
+    return this.idlePoll({ actor, lease: randomUUID(), proofId: proof.jti, proofExpiry: proof.expiresAt, limit, rateLimit: this.limits.requestsPerMinute, invalidQuery, finished: false });
+  }
+  async finishIdlePoll(actor: string, lease: string, limit: number) {
+    return (await this.idlePoll({ actor, lease, limit, finished: true })).items;
   }
   async acquirePoll(actor: string): Promise<string> {
     return this.atomic(async db => {

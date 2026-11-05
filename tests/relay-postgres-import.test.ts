@@ -15,11 +15,159 @@ import { RELAY_PROTOCOL, type Envelope, RelayError, sha256 } from '../packages/r
 import { createRelayApp } from '../apps/relay/app.js';
 import { readRelayConfig } from '../apps/relay/config.js';
 import { RelayClient } from '../packages/agent-transport/client.js';
+import { idleRelayFixture } from './fixtures/relay-idle.js';
+import { MemoryRelayNotifications, type RelayNotifications } from '../packages/relay/notifications.js';
 
 // Set these only for a dedicated disposable test database. No application data
 // is read, and the uniquely named test schema is removed after the test.
 const enabled = process.env.EIGOS_TEST_RELAY_POSTGRES === '1';
 const fileDigest = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex');
+
+test('idle Relay uses committed PG facts with bounded wire statements and recoverable notifications', { skip: !enabled, timeout: 180000 }, async t => {
+  await t.test('four real wire statements, with no connection or transaction held during the wait', async () => {
+    const memory = new MemoryRelayNotifications(); let ready!: () => void;
+    const waiting = new Promise<void>(resolve => { ready = resolve; });
+    const channel: RelayNotifications = { snapshot: () => memory.snapshot(), notify: () => memory.notify(), wait: (...args) => { ready(); return memory.wait(...args); } };
+    const f = await idleRelayFixture(channel);
+    try {
+      const node = await f.client('idle'); f.wire.length = 0;
+      const response = f.request(node, 1); await waiting;
+      assert.equal(f.wire.length, 3);
+      const sessions = (await f.admin.query('SELECT state,xact_start FROM pg_stat_activity WHERE application_name=$1', [f.schema])).rows;
+      assert(sessions.length > 0); assert(sessions.every(row => row.state === 'idle' && row.xact_start === null));
+      assert.deepEqual(await (await response).json(), { items: [] });
+      assert.equal(f.wire.length, 4);
+      assert(f.wire.every(sql => /^SELECT /.test(sql) && !sql.includes(';')));
+      assert.equal(3 * (86400 / 25) * f.wire.length, 41472);
+    } finally { await f.close(); }
+  });
+  await t.test('commit between first read and wait registration wakes, preserves queued receipt, and survives restart', async () => {
+    const memory = new MemoryRelayNotifications(); let between: (() => Promise<void>) | undefined;
+    const channel: RelayNotifications = { snapshot: () => memory.snapshot(), notify: () => memory.notify(), wait: async (...args) => { await between?.(); await memory.wait(...args); } };
+    const f = await idleRelayFixture(channel);
+    try {
+      const a = await f.client('sender'), b = await f.client('recipient'), connection = await f.connect(a, b); let id = '';
+      between = async () => { between = undefined; id = await f.externallySend(a, b, connection); await memory.notify(); };
+      const started = Date.now();
+      const result = await (await f.request(b, 25)).json() as { items: { receipt: { id: string } }[] };
+      assert(Date.now() - started < 10000, 'A registered revision must wake before the 25-second fallback');
+      assert.equal(result.items[0]?.receipt.id, id);
+      assert.equal((await f.external.messageReceipt(a.agentId, a.agentId, id)).status, 'queued');
+      await f.restart();
+      assert.deepEqual((await b.poll()).map(item => item.content), [{ fixture: 'external-commit' }]);
+      assert.equal((await f.external.messageReceipt(a.agentId, a.agentId, id)).status, 'received');
+      await b.markHandled(a.agentId, id); assert.deepEqual(await b.poll(), []);
+    } finally { await f.close(); }
+  });
+  await t.test('a false hint supplies no facts and a queued message that expires before the final read is withheld', async () => {
+    const memory = new MemoryRelayNotifications(); let between: (() => Promise<void>) | undefined;
+    const channel: RelayNotifications = { snapshot: () => memory.snapshot(), notify: () => memory.notify(), wait: async (...args) => { await between?.(); await memory.wait(...args); } };
+    const f = await idleRelayFixture(channel);
+    try {
+      const a = await f.client('sender'), b = await f.client('recipient'), connection = await f.connect(a, b);
+      between = () => memory.notify();
+      assert.deepEqual(await (await f.request(b, 25)).json(), { items: [] });
+      let id = '';
+      between = async () => { id = await f.externallySend(a, b, connection, Date.now() + 1000); f.advance(2000); await memory.notify(); };
+      assert.deepEqual(await (await f.request(b, 25)).json(), { items: [] });
+      assert.equal((await f.external.messageReceipt(a.agentId, a.agentId, id)).status, 'expired');
+    } finally { await f.close(); }
+  });
+  await t.test('revocation committed while final read waits for the table lock prevents delivery', async () => {
+    const memory = new MemoryRelayNotifications(); let ready!: () => void;
+    const waiting = new Promise<void>(resolve => { ready = resolve; });
+    const f = await idleRelayFixture({ snapshot: () => memory.snapshot(), notify: () => memory.notify(), wait: (...args) => { ready(); return memory.wait(...args); } });
+    try {
+      const node = await f.client('revoked'); const response = f.request(node, 25); await waiting;
+      await f.admin.query('BEGIN'); await f.admin.query(`LOCK TABLE "${f.schema}".relay_agents IN EXCLUSIVE MODE`);
+      await memory.notify();
+      await f.admin.query(`UPDATE "${f.schema}".relay_agents SET state='revoked' WHERE id=$1`, [node.agentId]); await f.admin.query('COMMIT');
+      const revoked = await response; assert.equal(revoked.status, 401); assert.deepEqual(await revoked.json(), { error: 'AGENT_REVOKED_OR_EXPIRED' });
+      assert.equal((await f.admin.query(`SELECT count(*)::int AS n FROM "${f.schema}".relay_poll_leases`)).rows[0].n, 0);
+    } finally { await f.close(); }
+  });
+  await t.test('expiry during wait fails closed and releases its lease', async () => {
+    const memory = new MemoryRelayNotifications(); let f: Awaited<ReturnType<typeof idleRelayFixture>>;
+    f = await idleRelayFixture({ snapshot: () => memory.snapshot(), notify: () => memory.notify(), wait: async () => { f.advance(86400001); await memory.notify(); } });
+    try {
+      const node = await f.client('expires'); const expired = await f.request(node, 25);
+      assert.equal(expired.status, 401); assert.equal((await f.admin.query(`SELECT count(*)::int AS n FROM "${f.schema}".relay_poll_leases`)).rows[0].n, 0);
+    } finally { await f.close(); }
+  });
+  await t.test('proof replay, node rate, concurrent polls, and abandoned lease expiry remain enforced', async () => {
+    const f = await idleRelayFixture();
+    try {
+      const node = await f.client('limited'), headers = await f.headers(node);
+      assert.equal((await f.request(node, 0, headers)).status, 200);
+      const replay = await f.request(node, 0, headers); assert.equal(replay.status, 401); assert.equal((await replay.json() as { error: string }).error, 'DPOP_PROOF_REPLAY');
+      const malformedHeaders=await f.headers(node);
+      assert.equal((await fetch(f.baseUrl+'/v1/inbox?wait=26',{headers:malformedHeaders})).status,400);
+      assert.equal((await f.request(node,0,malformedHeaders)).status,401);
+      await f.admin.query(`INSERT INTO "${f.schema}".relay_poll_leases VALUES($1,$3,$4),($2,$3,$4)`, [randomUUID(), randomUUID(), node.agentId, Date.now() + 120000]);
+      const concurrent = await f.request(node, 0); assert.equal(concurrent.status, 429); assert.equal((await concurrent.json() as { error: string }).error, 'POLL_LIMIT');
+      await f.admin.query(`UPDATE "${f.schema}".relay_poll_leases SET expires_at=0`);
+      assert.equal((await f.request(node, 0)).status, 200);
+      f.store.limits.requestsPerMinute = 1; await f.admin.query(`DELETE FROM "${f.schema}".relay_limits WHERE subject=$1`, ['node:' + node.agentId]);
+      assert.equal((await f.request(node, 0)).status, 200);
+      const limited = await f.request(node, 0); assert.equal(limited.status, 429); assert.equal((await limited.json() as { error: string }).error, 'RATE_LIMITED');
+    } finally { await f.close(); }
+  });
+  for (const target of ['agent', 'message'] as const) for (const phase of ['before-send', 'after-read'] as const) {
+    await t.test(`${target} expiry survives a delayed ${phase} final query without another wire statement`, async () => {
+      const f = await idleRelayFixture();
+      try {
+        const a = await f.client('sender'), b = await f.client('recipient'), connection = await f.connect(a, b);
+        const original = f.pool.query.bind(f.pool);
+        let databaseResult: { error?: string; items?: unknown[] } | undefined;
+        // Delay after the store has already captured requested_ms. Real PG
+        // still executes the query, and its wire parse/query is still counted.
+        f.pool.query = (async (...args: unknown[]) => {
+          const text = args[0], values = args[1] as unknown[] | undefined;
+          const final = typeof text === 'string' && text.includes('relay_idle_poll') && JSON.parse(String(values?.[0])).finished;
+          if (final) {
+            if (target === 'message') await f.expiringExternalMessage(a, b, connection);
+            else await f.admin.query(`UPDATE "${f.schema}".relay_agents SET expires_at=$2 WHERE id=$1`, [b.agentId, Date.now() + 2000]);
+          }
+          if (final && phase === 'before-send') await new Promise(resolve => setTimeout(resolve, 2500));
+          const result = await Reflect.apply(original, f.pool, args);
+          if (final) databaseResult = result.rows[0]?.result;
+          if (final && phase === 'after-read') await new Promise(resolve => setTimeout(resolve, 2500));
+          return result;
+        }) as typeof f.pool.query;
+        f.wire.length = 0;
+        const response = await f.request(b, 0);
+        assert.equal(response.status, target === 'agent' ? 401 : 200);
+        assert.deepEqual(await response.json(), target === 'agent' ? { error: 'AGENT_REVOKED_OR_EXPIRED' } : { items: [] });
+        if (phase === 'before-send') {
+          if (target === 'agent') assert.equal(databaseResult?.error, 'AGENT_REVOKED_OR_EXPIRED');
+          else assert.deepEqual(databaseResult?.items, []);
+        } else {
+          assert.equal(databaseResult?.error, undefined);
+          if (target === 'message') assert.equal(databaseResult?.items?.length, 1, 'The delayed reply must test the post-read expiry fence');
+        }
+        assert.equal(f.wire.length, 4);
+        assert.equal((await f.admin.query(`SELECT count(*)::int AS n FROM "${f.schema}".relay_poll_leases`)).rows[0].n, 0);
+      } finally { await f.close(); }
+    });
+  }
+  await t.test('an external commit at 35 seconds with all hints lost is recovered by a later final PG read', { timeout: 70000 }, async () => {
+    const f = await idleRelayFixture(); let write: Promise<string> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const a = await f.client('sender'), b = await f.client('recipient'), connection = await f.connect(a, b);
+      const queued = await f.prepareExternal(a, b, connection);
+      const committed = new Promise<string>((resolve, reject) => { timer = setTimeout(() => { write = queued.commit(); write.then(resolve, reject); }, 35000); });
+      void committed.catch(() => {});
+      const first = await f.request(b, 25); assert.deepEqual(await first.json(), { items: [] });
+      f.wire.length = 0;
+      const second = await f.request(b, 25), id = await committed;
+      const body = await second.json() as { items: { receipt: { id: string } }[] };
+      assert.equal(body.items[0]?.receipt.id, id); assert.equal(f.wire.length, 4);
+      assert.equal((await f.external.messageReceipt(a.agentId, a.agentId, id)).status, 'queued');
+    } finally { if (timer) clearTimeout(timer); await write; await f.close(); }
+  });
+});
+
 test('offline Relay import preserves queued data, uniqueness and sequence, and refuses an existing target', { skip: !enabled }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'relay-pg-import-'));
   const path = join(dir, 'relay.sqlite');
