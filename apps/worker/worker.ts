@@ -6,6 +6,7 @@ import { ReasoningBudgetExhausted } from '../../packages/core/execution-budget.j
 import { scheduleTaskRecovery, resumeScheduledRecovery, canRecoverReadOnly, canResumeSource, SOURCE_AUTHORIZATION_MESSAGE } from '../../packages/core/task-recovery.js';
 import {SecurityError} from '../../packages/security/store.js';
 import { withModelUsage } from '../../packages/core/model-usage-context.js';
+import { recordWorkerRejection } from '../../packages/core/worker-rejection.js';
 import { ConnectionAuthorizationRequired, DomainError } from '../../packages/core/domain.js';
 import { withAuthorization, type AuthorizationScope } from '../../packages/security/context.js';
 import type { RecoveryWork } from '../../packages/security/recovery.js';
@@ -181,6 +182,7 @@ export class Worker {
             const intentId = current.delegation?.intentId;
             const dispatched = current.delegation?.agent ? this.store.intents(owner, current.id).some(i => this.store.attempts(owner, i.id).length > 0) : intentId ? this.store.intent(owner, intentId).state !== 'ready' : false;
             if (current.delegation && readOnly) {
+              if (!controller.signal.aborted) recordWorkerRejection(current.id, error);
               if(error instanceof SecurityError && error.reason==='SOURCE_NOT_AUTHORIZED' && !controller.signal.aborted) {
                 scheduleTaskRecovery(current,'source_authorization_required',SOURCE_AUTHORIZATION_MESSAGE,{automatic:false,operation:'SOURCE_NOT_AUTHORIZED'});
                 return;

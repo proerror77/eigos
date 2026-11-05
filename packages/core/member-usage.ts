@@ -1,12 +1,13 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { DomainError } from './domain.js';
 import type { RunEvidence } from '../capabilities/executor.js';
-import type { ModelUsageEvidence } from './model-usage-context.js';
+import { modelFailureSchema, type ModelFailureDiagnostic, type ModelUsageEvidence } from './model-usage-context.js';
 import { nativeModelTimingSchema, type NativeModelTiming } from '../capabilities/native-model-timing.js';
 
-export type ModelUsage = { id: string; runtime: string; startedAt: string; completedAt?: string; model?: string; usage?: Record<string, number>; usageReported: boolean; claimTokenDigest?: string; nativeTiming?: NativeModelTiming };
+export type ModelUsage = { id: string; runtime: string; startedAt: string; completedAt?: string; model?: string; usage?: Record<string, number>; usageReported: boolean; claimTokenDigest?: string; nativeTiming?: NativeModelTiming; failure?: ModelFailureDiagnostic };
 const cleanUsage = (value: RunEvidence['usage']) => value ? Object.fromEntries(Object.entries(value).filter(([key, n]) => /^[a-z_]{1,80}$/.test(key) && Number.isSafeInteger(n) && n >= 0)) : undefined;
 const cleanTiming = (value: unknown) => { const parsed = nativeModelTimingSchema.safeParse(value); return parsed.success ? parsed.data : undefined; };
+const cleanFailure = (value: unknown) => { const parsed = modelFailureSchema.safeParse(value); return parsed.success ? parsed.data : undefined; };
 
 /** Pure accounting transitions shared by local and remote persistence. */
 export function modelUsageStarted(id:string,runtime:string,startedAt:string,claimTokenDigest:string):ModelUsage {
@@ -15,7 +16,8 @@ export function modelUsageStarted(id:string,runtime:string,startedAt:string,clai
 export function modelUsageFinished(old:ModelUsage,evidence:ModelUsageEvidence|undefined):ModelUsage {
   const usage=cleanUsage(evidence?.usage);
   return {...old,completedAt:evidence?.completedAt??new Date().toISOString(),model:evidence?.model,usage,
-    usageReported:!!usage&&Object.keys(usage).length>0,nativeTiming:old.nativeTiming??cleanTiming(evidence?.nativeTiming)};
+    usageReported:!!usage&&Object.keys(usage).length>0,nativeTiming:old.nativeTiming??cleanTiming(evidence?.nativeTiming),
+    failure:cleanFailure(old.failure)??cleanFailure(evidence?.failure)};
 }
 export function modelUsageReported(evidence:RunEvidence):ModelUsage {
   const usage=cleanUsage(evidence.usage);
