@@ -8,7 +8,7 @@ import { ontologyReleaseRefSchema, parseOntologyDocument } from '../ontology/def
 
 export type BusinessColumn = { name: string; type: string; notNull: boolean; primaryKey: number; sourceRowidAlias?: string };
 type UniqueKey = { name: string; origin: string; partial: boolean; columns: (string | null)[] };
-export type BusinessTable = { name: string; columns: BusinessColumn[]; uniqueKeys: UniqueKey[]; rows: number; totalEncodedBytes: number; maxRowBytes: number; maxIntegerPrimaryKey?: string | null; maxRowid: string | null; digest: string };
+export type BusinessTable = { name: string; columns: BusinessColumn[]; uniqueKeys: UniqueKey[]; rows: number; totalEncodedBytes: number; maxRowBytes: number; maxIntegerPrimaryKey?: string | null; maxRowid: string | null; digest: string; contentDigest: string };
 export interface BusinessSnapshotPlan {
   version: 2;
   purpose: 'inventory-only';
@@ -59,6 +59,9 @@ function hashFile(path: string, expected: Stats): string {
     if (!stat.isFile() || stat.dev !== expected.dev || stat.ino !== expected.ino || stat.nlink !== 1 || (stat.mode & 0o077) !== 0 || (process.getuid && stat.uid !== process.getuid())) throw new Error('Snapshot changed during the audit');
     const digest = createHash('sha256'), buffer = Buffer.allocUnsafe(1024 * 1024);
     for (;;) { const read = readSync(fd, buffer, 0, buffer.length, null); if (!read) break; digest.update(buffer.subarray(0, read)); }
+    const after = fstatSync(fd);
+    if (after.size !== stat.size || after.mtimeMs !== stat.mtimeMs || after.ctimeMs !== stat.ctimeMs || after.nlink !== 1)
+      throw new Error('Snapshot changed during the audit');
     return digest.digest('hex');
   } finally { closeSync(fd); }
 }
@@ -108,6 +111,8 @@ function* businessRowChunks(row: Record<string, unknown>, columns: readonly Busi
   yield ']';
 }
 
+let lastAudit: { path: string; at: number; plan: BusinessSnapshotPlan } | undefined;
+
 /** Read-only evidence for a stopped, self-contained business snapshot. This is
  * an inventory, not a PostgreSQL schema migration or a cutover authorization. */
 export function planBusinessSnapshot(snapshot: string, expectedAuthorityDigest: string, expectedPolicyDigest: string, now = Date.now()): BusinessSnapshotPlan {
@@ -117,6 +122,15 @@ export function planBusinessSnapshot(snapshot: string, expectedAuthorityDigest: 
   const info = lstatSync(snapshot);
   if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.mode & 0o077 || (process.getuid && info.uid !== process.getuid())) throw new Error('Snapshot must be an owned private regular file');
   const before = hashFile(snapshot, info);
+  // Consecutive handoff steps can reuse an audit of the same exact bytes.
+  // Rehash the file first and never reuse a check made at a later audit time.
+  if (lastAudit?.path === snapshot && lastAudit.at <= now && lastAudit.plan.fileDigest === before
+    && lastAudit.plan.authority.digest === expectedAuthorityDigest && lastAudit.plan.policyDigest === expectedPolicyDigest) {
+    const current = lstatSync(snapshot);
+    if (current.dev !== info.dev || current.ino !== info.ino || current.mtimeMs !== info.mtimeMs || current.ctimeMs !== info.ctimeMs
+      || ['-wal', '-shm', '-journal'].some(suffix => existsSync(snapshot + suffix))) throw new Error('Snapshot changed during the audit');
+    return structuredClone(lastAudit.plan);
+  }
   const db = new DatabaseSync(snapshot, { readOnly: true });
   try {
     if (db.prepare('PRAGMA journal_mode').get()?.journal_mode !== 'delete') throw new Error('Snapshot must use DELETE journal mode');
@@ -223,8 +237,9 @@ export function planBusinessSnapshot(snapshot: string, expectedAuthorityDigest: 
       const ordering = keys.map(column => quote(column.name) + (column.type === 'TEXT' ? ' COLLATE BINARY' : '')).join(',');
       if (columns.some(column => column.name.startsWith('__eigos_migration_raw_'))) throw new Error(`Reserved migration column name in ${name}`);
       const rawFields = textFields.map((column, index) => `CAST(${quote(column.name)} AS BLOB) AS ${quote(`__eigos_migration_raw_${index}`)}`);
+      const rawTextNames = new Map(textFields.map((column, index) => [column.name, `__eigos_migration_raw_${index}`]));
       const statement = db.prepare(`SELECT ${[...columns.map(c => c.sourceRowidAlias ? `${quote(c.sourceRowidAlias)} AS ${quote(c.name)}` : quote(c.name)), ...rawFields].join(',')} FROM ${quote(name)} ORDER BY ${ordering}`); statement.setReadBigInts(true);
-      const fingerprint = createHash('sha256'); let rows = 0, totalEncodedBytes = 0, maxRowBytes = 0, maxRowid: bigint | null = null;
+      const fingerprint = createHash('sha256'), content = createHash('sha256'); let rows = 0, totalEncodedBytes = 0, maxRowBytes = 0, maxRowid: bigint | null = null;
       for (const row of statement.iterate()) {
         const sourceRowid=row.__eigos_rowid;
         if (typeof sourceRowid !== 'bigint') throw new Error(`Invalid hidden row identity in ${name}`);
@@ -237,6 +252,20 @@ export function planBusinessSnapshot(snapshot: string, expectedAuthorityDigest: 
         maxRowBytes = Math.max(maxRowBytes, bytes);
         fingerprint.update(`${bytes}:`);
         for (const chunk of businessRowChunks(row, columns)) fingerprint.update(chunk);
+        // Each field is a null marker or a value marker followed by its raw
+        // SHA-256. Hashing rows individually bounds the target's aggregate.
+        const rowHash = createHash('sha256');
+        for (const column of columns) {
+          const value = row[column.name];
+          if (value === null) {
+            rowHash.update('0');
+            continue;
+          }
+          const raw = column.type === 'TEXT' ? row[rawTextNames.get(column.name)!] as Uint8Array
+            : column.type === 'INTEGER' ? String(value) : value as Uint8Array;
+          rowHash.update('1').update(createHash('sha256').update(raw).digest());
+        }
+        content.update(rowHash.digest());
         rows++;
       }
       const uniqueKeys = db.prepare(`PRAGMA index_list(${quote(name)})`).all().filter(row => Number(row.unique) === 1).map(row => {
@@ -252,7 +281,7 @@ export function planBusinessSnapshot(snapshot: string, expectedAuthorityDigest: 
       }
       if (maxRowid !== null && maxRowid < 0n) throw new Error(`Negative hidden row identity requires review in ${name}`);
       if (maxRowid === 9223372036854775807n) throw new Error(`Hidden row identity is exhausted in ${name}`);
-      tables.push({ name, columns, uniqueKeys, rows, totalEncodedBytes, maxRowBytes, maxRowid:maxRowid?.toString() ?? null, ...(maxIntegerPrimaryKey !== undefined ? { maxIntegerPrimaryKey } : {}), digest: fingerprint.digest('hex') });
+      tables.push({ name, columns, uniqueKeys, rows, totalEncodedBytes, maxRowBytes, maxRowid:maxRowid?.toString() ?? null, ...(maxIntegerPrimaryKey !== undefined ? { maxIntegerPrimaryKey } : {}), digest: fingerprint.digest('hex'), contentDigest: content.digest('hex') });
     }
     // AUTOINCREMENT remembers deleted high-water marks; MAX(id) alone is not
     // sufficient to preserve its non-reuse guarantee during migration.
@@ -265,8 +294,10 @@ export function planBusinessSnapshot(snapshot: string, expectedAuthorityDigest: 
     }
     const after = hashFile(snapshot, info), finalInfo = lstatSync(snapshot);
     if (before !== after || finalInfo.dev !== info.dev || finalInfo.ino !== info.ino || finalInfo.nlink !== 1 || !finalInfo.isFile() || finalInfo.isSymbolicLink() || (finalInfo.mode & 0o077) !== 0 || (process.getuid && finalInfo.uid !== process.getuid()) || ['-wal', '-shm', '-journal'].some(suffix => existsSync(snapshot + suffix))) throw new Error('Snapshot changed during the audit');
-    return { version: 2, purpose: 'inventory-only', fileDigest: before,
+    const plan: BusinessSnapshotPlan = { version: 2, purpose: 'inventory-only', fileDigest: before,
       schemaDigest: hash(JSON.stringify(objects.map(row => [row.type, row.name, row.tbl_name, row.sql]))), authority,
       policyDigest: expectedPolicyDigest, tables, sequences, indexes: objects.filter(row => row.type === 'index').length, triggers: objects.filter(row => row.type === 'trigger').length };
+    lastAudit = { path: snapshot, at: now, plan: structuredClone(plan) };
+    return plan;
   } finally { db.close(); }
 }

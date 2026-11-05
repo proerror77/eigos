@@ -2,14 +2,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import type { Client } from 'pg';
 import { canonical } from '../core/delegation.js';
-import { encodeBusinessRow, planBusinessSnapshot, type BusinessSnapshotPlan, type BusinessTable } from './business-snapshot.js';
+import { planBusinessSnapshot, type BusinessSnapshotPlan, type BusinessTable } from './business-snapshot.js';
 import { compileBusinessSchema } from './business-schema.js';
 import {postgresBusinessMutexValid} from './authority-lock.js';
 
 const schemaPattern=/^eigos_business_[a-z0-9_]{1,40}$/;
 const digestPattern=/^[a-f0-9]{64}$/;
 const quote=(value:string)=>`"${value.replaceAll('"','""')}"`;
-const batchRows=64, batchBytes=8*1024*1024;
 
 export interface BusinessVerificationOptions {
   snapshot:string;
@@ -52,7 +51,7 @@ export async function verifyBusinessSnapshot(client:Client,options:BusinessVerif
     const expectedNames=[...plan.tables.map(table=>table.name),'eigos_migration_receipt','eigos_business_mutex'].sort();
     if(expectedNames.length>10000 || tables.rows.length>10000 || canonical(tables.rows.map(row=>row.relname).sort())!==canonical(expectedNames))throw new Error('Business destination table inventory differs from the reviewed snapshot');
     if(!await postgresBusinessMutexValid(client,schema))throw new Error('Business destination serialization relation differs from the reviewed contract');
-    for(const [index,table] of plan.tables.entries())await verifyTable(client,schema,table,index);
+    for(const table of plan.tables)await verifyTable(client,schema,table);
     const sequences=await verifySequences(client,schema,plan,identities);
     const after:BusinessSnapshotPlan=planBusinessSnapshot(snapshot,expectedAuthorityDigest,expectedPolicyDigest);
     if(canonical(after)!==canonical(plan))throw new Error('Business snapshot changed during verification');
@@ -103,7 +102,7 @@ export async function verifySequences(client:Client,schema:string,plan:BusinessS
   return {checked:expected.length,atomicWithRows:false as const};
 }
 
-export async function verifyTable(client:Client,schema:string,table:BusinessTable,index:number):Promise<void> {
+export async function verifyTable(client:Client,schema:string,table:BusinessTable):Promise<void> {
   const actual=await client.query(`SELECT a.attname,pg_catalog.format_type(a.atttypid,a.atttypmod) AS type,a.attnotnull
     FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname=$1 AND c.relname=$2 AND c.relkind='r' AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum`,[schema,table.name]);
@@ -117,23 +116,22 @@ export async function verifyTable(client:Client,schema:string,table:BusinessTabl
   const columns=table.columns,keys=columns.filter(column=>column.primaryKey>0).sort((a,b)=>a.primaryKey-b.primaryKey);
   const order=keys.map(column=>`source.${quote(column.name)}`+(column.type==='TEXT'?' COLLATE "C"':'')).join(',');
   const rawSize=columns.map(column=>`COALESCE(octet_length(source.${quote(column.name)}${column.type==='INTEGER'?'::text':''}),0)::bigint`).join('+');
-  const bound=Math.max(1,table.maxRowBytes),predicate=`(${rawSize})<=${bound}`;
-  const selected=columns.map(column=>`CASE WHEN bounded.allowed THEN source.${quote(column.name)} END`).join(',');
-  const cursor=quote(`eigos_verify_${index}`),page=Math.max(1,Math.min(batchRows,Math.floor(batchBytes/bound)));
-  await client.query(`DECLARE ${cursor} NO SCROLL CURSOR FOR SELECT ${selected},bounded.allowed FROM ${quote(schema)}.${quote(table.name)} AS source
-    CROSS JOIN LATERAL (SELECT (${predicate}) AS allowed OFFSET 0) AS bounded ORDER BY ${order}`);
-  const digest=createHash('sha256');let count=0;
-  try {
-    for(;;){
-      const rows=(await client.query({text:`FETCH FORWARD ${page} FROM ${cursor}`,rowMode:'array'})).rows as unknown[][];
-      if(!rows.length)break;
-      for(const values of rows){
-        if(values.length!==columns.length+1 || values[columns.length]!==true)throw new Error(`Business row exceeds its reviewed bound in ${table.name}`);
-        const row=Object.fromEntries(columns.map((column,i)=>[column.name,values[i]]));
-        const encoded=encodeBusinessRow(row,columns,'postgres');digest.update(`${Buffer.byteLength(encoded)}:`).update(encoded);count++;
-        if(count>table.rows)throw new Error(`Business readback mismatch in ${table.name}`);
-      }
-    }
-  } finally {await client.query(`CLOSE ${cursor}`);}
-  if(count!==table.rows || digest.digest('hex')!==table.digest)throw new Error(`Business readback mismatch in ${table.name}`);
+  const fields=columns.map(column=>{
+    const value=`source.${quote(column.name)}`;
+    const raw=column.type==='BLOB'?value:`pg_catalog.convert_to(${value}::text,'UTF8')`;
+    return `(CASE WHEN ${value} IS NULL THEN '0'::bytea ELSE '1'::bytea || pg_catalog.sha256(${raw}) END)`;
+  }).join(' || ');
+  // Recompute the proof from the actual target rows. Only the table checksum
+  // crosses the network, including for historical rows larger than a batch.
+  const result=await client.query(`WITH checked AS (
+    SELECT pg_catalog.row_number() OVER (ORDER BY ${order}) AS ordinal,
+      CASE WHEN (${rawSize})<=$2 THEN pg_catalog.sha256(${fields}) END AS row_hash
+    FROM ${quote(schema)}.${quote(table.name)} AS source ORDER BY ${order} LIMIT $1
+  )
+  SELECT count(*)::text AS rows, coalesce(bool_and(row_hash IS NOT NULL),true) AS bounded,
+    pg_catalog.encode(pg_catalog.sha256(coalesce(pg_catalog.string_agg(row_hash,''::bytea ORDER BY ordinal),''::bytea)),'hex') AS digest
+  FROM checked`,[table.rows+1,Math.max(1,table.maxRowBytes)]);
+  const proof=result.rows[0];
+  if(proof?.bounded!==true)throw new Error(`Business row exceeds its reviewed bound in ${table.name}`);
+  if(proof.rows!==String(table.rows)||proof.digest!==table.contentDigest)throw new Error(`Business readback mismatch in ${table.name}`);
 }

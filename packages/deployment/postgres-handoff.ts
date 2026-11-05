@@ -173,7 +173,7 @@ async function verifyMembershipRows(client:Client,binding:PostgresBinding,snapsh
 async function verifyOriginalRows(client:Client,checked:ReturnType<typeof readPostgresHandoffOperation>){
   const {binding,plan,operation}=checked,sqlite=new DatabaseSync(operation.businessSnapshot.path,{readOnly:true});let mapping:ReturnType<typeof compileBusinessSchema>;
   try{sqlite.exec('PRAGMA query_only=ON; BEGIN');mapping=compileBusinessSchema(sqlite);}finally{sqlite.close();}
-  for(const [index,table] of plan.tables.entries())await verifyTable(client,binding.business.schema,table,index);
+  for(const table of plan.tables)await verifyTable(client,binding.business.schema,table);
   await verifySequences(client,binding.business.schema,plan,mapping.identities);
   await verifyMembershipRows(client,binding,operation.membershipSnapshot.path);
   // Guard inventories and the actual functions are checked, rather than
