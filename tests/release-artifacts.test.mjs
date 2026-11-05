@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {createRequire} from 'node:module';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,symlinkSync} from 'node:fs';
+import {existsSync,mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,symlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname,join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {parse} from 'yaml';
 import {artifactDigest,canonical,createReleaseManifest,createReleaseArtifacts,validateReleaseManifest,readReleaseManifest,verifyReleaseArtifacts,verifyRuntimeImagePayload,finalizeReleaseArtifacts,selectExactCiRun,proveExactCi,proveExactSemanticCi,HARNESS_RELEASE_TOOLS} from '../scripts/release-artifacts.mjs';
 
@@ -61,6 +62,32 @@ test('installed image proof verifies actual runtime bytes and rejects a differen
       assert.throws(()=>verifyRuntimeImagePayload(root,{sourceSha,backend}),/Installed image runtime differs/);
     }finally{x.close();}
   }
+});
+
+test('the external packaging CLI verifies a minimal installed runtime without entering its whitelist',()=>{
+  for(const backend of ['codex','harness']){
+    const x=fixture(backend);try{
+      const candidate=createReleaseManifest({...x.input,backend}),root=join(x.directory,'runtime');
+      mkdirSync(join(root,'release'));writeFileSync(join(root,'release/manifest.json'),canonical(candidate)+'\n');
+      const args=['verify-image','--root',root,'--source-sha',sourceSha,'--backend',backend],options={cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe'],timeout:10000};
+      assert.equal(existsSync(join(root,'scripts/release-artifacts.mjs')),false);
+      assert.throws(()=>execFileSync(process.execPath,['scripts/release-artifacts.mjs',...args],options),/Cannot find module/);
+      const cli=fileURLToPath(new URL('../scripts/release-artifacts.mjs',import.meta.url));
+      assert.deepEqual(JSON.parse(execFileSync(process.execPath,[cli,...args],options)),{sourceSha,backend,payloadDigest:candidate.payloadDigest,buildDigest:candidate.runtime.buildDigest});
+      writeFileSync(join(root,'dist/apps/gateway/main.js'),'changed installed bytes');
+      assert.throws(()=>execFileSync(process.execPath,[cli,...args],options),/Installed image runtime differs/);
+      assert.equal(existsSync(join(root,'scripts/release-artifacts.mjs')),false);
+    }finally{x.close();}
+  }
+});
+
+test('published image verification mounts the exact checkout CLI read-only outside the runtime payload',()=>{
+  const workflow=parse(readFileSync(new URL('../.github/workflows/release-artifacts.yml',import.meta.url),'utf8')),steps=workflow.jobs.image.steps;
+  assert.equal(steps.find(step=>step.uses?.startsWith('actions/checkout@')).with.ref,'${{ inputs.source_sha }}');
+  const step=steps.find(step=>step.name==='Read the installed payload from each published role image');
+  assert.equal(step.env.IMAGE,'${{ steps.reference.outputs.repository }}@${{ steps.build.outputs.digest }}');
+  for(const flag of ['--network none','--read-only','--entrypoint node','--mount "type=bind,src=$PWD/scripts/release-artifacts.mjs,dst=/app/scripts/release-artifacts.mjs,readonly"'])assert(step.run.includes(flag));
+  assert(step.run.includes('"$IMAGE" scripts/release-artifacts.mjs verify-image --root /app --source-sha "$SOURCE_SHA" --backend "$BACKEND"'));
 });
 
 test('artifact inventories reject private state, traversal, symlinks and invented database publication refs',()=>{
