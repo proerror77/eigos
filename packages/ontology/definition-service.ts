@@ -89,10 +89,10 @@ export class DefinitionService {
   private metadataContext(principal: Principal) {
     return this.isOperator(principal) ? this.jobs.security.ontologyOperatorContext(principal) : this.jobs.security.agentContext(principal);
   }
-  private assertClassificationOnly(before: DefinitionDraft['document'], after: DefinitionDraft['document']) {
+  private assertClassificationOnly(before: DefinitionDraft['document'], after: DefinitionDraft['document'], complete = true) {
     const strip = (document: DefinitionDraft['document']) => ({ ...document, version: undefined,
       objects: document.objects.map(type => { if (!Object.hasOwn(paClassifications, type.id)) return type; const { classification: _classification, ...value } = type; return value; }) });
-    if (digest(strip(before)) !== digest(strip(after)) || Object.entries(paClassifications).some(([id, classification]) =>
+    if (digest(strip(before)) !== digest(strip(after)) || complete && Object.entries(paClassifications).some(([id, classification]) =>
       digest(after.objects.find(type => type.id === id)?.classification ?? null) !== digest(classification)))
       throw new DomainError('FORBIDDEN', 'Operator publication permits only the complete reviewed PA classification on the unchanged base');
   }
@@ -275,6 +275,7 @@ export class DefinitionService {
     }
     const currentDraft = this.ownedDraft(principal, command.ontologyId, command.draftId, true);
     if (this.isOperator(principal) && currentDraft.owner !== owner) throw new DomainError('FORBIDDEN', 'Operator edits require its own draft');
+    if (this.isOperator(principal)) this.assertClassificationOnly(store.resolve(currentDraft.base).document, currentDraft.document, false);
     if (command.operation === 'put_pa_classification') {
       if (!this.isOperator(principal)) throw new DomainError('FORBIDDEN', 'PA classification requires the configured metadata operator');
       const type = currentDraft.document.objects.find(type => type.id === command.objectType), classification = paClassifications[command.objectType];

@@ -61,7 +61,7 @@ v28 的完整合同仅增加分类时，字段政策通过重建并核对准确�
 
 ### 正式 SQLite 操作员激活
 
-正式入口须在 authority 的 `ontologyOperators` 中固定操作员的 issuer、client、subject 与 tenant，并保持原会员、连接和 native 安装有效。操作员只在 `/ontology/v1/query`、`/ontology/v1/commands` 获得 `ontology_operator` 元数据身份；它不依赖业务数据 grant，也不能读取任务、业务对象或供应商来源。签名 scopes、当前资格发布器、安装撤权与原 namespace 管理检查继续生效。CLI `status` 查询共享本体管理状态，不再要求业务 `/security/context`。
+正式入口须在 authority 的 `ontologyOperators` 中固定操作员的 issuer、client、subject 与 tenant，并保持原会员、连接和 native 安装有效。操作员只在 `/ontology/v1/pa-classification/query`、`/ontology/v1/pa-classification/commands` 获得 `ontology_operator` 元数据身份；它不依赖业务数据 grant，也不能读取任务、业务对象或供应商来源。签名 scopes、当前资格发布器、安装撤权与原 namespace 管理检查继续生效。CLI `status` 查询共享本体管理状态，不再要求业务 `/security/context`；分类 `query`／`command` 使用 `--pa-classification`。原通用元数据和 Pipeline 端点继续使用原业务授权路径。
 
 该窄接口只管理 `eigos.business` 的 PA 分类：创建自己的草稿，逐个提交下列小请求，分页审查 diff 并校验，再发布和按原 generation 激活：
 

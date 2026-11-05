@@ -2895,7 +2895,7 @@
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "5ce0c40d3c53675a5cb7cfd5b9cf9a5ea3f0cffd1d977d0b7aa939327ac6e793",
+      "sourceDigest": "40e18a4b2fdcfe09d97234244d965da872db47b20a577716dbd22285df21abab",
       "channels": [
         "http"
       ],
@@ -4267,7 +4267,7 @@
     {
       "id": "ontology-definition-service",
       "file": "packages/ontology/definition-service.ts",
-      "sourceDigest": "cec41cff1e14af5c645ee7c29b50f52c9a44a0d5daf2d34a1d41c0cad0171eae",
+      "sourceDigest": "e0b86eb945a2c6e8ec89ee105598c5576e45d08edc4491764b274ed8c7442cc0",
       "channels": [
         "http",
         "mcp"
@@ -4421,7 +4421,7 @@
     {
       "id": "ontology-metadata-http",
       "file": "apps/gateway/ontology/routes.ts",
-      "sourceDigest": "7e1a45cf4cc3447fe071351727cb9fcdd5314ea38b6470068ede14cc687b9b89",
+      "sourceDigest": "54fd9ee4a92a0a415bd1c2563510ecf8e562ab51687fc352b05e940bee758ab5",
       "channels": [
         "http"
       ],
@@ -4467,7 +4467,7 @@
       "currentControl": "PKCE/state/nonce, signed exact identity, private atomic locked credential files, fixed primary paths, redirect denial, bounded response and callback; credentials never printed",
       "targetControl": "Reusable authenticated management entry retaining current member, installation, source and task checks",
       "stage": "S5",
-      "sourceDigest": "5518e5ab64bf7676717e0f79404c0f535137f28de76b4c590692936c14f1f457"
+      "sourceDigest": "9e1fd430584b27d12aa7f9c0475b4564926d9a86c7877d91f898d1e1d0b632a9"
     },
     {
       "id": "ontology-operator-issuer-guard",

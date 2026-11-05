@@ -257,7 +257,8 @@ function createGatewayHttpApp(config:Config,runtime:GatewayRuntimePorts,verify?:
               const route = config.authority ? ingress.selected(req) : undefined;
               const operator = route?.ontologyOperators?.some(binding => principal.issuer === config.authority!.issuer
                 && binding.clientId === principal.clientId && binding.subject === principal.subject && binding.tenant === principal.tenant);
-              if (operator && ['/ontology/v1/query', '/ontology/v1/commands'].includes(rpcPath)) {
+              if (['/ontology/v1/pa-classification/query', '/ontology/v1/pa-classification/commands'].includes(rpcPath)) {
+                if (!operator) throw new SecurityError('AUTHORIZATION_REQUIRED');
                 if (!security.authenticateOntologyOperator) throw new SecurityError('AUTHORITY_UNAVAILABLE');
                 principal.access = await security.authenticateOntologyOperator(principal, match[1]);
               } else principal.access = await security.authenticate(principal, match[1]);

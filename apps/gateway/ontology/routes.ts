@@ -6,7 +6,8 @@ import { ontologyManagerPage, ontologyManagerScript } from './page.js';
 
 export function mountDefinitionRoutes(app: Express, service: DefinitionServicePort, authenticate: RequestHandler, principal: (request: Request) => Principal): void {
   for (const [path, method] of [['query', 'query'], ['commands', 'command'], ['actions/prepare', 'prepare'], ['actions/approve', 'approve']] as const) {
-    app.post(`/ontology/v1/${path}`, authenticate, async (req, res, next) => {
+    const paths = [`/ontology/v1/${path}`, ...(service.secured && ['query', 'commands'].includes(path) ? [`/ontology/v1/pa-classification/${path}`] : [])];
+    app.post(paths, authenticate, async (req, res, next) => {
       try { res.json(await service[method](principal(req), req.body)); }
       catch (error) {
         if (error instanceof DomainError || error instanceof z.ZodError) {
