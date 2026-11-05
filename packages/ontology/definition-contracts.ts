@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { paClassificationSchema } from './pa-classification-contract.js';
 import { mcpReadBindingSchema } from './mcp-read.js';
 import { DomainError } from '../core/domain.js';
 import { nameSchema, type ActionDefinition, type FunctionDefinition, type InterfaceDefinition, type LinkDefinition, type ObjectTypeDefinition, type PropertyDefinition } from './model.js';
@@ -48,6 +49,7 @@ export const serializableObjectTypeSchema = z.strictObject({
   resourceId: resourceIdSchema, id: nameSchema, version: versionSchema, name: text, aliases: z.array(z.string().min(1).max(500)).max(100), description: text,
   primaryKey: nameSchema, titleKey: nameSchema, properties, interfaces: z.array(interfaceImplementation).max(100).optional(),
   businessDescription: text.optional(),
+  classification: paClassificationSchema.optional(),
   visibility: z.enum(['business', 'technical']).optional(), writePolicy: z.enum(['managed', 'source']),
 });
 export const serializableInterfaceSchema = z.strictObject({

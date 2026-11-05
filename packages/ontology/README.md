@@ -55,6 +55,8 @@ flowchart LR
 
 ## 供应商绑定
 
+Personal Agent 的用途分类与按任务发现见[PA 本体视图](../../docs/guides/pa-ontology-views.md)。独立 v30 候选提供分类元数据、领域选择及完整的获准目录入口；已有 v28／v29 发布和任务引用保持原样，部署代码不自动激活候选。
+
 | 文件 | 读取范围 |
 | --- | --- |
 | `definitions/didi-readonly.json` | 地点搜索和车型估价 |

@@ -4,10 +4,13 @@ import { digest } from '../core/delegation.js';
 import { SINGLE_READ_PREDECESSOR, PRIOR_GOAL_COVERAGE_FINGERPRINT } from '../ontology/single-read-kernel.js';
 import { SecurityError } from './errors.js';
 import {isSemanticRetrievalSuccessor} from '../ontology/semantic-retrieval-kernel.js';
+import { paFieldPolicyRef } from '../ontology/pa-classification-kernel.js';
 
 /** Exact reviewed historical kernel compatibility; never grants data access. */
 export function assertReviewedModel(current: OntologyModel, model: OntologyModel): void {
   if (current === model) return;
+  if (digest(paFieldPolicyRef(current)) === digest(paFieldPolicyRef(model))
+    && model.actionIds().every(id => digest(model.actionImplementation(id) ?? null) === digest(current.actionImplementation(id) ?? null))) return;
   if(isSemanticRetrievalSuccessor(model,current)||isSemanticRetrievalSuccessor(current,model))return;
   // Reviewed v22 -> RollingGo-only v23 compatibility. Historical tasks keep
   // their own model and action bindings; current data/source grants still gate reads.

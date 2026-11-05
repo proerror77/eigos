@@ -19,6 +19,9 @@ const resources = (document: OntologyDocument) => [
 ];
 const coreType = (id: string) => /^(?:Execution|Registered|Network)/.test(id) || ['Authorization', 'SourceReceipt', 'ServiceRequest', 'RequestInstruction', 'RequestConstraint', 'OutcomeAssessment', 'EntityIdentityAssertion', 'TransactionPartyRole'].includes(id);
 function compatibleBusinessObject(original: SerializableObjectType, candidate: SerializableObjectType, document: OntologyDocument): boolean {
+  const { classification: _priorPresentation, ...priorContract } = original;
+  const { classification: _nextPresentation, ...nextContract } = candidate;
+  if (digest(priorContract) === digest(nextContract)) return true;
   if (coreType(original.id)) return false;
   const { name: _name, description: _description, businessDescription: _businessDescription, aliases: _aliases, properties, interfaces: previousViews = [], ...identity } = original;
   const { name: _newName, description: _newDescription, businessDescription: _newBusinessDescription, aliases: _newAliases, properties: next, interfaces: nextViews = [], ...nextIdentity } = candidate;

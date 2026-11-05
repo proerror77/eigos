@@ -1,3 +1,4 @@
+import { paDiscoveryFields } from '../ontology/pa-classification-contract.js';
 import {runRecoveryProgram,reconcileTransition,revokeAuthorizationTransition} from './recovery-commands.js';
 import {taskScopedServices} from './service-metadata.js';
 import {assertTechnicalResume,assertTechnicalResumeState,applyTechnicalResume} from './technical-resume.js';
@@ -150,7 +151,7 @@ export class TaskService {
       return new AuthorizedOntologyView(taskId?this.store.ontologyForTaskRead(ownerKey(p),taskId):this.store.ontology,this.store.security,p).describe(input);
     }
     const scoped = this.ontologyInput(input, context);
-    const query = z.object({ search: z.string().max(100).optional(), linkSearch: linkSearchSchema, limit: z.number().int().min(1).max(5).optional(), after: z.string().optional(), kind: z.enum(['types', 'actions', 'functions']).optional() }).strict().parse(scoped.query);
+    const query = z.object({ ...paDiscoveryFields, search: z.string().max(100).optional(), linkSearch: linkSearchSchema, limit: z.number().int().min(1).max(5).optional(), after: z.string().optional(), kind: z.enum(['types', 'actions', 'functions']).optional() }).strict().parse(scoped.query);
     return this.ontologyContext(p, scoped.context).model.describe(query);
   }
   queryOntology(p: Principal, input: unknown, reader?: import('../ontology/network-read.js').NetworkOntologyReadAdapter, context?: OntologyReadContext) {

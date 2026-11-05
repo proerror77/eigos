@@ -1,6 +1,7 @@
 import { extendPaymentCommerceKernel } from './payment-commerce-kernel.js';
 import {extendSemanticRetrievalKernel} from './semantic-retrieval-kernel.js';
 import { extendBusinessDescriptions } from './business-descriptions.js';
+import { extendPaClassificationKernel } from './pa-classification-kernel.js';
 import { extendRollingGoKernel } from './rollinggo-kernel.js';
 import { extendBusinessFactsKernel } from './business-facts-kernel.js';
 import { extendPersonalContextKernel } from './personal-context-kernel.js';
@@ -25,6 +26,7 @@ import type { ActionDefinition, InterfaceDefinition, ModelDefinition, ObjectType
 
 export const LEGACY_SEED_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '15', digest: 'efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776' });
 export const CURRENT_KERNEL_VERSION = '28';
+export const PA_CLASSIFICATION_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '30', digest: '1ef0be3f87514a7916635b3e26eec05a552fccb1df17ab1d09700baf3fe26aaf' });
 export const BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '28', digest: '04606f93dc6cfd9045ac6b9a0c3dcfa4c8f330689ecbdd3cdfa7556df15202c5' });
 export const PAYMENT_COMMERCE_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '27', digest: '8e5b11eb6b25d873b12f05d67232899f97af6af929b143397aa19e75379fc5e6' });
 export const SINGLE_READ_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '26', digest: '78e73e56caaed8c894b716a0ed486dd98442beed1234a7c29e557821ba2f4020' });
@@ -157,6 +159,12 @@ export function createCurrentKernelDefinition(registry = new TrustedDefinitionRe
 export function createSemanticRetrievalKernelDefinition(registry=new TrustedDefinitionRegistry()):SeedDefinition{
   return complete(extendSemanticRetrievalKernel(createBusinessDescriptionsKernelDefinition(registry).document,registry),registry,false);
 }
+/** Opt-in PA presentation release. Existing databases keep their active release. */
+export function createPaClassificationKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
+  const classified = complete(extendPaClassificationKernel(createBusinessDescriptionsKernelDefinition(registry).document), registry, false);
+  if (digest(classified.audit.model) !== digest(PA_CLASSIFICATION_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'The reviewed PA classification fingerprint changed');
+  return classified;
+}
 export function createBusinessDescriptionsKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const described = complete(extendBusinessDescriptions(createPaymentCommerceKernelDefinition(registry).document), registry, false);
   if (digest(described.audit.model) !== digest(BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'The original v28 description kernel fingerprint changed');
@@ -190,10 +198,10 @@ export class StagedKernelBuilder {
   #model?: OntologyModel;
   #documentDigest?: string;
   static readonly stages = 15;
-  readonly #targetVersion: '27' | '28' | '29';
+  readonly #targetVersion: '27' | '28' | '29' | '30';
   readonly #stageCount: number;
-  constructor(targetVersion: '27' | '28' | '29' = CURRENT_KERNEL_VERSION) {
-    if (targetVersion !== '27' && targetVersion !== '28' && targetVersion !== '29') throw new Error('Unsupported reviewed kernel target');
+  constructor(targetVersion: '27' | '28' | '29' | '30' = CURRENT_KERNEL_VERSION) {
+    if (!['27', '28', '29', '30'].includes(targetVersion)) throw new Error('Unsupported reviewed kernel target');
     this.#targetVersion = targetVersion; this.#stageCount = targetVersion === '27' ? 14 : targetVersion==='28'?15:16;
   }
 
@@ -248,7 +256,8 @@ export class StagedKernelBuilder {
           if(this.#targetVersion==='28'){this.#documentDigest=digest(this.#current.document); this.#registry.seal();}
           break;
         case 15:
-          this.#current=complete(extendSemanticRetrievalKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
+          this.#current=complete(this.#targetVersion === '30' ? extendPaClassificationKernel(this.#current!.document) : extendSemanticRetrievalKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
+          if (this.#targetVersion === '30' && digest(this.#current.audit.model) !== digest(PA_CLASSIFICATION_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'The reviewed PA classification fingerprint changed');
           this.#documentDigest=digest(this.#current.document);this.#registry.seal();
           break;
         default: throw new Error('Unknown kernel stage');
