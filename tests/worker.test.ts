@@ -15,7 +15,8 @@ import { JobStore, type WorkClaim } from '../packages/core/store.js';
 import { securityFixture } from './fixtures/security.js';
 import { authorizationScope } from '../packages/security/context.js';
 import { TaskService } from '../packages/core/tasks.js';
-import { SCOPES, ownerKey, type Job, type Principal } from '../packages/core/domain.js';
+import { DomainError, SCOPES, ownerKey, type Job, type Principal } from '../packages/core/domain.js';
+import { SecurityError } from '../packages/security/errors.js';
 import { readWorkerConfig } from '../packages/core/config.js';
 import { createApp } from '../apps/gateway/app.js';
 import { readConfig } from '../packages/core/config.js';
@@ -345,6 +346,32 @@ test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, 
     await client.close(); await Promise.all(children.map(stop));
     server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await closeGateway();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Worker privately records bounded rejection reasons even when recovery writeback succeeds', async t => {
+  const logs: unknown[][] = [];
+  t.mock.method(console, 'error', (...args: unknown[]) => { logs.push(args); });
+  for (const [error, reason] of [
+    [new DomainError('CONFLICT', 'SYNTHETIC_PRIVATE_MESSAGE'), 'CONFLICT'],
+    [new SecurityError('POLICY_CHANGED', 'SYNTHETIC_PRIVATE_MESSAGE'), 'POLICY_CHANGED'],
+    [Object.assign(new DomainError('CONFLICT', 'SYNTHETIC_PRIVATE_MESSAGE'), { code: 'SYNTHETIC_PRIVATE_CODE' }), undefined],
+    [Object.assign(new SecurityError('POLICY_CHANGED', 'SYNTHETIC_PRIVATE_MESSAGE'), { reason: 'SYNTHETIC_PRIVATE_REASON' }), undefined],
+  ] as const) {
+    const store = new JobStore(':memory:'), tasks = new TaskService(store, { catalog: createExecutionCatalog() });
+    const job = tasks.submit(principal, { service: 'eigos.delegate', goal: 'synthetic rejection', requestId: randomUUID() });
+    const start = logs.length;
+    const worker = new Worker(store, { pollMs: 10, coordinator: { run: async () => { throw error; } } });
+    try {
+      worker.start(); const paused = await until(() => tasks.get(principal, job.id), value => value.state === 'paused');
+      await worker.pauseClaims();
+      assert.equal(paused.delegation?.recovery?.code, 'validation_stalled');
+      const diagnostics = logs.slice(start).filter(args => args[0] === 'Worker execution rejected; original task retained');
+      assert.deepEqual(diagnostics, reason ? [['Worker execution rejected; original task retained', { event: 'worker_execution_rejected', taskId: job.id, reason }]] : []);
+      assert(!JSON.stringify({ logs, paused }).includes('SYNTHETIC_PRIVATE'));
+      assert(!paused.delegation?.events.some(event => event.event === 'worker_execution_rejected'), 'Diagnostic categories remain private process logs');
+      assert.equal(store.intents(ownerKey(principal), job.id).length, 0);
+    } finally { await worker.close(); store.close(); }
   }
 });
 

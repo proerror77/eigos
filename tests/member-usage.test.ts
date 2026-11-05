@@ -52,6 +52,34 @@ test('private attempt diagnostics reject payload fields and preserve the first v
   } finally { db.close(); }
 });
 
+test('private failure diagnostics allow only bounded values and survive later accounting', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec('CREATE TABLE jobs(owner TEXT,id TEXT,body TEXT)'); initializeMemberUsage(db);
+    const at = '2026-01-01T00:00:00.000Z', failure = { phase: 'protocol', code: 'invalid_protocol', exitCode: 17 } as const;
+    const evidence = { id: 'failed-attempt', runtime: 'harness-sdk', startedAt: at, completedAt: at, failure };
+    beginModelUsage(db, 'owner', 'task', evidence.id, evidence.runtime, at, 'claim-digest');
+    const read = () => JSON.parse(String(db.prepare('SELECT body FROM member_model_usage WHERE run_id=?').get(evidence.id)!.body));
+    for (const invalid of [
+      { ...failure, prompt: 'PRIVATE_PROMPT' }, { ...failure, code: 'PRIVATE_ERROR' },
+      { ...failure, phase: 'PRIVATE_PHASE' }, { ...failure, signal: 'PRIVATE_SIGNAL' },
+      { ...failure, exitCode: -1 }, { ...failure, exitCode: 1.5 },
+    ]) {
+      // Model transports are an untrusted runtime boundary, including fields
+      // beyond the compile-time interface.
+      const untrusted = JSON.parse(JSON.stringify({ ...evidence, failure: invalid }));
+      finishModelUsage(db, 'owner', 'task', evidence.id, untrusted, 'failed');
+      assert.equal(read().failure, undefined); assert(!JSON.stringify(read()).includes('PRIVATE_'));
+    }
+    finishModelUsage(db, 'owner', 'task', evidence.id, evidence, 'failed'); assert.deepEqual(read().failure, failure);
+    finishModelUsage(db, 'owner', 'task', evidence.id, undefined, 'failed'); assert.deepEqual(read().failure, failure);
+    const later = { ...evidence, failure: { phase: 'exit', code: 'process_exited' } as const };
+    finishModelUsage(db, 'owner', 'task', evidence.id, later, 'failed'); assert.deepEqual(read().failure, failure);
+    assert.throws(() => finishModelUsage(db, 'other-owner', 'task', evidence.id, evidence, 'failed'), /another execution/);
+    assert.equal(db.prepare('SELECT count(*) n FROM jobs').get()!.n, 0);
+  } finally { db.close(); }
+});
+
 test('concurrent model execution records the correct owner, including failed attempts with unknown usage', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-usage-')), store = new JobStore(join(dir, 'tasks.sqlite')), tasks = new TaskService(store, { catalog: createExecutionCatalog() });
   const binary = join(dir, 'fixture-model');
