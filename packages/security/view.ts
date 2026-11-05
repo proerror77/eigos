@@ -18,7 +18,7 @@ export function authorizedDefinitions(security: SecurityStore, scope: Authorizat
 }
 export function describeAuthorized(security: SecurityStore, scope: AuthorizationScope, input: DefinitionDescriptionInput = {}, model = security.model) {
   security.policies.assertModel(model);
-  return describeDefinitionCatalogue(definitionAccess(security, scope), input, model);
+  return describeDefinitionCatalogue(definitionAccess(security, scope), input, model, scope.grant?.inputs.map(input => input.object.type) ?? []);
 }
 
 export class AuthorizedOntologyView {

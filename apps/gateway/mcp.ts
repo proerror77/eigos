@@ -1,3 +1,4 @@
+import { paDiscoveryFields } from '../../packages/ontology/pa-classification-contract.js';
 import type { NetworkService } from '../../packages/network/service.js';
 import type { MemberSourceService } from '../../packages/members/source-service.js';
 import { sourceBeginSchema, sourceRevokeSchema } from '../../packages/core/member-source.js';
@@ -61,7 +62,7 @@ export function createMcpServer(tasks: GatewayTaskService, principal: Principal,
   }
   server.registerTool('describe_ontology', {
     description: 'Read bounded business object/interface definitions, properties, source semantics and bidirectional links. Definitions do not grant access or prove live supply.',
-    inputSchema: tasks.secured ? secureDescribeSchema : z.object({ ...ontologyContext, search: z.string().max(100).optional(), linkSearch: linkSearchSchema, limit: z.number().int().min(1).max(5).optional(), after: z.string().optional(), kind: z.enum(['types', 'actions', 'functions']).optional().describe('Discover types with related contracts by default; use actions or functions to page through their complete catalogues') }).strict(), annotations: read,
+    inputSchema: tasks.secured ? secureDescribeSchema : z.object({ ...ontologyContext, ...paDiscoveryFields, search: z.string().max(100).optional(), linkSearch: linkSearchSchema, limit: z.number().int().min(1).max(5).optional(), after: z.string().optional(), kind: z.enum(['types', 'actions', 'functions']).optional().describe('Discover types with related contracts by default; use actions or functions to page through their complete catalogues') }).strict(), annotations: read,
   }, (args: unknown) => result(() => tasks.describeOntology(principal, args)));
   server.registerTool('query_ontology', {
     description: 'Read only owned business objects or one named relationship. Filters and projections use registered fields; private fields are forbidden. Inspect hasMore/cursor, source kind and evidence level.',

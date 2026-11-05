@@ -64,12 +64,12 @@ export async function postgresDescribeOntology(client: Client, principal: Princi
   const captured = structuredClone(principal), { taskId, ...args } = secureDescribeSchema.parse(input);
   requireScope(captured, 'services:read');
   const model = builder === undefined ? currentKernelImplementation() : stagedKernelComponents(builder).model;
-  const describe = async (admission: Pick<PostgresTaskReadAdmission, 'actor' | 'parent'>) => {
+  const describe = async (admission: Pick<PostgresTaskReadAdmission, 'actor' | 'parent'>, contextTypes: readonly string[] = []) => {
     const selected = taskId ? (await postgresTaskReadOntology(client, captured, taskId, policyDigest, builder)).model : model;
-    return withDefinitionAccess(client, admission, model, policyDigest, async access => describeDefinitionCatalogue(access, args, selected));
+    return withDefinitionAccess(client, admission, model, policyDigest, async access => describeDefinitionCatalogue(access, args, selected, contextTypes));
   };
   return taskId ? withPostgresTaskReadSnapshot(client, captured, taskId, policyDigest, admission => {
     if (!admission.grant.operations.includes('task.query')) throw new SecurityError('AUTHORIZATION_REQUIRED');
-    return describe(admission);
+    return describe(admission, admission.grant.inputs.map(input => input.object.type));
   }) : withPostgresAgentMetadata(client, captured, policyDigest, describe);
 }

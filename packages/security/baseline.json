@@ -2907,7 +2907,7 @@
     {
       "id": "mcp",
       "file": "apps/gateway/mcp.ts",
-      "sourceDigest": "97941c4e0cb0780f2d5d82a6e17c64c55e93aeafc6dd019f75de5a9396d926aa",
+      "sourceDigest": "3840aa1525ac0c8e8c5db1b3fbb625c0b4b1adb77b44137fa053b15e924aece9",
       "channels": [
         "mcp"
       ],
@@ -2931,7 +2931,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "fe8892fd2448f4bd636fea4e338a6dc1bfd46fe1a8b05c872143c132c8bda267",
+      "sourceDigest": "6ce7caaa6be22e81728e06192ec9614f9821bc30a91e8a57f1041a71c2764a7a",
       "channels": [
         "http",
         "mcp",
@@ -3271,7 +3271,7 @@
     {
       "id": "ontology-definitions",
       "file": "packages/ontology/model.ts",
-      "sourceDigest": "30b9993512478b5349395fe2fef3dfaadcae29ca47c93f92da64fae222a8bb88",
+      "sourceDigest": "9e31e4614f224b87d725fd8131105a666a222ab45b204cb4578b2af50405253d",
       "channels": [
         "definition"
       ],
@@ -3495,7 +3495,7 @@
     {
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "72e35411d7b54d54261e4b18b3073aaf8a0d08db2e9c6c10b5f753a87d4a1271",
+      "sourceDigest": "d253b9bbe9ac9f4b9b7cf032683c9cf332fb8798e345fe9712cf7d2dd72114d4",
       "stage": "S2",
       "content": "Resource roles, fields, bindings, source grants, derived lineage, artifacts and opaque cursors",
       "currentControl": "Current roles, fields, source and output lineage remain mandatory. Optional semantic-v29 reuses only the exact unchanged descriptions-v28 field policy; the distinct v27-to-description28 upgrade remains explicit and new functions require their own rights.",
@@ -3543,7 +3543,7 @@
     {
       "id": "security-ontology-view",
       "file": "packages/security/view.ts",
-      "sourceDigest": "5c914bb28ead42bc84dad89313d9ae39868d48676e758a40357e2c6486b2abcc",
+      "sourceDigest": "35a2244f6dd38d60a64ca80cd6b2db71329c84bf2f6bc4a83c650e1c5668befe",
       "channels": [
         "http-mcp-model"
       ],
@@ -4254,7 +4254,7 @@
     {
       "id": "ontology-definition-contracts",
       "file": "packages/ontology/definition-contracts.ts",
-      "sourceDigest": "66350d39becb53b71e42151aea052fa5d8f398c2dae0cb6a773e7202c68a5866",
+      "sourceDigest": "e83e1ca210ef21ed16cda7c46ff283dd50350d9187a1f24f77ec1eaeb5391564",
       "channels": [
         "management",
         "sqlite"
@@ -5741,7 +5741,7 @@
     {
       "id": "trusted-kernel-bootstrap",
       "file": "packages/ontology/seed-definition.ts",
-      "sourceDigest": "4b27e25da5c23dc4beb5582c0415868dcc64d6149884dac87c529fd15813a88c",
+      "sourceDigest": "f922be2a7cbbbca45052a7e7cc4fbf05d95b412d09e1081ea519d2f323835ced",
       "channels": [
         "authorization_control"
       ],
@@ -5753,7 +5753,7 @@
     {
       "id": "trusted-definition-registry",
       "file": "packages/ontology/model-compiler.ts",
-      "sourceDigest": "2119d87a9dbf05e8e16e56da46414d93e04aca2c17d6dada952e1eea2e40daeb",
+      "sourceDigest": "53c070667f35392c75abe139e29797033c4d9bba9dede67b6391c14ad927d5ed",
       "channels": [
         "authorization_control"
       ],
@@ -6227,7 +6227,7 @@
     {
       "id": "security-model-review",
       "file": "packages/security/model-review.ts",
-      "sourceDigest": "27374473cb4184775d964b95afd437d593e12601810ba004ee4363db2a2d23d8",
+      "sourceDigest": "dba149d5a3cca733d5d3d857d62c251447b757f5b77ee518b79196b320665547",
       "channels": [
         "internal"
       ],
@@ -6239,7 +6239,7 @@
     {
       "id": "security-definition-view",
       "file": "packages/security/definition-view.ts",
-      "sourceDigest": "48a00912620a789295cf41f48da65ac0149df9b370efc713fbacb4023873db04",
+      "sourceDigest": "89d7508549c6218334e2bf9bd2266d677795a2335717aca466a3c58ea39b6fd7",
       "channels": [
         "internal"
       ],
@@ -6251,7 +6251,7 @@
     {
       "id": "security-view-contracts",
       "file": "packages/security/view-contracts.ts",
-      "sourceDigest": "8440323d916132562a196c8ffdb0922f32ac7d2313bfb8946bdd2d2431a031ae",
+      "sourceDigest": "0816cfe6b5e77a3d5cd078a71ca3b949957f44fa0d4d7d80af62a5860a0e1613",
       "channels": [
         "internal"
       ],
@@ -6263,7 +6263,7 @@
     {
       "id": "postgres-ontology-metadata",
       "file": "packages/postgres/ontology-metadata.ts",
-      "sourceDigest": "4247474ed1c8d2054d6d2436f995f8de120dcc7d90a2ae49b2cbb0c449cb8d0e",
+      "sourceDigest": "a32a73e9d8215667d8531d8f2e6e4f819629ab1e11f93617f59ab32972c0d22f",
       "channels": [
         "internal"
       ],
@@ -6347,7 +6347,7 @@
     {
       "id": "planning-session-program",
       "file": "packages/coordinator/planning-program.ts",
-      "sourceDigest": "30d693e22f80d0b3a5b527d1dac5a7a735925738ef2a90c69f35d7382d913247",
+      "sourceDigest": "3d26a0d236a284449a54d5e9a241e56fc0f40cd60310b49396803e187b30c517",
       "channels": [
         "internal"
       ],
@@ -6671,7 +6671,7 @@
     {
       "id": "postgres-kernel-runtime",
       "file": "packages/postgres/kernel-runtime.ts",
-      "sourceDigest": "e24ce1bb8318c7eae51593f5be17aea5fddd1015dfe8b5b498214e100cfdf6c3",
+      "sourceDigest": "38d69afae024989f42b3f1e39592e0cf02df92a3a4ab8d695b1316f8cd59397f",
       "channels": [
         "internal"
       ],
@@ -7545,7 +7545,7 @@
       "currentControl": "Core resources remain protected; ordinary business display text cannot change data schemas, source binding or execution authority.",
       "targetControl": "Immutable compiled definitions and exact trusted handler contracts",
       "stage": "S2",
-      "sourceDigest": "2119d87a9dbf05e8e16e56da46414d93e04aca2c17d6dada952e1eea2e40daeb"
+      "sourceDigest": "53c070667f35392c75abe139e29797033c4d9bba9dede67b6391c14ad927d5ed"
     },
     {
       "id": "ontology-kernel-seed",
@@ -7557,7 +7557,7 @@
       "currentControl": "The v27 digest is preserved explicitly and registered before the v28 metadata-only successor; historical releases are never rewritten.",
       "targetControl": "Accurate release construction and immutable historical interpretation",
       "stage": "S2",
-      "sourceDigest": "4b27e25da5c23dc4beb5582c0415868dcc64d6149884dac87c529fd15813a88c"
+      "sourceDigest": "f922be2a7cbbbca45052a7e7cc4fbf05d95b412d09e1081ea519d2f323835ced"
     },
     {
       "id": "gateway-primary-startup",
@@ -7841,6 +7841,32 @@
       "targetControl": "Keep PostgreSQL as the sole authority for identity, messages, permissions and quotas",
       "stage": "S5",
       "sourceDigest": "3d78e8b4457205824719c3a3dcfd53e0646a592b4372959f68e6df4d3889e9f9"
+    },
+    {
+      "id": "pa-classification-contract",
+      "file": "packages/ontology/pa-classification-contract.ts",
+      "channels": [
+        "agent_input",
+        "model_output"
+      ],
+      "content": "Bounded PA purpose/domain metadata and post-authorization discovery presentation.",
+      "currentControl": "Strict metadata schemas, explicit filter boundaries, no object reads or permission grants; incomplete and filtered scopes remain explicit.",
+      "targetControl": "Keep task relevance independent of source, field and effect authority.",
+      "stage": "S2",
+      "sourceDigest": "c1acedfe9d10455e6c57ca97d75e5c67377134621a7df6fa1c0459e97db13709"
+    },
+    {
+      "id": "pa-classification-kernel",
+      "file": "packages/ontology/pa-classification-kernel.ts",
+      "channels": [
+        "definition_metadata",
+        "model_input"
+      ],
+      "content": "Reviewed immutable PA classification release and exact prior field-contract reconstruction.",
+      "currentControl": "204 explicit purpose assignments; metadata excluded from writer fingerprints; prior policy reuse requires the exact unchanged v28 contract.",
+      "targetControl": "No relabelling of facts, new source authority or historical contract rewrite.",
+      "stage": "S3",
+      "sourceDigest": "daa8c25ece5717cb799f178ea24a2e735802945f7718df1254d4656653ccd180"
     }
   ]
 }

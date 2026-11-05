@@ -1,3 +1,4 @@
+import { paDiscoveryFields, withPaTaskDomains } from '../ontology/pa-classification-contract.js';
 import { graphRead, graphQuery, graphRelated, graphEvaluate, graphRevision, graphRelationshipDigest, graphMap, graphPlanningCall, graphRecordPlanningRead, graphDiscoverActions, type GraphProgram, type ProjectionMetadata } from '../ontology/graph-program.js';
 import type { SecurityEnvelope } from '../security/envelope.js';
 import { readRequestedFactsProgram, type RequestedFactsResult, requestedFactsSchema, type RequestedFacts } from './requested-facts.js';
@@ -45,7 +46,7 @@ export interface PreparedPlanningContext {
  model:OntologyObjectStore['model']['ref'];requestRevision:number;receiptIds:string[];startedAt:string;preparedAt:string;digest:string;
 }
 
-const describeSchema = z.object({ functions: z.array(z.string().min(1).max(80)).max(20).optional(), includeLinks: z.boolean().optional(), linkSearch: linkSearchSchema, kind: z.enum(['types', 'actions', 'functions']).optional().describe('Types return related contracts only; actions/functions pages enumerate their complete catalogues'), search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), actions: z.array(z.string().min(1).max(80)).max(8).optional().describe('Exact action IDs whose complete input schemas are needed; otherwise concise action summaries'), includeConditionSchema: z.boolean().optional().describe('Request the full typed business-condition contract when grounding domain conditions'), includeSchemas: z.boolean().optional().describe('Request full property and action schemas; default returns concise names, semantics and links') }).strict();
+const describeSchema = z.object({ ...paDiscoveryFields, functions: z.array(z.string().min(1).max(80)).max(20).optional(), includeLinks: z.boolean().optional(), linkSearch: linkSearchSchema, kind: z.enum(['types', 'actions', 'functions']).optional().describe('Types return related contracts only; actions/functions pages enumerate their complete catalogues'), search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), actions: z.array(z.string().min(1).max(80)).max(8).optional().describe('Exact action IDs whose complete input schemas are needed; otherwise concise action summaries'), includeConditionSchema: z.boolean().optional().describe('Request the full typed business-condition contract when grounding domain conditions'), includeSchemas: z.boolean().optional().describe('Request full property and action schemas; default returns concise names, semantics and links') }).strict();
 const assessmentSchema = z.object({ candidateId: z.string().max(200).optional(), subject: objectRefSchema.optional(), phase: z.enum(['precondition', 'result']).optional() }).strict();
 const actionSchema = z.object({ action: z.string().min(1).max(80), inputs: z.array(z.object({ name: z.string().min(1).max(80), object: objectRefSchema, revision: z.number().int().positive() }).strict()).min(1).max(8) }).strict();
 export const planningQuerySchema = z.union([...objectQuerySchema.options, z.object({ facts: requestedFactsSchema }).strict()]);
@@ -309,7 +310,17 @@ private *requestedFactsProgram(input: RequestedFacts):GraphProgram<RequestedFact
         actionDiscovery = (yield* graphDiscoverActions(this.owner, this.request, actionDiscoverySchema.parse(input)));
         output = actionDiscovery;
       } else if (tool === 'describe_ontology') {
-        const { includeSchemas = false, includeLinks = true, includeConditionSchema = false, actions, functions, ...args } = describeSchema.parse(input), result = this.graph.model.describe(args);
+        const { includeSchemas = false, includeLinks = true, includeConditionSchema = false, actions, functions, ...requested } = describeSchema.parse(input);
+        const permitted = this.graph.security ? authority(this.graph).definitions() : undefined;
+        const metadata = permitted?.types ?? this.graph.model.typeIds().map(id => ({ id, classification: this.graph.model.isInterface(id) ? undefined : this.graph.model.object(id).classification }));
+        const permittedActions = permitted ? new Set(permitted.actions.map(action => action.id)) : undefined;
+        const contextTypes = [...this.boundRefs, ...(this.options.taskContext?.refs ?? [])].map(ref => ref.type);
+        const programTypes: string[] = [];
+        for (const id of this.options.taskContext?.program?.actionIds ?? []) if (!permittedActions || permittedActions.has(id)) {
+          const action = this.graph.model.action(id);
+          programTypes.push(...Object.values(action.inputs), ...(action.resultTypes ?? []), ...(action.read ? [action.read.resultType] : []));
+        }
+        const args = withPaTaskDomains(requested, metadata, contextTypes, programTypes), result = this.graph.model.describe(args);
         if (this.graph.security) {
           const visible=authority(this.graph).describe({...args, actions, functions});
           if (actions?.some(id=>!visible.actions.some(a=>a.id===id)) || functions?.some(id=>!visible.functions.some(f=>f.id===id))) throw new DomainError('FORBIDDEN','Definition is not available');
