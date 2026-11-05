@@ -1,5 +1,6 @@
 import type { Client } from 'pg';
 import { relayCleanupSql, relayImportedLayout, verifyImportedRelayRows } from './postgres-import.js';
+import { relayIdleFunctions } from './postgres-idle-sql.js';
 
 const pattern = /^eigos_relay_(?:live|test)_[a-f0-9]{12,32}$/;
 const hash = /^[a-f0-9]{64}$/;
@@ -63,8 +64,20 @@ export async function grantImportedRelayRuntime(client: Client, schema: string, 
     if (JSON.stringify(checkKeys) !== JSON.stringify(expectedChecks) || checks.rows.some(c=>!c.convalidated)) throw new Error('Relay target check constraints differ from the reviewed import');
     await client.query(`SET LOCAL search_path TO ${q}, pg_catalog, pg_temp`);
     const expectedPath = (await client.query("SELECT pg_catalog.current_setting('search_path') AS path")).rows[0].path;
-    const functions = await client.query(`SELECT p.proname,p.prosecdef,p.pronargs,p.prorettype::pg_catalog.regtype::text AS return_type,p.prosrc,p.proconfig,p.proowner=n.nspowner AS owner_matches,l.lanname FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace JOIN pg_catalog.pg_language l ON l.oid=p.prolang WHERE n.nspname=$1 ORDER BY p.proname`,[schema]);
-    if (functions.rowCount !== 2 || functions.rows.some(f=>!f.owner_matches) || functions.rows[0].proname !== 'relay_cleanup' || functions.rows[0].prosecdef || functions.rows[0].pronargs !== 3 || functions.rows[0].return_type !== 'void' || functions.rows[0].lanname !== 'plpgsql' || functions.rows[0].prosrc.trim() !== relayCleanupSql.split('$$')[1]?.trim() || JSON.stringify(functions.rows[0].proconfig) !== JSON.stringify([`search_path=${expectedPath}`]) || functions.rows[1].proname !== 'relay_migration_receipt_immutable' || functions.rows[1].prosecdef || functions.rows[1].pronargs !== 0 || functions.rows[1].return_type !== 'trigger' || functions.rows[1].lanname !== 'plpgsql' || functions.rows[1].prosrc.trim() !== "BEGIN RAISE EXCEPTION 'relay migration receipt is immutable'; END" || JSON.stringify(functions.rows[1].proconfig) !== JSON.stringify(['search_path=pg_catalog, pg_temp'])) throw new Error('Unexpected Relay target functions');
+    const functions = await client.query(`SELECT p.proname,p.prosecdef,p.pronargs,p.prorettype::pg_catalog.regtype::text AS return_type,p.prosrc,p.proconfig,p.proowner=n.nspowner AS owner_matches,l.lanname,p.provolatile,p.proretset,p.proleakproof,
+      ARRAY(SELECT pg_catalog.format_type(a,NULL) FROM pg_catalog.unnest(p.proargtypes) AS a) AS argument_types
+      FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace JOIN pg_catalog.pg_language l ON l.oid=p.prolang WHERE n.nspname=$1 ORDER BY p.proname`,[schema]);
+    const expectedFunctions = [
+      { name:'relay_cleanup', arguments:['bigint','bigint','bigint'], result:'void', body:relayCleanupSql.split('$$')[1]!.trim(), path:expectedPath },
+      ...relayIdleFunctions.map(f=>({name:f.name,arguments:f.arguments.split(','),result:'jsonb',body:f.sql.split('$$')[1]!.trim(),path:expectedPath})),
+      { name:'relay_migration_receipt_immutable', arguments:[], result:'trigger', body:"BEGIN RAISE EXCEPTION 'relay migration receipt is immutable'; END", path:'pg_catalog, pg_temp' },
+    ].sort((a,b)=>a.name.localeCompare(b.name));
+    if (functions.rowCount !== expectedFunctions.length || functions.rows.some((f,i)=>{
+      const expected=expectedFunctions[i]!;
+      return !f.owner_matches || f.proname!==expected.name || f.prosecdef || f.proretset || f.proleakproof || f.provolatile!=='v' || f.lanname!=='plpgsql'
+        || f.pronargs!==expected.arguments.length || JSON.stringify(f.argument_types)!==JSON.stringify(expected.arguments) || f.return_type!==expected.result
+        || f.prosrc.trim()!==expected.body || JSON.stringify(f.proconfig)!==JSON.stringify([`search_path=${expected.path}`]);
+    })) throw new Error('Unexpected Relay target functions');
     const triggers = await client.query(`SELECT t.tgtype,t.tgenabled,p.proname FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace JOIN pg_catalog.pg_proc p ON p.oid=t.tgfoid WHERE n.nspname=$1 AND p.pronamespace=n.oid AND c.relname='relay_migration_receipt' AND NOT t.tgisinternal`,[schema]);
     if (triggers.rowCount !== 1 || Number(triggers.rows[0].tgtype) !== 27 || triggers.rows[0].tgenabled !== 'O' || triggers.rows[0].proname !== 'relay_migration_receipt_immutable') throw new Error('Relay migration receipt protection differs from the reviewed import');
     const existingTargetAccess = await client.query(`SELECT c.relname FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relkind='r' AND (pg_catalog.has_table_privilege($2,c.oid,'SELECT') OR pg_catalog.has_table_privilege($2,c.oid,'INSERT') OR pg_catalog.has_table_privilege($2,c.oid,'UPDATE') OR pg_catalog.has_table_privilege($2,c.oid,'DELETE') OR pg_catalog.has_table_privilege($2,c.oid,'TRUNCATE') OR pg_catalog.has_table_privilege($2,c.oid,'REFERENCES') OR pg_catalog.has_table_privilege($2,c.oid,'TRIGGER') OR pg_catalog.has_any_column_privilege($2,c.oid,'SELECT') OR pg_catalog.has_any_column_privilege($2,c.oid,'INSERT') OR pg_catalog.has_any_column_privilege($2,c.oid,'UPDATE') OR pg_catalog.has_any_column_privilege($2,c.oid,'REFERENCES')) LIMIT 1`,[schema,role]);
@@ -79,6 +92,7 @@ export async function grantImportedRelayRuntime(client: Client, schema: string, 
     await client.query(Object.entries(grants).map(([table,privileges]) => `GRANT ${privileges.join(',')} ON ${q}."${table}" TO ${principal}`).join(';'));
     await client.query(`GRANT USAGE, SELECT ON SEQUENCE ${q}.relay_messages_seq_seq TO ${principal}`);
     await client.query(`GRANT EXECUTE ON FUNCTION ${q}.relay_cleanup(bigint,bigint,bigint) TO ${principal}`);
+    for (const f of relayIdleFunctions) await client.query(`GRANT EXECUTE ON FUNCTION ${q}.${f.name}(${f.arguments}) TO ${principal}`);
     const schemaCheck = (await client.query(`SELECT pg_catalog.has_schema_privilege($1,$2,'USAGE') AS usage, pg_catalog.has_schema_privilege($1,$2,'CREATE') AS create`,[role,schema])).rows[0];
     if (!schemaCheck.usage || schemaCheck.create) throw new Error('Relay schema privilege mismatch');
     const tableChecks = await client.query(`SELECT t.name AS table_name,p.name AS privilege,pg_catalog.has_table_privilege($1,pg_catalog.format('%I.%I',$2::text,t.name),p.name) AS allowed FROM pg_catalog.unnest($3::text[]) AS t(name) CROSS JOIN pg_catalog.unnest($4::text[]) AS p(name)`,[role,schema,[...Object.keys(grants),'relay_migration_receipt'],allPrivileges]);
@@ -88,6 +102,7 @@ export async function grantImportedRelayRuntime(client: Client, schema: string, 
     if (columnChecks.rowCount !== (Object.keys(grants).length+1)*columnPrivileges.length || columnChecks.rows.some(row => row.allowed !== (grants[row.table_name]?.includes(row.privilege) ?? false))) throw new Error('Relay column privilege mismatch');
     const privilegeChecks = (await client.query(`SELECT pg_catalog.has_sequence_privilege($1,$2,'USAGE') AS usage,pg_catalog.has_sequence_privilege($1,$2,'SELECT') AS select,pg_catalog.has_sequence_privilege($1,$2,'UPDATE') AS update,pg_catalog.has_function_privilege($1,$3,'EXECUTE') AS cleanup,pg_catalog.has_function_privilege($1,$4,'EXECUTE') AS receipt`,[role,`${schema}.relay_messages_seq_seq`,`${schema}.relay_cleanup(bigint,bigint,bigint)`,`${schema}.relay_migration_receipt_immutable()`])).rows[0];
     if (!privilegeChecks.usage || !privilegeChecks.select || privilegeChecks.update || !privilegeChecks.cleanup || privilegeChecks.receipt) throw new Error('Relay sequence or function privilege mismatch');
+    for (const f of relayIdleFunctions) if (!(await client.query("SELECT pg_catalog.has_function_privilege($1,$2,'EXECUTE') AS allowed",[role,`${schema}.${f.name}(${f.arguments})`])).rows[0].allowed) throw new Error('Relay idle function privilege mismatch');
     committing = true; await client.query('COMMIT'); open = false;
   } catch (error) {
     if (open && !committing) { try { await client.query('ROLLBACK'); } catch { throw new Error('Relay grant rollback failed; inspect target before retrying', {cause:error}); } }

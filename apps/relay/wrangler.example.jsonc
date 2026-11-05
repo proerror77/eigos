@@ -7,6 +7,10 @@
   "compatibility_flags": ["global_fetch_strictly_public"],
   "workers_dev": true,
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
+  // One memory-only coordinator; SQLite-backed namespace is required on Free,
+  // but the object never calls its storage API or stores business records.
+  "durable_objects": { "bindings": [{ "name": "RELAY_NOTIFICATIONS", "class_name": "RelayNotificationObject" }] },
+  "migrations": [{ "tag": "relay-notifications-v1", "new_sqlite_classes": ["RelayNotificationObject"] }],
   "hyperdrive": [{ "binding": "RELAY_DATABASE", "id": "REPLACE_WITH_HYPERDRIVE_ID" }],
   "vars": {
     "RELAY_SCHEMA": "eigos_relay_example",

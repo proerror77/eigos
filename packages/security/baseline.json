@@ -3432,12 +3432,12 @@
     {
       "id": "security-worker-loop",
       "file": "apps/worker/worker.ts",
-      "sourceDigest": "5921d559502bcbda6092bf43bd1895221394072dfa08dd265abb51287eb5d59c",
+      "sourceDigest": "88b98e29d5b689f520ac4a0b0c1c20bf3d5c121dc732d611395fc2c1a900bfac",
       "channels": [
         "authorization_control"
       ],
       "content": "Lease renewal, cancellation and completion lifecycle",
-      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit; synchronous progress renews each due active task claim through its original lease, execution deadline and policy fences; A source authorization mismatch produces explicit blocked recovery without automatic resubmission or new permission. Cutover pauses new claims and waits for in-flight work without aborting it. The Harness runtime may select one concurrent claim; existing lease, cancellation and late-result fences remain unchanged. Known rejection reasons are logged privately through a runtime allowlist even after successful recovery writeback; no raw error or public task diagnostic field is added.",
+      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit; synchronous progress renews each due active task claim through its original lease, execution deadline and policy fences; A source authorization mismatch produces explicit blocked recovery without automatic resubmission or new permission. Cutover pauses new claims and waits for in-flight work without aborting it. The Harness runtime may select one concurrent claim; existing lease, cancellation and late-result fences remain unchanged. Known rejection reasons and bounded policy rejection locations are logged privately even after successful recovery writeback; no raw error or public task diagnostic field is added.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
@@ -4869,7 +4869,7 @@
       "currentControl": "Explicit loopback proxy trust; Cloudflare adapter supplies trusted ingress address; distributed limits for PostgreSQL; exact owner and node proofs; bounded ciphertext",
       "targetControl": "Keep communication authorization separate from primary task and source grants",
       "stage": "S5",
-      "sourceDigest": "38dae4a6188c8d0715de795d9837699b057147ae7e13851282456d97a451220f"
+      "sourceDigest": "35cc844021cbb8f16701d1aa48c3dab15bf71f39fb2f20e41339607a05bf9ee4"
     },
     {
       "id": "relay-private-storage",
@@ -5384,7 +5384,7 @@
       "currentControl": "Per-schema transaction lock; hashed credentials and ingress addresses; proof replay rejection; contact approval, message quotas, revocation and bounded poll leases",
       "targetControl": "Preserve communication-only authority and exact state across instances and cutover",
       "stage": "S5",
-      "sourceDigest": "89c94dd28505f7f259695dd403e01a736c6b3e9eb807afa1f7e830ee0ff6bf88"
+      "sourceDigest": "d986ad2d1727b42b8e72906ad17268c5102eb6de600c654d5d07790a36f4ef6d"
     },
     {
       "id": "relay-cloudflare-entry",
@@ -5397,7 +5397,7 @@
       "currentControl": "Exact HTTPS origin and JWT configuration; Cloudflare client address validation; request-owned Hyperdrive client; optional version metadata response; no task or source grant",
       "targetControl": "Retain authenticated routing and communication isolation after production cutover",
       "stage": "S5",
-      "sourceDigest": "ffc0602ee6c3efa7af38cfd16dd85f889de920710be6902a76b342860640b40d"
+      "sourceDigest": "d98aa2157ea7a8312e23e24fe36f9ac4de0694912705c1025df4a0594062dbb8"
     },
     {
       "id": "relay-postgres-import",
@@ -5410,7 +5410,7 @@
       "currentControl": "Reviewed private source digest, bounded batched copy, readback fingerprints, immutable receipt and fail-closed uncertain commit; imported rows and sequence are rechecked before granting runtime access",
       "targetControl": "Preserve ciphertext, replay state and receipts without creating business authority",
       "stage": "S5",
-      "sourceDigest": "29e1f93f019f5e660a72b65598b01d3cce8de95e81103e2dfc3df2d388d3ca1b"
+      "sourceDigest": "4be2c48bc78c834932b50c666b1b07c8f925077fffde1961388a5322af145dee"
     },
     {
       "id": "relay-postgres-import-cli",
@@ -5660,7 +5660,7 @@
       "currentControl": "Restricted dedicated login, exact receipt and row digest recheck, reviewed constraints and function bodies, advisory lock, isolated schema and effective table, column, sequence and function privilege audit",
       "targetControl": "Grant only the reviewed imported Relay data to its dedicated runtime",
       "stage": "S5",
-      "sourceDigest": "847a521a01fb5967fddb4b35c3f1f33b4760d6e0cf08d352138e159be9b910c8"
+      "sourceDigest": "5dc1f380a0fdeb492cb255e531e86c41f27981481e6f31a20231758ac72ef171"
     },
     {
       "id": "relay-postgres-grant-cli",
@@ -8104,10 +8104,46 @@
         "internal"
       ],
       "content": "Private Worker rejection classification during existing recovery",
-      "currentControl": "Fixed event and original task id with runtime-allowlisted SecurityError reasons or DomainError codes; no raw error, stack, path or caller facts; logging failure cannot alter recovery",
+      "currentControl": "Fixed event and original task id with runtime-allowlisted SecurityError reasons or DomainError codes; policy rejections include at most four reviewed repository file locations, with no raw error, absolute path, function names or caller facts; logging failure cannot alter recovery",
       "targetControl": "Keep rejection diagnostics separate from task state, permission, retry and business acceptance",
       "stage": "S3",
-      "sourceDigest": "728b804b914bb5fe612de4a9e1afb11b128da7f1ed03bffa4bb417564faf118e"
+      "sourceDigest": "0d87682a27d4c0654aa6b13748fd71de4e0e150733b2cf6c17aa14521c132fb1"
+    },
+    {
+      "id": "relay-postgres-idle-operations",
+      "file": "packages/relay/postgres-idle-sql.ts",
+      "channels": [
+        "agent_transport"
+      ],
+      "content": "Atomic PostgreSQL idle inbox and ingress operations",
+      "currentControl": "Invoker rights, exact imported function bodies, shared table lock, proof replay and rate checks, bounded poll leases, fresh final authority and message read",
+      "targetControl": "Keep PostgreSQL as the sole authority for identity, messages, permissions and quotas",
+      "stage": "S5",
+      "sourceDigest": "ceaa41548500d475e1e4fe36ae63780317e9e785d3b3c0835c4c254fc050d1cd"
+    },
+    {
+      "id": "relay-notification-hints",
+      "file": "packages/relay/notifications.ts",
+      "channels": [
+        "agent_transport"
+      ],
+      "content": "Memory-only Relay wakeup coordinator",
+      "currentControl": "Opaque restart epoch, race-safe wait registration, bounded cancellable waiters, no message facts or permission cache",
+      "targetControl": "Keep PostgreSQL as the sole authority for identity, messages, permissions and quotas",
+      "stage": "S5",
+      "sourceDigest": "7740e6c6802d4aa887b9a23ca8fd8b3e23d506945661862d2667e1016e047951"
+    },
+    {
+      "id": "relay-cloudflare-notifications",
+      "file": "apps/relay/cloudflare-notifications.ts",
+      "channels": [
+        "agent_transport"
+      ],
+      "content": "Private Cloudflare single-object notification binding",
+      "currentControl": "One object per namespace, no storage API, bounded internal waits, hints always followed by authoritative PostgreSQL reads",
+      "targetControl": "Keep PostgreSQL as the sole authority for identity, messages, permissions and quotas",
+      "stage": "S5",
+      "sourceDigest": "3d78e8b4457205824719c3a3dcfd53e0646a592b4372959f68e6df4d3889e9f9"
     }
   ]
 }
