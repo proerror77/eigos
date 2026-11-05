@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import pg from 'pg';
 import { RelayStore } from '../packages/relay/store.js';
@@ -72,6 +72,9 @@ test('Relay runtime grant is tied to an unchanged import and excludes unrelated 
     await admin.query(`GRANT SELECT(body) ON "${role}".relay_migration_receipt TO "${role}"`);
     await assert.rejects(grantImportedRelayRuntime(admin,role,role,digest),/already has table or column privileges/);assert.equal(await usage(),false);
     await admin.query(`REVOKE SELECT(body) ON "${role}".relay_migration_receipt FROM "${role}"`);
+    await admin.query(`ALTER FUNCTION "${role}".relay_idle_poll(jsonb,bigint,bigint,bigint) SECURITY DEFINER`);
+    await assert.rejects(grantImportedRelayRuntime(admin,role,role,digest),/target functions/);assert.equal(await usage(),false);
+    await admin.query(`ALTER FUNCTION "${role}".relay_idle_poll(jsonb,bigint,bigint,bigint) SECURITY INVOKER`);
     await grantImportedRelayRuntime(admin,role,role,digest);assert.equal(await usage(),true);
     await assert.rejects(grantImportedRelayRuntime(admin,role,role,digest),/already granted/);
     const user=local?role:`${role}.${process.env.PGUSER!.split('.').slice(1).join('.')}`;
@@ -86,6 +89,8 @@ test('Relay runtime grant is tied to an unchanged import and excludes unrelated 
     const pool=new pg.Pool(config),store=new PostgresRelayStore(pool,role,()=>1800000000000);
     try {
       await store.rateIngress('203.0.113.9');assert.equal((await store.publicAgent('a')).signedCard,'synthetic-card');
+      const empty=await store.beginIdlePoll('a',{jti:randomUUID(),expiresAt:1800000010000},20);assert.deepEqual(empty.items,[]);
+      assert.deepEqual(await store.finishIdlePoll('a',empty.lease,20),[]);
       const envelope={version:RELAY_PROTOCOL,id:'new-message',senderId:'a',recipientId:'b',connectionId:'connection',createdAt:1800000000000,expiresAt:1800000010000,ciphertext:'x'.repeat(100)};
       const sent=await store.send('a',envelope,'synthetic-envelope');assert.deepEqual(await store.send('a',envelope,'synthetic-envelope'),sent);
       assert((await store.inbox('b')).some(item=>item.receipt.id==='new-message'));

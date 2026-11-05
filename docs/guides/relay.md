@@ -190,3 +190,24 @@ Worker 必须启用 `global_fetch_strictly_public`，让签发方 JWKS 请求按
 第一次 `SIGUSR2` 启动新的 Gateway 并重新读取 Relay 配置文件；出现 `Gateway ready; Worker claims remain paused` 后，须另行检查 Gateway 健康状态、身份、目标地址及节点重连。确认后第二次 `SIGUSR2` 恢复 Worker 领取任务，并等待 `Worker claims resumed`。其他阶段的过早恢复信号会被忽略。Worker 在排空时继续保持现有任务的授权和租约；如果任务长期不结束，Gateway 会保持运行，不能强行将其视为已暂停。
 
 此控制不停止独立服务 Agent、PA、源 Relay 或其他写入者，也不验证数据库快照、迁移围栏、节点凭据和目标环境；必须分别完成和核实这些步骤，才能认定源端已停写。Gateway 或 Worker 非正常退出仍按启动器既有的故障处理停止进程组，不会被记录为成功暂停。
+
+
+### 空闲长轮询与通知提示
+
+HTTP `/v1/inbox?wait=25` 和现有客户端协议保持兼容。Relay 在首次收件箱查询前取得通知版本，消息或撤销提交后发出唤醒提示；提示本身不包含消息、身份许可或收件回执。唤醒与等待结束都会重新读取权威存储，只有该次数据库读取确认有效的密文才会返回。ACK 仍由接收节点验证并持久保存消息后独立提交。
+
+Node 入口使用进程内通知。其他实例或直接数据库写入可能没有提示，因此每次最多 25 秒的 HTTP 等待结束时必定补读；进程／协调器重启、提示丢失或失败不会删除待收消息。等待阶段不持有数据库连接或事务，节点与联系撤销、期限和队列状态在最终读时重新核验。提示失败不把已提交的消息发送误报为未提交。
+
+PostgreSQL 入口限流与长轮询操作由导入器安装的 `relay_idle_ingress(text,bigint)`、`relay_idle_poll(jsonb,bigint,bigint,bigint)` 执行。这些函数使用调用者权限、固定 schema 搜索路径及现有 Relay 表锁；运行角色授权工具会核验准确的函数体、参数类型和最小 EXECUTE 权限。凭据每次从 PG 新鲜读取后做恒时比较，DPoP 验签规则不变，防重、节点限流、跨实例等待租约与首次读取在 PG 原子操作中处理。最终读取同时释放租约；函数采用新鲜 PG 时钟与调用时间加已耗时的保守较大值，清理后再刷新期限检查，避免发送排队使旧时间放行已过期身份或消息。数据库回复返回后也再次检查绝对期限，覆盖回复传输延迟，且不新增查询。数据库提交结果未知时不盲目重试，未确认释放的租约有过期时间。
+
+新导入目标会包含这些函数。旧 PostgreSQL schema 不会在服务启动时自动修改；部署前须按已审查的离线迁移／授权流程准备兼容目标，不能直接把新版本指向缺少函数的旧 schema。现有 ECS／PostgreSQL 业务联调无需等待 Cloudflare 部署。
+
+Cloudflare 示例配置增加可选 `RELAY_NOTIFICATIONS` Durable Object 绑定及 SQLite-backed class migration。每个命名空间只使用一个名为 `relay-notifications` 的对象，全部节点共用内存等待者；对象不调用 storage API，不建立另一套业务 SQLite。没有此绑定时仍执行末次 PG 补读。该内部绑定不开放公网通知端点，也不要求客户端改用 WebSocket。资源创建、迁移标签和实际部署须由运行负责人审核执行，示例本身不创建资源。
+
+#### 免费额度的准备边界
+
+一次正常、空闲的 PG 长轮询发送 4 条数据库语句：入口限流函数、凭据读取、原子初读／租约函数、最终读取／释放函数。以三个节点持续采用 25 秒请求估算，`3 × 86400 / 25 × 4 = 41,472` 条／日；活跃消息、登记、撤销、错误请求与其他应用还会消耗共享额度。该数值是源码预算；测试同时记录真实 PG wire query／parse 语句，避免把包含多个 SQL 语句的单次客户端调用误算为一条。
+
+[Hyperdrive Free](https://developers.cloudflare.com/hyperdrive/platform/pricing/) 为每账户每天 100,000 条数据库语句，缓存查询同样计数，超额操作会失败。[Workers Free](https://developers.cloudflare.com/workers/platform/limits/) 为每天 100,000 次请求、每请求 10ms CPU；数据库等待不计 CPU。真实 CPU 与共享账户剩余额度仍须部署负责人另行验收。
+
+[Durable Objects Free](https://developers.cloudflare.com/durable-objects/platform/pricing/) 支持 SQLite-backed namespace，每天包含 100,000 次对象请求和 13,000 GB-s 时长。三个空闲节点每轮取版本、等待各一次，约 20,736 次对象请求／日；一个 128MB 对象全天活跃约 11,059 GB-s。必须保持单对象设计并考虑账户其他对象用量；为每个节点建立全天活跃对象会超出此预算。Supabase 免费方案不代表已授权 Cloudflare 付费升级。

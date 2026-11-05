@@ -7,9 +7,12 @@ import { createRelayApp } from './app.js';
 import { readRelayConfig } from './config.js';
 import { PostgresRelayStore } from '../../packages/relay/postgres-store.js';
 import { uuidSchema } from '../../packages/relay/contracts.js';
+import { cloudflareRelayNotifications, type RelayNotificationNamespace } from './cloudflare-notifications.js';
+export { RelayNotificationObject } from './cloudflare-notifications.js';
 
 interface RelayWorkerEnv {
   RELAY_DATABASE: { connectionString: string };
+  RELAY_NOTIFICATIONS?: RelayNotificationNamespace;
   CF_VERSION_METADATA?: { id: string };
   RELAY_SCHEMA: string;
   EIGOS_RELAY_PUBLIC_URL: string;
@@ -36,7 +39,8 @@ export default {
     if (new URL(request.url).origin !== config.publicUrl) return Response.json({ error: 'ORIGIN_NOT_ALLOWED' }, { status: 403 });
     const pool = new pg.Pool({ connectionString: env.RELAY_DATABASE.connectionString, max: 1, connectionTimeoutMillis: 10000, query_timeout: 15000 });
     const store = new PostgresRelayStore(pool, env.RELAY_SCHEMA);
-    const relay = createRelayApp(config, { store, trustedIngressAddress: address });
+    const relay = createRelayApp(config, { store, trustedIngressAddress: address,
+      ...(env.RELAY_NOTIFICATIONS ? { notifications: cloudflareRelayNotifications(env.RELAY_NOTIFICATIONS) } : {}) });
     const server = createServer(relay.app);
     try {
       server.listen(0); await once(server, 'listening');

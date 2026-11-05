@@ -6,10 +6,18 @@ import type { PostgresRelayStore } from '../../packages/relay/postgres-store.js'
 import { agentIdSchema, fail, hashSchema, MAX_CONTENT_BYTES, MAX_ENVELOPE_BYTES, MAX_MESSAGE_MS, ownerKey, RELAY_PROTOCOL, RelayError, uuidSchema } from '../../packages/relay/contracts.js';
 import { verifyCard, verifyEnvelope, verifyProof } from '../../packages/agent-transport/crypto.js';
 import { createOwnerVerifier, type RelayConfig, type VerifyOwner } from './config.js';
+import { MemoryRelayNotifications, type RelayNotifications } from '../../packages/relay/notifications.js';
 
-export function createRelayApp(config: RelayConfig, options: { verifyOwner?: VerifyOwner; store?: RelayStore | PostgresRelayStore; trustedIngressAddress?: string } = {}) {
+export function createRelayApp(config: RelayConfig, options: { verifyOwner?: VerifyOwner; store?: RelayStore | PostgresRelayStore; trustedIngressAddress?: string; notifications?: RelayNotifications } = {}) {
   const store = options.store ?? new RelayStore(config.databasePath), verifyOwner = options.verifyOwner ?? createOwnerVerifier(config);
   const app = express(), waits = new Map<string, number>(), ingress = new Map<string, { bucket: number; count: number }>();
+  const notifications = options.notifications ?? new MemoryRelayNotifications(), pending = new Set<AbortController>();
+  const changed = async <T>(operation: T | Promise<T>): Promise<T> => {
+    const result = await operation;
+    // The PG commit/SQLite transaction is authoritative. A missed hint is
+    // recovered by the next final read, without reporting a committed send as failed.
+    await notifications.notify().catch(() => {}); return result;
+  };
   let closed = false, storageClosed = false;
   app.disable('x-powered-by');
   app.set('trust proxy', config.trustLoopbackProxy ? 'loopback' : false);
@@ -58,50 +66,82 @@ export function createRelayApp(config: RelayConfig, options: { verifyOwner?: Ver
   app.post('/v1/agents', route(async (req, res) => {
     const who = await owner(req), input = z.strictObject({ signedCard: z.string().max(4096), credentialHash: hashSchema, requestId: uuidSchema }).parse(req.body);
     const card = await verifyCard(input.signedCard); await proof(req, card.card.agentId, bearer(req));
-    res.json(await store.register(who, card, input.credentialHash, input.requestId));
+    res.json(await changed(store.register(who, card, input.credentialHash, input.requestId)));
   }));
   app.get('/v1/owned-agents', route(async (req, res) => { res.json({ agents: await store.owned(await owner(req)) }); }));
   app.post('/v1/agents/:agentId/renew', route(async (req, res) => {
     const who = await owner(req), id = pathId(req.params.agentId), input = z.strictObject({ requestId: uuidSchema }).parse(req.body);
-    await proof(req, id, bearer(req)); res.json(await store.renew(who, id, input.requestId));
+    await proof(req, id, bearer(req)); res.json(await changed(store.renew(who, id, input.requestId)));
   }));
   app.post('/v1/agents/:agentId/revoke', route(async (req, res) => {
-    const who = await owner(req); z.strictObject({}).parse(req.body); res.json(await store.revoke(who, pathId(req.params.agentId)));
+    const who = await owner(req); z.strictObject({}).parse(req.body); res.json(await changed(store.revoke(who, pathId(req.params.agentId))));
   }));
   app.get('/v1/agents/:agentId', route(async (req, res) => { await node(req); res.json(await store.publicAgent(pathId(req.params.agentId))); }));
   app.get('/v1/contacts', route(async (req, res) => { res.json({ connections: await store.contacts(await node(req)) }); }));
   app.post('/v1/contacts', route(async (req, res) => {
     const actor = await node(req), input = z.strictObject({ peerId: agentIdSchema, requestId: uuidSchema }).parse(req.body);
-    res.json(await store.requestContact(actor, input.peerId, input.requestId));
+    res.json(await changed(store.requestContact(actor, input.peerId, input.requestId)));
   }));
   app.post('/v1/contacts/:id', route(async (req, res) => {
     const actor = await node(req), input = z.strictObject({ action: z.enum(['accept', 'reject', 'revoke']) }).parse(req.body);
-    res.json(await store.respondContact(actor, uuidSchema.parse(req.params.id), input.action));
+    res.json(await changed(store.respondContact(actor, uuidSchema.parse(req.params.id), input.action)));
   }));
   app.post('/v1/messages', route(async (req, res) => {
     const actor = await node(req), input = z.strictObject({ signedEnvelope: z.string().max(MAX_ENVELOPE_BYTES) }).parse(req.body);
     const envelope = await verifyEnvelope(input.signedEnvelope, await store.identity(actor));
-    res.json(await store.send(actor, envelope, input.signedEnvelope));
+    res.json(await changed(store.send(actor, envelope, input.signedEnvelope)));
   }));
   app.get('/v1/inbox', route(async (req, res) => {
-    const actor = await node(req), query = z.strictObject({ wait: z.coerce.number().int().min(0).max(25).default(0), limit: z.coerce.number().int().min(1).max(20).default(20) }).parse(req.query);
-    let lease: string | undefined;
-    if ('acquirePoll' in store) lease = await store.acquirePoll(actor);
-    else {
+    // Take the notification revision before the first authoritative read. A
+    // commit between that read and wait registration changes the revision.
+    let revision: string | undefined;
+    const parsed = z.strictObject({ wait: z.coerce.number().int().min(0).max(25).default(0), limit: z.coerce.number().int().min(1).max(20).default(20) }).safeParse(req.query);
+    const query = parsed.success ? parsed.data : { wait: 0, limit: 20 };
+    let actor: string, lease: string | undefined, items: Awaited<ReturnType<typeof store.inbox>> | undefined;
+    if ('beginIdlePoll' in store) {
+      actor = pathId(req.headers['x-eigos-agent-id']);
+      const token = /^DPoP ([A-Za-z0-9_-]{43})$/.exec(req.headers.authorization ?? '')?.[1] ?? fail('NODE_AUTHENTICATION_REQUIRED', 401);
+      await store.authenticate(actor, token);
+      const value = typeof req.headers.dpop === 'string' ? req.headers.dpop : fail('INVALID_DPOP_PROOF', 401);
+      const checked = await verifyProof(value, token, req.method, config.publicUrl + req.path, actor, store.now());
+      revision = await notifications.snapshot().catch(() => undefined);
+      // No database transaction or connection survives this call.
+      const first = await store.beginIdlePoll(actor, checked, query.limit, !parsed.success);
+      if (!parsed.success) fail('INVALID_INPUT');
+      lease = first.lease;
+      items = first.items;
+    } else {
+      actor = await node(req);
+      if (!parsed.success) throw parsed.error;
+      revision = await notifications.snapshot().catch(() => undefined);
       if ((waits.get(actor) ?? 0) >= 2 || [...waits.values()].reduce((a, b) => a + b, 0) >= 100) fail('POLL_LIMIT', 429);
       waits.set(actor, (waits.get(actor) ?? 0) + 1);
     }
-    const end = Date.now() + query.wait * 1000;
+    const cancel = new AbortController(), end = Date.now() + query.wait * 1000;
+    const disconnect = () => cancel.abort();
+    pending.add(cancel); res.once('close', disconnect);
+    let finishing = false;
     try {
-      while (!closed && !res.destroyed) {
-        const items = await store.inbox(actor, query.limit);
-        if (items.length || Date.now() >= end) { res.json({ items }); return; }
-        await sleep(Math.min(250, Math.max(1, end - Date.now())));
+      items ??= await store.inbox(actor, query.limit);
+      if (!items.length && query.wait && !closed && !res.destroyed) {
+        if (revision !== undefined) {
+          try { await notifications.wait(revision, Math.max(0, end - Date.now()), cancel.signal); }
+          catch { if (!cancel.signal.aborted) await sleep(Math.max(0, end - Date.now()), undefined, { signal: cancel.signal }).catch(() => {}); }
+        } else await sleep(Math.max(0, end - Date.now()), undefined, { signal: cancel.signal }).catch(() => {});
       }
-      if (!res.destroyed) res.status(503).json({ error: 'RELAY_UNAVAILABLE' });
+      if (lease && 'finishIdlePoll' in store) {
+        finishing = true; items = await store.finishIdlePoll(actor, lease, query.limit);
+      } else items = await store.inbox(actor, query.limit);
+      if (!res.destroyed) {
+        if (closed) res.status(503).json({ error: 'RELAY_UNAVAILABLE' });
+        else res.json({ items });
+      }
     } finally {
-      if (lease && 'releasePoll' in store) await store.releasePoll(lease);
-      else { const remaining = (waits.get(actor) ?? 1) - 1; if (remaining) waits.set(actor, remaining); else waits.delete(actor); }
+      pending.delete(cancel); res.removeListener('close', disconnect); cancel.abort();
+      // If the final call's outcome is unknown, its PG lease expires. Never
+      // retry the same final operation after an uncertain database commit.
+      if (lease && !finishing && 'releasePoll' in store) await store.releasePoll(lease);
+      if (!lease) { const remaining = (waits.get(actor) ?? 1) - 1; if (remaining) waits.set(actor, remaining); else waits.delete(actor); }
     }
   }));
   app.post('/v1/messages/:sender/:id/ack', route(async (req, res) => {
@@ -117,5 +157,5 @@ export function createRelayApp(config: RelayConfig, options: { verifyOwner?: Ver
     else res.status(500).json({ error: 'RELAY_FAILURE' });
   };
   app.use(errors);
-  return { app, store, stop: () => { closed = true; }, close: () => { closed = true; if (!options.store && !storageClosed) { storageClosed = true; store.close(); } } };
+  return { app, store, stop: () => { closed = true; for (const cancel of pending) cancel.abort(); }, close: () => { closed = true; for (const cancel of pending) cancel.abort(); if (!options.store && !storageClosed) { storageClosed = true; store.close(); } } };
 }

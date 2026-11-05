@@ -4848,7 +4848,7 @@
       "currentControl": "Explicit loopback proxy trust; Cloudflare adapter supplies trusted ingress address; distributed limits for PostgreSQL; exact owner and node proofs; bounded ciphertext",
       "targetControl": "Keep communication authorization separate from primary task and source grants",
       "stage": "S5",
-      "sourceDigest": "38dae4a6188c8d0715de795d9837699b057147ae7e13851282456d97a451220f"
+      "sourceDigest": "7c5b15a00fe5093090951b4d25ef4197eebaf12cde6809627ae99c5f5296df34"
     },
     {
       "id": "relay-private-storage",
@@ -5363,7 +5363,7 @@
       "currentControl": "Per-schema transaction lock; hashed credentials and ingress addresses; proof replay rejection; contact approval, message quotas, revocation and bounded poll leases",
       "targetControl": "Preserve communication-only authority and exact state across instances and cutover",
       "stage": "S5",
-      "sourceDigest": "89c94dd28505f7f259695dd403e01a736c6b3e9eb807afa1f7e830ee0ff6bf88"
+      "sourceDigest": "57f4aab7a855b94c3aff28a829d6dcf2de97fda0b788df6c985ac011fb68a6a8"
     },
     {
       "id": "relay-cloudflare-entry",
@@ -5376,7 +5376,7 @@
       "currentControl": "Exact HTTPS origin and JWT configuration; Cloudflare client address validation; request-owned Hyperdrive client; optional version metadata response; no task or source grant",
       "targetControl": "Retain authenticated routing and communication isolation after production cutover",
       "stage": "S5",
-      "sourceDigest": "ffc0602ee6c3efa7af38cfd16dd85f889de920710be6902a76b342860640b40d"
+      "sourceDigest": "2bec1c45bdeb8e02c2e64d9a0ebfc1dacbe91092e90dfb8793979cd106841d8b"
     },
     {
       "id": "relay-postgres-import",
@@ -5389,7 +5389,7 @@
       "currentControl": "Reviewed private source digest, bounded batched copy, readback fingerprints, immutable receipt and fail-closed uncertain commit; imported rows and sequence are rechecked before granting runtime access",
       "targetControl": "Preserve ciphertext, replay state and receipts without creating business authority",
       "stage": "S5",
-      "sourceDigest": "29e1f93f019f5e660a72b65598b01d3cce8de95e81103e2dfc3df2d388d3ca1b"
+      "sourceDigest": "481940054731e74e6a8d117d665b47b748c95816f3c6865d5e604ea42b1ad4ab"
     },
     {
       "id": "relay-postgres-import-cli",
@@ -5639,7 +5639,7 @@
       "currentControl": "Restricted dedicated login, exact receipt and row digest recheck, reviewed constraints and function bodies, advisory lock, isolated schema and effective table, column, sequence and function privilege audit",
       "targetControl": "Grant only the reviewed imported Relay data to its dedicated runtime",
       "stage": "S5",
-      "sourceDigest": "847a521a01fb5967fddb4b35c3f1f33b4760d6e0cf08d352138e159be9b910c8"
+      "sourceDigest": "151edaee16129d141e6243a311ab4ec2dcd7f4a64944be0be88c202c07f2d29f"
     },
     {
       "id": "relay-postgres-grant-cli",
@@ -7781,6 +7781,42 @@
       "currentControl": "Only after the original activation/schema/import receipt chain is verified: require the original epoch table inventory, exact reviewed compiler helper body/config/owner/ACL and complete twelve-trigger group; legacy bases cannot gain helper permissions from target self-report. No DDL, grants or independent source re-audit is performed here.",
       "targetControl": "Preserve immutable base receipts, current runtime authority and rejection of unreviewed target extensions.",
       "stage": "S5"
+    },
+    {
+      "id": "relay-postgres-idle-operations",
+      "file": "packages/relay/postgres-idle-sql.ts",
+      "channels": [
+        "agent_transport"
+      ],
+      "content": "Atomic PostgreSQL idle inbox and ingress operations",
+      "currentControl": "Invoker rights, exact imported function bodies, shared table lock, proof replay and rate checks, bounded poll leases, fresh final authority and message read",
+      "targetControl": "Keep PostgreSQL as the sole authority for identity, messages, permissions and quotas",
+      "stage": "S5",
+      "sourceDigest": "7da78964c259c9820dae7cd5871883e7931d0a5c8c152453f9b8a41cf0a24d95"
+    },
+    {
+      "id": "relay-notification-hints",
+      "file": "packages/relay/notifications.ts",
+      "channels": [
+        "agent_transport"
+      ],
+      "content": "Memory-only Relay wakeup coordinator",
+      "currentControl": "Opaque restart epoch, race-safe wait registration, bounded cancellable waiters, no message facts or permission cache",
+      "targetControl": "Keep PostgreSQL as the sole authority for identity, messages, permissions and quotas",
+      "stage": "S5",
+      "sourceDigest": "f31c79ccc9fee7066e1799f2c99fd4832f75f4263b1bbb5272d4b9345c41df11"
+    },
+    {
+      "id": "relay-cloudflare-notifications",
+      "file": "apps/relay/cloudflare-notifications.ts",
+      "channels": [
+        "agent_transport"
+      ],
+      "content": "Private Cloudflare single-object notification binding",
+      "currentControl": "One object per namespace, no storage API, bounded internal waits, hints always followed by authoritative PostgreSQL reads",
+      "targetControl": "Keep PostgreSQL as the sole authority for identity, messages, permissions and quotas",
+      "stage": "S5",
+      "sourceDigest": "4db602f26ec6eaf39f9ebddea427a1602d5cb8cb3c6e0ccfd766837f42846f76"
     }
   ]
 }
