@@ -4882,10 +4882,22 @@
         "task_usage"
       ],
       "content": "Owned model-attempt accounting and optional private phase timing, including failed attempts",
-      "currentControl": "Exact owner and task binding; strict timing allowlist; first recorded timing retained; late writes affect accounting only; public usage remains aggregated",
+      "currentControl": "Exact owner and task binding; strict timing allowlist; first recorded timing retained; late writes affect accounting only; public usage remains aggregated. Optional failure diagnostics use a strict enum-only schema and preserve the first valid failure across late accounting.",
       "targetControl": "Private diagnostics with unchanged task, lease, authorization and usage semantics",
       "stage": "S3",
-      "sourceDigest": "d0746ead933392976242b44b12855a1ea93b6ff4c73c7970dae6f7b5582cfbc2"
+      "sourceDigest": "bb1d2267d99d3c5c93acac4a160cfc43c32c9b2c12a11aab2b2f925d2c5d4ebb"
+    },
+    {
+      "id": "model-attempt-failure-diagnostics",
+      "file": "packages/core/model-usage-context.ts",
+      "channels": [
+        "internal"
+      ],
+      "content": "Private attempt recorder and bounded failure metadata",
+      "currentControl": "Strict phase/code and signal enums; bounded exit code; no payload, message, path or identifier fields; optional field leaves existing records compatible",
+      "targetControl": "Attempt diagnostics stay separate from public task output, business acceptance and claim authority",
+      "stage": "S3",
+      "sourceDigest": "facc2643b803bc60c0c43cb6f5b90fbb56575bd73996c74767340a0eb3feda32"
     },
     {
       "id": "security-projection-origin",
@@ -6359,12 +6371,12 @@
     {
       "id": "postgres-model-usage",
       "file": "packages/postgres/model-usage.ts",
-      "sourceDigest": "f2f0eaec77b29dda80163146c2234c7b6cd0ceb0e3189840ba31450344290611",
+      "sourceDigest": "12a33d823d0e2eca47c4d7a710444868ce1afae76e003c35ca634a1e809bce0b",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL model attempt registration and late accounting",
-      "currentControl": "Current original claim before dispatch; durable once-only attempt id and captured token digest, shared pure receipt normalization, exact owner/task accounting, late evidence cannot mutate task/claim/output or revive authority",
+      "currentControl": "Current original claim before dispatch; durable once-only attempt id and captured token digest, shared pure receipt normalization, exact owner/task accounting, late evidence cannot mutate task/claim/output or revive authority. Optional failure diagnostics use a strict enum-only schema and preserve the first valid failure across late accounting.",
       "targetControl": "Current original claim before dispatch; durable once-only attempt id and captured token digest, shared pure receipt normalization, exact owner/task accounting, late evidence cannot mutate task/claim/output or revive authority",
       "stage": "S5"
     },
@@ -6901,13 +6913,13 @@
     {
       "id": "harness-executor",
       "file": "packages/capabilities/harness-executor.ts",
-      "sourceDigest": "3b256779e8912ede77717d2d0d237da10627d7342105343c84aeaeb6407fb475",
+      "sourceDigest": "132ac529a2073b90c50ed5d7025efcf57b86ab9cb8f93917c20b1dc1a2212c84",
       "channels": [
         "registered_model",
         "private_file"
       ],
       "content": "Task-bound Harness SDK Executor Session, private current model credential and actual Ontology MCP receipts",
-      "currentControl": "Distinct GPT OAuth and DeepSeek recipient channel identities; isolated invocation home and single original completed turn; no shell, filesystem or working-directory tools; only Worker loopback MCP operations; private credential-file checks; OAuth refresh remains with the original login; schema validation and process-group teardown before releasing the invocation. Recipient configuration is snapshotted before deriving the channel identity. Streaming UTF-8 preserves split characters; waits for durable pre-dispatch and accounting acknowledgements; acknowledgement failure cannot dispatch.",
+      "currentControl": "Distinct GPT OAuth and DeepSeek recipient channel identities; isolated invocation home and single original completed turn; no shell, filesystem or working-directory tools; only Worker loopback MCP operations; private credential-file checks; OAuth refresh remains with the original login; schema validation and process-group teardown before releasing the invocation. Recipient configuration is snapshotted before deriving the channel identity. Streaming UTF-8 preserves split characters; waits for durable pre-dispatch and accounting acknowledgements; acknowledgement failure cannot dispatch. Failed attempts retain only host-selected phase/code and bounded exit metadata in private usage accounting; raw subprocess diagnostics remain discarded.",
       "targetControl": "Current model-channel approval and task data/lease fences remain independent of Harness output; no second formal task or policy authority",
       "stage": "S3"
     },

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HarnessExecutor, HARNESS_SECURITY_CHANNEL_ID, HARNESS_DEEPSEEK_SECURITY_CHANNEL_ID, type HarnessConfiguration } from '../packages/capabilities/harness-executor.js';
 import { readConfig, readWorkerConfig } from '../packages/core/config.js';
-import { withModelUsage } from '../packages/core/model-usage-context.js';
+import { withModelUsage, type ModelUsageEvidence } from '../packages/core/model-usage-context.js';
 import {withModelDispatchGuard} from '../packages/core/model-dispatch-context.js';
 import {createPostgresWorker,postgresHarnessReasoner} from '../apps/worker/postgres-runtime.js';
 import {PostgresDatabase} from '../packages/postgres/database.js';
@@ -31,6 +31,11 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
  const boot=JSON.parse(fs.readFileSync(log,'utf8'));writeBoot({...boot,methods:[...(boot.methods??[]),q.method]});
  if(q.method==='initialize'){
   writeBoot({...JSON.parse(fs.readFileSync(log,'utf8')),initialization:q.params});
+  if(mode==='initialize-rejected'){
+   console.error('SYNTHETIC_PRIVATE_STDERR',process.env.EIGOS_HARNESS_MODEL_TOKEN,process.argv);
+   console.log(JSON.stringify({jsonrpc:'2.0',id:q.id,error:{code:-32603,message:'SYNTHETIC_PRIVATE_RPC_ERROR',data:q.params}}));return;
+  }
+  if(mode==='initialize-exit'){console.error('SYNTHETIC_PRIVATE_STDERR');process.exit(17);}
   const acknowledge=()=>reply(q.id,{serverInfo:{name:'deepseek-harness-sdk-runtime',version:'0.0.1'}});
   if(mode==='hold-initialize'){const timer=setInterval(()=>{if(fs.existsSync(log+'.ack')){clearInterval(timer);acknowledge();}},5);}
   else acknowledge();return;
@@ -56,11 +61,12 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
     process.stdout.write(frame.subarray(emoji));event('turn/end',{turn:1,reason:{kind:'completed'}});reply(q.id,{});
    },30);},30);return;
   }
-  const output=mode==='bad-json'?'invalid':JSON.stringify(mode==='review'?{requestRevision:1,verdict:'covered',message:'Synthetic transport review only',clauses:[{messageId:'message',quote:'Write a draft',disposition:'covered',inputKeys:['format'],requirementIds:[],conditionIds:[],reason:'Explicit fixture'}]}:{ok:mode!=='bad-schema'});
+  const output=mode==='bad-json'?'SYNTHETIC_PRIVATE_OUTPUT':JSON.stringify(mode==='review'?{requestRevision:1,verdict:'covered',message:'Synthetic transport review only',clauses:[{messageId:'message',quote:'Write a draft',disposition:'covered',inputKeys:['format'],requirementIds:[],conditionIds:[],reason:'Explicit fixture'}]}:{ok:mode!=='bad-schema'});
   for(const usage of usageFrames.length?usageFrames:[undefined])event('assistant/message',{
    message:{role:'assistant',content:[{type:'text',text:output}],...(mode==='usage-decoys'?{usage:{inputTokens:99999}}:{})},
    ...(usage===undefined?{}:{usage}),...(mode==='interrupted'?{interrupted:true}:{})});
   if(mode!=='no-completion')event('turn/end',{turn:1,reason:{kind:mode==='failed'?'failed':'completed'}});
+  if(mode==='bad-protocol'){console.error('SYNTHETIC_PRIVATE_STDERR');console.log('SYNTHETIC_PRIVATE_PROTOCOL');return;}
   reply(q.id,mode==='usage-decoys'?{usage:{inputTokens:99999}}:{});return;
  }
  if(q.method==='shutdown'){reply(q.id,{});return;}
@@ -71,6 +77,48 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
     close: () => rmSync(root, { recursive: true, force: true }) };
 }
 const schema = { type: 'object', properties: { ok: { const: true } }, required: ['ok'], additionalProperties: false };
+
+test('Harness persists bounded failure diagnostics and actual usage without subprocess payloads', async t => {
+  const logs: unknown[] = [];
+  for (const method of ['log', 'warn', 'error'] as const) t.mock.method(console, method, (...args: unknown[]) => { logs.push(args); });
+  for (const [mode, phase, code, expectedUsage] of [
+    ['initialize-rejected', 'initialize', 'operation_rejected', {}],
+    ['initialize-exit', 'initialize', 'process_exited', {}],
+    ['bad-protocol', 'protocol', 'invalid_protocol', { uncached_input_tokens: 3, output_tokens: 2 }],
+    ['bad-json', 'output', 'invalid_output', { uncached_input_tokens: 3, output_tokens: 2 }],
+  ] as const) {
+    const f = fixture(mode), db = new DatabaseSync(':memory:');
+    try {
+      db.exec('CREATE TABLE jobs(owner TEXT,id TEXT,body TEXT)'); initializeMemberUsage(db);
+      const recorder = {
+        begin: (id: string, runtime: string, at: string) => beginModelUsage(db, 'owner', 'task', id, runtime, at, 'claim-digest'),
+        finish: (id: string, evidence: Parameters<typeof finishModelUsage>[4], outcome: Parameters<typeof finishModelUsage>[5]) => finishModelUsage(db, 'owner', 'task', id, evidence, outcome),
+      };
+      let errorMessage = '';
+      await assert.rejects(withModelUsage(recorder, () => f.model.runStructured('SYNTHETIC_PRIVATE_PROMPT', schema, t.signal)), error => {
+        assert(error instanceof Error); errorMessage = error.message; return true;
+      });
+      const row = db.prepare('SELECT state,body FROM member_model_usage').get()!, stored = JSON.parse(String(row.body));
+      assert.equal(row.state, 'failed'); assert.equal(stored.failure?.phase, phase); assert.equal(stored.failure?.code, code);
+      assert.deepEqual(stored.usage, expectedUsage); assert.equal(stored.usageReported, Object.keys(expectedUsage).length > 0);
+      if (mode === 'initialize-exit') assert.equal(stored.failure.exitCode, 17);
+      else if (process.platform !== 'win32') assert.equal(stored.failure.signal, 'SIGKILL');
+      const persisted = JSON.stringify({ row, logs, errorMessage });
+      for (const privateText of ['SYNTHETIC_PRIVATE', 'synthetic-model-credential', f.root, f.boot().home]) assert(!persisted.includes(privateText), mode);
+      if (mode === 'bad-json') {
+        const recovered = fixture();
+        try {
+          await withModelUsage(recorder, () => recovered.model.runStructured('SYNTHETIC_PRIVATE_RECOVERY_PROMPT', schema, t.signal));
+          assert.deepEqual(db.prepare('SELECT state,body FROM member_model_usage WHERE run_id=?').get(stored.id), row, 'A later successful invocation for the same original task cannot erase its failed attempt');
+          const completed = JSON.parse(String(db.prepare("SELECT body FROM member_model_usage WHERE state='completed'").get()!.body));
+          assert.equal(completed.failure, undefined);
+        } finally { recovered.close(); }
+      }
+      assert.equal(db.prepare('SELECT count(*) AS n FROM jobs').get()!.n, 0);
+      assert(!existsSync(f.boot().home));
+    } finally { db.close(); f.close(); }
+  }
+});
 
 test('rc.5 assistant usage survives Harness evidence and the shared persisted accounting without inferred counts',async()=>{
   const cases:{name:string;frames:unknown[];expected:Record<string,number>;mode?:string}[]=[
@@ -106,7 +154,7 @@ test('rc.5 assistant usage survives Harness evidence and the shared persisted ac
       const row=db.prepare('SELECT state,body FROM member_model_usage').get()!,stored=JSON.parse(String(row.body));
       assert.equal(stored.usageReported,Object.keys(value.expected).length>0,value.name);
       assert.deepEqual(stored.usage,value.expected,value.name);assert.equal(row.state,value.mode==='interrupted'?'failed':'completed');
-      if(response){assert.deepEqual(response.evidence.usage,value.expected);assert.deepEqual(response.output,{ok:true});}
+      if(response){assert.deepEqual(response.evidence.usage,value.expected);assert.deepEqual(response.output,{ok:true});assert.equal(stored.failure,undefined);}
       assert.equal(db.prepare('SELECT count(*) AS n FROM jobs').get()!.n,0,'Accounting never creates or advances business work');
       assert(!existsSync(f.boot().home));
     }finally{db.close();f.close();}
@@ -136,10 +184,10 @@ test('Harness default initialization accepts a 20s ACK inside the original invoc
 for(const mode of ['initialize-timeout','cancel','invocation-timeout','late-initialize-ack','late-invocation-ack'] as const)
 test('Harness initialization '+mode+' cannot dispatch a prompt or revive completion',async t=>{
   t.mock.timers.enable({apis:['setTimeout']});let now=0;t.mock.method(performance,'now',()=>now);
-  const f=fixture('hold-initialize'),controller=new AbortController(),outcomes:string[]=[];t.after(f.close);t.after(()=>controller.abort());
+  const f=fixture('hold-initialize'),controller=new AbortController(),outcomes:string[]=[],diagnostics:ModelUsageEvidence['failure'][]=[];t.after(f.close);t.after(()=>controller.abort());
   const overall=mode==='invocation-timeout'?2000:180000;
   const model=new HarnessExecutor(f.binary,overall,{credentialFile:f.key,credentialKind:'api-key',initializeTimeoutMs:mode==='invocation-timeout'?45000:1000});
-  const pending=withModelUsage({begin:async()=>{},finish:async(_id,_evidence,outcome)=>{outcomes.push(outcome);}},()=>
+  const pending=withModelUsage({begin:async()=>{},finish:async(_id,evidence,outcome)=>{outcomes.push(outcome);diagnostics.push(evidence?.failure);}},()=>
     withModelDispatchGuard({channelId:model.securityChannelId,authorize:async()=>{if(mode==='invocation-timeout')now=1500;}},()=>model.runStructured('synthetic',schema,controller.signal,{toolFree:true})));
   void pending.catch(()=>{});await waitForInitialization(f);
   if(mode==='cancel')controller.abort();
@@ -153,6 +201,8 @@ test('Harness initialization '+mode+' cannot dispatch a prompt or revive complet
   }else{now=1000;t.mock.timers.tick(1000);}
   await assert.rejects(pending,mode==='cancel'?/canceled/:mode.includes('invocation')?/invocation timed out/:/initialization timed out/);
   assert.deepEqual(outcomes,[mode==='cancel'?'interrupted':'failed']);assert.deepEqual(f.boot().methods,['initialize']);
+  assert.equal(diagnostics[0]?.phase,mode==='cancel'||mode.includes('invocation')?'abort':'initialize');
+  assert.equal(diagnostics[0]?.code,mode==='cancel'?'canceled':'timeout');
   assert(!existsSync(f.boot().home));assert.throws(()=>process.kill(f.boot().pid,0),{code:'ESRCH'});
 });
 
