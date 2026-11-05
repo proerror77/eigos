@@ -5428,7 +5428,7 @@
       "currentControl": "Owned offline snapshot, exact authority and policy digests, claim fences, validated original draft references, byte-bounded hashing and no row output; retain and fingerprint original hidden row order",
       "targetControl": "Preserve all authority, historical evidence, sequence and policy invariants at migration",
       "stage": "S5",
-      "sourceDigest": "4e367b2a2c5dbab8639b12a3cde38972d802239362f89eb269bd4da9cccb9e8d"
+      "sourceDigest": "3253e735c01da9966d781467134bbe22f093abe656e93624841ed6ea362b97f9"
     },
     {
       "id": "business-postgres-preflight-cli",
@@ -5468,7 +5468,7 @@
       "currentControl": "Bounded comparisons reject incompatible indexed JSON values",
       "targetControl": "Preserve business authority and evidence before separate runtime activation",
       "stage": "S5",
-      "sourceDigest": "6297fa67a02f94230e6a18d7a9742356b94d9b66bd14e4aa5c8f828d1629c674"
+      "sourceDigest": "01da798474b4a2cee34f556edefef9d7a319171759c29ba1e03e6e68b4686052"
     },
     {
       "id": "business-postgres-import",
@@ -5481,7 +5481,7 @@
       "currentControl": "Isolated schema, transactional import, per-table digests and fail-closed commit handling; preserve row order and sequence high-water marks",
       "targetControl": "Preserve business authority and evidence before separate runtime activation",
       "stage": "S5",
-      "sourceDigest": "974450bffe6db15a3cf38a5acfafc12aa3ecf3b84d2d97f56923165888833057"
+      "sourceDigest": "262ee5eaa569a61dde9e75cc2b0127970a369b02ca204025d19d02b4970ded60"
     },
     {
       "id": "business-postgres-import-cli",
@@ -5825,7 +5825,7 @@
     {
       "id": "business-postgres-verification",
       "file": "packages/postgres/business-verify.ts",
-      "sourceDigest": "3da89906919e455f1bc252d5174d097eeecd603b7cc4713d029629cc8c238dd8",
+      "sourceDigest": "e321821ad763b842c0d7807c5f843afbf29554dc06f20bb0c73ca5cbdcaead84",
       "channels": [
         "offline migration",
         "authorization_control"
@@ -7338,7 +7338,7 @@
     {
       "id": "postgres-runtime-handoff",
       "file": "packages/deployment/postgres-handoff.ts",
-      "sourceDigest": "8d3d31fdfd8296653a2e3f400400bc1a33fc1cc5578b1f2ef37699d429b854cb",
+      "sourceDigest": "9fb32fabe676ba8f874037bc7c3387670c85f30e4167681790375203cc0f65ae",
       "channels": [
         "internal"
       ],

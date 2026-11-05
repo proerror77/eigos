@@ -165,7 +165,8 @@ test('synthetic business schema maps to PostgreSQL with guarded history and secu
     assert.throws(() => sqlite.exec(malformed), /malformed JSON/i);
     await rejectSql(malformed, '23514');
     const harmless = "INSERT INTO jobs VALUES('other','owner','context','unindexed','2026','2026','not-json')";
-    sqlite.exec(harmless); await client.query(harmless);
+    const harmlessRowid = sqlite.prepare(harmless).run().lastInsertRowid;
+    await client.query("INSERT INTO jobs(id,owner,context_id,state,created_at,updated_at,body,__eigos_rowid) OVERRIDING SYSTEM VALUE VALUES('other','owner','context','unindexed','2026','2026','not-json',$1)",[String(harmlessRowid)]);
     await rejectSql("UPDATE jobs SET __eigos_rowid=999 WHERE id='other'",'428C9');
     await rejectSql("UPDATE jobs SET __eigos_rowid=DEFAULT WHERE id='other'",'55000');
     sqlite.exec("UPDATE network_state SET value='0' WHERE key='activity_epoch'");
@@ -175,7 +176,9 @@ test('synthetic business schema maps to PostgreSQL with guarded history and secu
       assert.equal(String(sqlite.prepare("SELECT value FROM network_state WHERE key='activity_epoch'").get()!.value), expected);
       assert.equal((await client.query("SELECT value FROM network_state WHERE key='activity_epoch'")).rows[0].value, expected);
     };
-    await both(`INSERT INTO network_evidence_cards VALUES('evidence-1','owner','{"taskId":"task1"}')`);
+    const evidenceBody = '{"taskId":"task1"}';
+    const evidenceRowid = sqlite.prepare("INSERT INTO network_evidence_cards VALUES('evidence-1','owner',?)").run(evidenceBody).lastInsertRowid;
+    await client.query("INSERT INTO network_evidence_cards(id,owner,body,__eigos_rowid) OVERRIDING SYSTEM VALUE VALUES('evidence-1','owner',$1,$2)",[evidenceBody,String(evidenceRowid)]);
     const duplicateEvidence = `INSERT INTO network_evidence_cards VALUES('evidence-2','owner','{"taskId":"task1"}')`;
     assert.throws(() => sqlite.exec(duplicateEvidence), /UNIQUE constraint/i); await rejectSql(duplicateEvidence, '23505');
     await rejectSql(`INSERT INTO network_evidence_cards VALUES('numeric','owner','{"taskId":1}')`, '23514');
@@ -190,7 +193,9 @@ test('synthetic business schema maps to PostgreSQL with guarded history and secu
     await both("INSERT INTO ontology_links VALUES('owner','link','type','from','type','to','digest')"); await sameEpoch('8');
     const compatible = await validateBusinessJsonCompatibility(sqlite, client, schema);
     assert.equal(compatible.jobs, 1); assert.equal(compatible.network_evidence_cards, 1);
-    sqlite.prepare('INSERT INTO ontology_objects VALUES(?,?,?,?,?,?)').run('owner','type','json-nul',1,'digest',JSON.stringify({ value: '\u0000' }));
+    const invalidJson = JSON.stringify({ value: '\u0000' });
+    const rowid = sqlite.prepare('INSERT INTO ontology_objects VALUES(?,?,?,?,?,?)').run('owner','type','json-nul',1,'digest',invalidJson).lastInsertRowid;
+    await client.query("INSERT INTO ontology_objects(owner,type,id,revision,definition_digest,body,__eigos_rowid) OVERRIDING SYSTEM VALUE VALUES('owner','type','json-nul',1,'digest',$1,$2)",[invalidJson,String(rowid)]);
     await assert.rejects(validateBusinessJsonCompatibility(sqlite, client, schema), /JSON compatibility mismatch in ontology_objects/);
 
 

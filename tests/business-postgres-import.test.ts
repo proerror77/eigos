@@ -31,8 +31,8 @@ test('business snapshot import preserves data, authority, uniqueness, triggers a
     CREATE TABLE migration_sequence_probe(id INTEGER PRIMARY KEY AUTOINCREMENT,body TEXT NOT NULL);
     INSERT INTO migration_sequence_probe(id,body) VALUES(9007199254740993,'high'); DELETE FROM migration_sequence_probe WHERE id=9007199254740993;
     INSERT INTO migration_sequence_probe(id,body) VALUES(1,'retained');
-    CREATE TABLE migration_binary_probe(id TEXT PRIMARY KEY,payload BLOB NOT NULL,value INTEGER NOT NULL);
-    INSERT INTO migration_binary_probe VALUES('fixture',x'00FF',9007199254740993);
+    CREATE TABLE migration_binary_probe(id TEXT PRIMARY KEY,payload BLOB NOT NULL,value INTEGER NOT NULL,label TEXT);
+    INSERT INTO migration_binary_probe VALUES('fixture',x'00FF',9007199254740993,NULL);
     CREATE TABLE migration_rowid_probe(id TEXT PRIMARY KEY,rowid TEXT NOT NULL);
     INSERT INTO migration_rowid_probe(_rowid_,id,rowid) VALUES(9007199254740993,'z-first','shadow'),(9007199254740994,'a-second','shadow');`);
   const epoch = String(db.prepare("SELECT value FROM network_state WHERE key='activity_epoch'").get()!.value);
@@ -99,7 +99,7 @@ test('business snapshot import preserves data, authority, uniqueness, triggers a
       const concurrent=new Proxy(client,{get(target,property){
         if(property==='query')return async(sql:unknown,values?:unknown)=>{
           const result=await (target.query as (...args:any[])=>Promise<any>).call(target,sql,values);
-          if(!changed && typeof sql==='object' && sql && 'text' in sql && String(sql.text).startsWith('FETCH FORWARD')){
+          if(!changed && typeof sql==='string' && sql.startsWith('WITH checked AS')){
             changed=true;await other.query(`UPDATE "${schema}".migration_binary_probe SET value=7 WHERE id='fixture'`);
           }
           return result;
@@ -116,7 +116,7 @@ test('business snapshot import preserves data, authority, uniqueness, triggers a
       const changingSource=new Proxy(client,{get(target,property){
         if(property==='query')return async(sql:unknown,values?:unknown)=>{
           const result=await (target.query as (...args:any[])=>Promise<any>).call(target,sql,values);
-          if(!changed && typeof sql==='object' && sql && 'text' in sql && String(sql.text).startsWith('FETCH FORWARD')){
+          if(!changed && typeof sql==='string' && sql.startsWith('WITH checked AS')){
             changed=true;const changedDb=new DatabaseSync(path);
             try {changedDb.prepare("UPDATE migration_binary_probe SET value=7 WHERE id='fixture'").run();} finally {changedDb.close();}
           }
@@ -129,13 +129,20 @@ test('business snapshot import preserves data, authority, uniqueness, triggers a
     await client.query(`UPDATE "${schema}".migration_binary_probe SET value=7 WHERE id='fixture'`);
     await assert.rejects(verifyBusinessSnapshot(client,options),/readback mismatch/);
     await client.query(`UPDATE "${schema}".migration_binary_probe SET value=9007199254740993 WHERE id='fixture'`);
+    await client.query(`UPDATE "${schema}".migration_binary_probe SET payload=decode('ff00','hex') WHERE id='fixture'`);
+    await assert.rejects(verifyBusinessSnapshot(client,options),/readback mismatch/);
+    await client.query(`UPDATE "${schema}".migration_binary_probe SET payload=decode('00ff','hex'),label='' WHERE id='fixture'`);
+    await assert.rejects(verifyBusinessSnapshot(client,options),/readback mismatch/);
+    await client.query(`UPDATE "${schema}".migration_binary_probe SET label=NULL WHERE id='fixture'`);
     await client.query(`UPDATE "${schema}".migration_binary_probe SET payload=decode(repeat('ff',1024),'hex') WHERE id='fixture'`);
     let sawBoundedRejection=false;
     const boundedRead=new Proxy(client,{get(target,property){
       if(property==='query')return async(sql:unknown,values?:unknown)=>{
         const result=await (target.query as (...args:any[])=>Promise<any>).call(target,sql,values);
-        if(typeof sql==='object' && sql && 'text' in sql && String(sql.text).startsWith('FETCH FORWARD'))for(const row of result.rows as unknown[][])
-          if(row.at(-1)===false){sawBoundedRejection=true;assert(row.slice(0,-1).every(value=>value===null));}
+        if(typeof sql==='string' && sql.startsWith('WITH checked AS') && result.rows[0]?.bounded===false){
+          sawBoundedRejection=true;
+          assert.deepEqual(Object.keys(result.rows[0]),['rows','bounded','digest']);
+        }
         return result;
       };
       const value=Reflect.get(target,property,target);return typeof value==='function'?value.bind(target):value;

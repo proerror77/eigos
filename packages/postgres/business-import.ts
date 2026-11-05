@@ -1,9 +1,9 @@
 import { DatabaseSync } from 'node:sqlite';
-import { createHash } from 'node:crypto';
 import type { Client } from 'pg';
 import { compileBusinessSchema } from './business-schema.js';
-import { encodeBusinessRow, planBusinessSnapshot, type BusinessSnapshotPlan, type BusinessTable } from './business-snapshot.js';
+import { planBusinessSnapshot, type BusinessSnapshotPlan } from './business-snapshot.js';
 import { validateBusinessJsonCompatibility } from './business-json-compat.js';
+import { verifyTable } from './business-verify.js';
 import { installPostgresAuthorityLock } from './authority-lock.js';
 
 const schemaPattern = /^eigos_business_[a-z0-9_]{1,40}$/;
@@ -30,37 +30,19 @@ export interface BusinessImportReceipt {
 function sourceSize(row: Record<string, unknown>): number {
   return Object.values(row).reduce<number>((total, value) => total + (typeof value === 'string' ? Buffer.byteLength(value) : value instanceof Uint8Array ? value.byteLength : 32), 0);
 }
-function sqlValue(value: unknown): unknown { return value instanceof Uint8Array && !Buffer.isBuffer(value) ? Buffer.from(value) : value; }
+function sqlValue(value: unknown): unknown {
+  if (value instanceof Uint8Array && !Buffer.isBuffer(value)) return Buffer.from(value);
+  // The target TEXT column determines the parameter type. Its binary input
+  // is the same UTF-8 bytes, without building a large escaped driver string.
+  if (typeof value === 'string' && value.length > batchBytes / 3 && Buffer.byteLength(value) > batchBytes)
+    return Buffer.from(value, 'utf8');
+  return value;
+}
 async function targetSize(client: Client, maxDatabaseBytes: number): Promise<void> {
   const value = (await client.query('SELECT pg_database_size(current_database())::text AS bytes')).rows[0]?.bytes;
   if (typeof value !== 'string' || !/^\d+$/.test(value)) throw new Error('PostgreSQL database size is unavailable');
   if (BigInt(value) > BigInt(maxDatabaseBytes)) throw new Error('PostgreSQL database size budget exceeded');
 }
-async function readback(client: Client, table: BusinessTable, index: number): Promise<void> {
-  if (table.rows === 0) {
-    const present = (await client.query(`SELECT EXISTS(SELECT 1 FROM ${quote(table.name)}) AS present`)).rows[0]?.present;
-    if (present !== false || table.digest !== createHash('sha256').digest('hex')) throw new Error(`Business readback mismatch in ${table.name}`);
-    return;
-  }
-  const keys = table.columns.filter(column => column.primaryKey > 0).sort((a, b) => a.primaryKey - b.primaryKey);
-  const order = keys.map(column => quote(column.name) + (column.type === 'TEXT' ? ' COLLATE "C"' : '')).join(',');
-  const cursor = quote(`eigos_import_${index}`), columns = table.columns.map(column => quote(column.name)).join(',');
-  const page = Math.max(1, Math.min(batchRows, Math.floor((8 * 1024 * 1024) / Math.max(1, table.maxRowBytes))));
-  await client.query(`DECLARE ${cursor} NO SCROLL CURSOR FOR SELECT ${columns} FROM ${quote(table.name)} ORDER BY ${order}`);
-  const digest = createHash('sha256'); let count = 0;
-  try {
-    for (;;) {
-      const rows = (await client.query(`FETCH FORWARD ${page} FROM ${cursor}`)).rows;
-      if (!rows.length) break;
-      for (const row of rows) {
-        const encoded = encodeBusinessRow(row, table.columns, 'postgres');
-        digest.update(`${Buffer.byteLength(encoded)}:`).update(encoded); count++;
-      }
-    }
-  } finally { await client.query(`CLOSE ${cursor}`); }
-  if (count !== table.rows || digest.digest('hex') !== table.digest) throw new Error(`Business readback mismatch in ${table.name}`);
-}
-
 /** Copy a reviewed offline snapshot into a fresh, non-public PostgreSQL schema.
  * This does not update the source authority, grant a runtime role or activate
  * Gateway/Worker; the asynchronous runtime port is still required. */
@@ -85,10 +67,9 @@ export async function importBusinessSnapshot(client: Client, options: BusinessIm
     await client.query(`REVOKE ALL ON SCHEMA ${quote(schema)} FROM PUBLIC`);
     await client.query(`SET LOCAL search_path TO ${quote(schema)}, pg_catalog, pg_temp`);
     await client.query(mapping.schemaStatements.join(';\n'));
-    await validateBusinessJsonCompatibility(db, client, schema);
     let bytesSinceSizeCheck = 0;
-    for (let index = 0; index < plan.tables.length; index++) {
-      const table = plan.tables[index]!, columns = table.columns, keys = columns.filter(column => column.primaryKey > 0).sort((a,b) => a.primaryKey-b.primaryKey);
+    for (const table of plan.tables) {
+      const columns = table.columns, keys = columns.filter(column => column.primaryKey > 0).sort((a,b) => a.primaryKey-b.primaryKey);
       const order = keys.map(column => quote(column.name) + (column.type === 'TEXT' ? ' COLLATE BINARY' : '')).join(',');
       const statement = db.prepare(`SELECT ${columns.map(column => column.sourceRowidAlias ? `${quote(column.sourceRowidAlias)} AS ${quote(column.name)}` : quote(column.name)).join(',')} FROM ${quote(table.name)} ORDER BY ${order}`); statement.setReadBigInts(true);
       let batch: Record<string, unknown>[] = [], bytes = 0;
@@ -108,8 +89,9 @@ export async function importBusinessSnapshot(client: Client, options: BusinessIm
       await flush();
       if (table.rows > 0) await targetSize(client, maxDatabaseBytes);
       bytesSinceSizeCheck = 0;
-      await readback(client, table, index);
+      await verifyTable(client, schema, table);
     }
+    await validateBusinessJsonCompatibility(db, client, schema);
     for (const identity of mapping.identities) {
       const table = plan.tables.find(item => item.name === identity.table) ?? (() => { throw new Error('Identity table was not inventoried'); })();
       if (table.maxIntegerPrimaryKey === undefined) throw new Error('Identity high-water mark was not inventoried');
