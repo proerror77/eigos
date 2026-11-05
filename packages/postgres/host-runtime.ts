@@ -151,6 +151,8 @@ export async function checkActivationSchema(client:Client,schema:string,runtimeR
  * reviewed source-fence material leave formal startup explicitly not ready. */
 export async function verifyPostgresPrimaryActivation(client:Client,binding:PostgresBinding,vectorFeature?:PostgresVectorFeature,builder?:StagedKernelBuilder,ridePolicy?:RidePolicyProof):Promise<void>{
   if(!binding.handoff||!binding.activation)throw new Error('PostgreSQL primary is not ready: reviewed activation is absent');
+  // Cold trusted policy compilation must finish before the bounded DB snapshot.
+  if(ridePolicy)assertedRideRuntimePolicy(binding,ridePolicy);
   const handoff=postgresHandoffSchema.parse(readPinnedPostgresJson(binding.handoff,65536));
   const sourceFence=readPinnedPostgresJson(handoff.sourceFence,1048576),businessVerification=readPinnedPostgresJson(handoff.businessVerification),identityAudit=readPinnedPostgresJson(handoff.identityAudit,1048576);
   assertTls(client);if(client.getTransactionStatus()!=='I'||client.pipeline!==false)throw new Error('Primary activation verification requires an idle client');
@@ -215,6 +217,7 @@ function assertTls(client:Client){
 export async function preflightPostgresBinding(client:Client,binding:PostgresBinding,ridePolicy?:RidePolicyProof,builder?:StagedKernelBuilder){
   assertTls(client);
   if(client.getTransactionStatus()!=='I'||client.pipeline!==false)throw new Error('PostgreSQL preflight requires an idle client');
+  if(ridePolicy)assertedRideRuntimePolicy(binding,ridePolicy);
   let opened=false;
   try{
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');opened=true;
