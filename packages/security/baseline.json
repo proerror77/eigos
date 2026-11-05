@@ -7785,7 +7785,7 @@
     {
       "id": "ride-contracts-capabilities",
       "file": "packages/capabilities/rides/contracts.ts",
-      "sourceDigest": "f301caa1c9a06c2dcc303db371813194bef678274686322941121a75712c390b",
+      "sourceDigest": "cd85ab7854a70e285c1250c9a64b21579f32fb59d7b50c7e82cd6cdde9e48242",
       "channels": [
         "private_source",
         "relay"
@@ -7798,7 +7798,7 @@
     {
       "id": "ride-connector-capabilities",
       "file": "packages/capabilities/rides/connector.ts",
-      "sourceDigest": "b6a003c4bf081a554858888043d3fe9a3772c44fa03d21a38738b91847482ef5",
+      "sourceDigest": "8004607218cf5aab16168239aa9ddb28faf0d096383af3d5a7b7c125f01df4a7",
       "channels": [
         "private_source",
         "relay"
@@ -7837,7 +7837,7 @@
     {
       "id": "ride-ride-service-agent-transport",
       "file": "packages/agent-transport/ride-service.ts",
-      "sourceDigest": "3992b7b219e6df48ba2e526ade65722ba8499fcdb434ed75e20be5c24f779169",
+      "sourceDigest": "fbfccd76d4edc1160a084b4ab09ae7352aca07c626b36ee54aba9256eef7d93e",
       "channels": [
         "private_source",
         "relay"
@@ -7863,7 +7863,20 @@
     {
       "id": "ride-source-service-agent-transport",
       "file": "packages/agent-transport/source-service.ts",
-      "sourceDigest": "66f9b331a1279e6a64548146c5b778e036d12e71e9db9df946d2a5a011c4127c",
+      "sourceDigest": "e6447941eff2414755a258b04554b10499ef2dc399d276e97eb1e95981a44531",
+      "channels": [
+        "private_source",
+        "relay"
+      ],
+      "content": "Provider-bound readonly ride data, source credentials, task/context identity or current authorized receipt delivery",
+      "currentControl": "Default disabled; explicit provider schema, owner/environment/connection pins and original task/source authorization; no order or payment",
+      "targetControl": "Keep original current grants, DPoP and durable source-receipt validation through all delivery and acceptance boundaries",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-connection-capabilities",
+      "file": "packages/capabilities/rides/connection.ts",
+      "sourceDigest": "415710b2496d27222e4693b58fa95cef779e6bafb9712c7da6783c7c9522493a",
       "channels": [
         "private_source",
         "relay"

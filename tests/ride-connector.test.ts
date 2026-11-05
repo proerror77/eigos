@@ -15,11 +15,11 @@ function wire(provider:RideBinding['provider']){
   const deep=new URL('https://grab.onelink.me/2695613898');deep.searchParams.set('af_dp',direct.href);
   return {services:[{serviceID:302,serviceName:'Synthetic Grab',eta:1,fare:{currency:'SGD',minFare:10,maxFare:20},surgeNotice:'NONE',deepLink:deep.href,directDeepLink:direct.href}]};
 }
-function sourceHost(b:RideBinding,changes:Partial<RideToken>={}):RideSourceHost{return {async loadToken(){return {owner:b.owner,provider:b.provider,environment:b.environment,connectionId:b.connectionId,revision:b.revision,value:'synthetic_private_token',expiresAt:new Date(Date.now()+60000).toISOString(),riderId:'linked-rider',...changes};},async resolveUberRider(){return 'linked-rider';}};}
+function sourceHost(b:RideBinding,changes:Partial<RideToken>={}):RideSourceHost{return {readConnection(binding){return {binding,state:'active',expiresAt:new Date(Date.now()+60000).toISOString()};},async loadToken(){return {owner:b.owner,provider:b.provider,environment:b.environment,connectionId:b.connectionId,revision:b.revision,value:'synthetic_private_token',expiresAt:new Date(Date.now()+60000).toISOString(),riderId:'linked-rider',...changes};},async resolveUberRider(){return 'linked-rider';}};}
 const error=(code:string)=>(e:unknown)=>e instanceof RideReadError&&e.code===code;
 for(const provider of ['uber','grab']as const){
  test(`${provider}: disabled and unapproved reads never load a token or dispatch`,async()=>{
-  const b=binding(provider),h:RideSourceHost={async loadToken(){assert.fail('Disabled source loaded token');}};
+  const b=binding(provider),h:RideSourceHost={readConnection(binding){return {binding,state:'active',expiresAt:new Date(Date.now()+60000).toISOString()};},async loadToken(){assert.fail('Disabled source loaded token');}};
   for(const [options,code]of [[{},'DISABLED'],[{enabled:true},'PARTNER_APPROVAL_REQUIRED']]as const)await assert.rejects(new PaRideConnector(b,options,h).read(context,query,new AbortController().signal,()=>{}),error(code));
  });
  test(`${provider}: official estimate wire contract, task-bound receipt and user confirmation`,async()=>{

@@ -10,6 +10,7 @@ export type SourceErrorCode='AUTHORIZATION_REJECTED'|'SOURCE_UNAVAILABLE'|'RATE_
 export interface SourceBackend<R extends SourceRequestBase,Reply extends {result?:unknown},Observed> {
   parseRequest(value:unknown):R|undefined;
   validate(request:R):void;
+  assertCurrent?(request:R):void;
   invoke(request:R,signal:AbortSignal,authorize:()=>Promise<void>):Promise<Observed>;
   reply(request:R,value:Observed|undefined,error?:SourceErrorCode):Reply;
   parseReply(value:unknown,request:R):Reply;
@@ -35,14 +36,14 @@ export class SourceRelayService<R extends SourceRequestBase,Reply extends {resul
     this.db.exec('CREATE TABLE IF NOT EXISTS source_relay_reads(id TEXT PRIMARY KEY,request_digest TEXT NOT NULL,state TEXT NOT NULL,result TEXT)');
   }
   close(){this.db.close();}
-  private async authorize(request: SourceRequestBase, signal: AbortSignal, stage: AuthorizationStage) {
+  private async authorize(request: R, signal: AbortSignal, stage: AuthorizationStage) {
     const started = performance.now(); let status: number | undefined;
     const report = (outcome: SourceAuthorizationEvent['outcome'], reason?: SourceAuthorizationEvent['reason']) => {
       // Diagnostics contain only fixed classifications and correlation IDs, never proofs or response bodies.
       try { this.diagnostic?.({ callId: request.callId, stage, elapsedMs: performance.now() - started, outcome, ...(status === undefined ? {} : { status }), ...(reason ? { reason } : {}) }); } catch { /* Logging cannot change permission decisions. */ }
     };
     try {
-      signal.throwIfAborted();
+      signal.throwIfAborted();this.backend.assertCurrent?.(request);
       if (Date.now() >= request.expiresAt) throw new SourceAuthorizationError('denied', 'expired');
       const path = `/relay/source-reads/${request.callId}/authorize`, proof = await this.client.sourceReadProof(request.callId, this.config.gatewayOrigin);
       const bounded = AbortSignal.any([signal, AbortSignal.timeout(10000)]);
@@ -78,7 +79,7 @@ export class SourceRelayService<R extends SourceRequestBase,Reply extends {resul
       signal.throwIfAborted();
       if (result.authorityId !== this.config.authorityId || result.callId !== request.callId || result.requestDigest !== digest(request)
         || result.expiresAt !== request.expiresAt || result.expiresAt <= Date.now()) throw new SourceAuthorizationError('denied', 'invalid_response');
-      report('authorized');
+      this.backend.assertCurrent?.(request);report('authorized');
     } catch (error) {
       if (signal.aborted) { report('canceled'); throw error; }
       const failure = error instanceof SourceAuthorizationError ? error : new SourceAuthorizationError('denied', 'invalid_response');

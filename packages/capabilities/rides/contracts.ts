@@ -11,10 +11,14 @@ export const rideQuerySchema=z.strictObject({coordinateSystem:z.literal('WGS84')
 export type RideQuery=z.infer<typeof rideQuerySchema>;
 export const rideBindingSchema=z.strictObject({provider:z.enum(rideProviders),environment:rideEnvironment,bindingId:id,connectionId:z.uuid(),revision:z.number().int().positive(),owner:ownerIdentitySchema});
 export type RideBinding=z.infer<typeof rideBindingSchema>;
+export const rideConnectionSchema=z.strictObject({binding:rideBindingSchema,state:z.enum(['active','revoked']),expiresAt:z.iso.datetime()});
+export type RideConnection=z.infer<typeof rideConnectionSchema>;
 export const rideTokenSchema=z.strictObject({value:z.string().regex(/^[A-Za-z0-9._~+/-]{8,8192}={0,2}$/),owner:ownerIdentitySchema,provider:z.enum(rideProviders),environment:rideEnvironment,connectionId:z.uuid(),revision:z.number().int().positive(),expiresAt:z.iso.datetime(),riderId:id.optional()});
 export type RideToken=z.infer<typeof rideTokenSchema>;
 export type RideContext=z.infer<typeof sourceReadContextSchema>;
 export interface RideSourceHost {
+  /** Current PA-owned connection metadata, read on every dispatch/delivery. */
+  readConnection(binding:RideBinding):RideConnection;
   loadToken(binding:RideBinding,signal:AbortSignal):Promise<RideToken>;
   resolveUberRider?(binding:RideBinding,signal:AbortSignal):Promise<string>;
 }

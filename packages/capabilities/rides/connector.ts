@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {digest} from '../../core/delegation.js';
 import {sourceReadContextSchema} from '../../agent-transport/service-contracts.js';
-import {fareRangeSchema,rideBindingSchema,rideQuerySchema,rideTokenSchema,rideDataSchema,rideReadResultSchema,RideReadError,type RideBinding,type RideContext,type RideOptions,type RideSourceHost,type RideQuery,type RideReadResult} from './contracts.js';
+import {fareRangeSchema,rideConnectionSchema,rideBindingSchema,rideQuerySchema,rideTokenSchema,rideDataSchema,rideReadResultSchema,RideReadError,type RideBinding,type RideContext,type RideOptions,type RideSourceHost,type RideQuery,type RideReadResult} from './contracts.js';
 import {checkedGrabLink,handoff,uberHandoff} from './handoff.js';
 export type RideReadCheck=(stage:'prepare'|'dispatch'|'result')=>void|Promise<void>;
 export interface RideConnector {readonly evidenceKind:'live_readonly'|'provider_mock'|'fixture';read(context:RideContext,query:RideQuery,signal:AbortSignal,check:RideReadCheck):Promise<RideReadResult>}
@@ -33,11 +33,12 @@ export function normalizeRideData(provider:RideBinding['provider'],wire:unknown,
 export class PaRideConnector implements RideConnector {
   readonly evidenceKind:'live_readonly'|'provider_mock'|'fixture';readonly binding:RideBinding;private readonly options:Readonly<RideOptions>;
   constructor(binding:RideBinding,options:RideOptions,private host:RideSourceHost,private fetcher:typeof fetch=fetch,fixture=false){this.binding=Object.freeze(rideBindingSchema.parse(binding));this.options=Object.freeze({...options});this.evidenceKind=fixture?'fixture':binding.environment==='production'?'live_readonly':'provider_mock';}
+  assertCurrentBinding(){if(!this.options.enabled||!this.options.partnerApproved)throw new RideReadError(!this.options.enabled?'DISABLED':'PARTNER_APPROVAL_REQUIRED');const connection=rideConnectionSchema.parse(this.host.readConnection(this.binding));if(connection.state!=='active'||Date.parse(connection.expiresAt)<=Date.now()||digest(connection.binding)!==digest(this.binding))throw new RideReadError('CONNECTION_REVOKED');}
   async read(contextValue:RideContext,queryValue:RideQuery,signal:AbortSignal,check:RideReadCheck):Promise<RideReadResult>{
     if(!this.options.enabled||!this.options.partnerApproved)throw new RideReadError(!this.options.enabled?'DISABLED':'PARTNER_APPROVAL_REQUIRED');
     const context=Object.freeze(sourceReadContextSchema.parse(contextValue)),query=rideQuerySchema.parse(queryValue),b=this.binding,bounded=AbortSignal.any([signal,AbortSignal.timeout(30000)]);
     try{
-      bounded.throwIfAborted();await abortable(Promise.resolve().then(()=>check('prepare')),bounded);
+      bounded.throwIfAborted();this.assertCurrentBinding();await abortable(Promise.resolve().then(()=>check('prepare')),bounded);
       const token=Object.freeze(rideTokenSchema.parse(await abortable(this.host.loadToken(b,bounded),bounded)));
       const valid=()=>{if(token.provider!==b.provider||token.environment!==b.environment||token.owner!==b.owner||token.connectionId!==b.connectionId||token.revision!==b.revision||Date.parse(token.expiresAt)<=Date.now())throw new RideReadError('TOKEN_BINDING_REJECTED');};valid();
       let request:object;
@@ -46,13 +47,13 @@ export class PaRideConnector implements RideConnector {
         const loc=(p:RideQuery['pickup'])=>({point:{latitude:p.latitude,longitude:p.longitude},oneline_address:p.address});
         request={context:{trace_id:randomUUID(),timestamp:String(Date.now())},participant_spec:{requester:{user_id:rider}},intent:{ride_intent_spec:{origin:loc(query.pickup),destination:loc(query.dropoff),response_options:{include_product_details:true}}}};
       }else request={pickUp:query.pickup,dropOff:query.dropoff};
-      await abortable(Promise.resolve().then(()=>check('dispatch')),bounded);valid();bounded.throwIfAborted();const startedAt=new Date().toISOString();
+      await abortable(Promise.resolve().then(()=>check('dispatch')),bounded);this.assertCurrentBinding();valid();bounded.throwIfAborted();const startedAt=new Date().toISOString();
       const response=await abortable(this.fetcher(endpoints[b.provider][b.environment],{method:'POST',redirect:'manual',signal:bounded,headers:{Authorization:`Bearer ${token.value}`,'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(request)}),bounded);
       if(response.redirected||response.status>=300&&response.status<400){void response.body?.cancel();throw new RideReadError('REDIRECT_REJECTED');}
       if(response.status!==200){void response.body?.cancel();throw new RideReadError(response.status===401||response.status===403?'AUTH_REJECTED':response.status===429?'RATE_LIMITED':'HTTP_REJECTED');}
       const raw=await body(response,bounded);if(raw.includes(token.value))throw new RideReadError('CREDENTIAL_ECHO_REJECTED');
       const data=normalizeRideData(b.provider,JSON.parse(raw),query);if(JSON.stringify(data).includes(token.value))throw new RideReadError('CREDENTIAL_ECHO_REJECTED');
-      await abortable(Promise.resolve().then(()=>check('result')),bounded);valid();bounded.throwIfAborted();
+      await abortable(Promise.resolve().then(()=>check('result')),bounded);this.assertCurrentBinding();valid();bounded.throwIfAborted();
       return rideReadResultSchema.parse({data,receipt:{provider:b.provider,environment:b.environment,bindingId:b.bindingId,connectionDigest:digest(b),contextDigest:digest(context),inputDigest:digest(query),resultDigest:digest(data),evidenceKind:this.evidenceKind,startedAt,receivedAt:new Date().toISOString()}});
     }catch(error){if(bounded.aborted)throw new RideReadError('ABORTED');if(error instanceof RideReadError)throw error;throw new RideReadError('READ_REJECTED');}
   }

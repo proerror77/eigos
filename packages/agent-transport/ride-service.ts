@@ -18,6 +18,7 @@ export class RideRelayService extends SourceRelayService<RideSourceRequest,RideS
   if(!(connector instanceof PaRideConnector)||digest(connector.binding)!==digest(config.binding))throw new Error('PA source binding differs from connector');
   super(client,config,{
    parseRequest(value){const p=rideSourceRequestSchema.safeParse(value);return p.success?p.data:undefined;},
+   assertCurrent:()=>connector.assertCurrentBinding(),
    validate:request=>assertRideRequestBinding(request,config.binding,connector.evidenceKind),
    invoke:(request,signal,authorize)=>connector.read(request.context,request.input,signal,phase=>phase==='dispatch'?authorize():undefined),
    reply:(request,result,error)=>rideSourceResponseSchema.parse({protocol:SOURCE_RELAY_PROTOCOL,kind:'source.result',provider:request.provider,callId:request.callId,authorityId:request.authorityId,requestDigest:digest(request),...(result?{result}:{error})}),
