@@ -23,6 +23,8 @@ export type GatewayTaskPort=TaskServicePort&AwaitableMethods<TaskService,'downlo
 export interface GatewaySecurityPort {
   permissions:MemberPermissionCoordinatorPort;
   authenticate(principal:Principal,bearer:string):GatewayAwaitable<AccessContext>;
+  /** Optional reviewed metadata adapter; absence fails closed for operators. */
+  authenticateOntologyOperator?(principal:Principal,bearer:string):GatewayAwaitable<AccessContext>;
   available():GatewayAwaitable<boolean>;
   onUnavailable(handler:()=>void):void;
 }

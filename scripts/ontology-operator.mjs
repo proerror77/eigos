@@ -9,9 +9,9 @@ import { createRemoteJWKSet, decodeJwt } from 'jose';
 import { jwtVerifier } from '../dist/apps/gateway/auth.js';
 import { ontologyOperatorProfileSchema, ontologyOperatorScopes, assertOntologyOperator } from '../dist/packages/members/ontology-operator.js';
 
-const { values, positionals } = parseArgs({ allowPositionals: true, options: { profile: { type: 'string' }, input: { type: 'string' }, help: { type: 'boolean' } } });
+const { values, positionals } = parseArgs({ allowPositionals: true, options: { profile: { type: 'string' }, input: { type: 'string' }, 'pa-classification': { type: 'boolean' }, help: { type: 'boolean' } } });
 if (values.help) {
-  console.log('node ontology-operator.mjs --profile /private/operator/profile.json <login|status|query|command> [--input /path/request.json]');
+  console.log('node ontology-operator.mjs --profile /private/operator/profile.json <login|status|query|command> [--pa-classification] [--input /path/request.json]');
   process.exit(0);
 }
 if (!values.profile || positionals.length !== 1 || !['login', 'status', 'query', 'command'].includes(positionals[0])) throw new Error('Use --help for the operator entry commands');
@@ -92,9 +92,10 @@ try {
       access = await storeTokens(await oidc.refreshTokenGrant(config, saved.refresh_token), saved);
     } else access = { token: saved.access_token, principal: await checked(saved.access_token) };
     stage = command;
-    const path = command === 'status' ? '/security/context' : command === 'query' ? '/ontology/v1/query' : '/ontology/v1/commands';
+    const prefix = values['pa-classification'] || command === 'status' ? '/ontology/v1/pa-classification' : '/ontology/v1';
+    const path = prefix + (command === 'command' ? '/commands' : '/query');
     if (command !== 'status' && !values.input) throw new Error('Use an explicit --input file for a metadata request');
-    const body = command === 'status' ? {} : readJson(resolve(values.input), 48000, false);
+    const body = command === 'status' ? { operation: 'get_ontology', ontologyId: 'eigos.business' } : readJson(resolve(values.input), 48000, false);
     const response = await fetch(profile.baseUrl + path, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15000),
       headers: { Authorization: 'Bearer ' + access.token, 'Content-Type': 'application/json', 'User-Agent': 'EIGOS-Ontology-Operator/1.0' }, body: JSON.stringify(body) });
     let bytes = 0; const chunks = [];

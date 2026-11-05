@@ -58,3 +58,15 @@ PA 使用酒店作为服务地点引用，按任务查询人数与床型、房�
 v28 的完整合同仅增加分类时，字段政策通过重建并核对准确原合同复用；对象、关系、动作、函数或字段的任何变动都不能借此获得旧政策兼容。对象写入指纹不包含用途标签，分类仍进入新模型与发布摘要。旧任务和已有事实继续按原发布及证据解释；本次不删除类型、不重写历史或自动开启来源。
 
 使用 v29 的语义检索实例应保持其准确发布；本 v30 分类候选基于 v28，不隐式合并或替换检索版本。任何组合版本仍应单独审查、发布与验证。
+
+### 正式 SQLite 操作员激活
+
+正式入口须在 authority 的 `ontologyOperators` 中固定操作员的 issuer、client、subject 与 tenant，并保持原会员、连接和 native 安装有效。操作员只在 `/ontology/v1/pa-classification/query`、`/ontology/v1/pa-classification/commands` 获得 `ontology_operator` 元数据身份；它不依赖业务数据 grant，也不能读取任务、业务对象或供应商来源。签名 scopes、当前资格发布器、安装撤权与原 namespace 管理检查继续生效。CLI `status` 查询共享本体管理状态，不再要求业务 `/security/context`；分类 `query`／`command` 使用 `--pa-classification`。原通用元数据和 Pipeline 端点继续使用原业务授权路径。
+
+该窄接口只管理 `eigos.business` 的 PA 分类：创建自己的草稿，逐个提交下列小请求，分页审查 diff 并校验，再发布和按原 generation 激活：
+
+```json
+{"operation":"put_pa_classification","ontologyId":"eigos.business","draftId":"ACTUAL_DRAFT_UUID","expectedRevision":1,"objectType":"HotelProperty"}
+```
+
+标签从已审查的 204 类映射中取得，调用方不能提供属性正文、替换标签或改变动作。发布和激活都会重新检查全部标签及去除标签后的完整合同；不完整或混入其他变化的发布会被拒绝。原有请求大小上限保持不变。此操作员 adapter 当前接入正式 SQLite runtime；尚未装配对应 adapter 的 PostgreSQL runtime 明确拒绝，不退回业务身份或绕过检查。

@@ -19,6 +19,8 @@ import {nativeInstallationId} from '../packages/members/agents.js';
 import {createIngressRouter} from '../apps/gateway/ingress.js';
 import {SCOPES,TASK_SCOPES,ONTOLOGY_OPERATOR_SCOPES} from '../packages/core/domain.js';
 import {runtimeIngressSchema} from '../packages/core/runtime-authority.js';
+import {paClassifications} from '../packages/ontology/pa-classification-kernel.js';
+import {ownerKey} from '../packages/core/domain.js';
 
 function authorityFixture(operator = false) {
   const directory=mkdtempSync(join(tmpdir(),'eigos-authority-')),databasePath=join(directory,'tasks.sqlite'),membershipDatabasePath=join(directory,'members.sqlite');
@@ -67,7 +69,7 @@ test('public and private ingress share task authority while audience, installati
   const token=async(clientId:string,audience:string,claim=audience==='https://primary.example/'?'public_tenant':'private_tenant',scopes:readonly string[]=[...TASK_SCOPES,'members:write'])=>new SignJWT({[claim]:'fixture',scope:scopes.join(' '),client_id:clientId}).setProtectedHeader({alg:'RS256',typ:'at+jwt',kid:'fixture'}).setIssuer(f.authority.issuer).setAudience(audience).setSubject('fixture-member').setIssuedAt().setExpirationTime('5m').sign(keys.privateKey);
   const principal=(clientId:string)=>({issuer:f.authority.issuer,tenant:'fixture',subject:'fixture-member',clientId,scopes:['services:read','tasks:read','tasks:write','members:write']});
   const request=(host:string,path:string,bearer?:string,body?:object,forwardedHost?:string)=>new Promise<{status:number;body:any;headers:http.IncomingHttpHeaders}>((resolve,reject)=>{
-    const text=body?JSON.stringify(body):undefined,req=http.request({hostname:'127.0.0.1',port,path,method:text?'POST':'GET',headers:{Host:host,...(bearer?{Authorization:'Bearer '+bearer}:{}),...(text?{'Content-Type':'application/json','Content-Length':Buffer.byteLength(text)}:{}),...(forwardedHost?{'X-Forwarded-Host':forwardedHost}:{})}},res=>{let value='';res.on('data',data=>value+=data);res.on('end',()=>{let data;try{data=JSON.parse(value)}catch{data=value}resolve({status:res.statusCode!,body:data,headers:res.headers});});});req.on('error',reject);req.end(text);
+    const text=body?JSON.stringify(body):undefined,req=http.request({hostname:'127.0.0.1',port,path,method:text?'POST':'GET',headers:{Host:host,Connection:'close',...(bearer?{Authorization:'Bearer '+bearer}:{}),...(text?{'Content-Type':'application/json','Content-Length':Buffer.byteLength(text)}:{}),...(forwardedHost?{'X-Forwarded-Host':forwardedHost}:{})}},res=>{let value='';res.on('data',data=>value+=data);res.on('end',()=>{let data;try{data=JSON.parse(value)}catch{data=value}resolve({status:res.statusCode!,body:data,headers:res.headers});});});req.on('error',error=>reject(new Error(`HTTP ${path} ${body && 'operation' in body ? body.operation : ''} failed`,{cause:error})));req.end(text);
   });
   try {
     const member=gateway.members.login(principal('public-agent'));gateway.members.apply(member.id,{displayName:'Synthetic Member',locale:'en',timezone:'UTC',consent:true},false);
@@ -83,6 +85,7 @@ test('public and private ingress share task authority while audience, installati
     gateway.members.authorize(principal('ontology-manager'));const operator=gateway.members.agents.ensureNativeInstallation(principal('ontology-manager'),member.id);installs.push(operator.id);
     const policy=gateway.store.security.policies,until=new Date(Date.now()+3600000).toISOString();
     for(const installationId of installs){
+      if(installationId===operator.id)continue; // Metadata administration must not need a business grant.
       gateway.security!.approveAgentGrant(member.id,{installationId,capabilityIds:['brief.prepare'],resources:[{type:'ServiceRequest',fields:['requestId','displayTitle','originalGoal','revision','conditions','progress','createdAt']},...Object.entries(taskContextFields).map(([type,fields])=>({type,fields:fields.filter(field=>Object.hasOwn(policy.fields(type),field)&&policy.fieldPolicy(type,field)!=='internal_only')}))],sourceBindingIds:[],channels:['agent_response','registered_model'],expiresAt:until});
       policy.setRole({subjectKind:'installation',subjectId:installationId,resource:{kind:'namespace',id:policy.model.ref.id,version:policy.model.ref.digest},role:'Viewer',expiresAt:until},policy.revision());
       policy.setRecipient(installationId,{classification:'sensitive',markings:['member_private','personal_data'],channels:['agent_response','registered_model'],expiresAt:until},policy.revision());
@@ -102,13 +105,42 @@ test('public and private ingress share task authority while audience, installati
     assert.equal((await request('primary.example','/tasks/'+created.body.id,otherToken)).status,403);
     const nativeContext=await request('primary.example','/security/context',nativeToken,{});assert.equal(nativeContext.status,200);assert.equal(nativeContext.body.installationId,nativeInstallationId(principal('native-mcp')));
     const operatorToken=await token('ontology-manager','https://primary.example/','public_tenant',SCOPES);
-    assert.equal((await request('primary.example','/ontology/v1/query',await token('ontology-manager','https://primary.example/'),{operation:'get_ontology'})).status,403,'Operator configuration cannot manufacture scopes absent from the signed token');
-    const operatorView=await request('primary.example','/ontology/v1/query',operatorToken,{operation:'get_ontology',ontologyId:'eigos.business'});
+    assert.equal((await request('primary.example','/ontology/v1/pa-classification/query',await token('ontology-manager','https://primary.example/'),{operation:'get_ontology'})).status,403,'Operator configuration cannot manufacture scopes absent from the signed token');
+    const operatorView=await request('primary.example','/ontology/v1/pa-classification/query',operatorToken,{operation:'get_ontology',ontologyId:'eigos.business'});
     assert.equal(operatorView.status,200,JSON.stringify(operatorView.body));assert.equal(operatorView.body.result.permissions.publish,true);assert.equal(operatorView.body.result.permissions.execute,false);
-    const draft=await request('primary.example','/ontology/v1/commands',operatorToken,{operation:'create_draft',ontologyId:'eigos.business',title:'Synthetic operator metadata check'});
+    const draft=await request('primary.example','/ontology/v1/pa-classification/commands',operatorToken,{operation:'create_draft',ontologyId:'eigos.business',title:'Synthetic operator metadata check'});
     assert.equal(draft.status,200,JSON.stringify(draft.body));
-    assert.equal((await request('primary.example','/ontology/v1/commands',operatorToken,{operation:'discard_draft',ontologyId:'eigos.business',draftId:draft.body.result.id,expectedRevision:draft.body.result.revision})).status,200);
-    assert.equal((await request('primary.example','/ontology/v1/query',await token('native-mcp','https://primary.example/','public_tenant',SCOPES),{operation:'get_ontology'})).status,403,'An ordinary native client cannot acquire management rights by requesting more token scopes');
+    assert.equal((await request('primary.example','/security/context',operatorToken,{})).status,403,'Metadata admission cannot read business context without a business grant');
+    assert.equal((await request('primary.example','/tasks',operatorToken,{service:'eigos.delegate',goal:'No business grant',requestId:randomUUID()})).status,403);
+    assert.equal((await request('primary.example','/ontology/v1/pa-classification/query',operatorToken,{operation:'get_pipeline_task_uses',taskId:created.body.id})).status,403,'Metadata identity cannot read task evidence');
+    let revision=draft.body.result.revision;
+    const oldRelease=gateway.store.definitions.active(),hotel=oldRelease.document.objects.find(value=>value.id==='HotelProperty')!;
+    const put=(definition:object)=>request('primary.example','/ontology/v1/pa-classification/commands',operatorToken,{operation:'put_definition',draftId:draft.body.result.id,expectedRevision:revision,kind:'object',definition});
+    assert.equal((await put({...hotel,name:'Unreviewed field change',classification:paClassifications.HotelProperty})).status,403);
+    assert.equal((await put({...hotel,classification:{version:'1',purpose:'pa_core',domains:[]}})).status,403);
+    const edit={operation:'put_pa_classification',draftId:draft.body.result.id,expectedRevision:revision,objectType:'HotelProperty'};
+    assert.equal((await request('primary.example','/ontology/v1/pa-classification/commands',operatorToken,{...edit,classification:{version:'1',purpose:'pa_core',domains:[]}})).status,400,'The server selects the exact reviewed labels');
+    const edited=await request('primary.example','/ontology/v1/pa-classification/commands',operatorToken,edit);assert.equal(edited.status,200,JSON.stringify(edited.body));revision=edited.body.result.revision;
+    assert.equal((await request('primary.example','/ontology/v1/pa-classification/commands',operatorToken,{operation:'publish_draft',draftId:draft.body.result.id,expectedRevision:revision})).status,403,'Incomplete classification must not publish');
+    const operatorPrincipal={...principal('ontology-manager'),scopes:[...TASK_SCOPES,...ONTOLOGY_OPERATOR_SCOPES]};
+    const admitted={...operatorPrincipal,access:gateway.security!.authenticateOntologyOperator(operatorPrincipal,operatorToken)};
+    for(const type of oldRelease.document.objects.filter(type=>type.id!=='HotelProperty')){
+      const result=gateway.definitions.command(admitted,{operation:'put_pa_classification',draftId:draft.body.result.id,expectedRevision:revision,objectType:type.id}) as {result:{revision:number}};
+      revision=result.result.revision;
+    }
+    const published=await request('primary.example','/ontology/v1/pa-classification/commands',operatorToken,{operation:'publish_draft',draftId:draft.body.result.id,expectedRevision:revision});
+    assert.equal(published.status,200,JSON.stringify(published.body));assert.deepEqual(gateway.store.definitions.active().ref,oldRelease.ref,'Publication does not activate');
+    const generation=operatorView.body.result.generation;
+    assert.equal((await request('primary.example','/ontology/v1/pa-classification/commands',operatorToken,{operation:'activate_release',release:published.body.result.release,expectedGeneration:generation+10})).status,409);
+    const activated=await request('primary.example','/ontology/v1/pa-classification/commands',operatorToken,{operation:'activate_release',release:published.body.result.release,expectedGeneration:generation});
+    assert.equal(activated.status,200,JSON.stringify(activated.body));assert.equal(activated.body.result.generation,generation+1);
+    assert.deepEqual(gateway.store.get(ownerKey(principal('private-agent')),created.body.id).delegation!.ontologyRelease,oldRelease.ref,'An existing task retains its old release');
+    assert.equal(gateway.security!.grants(member.id).filter(grant=>grant.installationId===operator.id).length,0);
+    gateway.security!.approveAgentGrant(member.id,{installationId:operator.id,capabilityIds:['brief.prepare'],resources:[{type:'ServiceRequest',fields:['requestId','originalGoal']}],sourceBindingIds:[],channels:['agent_response'],expiresAt:until});
+    assert.equal((await request('primary.example','/ontology/v1/query',operatorToken,{operation:'get_pipeline_intake',serviceId:'missing-fixture-intake'})).status,404,'Existing Pipeline management retains its normal business-grant path');
+    gateway.security!.revokeInstallation(member.id,operator.id);
+    assert.equal((await request('primary.example','/ontology/v1/pa-classification/query',await token('ontology-manager','https://primary.example/','public_tenant',SCOPES),{operation:'get_ontology'})).status,403,'A fresh operator token cannot resurrect a revoked installation');
+    assert.equal((await request('primary.example','/ontology/v1/pa-classification/query',await token('native-mcp','https://primary.example/','public_tenant',SCOPES),{operation:'get_ontology'})).status,403,'An ordinary native client cannot acquire management rights by requesting more token scopes');
     gateway.security!.revokeInstallation(member.id,native.id);
     assert.equal((await request('primary.example','/security/context',await token('native-mcp','https://primary.example/'),{})).status,403,'A fresh token cannot resurrect a revoked native installation');
     const redirected=await request('private.example:8443','/members');assert.equal(redirected.status,307);assert.equal(redirected.headers.location,'https://primary.example/members');

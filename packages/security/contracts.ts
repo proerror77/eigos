@@ -38,6 +38,8 @@ export const accessContextSchema = z.discriminatedUnion('actorKind', [
   z.strictObject({ ...baseActor, actorKind: z.literal('member_session'), memberId: z.uuid(), sessionAuditRef: sha }),
   z.strictObject({ ...baseActor, ...agentActor, actorKind: z.literal('agent'), agentGrant: grantRefSchema,
     task: z.strictObject({ id: z.uuid(), requestRevision: revision, dataGrant: grantRefSchema }).optional() }),
+  // Host-admitted metadata administration is separate from business data grants.
+  z.strictObject({ ...baseActor, ...agentActor, actorKind: z.literal('ontology_operator') }),
   z.strictObject({ ...baseActor, ...agentActor, actorKind: z.literal('worker'), taskId: z.uuid(), requestRevision: revision,
     authorityRef: grantRefSchema, dataGrant: grantRefSchema, claimRef: sha }),
   z.strictObject({ ...baseActor, actorKind: z.literal('development'), installationId: z.uuid(), tokenScopes: scopeList,

@@ -170,7 +170,7 @@ export class PostgresDefinitionService implements DefinitionServicePort {
         const intents=await new PostgresTaskStorage(ctx.client,this.options.builder).intents(ctx.owner,accepted.id),byId=new Map(intents.map(value=>[value.id,value]));
         return envelope(await ctx.store.pipeline.verifyTask(command.ontologyId,ctx.owner,value.ref,value.model,accepted,id=>{const intent=byId.get(id);if(!intent)throw new DomainError('NOT_FOUND','Action intent not found');return intent;},command.expiresAt));
       }
-      if(command.operation==='put_definition'||command.operation==='retire_definition')throw new DomainError('FORBIDDEN','This metadata edit requires a separately reviewed Foundation interface');
+      if(command.operation==='put_definition'||command.operation==='put_pa_classification'||command.operation==='retire_definition')throw new DomainError('FORBIDDEN','This metadata edit requires a separately reviewed Foundation interface');
       if(command.operation==='publish_draft'){
         const published=await ctx.store.publish(ctx.owner,draft.id,command.expectedRevision,ctx.admin);assertReviewedModel(this.options.builder?stagedKernelComponents(this.options.builder).model:currentKernelImplementation(),(await ctx.store.resolve(published.release)).model);return envelope(published);
       }
