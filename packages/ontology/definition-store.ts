@@ -9,7 +9,7 @@ import { definitionKindSchema, ontologyIdSchema, ontologyReleaseRefSchema, parse
   type DefinitionKind, type OntologyDocument, type OntologyReleaseRef, type SerializableAction, type SerializableInterface,
   type SerializableLink, type SerializableObjectType } from './definition-contracts.js';
 import { compileOntologyDocument, normalizeOntologyDocument, type TrustedDefinitionRegistry } from './model-compiler.js';
-import { compiledSeedModel, createCurrentKernelDefinition, createSingleReadKernelDefinition, createSeedDefinition, createRollingGoKernelDefinition, createTaskClosureKernelDefinition, createBusinessFactsKernelDefinition, createPersonalContextKernelDefinition, PAYMENT_COMMERCE_KERNEL_MODEL_REF, BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF } from './seed-definition.js';
+import { compiledSeedModel, createRideSourcesKernelDefinition, createSemanticRetrievalKernelDefinition, createCurrentKernelDefinition, createSingleReadKernelDefinition, createSeedDefinition, createRollingGoKernelDefinition, createTaskClosureKernelDefinition, createBusinessFactsKernelDefinition, createPersonalContextKernelDefinition, PAYMENT_COMMERCE_KERNEL_MODEL_REF, BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF } from './seed-definition.js';
 import { extendBusinessDescriptions } from './business-descriptions.js';
 import { SINGLE_READ_PREDECESSOR } from './single-read-kernel.js';
 import { personalObjects, personalActions, personalLinks, PERSONAL_CONTEXT_PREDECESSOR } from './personal-context-kernel.js';
@@ -59,7 +59,7 @@ function freezeJson<T>(value: T): T {
   }
   return value;
 }
-let templates: { registry: TrustedDefinitionRegistry; legacy: OntologyDocument; kernel: OntologyDocument; legacyModel: OntologyModel; kernelModel: OntologyModel } | undefined;
+let templates: { registry: TrustedDefinitionRegistry; legacy: OntologyDocument; kernel: OntologyDocument; legacyModel: OntologyModel; kernelModel: OntologyModel; rideKernel:OntologyDocument; rideModel:OntologyModel } | undefined;
 // This cache contains definitions only. Database identity, data compatibility and
 // current permission checks still run separately for each store and request.
 const compiledModels = new WeakMap<TrustedDefinitionRegistry, Map<string, OntologyModel>>();
@@ -80,15 +80,18 @@ function trustedTemplates() {
   if (!templates) {
     const legacy = createSeedDefinition(), kernel = createCurrentKernelDefinition(legacy.registry);
     const legacyModel = compiledSeedModel(legacy, legacy.registry), kernelModel = compiledSeedModel(kernel, legacy.registry);
+    const ride=createRideSourcesKernelDefinition(legacy.registry),rideModel=compiledSeedModel(ride,legacy.registry);
     const models = modelsFor(legacy.registry);
     models.set(digest(legacy.document), legacyModel); models.set(digest(kernel.document), kernelModel);
-    templates = { registry: legacy.registry, legacy: freezeJson(legacy.document), kernel: freezeJson(kernel.document), legacyModel, kernelModel };
+    templates = { registry: legacy.registry, legacy: freezeJson(legacy.document), kernel: freezeJson(kernel.document), legacyModel, kernelModel,rideKernel:freezeJson(ride.document),rideModel };
   }
   return templates;
 }
 
 /** Canonical reviewed kernel, independent of owner-authored active releases. */
 export function currentKernelImplementation(): OntologyModel { return trustedTemplates().kernelModel; }
+
+export function rideSourcesKernelImplementation():OntologyModel{return trustedTemplates().rideModel;}
 
 /** Persistent metadata, independent of facts and authority. All returned models
  * are immutable release compilations; authorization is never cached here. */
@@ -279,6 +282,16 @@ export class DefinitionStore {
       document.version = `payment-commerce-reads-${namespace.generation + 1}`;
       const release = this.insertRelease(document, 'system:install-payment-commerce-reads', namespace.active);
       return this.activate('system:install-payment-commerce-reads', release.ref, expectedGeneration, true);
+    });
+  }
+  /** Named offline v28/v29 -> v30 installation. No grants or startup changes. */
+  installRideSources(expected:OntologyReleaseRef,expectedGeneration:number):OntologyNamespace{
+    return this.transaction(()=>{
+      const namespace=this.namespace();if(digest(namespace.active)!==digest(expected)||namespace.generation!==expectedGeneration)return conflict('Active ontology changed before ride-source installation');
+      const current=this.resolve(namespace.active),prior=current.document.version==='28'?trustedTemplates().kernel:current.document.version==='29'?createSemanticRetrievalKernelDefinition(trustedTemplates().registry).document:undefined;
+      if(!prior||digest(prior)!==digest(current.document))return conflict('Ride sources require the exact reviewed v28 or v29 release');
+      const release=this.insertRelease(trustedTemplates().rideKernel,'system:install-ride-sources',namespace.active);
+      return this.activate('system:install-ride-sources',release.ref,expectedGeneration,true);
     });
   }
   /** Operator-only v27 -> v28 metadata activation. Existing facts, task pins,

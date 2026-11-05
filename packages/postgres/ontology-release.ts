@@ -7,7 +7,7 @@ import { compatibleDefinitionModels } from '../ontology/definition-compatibility
 import type { DefinitionCompatibilityInput } from '../ontology/definition-store.js';
 import { BACKEND_VERSION } from '../ontology/execution.js';
 import { compileOntologyDocument, type TrustedDefinitionRegistry } from '../ontology/model-compiler.js';
-import { createCurrentKernelDefinition, createSeedDefinition, stagedKernelComponents, type StagedKernelBuilder } from '../ontology/seed-definition.js';
+import { createCurrentKernelDefinition, createRideSourcesKernelDefinition, createSeedDefinition, stagedKernelComponents, type StagedKernelBuilder } from '../ontology/seed-definition.js';
 import { validateTaskReadProjection } from '../ontology/task-read-proof.js';
 import type { Job } from '../core/domain.js';
 import { postgresBusinessSchema,postgresBusinessToken,postgresBusinessKernel } from './runtime-transaction.js';
@@ -16,7 +16,7 @@ let registry: TrustedDefinitionRegistry | undefined;
 function trustedRegistry(): TrustedDefinitionRegistry {
   if (!registry) {
     const seed = createSeedDefinition();
-    createCurrentKernelDefinition(seed.registry);
+    createRideSourcesKernelDefinition(seed.registry);
     registry = seed.registry;
   }
   return registry;

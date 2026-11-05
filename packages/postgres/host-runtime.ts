@@ -1,3 +1,4 @@
+import {rideConnectionsFromConfig} from '../capabilities/rides/connection.js';
 import {assertPostgresProjectionEpochBase} from './projection-epoch-schema.js';
 import pg,{type Client} from 'pg';
 import type {Config} from '../core/config.js';
@@ -82,11 +83,11 @@ export function readPostgresDidiHostConfiguration(config:Config){
  * and registry; no publisher, durable node, wrapping key or model is created. */
 export function createPostgresProgramTransport(config:Config,options:{database:PostgresDatabase;policyDigest:string;authority:{id:string;revision:number;digest:string};builder?:StagedKernelBuilder;role:'gateway'|'worker'}){
   if(!config.authority||config.authority.id!==options.authority.id||runtimeAuthorityDigest(config.authority)!==options.authority.digest||config.authority.revision!==options.authority.revision||config.PUBLIC_URL!==config.authority.canonicalOrigin)throw new Error('Program transport requires the same original host authority');
-  const selected=readPostgresDidiHostConfiguration(config),account=selected?new PostgresDidiAccount(selected.binding,selected.owner,selected.descriptor):undefined;
+  const rides=rideConnectionsFromConfig(config),selected=readPostgresDidiHostConfiguration(config),account=selected?new PostgresDidiAccount(selected.binding,selected.owner,selected.descriptor):undefined;
   const opts={database:options.database,policyDigest:options.policyDigest,authorityId:options.authority.id,gatewayOrigin:config.PUBLIC_URL,builder:options.builder,didiAccount:account};
   const taskRelay=options.role==='gateway'&&config.EIGOS_TASK_RELAY_FILE?new PostgresTaskRelay(opts):undefined;
-  const reads=selected?(taskRelay?.reads??new PostgresRelayReadAuthority(opts)):undefined;
-  const registry=new PostgresReadProgramRegistry(options.policyDigest,{documentEnabled:config.EIGOS_EXECUTOR!=='disabled',...(selected?{didi:{kind:'relay' as const,binding:selected.binding,owner:selected.owner,account:account!,reads:reads!,peerId:selected.peerId,authority:{id:options.authority.id,gatewayOrigin:config.PUBLIC_URL}}}:{})});
+  const reads=(selected||Object.keys(rides).length)?(taskRelay?.reads??new PostgresRelayReadAuthority(opts)):undefined;
+  const registry=new PostgresReadProgramRegistry(options.policyDigest,{rides:Object.fromEntries(Object.entries(rides).map(([provider,value])=>[provider,{...value,reads:reads!,authority:{id:options.authority.id,gatewayOrigin:config.PUBLIC_URL},kernelReady:options.builder?options.builder.trusted().model.hasType('RideSourceTask'):false}])),documentEnabled:config.EIGOS_EXECUTOR!=='disabled',...(selected?{didi:{kind:'relay' as const,binding:selected.binding,owner:selected.owner,account:account!,reads:reads!,peerId:selected.peerId,authority:{id:options.authority.id,gatewayOrigin:config.PUBLIC_URL}}}:{})});
   return {role:options.role,database:options.database,registry,taskRelay,reads,account,selected};
 }
 const runtimeContract=structuredClone(POSTGRES_RUNTIME_SCHEMA_CONTRACT),runtimeContractDigest=digest(runtimeContract);
@@ -322,7 +323,7 @@ export function createPostgresGatewayServices(config:Config,resources:Awaited<Re
     // Definition implementations are the real registered program metadata.
     // No fake graph or storage object is lent to the synchronous catalogue.
     const registered=programTransport.registry.find(program.ref,program.configurationDigest);
-    for(const action of program.actionIds){const definition=release.model.action(action);if(release.model.actionImplementation(action)?.kind!=='trusted'||definition.operation?.effect!=='local'&&!(registered?.kind==='didi'&&!definition.operation&&definition.read?.effect==='read'))throw new DomainError('CONFLICT','This source program requires its actual installed PostgreSQL adapter');}
+    for(const action of program.actionIds){const definition=release.model.action(action);if(release.model.actionImplementation(action)?.kind!=='trusted'||definition.operation?.effect!=='local'&&!(['didi','ride'].includes(registered?.kind??'')&&!definition.operation&&definition.read?.effect==='read'))throw new DomainError('CONFLICT','This source program requires its actual installed PostgreSQL adapter');}
     return program;
   };
   const tasks=new PostgresTaskCommandService(resources.database,resources.binding.policyDigest,resources.kernel,{

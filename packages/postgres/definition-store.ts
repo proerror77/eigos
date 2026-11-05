@@ -7,7 +7,7 @@ import {definitionKindSchema,ontologyIdSchema,ontologyReleaseRefSchema,parseOnto
   type DefinitionKind,type OntologyDocument,type OntologyReleaseRef} from '../ontology/definition-contracts.js';
 import type {DefinitionDraft,DefinitionResource,DefinitionValidation,OntologyNamespace} from '../ontology/definition-store.js';
 import {compileOntologyDocument,normalizeOntologyDocument,type TrustedDefinitionRegistry} from '../ontology/model-compiler.js';
-import {createSeedDefinition,createCurrentKernelDefinition,stagedKernelComponents,StagedKernelBuilder} from '../ontology/seed-definition.js';
+import {createSeedDefinition,createCurrentKernelDefinition,createSemanticRetrievalKernelDefinition,createRideSourcesKernelDefinition,stagedKernelComponents,StagedKernelBuilder} from '../ontology/seed-definition.js';
 import {SecurityError} from '../security/errors.js';
 import type {ActionIntent} from '../ontology/actions.js';
 import type {OntologyModel} from '../ontology/model.js';
@@ -25,7 +25,7 @@ const conflict=(message:string):never=>{throw new DomainError('CONFLICT',message
 const invalid=(message:string):never=>{throw new DomainError('INVALID_INPUT',message);};
 const summary=({document:_document,...value}:DefinitionDraft)=>value;
 let templates:{registry:TrustedDefinitionRegistry;document:OntologyDocument}|undefined;
-function trusted(){if(!templates){const seed=createSeedDefinition(),current=createCurrentKernelDefinition(seed.registry);templates={registry:seed.registry,document:current.document};}return templates;}
+function trusted(){if(!templates){const seed=createSeedDefinition(),current=createCurrentKernelDefinition(seed.registry);createRideSourcesKernelDefinition(seed.registry);templates={registry:seed.registry,document:current.document};}return templates;}
 
 /** Internal metadata persistence on the caller's original serialized business
  * transaction. This class grants no namespace, OAuth scope or actor authority,
@@ -79,6 +79,17 @@ export class PostgresDefinitionStore {
     await this.sql('SAVEPOINT eigos_semantic_kernel_install');
     try{const release=await this.insertRelease(template,owner,current.ref),activated=await this.activate(owner,release.ref,expectedGeneration,true);await this.sql('RELEASE SAVEPOINT eigos_semantic_kernel_install');return activated;}
     catch(error){await this.sql('ROLLBACK TO SAVEPOINT eigos_semantic_kernel_install');await this.sql('RELEASE SAVEPOINT eigos_semantic_kernel_install');throw error;}
+  }
+  /** Named v30 publisher; the offline installer separately checks real DB
+   * owner identity and couples activation to the policy CAS. */
+  async installRideSources(owner:string,expected:OntologyReleaseRef,expectedGeneration:number,admin=false){
+    if(!admin)throw new SecurityError('AUTHORIZATION_REQUIRED');const namespace=await this.assertManagement(owner,expected.ontologyId,true);
+    if(digest(namespace.active)!==digest(expected)||namespace.generation!==expectedGeneration)throw new DomainError('CONFLICT','Ride kernel active release changed');
+    const current=await this.resolve(namespace.active),prior=current.document.version==='28'?createCurrentKernelDefinition():current.document.version==='29'?createSemanticRetrievalKernelDefinition():undefined;
+    if(!prior||digest(prior.document)!==digest(current.document))throw new DomainError('CONFLICT','Ride kernel requires its exact v28/v29 predecessor');
+    const template=this.options.builder?StagedKernelBuilder.prototype.result.call(this.options.builder).document:createRideSourcesKernelDefinition(this.registry).document;
+    if(template.version!=='30'||digest(this.compile(template).ref)!==digest(createRideSourcesKernelDefinition().audit.model))throw new DomainError('CONFLICT','Reviewed v30 kernel is unavailable');
+    const release=await this.insertRelease(template,owner,current.ref);return this.activate(owner,release.ref,expectedGeneration,true);
   }
   async createNamespace(owner:string,input:{id?:string;name:string}){
     const id=ontologyIdSchema.parse(input.id??`ontology-${randomUUID()}`);

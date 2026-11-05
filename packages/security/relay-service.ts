@@ -6,8 +6,9 @@ import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import { agentIdSchema } from '../relay/contracts.js';
 import {anySourceReadRequestSchema,anySourceReadResponseSchema,assertSourceReadInput,checkedSourceReply,type AnySourceReadRequest,type SourceReadInput} from '../agent-transport/source-protocol.js';
-import {rideSourceResponseSchema,type RideSourceRequest,type RideSourceResponse} from '../agent-transport/ride-contracts.js';
+import {rideSourceRequestSchema,checkedRideReply,assertRideRequestBinding,rideSourceResponseSchema,type RideSourceRequest,type RideSourceResponse} from '../agent-transport/ride-contracts.js';
 import { sourceReadRequestSchema, sourceReadResponseSchema, SOURCE_RELAY_PROTOCOL, type SourceReadRequest, type SourceReadResponse } from '../agent-transport/service-contracts.js';
+import {type RideBinding,type RideContext,type RideReadResult} from '../capabilities/rides/contracts.js';
 import { accessContextSchema } from './contracts.js';
 import { authorizationScope, withAuthorization } from './context.js';
 import { SecurityError, type SecurityStore } from './store.js';
@@ -130,6 +131,19 @@ export class RelayReadAuthority {
     return row.result ? sourceReadResponseSchema.parse(JSON.parse(String(row.result))) : undefined;
   }
   rideResult(id:string):RideSourceResponse|undefined{const row=this.row(id);this.assert(row);return row.result?rideSourceResponseSchema.parse(JSON.parse(String(row.result))):undefined;}
+  /** Acceptance proof reads the actual primary receipt, under the current
+   * original Worker scope. A result's own digest is not source evidence. */
+  verifyRideReceipt(id:string,peerId:string,binding:RideBinding,context:RideContext,result:RideReadResult):void {
+    const row=this.row(id),scope=authorizationScope();
+    if(!scope||scope.policies.security!==this.security||scope.actor.actorKind!=='worker'
+      ||digest(scope.actor)!==digest(JSON.parse(String(row.actor)))||row.state!=='completed'||row.peer_id!==peerId||!row.connection_id||!row.result)throw new SecurityError('AUTHORIZATION_REQUIRED');
+    const request=rideSourceRequestSchema.parse(this.assert(row));
+    try{
+      assertRideRequestBinding(request,binding,result.receipt.evidenceKind);
+      const response=checkedRideReply(request,JSON.parse(String(row.result)));
+      if(digest(request.context)!==digest(context)||!response.result||digest(response.result)!==digest(result))throw new Error('Receipt differs');
+    }catch{throw new SecurityError('SOURCE_NOT_AUTHORIZED');}
+  }
   ready(id:string):boolean {
     const row=this.row(id),scope=authorizationScope();
     if(scope?.policies.security!==this.security||scope.actor.actorKind!=='worker'||scope.policyRevision!==row.policy_revision

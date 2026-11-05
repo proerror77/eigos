@@ -3,8 +3,8 @@
   "enforcement": "not_installed",
   "model": {
     "id": "eigos.business",
-    "version": "28",
-    "digest": "04606f93dc6cfd9045ac6b9a0c3dcfa4c8f330689ecbdd3cdfa7556df15202c5"
+    "version": "30",
+    "digest": "c7a8273844d891f98cd83ccc41c48ce156e9c5e9aef5b6e46490f8d9047b781d"
   },
   "types": {
     "ServiceRequest": {
@@ -2889,13 +2889,34 @@
         "requestRevision": "task_private",
         "snapshot": "internal_only"
       }
+    },
+    "RideSourceTask": {
+      "fingerprint": "5ba425ca6941344cc2aba82d279ff2df584ffdcc4999ea1eaa4360cb290db237",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "provider": "task_private",
+        "input": "internal_only",
+        "allowedActions": "internal_only",
+        "configurationDigest": "internal_only"
+      }
+    },
+    "RideSourceObservation": {
+      "fingerprint": "80b3b62973ce2c8c28bb1512fdf3fbf8f05405034d7c147b3da910c81b0fd395",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "snapshot": "internal_only"
+      }
     }
   },
   "surfaces": [
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "4209322bb0ff1889b2219378c7223c3efebe13c62768126fdaf9f8c8cfa5fe91",
+      "sourceDigest": "983ded593a815deb0593bec1da6e4b8f1c25da6dfed1ad6e661fb62b222a3ff5",
       "channels": [
         "http"
       ],
@@ -2945,7 +2966,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "66a0b73d7aa776870585a566105bac2ec7657fae7c35b29555e25fb400e36ad9",
+      "sourceDigest": "0735852f846154ca27a184a95e1e6ba9c99e9096cfba7e29e886331b57bfe36a",
       "channels": [
         "sqlite",
         "idempotency"
@@ -3169,7 +3190,7 @@
     {
       "id": "source-catalog",
       "file": "packages/capabilities/catalog.ts",
-      "sourceDigest": "e757d4b77b308bdd4268040dda7cbba3da18fedcf11e76f0bf488987e1e7c8d7",
+      "sourceDigest": "d64225b25225df87752d91dac372f5d055888d55934dc807dffd86384c39123e",
       "channels": [
         "source",
         "dispatch"
@@ -3387,7 +3408,7 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "c40bebd7af2a223c2a217cec5f14b269aeb58bb950009fe90166d334ff88c530",
+      "sourceDigest": "62917ef6a143de75ff805efb4d5985177196a19d4bb0a1f82c4512dde42c64e3",
       "channels": [
         "authorization_control"
       ],
@@ -3399,7 +3420,7 @@
     {
       "id": "security-worker-runtime",
       "file": "apps/worker/runtime.ts",
-      "sourceDigest": "caeabf32063978cce06d3f7c58cf3f90fde0e2e91cf83390a116b9c05cee3a0e",
+      "sourceDigest": "cda297a64d2f7dc67214bbb9b8f18771e74f8529ee364d439a5dbf0288a2648e",
       "channels": [
         "authorization_control"
       ],
@@ -3495,7 +3516,7 @@
     {
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "72e35411d7b54d54261e4b18b3073aaf8a0d08db2e9c6c10b5f753a87d4a1271",
+      "sourceDigest": "29138e7f7c8a691adebcfe6fdb69786353a18a3d1e8e789629ba4a57c7f5e76c",
       "stage": "S2",
       "content": "Resource roles, fields, bindings, source grants, derived lineage, artifacts and opaque cursors",
       "currentControl": "Current roles, fields, source and output lineage remain mandatory. Optional semantic-v29 reuses only the exact unchanged descriptions-v28 field policy; the distinct v27-to-description28 upgrade remains explicit and new functions require their own rights.",
@@ -3507,7 +3528,7 @@
     {
       "id": "security-safe-projections",
       "file": "packages/security/projections.ts",
-      "sourceDigest": "86bf1d06f4a265ae9db2265ca148dd607778f19b8364c103ac577bca76c3e8fb",
+      "sourceDigest": "73d59d2b88f3c57b295bb02f5e9eb381b1e3f93e20b2917b749af268bb69fb30",
       "channels": [
         "model-and-agent"
       ],
@@ -3603,7 +3624,7 @@
     {
       "id": "source-evidence-validation",
       "file": "packages/ontology/object-evidence.ts",
-      "sourceDigest": "18ff2936f58eb71bd2e7fe7dd647c0533dd029592ea4394f7e67e0497da98dbf",
+      "sourceDigest": "561cda1b9136e8fd3802b3edc8d2a3822888c80bf2e7c6cdea91b37b065ef637",
       "channels": [
         "internal"
       ],
@@ -3833,7 +3854,7 @@
     {
       "id": "s5-packages-security-inventory",
       "file": "packages/security/inventory.ts",
-      "sourceDigest": "8c25ff4b79eb38e52b26f4ccac8ea6be8e9c2ced4f773d7f1a869436cea41910",
+      "sourceDigest": "eda5cc5a915d33b5640d3f81f7e53cba9a6b994c36d82661ddd91092f821a352",
       "channels": [
         "runtime"
       ],
@@ -4113,7 +4134,7 @@
     {
       "id": "definition-registry",
       "file": "packages/ontology/definition-store.ts",
-      "sourceDigest": "b7b3262a0522f86ad90b5711413e6912242dbf32e53915d5a1ead6a31b1d14f2",
+      "sourceDigest": "38a691a6f02fac02032cc3d399dde901e82a296f68aba5202f66300244d27553",
       "channels": [
         "model",
         "artifact"
@@ -4662,7 +4683,7 @@
     {
       "id": "relay-read-authority",
       "file": "packages/security/relay-service.ts",
-      "sourceDigest": "3e4b2558e273128e61e5369c8d7d5e2845948fa209f4e15a2209f4d04cd464dc",
+      "sourceDigest": "a7c1acd6389c0014de61a441516d9df6cbfdbecd9bd3cb2e5b14070ec9cb7f91",
       "channels": [
         "authorization_control",
         "source"
@@ -5673,7 +5694,7 @@
       "stage": "S5",
       "id": "postgres-ontology-read",
       "file": "packages/postgres/ontology-release.ts",
-      "sourceDigest": "6b4b8287596f35a59abe6c19b1dc00ac5dd4951114974b7ef1cb318fb60c04df",
+      "sourceDigest": "819a0bfe1530e73d1b24d10f1083b7803d31ecc0b83828a34131c529c9c31d3c",
       "content": "PostgreSQL ontology release and historical witness reader",
       "currentControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions",
       "targetControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions"
@@ -5729,7 +5750,7 @@
     {
       "id": "trusted-kernel-bootstrap",
       "file": "packages/ontology/seed-definition.ts",
-      "sourceDigest": "4b27e25da5c23dc4beb5582c0415868dcc64d6149884dac87c529fd15813a88c",
+      "sourceDigest": "7a81331e6b9e76e2052d7e0880750c547b9af7c8e7b548ddafe869d2d6858513",
       "channels": [
         "authorization_control"
       ],
@@ -6215,7 +6236,7 @@
     {
       "id": "security-model-review",
       "file": "packages/security/model-review.ts",
-      "sourceDigest": "27374473cb4184775d964b95afd437d593e12601810ba004ee4363db2a2d23d8",
+      "sourceDigest": "dc003687935d676a604b4f08fcf51d4ce79bc62af22e7b4c9d0b7748c4a0a865",
       "channels": [
         "internal"
       ],
@@ -6323,7 +6344,7 @@
     {
       "id": "postgres-planning-read-graph",
       "file": "packages/postgres/planning-read-graph.ts",
-      "sourceDigest": "89c759c250ecca00fed432caf3132274f4522e36b532e44becfcd5845a799e06",
+      "sourceDigest": "166979ce953abc1ea530fafaf4a7e363b556ab42fa6b95dfa62276d5b2578fb0",
       "channels": [
         "internal"
       ],
@@ -6587,7 +6608,7 @@
     {
       "id": "postgres-source-projection",
       "file": "packages/postgres/source-projection.ts",
-      "sourceDigest": "5ba54f83bbf6e40bb989dca9ffdea898ba2a7e5deec6b518cd9ec7ff8bbf66ce",
+      "sourceDigest": "138b5e6ef197571d303ee368c89f2f289ec9390dd88aad6b57a8b657b5dd4196",
       "channels": [
         "internal"
       ],
@@ -6659,7 +6680,7 @@
     {
       "id": "postgres-kernel-runtime",
       "file": "packages/postgres/kernel-runtime.ts",
-      "sourceDigest": "e24ce1bb8318c7eae51593f5be17aea5fddd1015dfe8b5b498214e100cfdf6c3",
+      "sourceDigest": "ca2f200a6b06df092da31afdedab1434129b3cd955ad11e8e90fd3abfe67f662",
       "channels": [
         "internal"
       ],
@@ -6695,7 +6716,7 @@
     {
       "id": "postgres-document-bindings",
       "file": "packages/postgres/document-bindings.ts",
-      "sourceDigest": "db4e66369e7b4dd9e94a756ab6fa9c1a528d8c107c728d3a451ef3fbfe7983ee",
+      "sourceDigest": "fa4f89d1a5a0ffaeb0937823a42ecdf0ccc54747c408e68a048c350efd6cc3e7",
       "channels": [
         "internal"
       ],
@@ -6743,7 +6764,7 @@
     {
       "id": "postgres-coordinator",
       "file": "packages/postgres/coordinator.ts",
-      "sourceDigest": "d2e9b2acd9463959579bb04d55cef3bb6f1422dff5ce9e9e500cff3667c8bbce",
+      "sourceDigest": "64d31fda4bee1ea261d805400636e6cd3cf84b6895707d1237c6706304fe20ef",
       "channels": [
         "internal"
       ],
@@ -7044,7 +7065,7 @@
     {
       "id": "postgres-definition-store",
       "file": "packages/postgres/definition-store.ts",
-      "sourceDigest": "140ae6b23c09f1a5e99702b960bf1c3627cc0bd7a1ab3d0ce4084abce93b8969",
+      "sourceDigest": "9578a122aa22e8cb88f113b2f7b8ad09394f9a5d228609830851942cde3703b4",
       "channels": [
         "internal",
         "ontology_metadata"
@@ -7170,7 +7191,7 @@
     {
       "id": "postgres-host-runtime",
       "file": "packages/postgres/host-runtime.ts",
-      "sourceDigest": "1f86455b12262ac0a1e33429d54fcefe99556e5d4d39d0c686bc87df77a875a0",
+      "sourceDigest": "730e6151a9b59ec68cc06c5257bcb58361718bc65bb20c4b087c4878460501e8",
       "channels": [
         "internal"
       ],
@@ -7278,7 +7299,7 @@
     {
       "id": "postgres-source-relay-authority",
       "file": "packages/postgres/relay-read-authority.ts",
-      "sourceDigest": "456c9d965f4b2d22c496e2e200997837916e48d728045d2a8663ea0210f44c55",
+      "sourceDigest": "e4229d4efb09481a25774793247e1628146ddaab47c37d0416716056aee0611b",
       "channels": [
         "internal"
       ],
@@ -7388,7 +7409,7 @@
     {
       "id": "postgres-didi-registry",
       "file": "packages/postgres/didi-registry.ts",
-      "sourceDigest": "cc1bc4b21adec00316bcdaab5a04e4afe430fedc4677f65fa2a76b44afc0eb93",
+      "sourceDigest": "7d7f6ad4fde5b98c39226979cd0d9990cda01f36d929de87a3c1fc88d279d3d1",
       "channels": [
         "internal"
       ],
@@ -7545,7 +7566,7 @@
       "currentControl": "The v27 digest is preserved explicitly and registered before the v28 metadata-only successor; historical releases are never rewritten.",
       "targetControl": "Accurate release construction and immutable historical interpretation",
       "stage": "S2",
-      "sourceDigest": "4b27e25da5c23dc4beb5582c0415868dcc64d6149884dac87c529fd15813a88c"
+      "sourceDigest": "7a81331e6b9e76e2052d7e0880750c547b9af7c8e7b548ddafe869d2d6858513"
     },
     {
       "id": "gateway-primary-startup",
@@ -7563,7 +7584,7 @@
     {
       "id": "ontology-registered-calculations",
       "file": "packages/ontology/object-functions.ts",
-      "sourceDigest": "b83c1f563e83b231fd16939a05f11896fbe2435c90518ee3f7d727a1c683f332",
+      "sourceDigest": "e7e941aea80d1146436017cdf1b4d46c3cd60383b210c1661c48eb7134a60eac",
       "channels": [
         "internal"
       ],
@@ -7798,7 +7819,7 @@
     {
       "id": "ride-connector-capabilities",
       "file": "packages/capabilities/rides/connector.ts",
-      "sourceDigest": "8004607218cf5aab16168239aa9ddb28faf0d096383af3d5a7b7c125f01df4a7",
+      "sourceDigest": "83781dac7dfd59adf2df2035be67d1e361367a5ef7b3c7ee083547c07ced5b09",
       "channels": [
         "private_source",
         "relay"
@@ -7850,7 +7871,7 @@
     {
       "id": "ride-source-protocol-agent-transport",
       "file": "packages/agent-transport/source-protocol.ts",
-      "sourceDigest": "90483b1ef7a18688d3281f44abce38e059d278efef0d3198da99b4d51fe6d6cc",
+      "sourceDigest": "4d34797cd66bc31f9dd9c9d656752ca6ca309fbf249ae89c827dfee9d2054fde",
       "channels": [
         "private_source",
         "relay"
@@ -7876,7 +7897,7 @@
     {
       "id": "ride-connection-capabilities",
       "file": "packages/capabilities/rides/connection.ts",
-      "sourceDigest": "415710b2496d27222e4693b58fa95cef779e6bafb9712c7da6783c7c9522493a",
+      "sourceDigest": "be265466a22d6c93d7381e8f75ac72e1a11f11f7298129eb5192a6458be53b62",
       "channels": [
         "private_source",
         "relay"
@@ -7884,6 +7905,171 @@
       "content": "Provider-bound readonly ride data, source credentials, task/context identity or current authorized receipt delivery",
       "currentControl": "Default disabled; explicit provider schema, owner/environment/connection pins and original task/source authorization; no order or payment",
       "targetControl": "Keep original current grants, DPoP and durable source-receipt validation through all delivery and acceptance boundaries",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-source-apps-ride-source-agent-main",
+      "file": "apps/ride-source-agent/main.ts",
+      "sourceDigest": "adf05fc3d0dd3ee471cf912103d114621a2d0ee8d605cb59c3c3d30b9827df5a",
+      "channels": [
+        "private_source",
+        "authorization_control",
+        "sqlite",
+        "postgres"
+      ],
+      "content": "Ride estimate dispatch, source receipt, metadata or explicit offline upgrade",
+      "currentControl": "Code-defined default-disabled estimates; existing owner/source/claim/Pipeline checks remain mandatory. No booking or payment.",
+      "targetControl": "Retain actual persisted source proof, current authorization and immutable release/policy transitions; credentials remain on the PA.",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-source-packages-agent-transport-ride-agent-config",
+      "file": "packages/agent-transport/ride-agent-config.ts",
+      "sourceDigest": "f3fd760bc4708b9d95b155ce92676bb079976773cd87db31c7b20af5b6cd0d0c",
+      "channels": [
+        "private_source",
+        "authorization_control",
+        "sqlite",
+        "postgres"
+      ],
+      "content": "Ride estimate dispatch, source receipt, metadata or explicit offline upgrade",
+      "currentControl": "Code-defined default-disabled estimates; existing owner/source/claim/Pipeline checks remain mandatory. No booking or payment.",
+      "targetControl": "Retain actual persisted source proof, current authorization and immutable release/policy transitions; credentials remain on the PA.",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-source-packages-capabilities-rides-program",
+      "file": "packages/capabilities/rides/program.ts",
+      "sourceDigest": "118ae0290b65599a25731f0cbf8c4c940f3c7deb733161f338f06f0305f7f58f",
+      "channels": [
+        "private_source",
+        "authorization_control",
+        "sqlite",
+        "postgres"
+      ],
+      "content": "Ride estimate dispatch, source receipt, metadata or explicit offline upgrade",
+      "currentControl": "Code-defined default-disabled estimates; existing owner/source/claim/Pipeline checks remain mandatory. No booking or payment.",
+      "targetControl": "Retain actual persisted source proof, current authorization and immutable release/policy transitions; credentials remain on the PA.",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-source-packages-capabilities-rides-relay-connector",
+      "file": "packages/capabilities/rides/relay-connector.ts",
+      "sourceDigest": "b3150f623ed78ca36b8c0580f1e7dc7e9c8d23664529d2e1a109f6dc7c432e7a",
+      "channels": [
+        "private_source",
+        "authorization_control",
+        "sqlite",
+        "postgres"
+      ],
+      "content": "Ride estimate dispatch, source receipt, metadata or explicit offline upgrade",
+      "currentControl": "Code-defined default-disabled estimates; existing owner/source/claim/Pipeline checks remain mandatory. No booking or payment.",
+      "targetControl": "Retain actual persisted source proof, current authorization and immutable release/policy transitions; credentials remain on the PA.",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-source-packages-ontology-ride-sources-functions",
+      "file": "packages/ontology/ride-sources-functions.ts",
+      "sourceDigest": "98a75e9d390988304f2a02bdfa1bfe4c0cc601bd71da8f6b77b79e8a6f9bfabc",
+      "channels": [
+        "private_source",
+        "authorization_control",
+        "sqlite",
+        "postgres"
+      ],
+      "content": "Ride estimate dispatch, source receipt, metadata or explicit offline upgrade",
+      "currentControl": "Code-defined default-disabled estimates; existing owner/source/claim/Pipeline checks remain mandatory. No booking or payment.",
+      "targetControl": "Retain actual persisted source proof, current authorization and immutable release/policy transitions; credentials remain on the PA.",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-source-packages-ontology-ride-sources-kernel",
+      "file": "packages/ontology/ride-sources-kernel.ts",
+      "sourceDigest": "8110007c09555b7cea4caa4ca93c932b359016a155ca4d289428cc594e3aa939",
+      "channels": [
+        "private_source",
+        "authorization_control",
+        "sqlite",
+        "postgres"
+      ],
+      "content": "Ride estimate dispatch, source receipt, metadata or explicit offline upgrade",
+      "currentControl": "Code-defined default-disabled estimates; existing owner/source/claim/Pipeline checks remain mandatory. No booking or payment.",
+      "targetControl": "Retain actual persisted source proof, current authorization and immutable release/policy transitions; credentials remain on the PA.",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-source-packages-ontology-ride-sources",
+      "file": "packages/ontology/ride-sources.ts",
+      "sourceDigest": "89432296e02212f3b08822361d85bc9db102dc64f95a695fcccbf1df7bde96b7",
+      "channels": [
+        "private_source",
+        "authorization_control",
+        "sqlite",
+        "postgres"
+      ],
+      "content": "Ride estimate dispatch, source receipt, metadata or explicit offline upgrade",
+      "currentControl": "Code-defined default-disabled estimates; existing owner/source/claim/Pipeline checks remain mandatory. No booking or payment.",
+      "targetControl": "Retain actual persisted source proof, current authorization and immutable release/policy transitions; credentials remain on the PA.",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-source-packages-postgres-ride-execution",
+      "file": "packages/postgres/ride-execution.ts",
+      "sourceDigest": "534e82d0df15362964e7da6c503bdaf6ad7d1eaa8cfa4b697c2d377cfa0e093b",
+      "channels": [
+        "private_source",
+        "authorization_control",
+        "sqlite",
+        "postgres"
+      ],
+      "content": "Ride estimate dispatch, source receipt, metadata or explicit offline upgrade",
+      "currentControl": "Code-defined default-disabled estimates; existing owner/source/claim/Pipeline checks remain mandatory. No booking or payment.",
+      "targetControl": "Retain actual persisted source proof, current authorization and immutable release/policy transitions; credentials remain on the PA.",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-source-packages-postgres-ride-policy",
+      "file": "packages/postgres/ride-policy.ts",
+      "sourceDigest": "a00ce0f141ae6c7b60e527de6d88fd7198a7e12eb5bfe5116382b77da3cad791",
+      "channels": [
+        "private_source",
+        "authorization_control",
+        "sqlite",
+        "postgres"
+      ],
+      "content": "Ride estimate dispatch, source receipt, metadata or explicit offline upgrade",
+      "currentControl": "Code-defined default-disabled estimates; existing owner/source/claim/Pipeline checks remain mandatory. No booking or payment.",
+      "targetControl": "Retain actual persisted source proof, current authorization and immutable release/policy transitions; credentials remain on the PA.",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-source-packages-postgres-ride-sources-upgrade",
+      "file": "packages/postgres/ride-sources-upgrade.ts",
+      "sourceDigest": "663944aaca66eb88a1da3187331be2bb35e56744aefc9135598ac80d1f9e067b",
+      "channels": [
+        "private_source",
+        "authorization_control",
+        "sqlite",
+        "postgres"
+      ],
+      "content": "Ride estimate dispatch, source receipt, metadata or explicit offline upgrade",
+      "currentControl": "Code-defined default-disabled estimates; existing owner/source/claim/Pipeline checks remain mandatory. No booking or payment.",
+      "targetControl": "Retain actual persisted source proof, current authorization and immutable release/policy transitions; credentials remain on the PA.",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-source-packages-security-ride-sources-upgrade",
+      "file": "packages/security/ride-sources-upgrade.ts",
+      "sourceDigest": "12bd59704a8e5cbd387d1d6c1ce2ff80b49764fd84aea2bd8f8b4e1996935c7e",
+      "channels": [
+        "private_source",
+        "authorization_control",
+        "sqlite",
+        "postgres"
+      ],
+      "content": "Ride estimate dispatch, source receipt, metadata or explicit offline upgrade",
+      "currentControl": "Code-defined default-disabled estimates; existing owner/source/claim/Pipeline checks remain mandatory. No booking or payment.",
+      "targetControl": "Retain actual persisted source proof, current authorization and immutable release/policy transitions; credentials remain on the PA.",
       "stage": "S5"
     }
   ]

@@ -1,5 +1,6 @@
-import {anySourceReadRequestSchema,anySourceReadResponseSchema,assertSourceReadInput,assertSourceTaskEnvironment,checkedSourceReply,isRideSourceRequest,type AnySourceReadRequest,type SourceReadInput} from '../agent-transport/source-protocol.js';
-import {rideSourceResponseSchema,type RideSourceRequest,type RideSourceResponse} from '../agent-transport/ride-contracts.js';
+import {type RideBinding,type RideContext,type RideReadResult} from '../capabilities/rides/contracts.js';
+import {anySourceReadRequestSchema,anySourceReadResponseSchema,assertSourceReadInput,assertSourceTaskEnvironment,assertSourceDispatchInput,checkedSourceReply,isRideSourceRequest,type AnySourceReadRequest,type SourceReadInput} from '../agent-transport/source-protocol.js';
+import {rideSourceRequestSchema,checkedRideReply,assertRideRequestBinding,rideSourceResponseSchema,type RideSourceRequest,type RideSourceResponse} from '../agent-transport/ride-contracts.js';
 import type {Client} from 'pg';
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
@@ -81,6 +82,7 @@ export class PostgresRelayReadAuthority {
         ||intent.effect!=='read'||step.effect!=='read'||step.action!==request.context.action||plan.modelRunId!==request.context.modelRunId||plan.requestId!==job.id||plan.requestRevision!==actor.requestRevision
         ||attempt.id!==request.context.attemptId||attempt.intentId!==intent.id||attempt.kind!=='dispatch'||attempt.claimToken!==claim.token||attempt.requestRevision!==(job.revision??0)||attempt.planDigest!==plan.digest||attempt.inputDigest!==request.context.actionInputDigest
         ||!intent.dispatchInput||digest(intent.dispatchInput)!==request.context.actionInputDigest)throw new SecurityError('AUTHORIZATION_REQUIRED');
+      try{assertSourceDispatchInput(request,intent.dispatchInput);}catch{throw new SecurityError('SOURCE_NOT_AUTHORIZED');}
       const needed=actionSources(state,step.action,step.input,step),binding=needed.find(value=>value.programRef.id===request.context.programId&&value.programDigest===request.context.programDigest);
       if(!binding)throw new SecurityError('SOURCE_NOT_AUTHORIZED');
       for(const permission of ['resource.view','action.execute']as const){const until=await postgresTaskResourcePermissionValidUntil(client,principal,job.id,this.options.policyDigest,'actionType',step.action,permission,this.options.builder);if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');postgresConstrainReadDeadline(client,until);}
@@ -155,5 +157,15 @@ export class PostgresRelayReadAuthority {
   async ready(claim:PostgresWorkReference,id:string){return this.options.database.run(async client=>{const row=await this.row(client,id);await this.assert(client,row,claim);return row.result!==null;});}
   async result(claim:PostgresWorkReference,id:string):Promise<SourceReadResponse|undefined>{return this.options.database.run(async client=>{const row=await this.row(client,id);await this.assert(client,row,claim);return row.result!==null?sourceReadResponseSchema.parse(JSON.parse(row.result)):undefined;});}
   async rideResult(claim:PostgresWorkReference,id:string):Promise<RideSourceResponse|undefined>{return this.options.database.run(async client=>{const row=await this.row(client,id);await this.assert(client,row,claim);return row.result!==null?rideSourceResponseSchema.parse(JSON.parse(row.result)):undefined;});}
+  /** Current claim and actual persisted Relay response, never a Worker hash. */
+  async verifyRideReceipt(claim:PostgresWorkReference,id:string,peerId:string,binding:RideBinding,context:RideContext,result:RideReadResult):Promise<void>{
+    await this.options.database.run(async client=>{
+      const row=await this.row(client,id),request=rideSourceRequestSchema.parse(await this.assert(client,row,claim));
+      if(row.state!=='completed'||row.peer_id!==peerId||!row.connection_id||!row.result)throw new SecurityError('AUTHORIZATION_REQUIRED');
+      try{assertRideRequestBinding(request,binding,result.receipt.evidenceKind);const response=checkedRideReply(request,JSON.parse(row.result));
+        if(digest(request.context)!==digest(context)||!response.result||digest(response.result)!==digest(result))throw new Error('Receipt differs');
+      }catch{throw new SecurityError('SOURCE_NOT_AUTHORIZED');}
+    });
+  }
   async revoke(id:string){await this.options.database.run(client=>client.query(`UPDATE "${postgresBusinessSchema(client)}".security_relay_reads SET state='revoked' WHERE id=$1 AND state<>'completed'`,[z.uuid().parse(id)]).then(()=>{}));}
 }

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { digest } from '../core/delegation.js';
-import { currentKernelImplementation } from '../ontology/definition-store.js';
+import { rideSourcesKernelImplementation } from '../ontology/definition-store.js';
 import { type ModelDefinition, OntologyModel } from '../ontology/model.js';
 import { fieldPolicySchema, POLICY_VERSION, securityDefaults, resourceDefaults } from './contracts.js';
 
@@ -40,7 +40,7 @@ export function schemaPaths(schema: unknown): { paths: string[]; openContent: bo
 }
 
 export function buildSecurityInventory(input: unknown, definition?: ModelDefinition, root?: string) {
-  const baseline = securityBaselineSchema.parse(input), model = definition ? new OntologyModel(definition) : currentKernelImplementation();
+  const baseline = securityBaselineSchema.parse(input), model = definition ? new OntologyModel(definition) : rideSourcesKernelImplementation();
   definition ??= model.definitionSnapshot();
   const issues: string[] = [];
   if (digest(baseline.model) !== digest(model.ref)) issues.push('model_definition_changed');

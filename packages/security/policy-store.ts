@@ -22,7 +22,7 @@ import {matchesAgentGrant} from '../core/agent-authorization.js';
 import type {PlanGrant} from '../ontology/actions.js';
 import {actionSources} from './component-authority.js';
 import {compatibleProjectedObject} from '../ontology/task-read-projection.js';
-import {DefinitionStore} from '../ontology/definition-store.js';
+import {DefinitionStore,rideSourcesKernelImplementation} from '../ontology/definition-store.js';
 import { PRIOR_GOAL_COVERAGE_FINGERPRINT } from '../ontology/single-read-kernel.js';
 import { SINGLE_READ_KERNEL_MODEL_REF, PAYMENT_COMMERCE_KERNEL_MODEL_REF, BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF } from '../ontology/seed-definition.js';
 import {assertProjectionOrigin,taskProjectionEvidence,type ProjectionOrigin} from './projection-origin.js';
@@ -55,11 +55,12 @@ export function rollingGoPolicyContracts(model: SecurityStore['model']) {
   return {before:policyContract({id:'eigos.business',version:'22',digest:'b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4'},priorFields,priorProjection),after:policyContract({id:'eigos.business',version:'23',digest:'2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127'},fields,projectionContract)};
 }
 function policyContract(model: SecurityStore['model']['ref'], fields: typeof baseline.types, projection: typeof projectionContract, reobservation = false, persistentConsent = false) {
-  if (!['27', '28'].includes(model.version)) {
+  if(model.version!=='30'){fields=Object.fromEntries(Object.entries(fields).filter(([id])=>!['RideSourceTask','RideSourceObservation'].includes(id)));projection={...projection,fields:Object.fromEntries(Object.entries(projection.fields).filter(([id])=>!['RideSourceTask','RideSourceObservation'].includes(id)))};}
+  if (!['27', '28','30'].includes(model.version)) {
     fields = Object.fromEntries(Object.entries(fields).filter(([id]) => !['PaymentCommerceReadTask', 'PaymentCommerceReadObservation'].includes(id)));
     projection = { ...projection, fields: Object.fromEntries(Object.entries(projection.fields).filter(([id]) => id !== 'PaymentCommerceReadObservation')) };
   }
-  if (!['26', '27', '28'].includes(model.version) && fields.GoalCoverage) { fields = structuredClone(fields); fields.GoalCoverage!.fingerprint = PRIOR_GOAL_COVERAGE_FINGERPRINT; }
+  if (!['26', '27', '28','30'].includes(model.version) && fields.GoalCoverage) { fields = structuredClone(fields); fields.GoalCoverage!.fingerprint = PRIOR_GOAL_COVERAGE_FINGERPRINT; }
   if (!fields.Person && fields.RequestFact) { fields = structuredClone(fields); fields.RequestFact!.fingerprint = 'aca8fe3bad913ec40620004cfaf77e1620dbd40d6f59d92a774fc90aca9e1ace'; delete fields.RequestFact!.fields.personalBasis; }
   const taskFields = fields.Person ? taskContextFields : { ...taskContextFields, RequestFact: taskContextFields.RequestFact!.filter(field => field !== 'personalBasis') };
   return digest({model,fields,projection,taskContext:{version:TASK_CONTEXT_BINDING_VERSION,fields:taskFields,capabilityReader:'immutable-compatible-definition-v1'},
@@ -90,10 +91,11 @@ export function paymentCommercePolicyContracts(model: SecurityStore['model'], pe
 }
 /** Select only an exact already-reviewed policy contract. A runtime upgrade
  * never converts a v27 policy into the descriptions-v28 policy implicitly. */
-export function reviewedKernelVersionForPolicy(policyDigest: string): '27' | '28' {
+export function reviewedKernelVersionForPolicy(policyDigest: string): '27' | '28' | '30' {
   for (const ref of [PAYMENT_COMMERCE_KERNEL_MODEL_REF, BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF]) {
     if ([false, true].some(persistent => policyContract(ref, baseline.types, projectionContract, true, persistent) === policyDigest)) return ref.version as '27' | '28';
   }
+  const rides=rideSourcesKernelImplementation();if(Object.values(persistentConsentPolicyContracts(rides)).includes(policyDigest))return '30';
   throw new Error('The imported policy requires an explicit supported kernel review');
 }
 const refKey = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);

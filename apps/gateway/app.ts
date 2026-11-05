@@ -1,3 +1,4 @@
+import {rideConnectionsFromConfig} from '../../packages/capabilities/rides/connection.js';
 import { commerceConnectionsFromConfig } from '../../packages/capabilities/payment-commerce/connection.js';
 import { NetworkService } from '../../packages/network/service.js';
 import { MemberSourceService } from '../../packages/members/source-service.js';
@@ -65,7 +66,7 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
   const members = new MemberStore(config.MEMBERSHIP_DATABASE_PATH ?? (config.DATABASE_PATH === ':memory:' ? ':memory:' : `${config.DATABASE_PATH}.members`));
   let catalog: ExecutionCatalog, tasks: TaskService, network: NetworkService | undefined;
   try {
-    catalog = catalogFactory?.(store) ?? createExecutionCatalog({ paymentCommerce: commerceConnectionsFromConfig(config), store, didiRelayAgentId: config.EIGOS_DIDI_RELAY_AGENT_ID, personalSourceOwner: config.EIGOS_PERSONAL_SOURCE_OWNER, didiOrderTestEnabled: config.EIGOS_DIDI_ORDER_TEST_ENABLED === 'true', csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
+    catalog = catalogFactory?.(store) ?? createExecutionCatalog({ rides:rideConnectionsFromConfig(config),paymentCommerce: commerceConnectionsFromConfig(config), store, didiRelayAgentId: config.EIGOS_DIDI_RELAY_AGENT_ID, personalSourceOwner: config.EIGOS_PERSONAL_SOURCE_OWNER, didiOrderTestEnabled: config.EIGOS_DIDI_ORDER_TEST_ENABLED === 'true', csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
       documentEnabled: config.EIGOS_EXECUTOR !== 'disabled', paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR,
       paotuiMemberConnectionFile: config.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE, memberSourceKeyFile: config.EIGOS_MEMBER_SOURCE_KEY_FILE, executionHost: 'gateway',
       rollinggo: config.EIGOS_ROLLINGGO_KEY_FILE ? { keyFile: config.EIGOS_ROLLINGGO_KEY_FILE, keySha256: config.EIGOS_ROLLINGGO_KEY_SHA256! } : undefined,

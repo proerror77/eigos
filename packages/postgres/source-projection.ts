@@ -155,10 +155,11 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
   // Only this read-only graph command opts in. The scope closes before the
   // mapper can ingest, and source admission/write checks always stay fresh.
   const readAuthorize=caller?authorize:withPostgresWorkerRequestAuthorization;
+  let rideIntegrity=0;
   const read=<R>(operation:(graph:Parameters<Parameters<typeof withPostgresPlanningReadGraph>[6]>[0])=>Promise<R>)=>
     withPostgresOntologyReleaseSnapshot(client,()=>readAuthorize(client,claim,options.policyDigest,(auth,admission,principal)=>
       withPostgresPlanningReadGraph(client,principal,request.id,options.policyDigest,auth,admission,async graph=>{
-        const result=await operation(graph),influence=graph.evidence();
+        const result=await(rideIntegrity?auth.withFunction('rideSourceStatus',scoped=>scoped.withIntegrity(()=>operation(graph))):operation(graph)),influence=graph.evidence();
         if(influence){const approved=await auth.authorizeEvidence(influence);await client.query(`INSERT INTO ${q}.security_reads(grant_id,digest,body) VALUES($1,$2,$3) ON CONFLICT(grant_id,digest) DO NOTHING`,[admission.grant.id,digest(approved),JSON.stringify(approved)]);
           onInfluence?.(structuredClone(approved));}
         return result;
@@ -334,13 +335,14 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
     active();if(!caller||owner!==claim.owner||invocation.requestId!==request.id||invocation.planId!==caller.planId||invocation.intentId!==caller.intentId||invocation.attemptId!==caller.attemptId)throw new SecurityError('AUTHORIZATION_REQUIRED');
     await caller.journal.assertDispatchAllowed(claim,caller.intentId,caller.attemptId);active();await scope();active();
   };
-  const driver:PostgresCallerSourceProjectionGraph=Object.freeze({model:metadata.model,now:metadata.now,releaseRef:metadata.releaseRef,security:true,request:freezeData(structuredClone(request)),
+  const driver:PostgresCallerSourceProjectionGraph&Pick<GraphStorage,'withGraphIntegrity'>=Object.freeze({
+    async withGraphIntegrity<R>(action:()=>Promise<R>):Promise<R>{if(caller||!['ride.uber.estimate','ride.grab.estimate'].includes(configured.programRef.id))throw new SecurityError('AUTHORIZATION_REQUIRED');rideIntegrity++;try{return await action();}finally{rideIntegrity--;}} ,model:metadata.model,now:metadata.now,releaseRef:metadata.releaseRef,security:true,request:freezeData(structuredClone(request)),
     read:(...args:Parameters<GraphStorage['read']>)=>serial(()=>{if(++reads>1000)throw new SecurityError('OUTPUT_NOT_ALLOWED');return sourceRead(...args);}),
     query:(...args:Parameters<GraphStorage['query']>)=>serial(()=>read(graph=>graph.query(...args))),related:(...args:Parameters<GraphStorage['related']>)=>serial(()=>canonical&&canonicalTypes.has(args[1].type)&&args[2]==='sourceReceipts'?canonicalRelated(...args):read(graph=>graph.related(...args))),relationshipDigest:(...args:Parameters<GraphStorage['relationshipDigest']>)=>serial(()=>read(graph=>graph.relationshipDigest(...args))),
     ingest:(...args:Parameters<GraphStorage['ingest']>)=>serial(()=>{if(caller)throw new SecurityError('AUTHORIZATION_REQUIRED');return ingest(...args);}),readPrivate:(...args:Parameters<GraphStorage['readPrivate']>)=>{if(!canonical)throw new SecurityError('AUTHORIZATION_REQUIRED');return serial(()=>canonicalRead(...args));},
     containsLinks:(...args:Parameters<GraphStorage['containsLinks']>)=>serial(()=>{if(!caller)throw new SecurityError('AUTHORIZATION_REQUIRED');return callerGraph(graph=>Promise.resolve(graph.containsLinks(...args)));}),
     evidencePropertiesDigest:()=>{throw new SecurityError('AUTHORIZATION_REQUIRED');},
-    withGraphFunction:<R>(owner:string,id:string,action:(scope:GraphStorage)=>Promise<R>)=>serial(()=>{if(caller||configured.programRef.id!=='ride.estimate.query'||!['rideEstimateStatus','selectDidiPlace'].includes(id))throw new SecurityError('AUTHORIZATION_REQUIRED');return read(graph=>graph.withGraphFunction(owner,id,action));}),
+    withGraphFunction:<R>(owner:string,id:string,action:(scope:GraphStorage)=>Promise<R>)=>serial(()=>{if(caller||!(configured.programRef.id==='ride.estimate.query'&&['rideEstimateStatus','selectDidiPlace'].includes(id)||['ride.uber.estimate','ride.grab.estimate'].includes(configured.programRef.id)&&id==='rideSourceStatus'))throw new SecurityError('AUTHORIZATION_REQUIRED');return read(graph=>graph.withGraphFunction(owner,id,action));}),
     planning:{evaluate:(...args:Parameters<NonNullable<import('../ontology/graph-program.js').PlanningGraphStorage['evaluate']>>)=>serial(()=>read(graph=>graph.evaluate(...args)))},
     projectedRelationshipDigest:(owner:string,ref:ObjectRef,links:import('../ontology/object-store.js').LinkWrite[],remove:import('../ontology/object-store.js').LinkWrite[]=[])=>serial(async()=>{if(!canonical||owner!==claim.owner||!canonicalTypes.has(ref.type))throw new SecurityError('AUTHORIZATION_REQUIRED');try{await canonicalRead(owner,ref);}catch(error){if(!(error instanceof DomainError&&error.code==='NOT_FOUND'))throw error;}return(await PostgresProjectionGraph.create(client,owner,release,options.builder,{readOnly:true})).projectedRelationshipDigest(owner,ref,links,remove);}),
     tombstone:(...args:Parameters<GraphStorage['tombstone']>)=>serial(()=>{if(!caller)throw new SecurityError('AUTHORIZATION_REQUIRED');return callerGraph(graph=>Promise.resolve(graph.tombstone(...args)));}),

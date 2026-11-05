@@ -1,0 +1,50 @@
+{
+  "format": "eigos.ontology.mcp-reads.v1",
+  "id": "rides.readonly",
+  "version": "1",
+  "completion": {
+    "evaluate": "rideSourceStatus"
+  },
+  "actions": [
+    {
+      "id": "EstimateUberRide",
+      "description": "Read Uber estimate through the enrolled PA and prepare an official App handoff. No ride is booked or paid.",
+      "resultType": "RideSourceObservation",
+      "mcp": {
+        "server": "uber",
+        "tool": "estimate",
+        "encoding": "json",
+        "arguments": {
+          "query": {
+            "from": "scope",
+            "path": [
+              "input"
+            ]
+          }
+        },
+        "requires": [],
+        "inputMatchesScope": []
+      }
+    },
+    {
+      "id": "EstimateGrabRide",
+      "description": "Read Grab estimate through the enrolled PA and prepare an official App handoff. No ride is booked or paid.",
+      "resultType": "RideSourceObservation",
+      "mcp": {
+        "server": "grab",
+        "tool": "estimate",
+        "encoding": "json",
+        "arguments": {
+          "query": {
+            "from": "scope",
+            "path": [
+              "input"
+            ]
+          }
+        },
+        "requires": [],
+        "inputMatchesScope": []
+      }
+    }
+  ]
+}

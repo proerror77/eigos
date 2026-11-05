@@ -1,3 +1,4 @@
+import {rideSourceActionSchema} from '../ontology/ride-sources.js';
 import {z} from 'zod';
 import {digest} from '../core/delegation.js';
 import {didiToolInputs} from '../capabilities/didi/contracts.js';
@@ -21,4 +22,12 @@ export function checkedSourceReply(request:AnySourceReadRequest,value:unknown):A
 
 export function assertSourceTaskEnvironment(request:AnySourceReadRequest,environment:string|undefined){
  if(isRideSourceRequest(request)&&((environment==='sandbox')!==(request.source.environment==='sandbox')))throw new Error('Ride source environment differs from original task');
+}
+
+/** The query sent to PA must be the original immutable action input, not a
+ * replacement route hidden behind the same scope reference. */
+export function assertSourceDispatchInput(request:AnySourceReadRequest,value:unknown){
+ if(!isRideSourceRequest(request))return;
+ const input=rideSourceActionSchema.parse(value);
+ if(digest(input)!==request.context.actionInputDigest||digest(input.query)!==digest(request.input))throw new Error('Ride route differs from original dispatch input');
 }

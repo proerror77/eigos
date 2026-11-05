@@ -73,3 +73,11 @@ test('Uber range bounds use exact decimals without guessing a monetary scale',()
  for(const [lower,upper]of [['20','10'],['9007199254740993.00000001','9007199254740993.00000000'],['0.00000002','0.00000001']])assert.throws(()=>normalizeRideData('uber',response(lower!,upper!),query));
  const data=normalizeRideData('uber',response('0001.000','1'),query);if(data.provider!=='uber')assert.fail('Wrong provider');assert.deepEqual(data.products[0]!.fare.range,{lower:'0001.000',upper:'1'});assert.equal(data.amountUnit,'provider_wire_unverified');
 });
+
+test('Uber no_fare-only products do not discard another numeric quote; incomplete numeric fares still fail closed',()=>{
+ const query={coordinateSystem:'WGS84' as const,pickup:{latitude:1,longitude:2,address:'Origin'},dropoff:{latitude:3,longitude:4,address:'Destination'}};
+ const priced={product:{product_id:'quoted'},fare:{fare_id:'fare',currency_code:'SGD',contractual:false,point_fare:'10'}};
+ const value=normalizeRideData('uber',{ride_estimate:{product_estimates:[{product:{product_id:'unavailable'},fare:{no_fare:{reason:'not_available'}}},priced]}},query);
+ assert.equal(value.provider,'uber');if(value.provider==='uber')assert.deepEqual(value.products.map(p=>p.productId),['quoted']);
+ assert.throws(()=>normalizeRideData('uber',{ride_estimate:{product_estimates:[{product:{product_id:'bad'},fare:{point_fare:'10'}},priced]}},query));
+});

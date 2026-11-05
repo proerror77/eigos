@@ -1,3 +1,4 @@
+import {extendRideSourcesKernel} from './ride-sources-kernel.js';
 import { extendPaymentCommerceKernel } from './payment-commerce-kernel.js';
 import {extendSemanticRetrievalKernel} from './semantic-retrieval-kernel.js';
 import { extendBusinessDescriptions } from './business-descriptions.js';
@@ -154,6 +155,9 @@ export function createConsolidatedKernelDefinition(registry = new TrustedDefinit
 export function createCurrentKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   return createBusinessDescriptionsKernelDefinition(registry);
 }
+export function createRideSourcesKernelDefinition(registry=new TrustedDefinitionRegistry()):SeedDefinition{
+ return complete(extendRideSourcesKernel(createSemanticRetrievalKernelDefinition(registry).document,registry),registry,false);
+}
 export function createSemanticRetrievalKernelDefinition(registry=new TrustedDefinitionRegistry()):SeedDefinition{
   return complete(extendSemanticRetrievalKernel(createBusinessDescriptionsKernelDefinition(registry).document,registry),registry,false);
 }
@@ -190,11 +194,11 @@ export class StagedKernelBuilder {
   #model?: OntologyModel;
   #documentDigest?: string;
   static readonly stages = 15;
-  readonly #targetVersion: '27' | '28' | '29';
+  readonly #targetVersion: '27' | '28' | '29' | '30';
   readonly #stageCount: number;
-  constructor(targetVersion: '27' | '28' | '29' = CURRENT_KERNEL_VERSION) {
-    if (targetVersion !== '27' && targetVersion !== '28' && targetVersion !== '29') throw new Error('Unsupported reviewed kernel target');
-    this.#targetVersion = targetVersion; this.#stageCount = targetVersion === '27' ? 14 : targetVersion==='28'?15:16;
+  constructor(targetVersion: '27' | '28' | '29' | '30' = CURRENT_KERNEL_VERSION) {
+    if (targetVersion !== '27' && targetVersion !== '28' && targetVersion !== '29' && targetVersion !== '30') throw new Error('Unsupported reviewed kernel target');
+    this.#targetVersion = targetVersion; this.#stageCount = targetVersion === '27' ? 14 : targetVersion==='28'?15:targetVersion==='29'?16:17;
   }
 
   step(expected: number): { completed: number; total: number; ready: boolean } {
@@ -249,6 +253,10 @@ export class StagedKernelBuilder {
           break;
         case 15:
           this.#current=complete(extendSemanticRetrievalKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
+          if(this.#targetVersion==='29'){this.#documentDigest=digest(this.#current.document);this.#registry.seal();}
+          break;
+        case 16:
+          this.#current=complete(extendRideSourcesKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
           this.#documentDigest=digest(this.#current.document);this.#registry.seal();
           break;
         default: throw new Error('Unknown kernel stage');
