@@ -98,8 +98,25 @@ export class SourceRelayService<R extends SourceRequestBase,Reply extends {resul
       else if(previous)result=this.backend.reply(request,undefined,'READ_OUTCOME_UNKNOWN');
       else{
         transaction(this.db,()=>this.db.prepare("INSERT INTO source_relay_reads VALUES(?,?,'processing',NULL)").run(request.callId,requestDigest));
-        try{const observed=await this.backend.invoke(request,signal,()=>this.authorize(request,signal,'provider_dispatch'));result=this.backend.reply(request,observed);}
-        catch(error){if(signal.aborted)throw error;result=this.backend.reply(request,undefined,error instanceof Error&&'code'in error&&error.code==='RATE_LIMITED'?'RATE_LIMITED':'SOURCE_UNAVAILABLE');}
+        // The callback is the trusted backend's last check before each provider
+        // invocation. Its local classification survives connector error wrapping.
+        // Once any callback succeeds, processing is an irreversible replay fence.
+        let providerBoundaryCrossed=false,preDispatchUnavailable:SourceAuthorizationError|undefined;
+        try{const observed=await this.backend.invoke(request,signal,async()=>{
+          try{await this.authorize(request,signal,'provider_dispatch');providerBoundaryCrossed=true;}
+          catch(error){if(!providerBoundaryCrossed&&error instanceof SourceAuthorizationError&&error.outcome==='unavailable')preDispatchUnavailable=error;throw error;}
+        });if(!providerBoundaryCrossed)throw new Error('Source backend skipped dispatch authorization');result=this.backend.reply(request,observed);}
+        catch(error){
+          if(preDispatchUnavailable&&!providerBoundaryCrossed){
+            // Authorization failed before a provider invocation was possible.
+            // The failed callback unwound the backend; no in-flight source call
+            // may be resumed from this row. A restart during processing itself
+            // remains unknown, since it has no such proven unwind evidence.
+            this.db.prepare("DELETE FROM source_relay_reads WHERE id=? AND request_digest=? AND state='processing' AND result IS NULL").run(request.callId,requestDigest);
+            throw preDispatchUnavailable;
+          }
+          if(signal.aborted)throw error;result=this.backend.reply(request,undefined,error instanceof Error&&'code'in error&&error.code==='RATE_LIMITED'?'RATE_LIMITED':'SOURCE_UNAVAILABLE');
+        }
         // A lost delivery or primary outage never repeats the provider read.
         this.db.prepare("UPDATE source_relay_reads SET state='completed',result=? WHERE id=?").run(JSON.stringify(result),request.callId);
       }

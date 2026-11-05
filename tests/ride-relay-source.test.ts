@@ -67,3 +67,10 @@ for(const provider of ['uber','grab'] as const)test(`${provider}: disabling the 
   }
  }finally{service.close();f.close();}
 });
+
+for(const provider of ['uber','grab'] as const)test(`${provider}: temporary pre-dispatch authorization failure retries the same call without caching a false terminal error`,async()=>{
+ const f=fixture(provider);f.unavailableAt(2);let service=new RideRelayService(f.transport,f.config,f.connector,f.authorize);
+ try{await assert.rejects(service.handle(f.message,new AbortController().signal),/unavailable/);assert.equal(f.calls(),0);assert.equal(f.delivered.length,0);service.close();service=new RideRelayService(f.transport,f.config,f.connector,f.authorize);
+  await service.handle(f.message,new AbortController().signal);const response=rideSourceResponseSchema.parse(f.delivered[0]);assert(response.result);assert.equal(response.callId,f.request.callId);assert.equal(f.calls(),1);await service.handle(f.message,new AbortController().signal);assert.equal(f.calls(),1);assert.deepEqual(f.delivered[1],response);
+ }finally{service.close();f.close();}
+});

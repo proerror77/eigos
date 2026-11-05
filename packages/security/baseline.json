@@ -7863,7 +7863,7 @@
     {
       "id": "ride-source-service-agent-transport",
       "file": "packages/agent-transport/source-service.ts",
-      "sourceDigest": "e6447941eff2414755a258b04554b10499ef2dc399d276e97eb1e95981a44531",
+      "sourceDigest": "7c3a5de7e0abb7b0f95c1667d1895594a4667c36be84e3609f547b73afe56061",
       "channels": [
         "private_source",
         "relay"
