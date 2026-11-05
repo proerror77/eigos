@@ -2945,7 +2945,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "6e1b3393034193c40a974a6c529e3ce23455063ef2cb35c59b206ee244fe7860",
+      "sourceDigest": "66a0b73d7aa776870585a566105bac2ec7657fae7c35b29555e25fb400e36ad9",
       "channels": [
         "sqlite",
         "idempotency"
@@ -4637,7 +4637,7 @@
     {
       "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
       "file": "apps/gateway/relay.ts",
-      "sourceDigest": "a049b3d7e23e0b1f91807f589cdd670943de3dd1759f0a410241f293da997199",
+      "sourceDigest": "99e4181f53d8871d90d7f044fe9274dd83aa6f981cb8c00d2c6d9c69f98a3ff7",
       "stage": "S5",
       "content": "Node enrollment, installation binding, current source authorization and dispatch",
       "currentControl": "Authenticated member and DPoP binding; exact primary authority; live grant and Worker lease checks; at most two source deliveries, each freshly authorized before send; shutdown rejects new enrollment or binding and drains started work before closing node state",
@@ -4662,7 +4662,7 @@
     {
       "id": "relay-read-authority",
       "file": "packages/security/relay-service.ts",
-      "sourceDigest": "c8bdfe75d0eb978ac6b657719649cdfa64f2d65a28ff4cf6192c51666781df12",
+      "sourceDigest": "3e4b2558e273128e61e5369c8d7d5e2845948fa209f4e15a2209f4d04cd464dc",
       "channels": [
         "authorization_control",
         "source"
@@ -4687,7 +4687,7 @@
     {
       "id": "relay-source-service",
       "file": "packages/agent-transport/didi-service.ts",
-      "sourceDigest": "cce346271fe5f5a877b222ca55f0977148d2184e340c9d6fa4a090a76d70e0e7",
+      "sourceDigest": "247a83111776116968a0f27e69b2ddc42999f7d4a6553395a97ac3ee6f328cc5",
       "channels": [
         "agent_transport",
         "source",
@@ -7278,7 +7278,7 @@
     {
       "id": "postgres-source-relay-authority",
       "file": "packages/postgres/relay-read-authority.ts",
-      "sourceDigest": "960dd17151e45a4db9e87bf96e40fbd3e800d8b70f385a85363f495c61c44f88",
+      "sourceDigest": "456c9d965f4b2d22c496e2e200997837916e48d728045d2a8663ea0210f44c55",
       "channels": [
         "internal"
       ],
@@ -7780,6 +7780,97 @@
       "content": "Base-bound read-only projection epoch catalogue verification",
       "currentControl": "Only after the original activation/schema/import receipt chain is verified: require the original epoch table inventory, exact reviewed compiler helper body/config/owner/ACL and complete twelve-trigger group; legacy bases cannot gain helper permissions from target self-report. No DDL, grants or independent source re-audit is performed here.",
       "targetControl": "Preserve immutable base receipts, current runtime authority and rejection of unreviewed target extensions.",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-contracts-capabilities",
+      "file": "packages/capabilities/rides/contracts.ts",
+      "sourceDigest": "f301caa1c9a06c2dcc303db371813194bef678274686322941121a75712c390b",
+      "channels": [
+        "private_source",
+        "relay"
+      ],
+      "content": "Provider-bound readonly ride data, source credentials, task/context identity or current authorized receipt delivery",
+      "currentControl": "Default disabled; explicit provider schema, owner/environment/connection pins and original task/source authorization; no order or payment",
+      "targetControl": "Keep original current grants, DPoP and durable source-receipt validation through all delivery and acceptance boundaries",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-connector-capabilities",
+      "file": "packages/capabilities/rides/connector.ts",
+      "sourceDigest": "b6a003c4bf081a554858888043d3fe9a3772c44fa03d21a38738b91847482ef5",
+      "channels": [
+        "private_source",
+        "relay"
+      ],
+      "content": "Provider-bound readonly ride data, source credentials, task/context identity or current authorized receipt delivery",
+      "currentControl": "Default disabled; explicit provider schema, owner/environment/connection pins and original task/source authorization; no order or payment",
+      "targetControl": "Keep original current grants, DPoP and durable source-receipt validation through all delivery and acceptance boundaries",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-handoff-capabilities",
+      "file": "packages/capabilities/rides/handoff.ts",
+      "sourceDigest": "43c2790859a2d89d2f933804c6393472f7a1813f078108a03fe1c0d9a4a42dc8",
+      "channels": [
+        "private_source",
+        "relay"
+      ],
+      "content": "Provider-bound readonly ride data, source credentials, task/context identity or current authorized receipt delivery",
+      "currentControl": "Default disabled; explicit provider schema, owner/environment/connection pins and original task/source authorization; no order or payment",
+      "targetControl": "Keep original current grants, DPoP and durable source-receipt validation through all delivery and acceptance boundaries",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-ride-contracts-agent-transport",
+      "file": "packages/agent-transport/ride-contracts.ts",
+      "sourceDigest": "82c8c84a40bd1a2a6eee8a02b9d33d1deaebe9368209cd749e6db76e9beaab90",
+      "channels": [
+        "private_source",
+        "relay"
+      ],
+      "content": "Provider-bound readonly ride data, source credentials, task/context identity or current authorized receipt delivery",
+      "currentControl": "Default disabled; explicit provider schema, owner/environment/connection pins and original task/source authorization; no order or payment",
+      "targetControl": "Keep original current grants, DPoP and durable source-receipt validation through all delivery and acceptance boundaries",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-ride-service-agent-transport",
+      "file": "packages/agent-transport/ride-service.ts",
+      "sourceDigest": "3992b7b219e6df48ba2e526ade65722ba8499fcdb434ed75e20be5c24f779169",
+      "channels": [
+        "private_source",
+        "relay"
+      ],
+      "content": "Provider-bound readonly ride data, source credentials, task/context identity or current authorized receipt delivery",
+      "currentControl": "Default disabled; explicit provider schema, owner/environment/connection pins and original task/source authorization; no order or payment",
+      "targetControl": "Keep original current grants, DPoP and durable source-receipt validation through all delivery and acceptance boundaries",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-source-protocol-agent-transport",
+      "file": "packages/agent-transport/source-protocol.ts",
+      "sourceDigest": "90483b1ef7a18688d3281f44abce38e059d278efef0d3198da99b4d51fe6d6cc",
+      "channels": [
+        "private_source",
+        "relay"
+      ],
+      "content": "Provider-bound readonly ride data, source credentials, task/context identity or current authorized receipt delivery",
+      "currentControl": "Default disabled; explicit provider schema, owner/environment/connection pins and original task/source authorization; no order or payment",
+      "targetControl": "Keep original current grants, DPoP and durable source-receipt validation through all delivery and acceptance boundaries",
+      "stage": "S5"
+    },
+    {
+      "id": "ride-source-service-agent-transport",
+      "file": "packages/agent-transport/source-service.ts",
+      "sourceDigest": "66f9b331a1279e6a64548146c5b778e036d12e71e9db9df946d2a5a011c4127c",
+      "channels": [
+        "private_source",
+        "relay"
+      ],
+      "content": "Provider-bound readonly ride data, source credentials, task/context identity or current authorized receipt delivery",
+      "currentControl": "Default disabled; explicit provider schema, owner/environment/connection pins and original task/source authorization; no order or payment",
+      "targetControl": "Keep original current grants, DPoP and durable source-receipt validation through all delivery and acceptance boundaries",
       "stage": "S5"
     }
   ]

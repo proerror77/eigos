@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {PaRideConnector} from '../packages/capabilities/rides/connector.js';
+import {normalizeRideData,PaRideConnector} from '../packages/capabilities/rides/connector.js';
 import {checkedGrabLink} from '../packages/capabilities/rides/handoff.js';
 import {rideQuerySchema,RideReadError,type RideBinding,type RideToken,type RideContext,type RideSourceHost} from '../packages/capabilities/rides/contracts.js';
 import {digest} from '../packages/core/delegation.js';
@@ -15,7 +15,7 @@ function wire(provider:RideBinding['provider']){
   const deep=new URL('https://grab.onelink.me/2695613898');deep.searchParams.set('af_dp',direct.href);
   return {services:[{serviceID:302,serviceName:'Synthetic Grab',eta:1,fare:{currency:'SGD',minFare:10,maxFare:20},surgeNotice:'NONE',deepLink:deep.href,directDeepLink:direct.href}]};
 }
-function sourceHost(b:RideBinding,changes:Partial<RideToken>={}):RideSourceHost{return {async loadToken(){return {owner:b.owner,provider:b.provider,environment:b.environment,connectionId:b.connectionId,value:'synthetic_private_token',expiresAt:new Date(Date.now()+60000).toISOString(),riderId:'linked-rider',...changes};},async resolveUberRider(){return 'linked-rider';}};}
+function sourceHost(b:RideBinding,changes:Partial<RideToken>={}):RideSourceHost{return {async loadToken(){return {owner:b.owner,provider:b.provider,environment:b.environment,connectionId:b.connectionId,revision:b.revision,value:'synthetic_private_token',expiresAt:new Date(Date.now()+60000).toISOString(),riderId:'linked-rider',...changes};},async resolveUberRider(){return 'linked-rider';}};}
 const error=(code:string)=>(e:unknown)=>e instanceof RideReadError&&e.code===code;
 for(const provider of ['uber','grab']as const){
  test(`${provider}: disabled and unapproved reads never load a token or dispatch`,async()=>{
@@ -34,7 +34,7 @@ for(const provider of ['uber','grab']as const){
   if(value.data.provider==='uber'){assert.equal(value.data.products[0]!.etaSeconds,60);assert.equal(value.data.amountUnit,'provider_wire_unverified');assert.equal(value.data.products[0]!.fare.point,'12345');}else assert.equal(value.data.services[0]!.etaMinutes,1);
  });
  test(`${provider}: owner, provider, environment, connection and expiry cannot cross`,async()=>{
-  const b=binding(provider);for(const changes of [{owner:JSON.stringify(['foreign','tenant','person'])},{provider:provider==='uber'?'grab' as const:'uber' as const},{environment:'production' as const},{connectionId:randomUUID()},{expiresAt:new Date(Date.now()-1000).toISOString()}]){
+  const b=binding(provider);for(const changes of [{owner:JSON.stringify(['foreign','tenant','person'])},{provider:provider==='uber'?'grab' as const:'uber' as const},{environment:'production' as const},{connectionId:randomUUID()},{revision:2},{expiresAt:new Date(Date.now()-1000).toISOString()}]){
    let called=false;const c=new PaRideConnector(b,{enabled:true,partnerApproved:true},sourceHost(b,changes),async()=>{called=true;assert.fail('Foreign token dispatched');});await assert.rejects(c.read(context,query,new AbortController().signal,()=>{}),error('TOKEN_BINDING_REJECTED'));assert.equal(called,false);
   }
  });
@@ -58,4 +58,18 @@ test('Grab links reject foreign origins, duplicate arguments, nested redirects a
  for(const invalid of [s.deepLink.replace('grab.onelink.me','evil.example'),s.deepLink+'&af_web_dp=https://evil.example',s.deepLink+'&af_dp=grab://open',s.deepLink.replace('1.28','2.28')])assert.throws(()=>checkedGrabLink(invalid,query,302));
  assert.throws(()=>checkedGrabLink(s.deepLink,query,303));
  assert.equal(rideQuerySchema.safeParse({...query,coordinateSystem:'GCJ02'}).success,false);
+});
+
+
+test('Uber keeps available quotes beside legitimate absent fare and no_fare products',()=>{
+ const fare={fare_id:'fare',currency_code:'SGD',contractual:false};
+ const response={ride_estimate:{product_estimates:[{product:{product_id:'available'},fare:{...fare,point_fare:'0'}},{product:{product_id:'missing'}},{product:{product_id:'not-upfront'},fare:{...fare,no_fare:{description:'Computed after trip'}}}]}};
+ const data=normalizeRideData('uber',response,query);assert.equal(data.provider,'uber');if(data.provider!=='uber')assert.fail('Wrong provider');assert.deepEqual(data.products.map(p=>p.productId),['available']);assert.equal(data.products[0]!.fare.point,'0');
+ assert.throws(()=>normalizeRideData('uber',{ride_estimate:{product_estimates:response.ride_estimate.product_estimates.slice(1)}},query),error('NO_ESTIMATE'));
+ assert.throws(()=>normalizeRideData('uber',{ride_estimate:{product_estimates:[response.ride_estimate.product_estimates[0],{product:{product_id:'malformed'},fare:{...fare,point_fare:'NaN'}}]}},query));
+});
+test('Uber range bounds use exact decimals without guessing a monetary scale',()=>{
+ const response=(lower:string,upper:string)=>({ride_estimate:{product_estimates:[{product:{product_id:'range'},fare:{fare_id:'range-fare',currency_code:'SGD',contractual:false,range_fare:{lower,upper}}}]}});
+ for(const [lower,upper]of [['20','10'],['9007199254740993.00000001','9007199254740993.00000000'],['0.00000002','0.00000001']])assert.throws(()=>normalizeRideData('uber',response(lower!,upper!),query));
+ const data=normalizeRideData('uber',response('0001.000','1'),query);if(data.provider!=='uber')assert.fail('Wrong provider');assert.deepEqual(data.products[0]!.fare.range,{lower:'0001.000',upper:'1'});assert.equal(data.amountUnit,'provider_wire_unverified');
 });

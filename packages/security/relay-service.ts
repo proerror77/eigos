@@ -5,7 +5,8 @@ import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import { agentIdSchema } from '../relay/contracts.js';
-import { didiToolInputs } from '../capabilities/didi/contracts.js';
+import {anySourceReadRequestSchema,anySourceReadResponseSchema,assertSourceReadInput,checkedSourceReply,type AnySourceReadRequest,type SourceReadInput} from '../agent-transport/source-protocol.js';
+import {rideSourceResponseSchema,type RideSourceRequest,type RideSourceResponse} from '../agent-transport/ride-contracts.js';
 import { sourceReadRequestSchema, sourceReadResponseSchema, SOURCE_RELAY_PROTOCOL, type SourceReadRequest, type SourceReadResponse } from '../agent-transport/service-contracts.js';
 import { accessContextSchema } from './contracts.js';
 import { authorizationScope, withAuthorization } from './context.js';
@@ -16,7 +17,7 @@ import type { AgentActionPlan } from '../ontology/agent-actions.js';
 type Row = Record<string, unknown>;
 /** Durable transport work, stored with the task authority. It creates no new business grant. */
 export class RelayReadAuthority {
-  private pipelineGuard?: (owner: string, request: SourceReadRequest, plan: AgentActionPlan, intent: ActionIntent) => void;
+  private pipelineGuard?: (owner: string, request: AnySourceReadRequest, plan: AgentActionPlan, intent: ActionIntent) => void;
   constructor(private db: DatabaseSync, private security: SecurityStore, readOnly: boolean) {
     if (!readOnly) db.exec(`CREATE TABLE IF NOT EXISTS security_relay_reads (
       id TEXT PRIMARY KEY, retry_key TEXT NOT NULL UNIQUE, peer_id TEXT NOT NULL, actor TEXT NOT NULL,
@@ -31,10 +32,11 @@ export class RelayReadAuthority {
   private row(id: string): Row {
     return this.db.prepare('SELECT * FROM security_relay_reads WHERE id=?').get(z.uuid().parse(id)) ?? (() => { throw new SecurityError('AUTHORIZATION_REQUIRED'); })();
   }
-  private assert(row: Row): SourceReadRequest {
+  private assert(row: Row): AnySourceReadRequest {
     if (Number(row.expires_at) <= this.security.now() || row.state === 'revoked') throw new SecurityError('ACCESS_REVOKED');
-    const actor = accessContextSchema.parse(JSON.parse(String(row.actor))), request = sourceReadRequestSchema.parse(JSON.parse(String(row.request)));
+    const actor = accessContextSchema.parse(JSON.parse(String(row.actor))), request = anySourceReadRequestSchema.parse(JSON.parse(String(row.request)));
     if (actor.actorKind !== 'worker' || actor.taskId !== request.context.requestId || actor.requestRevision !== request.context.requestRevision) throw new SecurityError('AUTHORIZATION_REQUIRED');
+    try{assertSourceReadInput(request,actor.ownerKey,String(row.peer_id));}catch{throw new SecurityError('AUTHORIZATION_REQUIRED');}
     // This scope checks an exact dispatch and exports only its authorization
     // receipt. It does not inherit or publish the Worker's historical outputs.
     // Current object/source/plan checks below still read their own dependencies.
@@ -60,15 +62,16 @@ export class RelayReadAuthority {
     }));
     return request;
   }
-  create(peerId: string, input: Omit<SourceReadRequest, 'protocol' | 'kind' | 'callId' | 'expiresAt'>): SourceReadRequest {
+  create(peerId:string,input:Omit<SourceReadRequest,'protocol'|'kind'|'callId'|'expiresAt'>):SourceReadRequest;
+  create(peerId:string,input:Omit<RideSourceRequest,'protocol'|'kind'|'callId'|'expiresAt'>):RideSourceRequest;
+  create(peerId: string, input: SourceReadInput): AnySourceReadRequest {
     agentIdSchema.parse(peerId);
     const scope = authorizationScope();
     if (!this.security.enabled || scope?.actor.actorKind !== 'worker' || scope.policies.security !== this.security || !scope.grant) throw new SecurityError('AUTHORIZATION_REQUIRED');
     scope.assertCurrent();
-    const request = sourceReadRequestSchema.parse({ ...input, protocol: SOURCE_RELAY_PROTOCOL, kind: 'source.read', callId: randomUUID(),
+    const request = anySourceReadRequestSchema.parse({ ...input, protocol: SOURCE_RELAY_PROTOCOL, kind: 'source.read', callId: randomUUID(),
       expiresAt: Math.min(this.security.now() + 120000, consentDeadline(scope.grant.expiresAt)) });
-    const parsedInput = didiToolInputs[request.tool].parse(request.input);
-    if (digest(parsedInput) !== digest(request.input)) throw new SecurityError('AUTHORIZATION_REQUIRED');
+    try{assertSourceReadInput(request,scope.actor.ownerKey,peerId);}catch{throw new SecurityError('AUTHORIZATION_REQUIRED');}
     const retryKey = digest([peerId, input]);
     return this.security.atomic(() => {
       const existing = this.db.prepare('SELECT * FROM security_relay_reads WHERE retry_key=?').get(retryKey);
@@ -84,8 +87,8 @@ export class RelayReadAuthority {
       return request;
     });
   }
-  pending(): { peerId: string; request: SourceReadRequest }[] {
-    const results: { peerId: string; request: SourceReadRequest }[] = [];
+  pending(): { peerId: string; request: AnySourceReadRequest }[] {
+    const results: { peerId: string; request: AnySourceReadRequest }[] = [];
     for (const row of this.db.prepare("SELECT * FROM security_relay_reads WHERE state='queued' ORDER BY rowid LIMIT 20").all()) {
       try { results.push({ peerId: String(row.peer_id), request: this.assert(row) }); }
       catch (error) {
@@ -95,7 +98,7 @@ export class RelayReadAuthority {
     }
     return results;
   }
-  authorize(id: string, peerId?: string): SourceReadRequest {
+  authorize(id: string, peerId?: string): AnySourceReadRequest {
     const row = this.row(id);
     if (peerId !== undefined && row.peer_id !== peerId) throw new SecurityError('AUTHORIZATION_REQUIRED');
     return this.assert(row);
@@ -113,9 +116,10 @@ export class RelayReadAuthority {
       .run(z.uuid().parse(connectionId), id);
   }
   accept(peerId: string, connectionId: string, input: unknown) {
-    const result = sourceReadResponseSchema.parse(input);
+    const result = anySourceReadResponseSchema.parse(input);
     this.security.atomic(() => {
       const row = this.row(result.callId), request = this.assert(row);
+      try{checkedSourceReply(request,result);}catch{throw new SecurityError('AUTHORIZATION_REQUIRED');}
       if (row.peer_id !== peerId || row.connection_id !== connectionId || result.requestDigest !== digest(request) || result.authorityId !== request.authorityId) throw new SecurityError('AUTHORIZATION_REQUIRED');
       if (row.result && digest(JSON.parse(String(row.result))) !== digest(result)) throw new SecurityError('POLICY_CHANGED');
       this.db.prepare("UPDATE security_relay_reads SET state='completed',result=? WHERE id=?").run(JSON.stringify(result), result.callId);
@@ -125,6 +129,7 @@ export class RelayReadAuthority {
     const row = this.row(id); this.assert(row);
     return row.result ? sourceReadResponseSchema.parse(JSON.parse(String(row.result))) : undefined;
   }
+  rideResult(id:string):RideSourceResponse|undefined{const row=this.row(id);this.assert(row);return row.result?rideSourceResponseSchema.parse(JSON.parse(String(row.result))):undefined;}
   ready(id:string):boolean {
     const row=this.row(id),scope=authorizationScope();
     if(scope?.policies.security!==this.security||scope.actor.actorKind!=='worker'||scope.policyRevision!==row.policy_revision

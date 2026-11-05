@@ -1,3 +1,4 @@
+import {assertSourceTaskEnvironment} from '../agent-transport/source-protocol.js';
 import { projectCapabilityCatalog } from '../ontology/capability-catalog.js';
 import { ObservationContractStore } from './observation-store.js';
 import { personalSourceAdmitted, sourceOwner, type PersonalSource } from './personal-source.js';
@@ -169,6 +170,7 @@ export class JobStore {
     }, options.securityNow ?? Date.now));
     this.security.relayReads.setPipelineGuard((owner, request, plan, intent) => {
       const job = this.get(owner, request.context.requestId), graph = this.ontologyForJob(owner, job);
+      try{assertSourceTaskEnvironment(request,job.delegation?.request.executionEnvironment);}catch{throw new DomainError('FORBIDDEN','Source environment differs from original task');}
       const agent = job.delegation?.agent, step = plan.steps.find(value => value.intentId === intent.id);
       if (!agent || !step) throw new DomainError('FORBIDDEN', 'The source read has no current action plan');
       const binding = actionSources(agent, step.action, step.input, step).find(value => value.programRef.id === request.context.programId && value.programDigest === request.context.programDigest);

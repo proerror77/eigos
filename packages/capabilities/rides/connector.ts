@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {digest} from '../../core/delegation.js';
 import {sourceReadContextSchema} from '../../agent-transport/service-contracts.js';
-import {rideBindingSchema,rideQuerySchema,rideTokenSchema,rideDataSchema,rideReadResultSchema,RideReadError,type RideBinding,type RideContext,type RideOptions,type RideSourceHost,type RideQuery,type RideReadResult} from './contracts.js';
+import {fareRangeSchema,rideBindingSchema,rideQuerySchema,rideTokenSchema,rideDataSchema,rideReadResultSchema,RideReadError,type RideBinding,type RideContext,type RideOptions,type RideSourceHost,type RideQuery,type RideReadResult} from './contracts.js';
 import {checkedGrabLink,handoff,uberHandoff} from './handoff.js';
 export type RideReadCheck=(stage:'prepare'|'dispatch'|'result')=>void|Promise<void>;
 export interface RideConnector {readonly evidenceKind:'live_readonly'|'provider_mock'|'fixture';read(context:RideContext,query:RideQuery,signal:AbortSignal,check:RideReadCheck):Promise<RideReadResult>}
@@ -14,12 +14,14 @@ async function body(response:Response,signal:AbortSignal){
   finally{void reader.cancel().catch(()=>{});reader.releaseLock();}
 }
 const text=z.string().min(1).max(400),amount=z.string().regex(/^\d{1,24}(?:\.\d{1,8})?$/);
-const uberWire=z.object({ride_estimate:z.object({product_estimates:z.array(z.object({product:z.object({product_id:text,display_name:text.optional()}),eta:z.object({eta_in_seconds:z.number().int().nonnegative().optional()}).optional(),fare:z.object({fare_id:text,currency_code:z.string().regex(/^[A-Z]{3}$/),contractual:z.boolean(),expires_at:z.string().max(100).optional(),point_fare:amount.optional(),range_fare:z.object({lower:amount,upper:amount}).optional()}).optional()})).max(100).optional()}).optional()});
+const uberWire=z.object({ride_estimate:z.object({product_estimates:z.array(z.object({product:z.object({product_id:text,display_name:text.optional()}),eta:z.object({eta_in_seconds:z.number().int().nonnegative().optional()}).optional(),fare:z.object({fare_id:text,currency_code:z.string().regex(/^[A-Z]{3}$/),contractual:z.boolean(),expires_at:z.string().max(100).optional(),point_fare:amount.optional(),range_fare:fareRangeSchema.optional(),no_fare:z.record(z.string(),z.unknown()).optional()}).optional()})).max(100).optional()}).optional()});
 const grabWire=z.object({services:z.array(z.object({serviceID:z.number().int().positive(),serviceName:text,eta:z.number().int().nonnegative(),fare:z.object({currency:z.string().regex(/^[A-Z]{3}$/),minFare:z.number().finite().nonnegative(),maxFare:z.number().finite().nonnegative()}),surgeNotice:z.enum(['NONE','LOW_SURGE','HIGH_SURGE','FRACTIONAL_SURGE']),deepLink:z.string().max(8192),directDeepLink:z.string().max(8192)})).max(100)});
 export function normalizeRideData(provider:RideBinding['provider'],wire:unknown,query:RideQuery){
   if(provider==='uber'){
-    const products=uberWire.parse(wire).ride_estimate?.product_estimates??[];
-    if(!products.length||products.some(p=>!p.fare||p.fare.point_fare===undefined&&p.fare.range_fare===undefined))throw new RideReadError('NO_ESTIMATE');
+    const reported=uberWire.parse(wire).ride_estimate?.product_estimates??[];
+    if(new Set(reported.map(p=>p.product.product_id)).size!==reported.length||reported.some(p=>p.fare?.no_fare!==undefined&&(p.fare.point_fare!==undefined||p.fare.range_fare!==undefined)))throw new RideReadError('INVALID_RESPONSE');
+    const products=reported.filter(p=>p.fare&&(p.fare.point_fare!==undefined||p.fare.range_fare!==undefined));
+    if(!products.length)throw new RideReadError('NO_ESTIMATE');
     return rideDataSchema.parse({provider,products:products.map(p=>({productId:p.product.product_id,name:p.product.display_name,etaSeconds:p.eta?.eta_in_seconds,fare:{id:p.fare!.fare_id,currency:p.fare!.currency_code,contractual:p.fare!.contractual,expiresAt:p.fare!.expires_at,point:p.fare!.point_fare,range:p.fare!.range_fare},handoff:uberHandoff(query,p.product.product_id)})),amountUnit:'provider_wire_unverified',finalFare:'unknown'});
   }
   const services=grabWire.parse(wire).services;
@@ -37,7 +39,7 @@ export class PaRideConnector implements RideConnector {
     try{
       bounded.throwIfAborted();await abortable(Promise.resolve().then(()=>check('prepare')),bounded);
       const token=Object.freeze(rideTokenSchema.parse(await abortable(this.host.loadToken(b,bounded),bounded)));
-      const valid=()=>{if(token.provider!==b.provider||token.environment!==b.environment||token.owner!==b.owner||token.connectionId!==b.connectionId||Date.parse(token.expiresAt)<=Date.now())throw new RideReadError('TOKEN_BINDING_REJECTED');};valid();
+      const valid=()=>{if(token.provider!==b.provider||token.environment!==b.environment||token.owner!==b.owner||token.connectionId!==b.connectionId||token.revision!==b.revision||Date.parse(token.expiresAt)<=Date.now())throw new RideReadError('TOKEN_BINDING_REJECTED');};valid();
       let request:object;
       if(b.provider==='uber'){
         const rider=await abortable(this.host.resolveUberRider?.(b,bounded)??Promise.resolve(undefined),bounded);if(!rider||rider!==token.riderId)throw new RideReadError('RIDER_BINDING_REQUIRED');
@@ -51,7 +53,7 @@ export class PaRideConnector implements RideConnector {
       const raw=await body(response,bounded);if(raw.includes(token.value))throw new RideReadError('CREDENTIAL_ECHO_REJECTED');
       const data=normalizeRideData(b.provider,JSON.parse(raw),query);if(JSON.stringify(data).includes(token.value))throw new RideReadError('CREDENTIAL_ECHO_REJECTED');
       await abortable(Promise.resolve().then(()=>check('result')),bounded);valid();bounded.throwIfAborted();
-      return rideReadResultSchema.parse({data,receipt:{provider:b.provider,environment:b.environment,bindingId:b.bindingId,connectionDigest:digest(b),contextDigest:digest(context),inputDigest:digest(query),resultDigest:digest(data),startedAt,receivedAt:new Date().toISOString()}});
+      return rideReadResultSchema.parse({data,receipt:{provider:b.provider,environment:b.environment,bindingId:b.bindingId,connectionDigest:digest(b),contextDigest:digest(context),inputDigest:digest(query),resultDigest:digest(data),evidenceKind:this.evidenceKind,startedAt,receivedAt:new Date().toISOString()}});
     }catch(error){if(bounded.aborted)throw new RideReadError('ABORTED');if(error instanceof RideReadError)throw error;throw new RideReadError('READ_REJECTED');}
   }
 }
