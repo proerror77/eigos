@@ -6,7 +6,7 @@ import { ReasoningBudgetExhausted } from '../../packages/core/execution-budget.j
 import { scheduleTaskRecovery, resumeScheduledRecovery, canRecoverReadOnly, canResumeSource, SOURCE_AUTHORIZATION_MESSAGE } from '../../packages/core/task-recovery.js';
 import {SecurityError} from '../../packages/security/store.js';
 import { withModelUsage } from '../../packages/core/model-usage-context.js';
-import { recordWorkerRejection } from '../../packages/core/worker-rejection.js';
+import { recordWorkerRejection, workerErrorOrigins } from '../../packages/core/worker-rejection.js';
 import { ConnectionAuthorizationRequired, DomainError } from '../../packages/core/domain.js';
 import { withAuthorization, type AuthorizationScope } from '../../packages/security/context.js';
 import type { RecoveryWork } from '../../packages/security/recovery.js';
@@ -24,17 +24,6 @@ type FailurePhase = 'recovery_writeback' | 'claim_cleanup' | 'model_context_clea
 // Large existing histories can need over 30s to persist a fenced pause. This
 // budget records recovery only; the original execution deadline remains intact.
 const RECOVERY_WRITEBACK_MS = 45000;
-const diagnosticFiles = new Set(['apps/worker/worker', 'packages/core/store', 'packages/core/task-outcome',
-  'packages/security/store', 'packages/security/policy-store', 'packages/security/envelope', 'packages/security/model',
-  'packages/coordinator/coordinator', 'packages/coordinator/planning-session', 'packages/coordinator/task-context',
-  'packages/ontology/object-store', 'packages/ontology/task-projection', 'packages/ontology/execution-projection']);
-function workerErrorOrigins(error: unknown): string[] {
-  if (!(error instanceof Error)) return [];
-  return [...new Set((error.stack ?? '').split('\n').slice(1, 17).flatMap(line => {
-    const match = line.match(/((?:apps|packages)\/[A-Za-z0-9_/-]+)\.(js|ts):(\d{1,7}):(\d{1,5})(?:\)|$)/);
-    return match && diagnosticFiles.has(match[1]!) ? [`${match[1]}.${match[2]}:${match[3]}:${match[4]}`] : [];
-  }))].slice(0, 4);
-}
 
 // No HTTP listener or user Bearer token. Claims and fenced writes are in the shared core.
 export class Worker {
