@@ -70,7 +70,7 @@ export class AuthorizationCoordinator {
       this.close(); const failure = new SecurityError('AUTHORITY_UNAVAILABLE'); failure.cause = error; throw failure;
     }
   }
-  authenticate(principal: Principal, bearer: string): AccessContext {
+  private authenticateIdentity(principal: Principal, bearer: string) {
     if (!this.token) throw new SecurityError('AUTHORITY_UNAVAILABLE');
     // Both checks are existing membership/installation mechanisms. A client_id
     // or installation id supplied in a JSON body is never evidence of identity.
@@ -78,7 +78,21 @@ export class AuthorizationCoordinator {
     this.members.authorize(principal);
     const facts = this.members.authorizationFacts(registration.memberId!, registration.id);
     if (facts.ownerKey !== ownerKey(principal) || facts.clientId !== principal.clientId) throw new SecurityError('ACCESS_REVOKED');
-    const subject = this.store.authenticateSubject(facts, this.token), grant = this.store.agentGrant(subject.installationId);
+    const subject = this.store.authenticateSubject(facts, this.token);
+    this.store.requireSubject(subject.installationId, subject.epoch);
+    return subject;
+  }
+  /** Called only for an exact configured operator on the metadata HTTP routes. */
+  authenticateOntologyOperator(principal: Principal, bearer: string): AccessContext {
+    if (!principal.scopes.includes('ontology:admin')) throw new SecurityError('AUTHORIZATION_REQUIRED');
+    const subject = this.authenticateIdentity(principal, bearer);
+    return accessContextSchema.parse({ version: SECURITY_CONTRACT, actorKind: 'ontology_operator', ownerKey: subject.ownerKey,
+      memberId: subject.memberId, installationId: subject.installationId, clientId: subject.clientId,
+      tokenScopes: [...new Set(principal.scopes)], authEpoch: subject.epoch, policyVersion: POLICY_VERSION,
+      checkedAt: new Date(this.store.now()).toISOString() });
+  }
+  authenticate(principal: Principal, bearer: string): AccessContext {
+    const subject = this.authenticateIdentity(principal, bearer), grant = this.store.agentGrant(subject.installationId);
     return accessContextSchema.parse({ version: SECURITY_CONTRACT, actorKind: 'agent', ownerKey: subject.ownerKey,
       memberId: subject.memberId, installationId: subject.installationId, clientId: subject.clientId,
       tokenScopes: [...new Set(principal.scopes)], agentGrant: { id: grant.id, revision: grant.revision },

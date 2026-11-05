@@ -1,4 +1,6 @@
 import { accessDigest } from '../security/model.js';
+import { digest } from '../core/delegation.js';
+import { paClassifications } from './pa-classification-kernel.js';
 import { z } from 'zod';
 import { DomainError, ownerKey, requireScope, taskIdSchema, type Job, type Principal } from '../core/domain.js';
 import type { JobStore } from '../core/store.js';
@@ -46,6 +48,7 @@ export const definitionCommandSchema = z.discriminatedUnion('operation', [
   z.strictObject({ operation: z.literal('create_ontology'), id: ontologyIdSchema.optional(), name: z.string().trim().min(1).max(160) }),
   z.strictObject({ operation: z.literal('create_draft'), ...ontology, title: z.string().trim().min(1).max(160) }),
   z.strictObject({ operation: z.literal('put_definition'), ...ontology, draftId, expectedRevision, kind: definitionKindSchema, definition: z.record(z.string(), z.unknown()) }),
+  z.strictObject({ operation: z.literal('put_pa_classification'), ...ontology, draftId, expectedRevision, objectType: z.string().min(1).max(80) }),
   z.strictObject({ operation: z.literal('retire_definition'), ...ontology, draftId, expectedRevision, resourceId: resourceIdSchema }),
   z.strictObject({ operation: z.enum(['publish_draft', 'discard_draft']), ...ontology, draftId, expectedRevision }),
   z.strictObject({ operation: z.literal('activate_release'), ...ontology, release: ontologyReleaseRefSchema, expectedGeneration: z.number().int().nonnegative() }),
@@ -58,6 +61,8 @@ export const definitionCommandSchema = z.discriminatedUnion('operation', [
 ]);
 const foundationQueries = ['get_ontology', 'get_pipeline_intake', 'get_pipeline_task_uses', 'get_pipeline_task_changes', 'get_pipeline_fact', 'discover_task_actions', 'get_action_task'];
 const foundationCommands = ['create_draft', 'put_pipeline_intake', 'validate_pipeline_intake', 'publish_draft', 'discard_draft', 'activate_release', 'verify_pipeline_task', 'report_pipeline_source_change', 'revoke_pipeline_verification', 'prepare_pipeline_validation'];
+const operatorQueries = ['get_ontology', 'list_definitions', 'get_definition', 'list_drafts', 'get_draft', 'validate_draft', 'diff_draft', 'list_releases', 'get_release'];
+const operatorCommands = ['create_draft', 'put_pa_classification', 'publish_draft', 'discard_draft', 'activate_release'];
 const [firstFoundationQuery, ...otherFoundationQueries] = definitionQuerySchema.options.filter(schema => foundationQueries.some(operation => schema.shape.operation.safeParse(operation).success));
 const [firstFoundationCommand, ...otherFoundationCommands] = definitionCommandSchema.options.filter(schema => foundationCommands.some(operation => schema.shape.operation.safeParse(operation).success));
 if (!firstFoundationQuery || !firstFoundationCommand) throw new Error('Foundation Pipeline interfaces require an explicit operation allowlist');
@@ -80,8 +85,20 @@ function paginate<T>(items: T[], query: { limit: number; offset: number }) {
 export class DefinitionService {
   constructor(private readonly jobs: JobStore, private readonly tasks: TaskService, private readonly catalog: ExecutionCatalog) {}
   get secured() { return this.jobs.security.enabled; }
+  private isOperator(principal: Principal) { return this.secured && principal.access?.actorKind === 'ontology_operator'; }
+  private metadataContext(principal: Principal) {
+    return this.isOperator(principal) ? this.jobs.security.ontologyOperatorContext(principal) : this.jobs.security.agentContext(principal);
+  }
+  private assertClassificationOnly(before: DefinitionDraft['document'], after: DefinitionDraft['document']) {
+    const strip = (document: DefinitionDraft['document']) => ({ ...document, version: undefined,
+      objects: document.objects.map(type => { if (!Object.hasOwn(paClassifications, type.id)) return type; const { classification: _classification, ...value } = type; return value; }) });
+    if (digest(strip(before)) !== digest(strip(after)) || Object.entries(paClassifications).some(([id, classification]) =>
+      digest(after.objects.find(type => type.id === id)?.classification ?? null) !== digest(classification)))
+      throw new DomainError('FORBIDDEN', 'Operator publication permits only the complete reviewed PA classification on the unchanged base');
+  }
   private context(principal: Principal, ontologyId: string, management = false) {
-    if (this.secured) this.jobs.security.agentContext(principal);
+    if (this.secured) this.metadataContext(principal);
+    if (this.isOperator(principal) && ontologyId !== 'eigos.business') throw new DomainError('FORBIDDEN', 'This operator interface manages only the shared PA classification');
     const owner = ownerKey(principal), admin = principal.scopes.includes('ontology:admin');
     this.jobs.definitions.assertAccess(owner, ontologyId, admin);
     if (management) this.jobs.definitions.assertManagement(owner, ontologyId, admin);
@@ -103,7 +120,7 @@ export class DefinitionService {
   }
   private permission(principal: Principal, namespace: { owner: string | null }) {
     const manager = namespace.owner === ownerKey(principal) || principal.scopes.includes('ontology:admin');
-    return { read: principal.scopes.includes('ontology:read'), createOntology: principal.scopes.includes('ontology:write'), edit: manager && principal.scopes.includes('ontology:write'), publish: manager && principal.scopes.includes('ontology:publish'), execute: principal.scopes.includes('ontology:object_write') && principal.scopes.includes('tasks:write') };
+    return { read: principal.scopes.includes('ontology:read'), createOntology: !this.isOperator(principal) && principal.scopes.includes('ontology:write'), edit: manager && principal.scopes.includes('ontology:write'), publish: manager && principal.scopes.includes('ontology:publish'), execute: !this.isOperator(principal) && principal.scopes.includes('ontology:object_write') && principal.scopes.includes('tasks:write') };
   }
   private withTask<T>(principal: Principal, ontologyId: string, taskId: string, operation: 'task.query' | 'task.result.read', action: (job: Job, visible: Job) => T): T {
     const visible = this.tasks.get(principal, taskId), owner = ownerKey(principal);
@@ -124,14 +141,16 @@ export class DefinitionService {
   }
   query(principal: Principal, input: unknown) {
     if (!this.secured) return this.queryInternal(principal, input);
-    this.jobs.security.agentContext(principal);
+    this.metadataContext(principal);
     const result = this.queryInternal(principal, input);
-    this.jobs.security.agentContext(principal);
+    this.metadataContext(principal);
     return result;
   }
   private queryInternal(principal: Principal, input: unknown) {
     requireScope(principal, 'ontology:read'); const query = definitionQuerySchema.parse(input), store = this.jobs.definitions;
-    if (this.secured && !foundationQueries.includes(query.operation)) throw new DomainError('FORBIDDEN', 'This metadata query requires a separately reviewed Foundation interface');
+    if (this.isOperator(principal)) {
+      if (!operatorQueries.includes(query.operation) || 'kind' in query && query.kind !== 'object') throw new DomainError('FORBIDDEN', 'This operator interface reads only classification release metadata');
+    } else if (this.secured && !foundationQueries.includes(query.operation)) throw new DomainError('FORBIDDEN', 'This metadata query requires a separately reviewed Foundation interface');
     if (query.operation === 'list_ontologies') return envelope(paginate(store.namespaces(ownerKey(principal), principal.scopes.includes('ontology:admin')).map(namespace => ({ ...namespace, permissions: this.permission(principal, namespace) })), query));
     this.context(principal, query.ontologyId, this.secured && ['get_ontology', 'get_pipeline_intake'].includes(query.operation));
     if (query.operation === 'get_pipeline_intake') {
@@ -222,16 +241,18 @@ export class DefinitionService {
   command(principal: Principal, input: unknown) {
     if (!this.secured) return this.commandInternal(principal, input);
     return this.jobs.transaction(() => {
-      this.jobs.security.agentContext(principal);
+      this.metadataContext(principal);
       const result = this.commandInternal(principal, input);
-      this.jobs.security.agentContext(principal);
+      this.metadataContext(principal);
       return result;
     });
   }
   private commandInternal(principal: Principal, input: unknown) {
     if (Buffer.byteLength(JSON.stringify(input)) > 48000) invalid('One metadata command is limited to 48 KB; edit one bounded definition at a time');
     const command = definitionCommandSchema.parse(input), publish = ['publish_draft', 'activate_release', 'verify_pipeline_task', 'report_pipeline_source_change', 'revoke_pipeline_verification', 'prepare_pipeline_validation'].includes(command.operation);
-    if (this.secured && !foundationCommands.includes(command.operation)) throw new DomainError('FORBIDDEN', 'This metadata edit requires a separately reviewed Foundation interface');
+    if (this.isOperator(principal)) {
+      if (!operatorCommands.includes(command.operation)) throw new DomainError('FORBIDDEN', 'This operator interface edits only the PA classification release');
+    } else if (this.secured && !foundationCommands.includes(command.operation)) throw new DomainError('FORBIDDEN', 'This metadata edit requires a separately reviewed Foundation interface');
     requireScope(principal, publish ? 'ontology:publish' : 'ontology:write');
     const store = this.jobs.definitions, owner = ownerKey(principal), admin = principal.scopes.includes('ontology:admin');
     if (command.operation === 'create_ontology') return envelope(store.createNamespace(owner, { ...(command.id ? { id: command.id } : {}), name: command.name }));
@@ -243,6 +264,7 @@ export class DefinitionService {
     if (command.operation === 'create_draft') return envelope(summary(store.createDraft(owner, command.ontologyId, command.title, admin)));
     if (command.operation === 'activate_release') {
       if (command.release.ontologyId !== command.ontologyId) invalid('Release belongs to another ontology');
+      if (this.isOperator(principal)) this.assertClassificationOnly(store.active(command.ontologyId).document, store.resolve(command.release).document);
       if (this.secured) this.jobs.security.policies.assertModel(store.resolve(command.release).model);
       return envelope(store.activate(owner, command.release, command.expectedGeneration, admin));
     }
@@ -252,6 +274,13 @@ export class DefinitionService {
         ? { kind: 'source_changed', sourceDigest: command.sourceDigest } : { kind: 'verification_revoked', verificationId: command.verificationId }));
     }
     const currentDraft = this.ownedDraft(principal, command.ontologyId, command.draftId, true);
+    if (this.isOperator(principal) && currentDraft.owner !== owner) throw new DomainError('FORBIDDEN', 'Operator edits require its own draft');
+    if (command.operation === 'put_pa_classification') {
+      if (!this.isOperator(principal)) throw new DomainError('FORBIDDEN', 'PA classification requires the configured metadata operator');
+      const type = currentDraft.document.objects.find(type => type.id === command.objectType), classification = paClassifications[command.objectType];
+      if (!type || !Object.hasOwn(paClassifications, command.objectType)) throw new DomainError('FORBIDDEN', 'This object has no reviewed PA classification');
+      return envelope(summary(store.putResource(owner, currentDraft.id, command.expectedRevision, 'object', { ...type, classification }, admin)));
+    }
     if (command.operation === 'put_pipeline_intake') return envelope(summary(store.putPipeline(owner, command.draftId, command.expectedRevision, command.intake, admin)));
     if (command.operation === 'validate_pipeline_intake') return envelope(store.validatePipeline(owner, command.draftId, command.expectedRevision, command.serviceId, command.expiresAt, admin));
     if (command.operation === 'verify_pipeline_task') {
@@ -272,6 +301,7 @@ export class DefinitionService {
       return envelope(summary(store.retireResource(owner, command.draftId, command.expectedRevision, command.resourceId, admin)));
     }
     if (command.operation === 'publish_draft') return this.jobs.transaction(() => {
+      if (this.isOperator(principal)) this.assertClassificationOnly(store.resolve(currentDraft.base).document, currentDraft.document);
       const published = store.publish(owner, command.draftId, command.expectedRevision, admin);
       if (this.secured) this.jobs.security.policies.assertModel(store.resolve(published.release).model);
       return envelope(published);

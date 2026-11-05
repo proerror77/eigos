@@ -92,9 +92,9 @@ try {
       access = await storeTokens(await oidc.refreshTokenGrant(config, saved.refresh_token), saved);
     } else access = { token: saved.access_token, principal: await checked(saved.access_token) };
     stage = command;
-    const path = command === 'status' ? '/security/context' : command === 'query' ? '/ontology/v1/query' : '/ontology/v1/commands';
+    const path = command === 'command' ? '/ontology/v1/commands' : '/ontology/v1/query';
     if (command !== 'status' && !values.input) throw new Error('Use an explicit --input file for a metadata request');
-    const body = command === 'status' ? {} : readJson(resolve(values.input), 48000, false);
+    const body = command === 'status' ? { operation: 'get_ontology', ontologyId: 'eigos.business' } : readJson(resolve(values.input), 48000, false);
     const response = await fetch(profile.baseUrl + path, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15000),
       headers: { Authorization: 'Bearer ' + access.token, 'Content-Type': 'application/json', 'User-Agent': 'EIGOS-Ontology-Operator/1.0' }, body: JSON.stringify(body) });
     let bytes = 0; const chunks = [];

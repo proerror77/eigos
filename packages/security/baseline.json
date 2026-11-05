@@ -2895,7 +2895,7 @@
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "4209322bb0ff1889b2219378c7223c3efebe13c62768126fdaf9f8c8cfa5fe91",
+      "sourceDigest": "5ce0c40d3c53675a5cb7cfd5b9cf9a5ea3f0cffd1d977d0b7aa939327ac6e793",
       "channels": [
         "http"
       ],
@@ -3339,7 +3339,7 @@
     {
       "id": "security-contracts",
       "file": "packages/security/contracts.ts",
-      "sourceDigest": "11f745d37936c5ae93550980d754f69acf4bdb3a0e33e62d6f1e5035901e0cc9",
+      "sourceDigest": "8196b94d4f004a573741395092b7fcba3ed8e9e662e1832a90c9e35ecae901d8",
       "channels": [
         "authorization_control"
       ],
@@ -3351,7 +3351,7 @@
     {
       "id": "security-coordinator",
       "file": "packages/security/coordinator.ts",
-      "sourceDigest": "a21e747fb05819a1f34989bc44c0057b51caba8e043f28e1b0ee308c55457395",
+      "sourceDigest": "90d3af22736ba1fe44b3d9e337d6f76873ddb49203fac3b7088f01b3a5b3287e",
       "channels": [
         "authorization_control"
       ],
@@ -3363,7 +3363,7 @@
     {
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "file": "packages/security/store.ts",
-      "sourceDigest": "4f1929095efc64acd422344d2dc249980646b7a359fb222a7425081b9b2600b1",
+      "sourceDigest": "028ef89c5aa02a88add5af512643ed7b8c5bb5f36e114a2410ab8654eae364b4",
       "stage": "S1",
       "content": "Subjects, grants, fences, task authority, audit and worker eligibility",
       "currentControl": "Current installation, task revision, grants, revocation fences and Worker leases. Permanent consent uses explicit null plus a finite SQL index projection; old policy cannot adopt it without the named migration.",
@@ -4267,7 +4267,7 @@
     {
       "id": "ontology-definition-service",
       "file": "packages/ontology/definition-service.ts",
-      "sourceDigest": "032539633dfcb036e967d3ed7ba157443d17a056dd1af7a1b28eceaf57bec092",
+      "sourceDigest": "cec41cff1e14af5c645ee7c29b50f52c9a44a0d5daf2d34a1d41c0cad0171eae",
       "channels": [
         "http",
         "mcp"
@@ -4467,7 +4467,7 @@
       "currentControl": "PKCE/state/nonce, signed exact identity, private atomic locked credential files, fixed primary paths, redirect denial, bounded response and callback; credentials never printed",
       "targetControl": "Reusable authenticated management entry retaining current member, installation, source and task checks",
       "stage": "S5",
-      "sourceDigest": "8d3f5cda6cac9b7b07da747eb217c94bfeb57a84b8e4132530b93889aa9b6ec9"
+      "sourceDigest": "5518e5ab64bf7676717e0f79404c0f535137f28de76b4c590692936c14f1f457"
     },
     {
       "id": "ontology-operator-issuer-guard",
@@ -7031,7 +7031,7 @@
     {
       "id": "gateway-runtime-ports",
       "file": "apps/gateway/runtime-ports.ts",
-      "sourceDigest": "f2d893f74b3cdcee21f6b2214321dad0b6e69570878150c94404dab62ca09221",
+      "sourceDigest": "9899b819eaabf3efd611af6b99ca85d1d54e79c215e3b2f43ad9ea0adf6c3c4d",
       "channels": [
         "internal"
       ],
@@ -7043,7 +7043,7 @@
     {
       "id": "postgres-definition-service",
       "file": "packages/postgres/definition-service.ts",
-      "sourceDigest": "ecae25155ac8a1ecb59dce864d566c9e4d8c9f6b09975bb465ca2b6cfe76c8b7",
+      "sourceDigest": "c6c2bd273cb8687ef50aaeedee6e5312d592b3123db486dd95bcf2ccbdc35c4b",
       "channels": [
         "internal",
         "ontology_metadata"

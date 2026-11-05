@@ -309,6 +309,15 @@ export class SecurityStore {
     const value = taskExecutionAuthoritySchema.parse(JSON.parse(String(row.body)));
     this.policies.assertConsentExpiry(value.expiresAt); return value;
   }
+  ontologyOperatorContext(principal: Principal): Extract<AccessContext, { actorKind: 'ontology_operator' }> {
+    const actor = accessContextSchema.parse(principal.access);
+    if (actor.actorKind !== 'ontology_operator' || actor.ownerKey !== ownerKey(principal) || actor.clientId !== principal.clientId
+      || !principal.scopes.includes('ontology:admin')
+      || digest([...actor.tokenScopes].sort()) !== digest([...new Set(principal.scopes)].sort())) throw new SecurityError('AUTHORIZATION_REQUIRED');
+    const subject = this.requireSubject(actor.installationId, actor.authEpoch);
+    if (subject.ownerKey !== actor.ownerKey || subject.memberId !== actor.memberId || subject.clientId !== actor.clientId) throw new SecurityError('ACCESS_REVOKED');
+    return actor;
+  }
   agentContext(principal: Principal): Extract<AccessContext, { actorKind: 'agent' }> {
     const actor = accessContextSchema.parse(principal.access);
     if (actor.actorKind !== 'agent' || actor.ownerKey !== ownerKey(principal) || actor.clientId !== principal.clientId

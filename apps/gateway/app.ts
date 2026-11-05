@@ -122,7 +122,7 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
   const definitions = new DefinitionService(store, tasks, catalog);
   const runtime:GatewayRuntimePorts={backend:'sqlite',tasks,members,definitions,
     ...(config.authority?{authority:{id:config.authority.id,revision:config.authority.revision,digest:runtimeAuthorityDigest(config.authority)}}:{}),
-    security:security?{permissions:memberPermissionCoordinatorPort(security),authenticate:(principal,bearer)=>security.authenticate(principal,bearer),available:()=>security.available,onUnavailable:handler=>security.onUnavailable(handler)}:undefined,
+    security:security?{permissions:memberPermissionCoordinatorPort(security),authenticate:(principal,bearer)=>security.authenticate(principal,bearer),authenticateOntologyOperator:(principal,bearer)=>security.authenticateOntologyOperator(principal,bearer),available:()=>security.available,onUnavailable:handler=>security.onUnavailable(handler)}:undefined,
     relay:relay?{status:()=>relay.status,mount:(app,authenticate,principal)=>mountTaskRelay(app,relay,store,authenticate,principal)}:undefined,
     messaging:messaging?{service:messaging,mountMembers:app=>mountMessagingMemberRoutes(app,config,members,messaging)}:undefined,
     legacy:{network,sources,mount:(app,authenticate,principal)=>{mountNetworkRoutes(app,config,members,network,authenticate,principal);mountSourceRoutes(app,sources,authenticate,principal);}},
@@ -253,7 +253,15 @@ function createGatewayHttpApp(config:Config,runtime:GatewayRuntimePorts,verify?:
             }
             await messageIdentity();
           } else {
-            try { principal.access = await security.authenticate(principal, match[1]); }
+            try {
+              const route = config.authority ? ingress.selected(req) : undefined;
+              const operator = route?.ontologyOperators?.some(binding => principal.issuer === config.authority!.issuer
+                && binding.clientId === principal.clientId && binding.subject === principal.subject && binding.tenant === principal.tenant);
+              if (operator && ['/ontology/v1/query', '/ontology/v1/commands'].includes(rpcPath)) {
+                if (!security.authenticateOntologyOperator) throw new SecurityError('AUTHORITY_UNAVAILABLE');
+                principal.access = await security.authenticateOntologyOperator(principal, match[1]);
+              } else principal.access = await security.authenticate(principal, match[1]);
+            }
             catch (error) {
               if (intent !== 'discovery' || !principal.scopes.some(scope => (MESSAGING_SCOPES as readonly string[]).includes(scope))) throw error;
               await messageIdentity();
