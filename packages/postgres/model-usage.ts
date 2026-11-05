@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { DomainError } from '../core/domain.js';
 import { digest } from '../core/delegation.js';
 import type { RunEvidence } from '../capabilities/executor.js';
-import type { ModelUsageEvidence } from '../core/model-usage-context.js';
+import { modelFailureSchema, type ModelUsageEvidence } from '../core/model-usage-context.js';
 import { modelUsageStarted, modelUsageFinished, modelUsageReported, assertModelUsageResponse, type ModelUsage } from '../core/member-usage.js';
 import { nativeModelTimingSchema } from '../capabilities/native-model-timing.js';
 import { postgresBusinessSchema } from './runtime-transaction.js';
@@ -12,7 +12,7 @@ import type { PostgresWorkReference } from './work-claim.js';
 const idSchema = z.string().min(1).max(200), timeSchema = z.iso.datetime({ offset: true });
 const storedSchema = z.strictObject({ id: idSchema, runtime: z.string().min(1).max(200), startedAt: timeSchema, completedAt: timeSchema.optional(),
   model: z.string().max(1000).optional(), usage: z.record(z.string(), z.number()).optional(), usageReported: z.boolean(),
-  claimTokenDigest: z.string().min(1).max(200).optional(), nativeTiming: nativeModelTimingSchema.optional() });
+  claimTokenDigest: z.string().min(1).max(200).optional(), nativeTiming: nativeModelTimingSchema.optional(), failure: modelFailureSchema.optional() });
 const identity = (value: Pick<ModelUsage, 'id' | 'runtime' | 'startedAt'>) => {
   idSchema.parse(value.id); z.string().min(1).max(200).parse(value.runtime); timeSchema.parse(value.startedAt);
 };

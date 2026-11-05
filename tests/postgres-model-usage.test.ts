@@ -50,9 +50,15 @@ test('PostgreSQL registers each model dispatch once and late accounting cannot r
       await worker.finishModelUsage(claim, runId, reported, 'completed');
       const finished = JSON.parse((await read(runId)).body); assert.deepEqual(finished.usage, { input_tokens: 10 }); assert.equal(finished.usageReported, true);
       assert.equal(finished.nativeTiming, undefined); assert(!JSON.stringify(finished).includes('PRIVATE_PROMPT'));
-      await worker.finishModelUsage(claim, runId, { ...reported, nativeTiming: timing }, 'completed');
+      const failure = { phase: 'protocol', code: 'invalid_protocol', exitCode: 17 } as const;
+      const unsafeFailure = { ...failure, stderr: 'PRIVATE_STDERR' };
+      await worker.finishModelUsage(claim, runId, { ...reported, failure: unsafeFailure }, 'failed');
+      assert.equal(JSON.parse((await read(runId)).body).failure, undefined);
+      assert(!String((await read(runId)).body).includes('PRIVATE_STDERR'));
+      await worker.finishModelUsage(claim, runId, { ...reported, nativeTiming: timing, failure }, 'failed');
       await worker.finishModelUsage(claim, runId, undefined, 'failed');
       assert.deepEqual(JSON.parse((await read(runId)).body).nativeTiming, timing, 'the first valid timing survives late accounting');
+      assert.deepEqual(JSON.parse((await read(runId)).body).failure, failure, 'the first valid failure survives strict PostgreSQL readback and late accounting');
       assert.deepEqual((await t.client.query(`SELECT body,state,updated_at FROM ${q}.jobs WHERE id=$1`, [task.id])).rows[0], initial);
       const modelRun = { ...syntheticEvidence(), id: randomUUID(), runtime, startedAt, completedAt, model: 'synthetic-model', usage: { input_tokens: 2 } };
       await worker.beginModelUsage(claim, modelRun.id, runtime, startedAt); await worker.finishModelUsage(claim, modelRun.id, modelRun, 'completed');
@@ -74,8 +80,8 @@ test('PostgreSQL registers each model dispatch once and late accounting cannot r
       const lateId = randomUUID(); await worker.beginModelUsage(claim, lateId, runtime, startedAt);
       await t.client.query(`UPDATE ${q}.work_claims SET expires_at=$1 WHERE job_id=$2`, [Date.now() - 1, task.id]);
       const expired = (await t.client.query(`SELECT token,revision,expires_at FROM ${q}.work_claims WHERE job_id=$1`, [task.id])).rows[0];
-      await worker.finishModelUsage(claim, lateId, { id: lateId, runtime, startedAt, completedAt, usage: { input_tokens: 3 } }, 'completed');
-      assert.equal((await read(lateId)).state, 'completed');
+      await worker.finishModelUsage(claim, lateId, { id: lateId, runtime, startedAt, completedAt, usage: { input_tokens: 3 }, failure }, 'failed');
+      assert.equal((await read(lateId)).state, 'failed'); assert.deepEqual(JSON.parse((await read(lateId)).body).failure, failure);
       await assert.rejects(worker.beginModelUsage(claim, randomUUID(), runtime, startedAt), /lease/);
       assert.equal(await worker.recordRun(claim,modelRun,'request_interpreted'),false,'Duplicate accounting cannot revive an expired original claim');
       assert.equal(await worker.finish(claim, job => { job.state = 'completed'; }), false);
