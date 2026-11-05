@@ -65,6 +65,11 @@ test('task scope comes only from declared, permitted context types and explicit 
   const types = next.document.objects;
   assert.deepEqual(withPaTaskDomains({}, types, ['RollingGoSearchTask']).domains, ['hotel']);
   assert.deepEqual(withPaTaskDomains({}, types, ['RideEstimateTask']).domains, ['ride']);
+  assert.deepEqual(withPaTaskDomains({}, types, [], ['RollingGoSearchTask']).domains, ['hotel']);
+  assert.deepEqual(withPaTaskDomains({}, types, [], ['HotelRequest', 'AppointmentRequest']), {}, 'A universal capability menu does not select service domains');
+  assert.deepEqual(withPaTaskDomains({}, types, ['HotelRequest'], ['HotelRequest', 'AppointmentRequest']).domains, ['hotel']);
+  const broad = Array.from({ length: 13 }, (_, index) => ({ id: `Scope${index}`, classification: { version: '1' as const, purpose: 'domain_detail' as const, domains: [`domain${index}`] } }));
+  assert.deepEqual(withPaTaskDomains({}, broad, broad.map(type => type.id)), {}, 'Broad context cannot create an invalid or silently truncated domain selector');
   assert.deepEqual(withPaTaskDomains({}, types.filter(type => type.id !== 'RollingGoSearchTask'), ['RollingGoSearchTask']), {});
   assert.deepEqual(withPaTaskDomains({ domains: [] }, types, ['RollingGoSearchTask']), { domains: [] });
   assert.deepEqual(withPaTaskDomains({ search: 'Hospital' }, types, ['RollingGoSearchTask']), { search: 'Hospital' });

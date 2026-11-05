@@ -315,11 +315,12 @@ private *requestedFactsProgram(input: RequestedFacts):GraphProgram<RequestedFact
         const metadata = permitted?.types ?? this.graph.model.typeIds().map(id => ({ id, classification: this.graph.model.isInterface(id) ? undefined : this.graph.model.object(id).classification }));
         const permittedActions = permitted ? new Set(permitted.actions.map(action => action.id)) : undefined;
         const contextTypes = [...this.boundRefs, ...(this.options.taskContext?.refs ?? [])].map(ref => ref.type);
+        const programTypes: string[] = [];
         for (const id of this.options.taskContext?.program?.actionIds ?? []) if (!permittedActions || permittedActions.has(id)) {
           const action = this.graph.model.action(id);
-          contextTypes.push(...Object.values(action.inputs), ...(action.resultTypes ?? []), ...(action.read ? [action.read.resultType] : []));
+          programTypes.push(...Object.values(action.inputs), ...(action.resultTypes ?? []), ...(action.read ? [action.read.resultType] : []));
         }
-        const args = withPaTaskDomains(requested, metadata, contextTypes), result = this.graph.model.describe(args);
+        const args = withPaTaskDomains(requested, metadata, contextTypes, programTypes), result = this.graph.model.describe(args);
         if (this.graph.security) {
           const visible=authority(this.graph).describe({...args, actions, functions});
           if (actions?.some(id=>!visible.actions.some(a=>a.id===id)) || functions?.some(id=>!visible.functions.some(f=>f.id===id))) throw new DomainError('FORBIDDEN','Definition is not available');

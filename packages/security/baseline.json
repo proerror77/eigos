@@ -6347,7 +6347,7 @@
     {
       "id": "planning-session-program",
       "file": "packages/coordinator/planning-program.ts",
-      "sourceDigest": "9b086ed104d029a7a2d4260cc0c276499278827255cb21e8dbc1fb6a2605198d",
+      "sourceDigest": "3d26a0d236a284449a54d5e9a241e56fc0f40cd60310b49396803e187b30c517",
       "channels": [
         "internal"
       ],
@@ -7853,7 +7853,7 @@
       "currentControl": "Strict metadata schemas, explicit filter boundaries, no object reads or permission grants; incomplete and filtered scopes remain explicit.",
       "targetControl": "Keep task relevance independent of source, field and effect authority.",
       "stage": "S2",
-      "sourceDigest": "1b39c8eb1d3ca42d019af56764e93b7d599474e71cda95c4cbee4a08e11e3d74"
+      "sourceDigest": "c1acedfe9d10455e6c57ca97d75e5c67377134621a7df6fa1c0459e97db13709"
     },
     {
       "id": "pa-classification-kernel",

@@ -16,11 +16,17 @@ export interface ClassifiedType { id: string; kind?: string; classification?: Pa
 
 /** Context IDs are host-bound inputs/actions, never inferred from free text.
  * The metadata supplied here has already passed the caller's resource checks. */
-export function withPaTaskDomains<T extends PaDiscoveryInput>(input: T, types: readonly ClassifiedType[], contextTypes: readonly string[]): T & PaDiscoveryInput {
+export function withPaTaskDomains<T extends PaDiscoveryInput>(input: T, types: readonly ClassifiedType[], contextTypes: readonly string[], programTypes: readonly string[] = []): T & PaDiscoveryInput {
   if (input.view === 'all' || input.domains || input.purposes || input.search?.trim()) return input;
-  const selected = new Set(contextTypes);
-  const domains = [...new Set(types.filter(type => selected.has(type.id)).flatMap(type => type.classification?.domains ?? []))].sort();
-  return domains.length ? { ...input, domains } : input;
+  const domainsFor = (ids: readonly string[]) => {
+    const selected = new Set(ids);
+    return [...new Set(types.filter(type => selected.has(type.id)).flatMap(type => type.classification?.domains ?? []))].sort();
+  };
+  let domains = domainsFor(contextTypes);
+  // A universal program's allowed actions are a capability menu, not a task
+  // selection. Only an unambiguous single-domain program supplies a fallback.
+  if (!domains.length) { const program = domainsFor(programTypes); if (program.length === 1) domains = program; }
+  return domains.length && domains.length <= 12 ? { ...input, domains } : input;
 }
 
 /** Receives only the caller's already-authorized metadata in secured paths. */
