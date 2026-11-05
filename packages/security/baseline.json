@@ -8075,7 +8075,7 @@
     {
       "id": "ride-policy-successor-deployment",
       "file": "packages/deployment/ride-policy-successor.ts",
-      "sourceDigest": "725f42567a28a12c511fb01a1404838a7ed6aacef9635f08162e04846935e694",
+      "sourceDigest": "e3c4e1db043f72431f13fe0638ab52a1cac7fbaa00da0e322c6a30ea5f598863",
       "channels": [
         "postgres",
         "authorization_control"

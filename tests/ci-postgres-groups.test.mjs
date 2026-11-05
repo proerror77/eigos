@@ -32,15 +32,15 @@ test('PG scope selection rejects unknown suites instead of silently dropping a r
 });
 
 test('vector validation pins its actual service, guarded loopback fixture and mandatory non-skipped case',()=>{
-  assert.deepEqual(POSTGRES_TEST_GROUPS.vectors,['tests/postgres-embedding-index.test.ts']);
+  assert.deepEqual(POSTGRES_TEST_GROUPS.vectors,['tests/postgres-embedding-index.test.ts','tests/postgres-ride-sources-upgrade.test.ts']);
   const job=workflow.jobs['postgres-vectors'];
   assert.equal(job.services.postgres.image,'pgvector/pgvector:0.8.2-pg17@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966');
   assert.equal(job.services.postgres.env.POSTGRES_PASSWORD,'synthetic-vectors-only');
   assert.equal(job.env.EIGOS_TEST_VECTOR_PG,'1');assert.equal(job.env.EIGOS_TEST_VECTOR_PGPORT,job.env.PGPORT);
   assert.equal(job.env.PGPASSWORD,job.services.postgres.env.POSTGRES_PASSWORD);
   assert(job.steps.some(step=>step.run==='npm run build'),'the actual CLI previews require emitted code');
-  assert.deepEqual([...readFileSync(new URL('./postgres-embedding-index.test.ts',import.meta.url),'utf8').matchAll(/^test\('([^']+)'/gm)].map(match=>match[1]),[...POSTGRES_VECTOR_CASES]);
-  const valid=[...POSTGRES_VECTOR_CASES.map((name,i)=>`ok ${i+1} - ${name}`),'# tests 1','# pass 1','# fail 0','# cancelled 0','# skipped 0','# todo 0'];
+  assert.deepEqual(POSTGRES_TEST_GROUPS.vectors.flatMap(file=>[...readFileSync(new URL('../'+file,import.meta.url),'utf8').matchAll(/^test\('([^']+)'/gm)].map(match=>match[1])),[...POSTGRES_VECTOR_CASES]);
+  const valid=[...POSTGRES_VECTOR_CASES.map((name,i)=>`ok ${i+1} - ${name}`),`# tests ${POSTGRES_VECTOR_CASES.length}`,`# pass ${POSTGRES_VECTOR_CASES.length}`,'# fail 0','# cancelled 0','# skipped 0','# todo 0'];
   assert.doesNotThrow(()=>assertVectorTap(valid));
   assert.throws(()=>assertVectorTap(valid.map(line=>line.startsWith('ok ')?line+' # SKIP':line)),/actually pass/);
   assert.throws(()=>assertVectorTap(valid.filter(line=>line!=='# skipped 0')),/complete non-skipped/);

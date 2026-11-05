@@ -38,8 +38,12 @@ export async function verifyRidePolicyProof(client:Client,binding:PostgresBindin
  if(event.rowCount!==1||typeof event.rows[0]?.body!=='string'||digest(JSON.parse(event.rows[0].body))!==proof.sha256)throw new Error('Policy successor publication receipt differs');
  const state=await client.query(`SELECT d.digest,p.revision,n.active_release_id,n.generation,rel.digest AS release_digest,rel.model_digest,CASE WHEN octet_length(rel.body)<=8388608 THEN rel.body END AS body FROM ${q}.security_policy_definitions d JOIN ${q}.security_policy p ON p.slot=d.slot JOIN ${q}.ontology_namespaces n ON n.id=$1 JOIN ${q}.ontology_definition_releases rel ON rel.id=n.active_release_id AND rel.ontology_id=n.id WHERE d.slot=1 LIMIT 2`,['eigos.business']),row=state.rows[0];
  if(state.rowCount!==1||row.digest!==policy||Number(row.revision)<r.nextRevision||Number(row.generation)<r.generationAfter||typeof row.body!=='string')throw new Error('Current policy or release differs from its reviewed successor');
- const document=parseOntologyDocument(JSON.parse(row.body)),model=compileOntologyDocument(document,kernel.registry);
- if(digest(document)!==row.release_digest||model.ref.id!==r.targetModel.id||model.ref.digest!==r.targetModel.digest||row.model_digest!==r.targetModel.digest)throw new Error('Current published definitions differ from the reviewed ride model');
+ const document=parseOntologyDocument(JSON.parse(row.body)),documentDigest=digest(document);
+ // The prepared model already compiles this exact immutable document. Reuse it
+ // only after checking the actual DB body hash; recompiling the entire kernel
+ // in this read snapshot can outlive its fixed idle-in-transaction deadline.
+ const model=documentDigest===kernel.documentDigest?kernel.model:compileOntologyDocument(document,kernel.registry);
+ if(documentDigest!==row.release_digest||model.ref.id!==r.targetModel.id||model.ref.digest!==r.targetModel.digest||row.model_digest!==r.targetModel.digest)throw new Error('Current published definitions differ from the reviewed ride model');
  let ref={ontologyId:'eigos.business',releaseId:String(row.active_release_id),digest:String(row.release_digest)};const seen=new Set<string>();
  for(let depth=0;;depth++){
   if(depth>=64||seen.has(ref.releaseId))throw new Error('Ride successor lineage is cyclic or exceeds its bound');seen.add(ref.releaseId);
