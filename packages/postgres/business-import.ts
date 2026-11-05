@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import type { Client } from 'pg';
 import { compileBusinessSchema } from './business-schema.js';
-import { planBusinessSnapshot, type BusinessSnapshotPlan } from './business-snapshot.js';
+import { planBusinessSnapshot, type BusinessSnapshotPlan, type BusinessColumn } from './business-snapshot.js';
 import { validateBusinessJsonCompatibility } from './business-json-compat.js';
 import { verifyTable } from './business-verify.js';
 import { installPostgresAuthorityLock } from './authority-lock.js';
@@ -10,6 +10,7 @@ const schemaPattern = /^eigos_business_[a-z0-9_]{1,40}$/;
 const digestPattern = /^[a-f0-9]{64}$/;
 const quote = (value: string) => `"${value.replaceAll('"', '""')}"`;
 const batchBytes = 4 * 1024 * 1024, batchRows = 64;
+const chunkBytes = 1024 * 1024;
 export interface BusinessImportOptions {
   snapshot: string;
   schema: string;
@@ -30,18 +31,39 @@ export interface BusinessImportReceipt {
 function sourceSize(row: Record<string, unknown>): number {
   return Object.values(row).reduce<number>((total, value) => total + (typeof value === 'string' ? Buffer.byteLength(value) : value instanceof Uint8Array ? value.byteLength : 32), 0);
 }
-function sqlValue(value: unknown): unknown {
-  if (value instanceof Uint8Array && !Buffer.isBuffer(value)) return Buffer.from(value);
-  // The target TEXT column determines the parameter type. Its binary input
-  // is the same UTF-8 bytes, without building a large escaped driver string.
-  if (typeof value === 'string' && value.length > batchBytes / 3 && Buffer.byteLength(value) > batchBytes)
-    return Buffer.from(value, 'utf8');
-  return value;
-}
+function sqlValue(value: unknown): unknown { return value instanceof Uint8Array && !Buffer.isBuffer(value) ? Buffer.from(value) : value; }
 async function targetSize(client: Client, maxDatabaseBytes: number): Promise<void> {
   const value = (await client.query('SELECT pg_database_size(current_database())::text AS bytes')).rows[0]?.bytes;
   if (typeof value !== 'string' || !/^\d+$/.test(value)) throw new Error('PostgreSQL database size is unavailable');
   if (BigInt(value) > BigInt(maxDatabaseBytes)) throw new Error('PostgreSQL database size budget exceeded');
+}
+
+/** Assemble oversized values inside the import transaction. A session pooler
+ * only handles one bounded binary chunk per request. The temporary table
+ * holds a single row at a time and never becomes part of the imported schema. */
+async function insertLargeRow(client: Client, table: string, columns: readonly BusinessColumn[], row: Record<string, unknown>) {
+  const parts: string[] = [], values: unknown[] = [];
+  let inlineBytes = 0;
+  for (const [index, column] of columns.entries()) {
+    const value = row[column.name];
+    const length = typeof value === 'string' ? Buffer.byteLength(value) : value instanceof Uint8Array ? value.byteLength : 0;
+    if (length && (length > chunkBytes || inlineBytes + length > batchBytes)) {
+      const bytes = typeof value === 'string' ? Buffer.from(value, 'utf8') : Buffer.from(value as Uint8Array);
+      for (let offset = 0; offset < bytes.length; offset += chunkBytes) {
+        await client.query('INSERT INTO pg_temp.eigos_import_chunks(column_no,part_no,bytes) VALUES ($1,$2,$3)',
+          [index,offset / chunkBytes,bytes.subarray(offset,offset+chunkBytes)]);
+      }
+      const assembled = `(SELECT pg_catalog.string_agg(bytes,''::bytea ORDER BY part_no) FROM pg_temp.eigos_import_chunks WHERE column_no=${index})`;
+      parts.push(column.type === 'TEXT' ? `pg_catalog.convert_from(${assembled},'UTF8')` : assembled);
+    } else {
+      inlineBytes += length;
+      values.push(sqlValue(value));
+      const type = column.type === 'INTEGER' ? 'bigint' : column.type === 'BLOB' ? 'bytea' : 'text';
+      parts.push(`$${values.length}::${type}`);
+    }
+  }
+  await client.query(`INSERT INTO ${quote(table)} (${columns.map(c=>quote(c.name)).join(',')}) OVERRIDING SYSTEM VALUE SELECT ${parts.join(',')}`, values);
+  await client.query('TRUNCATE pg_temp.eigos_import_chunks');
 }
 /** Copy a reviewed offline snapshot into a fresh, non-public PostgreSQL schema.
  * This does not update the source authority, grant a runtime role or activate
@@ -67,7 +89,7 @@ export async function importBusinessSnapshot(client: Client, options: BusinessIm
     await client.query(`REVOKE ALL ON SCHEMA ${quote(schema)} FROM PUBLIC`);
     await client.query(`SET LOCAL search_path TO ${quote(schema)}, pg_catalog, pg_temp`);
     await client.query(mapping.schemaStatements.join(';\n'));
-    let bytesSinceSizeCheck = 0;
+    let bytesSinceSizeCheck = 0, chunksCreated = false;
     for (const table of plan.tables) {
       const columns = table.columns, keys = columns.filter(column => column.primaryKey > 0).sort((a,b) => a.primaryKey-b.primaryKey);
       const order = keys.map(column => quote(column.name) + (column.type === 'TEXT' ? ' COLLATE BINARY' : '')).join(',');
@@ -83,6 +105,17 @@ export async function importBusinessSnapshot(client: Client, options: BusinessIm
       const maxRows = Math.max(1, Math.min(batchRows, Math.floor(60000 / columns.length)));
       for (const row of statement.iterate()) {
         const size = sourceSize(row);
+        if (size > batchBytes) {
+          await flush();
+          if (!chunksCreated) {
+            await client.query('CREATE TEMP TABLE eigos_import_chunks (column_no integer,part_no integer,bytes bytea NOT NULL,PRIMARY KEY(column_no,part_no)) ON COMMIT DROP');
+            chunksCreated = true;
+          }
+          await insertLargeRow(client, table.name, columns, row);
+          await targetSize(client, maxDatabaseBytes);
+          bytesSinceSizeCheck = 0;
+          continue;
+        }
         if (batch.length && (batch.length >= maxRows || bytes + size > batchBytes)) await flush();
         batch.push(row); bytes += size;
       }

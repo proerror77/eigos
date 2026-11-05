@@ -34,7 +34,20 @@ test('business migration preserves a synthetic 128 MiB task body without retrans
   let connected = false, imported = false;
   try {
     await client.connect(); connected = true;
-    const receipt = await importBusinessSnapshot(client, { snapshot:path, schema, expectedFileDigest:plan.fileDigest, expectedAuthorityDigest:authorityDigest, expectedPolicyDigest:policy, maxDatabaseBytes:1_000_000_000 }); imported = true;
+    let chunks = 0;
+    const observed = new Proxy(client, { get(target, property) {
+      if (property === 'query') return async (sql: unknown, parameters?: unknown[]) => {
+        if (typeof sql === 'string' && sql.startsWith('INSERT INTO pg_temp.eigos_import_chunks')) {
+          assert(Buffer.isBuffer(parameters?.[2]) && parameters[2].length <= 1024 * 1024);
+          chunks++;
+        }
+        return (target.query as (...args: any[]) => Promise<any>).call(target, sql, parameters);
+      };
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    }});
+    const receipt = await importBusinessSnapshot(observed, { snapshot:path, schema, expectedFileDigest:plan.fileDigest, expectedAuthorityDigest:authorityDigest, expectedPolicyDigest:policy, maxDatabaseBytes:1_000_000_000 }); imported = true;
+    assert(chunks > 128);
     assert.equal(receipt.status, 'imported-not-activated');
     const verified=await verifyBusinessSnapshot(client,{snapshot:path,schema,expectedFileDigest:plan.fileDigest,expectedAuthorityDigest:authorityDigest,expectedPolicyDigest:policy});
     assert.equal(verified.status,'verified-at-snapshot');assert.deepEqual(verified.tables,receipt.tables);

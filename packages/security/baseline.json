@@ -5481,7 +5481,7 @@
       "currentControl": "Isolated schema, transactional import, per-table digests and fail-closed commit handling; preserve row order and sequence high-water marks",
       "targetControl": "Preserve business authority and evidence before separate runtime activation",
       "stage": "S5",
-      "sourceDigest": "262ee5eaa569a61dde9e75cc2b0127970a369b02ca204025d19d02b4970ded60"
+      "sourceDigest": "f1d6bb649db4292fa6d24f3beef664ef6116ceb2f13cfaf4af841831e0ca3ad9"
     },
     {
       "id": "business-postgres-import-cli",
