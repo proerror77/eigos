@@ -3411,12 +3411,12 @@
     {
       "id": "security-worker-loop",
       "file": "apps/worker/worker.ts",
-      "sourceDigest": "9a541eb7b2dfb7d6235fcef75adf878758a2379d2268e49fc86263037613006c",
+      "sourceDigest": "5921d559502bcbda6092bf43bd1895221394072dfa08dd265abb51287eb5d59c",
       "channels": [
         "authorization_control"
       ],
       "content": "Lease renewal, cancellation and completion lifecycle",
-      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit; synchronous progress renews each due active task claim through its original lease, execution deadline and policy fences; A source authorization mismatch produces explicit blocked recovery without automatic resubmission or new permission. Cutover pauses new claims and waits for in-flight work without aborting it. The Harness runtime may select one concurrent claim; existing lease, cancellation and late-result fences remain unchanged.",
+      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit; synchronous progress renews each due active task claim through its original lease, execution deadline and policy fences; A source authorization mismatch produces explicit blocked recovery without automatic resubmission or new permission. Cutover pauses new claims and waits for in-flight work without aborting it. The Harness runtime may select one concurrent claim; existing lease, cancellation and late-result fences remain unchanged. Known rejection reasons are logged privately through a runtime allowlist even after successful recovery writeback; no raw error or public task diagnostic field is added.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
@@ -6755,12 +6755,12 @@
     {
       "id": "postgres-coordinator",
       "file": "packages/postgres/coordinator.ts",
-      "sourceDigest": "d2e9b2acd9463959579bb04d55cef3bb6f1422dff5ce9e9e500cff3667c8bbce",
+      "sourceDigest": "e976843bfbeb0159005ccfd76bd0eee1a45ddb2ea0b410dd9be21d45c9535d91",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL original-task Goal and document phase coordinator",
-      "currentControl": "Registered acknowledged model ports; authorized typed request/catalogue/model DTOs and actual native receipts; independent Goal review, committed original attempts, current model/claim/role/source checks before dispatch, atomic output seals and no uncertain-operation replay",
+      "currentControl": "Registered acknowledged model ports; authorized typed request/catalogue/model DTOs and actual native receipts; independent Goal review, committed original attempts, current model/claim/role/source checks before dispatch, atomic output seals and no uncertain-operation replay Known rejection reasons are logged privately through a runtime allowlist even after successful recovery writeback; no raw error or public task diagnostic field is added.",
       "targetControl": "Registered acknowledged model ports; authorized typed request/catalogue/model DTOs and actual native receipts; independent Goal review, committed original attempts, current model/claim/role/source checks before dispatch, atomic output seals and no uncertain-operation replay",
       "stage": "S5"
     },
@@ -7793,6 +7793,18 @@
       "currentControl": "Only after the original activation/schema/import receipt chain is verified: require the original epoch table inventory, exact reviewed compiler helper body/config/owner/ACL and complete twelve-trigger group; legacy bases cannot gain helper permissions from target self-report. No DDL, grants or independent source re-audit is performed here.",
       "targetControl": "Preserve immutable base receipts, current runtime authority and rejection of unreviewed target extensions.",
       "stage": "S5"
+    },
+    {
+      "id": "worker-rejection-diagnostic",
+      "file": "packages/core/worker-rejection.ts",
+      "channels": [
+        "internal"
+      ],
+      "content": "Private Worker rejection classification during existing recovery",
+      "currentControl": "Fixed event and original task id with runtime-allowlisted SecurityError reasons or DomainError codes; no raw error, stack, path or caller facts; logging failure cannot alter recovery",
+      "targetControl": "Keep rejection diagnostics separate from task state, permission, retry and business acceptance",
+      "stage": "S3",
+      "sourceDigest": "728b804b914bb5fe612de4a9e1afb11b128da7f1ed03bffa4bb417564faf118e"
     }
   ]
 }

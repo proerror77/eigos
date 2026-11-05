@@ -8,6 +8,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {z} from 'zod';
 import {Client,StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
 import {digest,goalGroundingSchema,type Grounding} from '../packages/core/delegation.js';
+import {DomainError} from '../packages/core/domain.js';
 import type {TaskServicePort} from '../packages/core/task-service-port.js';
 import {modelUsageRecorder,withModelUsage} from '../packages/core/model-usage-context.js';
 import {authorizeModelDispatch,withModelDispatchGuard} from '../packages/core/model-dispatch-context.js';
@@ -177,9 +178,16 @@ test('an incomplete whole-goal assessment preserves the verified document withou
   }finally{await x.close();}
 });
 
-test('an unknown original document invocation is paused without automatic replay',local,async()=>{
-  const x=await fixture({afterDocumentDispatch:async()=>{throw new Error('Explicit synthetic lost model result');}});try{
-    const id=await x.submit('mcp');x.runtime.start();await x.wait(async()=>await x.state(id)==='paused');await delay(600);assert.equal(x.stats.documentBegins,1);assert.equal(x.stats.documents,1);
-    const intents=(await x.t.client.query(`SELECT state FROM ${x.q}.action_intents WHERE job_id=$1`,[id])).rows;assert(intents.some(row=>['dispatching','effect_unknown','needs_review'].includes(row.state)));assert.notEqual(await x.state(id),'completed');
-  }finally{await x.close();}
+test('an unknown original document invocation is paused without automatic replay',local,async t=>{
+  const logs:unknown[][]=[];t.mock.method(console,'error',(...args:unknown[])=>{logs.push(args);});
+  for(const error of [new Error('Explicit synthetic lost model result'),new DomainError('CONFLICT','SYNTHETIC_PRIVATE_REJECTION')]){
+    const start=logs.length,x=await fixture({afterDocumentDispatch:async()=>{throw error;}});try{
+      const id=await x.submit('mcp');x.runtime.start();await x.wait(async()=>await x.state(id)==='paused');await delay(600);await x.runtime.pause();assert.equal(x.stats.documentBegins,1);assert.equal(x.stats.documents,1);
+      const intents=(await x.t.client.query(`SELECT state FROM ${x.q}.action_intents WHERE job_id=$1`,[id])).rows;assert(intents.some(row=>['dispatching','effect_unknown','needs_review'].includes(row.state)));assert.notEqual(await x.state(id),'completed');
+      const diagnostics=logs.slice(start).filter(args=>args[0]==='Worker execution rejected; original task retained');
+      assert.deepEqual(diagnostics,error instanceof DomainError?[[ 'Worker execution rejected; original task retained',{event:'worker_execution_rejected',taskId:id,reason:'CONFLICT'}]]:[]);
+      const job=(await x.t.client.query(`SELECT body FROM ${x.q}.jobs WHERE id=$1`,[id])).rows[0].body;
+      assert(!JSON.stringify({logs,job}).includes('SYNTHETIC_PRIVATE'));assert(!String(job).includes('worker_execution_rejected'));
+    }finally{await x.close();}
+  }
 });

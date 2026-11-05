@@ -7,6 +7,7 @@ import type {WorkClaim} from '../core/store.js';
 import {executionBudgetStatus,remainingModelTurns,MIN_REASONING_TURNS,pauseExecutionBudget} from '../core/execution-budget.js';
 import {canRecoverReadOnly,resolveTaskRecovery,scheduleTaskRecovery,resumeScheduledRecovery} from '../core/task-recovery.js';
 import {withModelUsage,type ModelUsageEvidence} from '../core/model-usage-context.js';
+import {recordWorkerRejection} from '../core/worker-rejection.js';
 import {withModelDispatchGuard} from '../core/model-dispatch-context.js';
 import {GoalProgram,goalState} from '../coordinator/goal-program.js';
 import {groundRequirements} from '../coordinator/requirements.js';
@@ -229,6 +230,7 @@ export class PostgresCoordinator {
   }
   async onError(claim:WorkClaim,error:unknown,signal:AbortSignal){
     if(signal.aborted||!await this.configured.store.active(claim))return;
+    recordWorkerRejection(claim.job.id,error);
     const unavailable=error instanceof SecurityError||error instanceof ConnectionAuthorizationRequired;
     await this.transition(claim,job=>{
       scheduleTaskRecovery(job,unavailable?'source_authorization_required':'worker_interrupted',unavailable?'当前服务授权或执行适配尚未就绪，已保留原任务和原操作。':'执行在已确认的下一阶段之前中断，已保留原任务和原操作。',{automatic:false});
