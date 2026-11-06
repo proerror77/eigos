@@ -5685,7 +5685,7 @@
       "stage": "S5",
       "id": "postgres-ontology-read",
       "file": "packages/postgres/ontology-release.ts",
-      "sourceDigest": "6b4b8287596f35a59abe6c19b1dc00ac5dd4951114974b7ef1cb318fb60c04df",
+      "sourceDigest": "172833bf3305a3be178593cd3036d7d617b7b89576a1ea7cf6d10456eea0f4bb",
       "content": "PostgreSQL ontology release and historical witness reader",
       "currentControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions",
       "targetControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions"
@@ -7182,7 +7182,7 @@
     {
       "id": "postgres-host-runtime",
       "file": "packages/postgres/host-runtime.ts",
-      "sourceDigest": "1f86455b12262ac0a1e33429d54fcefe99556e5d4d39d0c686bc87df77a875a0",
+      "sourceDigest": "cb4b4e9d1235f9531028378b3a3acce79e846face2f05d958df0941431dd72ec",
       "channels": [
         "internal"
       ],
@@ -7290,7 +7290,7 @@
     {
       "id": "postgres-source-relay-authority",
       "file": "packages/postgres/relay-read-authority.ts",
-      "sourceDigest": "960dd17151e45a4db9e87bf96e40fbd3e800d8b70f385a85363f495c61c44f88",
+      "sourceDigest": "c5b024b727cd049de568627e546f4ee94052179f40420fa5a084b128d199b4ac",
       "channels": [
         "internal"
       ],
@@ -7314,7 +7314,7 @@
     {
       "id": "postgres-task-relay-authority",
       "file": "packages/postgres/task-relay-authority.ts",
-      "sourceDigest": "97e41b3ac92c805a431e58fd1f4760274ab854b4f6cb1dd21fa4600b23ec1996",
+      "sourceDigest": "7998b2e616a2ea0e24e56d8bd04fe419f0e9e733b65173ec254422b2e50a9838",
       "channels": [
         "internal"
       ],

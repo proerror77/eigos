@@ -187,7 +187,7 @@ export async function postgresTaskOntologyRelease(client: Client, owner: string,
     CASE WHEN body.value#>'{delegation,ontologyRelease}' IS NULL OR body.value#>'{delegation,ontologyRelease}' = 'null'::jsonb THEN 'absent'
          WHEN octet_length((body.value#>'{delegation,ontologyRelease}')::text) <= 1024 THEN 'present' ELSE 'invalid' END AS ref_state,
     CASE WHEN octet_length((body.value#>'{delegation,ontologyRelease}')::text) <= 1024 THEN (body.value#>'{delegation,ontologyRelease}')::text END AS ref
-    FROM ${q}.jobs j JOIN ${q}.runtime_authority a ON a.slot=1
+    FROM ${q}.jobs j CROSS JOIN ${q}.eigos_current_runtime_authority() a
     CROSS JOIN LATERAL (SELECT ${q}.eigos_try_jsonb(j.body) AS value OFFSET 0) body
     WHERE j.owner=$1 AND j.id=$2`, [owner,taskId]);
   if (result.rowCount !== 1) throw new DomainError('NOT_FOUND', 'Task not found');
