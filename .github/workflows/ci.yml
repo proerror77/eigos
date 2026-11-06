@@ -149,11 +149,15 @@ jobs:
       - run: npm run build
       - run: node scripts/postgres-tests.mjs run --group vectors
 
-  postgres-access:
+  postgres-access-cases:
     needs: scope
     if: ${{ needs.scope.result == 'success' && needs.scope.outputs.postgres == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [identity, ontology, runtime]
     services:
       postgres:
         image: postgres:17
@@ -184,7 +188,22 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: node scripts/postgres-tests.mjs run --group access
+      - run: node scripts/postgres-tests.mjs run --group access --case ${{ matrix.case }}
+
+  postgres-access:
+    needs: [scope, postgres-access-cases]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Require every selected access group to succeed
+        env:
+          PG_TEST_SHARDS: ${{ needs.scope.outputs.shards }}
+          PG_CI_NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/postgres-tests.mjs aggregate-access
 
   postgres-execution-cases:
     needs: scope

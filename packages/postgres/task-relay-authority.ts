@@ -1,29 +1,35 @@
 import type {Client} from 'pg';
 import {z} from 'zod';
 import {digest} from '../core/delegation.js';
+import {runtimeAuthorityDigest,type RuntimeAuthority} from '../core/runtime-authority.js';
 import {DomainError,ownerKey,TASK_SCOPES,type Principal} from '../core/domain.js';
 import {agentIdSchema} from '../relay/contracts.js';
 import {accessContextSchema} from '../security/contracts.js';
 import {SecurityError} from '../security/errors.js';
 import {postgresConsentIndex} from './consent.js';
 import type {PostgresDatabase} from './database.js';
-import {postgresBusinessSchema,postgresConstrainReadDeadline} from './runtime-transaction.js';
+import {postgresBusinessAuthorityDigest,postgresBusinessSchema,postgresConstrainReadDeadline} from './runtime-transaction.js';
 import {withPostgresAgentScope,withPostgresAgentIdentity} from './task-read-access.js';
 
 const boundPrincipalSchema=z.strictObject({issuer:z.string(),tenant:z.string(),subject:z.string(),clientId:z.string(),scopes:z.array(z.enum(TASK_SCOPES)),access:accessContextSchema});
-export interface PostgresTaskRelayAuthorityOptions {database:Pick<PostgresDatabase,'run'>;policyDigest:string;authorityId:string;gatewayOrigin:string}
+export interface PostgresTaskRelayAuthorityOptions {database:Pick<PostgresDatabase,'run'>;policyDigest:string;authority:RuntimeAuthority}
 export interface RelayProof {jti:string;expiresAt:number}
 /** Business-side transport identities only. OAuth tokens, source credentials
  * and encrypted node storage do not enter these existing authority tables. */
 export class PostgresTaskRelayAuthority {
   readonly authorityId:string;readonly gatewayOrigin:string;
+  private readonly authorityDigest:string;
   constructor(private readonly options:PostgresTaskRelayAuthorityOptions){
-    this.authorityId=z.uuid().parse(options.authorityId);const u=new URL(options.gatewayOrigin);if(u.protocol!=='https:'||u.origin!==options.gatewayOrigin||! /^[a-f0-9]{64}$/.test(options.policyDigest))throw new Error('Explicit primary PostgreSQL Relay authority is required');this.gatewayOrigin=options.gatewayOrigin;
+    if (!/^[a-f0-9]{64}$/.test(options.policyDigest)) throw new Error('Explicit primary PostgreSQL Relay authority is required');
+    this.authorityDigest = runtimeAuthorityDigest(options.authority);
+    this.authorityId = options.authority.id;
+    this.gatewayOrigin = options.authority.canonicalOrigin;
   }
   readonly now=Date.now;
   async assertCurrent(client:Client,authorityId=this.authorityId){
-    const q=`"${postgresBusinessSchema(client)}"`,row=(await client.query(`SELECT id,canonical_origin FROM ${q}.runtime_authority WHERE slot=1`)).rows[0];
-    if(!row||row.id!==this.authorityId||authorityId!==this.authorityId||row.canonical_origin!==this.gatewayOrigin)throw new SecurityError('AUTHORITY_UNAVAILABLE');
+    // The business transaction already locked and verified the original authority.
+    if (authorityId !== this.authorityId || postgresBusinessAuthorityDigest(client) !== this.authorityDigest)
+      throw new SecurityError('AUTHORITY_UNAVAILABLE');
   }
   async authorityCurrent(){await this.options.database.run(client=>this.assertCurrent(client));return true;}
   private async proof(client:Client,input:RelayProof){

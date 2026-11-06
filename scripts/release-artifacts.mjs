@@ -17,7 +17,8 @@ const image=/^[a-z0-9][a-z0-9.:-]*(?:\/[a-z0-9][a-z0-9._-]*)+@sha256:[a-f0-9]{64
 const roles=['gateway','relay','worker'];
 const legacyRequiredJobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-vectors','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)','postgres-execution-cases (contracts)','postgres-execution-cases (planning)','postgres-execution-cases (documents)','postgres-execution-cases (didi)','postgres-execution-cases (transitions)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
 const minimumNodeJob='minimum-node',minimumNodeCommand='Run node --import tsx --test tests/transaction-savepoints.test.ts tests/execution-projection-noop.test.ts tests/graph-read-window.test.ts';
-const requiredJobs=[...legacyRequiredJobs,minimumNodeJob];
+const preAccessSplitJobs=[...legacyRequiredJobs,minimumNodeJob];
+const requiredJobs=[...preAccessSplitJobs,'postgres-access-cases (identity)','postgres-access-cases (ontology)','postgres-access-cases (runtime)'];
 const semanticJob='local-embedding-pgvector';
 function fail(message){throw new Error(message);}
 function backendTools(backend){if(backend==='codex')return RELEASE_TOOLS;if(backend==='harness')return HARNESS_RELEASE_TOOLS;fail('Only the registered codex or harness release backend is supported');}
@@ -58,7 +59,7 @@ export function validateOntologyPackage(input){
   if(new Set(input.providerModules.map(x=>x.file.path)).size!==input.providerModules.length)fail('Duplicate provider module path');return structuredClone(input);
 }
 function ciProof(input,sourceSha){
-  record(input,['sourceSha','runId','url','jobs','semantic'],'CI proof');if(input.sourceSha!==sourceSha||!Number.isSafeInteger(input.runId)||input.runId<1||!/^https:\/\/github\.com\/[^/]+\/[^/]+\/actions\/runs\/\d+$/.test(input.url)||!Array.isArray(input.jobs)||![legacyRequiredJobs,requiredJobs].some(names=>input.jobs.length===names.length&&names.every(name=>input.jobs.filter(x=>x===name).length===1)))fail('Exact-source successful CI proof is required');
+  record(input,['sourceSha','runId','url','jobs','semantic'],'CI proof');if(input.sourceSha!==sourceSha||!Number.isSafeInteger(input.runId)||input.runId<1||!/^https:\/\/github\.com\/[^/]+\/[^/]+\/actions\/runs\/\d+$/.test(input.url)||!Array.isArray(input.jobs)||![legacyRequiredJobs,preAccessSplitJobs,requiredJobs].some(names=>input.jobs.length===names.length&&names.every(name=>input.jobs.filter(x=>x===name).length===1)))fail('Exact-source successful CI proof is required');
   if(input.semantic)semanticCiProof(input.semantic,sourceSha);return structuredClone(input);
 }
 function semanticCiProof(input,sourceSha){

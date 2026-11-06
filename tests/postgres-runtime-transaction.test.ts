@@ -10,6 +10,8 @@ import { installPostgresAuthorityLock,postgresBusinessMutexValid } from '../pack
 import { PostgresDatabase } from '../packages/postgres/database.js';
 import type {WorkClaim} from '../packages/core/store.js';
 import {BACKEND_VERSION} from '../packages/ontology/execution.js';
+import {runtimeAuthorityDigest,runtimeAuthoritySchema} from '../packages/core/runtime-authority.js';
+import {PostgresTaskRelayAuthority} from '../packages/postgres/task-relay-authority.js';
 
 test('PostgreSQL business mutations fence authority, roll back and report uncertain commits', { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async () => {
   const client = new pg.Client(clientOptions()); await client.connect();
@@ -103,7 +105,18 @@ test('pooled connection is evicted after a failed rollback', async () => {
 
 test('restricted runtime can lock authority without reading or updating its table', { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' || !!process.env.EIGOS_TEST_PG_CA_FILE }, async () => {
   const admin = new pg.Client(clientOptions()); await admin.connect();
-  const suffix = randomUUID().replaceAll('-',''), schema = `eigos_business_${suffix}`, role = `eigos_test_${suffix}`, authority = { id: randomUUID(), revision: 1, digest: 'a'.repeat(64) };
+  const suffix = randomUUID().replaceAll('-',''), schema = `eigos_business_${suffix}`, role = `eigos_test_${suffix}`;
+  const canonicalOrigin = 'https://primary.example.test';
+  const runtime = runtimeAuthoritySchema.parse({
+    version:1,id:randomUUID(),revision:1,canonicalOrigin,issuer:'https://issuer.example.test',ontologyId:'eigos.business',
+    databasePath:'/fixture/tasks.sqlite',membershipDatabasePath:'/fixture/members.sqlite',
+    ingresses:[{origin:canonicalOrigin,audience:canonicalOrigin,agentClientId:'test',agentClientIds:['test']}],
+  });
+  const authority = { id:runtime.id, revision:runtime.revision, digest:runtimeAuthorityDigest(runtime) };
+  const relay = new PostgresTaskRelayAuthority({
+    authority:runtime,policyDigest:'a'.repeat(64),
+    database:{run:action=>postgresBusinessTransaction(admin,schema,authority,action)},
+  });
   try {
     await admin.query(`CREATE SCHEMA "${schema}"; CREATE TABLE "${schema}".runtime_authority(slot BIGINT PRIMARY KEY,id TEXT,revision BIGINT,configuration_digest TEXT); CREATE TABLE "${schema}".example(id BIGINT PRIMARY KEY,value BIGINT); CREATE ROLE "${role}" NOLOGIN`);
     await admin.query(`INSERT INTO "${schema}".runtime_authority VALUES(1,$1,$2,$3)`, [authority.id,authority.revision,authority.digest]);
@@ -114,6 +127,7 @@ test('restricted runtime can lock authority without reading or updating its tabl
     const privileges = await admin.query('SELECT has_table_privilege(current_user,$1,\'SELECT\') AS can_read, has_table_privilege(current_user,$1,\'UPDATE\') AS can_update', [`"${schema}".runtime_authority`]);
     assert.equal(privileges.rows[0].can_read,false); assert.equal(privileges.rows[0].can_update,false);
     await assert.rejects(admin.query(`SELECT * FROM "${schema}".runtime_authority`), /permission denied/);
+    assert.equal(await relay.authorityCurrent(),true);
     await admin.query('CREATE TEMP TABLE runtime_authority(slot BIGINT, id TEXT, revision BIGINT, configuration_digest TEXT)');
     await postgresBusinessTransaction(admin,schema,authority,async c => { await c.query('UPDATE example SET value=1'); });
     assert.equal((await admin.query(`SELECT value FROM "${schema}".example`)).rows[0].value,'1');
