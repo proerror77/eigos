@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync,readdirSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {parse} from 'yaml';
-import {POSTGRES_TEST_GROUPS,POSTGRES_GROUP_JOBS,POSTGRES_TEST_FILES,POSTGRES_PURE_TEST_FILES,POSTGRES_EXECUTION_GROUPS,POSTGRES_EXECUTION_JOBS,POSTGRES_COORDINATOR_CASES,POSTGRES_COORDINATOR_JOBS,POSTGRES_VECTOR_CASES,postgresTestsRequired,assertPostgresGroups,assertExecutionCases,assertCoordinatorCases,coordinatorTestPattern,assertCoordinatorTap,assertVectorTap,vectorTestFixtureOptions} from '../scripts/postgres-tests.mjs';
+import {POSTGRES_TEST_GROUPS,POSTGRES_GROUP_JOBS,POSTGRES_TEST_FILES,POSTGRES_PURE_TEST_FILES,POSTGRES_ACCESS_GROUPS,POSTGRES_ACCESS_JOBS,POSTGRES_EXECUTION_GROUPS,POSTGRES_EXECUTION_JOBS,POSTGRES_COORDINATOR_CASES,POSTGRES_COORDINATOR_JOBS,POSTGRES_VECTOR_CASES,postgresTestsRequired,assertPostgresGroups,assertAccessCases,assertExecutionCases,assertCoordinatorCases,coordinatorTestPattern,assertCoordinatorTap,assertVectorTap,vectorTestFixtureOptions} from '../scripts/postgres-tests.mjs';
 import {proveExactCi} from '../scripts/release-artifacts.mjs';
 import {testFiles,shardFiles} from '../scripts/test-scope.mjs';
 
@@ -60,18 +60,42 @@ test('the relay-postgres aggregate rejects missing, skipped, failed or canceled 
 });
 
 test('all required groups keep their own bounded service and exact-source checkout; aggregate runs on failure',()=>{
-  for(const name of ['scope','verify',...POSTGRES_GROUP_JOBS,'postgres-execution-cases','postgres-coordinator-cases','tests','relay-postgres']){
+  const splitGroups=['access','execution','coordinator'];
+  for(const name of ['scope','verify',...POSTGRES_GROUP_JOBS,...splitGroups.map(group=>'postgres-'+group+'-cases'),'tests','relay-postgres']){
     const job=workflow.jobs[name];assert(job,name);
     for(const step of job.steps.filter(step=>step.uses?.startsWith('actions/checkout@')))assert.equal(step.with?.ref,sourceRef,name);
   }
   for(const [group,files] of Object.entries(POSTGRES_TEST_GROUPS)){
-    const job=workflow.jobs[group==='coordinator'?'postgres-coordinator-cases':group==='execution'?'postgres-execution-cases':'postgres-'+group];assert(job.services.postgres);assert.equal(job['timeout-minutes'],30);assert(job.if.includes("needs.scope.outputs.postgres == 'true'"));
+    const job=workflow.jobs['postgres-'+group+(splitGroups.includes(group)?'-cases':'')];assert(job.services.postgres);assert.equal(job['timeout-minutes'],30);assert(job.if.includes("needs.scope.outputs.postgres == 'true'"));
     assert(job.steps.some(step=>step.run?.startsWith('node scripts/postgres-tests.mjs run --group '+group)));assert(files.length);
   }
   assert.deepEqual(workflow.jobs['relay-postgres'].needs,['scope',...POSTGRES_GROUP_JOBS]);
   assert.equal(workflow.jobs['relay-postgres'].if,'${{ always() }}');
   assert(workflow.jobs['relay-postgres'].steps.some(step=>step.run==='node scripts/postgres-tests.mjs aggregate'));
   assert(readFileSync(new URL('../scripts/postgres-tests.mjs',import.meta.url),'utf8').includes("'--test-concurrency=1'"));
+});
+
+test('access partitions run every original file once with the existing database flags and a required aggregate',()=>{
+  const files=Object.values(POSTGRES_ACCESS_GROUPS).flat();
+  assert.equal(files.length,new Set(files).size);
+  assert.deepEqual([...files].sort(),[...POSTGRES_TEST_GROUPS.access].sort());
+  const job=workflow.jobs['postgres-access-cases'];
+  assert.deepEqual(job.strategy.matrix.case,Object.keys(POSTGRES_ACCESS_GROUPS));
+  assert.equal(job.strategy['fail-fast'],false);
+  assert.equal(job['continue-on-error'],undefined);
+  assert.equal(job.services.postgres.image,'postgres:17');
+  assert.equal(job.env.PGHOST,'127.0.0.1');
+  for(const flag of ['EIGOS_TEST_RELAY_POSTGRES','EIGOS_TEST_PG_LOCAL','EIGOS_TEST_LARGE_ROW'])assert.equal(job.env[flag],'1');
+  assert(job.steps.some(step=>step.run==='node scripts/postgres-tests.mjs run --group access --case ${{ matrix.case }}'));
+  const aggregate=workflow.jobs['postgres-access'];
+  assert.deepEqual(aggregate.needs,['scope','postgres-access-cases']);
+  assert.equal(aggregate.if,'${{ always() }}');
+  assert(aggregate.steps.some(step=>step.run==='node scripts/postgres-tests.mjs aggregate-access'));
+  const needs=result=>({scope:{result:'success'},'postgres-access-cases':{result}});
+  for(const result of ['failure','cancelled','skipped',undefined])assert.throws(()=>assertAccessCases(needs(result),needed),/not successful/);
+  assert.throws(()=>assertAccessCases({scope:{result:'failure'}},needed),/successful test scope/);
+  assert.deepEqual(assertAccessCases(needs('success'),needed),{required:true,groups:[...POSTGRES_ACCESS_JOBS]});
+  assert.equal(assertAccessCases(needs('skipped'),empty).required,false);
 });
 
 test('execution partitions preserve every original file once and require all actual partition results',()=>{
@@ -101,12 +125,12 @@ test('Coordinator success requires actual non-skipped TAP cases and all four rev
 
 test('immutable release proof requires the actual successful PG groups as well as their aggregate',()=>{
   const sha='1'.repeat(40),run={id:17,head_sha:sha,status:'completed',conclusion:'success',html_url:'https://github.com/example/eigos/actions/runs/17',head_repository:{full_name:'example/eigos'}};
-  const names=['scope','verify','relay-postgres',...POSTGRES_GROUP_JOBS,...POSTGRES_COORDINATOR_JOBS,...POSTGRES_EXECUTION_JOBS,...Array.from({length:8},(_,i)=>`tests (${i+1})`),'minimum-node'];
+  const names=['scope','verify','relay-postgres',...POSTGRES_GROUP_JOBS,...POSTGRES_COORDINATOR_JOBS,...POSTGRES_EXECUTION_JOBS,...Array.from({length:8},(_,i)=>`tests (${i+1})`),'minimum-node',...POSTGRES_ACCESS_JOBS];
   const minimumSteps=['Verify exact source','Run node --import tsx --test tests/transaction-savepoints.test.ts tests/execution-projection-noop.test.ts tests/graph-read-window.test.ts'];
   const jobs=names.map(name=>({name,status:'completed',conclusion:'success',...(name==='verify'?{steps:['npm run check','npm run build','npm run test:e2e:run'].map(command=>({name:'Run '+command,status:'completed',conclusion:'success'}))}:name==='postgres-vectors'?{steps:[{name:'Run node scripts/postgres-tests.mjs run --group vectors',status:'completed',conclusion:'success'}]}:name==='minimum-node'?{steps:minimumSteps.map(name=>({name,status:'completed',conclusion:'success'}))}:{})}));
-  assert.equal(names.length,25);
+  assert.equal(names.length,28);
   assert.deepEqual(proveExactCi(run,jobs,sha,'example/eigos').jobs,names);
-  for(const name of [...POSTGRES_GROUP_JOBS,...POSTGRES_COORDINATOR_JOBS,...POSTGRES_EXECUTION_JOBS,'minimum-node']){
+  for(const name of [...POSTGRES_GROUP_JOBS,...POSTGRES_ACCESS_JOBS,...POSTGRES_COORDINATOR_JOBS,...POSTGRES_EXECUTION_JOBS,'minimum-node']){
     assert.throws(()=>proveExactCi(run,jobs.filter(job=>job.name!==name),sha,'example/eigos'),/Required CI job/);
     assert.throws(()=>proveExactCi(run,jobs.map(job=>job.name===name?{...job,conclusion:'skipped'}:job),sha,'example/eigos'),/Required CI job/);
   }

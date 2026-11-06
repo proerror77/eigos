@@ -6743,7 +6743,7 @@
     {
       "id": "release-artifacts-cli",
       "file": "scripts/release-artifacts.mjs",
-      "sourceDigest": "f3173f81dd3674b633276a36898ef7e84bbeeee2b1e7fd11c8917fed4aecdc06",
+      "sourceDigest": "218019b86fb116a5b72201e105158170ac7e2b388a61fa7b46da5e85339561a9",
       "channels": [
         "internal"
       ],
@@ -6791,7 +6791,7 @@
     {
       "id": "postgres-ci-groups",
       "file": "scripts/postgres-tests.mjs",
-      "sourceDigest": "8451963d51f66c055873bf96e508d7ff61c2df6e8dc132cedba0fc404c37ba05",
+      "sourceDigest": "0fa4d2ff4fc59b30fd35aef38c0a57c654377acf5008960266d84fcbcf807f2a",
       "channels": [
         "internal"
       ],

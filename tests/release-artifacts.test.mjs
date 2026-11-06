@@ -9,10 +9,12 @@ import {dirname,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {parse} from 'yaml';
 import {artifactDigest,canonical,createReleaseManifest,createReleaseArtifacts,validateReleaseManifest,readReleaseManifest,verifyReleaseArtifacts,verifyRuntimeImagePayload,finalizeReleaseArtifacts,selectExactCiRun,proveExactCi,proveExactSemanticCi,HARNESS_RELEASE_TOOLS} from '../scripts/release-artifacts.mjs';
+import {POSTGRES_ACCESS_JOBS} from '../scripts/postgres-tests.mjs';
 
 const sourceSha='1'.repeat(40),rawDigest=bytes=>createHash('sha256').update(bytes).digest('hex'),roles=['gateway','relay','worker'];
 const jobs=['scope','verify','relay-postgres','postgres-storage','postgres-access','postgres-execution','postgres-coordinator','postgres-vectors','postgres-coordinator-cases (protocol)','postgres-coordinator-cases (revocation)','postgres-coordinator-cases (lifecycle)','postgres-execution-cases (contracts)','postgres-execution-cases (planning)','postgres-execution-cases (documents)','postgres-execution-cases (didi)','postgres-execution-cases (transitions)',...Array.from({length:8},(_,i)=>`tests (${i+1})`)];
 const legacyJobs=jobs.slice();jobs.push('minimum-node');
+const preAccessSplitJobs=jobs.slice();jobs.push(...POSTGRES_ACCESS_JOBS);
 const minimumNodeCommand='Run node --import tsx --test tests/transaction-savepoints.test.ts tests/execution-projection-noop.test.ts tests/graph-read-window.test.ts';
 const ci={sourceSha,runId:17,url:'https://github.com/example/eigos/actions/runs/17',jobs},legacyCi={...ci,jobs:legacyJobs};
 const images=Object.fromEntries(roles.map((role,i)=>[role,`ghcr.io/example/eigos/${role}@sha256:${String(i+1).repeat(64)}`]));
@@ -117,13 +119,15 @@ test('latest exact CI, all required jobs and real runtime validation are gates b
   assert.throws(()=>proveExactCi({...run,head_repository:{full_name:'foreign/repo'}},checks,sourceSha,'example/eigos'),/exact source and repository/);
 });
 
-test('published legacy 24-job manifests remain readable without rewriting their immutable records',()=>{
+test('published CI manifests from before access partitioning remain readable without rewriting their immutable records',()=>{
   const x=fixture();try{
-    const ready=createReleaseManifest({...x.input,images,ci:legacyCi});assert.equal(ready.state,'artifact-ready');
-    const path=join(x.directory,'manifest.json'),bytes=canonical(ready)+'\n';writeFileSync(path,bytes);
-    const read=readReleaseManifest(path,{requireReady:true});assert.deepEqual(read,ready);assert.deepEqual(read.ci.jobs,legacyJobs);
-    assert.equal(verifyReleaseArtifacts(x.directory).manifestDigest,ready.manifestDigest);
-    assert.equal(readFileSync(path,'utf8'),bytes);assert.equal(read.payloadDigest,ready.payloadDigest);
+    for(const previousJobs of [legacyJobs,preAccessSplitJobs]){
+      const ready=createReleaseManifest({...x.input,images,ci:{...ci,jobs:previousJobs}});assert.equal(ready.state,'artifact-ready');
+      const path=join(x.directory,'manifest.json'),bytes=canonical(ready)+'\n';writeFileSync(path,bytes);
+      const read=readReleaseManifest(path,{requireReady:true});assert.deepEqual(read,ready);assert.deepEqual(read.ci.jobs,previousJobs);
+      assert.equal(verifyReleaseArtifacts(x.directory).manifestDigest,ready.manifestDigest);
+      assert.equal(readFileSync(path,'utf8'),bytes);assert.equal(read.payloadDigest,ready.payloadDigest);
+    }
   }finally{x.close();}
 });
 

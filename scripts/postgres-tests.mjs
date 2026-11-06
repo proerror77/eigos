@@ -14,6 +14,35 @@ export const POSTGRES_TEST_GROUPS=Object.freeze({
   vectors:Object.freeze(['tests/postgres-embedding-index.test.ts']),
 });
 export const POSTGRES_VECTOR_CASES=Object.freeze(['supplied task vectors use actual pgvector through a restricted runtime, exact field grants and complete current index']);
+export const POSTGRES_ACCESS_GROUPS=Object.freeze({
+  identity:Object.freeze([
+    'tests/postgres-member-store.test.ts',
+    'tests/postgres-authentication.test.ts',
+    'tests/postgres-access-check.test.ts',
+    'tests/postgres-eligibility-inspection.test.ts',
+    'tests/postgres-eligibility-snapshot.test.ts',
+  ]),
+  ontology:Object.freeze([
+    'tests/postgres-task-read-access.test.ts',
+    'tests/postgres-ontology-metadata.test.ts',
+    'tests/postgres-definition-service.test.ts',
+    'tests/postgres-action-discovery.test.ts',
+    'tests/postgres-ontology-query.test.ts',
+    'tests/postgres-ontology-functions.test.ts',
+    'tests/postgres-planning-context.test.ts',
+    'tests/postgres-native-planning.test.ts',
+  ]),
+  runtime:Object.freeze([
+    'tests/postgres-model-usage.test.ts',
+    'tests/postgres-authority-publisher.test.ts',
+    'tests/postgres-permission-management.test.ts',
+    'tests/postgres-task-relay.test.ts',
+    'tests/postgres-host-runtime.test.ts',
+    'tests/postgres-work-availability.test.ts',
+    'tests/postgres-worker-loop.test.ts',
+  ]),
+});
+export const POSTGRES_ACCESS_JOBS=Object.freeze(Object.keys(POSTGRES_ACCESS_GROUPS).map(name=>'postgres-access-cases ('+name+')'));
 export const POSTGRES_EXECUTION_GROUPS=Object.freeze({
   contracts:Object.freeze(['tests/postgres-consent.test.ts','tests/composition-program-parity.test.ts','tests/document-program-parity.test.ts','tests/goal-assessment-program.test.ts','tests/postgres-action-authorization.test.ts','tests/postgres-action-journal.test.ts','tests/postgres-action-permit.test.ts','tests/postgres-capability-catalog.test.ts','tests/postgres-recovery-commands.test.ts']),
   planning:Object.freeze(['tests/postgres-agent-plan.test.ts','tests/postgres-document-bindings.test.ts','tests/postgres-goal-contexts.test.ts','tests/postgres-model-context.test.ts']),
@@ -68,6 +97,13 @@ export function assertExecutionCases(needs,scope){
   return {required,groups:[...POSTGRES_EXECUTION_JOBS]};
 }
 
+export function assertAccessCases(needs,scope){
+  if(!needs||needs.scope?.result!=='success')throw Error('Access checks require a successful test scope');
+  const required=postgresTestsRequired(scope),result=needs['postgres-access-cases']?.result;
+  if(required&&result!=='success'||!required&&result!=='success'&&result!=='skipped')throw Error('Required access groups are not successful: '+String(result));
+  return {required,groups:[...POSTGRES_ACCESS_JOBS]};
+}
+
 export function coordinatorTestPattern(scenario){
   if(!Object.hasOwn(POSTGRES_COORDINATOR_CASES,scenario))throw Error('Unknown Coordinator case set');
   return '^(?:'+POSTGRES_COORDINATOR_CASES[scenario].map(name=>name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|')+')';
@@ -116,13 +152,18 @@ async function prepareVectorFixture(env){
 async function main(){
   const {values,positionals}=parseArgs({allowPositionals:true,options:{group:{type:'string'},case:{type:'string'}}}),command=positionals[0];
   if(command==='needed'){const required=postgresTestsRequired(process.env.PG_TEST_SHARDS);if(!process.env.GITHUB_OUTPUT)throw Error('CI output path is required');appendFileSync(process.env.GITHUB_OUTPUT,'required='+required+'\n');console.log(JSON.stringify({required,groups:POSTGRES_GROUP_JOBS}));return;}
+  if(command==='aggregate-access'){console.log(JSON.stringify(assertAccessCases(JSON.parse(process.env.PG_CI_NEEDS??'null'),process.env.PG_TEST_SHARDS)));return;}
   if(command==='aggregate-execution'){console.log(JSON.stringify(assertExecutionCases(JSON.parse(process.env.PG_CI_NEEDS??'null'),process.env.PG_TEST_SHARDS)));return;}
   if(command==='aggregate-coordinator'){console.log(JSON.stringify(assertCoordinatorCases(JSON.parse(process.env.PG_CI_NEEDS??'null'),process.env.PG_TEST_SHARDS)));return;}
   if(command==='aggregate'){console.log(JSON.stringify(assertPostgresGroups(JSON.parse(process.env.PG_CI_NEEDS??'null'),process.env.PG_TEST_SHARDS)));return;}
   if(command!=='run'||!Object.hasOwn(POSTGRES_TEST_GROUPS,values.group??''))throw Error('Use needed, aggregate, or run --group <registered group>');
   const scenario=values.case,coordinator=values.group==='coordinator',execution=values.group==='execution',vectors=values.group==='vectors';
-  if(coordinator&&!Object.hasOwn(POSTGRES_COORDINATOR_CASES,scenario??'')||execution&&!Object.hasOwn(POSTGRES_EXECUTION_GROUPS,scenario??'')||!coordinator&&!execution&&scenario)throw Error('Use exactly one registered case set for split suites');
-  const files=execution?POSTGRES_EXECUTION_GROUPS[scenario]:POSTGRES_TEST_GROUPS[values.group];
+  const accessCase=values.group==='access'&&scenario!==undefined;
+  if(accessCase&&!Object.hasOwn(POSTGRES_ACCESS_GROUPS,scenario))throw Error('Use a registered access case set');
+  if(coordinator&&!Object.hasOwn(POSTGRES_COORDINATOR_CASES,scenario??'')||execution&&!Object.hasOwn(POSTGRES_EXECUTION_GROUPS,scenario??'')||!coordinator&&!execution&&!accessCase&&scenario)throw Error('Use exactly one registered case set for split suites');
+  let files=POSTGRES_TEST_GROUPS[values.group];
+  if(accessCase)files=POSTGRES_ACCESS_GROUPS[scenario];
+  if(execution)files=POSTGRES_EXECUTION_GROUPS[scenario];
   // Prefix matching intentionally includes every nested revocation subtest.
   const pattern=coordinator?coordinatorTestPattern(scenario):undefined;
   const options=['--import','tsx','--test','--test-concurrency=1','--test-reporter=tap',...(pattern?['--test-name-pattern='+pattern]:[])];
