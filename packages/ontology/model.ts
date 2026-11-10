@@ -330,9 +330,20 @@ export class OntologyModel {
       }
     }
     const documented = [...this.objects.values()].filter(type => type.businessDescription !== undefined);
-    this.ref = Object.freeze({ id: definition.id, version: definition.version, digest: digest({ objects: [...this.objects.keys()].map(id => this.describeType(id)), interfaces: [...this.interfaces.keys()].map(id => this.describeType(id)), links: this.links, actions: this.actions, functions: this.functions,
+    // Releases up to v31 fingerprint their *projection*: describeType() feeds the
+    // digest, so adding a field to a read-only view counts as republishing the
+    // ontology. From v32 the digest covers the released data only, which lets the
+    // projection evolve without invalidating a reviewed release. Published
+    // fingerprints never move: the split is version-gated, not a rewrite.
+    const releasedVersion = Number(definition.version);
+    const projectionCoupled = !Number.isSafeInteger(releasedVersion) || releasedVersion <= 31;
+    const releasedContract = (property: PropertyDefinition) => ({ ...property, schema: property.schemaMetadata });
+    const releasedType = (type: { id: string; properties: Record<string, PropertyDefinition> }) => ({ ...type, properties: Object.fromEntries(Object.entries(type.properties).map(([name, property]) => [name, releasedContract(property)])) });
+    const releasedData = { objects: [...this.objects.values()].map(releasedType), interfaces: [...this.interfaces.values()].map(releasedType), links: this.links, actions: this.actions, functions: this.functions,
+      ...(documented.length ? { documentedContracts: documented.map(type => ({ id: type.id, fingerprint: this.fingerprint(type.id) })) } : {}) };
+    this.ref = Object.freeze({ id: definition.id, version: definition.version, digest: digest(projectionCoupled ? { objects: [...this.objects.keys()].map(id => this.describeType(id)), interfaces: [...this.interfaces.keys()].map(id => this.describeType(id)), links: this.links, actions: this.actions, functions: this.functions,
       // A display override must not conceal a different underlying data contract.
-      ...(documented.length ? { documentedContracts: documented.map(type => ({ id: type.id, fingerprint: this.fingerprint(type.id) })) } : {}) }) });
+      ...(documented.length ? { documentedContracts: documented.map(type => ({ id: type.id, fingerprint: this.fingerprint(type.id) })) } : {}) } : releasedData) });
     Object.defineProperty(this, 'ref', { writable: false, configurable: false });
   }
   private interfaceProperties(id: string, active = new Set<string>()): Record<string, PropertyDefinition> {
