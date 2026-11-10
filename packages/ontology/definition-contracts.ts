@@ -24,6 +24,8 @@ export interface OntologyDocument {
   links: SerializableLink[]; actions: SerializableAction[]; functions: SerializableFunction[];
   /** Optional to preserve the exact bytes/digests of historical releases. */
   pipeline?: { serviceId: string; intakeDigest: string }[];
+  /** Which review of the submission-criteria vocabulary this release carries. */
+  criteriaVersion?: string;
 }
 
 export const ontologyIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/);
@@ -70,13 +72,15 @@ export const serializableActionSchema = z.strictObject({
   read: z.strictObject({ version: versionSchema, effect: z.literal('read'), inputSchema: schema, resultType: nameSchema, mcp: mcpReadBindingSchema.optional(), module: z.strictObject({ id: ontologyIdSchema, version: versionSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), completion: z.strictObject({ evaluate: nameSchema, planned: z.boolean().optional(), afterAuthorizedOperation: z.boolean().optional() }) }).optional() }).optional(),
   operation: z.strictObject({ version: versionSchema, effect: z.enum(['local', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'external_draft']), additionalEffects: effects.optional(), environment: z.enum(['sandbox', 'local', 'live_free', 'live']), inputSchema: schema, resultType: nameSchema }).optional(),
   inputSchema: schema.optional(), implementation: actionImplementationSchema.optional(), composition: compositionContractSchema.optional(),
+  requiresApproval: z.boolean().optional(),
 });
-export const serializableFunctionSchema = z.strictObject({ id: nameSchema, version: versionSchema, inputTypes: names.min(1), description: text, handlerRef: handlerRefSchema.optional() });
+export const serializableFunctionSchema = z.strictObject({ id: nameSchema, version: versionSchema, inputTypes: names.min(1), description: text, returns: names.min(1).optional(), handlerRef: handlerRefSchema.optional() });
 export const ontologyDocumentSchema = z.strictObject({
   formatVersion: z.literal(1), id: ontologyIdSchema, version: versionSchema,
   objects: z.array(serializableObjectTypeSchema).max(2000), interfaces: z.array(serializableInterfaceSchema).max(500),
   links: z.array(serializableLinkSchema).max(10000), actions: z.array(serializableActionSchema).max(2000), functions: z.array(serializableFunctionSchema).max(1000),
   pipeline: z.array(z.strictObject({ serviceId: resourceIdSchema, intakeDigest: z.string().regex(/^[a-f0-9]{64}$/) })).max(100).optional(),
+  criteriaVersion: z.string().min(1).max(20).optional(),
 });
 
 /** Reject non-JSON/prototype-bearing values before any recursive schema compiler runs. */

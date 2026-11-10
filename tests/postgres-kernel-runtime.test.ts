@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {installPostgresAuthorityLock} from '../packages/postgres/authority-lock.js';
 import {preparePostgresKernel} from '../packages/postgres/kernel-runtime.js';
-import {StagedKernelBuilder,stagedKernelComponents,PAYMENT_COMMERCE_KERNEL_MODEL_REF,BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF} from '../packages/ontology/seed-definition.js';
+import {StagedKernelBuilder,stagedKernelComponents,PAYMENT_COMMERCE_KERNEL_MODEL_REF,BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF,CONTRACT_CLOSURE_KERNEL_MODEL_REF} from '../packages/ontology/seed-definition.js';
 import {PostgresDatabase} from '../packages/postgres/database.js';
 import {postgresBusinessTransaction,postgresBusinessKernel,postgresBusinessToken} from '../packages/postgres/runtime-transaction.js';
 import {postgresOntologyRelease,postgresOntologyReadContext} from '../packages/postgres/ontology-release.js';
@@ -41,7 +41,8 @@ test('reviewed policy selects the exact v27 or descriptions-v28 kernel without u
   }
   assert.notEqual(persistentConsentPolicyContracts(legacyModel).after,persistentConsentPolicyContracts(currentModel).after);
   assert.throws(()=>reviewedKernelVersionForPolicy('0'.repeat(64)),/explicit supported kernel review/);
-  assert.throws(()=>new StagedKernelBuilder('32' as never),/Unsupported reviewed kernel target/);
+  assert.throws(()=>new StagedKernelBuilder('33' as never),/Unsupported reviewed kernel target/);
+  assert.equal(CONTRACT_CLOSURE_KERNEL_MODEL_REF.version,'32','the reviewed v32 closure is a selectable target');
   assert.throws(()=>stagedKernelComponents(Object.setPrototypeOf({},StagedKernelBuilder.prototype)),/private|read|member/i);
 });
 

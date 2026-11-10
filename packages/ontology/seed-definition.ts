@@ -3,6 +3,7 @@ import {extendSemanticRetrievalKernel} from './semantic-retrieval-kernel.js';
 import { extendBusinessDescriptions } from './business-descriptions.js';
 import { extendPaClassificationKernel } from './pa-classification-kernel.js';
 import { extendDomainVocabularyKernel } from './domain-vocabulary-kernel.js';
+import { extendContractClosureKernel } from './contract-closure-kernel.js';
 import { extendRollingGoKernel } from './rollinggo-kernel.js';
 import { extendBusinessFactsKernel } from './business-facts-kernel.js';
 import { extendPersonalContextKernel } from './personal-context-kernel.js';
@@ -28,6 +29,7 @@ import type { ActionDefinition, InterfaceDefinition, ModelDefinition, ObjectType
 export const LEGACY_SEED_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '15', digest: 'efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776' });
 export const CURRENT_KERNEL_VERSION = '28';
 export const DOMAIN_VOCABULARY_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '31', digest: '2eb7c0911c04c38bb0cc0f8316c12d86318f8612f675506436b41d871ce66f51' });
+export const CONTRACT_CLOSURE_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '32', digest: '53bdaa43dd60980322180e1a9aafa52a8669056aeef245fd9fc983a7a5322e04' });
 export const PA_CLASSIFICATION_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '30', digest: '1ef0be3f87514a7916635b3e26eec05a552fccb1df17ab1d09700baf3fe26aaf' });
 export const SEMANTIC_RETRIEVAL_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '29', digest: '3061fa84b2606d1726b9673053e5940daa141bfd84a7ba7b877a8b17ca81a8b6' });
 export const BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '28', digest: '04606f93dc6cfd9045ac6b9a0c3dcfa4c8f330689ecbdd3cdfa7556df15202c5' });
@@ -209,6 +211,13 @@ export function createDomainVocabularyKernelDefinition(registry = new TrustedDef
   assertRelease(vocabulary, DOMAIN_VOCABULARY_KERNEL_MODEL_REF, 'The reviewed domain vocabulary fingerprint changed');
   return vocabulary;
 }
+/** v32 closes the kinetic contract: approved-write classification, a reviewed
+ * submission-criteria vocabulary and a declared result for every function. */
+export function createContractClosureKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
+  const closed = complete(extendContractClosureKernel(createDomainVocabularyKernelDefinition(registry).document, registry), registry, false);
+  assertRelease(closed, CONTRACT_CLOSURE_KERNEL_MODEL_REF, 'The reviewed contract closure fingerprint changed');
+  return closed;
+}
 export function createBusinessDescriptionsKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const described = complete(extendBusinessDescriptions(createPaymentCommerceKernelDefinition(registry).document), registry, false);
   assertRelease(described, BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF, 'The original v28 description kernel fingerprint changed');
@@ -242,12 +251,12 @@ export class StagedKernelBuilder {
   #model?: OntologyModel;
   #documentDigest?: string;
   static readonly stages = 15;
-  readonly #targetVersion: '27' | '28' | '29' | '30' | '31';
+  readonly #targetVersion: '27' | '28' | '29' | '30' | '31' | '32';
   readonly #stageCount: number;
-  constructor(targetVersion: '27' | '28' | '29' | '30' | '31' = CURRENT_KERNEL_VERSION) {
-    if (!['27', '28', '29', '30', '31'].includes(targetVersion)) throw new Error('Unsupported reviewed kernel target');
+  constructor(targetVersion: '27' | '28' | '29' | '30' | '31' | '32' = CURRENT_KERNEL_VERSION) {
+    if (!['27', '28', '29', '30', '31', '32'].includes(targetVersion)) throw new Error('Unsupported reviewed kernel target');
     this.#targetVersion = targetVersion;
-    this.#stageCount = targetVersion === '27' ? 14 : targetVersion === '28' ? 15 : targetVersion === '31' ? 17 : 16;
+    this.#stageCount = targetVersion === '27' ? 14 : targetVersion === '28' ? 15 : targetVersion === '31' ? 17 : targetVersion === '32' ? 18 : 16;
   }
 
   step(expected: number): { completed: number; total: number; ready: boolean } {
@@ -301,17 +310,24 @@ export class StagedKernelBuilder {
           if(this.#targetVersion==='28'){this.#documentDigest=digest(this.#current.document); this.#registry.seal();}
           break;
         case 15: {
-          const classified = this.#targetVersion === '30' || this.#targetVersion === '31';
+          const classified = this.#targetVersion === '30' || this.#targetVersion === '31' || this.#targetVersion === '32';
           this.#current=complete(classified ? extendPaClassificationKernel(this.#current!.document) : extendSemanticRetrievalKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
           const expected = classified ? PA_CLASSIFICATION_KERNEL_MODEL_REF : SEMANTIC_RETRIEVAL_KERNEL_MODEL_REF;
           assertRelease(this.#current, expected, `The reviewed ${expected.version === '30' ? 'PA classification' : 'semantic retrieval'} fingerprint changed`);
           // The v31 vocabulary stage republishes this release, so sealing waits for stage 16.
-          if (this.#targetVersion !== '31') { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
+          if (this.#targetVersion !== '31' && this.#targetVersion !== '32') { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
           break;
         }
         case 16:
           this.#current=complete(extendDomainVocabularyKernel(this.#current!.document),this.#registry,false,model=>{this.#model=model;});
           assertRelease(this.#current, DOMAIN_VOCABULARY_KERNEL_MODEL_REF, 'The reviewed domain vocabulary fingerprint changed');
+          // The v32 contract closure still registers reviewed function contracts,
+          // so sealing waits for stage 17 when that release is the target.
+          if (this.#targetVersion !== '32') { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
+          break;
+        case 17:
+          this.#current=complete(extendContractClosureKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
+          assertRelease(this.#current, CONTRACT_CLOSURE_KERNEL_MODEL_REF, 'The reviewed contract closure fingerprint changed');
           this.#documentDigest=digest(this.#current.document);this.#registry.seal();
           break;
         default: throw new Error('Unknown kernel stage');
