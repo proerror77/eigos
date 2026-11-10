@@ -19,6 +19,17 @@ import { assertReviewedModel } from '../packages/security/model-review.js';
 import { securityFixture } from './fixtures/security.js';
 import { importPostgresFixture } from './fixtures/postgres-business.js';
 import { input as rideInput, sourcePlace } from './fixtures/didi.js';
+import { DynamicOntologyProgram, createDynamicOntologyProgram } from '../packages/capabilities/dynamic-ontology.js';
+import { ExecutionCatalog } from '../packages/core/catalog.js';
+import { personalActionIds, selfPersonRef, personalPreferenceRef } from '../packages/ontology/personal-context.js';
+import { taskContextFields } from '../packages/security/task-context-contract.js';
+import { PostgresTaskCommandService } from '../packages/postgres/task-command-service.js';
+import { PostgresTaskStorage } from '../packages/postgres/task-storage.js';
+import { PostgresWorkerStore } from '../packages/postgres/worker-store.js';
+import { PostgresCallerActionExecution } from '../packages/postgres/caller-action.js';
+import { PostgresReadProgramRegistry } from '../packages/postgres/didi-registry.js';
+import { postgresWorkerLane, postgresWorkerReservation } from '../packages/postgres/worker-capacity.js';
+import { discoverPostgresTaskActions } from '../packages/postgres/action-discovery.js';
 
 test('installed forward registry is sealed, idempotent and isolated from the selected policy document', async () => {
   const a = await preparePostgresKernel(), first = stagedKernelComponents(a), document = a.result().document;
@@ -98,4 +109,85 @@ test('ordinary policy-v28 PostgreSQL host reads an explicitly published v34 task
     await t.client.query(`DELETE FROM ${q}.security_roles WHERE id=$1`, [digest([role34.subjectKind, role34.subjectId, role34.resource])]);
     await assert.rejects(service.evaluateOntology(principal, call), /AUTHORIZATION_REQUIRED|INSUFFICIENT_ACCESS/);
   } finally { if (target) await target.close(); sqlite.close(); f.close(); }
+});
+
+test('v34 personal Actions retain exact discovery, approval, Worker execution and original-task readback', { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async () => {
+  const f = securityFixture(Date.now, { unified: true }); let target: Awaited<ReturnType<typeof importPostgresFixture>> | undefined;
+  try {
+    const forward = createExecutableContractKernelDefinition(), model = compiledSeedModel(forward, forward.registry);
+    const release = { ontologyId: forward.document.id, releaseId: `synthetic-managed-v34-${randomUUID()}`, digest: digest(forward.document) };
+    const program = new DynamicOntologyProgram(model, release, f.owner), policy = f.jobs.security.policies;
+    const expiresAt = new Date(Date.now() + 3600000).toISOString(), installation = f.installation('Synthetic v34 personal-action caller', 3600000), sourceBindingId = `program:${program.ref.id}`;
+    const resources = [...new Set(['ServiceRequest', 'Person', 'PersonalPreference', 'SavedAddress', ...Object.keys(taskContextFields)])].map(type => ({ type, fields: Object.keys(policy.fields(type)).filter(field => policy.fieldPolicy(type, field) !== 'internal_only') }));
+    f.coordinator.approveAgentGrant(f.member.id, { installationId: installation.id, capabilityIds: [program.ref.id], resources, sourceBindingIds: [sourceBindingId], channels: ['agent_response'], expiresAt });
+    const oldRole = { subjectKind: 'installation' as const, subjectId: installation.id, role: 'Viewer' as const, resource: { kind: 'namespace' as const, id: f.jobs.ontology.model.ref.id, version: f.jobs.ontology.model.ref.digest }, executeActions: [...personalActionIds], invokeFunctions: f.jobs.ontology.model.functionIds(), expiresAt };
+    policy.setRole(oldRole, policy.revision());
+    policy.setRecipient(installation.id, { classification: 'sensitive', markings: ['member_private', 'personal_data', 'precise_location', 'financial', 'health', 'account_private'], channels: ['agent_response'], expiresAt }, policy.revision());
+    // This is an explicit fixture source grant for the exact future release,
+    // never an automatic conversion of an old program configuration.
+    policy.setSource(f.owner, { installationId: installation.id, bindingId: sourceBindingId, programId: program.ref.id, programDigest: program.configurationDigest, operations: [...personalActionIds], outputTypes: ['Person', 'PersonalPreference'], expiresAt }, policy.revision());
+    const principal = { ...f.principal, access: f.coordinator.authenticate(f.principal, installation.token) };
+    target = await importPostgresFixture(f); const t = target, q = `"${t.schema}"`;
+    assert.equal(stagedKernelComponents(t.kernel).model.ref.version, '28');
+    await t.client.query(`INSERT INTO ${q}.ontology_definition_releases(id,ontology_id,sequence,digest,model_digest,body,created_at) VALUES($1,$2,(SELECT max(sequence)+1 FROM ${q}.ontology_definition_releases WHERE ontology_id=$2),$3,$4,$5,$6)`, [release.releaseId, release.ontologyId, release.digest, model.ref.digest, JSON.stringify(forward.document), new Date().toISOString()]);
+    await t.client.query(`UPDATE ${q}.ontology_namespaces SET active_release_id=$1,generation=generation+1 WHERE id=$2`, [release.releaseId, release.ontologyId]);
+    const tasks = new PostgresTaskCommandService(t.database, t.policy, t.kernel), registry = new PostgresReadProgramRegistry(t.policy);
+    const worker = new PostgresWorkerStore(t.database, t.policy, t.kernel, { classify: (job, intents) => postgresWorkerLane(job, intents, registry) });
+    const execution = new PostgresCallerActionExecution({ database: t.database, policyDigest: t.policy, builder: t.kernel });
+    const read = (id: string) => t.run(client => new PostgresTaskStorage(client, t.kernel).get(f.owner, id));
+    await assert.rejects(tasks.prepareOntologyAction(principal, { action: 'BindSelfPerson', input: { self: true, displayTitle: 'Synthetic self' }, requestId: randomUUID() }), /AUTHORIZATION_REQUIRED|INSUFFICIENT_ACCESS/, 'an old namespace role cannot prepare a newly published action');
+    const role = { ...oldRole, resource: { ...oldRole.resource, version: model.ref.digest }, invokeFunctions: model.functionIds() };
+    const roleId = digest([role.subjectKind, role.subjectId, role.resource]);
+    await t.client.query(`INSERT INTO ${q}.security_roles(id,subject_id,body) VALUES($1,$2,$3)`, [roleId, installation.id, JSON.stringify(role)]);
+    const directoryTask = await tasks.submit(principal, { requestId: randomUUID(), goal: 'Inspect explicitly authorized personal data actions; do not execute them' });
+    const catalog = new ExecutionCatalog([], [], [], [], [], createDynamicOntologyProgram);
+    const discover = () => t.database.read(client => discoverPostgresTaskActions(client, principal, directoryTask.id, release.ontologyId, { actionId: 'BindSelfPerson' }, { catalog, policyDigest: t.policy, builder: t.kernel }));
+    const directory = await discover(), action = directory.items.find(item => item.action.id === 'BindSelfPerson');
+    assert(action); assert.equal(action.status, 'available'); assert.equal(action.bindings[0]!.readiness, 'ready');
+    assert.deepEqual(action.action.effects, ['object_write']); assert.deepEqual(action.bindings[0]!.pin.ontologyRelease, release);
+    assert.equal(action.bindings[0]!.pin.configurationDigest, program.configurationDigest); assert.equal(directory.authorization, 'per_action_required');
+    await tasks.cancel(principal, directoryTask.id);
+
+    const perform = async (actionId: string, input: Record<string, unknown>) => {
+      await t.refreshEligibility();
+      const command = { action: actionId, input, requestId: randomUUID() }, prepared = await tasks.prepareOntologyAction(principal, command), original = await read(prepared.id);
+      assert.equal(prepared.state, 'auth-required'); assert.deepEqual(original.delegation!.ontologyRelease, release);
+      assert.equal(original.delegation!.agent!.programDigest, program.configurationDigest);
+      assert.equal((await tasks.prepareOntologyAction(principal, command)).id, prepared.id);
+      assert.equal(await worker.claim(['eigos.delegate'], 30000), undefined, 'discovery and preparation are not a write permit');
+      const preview = await tasks.callerActionPreview(principal, prepared.id), plan = original.delegation!.agent!.plans[0]!;
+      assert.equal(preview.status, 'prepared'); assert.equal(preview.planDigest, plan.digest); assert.equal(preview.digest, preview.scope.previewDigest);
+      const permit = { action: 'approve_object_write', requestId: randomUUID(), planDigest: plan.digest, objectWrite: preview.scope, expiresAt, environment: 'managed' };
+      await assert.rejects(tasks.authorize(principal, prepared.id, { ...permit, objectWrite: { ...preview.scope, inputDigest: 'f'.repeat(64) } }), /preview|differs|changed/i);
+      assert.equal((await tasks.authorize(principal, prepared.id, permit)).id, prepared.id);
+      const claim = await worker.claim(['eigos.delegate'], 30000); assert(claim); assert.equal(claim.job.id, prepared.id);
+      assert.equal(postgresWorkerReservation(claim.token).lane, 'execution');
+      await assert.rejects(worker.beginModelUsage(claim, randomUUID(), 'no-model-for-managed-write', new Date().toISOString()), /no model capacity/);
+      let renewal: Promise<unknown> | undefined, renewalFailure: unknown;
+      const timer = setInterval(() => { if (!renewal) renewal = worker.renew(claim, 30000).catch(error => { renewalFailure = error; }).finally(() => { renewal = undefined; }); }, 5000); timer.unref();
+      try { await execution.run(claim, new AbortController().signal); } finally { clearInterval(timer); if (renewal) await renewal; }
+      assert.equal(renewalFailure, undefined);
+      const completed = await read(prepared.id); assert.equal(completed.id, prepared.id); assert.equal(completed.state, 'completed');
+      assert.deepEqual(completed.delegation!.ontologyRelease, release); assert.equal(completed.delegation!.acceptance?.accepted, true); assert.equal(completed.runs!.length, 0);
+      const committed = await tasks.callerActionPreview(principal, prepared.id); assert.equal(committed.status, 'committed'); assert.equal(committed.digest, preview.digest);
+      const intents = await t.run(client => new PostgresTaskStorage(client, t.kernel).intents(f.owner, prepared.id));
+      assert.equal(intents.length, 1); assert.equal(intents[0]!.state, 'effect_confirmed');
+      assert.equal(Number((await t.client.query(`SELECT count(*) AS n FROM ${q}.action_attempts WHERE intent_id=$1`, [intents[0]!.id])).rows[0]!.n), 1);
+      assert.equal((await tasks.get(principal, prepared.id)).state, 'completed');
+      await assert.rejects(execution.run(claim, new AbortController().signal), /ACCESS_REVOKED|frontier|POLICY_CHANGED/);
+      return completed;
+    };
+    const bound = await perform('BindSelfPerson', { self: true, displayTitle: 'Synthetic v34 self' });
+    const person = await tasks.queryOntology(principal, { version: 2, taskId: bound.id, query: { object: selfPersonRef(f.owner) } });
+    assert.equal(person.items[0]!.revision, 1);
+    await perform('CreatePersonalPreference', { key: 'rideClass', value: { kind: 'rideClass', value: 'comfort' } });
+    const changed = await perform('SetPersonalPreference', { key: 'rideClass', expectedRevision: 1, value: { kind: 'rideClass', value: 'standard' } });
+    const result = await tasks.queryOntology(principal, { version: 2, taskId: changed.id, query: { object: personalPreferenceRef(f.owner, 'rideClass') } });
+    assert.equal(result.items[0]!.revision, 2); assert.deepEqual(result.items[0]!.properties.value, { kind: 'rideClass', value: 'standard' });
+    assert.equal(Number((await t.client.query(`SELECT count(*) AS n FROM ${q}.security_model_channels`)).rows[0]!.n), 0);
+    await t.client.query(`DELETE FROM ${q}.security_roles WHERE id=$1`, [roleId]);
+    await assert.rejects(discover(), /AUTHORIZATION_REQUIRED|INSUFFICIENT_ACCESS/, 'the remaining old role cannot discover v34 task actions');
+    await assert.rejects(tasks.prepareOntologyAction(principal, { action: 'SetPersonalPreference', input: { key: 'rideClass', expectedRevision: 2, value: { kind: 'rideClass', value: 'denied-change' } }, requestId: randomUUID() }), /AUTHORIZATION_REQUIRED|INSUFFICIENT_ACCESS/);
+    assert.equal(Number((await t.client.query(`SELECT revision FROM ${q}.ontology_objects WHERE owner=$1 AND type='PersonalPreference' AND id=$2`, [f.owner, personalPreferenceRef(f.owner, 'rideClass').id])).rows[0]!.revision), 2, 'the remaining old role cannot mutate the v34 object');
+  } finally { if (target) await target.close(); f.close(); }
 });
