@@ -84,6 +84,8 @@ export interface LinkDefinition {
 export interface ActionDefinition {
   id: string;
   version?: string;
+  /** True when the effect changes something outside this process and an owner must decide first. */
+  requiresApproval?: boolean;
   kind?: 'decision' | 'source_read' | 'business';
   effects?: import('./actions.js').EffectClass[];
   resultTypes?: string[];
@@ -100,9 +102,11 @@ export interface ActionDefinition {
   implementation?: ActionImplementation;
   composition?: import('./composition-contract.js').ActionCompositionContract;
 }
-export interface FunctionDefinition { id: string; version: string; inputTypes: string[]; description: string }
-export interface ModelDefinition { id: string; version: string; objects: ObjectTypeDefinition[]; interfaces: InterfaceDefinition[]; links: LinkDefinition[]; actions: ActionDefinition[]; functions: FunctionDefinition[] }
+export interface FunctionDefinition { id: string; version: string; inputTypes: string[]; description: string; returns?: string[] }
+export interface ModelDefinition { id: string; version: string; objects: ObjectTypeDefinition[]; interfaces: InterfaceDefinition[]; links: LinkDefinition[]; actions: ActionDefinition[]; functions: FunctionDefinition[]; criteriaVersion?: string }
 function invalid(message: string): never { throw new DomainError('INVALID_INPUT', message); }
+/** Effects that change state a person is accountable for. */
+const APPROVAL_EFFECTS = new Set(['change', 'object_write', 'reserve', 'order', 'payment', 'cancel', 'refund', 'external_draft']);
 /** Freeze public metadata only. Zod owns mutable parser caches and is deliberately excluded. */
 function freezeMetadata<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -430,6 +434,12 @@ export class OntologyModel {
   definitionSnapshot(): ModelDefinition { return { id: this.ref.id, version: this.ref.version, objects: [...this.objects.values()], interfaces: [...this.interfaces.values()], links: [...this.links], actions: [...this.actions], functions: [...this.functions] }; }
   typeIds(): string[] { return [...this.objects.keys(), ...this.interfaces.keys()]; }
   actionIds(): string[] { return this.actions.map(action => action.id); }
+  /** Derived from the declared effect: a write outside this process needs an owner's decision. */
+  approvalRequired(actionId: string): boolean {
+    const action = this.actions.find(candidate => candidate.id === actionId) ?? invalid('Unknown action');
+    const effect = (action as { operation?: { effect?: string }; read?: { effect?: string } }).operation?.effect ?? (action as { read?: { effect?: string } }).read?.effect ?? 'none';
+    return APPROVAL_EFFECTS.has(effect);
+  }
   functionIds(): string[] { return this.functions.map(fn => fn.id); }
   private interfaceAncestors(id: string): string[] {
     const cached = this.ancestorCache.get(id);
