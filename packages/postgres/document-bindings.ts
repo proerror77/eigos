@@ -24,6 +24,7 @@ import {PostgresDefinitionStore} from './definition-store.js';
 
 export interface PostgresDocumentBindingOptions {
   semantic?:SemanticActionRanker;
+  didiReadTiming?:{durationMs:number;receipts:number};
   policyDigest:string;modelChannel:string;builder?:StagedKernelBuilder;sourceBindingId?:string;registry?:PostgresReadProgramRegistry;
   inspectClaim:(claim:PostgresWorkReference)=>Promise<{validUntil:number}|undefined>;
 }

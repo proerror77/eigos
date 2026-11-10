@@ -2931,7 +2931,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "6ce7caaa6be22e81728e06192ec9614f9821bc30a91e8a57f1041a71c2764a7a",
+      "sourceDigest": "b2ee4dbe3b0441f9fb3cffacc790a00c0a663ff8bb1d054efa5f09affb2de4f6",
       "channels": [
         "http",
         "mcp",
@@ -3423,7 +3423,7 @@
     {
       "id": "security-principal",
       "file": "packages/core/domain.ts",
-      "sourceDigest": "62faf9bac7c98eb55cd938ce9e84989aca8b2e0a1a220175d5dc284b875bd3f0",
+      "sourceDigest": "f77d60d87fa1875d37c72a0b8617dbd068fb80fb201e77e801fb95c6a9fdf47e",
       "channels": [
         "authorization_control"
       ],
@@ -4087,7 +4087,7 @@
     {
       "id": "fixed-scope-message-references",
       "file": "packages/core/delegation.ts",
-      "sourceDigest": "86a7545dbbb0b7b6ddde2ae0129cf73d96090e5ff577665d517450ab8675d929",
+      "sourceDigest": "1ba77cde18adbb537fef1ebf43924f4159b8a27dc6c092b4e80f0f31017f1397",
       "channels": [
         "model",
         "artifact"
@@ -4619,7 +4619,7 @@
       "currentControl": "Original accepted ports, same-component declared functions, exact source observations, ownership, freshness and independent input validation",
       "targetControl": "No guessed values, cross-task aliases, implicit conversions or authority from model text",
       "stage": "S5",
-      "sourceDigest": "c4bd161e866c09db0d5d3b3b62e3f2cb47df6a8457ef69ec9bae7f23e88fc91b"
+      "sourceDigest": "def918da58e6dc47a68ac72b19cd814d76fbb867b3d29a16adc96a6bb75b57dd"
     },
     {
       "id": "native-agent-decision-contract",
@@ -4632,7 +4632,7 @@
       "currentControl": "Strict model decision schema; host validates authenticated decision digests, exact contexts and current task revision before dispatch",
       "targetControl": "Proposals cannot grant permissions or declare unverified business completion",
       "stage": "S5",
-      "sourceDigest": "1f844a90c0e568455536b5f09f43c4ba8443a5458dcdbe02a78eaa53bf305066"
+      "sourceDigest": "9b9f906ba6fbeed1dd7b6ffbae596e5e4949d6486414ec3fde8d8ad3fd9847b4"
     },
     {
       "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
@@ -6020,12 +6020,12 @@
     {
       "id": "postgres-task-commands",
       "file": "packages/postgres/task-command-service.ts",
-      "sourceDigest": "245c15f8910f582f319fc85de21cdec929ee28985cb6a01ccdf0f2e453ff1bc0",
+      "sourceDigest": "7f1cffcac2f01383376c47377ca8f3d1531dea3f32f2df05e7b003c6cc6c7403",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL task submit and cancellation",
-      "currentControl": "Current write admission before and after atomic commands; original-task idempotency; explicit personal inputs; current sealed output or writer-only receipt; no model/provider execution",
+      "currentControl": "Current write admission before and after atomic commands; original-task idempotency; explicit personal inputs; current sealed output or writer-only receipt; no model/provider execution The explicit DiDi estimate submission pins the registered read capability. Structured mode validates the exact read-only goal and binds the typed route into the original request.",
       "targetControl": "Current write admission before and after atomic commands; original-task idempotency; explicit personal inputs; current sealed output or writer-only receipt; no model/provider execution",
       "stage": "S5"
     },
@@ -6491,12 +6491,12 @@
     {
       "id": "postgres-action-authorization",
       "file": "packages/postgres/action-authorization.ts",
-      "sourceDigest": "d5d8de5a644cbfde35d7cdbedf634f6ce55540b48704a9b1d4e9020690746d72",
+      "sourceDigest": "8a6cb23190e07f5960c687107d18bdfd7fc304f69bddfe1ac3ab9140fb9b7644",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL current plan, source and action admission",
-      "currentControl": "Current task/claim/roles/source/output grants, sealed plan and actual receipts, immutable input/configuration, exact permits and original trusted response; required missing program, result and grounding semantic ports fail closed",
+      "currentControl": "Current task/claim/roles/source/output grants, sealed plan and actual receipts, immutable input/configuration, exact permits and original trusted response; required missing program, result and grounding semantic ports fail closed The DiDi-only host branch verifies the fixed goal, original workflow digest and actual Worker read ledger, then applies the same role, source, lease and action checks.",
       "targetControl": "Current task/claim/roles/source/output grants, sealed plan and actual receipts, immutable input/configuration, exact permits and original trusted response; required missing program, result and grounding semantic ports fail closed",
       "stage": "S5"
     },
@@ -6659,12 +6659,12 @@
     {
       "id": "postgres-agent-plan",
       "file": "packages/postgres/agent-plan.ts",
-      "sourceDigest": "354f7294d13a58fe8c13ed469ac3c6b9af935e4ece677049a961f8a8bdb6b524",
+      "sourceDigest": "fb996ca3f4b802132363dec75b08526e04edf1e15c7ee6aabafe98b801fd0124",
       "channels": [
         "internal"
       ],
       "content": "Atomic original PostgreSQL Agent frontier installation",
-      "currentControl": "Current original claim and scope, exact durable model decision and read receipts, cumulative budgets and pinned definitions; same-savepoint plan and actual journal-authorized fresh intents; unported dataflow, private inputs and effects remain denied",
+      "currentControl": "Current original claim and scope, exact durable model decision and read receipts, cumulative budgets and pinned definitions; same-savepoint plan and actual journal-authorized fresh intents; unported dataflow, private inputs and effects remain denied DiDi host plans require the original task-bound workflow proof and durable current Worker-context receipts. The intent still uses the original journal authorization.",
       "targetControl": "Current original claim and scope, exact durable model decision and read receipts, cumulative budgets and pinned definitions; same-savepoint plan and actual journal-authorized fresh intents; unported dataflow, private inputs and effects remain denied",
       "stage": "S5"
     },
@@ -6683,7 +6683,7 @@
     {
       "id": "goal-assessment-program",
       "file": "packages/coordinator/goal-assessment-program.ts",
-      "sourceDigest": "cea3e886c21fb43894af47e2bae7814cabc4654f1e8198e11718977dadaa46ca",
+      "sourceDigest": "a0e9172b9baff6f89823bbf36168b1dc0b65994c15617d137d381cde3527e023",
       "channels": [
         "internal"
       ],
@@ -6707,7 +6707,7 @@
     {
       "id": "postgres-document-bindings",
       "file": "packages/postgres/document-bindings.ts",
-      "sourceDigest": "db4e66369e7b4dd9e94a756ab6fa9c1a528d8c107c728d3a451ef3fbfe7983ee",
+      "sourceDigest": "0a4196ee32933d0d93305e8066903591f2ce6021fd6bc29095d0f783254ebeab",
       "channels": [
         "internal"
       ],
@@ -6719,12 +6719,12 @@
     {
       "id": "postgres-goal-contexts",
       "file": "packages/postgres/goal-contexts.ts",
-      "sourceDigest": "6b685ab4457c960aec54eb3453f968d4dcac0dead2994bbc3b304e0ec2e09521",
+      "sourceDigest": "f29210f79f9df48fc67681dddba4801c8d8416c8fc5adaf1faff3862f45ff073",
       "channels": [
         "internal"
       ],
       "content": "Atomic original Goal component preparation",
-      "currentControl": "Actual model decision and durable native read receipts, immutable original Goal criteria and request, current registered Doc binding/source, checked initializer and component digest; same-savepoint rollback without new task/grant or authority",
+      "currentControl": "Actual model decision and durable native read receipts, immutable original Goal criteria and request, current registered Doc binding/source, checked initializer and component digest; same-savepoint rollback without new task/grant or authority DiDi component preparation additionally accepts a current Worker-context receipt restricted to the fixed DiDi read binding and typed route.",
       "targetControl": "Actual model decision and durable native read receipts, immutable original Goal criteria and request, current registered Doc binding/source, checked initializer and component digest; same-savepoint rollback without new task/grant or authority",
       "stage": "S5"
     },
@@ -6755,24 +6755,24 @@
     {
       "id": "postgres-coordinator",
       "file": "packages/postgres/coordinator.ts",
-      "sourceDigest": "e976843bfbeb0159005ccfd76bd0eee1a45ddb2ea0b410dd9be21d45c9535d91",
+      "sourceDigest": "f5c4ff8fb841729eaf90cb2531dcdb5ad20968006c1805fa176b3128d4ace552",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL original-task Goal and document phase coordinator",
-      "currentControl": "Registered acknowledged model ports; authorized typed request/catalogue/model DTOs and actual native receipts; independent Goal review, committed original attempts, current model/claim/role/source checks before dispatch, atomic output seals and no uncertain-operation replay Known rejection reasons are logged privately through a runtime allowlist even after successful recovery writeback; no raw error or public task diagnostic field is added.",
+      "currentControl": "Registered acknowledged model ports; authorized typed request/catalogue/model DTOs and actual native receipts; independent Goal review, committed original attempts, current model/claim/role/source checks before dispatch, atomic output seals and no uncertain-operation replay Known rejection reasons are logged privately through a runtime allowlist even after successful recovery writeback; no raw error or public task diagnostic field is added. The scoped DiDi estimator reserves at most one tool-free model decision before egress and runs program-selected reads through the current journal. Model and provider attempts are not fabricated.",
       "targetControl": "Registered acknowledged model ports; authorized typed request/catalogue/model DTOs and actual native receipts; independent Goal review, committed original attempts, current model/claim/role/source checks before dispatch, atomic output seals and no uncertain-operation replay",
       "stage": "S5"
     },
     {
       "id": "postgres-goal-acceptance",
       "file": "packages/postgres/goal-acceptance.ts",
-      "sourceDigest": "66a243fc72bbe729629b3145d0eb8947a13227aff3427b508501608efbced71a",
+      "sourceDigest": "b3a94ccf03f5ec3294575e41617190fc3e198c7d96b6c17eb80d08b8a1a62073",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL original-model whole-goal acceptance",
-      "currentControl": "Original durable model completion and read receipts, fixed Goal and independent coverage, current component/requirements/conditions/definition checks; approved influence and sealed output in the original fenced commit; unavailable producer/citation semantics never default to accepted",
+      "currentControl": "Original durable model completion and read receipts, fixed Goal and independent coverage, current component/requirements/conditions/definition checks; approved influence and sealed output in the original fenced commit; unavailable producer/citation semantics never default to accepted DiDi host completion independently validates the fixed quote goal, original accepted reads, source evidence and current output authorization.",
       "targetControl": "Original durable model completion and read receipts, fixed Goal and independent coverage, current component/requirements/conditions/definition checks; approved influence and sealed output in the original fenced commit; unavailable producer/citation semantics never default to accepted",
       "stage": "S5"
     },
@@ -7290,7 +7290,7 @@
     {
       "id": "postgres-source-relay-authority",
       "file": "packages/postgres/relay-read-authority.ts",
-      "sourceDigest": "c5b024b727cd049de568627e546f4ee94052179f40420fa5a084b128d199b4ac",
+      "sourceDigest": "88a975b694c7c9aac172a36243b45449139b1bd0656717196f21d29816149a85",
       "channels": [
         "internal"
       ],
@@ -7387,7 +7387,7 @@
     {
       "id": "postgres-didi-policy",
       "file": "packages/postgres/didi-policy.ts",
-      "sourceDigest": "30c95ac1209561908c27183eb00560b19d4a17993ad90210d54592faa227fd1a",
+      "sourceDigest": "40c5537d90c4e937bf704d1a313920c189944d947d86695b8dff40f7d117d0b3",
       "channels": [
         "internal",
         "provider"
@@ -7412,7 +7412,7 @@
     {
       "id": "postgres-didi-execution",
       "file": "packages/postgres/didi-execution.ts",
-      "sourceDigest": "c2a2959a4ba401a388363f8586fd14af5070e332254871b4a199ac8a6a354bf3",
+      "sourceDigest": "3df560001da74b1b757766f04b16d5b0d6eedb9b9d795b595d381025712e507f",
       "channels": [
         "internal",
         "provider"
@@ -7867,6 +7867,31 @@
       "targetControl": "No relabelling of facts, new source authority or historical contract rewrite.",
       "stage": "S3",
       "sourceDigest": "daa8c25ece5717cb799f178ea24a2e735802945f7718df1254d4656653ccd180"
+    },
+    {
+      "id": "didi-estimate-submission-contract",
+      "file": "packages/core/didi-estimate-request.ts",
+      "sourceDigest": "f0c2887be5f6d66b52c52a7d0cd90c7bb4780eb8c156fec73362832c65019e7c",
+      "channels": [
+        "mcp",
+        "a2a"
+      ],
+      "content": "Closed PA DiDi estimate request and one-decision route input",
+      "currentControl": "Only named places, city and optional vehicle class are accepted. The typed scope is bound to the original request. No effect or source privilege is granted.",
+      "targetControl": "Only named places, city and optional vehicle class are accepted. The typed scope is bound to the original request. No effect or source privilege is granted.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-didi-short-path-proof",
+      "file": "packages/postgres/didi-short-path.ts",
+      "sourceDigest": "e7b51769aaa3dbefaefb1c4ca0405c1db240ec6c204899991c08e045de203858",
+      "channels": [
+        "internal"
+      ],
+      "content": "Fixed DiDi read-only workflow evidence",
+      "currentControl": "The current request and release, exact authorized route, optional single grounded model receipt and actual Worker-context receipts bind the fixed estimate phases. Only the two registered source read actions can enter the original journal.",
+      "targetControl": "The current request and release, exact authorized route, optional single grounded model receipt and actual Worker-context receipts bind the fixed estimate phases. Only the two registered source read actions can enter the original journal.",
+      "stage": "S5"
     }
   ]
 }

@@ -302,6 +302,7 @@ export class TaskService {
     const owner = ownerKey(p);
     if (args.service === 'eigos.aftersales') { if (inTransaction) throw new DomainError('FORBIDDEN', 'Inquiry cannot submit after-sales'); if (contextId && this.store.get(owner, args.originalTaskId).contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match original task'); const { service, ...remedy } = args; return this.requestRemediation(p, remedy); }
     if (this.stopping) throw new DomainError('CONFLICT', 'Gateway is shutting down');
+    if (args.didiEstimate) throw new DomainError('INVALID_INPUT', 'Explicit DiDi estimate requests require the PostgreSQL Worker');
     const once = inTransaction ? this.store.onceInTransaction.bind(this.store) : this.store.once.bind(this.store);
     const submitted = once(owner, 'submit', args.requestId, JSON.stringify([args, contextId]), () => {
       if (contextId && !this.store.hasContext(owner, contextId)) throw new DomainError('NOT_FOUND', 'Context not found');

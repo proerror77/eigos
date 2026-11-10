@@ -65,6 +65,12 @@ export const proposalSchema = z.object({
 }).strict();
 export type PlanProposal = z.infer<typeof proposalSchema>;
 export interface Delegation {
+  didiEstimate?: {
+    request: import('./didi-estimate-request.js').DidiEstimateRequest;
+    revision: number;
+    modelStarted?: true;
+    interpretation?: { runId: string; decision: Extract<import('./didi-estimate-request.js').DidiEstimateDecision, {kind:'estimate'}> };
+  };
   /** Inactive, separate guardian delegation; never permission to reopen history. */
   observationContract?: { id: string; digest: string };
   goalCoverage?: import('../ontology/goal-coverage.js').GoalCoverage;

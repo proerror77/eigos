@@ -29,6 +29,7 @@ export interface GoalAssessmentPorts {
    * semantic programs do not grant authority or renew any evidence. */
   /** Re-resolve the exact original pin, source/configuration and registration. */
   resolveProgram:(context:GoalAssessmentContext,component:AgentComponentContext)=>GraphProgram<GoalCompletionProgram>;
+  verifyHostSetup?:(component:AgentComponentContext)=>void;
   /** Current accepted receipt plus the real producer's output semantics. */
   assertAcceptedOutputCurrentProgram:(context:GoalAssessmentContext,intent:ActionIntent,port:string)=>GraphProgram<AcceptedPortValue>;
 }
@@ -138,7 +139,7 @@ export function* assessGoalProgram(ctx:GoalAssessmentContext,proposal:unknown,re
     try {
       const component = composition.contexts.find(value => value.id === item.contextId) ?? fail('Unknown completion component');
       const program=yield* ports.resolveProgram(ctx,component);
-      const scoped = componentContext(ctx, component, program), accepted = (scoped.intents ?? []).filter(intent => intent.state === 'effect_confirmed');
+      const scoped = componentContext(ctx, component, program, ports.verifyHostSetup), accepted = (scoped.intents ?? []).filter(intent => intent.state === 'effect_confirmed');
       if(program.assertContextProgram)yield* program.assertContextProgram(scoped);
       if (!accepted.length) fail('A component result requires its accepted original operation');
       const delivery=yield* program.completeProgram(scoped,JSON.parse(item.proposalJson),reads);
