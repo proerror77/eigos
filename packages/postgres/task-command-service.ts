@@ -1,5 +1,7 @@
 import {ownerKey,requireScope,submitSchema,replySchema,versionedReplySchema,resumeTaskSchema,remediationSchema,taskIdSchema,DomainError,type Principal,type Job} from '../core/domain.js';
 import {z} from 'zod';
+import {didiEstimateGoal,structuredDidiGoal} from '../core/didi-estimate-request.js';
+import {DIDI_PROGRAM_REF} from '../capabilities/didi/program.js';
 import {isPersonalAction,personalPreferenceKey,personalPreferenceRef,selfPersonRef} from '../ontology/personal-context.js';
 import {ontologyIdSchema} from '../ontology/definition-contracts.js';
 import {objectRefSchema} from '../ontology/model.js';
@@ -278,6 +280,13 @@ export class PostgresTaskCommandService extends PostgresTaskReadService {
       }));
       const {service:_service,...remedy}=args;return this.requestRemediation(p,remedy);
     }
+    const estimate=args.didiEstimate;
+    if(estimate&&(args.deliverable||args.requirements?.length||args.personalContext||args.executionEnvironment==='sandbox'
+      ||args.ontologyId&&args.ontologyId!=='eigos.business'||args.capabilityRef&&digest(args.capabilityRef)!==digest(DIDI_PROGRAM_REF)
+      ||estimate.mode==='structured'&&(args.goal!==didiEstimateGoal||args.locationContext)
+      ||estimate.mode==='natural'&&args.goal.length>2000)){
+      throw new DomainError('INVALID_INPUT','The DiDi short path accepts one read-only estimate with no separate deliverable or constraints');
+    }
     if(this.commandStopping)throw new DomainError('CONFLICT','Gateway is shutting down');
     return this.db.run(client=>withPostgresAgentWrite(client,p,this.policy,async admission=>{
       const store=new PostgresTaskStorage(client,this.kernel),owner=ownerKey(p),q=`"${postgresBusinessSchema(client)}"`;
@@ -291,7 +300,10 @@ export class PostgresTaskCommandService extends PostgresTaskReadService {
           if(!allowed)throw new DomainError('NOT_FOUND','Context not found');
         }
         const release=await postgresOntologyReadContext(client,owner,{ontologyId:args.ontologyId??'eigos.business'},p.scopes.includes('ontology:admin'),this.kernel);
-        let created=await store.save(owner,createSubmittedTask(p,args,release.ref,contextId));
+        const submitted=createSubmittedTask(p,estimate?{...args,capabilityRef:DIDI_PROGRAM_REF,
+          goal:estimate.mode==='structured'?structuredDidiGoal(estimate):args.goal}:args,release.ref,contextId);
+        if(estimate)submitted.delegation!.didiEstimate={request:estimate,revision:1};
+        let created=await store.save(owner,submitted);
         const inputs=await postgresPersonalInputs(client,p,created,this.policy,this.kernel);
         await postgresProvisionTask(client,p,created,this.policy,inputs,{builder:this.kernel});
         if(created.delegation!.request.personalContext){

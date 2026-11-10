@@ -60,6 +60,7 @@ export interface AgentActionPlan {
   id: string; version: '2' | '3'; sequence: number; requestId: string; requestRevision: number;
   programRef: Ref; programDigest: string; scope: ObjectRef; scopeDigest: string;
   modelRunId?: string; modelDecision?: AgentDecision;
+  didiDecision?: { id: string; decision: AgentDecision };
   callerDecision?: { requestId: string; envelopeDigest: string; decision: AgentDecision };
   reasoning: string; createdAt: string;
   steps: (AgentStep & { confirmation?: import('./actions.js').AuthorizationPresentation; simulatedApproval?: { amount: { minor: string; currency: string }; expiresAt: string }; privateDigest?: string; binding?: ActionBindingPin; contextDigest?: string; contextScope?: ObjectRef; scopeDigest?: string; acceptedInputSources?: { targetKey: string; sourceStep: ObjectRef }[]; definitionDigest: string; input: Record<string, unknown>; intentId: string; operationKey: string; effect: import('./actions.js').EffectClass; additionalEffects?: import('./actions.js').EffectClass[]; cost?: { minor: string; currency: string; payeeId: string }; budgetImpact?: import('./actions.js').ActionBudgetImpact; objectWrite?: import('./actions.js').ObjectWriteScope; externalDraft?: import('./external-draft.js').ExternalDraftScope; operationScope?: string })[];

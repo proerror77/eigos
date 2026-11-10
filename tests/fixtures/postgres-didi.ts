@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {digest} from '../../packages/core/delegation.js';
+import {structuredDidiGoal,type DidiEstimateRequest} from '../../packages/core/didi-estimate-request.js';
 import {bindPersonalSourceOwner} from '../../packages/core/source-owner.js';
 import {createGoalContract} from '../../packages/core/goal-contract.js';
 import {goalState,GoalProgram} from '../../packages/coordinator/goal-program.js';
@@ -31,7 +32,7 @@ import {evidence,syntheticGoalReview} from '../backend-fixture.js';
 /** All choices and upstream MCP responses are explicitly synthetic. The
  * PostgreSQL current account, native read ledger, real semantic/journal/source
  * projection and whole-goal acceptance have no permissive verifier callback. */
-export async function postgresDidiFixture(relay=false,transport:{deliverSource?:boolean}={}){
+export async function postgresDidiFixture(relay=false,transport:{deliverSource?:boolean;shortPath?:DidiEstimateRequest}={}){
   const f=securityFixture(Date.now,{unified:true}),source=didiFixture(),sourceKeys=relay?await createNodeKeys('Explicit synthetic provider transport'):undefined,peerId=sourceKeys?.identity.card.agentId;
   const transportDigest=relay?digest({transport:digest({protocol:'eigos.source-read/1',authorityId:f.authority!.id,gatewayOrigin:f.authority!.canonicalOrigin,peerId}),fixture:'explicit-synthetic-provider-v1'}):undefined;
   const initialProgram=new DidiAgentProgram(source.binding,{connector:relay?{evidenceKind:'fixture',transportDigest,invoke:source.connector.invoke.bind(source.connector)}:source.connector});bindPersonalSourceOwner(initialProgram,f.owner);
@@ -47,13 +48,27 @@ export async function postgresDidiFixture(relay=false,transport:{deliverSource?:
     f.jobs.security.policies.setRecipient(installation.id,{classification:'sensitive',markings:[...markings],channels:['agent_response'],expiresAt},f.jobs.security.policies.revision());
     f.jobs.security.policies.setModelChannel(channel,{classification:'sensitive',markings:[...markings],expiresAt},f.jobs.security.policies.revision());
     f.jobs.security.policies.setSource(f.owner,{installationId:installation.id,bindingId,programId:initialProgram.ref.id,programDigest:initialProgram.configurationDigest,operations:[...initialProgram.actionIds],outputTypes:initialProgram.projectionTypes,expiresAt},f.jobs.security.policies.revision());
-    const save=f.jobs.save.bind(f.jobs);f.jobs.save=(owner,job)=>{job.goal='只读查询合成滴滴地点或车型估价，不叫车、不付款';job.delegation!.request.originalGoal=job.goal;job.delegation!.request.messages=[{id:randomUUID(),text:job.goal,receivedAt:job.createdAt}];f.jobs.save=save;return save(owner,job);};
+    const save=f.jobs.save.bind(f.jobs);f.jobs.save=(owner,job)=>{
+      const d=job.delegation!,request=d.request,short=transport.shortPath;
+      job.goal=short?.mode==='structured'?structuredDidiGoal(short):short?'只查北京市北京西站到西二旗地铁站的滴滴估价，不叫车不付款。':'只读查询合成滴滴地点或车型估价，不叫车、不付款';
+      request.originalGoal=job.goal;
+      request.messages=[{id:randomUUID(),text:job.goal,receivedAt:job.createdAt}];
+      if(short){
+        request.capabilityRef=initialProgram.ref;request.executionEnvironment='live';
+        job.messages=[{id:request.messages[0]!.id,role:'user',text:job.goal,at:job.createdAt}];
+        d.didiEstimate={request:short,revision:request.revision};
+      }
+      f.jobs.save=save;return save(owner,job);
+    };
     const task=f.task(installation.id);f.jobs.security.revokeGrant(f.owner,task.grant.id,task.grant.revision);
     const grant=f.jobs.security.issueTaskGrant({...task.grant,id:randomUUID(),operations:['task.process','task.query','task.result.read'],channels:['agent_response','registered_model'],outputs:initialProgram.projectionTypes.map(type=>({type,fields:fields(type),programId:initialProgram.ref.id,programDigest:initialProgram.configurationDigest,sourceBindingId:bindingId}))});
     f.jobs.security.attachTaskAuthority({...task.authority,id:randomUUID(),dataGrant:{id:grant.id,revision:grant.revision}});
     const request=task.job.delegation!.request,message=request.messages[0]!,goal=createGoalContract(request,task.job.delegation!.ontologyRelease!,[{id:'query',predicate:'ride.query_readback',phase:'fact',description:'An explicitly synthetic readonly DiDi source query result',messageId:message.id,quote:message.text,requirementIds:[]}],[initialProgram.capability()]);
     const fixed=new GoalProgram(goal),reviewContext={request,capability:fixed.capability(),input:{}},review=await syntheticGoalReview(reviewContext),coverage=createGoalCoverage(reviewContext,review.decision,{...review.evidence,purpose:'goal_coverage'});
-    task.job.delegation!.agent=goalState(request,goal);task.job.delegation!.goalCoverage=coverage;task.job.delegation!.phase='planning';task.job.runs=[{...review.evidence,purpose:'goal_coverage'}];f.jobs.save(f.owner,task.job);
+    if(!transport.shortPath){
+      task.job.delegation!.agent=goalState(request,goal);task.job.delegation!.goalCoverage=coverage;
+      task.job.delegation!.phase='planning';task.job.runs=[{...review.evidence,purpose:'goal_coverage'}];f.jobs.save(f.owner,task.job);
+    }
     target=await importPostgresPrimaryFixture(f);const t=target,q=`"${t.schema}"`,account=new PostgresDidiAccount(source.binding,f.owner,{readCurrent:()=>descriptor,expectedDigest:accountDigest}),reads=relay?new PostgresRelayReadAuthority({database:t.database,policyDigest:t.policy,authority:f.authority!,builder:t.kernel,didiAccount:account}):undefined;
     const common={binding:source.binding,owner:f.owner,account,sourceBindingId:bindingId};
     const registry=new PostgresReadProgramRegistry(t.policy,{documentEnabled:false,didi:relay?{...common,kind:'relay-fixture',reads:reads!,peerId:peerId!,authority:{id:f.authority!.id,gatewayOrigin:f.authority!.canonicalOrigin}}:{...common,kind:'synthetic-fixture',connector:source.connector}}),program=registry.entries[0]!.program;

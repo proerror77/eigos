@@ -7,6 +7,8 @@ import {executionBudgetStatus} from '../core/execution-budget.js';
 import type {Job} from '../core/domain.js';
 import type {AgentProgram,AgentActionAuthority,AgentActionResult} from '../core/agent-program.js';
 import {agentOperation,assertAgentDecisionOrigin,hasSimulationApproval,matchesAgentGrant} from '../core/agent-authorization.js';
+import {assertDidiShortPathDecision,didiShortPathGoal} from './didi-short-path.js';
+import {DIDI_PROGRAM_REF} from '../capabilities/didi/program.js';
 import {DynamicOntologyProgram} from '../capabilities/dynamic-ontology.js';
 import {stepBindingRef,stepInputDigest} from '../core/composed-actions.js';
 import {assertGoalContract,assertGoalEffects} from '../core/goal-contract.js';
@@ -150,6 +152,11 @@ function actionAuthorization(client:Client,options:PostgresActionAuthorizationOp
     if(plan.callerDecision){
       if(!(program instanceof DynamicOntologyProgram))deny();
       assertAgentDecisionOrigin(program,job,check.claim.owner,plan);
+    }else if(plan.didiDecision){
+      if(!state.composition||!same(program.ref,DIDI_PROGRAM_REF)||plan.modelRunId||plan.modelDecision||plan.initialSelection
+        ||plan.steps.some(item=>item.effect!=='read'||item.additionalEffects?.length)
+        ||!same(didiShortPathGoal(job,capability),state.composition.goal))deny('POLICY_CHANGED');
+      assertDidiShortPathDecision(job,plan.didiDecision.decision,plan.didiDecision.id,plan.ontologyPlanning);
     }else{
       if(!plan.modelRunId||!plan.modelDecision||job.delegation.callerAction||!['model_queries','worker_context','worker_context_with_queries'].includes(plan.ontologyPlanning.mode))deny('POLICY_CHANGED');
       if(plan.initialSelection){
@@ -159,7 +166,7 @@ function actionAuthorization(client:Client,options:PostgresActionAuthorizationOp
       }else if(!job.runs?.some(run=>run.id===plan.modelRunId&&run.decisionDigest===digest(plan.modelDecision)))deny('POLICY_CHANGED');
       if(!state.composition)assertGoalCoverage(job,capability);
     }
-    const decision=plan.modelDecision??plan.callerDecision?.decision;
+    const decision=plan.modelDecision??plan.callerDecision?.decision??plan.didiDecision?.decision;
     if(!decision||decision.kind!=='execute'||decision.requestRevision!==request.revision||plan.steps.length!==decision.steps.length||plan.steps.some((value,index)=>{
       const {confirmation:_confirmation,simulatedApproval:_simulation,privateDigest:_private,definitionDigest:_definition,input,intentId:_intent,effect:_effect,additionalEffects:_effects,cost:_cost,budgetImpact:_budget,objectWrite:_write,externalDraft:_draft,operationScope:_scope,operationKey:_key,binding:_binding,contextDigest:_context,contextScope:_contextScope,scopeDigest:_scopeDigest,acceptedInputSources:_sources,...selected}=value;
       return !same(selected,decision.steps[index])||!same(input,JSON.parse(value.argumentsJson));

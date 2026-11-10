@@ -25,9 +25,9 @@ export const stepBindingRef = (plan: AgentActionPlan, step: AgentActionPlan['ste
 export const stepInputDigest = (step: Pick<AgentStep, 'inputRefs' | 'acceptedInputs'> & { input: Record<string, unknown> }) =>
   digest({ input: step.input, inputRefs: step.inputRefs, ...(step.acceptedInputs ? { acceptedInputs: step.acceptedInputs } : {}) });
 
-/** Only a pin that was delivered during this model decision may be selected. */
-export function discoveredBinding(reads: PlanningSnapshot, bindingDigest: string): ActionBindingPin {
-  if (reads.mode !== 'model_queries') fail('Composed actions require model discovery receipts');
+/** Select a pin from the current, explicitly chosen evidence origin. */
+export function discoveredBinding(reads: PlanningSnapshot, bindingDigest: string, mode: 'model_queries' | 'worker_context' = 'model_queries'): ActionBindingPin {
+  if (reads.mode !== mode) fail('Composed actions require current discovery receipts from the decision origin');
   const pins = reads.reads.filter(read => read.status === 'ok').flatMap(read => read.actionBindings?.pins ?? []);
   const pin = pins.find(value => value.digest === bindingDigest) ?? fail('Read the exact action binding in this decision before selecting it');
   const { digest: expected, ...body } = pin;
@@ -206,7 +206,7 @@ function outputSnapshot(graph:ProjectionMetadata,ref:ObjectRef,view:ObjectView){
  * Only this program reads current admitted objects and creates their receipts.
  * The enclosing action journal still owns grant/claim/cancellation fences. */
 export function* sealComposedOutputsProgram(ctx:ComposedOutputContext,step:AgentActionPlan['steps'][number],input:Record<string,unknown>,result:AgentActionResult,object:ObjectRef,intent:ActionIntent,
-  definition:ActionDefinition,project:(current:ObjectView)=>ComposedOutputProjection):GraphProgram<AcceptedPortValue[]>{
+  definition:ActionDefinition,project:(current:ObjectView)=>ComposedOutputProjection,verifyHostSetup?:(component:AgentComponentContext)=>void):GraphProgram<AcceptedPortValue[]>{
   const contract=definition.composition??fail('Missing output composition contract'),binding=step.binding;
   const release=ctx.graph.releaseRef??fail('Outputs require the pinned ontology release');
   const plan=ctx.state.plans.find(value=>value.id===ctx.planId),observationId=intent.latestObservationId;
@@ -232,7 +232,7 @@ export function* sealComposedOutputsProgram(ctx:ComposedOutputContext,step:Agent
       ||!same(ctx.graph.releaseRef,release)||!same(ctx.graph.model.action(step.action),definition))fail('Output definition, composition, binding or ontology release changed');
     if(step.contextId){
       const component=ctx.state.composition?.contexts.find(value=>value.id===step.contextId)??fail('Output component context is missing');
-      componentContext(ctx,component,{ref:ctx.state.programRef,configurationDigest:ctx.state.programDigest});
+      componentContext(ctx,component,{ref:ctx.state.programRef,configurationDigest:ctx.state.programDigest},verifyHostSetup);
       if(component.digest!==step.contextDigest||!same(component.scope,step.contextScope)||!same(ctx.state.scope,component.scope))fail('Output component differs from its pinned scope');
     }
     if(witness()!==original)fail('Accepted output evidence changed while reading its snapshots');
@@ -298,7 +298,7 @@ export function objectResultProjection(object: ObjectRef, evidence: AcceptedPort
 
 /** A view for one trusted domain validator. Root plans remain sealed and
  * unchanged; only observations and intents are narrowed to the exact context. */
-export function componentContext<G extends ProjectionMetadata>(ctx:Omit<AgentProgramContext,'graph'>&{graph:G},component:AgentComponentContext,program:Pick<AgentProgram,'ref'|'configurationDigest'>):Omit<AgentProgramContext,'graph'>&{graph:G} {
+export function componentContext<G extends ProjectionMetadata>(ctx:Omit<AgentProgramContext,'graph'>&{graph:G},component:AgentComponentContext,program:Pick<AgentProgram,'ref'|'configurationDigest'>,verifyHostSetup?:(value:AgentComponentContext)=>void):Omit<AgentProgramContext,'graph'>&{graph:G} {
   if (ctx.state.composition?.retiredContexts?.some(value => value.id === component.id)) fail('Source authorization renewed; prepare a new explicit context instead of reusing the retired one');
   const { digest: expected, ...body } = component;
   if (!ctx.state.composition?.contexts.some(value => value.id === component.id && value.digest === expected)) fail('Component context is not a member of this task');
@@ -306,7 +306,8 @@ export function componentContext<G extends ProjectionMetadata>(ctx:Omit<AgentPro
   if (component.requestRevision !== ctx.request.revision) fail('Component request revision changed');
   if (!same(component.programRef, program.ref)) fail(`Component program reference changed (${component.programRef.id} to ${program.ref.id})`);
   if (component.programDigest !== program.configurationDigest) fail('Component program configuration changed');
-  if (!ctx.modelRuns?.some(run => run.id === component.initializedBy.modelRunId && run.decisionDigest === digest(component.initializedBy.decision))) fail('Component setup has no original authenticated model decision');
+  if (verifyHostSetup) verifyHostSetup(component);
+  else if (!ctx.modelRuns?.some(run => run.id === component.initializedBy.modelRunId && run.decisionDigest === digest(component.initializedBy.decision))) fail('Component setup has no original authenticated model decision');
   const steps = ctx.state.plans.flatMap(plan => plan.steps).filter(step => step.contextId === component.id && step.contextDigest === component.digest);
   const intents = (ctx.intents ?? []).filter(intent => steps.some(step => step.intentId === intent.id && step.binding && same(intent.bindingRef, step.binding.ref)));
   const objects = intents.filter(intent => intent.state === 'effect_confirmed').map(intent => intent.acceptedOutput?.object).filter(Boolean);

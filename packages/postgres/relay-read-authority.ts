@@ -1,3 +1,4 @@
+import {didiSourceDecisionId} from './didi-short-path.js';
 import type {Client} from 'pg';
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
@@ -74,7 +75,7 @@ export class PostgresRelayReadAuthority {
       if(!state||!plan||intentRows.rowCount!==1||typeof intentRows.rows[0]?.body!=='string'||attemptRows.rowCount!==1||typeof attemptRows.rows[0]?.body!=='string')throw new SecurityError('ACCESS_REVOKED');
       const intent=intentSchema.parse(JSON.parse(intentRows.rows[0].body)),attempt=attemptSchema.parse(JSON.parse(attemptRows.rows[0].body)),step=plan.steps.find(value=>value.intentId===intent.id),{digest:expected,...body}=plan;
       if(!step||intent.id!==request.context.intentId||intent.owner!==claim.owner||intent.jobId!==job.id||intent.planDigest!==plan.digest||plan.programDigest!==state.programDigest||digest(body)!==expected||step.effect!==intent.effect
-        ||intent.effect!=='read'||step.effect!=='read'||step.action!==request.context.action||plan.modelRunId!==request.context.modelRunId||plan.requestId!==job.id||plan.requestRevision!==actor.requestRevision
+        ||intent.effect!=='read'||step.effect!=='read'||step.action!==request.context.action||didiSourceDecisionId(plan)!==request.context.modelRunId||plan.requestId!==job.id||plan.requestRevision!==actor.requestRevision
         ||attempt.id!==request.context.attemptId||attempt.intentId!==intent.id||attempt.kind!=='dispatch'||attempt.claimToken!==claim.token||attempt.requestRevision!==(job.revision??0)||attempt.planDigest!==plan.digest||attempt.inputDigest!==request.context.actionInputDigest
         ||!intent.dispatchInput||digest(intent.dispatchInput)!==request.context.actionInputDigest)throw new SecurityError('AUTHORIZATION_REQUIRED');
       const needed=actionSources(state,step.action,step.input,step),binding=needed.find(value=>value.programRef.id===request.context.programId&&value.programDigest===request.context.programDigest);
