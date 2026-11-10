@@ -84,6 +84,10 @@ export async function importPostgresFixture(f:ReturnType<typeof securityFixture>
   database.run=<T>(action:(client:pg.Client)=>Promise<T>):Promise<T>=>{
     if(failure)return Promise.reject(new Error('Synthetic eligibility publisher failed',{cause:failure}));return ownedRun(action);
   };
+  const ownedRead=database.read.bind(database);
+  database.read=<T>(action:(client:pg.Client)=>Promise<T>):Promise<T>=>{
+    if(failure)return Promise.reject(new Error('Synthetic eligibility publisher failed',{cause:failure}));return ownedRead(action);
+  };
   const publisherStatus=()=>({lastAttemptAt,lastAcknowledgedAt,acknowledgedUntil,remainingMs:acknowledgedUntil===undefined?undefined:acknowledgedUntil-Date.now(),
     failure:failure instanceof Error?{name:failure.name,code:'code'in failure?failure.code:undefined,message:failure.message}:failure?{name:'unknown'}:undefined});
   return {client,schema,authority,policy,database,kernel,refreshEligibility,publisherStatus,run:<T>(action:(client:pg.Client)=>Promise<T>)=>{

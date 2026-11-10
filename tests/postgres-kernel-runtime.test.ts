@@ -52,7 +52,8 @@ test('prepared kernel is bound to the exact callback token and explicit builders
     let oldToken:object|undefined,late:(()=>unknown)|undefined;
     await x.t.database.run(async client=>{
       const token=postgresBusinessToken(client);assert.equal(postgresBusinessKernel(client,token),x.t.kernel);
-      const first=await postgresOntologyRelease(client,x.ref),again=await postgresOntologyRelease(client,x.ref);assert.equal(first.model,expected.model);assert.equal(again.model,first.model);assert(Object.isFrozen(first.document));assert.notEqual(first.document,again.document,'each persisted release row is still parsed and verified');
+      const first=await postgresOntologyRelease(client,x.ref),again=await postgresOntologyRelease(client,x.ref);assert.equal(first.model,expected.model);assert.equal(again.model,first.model);assert(Object.isFrozen(first.document));assert.equal(first.document,again.document,'unchanged stored bytes reuse the immutable verified document');
+      assert.throws(()=>{first.document.version='forged';},TypeError);
       assert.equal((await postgresOntologyRelease(client,x.ref,second)).model,other.model,'explicit reviewed builder overrides this transaction host default');
     });
     await x.t.run(async client=>{oldToken=postgresBusinessToken(client);late=()=>postgresBusinessKernel(client,oldToken!);assert.equal(late(),x.t.kernel);});

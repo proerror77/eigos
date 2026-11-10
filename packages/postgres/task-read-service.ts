@@ -26,7 +26,7 @@ export class PostgresTaskReadService implements Pick<TaskServicePort,'get'|'getA
   usage(_principal:Principal):never{throw new DomainError('FORBIDDEN','Foundation usage is not an authorized task projection');}
   private stopping=false;
   private readonly waitTimeoutMs:number;
-  constructor(private readonly database:Pick<PostgresDatabase,'run'>,private readonly policyDigest:string,
+  constructor(private readonly database:Pick<PostgresDatabase,'read'>,private readonly policyDigest:string,
     private readonly builder?:StagedKernelBuilder,options:{waitTimeoutMs?:number}={}) {
     if(!/^[a-f0-9]{64}$/.test(policyDigest))throw new Error('Invalid PostgreSQL task policy');
     this.waitTimeoutMs=options.waitTimeoutMs??300000;
@@ -35,31 +35,31 @@ export class PostgresTaskReadService implements Pick<TaskServicePort,'get'|'getA
   async describeOntology(principal:Principal,input:unknown,context?:import('../core/tasks.js').OntologyReadContext) {
     if(context)throw new DomainError('FORBIDDEN','Use the task-scoped foundation read contract');
     const p=structuredClone(principal),args=structuredClone(input);
-    return this.database.run(client=>postgresDescribeOntology(client,p,args,this.policyDigest,this.builder));
+    return this.database.read(client=>postgresDescribeOntology(client,p,args,this.policyDigest,this.builder));
   }
   async queryOntology(principal:Principal,input:unknown,reader?:import('../ontology/network-read.js').NetworkOntologyReadAdapter,context?:import('../core/tasks.js').OntologyReadContext) {
     if(reader||context)throw new DomainError('FORBIDDEN','Use the task-scoped foundation read contract');
     const p=structuredClone(principal),args=structuredClone(input);
-    return this.database.run(client=>withPostgresOntologyReleaseSnapshot(client,()=>
+    return this.database.read(client=>withPostgresOntologyReleaseSnapshot(client,()=>
       postgresQueryOntology(client,p,args,this.policyDigest,this.builder)));
   }
   async evaluateOntology(principal:Principal,input:unknown,reader?:import('../ontology/network-read.js').NetworkOntologyReadAdapter,context?:import('../core/tasks.js').OntologyReadContext) {
     if(reader||context)throw new DomainError('FORBIDDEN','Use the task-scoped foundation read contract');
     const p=structuredClone(principal),args=structuredClone(input);
-    return this.database.run(client=>withPostgresOntologyReleaseSnapshot(client,()=>
+    return this.database.read(client=>withPostgresOntologyReleaseSnapshot(client,()=>
       postgresEvaluateOntology(client,p,args,this.policyDigest,this.builder)));
   }
   async checkAccess(principal:Principal,input:unknown){
     const p=structuredClone(principal),args=structuredClone(input);
-    return this.database.run(client=>postgresCheckAccess(client,p,args,this.policyDigest,this.builder));
+    return this.database.read(client=>postgresCheckAccess(client,p,args,this.policyDigest,this.builder));
   }
   async downloadArtifact(principal:Principal,taskId:string,artifactId:string){
     const p=structuredClone(principal),id=taskIdSchema.parse(taskId),artifact=z.uuid().parse(artifactId);
-    return this.database.run(client=>withPostgresTaskReadAuthorization(client,p,id,this.policyDigest,async auth=>{const item=await auth.download(artifact);return {...item,content:Buffer.from(item.content)};},this.builder));
+    return this.database.read(client=>withPostgresTaskReadAuthorization(client,p,id,this.policyDigest,async auth=>{const item=await auth.download(artifact);return {...item,content:Buffer.from(item.content)};},this.builder));
   }
   async get(principal:Principal,taskId:string) {
     const p=structuredClone(principal),id=taskIdSchema.parse(taskId);
-    return this.database.run(client=>postgresTaskView(client,p,id,this.policyDigest,this.builder));
+    return this.database.read(client=>postgresTaskView(client,p,id,this.policyDigest,this.builder));
   }
   async getAfterWait(principal:Principal,taskId:string,waitMs=0) {
     if(!Number.isInteger(waitMs) || waitMs<0 || waitMs>30000)throw new DomainError('INVALID_INPUT','Task read wait must be between 0 and 30000 milliseconds');
@@ -73,7 +73,7 @@ export class PostgresTaskReadService implements Pick<TaskServicePort,'get'|'getA
   }
   async wait(principal:Principal,taskId:string) {
     const p=structuredClone(principal),id=taskIdSchema.parse(taskId),deadline=Date.now()+this.waitTimeoutMs;
-    const read=()=>this.database.run(async client=>{
+    const read=()=>this.database.read(async client=>{
       const job=await postgresTaskView(client,p,id,this.policyDigest,this.builder),q=`"${postgresBusinessSchema(client)}"`;
       const metadata=await client.query(`SELECT CASE WHEN octet_length(${q}.eigos_try_jsonb(body)#>>'{delegation,backendVersion}')<=128
         THEN ${q}.eigos_try_jsonb(body)#>>'{delegation,backendVersion}' END AS backend FROM ${q}.jobs WHERE owner=$1 AND id=$2`,[ownerKey(p),id]);
@@ -90,7 +90,7 @@ export class PostgresTaskReadService implements Pick<TaskServicePort,'get'|'getA
     const p=structuredClone(principal),owner=ownerKey(p);
     z.number().int().min(1).max(100).parse(filter.limit);z.number().int().min(0).max(1000000).parse(filter.offset);
     const updatedAfter=filter.updatedAfter?new Date(z.iso.datetime({offset:true}).parse(filter.updatedAfter)).toISOString():undefined;
-    return this.database.run(client=>withPostgresAgentRead(client,p,this.policyDigest,async admission=>{
+    return this.database.read(client=>withPostgresAgentRead(client,p,this.policyDigest,async admission=>{
       const q=`"${postgresBusinessSchema(client)}"`;
       const grants=await client.query(`SELECT data.value->>'taskId' AS task_id FROM ${q}.security_grants g
         CROSS JOIN LATERAL (SELECT CASE WHEN octet_length(g.body)<=1048576 THEN ${q}.eigos_try_jsonb(g.body) END AS value OFFSET 0) data

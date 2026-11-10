@@ -63,6 +63,70 @@ test('concurrent PostgreSQL writers cannot silently lose an update', { skip: pro
   } finally { await first.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); await first.end(); await second.end(); }
 });
 
+test('PostgreSQL query transactions overlap while business mutations remain fenced', { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async () => {
+  const first = new pg.Client(clientOptions()), second = new pg.Client(clientOptions()), writer = new pg.Client(clientOptions());
+  await Promise.all([first.connect(), second.connect(), writer.connect()]);
+  const schema = `eigos_business_${randomUUID().replaceAll('-','')}`, authority = { id: randomUUID(), revision: 1, digest: 'a'.repeat(64) };
+  let releaseReaders!: () => void;
+  const held = new Promise<void>(resolve => { releaseReaders = resolve; });
+  const reads: Promise<unknown>[] = [];
+  try {
+    await first.query(`CREATE SCHEMA "${schema}"; CREATE TABLE "${schema}".runtime_authority(slot BIGINT PRIMARY KEY,id TEXT,revision BIGINT,configuration_digest TEXT); CREATE TABLE "${schema}".example(id BIGINT PRIMARY KEY,value BIGINT)`);
+    await first.query(`INSERT INTO "${schema}".runtime_authority VALUES(1,$1,$2,$3)`, [authority.id,authority.revision,authority.digest]);
+    await installPostgresAuthorityLock(first, schema);
+    await first.query(`INSERT INTO "${schema}".example VALUES(1,7)`);
+    for (const client of [first, second]) {
+      let entered!: () => void;
+      const ready = new Promise<void>(resolve => { entered = resolve; });
+      const reading = postgresBusinessTransaction(client, schema, authority, async c => {
+        assert.equal((await c.query('SELECT value FROM example WHERE id=1')).rows[0].value, '7');
+        entered();
+        await held;
+        return 'read result';
+      }, { access: 'read' });
+      reads.push(reading);
+      const deadline = AbortSignal.timeout(5000);
+      await Promise.race([ready, reading.then(() => { throw new Error('Query ended before its read callback'); }), new Promise<never>((_, reject) => {
+        deadline.addEventListener('abort', () => reject(new Error('Another read blocked this query')), { once: true });
+      })]);
+    }
+    await writer.query("SET lock_timeout='100ms'");
+    await assert.rejects(postgresBusinessTransaction(writer, schema, authority, c => c.query('UPDATE example SET value=8')), /lock timeout/);
+    releaseReaders();
+    assert.deepEqual(await Promise.all(reads), ['read result', 'read result']);
+    await postgresBusinessTransaction(writer, schema, authority, c => c.query('UPDATE example SET value=8'));
+    assert.equal((await writer.query(`SELECT value FROM "${schema}".example`)).rows[0].value, '8');
+  } finally {
+    releaseReaders();
+    await Promise.allSettled(reads);
+    await writer.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await Promise.all([first.end(), second.end(), writer.end()]);
+  }
+});
+
+test('a query withholds its result when runtime authority changes during commit acknowledgement', { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async () => {
+  const client = new pg.Client(clientOptions()), admin = new pg.Client(clientOptions());
+  await Promise.all([client.connect(), admin.connect()]);
+  const schema = `eigos_business_${randomUUID().replaceAll('-','')}`, authority = { id: randomUUID(), revision: 1, digest: 'a'.repeat(64) };
+  const original = client.query;
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"; CREATE TABLE "${schema}".runtime_authority(slot BIGINT PRIMARY KEY,id TEXT,revision BIGINT,configuration_digest TEXT)`);
+    await admin.query(`INSERT INTO "${schema}".runtime_authority VALUES(1,$1,$2,$3)`, [authority.id,authority.revision,authority.digest]);
+    await installPostgresAuthorityLock(admin, schema);
+    client.query = (async (...args: unknown[]) => {
+      const result = await Reflect.apply(original, client, args);
+      if (args[0] === 'COMMIT') await admin.query(`UPDATE "${schema}".runtime_authority SET revision=2`);
+      return result;
+    }) as typeof client.query;
+    await assert.rejects(postgresBusinessTransaction(client, schema, authority, async () => 'protected response', { access: 'read' }), /authority changed/);
+    assert.equal(client.getTransactionStatus(), 'I');
+  } finally {
+    client.query = original;
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await Promise.all([client.end(), admin.end()]);
+  }
+});
+
 test('transaction discards connections when rollback or commit responses fail', async () => {
   const authority = { id: 'authority', revision: 1, digest: 'a'.repeat(64) };
   for (const failure of ['ROLLBACK','COMMIT']) {
@@ -110,13 +174,15 @@ test('restricted runtime can lock authority without reading or updating its tabl
     await admin.query(`INSERT INTO "${schema}".example VALUES(1,0)`);
     await installPostgresAuthorityLock(admin,schema);
     assert.equal((await admin.query('SELECT has_function_privilege($1,$2,\'EXECUTE\') AS allowed', [role, `"${schema}".eigos_lock_runtime_authority()`])).rows[0].allowed,false);
-    await admin.query(`GRANT USAGE ON SCHEMA "${schema}" TO "${role}"; GRANT EXECUTE ON FUNCTION "${schema}".eigos_lock_runtime_authority() TO "${role}"; GRANT UPDATE ON "${schema}".eigos_business_mutex TO "${role}"; GRANT SELECT,UPDATE ON "${schema}".example TO "${role}"; SET ROLE "${role}"`);
+    await admin.query(`GRANT USAGE ON SCHEMA "${schema}" TO "${role}"; GRANT EXECUTE ON FUNCTION "${schema}".eigos_lock_runtime_authority(), "${schema}".eigos_current_runtime_authority() TO "${role}"; GRANT UPDATE ON "${schema}".eigos_business_mutex TO "${role}"; GRANT SELECT,UPDATE ON "${schema}".example TO "${role}"; SET ROLE "${role}"`);
     const privileges = await admin.query('SELECT has_table_privilege(current_user,$1,\'SELECT\') AS can_read, has_table_privilege(current_user,$1,\'UPDATE\') AS can_update', [`"${schema}".runtime_authority`]);
     assert.equal(privileges.rows[0].can_read,false); assert.equal(privileges.rows[0].can_update,false);
     await assert.rejects(admin.query(`SELECT * FROM "${schema}".runtime_authority`), /permission denied/);
     await admin.query('CREATE TEMP TABLE runtime_authority(slot BIGINT, id TEXT, revision BIGINT, configuration_digest TEXT)');
     await postgresBusinessTransaction(admin,schema,authority,async c => { await c.query('UPDATE example SET value=1'); });
     assert.equal((await admin.query(`SELECT value FROM "${schema}".example`)).rows[0].value,'1');
+    const read = await postgresBusinessTransaction(admin,schema,authority,c => c.query('SELECT value FROM example'), { access: 'read' });
+    assert.equal(read.rows[0].value, '1');
     await assert.rejects(admin.query(`UPDATE "${schema}".runtime_authority SET revision=2`), /permission denied/);
   } finally { await admin.query('RESET ROLE'); await admin.query('DROP TABLE IF EXISTS pg_temp.runtime_authority'); await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE; DROP ROLE IF EXISTS "${role}"`); await admin.end(); }
 });

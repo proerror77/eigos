@@ -60,7 +60,7 @@ export interface PostgresTaskCommandOptions{
 /** Async task commands. This class owns no model, provider or polling loop. */
 export class PostgresTaskCommandService extends PostgresTaskReadService {
   private commandStopping=false;
-  constructor(private readonly db:Pick<PostgresDatabase,'run'>,private readonly policy:string,private readonly kernel?:StagedKernelBuilder,
+  constructor(private readonly db:Pick<PostgresDatabase,'run'|'read'>,private readonly policy:string,private readonly kernel?:StagedKernelBuilder,
     private readonly options:PostgresTaskCommandOptions={}){super(db,policy,kernel);}
   private async view(client:Client,p:Principal,job:Job):Promise<TaskView>{
     const admission=await postgresTaskReceiptGrant(client,p,job.id,this.policy);postgresConstrainReadDeadline(client,admission.validUntil);

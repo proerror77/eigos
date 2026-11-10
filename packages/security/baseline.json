@@ -5145,7 +5145,7 @@
     {
       "id": "postgres-database-runtime",
       "file": "packages/postgres/database.ts",
-      "sourceDigest": "783b02e28f999ca9a7789db6aa28da6bb24281b881e9fa4f2c12bbcb4361406e",
+      "sourceDigest": "08a463b6068a6203e2e23db2b8d9576795c6cd4240e093b7853e267e2baf6e2b",
       "channels": [
         "internal"
       ],
@@ -5618,9 +5618,9 @@
       "stage": "S5",
       "id": "postgres-ontology-read",
       "file": "packages/postgres/ontology-release.ts",
-      "sourceDigest": "6b4b8287596f35a59abe6c19b1dc00ac5dd4951114974b7ef1cb318fb60c04df",
+      "sourceDigest": "b110d69e4e5363386c751e8f15e97a1e485786976136972c549963a4a9575592",
       "content": "PostgreSQL ontology release and historical witness reader",
-      "currentControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions",
+      "currentControl": "Every lookup checks the persisted release identity, actual stored-body SHA-256 and model fingerprint. Immutable documents and compiled models are reused only within the same trusted registry, bounded to eight entries and 16 MiB of serialized content. Namespace, task, role, source and output checks execute at their existing boundaries.",
       "targetControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions"
     },
     {
@@ -5741,10 +5741,10 @@
         "postgres"
       ],
       "content": "PostgreSQL business mutation transaction primitive",
-      "currentControl": "Serializable business state after transaction-scoped table serialization, exact authority/transaction identity and savepoint guards; current deadlines before/after commit, unknown-outcome eviction and no automatic retries",
+      "currentControl": "Business writes retain serializable exclusive fencing. Audited query callbacks share the fence under READ COMMITTED, resolve current authority without a row lock, and recheck authority after commit. Exact transaction identity, deadlines, current eligibility, uncertain-outcome eviction and cursor scope remain enforced.",
       "targetControl": "Serializable business state after transaction-scoped table serialization, exact authority/transaction identity and savepoint guards; current deadlines before/after commit, unknown-outcome eviction and no automatic retries",
       "stage": "S5",
-      "sourceDigest": "df18813fe0b33616c214edb496b521f2c14f95dcc778d2f0721618fe3b583fc2"
+      "sourceDigest": "2d4304f79117ecb99a699fd635eb801e8b5683de4195d9cef55ef632ef929b16"
     },
     {
       "id": "postgres-source-projection",
@@ -5809,7 +5809,7 @@
     {
       "id": "postgres-task-commands",
       "file": "packages/postgres/task-command-service.ts",
-      "sourceDigest": "245c15f8910f582f319fc85de21cdec929ee28985cb6a01ccdf0f2e453ff1bc0",
+      "sourceDigest": "a183981c2325523eacf719b1ca391b766dc8a6b2f29add73ec60aafd834c9938",
       "channels": [
         "internal"
       ],
@@ -5905,12 +5905,12 @@
     {
       "id": "postgres-task-read-service",
       "file": "packages/postgres/task-read-service.ts",
-      "sourceDigest": "16db21120c6b7a67384185f73063070cc2725258c389cdc16bef182338ef9344",
+      "sourceDigest": "55ca777166bf51b8970c9c842b353c95f7e7740155fd36ff6179ff3eb5a79089",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL task get/list/wait service",
-      "currentControl": "Current installation and task roots before listing/counting; sealed TaskViews for each result; each poll releases its transaction and rechecks current permission",
+      "currentControl": "Task views, object queries and Function evaluations use a concurrent per-request read fence; object and Function reads reuse one exact immutable release within that request. Every later call rechecks installation, task, role, fields, sources and output eligibility.",
       "targetControl": "Current installation and task roots before listing/counting; sealed TaskViews for each result; each poll releases its transaction and rechecks current permission",
       "stage": "S5"
     },
@@ -5966,7 +5966,7 @@
     {
       "id": "postgres-task-view",
       "file": "packages/postgres/task-view.ts",
-      "sourceDigest": "77505001297651f4f171b4099f33be488b07f8ca562c97c5e1834aead31209bd",
+      "sourceDigest": "4b73c95f521b539c7ad317bd2e9b6dce554934e39cab551d992a058313b4d166",
       "channels": [
         "internal"
       ],

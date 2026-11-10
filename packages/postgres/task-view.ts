@@ -27,7 +27,7 @@ export async function postgresTaskView(client:Client,principal:Principal,taskId:
   return withPostgresTaskReadGrant(client,p,id,policyDigest,async admission=>{
     const rows=await client.query(`SELECT j.state AS stored_state,a.id AS authority_id,
       CASE WHEN octet_length(minimal.value::text)<=8388608 THEN minimal.value::text END AS body
-      FROM ${q}.jobs j CROSS JOIN ${q}.eigos_lock_runtime_authority() a
+      FROM ${q}.jobs j CROSS JOIN ${q}.eigos_current_runtime_authority() a
       CROSS JOIN LATERAL (SELECT CASE WHEN ${q}.eigos_try_jsonb(j.body) IS NOT NULL THEN j.body::json ELSE '{}'::json END AS value OFFSET 0) source
       CROSS JOIN LATERAL (SELECT
         COALESCE(max(ordinal) FILTER(WHERE event->>'event'='original_pa_source_authorization_renewed' AND event->>'evidence'=$3),0)

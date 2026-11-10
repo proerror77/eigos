@@ -1,4 +1,5 @@
 import type { Client } from 'pg';
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError, taskIdSchema } from '../core/domain.js';
@@ -118,6 +119,21 @@ export async function postgresOntologyReadContext(client: Client, owner: string,
 
 type ResolvedRelease=Awaited<ReturnType<typeof resolveOntologyRelease>>;
 const releaseSnapshots=new WeakMap<object,{bytes:number;entries:{key:string;kernel:StagedKernelBuilder|undefined;value:ResolvedRelease;bytes:number}[]}>();
+type ReleaseContent = {
+  document: ReturnType<typeof parseOntologyDocument>;
+  documentDigest: string;
+  model: ReturnType<typeof compileOntologyDocument>;
+  bytes: number;
+};
+const releaseContents = new WeakMap<TrustedDefinitionRegistry, { bytes: number; entries: Map<string, ReleaseContent> }>();
+function contentCache(registry: TrustedDefinitionRegistry) {
+  let cache = releaseContents.get(registry);
+  if (!cache) {
+    cache = { bytes: 0, entries: new Map() };
+    releaseContents.set(registry, cache);
+  }
+  return cache;
+}
 
 /** Explicit host-only reading scope. Ordinary administration and writer paths
  * keep resolving rows freshly; no cache survives this callback. */
@@ -160,19 +176,50 @@ async function resolveOntologyRelease(client: Client, input: OntologyReleaseRef,
   const schema = postgresBusinessSchema(client), ref = ontologyReleaseRefSchema.parse(input), q = `"${schema}"`;
   const kernel=builder===undefined?postgresBusinessKernel(client,postgresBusinessToken(client)):builder;
   const staged = kernel === undefined ? undefined : stagedKernelComponents(kernel);
-  let result = await client.query(`SELECT body,model_digest,created_at,sequence FROM ${q}.ontology_definition_releases WHERE id=$1 AND ontology_id=$2 AND digest=$3`, [ref.releaseId,ref.ontologyId,ref.digest]);
-  if (!result.rowCount) result = await client.query(`SELECT r.body,r.model_digest,r.created_at,r.sequence FROM ${q}.ontology_definition_release_aliases a JOIN ${q}.ontology_definition_releases r ON r.id=a.canonical_id AND r.ontology_id=a.ontology_id AND r.digest=a.digest WHERE a.alias_id=$1 AND a.ontology_id=$2 AND a.digest=$3`, [ref.releaseId,ref.ontologyId,ref.digest]);
+  const registry = staged?.registry ?? trustedRegistry(), cache = contentCache(registry);
+  const offered = new Map(cache.entries);
+  const values = [ref.releaseId, ref.ontologyId, ref.digest, [...offered.keys()]];
+  // The database hashes the actual stored bytes on every lookup. A cache hit
+  // avoids transferring/parsing the document while still detecting corruption,
+  // deletion, alias changes and a changed stored model fingerprint.
+  const project = (selection: string) => `SELECT
+    CASE WHEN content_digest=ANY($4::text[]) THEN NULL ELSE body END AS body,
+    model_digest,created_at,sequence,content_digest
+    FROM (SELECT selected.*,pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(body,'UTF8')),'hex') AS content_digest
+      FROM (${selection}) selected OFFSET 0) verified`;
+  let result = await client.query(project(`SELECT body,model_digest,created_at,sequence FROM ${q}.ontology_definition_releases WHERE id=$1 AND ontology_id=$2 AND digest=$3`), values);
+  if (!result.rowCount) result = await client.query(project(`SELECT r.body,r.model_digest,r.created_at,r.sequence FROM ${q}.ontology_definition_release_aliases a JOIN ${q}.ontology_definition_releases r ON r.id=a.canonical_id AND r.ontology_id=a.ontology_id AND r.digest=a.digest WHERE a.alias_id=$1 AND a.ontology_id=$2 AND a.digest=$3`), values);
   if (result.rowCount !== 1) return conflict('The exact ontology release is unavailable');
   const row = result.rows[0];
-  let document;
-  try { document = parseOntologyDocument(JSON.parse(String(row.body))); }
-  catch { return conflict('Stored ontology release is invalid'); }
-  const documentDigest = digest(document);
+  if (typeof row.content_digest !== 'string' || !/^[a-f0-9]{64}$/.test(row.content_digest)) return conflict('Stored ontology content fingerprint is invalid');
+  // Keep the offered entries alive until the query returns, even when another
+  // request evicts one from the shared LRU while this connection is waiting.
+  let content = cache.entries.get(row.content_digest) ?? offered.get(row.content_digest);
+  if (!content) {
+    if (typeof row.body !== 'string' || createHash('sha256').update(row.body).digest('hex') !== row.content_digest) return conflict('Stored ontology release bytes changed');
+    let document;
+    try { document = parseOntologyDocument(JSON.parse(row.body)); }
+    catch { return conflict('Stored ontology release is invalid'); }
+    const documentDigest = digest(document);
+    if (document.id !== ref.ontologyId || documentDigest !== ref.digest) return conflict('Stored ontology release digest is invalid');
+    const model = staged && documentDigest === staged.documentDigest ? staged.model : compileOntologyDocument(document, registry);
+    content = { document: freeze(document), documentDigest, model, bytes: Buffer.byteLength(row.body) };
+  }
+  const { document, documentDigest, model } = content;
   if (document.id !== ref.ontologyId || documentDigest !== ref.digest) return conflict('Stored ontology release digest is invalid');
-  const model = staged && documentDigest === staged.documentDigest ? staged.model : compileOntologyDocument(document, staged?.registry ?? trustedRegistry());
   if (model.ref.digest !== row.model_digest) return conflict('Ontology compiler or trusted handler contract changed');
   const sequence = Number(row.sequence);
   if (!Number.isSafeInteger(sequence) || sequence < 1 || typeof row.created_at !== 'string') return conflict('Stored ontology release metadata is invalid');
+  if (content.bytes <= 16777216) {
+    if (cache.entries.delete(row.content_digest)) cache.bytes -= content.bytes;
+    while (cache.entries.size >= 8 || cache.bytes + content.bytes > 16777216) {
+      const oldest = cache.entries.keys().next().value!;
+      cache.bytes -= cache.entries.get(oldest)!.bytes;
+      cache.entries.delete(oldest);
+    }
+    cache.entries.set(row.content_digest, content);
+    cache.bytes += content.bytes;
+  }
   return Object.freeze({ ref: freeze(ref), document: freeze(document), model, sequence, createdAt: row.created_at });
 }
 
@@ -187,7 +234,7 @@ export async function postgresTaskOntologyRelease(client: Client, owner: string,
     CASE WHEN body.value#>'{delegation,ontologyRelease}' IS NULL OR body.value#>'{delegation,ontologyRelease}' = 'null'::jsonb THEN 'absent'
          WHEN octet_length((body.value#>'{delegation,ontologyRelease}')::text) <= 1024 THEN 'present' ELSE 'invalid' END AS ref_state,
     CASE WHEN octet_length((body.value#>'{delegation,ontologyRelease}')::text) <= 1024 THEN (body.value#>'{delegation,ontologyRelease}')::text END AS ref
-    FROM ${q}.jobs j JOIN ${q}.runtime_authority a ON a.slot=1
+    FROM ${q}.jobs j CROSS JOIN ${q}.eigos_current_runtime_authority() a
     CROSS JOIN LATERAL (SELECT ${q}.eigos_try_jsonb(j.body) AS value OFFSET 0) body
     WHERE j.owner=$1 AND j.id=$2`, [owner,taskId]);
   if (result.rowCount !== 1) throw new DomainError('NOT_FOUND', 'Task not found');

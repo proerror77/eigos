@@ -88,6 +88,15 @@ test('PostgreSQL task queries filter visibility before predicates and pages, ret
       assert.match(page.page.cursor!, /^[a-f0-9-]{36}$/); assert(!page.page.cursor!.includes('Place'));
       const next = await query({ type: 'Place', limit: 1, cursor: page.page.cursor });
       assert.deepEqual(next.items.map(item => item.ref.id), ['c-visible']);
+      const concurrentPages = await Promise.all([
+        service.queryOntology(p, input({ type: 'Place', limit: 1 })),
+        service.queryOntology(p, input({ type: 'Place', limit: 1 })),
+      ]);
+      for (const concurrent of concurrentPages) {
+        assert.deepEqual(concurrent.items.map(item => item.ref.id), ['a-visible']);
+        assert.equal(concurrent.page.hasMore, true);
+      }
+      assert.notEqual(concurrentPages[0]!.page.cursor, concurrentPages[1]!.page.cursor);
       assert.equal((await query({ type: 'Place', where: [{ property: 'name', op: 'eq', value: 'b-hidden' }] })).items.length, 0);
       await assert.rejects(query({ object: refs[1]! }), /AUTHORIZATION_REQUIRED|not available/);
       await assert.rejects(query({ type: 'Place', select: ['address'] }), /INSUFFICIENT_ACCESS/);
@@ -141,7 +150,7 @@ test('PostgreSQL relationship queries authorize only related admitted candidates
       target=await importPostgresFixture(f);
       const t=target,q=`"${t.schema}"`,bindings=new Set<string>(),labels=new Set<string>();
       // Observe the real client without replacing any authorization result.
-      const service=new PostgresTaskReadService({run:action=>t.database.run(async client=>{
+      const service=new PostgresTaskReadService({read:action=>t.database.read(async client=>{
         const original=client.query;
         client.query=(async(...args:unknown[])=>{
           const [sql,values]=args;
