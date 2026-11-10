@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {installPostgresAuthorityLock} from '../packages/postgres/authority-lock.js';
 import {preparePostgresKernel} from '../packages/postgres/kernel-runtime.js';
-import {StagedKernelBuilder,stagedKernelComponents,PAYMENT_COMMERCE_KERNEL_MODEL_REF,BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF} from '../packages/ontology/seed-definition.js';
+import {
+  StagedKernelBuilder,stagedKernelComponents,createSemanticRetrievalKernelDefinition,
+  PAYMENT_COMMERCE_KERNEL_MODEL_REF,BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF,
+  SEMANTIC_RETRIEVAL_KERNEL_MODEL_REF,PA_CLASSIFICATION_KERNEL_MODEL_REF,
+} from '../packages/ontology/seed-definition.js';
+import {digest} from '../packages/core/delegation.js';
 import {PostgresDatabase} from '../packages/postgres/database.js';
 import {postgresBusinessTransaction,postgresBusinessKernel,postgresBusinessToken} from '../packages/postgres/runtime-transaction.js';
 import {postgresOntologyRelease,postgresOntologyReadContext} from '../packages/postgres/ontology-release.js';
@@ -43,6 +48,18 @@ test('reviewed policy selects the exact v27 or descriptions-v28 kernel without u
   assert.throws(()=>reviewedKernelVersionForPolicy('0'.repeat(64)),/explicit supported kernel review/);
   assert.throws(()=>new StagedKernelBuilder('31' as never),/Unsupported reviewed kernel target/);
   assert.throws(()=>stagedKernelComponents(Object.setPrototypeOf({},StagedKernelBuilder.prototype)),/private|read|member/i);
+});
+
+test('optional PostgreSQL v29 and v30 complete their own stages and preserve reviewed fingerprints',async()=>{
+  const direct=createSemanticRetrievalKernelDefinition();
+  assert.deepEqual(direct.audit.model,SEMANTIC_RETRIEVAL_KERNEL_MODEL_REF);
+  const semantic=await preparePostgresKernel(undefined,'29');
+  const staged=stagedKernelComponents(semantic);
+  assert.deepEqual(staged.model.ref,SEMANTIC_RETRIEVAL_KERNEL_MODEL_REF);
+  assert.equal(staged.documentDigest,digest(direct.document));
+
+  const classified=await preparePostgresKernel(undefined,'30');
+  assert.deepEqual(stagedKernelComponents(classified).model.ref,PA_CLASSIFICATION_KERNEL_MODEL_REF);
 });
 
 test('prepared kernel is bound to the exact callback token and explicit builders retain priority',local,async()=>{

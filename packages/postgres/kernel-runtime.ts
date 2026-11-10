@@ -6,8 +6,11 @@ import {StagedKernelBuilder,stagedKernelComponents,CURRENT_KERNEL_VERSION} from 
  * Yield between audited stages so sockets, timers and cancellation can run. */
 export async function preparePostgresKernel(signal?:AbortSignal,targetVersion:'27'|'28'|'29'|'30'=CURRENT_KERNEL_VERSION):Promise<StagedKernelBuilder>{
   signal?.throwIfAborted();const kernel=new StagedKernelBuilder(targetVersion);
-  for(let stage=0;stage<(targetVersion==='29'?16:StagedKernelBuilder.stages);stage++){
-    signal?.throwIfAborted();kernel.step(stage);await yieldToHost();
+  let completed=0,ready=false;
+  while(!ready){
+    signal?.throwIfAborted();
+    ({completed,ready}=kernel.step(completed));
+    await yieldToHost();
   }
   signal?.throwIfAborted();stagedKernelComponents(kernel);return kernel;
 }

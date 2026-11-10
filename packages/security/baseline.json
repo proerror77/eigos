@@ -5741,12 +5741,12 @@
     {
       "id": "trusted-kernel-bootstrap",
       "file": "packages/ontology/seed-definition.ts",
-      "sourceDigest": "f922be2a7cbbbca45052a7e7cc4fbf05d95b412d09e1081ea519d2f323835ced",
+      "sourceDigest": "4145734b1c5e2d01b27676355632f7a4618e2c9719f62c65a3d33e5fbeca8693",
       "channels": [
         "authorization_control"
       ],
       "content": "Trusted historical and staged ontology registry construction",
-      "currentControl": "Default descriptions-v28 remains genuine15 stages; exact legacy policy selects genuine v27/14 stages. Optional semantic29 adds its true sealed16th stage from actual description28, retaining private compiled-seed identity and historical hashes.",
+      "currentControl": "Default v28 and historical kernels retain their exact reviewed fingerprints. Optional semantic v29 and PA classification v30 complete their own sealed final stage and verify the pinned model before use.",
       "targetControl": "Historical fingerprints, validators and protected contracts verified before use; incomplete builders deny",
       "stage": "S5"
     },
@@ -6671,13 +6671,13 @@
     {
       "id": "postgres-kernel-runtime",
       "file": "packages/postgres/kernel-runtime.ts",
-      "sourceDigest": "38d69afae024989f42b3f1e39592e0cf02df92a3a4ab8d695b1316f8cd59397f",
+      "sourceDigest": "0736c60412ab8734a073b2b8107ab9bb1e7552b73e5ff87fc9543b21d78397cc",
       "channels": [
         "internal"
       ],
       "content": "Yielded pre-publication PostgreSQL compiler preparation",
-      "currentControl": "Yielded actual staged targets27,28 or optional29 preserve exact completion/registry identity. Host selects27 or28 only from the reviewed policy; vector29 requires verified feature configuration and an explicitly upgraded description28 policy.",
-      "targetControl": "Existing exact 13-stage trusted kernel, ready-brand checks and cancellation between stages; prepared before qualification publishing and passed through exact transaction token; original release row/body/digest/model checks remain authoritative, with no permission or data caching",
+      "currentControl": "PostgreSQL preparation yields and checks cancellation between stages until the selected v27, v28, v29 or v30 builder reports completion. Formal host selection still uses the reviewed policy and explicit vector configuration.",
+      "targetControl": "Completed trusted kernel, ready-brand checks and cancellation between stages; prepared before qualification publishing and passed through the exact transaction token; original release row/body/digest/model checks remain authoritative, with no permission or data caching.",
       "stage": "S5"
     },
     {
@@ -7557,7 +7557,7 @@
       "currentControl": "The v27 digest is preserved explicitly and registered before the v28 metadata-only successor; historical releases are never rewritten.",
       "targetControl": "Accurate release construction and immutable historical interpretation",
       "stage": "S2",
-      "sourceDigest": "f922be2a7cbbbca45052a7e7cc4fbf05d95b412d09e1081ea519d2f323835ced"
+      "sourceDigest": "4145734b1c5e2d01b27676355632f7a4618e2c9719f62c65a3d33e5fbeca8693"
     },
     {
       "id": "gateway-primary-startup",
