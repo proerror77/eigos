@@ -1,12 +1,17 @@
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
-import { objectRefSchema, type ModelDefinition, type PropertyDefinition } from './model.js';
+import { objectRefSchema, type FunctionDefinition, type ModelDefinition, type PropertyDefinition } from './model.js';
 
 const text = z.string().min(1).max(200), sha = z.string().regex(/^[a-f0-9]{64}$/), time = z.iso.datetime({ offset: true });
 const receiptRef = objectRefSchema.extend({ type: z.literal('SourceReceipt') });
 export const identityAssertionRefSchema = objectRefSchema.extend({ type: z.literal('EntityIdentityAssertion') });
 export const identityKindSchema = z.enum(['product_variant', 'hotel_property', 'room_type', 'vehicle_class', 'vehicle', 'driver']);
 export const identityTypes: Record<z.infer<typeof identityKindSchema>, string> = { product_variant: 'ProductVariant', hotel_property: 'HotelProperty', room_type: 'RoomType', vehicle_class: 'VehicleClass', vehicle: 'TransportVehicle', driver: 'TransportDriver' };
+/** Forward contracts only. Historical releases keep the v1 declarations below. */
+export const identityFunctionDefinitionsV2: FunctionDefinition[] = [
+  { id: 'entityIdentityStatus', version: '2', inputTypes: ['EntityIdentityAssertion'], description: 'Evaluate immutable identity assertions against their exact current source evidence, including reviewed RollingGo hotel search observations, contradictory issuers, expiry and revocation. History remains separately readable.' },
+  { id: 'entityIdentityBetween', version: '2', inputTypes: Object.values(identityTypes), description: 'Compare two readable subjects at one supported identity level using sealed assertions and reviewed source evidence. Returns equivalent, different, unknown, conflict, revoked or expired. Never merges entities or transfers prices, stock, permissions or order terms.' },
+];
 export const identityEndpointSchema = z.strictObject({
   object: objectRefSchema, revision: z.number().int().positive(), propertiesDigest: sha,
   sourceIdentity: text, sourceRecordId: text, sourceVersion: text,
