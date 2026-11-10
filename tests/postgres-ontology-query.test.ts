@@ -4,13 +4,15 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { securityFixture } from './fixtures/security.js';
 import { importPostgresFixture } from './fixtures/postgres-business.js';
-import { OntologyObjectStore } from '../packages/ontology/object-store.js';
+import { OntologyObjectStore, ontologyCursorSchema, type ObjectWrite, type LinkWrite } from '../packages/ontology/object-store.js';
 import { currentKernelImplementation } from '../packages/ontology/definition-store.js';
 import { AuthorizedOntologyView } from '../packages/security/view.js';
 import { PostgresTaskReadService } from '../packages/postgres/task-read-service.js';
 import type { ObjectQuery } from '../packages/ontology/object-store.js';
 import type { TaskServicePort } from '../packages/core/task-service-port.js';
 import { taskProtocolFixture } from './fixtures/task-protocol.js';
+import { PostgresProjectionGraph } from '../packages/postgres/projection-graph.js';
+import { postgresScalarQueryPredicate } from '../packages/postgres/scalar-query-predicate.js';
 
 test('PostgreSQL task queries filter visibility before predicates and pages, retaining opaque cursor and field boundaries',
   { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async () => {
@@ -183,4 +185,134 @@ test('PostgreSQL relationship queries authorize only related admitted candidates
       await assert.rejects(query({...relationship,cursor:first.page.cursor}),/POLICY_CHANGED/,
         'a changed unrelated binding still invalidates the original full-selection cursor context');
     }finally{if(target)await target.close();sqlite.close();f.close();}
+  });
+
+test('bounded PostgreSQL scalar filtering preserves interface values, exact numerics and visible cursor traversal',
+  { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async () => {
+    const f = securityFixture(Date.now, { unified: true }), sqlite = new DatabaseSync(f.database);
+    let target: Awaited<ReturnType<typeof importPostgresFixture>> | undefined;
+    try {
+      const release = f.jobs.definitions.active(), model = release.model;
+      const raw = new OntologyObjectStore(sqlite, model, Date.now, undefined, { skipLegacyMigration: true });
+      const root = { type: 'ServiceRequest', id: 'scalar-query-request' }, hotel = { type: 'HotelProperty', id: 'scalar-query-hotel' };
+      const provider = { type: 'Provider', id: 'scalar-query-provider' }, receipt = { type: 'SourceReceipt', id: 'scalar-query-receipt' };
+      const source = { kind: 'synthetic' as const, id: 'scalar-query-fixture', observedAt: new Date().toISOString() };
+      raw.ingest(f.owner, { objects: [
+        { ref: root, properties: { requestId: root.id, displayTitle: 'Synthetic request', originalGoal: 'Scalar query parity', revision: 1 } },
+        { ref: hotel, properties: { objectId: hotel.id, displayTitle: 'Synthetic hotel' } },
+        { ref: provider, properties: { providerId: provider.id, displayTitle: 'Synthetic provider', name: 'Synthetic provider' } },
+        { ref: receipt, properties: { receiptId: receipt.id, displayTitle: 'Synthetic receipt', safeSummary: 'Synthetic scalar query fixture', evidenceLevel: 'synthetic' } },
+      ] }, source);
+      const amounts = ['1', '1.000000', '9007199254740993.123456', '999999999999999999.999999'];
+      const instants = ['2026-11-10T01:00:00.123Z', '2026-11-10T09:00:00.123+08:00', '2026-11-10T01:00:00.123999Z', '2026-11-10T01:00:00.124Z'];
+      const objects: ObjectWrite[] = Array.from({ length: 450 }, (_, index) => {
+        const id = `scalar-${String(index).padStart(3, '0')}`;
+        return { ref: { type: 'HotelPrice', id }, properties: {
+          id, displayTitle: index < 240 ? 'other' : 'needle', observedAt: instants[index % instants.length], expiresAt: '2099-01-01T00:00:00Z',
+          hotelRevision: 1, requestRevision: 1, checkInDate: '2099-01-01', stayNights: 1, adultCount: index % 3 === 0 ? Number.MAX_SAFE_INTEGER : index % 3,
+          referenceAmount: amounts[index % amounts.length], currency: 'USD', hasPrice: index % 2 === 0, priceKind: 'reference', amountUnit: 'major', priceBasis: 'unknown', pricingCompleteness: 'unknown',
+        } };
+      });
+      for (let offset = 0; offset < objects.length; offset += 100) {
+        const batch = objects.slice(offset, offset + 100), links: LinkWrite[] = batch.flatMap(object => [
+          { type: 'HotelPriceEvidence', from: object.ref, to: receipt }, { type: 'HotelPriceRequest', from: object.ref, to: root },
+          { type: 'HotelPriceHotel', from: object.ref, to: hotel }, { type: 'HotelPriceProvider', from: object.ref, to: provider },
+        ]);
+        raw.ingest(f.owner, { objects: batch, links }, source);
+      }
+      const hidden = objects[241]!.ref, visible = objects.map(object => object.ref).filter(ref => ref.id !== hidden.id);
+      target = await importPostgresFixture(f);
+      const t = target, q = `"${t.schema}"`;
+      // A same-key row in another owner partition and malformed hidden rows
+      // must never enter the materialized candidate set or its scan count.
+      await t.client.query(`INSERT INTO ${q}.ontology_objects(owner,type,id,revision,definition_digest,body)
+        SELECT $1,type,id,revision,definition_digest,'not JSON' FROM ${q}.ontology_objects WHERE owner=$2 AND type=$3 AND id=$4`,
+      ['another-owner', f.owner, objects[0]!.ref.type, objects[0]!.ref.id]);
+      const originalHidden = (await t.client.query(`SELECT body FROM ${q}.ontology_objects WHERE owner=$1 AND type=$2 AND id=$3`, [f.owner, hidden.type, hidden.id])).rows[0]!.body;
+      await t.client.query(`UPDATE ${q}.ontology_objects SET body='not JSON' WHERE owner=$1 AND type=$2 AND id=$3`, [f.owner, hidden.type, hidden.id]);
+      const query = async (input: ObjectQuery, refs = visible) => t.run(async client => {
+        const graph = await PostgresProjectionGraph.create(client, f.owner, release.ref, undefined, { readOnly: true });
+        const after = input.cursor ? ontologyCursorSchema.parse(JSON.parse(Buffer.from(input.cursor, 'base64url').toString())).last : undefined;
+        return graph.queryVisible(f.owner, { ...input, cursor: undefined }, { remaining: 1000 }, 'synthetic-authorized-set', {
+          refs, revision: 1, after, properties: type => model.properties(type),
+          async project(ref, view, select) {
+            const page = await graph.query(f.owner, { object: ref, ...(model.isInterface(view) ? { as: view } : {}), select });
+            return page.items[0]!;
+          },
+        });
+      });
+      const collect = async (input: ObjectQuery) => {
+        const items = []; let cursor: string | undefined;
+        for (let pageNumber = 0; pageNumber < 20; pageNumber++) {
+          const page = await query({ ...input, cursor }); items.push(...page.items);
+          assert(page.page.scanned <= 200); assert(page.items.length <= (input.limit ?? 20));
+          if (!page.page.hasMore) return items;
+          assert(page.page.cursor); assert.notEqual(page.page.cursor, cursor); cursor = page.page.cursor;
+        }
+        assert.fail('Bounded scalar query did not finish');
+      };
+      const oracle = (input: ObjectQuery) => {
+        const items = []; let cursor: string | undefined;
+        for (let pageNumber = 0; pageNumber < 20; pageNumber++) {
+          const page = raw.query(f.owner, { ...input, cursor }); items.push(...page.items.filter(item => item.ref.id !== hidden.id));
+          if (!page.page.hasMore) return items;
+          assert(page.page.cursor); cursor = page.page.cursor;
+        }
+        assert.fail('SQLite scalar oracle did not finish');
+      };
+      const seek: ObjectQuery = { type: 'HotelPrice', where: [{ property: 'displayTitle', op: 'eq', value: 'needle' }], select: ['id', 'displayTitle'], limit: 50 };
+      const first = await query(seek);
+      assert.equal(first.items.length, 50, 'The first matching page crosses more than 200 nonmatching visible objects');
+      assert.equal(first.items[0]!.ref.id, 'scalar-240'); assert.equal(first.page.scanned, 50);
+      const all = await collect(seek);
+      assert.equal(all.length, 209); assert.equal(new Set(all.map(item => item.ref.id)).size, 209);
+      assert.deepEqual(all, oracle(seek));
+      const cases: ObjectQuery[] = [
+        { type: 'HotelPrice', where: [{ property: 'hasPrice', op: 'eq', value: false }], select: ['hasPrice'], limit: 50 },
+        { type: 'HotelPrice', where: [{ property: 'hasPrice', op: 'in', value: [true, false] }, { property: 'adultCount', op: 'gte', value: Number.MAX_SAFE_INTEGER }], select: ['adultCount'], limit: 50 },
+        { type: 'HotelPrice', where: [{ property: 'adultCount', op: 'in', value: [1, 2] }], select: ['adultCount'], limit: 50 },
+        { type: 'MonetaryFact', where: [{ property: 'amount', op: 'eq', value: '1.0' }], select: ['amount', 'currency'], limit: 50 },
+        { type: 'MonetaryFact', where: [{ property: 'amount', op: 'gt', value: '9007199254740993.123455' }], select: ['amount'], limit: 50 },
+        { type: 'MonetaryFact', where: [{ property: 'amount', op: 'in', value: ['1.000000', '999999999999999999.999999'] }], select: ['amount'], limit: 50 },
+        { type: 'MonetaryFact', where: [{ property: 'observedAt', op: 'eq', value: '2026-11-10T01:00:00.123Z' }], select: ['observedAt'], limit: 50 },
+        { type: 'HotelPrice', where: [{ property: 'displayTitle', op: 'eq', value: 'needle' }, { property: 'observedAt', op: 'lt', value: '2026-11-10T01:00:00.124Z' }], select: ['observedAt'], limit: 50 },
+      ];
+      for (const input of cases) assert.deepEqual(await collect(input), oracle(input), JSON.stringify(input.where));
+      const fallback = { type: 'HotelPrice', where: [{ property: 'observedAt', op: 'eq' as const, value: '2026-11-10T01:00:00.123Z' }], select: ['observedAt'], limit: 50 };
+      assert((await query(fallback)).page.scanned > 50, 'Date.parse filtering remains on the original JS scan path');
+      const parameters: unknown[] = [];
+      assert.equal(postgresScalarQueryPredicate(model, 'HotelPrice', fallback.where, model.properties('HotelPrice'), parameters), undefined);
+      assert.deepEqual(parameters, [], 'Unsupported filters do not mutate SQL parameters');
+      const unfiltered = await query({ type: 'HotelPrice', select: ['id'], limit: 50 });
+      assert.equal(unfiltered.page.scanned, 50); assert(unfiltered.page.hasMore);
+      // Restore this row only after proving it cannot influence visible reads.
+      await t.client.query(`UPDATE ${q}.ontology_objects SET body=$1 WHERE owner=$2 AND type=$3 AND id=$4`, [originalHidden, f.owner, hidden.type, hidden.id]);
+
+      const ref = objects[0]!.ref, original = (await t.client.query(`SELECT body,definition_digest FROM ${q}.ontology_objects WHERE owner=$1 AND type=$2 AND id=$3`, [f.owner, ref.type, ref.id])).rows[0]!;
+      const corrupt = async (body: string, operation: () => Promise<void>, definition = original.definition_digest) => {
+        await t.client.query(`UPDATE ${q}.ontology_objects SET body=$1,definition_digest=$2 WHERE owner=$3 AND type=$4 AND id=$5`, [body, definition, f.owner, ref.type, ref.id]);
+        try { await operation(); }
+        finally { await t.client.query(`UPDATE ${q}.ontology_objects SET body=$1,definition_digest=$2 WHERE owner=$3 AND type=$4 AND id=$5`, [original.body, original.definition_digest, f.owner, ref.type, ref.id]); }
+      };
+      const nonmatch: ObjectQuery = { type: 'HotelPrice', where: [{ property: 'displayTitle', op: 'eq', value: 'never-matches' }] };
+      await corrupt(original.body, async () => { await assert.rejects(query(nonmatch, [ref]), /historical data cannot be reinterpreted/); }, '0'.repeat(64));
+      await corrupt('not JSON', async () => { await assert.rejects(query(nonmatch, [ref]), SyntaxError); });
+      const body = JSON.parse(original.body);
+      await corrupt(JSON.stringify({ ...body, properties: { ...body.properties, id: 'wrong-primary-key' } }), async () => { await assert.rejects(query(nonmatch, [ref]), /Invalid ontology object body/); });
+      await corrupt(JSON.stringify({ ...body, properties: { ...body.properties, referenceAmount: null } }), async () => {
+        // Invalid decimal appears before a false string filter: SQL must not
+        // hide the JS error by evaluating the later predicate first.
+        await assert.rejects(query({ type: 'HotelPrice', where: [{ property: 'referenceAmount', op: 'eq', value: '1' }, ...nonmatch.where!] }, [ref]), /BigInt/);
+      });
+      const { referenceAmount: _missing, ...withoutAmount } = body.properties;
+      await corrupt(JSON.stringify({ ...body, properties: withoutAmount }), async () => {
+        const page = await query({ type: 'HotelPrice', where: [{ property: 'referenceAmount', op: 'eq', value: '1' }] }, [ref]);
+        assert.equal(page.items.length, 0); assert.equal(page.page.scanned, 1);
+      });
+      const preciseNumber = JSON.stringify({ ...body, properties: { ...body.properties, adultCount: 1 } }).replace('"adultCount":1,', '"adultCount":1.00000000000000001,');
+      await corrupt(preciseNumber, async () => {
+        const page = await query({ type: 'HotelPrice', where: [{ property: 'adultCount', op: 'eq', value: 1 }], select: ['adultCount'] }, [ref]);
+        assert.deepEqual(page.items.map(item => item.properties.adultCount), [1], 'Noncanonical JSON numbers retain JavaScript number precision');
+      });
+    } finally { if (target) await target.close(); sqlite.close(); f.close(); }
   });
