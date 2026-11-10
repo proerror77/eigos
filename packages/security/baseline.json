@@ -4189,7 +4189,7 @@
     {
       "id": "ontology-definitions",
       "file": "packages/ontology/model.ts",
-      "sourceDigest": "6e4e3198adf526126e8d33b030ab85dc5c33946048fd295a725bf1ae8db4a65c",
+      "sourceDigest": "f257fcf953781b739cd99cf629443b894acab0d38bf1d46c7225c30880d788e1",
       "channels": [
         "definition"
       ],
