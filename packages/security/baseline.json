@@ -4257,7 +4257,7 @@
       "currentControl": "Every selectable release (v27-v31) keeps an explicit digest constant and is asserted during construction; historical releases are never rewritten.",
       "targetControl": "Accurate release construction and immutable historical interpretation",
       "stage": "S2",
-      "sourceDigest": "9a027a1cf0b88cc5df228c9327d1b72d84fbd449eb7dfcebce524d5cc2e91a8f"
+      "sourceDigest": "b7ee9ba42c2a8f925d711b01bc82bc6f928db8d418ad5019974626586a5527df"
     },
     {
       "id": "ontology-metadata-http",
@@ -7860,7 +7860,7 @@
     {
       "id": "trusted-kernel-bootstrap",
       "file": "packages/ontology/seed-definition.ts",
-      "sourceDigest": "9a027a1cf0b88cc5df228c9327d1b72d84fbd449eb7dfcebce524d5cc2e91a8f",
+      "sourceDigest": "b7ee9ba42c2a8f925d711b01bc82bc6f928db8d418ad5019974626586a5527df",
       "channels": [
         "authorization_control"
       ],

@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// Every stage must be verified here, so the kernel builder compiles each
+// intermediate release and compares its published model ref. Ordinary runs
+// (tests, benches, the gateway) only verify the release they actually publish.
+process.env.EIGOS_KERNEL_PINS = 'full';
 /**
  * Ontology integrity gate.
  *

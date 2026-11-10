@@ -48,9 +48,12 @@ test('the genuine seed must retain its document, registry and model audit', () =
     assert.throws(() => compiledSeedModel(seed, registry), /compiled seed identity/);
     assert.throws(() => compiledSeedModel(seed, seed.registry), /compiled seed identity/);
     seed.registry = registry;
+    // The audit ref is derived from the frozen document, not stored beside it, so
+    // an attempted edit yields a detached copy and can never alter the release.
     seed.audit.model.version = 'changed';
-    assert.throws(() => compiledSeedModel(seed, registry), /compiled seed identity/);
-  } finally { seed.registry = registry; seed.audit.model.version = version; }
+    assert.equal(seed.audit.model.version, version);
+    assert.deepEqual(compiledSeedModel(seed, registry).ref, LEGACY_SEED_MODEL_REF);
+  } finally { seed.registry = registry; }
   assert.deepEqual(compiledSeedModel(seed, registry).ref, LEGACY_SEED_MODEL_REF);
 });
 

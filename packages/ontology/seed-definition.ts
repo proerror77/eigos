@@ -141,15 +141,35 @@ function freezeRelease<T>(value: T): T {
   return value;
 }
 
+/**
+ * Compare a stage against its reviewed fingerprint. The published model ref is a
+ * digest of the compiled projection, so verifying it costs one compilation. That
+ * price is paid for the current release on every build, and for every historical
+ * stage only when EIGOS_KERNEL_PINS=full (scripts/ontology-integrity.mjs), which
+ * is what CI runs: intermediate releases are reviewed there, not on every boot.
+ */
+const FULL_PINS = process.env.EIGOS_KERNEL_PINS === 'full';
+export function assertRelease(seed: SeedDefinition, expected: { id: string; version: string; digest: string }, label: string): void {
+  if (!FULL_PINS && expected.version !== CURRENT_KERNEL_VERSION) return;
+  if (digest(seed.audit.model) !== digest(expected)) throw new DomainError('CONFLICT', `${label} changed`);
+}
+
 function complete(document: OntologyDocument, registry: TrustedDefinitionRegistry, original: boolean, onCompiled?: (model: OntologyModel) => void): SeedDefinition {
   freezeRelease(document);
   registry.protect(document);
-  const model = compileOntologyDocument(document, registry);
-  onCompiled?.(model);
-  if (original && digest(model.ref) !== digest(LEGACY_SEED_MODEL_REF)) throw new DomainError('CONFLICT', 'Original v15 seed changed its model digest');
+  const documentDigest = digest(document);
+  // Compiling is only needed when someone asks for the model. The chain publishes
+  // sixteen intermediate releases that nobody reads a model from, so compiling
+  // them eagerly cost ~85% of the build for fingerprints alone.
+  let compiled: OntologyModel | undefined;
+  const model = (): OntologyModel => (compiled ??= compileOntologyDocument(document, registry));
+  const needsModel = FULL_PINS || original || onCompiled !== undefined;
+  if (needsModel) onCompiled?.(model());
+  if (original && digest(model().ref) !== digest(LEGACY_SEED_MODEL_REF)) throw new DomainError('CONFLICT', 'Original v15 seed changed its model digest');
   const propertyCount = [...document.objects, ...document.interfaces].reduce((sum, type) => sum + Object.keys(type.properties).length, 0);
-  const seed: SeedDefinition = { document, registry, audit: { model: { ...model.ref }, counts: { objects: document.objects.length, interfaces: document.interfaces.length, links: document.links.length, actions: document.actions.length, functions: document.functions.length }, propertyCount, trustedValidatorCount: propertyCount, legacyMetadataPreserved: original } };
-  compiledSeeds.set(seed, { registry, documentDigest: digest(document), model });
+  const audit = { counts: { objects: document.objects.length, interfaces: document.interfaces.length, links: document.links.length, actions: document.actions.length, functions: document.functions.length }, propertyCount, trustedValidatorCount: propertyCount, legacyMetadataPreserved: original, get model() { return { ...model().ref }; } };
+  const seed: SeedDefinition = { document, registry, audit: audit as SeedDefinition['audit'] };
+  compiledSeeds.set(seed, { registry, documentDigest, get model() { return model(); } } as { registry: TrustedDefinitionRegistry; documentDigest: string; model: OntologyModel });
   return seed;
 }
 
@@ -165,7 +185,7 @@ export function createConsolidatedKernelDefinition(registry = new TrustedDefinit
   const didi = complete(extendDidiKernel(composition.document, registry), registry, false);
   const combined = extendPAPaymentKernel(extendCheckoutKernel(didi.document, registry), registry);
   const predecessor = complete(extendConsolidatedKernel(combined, registry, BUSINESS_MODEL_DEFINITION), registry, false);
-  if (predecessor.audit.model.digest !== 'fabd8b85eb9e6199140eece8a71bb4b91ef9c0eb0edd2df30df848c035657107') throw new DomainError('CONFLICT', 'The original consolidated v21 fingerprint changed');
+  assertRelease(predecessor, { id: 'eigos.business', version: '21', digest: 'fabd8b85eb9e6199140eece8a71bb4b91ef9c0eb0edd2df30df848c035657107' }, 'The original consolidated v21 fingerprint changed');
   return predecessor;
 }
 export function createCurrentKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
@@ -173,35 +193,35 @@ export function createCurrentKernelDefinition(registry = new TrustedDefinitionRe
 }
 export function createSemanticRetrievalKernelDefinition(registry=new TrustedDefinitionRegistry()):SeedDefinition{
   const semantic = complete(extendSemanticRetrievalKernel(createBusinessDescriptionsKernelDefinition(registry).document,registry),registry,false);
-  if (digest(semantic.audit.model) !== digest(SEMANTIC_RETRIEVAL_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT','The reviewed semantic retrieval v29 fingerprint changed');
+  assertRelease(semantic, SEMANTIC_RETRIEVAL_KERNEL_MODEL_REF, 'The reviewed semantic retrieval v29 fingerprint changed');
   return semantic;
 }
 /** Opt-in PA presentation release. Existing databases keep their active release. */
 export function createPaClassificationKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const classified = complete(extendPaClassificationKernel(createBusinessDescriptionsKernelDefinition(registry).document), registry, false);
-  if (digest(classified.audit.model) !== digest(PA_CLASSIFICATION_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'The reviewed PA classification fingerprint changed');
+  assertRelease(classified, PA_CLASSIFICATION_KERNEL_MODEL_REF, 'The reviewed PA classification fingerprint changed');
   return classified;
 }
 /** Reviewed domain vocabulary release. It republishes the v30 classification
  * with runtime ServiceDomain spellings and keeps v30 byte-identical. */
 export function createDomainVocabularyKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const vocabulary = complete(extendDomainVocabularyKernel(createPaClassificationKernelDefinition(registry).document), registry, false);
-  if (digest(vocabulary.audit.model) !== digest(DOMAIN_VOCABULARY_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'The reviewed domain vocabulary fingerprint changed');
+  assertRelease(vocabulary, DOMAIN_VOCABULARY_KERNEL_MODEL_REF, 'The reviewed domain vocabulary fingerprint changed');
   return vocabulary;
 }
 export function createBusinessDescriptionsKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const described = complete(extendBusinessDescriptions(createPaymentCommerceKernelDefinition(registry).document), registry, false);
-  if (digest(described.audit.model) !== digest(BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'The original v28 description kernel fingerprint changed');
+  assertRelease(described, BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF, 'The original v28 description kernel fingerprint changed');
   return described;
 }
 export function createPaymentCommerceKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const previous = complete(extendPaymentCommerceKernel(createSingleReadKernelDefinition(registry).document, registry), registry, false);
-  if (digest(previous.audit.model) !== digest(PAYMENT_COMMERCE_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'The original v27 kernel fingerprint changed');
+  assertRelease(previous, PAYMENT_COMMERCE_KERNEL_MODEL_REF, 'The original v27 kernel fingerprint changed');
   return previous;
 }
 export function createSingleReadKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const previous = complete(extendSingleReadKernel(createPersonalContextKernelDefinition(registry).document, registry), registry, false);
-  if (digest(previous.audit.model) !== digest(SINGLE_READ_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'The original v26 kernel fingerprint changed');
+  assertRelease(previous, SINGLE_READ_KERNEL_MODEL_REF, 'The original v26 kernel fingerprint changed');
   return previous;
 }
 
@@ -241,12 +261,12 @@ export class StagedKernelBuilder {
         case 2: this.#checkout = checkoutKernelFromComposition(this.#composition!.document,this.#registry); break;
         case 3: {
           this.#payment = complete(extendPAPaymentKernel(this.#checkout!.document,this.#registry),this.#registry,false);
-          if (digest(this.#payment.audit.model) !== digest(PA_PAYMENT_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT','The original v19 model fingerprint changed');
+          assertRelease(this.#payment, PA_PAYMENT_KERNEL_MODEL_REF, 'The original v19 model fingerprint changed');
           break;
         }
         case 4: {
           const provider = complete(extendProviderReadKernel(this.#payment!.document,this.#registry,historicalImplementation),this.#registry,false);
-          if (digest(provider.audit.model) !== digest(PROVIDER_READ_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT','The original provider-read v20 model fingerprint changed');
+          assertRelease(provider, PROVIDER_READ_KERNEL_MODEL_REF, 'The original provider-read v20 model fingerprint changed');
           this.#checkout=undefined; this.#payment=undefined;
           break;
         }
@@ -254,13 +274,13 @@ export class StagedKernelBuilder {
         case 6: this.#combined = extendPAPaymentKernel(extendCheckoutKernel(this.#didi!.document,this.#registry),this.#registry); this.#didi=undefined; break;
         case 7: {
           this.#current = complete(extendConsolidatedKernel(this.#combined!,this.#registry,BUSINESS_MODEL_DEFINITION),this.#registry,false);
-          if (this.#current.audit.model.digest !== 'fabd8b85eb9e6199140eece8a71bb4b91ef9c0eb0edd2df30df848c035657107') throw new DomainError('CONFLICT','The original consolidated v21 fingerprint changed');
+          assertRelease(this.#current, { id: 'eigos.business', version: '21', digest: 'fabd8b85eb9e6199140eece8a71bb4b91ef9c0eb0edd2df30df848c035657107' }, 'The original consolidated v21 fingerprint changed');
           this.#combined=undefined;
           break;
         }
         case 8: {
           this.#current = complete(extendTaskClosureKernel(this.#current!.document,this.#registry,BUSINESS_MODEL_DEFINITION),this.#registry,false);
-          if (this.#current.audit.model.digest !== 'b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4') throw new DomainError('CONFLICT','The original v22 kernel fingerprint changed');
+          assertRelease(this.#current, { id: 'eigos.business', version: '22', digest: 'b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4' }, 'The original v22 kernel fingerprint changed');
           break;
         }
         case 9: this.#current = complete(extendRollingGoKernel(this.#current!.document,this.#registry),this.#registry,false); break;
@@ -268,30 +288,30 @@ export class StagedKernelBuilder {
         case 11: this.#current = complete(extendPersonalContextKernel(this.#current!.document,this.#registry),this.#registry,false); break;
         case 12:
           this.#current = complete(extendSingleReadKernel(this.#current!.document,this.#registry),this.#registry,false);
-          if (digest(this.#current.audit.model) !== digest(SINGLE_READ_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT','The original v26 kernel fingerprint changed');
+          assertRelease(this.#current, SINGLE_READ_KERNEL_MODEL_REF, 'The original v26 kernel fingerprint changed');
           break;
         case 13:
           this.#current = complete(extendPaymentCommerceKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
-          if (digest(this.#current.audit.model) !== digest(PAYMENT_COMMERCE_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT','The original v27 kernel fingerprint changed');
+          assertRelease(this.#current, PAYMENT_COMMERCE_KERNEL_MODEL_REF, 'The original v27 kernel fingerprint changed');
           if (this.#targetVersion === '27') { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
           break;
         case 14:
           this.#current = complete(extendBusinessDescriptions(this.#current!.document),this.#registry,false,model=>{this.#model=model;});
-          if (digest(this.#current.audit.model) !== digest(BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT','The reviewed v28 description fingerprint changed');
+          assertRelease(this.#current, BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF, 'The reviewed v28 description fingerprint changed');
           if(this.#targetVersion==='28'){this.#documentDigest=digest(this.#current.document); this.#registry.seal();}
           break;
         case 15: {
           const classified = this.#targetVersion === '30' || this.#targetVersion === '31';
           this.#current=complete(classified ? extendPaClassificationKernel(this.#current!.document) : extendSemanticRetrievalKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
           const expected = classified ? PA_CLASSIFICATION_KERNEL_MODEL_REF : SEMANTIC_RETRIEVAL_KERNEL_MODEL_REF;
-          if (digest(this.#current.audit.model) !== digest(expected)) throw new DomainError('CONFLICT', `The reviewed ${expected.version === '30' ? 'PA classification' : 'semantic retrieval'} fingerprint changed`);
+          assertRelease(this.#current, expected, `The reviewed ${expected.version === '30' ? 'PA classification' : 'semantic retrieval'} fingerprint changed`);
           // The v31 vocabulary stage republishes this release, so sealing waits for stage 16.
           if (this.#targetVersion !== '31') { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
           break;
         }
         case 16:
           this.#current=complete(extendDomainVocabularyKernel(this.#current!.document),this.#registry,false,model=>{this.#model=model;});
-          if (digest(this.#current.audit.model) !== digest(DOMAIN_VOCABULARY_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'The reviewed domain vocabulary fingerprint changed');
+          assertRelease(this.#current, DOMAIN_VOCABULARY_KERNEL_MODEL_REF, 'The reviewed domain vocabulary fingerprint changed');
           this.#documentDigest=digest(this.#current.document);this.#registry.seal();
           break;
         default: throw new Error('Unknown kernel stage');
@@ -332,18 +352,18 @@ export function createRollingGoKernelDefinition(registry = new TrustedDefinition
 export function createTaskClosureKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const predecessor = createConsolidatedKernelDefinition(registry);
   const closure = complete(extendTaskClosureKernel(predecessor.document, registry, BUSINESS_MODEL_DEFINITION), registry, false);
-  if (closure.audit.model.digest !== 'b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4') throw new DomainError('CONFLICT', 'The original v22 kernel fingerprint changed');
+  assertRelease(closure, { id: 'eigos.business', version: '22', digest: 'b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4' }, 'The original v22 kernel fingerprint changed');
   return closure;
 }
 export function createProviderReadKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const payment = createPAPaymentKernelDefinition(registry);
   const provider = complete(extendProviderReadKernel(payment.document, registry, historicalImplementation), registry, false);
-  if (digest(provider.audit.model) !== digest(PROVIDER_READ_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'The original provider-read v20 model fingerprint changed');
+  assertRelease(provider, PROVIDER_READ_KERNEL_MODEL_REF, 'The original provider-read v20 model fingerprint changed');
   return provider;
 }
 export function createPAPaymentKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const payment = complete(extendPAPaymentKernel(createCheckoutKernelDefinition(registry).document, registry), registry, false);
-  if (digest(payment.audit.model) !== digest(PA_PAYMENT_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'The original v19 model fingerprint changed');
+  assertRelease(payment, PA_PAYMENT_KERNEL_MODEL_REF, 'The original v19 model fingerprint changed');
   return payment;
 }
 export function createCheckoutKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
@@ -351,13 +371,13 @@ export function createCheckoutKernelDefinition(registry = new TrustedDefinitionR
 }
 function checkoutKernelFromComposition(document: OntologyDocument, registry: TrustedDefinitionRegistry): SeedDefinition {
   const checkout = complete(extendCheckoutKernel(document, registry), registry, false);
-  if (digest(checkout.audit.model) !== digest(CHECKOUT_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'The original v18 model fingerprint changed');
+  assertRelease(checkout, CHECKOUT_KERNEL_MODEL_REF, 'The original v18 model fingerprint changed');
   return checkout;
 }
 export function createCompositionKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const historical = createHistoricalKernelDefinition(registry);
   const composition = complete(extendCompositionKernel(historical.document, registry, historicalImplementation), registry, false);
-  if (digest(composition.audit.model) !== digest(COMPOSITION_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'The original v17 model fingerprint changed');
+  assertRelease(composition, COMPOSITION_KERNEL_MODEL_REF, 'The original v17 model fingerprint changed');
   return composition;
 }
 export function createHistoricalKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
@@ -385,6 +405,6 @@ export function createHistoricalKernelDefinition(registry = new TrustedDefinitio
   }
   for (const { handlerRef, ...fn } of document.functions) if (!handlerRef || digest(registry.registerFunction(fn)) !== digest(handlerRef)) throw new DomainError('CONFLICT', 'Historical v16 function identity changed');
   const historical = complete(document, registry, false);
-  if (digest(historical.audit.model) !== digest(frozenV16.model)) throw new DomainError('CONFLICT', 'The original v16 model fingerprint changed');
+  assertRelease(historical, frozenV16.model, 'The original v16 model fingerprint changed');
   return historical;
 }
