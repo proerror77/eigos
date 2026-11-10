@@ -19,15 +19,16 @@ jobs:
       verify: ${{ steps.scope.outputs.verify }}
       shards: ${{ steps.scope.outputs.shards }}
       e2e: ${{ steps.scope.outputs.e2e }}
+      ontology: ${{ steps.scope.outputs.ontology }}
       postgres: ${{ steps.postgres.outputs.required }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22
+          node-version: 22.22.3
           cache: npm
       - run: npm ci
       - name: Validate test selection
@@ -50,14 +51,14 @@ jobs:
         env:
           SCOPE_RESULT: ${{ needs.scope.result }}
         run: test "$SCOPE_RESULT" = success
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         if: needs.scope.outputs.verify == 'true'
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         if: needs.scope.outputs.verify == 'true'
         with:
-          node-version: 22
+          node-version: 22.22.3
           cache: npm
       - run: npm ci
         if: needs.scope.outputs.verify == 'true'
@@ -72,6 +73,33 @@ jobs:
       - name: Documentation scope
         if: needs.scope.outputs.verify == 'false'
         run: echo 'Documentation-only change; no runtime checks required.'
+  # Ontology definitions, kernel releases and the published PA vocabulary are
+  # reviewed contracts. They get their own gate so a definition edit cannot pass
+  # on unit tests alone, and so an unpinned kernel release fails loudly.
+  ontology-integrity:
+    needs: scope
+    if: ${{ needs.scope.result == 'success' && (needs.scope.outputs.ontology == 'true' || github.event_name == 'push') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.22.3
+          cache: npm
+      - run: npm ci
+      - name: Build generated ontology modules
+        run: npm run build
+      - name: Definition modules stay loadable
+        run: npm run ontology:check
+      - name: Kernel fingerprints, structure, classification and action declarations
+        run: node --import tsx scripts/ontology-integrity.mjs
+      - name: Reviewed ontology suites
+        run: node --import tsx --test tests/domain-vocabulary.test.ts tests/pa-ontology-classification.test.ts tests/ontology-single-source.test.ts tests/ontology-scenarios.test.ts
+
   postgres-storage:
     needs: scope
     if: ${{ needs.scope.result == 'success' && needs.scope.outputs.postgres == 'true' }}
@@ -99,12 +127,12 @@ jobs:
       PGDATABASE: postgres
       PGPASSWORD: fixture-only-password
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22
+          node-version: 22.22.3
           cache: npm
       - run: npm ci
       - run: node scripts/postgres-tests.mjs run --group storage
@@ -138,12 +166,12 @@ jobs:
       PGDATABASE: postgres
       PGPASSWORD: synthetic-vectors-only
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22
+          node-version: 22.22.3
           cache: npm
       - run: npm ci
       - run: npm run build
@@ -176,12 +204,12 @@ jobs:
       PGDATABASE: postgres
       PGPASSWORD: fixture-only-password
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22
+          node-version: 22.22.3
           cache: npm
       - run: npm ci
       - run: node scripts/postgres-tests.mjs run --group access
@@ -217,12 +245,12 @@ jobs:
       PGDATABASE: postgres
       PGPASSWORD: fixture-only-password
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22
+          node-version: 22.22.3
           cache: npm
       - run: npm ci
       - run: node scripts/postgres-tests.mjs run --group execution --case ${{ matrix.case }}
@@ -233,7 +261,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Require every selected execution group to succeed
@@ -273,12 +301,12 @@ jobs:
       PGDATABASE: postgres
       PGPASSWORD: fixture-only-password
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22
+          node-version: 22.22.3
           cache: npm
       - run: npm ci
       - run: node scripts/postgres-tests.mjs run --group coordinator --case ${{ matrix.case }}
@@ -289,7 +317,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Require every selected Coordinator case set to succeed
@@ -304,7 +332,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Require every selected PostgreSQL group to succeed
@@ -330,14 +358,14 @@ jobs:
         env:
           SCOPE_RESULT: ${{ needs.scope.result }}
         run: test "$SCOPE_RESULT" = success
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         if: env.EIGOS_TEST_FILES != '[]'
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         if: env.EIGOS_TEST_FILES != '[]'
         with:
-          node-version: 22
+          node-version: 22.22.3
           cache: npm
       - run: npm ci
         if: env.EIGOS_TEST_FILES != '[]'
@@ -354,13 +382,13 @@ jobs:
     env:
       SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Verify exact source
         run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.13.0
           cache: npm

@@ -3,6 +3,7 @@ import { digest } from '../core/delegation.js';
 import type { OntologyModel } from './model.js';
 import type { OntologyDocument } from './definition-contracts.js';
 import type { PaClassification } from './pa-classification-contract.js';
+import { assertAcceptedDomains } from './domain-vocabulary.js';
 
 /** Reviewed PA purposes are copied into each immutable release, not a second mutable registry. */
 export const paClassifications: Readonly<Record<string, PaClassification>> = Object.freeze({
@@ -217,6 +218,7 @@ export function extendPaClassificationKernel(original: OntologyDocument): Ontolo
     throw new DomainError('CONFLICT', 'PA classification requires the complete reviewed v28 predecessor');
   const document = structuredClone(original); document.version = '30';
   for (const type of document.objects) type.classification = structuredClone(paClassifications[type.id]!);
+  for (const type of document.objects) assertAcceptedDomains(type.classification!.domains, `object:${type.id}`);
   return document;
 }
 

@@ -94,10 +94,16 @@ async function dependencyGraph(root) {
 
 export async function selectScope({ root = process.cwd(), changed, full = false, main = false, reason } = {}) {
   const unit = testFiles(root), e2e = testFiles(root, true);
-  const all = why => ({ mode: 'full', reason: why, verify: true, unit, e2e });
+  // Ontology definitions, kernel releases and their published vocabulary are
+  // reviewed contracts: they need the dedicated integrity gate even when no unit
+  // test depends on the changed file (for example a contract document).
+  const ontologyPaths = ['packages/ontology/', 'packages/security/model-review.ts', 'packages/security/policy-store.ts', 'scripts/ontology.mjs', 'scripts/ontology-integrity.mjs'];
+  const ontologyContracts = new Set(['docs/guides/pa-ontology-views.md', 'docs/architecture/domain.md', 'docs/architecture/model-execution.md']);
+  const ontologyChanged = (changed ?? []).some(file => ontologyPaths.some(prefix => file.startsWith(prefix)) || ontologyContracts.has(file));
+  const all = why => ({ mode: 'full', reason: why, verify: true, unit, e2e, ontology: true });
   if (full) return all(reason ?? 'Explicit full regression');
   const relevant = changed.filter(file => !documentation(file));
-  if (!relevant.length) return { mode: 'docs', reason: 'Only documentation or no changes', verify: false, unit: [], e2e: [] };
+  if (!relevant.length) return { mode: 'docs', reason: 'Only documentation or no changes', verify: false, unit: [], e2e: [], ontology: ontologyChanged };
   if (main) return all('Integration branch regression');
   const unscoped = relevant.find(file => !/^(apps|packages|tests|examples)\/.*\.(ts|mjs)$/.test(file)
     || !existsSync(resolve(root, file)));
@@ -126,7 +132,7 @@ export async function selectScope({ root = process.cwd(), changed, full = false,
   const processCoverage = relevant.some(file => !unit.includes(file) && !e2e.includes(file));
   const selectedE2e = processCoverage ? e2e : e2e.filter(file => affected.has(file));
   if (!selected.length && !selectedE2e.length) return all('No tests could be selected for code changes');
-  return { mode: 'affected', reason: 'Changed tests and transitive dependants', verify: true, unit: selected, e2e: selectedE2e };
+  return { mode: 'affected', reason: 'Changed tests and transitive dependants', verify: true, unit: selected, e2e: selectedE2e, ontology: ontologyChanged };
 }
 
 export async function scopeFromGit({ root = process.cwd(), base = 'origin/main', full = false, main = false } = {}) {
@@ -144,7 +150,7 @@ async function main() {
     main: ci && process.env.GITHUB_EVENT_NAME === 'push' });
   console.log(JSON.stringify(scope, null, 2));
   if (process.env.GITHUB_OUTPUT) {
-    const outputs = { mode: scope.mode, verify: scope.verify, shards: shardFiles(scope.unit), e2e: scope.e2e };
+    const outputs = { mode: scope.mode, verify: scope.verify, shards: shardFiles(scope.unit), e2e: scope.e2e, ontology: Boolean(scope.ontology) };
     for (const [key, value] of Object.entries(outputs)) appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${typeof value === 'object' ? JSON.stringify(value) : value}\n`);
   }
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY,
