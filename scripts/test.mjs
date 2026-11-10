@@ -27,7 +27,12 @@ if (args.includes('--list')) console.log(files.join('\n'));
 else if (!files.length) console.log('No tests in this scope; test discovery was not invoked.');
 else {
   const paths = e2e ? files.map(file => 'dist/' + file.replace(/\.ts$/, '.js')) : files;
-  const child = spawn(process.execPath, [...(e2e ? [] : ['--import', 'tsx']), '--test', `--test-concurrency=${e2e ? 1 : 2}`, ...nodeArgs, ...paths], { stdio: 'inherit' });
+  // Process E2E keeps one file at a time (shared fixtures and ports); unit and
+  // integration files are independent processes, so the width follows the runner.
+  // Hosted CI runners expose four cores; a laptop defaults to the conservative 2.
+  const requested = Number(process.env.EIGOS_TEST_CONCURRENCY ?? '');
+  const width = Number.isInteger(requested) && requested > 0 ? requested : (e2e ? 1 : 2);
+  const child = spawn(process.execPath, [...(e2e ? [] : ['--import', 'tsx']), '--test', `--test-concurrency=${width}`, ...nodeArgs, ...paths], { stdio: 'inherit' });
   child.on('error', error => { console.error(error.message); process.exitCode = 1; });
   child.on('close', (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0); });
 }

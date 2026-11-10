@@ -40,16 +40,17 @@ test('structural copies, proxies and a different supplied registry cannot attest
 test('the genuine seed must retain its document, registry and model audit', () => {
   const type = seed.document.objects[0]!, description = type.description, registry = seed.registry, version = seed.audit.model.version;
   try {
-    type.description += ' changed';
-    assert.throws(() => compiledSeedModel(seed, registry), /compiled seed identity/);
-    type.description = description;
+    // A published release is frozen, so tampering is refused outright rather than
+    // only detected afterwards by the identity check.
+    assert.throws(() => { type.description = `${description} changed`; }, TypeError);
+    assert.equal(type.description, description);
     seed.registry = new TrustedDefinitionRegistry();
     assert.throws(() => compiledSeedModel(seed, registry), /compiled seed identity/);
     assert.throws(() => compiledSeedModel(seed, seed.registry), /compiled seed identity/);
     seed.registry = registry;
     seed.audit.model.version = 'changed';
     assert.throws(() => compiledSeedModel(seed, registry), /compiled seed identity/);
-  } finally { type.description = description; seed.registry = registry; seed.audit.model.version = version; }
+  } finally { seed.registry = registry; seed.audit.model.version = version; }
   assert.deepEqual(compiledSeedModel(seed, registry).ref, LEGACY_SEED_MODEL_REF);
 });
 

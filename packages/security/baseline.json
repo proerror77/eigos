@@ -3456,7 +3456,7 @@
     {
       "id": "fixed-scope-message-references",
       "file": "packages/core/delegation.ts",
-      "sourceDigest": "86a7545dbbb0b7b6ddde2ae0129cf73d96090e5ff577665d517450ab8675d929",
+      "sourceDigest": "08c9c38a4b025f680bd06b4e2195844fb1b14858b17d3d46883e0c6a3f792c20",
       "channels": [
         "model",
         "artifact"
@@ -4257,7 +4257,7 @@
       "currentControl": "Every selectable release (v27-v31) keeps an explicit digest constant and is asserted during construction; historical releases are never rewritten.",
       "targetControl": "Accurate release construction and immutable historical interpretation",
       "stage": "S2",
-      "sourceDigest": "ceef839490cf8db0bef191b30389135de23e12fcb3daab4e023a1b940ee76f2c"
+      "sourceDigest": "9a027a1cf0b88cc5df228c9327d1b72d84fbd449eb7dfcebce524d5cc2e91a8f"
     },
     {
       "id": "ontology-metadata-http",
@@ -7860,7 +7860,7 @@
     {
       "id": "trusted-kernel-bootstrap",
       "file": "packages/ontology/seed-definition.ts",
-      "sourceDigest": "ceef839490cf8db0bef191b30389135de23e12fcb3daab4e023a1b940ee76f2c",
+      "sourceDigest": "9a027a1cf0b88cc5df228c9327d1b72d84fbd449eb7dfcebce524d5cc2e91a8f",
       "channels": [
         "authorization_control"
       ],
