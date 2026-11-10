@@ -26,6 +26,8 @@ export interface OntologyDocument {
   pipeline?: { serviceId: string; intakeDigest: string }[];
   /** Which review of the submission-criteria vocabulary this release carries. */
   criteriaVersion?: string;
+  /** How the v33 release completed the effect declarations. */
+  effectCoverage?: { derived: number; kept: number; undeclared: string[] };
 }
 
 export const ontologyIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/);
@@ -81,6 +83,7 @@ export const ontologyDocumentSchema = z.strictObject({
   links: z.array(serializableLinkSchema).max(10000), actions: z.array(serializableActionSchema).max(2000), functions: z.array(serializableFunctionSchema).max(1000),
   pipeline: z.array(z.strictObject({ serviceId: resourceIdSchema, intakeDigest: z.string().regex(/^[a-f0-9]{64}$/) })).max(100).optional(),
   criteriaVersion: z.string().min(1).max(20).optional(),
+  effectCoverage: z.strictObject({ derived: z.number().int().nonnegative(), kept: z.number().int().nonnegative(), undeclared: z.array(nameSchema).max(200) }).optional(),
 });
 
 /** Reject non-JSON/prototype-bearing values before any recursive schema compiler runs. */

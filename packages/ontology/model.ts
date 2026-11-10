@@ -103,7 +103,7 @@ export interface ActionDefinition {
   composition?: import('./composition-contract.js').ActionCompositionContract;
 }
 export interface FunctionDefinition { id: string; version: string; inputTypes: string[]; description: string; returns?: string[] }
-export interface ModelDefinition { id: string; version: string; objects: ObjectTypeDefinition[]; interfaces: InterfaceDefinition[]; links: LinkDefinition[]; actions: ActionDefinition[]; functions: FunctionDefinition[]; criteriaVersion?: string }
+export interface ModelDefinition { id: string; version: string; objects: ObjectTypeDefinition[]; interfaces: InterfaceDefinition[]; links: LinkDefinition[]; actions: ActionDefinition[]; functions: FunctionDefinition[]; criteriaVersion?: string; effectCoverage?: { derived: number; kept: number; undeclared: string[] } }
 function invalid(message: string): never { throw new DomainError('INVALID_INPUT', message); }
 /** Effects that change state a person is accountable for. */
 const APPROVAL_EFFECTS = new Set(['change', 'object_write', 'reserve', 'order', 'payment', 'cancel', 'refund', 'external_draft']);

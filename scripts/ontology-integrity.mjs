@@ -38,7 +38,7 @@ const DEFINITION_ONLY_ACTIONS = new Set([
   'AssessServiceOutcome', 'RequestServiceRemedy',
 ]);
 
-const KERNEL_TARGETS = ['27', '28', '29', '30', '31', '32'];
+const KERNEL_TARGETS = ['27', '28', '29', '30', '31', '32', '33'];
 const PIN_CONSTANTS = {
   '26': 'SINGLE_READ_KERNEL_MODEL_REF',
   '27': 'PAYMENT_COMMERCE_KERNEL_MODEL_REF',
@@ -47,6 +47,7 @@ const PIN_CONSTANTS = {
   '30': 'PA_CLASSIFICATION_KERNEL_MODEL_REF',
   '31': 'DOMAIN_VOCABULARY_KERNEL_MODEL_REF',
   '32': 'CONTRACT_CLOSURE_KERNEL_MODEL_REF',
+  '33': 'EFFECT_COVERAGE_KERNEL_MODEL_REF',
 };
 /** Legacy releases accepted by the reviewed-model compatibility matrix that have
  * no reconstruction path in this codebase. Declaring them here is the reviewed
