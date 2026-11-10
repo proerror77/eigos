@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import {randomUUID} from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { securityFixture } from './fixtures/security.js';
 import { importPostgresFixture } from './fixtures/postgres-business.js';
@@ -7,6 +8,7 @@ import { PostgresTaskCommandService } from '../packages/postgres/task-command-se
 import { PostgresWorkerStore } from '../packages/postgres/worker-store.js';
 import { PostgresTaskWorker } from '../apps/worker/postgres-worker.js';
 import type {WorkClaim} from '../packages/core/store.js';
+import {defaultPostgresWorkerCapacity,postgresWorkerCapacity,postgresWorkerClaimToken,postgresWorkerOccupancy,postgresWorkerReservation,type PostgresWorkerLane} from '../packages/postgres/worker-capacity.js';
 
 // Scheduling-only test doubles. No database, authorization decision, model or
 // production Worker is started by these unit tests.
@@ -29,6 +31,69 @@ test('the selected single-session Worker drains one original claim before claimi
   try{await loop.tick();await until(()=>started.length===1);assert.equal(claims,1);assert.deepEqual(started,[first.token]);release();await loop.pauseClaims();assert.equal(claims,1);loop.resumeClaims();await until(()=>started.length===2);assert.equal(claims,2);assert.deepEqual(started,[first.token,second.token]);}
   finally{await loop.close();}
 });
+
+test('a held model slot does not lease another model or block a ready execution slot',async()=>{
+  const capacity=defaultPostgresWorkerCapacity,make=(id:string,lane:PostgresWorkerLane)=>({...syntheticClaim(),token:postgresWorkerClaimToken(lane,capacity),job:{...syntheticClaim().job,id}});
+  const first=make('held-model','model'),waiting=make('waiting-model','model'),short=make('short-action','execution'),queue=[first,waiting,short],store=schedulingStore(first);
+  const started:string[]=[],released:string[]=[],requests:PostgresWorkerLane[][]=[];
+  store.claim=async(_services?:string[],_lease?:number,lanes:readonly PostgresWorkerLane[]=['model'])=>{
+    requests.push([...lanes]);const index=queue.findIndex(claim=>lanes.includes(postgresWorkerReservation(claim.token).lane));
+    return index<0?undefined:queue.splice(index,1)[0];
+  };
+  store.releaseCheckpoint=async claim=>{released.push(claim.job.id);return true;};
+  const loop=new PostgresTaskWorker(store,{slots:{model:1,execution:1},pollMs:10000,run:async(claim,signal)=>{
+    started.push(claim.job.id);
+    if(claim.job.id==='held-model')await new Promise<void>(resolve=>signal.addEventListener('abort',()=>resolve(),{once:true}));
+  }});
+  try{
+    await loop.tick();await until(()=>released.includes('short-action'));await loop.tick();
+    assert.deepEqual(started,['held-model','short-action']);assert.deepEqual(queue,[waiting]);
+    assert(requests.slice(1).every(lanes=>!lanes.includes('model')),'A full model slot must not acquire a waiting model lease');
+  }finally{await loop.close();}
+});
+
+test('shared capacity reservations are bounded, opaque, stable and reject malformed or conflicting contracts',()=>{
+  const capacity=postgresWorkerCapacity(),model=postgresWorkerClaimToken('model',capacity),execution=postgresWorkerClaimToken('execution',capacity);
+  assert(model.length<=200);assert(execution.length<=200);assert.notEqual(model,postgresWorkerClaimToken('model',capacity));
+  assert.equal(postgresWorkerReservation(model).lane,'model');assert.equal(postgresWorkerReservation(execution).lane,'execution');
+  assert.deepEqual(postgresWorkerReservation('historical-original-token'),{lane:'model'});
+  const occupied=postgresWorkerOccupancy([{owner:'one',token:model},{owner:'one',token:execution},{owner:'two',token:'legacy-token'}],0,capacity);
+  assert.equal(occupied.available('model'),false);assert.equal(occupied.available('execution'),true);
+  assert.equal(occupied.available('execution','one'),false);assert.equal(occupied.available('execution','two'),true);
+  assert.equal(postgresWorkerOccupancy([{owner:'one',token:model},{owner:'two',token:execution}],2,capacity).available('execution'),false,'Security recovery shares the total budget');
+  for(const token of ['eigos-worker-v1:execution:forged',execution.replace('execution','local'),execution.replace('v1','v2'),execution+'x'])
+    assert.throws(()=>postgresWorkerOccupancy([{owner:'one',token}],0,capacity),/Unrecognized.*reservation/);
+  const other=postgresWorkerCapacity({slots:{model:1,execution:1},perOwner:{model:1,execution:1}});
+  assert.throws(()=>postgresWorkerOccupancy([{owner:'one',token:postgresWorkerClaimToken('execution',other)}],0,capacity),/another capacity contract/);
+  assert.throws(()=>postgresWorkerCapacity({slots:{model:20,execution:1},perOwner:{model:1,execution:1}}),/Invalid.*capacity/);
+});
+
+test('PostgreSQL historical untagged leases keep exact renewal and release receipts without exposing tokens',
+  {skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'},async()=>{
+    const f=securityFixture(Date.now,{unified:true});let target:Awaited<ReturnType<typeof importPostgresFixture>>|undefined;
+    try{
+      const installation=f.installation('Synthetic historical lease',3600000);f.approve(installation.id);
+      const expiresAt=new Date(Date.now()+3600000).toISOString(),policy=f.jobs.security.policies;
+      policy.setRole({subjectKind:'installation',subjectId:installation.id,resource:{kind:'namespace',id:f.jobs.ontology.model.ref.id,version:f.jobs.ontology.model.ref.digest},role:'Viewer',expiresAt},policy.revision());
+      policy.setRecipient(installation.id,{classification:'sensitive',markings:['member_private','personal_data'],channels:['agent_response'],expiresAt},policy.revision());
+      const principal={...f.principal,scopes:['tasks:write','tasks:read'],access:f.coordinator.authenticate({...f.principal,scopes:['tasks:write','tasks:read']},installation.token)};
+      target=await importPostgresFixture(f);const t=target,q=`"${t.schema}"`,commands=new PostgresTaskCommandService(t.database,t.policy),store=new PostgresWorkerStore(t.database,t.policy);
+      const task=await commands.submit(principal,{requestId:randomUUID(),goal:'Synthetic historical scheduling lease only'}),claimed=await store.claim(['eigos.delegate'],30000);assert(claimed);
+      const legacy={...claimed,token:randomUUID()};
+      // Model an already-active pre-upgrade lease. No provider, model usage,
+      // attempt or output has been created; only its two exact headers change.
+      await t.database.run(async client=>{
+        await client.query(`UPDATE ${q}.work_claims SET token=$1 WHERE job_id=$2 AND token=$3`,[legacy.token,task.id,claimed.token]);
+        await client.query(`UPDATE ${q}.runtime_work_claims SET token=$1 WHERE job_id=$2 AND token=$3`,[legacy.token,task.id,claimed.token]);
+      });
+      assert(await store.active(legacy));assert(await store.renew(legacy,30000));assert.equal(await store.active(claimed),false);
+      assert(!JSON.stringify(await commands.get(principal,task.id)).includes(legacy.token));
+      assert(await store.releaseCheckpoint(legacy));assert.equal(await store.releaseCheckpoint(legacy),false);
+      assert.equal((await t.client.query(`SELECT count(*)::int AS n FROM ${q}.work_claims WHERE job_id=$1`,[task.id])).rows[0].n,0);
+      const next=await store.claim(['eigos.delegate'],30000);assert(next);assert.notEqual(next.token,legacy.token);assert.equal(postgresWorkerReservation(next.token).lane,'model');
+      assert(await store.finish(next,current=>{current.state='paused';}));
+    }finally{if(target)await target.close();f.close();}
+  });
 
 test('the default SQL Worker keeps the existing five-minute execution deadline',async context=>{
   context.mock.timers.enable({apis:['setTimeout']});const store=schedulingStore(syntheticClaim());let signal!:AbortSignal,started!:()=>void,failed!:()=>void;const running=new Promise<void>(resolve=>{started=resolve;}),ended=new Promise<void>(resolve=>{failed=resolve;});

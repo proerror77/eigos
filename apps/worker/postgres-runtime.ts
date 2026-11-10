@@ -8,7 +8,8 @@ import type {PostgresDatabase} from '../../packages/postgres/database.js';
 import type {StagedKernelBuilder} from '../../packages/ontology/seed-definition.js';
 import {PostgresWorkerStore} from '../../packages/postgres/worker-store.js';
 import {PostgresCoordinator,type PostgresReasoner,type PostgresExecutor} from '../../packages/postgres/coordinator.js';
-import type {PostgresReadProgramRegistry} from '../../packages/postgres/didi-registry.js';
+import {PostgresReadProgramRegistry} from '../../packages/postgres/didi-registry.js';
+import {postgresWorkerLane,type PostgresWorkerCapacity} from '../../packages/postgres/worker-capacity.js';
 import {PostgresTaskWorker} from './postgres-worker.js';
 import {PostgresEmbeddingIndex} from '../../packages/postgres/embedding-index.js';
 
@@ -54,6 +55,7 @@ export function createPostgresWorker(config:PostgresModelConfig,options:{
   semantic?:SemanticActionRanker;
   database:PostgresDatabase;policyDigest:string;sourceBindingId?:string;builder?:StagedKernelBuilder;registry?:PostgresReadProgramRegistry;
   reasoner?:PostgresReasoner;executor?:PostgresExecutor;modelChannel?:string;
+  capacity?:PostgresWorkerCapacity;
   timing?:{leaseMs?:number;pollMs?:number;timeoutMs?:number};
 }){
   const model=!options.executor||!options.reasoner?(options.executor instanceof HarnessExecutor?options.executor:configuredModel(config)):undefined;
@@ -61,8 +63,11 @@ export function createPostgresWorker(config:PostgresModelConfig,options:{
   // injected Harness/other port must declare AND implement the same contract;
   // existing unadapted synchronous recorder implementations are rejected.
   const executor=options.executor??Object.assign(model!,{postgresModelDispatch:'acknowledged-v1' as const}),reasoner=options.reasoner??(model instanceof HarnessExecutor?postgresHarnessReasoner(model):postgresCodexReasoner(model!)),modelChannel=options.modelChannel??reasoner.securityChannelId??executor.securityChannelId;
-  const store=new PostgresWorkerStore(options.database,options.policyDigest,options.builder),coordinator=new PostgresCoordinator({...options,store,executor,reasoner,modelChannel,maxTaskMs:config.EIGOS_TASK_MAX_MS});
-  const worker=new PostgresTaskWorker(store,{...options.timing,maxConcurrent:config.EIGOS_EXECUTOR==='harness'||executor instanceof HarnessExecutor?1:2,run:(claim,signal)=>coordinator.run(claim,signal),onError:(claim,error,signal)=>coordinator.onError(claim,error,signal)});
+  const registry=options.registry??new PostgresReadProgramRegistry(options.policyDigest,{documentSourceBindingId:options.sourceBindingId});
+  const store=new PostgresWorkerStore(options.database,options.policyDigest,options.builder,{capacity:options.capacity,classify:(job,intents)=>postgresWorkerLane(job,intents,registry)}),
+    coordinator=new PostgresCoordinator({...options,registry,store,executor,reasoner,modelChannel,maxTaskMs:config.EIGOS_TASK_MAX_MS});
+  const worker=new PostgresTaskWorker(store,{...options.timing,slots:{model:Math.min(store.capacity.slots.model,config.EIGOS_EXECUTOR==='harness'||executor instanceof HarnessExecutor?1:2),execution:store.capacity.slots.execution},
+    run:(claim,signal)=>coordinator.run(claim,signal),onError:(claim,error,signal)=>coordinator.onError(claim,error,signal)});
   const vectors=options.database.taskVectorFeature?new PostgresEmbeddingIndex(options.database,options.policyDigest,options.database.taskVectorFeature,options.builder):undefined;
   return {worker,coordinator,store,vectors,start:()=>worker.start(),pause:()=>worker.pauseClaims(),resume:()=>worker.resumeClaims(),close:async()=>{await worker.close();await coordinator.closeModelContexts();}};
 }

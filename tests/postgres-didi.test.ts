@@ -12,9 +12,49 @@ import {checkedRideEstimate} from '../packages/ontology/ride-estimate-projection
 import {digest} from '../packages/core/delegation.js';
 import {SecurityError} from '../packages/security/errors.js';
 import type {AgentActionResult} from '../packages/core/agent-program.js';
+import {PostgresWorkerStore} from '../packages/postgres/worker-store.js';
+import {PostgresReadProgramRegistry} from '../packages/postgres/didi-registry.js';
+import {PostgresTaskCommandService} from '../packages/postgres/task-command-service.js';
+import {postgresWorkerLane,postgresWorkerReservation} from '../packages/postgres/worker-capacity.js';
 
 const local={skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'};
 async function reader(x:Awaited<ReturnType<typeof postgresDidiFixture>>){const p={...x.f.principal,access:await x.t.publisher.authenticate(x.f.principal,x.installation.token)};return {p,service:new PostgresTaskReadService(x.t.database,x.t.policy,x.t.kernel)};}
+
+test('two PostgreSQL hosts reserve a ready DiDi read beside a held model without replay or capacity promotion',local,async()=>{
+  const x=await postgresDidiFixture();try{
+    const component=await x.prepare(),plan=await x.install(component,'SearchDidiPlaces',{scope:component.scope,role:'search',keywords:'北京西站'});
+    const job=await x.stored(),intents=await x.t.database.run(client=>new PostgresTaskStorage(client,x.t.kernel).intents(x.f.owner,job.id));
+    assert.equal(postgresWorkerLane(job,intents,x.registry),'execution');
+    assert.equal(postgresWorkerLane(job,intents,new PostgresReadProgramRegistry(x.t.policy)),'model','Uninstalled adapters never acquire execution capacity');
+    const uncovered=structuredClone(job);delete uncovered.delegation!.goalCoverage;
+    assert.equal(postgresWorkerLane(uncovered,intents,x.registry),'model');
+    const stale=structuredClone(job);stale.delegation!.request.revision++;
+    assert.equal(postgresWorkerLane(stale,intents,x.registry),'model');
+    assert.equal(postgresWorkerLane(job,intents.map(intent=>({...intent,state:'effect_unknown' as const})),x.registry),'model');
+    const local=structuredClone(job);local.delegation!.agent!.plans[0]!.steps[0]!.effect='local';
+    assert.equal(postgresWorkerLane(local,intents,x.registry),'model','A local effect does not imply a model-free adapter');
+    await x.stopRenewals();assert(await x.worker.releaseCheckpoint(x.claim));
+    const {p}=await reader(x),commands=new PostgresTaskCommandService(x.t.database,x.t.policy,x.t.kernel);
+    const pending=await commands.submit(p,{requestId:randomUUID(),goal:'Synthetic queued model work; no actual model or business effect.'});
+    const capacity={slots:{model:1,execution:1},perOwner:{model:1,execution:1}},scheduling={capacity,classify:(current:typeof job,currentIntents:typeof intents)=>postgresWorkerLane(current,currentIntents,x.registry)};
+    const first=new PostgresWorkerStore(x.t.database,x.t.policy,x.t.kernel,scheduling),second=new PostgresWorkerStore(x.t.database,x.t.policy,x.t.kernel,scheduling);
+    const [a,b]=await Promise.all([first.claim(['eigos.delegate'],300000,['model']),second.claim(['eigos.delegate'],300000,['model'])]);
+    assert.equal([a,b].filter(Boolean).length,1,'Two hosts cannot both reserve the only shared model slot');
+    const held=a??b!;assert.equal(held.job.id,pending.id);assert.equal(postgresWorkerReservation(held.token).lane,'model');
+    await assert.rejects(new PostgresWorkerStore(x.t.database,x.t.policy,x.t.kernel).claim(['eigos.delegate'],300000),/another capacity contract/);
+    const short=await second.claim(['eigos.delegate'],300000,['execution']);assert(short);assert.equal(short.job.id,job.id);
+    assert.equal(postgresWorkerReservation(short.token).lane,'execution');assert(short.token.length<=200);
+    await assert.rejects(second.beginModelUsage(short,randomUUID(),'synthetic-must-not-start',new Date().toISOString()),/no model capacity/);
+    assert(await second.renew(short,300000));
+    const result=await x.execution.execute(short,plan.steps[0]!.intentId,new AbortController().signal);assert(result.applied);
+    assert(await first.active(held),'The short read completes while the model claim remains occupied');
+    await assert.rejects(x.execution.execute(short,plan.steps[0]!.intentId,new AbortController().signal),/automatic replay/);
+    assert.equal((await x.t.client.query(`SELECT count(*)::int AS n FROM ${x.q}.action_attempts WHERE intent_id=$1`,[plan.steps[0]!.intentId])).rows[0].n,1);
+    assert.deepEqual(x.source.calls.filter(call=>call.method==='tools/call').map(call=>call.name),['maps_textsearch']);
+    assert.equal((await x.stored()).delegation!.agent!.observations.length,1);
+    assert(await second.releaseCheckpoint(short));assert(await first.finish(held,current=>{current.state='paused';}));
+  }finally{await x.close();}
+});
 
 test('DiDi actual PG places flow verifies original journal and canonical facts while the live goal refuses synthetic evidence',local,async()=>{
   const x=await postgresDidiFixture();try{

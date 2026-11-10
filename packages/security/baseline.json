@@ -5023,13 +5023,13 @@
     {
       "id": "postgres-agent-plan",
       "file": "packages/postgres/agent-plan.ts",
-      "sourceDigest": "354f7294d13a58fe8c13ed469ac3c6b9af935e4ece677049a961f8a8bdb6b524",
+      "sourceDigest": "ac0ffb1e485e2c26f3d37559ac1f01e36729ba51c04afa7cfeb5bac06cc11616",
       "channels": [
         "internal"
       ],
       "content": "Atomic original PostgreSQL Agent frontier installation",
-      "currentControl": "Current original claim and scope, exact durable model decision and read receipts, cumulative budgets and pinned definitions; same-savepoint plan and actual journal-authorized fresh intents; unported dataflow, private inputs and effects remain denied",
-      "targetControl": "Current original claim and scope, exact durable model decision and read receipts, cumulative budgets and pinned definitions; same-savepoint plan and actual journal-authorized fresh intents; unported dataflow, private inputs and effects remain denied",
+      "currentControl": "Current original claim, exact durable model decision and read receipts, cumulative budgets and pinned definitions; same-savepoint plan and actual journal-authorized fresh intents. Only six explicit pre-dispatch read/argument checks emit typed bounded feedback after origin validation; rollback precedes feedback. Authority failures, unported dataflow/private inputs/effects and uncertain original attempts remain denied.",
+      "targetControl": "Current original claim, exact durable model decision and read receipts, cumulative budgets and pinned definitions; same-savepoint plan and actual journal-authorized fresh intents. Only six explicit pre-dispatch read/argument checks emit typed bounded feedback after origin validation; rollback precedes feedback. Authority failures, unported dataflow/private inputs/effects and uncertain original attempts remain denied.",
       "stage": "S5"
     },
     {
@@ -5085,7 +5085,7 @@
     {
       "id": "postgres-ci-groups",
       "file": "scripts/postgres-tests.mjs",
-      "sourceDigest": "8451963d51f66c055873bf96e508d7ff61c2df6e8dc132cedba0fc404c37ba05",
+      "sourceDigest": "74c9f3b481ae8ddd21545eaa36902f7bc634cfae1cdf9b93fecb06b8a295f5ec",
       "channels": [
         "internal"
       ],
@@ -5133,13 +5133,13 @@
     {
       "id": "postgres-coordinator",
       "file": "packages/postgres/coordinator.ts",
-      "sourceDigest": "e976843bfbeb0159005ccfd76bd0eee1a45ddb2ea0b410dd9be21d45c9535d91",
+      "sourceDigest": "6a3ba331f67876cf13fe35b570afccbdbf3b66fbec16d9c26e59a44318bc20c5",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL original-task Goal and document phase coordinator",
-      "currentControl": "Registered acknowledged model ports; authorized typed request/catalogue/model DTOs and actual native receipts; independent Goal review, committed original attempts, current model/claim/role/source checks before dispatch, atomic output seals and no uncertain-operation replay Known rejection reasons are logged privately through a runtime allowlist even after successful recovery writeback; no raw error or public task diagnostic field is added.",
-      "targetControl": "Registered acknowledged model ports; authorized typed request/catalogue/model DTOs and actual native receipts; independent Goal review, committed original attempts, current model/claim/role/source checks before dispatch, atomic output seals and no uncertain-operation replay",
+      "currentControl": "Registered acknowledged model ports, current typed request/catalogue/model DTOs and native receipts; independent Goal review, original attempts and current model/claim/role/source checks before dispatch; atomic output seals. Fresh fenced feedback only after typed pre-dispatch plan rollback, same decision/revision and no unconfirmed intents; three same failures or exhausted reasoning pause. Unknown dispatched outcomes remain a distinct original-result reconciliation stop and never replay; raw diagnostics are not published.",
+      "targetControl": "Registered acknowledged model ports, current typed request/catalogue/model DTOs and native receipts; independent Goal review, original attempts and current model/claim/role/source checks before dispatch; atomic output seals. Fresh fenced feedback only after typed pre-dispatch plan rollback, same decision/revision and no unconfirmed intents; three same failures or exhausted reasoning pause. Unknown dispatched outcomes remain a distinct original-result reconciliation stop and never replay; raw diagnostics are not published.",
       "stage": "S5"
     },
     {
@@ -6080,13 +6080,13 @@
     {
       "id": "postgres-worker-loop",
       "file": "apps/worker/postgres-worker.ts",
-      "sourceDigest": "c7237b8bf9d6baba57d12f2487edca2dd2b82bfe3533ae2ce986f19490a1ad4d",
+      "sourceDigest": "20bb88fc09573d9053df6c3a550d6264b59c8c1e8f26cd67eded5838d167699b",
       "channels": [
         "internal"
       ],
       "content": "Mac PostgreSQL durable execution loop",
-      "currentControl": "Original durable claims with independent serialized heartbeat, shared two-slot queue, model accounting acknowledged before/after dispatch, cancellation/expiry abort, drain/resume and guarded writeback; no model/provider I/O in a transaction or automatic business replay",
-      "targetControl": "Original durable claims with independent serialized heartbeat, shared two-slot queue, model accounting acknowledged before/after dispatch, cancellation/expiry abort, drain/resume and guarded writeback; no model/provider I/O in a transaction or automatic business replay",
+      "currentControl": "Separate bounded local model/execution slots; requests only currently free lanes before durable claim, verifies returned opaque reservation, and never leases a task to await a model slot. Original-token heartbeat, cancellation/expiry abort, acknowledged model accounting, drain/resume and guarded release remain; no model/provider I/O inside transactions or automatic business replay.",
+      "targetControl": "Separate bounded local model/execution slots; requests only currently free lanes before durable claim, verifies returned opaque reservation, and never leases a task to await a model slot. Original-token heartbeat, cancellation/expiry abort, acknowledged model accounting, drain/resume and guarded release remain; no model/provider I/O inside transactions or automatic business replay.",
       "stage": "S5"
     },
     {
@@ -6104,25 +6104,25 @@
     {
       "id": "postgres-worker-runtime",
       "file": "apps/worker/postgres-runtime.ts",
-      "sourceDigest": "63cd92c7492794e99168bd233ab0c0fca23cf053da43bedbe37592c4293a28bf",
+      "sourceDigest": "d5242ba72129e77a134d33f2600cdeebd1f62d47e4767a4a9bf490e421bcd373",
       "channels": [
         "internal"
       ],
       "content": "Explicit registered PostgreSQL Worker candidate assembly",
-      "currentControl": "Selected known Codex or Harness transport uses acknowledged usage and a current guarded runStructured path; original model/account/configuration retained, Harness concurrency one and existing five-minute Worker deadline; unadapted ports reject, injected original database ownership; construction never starts polling or switches primary",
-      "targetControl": "Selected known Codex or Harness transport uses acknowledged usage and a current guarded runStructured path; original model/account/configuration retained, Harness concurrency one and existing five-minute Worker deadline; unadapted ports reject, injected original database ownership; construction never starts polling or switches primary",
+      "currentControl": "Same installed program registry classifies the exact next phase and executes it. Explicit shared capacity contract, separate local execution slots, Harness model concurrency one/Codex two and existing five-minute deadline. Original selected model/account/channel retained with acknowledged guarded dispatch; unadapted ports reject. Construction starts no polling, migration or primary switch.",
+      "targetControl": "Same installed program registry classifies the exact next phase and executes it. Explicit shared capacity contract, separate local execution slots, Harness model concurrency one/Codex two and existing five-minute deadline. Original selected model/account/channel retained with acknowledged guarded dispatch; unadapted ports reject. Construction starts no polling, migration or primary switch.",
       "stage": "S5"
     },
     {
       "id": "postgres-worker-store",
       "file": "packages/postgres/worker-store.ts",
-      "sourceDigest": "c8f3a034917cc21c214132da3b1b63d7287b39691f3b51c8ec16fa429161b7bc",
+      "sourceDigest": "ac565f67bcd27d848aece546352bafe7b46e6e9c8e058320bcf9080a99a7561e",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL durable Worker queue and writeback",
-      "currentControl": "Shared two-call budget; current task authority and original token for claim, renewal and checkpoint/finish; cancellation and late-result fences; expired external dispatch becomes unknown and retains original key",
-      "targetControl": "Shared two-call budget; current task authority and original token for claim, renewal and checkpoint/finish; cancellation and late-result fences; expired external dispatch becomes unknown and retains original key",
+      "currentControl": "Shared bounded model/execution and per-owner capacity checked in the serialized business transaction; owner occupancy fairness and bounded candidate pagination. Immutable versioned opaque-token reservation, exact active-contract match, conservative legacy-token accounting and total budget including safety recovery. Execution reservations cannot begin model usage. Original authority/token, renewal, cancel/late-output fences and unknown-effect preservation remain.",
+      "targetControl": "Shared bounded model/execution and per-owner capacity checked in the serialized business transaction; owner occupancy fairness and bounded candidate pagination. Immutable versioned opaque-token reservation, exact active-contract match, conservative legacy-token accounting and total budget including safety recovery. Execution reservations cannot begin model usage. Original authority/token, renewal, cancel/late-output fences and unknown-effect preservation remain.",
       "stage": "S5"
     },
     {
@@ -7983,6 +7983,30 @@
       "targetControl": "Exact public and complete document pins plus genuine compiler completion and installed Function callback identity; metadata copies, missing bindings, substituted callbacks and method overrides cannot borrow policy; immutable validation is reused without per-field catalogue scans.",
       "stage": "S2",
       "sourceDigest": "240169437122ae0bb38197fc7c0f5a2fbf921007dbf49b9eeeabcb5815440f3f"
+    },
+    {
+      "id": "postgres-worker-capacity",
+      "file": "packages/postgres/worker-capacity.ts",
+      "sourceDigest": "fd99574dbe549ecd7c9c414014c74fbe91c7b59cfc17640dd517463b6bcd6ed1",
+      "channels": [
+        "internal"
+      ],
+      "content": "Bounded original Worker resource reservations and installed next-phase classification",
+      "currentControl": "Host-only capacity metadata supplies no action permission. Exact installed CallerAction/DiDi next-phase classification retains coverage and original pending intents; local ComposeDocument still needs model capacity. Validated shared/per-owner bounds, random opaque token with version and contract digest, conservative historical tokens, refusal of malformed/version/active-contract mismatch; original lease and semantic gates remain independent.",
+      "targetControl": "Host-only capacity metadata supplies no action permission. Exact installed CallerAction/DiDi next-phase classification retains coverage and original pending intents; local ComposeDocument still needs model capacity. Validated shared/per-owner bounds, random opaque token with version and contract digest, conservative historical tokens, refusal of malformed/version/active-contract mismatch; original lease and semantic gates remain independent.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-plan-feedback",
+      "file": "packages/postgres/plan-feedback.ts",
+      "sourceDigest": "a2397227b843bbc1d16ed927ab168808b4cab521229b4e67a8bf8a0ecfa1c039",
+      "channels": [
+        "internal"
+      ],
+      "content": "Bounded feedback for safely rejected original pre-dispatch plans",
+      "currentControl": "Only named non-private validation messages after exact durable planning origin and rollback. Fresh same-request working state, no pending plan, no installed frontier from that model run and no unconfirmed intent; current claim/evidence authorization belongs to enclosing mutation. Preserve fixed goal, budgets and accepted results; three same validation failures or exhausted reasoning pauses, never replaying uncertain effects.",
+      "targetControl": "Only named non-private validation messages after exact durable planning origin and rollback. Fresh same-request working state, no pending plan, no installed frontier from that model run and no unconfirmed intent; current claim/evidence authorization belongs to enclosing mutation. Preserve fixed goal, budgets and accepted results; three same validation failures or exhausted reasoning pauses, never replaying uncertain effects.",
+      "stage": "S5"
     }
   ]
 }

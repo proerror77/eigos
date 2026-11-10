@@ -111,6 +111,7 @@ export async function postgresDidiFixture(relay=false,transport:{deliverSource?:
         return t.database.run(client=>acceptPostgresGoal(client,claim,decision,selected.run.id,selected.reads,options));
       }finally{active.value.close();}
     };
-    return {f,t,q,source,reads,registry,program,worker,claim,request,goal,grant,bindingId,installation,channel,options,accountDigest,stored,session,prepare,install,execute,execution,complete,setDescriptor:(value:DidiMemberConnection)=>{descriptor=value;},descriptor:()=>structuredClone(descriptor),close:async()=>{if(timer)clearInterval(timer);if(pumpTimer)clearInterval(pumpTimer);if(pending)await pending;if(pumping)await pumping;try{await t.close();}finally{f.close();source.close();}assert.equal(heartbeatFailure,undefined);assert.equal(pumpFailure,undefined);}};
+    const stopRenewals=async()=>{if(timer)clearInterval(timer);timer=undefined;if(pending)await pending;};
+    return {f,t,q,source,reads,registry,program,worker,claim,request,goal,grant,bindingId,installation,channel,options,accountDigest,stored,session,prepare,install,execute,execution,complete,stopRenewals,setDescriptor:(value:DidiMemberConnection)=>{descriptor=value;},descriptor:()=>structuredClone(descriptor),close:async()=>{await stopRenewals();if(pumpTimer)clearInterval(pumpTimer);if(pumping)await pumping;try{await t.close();}finally{f.close();source.close();}assert.equal(heartbeatFailure,undefined);assert.equal(pumpFailure,undefined);}};
   }catch(error){if(timer)clearInterval(timer);if(pumpTimer)clearInterval(pumpTimer);if(pending)await pending;if(pumping)await pumping;try{await target?.close();}finally{f.close();source.close();}throw error;}
 }

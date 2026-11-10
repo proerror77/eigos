@@ -37,6 +37,7 @@ import {preparePostgresGoalContexts,postgresGoalProgram} from './goal-contexts.j
 import {postgresGoalReviewContext,postgresAgentPlanningContext} from './model-context.js';
 import {acceptPostgresGoal} from './goal-acceptance.js';
 import {PostgresCallerActionExecution} from './caller-action.js';
+import {PostgresPlanValidationFeedback,recordPostgresPlanFeedback} from './plan-feedback.js';
 
 /** Host registry contract: the implementation must await model-usage begin and
  * finish and invoke the actual dispatch guard before sending any prompt. A
@@ -223,7 +224,17 @@ export class PostgresCoordinator {
       const decision=agentDecisionSchema.parse(response.decision),reads=await session.finish(),configured={...this.options,programs:this.runtime.policies(),maxTaskMs:this.maximum};
       signal.throwIfAborted();
       if(decision.kind==='prepare')await this.configured.database.run(client=>preparePostgresGoalContexts(client,claim,decision,response.evidence.id,reads,configured));
-      else if(decision.kind==='execute')await this.configured.database.run(client=>installPostgresAgentPlan(client,claim,decision,response.evidence.id,reads,configured));
+      else if(decision.kind==='execute'){
+        try{await this.configured.database.run(client=>installPostgresAgentPlan(client,claim,decision,response.evidence.id,reads,configured));}
+        catch(error){
+          if(!(error instanceof PostgresPlanValidationFeedback))throw error;
+          // The failed plan transaction has fully rolled back. Fresh claim and
+          // evidence fences own feedback; no unconfirmed action may be retried.
+          signal.throwIfAborted();
+          if(!await this.transition(claim,async(current,client)=>recordPostgresPlanFeedback(current,
+            await new PostgresTaskStorage(client,this.options.builder).intents(claim.owner,current.id),error)))throw new SecurityError('ACCESS_REVOKED');
+        }
+      }
       else if(decision.kind==='complete')await this.configured.database.run(client=>acceptPostgresGoal(client,claim,decision,response.evidence.id,reads,this.options));
       else throw new SecurityError('AUTHORITY_UNAVAILABLE','The selected component has no installed PostgreSQL clarification/infeasibility semantic verifier');
     }finally{session.close();}
@@ -232,8 +243,13 @@ export class PostgresCoordinator {
     if(signal.aborted||!await this.configured.store.active(claim))return;
     recordWorkerRejection(claim.job.id,error);
     const unavailable=error instanceof SecurityError||error instanceof ConnectionAuthorizationRequired;
-    await this.transition(claim,job=>{
-      scheduleTaskRecovery(job,unavailable?'source_authorization_required':'worker_interrupted',unavailable?'当前服务授权或执行适配尚未就绪，已保留原任务和原操作。':'执行在已确认的下一阶段之前中断，已保留原任务和原操作。',{automatic:false});
+    await this.transition(claim,async(job,client)=>{
+      const intents=await new PostgresTaskStorage(client,this.options.builder).intents(claim.owner,job.id);
+      const uncertain=intents.some(intent=>['dispatching','awaiting_remote','effect_unknown','needs_review','canceled_after_dispatch'].includes(intent.state));
+      scheduleTaskRecovery(job,uncertain?'worker_interrupted':unavailable?'source_authorization_required':'worker_interrupted',uncertain
+        ?'原操作已派发但结果尚未确认。已保留原操作与观察记录，需要先核对原结果，不能自动重放。'
+        :unavailable?'当前服务授权或执行适配尚未就绪，已保留原任务和原操作。':'执行在已确认的下一阶段之前中断，已保留原任务和原操作。',{automatic:false});
+      if(uncertain)job.delegation!.events.push({at:job.updatedAt,event:'original_action_reconciliation_required'});
     },{operationalOnly:true,release:true});
   }
   async closeModelContexts(){await this.configured.reasoner.closeTask?.();}

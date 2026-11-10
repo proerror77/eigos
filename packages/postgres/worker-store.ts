@@ -1,4 +1,3 @@
-import {randomUUID} from 'node:crypto';
 import type {Client} from 'pg';
 import {DomainError,type Job,type Principal} from '../core/domain.js';
 import type {WorkClaim} from '../core/store.js';
@@ -28,6 +27,13 @@ import type {ServiceRequest} from '../ontology/execution.js';
 import {withPostgresSourceProjection,type PostgresSourceProjectionOptions} from './source-projection.js';
 import {combineEnvelopes,type SecurityEnvelope} from '../security/envelope.js';
 import {postgresProjectCapabilityCatalog,type PostgresCapabilityCatalogEntry} from './capability-catalog.js';
+import {postgresWorkerCapacity,postgresWorkerCapacityDigest,postgresWorkerClaimToken,postgresWorkerLanes,postgresWorkerOccupancy,postgresWorkerReservation,
+  type PostgresWorkerCapacity,type PostgresWorkerLane} from './worker-capacity.js';
+
+export interface PostgresWorkerScheduling {
+  capacity?:PostgresWorkerCapacity;
+  classify?(job:Job,intents:readonly ActionIntent[]):PostgresWorkerLane;
+}
 
 export interface PostgresWorkerProjectionContext {
   readonly graph:ProjectionMetadata;
@@ -41,8 +47,11 @@ class LostClaim extends Error{}
  * before the caller can run a model or contact a provider. Explicit host-only
  * database continuations remain inside that boundary. */
 export class PostgresWorkerStore {
-  constructor(private readonly db:Pick<PostgresDatabase,'run'|'renewClaim'|'inspectClaim'|'cleanupReleasedClaims'>&Partial<Pick<PostgresDatabase,'workAvailable'>>,private readonly policy:string,private readonly kernel?:StagedKernelBuilder){
+  readonly capacity:PostgresWorkerCapacity;
+  private readonly scans=new Map<string,{occupancy:string;ownerActive:number;createdAt:string;id:string}>();
+  constructor(private readonly db:Pick<PostgresDatabase,'run'|'renewClaim'|'inspectClaim'|'cleanupReleasedClaims'>&Partial<Pick<PostgresDatabase,'workAvailable'>>,private readonly policy:string,private readonly kernel?:StagedKernelBuilder,private readonly scheduling:PostgresWorkerScheduling={}){
     if(!/^[a-f0-9]{64}$/.test(policy))throw new Error('Invalid PostgreSQL Worker policy');
+    this.capacity=postgresWorkerCapacity(scheduling.capacity);
   }
   private async expire(client:Client){
     const q=`"${postgresBusinessSchema(client)}"`,now=Date.now(),store=new PostgresTaskStorage(client,this.kernel);
@@ -71,22 +80,28 @@ export class PostgresWorkerStore {
       await client.query(`DELETE FROM ${q}.work_claims WHERE job_id=$1 AND token=$2 AND expires_at<=$3`,[job.id,row.token,now]);
     }
   }
-  async claim(services:string[],leaseMs:number):Promise<WorkClaim|undefined>{
+  async claim(services:string[],leaseMs:number,lanes:readonly PostgresWorkerLane[]=postgresWorkerLanes):Promise<WorkClaim|undefined>{
     if(!Number.isSafeInteger(leaseMs)||leaseMs<100||leaseMs>300000)throw new Error('Invalid Worker lease');
+    if(lanes.some(lane=>!postgresWorkerLanes.includes(lane))||new Set(lanes).size!==lanes.length)throw new Error('Invalid PostgreSQL Worker lanes');
+    if(!lanes.length)return;
     if(!services.includes('eigos.delegate'))return;
     if(this.db.workAvailable&&!await this.db.workAvailable())return;
     await this.db.cleanupReleasedClaims();
     return this.db.run(async client=>{
       await this.expire(client);const q=`"${postgresBusinessSchema(client)}"`,now=Date.now();
-      const count=await client.query(`SELECT(SELECT count(*) FROM ${q}.work_claims)+(SELECT count(*) FROM ${q}.security_recoveries WHERE state='running' AND lease_until>$1) AS n`,[now]);
-      const active=Number(count.rows[0]?.n);if(!Number.isSafeInteger(active)||active<0)throw new DomainError('CONFLICT','Invalid active Worker count');
-      if(active>=2)return;
+      const reservations=await client.query(`SELECT j.owner,c.token FROM ${q}.work_claims c JOIN ${q}.jobs j ON j.id=c.job_id ORDER BY c.job_id LIMIT 65`);
+      if(reservations.rows.length>64)throw new DomainError('CONFLICT','Active Worker claims exceed the supported capacity bound');
+      const recoveries=await client.query(`SELECT count(*) AS n FROM ${q}.security_recoveries WHERE state='running' AND lease_until>$1`,[now]);
+      const occupied=postgresWorkerOccupancy(reservations.rows.map(row=>({owner:String(row.owner),token:String(row.token)})),Number(recoveries.rows[0]?.n),this.capacity);
+      const available=lanes.filter(lane=>occupied.available(lane));if(!available.length)return;
+      const scanKey=[...available].sort().join(','),occupancy=digest(reservations.rows),previous=this.scans.get(scanKey),cursor=previous?.occupancy===occupancy?previous:undefined;
       const manager=await client.query(`SELECT 1 FROM ${q}.security_manager m JOIN ${q}.security_settings settings ON settings.slot=m.slot
         JOIN ${q}.security_policy p ON p.slot=m.slot JOIN ${q}.security_policy_definitions definition ON definition.slot=p.slot
         WHERE m.slot=1 AND m.expires_at>$1 AND settings.version=2 AND settings.mode='foundation' AND p.revision BETWEEN 1 AND 9007199254740991 AND definition.digest=$2`,[now,this.policy]);
       if(manager.rowCount!==1)return;
-      const rows=await client.query(`SELECT j.id,j.owner FROM ${q}.jobs j CROSS JOIN ${q}.eigos_lock_runtime_authority() a
+      const rows=await client.query(`SELECT j.id,j.owner,j.created_at,occupancy.owner_active FROM ${q}.jobs j CROSS JOIN ${q}.eigos_lock_runtime_authority() a
         CROSS JOIN LATERAL(SELECT ${q}.eigos_try_jsonb(j.body) AS value OFFSET 0) body
+        CROSS JOIN LATERAL(SELECT count(*) AS owner_active FROM ${q}.work_claims c JOIN ${q}.jobs owned ON owned.id=c.job_id WHERE owned.owner=j.owner) occupancy
         WHERE(j.state IN('working','submitted') OR(j.state IN('canceled','failed','rejected','completed','auth-required') AND body.value#>'{delegation,recoveryPending}'='true'::jsonb))
           AND body.value->>'executionMode'='worker-security-v2' AND body.value->>'service'='eigos.delegate'
           AND body.value#>>'{delegation,backendVersion}'=$1 AND body.value->>'authorityId'=a.id
@@ -103,21 +118,33 @@ export class PostgresWorkerStore {
               AND permission.expires_at>$2 AND subject.valid_until>$2 AND parent.expires_at>$2 AND data.expires_at>$2
               AND NOT EXISTS(SELECT 1 FROM ${q}.security_fences fence WHERE fence.owner=permission.owner AND fence.state<>'cleared'
                 AND((fence.kind='member' AND fence.target_id=permission.member_id) OR(fence.kind='connection' AND fence.target_id=subject.client_id) OR(fence.kind='installation' AND fence.target_id=permission.installation_id))))
-          AND NOT EXISTS(SELECT 1 FROM ${q}.work_claims c WHERE c.job_id=j.id) ORDER BY j.created_at,j.id LIMIT 65`,[BACKEND_VERSION,now]);
+          AND($6::boolean OR body.value#>>'{delegation,callerAction}' IS NOT NULL OR body.value#>>'{delegation,agent,pendingPlanId}' IS NOT NULL)
+          AND(occupancy.owner_active,j.created_at,j.id)>($3::bigint,$4::text,$5::text)
+          AND NOT EXISTS(SELECT 1 FROM ${q}.work_claims c WHERE c.job_id=j.id) ORDER BY occupancy.owner_active,j.created_at,j.id LIMIT 65`,
+        [BACKEND_VERSION,now,cursor?.ownerActive??-1,cursor?.createdAt??'',cursor?.id??'',available.includes('model')]);
       const store=new PostgresTaskStorage(client,this.kernel);
       for(const row of rows.rows.slice(0,64)){
         let admission;try{admission=await postgresWorkerAdmission(client,String(row.owner),String(row.id),this.policy);}
         catch(error){if(error instanceof SecurityError)continue;throw error;}
         let job=await store.get(String(row.owner),String(row.id));
+        const lane=this.scheduling.classify?.(job,job.delegation?.agent?.pendingPlanId?await store.intents(String(row.owner),job.id):[])??'model';
+        if(!available.includes(lane)||!occupied.available(lane,String(row.owner)))continue;
         if(job.state==='submitted'){job.state='working';job.updatedAt=new Date().toISOString();job=await store.save(String(row.owner),job);}
-        const token=randomUUID(),at=Date.now();
+        const token=postgresWorkerClaimToken(lane,this.capacity),at=Date.now();
         await client.query(`INSERT INTO ${q}.work_claims(job_id,token,revision,expires_at) VALUES($1,$2,$3,$4)`,[job.id,token,job.revision??0,at+leaseMs]);
         await client.query(`INSERT INTO ${q}.runtime_work_claims(job_id,token,authority_digest) VALUES($1,$2,$3)`,[job.id,token,postgresBusinessAuthorityDigest(client)]);
         const fresh=await postgresWorkerAdmission(client,String(row.owner),job.id,this.policy);
         if(digest(admission)!==digest(fresh))throw new SecurityError('POLICY_CHANGED');
+        this.scans.delete(scanKey);
         return {owner:String(row.owner),job,token,recovery:job.state!=='working'&&job.delegation?.recoveryPending===true,securityAuthorityId:admission.authority.id,
           securityEpoch:admission.authority.authEpoch,securityPolicyRevision:admission.policyRevision};
       }
+      // Advance only after a whole bounded page contained no claimable work.
+      // This avoids hiding a short task behind old model/ineligible candidates;
+      // current owner occupancy invalidates the cursor before a fairness reorder.
+      const last=rows.rows[63];
+      if(rows.rows.length>64&&last)this.scans.set(scanKey,{occupancy,ownerActive:Number(last.owner_active),createdAt:String(last.created_at),id:String(last.id)});
+      else this.scans.delete(scanKey);
     });
   }
   async active(input:WorkClaim){const claim=postgresWorkReference(input);return this.db.run(async client=>{
@@ -168,6 +195,9 @@ export class PostgresWorkerStore {
     });
   }
   beginModelUsage(claim:PostgresWorkReference,id:string,runtime:string,startedAt:string){
+    const reservation=postgresWorkerReservation(claim.token);
+    if(reservation.lane!=='model'||reservation.contract&&reservation.contract!==postgresWorkerCapacityDigest(this.capacity))
+      return Promise.reject(new DomainError('CONFLICT','The original claim has no model capacity reservation'));
     return this.withUsageClaim(claim,(client,reference)=>postgresBeginModelUsage(client,reference,id,runtime,startedAt));
   }
   finishModelUsage(claim:PostgresWorkReference,id:string,evidence:ModelUsageEvidence|undefined,outcome:'completed'|'failed'|'interrupted'){

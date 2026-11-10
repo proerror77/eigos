@@ -30,7 +30,7 @@ import {postgresGatewayProtocolFixture} from './fixtures/postgres-gateway.js';
 
 const local={skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'},channel='synthetic:acknowledged-postgres-coordinator';
 type Stage='ground'|'review'|'act'|'document';
-interface Hooks {beforeDispatch?(stage:Stage,taskId:string):Promise<void>;afterDocumentDispatch?(taskId:string):Promise<void>;partial?:boolean}
+interface Hooks {beforeDispatch?(stage:Stage,taskId:string):Promise<void>;afterDocumentDispatch?(taskId:string):Promise<void>;partial?:boolean;invalidPlans?:number}
 
 test('the default Codex review preserves native mode and uses the acknowledged guarded transport',async t=>{
   const model=new CodexExecutor('must-not-start',1000,{model:'inherited-config',reasoningEffort:'medium',serviceTier:'priority'}),events:string[]=[],id=randomUUID(),at=new Date().toISOString();
@@ -61,7 +61,7 @@ test('an unadapted synchronous model port is rejected before any prompt or datab
 async function fixture(hooks:Hooks={}){
   const f=securityFixture(Date.now,{unified:true}),doc=new DocumentAgentProgram();let target:Awaited<ReturnType<typeof importPostgresPrimaryFixture>>|undefined;
   let protocol:Awaited<ReturnType<typeof postgresGatewayProtocolFixture>>|undefined,runtime:ReturnType<typeof createPostgresWorker>|undefined;
-  const stats={models:0,documents:0,documentBegins:0,nativeDecisions:0},errors:string[]=[];
+  const stats={models:0,documents:0,documentBegins:0,nativeDecisions:0,invalidPlans:0,feedbackReads:0},errors:string[]=[];
   try{
     const installation=f.installation('Synthetic actual PostgreSQL coordinator',3600000),expiry=new Date(Date.now()+3600000).toISOString(),bindingId='synthetic-coordinator-doc';
     const types=[...new Set(['ServiceRequest','DocumentTask','DocumentDraft','Place',...Object.keys(taskContextFields)])];
@@ -91,7 +91,8 @@ async function fixture(hooks:Hooks={}){
         try{
           await client.connect(transport,{timeout:180000});
           const call=async(name:string,args:Record<string,unknown>)=>{const response=await client.callTool({name,arguments:args},{timeout:180000});assert(!response.isError,JSON.stringify(response));const result=(response.structuredContent as {result:any}).result;return result.result??result;};
-          await call('read_task_context',{});const decision=await choose(call);
+          const taskContext=await call('read_task_context',{});if(JSON.stringify(taskContext).includes('"kind":"validation"'))stats.feedbackReads++;
+          const decision=await choose(call);
           await call('submit_decision',{decisionJson:JSON.stringify(decision),receiptIds:access.session.receipts().filter(read=>read.status==='ok').map(read=>read.id)});
           assert.deepEqual(mcp.result().output,decision);stats.nativeDecisions++;return {decision,receipt:mcp.evidence()};
         }finally{await client.close();await transport.close();await mcp.close();}
@@ -112,7 +113,8 @@ async function fixture(hooks:Hooks={}){
         const drafts=await call('query_ontology',{type:'DocumentDraft',limit:5});
         if(drafts.items.length){const object=drafts.items[0].ref;return {...base,kind:'complete',completionJson:JSON.stringify({components:[{contextId:component.id,proposalJson:JSON.stringify({document:object})}],criteria:[{id:'draft',contextIds:[hooks.partial?'unproved-component':component.id]}],conditions:[]})};}
         await call('query_ontology',{object:component.scope});const page=await call('discover_actions',{actionId:'ComposeDocument',programRef:doc.ref});
-        return {...base,kind:'execute',steps:[{id:'document',action:'ComposeDocument',argumentsJson:JSON.stringify({scope:component.scope}),dependsOn:[],inputRefs:[],bindingDigest:page.items[0].bindings[0].pin.digest,contextId:component.id,contributesTo:['draft']}]};
+        const invalid=stats.invalidPlans<(hooks.invalidPlans??0);if(invalid)stats.invalidPlans++;
+        return {...base,kind:'execute',steps:[{id:'document',action:'ComposeDocument',argumentsJson:JSON.stringify({scope:component.scope,...(invalid?{unregisteredField:'SYNTHETIC_PRIVATE_DECISION'}:{})}),dependsOn:[],inputRefs:[],bindingDigest:page.items[0].bindings[0].pin.digest,contextId:component.id,contributesTo:['draft']}]};
       }),
     };
     const executor:PostgresExecutor={postgresModelDispatch:'acknowledged-v1',securityChannelId:channel,run:async(job,signal)=>{
@@ -147,6 +149,22 @@ test('HTTP MCP and A2A reach the same original SQL task through native compose, 
     assert.equal(x.stats.documents,2);assert(x.stats.nativeDecisions>=8);
     assert.deepEqual((await x.t.client.query(`SELECT id FROM ${x.q}.jobs ORDER BY id`)).rows.map(row=>row.id),originalIds.sort(),'both protocols must preserve exactly the two original tasks');
   }finally{await x.close();}
+});
+
+test('repairable pre-dispatch plan feedback reaches the next native decision and stops after repeated failure',local,async t=>{
+  for(const invalidPlans of [1,3])await t.test(String(invalidPlans),async()=>{
+    const x=await fixture({invalidPlans});try{
+      const id=await x.submit('mcp');x.runtime.start();await x.wait(async()=>['completed','paused'].includes((await x.state(id))??''));await x.runtime.pause();
+      const job=JSON.parse((await x.t.client.query(`SELECT body FROM ${x.q}.jobs WHERE id=$1`,[id])).rows[0].body);
+      assert.equal(job.state,invalidPlans===1?'completed':'paused',JSON.stringify(x.errors));
+      assert.equal(job.delegation.agent.feedback.filter((entry:{kind:string})=>entry.kind==='validation').length,invalidPlans);
+      assert(x.stats.feedbackReads>=1,'The subsequent native task context contains the committed validation feedback');
+      assert(!JSON.stringify(job.delegation.agent.feedback).includes('SYNTHETIC_PRIVATE_DECISION'));
+      assert.equal(x.stats.documents,invalidPlans===1?1:0);assert.deepEqual(x.errors,[]);
+      assert.equal((await x.t.client.query(`SELECT count(*)::int AS n FROM ${x.q}.action_attempts`)).rows[0].n,invalidPlans===1?1:0);
+      if(invalidPlans===3)assert.equal(job.delegation.recovery.code,'validation_stalled');
+    }finally{await x.close();}
+  });
 });
 
 test('parent, action role, source and model revocation cannot produce a completed original goal',local,async t=>{
@@ -188,6 +206,7 @@ test('an unknown original document invocation is paused without automatic replay
       assert.deepEqual(diagnostics,error instanceof DomainError?[[ 'Worker execution rejected; original task retained',{event:'worker_execution_rejected',taskId:id,reason:'CONFLICT'}]]:[]);
       const job=(await x.t.client.query(`SELECT body FROM ${x.q}.jobs WHERE id=$1`,[id])).rows[0].body;
       assert(!JSON.stringify({logs,job}).includes('SYNTHETIC_PRIVATE'));assert(!String(job).includes('worker_execution_rejected'));
+      assert(JSON.parse(job).delegation.events.some((event:{event:string})=>event.event==='original_action_reconciliation_required'));
     }finally{await x.close();}
   }
 });

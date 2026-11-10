@@ -3,15 +3,17 @@ import { DomainError } from '../../packages/core/domain.js';
 import { withModelUsage } from '../../packages/core/model-usage-context.js';
 import { withWorkerClaimRelease } from '../../packages/core/worker-claim-lifecycle.js';
 import type { PostgresWorkerStore } from '../../packages/postgres/worker-store.js';
+import {postgresWorkerLanes,postgresWorkerReservation,type PostgresWorkerLane,type PostgresWorkerSlots} from '../../packages/postgres/worker-capacity.js';
 
 type WorkerStore = Pick<PostgresWorkerStore, 'claim' | 'renew' | 'active' | 'finish' | 'releaseCheckpoint' | 'beginModelUsage' | 'finishModelUsage'>;
 interface Options {
   run(claim: WorkClaim, signal: AbortSignal): Promise<void>;
   leaseMs?: number; pollMs?: number; timeoutMs?: number;
   maxConcurrent?: number;
+  slots?:PostgresWorkerSlots;
   onError?(claim: WorkClaim, error: unknown, signal: AbortSignal): Promise<void>;
 }
-interface Running { controller: AbortController; done: Promise<void> }
+interface Running { controller: AbortController; done: Promise<void>;lane:PostgresWorkerLane }
 
 /** Execution loop for the shared SQL queue. The handler owns each durable
  * business transition; this loop never starts a model inside a transaction. */
@@ -24,13 +26,16 @@ export class PostgresTaskWorker {
   private readonly leaseMs: number;
   private readonly pollMs: number;
   private readonly timeoutMs: number;
-  private readonly maxConcurrent: number;
+  private readonly slots:PostgresWorkerSlots;
   constructor(private readonly store: WorkerStore, private readonly options: Options) {
-    this.leaseMs = options.leaseMs ?? 15000; this.pollMs = options.pollMs ?? 100; this.timeoutMs = options.timeoutMs ?? 300000; this.maxConcurrent=options.maxConcurrent??2;
+    this.leaseMs = options.leaseMs ?? 15000; this.pollMs = options.pollMs ?? 100; this.timeoutMs = options.timeoutMs ?? 300000;
+    this.slots=Object.freeze({...options.slots??{model:options.maxConcurrent??2,execution:0}});
     if (!Number.isSafeInteger(this.leaseMs) || this.leaseMs < 100 || this.leaseMs > 300000
       || !Number.isSafeInteger(this.pollMs) || this.pollMs < 10 || this.pollMs > 60000
       || !Number.isSafeInteger(this.timeoutMs) || this.timeoutMs < 1) throw new Error('Invalid PostgreSQL Worker timing');
-    if(!Number.isInteger(this.maxConcurrent)||this.maxConcurrent<1||this.maxConcurrent>2)throw new Error('Invalid PostgreSQL Worker concurrency');
+    if(options.slots&&options.maxConcurrent!==undefined||options.maxConcurrent!==undefined&&(!Number.isInteger(options.maxConcurrent)||options.maxConcurrent<1||options.maxConcurrent>2)
+      ||postgresWorkerLanes.some(lane=>!Number.isSafeInteger(this.slots[lane])||this.slots[lane]<0||this.slots[lane]>8)
+      ||this.slots.model+this.slots.execution<1)throw new Error('Invalid PostgreSQL Worker concurrency');
   }
   start() {
     if (this.timer || this.paused || this.stopping) return;
@@ -41,16 +46,22 @@ export class PostgresTaskWorker {
     if (this.stopping || this.paused) return Promise.resolve();
     if (this.polling) return this.polling;
     const poll = async () => {
-      while (!this.stopping && !this.paused && this.running.size < this.maxConcurrent) {
-        const claim = await this.store.claim(['eigos.delegate'], this.leaseMs);
+      while (!this.stopping && !this.paused) {
+        const available=postgresWorkerLanes.filter(lane=>[...this.running.values()].filter(run=>run.lane===lane).length<this.slots[lane]);
+        if(!available.length)break;
+        // The durable queue selects only work that has an available local slot.
+        // No lease is acquired merely to wait behind another model invocation.
+        const claim = await this.store.claim(['eigos.delegate'], this.leaseMs,available);
         if (!claim) break;
         if (this.stopping || this.paused) { await this.store.finish(claim, () => {}); break; }
-        this.execute(claim);
+        const lane=postgresWorkerReservation(claim.token).lane;
+        if(!available.includes(lane)){await this.store.releaseCheckpoint(claim);throw new Error('Worker claim differs from its available capacity');}
+        this.execute(claim,lane);
       }
     };
     this.polling = poll().finally(() => { this.polling = undefined; }); return this.polling;
   }
-  private execute(claim: WorkClaim) {
+  private execute(claim: WorkClaim,lane:PostgresWorkerLane) {
     const controller = new AbortController(); let renewal: Promise<void> | undefined;
     const lost = () => controller.abort(new DomainError('CONFLICT', 'The original Worker lease or authority ended'));
     const heartbeat = setInterval(() => {
@@ -61,7 +72,7 @@ export class PostgresTaskWorker {
     const stopAndDrainHeartbeat = async () => { stopHeartbeat(); if (renewal) await renewal; };
     controller.signal.addEventListener('abort', stopHeartbeat, { once: true });
     const timeout = setTimeout(() => controller.abort(new DomainError('CONFLICT', 'Worker execution time budget ended')), this.timeoutMs);
-    const run: Running = { controller, done: Promise.resolve() };
+    const run: Running = { controller, done: Promise.resolve(),lane };
     this.running.set(claim.token, run);
     run.done = Promise.resolve().then(async () => {
       if (!await this.store.active(claim)) { lost(); return; }

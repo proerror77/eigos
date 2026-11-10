@@ -25,7 +25,7 @@ export const POSTGRES_EXECUTION_JOBS=Object.freeze(Object.keys(POSTGRES_EXECUTIO
 export const POSTGRES_COORDINATOR_CASES=Object.freeze({
   protocol:Object.freeze(['the default Codex review','an unadapted synchronous model port','HTTP MCP and A2A reach']),
   revocation:Object.freeze(['parent, action role, source and model revocation']),
-  lifecycle:Object.freeze(['canceling the original task','an incomplete whole-goal assessment','an unknown original document invocation']),
+  lifecycle:Object.freeze(['canceling the original task','an incomplete whole-goal assessment','an unknown original document invocation','repairable pre-dispatch plan feedback']),
 });
 export const POSTGRES_COORDINATOR_JOBS=Object.freeze(Object.keys(POSTGRES_COORDINATOR_CASES).map(name=>'postgres-coordinator-cases ('+name+')'));
 export const POSTGRES_GROUP_JOBS=Object.freeze(Object.keys(POSTGRES_TEST_GROUPS).map(group=>'postgres-'+group));

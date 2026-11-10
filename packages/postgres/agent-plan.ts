@@ -30,6 +30,7 @@ import {createPostgresActionAuthorization,type PostgresActionAuthorizationOption
 import {withPostgresWorkerRequestAuthorization} from './task-output.js';
 import {withPostgresOntologyReleaseSnapshot} from './ontology-release.js';
 import {withPostgresPlanningReadGraph} from './planning-read-graph.js';
+import {PostgresPlanValidationFeedback} from './plan-feedback.js';
 
 type Registration=PostgresActionProgramPolicy&{program:PostgresActionProgramPolicy['program']&Pick<AgentProgram,'limits'|'privateInput'|'simulatedApproval'>};
 export interface PostgresAgentPlanOptions extends Omit<PostgresActionAuthorizationOptions,'programs'|'observation'>{programs:readonly Registration[];registry?:PostgresReadProgramRegistry}
@@ -65,6 +66,9 @@ export async function installPostgresAgentPlan(client:Client,input:PostgresWorkR
     if(!state.composition&&!registration!.validate)throw new SecurityError('AUTHORITY_UNAVAILABLE','PostgreSQL actual Agent planning semantics are not installed');
     if(!state.composition)assertGoalCoverage(job,capability);
     const evidence=assertPostgresPlanningDecisionEvidence(job,decision,modelRunId,reads);
+    const feedback=(kind:ConstructorParameters<typeof PostgresPlanValidationFeedback>[0]):never=>{
+      throw new PostgresPlanValidationFeedback(kind,evidence.id,d.request.revision,digest(decision));
+    };
     const histories=[state,...(d.agentHistory??[])],plans=histories.flatMap(value=>value.plans),limits=agentLimits(program);
     if(plans.some(plan=>plan.modelRunId===evidence.id))fail('This original model decision already installed its frontier');
     if(executionBudgetExceeded(job,'modelTurns')||program.limits&&(job.runs?.length??0)>limits.modelTurns)fail('Agent model budget is exhausted without a new authorized execution window');
@@ -73,7 +77,7 @@ export async function installPostgresAgentPlan(client:Client,input:PostgresWorkR
     const intents=await store.intents(claim.owner,job.id);
     if(intents.some(intent=>!['read','local','object_write'].includes(intent.effect)&&['dispatching','awaiting_remote','effect_unknown','needs_review'].includes(intent.state)))fail('An unconfirmed original business effect blocks new planning');
     const delivered=reads.deliveredObjects??reads.objects,preceding=new Set<string>(),planId=randomUUID();
-    if(!delivered.some(value=>same(value.ref,state.scope)))fail('Read the task scope before selecting actions');
+    if(!delivered.some(value=>same(value.ref,state.scope)))feedback('task_scope');
     const data=await withPostgresOntologyReleaseSnapshot(client,()=>withPostgresWorkerRequestAuthorization(client,claim,options.policyDigest,(auth,admission,principal)=>
       withPostgresPlanningReadGraph(client,principal,job.id,options.policyDigest,auth,admission,async graph=>{
         const scope=await graph.read(claim.owner,state.scope);postgresConstrainReadDeadline(client,admission.validUntil);
@@ -82,7 +86,7 @@ export async function installPostgresAgentPlan(client:Client,input:PostgresWorkR
       },options.builder),options.builder,options.modelChannel,options.inspectClaim));
     const steps:AgentActionPlan['steps']=[];
     for(const selected of decision.steps){
-      if(preceding.has(selected.id)||new Set(selected.dependsOn).size!==selected.dependsOn.length||selected.dependsOn.some(id=>!preceding.has(id)))fail('Step IDs must be unique and dependencies must precede their consumers');
+      if(preceding.has(selected.id)||new Set(selected.dependsOn).size!==selected.dependsOn.length||selected.dependsOn.some(id=>!preceding.has(id)))feedback('dependencies');
       if(selected.inputRefs.length||selected.acceptedInputs?.length)fail('PostgreSQL accepted/derived input planning is not installed on this plan path');
       if(!state.composition&&(selected.bindingDigest||selected.contextId||selected.contributesTo?.length))fail('PostgreSQL composition planning is not installed on this direct plan path');
       let readRegistration:PostgresReadRegistration|undefined,selectedProgram:Registration['program']=program,pinned:Pick<AgentActionPlan['steps'][number],'binding'|'contextDigest'|'contextScope'|'scopeDigest'>={};
@@ -95,7 +99,7 @@ export async function installPostgresAgentPlan(client:Client,input:PostgresWorkR
         const context={graph:{model:data.model,now:Date.now,releaseRef:d.ontologyRelease,security:true},owner:claim.owner,request:data.request,state,intents,modelRuns:job.runs};
         const scoped=componentContext(context,component,resolved.program);
         if(component.managedActionIds&&!component.managedActionIds.includes(selected.action))fail('Action is outside its explicitly selected managed context');
-        if(!delivered.some(value=>same(value.ref,component.scope)))fail('Read this component scope before selecting its actions');
+        if(!delivered.some(value=>same(value.ref,component.scope)))feedback('component_scope');
         const scopeDigest=await withPostgresOntologyReleaseSnapshot(client,()=>withPostgresWorkerRequestAuthorization(client,claim,options.policyDigest,(auth,admission,principal)=>withPostgresPlanningReadGraph(client,principal,job.id,options.policyDigest,auth,admission,graph=>runGraphProgramAsync(graph,componentScopeDigestProgram(scoped,component.scope)),options.builder),options.builder,options.modelChannel,options.inspectClaim));
         pinned={binding:pin,contextDigest:component.digest,contextScope:component.scope,scopeDigest};
       }
@@ -103,8 +107,10 @@ export async function installPostgresAgentPlan(client:Client,input:PostgresWorkR
       if(!selectedProgram.actionIds.includes(selected.action)||!state.composition&&state.managedActionIds&&!state.managedActionIds.includes(selected.action))fail('This Agent binding does not permit the selected action');
       if(state.composition)assertGoalEffects(state.composition.goal,[operation.effect,...('additionalEffects'in operation?operation.additionalEffects??[]:[])]);
       if(!['read','local'].includes(operation.effect)||'additionalEffects'in operation&&operation.additionalEffects?.length)fail('PostgreSQL business-effect planning requires its installed exact authority port');
-      const parsed:unknown=JSON.parse(selected.argumentsJson);if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))fail('Action arguments must be an object');
-      const actionInput=parsed as Record<string,unknown>;selectedProgram.schema(selected.action).parse(actionInput);
+      let parsed:unknown;try{parsed=JSON.parse(selected.argumentsJson);}catch{feedback('arguments');}
+      if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))feedback('arguments');
+      const actionInput=parsed as Record<string,unknown>;
+      if(!selectedProgram.schema(selected.action).safeParse(actionInput).success)feedback('arguments');
       if(state.composition){
         if(!readRegistration)throw new SecurityError('AUTHORITY_UNAVAILABLE','The selected composed program has no actual PostgreSQL registration');
         if(readRegistration.kind==='document'&&(Array.isArray(actionInput.citations)&&actionInput.citations.length||Array.isArray(actionInput.additionalCitations)&&actionInput.additionalCitations.length))fail('Composed document citations require their installed current producer semantics');
@@ -112,12 +118,12 @@ export async function installPostgresAgentPlan(client:Client,input:PostgresWorkR
       }
       const refs=new Map<string,ObjectRef>();let nodes=0;
       const inspect=(value:unknown)=>{if(++nodes>5000)fail('Agent input exceeds its bounded reference traversal');if(!value||typeof value!=='object')return;const ref=objectRefSchema.safeParse(value);if(ref.success)refs.set(digest(ref.data),ref.data);else for(const child of Object.values(value))inspect(child);};inspect(actionInput);
-      if([...refs.values()].some(ref=>!delivered.some(value=>same(value.ref,ref))))fail('Read referenced ontology objects before selecting an action');
+      if([...refs.values()].some(ref=>!delivered.some(value=>same(value.ref,ref))))feedback('references');
       const operationKey=actionOperationKey(claim.owner,d.request.id,`${planId}:${selected.id}`);
       if((await query(`SELECT 1 FROM ${q}.action_intents WHERE owner=$1 AND business_key=$2 LIMIT 1`,[claim.owner,operationKey])).rowCount)fail('This business operation already has an original intent');
       steps.push({...selected,...pinned,input:actionInput,definitionDigest:digest(definition),intentId:randomUUID(),effect:operation.effect,operationKey});preceding.add(selected.id);
     }
-    if(steps.some(step=>step.effect==='local')&&steps.length!==1)fail('Local handoff actions require their own frontier');
+    if(steps.some(step=>step.effect==='local')&&steps.length!==1)feedback('local_frontier');
     const body:Omit<AgentActionPlan,'digest'>={id:planId,version:state.composition?'3':'2',sequence:plans.length+1,requestId:job.id,requestRevision:d.request.revision,
       programRef:state.programRef,programDigest:state.programDigest,scope:state.scope,scopeDigest:data.scopeDigest,modelRunId:evidence.id,modelDecision:decision,
       reasoning:decision.message,createdAt:new Date().toISOString(),steps,ontologyPlanning:reads};
