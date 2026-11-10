@@ -26,7 +26,11 @@ export function changedFiles(root, base = 'origin/main') {
 
 function documentation(file) {
   return ['AGENTS.md', 'README.md'].includes(file)
-    || /^docs\/.*\.md$/.test(file) || /^packages\/.*\/README\.md$/.test(file);
+    || /^docs\/.*\.md$/.test(file) || /^packages\/.*\/README\.md$/.test(file)
+    // CI configuration and repository metadata cannot be exercised by the test
+    // suite: the workflow run itself is the check. Treating them as runtime code
+    // forced a 347-file regression for a one-line CI edit.
+    || /^\.github\//.test(file) || ['.gitignore', '.gitattributes'].includes(file);
 }
 
 export function shardFiles(files, count = 8) {
@@ -97,12 +101,16 @@ export async function selectScope({ root = process.cwd(), changed, full = false,
   // Ontology definitions, kernel releases and their published vocabulary are
   // reviewed contracts: they need the dedicated integrity gate even when no unit
   // test depends on the changed file (for example a contract document).
-  const ontologyPaths = ['packages/ontology/', 'packages/security/model-review.ts', 'packages/security/policy-store.ts', 'scripts/ontology.mjs', 'scripts/ontology-integrity.mjs'];
+  const ontologyPaths = ['packages/ontology/', 'packages/security/model-review.ts', 'packages/security/policy-store.ts', 'scripts/ontology.mjs', 'scripts/ontology-integrity.mjs', 'scripts/kernel-bench.mts'];
   const ontologyContracts = new Set(['docs/guides/pa-ontology-views.md', 'docs/architecture/domain.md', 'docs/architecture/model-execution.md']);
   const ontologyChanged = (changed ?? []).some(file => ontologyPaths.some(prefix => file.startsWith(prefix)) || ontologyContracts.has(file));
   const all = why => ({ mode: 'full', reason: why, verify: true, unit, e2e, ontology: true });
   if (full) return all(reason ?? 'Explicit full regression');
-  const relevant = changed.filter(file => !documentation(file));
+  // A released kernel snapshot is data, not source: the ontology gate rebuilds
+  // every layer and compares fingerprints, which is strictly stronger than the
+  // unit suites this path used to trigger through the "unknown file" rule.
+  const releasedKernelData = /^packages\/ontology\/history\/.*\.json$/;
+  const relevant = changed.filter(file => !documentation(file) && !releasedKernelData.test(file));
   if (!relevant.length) return { mode: 'docs', reason: 'Only documentation or no changes', verify: false, unit: [], e2e: [], ontology: ontologyChanged };
   if (main) return all('Integration branch regression');
   const unscoped = relevant.find(file => !/^(apps|packages|tests|examples)\/.*\.(ts|mjs)$/.test(file)

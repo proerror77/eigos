@@ -130,7 +130,19 @@ function documentFromDefinition(definition: FrozenDefinition | ModelDefinition, 
   return parseOntologyDocument(JSON.parse(JSON.stringify(document)));
 }
 
+/** A published release is immutable by contract: freeze it so an accidental
+ * in-place edit fails loudly instead of silently rewriting history, and so its
+ * digest can be memoised by identity. */
+function freezeRelease<T>(value: T): T {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) freezeRelease(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 function complete(document: OntologyDocument, registry: TrustedDefinitionRegistry, original: boolean, onCompiled?: (model: OntologyModel) => void): SeedDefinition {
+  freezeRelease(document);
   registry.protect(document);
   const model = compileOntologyDocument(document, registry);
   onCompiled?.(model);

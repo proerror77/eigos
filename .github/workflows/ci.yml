@@ -30,7 +30,7 @@ jobs:
         with:
           node-version: 22.22.3
           cache: npm
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit --no-fund
       - name: Validate test selection
         run: node --test tests/ci-scope.test.mjs
       - id: scope
@@ -60,7 +60,7 @@ jobs:
         with:
           node-version: 22.22.3
           cache: npm
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit --no-fund
         if: needs.scope.outputs.verify == 'true'
       - run: npm run check
         if: needs.scope.outputs.verify == 'true'
@@ -90,7 +90,7 @@ jobs:
         with:
           node-version: 22.22.3
           cache: npm
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit --no-fund
       - name: Build generated ontology modules
         run: npm run build
       - name: Definition modules stay loadable
@@ -134,7 +134,7 @@ jobs:
         with:
           node-version: 22.22.3
           cache: npm
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit --no-fund
       - run: node scripts/postgres-tests.mjs run --group storage
 
   postgres-vectors:
@@ -173,7 +173,7 @@ jobs:
         with:
           node-version: 22.22.3
           cache: npm
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run build
       - run: node scripts/postgres-tests.mjs run --group vectors
 
@@ -211,7 +211,7 @@ jobs:
         with:
           node-version: 22.22.3
           cache: npm
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit --no-fund
       - run: node scripts/postgres-tests.mjs run --group access
 
   postgres-execution-cases:
@@ -252,7 +252,7 @@ jobs:
         with:
           node-version: 22.22.3
           cache: npm
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit --no-fund
       - run: node scripts/postgres-tests.mjs run --group execution --case ${{ matrix.case }}
 
   postgres-execution:
@@ -308,7 +308,7 @@ jobs:
         with:
           node-version: 22.22.3
           cache: npm
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit --no-fund
       - run: node scripts/postgres-tests.mjs run --group coordinator --case ${{ matrix.case }}
 
   postgres-coordinator:
@@ -353,6 +353,9 @@ jobs:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
     env:
       EIGOS_TEST_FILES: ${{ needs.scope.result == 'success' && toJSON(fromJSON(needs.scope.outputs.shards)[matrix.shard]) || '[]' }}
+      # Hosted runners expose four cores. Two concurrent test files left half the
+      # machine idle on every shard; the suite is process-isolated per file.
+      EIGOS_TEST_CONCURRENCY: '4'
     steps:
       - name: Require a valid scope
         env:
@@ -367,7 +370,7 @@ jobs:
         with:
           node-version: 22.22.3
           cache: npm
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit --no-fund
         if: env.EIGOS_TEST_FILES != '[]'
       - run: npm test
         if: env.EIGOS_TEST_FILES != '[]'
@@ -392,5 +395,5 @@ jobs:
         with:
           node-version: 22.13.0
           cache: npm
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit --no-fund
       - run: node --import tsx --test tests/transaction-savepoints.test.ts tests/execution-projection-noop.test.ts tests/graph-read-window.test.ts
