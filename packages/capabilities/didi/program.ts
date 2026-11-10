@@ -15,6 +15,7 @@ import type { OntologyObjectStore } from '../../ontology/object-store.js';
 import type { PlanningSnapshot } from '../../ontology/planning-contract.js';
 import { rideEstimateInputSchema, rideEstimateActionIds, rideEstimateActionSchemas, rideEstimateCompletionSchema, type RideEstimateAction, type RideEstimateObservation } from '../../ontology/ride-estimate.js';
 import { checkedRideEstimate, projectRideEstimateProgram } from '../../ontology/ride-estimate-projection.js';
+import { didiEstimateMatchesServiceTier } from '../../ontology/ride-service-tier.js';
 import { didiBindingSchema, didiDataSchema, didiReceiptSchema, didiEndpoint, didiPlaceSchema, didiToolInputs, DIDI_TOOLS, type DidiTool,type DidiBinding, type DidiPlace } from './contracts.js';
 import { DidiMcpConnector,type DidiCallContext,type DidiReadResult,type DidiConnector } from './connector.js';
 import { requestLocations, sameCity, locationMatchesSource, locationRequirementMatchesSource, locationAliases, normalizedLocation } from '../../core/location-context.js';
@@ -236,7 +237,7 @@ export function* completeDidiProgram(program:DidiProgramSemantics,ctx:DidiProgra
     if (scope.mode !== s.data.kind) invalid('The selected observation does not complete the requested query mode');
     const later=ctx.state.observations.slice(ctx.state.observations.findIndex(ref=>equal(ref,completion.observation))+1);
     for(const ref of later){const observed=(yield* didiObservationProgram(program,ctx,ref)).snapshot;if(observed.action===s.action&&equal(observed.actionInput,s.actionInput)&&!equal(observed.data,s.data))invalid('A later DiDi observation changed the selected facts');}
-    const requestedItems = scope.mode === 'estimate' && s.data.kind === 'estimate' && scope.serviceClass ? s.data.items.filter(item => normalized(item.productName) === normalized(scope.serviceClass!)) : s.data.kind === 'estimate' ? s.data.items : [];
+    const requestedItems = scope.mode === 'estimate' && s.data.kind === 'estimate' && scope.serviceClass ? s.data.items.filter(item => didiEstimateMatchesServiceTier(scope.serviceClass!, item)) : s.data.kind === 'estimate' ? s.data.items : [];
     const prefix = s.evidenceKind === 'provider_mock' ? '【滴滴 Mock 数据】' : s.evidenceKind === 'fixture' ? '【合成测试数据】' : '';
     const answer = s.data.kind === 'places' ? s.data.places.map(p => `${p.name}：${p.addressAll || p.address}`).join('\n') || '本次地点搜索未返回结果。'
       : `${s.route!.origin.name} → ${s.route!.destination.name}\n${requestedItems.map(item => `${item.productName}：${item.priceText}（预估）`).join('\n') || '本次未返回符合指定车型的估价。'}\n估价不代表最终完整车费或接驾承诺。`;

@@ -28,9 +28,10 @@ test('S0 inventories every definition and nested subtree without changing runtim
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
   assert.equal(report.counts.objectTypes, 204); assert.equal(report.counts.properties, 1863); assert.equal(report.counts.interfaces, 14);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 401);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 402);
   assert.equal(report.surfaces.find(surface => surface.id === 'didi-estimate-submission-contract')?.file, 'packages/core/didi-estimate-request.ts');
   assert.equal(report.surfaces.find(surface => surface.id === 'postgres-didi-short-path-proof')?.file, 'packages/postgres/didi-short-path.ts');
+  assert.equal(report.surfaces.find(surface => surface.id === 'didi-estimate-service-tier')!.file, 'packages/ontology/ride-service-tier.ts');
   assert.equal(report.surfaces.find(surface => surface.id === 'pa-classification-contract')!.file, 'packages/ontology/pa-classification-contract.ts');
   assert.equal(report.surfaces.find(surface => surface.id === 'pa-classification-kernel')!.file, 'packages/ontology/pa-classification-kernel.ts');
   for(const id of ['gateway-primary-startup','ontology-registered-calculations','ontology-semantic-retrieval-contract','ontology-semantic-retrieval-port','ontology-semantic-retrieval-kernel','postgres-embedding-index','postgres-embedding-schema','postgres-vector-index-deployment','postgres-task-vector-cli'])assert(report.surfaces.some(surface=>surface.id===id),`Missing reviewed supplied-vector surface: ${id}`);

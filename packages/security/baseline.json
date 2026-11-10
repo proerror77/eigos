@@ -3773,12 +3773,12 @@
     {
       "id": "s5-packages-capabilities-didi-program",
       "file": "packages/capabilities/didi/program.ts",
-      "sourceDigest": "fa0ab8213faf573772a86f12331682bc6bb1e4cf23082cf0c0d8569da7888ba1",
+      "sourceDigest": "eaf34dbdde1d8c83712fb63ae0b3a90cb706150811f2e277d854804a54f524a3",
       "channels": [
         "runtime"
       ],
       "content": "S5 source, client, migration or runtime integration contract",
-      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation. Exact combinations of the already confirmed place name and address remain concrete read queries; source matching still checks both fields and no new place or permission is inferred. Annotated location requirements are resolved only against a confirmed source-matching canonical name and exact address, with bounded whole-POI and terminal checks; map query aliases and business authority remain unchanged.",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation. Exact combinations of the already confirmed place name and address remain concrete read queries; source matching still checks both fields and no new place or permission is inferred. Annotated location requirements are resolved only against a confirmed source-matching canonical name and exact address, with bounded whole-POI and terminal checks; map query aliases and business authority remain unchanged. Specified known service tiers use the reviewed DiDi product category mapping and reject conflicts between known tier labels and category codes. Source fields and action parameters are unchanged.",
       "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
       "stage": "S5"
     },
@@ -6755,12 +6755,12 @@
     {
       "id": "postgres-coordinator",
       "file": "packages/postgres/coordinator.ts",
-      "sourceDigest": "f5c4ff8fb841729eaf90cb2531dcdb5ad20968006c1805fa176b3128d4ace552",
+      "sourceDigest": "2e7ec86cc699965b887a7355c73831728ed877167a8c848b2017e973aa248d14",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL original-task Goal and document phase coordinator",
-      "currentControl": "Registered acknowledged model ports; authorized typed request/catalogue/model DTOs and actual native receipts; independent Goal review, committed original attempts, current model/claim/role/source checks before dispatch, atomic output seals and no uncertain-operation replay Known rejection reasons are logged privately through a runtime allowlist even after successful recovery writeback; no raw error or public task diagnostic field is added. The scoped DiDi estimator reserves at most one tool-free model decision before egress and runs program-selected reads through the current journal. Model and provider attempts are not fabricated.",
+      "currentControl": "Registered acknowledged model ports; authorized typed request/catalogue/model DTOs and actual native receipts; independent Goal review, committed original attempts, current model/claim/role/source checks before dispatch, atomic output seals and no uncertain-operation replay Known rejection reasons are logged privately through a runtime allowlist even after successful recovery writeback; no raw error or public task diagnostic field is added. The scoped DiDi estimator reserves at most one tool-free model decision before egress and runs program-selected reads through the current journal. Model and provider attempts are not fabricated. The bounded DiDi model output exposes the actual route object schema before dispatch and validates the same schema on receipt.",
       "targetControl": "Registered acknowledged model ports; authorized typed request/catalogue/model DTOs and actual native receipts; independent Goal review, committed original attempts, current model/claim/role/source checks before dispatch, atomic output seals and no uncertain-operation replay",
       "stage": "S5"
     },
@@ -7871,13 +7871,13 @@
     {
       "id": "didi-estimate-submission-contract",
       "file": "packages/core/didi-estimate-request.ts",
-      "sourceDigest": "f0c2887be5f6d66b52c52a7d0cd90c7bb4780eb8c156fec73362832c65019e7c",
+      "sourceDigest": "39aa22d8ab7d059dff4f7ab1f17bae0dd9b70cc2dbd14688db139223743b0d52",
       "channels": [
         "mcp",
         "a2a"
       ],
       "content": "Closed PA DiDi estimate request and one-decision route input",
-      "currentControl": "Only named places, city and optional vehicle class are accepted. The typed scope is bound to the original request. No effect or source privilege is granted.",
+      "currentControl": "Only named places, city and optional vehicle class are accepted. The typed scope is bound to the original request. No effect or source privilege is granted. The model wire reuses the route fields and explicitly normalizes the nullable serviceClass to the established optional task field.",
       "targetControl": "Only named places, city and optional vehicle class are accepted. The typed scope is bound to the original request. No effect or source privilege is granted.",
       "stage": "S5"
     },
@@ -7891,6 +7891,18 @@
       "content": "Fixed DiDi read-only workflow evidence",
       "currentControl": "The current request and release, exact authorized route, optional single grounded model receipt and actual Worker-context receipts bind the fixed estimate phases. Only the two registered source read actions can enter the original journal.",
       "targetControl": "The current request and release, exact authorized route, optional single grounded model receipt and actual Worker-context receipts bind the fixed estimate phases. Only the two registered source read actions can enter the original journal.",
+      "stage": "S5"
+    },
+    {
+      "id": "didi-estimate-service-tier",
+      "file": "packages/ontology/ride-service-tier.ts",
+      "sourceDigest": "ee700eb853863c744e7e406f4c43aeb4fc4164c7312fe66fde07b84c4e947e0c",
+      "channels": [
+        "internal"
+      ],
+      "content": "Read-only ride service tier matching against reviewed DiDi product category mappings",
+      "currentControl": "Pure comparison of task service tier and already authorized source fields, with distinct checked mappings and rejection of conflicting known source labels.",
+      "targetControl": "Preserve source observations, request fields, published ontology schema and existing source access controls.",
       "stage": "S5"
     }
   ]

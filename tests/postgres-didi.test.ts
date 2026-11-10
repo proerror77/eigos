@@ -1,5 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {z} from 'zod';
 import {randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {postgresDidiFixture} from './fixtures/postgres-didi.js';
@@ -8,7 +9,7 @@ import {PostgresTaskStorage} from '../packages/postgres/task-storage.js';
 import {PostgresProjectionGraph} from '../packages/postgres/projection-graph.js';
 import {withPostgresSourceProjection} from '../packages/postgres/source-projection.js';
 import {PostgresTaskCommandService} from '../packages/postgres/task-command-service.js';
-import {didiEstimateGoal,structuredDidiGoal} from '../packages/core/didi-estimate-request.js';
+import {didiEstimateGoal,structuredDidiGoal,didiEstimateModelOutputSchema,parseDidiEstimateModelOutput} from '../packages/core/didi-estimate-request.js';
 import {PostgresCoordinator} from '../packages/postgres/coordinator.js';
 import {modelUsageRecorder} from '../packages/core/model-usage-context.js';
 import {authorizeModelDispatch} from '../packages/core/model-dispatch-context.js';
@@ -123,14 +124,15 @@ for(const mode of ['structured','natural'] as const)test(`PG DiDi ${mode} short 
     const port={securityChannelId:x.channel,postgresModelDispatch:'acknowledged-v1' as const};
     const coordinator=new PostgresCoordinator({...x.options,database:x.t.database,store:x.worker,
       reasoner:{...port,ground:unexpected,plan:unexpected,act:unexpected,reviewGoal:unexpected},
-      executor:{...port,run:unexpected,async runStructured(_prompt,_schema,_signal,options){
+      executor:{...port,run:unexpected,async runStructured(_prompt,schema,_signal,options){
+        assert.deepEqual(schema,z.toJSONSchema(didiEstimateModelOutputSchema));
         assert.equal(options?.toolFree,true);assert.equal(options?.mcp,undefined);
         const run=evidence(),recorder=modelUsageRecorder();assert(recorder);
         await recorder.begin(run.id,run.runtime,run.startedAt);
         await authorizeModelDispatch(x.channel);turns++;
         run.completedAt=new Date().toISOString();
         await recorder.finish(run.id,run,'completed');
-        return {output:{decisionJson:JSON.stringify({kind:'estimate',route})},evidence:run};
+        return {output:{decision:{kind:'estimate',route:{...route,serviceClass:null}}},evidence:run};
       }},
     });
     const original=await x.stored();
@@ -171,4 +173,18 @@ for(const mode of ['structured','natural'] as const)test(`PG DiDi ${mode} short 
       assert.equal(stored.runs?.length,0);
     }
   }finally{await x.close();}
+});
+
+test('DiDi model wire schema constrains serviceClass and preserves the stored route format',()=>{
+  const route={city:'上海市',origin:'上海虹桥站',destination:'上海浦东国际机场2号航站楼'};
+  const estimate=(fields:object)=>({decision:{kind:'estimate',route:{...route,...fields}}});
+  const schema=z.fromJSONSchema(z.toJSONSchema(didiEstimateModelOutputSchema));
+  const withTier=estimate({serviceClass:'专车'});
+  assert(schema.safeParse(withTier).success);
+  assert.deepEqual(parseDidiEstimateModelOutput(withTier),{kind:'estimate',route:{...route,serviceClass:'专车'}});
+  assert.deepEqual(parseDidiEstimateModelOutput(estimate({serviceClass:null})),{kind:'estimate',route});
+  assert(!schema.safeParse(estimate({vehicleClass:'专车'})).success);
+  assert.throws(()=>parseDidiEstimateModelOutput(estimate({serviceClass:null,vehicleClass:'专车'})));
+  const unsupported={kind:'unsupported',message:'本次只支持估价，无法保证最终车费。'};
+  assert.deepEqual(parseDidiEstimateModelOutput({decision:unsupported}),unsupported);
 });

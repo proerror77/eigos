@@ -8,6 +8,7 @@ import { DidiAgentProgram, DIDI_PROGRAM_REF } from '../packages/capabilities/did
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { estimatedMoney, mapDidiResult } from '../packages/capabilities/didi/mapping.js';
 import { checkedRideEstimate } from '../packages/ontology/ride-estimate-projection.js';
+import { didiEstimateMatchesServiceTier } from '../packages/ontology/ride-service-tier.js';
 import { readConfig, readWorkerConfig } from '../packages/core/config.js';
 import { digest } from '../packages/core/delegation.js';
 import { assertGoalEffects, createGoalContract } from '../packages/core/goal-contract.js';
@@ -252,6 +253,32 @@ test('Place-only empty searches complete with a bounded no-result and no estimat
   }, { mode: 'places', city: '北京市', keywords: '不存在的公共地点' });
   try { t.flags.empty = true; const job = t.b.submit(); const done = await t.finish(job.id); assert.equal(done.state, 'completed'); assert.match(done.artifact!.data.deliverable, /未返回结果/); assert.equal(t.calls.filter(c => c.method === 'tools/call').length, 1); }
   finally { t.close(); }
+});
+
+test('DiDi quote completion uses the reviewed product category for the requested tier', async () => {
+  const t = setupDidi(chooseDidi, { ...input, serviceClass: '专车' });
+  try {
+    t.flags.transform = (response, request) => {
+      if (request.params?.name === 'taxi_estimate') response.result.structuredContent.items = [
+        { productName: '专享出行', productCategory: '8', priceText: '126' },
+        { productName: '专车', productCategory: 'unreviewed', priceText: '90' },
+      ];
+      return response;
+    };
+    const done = await t.finish(t.b.submit().id);
+    assert.equal(done.state, 'completed');
+    assert.match(done.artifact!.data.deliverable, /专享出行：126/);
+    assert.doesNotMatch(done.artifact!.data.deliverable, /专车：90/);
+    const estimate = t.calls.find(call => call.name === 'taxi_estimate');
+    assert(estimate);
+    assert.deepEqual(Object.keys(estimate.args!).sort(), ['from_lat', 'from_lng', 'from_name', 'to_lat', 'to_lng', 'to_name']);
+  } finally { t.close(); }
+});
+
+test('DiDi rejects contradictory service tiers and keeps exact product requests outside the mapping', () => {
+  assert(!didiEstimateMatchesServiceTier('专车', { productName: '六座专车', productCategory: '8' }));
+  assert(!didiEstimateMatchesServiceTier('专车', { productName: '专车', productCategory: 'unreviewed' }));
+  assert(didiEstimateMatchesServiceTier('特定产品', { productName: '特定产品', productCategory: 'unreviewed' }));
 });
 
 test('A selected class absent from the source is reported without substituting another class', async () => {
