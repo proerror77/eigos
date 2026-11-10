@@ -29,16 +29,24 @@ import {securityFixture} from './security.js';
 import {didiFixture} from './didi.js';
 import {importPostgresPrimaryFixture} from './postgres-primary.js';
 import {evidence,syntheticGoalReview} from '../backend-fixture.js';
+import {createExecutableContractKernelDefinition,compiledSeedModel} from '../../packages/ontology/seed-definition.js';
+import {createSubmittedTask} from '../../packages/core/task-submission.js';
+import {postgresProvisionTask} from '../../packages/postgres/task-grants.js';
+import {withPostgresAgentWrite,postgresTaskProcessingGrant} from '../../packages/postgres/task-read-access.js';
 
 /** All choices and upstream MCP responses are explicitly synthetic. The
  * PostgreSQL current account, native read ledger, real semantic/journal/source
  * projection and whole-goal acceptance have no permissive verifier callback. */
-export async function postgresDidiFixture(relay=false,transport:{deliverSource?:boolean;shortPath?:DidiEstimateRequest;scheduled?:boolean;executionEnvironment?:'live'|'sandbox'}={}){
+export async function postgresDidiFixture(relay=false,transport:{deliverSource?:boolean;shortPath?:DidiEstimateRequest;scheduled?:boolean;executionEnvironment?:'live'|'sandbox';goal?:string;releaseVersion?:'34'}={}){
   const f=securityFixture(Date.now,{unified:true}),source=didiFixture(),sourceKeys=relay?await createNodeKeys('Explicit synthetic provider transport'):undefined,peerId=sourceKeys?.identity.card.agentId;
   const transportDigest=relay?digest({transport:digest({protocol:'eigos.source-read/1',authorityId:f.authority!.id,gatewayOrigin:f.authority!.canonicalOrigin,peerId}),fixture:'explicit-synthetic-provider-v1'}):undefined;
   let pumping:Promise<void>|undefined,pumpTimer:ReturnType<typeof setInterval>|undefined,pumpFailure:unknown,target:Awaited<ReturnType<typeof importPostgresPrimaryFixture>>|undefined,timer:ReturnType<typeof setInterval>|undefined,pending:Promise<void>|undefined,heartbeatFailure:unknown;
   try{
     if(relay&&transport.executionEnvironment==='sandbox')throw new Error('Sandbox fixture registration does not replace a Relay production registration');
+    if(transport.releaseVersion&&!transport.shortPath)throw new Error('The forward execution fixture requires an explicit short path');
+    const forward=transport.releaseVersion==='34'?createExecutableContractKernelDefinition():undefined;
+    const forwardModel=forward?compiledSeedModel(forward,forward.registry):undefined;
+    const forwardRef=forward?{ontologyId:forward.document.id,releaseId:`synthetic-didi-v34-${randomUUID()}`,digest:digest(forward.document)}:undefined;
     const installation=f.installation('Synthetic DiDi readonly owner',3600000),expiresAt=new Date(Date.now()+3600000).toISOString(),channel='synthetic:didi-readonly',bindingId='synthetic-pg-didi-source',model=f.jobs.ontology.model;
     let descriptor:DidiMemberConnection={version:1,connectionId:randomUUID(),revision:1,memberId:f.member.id,owner:{issuer:f.principal.issuer,tenant:f.principal.tenant,subject:f.principal.subject},localUid:process.getuid?.()??0,purpose:'ride_estimate_readonly',state:'active',expiresAt,binding:{...source.binding,environment:'production',auditDirectory:source.binding.auditDirectory!}};
     const accountDigest=digest({policy:'member-didi-estimate@1',connection:descriptor});f.jobs.admitMemberDidiSource(descriptor,accountDigest);
@@ -56,7 +64,7 @@ export async function postgresDidiFixture(relay=false,transport:{deliverSource?:
     f.jobs.security.policies.setSource(f.owner,{installationId:installation.id,bindingId,programId:initialProgram.ref.id,programDigest:initialProgram.configurationDigest,operations:[...initialProgram.actionIds],outputTypes:initialProgram.projectionTypes,expiresAt},f.jobs.security.policies.revision());
     const save=f.jobs.save.bind(f.jobs);f.jobs.save=(owner,job)=>{
       const d=job.delegation!,request=d.request,short=transport.shortPath;
-      job.goal=short?.mode==='structured'?structuredDidiGoal(short):short?'只查北京市北京西站到西二旗地铁站的滴滴估价，不叫车不付款。':'只读查询合成滴滴地点或车型估价，不叫车、不付款';
+      job.goal=short?.mode==='structured'?structuredDidiGoal(short):short?transport.goal??'只查北京市北京西站到西二旗地铁站的滴滴估价，不叫车不付款。':'只读查询合成滴滴地点或车型估价，不叫车、不付款';
       request.originalGoal=job.goal;
       request.messages=[{id:randomUUID(),text:job.goal,receivedAt:job.createdAt}];
       if(short){
@@ -66,9 +74,14 @@ export async function postgresDidiFixture(relay=false,transport:{deliverSource?:
       }
       f.jobs.save=save;return save(owner,job);
     };
-    const task=f.task(installation.id);f.jobs.security.revokeGrant(f.owner,task.grant.id,task.grant.revision);
-    const grant=f.jobs.security.issueTaskGrant({...task.grant,id:randomUUID(),operations:['task.process','task.query','task.result.read'],channels:['agent_response','registered_model'],outputs:initialProgram.projectionTypes.map(type=>({type,fields:fields(type),programId:initialProgram.ref.id,programDigest:initialProgram.configurationDigest,sourceBindingId:bindingId}))});
-    f.jobs.security.attachTaskAuthority({...task.authority,id:randomUUID(),dataGrant:{id:grant.id,revision:grant.revision}});
+    const task=forwardRef?{job:createSubmittedTask(f.principal,{service:'eigos.delegate',goal:transport.shortPath!.mode==='structured'?structuredDidiGoal(transport.shortPath!):transport.goal??'只查滴滴估价',requestId:randomUUID(),executionEnvironment:transport.executionEnvironment,capabilityRef:initialProgram.ref},forwardRef),grant:undefined,authority:undefined}:f.task(installation.id);
+    let grant:ReturnType<typeof f.task>['grant']|undefined;
+    if(forwardRef){f.jobs.save=save;task.job.delegation!.didiEstimate={request:transport.shortPath!,revision:1};}
+    else{
+      f.jobs.security.revokeGrant(f.owner,task.grant!.id,task.grant!.revision);
+      grant=f.jobs.security.issueTaskGrant({...task.grant!,id:randomUUID(),operations:['task.process','task.query','task.result.read'],channels:['agent_response','registered_model'],outputs:initialProgram.projectionTypes.map(type=>({type,fields:fields(type),programId:initialProgram.ref.id,programDigest:initialProgram.configurationDigest,sourceBindingId:bindingId}))});
+      f.jobs.security.attachTaskAuthority({...task.authority!,id:randomUUID(),dataGrant:{id:grant.id,revision:grant.revision}});
+    }
     const request=task.job.delegation!.request,message=request.messages[0]!,goal=createGoalContract(request,task.job.delegation!.ontologyRelease!,[{id:'query',predicate:'ride.query_readback',phase:'fact',description:'An explicitly synthetic readonly DiDi source query result',messageId:message.id,quote:message.text,requirementIds:[]}],[initialProgram.capability()]);
     const fixed=new GoalProgram(goal),reviewContext={request,capability:fixed.capability(),input:{}},review=await syntheticGoalReview(reviewContext),coverage=createGoalCoverage(reviewContext,review.decision,{...review.evidence,purpose:'goal_coverage'});
     if(!transport.shortPath){
@@ -76,6 +89,19 @@ export async function postgresDidiFixture(relay=false,transport:{deliverSource?:
       task.job.delegation!.phase='planning';task.job.runs=[{...review.evidence,purpose:'goal_coverage'}];f.jobs.save(f.owner,task.job);
     }
     target=await importPostgresPrimaryFixture(f);const t=target,q=`"${t.schema}"`,account=new PostgresDidiAccount(source.binding,f.owner,{readCurrent:()=>descriptor,expectedDigest:accountDigest}),reads=relay?new PostgresRelayReadAuthority({database:t.database,policyDigest:t.policy,authority:f.authority!,builder:t.kernel,didiAccount:account}):undefined;
+    if(forward&&forwardRef&&forwardModel){
+      await t.client.query(`INSERT INTO ${q}.ontology_definition_releases(id,ontology_id,sequence,digest,model_digest,body,created_at) VALUES($1,$2,(SELECT max(sequence)+1 FROM ${q}.ontology_definition_releases WHERE ontology_id=$2),$3,$4,$5,$6)`,[forwardRef.releaseId,forwardRef.ontologyId,forwardRef.digest,forwardModel.ref.digest,JSON.stringify(forward.document),new Date().toISOString()]);
+      await t.client.query(`UPDATE ${q}.ontology_namespaces SET active_release_id=$1,generation=generation+1 WHERE id=$2`,[forwardRef.releaseId,forwardRef.ontologyId]);
+      const role={subjectKind:'installation',subjectId:installation.id,role:'Owner',resource:{kind:'namespace',id:forwardModel.ref.id,version:forwardModel.ref.digest},executeActions:[...initialProgram.actionIds],invokeFunctions:['rideEstimateStatus','selectDidiPlace'],expiresAt};
+      await t.client.query(`INSERT INTO ${q}.security_roles(id,subject_id,body) VALUES($1,$2,$3)`,[digest([role.subjectKind,role.subjectId,role.resource]),installation.id,JSON.stringify(role)]);
+      const principal={...f.principal,access:await t.publisher.authenticate(f.principal,installation.token)};
+      await t.database.run(client=>withPostgresAgentWrite(client,principal,t.policy,async()=>{
+        const store=new PostgresTaskStorage(client,t.kernel);await store.save(f.owner,task.job);
+        await postgresProvisionTask(client,principal,task.job,t.policy,[],{builder:t.kernel});
+        grant=(await postgresTaskProcessingGrant(client,principal,task.job.id,t.policy)).grant;task.job=await store.get(f.owner,task.job.id);
+      }));
+    }
+    assert(grant);
     const common={binding:source.binding,owner:f.owner,account,sourceBindingId:bindingId};
     const registry=new PostgresReadProgramRegistry(t.policy,{documentEnabled:false,didi:relay?{...common,kind:'relay-fixture',reads:reads!,peerId:peerId!,authority:{id:f.authority!.id,gatewayOrigin:f.authority!.canonicalOrigin}}:{...common,kind:'synthetic-fixture',connector:source.connector,...(fixtureEnvironment?{fixtureEnvironment}:{})}}),program=registry.entries[0]!.program;
     assert.equal(program.configurationDigest,initialProgram.configurationDigest);const worker=new PostgresWorkerStore(t.database,t.policy,t.kernel,transport.scheduled?{classify:(job,intents)=>postgresWorkerLane(job,intents,registry)}:{}),claim=await worker.claim(['eigos.delegate'],30000);assert(claim);

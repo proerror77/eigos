@@ -78,13 +78,19 @@ export const proposalSchema = z.object({
     inputJson: z.string().max(16000), dependsOn: z.array(z.string().min(1).max(100)).max(8) }).strict()).max(8),
 }).strict();
 export type PlanProposal = z.infer<typeof proposalSchema>;
+export interface DidiEstimateWorkflow {
+  request: import('./didi-estimate-request.js').DidiEstimateRequest;
+  revision: number;
+  modelStarted?: true;
+  invocation?: {runId:string;runtime:string;startedAt:string;requestRevision:number;requestDigest:string};
+  interpretation?: { runId: string; decision: import('./didi-estimate-request.js').DidiEstimateDecision };
+}
+export interface DidiEstimateHistory {
+  workflow:DidiEstimateWorkflow;requestDigest:string;replyId:string;modelRunIds:string[];
+}
 export interface Delegation {
-  didiEstimate?: {
-    request: import('./didi-estimate-request.js').DidiEstimateRequest;
-    revision: number;
-    modelStarted?: true;
-    interpretation?: { runId: string; decision: Extract<import('./didi-estimate-request.js').DidiEstimateDecision, {kind:'estimate'}> };
-  };
+  didiEstimate?: DidiEstimateWorkflow;
+  didiEstimateHistory?: DidiEstimateHistory[];
   /** Inactive, separate guardian delegation; never permission to reopen history. */
   observationContract?: { id: string; digest: string };
   goalCoverage?: import('../ontology/goal-coverage.js').GoalCoverage;

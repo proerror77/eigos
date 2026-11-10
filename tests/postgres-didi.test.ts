@@ -8,7 +8,7 @@ import {PostgresTaskStorage} from '../packages/postgres/task-storage.js';
 import {PostgresProjectionGraph} from '../packages/postgres/projection-graph.js';
 import {withPostgresSourceProjection} from '../packages/postgres/source-projection.js';
 import {PostgresTaskCommandService} from '../packages/postgres/task-command-service.js';
-import {didiEstimateGoal,structuredDidiGoal} from '../packages/core/didi-estimate-request.js';
+import {didiEstimateGoal,structuredDidiGoal,type DidiEstimateDecision} from '../packages/core/didi-estimate-request.js';
 import {PostgresCoordinator} from '../packages/postgres/coordinator.js';
 import {modelUsageRecorder} from '../packages/core/model-usage-context.js';
 import {authorizeModelDispatch} from '../packages/core/model-dispatch-context.js';
@@ -23,25 +23,107 @@ import {PostgresReadProgramRegistry} from '../packages/postgres/didi-registry.js
 import {postgresWorkerLane,postgresWorkerReservation} from '../packages/postgres/worker-capacity.js';
 import {PostgresPlanValidationFeedback,recordPostgresPlanFeedback} from '../packages/postgres/plan-feedback.js';
 import {DidiAgentProgram} from '../packages/capabilities/didi/program.js';
+import {didiShortPathInput} from '../packages/postgres/didi-short-path.js';
+import {executionCounts} from '../packages/core/execution-budget.js';
+import {postgresOntologyRelease} from '../packages/postgres/ontology-release.js';
 
 const local={skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'};
 async function reader(x:Awaited<ReturnType<typeof postgresDidiFixture>>){const p={...x.f.principal,access:await x.t.publisher.authenticate(x.f.principal,x.installation.token)};return {p,service:new PostgresTaskReadService(x.t.database,x.t.policy,x.t.kernel)};}
 const shortRoute={city:'北京市',origin:'北京西站',destination:'西二旗地铁站'};
-function shortCoordinator(x:Awaited<ReturnType<typeof postgresDidiFixture>>,loseDecision=false){
+function shortCoordinator(x:Awaited<ReturnType<typeof postgresDidiFixture>>,loseDecision=false,choose?:(prompt:string,turn:number)=>DidiEstimateDecision){
   let turns=0;const unexpected=async():Promise<never>=>{throw Error('Unexpected model stage');},port={securityChannelId:x.channel,postgresModelDispatch:'acknowledged-v1' as const};
   const coordinator=new PostgresCoordinator({...x.options,database:x.t.database,store:x.worker,
     reasoner:{...port,ground:unexpected,plan:unexpected,act:unexpected,reviewGoal:unexpected},
-    executor:{...port,run:unexpected,async runStructured(_prompt,_schema,_signal,options){
+    executor:{...port,run:unexpected,async runStructured(prompt,_schema,_signal,options){
       assert.equal(options?.toolFree,true);assert.equal(options?.mcp,undefined);
       const run=evidence(),recorder=modelUsageRecorder();assert(recorder);await recorder.begin(run.id,run.runtime,run.startedAt);
       await authorizeModelDispatch(x.channel);turns++;run.completedAt=new Date().toISOString();
       await recorder.finish(run.id,run,loseDecision?'failed':'completed');
       if(loseDecision)throw new Error('Explicit synthetic lost interpretation');
-      return {output:{decisionJson:JSON.stringify({kind:'estimate',route:shortRoute})},evidence:run};
+      return {output:{decisionJson:JSON.stringify(choose?.(prompt,turns)??{kind:'estimate',route:shortRoute})},evidence:run};
     }},
   });
   return {coordinator,turns:()=>turns};
 }
+
+for(const scenario of ['missing','ambiguous'] as const)test(`DiDi ${scenario} clarification replies complete the same PostgreSQL task with preserved evidence and per-version model usage`,local,async()=>{
+  const x=await postgresDidiFixture(false,{shortPath:scenario==='missing'?{mode:'natural'}:{mode:'structured',...shortRoute},scheduled:true,executionEnvironment:'sandbox',
+    ...(scenario==='missing'?{goal:'只查询北京市北京西站出发的滴滴估价，终点稍后补充；不叫车不付款。'}:{releaseVersion:'34' as const})});
+  const answer=scenario==='missing'?'终点是西二旗地铁站，只查询估价。':'起点用北京西站南广场1号门，终点用西二旗地铁站北口；只查询估价。';
+  const route=scenario==='missing'?shortRoute:{...shortRoute,origin:'北京西站南广场1号门',destination:'西二旗地铁站北口'};
+  const {coordinator,turns}=shortCoordinator(x,false,(prompt,turn)=>{
+    const input=JSON.parse(prompt.split('\n\n').at(-1)!);assert.equal(input.messages[0].text,input.goal);
+    if(scenario==='missing'&&turn===1){assert.equal(input.requestRevision,1);return {kind:'clarify',message:'请补充终点。'};}
+    assert.equal(input.requestRevision,2);assert.equal(input.messages.length,2);assert.equal(input.messages[1].text,answer);
+    return {kind:'estimate',route};
+  });
+  try{
+    await x.stopRenewals();assert(await x.worker.renew(x.claim,300000));x.source.flags.ambiguous=scenario==='ambiguous';
+    await coordinator.run(x.claim,new AbortController().signal);const waiting=await x.stored();assert.equal(waiting.state,'input-required');
+    assert.equal(turns(),scenario==='missing'?1:0);assert.equal(x.source.calls.filter(call=>call.method==='tools/call').length,scenario==='missing'?0:2);
+    const originalCounts=executionCounts(waiting),oldRuns=structuredClone(waiting.runs),oldObservations=structuredClone(waiting.delegation!.agent?.observations??[]);
+    const oldAttempts=(await x.t.client.query(`SELECT id,body FROM ${x.q}.action_attempts ORDER BY id`)).rows;
+    const oldIntents=(await x.t.client.query(`SELECT id,state,body FROM ${x.q}.action_intents ORDER BY id`)).rows;
+    const {p,service}=await reader(x),commands=new PostgresTaskCommandService(x.t.database,x.t.policy,x.t.kernel),reply={taskId:waiting.id,answer,requestId:randomUUID(),expectedRevision:waiting.revision};
+    const parentBefore=(await x.t.client.query(`SELECT body,revision FROM ${x.q}.security_grants WHERE installation_id=$1 AND kind='agent_access'`,[x.installation.id])).rows;
+    await assert.rejects(commands.reply(p,{...reply,requestId:randomUUID(),expectedRevision:(waiting.revision??1)+1}),/older task question or revision/);
+    const responded=await commands.reply(p,reply);assert.equal(responded.id,waiting.id);const renewed=await x.stored();
+    assert.equal(renewed.delegation!.request.revision,2);assert.equal(renewed.delegation!.didiEstimate!.revision,2);assert.equal(renewed.delegation!.didiEstimate!.request.mode,'natural');
+    assert.equal(renewed.delegation!.didiEstimate!.modelStarted,undefined);assert.equal(renewed.delegation!.didiEstimateHistory!.length,1);
+    assert.deepEqual(renewed.runs,oldRuns);assert.deepEqual(executionCounts(renewed),originalCounts);
+    if(oldObservations.length)assert.deepEqual(renewed.delegation!.agentHistory!.at(-1)!.observations,oldObservations);
+    assert.deepEqual((await x.t.client.query(`SELECT id,state,body FROM ${x.q}.action_intents ORDER BY id`)).rows,oldIntents);
+    assert.deepEqual((await x.t.client.query(`SELECT id,body FROM ${x.q}.action_attempts ORDER BY id`)).rows,oldAttempts);
+    assert.equal((await commands.reply(p,reply)).id,waiting.id);assert.deepEqual(await x.stored(),renewed,'An idempotent reply cannot open another model window');
+    await assert.rejects(commands.reply(p,{...reply,answer:answer+' changed'}),/Request ID was already used/);
+    assert.deepEqual((await x.t.client.query(`SELECT body,revision FROM ${x.q}.security_grants WHERE installation_id=$1 AND kind='agent_access'`,[x.installation.id])).rows,parentBefore);
+    x.source.flags.ambiguous=false;
+    const model=await x.worker.claim(['eigos.delegate'],300000,['model']);assert(model);assert.equal(model.job.id,waiting.id);
+    await coordinator.run(model,new AbortController().signal);const interpreted=await x.stored();
+    assert.equal(interpreted.runs!.length,(oldRuns?.length??0)+1);assert.equal(interpreted.delegation!.didiEstimate!.invocation!.requestRevision,2);
+    const changed=structuredClone(interpreted);changed.delegation!.didiEstimate!.revision=1;assert.throws(()=>didiShortPathInput(changed),/original read-only request/);
+    const tampered=structuredClone(interpreted);tampered.delegation!.didiEstimate!.invocation!.requestDigest='0'.repeat(64);assert.throws(()=>didiShortPathInput(tampered),/original read-only request/);
+    if(oldRuns?.length){const old=structuredClone(interpreted);old.delegation!.didiEstimate!.interpretation!.runId=oldRuns[0]!.id;assert.throws(()=>didiShortPathInput(old),/original read-only request/);}
+    assert(await x.worker.releaseCheckpoint(model));const execution=await x.worker.claim(['eigos.delegate'],300000,['execution']);assert(execution);
+    await coordinator.run(execution,new AbortController().signal);const done=await x.stored();
+    assert.equal(done.id,waiting.id);assert.equal(done.contextId,waiting.contextId);assert.equal(done.state,'completed');assert.equal(done.delegation!.outcome!.evidenceLevel,'synthetic');
+    assert.equal(turns(),scenario==='missing'?2:1);assert.deepEqual(done.runs!.slice(0,oldRuns!.length),oldRuns);
+    const expectedCalls=scenario==='missing'?3:5;assert.equal(x.source.calls.filter(call=>call.method==='tools/call').length,expectedCalls);
+    assert.equal((await x.t.client.query(`SELECT count(*)::int AS n FROM ${x.q}.jobs`)).rows[0].n,1);
+    assert.deepEqual((await x.t.client.query(`SELECT id,body FROM ${x.q}.action_attempts WHERE id=ANY($1::text[]) ORDER BY id`,[oldAttempts.map(row=>row.id)])).rows,oldAttempts);
+    assert.deepEqual(executionCounts(done),{modelTurns:scenario==='missing'?2:1,plans:scenario==='missing'?2:3,actions:expectedCalls});
+    assert.equal((await commands.reply(p,reply)).id,done.id);assert.equal((await service.get(p,done.id)).state,'completed');
+    assert.equal(x.source.calls.filter(call=>call.method==='tools/call').length,expectedCalls);
+    if(scenario==='ambiguous')assert.equal((await x.t.database.run(client=>postgresOntologyRelease(client,done.delegation!.ontologyRelease!,x.t.kernel))).model.ref.version,'34');
+  }finally{await x.close();}
+});
+
+test('DiDi clarification cannot replay unknown effects or turn a new booking goal into a quote',local,async()=>{
+  const x=await postgresDidiFixture(false,{shortPath:{mode:'structured',...shortRoute},scheduled:true,executionEnvironment:'sandbox'}),first=shortCoordinator(x);
+  try{
+    await x.stopRenewals();assert(await x.worker.renew(x.claim,300000));const invoke=x.source.connector.invoke.bind(x.source.connector);
+    x.source.connector.invoke=async(...args)=>{await invoke(...args);throw new Error('Synthetic unknown original read');};
+    await assert.rejects(first.coordinator.run(x.claim,new AbortController().signal),/unknown original read/);
+    const before=await x.stored(),intents=(await x.t.client.query(`SELECT id,state,body FROM ${x.q}.action_intents ORDER BY id`)).rows;
+    const {p}=await reader(x),commands=new PostgresTaskCommandService(x.t.database,x.t.policy,x.t.kernel);
+    await assert.rejects(commands.reply(p,{taskId:before.id,requestId:randomUUID(),answer:'起点换一个地址',expectedRevision:before.revision}),/must be reconciled.*cannot replay/);
+    assert.deepEqual(await x.stored(),before);assert.deepEqual((await x.t.client.query(`SELECT id,state,body FROM ${x.q}.action_intents ORDER BY id`)).rows,intents);
+    assert.equal(x.source.calls.filter(call=>call.method==='tools/call').length,1);
+  }finally{await x.close();}
+  const y=await postgresDidiFixture(false,{shortPath:{mode:'natural'},scheduled:true,executionEnvironment:'sandbox'}),second=shortCoordinator(y,false,(prompt,turn)=>{
+    if(turn===1)return {kind:'clarify',message:'请确认终点。'};
+    const input=JSON.parse(prompt.split('\n\n').at(-1)!);assert.equal(input.messages.at(-1).text,'现在请替我叫车并付款');
+    return {kind:'unsupported',message:'当前任务只能查询估价，不能叫车或付款。'};
+  });
+  try{
+    await y.stopRenewals();assert(await y.worker.renew(y.claim,300000));await second.coordinator.run(y.claim,new AbortController().signal);
+    const {p}=await reader(y),commands=new PostgresTaskCommandService(y.t.database,y.t.policy,y.t.kernel),waiting=await y.stored();
+    await assert.rejects(commands.reply(p,{taskId:waiting.id,requestId:randomUUID(),answer:'更改预算',executionBudget:'extended'}),/cannot change grants, budgets/);
+    await commands.reply(p,{taskId:waiting.id,requestId:randomUUID(),answer:'现在请替我叫车并付款',expectedRevision:waiting.revision});
+    const claim=await y.worker.claim(['eigos.delegate'],300000,['model']);assert(claim);await second.coordinator.run(claim,new AbortController().signal);
+    assert.equal((await y.stored()).state,'rejected');assert.equal(second.turns(),2);assert.equal(y.source.calls.filter(call=>call.method==='tools/call').length,0);
+  }finally{await y.close();}
+});
 
 for(const mode of ['structured','natural'] as const)test(`scheduled PG DiDi ${mode} short path completes its original synthetic sandbox task with zero or one model turn`,local,async()=>{
   const x=await postgresDidiFixture(false,{shortPath:mode==='structured'?{mode,...shortRoute}:{mode},scheduled:true,executionEnvironment:'sandbox'});

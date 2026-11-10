@@ -1,6 +1,7 @@
 import {ownerKey,requireScope,submitSchema,replySchema,versionedReplySchema,resumeTaskSchema,remediationSchema,taskIdSchema,DomainError,type Principal,type Job} from '../core/domain.js';
 import {z} from 'zod';
 import {didiEstimateGoal,structuredDidiGoal} from '../core/didi-estimate-request.js';
+import {prepareDidiClarificationReply,continueDidiClarification} from './didi-short-path.js';
 import {DIDI_PROGRAM_REF} from '../capabilities/didi/program.js';
 import {isPersonalAction,personalPreferenceKey,personalPreferenceRef,selfPersonRef} from '../ontology/personal-context.js';
 import {ontologyIdSchema} from '../ontology/definition-contracts.js';
@@ -346,11 +347,16 @@ export class PostgresTaskCommandService extends PostgresTaskReadService {
       assertReplyTaskContext(await store.get(owner,args.taskId),contextId);
       const result=await store.once(owner,admission.actor.installationId,`${amendment?'amend':'reply'}:${args.taskId}`,args.requestId,JSON.stringify(args),async()=>{
         const current=await store.get(owner,args.taskId);
+        const didi=prepareDidiClarificationReply(current,args,current.delegation?.didiEstimate?await store.intents(owner,args.taskId):[],amendment);
         await runReplyProgramAsync({
           intents:store.intents.bind(store),intent:store.intent.bind(store),saveIntent:store.saveIntent.bind(store),cancelActions:store.cancelActions.bind(store),
-          saveTask:async(owner,job)=>{await store.save(owner,job);},
+          saveTask:async(owner,job)=>{if(didi)continueDidiClarification(job,didi);await store.save(owner,job);},
           personal:()=>{throw new DomainError('FORBIDDEN','Personal selection requires the current task grant');},
           prepare:(owner,job,program,request)=>{
+            // The shared transition already archived the old read-only Goal.
+            // Only this checked DiDi reply may defer its new fixed Goal to the
+            // new revision's single interpretation; no old Agent is recreated.
+            if(didi&&program.id==='eigos.goal')return request;
             if(!this.options.prepareRequest)throw new DomainError('CONFLICT','This original task requires its configured runtime before it can continue');
             return this.options.prepareRequest(client,owner,job,program,request);
           },
