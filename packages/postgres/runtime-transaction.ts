@@ -7,7 +7,7 @@ import { SecurityError } from '../security/errors.js';
 const schemaPattern = /^eigos_business_[a-z0-9_]{1,40}$/;
 const digestPattern = /^[a-f0-9]{64}$/;
 const active = new WeakSet<object>();
-const contexts = new WeakMap<object, { schema: string; authorityDigest: string; readUntil:number;token:object;kernel?:StagedKernelBuilder;leases:Map<string,()=>Promise<{validUntil:number}|undefined>>;eligibilityInspector?:PostgresEligibilityInspector;eligibility:Map<string,Promise<void>>;eligibilityReferences:Map<string,PostgresEligibilityReference>;egressReferences:PostgresEligibilityReference[] }>();
+const contexts = new WeakMap<object, { schema: string; authorityDigest: string; readUntil:number;token:object;readOnly:boolean;kernel?:StagedKernelBuilder;leases:Map<string,()=>Promise<{validUntil:number}|undefined>>;eligibilityInspector?:PostgresEligibilityInspector;eligibility:Map<string,Promise<void>>;eligibilityReferences:Map<string,PostgresEligibilityReference>;egressReferences:PostgresEligibilityReference[] }>();
 
 /** An original-token inspector, never business/model/provider work. Lease
  * evidence is refreshed at the outer commit; fixed read deadlines stay fixed. */
@@ -43,6 +43,14 @@ export function postgresBusinessToken(client:Client):object {
   const context=contexts.get(client);
   if(!context)throw new Error('An active PostgreSQL business transaction is required');
   return context.token;
+}
+
+/** The host-selected shared read fence for this exact active transaction.
+ * Actor labels and a reused pooled connection cannot establish this mode. */
+export function postgresBusinessReadOnly(client:Client,expectedToken:object):boolean{
+  const context=contexts.get(client);
+  if(!context||context.token!==expectedToken)throw new Error('The exact active PostgreSQL business transaction is required');
+  return context.readOnly;
 }
 
 /** Host-only immutable compiler context. It grants no namespace, task, role,
@@ -137,7 +145,7 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
     await assertAuthority();
     await assertBoundary();
     await client.query('SAVEPOINT eigos_runtime_action_guard');
-    const context={schema,authorityDigest:expected.digest,readUntil:Infinity,token:Object.freeze({}),kernel,leases:new Map<string,()=>Promise<{validUntil:number}|undefined>>(),eligibilityInspector:options.eligibilityInspector,eligibility:new Map<string,Promise<void>>(),eligibilityReferences:new Map<string,PostgresEligibilityReference>(),egressReferences:[] as PostgresEligibilityReference[]};
+    const context={schema,authorityDigest:expected.digest,readUntil:Infinity,token:Object.freeze({}),readOnly:reading,kernel,leases:new Map<string,()=>Promise<{validUntil:number}|undefined>>(),eligibilityInspector:options.eligibilityInspector,eligibility:new Map<string,Promise<void>>(),eligibilityReferences:new Map<string,PostgresEligibilityReference>(),egressReferences:[] as PostgresEligibilityReference[]};
     contexts.set(client,context);
     let result: T;
     try {
