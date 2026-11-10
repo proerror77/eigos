@@ -60,3 +60,22 @@ test('the closure release changes nothing that was already reviewed', () => {
   assert.equal(digest(closed.document.links), digest(before.links));
   assert.deepEqual(closed.document.actions.map(action => action.id), before.actions.map(action => action.id));
 });
+
+test('v32 exposes which actions operate on a type without moving the fingerprint', () => {
+  const described = model.describeType('Order') as { actions?: { writes: { id: string; requiresApproval: boolean }[]; reads: unknown[] } };
+  assert.ok(described.actions, 'a v32 projection must say which actions operate on the type');
+  assert.equal(described.actions!.writes.length, 12);
+  assert.equal(described.actions!.reads.length, 1);
+  // Writing a local object is not the same as reaching a provider: approval follows
+  // the declared effect, so the projection carries it rather than assuming it.
+  for (const entry of [...described.actions!.writes, ...described.actions!.reads as { id: string; requiresApproval: boolean }[]]) {
+    assert.equal(entry.requiresApproval, model.approvalRequired(entry.id), `${entry.id} must publish the derived approval`);
+  }
+  assert.ok(described.actions!.writes.some(entry => entry.requiresApproval), 'at least one write to this type needs an owner');
+  // The reviewed release is unaffected: the projection is not part of the digest any more.
+  assert.equal(model.ref.digest, '53bdaa43dd60980322180e1a9aafa52a8669056aeef245fd9fc983a7a5322e04');
+  const previous = compileOntologyDocument(createDomainVocabularyKernelDefinition().document, createDomainVocabularyKernelDefinition().registry);
+  const before = previous.describeType('Order') as { actions?: unknown };
+  assert.equal(before.actions, undefined, 'a published v31 projection must stay exactly as it was');
+  assert.equal(previous.ref.digest, '2eb7c0911c04c38bb0cc0f8316c12d86318f8612f675506436b41d871ce66f51');
+});

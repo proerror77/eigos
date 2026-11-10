@@ -341,6 +341,13 @@ export class OntologyModel {
     // fingerprints never move: the split is version-gated, not a rewrite.
     const releasedVersion = Number(definition.version);
     const projectionCoupled = !Number.isSafeInteger(releasedVersion) || releasedVersion <= 31;
+    // Action bindings are part of the kinetic contract, but no published release
+    // described them. From v32 the projection can say which actions operate on a
+    // type without republishing anything, because the digest covers released data.
+    this.#bindActions = !projectionCoupled;
+    // Anything described while the release was still being validated was cached
+    // against the old projection; the bindings must be recomputed for this one.
+    this.typeDescriptions.clear();
     const releasedContract = (property: PropertyDefinition) => ({ ...property, schema: property.schemaMetadata });
     const releasedType = (type: { id: string; properties: Record<string, PropertyDefinition> }) => ({ ...type, properties: Object.fromEntries(Object.entries(type.properties).map(([name, property]) => [name, releasedContract(property)])) });
     const releasedData = { objects: [...this.objects.values()].map(releasedType), interfaces: [...this.interfaces.values()].map(releasedType), links: this.links, actions: this.actions, functions: this.functions,
@@ -350,6 +357,7 @@ export class OntologyModel {
       ...(documented.length ? { documentedContracts: documented.map(type => ({ id: type.id, fingerprint: this.fingerprint(type.id) })) } : {}) } : releasedData) });
     Object.defineProperty(this, 'ref', { writable: false, configurable: false });
   }
+  #bindActions = false;
   private interfaceProperties(id: string, active = new Set<string>()): Record<string, PropertyDefinition> {
     const value = this.interfaces.get(id);
     if (!value || active.has(id)) invalid('Unresolved or cyclic interface');
@@ -434,6 +442,18 @@ export class OntologyModel {
   definitionSnapshot(): ModelDefinition { return { id: this.ref.id, version: this.ref.version, objects: [...this.objects.values()], interfaces: [...this.interfaces.values()], links: [...this.links], actions: [...this.actions], functions: [...this.functions] }; }
   typeIds(): string[] { return [...this.objects.keys(), ...this.interfaces.keys()]; }
   actionIds(): string[] { return this.actions.map(action => action.id); }
+  /** Actions bound to one object type: the ones that write it, and the ones that read it. */
+  typeActions(id: string): { writes: { id: string; requiresApproval: boolean }[]; reads: { id: string; requiresApproval: boolean }[] } {
+    if (!this.objects.has(id)) invalid('Unknown object type');
+    const writes: { id: string; requiresApproval: boolean }[] = [], reads: { id: string; requiresApproval: boolean }[] = [];
+    for (const action of this.actions) {
+      const changes = action.changes.includes(id);
+      const touches = changes || Object.values(action.inputs).includes(id) || (action.resultTypes ?? []).includes(id);
+      if (!touches) continue;
+      (changes ? writes : reads).push({ id: action.id, requiresApproval: this.approvalRequired(action.id) });
+    }
+    return { writes, reads };
+  }
   /** Derived from the declared effect: a write outside this process needs an owner's decision. */
   approvalRequired(actionId: string): boolean {
     const action = this.actions.find(candidate => candidate.id === actionId) ?? invalid('Unknown action');
@@ -482,6 +502,7 @@ export class OntologyModel {
     const description = { kind: i ? 'interface' : 'object', id, ...(o ? { version: o.version, name: o.name, aliases: o.aliases, description: o.businessDescription ?? o.description, primaryKey: o.primaryKey, titleKey: o.titleKey, interfaces: o.interfaces ?? [], ...(o.visibility ? { visibility: o.visibility } : {}), ...(o.classification ? { classification: o.classification } : {}), ...(o.writePolicy ? { writePolicy: o.writePolicy } : {}) } : { description: i!.description, parents: i!.parents ?? [], linkConstraints: this.interfaceLinks(id), ...(i!.optionalProperties ? { optionalProperties: this.interfaceOptionalProperties(id) } : {}), ...(this.interfaceActions(id).length ? { actionConstraints: this.interfaceActions(id) } : {}) }),
       ...(i?.propertyCompatibility ? { propertyCompatibility: i.propertyCompatibility } : {}),
       ...(i?.projectionOnly ? { projectionOnly: true } : {}),
+      ...(o && this.#bindActions ? { actions: this.typeActions(id) } : {}),
       properties: Object.fromEntries(Object.entries(this.properties(id)).map(([k, p]) => [k, propertyMetadata(p)])),
       ...(o ? { links: this.sides(id).map(({ side, other, link }) => ({ id: link.id, name: side.name, target: other.type, many: side.many, required: !!side.required, description: link.description })) } : {}) };
     this.typeDescriptions.set(id, description);
