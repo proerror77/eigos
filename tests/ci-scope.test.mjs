@@ -52,6 +52,19 @@ test('a test-only edit selects that test without process E2E', async t => {
   assert.deepEqual(scope.unit, ['tests/leaf.test.ts']); assert.deepEqual(scope.e2e, []);
 });
 
+test('ontology contracts are gated even when only documentation changes', async t => {
+  const f = fixture(t);
+  const contract = await selectScope({ root: f.directory, changed: ['docs/guides/pa-ontology-views.md'] });
+  assert.equal(contract.mode, 'docs'); assert.equal(contract.verify, false);
+  assert.equal(contract.ontology, true, 'the published PA vocabulary needs the integrity gate');
+  const plain = await selectScope({ root: f.directory, changed: ['docs/guide.md'] });
+  assert.equal(plain.ontology, false, 'ordinary documentation stays cheap');
+  const kernel = await selectScope({ root: f.directory, changed: ['packages/ontology/pa-classification-kernel.ts'] });
+  assert.equal(kernel.ontology, true);
+  const security = await selectScope({ root: f.directory, changed: ['packages/security/model-review.ts'] });
+  assert.equal(security.ontology, true, 'reviewed kernel compatibility changes need the same gate');
+});
+
 test('source edits follow re-exports, fixtures, dynamic imports and process paths', async t => {
   const f = fixture(t), scope = await f.select(['packages/leaf.ts']);
   assert.equal(scope.mode, 'affected');

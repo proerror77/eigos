@@ -18,9 +18,22 @@ PA 的目录围绕服务对象、目标约束、可用能力、方案依赖、�
 
 `purpose` 取值为 `pa_core`、`domain_task`、`domain_detail`、`evidence`、`runtime_adapter`、`network_optional`、`integration_test`。`domains` 为去重的领域 ID，最多 12 项；它描述信息的用途范围，不表示供应商地域或接入覆盖。
 
-v30 软件合同为现有 204 个类型固定分类：核心 30、领域任务 56、领域细节 19、证据 32、运行适配 42、可选网络 8、测试适配 17。七类是用途分组，不是新的业务继承树；也不增加 PA 的必填输入。跨来源身份、历史版本和证据关系仍保留原合同。
+内核发布的 `domains` 只能使用已审阅的词表（`packages/ontology/domain-vocabulary.ts`，当前 `vocabularyVersion = 1`）。`itinerary` 是运行时服务域 id，也是行程域的正式标签；`travel` 作为历史别名继续可用，两者在查询时等价。没有对应运行时服务域的标签必须声明能力族（`family`）：
 
-目前使用的领域包括 `hotel`、`ride`、`vehicle`、`dining`、`food`、`shopping`、`delivery`、`appointment`、`travel`、`events`、`documents`、`location`、`network`。组合旅行可明确选择多个领域；自由文本不会自动变成已确认的领域或业务事实。
+| 标签 | 运行时服务域 | 能力族 |
+| --- | --- | --- |
+| `hotel` / `ride` / `vehicle` / `food` / `appointment` / `itinerary` | 同名服务域 | — |
+| `dining` | — | hospitality |
+| `delivery` | — | logistics |
+| `shopping` | — | commerce |
+| `documents` | — | documents |
+| `events` | — | activity |
+| `location` | — | geo |
+| `network` | — | network |
+
+别名只影响查询拼写，不改变已发布快照：v30 仍按原样保存 `travel`，v31 用 `itinerary` 重新发布同一批类型（7 个）。自定义命名空间不受该词表限制，仍可声明自己的领域 ID。
+
+v30 软件合同为现有 204 个类型固定分类：核心 30、领域任务 56、领域细节 19、证据 32、运行适配 42、可选网络 8、测试适配 17。七类是用途分组，不是新的业务继承树；也不增加 PA 的必填输入。跨来源身份、历史版本和证据关系仍保留原合同。v31 不改分类本身，只把行程域标签统一为运行时拼写。
 
 ## 发现方式
 
@@ -31,6 +44,8 @@ Gateway HTTP、Gateway MCP 和 Worker 的任务专属 MCP 共用相同选择项�
 ```
 
 在带分类的发布中，无搜索的默认类型目录采用 PA 视图：返回核心及明确相关的领域对象和共用接口，不默认展开来源包装、执行账本或测试类型。任务专属会话优先从获准的绑定引用推导领域；仅当已固定程序的动作输入／结果类型指向单一领域时，才把它用作补充提示。通用程序的多领域能力菜单不当作当前任务选择；Foundation 公开读取也可从当前数据授权的输入类型推导。没有可靠类型提示时保留核心目录，调用方可显式提供 `domains`。
+
+默认视图（无 `domains`、无 `purposes`、无 `search`）额外返回 `discovery.availableDomains`：本次发布中 PA 可以展开的领域标签、对应运行时服务域与可发现类型数。它是"可发现范围"，不是供应商覆盖或执行能力证明；显式给出 `domains` 时不再返回，避免把过滤器误读成菜单。`discovery.vocabularyVersion` 标识所用词表版本。
 
 关系列表也按所选类型范围裁剪，被裁剪时返回 `linksFiltered`。它不表示其他关系不存在，具体证据仍能通过获准的对象／关系查询和明确目录读取访问。
 

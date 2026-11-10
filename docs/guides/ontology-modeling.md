@@ -61,6 +61,21 @@ MCP 工具、供应商端点和运行步骤不是业务 Action Type 的同义词
 
 原有校验器包含自定义约束和规范化处理，普通 JSON Schema 往返不能完整保留。种子使用版本化 `validatorRef` 保留受信校验；函数和已有来源程序只接受准确注册合约。
 
+### 已审阅内核发布
+
+每一层都是独立、不可变的发布；软件安装只重建定义，不激活已存命名空间。当前默认目标仍是 v28。
+
+| 版本 | 内容 | 指纹常量 |
+| --- | --- | --- |
+| 26 | 单次读取 | `SINGLE_READ_KERNEL_MODEL_REF` |
+| 27 | 支付与商务 | `PAYMENT_COMMERCE_KERNEL_MODEL_REF` |
+| 28 | 业务描述（当前默认） | `BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF` |
+| 29 | 语义检索（向量链强制要求） | `SEMANTIC_RETRIEVAL_KERNEL_MODEL_REF` |
+| 30 | PA 分类标签 | `PA_CLASSIFICATION_KERNEL_MODEL_REF` |
+| 31 | 领域词表（行程域改用运行时拼写） | `DOMAIN_VOCABULARY_KERNEL_MODEL_REF` |
+
+`npm run ontology:integrity` 逐个重建可选定版本并核对指纹，同时检查悬空关系、孤立类型、分类词表闭合、每域可发现性，以及"没有实现的动作必须显式声明"。CI 的 `ontology-integrity` 任务在 `packages/ontology/`、已审阅模型兼容层或词表契约文档变更时强制运行；新增可选定版本却没有指纹常量会直接失败。
+
 历史内核 v16 引入了 `object_write` 和 managed 授权环境，与旧版本分别存储。首次初始化导入 v15 和当前内核；已初始化的数据库不会随进程启动自动替换 active release。旧执行契约 v16 且尚未记录发布引用的任务，继续解析为准确 v15，不向历史请求、计划或回执补写新 pin。其他旧后端任务仍遵守原历史只读政策。若显式回退到旧 v15，须先恢复支持 managed 授权的当前内核，才能发布声明式数据动作；不将不支持的动作留到执行时才失败。
 
 ## 发布、兼容与回退
