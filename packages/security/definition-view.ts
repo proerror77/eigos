@@ -97,11 +97,17 @@ export function authorizedDefinitionCatalogue(access: DefinitionAccess, model: O
   const visibleDefinitions = model.criteriaVersion === '2' ? definitions.map(type => ({ ...type,
     ...(type.kind === 'object' ? { actions: Object.fromEntries(Object.entries(model.typeActions(type.id)).map(([kind, bindings]) => [kind, bindings.filter(binding => permittedActions.has(binding.id))])) } : {}),
   })) : definitions;
-  const functions = model.functionIds().map(id => model.function(id)).filter(f => policy.resourceAllowed('function', f.id) && f.inputTypes.every(typeAllowed)
+  const strictFunctions = model.criteriaVersion === '2';
+  const functions = model.functionIds().map(id => model.function(id)).filter(f => policy.resourceAllowed('function', f.id) && (strictFunctions ? f.inputTypes.some(typeAllowed) : f.inputTypes.every(typeAllowed))
     && (f.executionContract?.mode !== 'validated' || f.executionContract.reads.types.every(typeAllowed)
-      && f.executionContract.reads.relationships.every(link => policy.resourceAllowed('linkType', model.navigation(link.type, link.name).link.id)))).map(f=>{
+      && f.executionContract.reads.relationships.every(link => {
+        const as = model.isInterface(link.type) ? link.type : undefined, sources = (as ? model.concreteTypes(as) : [link.type]).filter(typeAllowed);
+        return sources.length > 0 && sources.every(source => policy.resourceAllowed('linkType', model.navigation(source, link.name, as).link.id));
+      }))).map(f=>{
     const schema=functionCallSchema.options.find(schema=>schema.shape.function.value===f.id);
-    return {...f,...(schema?{inputSchema:definitionSchema(access.model, schema)}:{}), ...(model.criteriaVersion === '2' ? { binding: model.functionBindingStatus(f.id) } : {})};
+    const inputTypes = strictFunctions ? f.inputTypes.filter(typeAllowed) : f.inputTypes;
+    return {...f, inputTypes, ...(inputTypes.length !== f.inputTypes.length ? { inputTypesFiltered: true } : {}),
+      ...(f.executionContract ? { inputSchema: structuredClone(f.executionContract.inputSchema) } : schema ? {inputSchema:definitionSchema(access.model, schema)} : {}), ...(strictFunctions ? { binding: model.functionBindingStatus(f.id) } : {})};
   });
   // Build one authorized definition set for internal context selection and public paging.
   return { model: { id: model.ref.id, version: 'authorized.v2', digest: digest({ types: visibleDefinitions, actions, functions }) }, types: visibleDefinitions, actions, functions };

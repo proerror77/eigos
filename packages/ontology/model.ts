@@ -366,6 +366,7 @@ export class OntologyModel {
       // A display override must not conceal a different underlying data contract.
       ...(documented.length ? { documentedContracts: documented.map(type => ({ id: type.id, fingerprint: this.fingerprint(type.id) })) } : {}) } : releasedData) });
     Object.defineProperty(this, 'ref', { writable: false, configurable: false });
+    for (const key of ['options', 'actions', 'functions']) Object.defineProperty(this, key, { writable: false, configurable: false });
   }
   #bindActions = false;
   private interfaceProperties(id: string, active = new Set<string>()): Record<string, PropertyDefinition> {

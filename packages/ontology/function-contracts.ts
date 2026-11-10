@@ -7,7 +7,7 @@ export const functionReadSetSchema = z.strictObject({
   relationships: z.array(z.strictObject({ type: name, name })).max(200),
   sourceProof: z.boolean(),
 });
-const common = { version: z.literal('1'), inputSchema: jsonSchema, unknown: z.literal('explicit_reason_no_value') };
+const common = { version: z.literal('1'), inputSchema: jsonSchema, unknown: z.literal('explicit_reason_no_value'), parameterNormalization: z.literal('registered_parser').optional() };
 /** A legacy result is explicitly untyped. It is never advertised as an object or
  * boolean merely because its current implementation has a familiar name. */
 export const functionExecutionContractSchema = z.discriminatedUnion('mode', [

@@ -5,10 +5,13 @@ import { SINGLE_READ_PREDECESSOR, PRIOR_GOAL_COVERAGE_FINGERPRINT } from '../ont
 import { SecurityError } from './errors.js';
 import {isSemanticRetrievalSuccessor} from '../ontology/semantic-retrieval-kernel.js';
 import { paFieldPolicyRef } from '../ontology/pa-classification-kernel.js';
-import { reviewedExecutableModelPair } from '../ontology/executable-contract-compatibility.js';
+import { reviewedExecutableModelPair, reviewedExecutableRuntime } from '../ontology/executable-contract-compatibility.js';
+import { compiledOntologyDocumentDigest } from '../ontology/model-compiler.js';
 
 /** Exact reviewed historical kernel compatibility; never grants data access. */
 export function assertReviewedModel(current: OntologyModel, model: OntologyModel): void {
+  for (const value of [current, model]) if (value.criteriaVersion === '2' && (!compiledOntologyDocumentDigest(value)
+    || value.ref.id === 'eigos.business' && value.ref.version === '34' && !reviewedExecutableRuntime(value))) throw new SecurityError('POLICY_CHANGED');
   if (current === model) return;
   if (reviewedExecutableModelPair(current, model)) return;
   if (digest(paFieldPolicyRef(current)) === digest(paFieldPolicyRef(model))

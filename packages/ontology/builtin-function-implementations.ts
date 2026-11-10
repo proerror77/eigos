@@ -3,7 +3,7 @@ import { DomainError } from '../core/domain.js';
 import { functionCallSchema, evaluateLegacyFunctionProgram } from './object-functions.js';
 import { objectRefSchema, type FunctionDefinition } from './model.js';
 import { rideEstimateObservationSchema } from './ride-estimate.js';
-import type { FunctionImplementation } from './function-runtime.js';
+import { functionInputNormalizes, type FunctionImplementation } from './function-runtime.js';
 import type { FunctionReadSet } from './function-contracts.js';
 
 const observations = ['DidiPlaceObservation', 'RideEstimateObservation'];
@@ -38,7 +38,8 @@ export function builtinFunctionImplementation(definition: Pick<FunctionDefinitio
   const input = functionCallSchema.options.find(schema => schema.shape.function.value === definition.id);
   if (!input) throw new DomainError('INVALID_INPUT', 'No built-in executor exists for this function');
   const value = values[definition.id];
-  const common = { version: '1' as const, inputSchema: z.toJSONSchema(input), unknown: 'explicit_reason_no_value' as const };
+  const common = { version: '1' as const, inputSchema: z.toJSONSchema(input, { io: 'input' }), unknown: 'explicit_reason_no_value' as const,
+    ...(functionInputNormalizes(input) ? { parameterNormalization: 'registered_parser' as const } : {}) };
   const implementation: FunctionImplementation = {
     input, ...(value ? { value } : {}),
     contract: value ? { ...common, mode: 'validated', valueSchema: z.toJSONSchema(value), reads: structuredClone(rideReads) }

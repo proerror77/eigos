@@ -4158,7 +4158,7 @@
       "currentControl": "Core resources remain protected; ordinary business display text cannot change data schemas, source binding or execution authority.",
       "targetControl": "Immutable compiled definitions and exact trusted handler contracts",
       "stage": "S2",
-      "sourceDigest": "dbb386fafa3b4fb846dbdb769f9f6e45502f71a916a65634027126176697ecf0"
+      "sourceDigest": "e05030cd7b40b1eb716505d74f184b9e8d992c562040d244ab688ce4b4327e72"
     },
     {
       "id": "ontology-definition-contracts",
@@ -4189,7 +4189,7 @@
     {
       "id": "ontology-definitions",
       "file": "packages/ontology/model.ts",
-      "sourceDigest": "3fb2fdc88ce4cf97865120542765a90c7928dd4e8e446ff700db1bca891c791f",
+      "sourceDigest": "902d2c899853e0f1fcf0bcf2fef803ea53ab70e58412a03b02bc3b5f617c8b89",
       "channels": [
         "definition"
       ],
@@ -4391,7 +4391,7 @@
     {
       "id": "ontology-registered-calculations",
       "file": "packages/ontology/object-functions.ts",
-      "sourceDigest": "e6fd889d4bf78916eff2ff3be5f4adcc93e5ab4550e9af762aa53fcfdfc45014",
+      "sourceDigest": "afce1b79c4e52641d5ca3d06b4c78d92cb558d5ef19539ad2844b9ea3244a30b",
       "channels": [
         "internal"
       ],
@@ -7258,7 +7258,7 @@
     {
       "id": "security-definition-view",
       "file": "packages/security/definition-view.ts",
-      "sourceDigest": "be0fa407a587e0f2aaddccda0870b1d46a7a57ed5af636326c16e52c9043332b",
+      "sourceDigest": "69a8b3ed1b516a5734ad4fd897ff544971e79b0530a34985374f5718f344ede3",
       "channels": [
         "internal"
       ],
@@ -7344,7 +7344,7 @@
     {
       "id": "security-model-review",
       "file": "packages/security/model-review.ts",
-      "sourceDigest": "70ffa644e288869509385e32f0c00ff2f70caaaecf873454f8c9048431340b87",
+      "sourceDigest": "0f7cbf95b89cc99f9fa11c84acb4d8b175cb6cbd3bdd346104d5470a1794ff6b",
       "channels": [
         "internal"
       ],
@@ -7848,7 +7848,7 @@
     {
       "id": "trusted-definition-registry",
       "file": "packages/ontology/model-compiler.ts",
-      "sourceDigest": "dbb386fafa3b4fb846dbdb769f9f6e45502f71a916a65634027126176697ecf0",
+      "sourceDigest": "e05030cd7b40b1eb716505d74f184b9e8d992c562040d244ab688ce4b4327e72",
       "channels": [
         "authorization_control"
       ],
@@ -7917,7 +7917,7 @@
       "currentControl": "Strict bounded schema separates known/unknown envelope, declared reads and undeclared legacy output; JSON carries no code.",
       "targetControl": "Strict bounded schema separates known/unknown envelope, declared reads and undeclared legacy output; JSON carries no code.",
       "stage": "S2",
-      "sourceDigest": "cebbfc1bb42390a0f139db1a2cd64ab3c63f7397bc392e75f6022342099537c1"
+      "sourceDigest": "7aa9252495c20b79cb8520ee249fdde1392fb44eabf460df7e3444b9ccb3e8f8"
     },
     {
       "id": "ontology-function-runtime",
@@ -7927,10 +7927,10 @@
         "definition_metadata"
       ],
       "content": "Exact compiled function execution and result/read validation",
-      "currentControl": "Compiler-owned immutable bindings; input/result validation; declared reads bound generators, original owner/task/field authorization remains in force; unknown preserves evidence without business value.",
-      "targetControl": "Compiler-owned immutable bindings; input/result validation; declared reads bound generators, original owner/task/field authorization remains in force; unknown preserves evidence without business value.",
+      "currentControl": "Immutable once-only bindings and opaque set identity; explicit parameter normalization cannot change function/object identity; declared reads cover interface mappings and returned targets; all registered functions remain read-only with current authorization and evidence.",
+      "targetControl": "Immutable once-only bindings and opaque set identity; explicit parameter normalization cannot change function/object identity; declared reads cover interface mappings and returned targets; all registered functions remain read-only with current authorization and evidence.",
       "stage": "S2",
-      "sourceDigest": "f5981974bc1c4506c5b9ff6ce00f8f6eb67e56eb284c2f6f7486a9d80f582a45"
+      "sourceDigest": "62560ea76c23a4cd39f4d83c20978307fc142ab16a70da8c38812660b8fdc1e9"
     },
     {
       "id": "ontology-builtin-function-implementations",
@@ -7943,7 +7943,7 @@
       "currentControl": "Explicit built-in parser allowlist, pinned model version, validated DiDi result/read contracts and honest legacy coverage; no executable source in definitions.",
       "targetControl": "Explicit built-in parser allowlist, pinned model version, validated DiDi result/read contracts and honest legacy coverage; no executable source in definitions.",
       "stage": "S2",
-      "sourceDigest": "5dcf2377e500fab5dbde7e7fd2da8a25fb8a0ec678ff6d5352a46308d74745a9"
+      "sourceDigest": "4379bf62bf07b7b0e48b1365fa4baa25f978385010debf64c90122303f783fa6"
     },
     {
       "id": "ontology-action-criteria",
@@ -7979,10 +7979,10 @@
         "definition_metadata"
       ],
       "content": "Exact installed v34 compatibility and field policy reference",
-      "currentControl": "Fixed full model digests only; fields reuse reviewed v28 policy, tasks keep exact release/function versions and separate namespace roles; no automatic new invocation rights.",
-      "targetControl": "Fixed full model digests only; fields reuse reviewed v28 policy, tasks keep exact release/function versions and separate namespace roles; no automatic new invocation rights.",
+      "currentControl": "Exact public and complete document pins plus genuine compiler completion and installed Function callback identity; metadata copies, missing bindings, substituted callbacks and method overrides cannot borrow policy; immutable validation is reused without per-field catalogue scans.",
+      "targetControl": "Exact public and complete document pins plus genuine compiler completion and installed Function callback identity; metadata copies, missing bindings, substituted callbacks and method overrides cannot borrow policy; immutable validation is reused without per-field catalogue scans.",
       "stage": "S2",
-      "sourceDigest": "9020a008d7d440c58c0ae3d3b43b2c01018227ebbf37ff565c90489845b80c0e"
+      "sourceDigest": "240169437122ae0bb38197fc7c0f5a2fbf921007dbf49b9eeeabcb5815440f3f"
     }
   ]
 }

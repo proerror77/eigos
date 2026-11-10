@@ -8,7 +8,7 @@ import { executionReferenceLinks } from './execution-model.js';
 import { isVirtualRef } from './network-model.js';
 import { bindCompositionCompiler, validateCompositionContract } from './composition-contract.js';
 import { managedComposition } from './managed-composition.js';
-import { assertFunctionImplementation, bindFunctionRuntimes, type FunctionImplementation, type FunctionRuntimeBinding } from './function-runtime.js';
+import { assertFunctionImplementation, bindFunctionRuntimes, functionRuntimeIdentity, type FunctionImplementation, type FunctionRuntimeBinding } from './function-runtime.js';
 import { isReviewedCriterion, isFunctionReturnType, STRICT_SUBMISSION_CRITERIA_VERSION } from './contract-vocabulary.js';
 import { validateActionCriteria } from './action-criteria.js';
 
@@ -18,6 +18,18 @@ function freezeJson<T>(value: T): T {
   return value;
 }
 const refKey = (ref: HandlerRef) => JSON.stringify([ref.id, ref.version, ref.digest]);
+const completedCompilations = new WeakMap<OntologyModel, { documentDigest: string; runtimeIdentity: object }>();
+const bindingMethods = ['action', 'actionIds', 'actionImplementation', 'function', 'functionIds', 'functionBindingStatus', 'definitionSnapshot'] as const;
+const originalMethods = bindingMethods.map(name => OntologyModel.prototype[name]);
+/** Successful compilation attests the private bindings as well as public data.
+ * There is intentionally no public setter for this identity-owned record. */
+export function compiledOntologyDocumentDigest(model: OntologyModel): string | undefined {
+  const compiled = completedCompilations.get(model);
+  if (!compiled || Object.getPrototypeOf(model) !== OntologyModel.prototype || bindingMethods.some((name, index) => Object.hasOwn(model, name)
+    || Object.getOwnPropertyDescriptor(OntologyModel.prototype, name)?.value !== originalMethods[index])) return;
+  if (functionRuntimeIdentity(model) !== compiled.runtimeIdentity) return;
+  return compiled.documentDigest;
+}
 const resources = (document: OntologyDocument) => [
   ...document.objects.map(value => ({ kind: 'object' as const, value })),
   ...document.interfaces.map(value => ({ kind: 'interface' as const, value })),
@@ -348,6 +360,7 @@ export function compileOntologyDocument(input: OntologyDocument | unknown, regis
     functions: document.functions.map(({ handlerRef, ...rest }) => {
       if (!handlerRef) fail('Functions require an exact trusted handler reference');
       const binding = registry.resolveFunction(handlerRef, rest);
+      if (rest.executionContract && !binding) fail('The exact executable function binding is unavailable');
       if (binding) { functionRuntimes.set(rest.id, binding); trustedFunctionImplementations[rest.id] = handlerRef; }
       return rest;
     }),
@@ -356,7 +369,16 @@ export function compileOntologyDocument(input: OntologyDocument | unknown, regis
   bindFunctionRuntimes(model, functionRuntimes);
   for (const fn of definition.functions) if (fn.executionContract?.mode === 'validated') {
     for (const type of fn.executionContract.reads.types) if (!model.hasType(type)) fail('Function declares an unknown read type');
-    for (const link of fn.executionContract.reads.relationships) model.navigation(link.type, link.name);
+    const declared = fn.executionContract.reads.types;
+    const covered = (type: string) => model.concreteTypes(type).every(actual => declared.some(target => model.implements(actual, target)));
+    for (const link of fn.executionContract.reads.relationships) {
+      const as = model.isInterface(link.type) ? link.type : undefined;
+      if (as && !(model.describeType(as) as { linkConstraints: { name: string }[] }).linkConstraints.some(value => value.name === link.name)) fail('Function declares an unknown interface relationship');
+      for (const source of as ? model.concreteTypes(as) : [link.type]) {
+        const navigation = model.navigation(source, link.name, as);
+        if (!covered(source) || !covered(navigation.other.type)) fail('Function relationship exceeds its declared read types');
+      }
+    }
   }
   bindCompositionCompiler(model, { schema: compileJsonSchema, validator: (ref, schema) => registry.resolveValidator(ref, schema) });
   for (const action of model.actionDefinitions()) {
@@ -371,5 +393,6 @@ export function compileOntologyDocument(input: OntologyDocument | unknown, regis
     const personalAddress = link.resourceId === 'builtin:eigos.business:link:PreferenceAddress' && link.id === 'PreferenceAddress' && link.from.type === 'PersonalPreference' && link.to.type === 'SavedAddress' && model.hasType('Person');
     if (!endpoints.length || !personalAddress && endpoints.some(type => model.objectWritePolicy(type) !== 'managed')) fail('Managed links require managed concrete endpoints');
   }
+  completedCompilations.set(model, { documentDigest: digest(document), runtimeIdentity: functionRuntimeIdentity(model)! });
   return model;
 }

@@ -105,7 +105,7 @@ export function* evaluateFunctionProgram(store: ProjectionMetadata, owner: strin
   }
   if (!definition.inputTypes.some(type => store.model.implements(args.object.type, type))) throw new DomainError('INVALID_INPUT', 'Function requires its registered object type');
   const program = binding.implementation.execute(store, owner, args, budget), contract = binding.implementation.contract;
-  const result = yield* constrainFunctionReads(program, contract.mode === 'validated' ? contract.reads : undefined);
+  const result = yield* constrainFunctionReads(program, contract.mode === 'validated' ? contract.reads : undefined, store.model);
   return validateFunctionComputation(binding, result);
 }
 
