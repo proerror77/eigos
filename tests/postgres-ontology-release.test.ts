@@ -43,7 +43,7 @@ test('PostgreSQL resolves the exact task-pinned ontology and legacy release', { 
     const observed = new Proxy(client, { get(target, property) {
       if (property === 'query') return async (sql: string, values?: unknown[]) => {
         const result = await target.query(sql, values);
-        if (sql.includes('.jobs j JOIN')) taskQueryBytes = Buffer.byteLength(JSON.stringify(result.rows));
+        if (sql.includes('.jobs j CROSS JOIN')) taskQueryBytes = Buffer.byteLength(JSON.stringify(result.rows));
         if (sql.includes('minimal.value')) proofQueryBytes = Buffer.byteLength(JSON.stringify(result.rows));
         return result;
       };
@@ -64,7 +64,7 @@ test('PostgreSQL resolves the exact task-pinned ontology and legacy release', { 
     assert.notDeepEqual(first.ref,active.ref);
     const originalQuery=client.query;let resolutions=0;
     client.query=(async(...args:unknown[])=>{
-      if(String(args[0]).startsWith('SELECT body,model_digest,created_at,sequence FROM '))resolutions++;
+      if(String(args[0]).includes('SELECT body,model_digest,created_at,sequence FROM '))resolutions++;
       return Reflect.apply(originalQuery,client,args);
     }) as typeof client.query;
     try{

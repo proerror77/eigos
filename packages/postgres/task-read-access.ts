@@ -9,11 +9,12 @@ import { digest } from '../core/delegation.js';
 import { DomainError, ownerKey, requireScope, taskIdSchema, type Principal,type Scope } from '../core/domain.js';
 import { accessContextSchema, agentAccessGrantSchema, securityEnvelopeSchema, taskDataGrantSchema, SECURITY_CONTRACT, POLICY_VERSION,ownerIdentitySchema,type AccessContext } from '../security/contracts.js';
 import { SecurityError } from '../security/errors.js';
-import { postgresBusinessSchema,postgresBusinessToken, postgresConstrainReadDeadline,postgresRequireLeaseAtCommit } from './runtime-transaction.js';
+import { postgresBusinessSchema,postgresBusinessToken,postgresBusinessReadOnly, postgresConstrainReadDeadline,postgresRequireLeaseAtCommit } from './runtime-transaction.js';
 import { postgresOntologyReadContext } from './ontology-release.js';
 import { roleAllows, roleSchema } from '../security/resource-role.js';
 import { currentKernelImplementation } from '../ontology/definition-store.js';
 import { stagedKernelComponents, type StagedKernelBuilder } from '../ontology/seed-definition.js';
+import { reviewedExecutableModelPair } from '../ontology/executable-contract-compatibility.js';
 import { reviewedFieldPolicy } from '../security/field-policy.js';
 import { nameSchema, objectRefSchema, type ObjectRef } from '../ontology/model.js';
 import { projectionInputs, projectionMarkings, responseOnlyProjection } from '../security/projections.js';
@@ -44,33 +45,44 @@ type ReadSnapshot={key:string;admission:PostgresTaskReadAdmission;ontology:Map<S
 const snapshots=new WeakMap<Client,ReadSnapshot>();
 const snapshotKey=(principal:Principal,taskId:string,policyDigest:string)=>digest([principal,taskId,policyDigest]);
 type DirectBindingRows={rowCount:number|null;rows:Record<string,unknown>[]};
-type WorkerRequestRows={snapshot:ReadSnapshot;token:object;identity:string;
+type RequestReadRows={snapshot:ReadSnapshot;token:object;identity:string;kind:'worker'|'agent';
   direct:Map<string,{value:DirectBindingRows;bytes:number}>;bytes:number};
-const workerRequestRows=new WeakMap<Client,WorkerRequestRows>();
+const requestReadRows=new WeakMap<Client,RequestReadRows>();
 const requestRowsIdentity=(principal:Principal,taskId:string,policyDigest:string,snapshot:ReadSnapshot)=>
   digest([snapshot.key,ownerKey(principal),taskId,policyDigest,snapshot.admission.grant.id,snapshot.admission.grant.revision,snapshot.admission.grant.requestRevision]);
-function currentWorkerRequestRows(client:Client,principal:Principal,taskId:string,policyDigest:string){
-  const memo=workerRequestRows.get(client);if(!memo)return;
+function currentRequestReadRows(client:Client,principal:Principal,taskId:string,policyDigest:string){
+  const memo=requestReadRows.get(client);if(!memo)return;
   const snapshot=snapshots.get(client);
   if(!snapshot||snapshot!==memo.snapshot||snapshot.key!==snapshotKey(principal,taskId,policyDigest)
-    ||postgresBusinessToken(client)!==memo.token||memo.identity!==requestRowsIdentity(principal,taskId,policyDigest,snapshot))throw new SecurityError('AUTHORIZATION_REQUIRED');
+    ||postgresBusinessToken(client)!==memo.token||memo.identity!==requestRowsIdentity(principal,taskId,policyDigest,snapshot)
+    ||memo.kind==='agent'&&!postgresBusinessReadOnly(client,memo.token))throw new SecurityError('AUTHORIZATION_REQUIRED');
   return memo;
 }
 /** Explicit immutable request-read scope only. Source writers keep fresh row
  * reads. This retains raw lookup rows, never field/output/source permission. */
-export async function withPostgresWorkerRequestReadRows<T>(client:Client,principal:Principal,taskId:string,policyDigest:string,
+async function withRequestReadRows<T>(client:Client,principal:Principal,taskId:string,policyDigest:string,kind:'worker'|'agent',
   action:(assertCurrent:()=>void)=>Promise<T>):Promise<T>{
-  const captured=structuredClone(principal),snapshot=snapshots.get(client);
-  if(!snapshot||snapshot.key!==snapshotKey(captured,taskId,policyDigest)||snapshot.admission.actor.actorKind!=='worker'
-    ||snapshot.admission.actor.taskId!==taskId||workerRequestRows.has(client))throw new SecurityError('AUTHORIZATION_REQUIRED');
-  const memo:WorkerRequestRows={snapshot,token:postgresBusinessToken(client),identity:requestRowsIdentity(captured,taskId,policyDigest,snapshot),direct:new Map(),bytes:0};
-  workerRequestRows.set(client,memo);
+  const captured=structuredClone(principal),snapshot=snapshots.get(client),token=postgresBusinessToken(client);
+  if(!snapshot||snapshot.key!==snapshotKey(captured,taskId,policyDigest)||snapshot.admission.actor.actorKind!==kind
+    ||snapshot.admission.grant.taskId!==taskId||snapshot.admission.grant.ownerKey!==ownerKey(captured)
+    ||snapshot.admission.actor.actorKind==='worker'&&snapshot.admission.actor.taskId!==taskId
+    ||kind==='agent'&&!postgresBusinessReadOnly(client,token)||requestReadRows.has(client))throw new SecurityError('AUTHORIZATION_REQUIRED');
+  const memo:RequestReadRows={snapshot,token,kind,identity:requestRowsIdentity(captured,taskId,policyDigest,snapshot),direct:new Map(),bytes:0};
+  requestReadRows.set(client,memo);
   const assertCurrent=()=>{
-    if(currentWorkerRequestRows(client,captured,taskId,policyDigest)!==memo||snapshot.admission.validUntil<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');
+    if(currentRequestReadRows(client,captured,taskId,policyDigest)!==memo||snapshot.admission.validUntil<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');
   };
   try{assertCurrent();const result=await action(assertCurrent);assertCurrent();return result;}
-  finally{workerRequestRows.delete(client);memo.direct.clear();memo.bytes=0;}
+  finally{requestReadRows.delete(client);memo.direct.clear();memo.bytes=0;}
 }
+/** Explicitly reviewed immutable Worker callback, including receipt writes. */
+export function withPostgresWorkerRequestReadRows<T>(client:Client,principal:Principal,taskId:string,policyDigest:string,
+  action:(assertCurrent:()=>void)=>Promise<T>):Promise<T>{return withRequestReadRows(client,principal,taskId,policyDigest,'worker',action);}
+/** Public Agent reuse additionally requires the actual shared read transaction
+ * and an already-established exact task grant; an Agent actor alone is not a
+ * read-only boundary. Writers continue to resolve each raw row freshly. */
+export function withPostgresAgentRequestReadRows<T>(client:Client,principal:Principal,taskId:string,policyDigest:string,
+  action:(assertCurrent:()=>void)=>Promise<T>):Promise<T>{return withRequestReadRows(client,principal,taskId,policyDigest,'agent',action);}
 function freezeData<T>(input:T):T {
   if(input && typeof input==='object' && !Object.isFrozen(input)) {
     for(const value of Object.values(input))freezeData(value);
@@ -350,7 +362,8 @@ export async function postgresTaskResourcePermissionValidUntil(client: Client, p
     const schema = postgresBusinessSchema(client);
     const ontology=await postgresTaskReadOntology(client,captured,taskId,policyDigest,builder);
     const current=builder===undefined?currentKernelImplementation():stagedKernelComponents(builder).model;
-    if(current.ref.version==='29')assertReviewedModel(current,ontology.model);
+    const taskRoles = current.ref.version==='29' || reviewedExecutableModelPair(current,ontology.model);
+    if(taskRoles)assertReviewedModel(current,ontology.model);
     const load=async()=>{
       const result=await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${schema}".security_roles WHERE subject_id IN ($1,$2) LIMIT 257`,[admission.actor.memberId,admission.actor.installationId]);
       if(result.rows.length>256||result.rows.some(row=>row.body===null))throw new SecurityError('OUTPUT_NOT_ALLOWED');
@@ -358,7 +371,7 @@ export async function postgresTaskResourcePermissionValidUntil(client: Client, p
     };
     const snapshot=snapshots.get(client);
     const roles=await(snapshot?(snapshot.roles??=load()):load());
-    return {roles,actor:admission.actor,model:current.ref.version==='29'?ontology.model:current,policyModel:current};
+    return {roles,actor:admission.actor,model:taskRoles?ontology.model:current,policyModel:current};
   });
   const now=Date.now(),matching=checked.roles.filter(role=>roleAllows(checked.model,[role],checked.actor.memberId,checked.actor.installationId,kind,id,permission,()=>now));
   return matching.reduce((latest,role)=>Math.max(latest,postgresConsentIndex(role.expiresAt,policyDigest,checked.policyModel)),0);
@@ -459,7 +472,7 @@ export async function postgresTaskDirectBindingEvidence(client: Client, principa
   return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission=>{
     await postgresTaskReadOntology(client,captured,taskId,policyDigest,builder);
     const schema=postgresBusinessSchema(client),owner=ownerKey(captured);
-    const memo=currentWorkerRequestRows(client,captured,taskId,policyDigest),key=JSON.stringify([ref.type,ref.id]);
+    const memo=currentRequestReadRows(client,captured,taskId,policyDigest),key=JSON.stringify([ref.type,ref.id]);
     const cached=memo?.direct.get(key);
     const result:DirectBindingRows=cached?structuredClone(cached.value):await client.query(`SELECT b.owner,b.task_id,b.request_revision,b.object_revision,
       CASE WHEN octet_length(b.body)<=1048576 THEN b.body END AS body
@@ -467,7 +480,7 @@ export async function postgresTaskDirectBindingEvidence(client: Client, principa
       ON o.owner=b.owner AND o.type=b.type AND o.id=b.object_id AND o.revision=b.object_revision
       WHERE b.grant_id=$1 AND b.type=$2 AND b.object_id=$3 LIMIT 2`,[admission.grant.id,ref.type,ref.id]);
     if(memo){
-      if(currentWorkerRequestRows(client,captured,taskId,policyDigest)!==memo)throw new SecurityError('AUTHORIZATION_REQUIRED');
+      if(currentRequestReadRows(client,captured,taskId,policyDigest)!==memo)throw new SecurityError('AUTHORIZATION_REQUIRED');
       if(!cached){
         const value={rowCount:result.rowCount,rows:result.rows},bytes=Buffer.byteLength(JSON.stringify(value,(_key,item)=>typeof item==='bigint'?item.toString():item));
         if(bytes<=8388608){

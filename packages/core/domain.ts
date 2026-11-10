@@ -4,6 +4,7 @@ import type { RunEvidence } from '../capabilities/executor.js';
 import { requirementsSchema, refSchema } from '../ontology/execution.js';
 import type { AccessContext } from '../security/contracts.js';
 import { locationContextSchema } from './location-context.js';
+import { didiEstimateRequestSchema } from './didi-estimate-request.js';
 import { personalContextInputSchema } from '../ontology/personal-context.js';
 import { executionBudgetProfileSchema } from './execution-budget.js';
 import type { MESSAGING_SCOPES } from '../agent-messaging/contracts.js';
@@ -60,6 +61,7 @@ export const submitSchema = z.union([z.object({
   executionBudget: executionBudgetProfileSchema.optional(),
   ontologyId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/).optional(),
   capabilityRef: refSchema.optional(),
+  didiEstimate: didiEstimateRequestSchema.optional(),
 }).strict(), afterSalesSubmitSchema]);
 const answerReplySchema = z.object({
   taskId: taskIdSchema,

@@ -72,8 +72,9 @@ export const workbenchScript = String.raw`
     } else if (resource.kind === 'function') {
       facts(panel, [['输入类型', definition.inputTypes.join(', ')], ['实现版本', definition.handlerRef && definition.handlerRef.version], ['后端标识', definition.handlerRef && definition.handlerRef.id]]);
       panel.append(text('h3', '计算合同'), text('p', 'Function 根据对象和关系进行计算或判断。浏览定义不会运行后端。', 'section-note'));
-      table(panel, ['合同项', '当前声明'], [['输入类型', definition.inputTypes.join(', ')], ['输出类型', '当前发布未声明'], ['读取的对象与 Link', '当前发布未声明'], ['未知分支', '当前发布未声明'], ['实现摘要', definition.handlerRef && definition.handlerRef.digest]]);
-      panel.append(text('p', '先补齐未声明的合同，再据此验证执行路径；这里不会从名称推断读取依赖。', 'notice'));
+      const contract = definition.executionContract;
+      table(panel, ['合同项', '当前声明'], [['输入类型', definition.inputTypes.join(', ')], ['调用参数', contract ? shapeLabel(contract.inputSchema) : '当前发布未声明'], ['输出值', contract && contract.mode === 'validated' ? shapeLabel(contract.valueSchema) : '未完整声明 · 兼容实现'], ['读取的对象与 Link', contract && contract.mode === 'validated' ? contract.reads.types.join(', ') + '；' + contract.reads.relationships.map(link => link.type + '.' + link.name).join(', ') : '运行时逐项授权；静态范围未完整声明'], ['未知分支', contract ? 'unknown：保留原因和证据，不返回业务值' : '当前发布未声明'], ['实现摘要', definition.handlerRef && definition.handlerRef.digest]]);
+      panel.append(text('p', contract && contract.mode === 'validated' ? '此版本校验调用参数、结果和声明的读取范围。执行仍需当前任务授权。' : '未完整声明的部分保持未知，不从函数名称推断。已有实现仍受当前任务权限约束。', 'notice'));
     } else {
       const read = definition.read, operation = definition.operation, mcp = read && read.mcp;
       const effects = definition.effects ?? (read ? ['read'] : operation ? [operation.effect, ...(operation.additionalEffects ?? [])] : []);

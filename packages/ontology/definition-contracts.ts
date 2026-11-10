@@ -5,6 +5,8 @@ import { DomainError } from '../core/domain.js';
 import { nameSchema, type ActionDefinition, type FunctionDefinition, type InterfaceDefinition, type LinkDefinition, type ObjectTypeDefinition, type PropertyDefinition } from './model.js';
 import { actionImplementationSchema, type ActionImplementation } from './action-dsl.js';
 import { compositionContractSchema, compositionPortSchema } from './composition-contract.js';
+import { functionExecutionContractSchema } from './function-contracts.js';
+import { actionCriteriaBindingsSchema } from './action-criteria.js';
 
 /** Definition JSON is data. It cannot contain executable code or remote schema references. */
 export type JsonSchema = Record<string, unknown>;
@@ -75,8 +77,9 @@ export const serializableActionSchema = z.strictObject({
   operation: z.strictObject({ version: versionSchema, effect: z.enum(['local', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'external_draft']), additionalEffects: effects.optional(), environment: z.enum(['sandbox', 'local', 'live_free', 'live']), inputSchema: schema, resultType: nameSchema }).optional(),
   inputSchema: schema.optional(), implementation: actionImplementationSchema.optional(), composition: compositionContractSchema.optional(),
   requiresApproval: z.boolean().optional(),
+  criteriaBindings: actionCriteriaBindingsSchema.optional(),
 });
-export const serializableFunctionSchema = z.strictObject({ id: nameSchema, version: versionSchema, inputTypes: names.min(1), description: text, returns: names.min(1).optional(), handlerRef: handlerRefSchema.optional() });
+export const serializableFunctionSchema = z.strictObject({ id: nameSchema, version: versionSchema, inputTypes: names.min(1), description: text, returns: names.min(1).optional(), executionContract: functionExecutionContractSchema.optional(), handlerRef: handlerRefSchema.optional() });
 export const ontologyDocumentSchema = z.strictObject({
   formatVersion: z.literal(1), id: ontologyIdSchema, version: versionSchema,
   objects: z.array(serializableObjectTypeSchema).max(2000), interfaces: z.array(serializableInterfaceSchema).max(500),

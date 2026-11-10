@@ -226,7 +226,7 @@ function packagingFixture({version=HARNESS_RELEASE_TOOLS.harness,adapter=true}={
   put(harnessPaths[1],`export function createPostgresWorker(){throw new Error('Synthetic packaging must never start a Worker')}\n${adapter?"export function postgresHarnessReasoner(){throw new Error('Synthetic packaging must never invoke reasoning')}":''}`);
   put('dist/packages/deployment/files.js',`export const releaseFiles=()=>${JSON.stringify(paths)};`);
   const document={formatVersion:1,id:'synthetic.harness-package',version:'1',objects:[],interfaces:[],links:[],actions:[],functions:[]};
-  put('dist/packages/ontology/seed-definition.js',`const document=${JSON.stringify(document)};export class StagedKernelBuilder{static stages=1;step(){}result(){return {document}}}export const stagedKernelComponents=()=>({documentDigest:${JSON.stringify(artifactDigest(document))},model:{ref:{digest:'${'a'.repeat(64)}'}}});`);
+  put('dist/packages/ontology/seed-definition.js',`const document=${JSON.stringify(document)};export class StagedKernelBuilder{static stages=1;step(){return {completed:1,total:1,ready:true}}result(){return {document}}}export const stagedKernelComponents=()=>({documentDigest:${JSON.stringify(artifactDigest(document))},model:{ref:{digest:'${'a'.repeat(64)}'}}});`);
   put('dist/packages/ontology/mcp-read.js','export const loadMcpReadModule=()=>{};export const mcpReadModuleRef=()=>{};');mkdirSync(join(root,'dist/packages/ontology/definitions'),{recursive:true});
   for(const path of ['Dockerfile','.dockerignore','tsconfig.json','scripts/build.mjs','scripts/ontology.mjs','scripts/release-artifacts.mjs'])put(path,'// synthetic source packaging fixture\n');
   return {root,output,put,close:()=>rmSync(root,{recursive:true,force:true})};
@@ -240,6 +240,19 @@ test('Harness packaging checks real bundled export/version metadata without exec
   for(const options of [{version:'unverified'},{adapter:false}]){
     const invalid=packagingFixture(options);try{await assert.rejects(createReleaseArtifacts({root:invalid.root,output:invalid.output,sourceSha,backend:'harness'}),options.adapter===false?/actual Harness executor.*adapter must be bundled/:/version differs.*release tool pin/);}finally{invalid.close();}
   }
+});
+
+test('explicit kernel packaging follows genuine progress and records the selected version and digests',async()=>{
+  const x=packagingFixture(),document={formatVersion:1,id:'synthetic.forward-package',version:'34',objects:[],interfaces:[],links:[],actions:[],functions:[]};
+  try{
+    x.put('dist/packages/ontology/seed-definition.js',`const document=${JSON.stringify(document)};export class StagedKernelBuilder{static stages=1;position=0;constructor(version){if(version!=='34')throw new Error('Unsupported reviewed kernel target')}step(expected){if(expected!==this.position)throw new Error('Wrong stage');this.position++;return {completed:this.position,total:20,ready:this.position===20}}result(){if(this.position!==20)throw new Error('Kernel not ready');return {document}}}export const stagedKernelComponents=kernel=>{kernel.result();return {documentDigest:${JSON.stringify(artifactDigest(document))},model:{ref:{digest:'${'b'.repeat(64)}'}}}};`);
+    const manifest=await createReleaseArtifacts({root:x.root,output:x.output,sourceSha,backend:'harness',kernelVersion:'34'});
+    const checked=verifyReleaseArtifacts(x.output);assert.equal(checked.manifestDigest,manifest.manifestDigest);
+    assert.equal(checked.ontology.package.kernel.version,'34');assert.equal(checked.ontology.package.kernel.documentDigest,artifactDigest(document));
+    assert.equal(checked.ontology.package.kernel.modelDigest,'b'.repeat(64));
+    assert.deepEqual(JSON.parse(readFileSync(join(x.output,'ontology/kernel.json'),'utf8')),document);
+    await assert.rejects(createReleaseArtifacts({root:x.root,output:join(x.root,'invalid'),sourceSha,backend:'harness',kernelVersion:'unreviewed'}),/Unsupported reviewed kernel target/);
+  }finally{x.close();}
 });
 
 test('container build inputs include PA assets and role images retain nonroot and exact tool pins',()=>{

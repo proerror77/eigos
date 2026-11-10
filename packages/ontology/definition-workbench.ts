@@ -25,9 +25,12 @@ export function workbenchSummary(document: OntologyDocument) {
     properties: properties.length,
     structuredProperties: properties.filter(value => value.kind === 'struct' || value.kind === 'array').length,
     sourceOperations: document.actions.filter(value => !!value.read?.mcp).length,
-    // No output/reads contract exists in this document format. Do not infer one
-    // from a backend implementation or mistake an empty declaration for none.
-    functionContract: 'input_types_and_handler_only' as const,
+    functionContract: document.functions.some(fn => fn.executionContract) ? 'explicit_execution_coverage' as const : 'input_types_and_handler_only' as const,
+    ...(document.functions.some(fn => fn.executionContract) ? { functionCoverage: {
+      validated: document.functions.filter(fn => fn.executionContract?.mode === 'validated').length,
+      legacy: document.functions.filter(fn => fn.executionContract?.mode === 'legacy').length,
+      undeclared: document.functions.filter(fn => !fn.executionContract).length,
+    } } : {}),
   };
 }
 
@@ -117,6 +120,14 @@ export function workbenchRelations(document: OntologyDocument): WorkbenchRelatio
       }
     }
   }
-  for (const fn of document.functions) for (const type of fn.inputTypes) typeEdge('function', fn.id, type, 'input');
+  for (const fn of document.functions) {
+    for (const type of fn.inputTypes) typeEdge('function', fn.id, type, 'input');
+    if (fn.executionContract?.mode === 'validated') {
+      for (const type of fn.executionContract.reads.types) typeEdge('function', fn.id, type, 'reads');
+      for (const link of fn.executionContract.reads.relationships) for (const endpoint of lineage(link.type)) {
+        for (const id of relationshipFields.get(`${endpoint}.${link.name}`) ?? []) edge('function', fn.id, 'link', id, `reads:${link.name}`);
+      }
+    }
+  }
   return [...result.values()].sort((a, b) => a.from.resourceId.localeCompare(b.from.resourceId) || a.role.localeCompare(b.role) || a.to.resourceId.localeCompare(b.to.resourceId));
 }

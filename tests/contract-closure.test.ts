@@ -46,8 +46,8 @@ test('approval is derived from the declared effect, not hand-assigned', () => {
   assert.equal(requires.length + reads.length, closed.document.actions.length);
   // Reads and local computation never need an owner's decision.
   for (const action of closed.document.actions) {
-    const effect = action.operation?.effect ?? action.read?.effect ?? 'none';
-    assert.equal(model.approvalRequired(action.id), !['read', 'local', 'none'].includes(effect), `${action.id} (${effect})`);
+    const effects = [...(action.effects ?? []), ...(action.operation ? [action.operation.effect, ...(action.operation.additionalEffects ?? [])] : []), ...(action.read ? ['read'] : [])];
+    assert.equal(model.approvalRequired(action.id), action.implementation?.kind === 'declarative' || effects.some(effect => !['read', 'local'].includes(effect)), action.id);
   }
   assert.ok(requires.length > 0 && reads.length > 0);
   assert.throws(() => model.approvalRequired('NoSuchAction'), /Unknown action/);
@@ -64,7 +64,7 @@ test('the closure release changes nothing that was already reviewed', () => {
 test('v32 exposes which actions operate on a type without moving the fingerprint', () => {
   const described = model.describeType('Order') as { actions?: { writes: { id: string; requiresApproval: boolean }[]; reads: unknown[] } };
   assert.ok(described.actions, 'a v32 projection must say which actions operate on the type');
-  assert.equal(described.actions!.writes.length, 12);
+  assert.equal(described.actions!.writes.length, 13);
   assert.equal(described.actions!.reads.length, 1);
   // Writing a local object is not the same as reaching a provider: approval follows
   // the declared effect, so the projection carries it rather than assuming it.

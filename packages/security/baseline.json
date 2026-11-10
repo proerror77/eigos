@@ -3456,7 +3456,7 @@
     {
       "id": "fixed-scope-message-references",
       "file": "packages/core/delegation.ts",
-      "sourceDigest": "08c9c38a4b025f680bd06b4e2195844fb1b14858b17d3d46883e0c6a3f792c20",
+      "sourceDigest": "5c0fa70f48750a205381df18f05f64d5d52dd6721d6a13600c8c0101be9bee42",
       "channels": [
         "model",
         "artifact"
@@ -3507,7 +3507,7 @@
     {
       "id": "goal-assessment-program",
       "file": "packages/coordinator/goal-assessment-program.ts",
-      "sourceDigest": "cea3e886c21fb43894af47e2bae7814cabc4654f1e8198e11718977dadaa46ca",
+      "sourceDigest": "a0e9172b9baff6f89823bbf36168b1dc0b65994c15617d137d381cde3527e023",
       "channels": [
         "internal"
       ],
@@ -3929,7 +3929,7 @@
       "currentControl": "Strict model decision schema; host validates authenticated decision digests, exact contexts and current task revision before dispatch",
       "targetControl": "Proposals cannot grant permissions or declare unverified business completion",
       "stage": "S5",
-      "sourceDigest": "1f844a90c0e568455536b5f09f43c4ba8443a5458dcdbe02a78eaa53bf305066"
+      "sourceDigest": "9b9f906ba6fbeed1dd7b6ffbae596e5e4949d6486414ec3fde8d8ad3fd9847b4"
     },
     {
       "id": "native-async-planning-session",
@@ -3954,7 +3954,7 @@
       "currentControl": "Original accepted ports, same-component declared functions, exact source observations, ownership, freshness and independent input validation",
       "targetControl": "No guessed values, cross-task aliases, implicit conversions or authority from model text",
       "stage": "S5",
-      "sourceDigest": "c4bd161e866c09db0d5d3b3b62e3f2cb47df6a8457ef69ec9bae7f23e88fc91b"
+      "sourceDigest": "def918da58e6dc47a68ac72b19cd814d76fbb867b3d29a16adc96a6bb75b57dd"
     },
     {
       "id": "native-goal-completion-contract",
@@ -4158,12 +4158,12 @@
       "currentControl": "Core resources remain protected; ordinary business display text cannot change data schemas, source binding or execution authority.",
       "targetControl": "Immutable compiled definitions and exact trusted handler contracts",
       "stage": "S2",
-      "sourceDigest": "53c070667f35392c75abe139e29797033c4d9bba9dede67b6391c14ad927d5ed"
+      "sourceDigest": "e05030cd7b40b1eb716505d74f184b9e8d992c562040d244ab688ce4b4327e72"
     },
     {
       "id": "ontology-definition-contracts",
       "file": "packages/ontology/definition-contracts.ts",
-      "sourceDigest": "453c626a65f4b9ad3649876b83ea357ed1bae41cbc959b23bfa6dd748857bd6b",
+      "sourceDigest": "18581bf60618561f27db21f59458363e99726c84ec5ec129d124df55a8da33f2",
       "channels": [
         "management",
         "sqlite"
@@ -4189,7 +4189,7 @@
     {
       "id": "ontology-definitions",
       "file": "packages/ontology/model.ts",
-      "sourceDigest": "66c84a0fad11b8aed357186ba909ce746a9a913222ef495120fd5deb501744fb",
+      "sourceDigest": "902d2c899853e0f1fcf0bcf2fef803ea53ab70e58412a03b02bc3b5f617c8b89",
       "channels": [
         "definition"
       ],
@@ -4257,7 +4257,7 @@
       "currentControl": "Every selectable release (v27-v31) keeps an explicit digest constant and is asserted during construction; historical releases are never rewritten.",
       "targetControl": "Accurate release construction and immutable historical interpretation",
       "stage": "S2",
-      "sourceDigest": "7bc826de364081e6183656b80f5288a943927890289cbd18effc5b07f3fe755c"
+      "sourceDigest": "ae5584dd1f36a0cc138343b903b28255807781ea5f0e7e765149423e6446d0ff"
     },
     {
       "id": "ontology-metadata-http",
@@ -4391,7 +4391,7 @@
     {
       "id": "ontology-registered-calculations",
       "file": "packages/ontology/object-functions.ts",
-      "sourceDigest": "b83c1f563e83b231fd16939a05f11896fbe2435c90518ee3f7d727a1c683f332",
+      "sourceDigest": "afce1b79c4e52641d5ca3d06b4c78d92cb558d5ef19539ad2844b9ea3244a30b",
       "channels": [
         "internal"
       ],
@@ -4441,7 +4441,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "ddf565b0183f85a63efdc20ac4e1236183ebbb3b27e097933f29b11417fee333",
+      "sourceDigest": "64195a3aaaea2d9da1689480d88a58ff3102d49eaa2c73040b75c66bd6833c1a",
       "channels": [
         "query",
         "function"
@@ -4488,7 +4488,7 @@
       "currentControl": "204 explicit purpose assignments; metadata excluded from writer fingerprints; prior policy reuse requires the exact unchanged v28 contract.",
       "targetControl": "No relabelling of facts, new source authority or historical contract rewrite.",
       "stage": "S3",
-      "sourceDigest": "3bb282a50079ee3f05cc037173a23452a46e92a806f809b63a498b1a66b9951e"
+      "sourceDigest": "3e10ecc2c48ba205c08e7642394c99cee8de7eacc8bbadc90e95bfa402600a5d"
     },
     {
       "id": "pa-communication-client-input",
@@ -4986,12 +4986,12 @@
     {
       "id": "postgres-action-authorization",
       "file": "packages/postgres/action-authorization.ts",
-      "sourceDigest": "d5d8de5a644cbfde35d7cdbedf634f6ce55540b48704a9b1d4e9020690746d72",
+      "sourceDigest": "8a6cb23190e07f5960c687107d18bdfd7fc304f69bddfe1ac3ab9140fb9b7644",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL current plan, source and action admission",
-      "currentControl": "Current task/claim/roles/source/output grants, sealed plan and actual receipts, immutable input/configuration, exact permits and original trusted response; required missing program, result and grounding semantic ports fail closed",
+      "currentControl": "Current task/claim/roles/source/output grants, sealed plan and actual receipts, immutable input/configuration, exact permits and original trusted response; required missing program, result and grounding semantic ports fail closed The DiDi-only host branch verifies the fixed goal, original workflow digest and actual Worker read ledger, then applies the same role, source, lease and action checks.",
       "targetControl": "Current task/claim/roles/source/output grants, sealed plan and actual receipts, immutable input/configuration, exact permits and original trusted response; required missing program, result and grounding semantic ports fail closed",
       "stage": "S5"
     },
@@ -5023,13 +5023,13 @@
     {
       "id": "postgres-agent-plan",
       "file": "packages/postgres/agent-plan.ts",
-      "sourceDigest": "354f7294d13a58fe8c13ed469ac3c6b9af935e4ece677049a961f8a8bdb6b524",
+      "sourceDigest": "2c6a2a211d44d8cacf51e4046612a2897a1f9fe43c5af649315f1f41eea7baeb",
       "channels": [
         "internal"
       ],
       "content": "Atomic original PostgreSQL Agent frontier installation",
-      "currentControl": "Current original claim and scope, exact durable model decision and read receipts, cumulative budgets and pinned definitions; same-savepoint plan and actual journal-authorized fresh intents; unported dataflow, private inputs and effects remain denied",
-      "targetControl": "Current original claim and scope, exact durable model decision and read receipts, cumulative budgets and pinned definitions; same-savepoint plan and actual journal-authorized fresh intents; unported dataflow, private inputs and effects remain denied",
+      "currentControl": "Current original claim, exact durable model decision and read receipts, cumulative budgets and pinned definitions; same-savepoint plan and actual journal-authorized fresh intents. Only six explicit pre-dispatch read/argument checks emit typed bounded feedback after origin validation; rollback precedes feedback. Authority failures, unported dataflow/private inputs/effects and uncertain original attempts remain denied. Current original claim and scope, exact durable model decision and read receipts, cumulative budgets and pinned definitions; same-savepoint plan and actual journal-authorized fresh intents; unported dataflow, private inputs and effects remain denied DiDi host plans require the original task-bound workflow proof and durable current Worker-context receipts. The intent still uses the original journal authorization.",
+      "targetControl": "Current original claim, exact durable model decision and read receipts, cumulative budgets and pinned definitions; same-savepoint plan and actual journal-authorized fresh intents. Only six explicit pre-dispatch read/argument checks emit typed bounded feedback after origin validation; rollback precedes feedback. Authority failures, unported dataflow/private inputs/effects and uncertain original attempts remain denied.",
       "stage": "S5"
     },
     {
@@ -5085,7 +5085,7 @@
     {
       "id": "postgres-ci-groups",
       "file": "scripts/postgres-tests.mjs",
-      "sourceDigest": "8451963d51f66c055873bf96e508d7ff61c2df6e8dc132cedba0fc404c37ba05",
+      "sourceDigest": "baf4109856e8212acc2c4735a9e786725f689415193912e9ac94887f4f8b367a",
       "channels": [
         "internal"
       ],
@@ -5133,19 +5133,19 @@
     {
       "id": "postgres-coordinator",
       "file": "packages/postgres/coordinator.ts",
-      "sourceDigest": "e976843bfbeb0159005ccfd76bd0eee1a45ddb2ea0b410dd9be21d45c9535d91",
+      "sourceDigest": "19cc486079e3ca6192ccbe2524294efd0af1dc1994666a7aa9fafe165ac98c57",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL original-task Goal and document phase coordinator",
-      "currentControl": "Registered acknowledged model ports; authorized typed request/catalogue/model DTOs and actual native receipts; independent Goal review, committed original attempts, current model/claim/role/source checks before dispatch, atomic output seals and no uncertain-operation replay Known rejection reasons are logged privately through a runtime allowlist even after successful recovery writeback; no raw error or public task diagnostic field is added.",
-      "targetControl": "Registered acknowledged model ports; authorized typed request/catalogue/model DTOs and actual native receipts; independent Goal review, committed original attempts, current model/claim/role/source checks before dispatch, atomic output seals and no uncertain-operation replay",
+      "currentControl": "Acknowledged original model usage/dispatch, authorized typed contexts and actual read receipts; ordinary Goals retain independent review. Current model, claim, task, role and source checks guard dispatch, observation and sealed acceptance. Only typed pre-dispatch plan errors after rollback produce bounded feedback; three failures without verified progress or exhausted budget pause. Fixed DiDi estimates use at most one tool-free interpretation per explicit request revision and at most eight committed deterministic phases per execution claim. Clarification releases the original claim; reply preserves cumulative usage and exact invocation identity. Unknown results never replay automatically; private rejection diagnostics use the existing allowlist.",
+      "targetControl": "Registered acknowledged model ports, current typed request/catalogue/model DTOs and native receipts; independent Goal review, original attempts and current model/claim/role/source checks before dispatch; atomic output seals. Fresh fenced feedback only after typed pre-dispatch plan rollback, same decision/revision and no unconfirmed intents; three same failures or exhausted reasoning pause. Unknown dispatched outcomes remain a distinct original-result reconciliation stop and never replay; raw diagnostics are not published. Execution-tagged fixed DiDi estimates may advance at most eight committed phases under the same original lease; model claims stop after their one phase. Each external dispatch/observation/acceptance retains its existing current authority and original-attempt checks; lost interpretation or source result is never retried automatically.",
       "stage": "S5"
     },
     {
       "id": "postgres-database-runtime",
       "file": "packages/postgres/database.ts",
-      "sourceDigest": "783b02e28f999ca9a7789db6aa28da6bb24281b881e9fa4f2c12bbcb4361406e",
+      "sourceDigest": "08a463b6068a6203e2e23db2b8d9576795c6cd4240e093b7853e267e2baf6e2b",
       "channels": [
         "internal"
       ],
@@ -5196,7 +5196,7 @@
     {
       "id": "postgres-didi-execution",
       "file": "packages/postgres/didi-execution.ts",
-      "sourceDigest": "c2a2959a4ba401a388363f8586fd14af5070e332254871b4a199ac8a6a354bf3",
+      "sourceDigest": "3df560001da74b1b757766f04b16d5b0d6eedb9b9d795b595d381025712e507f",
       "channels": [
         "internal",
         "provider"
@@ -5209,7 +5209,7 @@
     {
       "id": "postgres-didi-policy",
       "file": "packages/postgres/didi-policy.ts",
-      "sourceDigest": "30c95ac1209561908c27183eb00560b19d4a17993ad90210d54592faa227fd1a",
+      "sourceDigest": "40c5537d90c4e937bf704d1a313920c189944d947d86695b8dff40f7d117d0b3",
       "channels": [
         "internal",
         "provider"
@@ -5222,19 +5222,19 @@
     {
       "id": "postgres-didi-registry",
       "file": "packages/postgres/didi-registry.ts",
-      "sourceDigest": "cc1bc4b21adec00316bcdaab5a04e4afe430fedc4677f65fa2a76b44afc0eb93",
+      "sourceDigest": "f29d973ca4e555790be049e544f54f27c09a823f6e1e6f999b0bd9d269c15fc9",
       "channels": [
         "internal"
       ],
       "content": "Explicit document and DiDi program registry",
-      "currentControl": "Configured host programs preserve fixed pins, current account and original source binding; synthetic fixture evidence remains synthetic, unsupported semantics fail closed",
-      "targetControl": "Configured host programs preserve fixed pins, current account and original source binding; synthetic fixture evidence remains synthetic, unsupported semantics fail closed",
+      "currentControl": "Configured host programs preserve fixed pins, current account and original source binding; synthetic fixture evidence remains synthetic, unsupported semantics fail closed Only existing synthetic-fixture registrations may explicitly select fixtureEnvironment=sandbox; the executable program digest includes original program digest, kind and environment, while evidence remains synthetic. Relay kinds reject the option; production account schema and public submission are unchanged, and an old production source grant cannot match the fixture configuration.",
+      "targetControl": "Configured host programs preserve fixed pins, current account and original source binding; synthetic fixture evidence remains synthetic, unsupported semantics fail closed Only existing synthetic-fixture registrations may explicitly select fixtureEnvironment=sandbox; the executable program digest includes original program digest, kind and environment, while evidence remains synthetic. Relay kinds reject the option; production account schema and public submission are unchanged, and an old production source grant cannot match the fixture configuration.",
       "stage": "S5"
     },
     {
       "id": "postgres-document-bindings",
       "file": "packages/postgres/document-bindings.ts",
-      "sourceDigest": "db4e66369e7b4dd9e94a756ab6fa9c1a528d8c107c728d3a451ef3fbfe7983ee",
+      "sourceDigest": "0a4196ee32933d0d93305e8066903591f2ce6021fd6bc29095d0f783254ebeab",
       "channels": [
         "internal"
       ],
@@ -5321,24 +5321,24 @@
     {
       "id": "postgres-goal-acceptance",
       "file": "packages/postgres/goal-acceptance.ts",
-      "sourceDigest": "66a243fc72bbe729629b3145d0eb8947a13227aff3427b508501608efbced71a",
+      "sourceDigest": "975408fb63d5c9bcdea772bccd193732cc70ac0291f803ac2aedfc0c9888479f",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL original-model whole-goal acceptance",
-      "currentControl": "Original durable model completion and read receipts, fixed Goal and independent coverage, current component/requirements/conditions/definition checks; approved influence and sealed output in the original fenced commit; unavailable producer/citation semantics never default to accepted",
-      "targetControl": "Original durable model completion and read receipts, fixed Goal and independent coverage, current component/requirements/conditions/definition checks; approved influence and sealed output in the original fenced commit; unavailable producer/citation semantics never default to accepted",
+      "currentControl": "Original durable model completion and read receipts, fixed Goal and independent coverage, current component/requirements/conditions/definition checks; approved influence and sealed output in the original fenced commit; unavailable producer/citation semantics never default to accepted DiDi host completion independently validates the fixed quote goal, original accepted reads, source evidence and current output authorization. The fixed single-component DiDi outcome retains the independently verified component evidence level; synthetic is never promoted to live.",
+      "targetControl": "Original durable model completion and read receipts, fixed Goal and independent coverage, current component/requirements/conditions/definition checks; approved influence and sealed output in the original fenced commit; unavailable producer/citation semantics never default to accepted The fixed single-component DiDi outcome retains the independently verified component evidence level; synthetic is never promoted to live.",
       "stage": "S5"
     },
     {
       "id": "postgres-goal-contexts",
       "file": "packages/postgres/goal-contexts.ts",
-      "sourceDigest": "6b685ab4457c960aec54eb3453f968d4dcac0dead2994bbc3b304e0ec2e09521",
+      "sourceDigest": "f29210f79f9df48fc67681dddba4801c8d8416c8fc5adaf1faff3862f45ff073",
       "channels": [
         "internal"
       ],
       "content": "Atomic original Goal component preparation",
-      "currentControl": "Actual model decision and durable native read receipts, immutable original Goal criteria and request, current registered Doc binding/source, checked initializer and component digest; same-savepoint rollback without new task/grant or authority",
+      "currentControl": "Actual model decision and durable native read receipts, immutable original Goal criteria and request, current registered Doc binding/source, checked initializer and component digest; same-savepoint rollback without new task/grant or authority DiDi component preparation additionally accepts a current Worker-context receipt restricted to the fixed DiDi read binding and typed route.",
       "targetControl": "Actual model decision and durable native read receipts, immutable original Goal criteria and request, current registered Doc binding/source, checked initializer and component digest; same-savepoint rollback without new task/grant or authority",
       "stage": "S5"
     },
@@ -5357,7 +5357,7 @@
     {
       "id": "postgres-host-runtime",
       "file": "packages/postgres/host-runtime.ts",
-      "sourceDigest": "1f86455b12262ac0a1e33429d54fcefe99556e5d4d39d0c686bc87df77a875a0",
+      "sourceDigest": "cb4b4e9d1235f9531028378b3a3acce79e846face2f05d958df0941431dd72ec",
       "channels": [
         "internal"
       ],
@@ -5407,13 +5407,13 @@
     {
       "id": "postgres-kernel-runtime",
       "file": "packages/postgres/kernel-runtime.ts",
-      "sourceDigest": "dc01021b5c3321d48ca81ea7ea2cbdb24c103321f325ee2005abae4ffed7c379",
+      "sourceDigest": "3b1ab0978316fcfa613cda55a54db6f5be5857f9498fd7794b1e9a61a05bf996",
       "channels": [
         "internal"
       ],
       "content": "Yielded pre-publication PostgreSQL compiler preparation",
-      "currentControl": "Yielded actual staged targets27,28 or optional29 preserve exact completion/registry identity. Host selects27 or28 only from the reviewed policy; vector29 requires verified feature configuration and an explicitly upgraded description28 policy.",
-      "targetControl": "Existing exact 13-stage trusted kernel, ready-brand checks and cancellation between stages; prepared before qualification publishing and passed through exact transaction token; original release row/body/digest/model checks remain authoritative, with no permission or data caching",
+      "currentControl": "Selected policy model and document remain unchanged; install exact reviewed v34 software contracts from the already prepared v28 node before publisher startup, then seal. Installation grants no rights and does not activate releases; v29 vector branch remains explicit.",
+      "targetControl": "Selected policy model and document remain unchanged; install exact reviewed v34 software contracts from the already prepared v28 node before publisher startup, then seal. Installation grants no rights and does not activate releases; v29 vector branch remains explicit.",
       "stage": "S5"
     },
     {
@@ -5578,7 +5578,7 @@
     {
       "id": "postgres-ontology-functions",
       "file": "packages/postgres/ontology-functions.ts",
-      "sourceDigest": "c6ea9d3a2d47fbb323012057067211c34fab3334e8a961c62acd340da938e7d2",
+      "sourceDigest": "621fab3f18268d9c366f94a7e6fe24e4d20235d39b57862bbc1319c24f7b4107",
       "channels": [
         "internal"
       ],
@@ -5590,7 +5590,7 @@
     {
       "id": "postgres-ontology-metadata",
       "file": "packages/postgres/ontology-metadata.ts",
-      "sourceDigest": "a32a73e9d8215667d8531d8f2e6e4f819629ab1e11f93617f59ab32972c0d22f",
+      "sourceDigest": "950fa6cc9a175c59ed53259edee3ff85789a34c87130a66b611bdef21cc570bf",
       "channels": [
         "internal"
       ],
@@ -5618,9 +5618,9 @@
       "stage": "S5",
       "id": "postgres-ontology-read",
       "file": "packages/postgres/ontology-release.ts",
-      "sourceDigest": "6b4b8287596f35a59abe6c19b1dc00ac5dd4951114974b7ef1cb318fb60c04df",
+      "sourceDigest": "b110d69e4e5363386c751e8f15e97a1e485786976136972c549963a4a9575592",
       "content": "PostgreSQL ontology release and historical witness reader",
-      "currentControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions",
+      "currentControl": "Every lookup checks the persisted release identity, actual stored-body SHA-256 and model fingerprint. Immutable documents and compiled models are reused only within the same trusted registry, bounded to eight entries and 16 MiB of serialized content. Namespace, task, role, source and output checks execute at their existing boundaries.",
       "targetControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions"
     },
     {
@@ -5688,7 +5688,7 @@
     {
       "id": "postgres-projection-graph",
       "file": "packages/postgres/projection-graph.ts",
-      "sourceDigest": "c4a4a7ff1688ae7b895784b9afd2253a35bb76601e4aa453cc7364af2d2e4219",
+      "sourceDigest": "21096b41ba375ef255c2c816bd61f30c2cb6894bfae214b21943bdb086de3e9f",
       "channels": [
         "internal"
       ],
@@ -5741,10 +5741,10 @@
         "postgres"
       ],
       "content": "PostgreSQL business mutation transaction primitive",
-      "currentControl": "Serializable business state after transaction-scoped table serialization, exact authority/transaction identity and savepoint guards; current deadlines before/after commit, unknown-outcome eviction and no automatic retries",
+      "currentControl": "Business writes retain serializable exclusive fencing. Audited query callbacks share the fence under READ COMMITTED, resolve current authority without a row lock, and recheck authority after commit. Exact transaction identity, deadlines, current eligibility, uncertain-outcome eviction and cursor scope remain enforced.",
       "targetControl": "Serializable business state after transaction-scoped table serialization, exact authority/transaction identity and savepoint guards; current deadlines before/after commit, unknown-outcome eviction and no automatic retries",
       "stage": "S5",
-      "sourceDigest": "df18813fe0b33616c214edb496b521f2c14f95dcc778d2f0721618fe3b583fc2"
+      "sourceDigest": "a545fe409772c6f8637eda9647871fabfd4797451fc6920fb84d27b49980a4e1"
     },
     {
       "id": "postgres-source-projection",
@@ -5761,7 +5761,7 @@
     {
       "id": "postgres-source-relay-authority",
       "file": "packages/postgres/relay-read-authority.ts",
-      "sourceDigest": "960dd17151e45a4db9e87bf96e40fbd3e800d8b70f385a85363f495c61c44f88",
+      "sourceDigest": "88a975b694c7c9aac172a36243b45449139b1bd0656717196f21d29816149a85",
       "channels": [
         "internal"
       ],
@@ -5809,12 +5809,12 @@
     {
       "id": "postgres-task-commands",
       "file": "packages/postgres/task-command-service.ts",
-      "sourceDigest": "245c15f8910f582f319fc85de21cdec929ee28985cb6a01ccdf0f2e453ff1bc0",
+      "sourceDigest": "9ea7bdd4f95a73ac83628a0a22fa2dbba5146b2315e5270c1e53ac4be7b3c8d9",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL task submit and cancellation",
-      "currentControl": "Current write admission before and after atomic commands; original-task idempotency; explicit personal inputs; current sealed output or writer-only receipt; no model/provider execution",
+      "currentControl": "Current write admission before and after atomic commands, original-task idempotency, explicit personal inputs and sealed output; no model/provider execution. DiDi submission pins the registered read capability and exact structured goal. Checked clarification replies retain the task and prior evidence, atomically establish one new request version, and reject unknown intents, budget changes and expanded authority.",
       "targetControl": "Current write admission before and after atomic commands; original-task idempotency; explicit personal inputs; current sealed output or writer-only receipt; no model/provider execution",
       "stage": "S5"
     },
@@ -5869,12 +5869,12 @@
     {
       "id": "postgres-task-output-authorization",
       "file": "packages/postgres/task-output.ts",
-      "sourceDigest": "d542a07d4ebf7aee3ea4f9810290a14d081190f7ab1335287a90040a3aa7def2",
+      "sourceDigest": "c4e7aa1d464f1d216512440c3f427735a2d12699e5e28696b6c2fe3f388475eb",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL task object, sealed output and controlled download authorization",
-      "currentControl": "Current task admission, source and field visibility, exact sealed content, projection provenance, dependency digests and recipient checks; bounded read sessions expire before returning protected data",
+      "currentControl": "Current task admission, source/field visibility, sealed content, provenance, dependency digests and recipient checks remain. Raw bindings, request digests and membership proofs reuse only an exact immutable Worker window or host-selected public read transaction; writers and later requests read fresh rows.",
       "targetControl": "Current task admission, source and field visibility, exact sealed content, projection provenance, dependency digests and recipient checks; bounded read sessions expire before returning protected data",
       "stage": "S5"
     },
@@ -5897,20 +5897,20 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "bf7075c74da2c83a57304ea060eb1219dd6faf4928cc31566fadab0975c22a87",
+      "sourceDigest": "bde6e43ad0fb2ff8ea1c1d2eac84de24198c487de502b41695d8ea3437b688f6",
       "content": "PostgreSQL agent task-read admission",
-      "currentControl": "Current task, identity, source and expiry checks remain. Under optional29, resource roles resolve against the checked task release while consent validates against the current reviewed policy, preserving old27 pins without new function grants.",
+      "currentControl": "Current task, identity, source and expiry checks remain. Resource roles pin the exact checked task release, independently of the compatible field policy. Raw binding reuse is bounded to 64 entries/8 MiB and the same callback, transaction token, actor, owner, task and grant revisions; public reuse additionally requires the shared read fence.",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
     },
     {
       "id": "postgres-task-read-service",
       "file": "packages/postgres/task-read-service.ts",
-      "sourceDigest": "c073f678267c277396d1387eba7939b82a0e2ac8aec6163d35ccaf3c1002106d",
+      "sourceDigest": "55ca777166bf51b8970c9c842b353c95f7e7740155fd36ff6179ff3eb5a79089",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL task get/list/wait service",
-      "currentControl": "Current installation and task roots before listing/counting; sealed TaskViews for each result; each poll releases its transaction and rechecks current permission",
+      "currentControl": "Task views, object queries and Function evaluations use a concurrent per-request read fence; object and Function reads reuse one exact immutable release within that request. Every later call rechecks installation, task, role, fields, sources and output eligibility.",
       "targetControl": "Current installation and task roots before listing/counting; sealed TaskViews for each result; each poll releases its transaction and rechecks current permission",
       "stage": "S5"
     },
@@ -5929,13 +5929,13 @@
     {
       "id": "postgres-task-relay-authority",
       "file": "packages/postgres/task-relay-authority.ts",
-      "sourceDigest": "97e41b3ac92c805a431e58fd1f4760274ab854b4f6cb1dd21fa4600b23ec1996",
+      "sourceDigest": "7998b2e616a2ea0e24e56d8bd04fe419f0e9e733b65173ec254422b2e50a9838",
       "channels": [
         "internal"
       ],
       "content": "Current original installation/owner binding, one-use DPoP and command identity; own-identity revocation preserves original scope boundary",
-      "currentControl": "Current original installation/owner binding, one-use DPoP and command identity; own-identity revocation preserves original scope boundary",
-      "targetControl": "Preserve one current primary, original task/node identities and full data/authorization semantics; no silent fallback or activation claim",
+      "currentControl": "Current original installation/owner binding, one-use DPoP and command identity; own-identity revocation preserves original scope boundary Full trusted RuntimeAuthority fixes id, canonical origin and configuration digest; the fenced transaction supplies current authority without direct authority-table access.",
+      "targetControl": "Preserve one current primary, original task/node identities and full data/authorization semantics; no silent fallback or activation claim Full trusted RuntimeAuthority fixes id, canonical origin and configuration digest; the fenced transaction supplies current authority without direct authority-table access.",
       "stage": "S5"
     },
     {
@@ -5966,7 +5966,7 @@
     {
       "id": "postgres-task-view",
       "file": "packages/postgres/task-view.ts",
-      "sourceDigest": "77505001297651f4f171b4099f33be488b07f8ca562c97c5e1834aead31209bd",
+      "sourceDigest": "4b73c95f521b539c7ad317bd2e9b6dce554934e39cab551d992a058313b4d166",
       "channels": [
         "internal"
       ],
@@ -6080,13 +6080,13 @@
     {
       "id": "postgres-worker-loop",
       "file": "apps/worker/postgres-worker.ts",
-      "sourceDigest": "c7237b8bf9d6baba57d12f2487edca2dd2b82bfe3533ae2ce986f19490a1ad4d",
+      "sourceDigest": "20bb88fc09573d9053df6c3a550d6264b59c8c1e8f26cd67eded5838d167699b",
       "channels": [
         "internal"
       ],
       "content": "Mac PostgreSQL durable execution loop",
-      "currentControl": "Original durable claims with independent serialized heartbeat, shared two-slot queue, model accounting acknowledged before/after dispatch, cancellation/expiry abort, drain/resume and guarded writeback; no model/provider I/O in a transaction or automatic business replay",
-      "targetControl": "Original durable claims with independent serialized heartbeat, shared two-slot queue, model accounting acknowledged before/after dispatch, cancellation/expiry abort, drain/resume and guarded writeback; no model/provider I/O in a transaction or automatic business replay",
+      "currentControl": "Separate bounded local model/execution slots; requests only currently free lanes before durable claim, verifies returned opaque reservation, and never leases a task to await a model slot. Original-token heartbeat, cancellation/expiry abort, acknowledged model accounting, drain/resume and guarded release remain; no model/provider I/O inside transactions or automatic business replay.",
+      "targetControl": "Separate bounded local model/execution slots; requests only currently free lanes before durable claim, verifies returned opaque reservation, and never leases a task to await a model slot. Original-token heartbeat, cancellation/expiry abort, acknowledged model accounting, drain/resume and guarded release remain; no model/provider I/O inside transactions or automatic business replay.",
       "stage": "S5"
     },
     {
@@ -6104,25 +6104,25 @@
     {
       "id": "postgres-worker-runtime",
       "file": "apps/worker/postgres-runtime.ts",
-      "sourceDigest": "63cd92c7492794e99168bd233ab0c0fca23cf053da43bedbe37592c4293a28bf",
+      "sourceDigest": "d5242ba72129e77a134d33f2600cdeebd1f62d47e4767a4a9bf490e421bcd373",
       "channels": [
         "internal"
       ],
       "content": "Explicit registered PostgreSQL Worker candidate assembly",
-      "currentControl": "Selected known Codex or Harness transport uses acknowledged usage and a current guarded runStructured path; original model/account/configuration retained, Harness concurrency one and existing five-minute Worker deadline; unadapted ports reject, injected original database ownership; construction never starts polling or switches primary",
-      "targetControl": "Selected known Codex or Harness transport uses acknowledged usage and a current guarded runStructured path; original model/account/configuration retained, Harness concurrency one and existing five-minute Worker deadline; unadapted ports reject, injected original database ownership; construction never starts polling or switches primary",
+      "currentControl": "Same installed program registry classifies the exact next phase and executes it. Explicit shared capacity contract, separate local execution slots, Harness model concurrency one/Codex two and existing five-minute deadline. Original selected model/account/channel retained with acknowledged guarded dispatch; unadapted ports reject. Construction starts no polling, migration or primary switch.",
+      "targetControl": "Same installed program registry classifies the exact next phase and executes it. Explicit shared capacity contract, separate local execution slots, Harness model concurrency one/Codex two and existing five-minute deadline. Original selected model/account/channel retained with acknowledged guarded dispatch; unadapted ports reject. Construction starts no polling, migration or primary switch.",
       "stage": "S5"
     },
     {
       "id": "postgres-worker-store",
       "file": "packages/postgres/worker-store.ts",
-      "sourceDigest": "c8f3a034917cc21c214132da3b1b63d7287b39691f3b51c8ec16fa429161b7bc",
+      "sourceDigest": "fa9000f7b2bd6dfb21c23fd4b653dbeee519884a69eaff1e4fdf6cfb4c1ed7fd",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL durable Worker queue and writeback",
-      "currentControl": "Shared two-call budget; current task authority and original token for claim, renewal and checkpoint/finish; cancellation and late-result fences; expired external dispatch becomes unknown and retains original key",
-      "targetControl": "Shared two-call budget; current task authority and original token for claim, renewal and checkpoint/finish; cancellation and late-result fences; expired external dispatch becomes unknown and retains original key",
+      "currentControl": "Shared bounded model/execution and per-owner capacity checked in the serialized business transaction; owner occupancy fairness and bounded candidate pagination. Immutable versioned opaque-token reservation, exact active-contract match, conservative legacy-token accounting and total budget including safety recovery. Execution reservations cannot begin model usage. Original authority/token, renewal, cancel/late-output fences and unknown-effect preservation remain.",
+      "targetControl": "Shared bounded model/execution and per-owner capacity checked in the serialized business transaction; owner occupancy fairness and bounded candidate pagination. Immutable versioned opaque-token reservation, exact active-contract match, conservative legacy-token accounting and total budget including safety recovery. Execution reservations cannot begin model usage. Original authority/token, renewal, cancel/late-output fences and unknown-effect preservation remain.",
       "stage": "S5"
     },
     {
@@ -6651,7 +6651,7 @@
     {
       "id": "release-artifacts-cli",
       "file": "scripts/release-artifacts.mjs",
-      "sourceDigest": "f3173f81dd3674b633276a36898ef7e84bbeeee2b1e7fd11c8917fed4aecdc06",
+      "sourceDigest": "5b088e120bc58718269b8a680951041de6c3748c8ea07dcfe910ef43a9a27988",
       "channels": [
         "internal"
       ],
@@ -7258,7 +7258,7 @@
     {
       "id": "security-definition-view",
       "file": "packages/security/definition-view.ts",
-      "sourceDigest": "89d7508549c6218334e2bf9bd2266d677795a2335717aca466a3c58ea39b6fd7",
+      "sourceDigest": "69a8b3ed1b516a5734ad4fd897ff544971e79b0530a34985374f5718f344ede3",
       "channels": [
         "internal"
       ],
@@ -7344,7 +7344,7 @@
     {
       "id": "security-model-review",
       "file": "packages/security/model-review.ts",
-      "sourceDigest": "dba149d5a3cca733d5d3d857d62c251447b757f5b77ee518b79196b320665547",
+      "sourceDigest": "0f7cbf95b89cc99f9fa11c84acb4d8b175cb6cbd3bdd346104d5470a1794ff6b",
       "channels": [
         "internal"
       ],
@@ -7404,7 +7404,7 @@
     {
       "id": "security-principal",
       "file": "packages/core/domain.ts",
-      "sourceDigest": "62faf9bac7c98eb55cd938ce9e84989aca8b2e0a1a220175d5dc284b875bd3f0",
+      "sourceDigest": "f77d60d87fa1875d37c72a0b8617dbd068fb80fb201e77e801fb95c6a9fdf47e",
       "channels": [
         "authorization_control"
       ],
@@ -7810,7 +7810,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "6ce7caaa6be22e81728e06192ec9614f9821bc30a91e8a57f1041a71c2764a7a",
+      "sourceDigest": "b2ee4dbe3b0441f9fb3cffacc790a00c0a663ff8bb1d054efa5f09affb2de4f6",
       "channels": [
         "http",
         "mcp",
@@ -7848,7 +7848,7 @@
     {
       "id": "trusted-definition-registry",
       "file": "packages/ontology/model-compiler.ts",
-      "sourceDigest": "53c070667f35392c75abe139e29797033c4d9bba9dede67b6391c14ad927d5ed",
+      "sourceDigest": "e05030cd7b40b1eb716505d74f184b9e8d992c562040d244ab688ce4b4327e72",
       "channels": [
         "authorization_control"
       ],
@@ -7860,7 +7860,7 @@
     {
       "id": "trusted-kernel-bootstrap",
       "file": "packages/ontology/seed-definition.ts",
-      "sourceDigest": "7bc826de364081e6183656b80f5288a943927890289cbd18effc5b07f3fe755c",
+      "sourceDigest": "ae5584dd1f36a0cc138343b903b28255807781ea5f0e7e765149423e6446d0ff",
       "channels": [
         "authorization_control"
       ],
@@ -7892,6 +7892,146 @@
       "targetControl": "Keep rejection diagnostics separate from task state, permission, retry and business acceptance",
       "stage": "S3",
       "sourceDigest": "0d87682a27d4c0654aa6b13748fd71de4e0e150733b2cf6c17aa14521c132fb1"
+    },
+    {
+      "id": "postgres-scalar-query-predicate",
+      "file": "packages/postgres/scalar-query-predicate.ts",
+      "sourceDigest": "58520825604acf0dd72437d9427ff5dca0bbbf61cdd7f60cd9464d72640e870f",
+      "channels": [
+        "internal",
+        "postgres"
+      ],
+      "content": "Typed SQL predicates over an explicitly admitted object set",
+      "currentControl": "Parameterized scalar predicates apply after the materialized owner, namespace and visible-object boundary. Unsafe representations and historical definitions continue through the existing checked reader. Aggregate raw-body budget bounds server JSON parsing.",
+      "targetControl": "Preserve exact scalar semantics, authorized visibility, bounded continuation and rejection of incompatible stored data",
+      "stage": "S5"
+    },
+    {
+      "id": "ontology-function-contracts",
+      "file": "packages/ontology/function-contracts.ts",
+      "channels": [
+        "internal",
+        "definition_metadata"
+      ],
+      "content": "Definition-only schemas for validated and explicit legacy invocation contracts",
+      "currentControl": "Strict bounded schema separates known/unknown envelope, declared reads and undeclared legacy output; JSON carries no code.",
+      "targetControl": "Strict bounded schema separates known/unknown envelope, declared reads and undeclared legacy output; JSON carries no code.",
+      "stage": "S2",
+      "sourceDigest": "7aa9252495c20b79cb8520ee249fdde1392fb44eabf460df7e3444b9ccb3e8f8"
+    },
+    {
+      "id": "ontology-function-runtime",
+      "file": "packages/ontology/function-runtime.ts",
+      "channels": [
+        "internal",
+        "definition_metadata"
+      ],
+      "content": "Exact compiled function execution and result/read validation",
+      "currentControl": "Immutable once-only bindings and opaque set identity; explicit parameter normalization cannot change function/object identity; declared reads cover interface mappings and returned targets; all registered functions remain read-only with current authorization and evidence.",
+      "targetControl": "Immutable once-only bindings and opaque set identity; explicit parameter normalization cannot change function/object identity; declared reads cover interface mappings and returned targets; all registered functions remain read-only with current authorization and evidence.",
+      "stage": "S2",
+      "sourceDigest": "62560ea76c23a4cd39f4d83c20978307fc142ab16a70da8c38812660b8fdc1e9"
+    },
+    {
+      "id": "ontology-builtin-function-implementations",
+      "file": "packages/ontology/builtin-function-implementations.ts",
+      "channels": [
+        "internal",
+        "definition_metadata"
+      ],
+      "content": "Software-owned adapters for existing function evaluators",
+      "currentControl": "Explicit built-in parser allowlist, pinned model version, validated DiDi result/read contracts and honest legacy coverage; no executable source in definitions.",
+      "targetControl": "Explicit built-in parser allowlist, pinned model version, validated DiDi result/read contracts and honest legacy coverage; no executable source in definitions.",
+      "stage": "S2",
+      "sourceDigest": "4379bf62bf07b7b0e48b1365fa4baa25f978385010debf64c90122303f783fa6"
+    },
+    {
+      "id": "ontology-action-criteria",
+      "file": "packages/ontology/action-criteria.ts",
+      "channels": [
+        "internal",
+        "definition_metadata"
+      ],
+      "content": "Submission criterion enforcement bindings",
+      "currentControl": "Every strict criterion is covered by a real engine guard, existing declarative condition, protected personal guard or exact trusted runtime; registered vocabulary alone cannot bypass checks.",
+      "targetControl": "Every strict criterion is covered by a real engine guard, existing declarative condition, protected personal guard or exact trusted runtime; registered vocabulary alone cannot bypass checks.",
+      "stage": "S2",
+      "sourceDigest": "9014c73f7ed7a5c867949105ae8fa1eceefabbbfccdc6650a9beda6bc1264038"
+    },
+    {
+      "id": "ontology-executable-contract-kernel",
+      "file": "packages/ontology/executable-contract-kernel.ts",
+      "channels": [
+        "internal",
+        "definition_metadata"
+      ],
+      "content": "Forward v34 executable contracts",
+      "currentControl": "Preserves prior bodies; explicit compatibility references and identity-v2 metadata; no activation, grants or provider calls.",
+      "targetControl": "Preserves prior bodies; explicit compatibility references and identity-v2 metadata; no activation, grants or provider calls.",
+      "stage": "S2",
+      "sourceDigest": "4c9ab762cbc13aab6b5b64022fc915052ee4f106e9c50479bdc25938eb6064d6"
+    },
+    {
+      "id": "ontology-executable-contract-compatibility",
+      "file": "packages/ontology/executable-contract-compatibility.ts",
+      "channels": [
+        "internal",
+        "definition_metadata"
+      ],
+      "content": "Exact installed v34 compatibility and field policy reference",
+      "currentControl": "Exact public and complete document pins plus genuine compiler completion and installed Function callback identity; metadata copies, missing bindings, substituted callbacks and method overrides cannot borrow policy; immutable validation is reused without per-field catalogue scans.",
+      "targetControl": "Exact public and complete document pins plus genuine compiler completion and installed Function callback identity; metadata copies, missing bindings, substituted callbacks and method overrides cannot borrow policy; immutable validation is reused without per-field catalogue scans.",
+      "stage": "S2",
+      "sourceDigest": "240169437122ae0bb38197fc7c0f5a2fbf921007dbf49b9eeeabcb5815440f3f"
+    },
+    {
+      "id": "postgres-worker-capacity",
+      "file": "packages/postgres/worker-capacity.ts",
+      "sourceDigest": "f2ca1d9e72d30c4da13a662f8937e413d4b49506401e91d4925dc51e4bab8ab1",
+      "channels": [
+        "internal"
+      ],
+      "content": "Bounded original Worker resource reservations and installed next-phase classification",
+      "currentControl": "Host-only capacity metadata supplies no action permission. Exact installed CallerAction/DiDi next-phase classification retains coverage and original pending intents; local ComposeDocument still needs model capacity. Validated shared/per-owner bounds, random opaque token with version and contract digest, conservative historical tokens, refusal of malformed/version/active-contract mismatch; original lease and semantic gates remain independent. The closed DiDi estimate contract separately classifies structured initialization and accepted natural interpretation as execution; an unconsumed natural interpretation remains model work, with exact single-turn evidence and installed registry required. Unknown original source results can only enter a deterministic reconciliation stop, never model fallback or replay.",
+      "targetControl": "Host-only capacity metadata supplies no action permission. Exact installed CallerAction/DiDi next-phase classification retains coverage and original pending intents; local ComposeDocument still needs model capacity. Validated shared/per-owner bounds, random opaque token with version and contract digest, conservative historical tokens, refusal of malformed/version/active-contract mismatch; original lease and semantic gates remain independent. The closed DiDi estimate contract separately classifies structured initialization and accepted natural interpretation as execution; an unconsumed natural interpretation remains model work, with exact single-turn evidence and installed registry required. Unknown original source results can only enter a deterministic reconciliation stop, never model fallback or replay.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-plan-feedback",
+      "file": "packages/postgres/plan-feedback.ts",
+      "sourceDigest": "78acfa42e082eadb15d2f76c83394c09839bef7c32f25877f4c06e9fa76570cd",
+      "channels": [
+        "internal"
+      ],
+      "content": "Bounded feedback for safely rejected original pre-dispatch plans",
+      "currentControl": "Only named non-private validation messages after exact durable planning origin and rollback. Fresh same-request working state, no pending plan, no installed frontier from that model run and no unconfirmed intent; current claim/evidence authorization belongs to enclosing mutation. Preserve fixed goal, budgets and accepted results; three same validation failures since current request, restored scope or newly verified projected source evidence or exhausted reasoning pauses, never replaying uncertain effects.",
+      "targetControl": "Only named non-private validation messages after exact durable planning origin and rollback. Fresh same-request working state, no pending plan, no installed frontier from that model run and no unconfirmed intent; current claim/evidence authorization belongs to enclosing mutation. Preserve fixed goal, budgets and accepted results; three same validation failures since current request, restored scope or newly verified projected source evidence or exhausted reasoning pauses, never replaying uncertain effects.",
+      "stage": "S5"
+    },
+    {
+      "id": "didi-estimate-submission-contract",
+      "file": "packages/core/didi-estimate-request.ts",
+      "sourceDigest": "f0c2887be5f6d66b52c52a7d0cd90c7bb4780eb8c156fec73362832c65019e7c",
+      "channels": [
+        "mcp",
+        "a2a"
+      ],
+      "content": "Closed PA DiDi estimate request and one-decision route input",
+      "currentControl": "Only named places, city and optional vehicle class are accepted. The typed scope is bound to the original request. No effect or source privilege is granted.",
+      "targetControl": "Only named places, city and optional vehicle class are accepted. The typed scope is bound to the original request. No effect or source privilege is granted.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-didi-short-path-proof",
+      "file": "packages/postgres/didi-short-path.ts",
+      "sourceDigest": "0dd8f2e084cb455e4799e8de38780ce95127ace07d07c30bb69c1ae9dd1e5dfe",
+      "channels": [
+        "internal"
+      ],
+      "content": "Fixed DiDi read-only workflow evidence",
+      "currentControl": "Exact current request/release/route and actual Worker read receipts bind the fixed estimate phases to only the two registered source reads. Each natural interpretation pins its acknowledged invocation, request digest, revision and original run; historical runs remain in the cumulative ledger. Explicit idempotent user replies alone establish a new interpretation window after safe clarification. Classification and batching use this checked proof, never missing ordinary Goal coverage.",
+      "targetControl": "The current request and release, exact authorized route, optional single grounded model receipt and actual Worker-context receipts bind the fixed estimate phases. Only the two registered source read actions can enter the original journal. Common fixed-request validation also runs before natural interpretation; accepted natural evidence must declare exactly one tool-free model request. Classification and batching consume this same checked contract, not the absence of ordinary Goal coverage.",
+      "stage": "S5"
     }
   ]
 }

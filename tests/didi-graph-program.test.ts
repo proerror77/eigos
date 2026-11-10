@@ -1,4 +1,5 @@
 import {test} from 'node:test';
+import {runtimeAuthoritySchema} from '../packages/core/runtime-authority.js';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {ExecutionCatalog} from '../packages/core/catalog.js';
@@ -82,7 +83,12 @@ test('production DiDi registration shares the actual account with Relay and reje
     let descriptor:DidiMemberConnection={version:1,connectionId:randomUUID(),revision:1,memberId:randomUUID(),owner:identity,localUid:process.getuid?.()??0,purpose:'ride_estimate_readonly',state:'active',expiresAt:new Date(Date.now()+60000).toISOString(),binding:{...source.binding,environment:'production',auditDirectory:source.binding.auditDirectory!}};
     const account=new PostgresDidiAccount(source.binding,owner,{readCurrent:()=>descriptor}),other=new PostgresDidiAccount(source.binding,owner,{readCurrent:()=>descriptor});
     const noIO=async():Promise<never>=>{throw new Error('Constructor validation must not use PostgreSQL or a provider');},database:Pick<PostgresDatabase,'run'|'inspectClaim'>={run:noIO,inspectClaim:noIO};
-    const authority={id:randomUUID(),gatewayOrigin:'https://primary.synthetic.example'},options={database,policyDigest,authorityId:authority.id,gatewayOrigin:authority.gatewayOrigin},relay=new PostgresTaskRelay({...options,didiAccount:account});
+    const canonicalOrigin='https://primary.synthetic.example';
+    const runtime=runtimeAuthoritySchema.parse({version:1,id:randomUUID(),revision:1,canonicalOrigin,issuer:identity.issuer,ontologyId:'eigos.business',
+      databasePath:'/synthetic/tasks.sqlite',membershipDatabasePath:'/synthetic/members.sqlite',
+      ingresses:[{origin:canonicalOrigin,audience:canonicalOrigin,agentClientId:'test',agentClientIds:['test']}]});
+    const authority={id:runtime.id,gatewayOrigin:runtime.canonicalOrigin};
+    const options={database,policyDigest,authority:runtime},relay=new PostgresTaskRelay({...options,didiAccount:account});
     const registration={binding:source.binding,owner,account,kind:'relay' as const,reads:relay.reads,peerId:'agent_'+'A'.repeat(43),authority};
     assert.equal(relay.reads.didiAccount,account);const registry=new PostgresReadProgramRegistry(policyDigest,{documentEnabled:false,didi:registration});assert.equal(registry.entries[0]!.didi!.account,account);
     assert.throws(()=>new PostgresReadProgramRegistry(policyDigest,{didi:{...registration,reads:new PostgresRelayReadAuthority(options)}}),/same current account/);

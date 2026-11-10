@@ -39,6 +39,30 @@ Foundation 的 MCP 工具拒绝保留原 `code`，在文本 JSON 和 `structured
 
 指引只使用实际拒绝类别和安全常量，不返回私有对象是否存在、隐藏字段或原请求内容。`check_access` 只适用于已获许可的现有任务，不能在首次提交被拒绝、尚无任务 ID 时调用。重试前确认原请求是否已被接受；错误响应、权限页或 PA 的回复都不批准购买、付款或新的访问范围。
 
+## PostgreSQL 滴滴只读估价
+
+当前配置并授权滴滴只读来源的 PA 可显式选择估价短路径。MCP 调用 `submit_task`，A2A 用单个 data part，`messageId` 充当 `requestId`。
+
+```json
+{
+  "requestId": "stable-request-id",
+  "goal": "只查询滴滴估价，不叫车、不下单、不付款。",
+  "didiEstimate": {
+    "mode": "structured",
+    "city": "上海市",
+    "origin": "上海虹桥站",
+    "destination": "上海浦东国际机场2号航站楼",
+    "serviceClass": "专车"
+  }
+}
+```
+
+`serviceClass` 可省略。结构化方式的固定目标限定为查价，服务端将路线附入原始任务说明，不调用模型。用自然语言时传用户原话及 `"didiEstimate": {"mode": "natural"}`。Worker 对每个明确请求版本最多发出一次无工具解释请求。两种方式均通过同一已配置来源查询两端地点和估价，再根据原操作和来源回执验收。
+
+缺地点或地点不唯一时，原任务进入 `input-required`。通过 `reply_to_task` 补充路线后，任务编号、旧观察、操作记录和累计预算保留；新请求版本重新取得准确授权，并独立绑定至多一次解释。重复提交同一 `requestId` 不会再次开启解释。补充内容只能细化估价路线；叫车、下单、付款或无法表达的硬性条件会被拒绝。有已派发而结果未知的操作时，必须先核对原操作，不能靠补充信息重放。额外约束或其他业务目标应走普通委托入口。
+
+用返回的 `taskId` 调用 `get_task` 或 A2A `GetTask` 回读。报价按原来源时效读取，车辆价格区间、观察时间和来源证据随结果返回。
+
 ## 任务接口
 
 以 MCP `tools/list` 返回的输入 schema 为准：

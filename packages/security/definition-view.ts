@@ -82,17 +82,35 @@ export function authorizedDefinitionCatalogue(access: DefinitionAccess, model: O
         })).map(({ name, target, many }) => ({ name, target, many })) };
   });
   const actions = model.actionIds().map(id => model.action(id)).filter(a => policy.resourceAllowed('actionType', a.id) && Object.values(a.inputs).every(typeAllowed)
-    && a.changes.every(change => typeAllowed(change.split('.')[0]!)) && (a.read?.mcp?.requires??[]).every(r=>typeAllowed(r.objectType) && (!r.action || policy.resourceAllowed('actionType',r.action)) && policy.resourceAllowed('function',r.evaluate) && (!r.derive || policy.resourceAllowed('function',r.derive.function)))
+    && a.changes.every(change => typeAllowed(change.split('.')[0]!)) && (a.resultTypes ?? []).every(typeAllowed) && (a.read?.mcp?.requires??[]).every(r=>typeAllowed(r.objectType) && (!r.action || policy.resourceAllowed('actionType',r.action)) && policy.resourceAllowed('function',r.evaluate) && (!r.derive || policy.resourceAllowed('function',r.derive.function)))
     && (!a.read?.module || policy.resourceAllowed('function',a.read.module.completion.evaluate))).map(a => ({ id: a.id, description: a.description, inputs: a.inputs, changes: a.changes, execution: 'definition_only',
+      ...(model.criteriaVersion === '2' ? { version: a.version ?? a.operation?.version ?? a.read?.version, kind: a.kind, effects: a.effects,
+        requiresApproval: model.approvalRequired(a.id), resultTypes: a.resultTypes, submissionCriteria: a.submissionCriteria, criteriaBindings: a.criteriaBindings,
+        authorization: { requiresExplicitEffectScope: model.approvalRequired(a.id), current: 'not_evaluated', existingExactScopeMaySatisfy: true }, runtimeReadiness: 'not_evaluated',
+        binding: model.actionBindingStatus(a.id), ...(a.inputSchema ? { inputSchema: a.inputSchema } : {}),
+        ...(a.composition ? { composition: a.composition } : {}) } : {}),
       ...(a.read ? { read: { effect: a.read.effect, resultType: a.read.resultType, inputSchema: a.read.inputSchema,
         ...(a.read.mcp?{mcp:{requires:a.read.mcp.requires,inputMatchesScope:a.read.mcp.inputMatchesScope}}:{}),...(a.read.module?{module:{completion:a.read.module.completion}}:{}) } } : {}),
-      ...(a.operation ? { operation: { effect: a.operation.effect, resultType: a.operation.resultType, inputSchema: a.operation.inputSchema } } : {}) }));
-  const functions = model.functionIds().map(id => model.function(id)).filter(f => policy.resourceAllowed('function', f.id) && f.inputTypes.every(typeAllowed)).map(f=>{
+      ...(a.operation ? { operation: { effect: a.operation.effect, resultType: a.operation.resultType, inputSchema: a.operation.inputSchema,
+        ...(model.criteriaVersion === '2' ? { additionalEffects: a.operation.additionalEffects ?? [] } : {}) } } : {}) }));
+  const permittedActions = new Set(actions.map(action => action.id));
+  const visibleDefinitions = model.criteriaVersion === '2' ? definitions.map(type => ({ ...type,
+    ...(type.kind === 'object' ? { actions: Object.fromEntries(Object.entries(model.typeActions(type.id)).map(([kind, bindings]) => [kind, bindings.filter(binding => permittedActions.has(binding.id))])) } : {}),
+  })) : definitions;
+  const strictFunctions = model.criteriaVersion === '2';
+  const functions = model.functionIds().map(id => model.function(id)).filter(f => policy.resourceAllowed('function', f.id) && (strictFunctions ? f.inputTypes.some(typeAllowed) : f.inputTypes.every(typeAllowed))
+    && (f.executionContract?.mode !== 'validated' || f.executionContract.reads.types.every(typeAllowed)
+      && f.executionContract.reads.relationships.every(link => {
+        const as = model.isInterface(link.type) ? link.type : undefined, sources = (as ? model.concreteTypes(as) : [link.type]).filter(typeAllowed);
+        return sources.length > 0 && sources.every(source => policy.resourceAllowed('linkType', model.navigation(source, link.name, as).link.id));
+      }))).map(f=>{
     const schema=functionCallSchema.options.find(schema=>schema.shape.function.value===f.id);
-    return {...f,...(schema?{inputSchema:definitionSchema(access.model, schema)}:{})};
+    const inputTypes = strictFunctions ? f.inputTypes.filter(typeAllowed) : f.inputTypes;
+    return {...f, inputTypes, ...(inputTypes.length !== f.inputTypes.length ? { inputTypesFiltered: true } : {}),
+      ...(f.executionContract ? { inputSchema: structuredClone(f.executionContract.inputSchema) } : schema ? {inputSchema:definitionSchema(access.model, schema)} : {}), ...(strictFunctions ? { binding: model.functionBindingStatus(f.id) } : {})};
   });
   // Build one authorized definition set for internal context selection and public paging.
-  return { model: { id: model.ref.id, version: 'authorized.v2', digest: digest({ types: definitions, actions, functions }) }, types: definitions, actions, functions };
+  return { model: { id: model.ref.id, version: 'authorized.v2', digest: digest({ types: visibleDefinitions, actions, functions }) }, types: visibleDefinitions, actions, functions };
 }
 
 export function describeDefinitionCatalogue(access: DefinitionAccess, input: DefinitionDescriptionInput = {}, model: OntologyModel = access.model, contextTypes: readonly string[] = []) {

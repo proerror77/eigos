@@ -40,7 +40,7 @@ test('PostgreSQL Gateway refuses to omit enabled Definition, Task Relay or Messa
 });
 
 test('PostgreSQL Gateway refuses a partial production task service instead of installing a Proxy fallback',async()=>{
-  const x=input(),commands=new PostgresTaskCommandService({run:x.deny},'0'.repeat(64));
+  const x=input(),commands=new PostgresTaskCommandService({run:x.deny,read:x.deny},'0'.repeat(64));
   const partial={secured:commands.secured,services:commands.services.bind(commands),get:commands.get.bind(commands)};
   await assert.rejects(x.reject({...x.runtime,tasks:partial}),/task adapter is missing/);
   assert.equal(x.calls(),0);

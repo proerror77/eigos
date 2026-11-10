@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {assertDidiShortPathDecision,isDidiShortPathDecision,recordDidiReadTiming} from './didi-short-path.js';
 import type {Client} from 'pg';
 import {digest} from '../core/delegation.js';
 import {DomainError,type Job} from '../core/domain.js';
@@ -64,7 +65,10 @@ export async function preparePostgresGoalContexts(client:Client,input:PostgresWo
   try{
     await fence();const store=new PostgresTaskStorage(client,options.builder),job=await store.get(claim.owner,claim.job.id),d=job.delegation??fail('Original delegation is missing'),state=d.agent??fail('Original goal state is missing');postgresGoalProgram(job);
     if(job.state!=='working'||decision.requestRevision!==d.request.revision||state.pendingPlanId||state.components||state.initialSelectionPending||d.callerAction)fail('The original goal has a pending frontier or a stale context decision');
-    assertPostgresPlanningDecisionEvidence(job,decision,modelRunId,reads);if(executionBudgetExceeded(job,'modelTurns'))fail('The original goal model budget is exhausted');
+    const didi=isDidiShortPathDecision(modelRunId);
+    if(didi)assertDidiShortPathDecision(job,decision,modelRunId,reads);
+    else assertPostgresPlanningDecisionEvidence(job,decision,modelRunId,reads);
+    if(executionBudgetExceeded(job,'modelTurns'))fail('The original goal model budget is exhausted');
     const intents=await store.intents(claim.owner,job.id);if(intents.some(intent=>!['read','local','object_write'].includes(intent.effect)&&['dispatching','awaiting_remote','effect_unknown','needs_review'].includes(intent.state)))fail('An unconfirmed original business effect blocks new component preparation');
     const maximum=options.maxTaskMs??86400000;if(!Number.isSafeInteger(maximum)||maximum<1||maximum>86400000)throw new Error('Invalid fixed goal deadline');
     const until=Date.parse(canRecoverReadOnly(job,intents)&&!state.paPayment?executionBudgetStatus(job).window.startedAt:job.createdAt)+maximum;postgresConstrainReadDeadline(client,until);
@@ -76,7 +80,9 @@ export async function preparePostgresGoalContexts(client:Client,input:PostgresWo
     },options.builder),options.builder),options.builder,options.modelChannel,options.inspectClaim));
     for(const selected of decision.contexts){
       if(ids.has(selected.id))fail('A component context cannot be replaced or initialized twice');ids.add(selected.id);
-      const pin=discoveredBinding(reads,selected.bindingDigest),registered=options.programs.filter(value=>same(value.program.ref,pin.programRef)&&value.program.configurationDigest===pin.configurationDigest);
+      const pin=discoveredBinding(reads,selected.bindingDigest,didi?'worker_context':'model_queries');
+      if(didi&&(!same(pin.programRef,{id:'ride.estimate.query',version:'1'})||pin.actionId!=='SearchDidiPlaces'))fail('Unexpected DiDi short path binding');
+      const registered=options.programs.filter(value=>same(value.program.ref,pin.programRef)&&value.program.configurationDigest===pin.configurationDigest);
       if(registered.length!==1||!registered[0]?.validate)throw new SecurityError('AUTHORITY_UNAVAILABLE','The selected component has no installed PostgreSQL initialization semantics');
       if(registered[0].program.privateInput||registered[0].program.simulatedApproval)fail('Private or simulation component initialization is not installed');
       const resolved=await resolvePostgresDocumentBinding(client,claim,d.request,pin,options),parsed:unknown=JSON.parse(selected.inputJson);await registry.assertConfigured(client,resolved.registration,claim,job);
@@ -92,6 +98,7 @@ export async function preparePostgresGoalContexts(client:Client,input:PostgresWo
     for(const component of contexts)await registry.assertConfigured(client,registry.require(component.programRef,component.programDigest),claim,job);
     if(digest(d.request)!==requestDigest||state.composition!.goal.digest!==goalDigest)fail('Component preparation cannot revise the original request or fixed goal');
     state.composition!.contexts.push(...contexts);d.phase='planning';d.nextAt=0;resolveTaskRecovery(job,'decision');job.updatedAt=new Date().toISOString();d.events.push({at:job.updatedAt,event:'agent_contexts_prepared',evidence:digest(contexts.map(value=>value.digest))});
+    if(didi)recordDidiReadTiming(job,'prepare',options.didiReadTiming);
     await store.save(claim.owner,job);await fence();await query(`RELEASE SAVEPOINT ${name}`);return structuredClone(contexts);
   }catch(error){await query(`ROLLBACK TO SAVEPOINT ${name}`);await query(`RELEASE SAVEPOINT ${name}`);throw error;}
 }

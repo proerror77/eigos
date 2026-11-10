@@ -83,7 +83,7 @@ test('execution partitions preserve every original file once and require all act
 
 test('Coordinator case sets cover every top-level test once and keep every revocation child selected',()=>{
   const source=readFileSync(new URL('./postgres-coordinator.test.ts',import.meta.url),'utf8');
-  const names=[...source.matchAll(/^test\('([^']+)'/gm)].map(match=>match[1]);assert.equal(names.length,7);
+  const names=[...source.matchAll(/^test\('([^']+)'/gm)].map(match=>match[1]);assert.equal(names.length,8);
   for(const name of names)assert.equal(Object.keys(POSTGRES_COORDINATOR_CASES).filter(scenario=>new RegExp(coordinatorTestPattern(scenario)).test(name)).length,1,name);
   for(const child of ['parent','role','source','model'])assert(new RegExp(coordinatorTestPattern('revocation')).test(names.find(name=>name.startsWith('parent, action role'))+' '+child));
   assert.deepEqual(workflow.jobs['postgres-coordinator-cases'].strategy.matrix.case,Object.keys(POSTGRES_COORDINATOR_CASES));

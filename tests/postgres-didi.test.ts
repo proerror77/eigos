@@ -7,6 +7,12 @@ import {PostgresTaskReadService} from '../packages/postgres/task-read-service.js
 import {PostgresTaskStorage} from '../packages/postgres/task-storage.js';
 import {PostgresProjectionGraph} from '../packages/postgres/projection-graph.js';
 import {withPostgresSourceProjection} from '../packages/postgres/source-projection.js';
+import {PostgresTaskCommandService} from '../packages/postgres/task-command-service.js';
+import {didiEstimateGoal,structuredDidiGoal} from '../packages/core/didi-estimate-request.js';
+import {PostgresCoordinator} from '../packages/postgres/coordinator.js';
+import {modelUsageRecorder} from '../packages/core/model-usage-context.js';
+import {authorizeModelDispatch} from '../packages/core/model-dispatch-context.js';
+import {evidence} from './backend-fixture.js';
 import {verifyPostgresDidiSourceReceipt} from '../packages/postgres/didi-policy.js';
 import {checkedRideEstimate} from '../packages/ontology/ride-estimate-projection.js';
 import {digest} from '../packages/core/delegation.js';
@@ -15,7 +21,6 @@ import type {AgentActionResult} from '../packages/core/agent-program.js';
 
 const local={skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'};
 async function reader(x:Awaited<ReturnType<typeof postgresDidiFixture>>){const p={...x.f.principal,access:await x.t.publisher.authenticate(x.f.principal,x.installation.token)};return {p,service:new PostgresTaskReadService(x.t.database,x.t.policy,x.t.kernel)};}
-
 test('DiDi actual PG places flow verifies original journal and canonical facts while the live goal refuses synthetic evidence',local,async()=>{
   const x=await postgresDidiFixture();try{
     const original=await x.stored(),component=await x.prepare(),plan=await x.install(component,'SearchDidiPlaces',{scope:component.scope,role:'search',keywords:'北京西站'}),accepted=await x.execute(plan);assert(accepted.object);
@@ -105,5 +110,64 @@ test('a Worker-shaped live DiDi snapshot with a valid self-digest is not a compl
       const graph=await PostgresProjectionGraph.create(client,x.f.owner,job.delegation!.ontologyRelease!,x.t.kernel,{readOnly:true}),context={model:graph.model,graph,owner:x.f.owner,intents:await store.intents(x.f.owner,job.id),validUntil:Date.now()+30000,job,plan,step:plan.steps[0]!,intent,input:plan.steps[0]!.input,operation:'accept' as const,attempt};
       await assert.rejects(verifyPostgresDidiSourceReceipt(client,x.claim,context,attempt,response,result,{kind:'relay',peerId:'agent_'+'A'.repeat(43),authorityId:x.t.authority.id,gatewayOrigin:'https://primary.example',binding:x.source.binding}),error=>error instanceof SecurityError&&error.reason==='SOURCE_NOT_AUTHORIZED');
     });
+  }finally{await x.close();}
+});
+
+for(const mode of ['structured','natural'] as const)test(`PG DiDi ${mode} short path executes the original task with bounded calls and refuses to promote synthetic evidence`,local,async()=>{
+  const route={city:'北京市',origin:'北京西站',destination:'西二旗地铁站'};
+  const x=await postgresDidiFixture(mode==='natural',{shortPath:mode==='structured'?{mode,...route}:{mode}});
+  let turns=0;
+  const unexpected=async():Promise<never>=>{throw Error('Unexpected model stage');};
+  try{
+    const port={securityChannelId:x.channel,postgresModelDispatch:'acknowledged-v1' as const};
+    const coordinator=new PostgresCoordinator({...x.options,database:x.t.database,store:x.worker,
+      reasoner:{...port,ground:unexpected,plan:unexpected,act:unexpected,reviewGoal:unexpected},
+      executor:{...port,run:unexpected,async runStructured(_prompt,_schema,_signal,options){
+        assert.equal(options?.toolFree,true);assert.equal(options?.mcp,undefined);
+        const run=evidence(),recorder=modelUsageRecorder();assert(recorder);
+        await recorder.begin(run.id,run.runtime,run.startedAt);
+        await authorizeModelDispatch(x.channel);turns++;
+        run.completedAt=new Date().toISOString();
+        await recorder.finish(run.id,run,'completed');
+        return {output:{decisionJson:JSON.stringify({kind:'estimate',route})},evidence:run};
+      }},
+    });
+    const original=await x.stored();
+    for(let phase=0;phase<6;phase++)await coordinator.run(x.claim,new AbortController().signal);
+    await assert.rejects(coordinator.run(x.claim,new AbortController().signal),/did not pass independent acceptance/);
+    const done=await x.stored(),{p,service}=await reader(x);
+    assert.equal(done.id,original.id);
+    assert.equal(done.contextId,original.contextId);
+    assert.equal(done.state,'working');
+    assert.equal(done.delegation!.acceptance,undefined);
+    assert.equal(done.delegation!.agent?.composition?.assessment?.components[0]?.status,'verified',JSON.stringify(done.delegation!.agent?.composition?.assessment));
+    assert.equal(done.delegation!.agent?.composition?.assessment?.components[0]?.delivery?.evidenceLevel,'synthetic');
+    assert.equal(done.runs?.length,mode==='structured'?0:1);
+    assert.equal(turns,mode==='structured'?0:1);
+    assert.deepEqual(x.source.calls.filter(call=>call.method==='tools/call').map(call=>call.name),['maps_textsearch','maps_textsearch','taxi_estimate']);
+    assert(done.delegation!.agent!.plans.every(plan=>plan.didiDecision&&!plan.modelRunId));
+    if(mode==='natural'){
+      const relayed=await x.t.client.query(`SELECT state,request FROM ${x.q}.security_relay_reads`);
+      assert.equal(relayed.rowCount,3);
+      assert(relayed.rows.every(row=>row.state==='completed'&&JSON.parse(row.request).context.modelRunId.startsWith('didi-estimate:')));
+    }
+    const view=await service.get(p,done.id);
+    assert.equal(view.id,done.id);
+    assert.equal(view.state,'working');
+    const observation=done.delegation!.agent!.observations.find(value=>value.type==='RideEstimateObservation');assert(observation);
+    const result=await service.queryOntology(p,{version:2,taskId:done.id,query:{object:observation}}) as any;
+    assert.equal(result.items[0]?.properties.observedData?.data?.kind,'estimate');
+    if(mode==='structured'){
+      const commands=new PostgresTaskCommandService(x.t.database,x.t.policy,x.t.kernel);
+      const input={mode:'structured' as const,...route},request={requestId:randomUUID(),goal:didiEstimateGoal,didiEstimate:input};
+      await assert.rejects(commands.submit(p,{...request,goal:'请真实叫车'}),/read-only estimate/);
+      const submitted=await commands.submit(p,request),repeated=await commands.submit(p,request);
+      assert.equal(submitted.id,repeated.id);
+      const stored=await x.t.database.run(client=>new PostgresTaskStorage(client,x.t.kernel).get(x.f.owner,submitted.id));
+      assert.equal(stored.goal,structuredDidiGoal(input));
+      assert.deepEqual(stored.delegation?.didiEstimate,{request:input,revision:1});
+      assert.deepEqual(stored.delegation?.request.capabilityRef,x.program.ref);
+      assert.equal(stored.runs?.length,0);
+    }
   }finally{await x.close();}
 });

@@ -1,3 +1,4 @@
+import {assertDidiShortPathComponent,didiSourceDecisionId} from './didi-short-path.js';
 import type {Client} from 'pg';
 import {digest} from '../core/delegation.js';
 import {DomainError,type Job} from '../core/domain.js';
@@ -76,7 +77,7 @@ export class PostgresDidiExecution {
     await journal.assertDispatchAllowed(claim,intentId,prepared.attempt.id);
     const store=new PostgresTaskStorage(client,this.options.builder),job=await store.get(claim.owner,claim.job.id),intent=await journal.intent(claim.owner,intentId),selected=this.select(job,intent);
     const attempt=(await journal.attempts(claim.owner,intentId)).find(value=>value.id===prepared.attempt.id);
-    const wire:DidiCallContext={requestId:job.id,requestRevision:job.delegation!.request.revision,planId:selected.plan.id,intentId:intent.id,attemptId:prepared.attempt.id,modelRunId:selected.plan.modelRunId??fail('Original DiDi model decision is missing'),programId:selected.entry.program.ref.id,programDigest:selected.entry.program.configurationDigest,action:selected.step.action,actionInputDigest:digest(selected.input)};
+    const wire:DidiCallContext={requestId:job.id,requestRevision:job.delegation!.request.revision,planId:selected.plan.id,intentId:intent.id,attemptId:prepared.attempt.id,modelRunId:didiSourceDecisionId(selected.plan)??fail('Original DiDi decision is missing'),programId:selected.entry.program.ref.id,programDigest:selected.entry.program.configurationDigest,action:selected.step.action,actionInputDigest:digest(selected.input)};
     if(intent.state!=='dispatching'||!intent.dispatchInput||!attempt||!same(attempt,prepared.attempt)||selected.entry!==prepared.entry||selected.plan.digest!==prepared.attempt.planDigest
       ||prepared.attempt.intentId!==intentId||prepared.attempt.inputDigest!==digest(selected.input)||!same(selected.input,prepared.input)||!same(wire,prepared.wire)
       ||digest(job.delegation!.request)!==prepared.requestDigest||digest(job.delegation!.ontologyRelease)!==prepared.releaseDigest)fail('DiDi original invocation changed before source dispatch or return');
@@ -105,7 +106,8 @@ export class PostgresDidiExecution {
           await withPostgresDidiCanonicalSourceProjection(client,reference,this.source(prepared.entry,prepared.action),{journal,program,account:prepared.entry.didi!.account,transport:prepared.entry.didi!.transport,context:semantic,attempt:prepared.attempt,observationId,response:actual},async graph=>{
             const ctx=await runGraphProgramAsync(graph,postgresDidiContextProgram({...semantic,graph},program)),action=didiActionContext(semantic,ctx,prepared.attempt);
             object=await runGraphProgramAsync(graph,projectDidiProgram(program,action,prepared.action,prepared.input,actual));
-            const snapshot=checkedRideEstimate(actual.value),ports=job.delegation!.agent!.composition?await runGraphProgramAsync(graph,sealComposedOutputsProgram(action,semantic.step,prepared.input,actual,object,intent,graph.model.action(prepared.action),()=>didiOutputPorts(snapshot,actual,object!))):undefined;
+            const snapshot=checkedRideEstimate(actual.value),ports=job.delegation!.agent!.composition?await runGraphProgramAsync(graph,sealComposedOutputsProgram(action,semantic.step,prepared.input,actual,object,intent,graph.model.action(prepared.action),()=>didiOutputPorts(snapshot,actual,object!),
+              semantic.plan.didiDecision?value=>assertDidiShortPathComponent(job,value):undefined)):undefined;
             intent.acceptedOutput={object,...(ports?{ports}:{})};if(!job.delegation!.agent!.observations.some(value=>same(value,object)))job.delegation!.agent!.observations.push(object);
             resolveTaskRecovery(job,'source',prepared.action);job.updatedAt=new Date().toISOString();job.delegation!.nextAt=0;job.delegation!.events.push({at:job.updatedAt,event:'agent_observation_projected',evidence:digest(object)});
           });

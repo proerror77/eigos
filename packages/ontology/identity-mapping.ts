@@ -7,13 +7,16 @@ import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import type { ObjectRef } from './model.js';
-import { linkSnapshotDigest, type OntologyObjectStore, type ObjectSource, type ObjectWrite, type ReadBudget, type LinkWrite } from './object-store.js';
+import { linkSnapshotDigest, type OntologyObjectStore, type ObjectSource, type ObjectWrite, type ObjectView, type ReadBudget, type LinkWrite } from './object-store.js';
 import type { Computation } from './object-functions.js';
 import { sourceProof } from './object-evidence.js';
 import { catalogEntityRefs, checkedAgentCatalogObservation } from './catalog-agent-projection.js';
 
 import { parseCommerceEntity } from './commerce-journey.js';
 import { commerceProductVariantValues } from './product-attributes.js';
+import { sourceEntityRef } from './business-fact-projection.js';
+import { checkedRollingGo } from './rollinggo.js';
+import { evaluateRollingGoProgram } from './rollinggo-functions.js';
 
 import { identityTypes, identityKindSchema, identityEndpointSchema, entityIdentityAssertionSchema, identityFunctionSchemas, identityAssertionRefSchema as assertionRef, type EntityIdentityAssertion } from './identity-model.js';
 export * from './identity-model.js';
@@ -21,6 +24,39 @@ export * from './identity-model.js';
 const text = z.string().min(1).max(200), sha = z.string().regex(/^[a-f0-9]{64}$/), time = z.iso.datetime({ offset: true });
 function fail(message: string): never { throw new DomainError('CONFLICT', message); }
 const same = (a: unknown, b: unknown) => digest(a) === digest(b);
+type SourceIdentity = Pick<z.infer<typeof identityEndpointSchema>, 'sourceIdentity' | 'sourceRecordId' | 'sourceVersion'>;
+type IdentityEvidenceResolver = (graph: ProjectionMetadata, owner: string, subject: ObjectView, evidence: ObjectView, receipt: ObjectView, budget: ReadBudget) => GraphProgram<SourceIdentity>;
+
+/** The source has no resource revision or monotonic event version. Its exact
+ * validated search digest identifies the evidence; it is not a fabricated
+ * HotelPropertyObservation or a statement about room/rate/stock identity. */
+const resolveRollingGoHotelIdentity: IdentityEvidenceResolver = function* (graph, owner, subject, evidence, receipt, budget) {
+  if ((yield* evaluateRollingGoProgram(graph, owner, { function: 'rollingGoSearchStatus', object: evidence.ref }, budget))?.status !== 'known') fail('RollingGo identity evidence is stale or out of scope');
+  const snapshot = checkedRollingGo(evidence.properties.snapshot);
+  const hotel = snapshot.hotels.find(value => same(sourceEntityRef('HotelProperty', 'rollinggo:international', String(value.hotelId)), subject.ref));
+  const current = yield* sourceProofProgram(graph, owner, subject.ref, budget);
+  if (!hotel || snapshot.id !== evidence.ref.id || !current || current.refs.length !== 1 || !same(current.refs[0], receipt.ref)
+    || receipt.properties.sourceIdentity !== 'rollinggo-mcp:international' || receipt.properties.sourceEventId !== snapshot.id
+    || receipt.properties.contentDigest !== snapshot.contentDigest
+    || !((yield* graphRelated(owner, evidence.ref, 'hotels', budget)) ?? []).some(value => same(value.ref, subject.ref))) fail('RollingGo identity evidence does not bind the current hotel');
+  const title = hotel.name || hotel.nameEn || `RollingGo hotel ${hotel.hotelId}`;
+  const expected = graph.model.parseProperties('HotelProperty', {
+    [graph.model.object('HotelProperty').primaryKey]: subject.ref.id, displayTitle: title.slice(0, 500), sourceId: String(hotel.hotelId),
+    ...(hotel.name || hotel.nameEn ? { hotelName: title } : {}), ...(hotel.address ? { address: hotel.address } : {}),
+  });
+  if (!same(subject.properties, expected)) fail('RollingGo hotel changed outside its source observation');
+  return { sourceIdentity: 'rollinggo-mcp:international', sourceRecordId: String(hotel.hotelId), sourceVersion: snapshot.contentDigest };
+};
+const identityEvidenceResolversV2: Readonly<Record<string, IdentityEvidenceResolver>> = Object.freeze({
+  'HotelProperty:RollingGoSearchObservation': resolveRollingGoHotelIdentity,
+});
+function currentEvidenceResolver(graph: ProjectionMetadata, subject: ObjectRef, evidence: ObjectRef): IdentityEvidenceResolver | undefined {
+  const resolver = identityEvidenceResolversV2[`${subject.type}:${evidence.type}`];
+  if (!resolver) return;
+  const functions = graph.model.functionDefinitions();
+  if (!['entityIdentityBetween', 'entityIdentityStatus'].every(id => functions.some(value => value.id === id && value.version === '2'))) return;
+  return resolver;
+}
 /** Internal mapper utility. The evidence object is an actual source observation,
  * not a title, a buyer assertion or a fabricated source identifier. */
 export function pinIdentityEndpoint(graph: OntologyObjectStore, owner: string, ref: ObjectRef, evidenceObject: ObjectRef, budget: ReadBudget = { remaining: 1000 }): z.infer<typeof identityEndpointSchema> { return runGraphProgram(graph, pinIdentityEndpointProgram(graph, owner, ref, evidenceObject, budget)); }
@@ -31,7 +67,10 @@ export function* pinIdentityEndpointProgram(graph: ProjectionMetadata, owner: st
   if (!proof || proof.refs.length !== 1) fail('Identity endpoint needs one exact source receipt');
   const receipt = (yield* graphRead(owner, proof.refs[0]!, budget));
   let sourceIdentity: string, sourceRecordId: string, sourceVersion: string;
-  if (ref.type === 'ProductVariant' && evidenceObject.type === 'CatalogObservation') {
+  const resolver = currentEvidenceResolver(graph, ref, evidenceObject);
+  if (resolver) {
+    ({ sourceIdentity, sourceRecordId, sourceVersion } = yield* resolver(graph, owner, subject, evidence, receipt, budget));
+  } else if (ref.type === 'ProductVariant' && evidenceObject.type === 'CatalogObservation') {
     if ((yield* evaluateAgentCatalogFunctionProgram(graph, owner, { function: 'catalogObservationStatus', object: evidenceObject }, budget))?.status !== 'known') fail('Catalog identity evidence is stale or out of scope');
     const snapshot = checkedAgentCatalogObservation(evidence.properties.snapshot), item = snapshot.items.find(item => same(catalogEntityRefs(snapshot, item.variantId).variant, ref));
     if (!item || !((yield* graphRelated(owner, ref, 'currentCatalogObservation', budget)) ?? []).some(o => same(o.ref, evidenceObject))) fail('Catalog identity evidence does not describe the current variant');

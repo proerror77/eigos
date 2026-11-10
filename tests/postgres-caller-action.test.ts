@@ -11,6 +11,8 @@ import {PostgresTaskCommandService} from '../packages/postgres/task-command-serv
 import {PostgresTaskStorage} from '../packages/postgres/task-storage.js';
 import {PostgresWorkerStore} from '../packages/postgres/worker-store.js';
 import {PostgresCallerActionExecution} from '../packages/postgres/caller-action.js';
+import {PostgresReadProgramRegistry} from '../packages/postgres/didi-registry.js';
+import {postgresWorkerLane,postgresWorkerReservation} from '../packages/postgres/worker-capacity.js';
 import {postgresTaskProcessingGrant} from '../packages/postgres/task-read-access.js';
 import {readPostgresObservationContract} from '../packages/postgres/observation-contract.js';
 import type {TaskServicePort} from '../packages/core/task-service-port.js';
@@ -48,7 +50,8 @@ test('PostgreSQL caller preparation, exact approval and actual managed readback 
     policy.setRecipient(installation.id,{classification:'sensitive',markings:['member_private','personal_data','precise_location','financial','health','account_private'],channels:['agent_response'],expiresAt:until},policy.revision());
     policy.setSource(f.owner,{installationId:installation.id,bindingId:sourceBindingId,programId:program.ref.id,programDigest:program.configurationDigest,operations:[...personalActionIds],outputTypes:['Person','PersonalPreference'],expiresAt:until},policy.revision());
     const p={...f.principal,access:f.coordinator.authenticate(f.principal,installation.token)};
-    target=await importPostgresFixture(f);const t=target,q=`"${t.schema}"`,tasks=new PostgresTaskCommandService(t.database,t.policy,t.kernel),worker=new PostgresWorkerStore(t.database,t.policy,t.kernel);
+    target=await importPostgresFixture(f);const t=target,q=`"${t.schema}"`,tasks=new PostgresTaskCommandService(t.database,t.policy,t.kernel),registry=new PostgresReadProgramRegistry(t.policy),
+      worker=new PostgresWorkerStore(t.database,t.policy,t.kernel,{classify:(job,intents)=>postgresWorkerLane(job,intents,registry)});
     const execution=new PostgresCallerActionExecution({database:t.database,policyDigest:t.policy,builder:t.kernel});
     const read=(id:string)=>t.run(c=>new PostgresTaskStorage(c,t.kernel).get(f.owner,id));
     const perform=async(action:string,input:Record<string,unknown>)=>{
@@ -61,6 +64,8 @@ test('PostgreSQL caller preparation, exact approval and actual managed readback 
       await assert.rejects(tasks.authorize(p,prepared.id,{...permit,objectWrite:{...preview.scope,inputDigest:'f'.repeat(64)}}),/preview|differs|changed/i);
       const approved=await tasks.authorize(p,prepared.id,permit);assert.equal(approved.id,prepared.id);assert.equal(approved.state,'submitted');
       const claim=await worker.claim(['eigos.delegate'],30000);assert(claim);assert.equal(claim.job.id,prepared.id);
+      assert.equal(postgresWorkerReservation(claim.token).lane,'execution');
+      await assert.rejects(worker.beginModelUsage(claim,randomUUID(),'must-not-start',new Date().toISOString()),/no model capacity/);
       let renewing:Promise<unknown>|undefined,renewalFailure:unknown;
       const timer=setInterval(()=>{if(!renewing)renewing=worker.renew(claim,30000).catch(error=>{renewalFailure=error;}).finally(()=>{renewing=undefined;});},5000);timer.unref();
       try{await execution.run(claim,new AbortController().signal);}finally{clearInterval(timer);if(renewing)await renewing;}

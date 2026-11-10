@@ -155,7 +155,7 @@ export function finalizeReleaseArtifacts(directory,{images,ci,harnessImage}){
   validateReleaseManifest(value,{requireReady:true});if(value.payloadDigest!==current.payloadDigest)fail('Finalization cannot change the image payload');writeJson(join(directory,'manifest.json'),value);return value;
 }
 
-export async function createReleaseArtifacts({root=process.cwd(),output,sourceSha,backend='codex',images={},ci}){
+export async function createReleaseArtifacts({root=process.cwd(),output,sourceSha,backend='codex',images={},ci,kernelVersion}){
   root=resolve(root);if(!output)fail('An explicit new artifact output directory is required');output=resolve(output);if(existsSync(output))fail('Artifact output already exists; preserve immutable releases');if(!commit.test(sourceSha))fail('Use an exact 40-character source SHA');backendTools(backend);
   if(existsSync(join(root,'.git'))){if(execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim()!==sourceSha)fail('Release source SHA differs from this checkout');if(execFileSync('git',['status','--porcelain','--untracked-files=normal'],{cwd:root,encoding:'utf8'}).trim())fail('Release packaging requires a clean reviewed source checkout');}
   const {releaseFiles}=await import(pathToFileURL(join(root,'dist/packages/deployment/files.js')).href),runtimePaths=releaseFiles(root);if(new Set(runtimePaths).size!==runtimePaths.length)fail('Runtime whitelist contains duplicate paths');
@@ -166,7 +166,9 @@ export async function createReleaseArtifacts({root=process.cwd(),output,sourceSh
   if(backend==='harness'){
     assertHarnessInventory({runtime:{files:runtimeFiles},sourceFiles});await assertHarnessPackaging(root);
   }
-  const {StagedKernelBuilder,stagedKernelComponents}=await import(pathToFileURL(join(root,'dist/packages/ontology/seed-definition.js')).href),kernel=new StagedKernelBuilder();for(let stage=0;stage<StagedKernelBuilder.stages;stage++){kernel.step(stage);await yieldToHost();}const ready=stagedKernelComponents(kernel),definition=kernel.result().document;
+  const {StagedKernelBuilder,stagedKernelComponents}=await import(pathToFileURL(join(root,'dist/packages/ontology/seed-definition.js')).href),kernel=new StagedKernelBuilder(kernelVersion);
+  let progress=kernel.step(0);while(!progress.ready){await yieldToHost();progress=kernel.step(progress.completed);}
+  const ready=stagedKernelComponents(kernel),definition=kernel.result().document;
   const {loadMcpReadModule,mcpReadModuleRef}=await import(pathToFileURL(join(root,'dist/packages/ontology/mcp-read.js')).href),providerDirectory='dist/packages/ontology/definitions';
   mkdirSync(output,{recursive:true});for(const path of runtimePaths)copyFile(root,path,output,'runtime');for(const path of sourcePaths)copyFile(root,path,output,'source');
   writeJson(join(output,'ontology/kernel.json'),definition);const providerModules=readdirSync(join(root,providerDirectory)).filter(name=>name.endsWith('.json')).sort().map(name=>{const path=`${providerDirectory}/${name}`,module=loadMcpReadModule(checkedFile(root,path)),ref=mcpReadModuleRef(module);const destination=`providers/${name}`,target=join(output,'ontology',destination);mkdirSync(dirname(target),{recursive:true});copyFileSync(checkedFile(root,path),target);return {...ref,file:fileDescriptor(join(output,'ontology'),destination)};});
@@ -175,7 +177,7 @@ export async function createReleaseArtifacts({root=process.cwd(),output,sourceSh
 }
 
 async function main(){
-  const command=process.argv[2],{values}=parseArgs({args:process.argv.slice(3),options:{root:{type:'string'},out:{type:'string'},'source-sha':{type:'string'},backend:{type:'string'},manifest:{type:'string'},'image-gateway':{type:'string'},'image-relay':{type:'string'},'image-worker':{type:'string'},'ci-proof':{type:'string'},'harness-image-proof':{type:'string'},'require-ready':{type:'boolean'},runs:{type:'string'},jobs:{type:'string'},'semantic-runs':{type:'string'},'semantic-jobs':{type:'string'},repository:{type:'string'}}});
+  const command=process.argv[2],{values}=parseArgs({args:process.argv.slice(3),options:{root:{type:'string'},out:{type:'string'},'source-sha':{type:'string'},backend:{type:'string'},'kernel-version':{type:'string'},manifest:{type:'string'},'image-gateway':{type:'string'},'image-relay':{type:'string'},'image-worker':{type:'string'},'ci-proof':{type:'string'},'harness-image-proof':{type:'string'},'require-ready':{type:'boolean'},runs:{type:'string'},jobs:{type:'string'},'semantic-runs':{type:'string'},'semantic-jobs':{type:'string'},repository:{type:'string'}}});
   if(values['harness-image-proof']&&command!=='finalize')fail('Harness image proof is admitted only during finalization');
   if(command==='select-ci'){const run=selectExactCiRun(JSON.parse(readFileSync(values.runs,'utf8')),values['source-sha']);console.log(run.id);return;}
   if(command==='ci-proof'){
@@ -188,6 +190,6 @@ async function main(){
   if(command==='verify-image'){console.log(canonical(verifyRuntimeImagePayload(values.root??process.cwd(),{sourceSha:values['source-sha'],backend:values.backend})));return;}
   if(!['create','finalize'].includes(command))fail('Use create, finalize, verify, verify-image, select-ci or ci-proof');const images=Object.fromEntries(roles.filter(role=>values[`image-${role}`]).map(role=>[role,values[`image-${role}`]]));
   if(command==='finalize'){const value=finalizeReleaseArtifacts(values.root??process.cwd(),{images,ci:values['ci-proof']?JSON.parse(readFileSync(values['ci-proof'],'utf8')):undefined,harnessImage:values['harness-image-proof']?JSON.parse(readFileSync(values['harness-image-proof'],'utf8')):undefined});console.log(canonical({state:value.state,payloadDigest:value.payloadDigest,manifestDigest:value.manifestDigest}));return;}
-  const value=await createReleaseArtifacts({root:values.root,output:values.out,sourceSha:values['source-sha'],backend:values.backend,images,ci:values['ci-proof']?JSON.parse(readFileSync(values['ci-proof'],'utf8')):undefined});console.log(canonical({state:value.state,sourceSha:value.source.sha,payloadDigest:value.payloadDigest,manifestDigest:value.manifestDigest}));
+  const value=await createReleaseArtifacts({root:values.root,output:values.out,sourceSha:values['source-sha'],backend:values.backend,kernelVersion:values['kernel-version'],images,ci:values['ci-proof']?JSON.parse(readFileSync(values['ci-proof'],'utf8')):undefined});console.log(canonical({state:value.state,sourceSha:value.source.sha,payloadDigest:value.payloadDigest,manifestDigest:value.manifestDigest}));
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(error=>{console.error(error.message);process.exitCode=1;});

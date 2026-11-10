@@ -6,7 +6,8 @@ import { DomainError } from '../core/domain.js';
 import { businessModel, businessModelV9 } from './business-model.js';
 import { migrateIntegratedOntology } from './integration-migration.js';
 import { nameSchema, objectRefSchema, type ObjectRef, type OntologyModel } from './model.js';
-import { deriveProperty, evaluateFunction, functionCallSchema } from './object-functions.js';
+import { deriveProperty, evaluateFunction } from './object-functions.js';
+import { parseFunctionInvocation } from './function-runtime.js';
 import { isVirtualRef, networkLinkIds } from './network-model.js';
 import type { NetworkOntologyReadAdapter } from './network-read.js';
 import { assertIdentityAssertionWrite } from './identity-mapping.js';
@@ -866,7 +867,7 @@ export class OntologyObjectStore {
   private evaluateRaw(owner: string, input: unknown, budget: ReadBudget) {
     this.assertReaderOwner(owner);
     const revision = this.revision(owner);
-    const args = functionCallSchema.parse(input), definition = this.model.function(args.function);
+    const args = parseFunctionInvocation(this.model, input), definition = this.model.function(args.function);
     if (!definition.inputTypes.some(t => this.model.implements(args.object.type, t))) failure('Function requires its registered object type');
     const calculationStore = this.backingStore && !isVirtualRef(args.object) ? this.backingStore : this;
     const guard = this.guard();

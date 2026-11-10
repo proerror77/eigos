@@ -18,6 +18,9 @@ import {createPostgresDocumentPolicy} from '../packages/postgres/document-policy
 import {PostgresNativePlanningSession} from '../packages/postgres/native-planning-session.js';
 import {PostgresWorkerStore} from '../packages/postgres/worker-store.js';
 import {PostgresTaskStorage} from '../packages/postgres/task-storage.js';
+import {PostgresPlanValidationFeedback,recordPostgresPlanFeedback} from '../packages/postgres/plan-feedback.js';
+import {PostgresReadProgramRegistry} from '../packages/postgres/didi-registry.js';
+import {postgresWorkerLane} from '../packages/postgres/worker-capacity.js';
 import {securityFixture} from './fixtures/security.js';
 import {importPostgresFixture} from './fixtures/postgres-business.js';
 import {evidence} from './backend-fixture.js';
@@ -90,6 +93,7 @@ test('actual native PostgreSQL reads install a direct document plan and only its
       const before=await x.stored(),grants=(await x.t.client.query(`SELECT id,revision,expires_at,state FROM ${x.q}.security_grants ORDER BY id`)).rows;
       const plan=await x.install(),after=await x.stored(),intent=(await x.t.database.run(client=>new PostgresTaskStorage(client).intents(x.f.owner,x.job.id)))[0]!;
       assert.equal(plan.version,'2');assert.equal(plan.sequence,1);assert.deepEqual(plan.modelDecision,x.decision);assert.equal(plan.modelRunId,x.run.id);assert.deepEqual(plan.ontologyPlanning,x.reads);
+      assert.equal(postgresWorkerLane(after,[intent],new PostgresReadProgramRegistry(x.t.policy)),'model','ComposeDocument requires a model even though its effect is local');
       assert.equal(plan.digest,digest((({digest:_digest,...body})=>body)(plan)));assert.equal(plan.steps[0]!.operationKey,actionOperationKey(x.f.owner,x.job.id,`${plan.id}:document`));
       assert.equal(after.delegation!.agent!.pendingPlanId,plan.id);assert.deepEqual(after.delegation!.agent!.plans,[plan]);assert.equal(after.delegation!.phase,'executing');
       assert.equal(intent.id,plan.steps[0]!.intentId);assert.equal(intent.state,'ready');assert.equal(intent.privateData,undefined,'the ordinary intent inventory excludes private bytes');assert.deepEqual(JSON.parse((await x.t.client.query(`SELECT private_data FROM ${x.q}.action_intents WHERE id=$1`,[intent.id])).rows[0].private_data),{});assert.equal(intent.planDigest,plan.digest);assert.equal(intent.privateDigest,digest({}));
@@ -98,6 +102,25 @@ test('actual native PostgreSQL reads install a direct document plan and only its
       assert.equal(await x.worker.active(x.claim),true);await assert.rejects(x.install(),/pending frontier/);
     }finally{await x.close();}
   });
+});
+
+test('rolled-back PostgreSQL plan validation produces bounded feedback without a new intent or unknown-effect replay',local,async()=>{
+  const x=await fixture();try{
+    const invalid={...x.decision,steps:[{...x.decision.steps[0]!,argumentsJson:JSON.stringify({scope:x.state.scope,privateUnregisteredField:'SYNTHETIC_PRIVATE_INPUT'})}]},run=await x.record(invalid);
+    let feedback:PostgresPlanValidationFeedback|undefined;
+    await assert.rejects(x.install(invalid,run.id),error=>{if(error instanceof PostgresPlanValidationFeedback){feedback=error;return true;}return false;});assert(feedback);
+    const before=await x.stored();assert.equal(before.delegation!.agent!.pendingPlanId,undefined);
+    assert.equal((await x.t.client.query(`SELECT count(*)::int AS n FROM ${x.q}.action_intents WHERE job_id=$1`,[x.job.id])).rows[0].n,0);
+    assert(await x.worker.checkpoint(x.claim,job=>recordPostgresPlanFeedback(job,[],feedback!)));
+    const after=await x.stored();assert.equal(after.state,'working');assert.equal(after.delegation!.phase,'planning');
+    assert.equal(after.delegation!.agent!.feedback.length,1);assert(!JSON.stringify(after.delegation!.agent!.feedback).includes('SYNTHETIC_PRIVATE_INPUT'));
+    assert.deepEqual(after.delegation!.request,before.delegation!.request);assert.deepEqual(after.delegation!.executionBudget,before.delegation!.executionBudget);
+    const stale=structuredClone(after);stale.delegation!.request.revision++;assert.throws(()=>recordPostgresPlanFeedback(stale,[],feedback!),/safe original planning boundary/);
+    const repaired=await x.record();const plan=await x.install(x.decision,repaired.id);assert.equal(plan.steps.length,1);
+    const intents=await x.t.database.run(client=>new PostgresTaskStorage(client).intents(x.f.owner,x.job.id));
+    const unknown=structuredClone(after);assert.throws(()=>recordPostgresPlanFeedback(unknown,intents.map(intent=>({...intent,state:'effect_unknown'})),feedback!),/safe original planning boundary/);
+    assert.equal(intents.length,1);assert.equal(intents[0]!.state,'ready');
+  }finally{await x.close();}
 });
 
 test('failed intent persistence rolls back the plan and execution projection even when the caller catches it',local,async()=>{

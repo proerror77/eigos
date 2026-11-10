@@ -16,11 +16,11 @@ import { reviewedFieldPolicy } from '../security/field-policy.js';
 import { submissionDigest } from '../security/submission-digest.js';
 import { taskContextFields } from '../security/task-context-contract.js';
 import {objectEnvelope,objectEnvelopeDependencies} from '../security/object-envelope.js';
-import { postgresBusinessSchema, postgresConstrainReadDeadline } from './runtime-transaction.js';
+import { postgresBusinessSchema,postgresBusinessToken,postgresBusinessReadOnly, postgresConstrainReadDeadline } from './runtime-transaction.js';
 import { postgresTaskContextMembers } from './task-context-membership.js';
 import { postgresTaskCurrentLabels, postgresTaskDirectBindingEvidence, postgresTaskDirectFieldCandidates,
   postgresTaskReadClearance, postgresTaskReadOntology, postgresTaskRetainedBindingEvidence, postgresTaskRetainedFieldCandidates,
-  postgresTaskResourceViewValidUntil, postgresTaskResourcePermissionValidUntil, postgresTaskSourceObservationValidUntil, withPostgresTaskReadSnapshot,withPostgresWorkerReadSnapshot,withPostgresTaskPermissionSnapshot,withPostgresTaskReadGrant,withPostgresWorkerRequestReadRows,type PostgresTaskReadAdmission } from './task-read-access.js';
+  postgresTaskResourceViewValidUntil, postgresTaskResourcePermissionValidUntil, postgresTaskSourceObservationValidUntil, withPostgresTaskReadSnapshot,withPostgresWorkerReadSnapshot,withPostgresTaskPermissionSnapshot,withPostgresTaskReadGrant,withPostgresWorkerRequestReadRows,withPostgresAgentRequestReadRows,type PostgresTaskReadAdmission } from './task-read-access.js';
 import type { ServiceRequest } from '../ontology/execution.js';
 import type { ObjectView } from '../ontology/object-store.js';
 import type { Computation } from '../ontology/object-functions.js';
@@ -73,7 +73,7 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
   action: (authorization: PostgresTaskReadAuthorization) => Promise<T>, builder?: StagedKernelBuilder,processing?:{admission:PostgresTaskReadAdmission;modelChannel?:string;requestRows?:()=>void;caller?:true},permissionAdmission?:PostgresTaskReadAdmission): Promise<T> {
   const captured = structuredClone(principal), owner = ownerKey(captured), q = `"${postgresBusinessSchema(client)}"`;
   let validUntil = Infinity;
-  const authorize = async (admission:PostgresTaskReadAdmission) => {
+  const authorizeValues = async (admission:PostgresTaskReadAdmission,requestRows?:()=>void) => {
     const ontology = await postgresTaskReadOntology(client, captured, taskId, policyDigest, builder);
     const model = builder === undefined ? currentKernelImplementation() : stagedKernelComponents(builder).model;
     validUntil = admission.validUntil;
@@ -85,13 +85,13 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
     let nodes = 0;
     let requestMembers:Promise<ObjectRef[]>|undefined;
     const contextMembers=async()=>{
-      if(!processing?.requestRows)return postgresTaskContextMembers(client,captured,taskId,policyDigest,builder);
-      processing.requestRows();
+      if(!requestRows)return postgresTaskContextMembers(client,captured,taskId,policyDigest,builder);
+      requestRows();
       const members=await withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async()=>{
         await postgresTaskReadOntology(client,captured,taskId,policyDigest,builder);
         return requestMembers??=(postgresTaskContextMembers(client,captured,taskId,policyDigest,builder));
       });
-      processing.requestRows();return structuredClone(members);
+      requestRows();return structuredClone(members);
     };
     let modelClearance: {classification:'private'|'sensitive';markings:SecurityEnvelope['requiredMarkings'];expiresAt:ConsentExpiry}|undefined;
     const tombstones = new Map<string,boolean>();
@@ -169,9 +169,10 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
     const validateSubmission = async (envelope: SecurityEnvelope) => {
       if (!envelope.submission) return;
       if (envelope.ownerKey !== owner || envelope.submission.taskId !== taskId || envelope.submission.requestRevision !== admission.grant.requestRevision) throw new SecurityError('OUTPUT_NOT_ALLOWED');
-      // Only explicit immutable Worker reads reuse the submitted request. The
-      // source/writer API keeps resolving it freshly, even in this transaction.
-      let current=processing?.requestRows?submittedRequest:undefined;
+      // Reuse only inside an explicitly established immutable read callback.
+      // The source/writer API keeps resolving it freshly in this transaction.
+      requestRows?.();
+      let current=requestRows?submittedRequest:undefined;
       if(!current){
         const rows = await client.query(`SELECT CASE WHEN octet_length((body.value#>'{delegation,request}')::text)<=8388608
         THEN (body.value#>'{delegation,request}')::text END AS request FROM ${q}.jobs j
@@ -180,8 +181,9 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
         if (rows.rowCount !== 1 || typeof rows.rows[0].request !== 'string') throw new SecurityError('OUTPUT_NOT_ALLOWED');
         const request = JSON.parse(rows.rows[0].request) as ServiceRequest;
         current={revision:request.revision,contentDigest:submissionDigest(request)};
-        if(processing?.requestRows)submittedRequest=current;
+        if(requestRows)submittedRequest=current;
       }
+      requestRows?.();
       if (current.revision !== admission.grant.requestRevision || current.contentDigest !== envelope.submission.contentDigest) throw new SecurityError('OUTPUT_NOT_ALLOWED');
     };
     const binding = async (input: ObjectRef, historical = false): Promise<Binding | undefined> => {
@@ -275,7 +277,7 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
       return effective;
     };
     let available = true;
-    const assertAvailable = () => { if (!available) throw new SecurityError('AUTHORIZATION_REQUIRED'); };
+    const assertAvailable = () => { if (!available) throw new SecurityError('AUTHORIZATION_REQUIRED');requestRows?.(); };
     let calculation:{id:string;integrity:boolean;validUntil:number}|undefined;
     const boundObject=async(input:ObjectRef)=>{
       assertAvailable();
@@ -450,6 +452,10 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
     try { return await action(Object.freeze(authorization)); }
     finally { available = false; }
   };
+  const authorize=(admission:PostgresTaskReadAdmission)=>!processing&&admission.actor.actorKind==='agent'
+    &&postgresBusinessReadOnly(client,postgresBusinessToken(client))
+    ?withPostgresAgentRequestReadRows(client,captured,taskId,policyDigest,requestRows=>authorizeValues(admission,requestRows))
+    :authorizeValues(admission,processing?.requestRows);
   const authorized=processing?await authorize(processing.admission):permissionAdmission?await authorize(permissionAdmission):await withPostgresTaskReadSnapshot(client,captured,taskId,policyDigest,authorize);
   if (validUntil <= Date.now()) throw new SecurityError('OUTPUT_NOT_ALLOWED');
   postgresConstrainReadDeadline(client,validUntil);

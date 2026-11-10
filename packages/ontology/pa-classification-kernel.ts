@@ -4,6 +4,7 @@ import type { OntologyModel } from './model.js';
 import type { OntologyDocument } from './definition-contracts.js';
 import type { PaClassification } from './pa-classification-contract.js';
 import { assertAcceptedDomains } from './domain-vocabulary.js';
+import { executableFieldPolicyRef } from './executable-contract-compatibility.js';
 
 /** Reviewed PA purposes are copied into each immutable release, not a second mutable registry. */
 export const paClassifications: Readonly<Record<string, PaClassification>> = Object.freeze({
@@ -226,6 +227,7 @@ export function extendPaClassificationKernel(original: OntologyDocument): Ontolo
  * contract. Purpose labels cannot conceal a changed field, action or relation. */
 const policyRefs = new WeakMap<OntologyModel, OntologyModel['ref']>();
 export function paFieldPolicyRef(model: OntologyModel) {
+  const executable = executableFieldPolicyRef(model); if (executable !== model.ref) return executable;
   const cached = policyRefs.get(model); if (cached) return cached;
   const definition = model.definitionSnapshot();
   if (!definition.objects.some(type => type.classification)) return model.ref;

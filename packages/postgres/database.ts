@@ -54,8 +54,16 @@ export class PostgresDatabase {
     finally{try{releaseOnce(connection?.failure);}finally{connection?.close();}}
   }
   run<T>(action:(client:Client)=>Promise<T>):Promise<T>{
+    return this.transaction(action, 'write');
+  }
+  /** Concurrent object/Function reads with the existing per-request fences.
+   * Callbacks may persist their own pagination cursors, but no business edits. */
+  read<T>(action:(client:Client)=>Promise<T>):Promise<T>{
+    return this.transaction(action, 'read');
+  }
+  private transaction<T>(action:(client:Client)=>Promise<T>,access:'read'|'write'):Promise<T>{
     const eligibilityInspector=this.eligibilityPool?(reference:PostgresEligibilityReference)=>postgresInspectEligibility(this.eligibilityPool!,this.schema,this.authority,reference):undefined;
-    return this.use(this.pool,client=>postgresBusinessTransaction(client,this.schema,this.authority,c=>this.vectorFeature?withPostgresVectorFeature(c,this.vectorFeature,()=>action(c)):action(c),{eligibilityInspector,prepareEligibilityAtEgress:eligibilityInspector?postgresEligibilityAtEgress:undefined,kernel:this.kernel}));
+    return this.use(this.pool,client=>postgresBusinessTransaction(client,this.schema,this.authority,c=>this.vectorFeature?withPostgresVectorFeature(c,this.vectorFeature,()=>action(c)):action(c),{eligibilityInspector,prepareEligibilityAtEgress:eligibilityInspector?postgresEligibilityAtEgress:undefined,kernel:this.kernel,access}));
   }
   renewClaim(claim:WorkClaim,leaseMs:number,policy:string):Promise<boolean>{
     if(!this.leasePool)throw new Error('PostgreSQL Worker requires a dedicated heartbeat pool');

@@ -15,6 +15,7 @@ import {postgresBusinessSchema,postgresBusinessToken} from './runtime-transactio
 import {postgresAssertOntologyAccess,postgresOntologyRelease,postgresOntologyDefinitionCompatible} from './ontology-release.js';
 import {assertIdentityAssertionWriteProgram} from '../ontology/identity-mapping.js';
 import {assertTransactionPartyRoleWriteProgram} from '../ontology/errand-domain.js';
+import {postgresScalarQueryPredicate} from './scalar-query-predicate.js';
 
 function fail(message:string):never {throw new DomainError('INVALID_INPUT',message);}
 type RawObject={view:ObjectView;definitionDigest:string;body:string};
@@ -267,8 +268,21 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
       if(property.restricted)throw new DomainError('FORBIDDEN','Restricted property cannot be filtered');if(!['eq','in'].includes(filter.op)&&!['integer','timestamp','decimal'].includes(property.kind))fail('Unsupported comparison for this property');
       const options=filter.op==='in'?filter.value:[filter.value];if(!Array.isArray(options)||options.some(value=>!property.schema.safeParse(value).success))fail('Filter value does not match property type');}
     if(last){values.push(last.type,last.id);where.push(`(o.type COLLATE "C">$${values.length-1} OR(o.type=$${values.length-1} AND o.id COLLATE "C">$${values.length}))`);}
-    const rows=await this.sql(`SELECT o.type,o.id,o.revision,o.definition_digest,CASE WHEN octet_length(o.body)<=1048576 THEN o.body END AS body
-      FROM ${from} WHERE ${where.join(' AND ')} ORDER BY o.type COLLATE "C",o.id COLLATE "C" LIMIT 201`,values);
+    // Only a host-supplied visible set (at most 2,000 refs) can use this plan.
+    // Materialize its owner/namespace/visibility boundary before inspecting any
+    // values. Internal unbounded reads retain the existing bounded JS path.
+    const predicate=boundary?postgresScalarQueryPredicate(this.model,target,args.where,properties,values):undefined;
+    const candidates=`SELECT o.type,o.id,o.revision,o.definition_digest,CASE WHEN octet_length(o.body)<=1048576 THEN o.body END AS body${predicate?',octet_length(o.body) AS query_body_bytes':''}
+      FROM ${from} WHERE ${where.join(' AND ')}`;
+    // Bound aggregate JSON parsing, not only each individual row. If this
+    // authorized set is too large, a NULL query_body keeps every candidate in
+    // the original 201-row JS path, including malformed-body failures/cursors.
+    const selection=predicate?`WITH query_visible AS MATERIALIZED (${candidates}),
+      query_budget AS MATERIALIZED (SELECT COALESCE(sum(query_body_bytes),0)<=8388608 AS within_limit FROM query_visible),
+      query_values AS MATERIALIZED (SELECT o.*, CASE WHEN budget.within_limit THEN "${this.schema}".eigos_try_jsonb(o.body) END AS query_body
+        FROM query_visible o CROSS JOIN query_budget budget)
+      SELECT o.type,o.id,o.revision,o.definition_digest,o.body FROM query_values o WHERE ${predicate}`:candidates;
+    const rows=await this.sql(`${selection} ORDER BY o.type COLLATE "C",o.id COLLATE "C" LIMIT 201`,values);
     this.charge(budget,rows.rows.length);const items:ObjectView[]=[];let scanned=0,bytes=0,hasMore=false;
     for(const row of rows.rows){if(scanned===200||items.length===args.limit){hasMore=true;break;}scanned++;
       if(row.body===null)throw new DomainError('CONFLICT','Ontology object exceeds its safe read bound');const ref={type:String(row.type),id:String(row.id)},body=JSON.parse(String(row.body));

@@ -11,6 +11,7 @@ import { roleAllows, roleSchema } from '../security/resource-role.js';
 import { secureDescribeSchema } from '../security/view-contracts.js';
 import { SecurityError } from '../security/errors.js';
 import {assertReviewedModel} from '../security/model-review.js';
+import { reviewedExecutableModelPair } from '../ontology/executable-contract-compatibility.js';
 import { postgresBusinessSchema, postgresBusinessToken, postgresConstrainReadDeadline } from './runtime-transaction.js';
 import { postgresTaskReadOntology, withPostgresAgentMetadata, withPostgresTaskReadSnapshot,
   withPostgresTaskReadGrant, type PostgresTaskReadAdmission } from './task-read-access.js';
@@ -52,8 +53,9 @@ export async function withPostgresTaskDefinitionAccess<T>(client: Client, princi
     if (!admission.grant.operations.includes(admission.actor.actorKind === 'worker' ? 'task.process' : 'task.query')) throw new SecurityError('AUTHORIZATION_REQUIRED');
     const selected = (await postgresTaskReadOntology(client, captured, taskId, policyDigest, builder)).model;
     const model = builder === undefined ? currentKernelImplementation() : stagedKernelComponents(builder).model;
-    if(model.ref.version==='29')assertReviewedModel(model,selected);
-    return withDefinitionAccess(client, admission, model.ref.version==='29'?selected:model, policyDigest, access => action(access, selected),model);
+    const taskRoles=model.ref.version==='29'||reviewedExecutableModelPair(model,selected);
+    if(taskRoles)assertReviewedModel(model,selected);
+    return withDefinitionAccess(client, admission, taskRoles?selected:model, policyDigest, access => action(access, selected),model);
   });
 }
 
@@ -66,7 +68,9 @@ export async function postgresDescribeOntology(client: Client, principal: Princi
   const model = builder === undefined ? currentKernelImplementation() : stagedKernelComponents(builder).model;
   const describe = async (admission: Pick<PostgresTaskReadAdmission, 'actor' | 'parent'>, contextTypes: readonly string[] = []) => {
     const selected = taskId ? (await postgresTaskReadOntology(client, captured, taskId, policyDigest, builder)).model : model;
-    return withDefinitionAccess(client, admission, model, policyDigest, async access => describeDefinitionCatalogue(access, args, selected, contextTypes));
+    const taskRoles=model.ref.version==='29'||reviewedExecutableModelPair(model,selected);
+    if(taskRoles)assertReviewedModel(model,selected);
+    return withDefinitionAccess(client, admission, taskRoles?selected:model, policyDigest, async access => describeDefinitionCatalogue(access, args, selected, contextTypes),model);
   };
   return taskId ? withPostgresTaskReadSnapshot(client, captured, taskId, policyDigest, admission => {
     if (!admission.grant.operations.includes('task.query')) throw new SecurityError('AUTHORIZATION_REQUIRED');

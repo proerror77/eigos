@@ -7,7 +7,7 @@ import { SecurityError } from '../security/errors.js';
 const schemaPattern = /^eigos_business_[a-z0-9_]{1,40}$/;
 const digestPattern = /^[a-f0-9]{64}$/;
 const active = new WeakSet<object>();
-const contexts = new WeakMap<object, { schema: string; authorityDigest: string; readUntil:number;token:object;kernel?:StagedKernelBuilder;leases:Map<string,()=>Promise<{validUntil:number}|undefined>>;eligibilityInspector?:PostgresEligibilityInspector;eligibility:Map<string,Promise<void>>;eligibilityReferences:Map<string,PostgresEligibilityReference>;egressReferences:PostgresEligibilityReference[] }>();
+const contexts = new WeakMap<object, { schema: string; authorityDigest: string; readUntil:number;token:object;readOnly:boolean;kernel?:StagedKernelBuilder;leases:Map<string,()=>Promise<{validUntil:number}|undefined>>;eligibilityInspector?:PostgresEligibilityInspector;eligibility:Map<string,Promise<void>>;eligibilityReferences:Map<string,PostgresEligibilityReference>;egressReferences:PostgresEligibilityReference[] }>();
 
 /** An original-token inspector, never business/model/provider work. Lease
  * evidence is refreshed at the outer commit; fixed read deadlines stay fixed. */
@@ -43,6 +43,14 @@ export function postgresBusinessToken(client:Client):object {
   const context=contexts.get(client);
   if(!context)throw new Error('An active PostgreSQL business transaction is required');
   return context.token;
+}
+
+/** The host-selected shared read fence for this exact active transaction.
+ * Actor labels and a reused pooled connection cannot establish this mode. */
+export function postgresBusinessReadOnly(client:Client,expectedToken:object):boolean{
+  const context=contexts.get(client);
+  if(!context||context.token!==expectedToken)throw new Error('The exact active PostgreSQL business transaction is required');
+  return context.readOnly;
 }
 
 /** Host-only immutable compiler context. It grants no namespace, task, role,
@@ -83,14 +91,24 @@ export interface PostgresRuntimeAuthority {
   digest: string;
 }
 
+export interface PostgresTransactionOptions {
+  eligibilityInspector?: PostgresEligibilityInspector;
+  prepareEligibilityAtEgress?: PostgresEligibilityEgress;
+  kernel?: StagedKernelBuilder;
+  /** Host-selected query path. Only private cursor bookkeeping may write here. */
+  access?: 'read' | 'write';
+}
+
 /** Serialize a PostgreSQL business mutation and fence it to the reviewed
  * authority. This primitive is not a Worker claim, an authorization grant or a
  * runtime adapter. Callers must check current task and permission fences inside
  * the same callback, and all business writers must use the same lock. The
  * client must be request-owned and every database operation must be awaited.
  * External side effects must not be performed inside the transaction. */
-export async function postgresBusinessTransaction<T>(client: Client, schema: string, authority: PostgresRuntimeAuthority, action: (client: Client) => Promise<T>,options:{eligibilityInspector?:PostgresEligibilityInspector;prepareEligibilityAtEgress?:PostgresEligibilityEgress;kernel?:StagedKernelBuilder}={}): Promise<T> {
+export async function postgresBusinessTransaction<T>(client: Client, schema: string, authority: PostgresRuntimeAuthority, action: (client: Client) => Promise<T>,options:PostgresTransactionOptions={}): Promise<T> {
   if (!schemaPattern.test(schema) || !authority.id || !Number.isSafeInteger(authority.revision) || authority.revision < 1 || !digestPattern.test(authority.digest)) throw new Error('Invalid PostgreSQL business authority');
+  if (options.access !== undefined && options.access !== 'read' && options.access !== 'write') throw new Error('Invalid PostgreSQL transaction access');
+  const reading = options.access === 'read';
   const kernel=options.kernel;if(kernel!==undefined)stagedKernelComponents(kernel);
   const releaseClient=reservePostgresTransactionClient(client);
   const expected = { id: authority.id, revision: authority.revision, digest: authority.digest };
@@ -100,16 +118,21 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
     try { if (typeof pooled.release === 'function') pooled.release(new Error('Transaction state is uncertain')); else if (typeof client.end === 'function') await client.end(); } catch { /* connection is already unusable */ }
   };
   const assertAuthority = async () => {
-    const result = await client.query(`SELECT id,revision,configuration_digest FROM "${schema}".eigos_lock_runtime_authority()`);
+    const authorityFunction = reading ? 'eigos_current_runtime_authority' : 'eigos_lock_runtime_authority';
+    const result = await client.query(`SELECT id,revision,configuration_digest FROM "${schema}".${authorityFunction}()`);
     const row = result.rows[0];
     if (result.rowCount !== 1 || row?.id !== expected.id || String(row?.revision) !== String(expected.revision) || row?.configuration_digest !== expected.digest) throw new Error('PostgreSQL business authority changed');
   };
   try {
-    beginning=true;await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');beginning=false;opened = true;
+    // The shared fence excludes every business writer. READ COMMITTED lets
+    // independent readers maintain their private cursors without SSI conflicts.
+    beginning=true;await client.query(reading ? 'BEGIN ISOLATION LEVEL READ COMMITTED' : 'BEGIN ISOLATION LEVEL SERIALIZABLE');beginning=false;opened = true;
     if (client.getTransactionStatus() !== 'T') { committing = true; throw new Error('PostgreSQL business transaction did not start'); }
     // LOCK is a utility statement: acquire serialization before the first MVCC
     // snapshot. A SELECT-based lock would retain facts from before the wait.
-    await client.query(`LOCK TABLE "${schema}".eigos_business_mutex IN EXCLUSIVE MODE`);
+    // Readers share the fence. Writers retain exclusive serialization, so
+    // objects and permission rows stay stable while a read snapshot is used.
+    await client.query(`LOCK TABLE "${schema}".eigos_business_mutex IN ${reading ? 'SHARE' : 'EXCLUSIVE'} MODE`);
     const transactionId = (await client.query('SELECT pg_catalog.pg_current_xact_id()::text AS id')).rows[0]?.id;
     if (typeof transactionId !== 'string' || !/^\d+$/.test(transactionId)) throw new Error('PostgreSQL transaction identity unavailable');
     const assertBoundary = async () => {
@@ -122,7 +145,7 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
     await assertAuthority();
     await assertBoundary();
     await client.query('SAVEPOINT eigos_runtime_action_guard');
-    const context={schema,authorityDigest:expected.digest,readUntil:Infinity,token:Object.freeze({}),kernel,leases:new Map<string,()=>Promise<{validUntil:number}|undefined>>(),eligibilityInspector:options.eligibilityInspector,eligibility:new Map<string,Promise<void>>(),eligibilityReferences:new Map<string,PostgresEligibilityReference>(),egressReferences:[] as PostgresEligibilityReference[]};
+    const context={schema,authorityDigest:expected.digest,readUntil:Infinity,token:Object.freeze({}),readOnly:reading,kernel,leases:new Map<string,()=>Promise<{validUntil:number}|undefined>>(),eligibilityInspector:options.eligibilityInspector,eligibility:new Map<string,Promise<void>>(),eligibilityReferences:new Map<string,PostgresEligibilityReference>(),egressReferences:[] as PostgresEligibilityReference[]};
     contexts.set(client,context);
     let result: T;
     try {
@@ -149,6 +172,9 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
     }
     if(Math.min(context.readUntil,leaseUntil)<=Date.now())throw new SecurityError('OUTPUT_NOT_ALLOWED');
     committing = true; await client.query('COMMIT'); opened = false;committing=false;
+    // A query does not lock the singleton authority row. Check a fresh snapshot
+    // after commit as well, including administrative changes outside the fence.
+    if (reading) await assertAuthority();
     // The commit was acknowledged, so an expired response is a disclosure
     // denial, not an unknown commit. Mutation callers must retain their receipt.
     if(Math.min(context.readUntil,leaseUntil)<=Date.now())throw new SecurityError('OUTPUT_NOT_ALLOWED');

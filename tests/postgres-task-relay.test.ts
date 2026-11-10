@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
+import pg from 'pg';
 import {SignJWT,generateKeyPair,exportJWK,decodeJwt} from 'jose';
 import {digest} from '../packages/core/delegation.js';
 import type {Principal} from '../packages/core/domain.js';
@@ -16,6 +17,10 @@ import {PostgresTaskCommandService} from '../packages/postgres/task-command-serv
 import {PostgresTaskStorage} from '../packages/postgres/task-storage.js';
 import {PostgresWorkerStore} from '../packages/postgres/worker-store.js';
 import {PostgresRelayReadAuthority} from '../packages/postgres/relay-read-authority.js';
+import {PostgresTaskRelayAuthority} from '../packages/postgres/task-relay-authority.js';
+import {postgresBusinessTransaction} from '../packages/postgres/runtime-transaction.js';
+import {installPostgresAuthorityLock} from '../packages/postgres/authority-lock.js';
+import {runtimeAuthoritySchema,runtimeAuthorityDigest} from '../packages/core/runtime-authority.js';
 import {DidiAgentProgram} from '../packages/capabilities/didi/program.js';
 import {bindPersonalSourceOwner} from '../packages/core/source-owner.js';
 import {OntologyObjectStore} from '../packages/ontology/object-store.js';
@@ -30,6 +35,24 @@ import {ExecutionCatalog} from '../packages/core/catalog.js';
 import type {TaskRelayGatewayPort} from '../apps/gateway/relay.js';
 const relayPort=(value:PostgresTaskRelay):TaskRelayGatewayPort=>value;void relayPort;
 const unavailable=async():Promise<never>=>{throw new Error('Unexpected synthetic transport operation');};
+
+test('restricted PostgreSQL Relay validates its pinned host authority without direct authority-table access',
+  {skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'||!!process.env.EIGOS_TEST_PG_CA_FILE},async()=>{
+    const client=new pg.Client();await client.connect();const suffix=randomUUID().replaceAll('-',''),schema=`eigos_business_${suffix}`,role=`eigos_relay_${suffix}`;
+    const origin='https://synthetic-primary.example',runtime=runtimeAuthoritySchema.parse({version:1,id:randomUUID(),revision:1,canonicalOrigin:origin,issuer:'https://synthetic-issuer.example',ontologyId:'eigos.business',
+      databasePath:'/synthetic/tasks.sqlite',membershipDatabasePath:'/synthetic/members.sqlite',ingresses:[{origin,audience:origin,agentClientId:'synthetic-agent',agentClientIds:['synthetic-agent']}]});
+    const authority={id:runtime.id,revision:runtime.revision,digest:runtimeAuthorityDigest(runtime)},database={run:<T>(action:(client:pg.Client)=>Promise<T>)=>postgresBusinessTransaction(client,schema,authority,action)};
+    try{
+      await client.query(`CREATE SCHEMA "${schema}"; CREATE TABLE "${schema}".runtime_authority(slot BIGINT PRIMARY KEY,id TEXT,revision BIGINT,configuration_digest TEXT); CREATE ROLE "${role}" NOLOGIN`);
+      await client.query(`INSERT INTO "${schema}".runtime_authority VALUES(1,$1,$2,$3)`,[authority.id,authority.revision,authority.digest]);
+      await installPostgresAuthorityLock(client,schema);
+      await client.query(`GRANT USAGE ON SCHEMA "${schema}" TO "${role}"; GRANT EXECUTE ON FUNCTION "${schema}".eigos_lock_runtime_authority(),"${schema}".eigos_current_runtime_authority() TO "${role}"; GRANT UPDATE ON "${schema}".eigos_business_mutex TO "${role}"; SET ROLE "${role}"`);
+      await assert.rejects(client.query(`SELECT * FROM "${schema}".runtime_authority`),/permission denied/);
+      assert.equal(await new PostgresTaskRelayAuthority({database,policyDigest:'a'.repeat(64),authority:runtime}).authorityCurrent(),true);
+      await assert.rejects(new PostgresTaskRelayAuthority({database,policyDigest:'a'.repeat(64),authority:{...runtime,revision:2}}).authorityCurrent(),/AUTHORITY_UNAVAILABLE/);
+      await assert.rejects(client.query(`UPDATE "${schema}".runtime_authority SET revision=2`),/permission denied/);
+    }finally{await client.query('RESET ROLE');await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE; DROP ROLE IF EXISTS "${role}"`);await client.end();}
+  });
 async function transport(peerId:string,gatewayId:string,beforeQueue?:()=>Promise<void>){
   const outbox:unknown[]=[],messageId=randomUUID();let sent=0;
   const client:TaskRelayTransport={agentId:gatewayId,peer:unavailable,contacts:unavailable,ensureContact:unavailable,respondContact:unavailable,listen:unavailable,register:unavailable,renew:unavailable,close(){},
@@ -81,7 +104,7 @@ test('PostgreSQL Task Relay persists DPoP/command identity and routes the same a
     policy.setRecipient(installation.id,{classification:'sensitive',markings:['member_private','personal_data'],channels:['agent_response'],expiresAt},policy.revision());
     const second=f.installation('Other Relay PA',3600000);f.approve(second.id);
     const other={...f.principal,access:f.coordinator.authenticate(f.principal,second.token)},p={...f.principal,access:f.coordinator.authenticate(f.principal,installation.token)},node=await createNodeKeys('Synthetic PA'),gateway=await createNodeKeys('Synthetic gateway');
-    target=await importPostgresFixture(f);const t=target,port=new PostgresTaskRelay({database:t.database,policyDigest:t.policy,authorityId:f.authority!.id,gatewayOrigin:f.authority!.canonicalOrigin,builder:t.kernel}),tasks=new PostgresTaskCommandService(t.database,t.policy,t.kernel);
+    target=await importPostgresFixture(f);const t=target,port=new PostgresTaskRelay({database:t.database,policyDigest:t.policy,authority:f.authority!,builder:t.kernel}),tasks=new PostgresTaskCommandService(t.database,t.policy,t.kernel);
     const proof=await verifyProof(await createProof(node,'synthetic-oauth','POST',port.gatewayOrigin+'/relay/bind'),'synthetic-oauth','POST',port.gatewayOrigin+'/relay/bind',node.identity.card.agentId);
     await port.bind(p,node.identity.card.agentId,Date.now()+60000,proof);await assert.rejects(port.bind(p,node.identity.card.agentId,Date.now()+60000,proof),/ACCESS_REVOKED/);
     await assert.rejects(port.bind(other,node.identity.card.agentId,Date.now()+60000,{jti:randomUUID(),expiresAt:Date.now()+30000}),/AUTHORIZATION_REQUIRED/);
@@ -132,7 +155,7 @@ test('PostgreSQL source Relay checks the existing dispatch, facts and receipt wi
       const attempt:ExecutionAttempt={id:randomUUID(),intentId,kind:'dispatch',requestKey:plan.steps[0]!.operationKey,startedAt:new Date().toISOString(),claimToken:claim.token,requestRevision:claim.job.revision??0,inputDigest:digest(input),planDigest:plan.digest,ordinal:1};
       const intent:ActionIntent={id:intentId,owner:f.owner,jobId:job.id,stepId:selection.id,businessOperationKey:plan.steps[0]!.operationKey,planDigest:plan.digest,bindingRef:program.ref,inputDigest:digest({input,inputRefs:[]}),privateDigest:digest({}),privateData:{},dispatchInput:input,effect:'read',state:'dispatching',nextAt:0,createdAt:job.createdAt};const {privateData,...stored}=intent;
       await t.database.run(async c=>{await c.query(`INSERT INTO ${q}.action_intents(id,owner,job_id,business_key,state,private_data,body) VALUES($1,$2,$3,$4,'dispatching',$5,$6)`,[intentId,f.owner,job.id,intent.businessOperationKey,JSON.stringify(privateData),JSON.stringify(stored)]);await c.query(`INSERT INTO ${q}.action_attempts(id,owner,intent_id,body) VALUES($1,$2,$3,$4)`,[attempt.id,f.owner,intentId,JSON.stringify(attempt)]);});
-      const reads=new PostgresRelayReadAuthority({database:t.database,policyDigest:t.policy,authorityId:f.authority!.id,gatewayOrigin:f.authority!.canonicalOrigin,builder:t.kernel}),peer=(await createNodeKeys('Synthetic source')).identity.card.agentId,context={requestId:job.id,requestRevision:1,planId:plan.id,intentId,attemptId:attempt.id,modelRunId:run.id,programId:program.ref.id,programDigest:program.configurationDigest,action:selection.action,actionInputDigest:digest(input)},requestInput={authorityId:f.authority!.id,gatewayOrigin:f.authority!.canonicalOrigin,source:{bindingId:binding.bindingId,keySha256:binding.keySha256,environment:'production' as const},context,tool:'maps_textsearch' as const,input:{city:'Synthetic City',keywords:'Synthetic Place'}};
+      const reads=new PostgresRelayReadAuthority({database:t.database,policyDigest:t.policy,authority:f.authority!,builder:t.kernel}),peer=(await createNodeKeys('Synthetic source')).identity.card.agentId,context={requestId:job.id,requestRevision:1,planId:plan.id,intentId,attemptId:attempt.id,modelRunId:run.id,programId:program.ref.id,programDigest:program.configurationDigest,action:selection.action,actionInputDigest:digest(input)},requestInput={authorityId:f.authority!.id,gatewayOrigin:f.authority!.canonicalOrigin,source:{bindingId:binding.bindingId,keySha256:binding.keySha256,environment:'production' as const},context,tool:'maps_textsearch' as const,input:{city:'Synthetic City',keywords:'Synthetic Place'}};
       await assert.rejects(reads.create(claim,peer,{...requestInput,context:{...context,attemptId:randomUUID()}}),/ACCESS_REVOKED/);
       await assert.rejects(reads.create(claim,peer,{...requestInput,context:{...context,programDigest:'f'.repeat(64)}}),/SOURCE_NOT_AUTHORIZED/);
       const request=await reads.create(claim,peer,requestInput);assert.equal((await reads.create(claim,peer,requestInput)).callId,request.callId);assert.equal((await reads.pending())[0]?.request.callId,request.callId);

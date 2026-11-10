@@ -3,7 +3,8 @@ import { DomainError, ownerKey, type Principal } from '../core/domain.js';
 import { digest } from '../core/delegation.js';
 import type { ObjectRef } from '../ontology/model.js';
 import { IncompleteRelationshipRead, type ObjectQuery, type ReadBudget, type LinkWrite } from '../ontology/object-store.js';
-import { functionCallSchema, evaluateFunctionProgram, type Computation } from '../ontology/object-functions.js';
+import { evaluateFunctionProgram, type Computation } from '../ontology/object-functions.js';
+import { parseFunctionInvocation } from '../ontology/function-runtime.js';
 import { runGraphProgramAsync, type GraphStorage, type ProjectionMetadata } from '../ontology/graph-program.js';
 import type { StagedKernelBuilder } from '../ontology/seed-definition.js';
 import { combineEnvelopes, type SecurityEnvelope } from '../security/envelope.js';
@@ -115,7 +116,7 @@ export async function postgresEvaluateAuthorizedFunction(client:Client,principal
   if(!admission.grant.operations.includes(admission.actor.actorKind==='worker'?'task.process':'task.query'))throw new SecurityError('AUTHORIZATION_REQUIRED');
   if(expectedRequestRevision!==undefined&&expectedRequestRevision!==admission.grant.requestRevision)throw new SecurityError('POLICY_CHANGED');
   return auth.withFunction(basic.function,async calculation=>{
-    const call=functionCallSchema.parse(basic),ontology=await postgresTaskReadOntology(client,p,taskId,policy,builder);
+    const ontology=await postgresTaskReadOntology(client,p,taskId,policy,builder),call=parseFunctionInvocation(ontology.model,basic);
     const definition=ontology.model.function(call.function);
     if(!definition.inputTypes.some(type=>ontology.model.implements(call.object.type,type)))throw new DomainError('INVALID_INPUT','Function requires its registered object type');
     const storage=options.graph??await PostgresProjectionGraph.create(client,owner,ontology.ref,builder,{readOnly:true});
