@@ -4163,7 +4163,7 @@
     {
       "id": "ontology-definition-contracts",
       "file": "packages/ontology/definition-contracts.ts",
-      "sourceDigest": "4cf273e8589327f2b2381b4ce39baa03827c8f5bab7e3d995afe5c17db3dfb91",
+      "sourceDigest": "453c626a65f4b9ad3649876b83ea357ed1bae41cbc959b23bfa6dd748857bd6b",
       "channels": [
         "management",
         "sqlite"
@@ -4189,7 +4189,7 @@
     {
       "id": "ontology-definitions",
       "file": "packages/ontology/model.ts",
-      "sourceDigest": "f257fcf953781b739cd99cf629443b894acab0d38bf1d46c7225c30880d788e1",
+      "sourceDigest": "66c84a0fad11b8aed357186ba909ce746a9a913222ef495120fd5deb501744fb",
       "channels": [
         "definition"
       ],
@@ -4257,7 +4257,7 @@
       "currentControl": "Every selectable release (v27-v31) keeps an explicit digest constant and is asserted during construction; historical releases are never rewritten.",
       "targetControl": "Accurate release construction and immutable historical interpretation",
       "stage": "S2",
-      "sourceDigest": "a9641c6ed9411f53702f0cc338cb59370e947a276046140d4b205bdf5115e85e"
+      "sourceDigest": "7bc826de364081e6183656b80f5288a943927890289cbd18effc5b07f3fe755c"
     },
     {
       "id": "ontology-metadata-http",
@@ -7860,7 +7860,7 @@
     {
       "id": "trusted-kernel-bootstrap",
       "file": "packages/ontology/seed-definition.ts",
-      "sourceDigest": "a9641c6ed9411f53702f0cc338cb59370e947a276046140d4b205bdf5115e85e",
+      "sourceDigest": "7bc826de364081e6183656b80f5288a943927890289cbd18effc5b07f3fe755c",
       "channels": [
         "authorization_control"
       ],
