@@ -5145,12 +5145,12 @@
     {
       "id": "postgres-database-runtime",
       "file": "packages/postgres/database.ts",
-      "sourceDigest": "08a463b6068a6203e2e23db2b8d9576795c6cd4240e093b7853e267e2baf6e2b",
+      "sourceDigest": "a048305618bddb8fb44ae4911411c2626387cb5b8d55060c80c26b0c0dd8ab9d",
       "channels": [
         "internal"
       ],
       "content": "Request-owned PostgreSQL transaction pool",
-      "currentControl": "One fenced transaction per borrowed connection; exact captured authority, single lease release and eviction after uncertain outcomes; no implicit retry",
+      "currentControl": "One fenced transaction per borrowed connection; independent current eligibility checks on a separate pool, with a fixed read-only batch for public reads. Single lease release and eviction after uncertain outcomes.",
       "targetControl": "One fenced transaction per borrowed connection; exact captured authority, single lease release and eviction after uncertain outcomes; no implicit retry",
       "stage": "S5"
     },
@@ -5270,7 +5270,7 @@
     {
       "id": "postgres-eligibility-inspection",
       "file": "packages/postgres/eligibility-inspection.ts",
-      "sourceDigest": "1ba24d13486d73ec328bb226a5a559d0d06e56ffe36b995e58d00d6d38010a2b",
+      "sourceDigest": "8a2367c3cdc96c7ee3a011a66bdab1f044143f06c55c78df6d73368991015281",
       "channels": [
         "internal"
       ],
@@ -5602,12 +5602,12 @@
     {
       "id": "postgres-ontology-query",
       "file": "packages/postgres/ontology-query.ts",
-      "sourceDigest": "dacee20520357a8859ae2d30d72a9ae8b6553d13accd6880923f8530ca4ead0e",
+      "sourceDigest": "320dcff6b23abe4eccd018fa4caf8ed6b9ff9273454de2fc09e1db768786df98",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL task-scoped Ontology queries",
-      "currentControl": "Complete bounded task binding and current field/lineage/recipient visibility before predicates and pagination; exact release/revision, opaque installation/grant/policy cursors and checked field projection; raw graph never exposed",
+      "currentControl": "Exact release and revision, direct binding and current field, lineage and recipient visibility. Ordinary task-root reads batch bounded raw inputs and validate the same output evidence without scanning the task inventory. Other queries retain opaque cursors and checked field projection.",
       "targetControl": "Complete bounded task binding and current field/lineage/recipient visibility before predicates and pagination; exact release/revision, opaque installation/grant/policy cursors and checked field projection; raw graph never exposed",
       "stage": "S5"
     },
@@ -5618,7 +5618,7 @@
       "stage": "S5",
       "id": "postgres-ontology-read",
       "file": "packages/postgres/ontology-release.ts",
-      "sourceDigest": "b110d69e4e5363386c751e8f15e97a1e485786976136972c549963a4a9575592",
+      "sourceDigest": "f857a1367a7f3f58275e5a6a50fd9c77d10e81fe017e1c89c9da3c83b6fcc53f",
       "content": "PostgreSQL ontology release and historical witness reader",
       "currentControl": "Every lookup checks the persisted release identity, actual stored-body SHA-256 and model fingerprint. Immutable documents and compiled models are reused only within the same trusted registry, bounded to eight entries and 16 MiB of serialized content. Namespace, task, role, source and output checks execute at their existing boundaries.",
       "targetControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions"
@@ -5744,7 +5744,7 @@
       "currentControl": "Business writes retain serializable exclusive fencing. Audited query callbacks share the fence under READ COMMITTED, resolve current authority without a row lock, and recheck authority after commit. Exact transaction identity, deadlines, current eligibility, uncertain-outcome eviction and cursor scope remain enforced.",
       "targetControl": "Serializable business state after transaction-scoped table serialization, exact authority/transaction identity and savepoint guards; current deadlines before/after commit, unknown-outcome eviction and no automatic retries",
       "stage": "S5",
-      "sourceDigest": "a545fe409772c6f8637eda9647871fabfd4797451fc6920fb84d27b49980a4e1"
+      "sourceDigest": "4250b441a9a076cb541cbf76e0ea7a30fb58a958a8d12a7115dfbfdbc30a5162"
     },
     {
       "id": "postgres-source-projection",
@@ -5869,7 +5869,7 @@
     {
       "id": "postgres-task-output-authorization",
       "file": "packages/postgres/task-output.ts",
-      "sourceDigest": "c4e7aa1d464f1d216512440c3f427735a2d12699e5e28696b6c2fe3f388475eb",
+      "sourceDigest": "98b89fe67eae05d1749c2f3fd60941a492a2948bfca017b6a6f2b9031c937d7a",
       "channels": [
         "internal"
       ],
@@ -5897,7 +5897,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "bde6e43ad0fb2ff8ea1c1d2eac84de24198c487de502b41695d8ea3437b688f6",
+      "sourceDigest": "d1235f2324a5701833357efeb2dc4e82c6d261801e8516d0e45bba14b42dc413",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current task, identity, source and expiry checks remain. Resource roles pin the exact checked task release, independently of the compatible field policy. Raw binding reuse is bounded to 64 entries/8 MiB and the same callback, transaction token, actor, owner, task and grant revisions; public reuse additionally requires the shared read fence.",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
@@ -8031,6 +8031,18 @@
       "content": "Fixed DiDi read-only workflow evidence",
       "currentControl": "Exact current request/release/route and actual Worker read receipts bind the fixed estimate phases to only the two registered source reads. Each natural interpretation pins its acknowledged invocation, request digest, revision and original run; historical runs remain in the cumulative ledger. Explicit idempotent user replies alone establish a new interpretation window after safe clarification. Classification and batching use this checked proof, never missing ordinary Goal coverage.",
       "targetControl": "The current request and release, exact authorized route, optional single grounded model receipt and actual Worker-context receipts bind the fixed estimate phases. Only the two registered source read actions can enter the original journal. Common fixed-request validation also runs before natural interpretation; accepted natural evidence must declare exactly one tool-free model request. Classification and batching consume this same checked contract, not the absence of ordinary Goal coverage.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-read-batch",
+      "file": "packages/postgres/read-batch.ts",
+      "sourceDigest": "b4f8e0c61a2e6e6f13334d51106898e943af80be061cb4e5e5d2a0f1b9f377f9",
+      "channels": [
+        "internal"
+      ],
+      "content": "Bounded PostgreSQL raw read batching",
+      "currentControl": "Only host-authored bounded SELECT fragments are grouped in the owning transaction. Values are bound parameters. Callers retain row validation and all admission, source and output decisions.",
+      "targetControl": "Only host-authored bounded SELECT fragments are grouped in the owning transaction. Values are bound parameters. Callers retain row validation and all admission, source and output decisions.",
       "stage": "S5"
     }
   ]

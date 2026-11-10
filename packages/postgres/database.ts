@@ -62,8 +62,8 @@ export class PostgresDatabase {
     return this.transaction(action, 'read');
   }
   private transaction<T>(action:(client:Client)=>Promise<T>,access:'read'|'write'):Promise<T>{
-    const eligibilityInspector=this.eligibilityPool?(reference:PostgresEligibilityReference)=>postgresInspectEligibility(this.eligibilityPool!,this.schema,this.authority,reference):undefined;
-    return this.use(this.pool,client=>postgresBusinessTransaction(client,this.schema,this.authority,c=>this.vectorFeature?withPostgresVectorFeature(c,this.vectorFeature,()=>action(c)):action(c),{eligibilityInspector,prepareEligibilityAtEgress:eligibilityInspector?postgresEligibilityAtEgress:undefined,kernel:this.kernel,access}));
+    const eligibilityInspector=this.eligibilityPool?(reference:PostgresEligibilityReference)=>postgresInspectEligibility(this.eligibilityPool!,this.schema,this.authority,reference,{batch:access==='read'}):undefined;
+    return this.use(this.pool,client=>postgresBusinessTransaction(client,this.schema,this.authority,c=>this.vectorFeature?withPostgresVectorFeature(c,this.vectorFeature,()=>action(c)):action(c),{eligibilityInspector,prepareEligibilityAtEgress:eligibilityInspector?postgresEligibilityAtEgress:undefined,kernel:this.kernel,access,eligibilityChecksRuntimeAuthority:access==='read'}));
   }
   renewClaim(claim:WorkClaim,leaseMs:number,policy:string):Promise<boolean>{
     if(!this.leasePool)throw new Error('PostgreSQL Worker requires a dedicated heartbeat pool');

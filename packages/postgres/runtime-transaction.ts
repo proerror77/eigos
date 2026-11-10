@@ -1,7 +1,7 @@
 import {stagedKernelComponents,type StagedKernelBuilder} from '../ontology/seed-definition.js';
 import {createHash} from 'node:crypto';
 import {postgresEligibilityReferenceSchema,type PostgresEligibilityReference,type PostgresEligibilityInspector,type PostgresEligibilityEgress} from './eligibility-reference.js';
-import type { Client } from 'pg';
+import type { Client, QueryResult } from 'pg';
 import { SecurityError } from '../security/errors.js';
 
 const schemaPattern = /^eigos_business_[a-z0-9_]{1,40}$/;
@@ -94,6 +94,7 @@ export interface PostgresRuntimeAuthority {
 export interface PostgresTransactionOptions {
   eligibilityInspector?: PostgresEligibilityInspector;
   prepareEligibilityAtEgress?: PostgresEligibilityEgress;
+  eligibilityChecksRuntimeAuthority?: boolean;
   kernel?: StagedKernelBuilder;
   /** Host-selected query path. Only private cursor bookkeeping may write here. */
   access?: 'read' | 'write';
@@ -117,34 +118,60 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
     const pooled = client as Client & { release?: (error?: Error) => void };
     try { if (typeof pooled.release === 'function') pooled.release(new Error('Transaction state is uncertain')); else if (typeof client.end === 'function') await client.end(); } catch { /* connection is already unusable */ }
   };
-  const assertAuthority = async () => {
-    const authorityFunction = reading ? 'eigos_current_runtime_authority' : 'eigos_lock_runtime_authority';
-    const result = await client.query(`SELECT id,revision,configuration_digest FROM "${schema}".${authorityFunction}()`);
+  const authorityFunction = reading ? 'eigos_current_runtime_authority' : 'eigos_lock_runtime_authority';
+  const authorityQuery = `SELECT id,revision,configuration_digest FROM "${schema}".${authorityFunction}()`;
+  const identityQuery = 'SELECT pg_catalog.pg_current_xact_id()::text AS id';
+  const readFenceQuery = `SELECT fence.*, x.transaction_id FROM (SELECT pg_catalog.pg_current_xact_id()::text AS transaction_id) x LEFT JOIN LATERAL (${authorityQuery}) fence ON TRUE`;
+  const searchPath = `SET LOCAL search_path TO pg_catalog, "${schema}", pg_temp`;
+  const savepoint = 'SAVEPOINT eigos_runtime_action_guard';
+  const checkAuthority = (result: QueryResult) => {
     const row = result.rows[0];
     if (result.rowCount !== 1 || row?.id !== expected.id || String(row?.revision) !== String(expected.revision) || row?.configuration_digest !== expected.digest) throw new Error('PostgreSQL business authority changed');
   };
+  let transactionId: unknown;
+  const checkStatus = () => {
+    const status = client.getTransactionStatus();
+    if (status !== 'T') { committing = status !== 'E'; throw new Error('PostgreSQL business transaction boundary was lost'); }
+  };
+  const checkIdentity = (actual: unknown) => {
+    if (actual !== transactionId) { committing = true; throw new Error('PostgreSQL business transaction identity changed'); }
+  };
+  const assertBoundary = async () => {
+    checkStatus();
+    checkIdentity((await client.query(identityQuery)).rows[0]?.id);
+  };
   try {
-    // The shared fence excludes every business writer. READ COMMITTED lets
-    // independent readers maintain their private cursors without SSI conflicts.
-    beginning=true;await client.query(reading ? 'BEGIN ISOLATION LEVEL READ COMMITTED' : 'BEGIN ISOLATION LEVEL SERIALIZABLE');beginning=false;opened = true;
-    if (client.getTransactionStatus() !== 'T') { committing = true; throw new Error('PostgreSQL business transaction did not start'); }
-    // LOCK is a utility statement: acquire serialization before the first MVCC
-    // snapshot. A SELECT-based lock would retain facts from before the wait.
-    // Readers share the fence. Writers retain exclusive serialization, so
-    // objects and permission rows stay stable while a read snapshot is used.
-    await client.query(`LOCK TABLE "${schema}".eigos_business_mutex IN ${reading ? 'SHARE' : 'EXCLUSIVE'} MODE`);
-    const transactionId = (await client.query('SELECT pg_catalog.pg_current_xact_id()::text AS id')).rows[0]?.id;
+    beginning = true;
+    if (reading) {
+      // The driver uses the simple protocol for this fixed, parameter-free
+      // batch. LOCK still precedes the first MVCC snapshot and no callback
+      // starts until PostgreSQL acknowledges the fence and the savepoint.
+      const statements = ['BEGIN ISOLATION LEVEL READ COMMITTED',
+        `LOCK TABLE "${schema}".eigos_business_mutex IN SHARE MODE`, searchPath, readFenceQuery, savepoint];
+      const results: unknown = await client.query(statements.join('; '));
+      beginning = false;
+      opened = true;
+      checkStatus();
+      if (!Array.isArray(results) || results.length !== statements.length) {
+        committing = true;
+        throw new Error('PostgreSQL read transaction setup acknowledgement is incomplete');
+      }
+      checkAuthority(results[3] as QueryResult);
+      transactionId = results[3].rows[0]?.transaction_id;
+    } else {
+      await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+      beginning = false;
+      opened = true;
+      checkStatus();
+      await client.query(`LOCK TABLE "${schema}".eigos_business_mutex IN EXCLUSIVE MODE`);
+      transactionId = (await client.query(identityQuery)).rows[0]?.id;
+      if (typeof transactionId !== 'string' || !/^\d+$/.test(transactionId)) throw new Error('PostgreSQL transaction identity unavailable');
+      await client.query(searchPath);
+      checkAuthority(await client.query(authorityQuery));
+      await assertBoundary();
+      await client.query(savepoint);
+    }
     if (typeof transactionId !== 'string' || !/^\d+$/.test(transactionId)) throw new Error('PostgreSQL transaction identity unavailable');
-    const assertBoundary = async () => {
-      const status = client.getTransactionStatus();
-      if (status !== 'T') { committing = status !== 'E'; throw new Error('PostgreSQL business transaction boundary was lost'); }
-      const current = (await client.query('SELECT pg_catalog.pg_current_xact_id()::text AS id')).rows[0]?.id;
-      if (current !== transactionId) { committing = true; throw new Error('PostgreSQL business transaction identity changed'); }
-    };
-    await client.query(`SET LOCAL search_path TO pg_catalog, "${schema}", pg_temp`);
-    await assertAuthority();
-    await assertBoundary();
-    await client.query('SAVEPOINT eigos_runtime_action_guard');
     const context={schema,authorityDigest:expected.digest,readUntil:Infinity,token:Object.freeze({}),readOnly:reading,kernel,leases:new Map<string,()=>Promise<{validUntil:number}|undefined>>(),eligibilityInspector:options.eligibilityInspector,eligibility:new Map<string,Promise<void>>(),eligibilityReferences:new Map<string,PostgresEligibilityReference>(),egressReferences:[] as PostgresEligibilityReference[]};
     contexts.set(client,context);
     let result: T;
@@ -162,9 +189,17 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
       await assertBoundary();
       throw error;
     } finally { contexts.delete(client); }
-    await assertBoundary();
-    await assertAuthority();
-    await assertBoundary();
+    if (reading) {
+      checkStatus();
+      const fence = await client.query(readFenceQuery);
+      if (fence.rows.length) checkIdentity(fence.rows[0].transaction_id);
+      checkAuthority(fence);
+      checkStatus();
+    } else {
+      await assertBoundary();
+      checkAuthority(await client.query(authorityQuery));
+      await assertBoundary();
+    }
     let leaseUntil=Infinity;
     for(const inspect of context.leases.values()){
       const lease=await inspect();if(!lease||!Number.isSafeInteger(lease.validUntil)||lease.validUntil<=Date.now())throw new SecurityError('ACCESS_REVOKED');
@@ -174,7 +209,9 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
     committing = true; await client.query('COMMIT'); opened = false;committing=false;
     // A query does not lock the singleton authority row. Check a fresh snapshot
     // after commit as well, including administrative changes outside the fence.
-    if (reading) await assertAuthority();
+    if (reading && !(options.eligibilityChecksRuntimeAuthority && context.egressReferences.length && options.eligibilityInspector)) {
+      checkAuthority(await client.query(authorityQuery));
+    }
     // The commit was acknowledged, so an expired response is a disclosure
     // denial, not an unknown commit. Mutation callers must retain their receipt.
     if(Math.min(context.readUntil,leaseUntil)<=Date.now())throw new SecurityError('OUTPUT_NOT_ALLOWED');
@@ -190,6 +227,7 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
     if(Math.min(context.readUntil,leaseUntil,egressUntil)<=Date.now())throw new SecurityError('OUTPUT_NOT_ALLOWED');
     return result;
   } catch (error) {
+    if(beginning && reading && client.getTransactionStatus() === 'E') { beginning=false; opened=true; }
     if(beginning){await discard();throw new Error('PostgreSQL business transaction start outcome is unknown; connection discarded',{cause:error});}
     if (opened && !committing) { try { await client.query('ROLLBACK'); } catch { await discard(); throw new Error('PostgreSQL business transaction rollback failed; connection discarded', { cause: error }); } }
     if (committing) { await discard(); throw new Error('PostgreSQL business transaction commit outcome is unknown; inspect the operation receipt before retrying', { cause: error }); }

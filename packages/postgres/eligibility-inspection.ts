@@ -14,7 +14,7 @@ const changed=(cause?:unknown)=>{const error=new SecurityError('POLICY_CHANGED')
 const until=(value:unknown):number=>{const result=Number(value);if(!Number.isSafeInteger(result))throw changed();return result;};
 const limited=(field:string,max=2000)=>`CASE WHEN octet_length(${field})<=${max} THEN ${field} END`;
 
-function query(schema:string){
+function query(schema: string, installation = '$1', parent = '$2', task = '$3::text') {
   const q=`"${schema}"`;
   const grant=(alias:'g'|'d',prefix:'parent'|'data')=>`${alias}.id AS ${prefix}_id,${limited(`${alias}.kind`,100)} AS ${prefix}_kind,${limited(`${alias}.owner`,8000)} AS ${prefix}_owner,
     ${limited(`${alias}.member_id`,100)} AS ${prefix}_member,${limited(`${alias}.installation_id`,100)} AS ${prefix}_installation,
@@ -34,9 +34,9 @@ function query(schema:string){
     LEFT JOIN ${q}.security_policy_definitions pd ON pd.slot=singleton.slot
     LEFT JOIN ${q}.security_manager m ON m.slot=singleton.slot
     LEFT JOIN LATERAL ${q}.eigos_current_runtime_authority() r ON TRUE
-    LEFT JOIN ${q}.security_subjects s ON s.installation_id=$1
-    LEFT JOIN ${q}.security_grants g ON g.id=$2
-    LEFT JOIN ${q}.security_grants d ON d.id=$3::text LIMIT 2`;
+    LEFT JOIN ${q}.security_subjects s ON s.installation_id=${installation}
+    LEFT JOIN ${q}.security_grants g ON g.id=${parent}
+    LEFT JOIN ${q}.security_grants d ON d.id=${task} LIMIT 2`;
 }
 
 function parse(row:Row,runtime:PostgresRuntimeAuthority,reference:PostgresEligibilityReference){
@@ -81,7 +81,7 @@ function parse(row:Row,runtime:PostgresRuntimeAuthority,reference:PostgresEligib
  * This is not permission issuance, a Worker claim or a role/request check.
  * The caller retains its captured fixed authority/role/claim deadlines and
  * original-task checks. No database row is renewed or changed here. */
-export function postgresInspectEligibility(pool:Pick<Pool,'connect'>,schema:string,runtime:PostgresRuntimeAuthority,reference:PostgresEligibilityReference):Promise<{validUntil:number}>{
+export function postgresInspectEligibility(pool:Pick<Pool,'connect'>,schema:string,runtime:PostgresRuntimeAuthority,reference:PostgresEligibilityReference, options: { batch?: boolean } = {}):Promise<{validUntil:number}>{
   if(!/^eigos_business_[a-z0-9_]{1,40}$/.test(schema)||typeof runtime.id!=='string'||!runtime.id||runtime.id.length>2000
     ||!Number.isSafeInteger(runtime.revision)||runtime.revision<1||!/^[a-f0-9]{64}$/.test(runtime.digest))return Promise.reject(new Error('Invalid PostgreSQL eligibility configuration'));
   let captured:PostgresEligibilityReference;
@@ -91,20 +91,42 @@ export function postgresInspectEligibility(pool:Pick<Pool,'connect'>,schema:stri
     watch.failure=unavailable(new Error('PostgreSQL eligibility acknowledgement timed out after 10000 ms'));
     reject(watch.failure);watch.evict?.();
   },10000);timer.unref();});
-  return Promise.race([inspect(pool,schema,expected,captured,watch),timeout]).catch(error=>{if(error instanceof SecurityError)throw error;throw unavailable(error);}).finally(()=>clearTimeout(timer));
+  return Promise.race([inspect(pool,schema,expected,captured,watch,options.batch===true),timeout]).catch(error=>{if(error instanceof SecurityError)throw error;throw unavailable(error);}).finally(()=>clearTimeout(timer));
 }
 
-async function inspect(pool:Pick<Pool,'connect'>,schema:string,runtime:PostgresRuntimeAuthority,reference:PostgresEligibilityReference,watch:Watch):Promise<{validUntil:number}>{
+async function inspect(pool:Pick<Pool,'connect'>,schema:string,runtime:PostgresRuntimeAuthority,reference:PostgresEligibilityReference,watch:Watch,batch:boolean):Promise<{validUntil:number}>{
   const client=await pool.connect(),release=client.release.bind(client),connection=observePostgresClient(client);let released=false,opened=false,beginning=false,committing=false,unreserve:(()=>void)|undefined;
   const releaseOnce=(error?:Error)=>{if(!released){released=true;release(error);}};
   const evict=()=>{try{releaseOnce(new Error('Eligibility inspection transaction state is uncertain'));}catch{/* already disconnected */}};
   const observing=()=>{if(watch.failure)throw watch.failure;connection.check();};watch.evict=evict;
   try{
     observing();try{unreserve=reservePostgresTransactionClient(client);}catch(error){evict();throw unavailable(error);}
-    beginning=true;await client.query('BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY');beginning=false;opened=true;observing();
+    const begin = 'BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY';
+    const configure = `SET LOCAL search_path TO pg_catalog, "${schema}", pg_temp; SET LOCAL statement_timeout='10000ms'; SET LOCAL lock_timeout='5000ms'; SET LOCAL idle_in_transaction_session_timeout='10000ms'`;
+    let rows;
+    if (batch) {
+      // Only UUIDs parsed by postgresEligibilityReferenceSchema may enter the
+      // simple-protocol batch. The result is checked after the read-only
+      // transaction commits, so eligibility cannot outlive its deadlines.
+      const uuid = (id: string) => {
+        if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) throw changed();
+        return `'${id}'::text`;
+      };
+      const lookup = query(schema, uuid(reference.installationId), uuid(reference.parentGrant.id),
+        reference.taskGrant ? uuid(reference.taskGrant.id) : 'NULL::text');
+      beginning = true;
+      const result: unknown = await client.query(`${begin}; ${configure}; ${lookup}; COMMIT`);
+      observing();
+      if (!Array.isArray(result) || result.length !== 7 || result[6]?.command !== 'COMMIT' || client.getTransactionStatus() !== 'I') throw unavailable();
+      beginning = false;
+      rows = result[5];
+      if (rows.rowCount !== 1) throw unavailable();
+      return {validUntil: parse(rows.rows[0], runtime, reference).validUntil};
+    }
+    beginning=true;await client.query(begin);beginning=false;opened=true;observing();
     if(client.getTransactionStatus()!=='T'){evict();opened=false;throw unavailable(new Error('Eligibility read transaction did not start'));}
-    await client.query(`SET LOCAL search_path TO pg_catalog, "${schema}", pg_temp; SET LOCAL statement_timeout='10000ms'; SET LOCAL lock_timeout='5000ms'; SET LOCAL idle_in_transaction_session_timeout='10000ms'`);observing();
-    const rows=await client.query(query(schema),[reference.installationId,reference.parentGrant.id,reference.taskGrant?.id??null]);observing();
+    await client.query(configure);observing();
+    rows=await client.query(query(schema),[reference.installationId,reference.parentGrant.id,reference.taskGrant?.id??null]);observing();
     if(rows.rowCount!==1)throw unavailable();const value=parse(rows.rows[0],runtime,reference);
     if(client.getTransactionStatus()!=='T'){evict();opened=false;throw unavailable(new Error('Eligibility inspection transaction boundary was lost'));}
     value.current();committing=true;await client.query('COMMIT');opened=false;committing=false;observing();value.current();

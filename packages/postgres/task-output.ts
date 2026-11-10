@@ -1,3 +1,4 @@
+import { postgresTaskPointRows } from './task-read-access.js';
 import type { Client } from 'pg';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
@@ -70,7 +71,7 @@ export interface PostgresFunctionReadAuthorization extends PostgresTaskReadAutho
  * Authorization objects expire at the callback boundary; current identity,
  * grants and all captured role/source/recipient deadlines are checked at exit. */
 async function withTaskAuthorization<T>(client: Client, principal: Principal, taskId: string, policyDigest: string,
-  action: (authorization: PostgresTaskReadAuthorization) => Promise<T>, builder?: StagedKernelBuilder,processing?:{admission:PostgresTaskReadAdmission;modelChannel?:string;requestRows?:()=>void;caller?:true},permissionAdmission?:PostgresTaskReadAdmission): Promise<T> {
+  action: (authorization: PostgresTaskReadAuthorization) => Promise<T>, builder?: StagedKernelBuilder,processing?:{admission:PostgresTaskReadAdmission;modelChannel?:string;requestRows?:()=>void;caller?:true},permissionAdmission?:PostgresTaskReadAdmission,point?:ObjectRef): Promise<T> {
   const captured = structuredClone(principal), owner = ownerKey(captured), q = `"${postgresBusinessSchema(client)}"`;
   let validUntil = Infinity;
   const authorizeValues = async (admission:PostgresTaskReadAdmission,requestRows?:()=>void) => {
@@ -98,10 +99,11 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
     const raw = async (ref: ObjectRef) => {
       const objectKey = key(ref), cached = objects.get(objectKey);
       if (cached) return structuredClone(cached.value);
-      const result = await client.query(`SELECT revision,definition_digest,CASE WHEN octet_length(body)<=1048576 THEN body END AS body
+      const result = postgresTaskPointRows(client,captured,taskId,policyDigest,ref)?.body ?? await client.query(`SELECT revision,definition_digest,CASE WHEN octet_length(body)<=1048576 THEN body END AS body
         FROM ${q}.ontology_objects WHERE owner=$1 AND type=$2 AND id=$3 LIMIT 2`, [owner, ref.type, ref.id]);
-      if (result.rowCount !== 1 || result.rows[0].body === null) throw new SecurityError('OUTPUT_NOT_ALLOWED');
-      const row = result.rows[0], revision = Number(row.revision);
+      const row = result.rows[0];
+      if (result.rowCount !== 1 || typeof row?.body !== 'string') throw new SecurityError('OUTPUT_NOT_ALLOWED');
+      const revision = Number(row.revision);
       if (!Number.isSafeInteger(revision) || revision < 1) throw new SecurityError('OUTPUT_NOT_ALLOWED');
       const value = { revision, definitionDigest: String(row.definition_digest), body: bodySchema.parse(JSON.parse(String(row.body))) };
       const bytes = Buffer.byteLength(String(row.body));
@@ -287,7 +289,7 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
       if(row.revision!==evidence.revision||!graph.hasType(ref.type)||graph.isInterface(ref.type))throw new SecurityError('POLICY_CHANGED');
       const objectKey=key(ref);let deleted=tombstones.get(objectKey);
       if(deleted===undefined){
-        const tombstone=await client.query(`SELECT 1 FROM ${q}.ontology_tombstones WHERE ontology_id=$1 AND owner=$2 AND type=$3 AND id=$4 LIMIT 1`,[ontology.ref.ontologyId,owner,ref.type,ref.id]);
+        const tombstone=postgresTaskPointRows(client,captured,taskId,policyDigest,ref)?.tombstone ?? await client.query(`SELECT 1 FROM ${q}.ontology_tombstones WHERE ontology_id=$1 AND owner=$2 AND type=$3 AND id=$4 LIMIT 1`,[ontology.ref.ontologyId,owner,ref.type,ref.id]);
         deleted=!!tombstone.rowCount;if(tombstones.size>=512)tombstones.delete(tombstones.keys().next().value!);tombstones.set(objectKey,deleted);
       }
       if(deleted)throw new DomainError('NOT_FOUND','Ontology object was tombstoned');
@@ -456,7 +458,7 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
     &&postgresBusinessReadOnly(client,postgresBusinessToken(client))
     ?withPostgresAgentRequestReadRows(client,captured,taskId,policyDigest,requestRows=>authorizeValues(admission,requestRows))
     :authorizeValues(admission,processing?.requestRows);
-  const authorized=processing?await authorize(processing.admission):permissionAdmission?await authorize(permissionAdmission):await withPostgresTaskReadSnapshot(client,captured,taskId,policyDigest,authorize);
+  const authorized=processing?await authorize(processing.admission):permissionAdmission?await authorize(permissionAdmission):await withPostgresTaskReadSnapshot(client,captured,taskId,policyDigest,authorize,point?{object:point,builder}:undefined);
   if (validUntil <= Date.now()) throw new SecurityError('OUTPUT_NOT_ALLOWED');
   postgresConstrainReadDeadline(client,validUntil);
   return authorized;
@@ -464,8 +466,8 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
 
 /** Agent read boundary. Worker contexts cannot enter through this function. */
 export async function withPostgresTaskReadAuthorization<T>(client:Client,principal:Principal,taskId:string,policyDigest:string,
-  action:(authorization:PostgresTaskReadAuthorization)=>Promise<T>,builder?:StagedKernelBuilder):Promise<T>{
-  return withTaskAuthorization(client,principal,taskId,policyDigest,action,builder);
+  action:(authorization:PostgresTaskReadAuthorization)=>Promise<T>,builder?:StagedKernelBuilder,point?:ObjectRef):Promise<T>{
+  return withTaskAuthorization(client,principal,taskId,policyDigest,action,builder,undefined,undefined,point);
 }
 
 /** The authenticated PA's original process scope. This does not grant result
