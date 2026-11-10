@@ -77,3 +77,5 @@ npm run ontology:sync
 `apps/provider-mcp/` 是供应商协议适配层。通用 Ontology MCP 位于协调器的任务会话中，两者不各自保存业务定义。元数据、工具发现、自动测试和进程就绪都不能代替供应商业务回执与独立验收。
 
 个人服务对象、具名业务关系、默认值选择及受控更新见[Person 与跨任务个人上下文](../../docs/guides/person-context.md)。
+
+任务 MCP 的只读 `plan_services` 可将结构化服务需求或明确范围的往返旅行展开为有界需求图，并按当前发布的具名输出和来源依赖生成候选合同计划；实际可用性、报价与支付受理保留未知，计划不授权执行。合同、示例和限制见[任务需求与服务合同规划](../../docs/guides/service-planning.md)。

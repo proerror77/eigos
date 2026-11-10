@@ -28,7 +28,9 @@ test('S0 inventories every definition and nested subtree without changing runtim
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
   assert.equal(report.counts.objectTypes, 204); assert.equal(report.counts.properties, 1863); assert.equal(report.counts.interfaces, 14);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 399);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 401);
+  for (const [id, file] of [['service-planning-contract', 'packages/ontology/service-planning.ts'], ['bounded-service-planner', 'packages/coordinator/service-planner.ts']])
+    assert(report.surfaces.some(surface => surface.id === id && surface.file === file), `Unreviewed service-planning surface: ${id}`);
   assert.equal(report.surfaces.find(surface => surface.id === 'pa-classification-contract')!.file, 'packages/ontology/pa-classification-contract.ts');
   assert.equal(report.surfaces.find(surface => surface.id === 'pa-classification-kernel')!.file, 'packages/ontology/pa-classification-kernel.ts');
   for(const id of ['gateway-primary-startup','ontology-registered-calculations','ontology-semantic-retrieval-contract','ontology-semantic-retrieval-port','ontology-semantic-retrieval-kernel','postgres-embedding-index','postgres-embedding-schema','postgres-vector-index-deployment','postgres-task-vector-cli'])assert(report.surfaces.some(surface=>surface.id===id),`Missing reviewed supplied-vector surface: ${id}`);

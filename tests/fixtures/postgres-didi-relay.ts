@@ -17,6 +17,7 @@ import {bindPersonalSourceOwner} from '../../packages/core/source-owner.js';
 import {createGoalContract} from '../../packages/core/goal-contract.js';
 import {goalState,GoalProgram} from '../../packages/coordinator/goal-program.js';
 import {openOntologyMcp} from '../../packages/coordinator/ontology-mcp.js';
+import type {ServicePlan} from '../../packages/coordinator/service-planner.js';
 import {createGoalCoverage} from '../../packages/ontology/goal-coverage.js';
 import {agentDecisionSchema,type AgentDecision,type AgentComponentContext} from '../../packages/ontology/agent-actions.js';
 import type {ActionDiscoveryPage} from '../../packages/core/action-bindings.js';
@@ -139,8 +140,21 @@ export async function postgresDidiRelayFixture(hooks:PostgresDidiRelayHooks={}){
       const reads=await active.value.finish(),run={id:active.id,runtime:active.runtime,startedAt:active.startedAt,completedAt:new Date().toISOString(),outputSha256:digest(decision),purpose:'planning' as const,decisionDigest:digest(decision),ontologyMcp:active.mcp.evidence()};
       await worker.finishModelUsage(claim,run.id,run,'completed');active.markFinished();assert(await worker.recordRun(claim,run,'agent_decision'));return {decision,reads,run};
     };
-    const prepare=async()=>{const active=await session();try{
-      await active.call('read_task_context',{});const page=await active.call('discover_actions',{actionId:'SearchDidiPlaces',programRef:program.ref}) as ActionDiscoveryPage;assert.equal(active.value.lastReceipt()?.status,'ok');assert.equal(page.items[0]!.bindings[0]!.readiness,'ready');
+    const prepare=async(checkServicePlan=false)=>{const active=await session();try{
+      await active.call('read_task_context',{});
+      if(checkServicePlan){
+        const {id:messageId,text:quote}=request.messages[0]!;
+        const plan=await active.call('plan_services',{goal:{kind:'needs',needs:[{id:'estimate',role:'transport.estimate',
+          source:{messageId,quote},output:{type:'RideEstimateObservation',phase:'quote'}}]}}) as ServicePlan;
+        const read=active.value.lastReceipt()!;
+        assert.equal(read.status,'ok');assert.equal(plan.executionAllowed,false);assert.equal(plan.availabilityProof,false);
+        const steps=plan.needs[0]!.alternatives[0]!.steps;
+        assert.deepEqual(steps.map(step=>step.action),['SearchDidiPlaces','SearchDidiPlaces','EstimateDidiRide']);
+        assert.deepEqual(steps[2]!.dependsOn,steps.slice(0,2).map(step=>step.id));
+        assert.deepEqual(read.actionBindings,{snapshotDigest:plan.digest,pins:plan.contracts.map(contract=>contract.binding)});
+        assert.equal(provider.calls.filter(call=>call.method==='tools/call').length,0);
+      }
+      const page=await active.call('discover_actions',{actionId:'SearchDidiPlaces',programRef:program.ref}) as ActionDiscoveryPage;assert.equal(active.value.lastReceipt()?.status,'ok');assert.equal(page.items[0]!.bindings[0]!.readiness,'ready');
       const decision:AgentDecision={kind:'prepare',requestRevision:request.revision,message:'Explicit synthetic selection using the actual native Ontology HTTP receipts',steps:[],completionJson:'',contexts:[{id:'didi',bindingDigest:page.items[0]!.bindings[0]!.pin.digest,inputJson:JSON.stringify({mode:'places',city:'北京市',keywords:'北京西站'})}]},selected=await finish(active,decision);
       return(await t.database.run(client=>preparePostgresGoalContexts(client,claim,decision,selected.run.id,selected.reads,options)))[0]!;
     }finally{await active.close();}};

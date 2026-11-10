@@ -21,7 +21,11 @@ import { compactSchema } from './prompt-data.js';
 import { isExecutionBookkeepingType } from '../ontology/execution-model.js';
 import { isSharedManagedType } from '../ontology/managed-discovery.js';
 import {  assertTaskContextCurrentProgram, instructionCoverageDigest, MAX_INSTRUCTION_READ_BYTES,  readTaskContextProgram,  readTaskInstructionsProgram, taskContextSchema, taskInstructionsSchema,  taskObjectMembershipProgram, type TaskContextBinding, type TaskContextRead } from './task-context.js';
-import { actionDiscoverySchema, type ActionDiscoveryPage } from '../core/action-bindings.js';
+import { actionDiscoverySchema } from '../core/action-bindings.js';
+import { servicePlanningSchema } from '../ontology/service-planning.js';
+import { readOntologyRequestProgram } from '../ontology/execution-projection.js';
+import { submissionDigest } from '../security/submission-digest.js';
+import { planServicesProgram } from './service-planner.js';
 import type { ExecutionCatalog } from '../core/catalog.js';
 import type { authorizedDefinitions, describeAuthorized } from '../security/view.js';
 import { secureFunctionCallSchema } from '../security/view-contracts.js';
@@ -50,8 +54,8 @@ const describeSchema = z.object({ ...paDiscoveryFields, functions: z.array(z.str
 const assessmentSchema = z.object({ candidateId: z.string().max(200).optional(), subject: objectRefSchema.optional(), phase: z.enum(['precondition', 'result']).optional() }).strict();
 const actionSchema = z.object({ action: z.string().min(1).max(80), inputs: z.array(z.object({ name: z.string().min(1).max(80), object: objectRefSchema, revision: z.number().int().positive() }).strict()).min(1).max(8) }).strict();
 export const planningQuerySchema = z.union([...objectQuerySchema.options, z.object({ facts: requestedFactsSchema }).strict()]);
-export const planningToolSchemas = { read_task_context: taskContextSchema, read_task_instructions: taskInstructionsSchema, describe_ontology: describeSchema, discover_actions: actionDiscoverySchema, query_ontology: planningQuerySchema, evaluate_ontology: functionCallSchema, assess_conditions: assessmentSchema, propose_action: actionSchema };
-export const planningToolCatalog = (taskContext = false, actionCatalog = false, secured = false) => Object.entries(planningToolSchemas).filter(([name]) => (taskContext || !['read_task_context', 'read_task_instructions'].includes(name)) && (actionCatalog || name !== 'discover_actions')).map(([name, schema]) => {
+export const planningToolSchemas = { read_task_context: taskContextSchema, read_task_instructions: taskInstructionsSchema, describe_ontology: describeSchema, discover_actions: actionDiscoverySchema, plan_services: servicePlanningSchema, query_ontology: planningQuerySchema, evaluate_ontology: functionCallSchema, assess_conditions: assessmentSchema, propose_action: actionSchema };
+export const planningToolCatalog = (taskContext = false, actionCatalog = false, secured = false) => Object.entries(planningToolSchemas).filter(([name]) => (taskContext || !['read_task_context', 'read_task_instructions'].includes(name)) && (actionCatalog || !['discover_actions', 'plan_services'].includes(name))).map(([name, schema]) => {
   const input = secured && name === 'evaluate_ontology' ? secureFunctionCallSchema : schema;
   const described = name === 'evaluate_ontology' ? input.describe('Outer status known means the computation returned a result; inspect value for the business verdict. Source-specific observation checks validate their own snapshot, not whether a newer observation supersedes it. Check current business facts through their registered observation contract.') : input;
   return { name, inputSchema: compactSchema(z.toJSONSchema(described)), readOnly: true, executionAllowed: false };
@@ -285,7 +289,7 @@ private *requestedFactsProgram(input: RequestedFacts):GraphProgram<RequestedFact
     const datasetRevision = (yield* graphRevision(this.owner));
     let output: unknown, status: PlanningReadReceipt['status'] = 'ok';
     let contextRead: TaskContextRead | undefined;
-    let actionDiscovery: ActionDiscoveryPage | undefined;
+    let actionBindings: PlanningReadReceipt['actionBindings'];
     let instructionRefs: ObjectRef[] = [], instructionPage = false;
     try {
       const read = function* (this: PlanningSessionState): GraphProgram<void> {
@@ -307,8 +311,23 @@ private *requestedFactsProgram(input: RequestedFacts):GraphProgram<RequestedFact
       } else if (tool === 'discover_actions') {
         if (!this.options.actionCatalog) throw new DomainError('FORBIDDEN', 'This planning session has no action catalog binding');
         if (this.usesTaskContext() && !this.reads.some(read => read.tool === 'read_task_context' && read.status === 'ok')) throw new DomainError('FORBIDDEN', 'Read the current task context before discovering action bindings');
-        actionDiscovery = (yield* graphDiscoverActions(this.owner, this.request, actionDiscoverySchema.parse(input)));
-        output = actionDiscovery;
+        const page = yield* graphDiscoverActions(this.owner, this.request, actionDiscoverySchema.parse(input));
+        actionBindings = { snapshotDigest: page.snapshotDigest, pins: page.items.flatMap(item => item.bindings.map(binding => binding.pin)) };
+        output = page;
+      } else if (tool === 'plan_services') {
+        if (!this.options.actionCatalog) throw new DomainError('FORBIDDEN', 'This planning session has no action catalog binding');
+        if (this.usesTaskContext() && !this.reads.some(read => read.tool === 'read_task_context' && read.status === 'ok')) throw new DomainError('FORBIDDEN', 'Read the current task context before planning services');
+        const task = yield* graphRead(this.owner, { type: 'ServiceRequest', id: this.request.id });
+        if (task.properties.revision !== this.request.revision) throw new DomainError('CONFLICT', 'Service planning requires the current owned task revision');
+        const request = yield* readOntologyRequestProgram(this.graph, this.owner, this.request.id);
+        if (submissionDigest(request) !== submissionDigest(this.request)) throw new DomainError('CONFLICT', 'Service planning requires the current submitted instructions');
+        yield* this.rememberProgram(task.ref, task.revision);
+        const visibleTypes = this.graph.security ? new Set(authority(this.graph).definitions().types.map(type => type.id)) : undefined;
+        const plan = yield* planServicesProgram(request, this.graph.model, input,
+          query => graphDiscoverActions(this.owner, request, query), this.active,
+          type => visibleTypes ? visibleTypes.has(type) : this.graph.model.hasType(type));
+        actionBindings = { snapshotDigest: plan.digest, pins: structuredClone(plan.contracts.map(contract => contract.binding)) };
+        output = plan;
       } else if (tool === 'describe_ontology') {
         const { includeSchemas = false, includeLinks = true, includeConditionSchema = false, actions, functions, ...requested } = describeSchema.parse(input);
         const permitted = this.graph.security ? authority(this.graph).definitions() : undefined;
@@ -448,7 +467,7 @@ private *requestedFactsProgram(input: RequestedFacts):GraphProgram<RequestedFact
       if (!(error instanceof DomainError || error instanceof z.ZodError)) throw error;
       status = 'rejected'; output = error instanceof ContextReadBudgetExceeded ? { ...contextBudgetFeedback } : { error: error instanceof DomainError ? error.code : 'INVALID_INPUT', message: error instanceof DomainError ? error.message : 'Input does not match the published tool schema' };
       this.seen = before; this.knownRefs = knownBefore; this.proposals.length = proposalCount;
-      this.callObjects.clear(); this.callDelivered.clear(); contextRead = undefined; actionDiscovery = undefined;
+      this.callObjects.clear(); this.callDelivered.clear(); contextRead = undefined; actionBindings = undefined;
       instructionRefs = []; instructionPage = false;
       if (!(error instanceof ContextReadBudgetExceeded)) {
         const failure = digest({ tool, input, output }), count = (this.failures.get(failure) ?? 0) + 1; this.failures.set(failure, count);
@@ -458,7 +477,7 @@ private *requestedFactsProgram(input: RequestedFacts):GraphProgram<RequestedFact
     if (options && Buffer.byteLength(JSON.stringify(output)) > options.maxOutputBytes) {
       this.seen = before; this.knownRefs = knownBefore; this.proposals.length = proposalCount;
       this.callObjects.clear(); this.callDelivered.clear();
-      contextRead = undefined; actionDiscovery = undefined; instructionRefs = []; instructionPage = false;
+      contextRead = undefined; actionBindings = undefined; instructionRefs = []; instructionPage = false;
       status = 'rejected'; output = { error: 'CONTEXT_NOT_INCLUDED', message: 'The result exceeds the bounded initial Worker context. Request a narrower selection.' };
     }
     if (instructionPage) this.instructionBytes += Buffer.byteLength(JSON.stringify(output));
@@ -468,7 +487,7 @@ private *requestedFactsProgram(input: RequestedFacts):GraphProgram<RequestedFact
     this.active();
     const receipt: PlanningReadReceipt = { id: receiptId, at: new Date().toISOString(), tool, inputDigest: digest(input), outputDigest: digest(output), datasetRevision: (yield* graphRevision(this.owner)), status, origin: options?.origin ?? 'model', ...(this.graph.security ? authority(this.graph).receipt() : {}), outputBytes: Buffer.byteLength(JSON.stringify(output)),
       objects: [...this.callObjects.values()], deliveredObjects: [...this.callDelivered.values()], instructionRefs, ...(contextRead ? { context: contextRead.context, definitions: contextRead.definitions } : {}),
-      ...(actionDiscovery ? { actionBindings: { snapshotDigest: actionDiscovery.snapshotDigest, pins: actionDiscovery.items.flatMap(item => item.bindings.map(binding => binding.pin)) } } : {}) };
+      ...(actionBindings ? { actionBindings } : {}) };
     try { (yield* graphRecordPlanningRead(receipt)); }
     catch (error) {
       // An uncommitted receipt cannot authorize a later decision or consume a
