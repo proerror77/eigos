@@ -288,6 +288,32 @@ test('bounded PostgreSQL scalar filtering preserves interface values, exact nume
       // Restore this row only after proving it cannot influence visible reads.
       await t.client.query(`UPDATE ${q}.ontology_objects SET body=$1 WHERE owner=$2 AND type=$3 AND id=$4`, [originalHidden, f.owner, hidden.type, hidden.id]);
 
+      const largeRefs = objects.slice(0, 12).map(object => object.ref);
+      const originals = (await t.client.query<{ id: string; body: string }>(`SELECT id,body FROM ${q}.ontology_objects
+        WHERE owner=$1 AND type='HotelPrice' AND id=ANY($2::text[]) ORDER BY id`, [f.owner, largeRefs.map(ref => ref.id)])).rows;
+      try {
+        for (const [index, row] of originals.entries()) {
+          const body = JSON.parse(row.body);
+          // Legacy/imported records may exceed the current write-size limit
+          // while remaining below the existing 1 MiB per-row read bound.
+          const padded = JSON.stringify({ ...body, properties: { ...body.properties, displayTitle: index < 10 ? 'other' : 'budget-needle' }, padding: 'x'.repeat(750000) });
+          assert(Buffer.byteLength(padded) < 1048576);
+          await t.client.query(`UPDATE ${q}.ontology_objects SET body=$1 WHERE owner=$2 AND type='HotelPrice' AND id=$3`, [padded, f.owner, row.id]);
+        }
+        const filtered: ObjectQuery = { type: 'HotelPrice', where: [{ property: 'displayTitle', op: 'eq', value: 'budget-needle' }], select: ['id', 'displayTitle'], limit: 1 };
+        const first = await query(filtered, largeRefs);
+        assert.deepEqual(first.items.map(item => item.ref), [largeRefs[10]]);
+        assert.equal(first.page.scanned, 11, 'More than 8 MiB across individually bounded rows uses the original JS scan');
+        assert(first.page.hasMore); assert(first.page.cursor);
+        const next = await query({ ...filtered, cursor: first.page.cursor }, largeRefs);
+        assert.deepEqual(next.items.map(item => item.ref), [largeRefs[11]]);
+        assert.equal(next.page.scanned, 1); assert.equal(next.page.hasMore, false);
+        await t.client.query(`UPDATE ${q}.ontology_objects SET body=$1 WHERE owner=$2 AND type='HotelPrice' AND id=$3`, ['{' + ' '.repeat(750000), f.owner, largeRefs[0]!.id]);
+        await assert.rejects(query(filtered, largeRefs), SyntaxError, 'The aggregate-budget fallback still rejects a malformed nonmatching body');
+      } finally {
+        for (const row of originals) await t.client.query(`UPDATE ${q}.ontology_objects SET body=$1 WHERE owner=$2 AND type='HotelPrice' AND id=$3`, [row.body, f.owner, row.id]);
+      }
+
       const ref = objects[0]!.ref, original = (await t.client.query(`SELECT body,definition_digest FROM ${q}.ontology_objects WHERE owner=$1 AND type=$2 AND id=$3`, [f.owner, ref.type, ref.id])).rows[0]!;
       const corrupt = async (body: string, operation: () => Promise<void>, definition = original.definition_digest) => {
         await t.client.query(`UPDATE ${q}.ontology_objects SET body=$1,definition_digest=$2 WHERE owner=$3 AND type=$4 AND id=$5`, [body, definition, f.owner, ref.type, ref.id]);

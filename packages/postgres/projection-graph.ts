@@ -272,10 +272,15 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     // Materialize its owner/namespace/visibility boundary before inspecting any
     // values. Internal unbounded reads retain the existing bounded JS path.
     const predicate=boundary?postgresScalarQueryPredicate(this.model,target,args.where,properties,values):undefined;
-    const candidates=`SELECT o.type,o.id,o.revision,o.definition_digest,CASE WHEN octet_length(o.body)<=1048576 THEN o.body END AS body
+    const candidates=`SELECT o.type,o.id,o.revision,o.definition_digest,CASE WHEN octet_length(o.body)<=1048576 THEN o.body END AS body${predicate?',octet_length(o.body) AS query_body_bytes':''}
       FROM ${from} WHERE ${where.join(' AND ')}`;
+    // Bound aggregate JSON parsing, not only each individual row. If this
+    // authorized set is too large, a NULL query_body keeps every candidate in
+    // the original 201-row JS path, including malformed-body failures/cursors.
     const selection=predicate?`WITH query_visible AS MATERIALIZED (${candidates}),
-      query_values AS MATERIALIZED (SELECT o.*, "${this.schema}".eigos_try_jsonb(o.body) AS query_body FROM query_visible o)
+      query_budget AS MATERIALIZED (SELECT COALESCE(sum(query_body_bytes),0)<=8388608 AS within_limit FROM query_visible),
+      query_values AS MATERIALIZED (SELECT o.*, CASE WHEN budget.within_limit THEN "${this.schema}".eigos_try_jsonb(o.body) END AS query_body
+        FROM query_visible o CROSS JOIN query_budget budget)
       SELECT o.type,o.id,o.revision,o.definition_digest,o.body FROM query_values o WHERE ${predicate}`:candidates;
     const rows=await this.sql(`${selection} ORDER BY o.type COLLATE "C",o.id COLLATE "C" LIMIT 201`,values);
     this.charge(budget,rows.rows.length);const items:ObjectView[]=[];let scanned=0,bytes=0,hasMore=false;
