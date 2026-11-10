@@ -2,6 +2,7 @@ import {taskScopedServices} from '../core/service-metadata.js';
 import { postgresDescribeOntology } from './ontology-metadata.js';
 import { postgresQueryOntology } from './ontology-query.js';
 import { postgresEvaluateOntology } from './ontology-functions.js';
+import { withPostgresOntologyReleaseSnapshot } from './ontology-release.js';
 import {postgresCheckAccess} from './access-check.js';
 import { z } from 'zod';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -39,12 +40,14 @@ export class PostgresTaskReadService implements Pick<TaskServicePort,'get'|'getA
   async queryOntology(principal:Principal,input:unknown,reader?:import('../ontology/network-read.js').NetworkOntologyReadAdapter,context?:import('../core/tasks.js').OntologyReadContext) {
     if(reader||context)throw new DomainError('FORBIDDEN','Use the task-scoped foundation read contract');
     const p=structuredClone(principal),args=structuredClone(input);
-    return this.database.run(client=>postgresQueryOntology(client,p,args,this.policyDigest,this.builder));
+    return this.database.run(client=>withPostgresOntologyReleaseSnapshot(client,()=>
+      postgresQueryOntology(client,p,args,this.policyDigest,this.builder)));
   }
   async evaluateOntology(principal:Principal,input:unknown,reader?:import('../ontology/network-read.js').NetworkOntologyReadAdapter,context?:import('../core/tasks.js').OntologyReadContext) {
     if(reader||context)throw new DomainError('FORBIDDEN','Use the task-scoped foundation read contract');
     const p=structuredClone(principal),args=structuredClone(input);
-    return this.database.run(client=>postgresEvaluateOntology(client,p,args,this.policyDigest,this.builder));
+    return this.database.run(client=>withPostgresOntologyReleaseSnapshot(client,()=>
+      postgresEvaluateOntology(client,p,args,this.policyDigest,this.builder)));
   }
   async checkAccess(principal:Principal,input:unknown){
     const p=structuredClone(principal),args=structuredClone(input);

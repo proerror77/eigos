@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import pg from 'pg';
 import { securityFixture } from './fixtures/security.js';
 import { importPostgresFixture } from './fixtures/postgres-business.js';
 import { syntheticOntology } from './fixtures/ontology-objects.js';
@@ -18,7 +19,7 @@ import { PostgresTaskCommandService } from '../packages/postgres/task-command-se
 import { PostgresWorkerStore } from '../packages/postgres/worker-store.js';
 
 test('PostgreSQL registered functions retain invocation, private proof, incomplete evidence and escaped scope boundaries',
-  { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async () => {
+  { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async context => {
     const f = securityFixture(Date.now, { unified: true }), sqlite = new DatabaseSync(f.database);
     let target: Awaited<ReturnType<typeof importPostgresFixture>> | undefined;
     try {
@@ -45,8 +46,22 @@ test('PostgreSQL registered functions retain invocation, private proof, incomple
       target = await importPostgresFixture(f);
       const t = target, service = new PostgresTaskReadService(t.database, t.policy), q = `"${t.schema}"`;
       await t.refreshEligibility();
-      const result = await service.evaluateOntology(p, input);
-      assert.deepEqual(result, expected); assert(!JSON.stringify(result).includes('PRIVATE_'));
+      const query = pg.Client.prototype.query;
+      const sql = context.mock.method(pg.Client.prototype, 'query', function (this: pg.Client, ...args: unknown[]) {
+        return Reflect.apply(query, this, args);
+      });
+      const releaseReads = () => sql.mock.calls.filter(({ arguments: [statement] }) =>
+        typeof statement === 'string' && statement.includes('.ontology_definition_releases WHERE id=')).length;
+      try {
+        const result = await service.evaluateOntology(p, input);
+        assert.deepEqual(result, expected); assert(!JSON.stringify(result).includes('PRIVATE_'));
+        assert.equal(releaseReads(), 1, 'Function evaluation reads the release once');
+
+        sql.mock.resetCalls();
+        const queryInput = { version: 2, taskId: task.job.id, expectedRequestRevision: 1, query: { object: quote, select: ['serviceLevel'] } };
+        assert.deepEqual(await service.queryOntology(p, queryInput), source.query(queryInput));
+        assert.equal(releaseReads(), 1, 'A separate object query reads the release once again');
+      } finally { sql.mock.restore(); }
       const derivedInput = { version: 2, taskId: task.job.id, expectedRequestRevision: 1, query: { object: quote, select: ['isFresh'] } };
       const role = (await t.client.query(`SELECT body FROM ${q}.security_roles WHERE subject_id=$1`, [installation.id])).rows[0]!.body;
       await t.client.query(`UPDATE ${q}.security_roles SET body=jsonb_set(body::jsonb,'{invokeFunctions}','[]'::jsonb)::text WHERE subject_id=$1`, [installation.id]);
