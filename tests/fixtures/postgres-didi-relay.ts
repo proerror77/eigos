@@ -99,7 +99,7 @@ export async function postgresDidiRelayFixture(hooks:PostgresDidiRelayHooks={}){
     f.jobs.createMessagingStore();target=await importPostgresPrimaryFixture(f);const t=target,q=`"${t.schema}"`;
     // Explicit fixture migration-administrator step, never a host startup DDL.
     await t.database.run(client=>t.publisher.withManagement(client,()=>installPostgresMessagingStorage(client)));
-    const account=new PostgresDidiAccount(provider.binding,f.owner,{readCurrent:()=>descriptor,expectedDigest:accountDigest}),port=new PostgresTaskRelay({database:t.database,policyDigest:t.policy,authorityId:authority.id,gatewayOrigin:authority.canonicalOrigin,builder:t.kernel,didiAccount:account});
+    const account=new PostgresDidiAccount(provider.binding,f.owner,{readCurrent:()=>descriptor,expectedDigest:accountDigest}),port=new PostgresTaskRelay({database:t.database,policyDigest:t.policy,authority,builder:t.kernel,didiAccount:account});
     const wrappingKey=await relayNodeWrappingKey(randomBytes(32)),nodeId='gateway:synthetic-encrypted-didi';
     gatewayNode=await openPostgresRelayNode({database:t.database,publisher:t.publisher,nodeId,baseUrl:relay.baseUrl,wrappingKey,displayName:'Synthetic PostgreSQL gateway',createIfMissing:true,assertCurrent:async()=>{await port.authorityCurrent();}});await gatewayNode.register('fixture-owner');
     const contact=await gatewayNode.requestContact(sourceNode.agentId);await sourceNode.respondContact(contact.id,'accept');

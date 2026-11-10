@@ -83,7 +83,7 @@ export function readPostgresDidiHostConfiguration(config:Config){
 export function createPostgresProgramTransport(config:Config,options:{database:PostgresDatabase;policyDigest:string;authority:{id:string;revision:number;digest:string};builder?:StagedKernelBuilder;role:'gateway'|'worker'}){
   if(!config.authority||config.authority.id!==options.authority.id||runtimeAuthorityDigest(config.authority)!==options.authority.digest||config.authority.revision!==options.authority.revision||config.PUBLIC_URL!==config.authority.canonicalOrigin)throw new Error('Program transport requires the same original host authority');
   const selected=readPostgresDidiHostConfiguration(config),account=selected?new PostgresDidiAccount(selected.binding,selected.owner,selected.descriptor):undefined;
-  const opts={database:options.database,policyDigest:options.policyDigest,authorityId:options.authority.id,gatewayOrigin:config.PUBLIC_URL,builder:options.builder,didiAccount:account};
+  const opts={database:options.database,policyDigest:options.policyDigest,authority:config.authority,builder:options.builder,didiAccount:account};
   const taskRelay=options.role==='gateway'&&config.EIGOS_TASK_RELAY_FILE?new PostgresTaskRelay(opts):undefined;
   const reads=selected?(taskRelay?.reads??new PostgresRelayReadAuthority(opts)):undefined;
   const registry=new PostgresReadProgramRegistry(options.policyDigest,{documentEnabled:config.EIGOS_EXECUTOR!=='disabled',...(selected?{didi:{kind:'relay' as const,binding:selected.binding,owner:selected.owner,account:account!,reads:reads!,peerId:selected.peerId,authority:{id:options.authority.id,gatewayOrigin:config.PUBLIC_URL}}}:{})});

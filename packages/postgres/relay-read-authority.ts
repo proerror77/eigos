@@ -57,7 +57,7 @@ export class PostgresRelayReadAuthority {
   private async assert(client:Client,row:ReadRow,original?:PostgresWorkReference):Promise<SourceReadRequest>{
     const request=sourceReadRequestSchema.parse(JSON.parse(row.request)),actor=accessContextSchema.parse(JSON.parse(row.actor)),now=Date.now(),token=postgresBusinessToken(client),q=`"${postgresBusinessSchema(client)}"`;
     await this.authority.assertCurrent(client,request.authorityId);
-    if(row.id!==request.callId||Number(row.expires_at)!==request.expiresAt||request.gatewayOrigin!==this.options.gatewayOrigin||request.expiresAt<=now||row.state==='revoked')throw new SecurityError('ACCESS_REVOKED');
+    if(row.id!==request.callId||Number(row.expires_at)!==request.expiresAt||request.gatewayOrigin!==this.authority.gatewayOrigin||request.expiresAt<=now||row.state==='revoked')throw new SecurityError('ACCESS_REVOKED');
     const {protocol:_protocol,kind:_kind,callId:_callId,expiresAt:_expires,...selectedInput}=request;
     if(row.retry_key!==digest([row.peer_id,selectedInput])||!same(didiToolInputs[request.tool].parse(request.input),request.input))throw new SecurityError('POLICY_CHANGED');
     if(row.state==='completed'&&row.result===null)throw new SecurityError('POLICY_CHANGED');
