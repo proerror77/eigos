@@ -109,7 +109,7 @@ test('Worker request row reuse expires with its immutable scope and never covers
             const sql=typeof args[0]==='string'?args[0]:args[0]?.text;
             if(typeof sql==='string'){
               if(sql.startsWith('WITH candidates AS MATERIALIZED'))counts.members++;
-              if(sql.startsWith('SELECT body,model_digest,created_at,sequence FROM '))counts.releases++;
+              if(sql.includes('SELECT body,model_digest,created_at,sequence FROM '))counts.releases++;
               if(sql.startsWith("SELECT CASE WHEN octet_length((body.value#>'{delegation,request}')::text)<=8388608"))counts.submissions++;
               if(sql.startsWith('SELECT b.owner,b.task_id,b.request_revision,b.object_revision,')){
                 const key=JSON.stringify(typeof args[0]==='string'?args[1]:args[0]?.values);direct.set(key,(direct.get(key)??0)+1);
