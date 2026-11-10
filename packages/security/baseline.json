@@ -5602,12 +5602,12 @@
     {
       "id": "postgres-ontology-query",
       "file": "packages/postgres/ontology-query.ts",
-      "sourceDigest": "320dcff6b23abe4eccd018fa4caf8ed6b9ff9273454de2fc09e1db768786df98",
+      "sourceDigest": "16b11514b07e88175e05db5ea6ed3b0abaf801220e0a5a87d9f1177ba7a51fb2",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL task-scoped Ontology queries",
-      "currentControl": "Exact release and revision, direct binding and current field, lineage and recipient visibility. Ordinary task-root reads batch bounded raw inputs and validate the same output evidence without scanning the task inventory. Other queries retain opaque cursors and checked field projection.",
+      "currentControl": "Exact release and revision, direct binding and current field, lineage and recipient visibility. Ordinary task-root reads batch bounded raw inputs and validate the same inventory budget and output evidence. Other queries retain opaque cursors and checked field projection.",
       "targetControl": "Complete bounded task binding and current field/lineage/recipient visibility before predicates and pagination; exact release/revision, opaque installation/grant/policy cursors and checked field projection; raw graph never exposed",
       "stage": "S5"
     },
@@ -5897,7 +5897,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "d1235f2324a5701833357efeb2dc4e82c6d261801e8516d0e45bba14b42dc413",
+      "sourceDigest": "77eadda331ddb6a14909b5e46c442a727ae23aad920e0afc7ffcd7891095a0da",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current task, identity, source and expiry checks remain. Resource roles pin the exact checked task release, independently of the compatible field policy. Raw binding reuse is bounded to 64 entries/8 MiB and the same callback, transaction token, actor, owner, task and grant revisions; public reuse additionally requires the shared read fence.",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"

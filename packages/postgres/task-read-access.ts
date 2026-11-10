@@ -59,6 +59,8 @@ interface PointReadRows {
   binding: PostgresSelectResult;
   body: PostgresSelectResult;
   tombstone: PostgresSelectResult;
+  inventory: PostgresSelectResult;
+  currentBindings: PostgresSelectResult;
 }
 
 function sameRef(a: ObjectRef, b: ObjectRef) {
@@ -133,7 +135,8 @@ function parentAdmissionSelect(q: string, installationId: string, now: number): 
 }
 
 function taskGrantSelect(q: string, id: string, owner: string, installationId: string, now: number, parentId: string, parentRevision: number): PostgresSelect {
-  return { text: `SELECT d.id AS grant_id,d.revision,d.state,d.expires_at,CASE WHEN octet_length(d.body)<=1048576 THEN d.body END AS body
+  return { text: `SELECT d.id AS grant_id,d.revision,d.state,d.expires_at,(data.value->>'requestRevision')::numeric AS task_request_revision,
+    CASE WHEN octet_length(d.body)<=1048576 THEN d.body END AS body
     FROM ${q}.security_grants d JOIN ${q}.jobs j ON j.id=$1 AND j.owner=d.owner
     CROSS JOIN LATERAL (SELECT ${q}.eigos_try_jsonb(d.body) AS value OFFSET 0) data
     CROSS JOIN LATERAL (SELECT ${q}.eigos_try_jsonb(j.body) AS value OFFSET 0) job
@@ -175,6 +178,21 @@ function bindingSelect(schema: string, ref: ObjectRef, grant: PostgresSelect): P
       FROM "${schema}".security_bindings b JOIN "${schema}".ontology_objects o
       ON o.owner=b.owner AND o.type=b.type AND o.id=b.object_id AND o.revision=b.object_revision
       WHERE b.grant_id IN (SELECT grant_id FROM (${grant.text}) admitted) AND b.type=$${grant.values.length + 1} AND b.object_id=$${grant.values.length + 2} LIMIT 2`, values: [...grant.values, ref.type, ref.id] };
+}
+
+function queryInventorySelect(q: string, owner: string, taskId: string, installationId: string, requestRevision?: number): PostgresSelect {
+  const revision = requestRevision === undefined ? '(SELECT task_request_revision FROM eigos_read_task LIMIT 1)' : '$4';
+  return {text:`SELECT DISTINCT b.type,b.object_id FROM ${q}.security_bindings b
+        JOIN ${q}.security_grants issued ON issued.id=b.grant_id WHERE b.owner=$1 AND b.task_id=$2 AND b.request_revision=${revision}
+        AND issued.installation_id=$3 AND issued.kind='task_data' LIMIT 2001`,
+    values:requestRevision===undefined?[owner,taskId,installationId]:[owner,taskId,installationId,requestRevision]};
+}
+
+function currentBindingsSelect(q: string, grantId?: string): PostgresSelect {
+  const grant = grantId === undefined ? '(SELECT grant_id FROM eigos_read_task LIMIT 1)' : '$1';
+  return {text:`SELECT type,object_id,object_revision::text AS object_revision FROM ${q}.security_bindings
+        WHERE grant_id=${grant} ORDER BY type COLLATE "C",object_id COLLATE "C" LIMIT 2001`,
+    values:grantId===undefined?[]:[grantId]};
 }
 
 /** Resolve current installation admission for task reads. The principal and policy digest
@@ -297,7 +315,7 @@ async function postgresTaskGrant(client: Client, principal: Principal, taskId: s
       task: grant,
     };
     if (point && release && ref) {
-      const {identity,parent,task,release_rows:releaseRows,roles,clearance,labels,binding,body,tombstone} =
+      const {identity,parent,task,release_rows:releaseRows,roles,clearance,labels,binding,body,tombstone,inventory,current_bindings:currentBindings} =
         await postgresSelectBatch(client, {
           ...selectors,
           release_rows: release.select,
@@ -305,6 +323,8 @@ async function postgresTaskGrant(client: Client, principal: Principal, taskId: s
           clearance: recipientSelect(schema, claimed.installationId),
           labels: labelSelect(schema, owner, ref),
           binding: bindingSelect(schema, ref, {text:'SELECT grant_id FROM eigos_read_task',values:[]}),
+          inventory: queryInventorySelect(q, owner, id, claimed.installationId),
+          current_bindings: currentBindingsSelect(q),
           body: {
             text: `SELECT revision,definition_digest,CASE WHEN octet_length(body)<=1048576 THEN body END AS body
               FROM ${q}.ontology_objects WHERE owner=$1 AND type=$2 AND id=$3 LIMIT 2`,
@@ -318,7 +338,7 @@ async function postgresTaskGrant(client: Client, principal: Principal, taskId: s
         });
       if (releaseRows.rowCount) {
         point.capture({object:ref, builder:point.builder, readRelease:()=>release.read(releaseRows,principal.scopes.includes('ontology:admin')),
-          roles,clearance,labels,binding,body,tombstone});
+          roles,clearance,labels,binding,body,tombstone,inventory,currentBindings});
       }
       supplied = [identity,parent,task];
     } else {
@@ -745,16 +765,16 @@ export async function postgresTaskQuerySelection(client:Client,principal:Princip
   return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission=>{
     const load=async()=>{
       const q=`"${postgresBusinessSchema(client)}"`;
-      const rows=await client.query<{type:string;object_id:string}>(`SELECT DISTINCT b.type,b.object_id FROM ${q}.security_bindings b
-        JOIN ${q}.security_grants issued ON issued.id=b.grant_id WHERE b.owner=$1 AND b.task_id=$2 AND b.request_revision=$3
-        AND issued.installation_id=$4 AND issued.kind='task_data' LIMIT 2001`,[ownerKey(captured),taskId,admission.grant.requestRevision,admission.actor.installationId]);
-      const bindings=await client.query(`SELECT type,object_id,object_revision FROM ${q}.security_bindings
-        WHERE grant_id=$1 ORDER BY type COLLATE "C",object_id COLLATE "C" LIMIT 2001`,[admission.grant.id]);
+      const point=snapshots.get(client)?.point;
+      const inventory=queryInventorySelect(q,ownerKey(captured),taskId,admission.actor.installationId,admission.grant.requestRevision);
+      const current=currentBindingsSelect(q,admission.grant.id);
+      const rows=point?.inventory??await client.query<{type:string;object_id:string}>(inventory.text,[...inventory.values]);
+      const bindings=point?.currentBindings??await client.query(current.text,[...current.values]);
       if(rows.rows.length>2000||bindings.rows.length>2000||Buffer.byteLength(JSON.stringify([rows.rows,bindings.rows]))>8388608)throw new DomainError('CONFLICT','Task object boundary exceeds the supported query budget');
       const revision=parseInt(digest([admission.policyRevision,admission.grant.id,bindings.rows.map(row=>({
         type:row.type,object_id:row.object_id,object_revision:z.number().int().positive().safe().parse(Number(row.object_revision)),
       }))]).slice(0,12),16);
-      return freezeData({rows:rows.rows,revision});
+      return freezeData({rows:rows.rows as {type:string;object_id:string}[],revision});
     };
     const snapshot=snapshots.get(client),pending=snapshot?(snapshot.selection??=load()):load();
     return structuredClone(await pending);

@@ -4,7 +4,7 @@ import { projectionFields } from '../security/projections.js';
 import { SecurityError } from '../security/errors.js';
 import { currentKernelImplementation } from '../ontology/definition-store.js';
 import { stagedKernelComponents } from '../ontology/seed-definition.js';
-import { postgresTaskPointRows, postgresTaskReadOntology, withPostgresTaskReadGrant } from './task-read-access.js';
+import { postgresTaskPointRows, postgresTaskQuerySelection, postgresTaskReadOntology, withPostgresTaskReadGrant } from './task-read-access.js';
 import type { Client } from 'pg';
 import type { Principal } from '../core/domain.js';
 import type { StagedKernelBuilder } from '../ontology/seed-definition.js';
@@ -41,6 +41,10 @@ export async function postgresQueryOntology(client: Client, principal: Principal
         const keyFields=[...new Set([definition.primaryKey,definition.titleKey])];
         const anchor=await auth.readObject(point,keyFields);
         await auth.authorizeEvidence(anchor.envelope);
+        const selection = await postgresTaskQuerySelection(client,p,args.taskId,policyDigest);
+        if (!selection.rows.some(row=>row.type===point.type && row.object_id===point.id)) {
+          throw new SecurityError('AUTHORIZATION_REQUIRED');
+        }
         if (anchor.object.properties[definition.primaryKey] !== point.id) throw new DomainError('CONFLICT','Invalid ontology object body');
         for (const field of query.select??[]) {
           if (!Object.hasOwn(properties,field)) throw new DomainError('INVALID_INPUT','Unknown selected property');
