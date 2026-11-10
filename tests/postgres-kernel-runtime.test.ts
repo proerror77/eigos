@@ -41,7 +41,7 @@ test('reviewed policy selects the exact v27 or descriptions-v28 kernel without u
   }
   assert.notEqual(persistentConsentPolicyContracts(legacyModel).after,persistentConsentPolicyContracts(currentModel).after);
   assert.throws(()=>reviewedKernelVersionForPolicy('0'.repeat(64)),/explicit supported kernel review/);
-  assert.throws(()=>new StagedKernelBuilder('33' as never),/Unsupported reviewed kernel target/);
+  assert.throws(()=>new StagedKernelBuilder('unregistered' as never),/Unsupported reviewed kernel target/);
   assert.equal(CONTRACT_CLOSURE_KERNEL_MODEL_REF.version,'32','the reviewed v32 closure is a selectable target');
   assert.throws(()=>stagedKernelComponents(Object.setPrototypeOf({},StagedKernelBuilder.prototype)),/private|read|member/i);
 });
