@@ -5744,7 +5744,7 @@
       "currentControl": "Business writes retain serializable exclusive fencing. Audited query callbacks share the fence under READ COMMITTED, resolve current authority without a row lock, and recheck authority after commit. Exact transaction identity, deadlines, current eligibility, uncertain-outcome eviction and cursor scope remain enforced.",
       "targetControl": "Serializable business state after transaction-scoped table serialization, exact authority/transaction identity and savepoint guards; current deadlines before/after commit, unknown-outcome eviction and no automatic retries",
       "stage": "S5",
-      "sourceDigest": "2d4304f79117ecb99a699fd635eb801e8b5683de4195d9cef55ef632ef929b16"
+      "sourceDigest": "a545fe409772c6f8637eda9647871fabfd4797451fc6920fb84d27b49980a4e1"
     },
     {
       "id": "postgres-source-projection",
@@ -5869,12 +5869,12 @@
     {
       "id": "postgres-task-output-authorization",
       "file": "packages/postgres/task-output.ts",
-      "sourceDigest": "d542a07d4ebf7aee3ea4f9810290a14d081190f7ab1335287a90040a3aa7def2",
+      "sourceDigest": "c4e7aa1d464f1d216512440c3f427735a2d12699e5e28696b6c2fe3f388475eb",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL task object, sealed output and controlled download authorization",
-      "currentControl": "Current task admission, source and field visibility, exact sealed content, projection provenance, dependency digests and recipient checks; bounded read sessions expire before returning protected data",
+      "currentControl": "Current task admission, source/field visibility, sealed content, provenance, dependency digests and recipient checks remain. Raw bindings, request digests and membership proofs reuse only an exact immutable Worker window or host-selected public read transaction; writers and later requests read fresh rows.",
       "targetControl": "Current task admission, source and field visibility, exact sealed content, projection provenance, dependency digests and recipient checks; bounded read sessions expire before returning protected data",
       "stage": "S5"
     },
@@ -5897,9 +5897,9 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "2b5661e394bcacef27c32e7d29de21a4e42f3bd23cf820348f072730b9af2949",
+      "sourceDigest": "bde6e43ad0fb2ff8ea1c1d2eac84de24198c487de502b41695d8ea3437b688f6",
       "content": "PostgreSQL agent task-read admission",
-      "currentControl": "Current task, identity, source and expiry checks remain. Under optional29, resource roles resolve against the checked task release while consent validates against the current reviewed policy, preserving old27 pins without new function grants.",
+      "currentControl": "Current task, identity, source and expiry checks remain. Resource roles pin the exact checked task release, independently of the compatible field policy. Raw binding reuse is bounded to 64 entries/8 MiB and the same callback, transaction token, actor, owner, task and grant revisions; public reuse additionally requires the shared read fence.",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
     },
     {
