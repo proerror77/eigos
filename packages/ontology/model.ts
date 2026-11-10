@@ -163,6 +163,10 @@ export class OntologyModel {
   private fingerprints = new Map<string, string>();
   private links: LinkDefinition[];
   private linkSides = new Map<string, { link: LinkDefinition; side: LinkDefinition['from']; other: LinkDefinition['to']; direction: 'forward' | 'reverse' }[]>();
+  // Interface conformance is a pure function of the compiled definition, and it is
+  // asked O(links x types) times while building link sides and property maps.
+  private implementCache = new Map<string, boolean>();
+  private ancestorCache = new Map<string, string[]>();
   private typeDescriptions = new Map<string, object>();
   private actions: ActionDefinition[];
   private functions: FunctionDefinition[];
@@ -386,8 +390,13 @@ export class OntologyModel {
   linkWritePolicy(id: string): 'managed' | 'source' { return this.link(id).writePolicy ?? 'source'; }
   implements(type: string, target: string): boolean {
     if (type === target) return this.objects.has(type);
+    const key = `${type}\u0000${target}`;
+    const cached = this.implementCache.get(key);
+    if (cached !== undefined) return cached;
     const matches = (id: string): boolean => id === target || (this.interfaces.get(id)?.parents ?? []).some(matches);
-    return (this.objects.get(type)?.interfaces ?? []).some(i => matches(i.id));
+    const result = (this.objects.get(type)?.interfaces ?? []).some(i => matches(i.id));
+    this.implementCache.set(key, result);
+    return result;
   }
   concreteTypes(target: string): string[] {
     if (!this.hasType(target)) invalid('Unknown ontology type');
@@ -411,7 +420,13 @@ export class OntologyModel {
   typeIds(): string[] { return [...this.objects.keys(), ...this.interfaces.keys()]; }
   actionIds(): string[] { return this.actions.map(action => action.id); }
   functionIds(): string[] { return this.functions.map(fn => fn.id); }
-  private interfaceAncestors(id: string): string[] { return (this.interfaces.get(id)?.parents ?? []).flatMap(p => [p, ...this.interfaceAncestors(p)]); }
+  private interfaceAncestors(id: string): string[] {
+    const cached = this.ancestorCache.get(id);
+    if (cached) return cached;
+    const ancestors = (this.interfaces.get(id)?.parents ?? []).flatMap(p => [p, ...this.interfaceAncestors(p)]);
+    this.ancestorCache.set(id, ancestors);
+    return ancestors;
+  }
   properties(target: string) { return this.isInterface(target) ? this.interfaceProperties(target) : this.object(target).properties; }
   parseProperties(type: string, value: unknown): Record<string, unknown> {
     const parsed = this.schemas.get(type)?.safeParse(value);
