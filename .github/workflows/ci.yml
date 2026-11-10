@@ -353,9 +353,12 @@ jobs:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
     env:
       EIGOS_TEST_FILES: ${{ needs.scope.result == 'success' && toJSON(fromJSON(needs.scope.outputs.shards)[matrix.shard]) || '[]' }}
-      # Hosted runners expose four cores. Two concurrent test files left half the
-      # machine idle on every shard; the suite is process-isolated per file.
-      EIGOS_TEST_CONCURRENCY: '4'
+      # Keep the reviewed width of two. Four cores are available, but
+      # tests/runtime-authority.test.ts runs a single case for ~60 s and the
+      # authority projection lease is 60 s (securityDefaults), so a wider shard
+      # lets the lease lapse mid-test and the case fails with AUTHORITY_UNAVAILABLE.
+      # Raise this only after that fixture renews its manager lease.
+      EIGOS_TEST_CONCURRENCY: '2'
     steps:
       - name: Require a valid scope
         env:
