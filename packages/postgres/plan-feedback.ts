@@ -34,7 +34,16 @@ export function recordPostgresPlanFeedback(job:Job,intents:readonly ActionIntent
   state.feedback.push({at,kind:'validation',message,inputDigest:error.decisionDigest});
   d.phase='planning';d.nextAt=0;job.updatedAt=at;
   d.events.push({at,event:'agent_plan_validation_feedback',evidence:digest({kind:error.kind,modelRunId:error.modelRunId,decisionDigest:error.decisionDigest})});
-  if(state.feedback.filter(value=>value.kind==='validation'&&value.message===message).length>=3)
+  // Match the existing Agent stall boundary: retained history is not a current
+  // streak. Only restored scope/current request or verified projected evidence
+  // resets it; another model turn or an unexecuted plan does not. Keep the old
+  // feedback/event encoding and cumulative run/plan/action budgets intact.
+  const decisions=new Set(state.feedback.filter(value=>value.kind==='validation'&&value.message===message).map(value=>value.inputDigest));
+  const failures=new Set((job.runs??[]).filter(run=>run.purpose==='planning'&&run.decisionDigest&&decisions.has(run.decisionDigest))
+    .map(run=>digest({kind:error.kind,modelRunId:run.id,decisionDigest:run.decisionDigest})));
+  const progress=d.events.findLastIndex(event=>['agent_goal_fixed','agent_scope_initialized','agent_scope_resumed','agent_observation_projected'].includes(event.event));
+  const repeated=d.events.slice(progress+1).filter(event=>event.event==='agent_plan_validation_feedback'&&failures.has(event.evidence!)).length;
+  if(repeated>=3)
     scheduleTaskRecovery(job,'validation_stalled','自动规划持续未通过校验，原任务与已确认结果已保留。',{automatic:false});
   else if(remainingModelTurns(job)<MIN_REASONING_TURNS)pauseExecutionBudget(job,'modelTurns','window');
 }

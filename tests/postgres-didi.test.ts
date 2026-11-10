@@ -16,9 +16,37 @@ import {PostgresWorkerStore} from '../packages/postgres/worker-store.js';
 import {PostgresReadProgramRegistry} from '../packages/postgres/didi-registry.js';
 import {PostgresTaskCommandService} from '../packages/postgres/task-command-service.js';
 import {postgresWorkerLane,postgresWorkerReservation} from '../packages/postgres/worker-capacity.js';
+import {PostgresPlanValidationFeedback,recordPostgresPlanFeedback} from '../packages/postgres/plan-feedback.js';
 
 const local={skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'};
 async function reader(x:Awaited<ReturnType<typeof postgresDidiFixture>>){const p={...x.f.principal,access:await x.t.publisher.authenticate(x.f.principal,x.installation.token)};return {p,service:new PostgresTaskReadService(x.t.database,x.t.policy,x.t.kernel)};}
+
+test('verified PostgreSQL source progress resets the validation streak while retaining failures and cumulative budgets',local,async()=>{
+  const x=await postgresDidiFixture();try{
+    const component=await x.prepare(),initial=await x.stored();let rejected=0;
+    const reject=async()=>{
+      let feedback:PostgresPlanValidationFeedback|undefined;
+      await assert.rejects(x.install(component,'SearchDidiPlaces',{scope:component.scope,role:'search',keywords:'北京西站',unregisteredField:++rejected}),error=>{
+        if(error instanceof PostgresPlanValidationFeedback){feedback=error;return true;}return false;
+      });assert(feedback);
+      const intents=await x.t.database.run(client=>new PostgresTaskStorage(client,x.t.kernel).intents(x.f.owner,x.claim.job.id));
+      assert(await x.worker.checkpoint(x.claim,job=>recordPostgresPlanFeedback(job,intents,feedback!)));
+    };
+    await reject();await reject();assert.equal((await x.stored()).state,'working');
+    await x.execute(await x.install(component,'SearchDidiPlaces',{scope:component.scope,role:'search',keywords:'北京西站'}));
+    const progressed=await x.stored();assert.equal(progressed.delegation!.agent!.observations.length,1);
+    await reject();const continued=await x.stored();
+    assert.equal(continued.state,'working','Two historical failures plus one after verified progress are not a stalled streak');
+    assert.equal(continued.delegation!.agent!.feedback.length,3);assert.equal(continued.delegation!.recovery,undefined);
+    assert.deepEqual(continued.delegation!.executionBudget,initial.delegation!.executionBudget);
+    assert(continued.runs!.length>progressed.runs!.length);assert.equal(continued.delegation!.agent!.plans.length,1);
+    await reject();await reject();const stopped=await x.stored();
+    assert.equal(stopped.state,'paused');assert.equal(stopped.delegation!.recovery?.code,'validation_stalled');
+    assert.equal(stopped.delegation!.agent!.feedback.length,5);assert.equal(stopped.delegation!.agent!.observations.length,1);
+    assert.equal((await x.t.client.query(`SELECT count(*)::int AS n FROM ${x.q}.action_attempts`)).rows[0].n,1);
+    assert.deepEqual(x.source.calls.filter(call=>call.method==='tools/call').map(call=>call.name),['maps_textsearch']);
+  }finally{await x.close();}
+});
 
 test('two PostgreSQL hosts reserve a ready DiDi read beside a held model without replay or capacity promotion',local,async()=>{
   const x=await postgresDidiFixture();try{

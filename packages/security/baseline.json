@@ -7999,13 +7999,13 @@
     {
       "id": "postgres-plan-feedback",
       "file": "packages/postgres/plan-feedback.ts",
-      "sourceDigest": "a2397227b843bbc1d16ed927ab168808b4cab521229b4e67a8bf8a0ecfa1c039",
+      "sourceDigest": "78acfa42e082eadb15d2f76c83394c09839bef7c32f25877f4c06e9fa76570cd",
       "channels": [
         "internal"
       ],
       "content": "Bounded feedback for safely rejected original pre-dispatch plans",
-      "currentControl": "Only named non-private validation messages after exact durable planning origin and rollback. Fresh same-request working state, no pending plan, no installed frontier from that model run and no unconfirmed intent; current claim/evidence authorization belongs to enclosing mutation. Preserve fixed goal, budgets and accepted results; three same validation failures or exhausted reasoning pauses, never replaying uncertain effects.",
-      "targetControl": "Only named non-private validation messages after exact durable planning origin and rollback. Fresh same-request working state, no pending plan, no installed frontier from that model run and no unconfirmed intent; current claim/evidence authorization belongs to enclosing mutation. Preserve fixed goal, budgets and accepted results; three same validation failures or exhausted reasoning pauses, never replaying uncertain effects.",
+      "currentControl": "Only named non-private validation messages after exact durable planning origin and rollback. Fresh same-request working state, no pending plan, no installed frontier from that model run and no unconfirmed intent; current claim/evidence authorization belongs to enclosing mutation. Preserve fixed goal, budgets and accepted results; three same validation failures since current request, restored scope or newly verified projected source evidence or exhausted reasoning pauses, never replaying uncertain effects.",
+      "targetControl": "Only named non-private validation messages after exact durable planning origin and rollback. Fresh same-request working state, no pending plan, no installed frontier from that model run and no unconfirmed intent; current claim/evidence authorization belongs to enclosing mutation. Preserve fixed goal, budgets and accepted results; three same validation failures since current request, restored scope or newly verified projected source evidence or exhausted reasoning pauses, never replaying uncertain effects.",
       "stage": "S5"
     }
   ]
