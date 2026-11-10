@@ -20,12 +20,117 @@ import {SecurityError} from '../packages/security/errors.js';
 import type {AgentActionResult} from '../packages/core/agent-program.js';
 import {PostgresWorkerStore} from '../packages/postgres/worker-store.js';
 import {PostgresReadProgramRegistry} from '../packages/postgres/didi-registry.js';
-import {PostgresTaskCommandService} from '../packages/postgres/task-command-service.js';
 import {postgresWorkerLane,postgresWorkerReservation} from '../packages/postgres/worker-capacity.js';
 import {PostgresPlanValidationFeedback,recordPostgresPlanFeedback} from '../packages/postgres/plan-feedback.js';
+import {DidiAgentProgram} from '../packages/capabilities/didi/program.js';
 
 const local={skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'};
 async function reader(x:Awaited<ReturnType<typeof postgresDidiFixture>>){const p={...x.f.principal,access:await x.t.publisher.authenticate(x.f.principal,x.installation.token)};return {p,service:new PostgresTaskReadService(x.t.database,x.t.policy,x.t.kernel)};}
+const shortRoute={city:'北京市',origin:'北京西站',destination:'西二旗地铁站'};
+function shortCoordinator(x:Awaited<ReturnType<typeof postgresDidiFixture>>,loseDecision=false){
+  let turns=0;const unexpected=async():Promise<never>=>{throw Error('Unexpected model stage');},port={securityChannelId:x.channel,postgresModelDispatch:'acknowledged-v1' as const};
+  const coordinator=new PostgresCoordinator({...x.options,database:x.t.database,store:x.worker,
+    reasoner:{...port,ground:unexpected,plan:unexpected,act:unexpected,reviewGoal:unexpected},
+    executor:{...port,run:unexpected,async runStructured(_prompt,_schema,_signal,options){
+      assert.equal(options?.toolFree,true);assert.equal(options?.mcp,undefined);
+      const run=evidence(),recorder=modelUsageRecorder();assert(recorder);await recorder.begin(run.id,run.runtime,run.startedAt);
+      await authorizeModelDispatch(x.channel);turns++;run.completedAt=new Date().toISOString();
+      await recorder.finish(run.id,run,loseDecision?'failed':'completed');
+      if(loseDecision)throw new Error('Explicit synthetic lost interpretation');
+      return {output:{decisionJson:JSON.stringify({kind:'estimate',route:shortRoute})},evidence:run};
+    }},
+  });
+  return {coordinator,turns:()=>turns};
+}
+
+for(const mode of ['structured','natural'] as const)test(`scheduled PG DiDi ${mode} short path completes its original synthetic sandbox task with zero or one model turn`,local,async()=>{
+  const x=await postgresDidiFixture(false,{shortPath:mode==='structured'?{mode,...shortRoute}:{mode},scheduled:true,executionEnvironment:'sandbox'});
+  const {coordinator,turns}=shortCoordinator(x);try{
+    const original=await x.stored();let claim=x.claim;
+    assert.equal(postgresWorkerReservation(claim.token).lane,mode==='structured'?'execution':'model');
+    assert.equal(postgresWorkerLane(original,[],new PostgresReadProgramRegistry(x.t.policy)),'model','No installed DiDi registry means no execution shortcut');
+    const changed=structuredClone(original);changed.delegation!.didiEstimate!.revision++;
+    assert.equal(postgresWorkerLane(changed,[],x.registry),'model');
+    await x.stopRenewals();assert(await x.worker.renew(claim,300000));
+    if(mode==='natural'){
+      await coordinator.run(claim,new AbortController().signal);const interpreted=await x.stored();
+      assert.equal(turns(),1);assert.equal(x.source.calls.filter(call=>call.method==='tools/call').length,0);
+      assert.equal(postgresWorkerLane(interpreted,[],x.registry),'execution');
+      const forged=structuredClone(interpreted);Object.assign(forged.runs![0]!.singleReadDecision!,{modelRequests:2});
+      assert.equal(postgresWorkerLane(forged,[],x.registry),'model','An invalid single-model proof cannot acquire the deterministic lane');
+      assert(await x.worker.releaseCheckpoint(claim));const next=await x.worker.claim(['eigos.delegate'],300000,['execution']);assert(next);claim=next;
+    }
+    assert.equal(postgresWorkerReservation(claim.token).lane,'execution');
+    await coordinator.run(claim,new AbortController().signal);
+    const done=await x.stored();assert.equal(done.id,original.id);assert.equal(done.contextId,original.contextId);assert.equal(done.state,'completed');
+    assert.equal(done.delegation!.acceptance?.accepted,true);assert.equal(done.delegation!.outcome?.evidenceLevel,'synthetic');
+    assert.equal(done.runs!.length,mode==='structured'?0:1);assert.equal(turns(),mode==='structured'?0:1);
+    assert.deepEqual(x.source.calls.filter(call=>call.method==='tools/call').map(call=>call.name),['maps_textsearch','maps_textsearch','taxi_estimate']);
+    const attempts=(await x.t.client.query(`SELECT body FROM ${x.q}.action_attempts`)).rows.map(row=>JSON.parse(row.body));
+    assert.equal(attempts.length,3);assert(attempts.every(attempt=>attempt.claimToken===claim.token),'All fixed execution phases retain one original execution lease');
+    assert.equal((await x.t.client.query(`SELECT count(*)::int AS n FROM ${x.q}.jobs`)).rows[0].n,1);
+    await assert.rejects(coordinator.run(claim,new AbortController().signal),/ACCESS_REVOKED|AUTHORIZATION_REQUIRED|POLICY_CHANGED/);
+    assert.equal(x.source.calls.filter(call=>call.method==='tools/call').length,3,'A completed original cannot be dispatched again');
+    const {p,service}=await reader(x),view=await service.get(p,done.id);assert.equal(view.state,'completed');assert.equal(view.id,original.id);
+    assert(!JSON.stringify(view).includes(claim.token));assert.equal(await x.worker.claim(['eigos.delegate'],30000),undefined);
+  }finally{await x.close();}
+});
+
+test('sandbox DiDi fixture registration cannot borrow a production source grant or alter a Relay registration',local,async()=>{
+  const x=await postgresDidiFixture(false,{shortPath:{mode:'structured',...shortRoute},scheduled:true,executionEnvironment:'sandbox'}),{coordinator,turns}=shortCoordinator(x);
+  try{
+    await x.stopRenewals();assert(await x.worker.renew(x.claim,300000));
+    const production=new DidiAgentProgram(x.source.binding,{connector:x.source.connector});
+    assert.equal(production.capability().environment,'live');assert.equal(x.program.capability().environment,'sandbox');
+    assert.notEqual(production.configurationDigest,x.program.configurationDigest);
+    const configured={binding:x.source.binding,owner:x.f.owner,account:x.registry.entries[0]!.didi!.account,fixtureEnvironment:'sandbox' as const};
+    for(const kind of ['relay','relay-fixture'] as const){
+      const invalid={...configured,kind};
+      assert.throws(()=>new PostgresReadProgramRegistry(x.t.policy,{didi:invalid as never}),/Only a synthetic-fixture registration/);
+    }
+    await x.t.client.query(`UPDATE ${x.q}.security_sources SET body=jsonb_set(body::jsonb,'{programDigest}',to_jsonb($1::text))::text WHERE binding_id=$2`,[production.configurationDigest,x.bindingId]);
+    await assert.rejects(coordinator.run(x.claim,new AbortController().signal),/unique current DiDi binding/);
+    assert.equal(turns(),0);assert.equal(x.source.calls.filter(call=>call.method==='tools/call').length,0);
+    assert.notEqual((await x.stored()).state,'completed');
+  }finally{await x.close();}
+});
+
+test('the scheduled DiDi short path never repeats a lost source result or a consumed natural interpretation',local,async()=>{
+  const x=await postgresDidiFixture(false,{shortPath:{mode:'structured',...shortRoute},scheduled:true,executionEnvironment:'sandbox'}),{coordinator,turns}=shortCoordinator(x);
+  try{
+    await x.stopRenewals();assert(await x.worker.renew(x.claim,300000));const invoke=x.source.connector.invoke.bind(x.source.connector);
+    x.source.connector.invoke=async(...args)=>{await invoke(...args);throw new Error('Explicit synthetic lost source result');};
+    const signal=new AbortController().signal;
+    await assert.rejects(coordinator.run(x.claim,signal),/lost source result/);
+    await assert.rejects(coordinator.run(x.claim,signal),/reconciled|replay/);
+    await coordinator.onError(x.claim,new Error('Synthetic unknown source outcome'),signal);
+    const job=await x.stored();assert.equal(job.state,'paused');assert.equal(job.delegation!.acceptance,undefined);assert.equal(turns(),0);
+    assert.equal(x.source.calls.filter(call=>call.method==='tools/call').length,1);
+    assert.equal((await x.t.client.query(`SELECT count(*)::int AS n FROM ${x.q}.action_attempts`)).rows[0].n,1);
+    assert(job.delegation!.events.some(event=>event.event==='original_action_reconciliation_required'));
+  }finally{await x.close();}
+  const natural=await postgresDidiFixture(false,{shortPath:{mode:'natural'},scheduled:true}),model=shortCoordinator(natural,true);
+  try{
+    await natural.stopRenewals();assert(await natural.worker.renew(natural.claim,300000));
+    await assert.rejects(model.coordinator.run(natural.claim,new AbortController().signal),/lost interpretation/);
+    await assert.rejects(model.coordinator.run(natural.claim,new AbortController().signal),/consumed its single/);
+    assert.equal(model.turns(),1);assert.equal(natural.source.calls.filter(call=>call.method==='tools/call').length,0);
+  }finally{await natural.close();}
+});
+
+test('canceling a scheduled DiDi source read stops the same-claim drain before the next source operation',local,async()=>{
+  const x=await postgresDidiFixture(false,{shortPath:{mode:'structured',...shortRoute},scheduled:true,executionEnvironment:'sandbox'}),{coordinator,turns}=shortCoordinator(x);
+  try{
+    await x.stopRenewals();assert(await x.worker.renew(x.claim,300000));const {p}=await reader(x),commands=new PostgresTaskCommandService(x.t.database,x.t.policy,x.t.kernel);
+    x.source.flags.before=async()=>{await commands.cancel(p,x.claim.job.id);};
+    await assert.rejects(coordinator.run(x.claim,new AbortController().signal),/ACCESS_REVOKED|AUTHORIZATION_REQUIRED|POLICY_CHANGED|original|Original/);
+    const job=await x.stored();assert.equal(job.state,'canceled');assert.equal(job.delegation!.acceptance,undefined);
+    assert.equal(job.delegation!.agent!.observations.length,0);assert.equal(turns(),0);
+    assert.equal(x.source.calls.filter(call=>call.method==='tools/call').length,1,'The destination read must not follow cancellation of the original request');
+    assert.equal((await x.t.client.query(`SELECT count(*)::int AS n FROM ${x.q}.action_attempts`)).rows[0].n,1);
+    assert.equal((await x.t.client.query(`SELECT count(*)::int AS n FROM ${x.q}.action_observations`)).rows[0].n,1,'Retain the original late-source audit without publishing it');
+  }finally{await x.close();}
+});
 
 test('verified PostgreSQL source progress resets the validation streak while retaining failures and cumulative budgets',local,async()=>{
   const x=await postgresDidiFixture();try{

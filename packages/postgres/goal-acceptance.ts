@@ -86,12 +86,16 @@ export async function acceptPostgresGoal(client:Client,input:PostgresWorkReferen
     if(evaluated.assessment.accepted){
       if(didi){
         const step=state.plans[1]?.steps[0],intent=intents.find(value=>value.id===step?.intentId&&value.state==='effect_confirmed');
-        const object=objectRefSchema.safeParse(intent?.acceptedOutput?.object),component=evaluated.assessment.components[0]?.delivery?.artifact;
+        const object=objectRefSchema.safeParse(intent?.acceptedOutput?.object),componentDelivery=evaluated.assessment.components[0]?.delivery,component=componentDelivery?.artifact;
         const answer=component?.data.result as {didiAnswer?:{observation:unknown;requestedItems?:unknown[]}}|undefined;
         if(!object.success||object.data.type!=='RideEstimateObservation'||!component||!answer?.didiAnswer
           ||!same(answer.didiAnswer.observation,object.data)||!answer.didiAnswer.requestedItems?.length)fail('The original DiDi estimate did not return a verifiable quote');
         job.artifact.data.result={...job.artifact.data.result,securityEvidenceRefs:[object.data]};
         job.artifact.data.deliverable=component.data.deliverable;
+        // A single independently verified DiDi component is the entire fixed
+        // quote result. Preserve its actual source evidence level, including
+        // synthetic fixtures, rather than dropping it at the goal boundary.
+        evaluated.delivery.evidenceLevel=componentDelivery?.evidenceLevel;
       }
       if(coverage)assertReadContractResult(coverage,evaluated.delivery);job.state='completed';d.phase='accepted';resolveTaskRecovery(job,'decision');
       if(!didi)state.completion={modelRunId,modelDecision:decision,proposal,ontologyPlanning:reads};

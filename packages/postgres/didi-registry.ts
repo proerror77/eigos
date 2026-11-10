@@ -35,11 +35,21 @@ export interface PostgresReadRegistration {
   validateOutput?:(ctx:DidiProgramContext,output:AcceptedPortValue)=>GraphProgram<void>;
 }
 class PostgresDidiReadProgram extends DidiAgentProgram {
-  constructor(binding:DidiBinding,connector:DidiConnector,readonly account:PostgresDidiAccount){super(binding,{connector});bindPersonalSourceOwner(this,account.owner);}
+  constructor(binding:DidiBinding,connector:DidiConnector,readonly account:PostgresDidiAccount,private readonly fixtureEnvironment?:'sandbox'){
+    super(binding,{connector});
+    if(fixtureEnvironment){
+      if(connector.evidenceKind!=='fixture')throw new Error('A sandbox fixture program requires an explicitly synthetic connector');
+      // This host-only registration is a different executable configuration,
+      // not a production grant alias. Source evidence remains synthetic.
+      Object.defineProperty(this,'configurationDigest',{value:digest({kind:'synthetic-fixture',environment:fixtureEnvironment,programDigest:this.configurationDigest}),enumerable:true});
+    }
+    bindPersonalSourceOwner(this,account.owner);
+  }
   override permitted(owner:string){return super.permitted(owner)&&this.account.permitted(owner);}
+  override capability(){return {...super.capability(),...(this.fixtureEnvironment?{environment:this.fixtureEnvironment}:{})};}
 }
 interface DidiMetadata {binding:DidiBinding;owner:string;account:PostgresDidiAccountDescriptor|PostgresDidiAccount;sourceBindingId?:string}
-export type PostgresDidiRegistryOptions=DidiMetadata&({kind:'relay'|'relay-fixture';reads:PostgresRelayReadAuthority;peerId:string;authority:{id:string;gatewayOrigin:string}}|{kind:'synthetic-fixture';connector:DidiConnector});
+export type PostgresDidiRegistryOptions=DidiMetadata&({kind:'relay'|'relay-fixture';reads:PostgresRelayReadAuthority;peerId:string;authority:{id:string;gatewayOrigin:string}}|{kind:'synthetic-fixture';connector:DidiConnector;fixtureEnvironment?:'sandbox'});
 
 /** Closed actual program registry, currently Doc plus the enabled DiDi read
  * program. No provider flag/model JSON installs arbitrary code or grants a
@@ -53,13 +63,15 @@ export class PostgresReadProgramRegistry {
     if(options.documentEnabled!==false){const program=new DocumentAgentProgram();entries.push({kind:'document',program,policy:createPostgresDocumentPolicy(),sourceBindingId:options.documentSourceBindingId,
       initialize:(metadata,owner,request,input,component)=>initializeDocumentProgram(program,owner,request,input,component),assertContext:ctx=>assertDocumentContextProgram(program,ctx),complete:(ctx,value,reads)=>completeDocumentProgram(program,ctx,value,reads)});}
     if(options.didi){
-      const configured=options.didi,account=configured.account instanceof PostgresDidiAccount?configured.account:new PostgresDidiAccount(configured.binding,configured.owner,configured.account);account.assertBinding(configured.binding,configured.owner);let connector:DidiConnector;
+      const configured=options.didi,fixtureEnvironment='fixtureEnvironment'in configured?configured.fixtureEnvironment:undefined;
+      if(fixtureEnvironment!==undefined&&(configured.kind!=='synthetic-fixture'||fixtureEnvironment!=='sandbox'))throw new Error('Only a synthetic-fixture registration may select the sandbox fixture environment');
+      const account=configured.account instanceof PostgresDidiAccount?configured.account:new PostgresDidiAccount(configured.binding,configured.owner,configured.account);account.assertBinding(configured.binding,configured.owner);let connector:DidiConnector;
       if(configured.kind!=='synthetic-fixture'){
         if(!(configured.reads instanceof PostgresRelayReadAuthority)||configured.reads.didiAccount!==account||configured.binding.environment!=='production')throw new Error('Production DiDi requires its actual current source Agent Relay authority and the same current account');agentIdSchema.parse(configured.peerId);
         const relay=new PostgresDidiRelayConnector(configured.reads,()=>this.claim(),configured.peerId,configured.binding,configured.authority);
         connector=configured.kind==='relay-fixture'?{evidenceKind:'fixture',transportDigest:digest({transport:relay.transportDigest,fixture:'explicit-synthetic-provider-v1'}),invoke:relay.invoke.bind(relay)}:relay;
       }else{if(configured.connector.evidenceKind!=='fixture')throw new Error('Synthetic DiDi registration cannot claim a live source');connector=configured.connector;}
-      const program=new PostgresDidiReadProgram(configured.binding,connector,account),didi:PostgresDidiPolicyOptions={program,account,policyDigest,transport:configured.kind!=='synthetic-fixture'?{kind:configured.kind,peerId:configured.peerId,authorityId:configured.authority.id,gatewayOrigin:configured.authority.gatewayOrigin,binding:configured.binding}:{kind:'synthetic-fixture'}};
+      const program=new PostgresDidiReadProgram(configured.binding,connector,account,fixtureEnvironment),didi:PostgresDidiPolicyOptions={program,account,policyDigest,transport:configured.kind!=='synthetic-fixture'?{kind:configured.kind,peerId:configured.peerId,authorityId:configured.authority.id,gatewayOrigin:configured.authority.gatewayOrigin,binding:configured.binding}:{kind:'synthetic-fixture'}};
       entries.push({kind:'didi',program,policy:createPostgresDidiPolicy(didi),sourceBindingId:configured.sourceBindingId,didi,
         initialize:(metadata,owner,request,input,component)=>initializeDidiProgram(program,metadata,owner,request,input,component),
         assertContext:function*(ctx){yield* assertDidiContextProgram(program,ctx);},complete:(ctx,value,reads)=>completeDidiProgram(program,ctx,value,reads),

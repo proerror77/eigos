@@ -5133,13 +5133,13 @@
     {
       "id": "postgres-coordinator",
       "file": "packages/postgres/coordinator.ts",
-      "sourceDigest": "1fb4074ea2f125e0496ff62d0c857500ddaff01b087ba52f5415cfe5d0f624cd",
+      "sourceDigest": "735a657c5bff52baeb34d10b1508de698cec1908a17ee663db27dcdfcd312997",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL original-task Goal and document phase coordinator",
-      "currentControl": "Registered acknowledged model ports, current typed request/catalogue/model DTOs and native receipts; independent Goal review, original attempts and current model/claim/role/source checks before dispatch; atomic output seals. Fresh fenced feedback only after typed pre-dispatch plan rollback, same decision/revision and no unconfirmed intents; three same failures or exhausted reasoning pause. Unknown dispatched outcomes remain a distinct original-result reconciliation stop and never replay; raw diagnostics are not published. Registered acknowledged model ports; authorized typed request/catalogue/model DTOs and actual native receipts; independent Goal review, committed original attempts, current model/claim/role/source checks before dispatch, atomic output seals and no uncertain-operation replay Known rejection reasons are logged privately through a runtime allowlist even after successful recovery writeback; no raw error or public task diagnostic field is added. The scoped DiDi estimator reserves at most one tool-free model decision before egress and runs program-selected reads through the current journal. Model and provider attempts are not fabricated.",
-      "targetControl": "Registered acknowledged model ports, current typed request/catalogue/model DTOs and native receipts; independent Goal review, original attempts and current model/claim/role/source checks before dispatch; atomic output seals. Fresh fenced feedback only after typed pre-dispatch plan rollback, same decision/revision and no unconfirmed intents; three same failures or exhausted reasoning pause. Unknown dispatched outcomes remain a distinct original-result reconciliation stop and never replay; raw diagnostics are not published.",
+      "currentControl": "Registered acknowledged model ports, current typed request/catalogue/model DTOs and native receipts; independent Goal review, original attempts and current model/claim/role/source checks before dispatch; atomic output seals. Fresh fenced feedback only after typed pre-dispatch plan rollback, same decision/revision and no unconfirmed intents; three same failures or exhausted reasoning pause. Unknown dispatched outcomes remain a distinct original-result reconciliation stop and never replay; raw diagnostics are not published. Registered acknowledged model ports; authorized typed request/catalogue/model DTOs and actual native receipts; independent Goal review, committed original attempts, current model/claim/role/source checks before dispatch, atomic output seals and no uncertain-operation replay Known rejection reasons are logged privately through a runtime allowlist even after successful recovery writeback; no raw error or public task diagnostic field is added. The scoped DiDi estimator reserves at most one tool-free model decision before egress and runs program-selected reads through the current journal. Model and provider attempts are not fabricated. Execution-tagged fixed DiDi estimates may advance at most eight committed phases under the same original lease; model claims stop after their one phase. Each external dispatch/observation/acceptance retains its existing current authority and original-attempt checks; lost interpretation or source result is never retried automatically.",
+      "targetControl": "Registered acknowledged model ports, current typed request/catalogue/model DTOs and native receipts; independent Goal review, original attempts and current model/claim/role/source checks before dispatch; atomic output seals. Fresh fenced feedback only after typed pre-dispatch plan rollback, same decision/revision and no unconfirmed intents; three same failures or exhausted reasoning pause. Unknown dispatched outcomes remain a distinct original-result reconciliation stop and never replay; raw diagnostics are not published. Execution-tagged fixed DiDi estimates may advance at most eight committed phases under the same original lease; model claims stop after their one phase. Each external dispatch/observation/acceptance retains its existing current authority and original-attempt checks; lost interpretation or source result is never retried automatically.",
       "stage": "S5"
     },
     {
@@ -5222,13 +5222,13 @@
     {
       "id": "postgres-didi-registry",
       "file": "packages/postgres/didi-registry.ts",
-      "sourceDigest": "cc1bc4b21adec00316bcdaab5a04e4afe430fedc4677f65fa2a76b44afc0eb93",
+      "sourceDigest": "f29d973ca4e555790be049e544f54f27c09a823f6e1e6f999b0bd9d269c15fc9",
       "channels": [
         "internal"
       ],
       "content": "Explicit document and DiDi program registry",
-      "currentControl": "Configured host programs preserve fixed pins, current account and original source binding; synthetic fixture evidence remains synthetic, unsupported semantics fail closed",
-      "targetControl": "Configured host programs preserve fixed pins, current account and original source binding; synthetic fixture evidence remains synthetic, unsupported semantics fail closed",
+      "currentControl": "Configured host programs preserve fixed pins, current account and original source binding; synthetic fixture evidence remains synthetic, unsupported semantics fail closed Only existing synthetic-fixture registrations may explicitly select fixtureEnvironment=sandbox; the executable program digest includes original program digest, kind and environment, while evidence remains synthetic. Relay kinds reject the option; production account schema and public submission are unchanged, and an old production source grant cannot match the fixture configuration.",
+      "targetControl": "Configured host programs preserve fixed pins, current account and original source binding; synthetic fixture evidence remains synthetic, unsupported semantics fail closed Only existing synthetic-fixture registrations may explicitly select fixtureEnvironment=sandbox; the executable program digest includes original program digest, kind and environment, while evidence remains synthetic. Relay kinds reject the option; production account schema and public submission are unchanged, and an old production source grant cannot match the fixture configuration.",
       "stage": "S5"
     },
     {
@@ -5321,13 +5321,13 @@
     {
       "id": "postgres-goal-acceptance",
       "file": "packages/postgres/goal-acceptance.ts",
-      "sourceDigest": "b3a94ccf03f5ec3294575e41617190fc3e198c7d96b6c17eb80d08b8a1a62073",
+      "sourceDigest": "975408fb63d5c9bcdea772bccd193732cc70ac0291f803ac2aedfc0c9888479f",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL original-model whole-goal acceptance",
-      "currentControl": "Original durable model completion and read receipts, fixed Goal and independent coverage, current component/requirements/conditions/definition checks; approved influence and sealed output in the original fenced commit; unavailable producer/citation semantics never default to accepted DiDi host completion independently validates the fixed quote goal, original accepted reads, source evidence and current output authorization.",
-      "targetControl": "Original durable model completion and read receipts, fixed Goal and independent coverage, current component/requirements/conditions/definition checks; approved influence and sealed output in the original fenced commit; unavailable producer/citation semantics never default to accepted",
+      "currentControl": "Original durable model completion and read receipts, fixed Goal and independent coverage, current component/requirements/conditions/definition checks; approved influence and sealed output in the original fenced commit; unavailable producer/citation semantics never default to accepted DiDi host completion independently validates the fixed quote goal, original accepted reads, source evidence and current output authorization. The fixed single-component DiDi outcome retains the independently verified component evidence level; synthetic is never promoted to live.",
+      "targetControl": "Original durable model completion and read receipts, fixed Goal and independent coverage, current component/requirements/conditions/definition checks; approved influence and sealed output in the original fenced commit; unavailable producer/citation semantics never default to accepted The fixed single-component DiDi outcome retains the independently verified component evidence level; synthetic is never promoted to live.",
       "stage": "S5"
     },
     {
@@ -6116,7 +6116,7 @@
     {
       "id": "postgres-worker-store",
       "file": "packages/postgres/worker-store.ts",
-      "sourceDigest": "ac565f67bcd27d848aece546352bafe7b46e6e9c8e058320bcf9080a99a7561e",
+      "sourceDigest": "fa9000f7b2bd6dfb21c23fd4b653dbeee519884a69eaff1e4fdf6cfb4c1ed7fd",
       "channels": [
         "internal"
       ],
@@ -7987,13 +7987,13 @@
     {
       "id": "postgres-worker-capacity",
       "file": "packages/postgres/worker-capacity.ts",
-      "sourceDigest": "fd99574dbe549ecd7c9c414014c74fbe91c7b59cfc17640dd517463b6bcd6ed1",
+      "sourceDigest": "f2ca1d9e72d30c4da13a662f8937e413d4b49506401e91d4925dc51e4bab8ab1",
       "channels": [
         "internal"
       ],
       "content": "Bounded original Worker resource reservations and installed next-phase classification",
-      "currentControl": "Host-only capacity metadata supplies no action permission. Exact installed CallerAction/DiDi next-phase classification retains coverage and original pending intents; local ComposeDocument still needs model capacity. Validated shared/per-owner bounds, random opaque token with version and contract digest, conservative historical tokens, refusal of malformed/version/active-contract mismatch; original lease and semantic gates remain independent.",
-      "targetControl": "Host-only capacity metadata supplies no action permission. Exact installed CallerAction/DiDi next-phase classification retains coverage and original pending intents; local ComposeDocument still needs model capacity. Validated shared/per-owner bounds, random opaque token with version and contract digest, conservative historical tokens, refusal of malformed/version/active-contract mismatch; original lease and semantic gates remain independent.",
+      "currentControl": "Host-only capacity metadata supplies no action permission. Exact installed CallerAction/DiDi next-phase classification retains coverage and original pending intents; local ComposeDocument still needs model capacity. Validated shared/per-owner bounds, random opaque token with version and contract digest, conservative historical tokens, refusal of malformed/version/active-contract mismatch; original lease and semantic gates remain independent. The closed DiDi estimate contract separately classifies structured initialization and accepted natural interpretation as execution; an unconsumed natural interpretation remains model work, with exact single-turn evidence and installed registry required. Unknown original source results can only enter a deterministic reconciliation stop, never model fallback or replay.",
+      "targetControl": "Host-only capacity metadata supplies no action permission. Exact installed CallerAction/DiDi next-phase classification retains coverage and original pending intents; local ComposeDocument still needs model capacity. Validated shared/per-owner bounds, random opaque token with version and contract digest, conservative historical tokens, refusal of malformed/version/active-contract mismatch; original lease and semantic gates remain independent. The closed DiDi estimate contract separately classifies structured initialization and accepted natural interpretation as execution; an unconsumed natural interpretation remains model work, with exact single-turn evidence and installed registry required. Unknown original source results can only enter a deterministic reconciliation stop, never model fallback or replay.",
       "stage": "S5"
     },
     {
@@ -8024,13 +8024,13 @@
     {
       "id": "postgres-didi-short-path-proof",
       "file": "packages/postgres/didi-short-path.ts",
-      "sourceDigest": "e7b51769aaa3dbefaefb1c4ca0405c1db240ec6c204899991c08e045de203858",
+      "sourceDigest": "a6ad0cfc487ff878e83625e84159102e0af30a9b714d997a623a7d108d9c3469",
       "channels": [
         "internal"
       ],
       "content": "Fixed DiDi read-only workflow evidence",
-      "currentControl": "The current request and release, exact authorized route, optional single grounded model receipt and actual Worker-context receipts bind the fixed estimate phases. Only the two registered source read actions can enter the original journal.",
-      "targetControl": "The current request and release, exact authorized route, optional single grounded model receipt and actual Worker-context receipts bind the fixed estimate phases. Only the two registered source read actions can enter the original journal.",
+      "currentControl": "The current request and release, exact authorized route, optional single grounded model receipt and actual Worker-context receipts bind the fixed estimate phases. Only the two registered source read actions can enter the original journal. Common fixed-request validation also runs before natural interpretation; accepted natural evidence must declare exactly one tool-free model request. Classification and batching consume this same checked contract, not the absence of ordinary Goal coverage.",
+      "targetControl": "The current request and release, exact authorized route, optional single grounded model receipt and actual Worker-context receipts bind the fixed estimate phases. Only the two registered source read actions can enter the original journal. Common fixed-request validation also runs before natural interpretation; accepted natural evidence must declare exactly one tool-free model request. Classification and batching consume this same checked contract, not the absence of ordinary Goal coverage.",
       "stage": "S5"
     }
   ]

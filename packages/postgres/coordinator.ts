@@ -43,7 +43,8 @@ import {requestLocations} from '../core/location-context.js';
 import {DIDI_PROGRAM_REF} from '../capabilities/didi/program.js';
 import type {ActionDiscoveryPage} from '../core/action-bindings.js';
 import type {ActionIntent} from '../ontology/actions.js';
-import {didiEstimateComponent,didiShortPathDecisionId,didiShortPathGoal,didiShortPathInput} from './didi-short-path.js';
+import {didiEstimateComponent,didiShortPathDecisionId,didiShortPathGoal,didiShortPathInput,didiShortPathRequest} from './didi-short-path.js';
+import {postgresWorkerLane,postgresWorkerReservation} from './worker-capacity.js';
 
 /** Host registry contract: the implementation must await model-usage begin and
  * finish and invoke the actual dispatch guard before sending any prompt. A
@@ -71,9 +72,10 @@ function budgetView(job:Job):ReturnType<typeof executionBudgetStatus>{
     paused:status.paused?z.strictObject({resource:z.enum(['modelTurns','plans','actions','time','reasoning']),scope:z.enum(['window','task']),at:z.iso.datetime({offset:true})}).parse(status.paused):undefined};
 }
 
-/** Actual PostgreSQL business loop. One claim advances one durable phase, then
- * the outer Worker releases it. Models/providers run only between committed
- * storage calls. This candidate supports registered document composition;
+/** Actual PostgreSQL business loop. Models/providers run only between committed
+ * storage calls. A model claim advances one phase; an execution claim can drain
+ * the bounded fixed DiDi workflow without giving up its lease between phases.
+ * This candidate supports registered document composition;
  * unavailable adapters retain the same original task and fail explicitly. */
 export class PostgresCoordinator {
   private readonly runtime:PostgresReadProgramRegistry;
@@ -160,6 +162,21 @@ export class PostgresCoordinator {
     return result;
   }
   async run(claim:WorkClaim,signal:AbortSignal):Promise<void>{
+    const drain=postgresWorkerReservation(claim.token).lane==='execution'&&!!claim.job.delegation?.didiEstimate;
+    // Seven durable phases cover the complete structured estimate. Keep one
+    // spare bounded iteration, the original Worker timeout and all dispatch,
+    // observation, authority and lease commits. Unknown outcomes still throw
+    // before another source call; a model reservation never waits for this lane.
+    for(let phase=0;phase<(drain?8:1);phase++){
+      await this.runPhase(claim,signal);
+      if(!drain)return;
+      signal.throwIfAborted();const job=await this.load(claim);
+      if(job.state!=='working'||!job.delegation?.didiEstimate||(job.delegation.nextAt??0)>Date.now()||!await this.configured.store.active(claim))return;
+      const intents=await this.configured.database.run(client=>new PostgresTaskStorage(client,this.options.builder).intents(claim.owner,job.id));
+      if(postgresWorkerLane(job,intents,this.runtime)!=='execution')return;
+    }
+  }
+  private async runPhase(claim:WorkClaim,signal:AbortSignal):Promise<void>{
     try{
     signal.throwIfAborted();const job=await this.load(claim),d=job.delegation;
     if(!d||d.backendVersion!==BACKEND_VERSION||claim.recovery||d.plan||d.suspendedAgent)throw new SecurityError('AUTHORITY_UNAVAILABLE','This PostgreSQL candidate has no installed legacy or terminal-effect recovery adapter');
@@ -201,6 +218,7 @@ export class PostgresCoordinator {
     return entry.program.capability();
   }
   private async startDidiEstimate(claim:WorkClaim,job:Job,signal:AbortSignal){
+    didiShortPathRequest(job);
     const claimedAt=new Date().toISOString(),workflow=job.delegation!.didiEstimate!,capability=this.didiCapability();
     let interpretation=workflow.interpretation;
     if(workflow.request.mode==='natural'&&!interpretation){

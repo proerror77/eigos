@@ -118,7 +118,7 @@ export class PostgresWorkerStore {
               AND permission.expires_at>$2 AND subject.valid_until>$2 AND parent.expires_at>$2 AND data.expires_at>$2
               AND NOT EXISTS(SELECT 1 FROM ${q}.security_fences fence WHERE fence.owner=permission.owner AND fence.state<>'cleared'
                 AND((fence.kind='member' AND fence.target_id=permission.member_id) OR(fence.kind='connection' AND fence.target_id=subject.client_id) OR(fence.kind='installation' AND fence.target_id=permission.installation_id))))
-          AND($6::boolean OR body.value#>>'{delegation,callerAction}' IS NOT NULL OR body.value#>>'{delegation,agent,pendingPlanId}' IS NOT NULL)
+          AND($6::boolean OR body.value#>>'{delegation,callerAction}' IS NOT NULL OR body.value#>>'{delegation,agent,pendingPlanId}' IS NOT NULL OR body.value#>>'{delegation,didiEstimate}' IS NOT NULL)
           AND(occupancy.owner_active,j.created_at,j.id)>($3::bigint,$4::text,$5::text)
           AND NOT EXISTS(SELECT 1 FROM ${q}.work_claims c WHERE c.job_id=j.id) ORDER BY occupancy.owner_active,j.created_at,j.id LIMIT 65`,
         [BACKEND_VERSION,now,cursor?.ownerActive??-1,cursor?.createdAt??'',cursor?.id??'',available.includes('model')]);

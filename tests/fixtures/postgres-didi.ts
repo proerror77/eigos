@@ -18,6 +18,7 @@ import {PostgresDidiAccount} from '../../packages/postgres/didi-account.js';
 import {PostgresReadProgramRegistry} from '../../packages/postgres/didi-registry.js';
 import {PostgresDidiExecution} from '../../packages/postgres/didi-execution.js';
 import {PostgresWorkerStore} from '../../packages/postgres/worker-store.js';
+import {postgresWorkerLane} from '../../packages/postgres/worker-capacity.js';
 import {PostgresTaskStorage} from '../../packages/postgres/task-storage.js';
 import {PostgresNativePlanningSession} from '../../packages/postgres/native-planning-session.js';
 import {discoverPostgresReadActions} from '../../packages/postgres/document-bindings.js';
@@ -32,15 +33,20 @@ import {evidence,syntheticGoalReview} from '../backend-fixture.js';
 /** All choices and upstream MCP responses are explicitly synthetic. The
  * PostgreSQL current account, native read ledger, real semantic/journal/source
  * projection and whole-goal acceptance have no permissive verifier callback. */
-export async function postgresDidiFixture(relay=false,transport:{deliverSource?:boolean;shortPath?:DidiEstimateRequest}={}){
+export async function postgresDidiFixture(relay=false,transport:{deliverSource?:boolean;shortPath?:DidiEstimateRequest;scheduled?:boolean;executionEnvironment?:'live'|'sandbox'}={}){
   const f=securityFixture(Date.now,{unified:true}),source=didiFixture(),sourceKeys=relay?await createNodeKeys('Explicit synthetic provider transport'):undefined,peerId=sourceKeys?.identity.card.agentId;
   const transportDigest=relay?digest({transport:digest({protocol:'eigos.source-read/1',authorityId:f.authority!.id,gatewayOrigin:f.authority!.canonicalOrigin,peerId}),fixture:'explicit-synthetic-provider-v1'}):undefined;
-  const initialProgram=new DidiAgentProgram(source.binding,{connector:relay?{evidenceKind:'fixture',transportDigest,invoke:source.connector.invoke.bind(source.connector)}:source.connector});bindPersonalSourceOwner(initialProgram,f.owner);
   let pumping:Promise<void>|undefined,pumpTimer:ReturnType<typeof setInterval>|undefined,pumpFailure:unknown,target:Awaited<ReturnType<typeof importPostgresPrimaryFixture>>|undefined,timer:ReturnType<typeof setInterval>|undefined,pending:Promise<void>|undefined,heartbeatFailure:unknown;
   try{
+    if(relay&&transport.executionEnvironment==='sandbox')throw new Error('Sandbox fixture registration does not replace a Relay production registration');
     const installation=f.installation('Synthetic DiDi readonly owner',3600000),expiresAt=new Date(Date.now()+3600000).toISOString(),channel='synthetic:didi-readonly',bindingId='synthetic-pg-didi-source',model=f.jobs.ontology.model;
     let descriptor:DidiMemberConnection={version:1,connectionId:randomUUID(),revision:1,memberId:f.member.id,owner:{issuer:f.principal.issuer,tenant:f.principal.tenant,subject:f.principal.subject},localUid:process.getuid?.()??0,purpose:'ride_estimate_readonly',state:'active',expiresAt,binding:{...source.binding,environment:'production',auditDirectory:source.binding.auditDirectory!}};
     const accountDigest=digest({policy:'member-didi-estimate@1',connection:descriptor});f.jobs.admitMemberDidiSource(descriptor,accountDigest);
+    const fixtureEnvironment=transport.executionEnvironment==='sandbox'?'sandbox' as const:undefined;
+    const initialProgram=fixtureEnvironment?new PostgresReadProgramRegistry(f.jobs.security.policies.definitionDigest,{documentEnabled:false,didi:{kind:'synthetic-fixture',fixtureEnvironment,binding:source.binding,owner:f.owner,
+      account:{readCurrent:()=>descriptor,expectedDigest:accountDigest},connector:source.connector}}).entries[0]!.didi!.program
+      :new DidiAgentProgram(source.binding,{connector:relay?{evidenceKind:'fixture',transportDigest,invoke:source.connector.invoke.bind(source.connector)}:source.connector});
+    bindPersonalSourceOwner(initialProgram,f.owner);
     const fields=(type:string)=>Object.keys(f.jobs.security.policies.fields(type)).filter(field=>f.jobs.security.policies.fieldPolicy(type,field)!=='internal_only'),types=[...new Set(['ServiceRequest',...initialProgram.projectionTypes,...Object.keys(taskContextFields)])];
     f.coordinator.approveAgentGrant(f.member.id,{installationId:installation.id,capabilityIds:[initialProgram.ref.id],resources:types.map(type=>({type,fields:fields(type)})),sourceBindingIds:[bindingId],channels:['agent_response','registered_model'],expiresAt});
     f.jobs.security.policies.setRole({subjectKind:'installation',subjectId:installation.id,resource:{kind:'namespace',id:model.ref.id,version:model.ref.digest},role:'Owner',executeActions:[...initialProgram.actionIds],invokeFunctions:['rideEstimateStatus','selectDidiPlace'],expiresAt},f.jobs.security.policies.revision());
@@ -54,7 +60,7 @@ export async function postgresDidiFixture(relay=false,transport:{deliverSource?:
       request.originalGoal=job.goal;
       request.messages=[{id:randomUUID(),text:job.goal,receivedAt:job.createdAt}];
       if(short){
-        request.capabilityRef=initialProgram.ref;request.executionEnvironment='live';
+        request.capabilityRef=initialProgram.ref;request.executionEnvironment=transport.executionEnvironment??'live';
         job.messages=[{id:request.messages[0]!.id,role:'user',text:job.goal,at:job.createdAt}];
         d.didiEstimate={request:short,revision:request.revision};
       }
@@ -71,8 +77,8 @@ export async function postgresDidiFixture(relay=false,transport:{deliverSource?:
     }
     target=await importPostgresPrimaryFixture(f);const t=target,q=`"${t.schema}"`,account=new PostgresDidiAccount(source.binding,f.owner,{readCurrent:()=>descriptor,expectedDigest:accountDigest}),reads=relay?new PostgresRelayReadAuthority({database:t.database,policyDigest:t.policy,authority:f.authority!,builder:t.kernel,didiAccount:account}):undefined;
     const common={binding:source.binding,owner:f.owner,account,sourceBindingId:bindingId};
-    const registry=new PostgresReadProgramRegistry(t.policy,{documentEnabled:false,didi:relay?{...common,kind:'relay-fixture',reads:reads!,peerId:peerId!,authority:{id:f.authority!.id,gatewayOrigin:f.authority!.canonicalOrigin}}:{...common,kind:'synthetic-fixture',connector:source.connector}}),program=registry.entries[0]!.program;
-    assert.equal(program.configurationDigest,initialProgram.configurationDigest);const worker=new PostgresWorkerStore(t.database,t.policy,t.kernel),claim=await worker.claim(['eigos.delegate'],30000);assert(claim);
+    const registry=new PostgresReadProgramRegistry(t.policy,{documentEnabled:false,didi:relay?{...common,kind:'relay-fixture',reads:reads!,peerId:peerId!,authority:{id:f.authority!.id,gatewayOrigin:f.authority!.canonicalOrigin}}:{...common,kind:'synthetic-fixture',connector:source.connector,...(fixtureEnvironment?{fixtureEnvironment}:{})}}),program=registry.entries[0]!.program;
+    assert.equal(program.configurationDigest,initialProgram.configurationDigest);const worker=new PostgresWorkerStore(t.database,t.policy,t.kernel,transport.scheduled?{classify:(job,intents)=>postgresWorkerLane(job,intents,registry)}:{}),claim=await worker.claim(['eigos.delegate'],30000);assert(claim);
     timer=setInterval(()=>{if(!pending)pending=worker.renew(claim,30000).then(ok=>{if(!ok&&timer)clearInterval(timer);}).catch(error=>{heartbeatFailure=error;}).finally(()=>{pending=undefined;});},4000);timer.unref();
     const options={policyDigest:t.policy,modelChannel:channel,builder:t.kernel,registry,programs:registry.policies(),inspectClaim:(value:Parameters<typeof t.database.inspectClaim>[0])=>t.database.inspectClaim(value,t.policy)};
     const stored=()=>t.database.run(client=>new PostgresTaskStorage(client,t.kernel).get(f.owner,claim.job.id));

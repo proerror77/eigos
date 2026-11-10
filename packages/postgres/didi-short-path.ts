@@ -13,13 +13,17 @@ const prefix='didi-estimate:';
 const same=(a:unknown,b:unknown)=>a===undefined||b===undefined?a===b:digest(a)===digest(b);
 function fail():never{throw new DomainError('CONFLICT','DiDi estimate workflow differs from its original read-only request and evidence');}
 
-export function didiShortPathInput(job:Job){
+export function didiShortPathRequest(job:Job){
   const d=job.delegation,workflow=d?.didiEstimate;
   if(!d||!workflow||!d.ontologyRelease||d.ontologyRelease.ontologyId!=='eigos.business'||workflow.revision!==d.request.revision
     ||d.request.originalGoal!==job.goal||!d.request.capabilityRef||!same(d.request.capabilityRef,DIDI_PROGRAM_REF)
     ||d.request.requestedDeliverable||d.request.requirements.length||d.request.successCriteria?.length||d.request.conditions?.length
     ||d.request.personalContext||d.callerAction||d.pipelineValidation)fail();
-  const request=didiEstimateRequestSchema.parse(workflow.request);
+  return didiEstimateRequestSchema.parse(workflow.request);
+}
+
+export function didiShortPathInput(job:Job){
+  const request=didiShortPathRequest(job),d=job.delegation!,workflow=d.didiEstimate!;
   if(request.mode==='structured'){
     if(workflow.modelStarted||workflow.interpretation||job.runs?.length||structuredDidiGoal(request)!==job.goal||d.request.messages.length!==1)fail();
     const {mode:_mode,...route}=request;
@@ -27,7 +31,8 @@ export function didiShortPathInput(job:Job){
   }
   const selected=workflow.interpretation,run=job.runs?.[0];
   if(!workflow.modelStarted||!selected||job.runs?.length!==1||!run||run.id!==selected.runId
-    ||run.purpose!=='grounding'||run.decisionDigest!==digest(selected.decision)||!run.singleReadDecision||run.nativeMcpCalls?.length)fail();
+    ||run.purpose!=='grounding'||run.decisionDigest!==digest(selected.decision)||run.singleReadDecision?.version!=='1'
+    ||run.singleReadDecision.modelRequests!==1||run.singleReadDecision.toolsAvailable!==false||run.nativeMcpCalls?.length)fail();
   const decision=didiEstimateDecisionSchema.parse(selected.decision);
   if(decision.kind!=='estimate')fail();
   return {mode:'estimate' as const,...decision.route};
