@@ -3456,7 +3456,7 @@
     {
       "id": "fixed-scope-message-references",
       "file": "packages/core/delegation.ts",
-      "sourceDigest": "53c9e53cb381c5f2da4ac91879c6d4072f9655ae4651adc0d0ccf04efdb01535",
+      "sourceDigest": "5c0fa70f48750a205381df18f05f64d5d52dd6721d6a13600c8c0101be9bee42",
       "channels": [
         "model",
         "artifact"
@@ -5085,7 +5085,7 @@
     {
       "id": "postgres-ci-groups",
       "file": "scripts/postgres-tests.mjs",
-      "sourceDigest": "016876393bc9f78262832bcd04315984eb7d48202648246daeb01b0a29be2979",
+      "sourceDigest": "baf4109856e8212acc2c4735a9e786725f689415193912e9ac94887f4f8b367a",
       "channels": [
         "internal"
       ],
@@ -5133,12 +5133,12 @@
     {
       "id": "postgres-coordinator",
       "file": "packages/postgres/coordinator.ts",
-      "sourceDigest": "735a657c5bff52baeb34d10b1508de698cec1908a17ee663db27dcdfcd312997",
+      "sourceDigest": "19cc486079e3ca6192ccbe2524294efd0af1dc1994666a7aa9fafe165ac98c57",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL original-task Goal and document phase coordinator",
-      "currentControl": "Registered acknowledged model ports, current typed request/catalogue/model DTOs and native receipts; independent Goal review, original attempts and current model/claim/role/source checks before dispatch; atomic output seals. Fresh fenced feedback only after typed pre-dispatch plan rollback, same decision/revision and no unconfirmed intents; three same failures or exhausted reasoning pause. Unknown dispatched outcomes remain a distinct original-result reconciliation stop and never replay; raw diagnostics are not published. Registered acknowledged model ports; authorized typed request/catalogue/model DTOs and actual native receipts; independent Goal review, committed original attempts, current model/claim/role/source checks before dispatch, atomic output seals and no uncertain-operation replay Known rejection reasons are logged privately through a runtime allowlist even after successful recovery writeback; no raw error or public task diagnostic field is added. The scoped DiDi estimator reserves at most one tool-free model decision before egress and runs program-selected reads through the current journal. Model and provider attempts are not fabricated. Execution-tagged fixed DiDi estimates may advance at most eight committed phases under the same original lease; model claims stop after their one phase. Each external dispatch/observation/acceptance retains its existing current authority and original-attempt checks; lost interpretation or source result is never retried automatically.",
+      "currentControl": "Acknowledged original model usage/dispatch, authorized typed contexts and actual read receipts; ordinary Goals retain independent review. Current model, claim, task, role and source checks guard dispatch, observation and sealed acceptance. Only typed pre-dispatch plan errors after rollback produce bounded feedback; three failures without verified progress or exhausted budget pause. Fixed DiDi estimates use at most one tool-free interpretation per explicit request revision and at most eight committed deterministic phases per execution claim. Clarification releases the original claim; reply preserves cumulative usage and exact invocation identity. Unknown results never replay automatically; private rejection diagnostics use the existing allowlist.",
       "targetControl": "Registered acknowledged model ports, current typed request/catalogue/model DTOs and native receipts; independent Goal review, original attempts and current model/claim/role/source checks before dispatch; atomic output seals. Fresh fenced feedback only after typed pre-dispatch plan rollback, same decision/revision and no unconfirmed intents; three same failures or exhausted reasoning pause. Unknown dispatched outcomes remain a distinct original-result reconciliation stop and never replay; raw diagnostics are not published. Execution-tagged fixed DiDi estimates may advance at most eight committed phases under the same original lease; model claims stop after their one phase. Each external dispatch/observation/acceptance retains its existing current authority and original-attempt checks; lost interpretation or source result is never retried automatically.",
       "stage": "S5"
     },
@@ -5809,12 +5809,12 @@
     {
       "id": "postgres-task-commands",
       "file": "packages/postgres/task-command-service.ts",
-      "sourceDigest": "640fc777be6ee494bd995b4741b298f5a42ba45570c82a13fd97300c69f49457",
+      "sourceDigest": "9ea7bdd4f95a73ac83628a0a22fa2dbba5146b2315e5270c1e53ac4be7b3c8d9",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL task submit and cancellation",
-      "currentControl": "Current write admission before and after atomic commands; original-task idempotency; explicit personal inputs; current sealed output or writer-only receipt; no model/provider execution The explicit DiDi estimate submission pins the registered read capability. Structured mode validates the exact read-only goal and binds the typed route into the original request.",
+      "currentControl": "Current write admission before and after atomic commands, original-task idempotency, explicit personal inputs and sealed output; no model/provider execution. DiDi submission pins the registered read capability and exact structured goal. Checked clarification replies retain the task and prior evidence, atomically establish one new request version, and reject unknown intents, budget changes and expanded authority.",
       "targetControl": "Current write admission before and after atomic commands; original-task idempotency; explicit personal inputs; current sealed output or writer-only receipt; no model/provider execution",
       "stage": "S5"
     },
@@ -8024,12 +8024,12 @@
     {
       "id": "postgres-didi-short-path-proof",
       "file": "packages/postgres/didi-short-path.ts",
-      "sourceDigest": "a6ad0cfc487ff878e83625e84159102e0af30a9b714d997a623a7d108d9c3469",
+      "sourceDigest": "0dd8f2e084cb455e4799e8de38780ce95127ace07d07c30bb69c1ae9dd1e5dfe",
       "channels": [
         "internal"
       ],
       "content": "Fixed DiDi read-only workflow evidence",
-      "currentControl": "The current request and release, exact authorized route, optional single grounded model receipt and actual Worker-context receipts bind the fixed estimate phases. Only the two registered source read actions can enter the original journal. Common fixed-request validation also runs before natural interpretation; accepted natural evidence must declare exactly one tool-free model request. Classification and batching consume this same checked contract, not the absence of ordinary Goal coverage.",
+      "currentControl": "Exact current request/release/route and actual Worker read receipts bind the fixed estimate phases to only the two registered source reads. Each natural interpretation pins its acknowledged invocation, request digest, revision and original run; historical runs remain in the cumulative ledger. Explicit idempotent user replies alone establish a new interpretation window after safe clarification. Classification and batching use this checked proof, never missing ordinary Goal coverage.",
       "targetControl": "The current request and release, exact authorized route, optional single grounded model receipt and actual Worker-context receipts bind the fixed estimate phases. Only the two registered source read actions can enter the original journal. Common fixed-request validation also runs before natural interpretation; accepted natural evidence must declare exactly one tool-free model request. Classification and batching consume this same checked contract, not the absence of ordinary Goal coverage.",
       "stage": "S5"
     }
