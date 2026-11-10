@@ -15,7 +15,21 @@ export function canonical(value: unknown): string {
   };
   return JSON.stringify(normalize(value));
 }
-export const digest = (value: unknown) => createHash('sha256').update(canonical(value)).digest('hex');
+// Content addressing: a frozen value can never change, so its digest is stable for
+// the process lifetime. Kernel releases are immutable by contract, which turns the
+// repeated whole-document hashing during construction into one hash per resource.
+const frozenDigests = new WeakMap<object, string>();
+export const digestStats = { hits: 0, misses: 0 };
+export function digest(value: unknown): string {
+  if (value !== null && typeof value === 'object' && Object.isFrozen(value)) {
+    const cached = frozenDigests.get(value);
+    if (cached !== undefined) { digestStats.hits++; return cached; }
+    const computed = createHash('sha256').update(canonical(value)).digest('hex');
+    frozenDigests.set(value, computed); digestStats.misses++;
+    return computed;
+  }
+  return createHash('sha256').update(canonical(value)).digest('hex');
+}
 export const actionOperationKey = (owner: string, scope: string, operationId: string) => digest({ owner, requestId: scope, operationId });
 export function validPlanDigest(plan: ExecutionPlan): boolean { const { digest: expected, ...body } = plan; return digest(body) === expected; }
 

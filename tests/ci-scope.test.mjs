@@ -102,11 +102,29 @@ test('CLI imports of generated dist files resolve to source before a build exist
 
 test('configuration, definitions, unknown paths and deleted source require full regression', async t => {
   const f = fixture(t);
-  for (const file of ['package.json', 'package-lock.json', 'tsconfig.json', '.github/workflows/ci.yml', 'scripts/test.mjs',
+  for (const file of ['package.json', 'package-lock.json', 'tsconfig.json', 'scripts/test.mjs',
     'packages/ontology/definitions/provider.json', 'packages/security/baseline.json', 'integrations/agent/SKILL.md', 'docs/input.json', 'packages/deleted.ts']) {
     const scope = await f.select([file]);
     assert.equal(scope.mode, 'full', file); assert.deepEqual(scope.unit, testFiles(f.directory)); assert.equal(scope.e2e.length, 1);
   }
+});
+
+test('CI configuration alone never triggers a runtime regression', async t => {
+  const f = fixture(t);
+  for (const file of ['.github/workflows/ci.yml', '.github/dependabot.yml']) {
+    const scope = await selectScope({ root: f.directory, changed: [file] });
+    assert.equal(scope.mode, 'docs', file);
+    assert.equal(scope.verify, false, file);
+    assert.deepEqual(scope.unit, [], file);
+  }
+});
+
+test('a released kernel snapshot is reviewed by the ontology gate, not by the whole suite', async t => {
+  const f = fixture(t);
+  const scope = await selectScope({ root: f.directory, changed: ['packages/ontology/history/business-v28.json'] });
+  assert.equal(scope.mode, 'docs');
+  assert.equal(scope.verify, false, 'the snapshot is data; the ontology gate rebuilds every layer');
+  assert.equal(scope.ontology, true, 'kernel snapshots must exercise the fingerprint gate');
 });
 
 test('unmapped source and broken dependency resolution fall back to full regression', async t => {

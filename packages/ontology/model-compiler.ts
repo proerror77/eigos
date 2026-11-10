@@ -98,13 +98,36 @@ export class TrustedDefinitionRegistry {
   /** The trusted kernel is present in every namespace and cannot be replaced by a same-name resource. */
   protect(document: OntologyDocument): void {
     if (this.#sealed) throw new Error('Trusted definition registry is sealed');
-    const kernelDigest = digest({ objects: document.objects, interfaces: document.interfaces, links: document.links, actions: document.actions, functions: document.functions });
-    if (this.#protectedKernelDigests.has(kernelDigest)) return;
-    const kernel = { resources: new Map<string, { kind: DefinitionKind; id: string; digest: string; value: unknown }>(), functions: new Map<string, string>() };
-    for (const { kind, value } of resources(document)) { this.#protectedResources.add(value.resourceId); kernel.resources.set(value.resourceId, { kind, id: value.id, digest: digest(value), value: structuredClone(value) }); }
-    for (const fn of document.functions) kernel.functions.set(fn.id, digest(fn));
+    const entries = resources(document);
+    const perResource = new Map<string, { kind: DefinitionKind; id: string; digest: string }>();
+    for (const { kind, value } of entries) perResource.set(value.resourceId, { kind, id: value.id, digest: digest(value) });
+    const functions = new Map(document.functions.map(fn => [fn.id, digest(fn)]));
+    // Identity of a release is the Merkle digest of its per-resource digests. It
+    // answers exactly the same question as hashing the whole multi-megabyte
+    // document, and it lets unchanged resources be reused between layers.
+    const kernelDigest = digest([
+      ...[...perResource].map(([resourceId, entry]) => `${resourceId}:${entry.kind}:${entry.id}:${entry.digest}`).sort(),
+      ...[...functions].map(([id, value]) => `function:${id}:${value}`).sort(),
+    ]);
+    if (this.#protectedKernelDigests.has(kernelDigest)) { for (const resourceId of perResource.keys()) this.#protectedResources.add(resourceId); return; }
+    const kernel = { resources: new Map<string, { kind: DefinitionKind; id: string; digest: string; value: unknown }>(), functions };
+    for (const { kind, value } of entries) {
+      const digest = perResource.get(value.resourceId)!.digest;
+      const prior = this.#latestProtected(value.resourceId);
+      this.#protectedResources.add(value.resourceId);
+      kernel.resources.set(value.resourceId, prior && prior.kind === kind && prior.id === value.id && prior.digest === digest
+        ? prior
+        : { kind, id: value.id, digest, value: structuredClone(value) });
+    }
     this.#protectedKernels.push(kernel);
     this.#protectedKernelDigests.add(kernelDigest);
+  }
+  #latestProtected(resourceId: string): { kind: DefinitionKind; id: string; digest: string; value: unknown } | undefined {
+    for (let index = this.#protectedKernels.length - 1; index >= 0; index--) {
+      const record = this.#protectedKernels[index]!.resources.get(resourceId);
+      if (record) return record;
+    }
+    return undefined;
   }
   isProtected(resourceId: string): boolean { return this.#protectedResources.has(resourceId); }
   /** Seal a completed runtime registry against further trusted registrations. */
