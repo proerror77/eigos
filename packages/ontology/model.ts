@@ -5,6 +5,8 @@ import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import type { ActionImplementation } from './action-dsl.js';
 import { assertPortCompatible, type CompositionPort } from './composition-contract.js';
+import type { FunctionExecutionContract } from './function-contracts.js';
+import type { ActionCriterionBinding } from './action-criteria.js';
 
 export const nameSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/).refine(v => !['constructor', 'prototype', '__proto__'].includes(v));
 export const objectRefSchema = z.object({ type: nameSchema, id: z.string().min(1).max(200) }).strict();
@@ -93,6 +95,7 @@ export interface ActionDefinition {
   inputs: Record<string, string>;
   changes: string[];
   submissionCriteria: string[];
+  criteriaBindings?: Record<string, ActionCriterionBinding>;
   providerOperation?: string;
   // A definition is not an executable grant. A configured AgentProgram must bind
   // it, validate its schema and scope, and enforce read-only dispatch separately.
@@ -102,7 +105,7 @@ export interface ActionDefinition {
   implementation?: ActionImplementation;
   composition?: import('./composition-contract.js').ActionCompositionContract;
 }
-export interface FunctionDefinition { id: string; version: string; inputTypes: string[]; description: string; returns?: string[] }
+export interface FunctionDefinition { id: string; version: string; inputTypes: string[]; description: string; returns?: string[]; executionContract?: FunctionExecutionContract }
 export interface ModelDefinition { id: string; version: string; objects: ObjectTypeDefinition[]; interfaces: InterfaceDefinition[]; links: LinkDefinition[]; actions: ActionDefinition[]; functions: FunctionDefinition[]; criteriaVersion?: string; effectCoverage?: { derived: number; kept: number; undeclared: string[] } }
 function invalid(message: string): never { throw new DomainError('INVALID_INPUT', message); }
 /** Effects that change state a person is accountable for. */
@@ -152,7 +155,10 @@ function structurallyCompatible(actual: PropertyDefinition, expected: PropertyDe
   const integerAmount = actual.kind === 'decimal' && x.pattern === '^(0|[1-9]\\d{0,17})$' && y.pattern === '^(0|[1-9]\\d{0,17})(\\.\\d{1,6})?$';
   return ['pattern', 'format', 'multipleOf'].every(key => y[key] === undefined || x[key] === y[key] || key === 'pattern' && integerAmount);
 }
-export interface OntologyModelOptions { trustedActionImplementations?: Record<string, ActionImplementation> }
+export interface OntologyModelOptions {
+  trustedActionImplementations?: Record<string, ActionImplementation>;
+  trustedFunctionImplementations?: Record<string, { id: string; version: string; digest: string }>;
+}
 export type ActionBindingStatus =
   | { state: 'unbound'; executable: false }
   | { state: 'declarative_supported'; version: '1'; authorizationRequired: true }
@@ -161,6 +167,7 @@ export type ActionBindingStatus =
 /** Compiles trusted definitions once. No executable expressions or provider URLs are accepted. */
 export class OntologyModel {
   readonly ref: { id: string; version: string; digest: string };
+  readonly criteriaVersion?: string;
   private objects = new Map<string, ObjectTypeDefinition>();
   private interfaces = new Map<string, InterfaceDefinition>();
   private schemas = new Map<string, z.ZodType>();
@@ -175,6 +182,8 @@ export class OntologyModel {
   private actions: ActionDefinition[];
   private functions: FunctionDefinition[];
   constructor(definition: ModelDefinition, private options: OntologyModelOptions = {}) {
+    this.criteriaVersion = definition.criteriaVersion;
+    Object.defineProperty(this, 'criteriaVersion', { writable: false, configurable: false });
     this.options = freezeMetadata(structuredClone(options));
     for (const item of definition.interfaces) {
       nameSchema.parse(item.id);
@@ -351,6 +360,7 @@ export class OntologyModel {
     const releasedContract = (property: PropertyDefinition) => ({ ...property, schema: property.schemaMetadata });
     const releasedType = (type: { id: string; properties: Record<string, PropertyDefinition> }) => ({ ...type, properties: Object.fromEntries(Object.entries(type.properties).map(([name, property]) => [name, releasedContract(property)])) });
     const releasedData = { objects: [...this.objects.values()].map(releasedType), interfaces: [...this.interfaces.values()].map(releasedType), links: this.links, actions: this.actions, functions: this.functions,
+      ...(definition.criteriaVersion === '2' ? { criteriaVersion: definition.criteriaVersion } : {}),
       ...(documented.length ? { documentedContracts: documented.map(type => ({ id: type.id, fingerprint: this.fingerprint(type.id) })) } : {}) };
     this.ref = Object.freeze({ id: definition.id, version: definition.version, digest: digest(projectionCoupled ? { objects: [...this.objects.keys()].map(id => this.describeType(id)), interfaces: [...this.interfaces.keys()].map(id => this.describeType(id)), links: this.links, actions: this.actions, functions: this.functions,
       // A display override must not conceal a different underlying data contract.
@@ -439,7 +449,7 @@ export class OntologyModel {
     if (new Set(names).size !== 1) invalid('Ambiguous interface relationship mapping');
     return names[0]!;
   }
-  definitionSnapshot(): ModelDefinition { return { id: this.ref.id, version: this.ref.version, objects: [...this.objects.values()], interfaces: [...this.interfaces.values()], links: [...this.links], actions: [...this.actions], functions: [...this.functions] }; }
+  definitionSnapshot(): ModelDefinition { return { id: this.ref.id, version: this.ref.version, objects: [...this.objects.values()], interfaces: [...this.interfaces.values()], links: [...this.links], actions: [...this.actions], functions: [...this.functions], ...(this.criteriaVersion ? { criteriaVersion: this.criteriaVersion } : {}) }; }
   typeIds(): string[] { return [...this.objects.keys(), ...this.interfaces.keys()]; }
   actionIds(): string[] { return this.actions.map(action => action.id); }
   /** Actions bound to one object type: the ones that write it, and the ones that read it. */
@@ -447,18 +457,24 @@ export class OntologyModel {
     if (!this.objects.has(id)) invalid('Unknown object type');
     const writes: { id: string; requiresApproval: boolean }[] = [], reads: { id: string; requiresApproval: boolean }[] = [];
     for (const action of this.actions) {
-      const changes = action.changes.includes(id);
-      const touches = changes || Object.values(action.inputs).includes(id) || (action.resultTypes ?? []).includes(id);
+      const changes = action.changes.some(path => path.split('.')[0] === id);
+      const touches = changes || Object.values(action.inputs).some(type => this.implements(id, type)) || (action.resultTypes ?? []).some(type => this.implements(id, type));
       if (!touches) continue;
       (changes ? writes : reads).push({ id: action.id, requiresApproval: this.approvalRequired(action.id) });
     }
     return { writes, reads };
   }
-  /** Derived from the declared effect: a write outside this process needs an owner's decision. */
+  /** Static effect-authority requirement only. An existing exact grant may
+   * satisfy it; false never means executable or currently authorized. */
   approvalRequired(actionId: string): boolean {
     const action = this.actions.find(candidate => candidate.id === actionId) ?? invalid('Unknown action');
-    const effect = (action as { operation?: { effect?: string }; read?: { effect?: string } }).operation?.effect ?? (action as { read?: { effect?: string } }).read?.effect ?? 'none';
-    return APPROVAL_EFFECTS.has(effect);
+    const effects = [...(action.effects ?? []), ...(action.operation ? [action.operation.effect, ...(action.operation.additionalEffects ?? [])] : []), ...(action.read ? ['read'] : [])];
+    return action.requiresApproval === true || action.implementation?.kind === 'declarative' || effects.some(effect => APPROVAL_EFFECTS.has(effect));
+  }
+  functionBindingStatus(id: string) {
+    const definition = this.function(id), handlerRef = this.options.trustedFunctionImplementations?.[id];
+    return handlerRef ? { state: 'executable_registered' as const, handlerRef: { ...handlerRef }, contract: definition.executionContract?.mode ?? 'legacy', authorizationRequired: true as const }
+      : { state: 'unbound' as const, executable: false as const };
   }
   functionIds(): string[] { return this.functions.map(fn => fn.id); }
   private interfaceAncestors(id: string): string[] {

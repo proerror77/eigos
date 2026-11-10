@@ -105,6 +105,9 @@ export const SUBMISSION_CRITERIA: Readonly<Record<string, { kind: CriterionKind;
 });
 
 export const SUBMISSION_CRITERIA_VERSION = '1';
+/** v2 requires the generic compiler to reject unregistered criteria. It does not
+ * claim that a vocabulary entry itself supplies its runtime evaluator. */
+export const STRICT_SUBMISSION_CRITERIA_VERSION = '2';
 export const isReviewedCriterion = (name: string): boolean => Object.hasOwn(SUBMISSION_CRITERIA, name);
 
 /** What a function may declare as its result. Structural results stay objects. */

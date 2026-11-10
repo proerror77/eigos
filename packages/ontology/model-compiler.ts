@@ -8,8 +8,15 @@ import { executionReferenceLinks } from './execution-model.js';
 import { isVirtualRef } from './network-model.js';
 import { bindCompositionCompiler, validateCompositionContract } from './composition-contract.js';
 import { managedComposition } from './managed-composition.js';
+import { assertFunctionImplementation, bindFunctionRuntimes, type FunctionImplementation, type FunctionRuntimeBinding } from './function-runtime.js';
+import { isReviewedCriterion, isFunctionReturnType, STRICT_SUBMISSION_CRITERIA_VERSION } from './contract-vocabulary.js';
+import { validateActionCriteria } from './action-criteria.js';
 
 function fail(message: string): never { throw new DomainError('INVALID_INPUT', message); }
+function freezeJson<T>(value: T): T {
+  if (value && typeof value === 'object') { for (const child of Object.values(value)) freezeJson(child); Object.freeze(value); }
+  return value;
+}
 const refKey = (ref: HandlerRef) => JSON.stringify([ref.id, ref.version, ref.digest]);
 const resources = (document: OntologyDocument) => [
   ...document.objects.map(value => ({ kind: 'object' as const, value })),
@@ -51,11 +58,20 @@ export function validateBusinessDefinitionExtensions(original: OntologyDocument,
 export class TrustedDefinitionRegistry {
   #sealed = false;
   #validators = new Map<string, { ref: HandlerRef; schema: z.ZodType; schemaDigest: string }>();
-  #functions = new Map<string, { ref: HandlerRef; definition: FunctionDefinition }>();
+  #functions = new Map<string, { ref: HandlerRef; definition: FunctionDefinition; implementation?: FunctionImplementation }>();
   #actions = new Map<string, { ref: HandlerRef; definition: ActionDefinition }>();
   #protectedResources = new Set<string>();
   #protectedKernels: { resources: Map<string, { kind: DefinitionKind; id: string; digest: string; value: unknown }>; functions: Map<string, string> }[] = [];
   #protectedKernelDigests = new Set<string>();
+
+  /** Software installation may extend a completed registry without unsealing or
+   * mutating existing users. Existing parsers and immutable contracts are reused. */
+  fork(): TrustedDefinitionRegistry {
+    const next = new TrustedDefinitionRegistry();
+    next.#validators = new Map(this.#validators); next.#functions = new Map(this.#functions); next.#actions = new Map(this.#actions);
+    next.#protectedResources = new Set(this.#protectedResources); next.#protectedKernels = [...this.#protectedKernels]; next.#protectedKernelDigests = new Set(this.#protectedKernelDigests);
+    return next;
+  }
 
   registerValidator(id: string, version: string, schema: z.ZodType, metadata: JsonSchema = z.toJSONSchema(schema)): HandlerRef {
     if (this.#sealed) throw new Error('Trusted definition registry is sealed');
@@ -72,15 +88,21 @@ export class TrustedDefinitionRegistry {
     if (digest(schema) !== available.schemaDigest) fail('A trusted validator does not match the declared schema');
     return available.schema;
   }
-  registerFunction(definition: FunctionDefinition): HandlerRef {
+  registerFunction(definition: FunctionDefinition, implementation?: FunctionImplementation): HandlerRef {
     if (this.#sealed) throw new Error('Trusted definition registry is sealed');
+    if (implementation) assertFunctionImplementation(definition, implementation);
     const ref = { id: definition.id, version: definition.version, digest: digest(definition) };
-    this.#functions.set(refKey(ref), { ref, definition: structuredClone(definition) });
+    const previous = this.#functions.get(refKey(ref));
+    if (previous?.implementation && implementation && previous.implementation.execute !== implementation.execute) fail('An exact function binding cannot be replaced');
+    const frozenImplementation = implementation ? Object.freeze({ ...implementation, contract: freezeJson(structuredClone(implementation.contract)) }) : undefined;
+    this.#functions.set(refKey(ref), { ref, definition: structuredClone(definition), ...(previous?.implementation || frozenImplementation ? { implementation: previous?.implementation ?? frozenImplementation } : {}) });
     return { ...ref };
   }
-  resolveFunction(ref: HandlerRef, definition: FunctionDefinition): void {
+  resolveFunction(ref: HandlerRef, definition: FunctionDefinition): FunctionRuntimeBinding | undefined {
     const available = this.#functions.get(refKey(ref));
     if (!available || digest(available.definition) !== digest(definition)) fail('The exact trusted function contract is unavailable');
+    if (definition.executionContract && !available.implementation) fail('The exact executable function binding is unavailable');
+    return available.implementation ? Object.freeze({ handlerRef: Object.freeze({ ...ref }), definitionDigest: digest(definition), implementation: available.implementation }) : undefined;
   }
   registerAction(definition: ActionDefinition): HandlerRef {
     if (this.#sealed) throw new Error('Trusted definition registry is sealed');
@@ -281,6 +303,20 @@ export function normalizeOntologyDocument(input: OntologyDocument | unknown): On
 
 export function compileOntologyDocument(input: OntologyDocument | unknown, registry: TrustedDefinitionRegistry): OntologyModel {
   const document = normalizeOntologyDocument(input);
+  if (document.criteriaVersion !== undefined && !['1', STRICT_SUBMISSION_CRITERIA_VERSION].includes(document.criteriaVersion)) fail('Unsupported submission criteria vocabulary version');
+  if ((document.functions.some(fn => fn.executionContract) || document.actions.some(action => action.criteriaBindings)) && document.criteriaVersion !== STRICT_SUBMISSION_CRITERIA_VERSION) fail('Executable contracts require the strict criteria vocabulary');
+  const strictContracts = document.criteriaVersion === STRICT_SUBMISSION_CRITERIA_VERSION;
+  if (strictContracts) {
+    for (const action of document.actions) {
+      for (const criterion of action.submissionCriteria) if (!isReviewedCriterion(criterion)) fail(`Unregistered submission criterion: ${criterion}`);
+      if (action.implementation && !action.effects?.length) fail('Implemented actions require declared effects');
+      if (action.operation && [action.operation.effect, ...(action.operation.additionalEffects ?? [])].some(effect => !action.effects?.includes(effect))) fail('Action effects omit an operation effect');
+    }
+    for (const fn of document.functions) {
+      if (!fn.executionContract) fail('Forward functions require an explicit validated or legacy execution contract');
+      if (fn.returns?.some(value => !isFunctionReturnType(value))) fail('Unregistered function return type');
+    }
+  }
   const resourceIds = new Set<string>(), apiNames = new Set<string>();
   for (const { kind, value } of resources(document)) {
     if (resourceIds.has(value.resourceId)) fail('Duplicate stable definition resource ID');
@@ -292,8 +328,10 @@ export function compileOntologyDocument(input: OntologyDocument | unknown, regis
   registry.assertProtected(document);
   const mapProperties = (properties: Record<string, SerializableProperty>, policy?: 'managed' | 'source') => Object.fromEntries(Object.entries(properties).map(([name, value]) => [name, property(value, registry, policy)]));
   const trustedActionImplementations: Record<string, ActionImplementation> = {};
+  const trustedFunctionImplementations: Record<string, HandlerRef> = {}, functionRuntimes = new Map<string, FunctionRuntimeBinding>();
   const definition: ModelDefinition = {
     id: document.id, version: document.version,
+    ...(strictContracts ? { criteriaVersion: document.criteriaVersion } : {}),
     objects: document.objects.map(({ resourceId: _resourceId, writePolicy, properties, ...rest }) => ({ ...rest, properties: mapProperties(properties, writePolicy), ...(writePolicy === 'managed' ? { writePolicy } : {}) })),
     interfaces: document.interfaces.map(({ resourceId: _resourceId, properties, ...rest }) => ({ ...rest, properties: mapProperties(properties) })),
     links: document.links.map(({ resourceId: _resourceId, writePolicy, ...rest }) => ({ ...rest, ...(writePolicy === 'managed' ? { writePolicy } : {}) })),
@@ -307,11 +345,23 @@ export function compileOntologyDocument(input: OntologyDocument | unknown, regis
       if (!registry.isProtected(resourceId) && (rest.read || rest.operation || rest.providerOperation) && implementation?.kind !== 'trusted') fail('External action contracts require an exact trusted implementation');
       return { ...rest, ...(implementation ? { implementation } : {}) };
     }),
-    functions: document.functions.map(({ handlerRef, ...rest }) => { if (!handlerRef) fail('Functions require an exact trusted handler reference'); registry.resolveFunction(handlerRef, rest); return rest; }),
+    functions: document.functions.map(({ handlerRef, ...rest }) => {
+      if (!handlerRef) fail('Functions require an exact trusted handler reference');
+      const binding = registry.resolveFunction(handlerRef, rest);
+      if (binding) { functionRuntimes.set(rest.id, binding); trustedFunctionImplementations[rest.id] = handlerRef; }
+      return rest;
+    }),
   };
-  const model = new OntologyModel(definition, { trustedActionImplementations });
+  const model = new OntologyModel(definition, { trustedActionImplementations, trustedFunctionImplementations });
+  bindFunctionRuntimes(model, functionRuntimes);
+  for (const fn of definition.functions) if (fn.executionContract?.mode === 'validated') {
+    for (const type of fn.executionContract.reads.types) if (!model.hasType(type)) fail('Function declares an unknown read type');
+    for (const link of fn.executionContract.reads.relationships) model.navigation(link.type, link.name);
+  }
   bindCompositionCompiler(model, { schema: compileJsonSchema, validator: (ref, schema) => registry.resolveValidator(ref, schema) });
   for (const action of model.actionDefinitions()) {
+    if (strictContracts && action.requiresApproval === false && model.approvalRequired(action.id)) fail('A write effect cannot disable approval');
+    if (strictContracts) validateActionCriteria(model, action, registry.isProtected(document.actions.find(value => value.id === action.id)!.resourceId));
     const implementation = model.actionImplementation(action.id);
     if (implementation) validateActionImplementation(implementation, model, action);
     validateCompositionContract(model, action, { schema: compileJsonSchema, validator: (ref, schema) => registry.resolveValidator(ref, schema) });

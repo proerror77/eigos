@@ -4158,12 +4158,12 @@
       "currentControl": "Core resources remain protected; ordinary business display text cannot change data schemas, source binding or execution authority.",
       "targetControl": "Immutable compiled definitions and exact trusted handler contracts",
       "stage": "S2",
-      "sourceDigest": "53c070667f35392c75abe139e29797033c4d9bba9dede67b6391c14ad927d5ed"
+      "sourceDigest": "dbb386fafa3b4fb846dbdb769f9f6e45502f71a916a65634027126176697ecf0"
     },
     {
       "id": "ontology-definition-contracts",
       "file": "packages/ontology/definition-contracts.ts",
-      "sourceDigest": "453c626a65f4b9ad3649876b83ea357ed1bae41cbc959b23bfa6dd748857bd6b",
+      "sourceDigest": "18581bf60618561f27db21f59458363e99726c84ec5ec129d124df55a8da33f2",
       "channels": [
         "management",
         "sqlite"
@@ -4189,7 +4189,7 @@
     {
       "id": "ontology-definitions",
       "file": "packages/ontology/model.ts",
-      "sourceDigest": "66c84a0fad11b8aed357186ba909ce746a9a913222ef495120fd5deb501744fb",
+      "sourceDigest": "3fb2fdc88ce4cf97865120542765a90c7928dd4e8e446ff700db1bca891c791f",
       "channels": [
         "definition"
       ],
@@ -4257,7 +4257,7 @@
       "currentControl": "Every selectable release (v27-v31) keeps an explicit digest constant and is asserted during construction; historical releases are never rewritten.",
       "targetControl": "Accurate release construction and immutable historical interpretation",
       "stage": "S2",
-      "sourceDigest": "7bc826de364081e6183656b80f5288a943927890289cbd18effc5b07f3fe755c"
+      "sourceDigest": "ae5584dd1f36a0cc138343b903b28255807781ea5f0e7e765149423e6446d0ff"
     },
     {
       "id": "ontology-metadata-http",
@@ -4391,7 +4391,7 @@
     {
       "id": "ontology-registered-calculations",
       "file": "packages/ontology/object-functions.ts",
-      "sourceDigest": "b83c1f563e83b231fd16939a05f11896fbe2435c90518ee3f7d727a1c683f332",
+      "sourceDigest": "e6fd889d4bf78916eff2ff3be5f4adcc93e5ab4550e9af762aa53fcfdfc45014",
       "channels": [
         "internal"
       ],
@@ -4441,7 +4441,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "ddf565b0183f85a63efdc20ac4e1236183ebbb3b27e097933f29b11417fee333",
+      "sourceDigest": "64195a3aaaea2d9da1689480d88a58ff3102d49eaa2c73040b75c66bd6833c1a",
       "channels": [
         "query",
         "function"
@@ -4488,7 +4488,7 @@
       "currentControl": "204 explicit purpose assignments; metadata excluded from writer fingerprints; prior policy reuse requires the exact unchanged v28 contract.",
       "targetControl": "No relabelling of facts, new source authority or historical contract rewrite.",
       "stage": "S3",
-      "sourceDigest": "3bb282a50079ee3f05cc037173a23452a46e92a806f809b63a498b1a66b9951e"
+      "sourceDigest": "3e10ecc2c48ba205c08e7642394c99cee8de7eacc8bbadc90e95bfa402600a5d"
     },
     {
       "id": "pa-communication-client-input",
@@ -5407,13 +5407,13 @@
     {
       "id": "postgres-kernel-runtime",
       "file": "packages/postgres/kernel-runtime.ts",
-      "sourceDigest": "dc01021b5c3321d48ca81ea7ea2cbdb24c103321f325ee2005abae4ffed7c379",
+      "sourceDigest": "3b1ab0978316fcfa613cda55a54db6f5be5857f9498fd7794b1e9a61a05bf996",
       "channels": [
         "internal"
       ],
       "content": "Yielded pre-publication PostgreSQL compiler preparation",
-      "currentControl": "Yielded actual staged targets27,28 or optional29 preserve exact completion/registry identity. Host selects27 or28 only from the reviewed policy; vector29 requires verified feature configuration and an explicitly upgraded description28 policy.",
-      "targetControl": "Existing exact 13-stage trusted kernel, ready-brand checks and cancellation between stages; prepared before qualification publishing and passed through exact transaction token; original release row/body/digest/model checks remain authoritative, with no permission or data caching",
+      "currentControl": "Selected policy model and document remain unchanged; install exact reviewed v34 software contracts from the already prepared v28 node before publisher startup, then seal. Installation grants no rights and does not activate releases; v29 vector branch remains explicit.",
+      "targetControl": "Selected policy model and document remain unchanged; install exact reviewed v34 software contracts from the already prepared v28 node before publisher startup, then seal. Installation grants no rights and does not activate releases; v29 vector branch remains explicit.",
       "stage": "S5"
     },
     {
@@ -5578,7 +5578,7 @@
     {
       "id": "postgres-ontology-functions",
       "file": "packages/postgres/ontology-functions.ts",
-      "sourceDigest": "c6ea9d3a2d47fbb323012057067211c34fab3334e8a961c62acd340da938e7d2",
+      "sourceDigest": "621fab3f18268d9c366f94a7e6fe24e4d20235d39b57862bbc1319c24f7b4107",
       "channels": [
         "internal"
       ],
@@ -5590,7 +5590,7 @@
     {
       "id": "postgres-ontology-metadata",
       "file": "packages/postgres/ontology-metadata.ts",
-      "sourceDigest": "a32a73e9d8215667d8531d8f2e6e4f819629ab1e11f93617f59ab32972c0d22f",
+      "sourceDigest": "950fa6cc9a175c59ed53259edee3ff85789a34c87130a66b611bdef21cc570bf",
       "channels": [
         "internal"
       ],
@@ -5897,7 +5897,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "bf7075c74da2c83a57304ea060eb1219dd6faf4928cc31566fadab0975c22a87",
+      "sourceDigest": "2b5661e394bcacef27c32e7d29de21a4e42f3bd23cf820348f072730b9af2949",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current task, identity, source and expiry checks remain. Under optional29, resource roles resolve against the checked task release while consent validates against the current reviewed policy, preserving old27 pins without new function grants.",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
@@ -6651,7 +6651,7 @@
     {
       "id": "release-artifacts-cli",
       "file": "scripts/release-artifacts.mjs",
-      "sourceDigest": "f3173f81dd3674b633276a36898ef7e84bbeeee2b1e7fd11c8917fed4aecdc06",
+      "sourceDigest": "5b088e120bc58718269b8a680951041de6c3748c8ea07dcfe910ef43a9a27988",
       "channels": [
         "internal"
       ],
@@ -7258,7 +7258,7 @@
     {
       "id": "security-definition-view",
       "file": "packages/security/definition-view.ts",
-      "sourceDigest": "89d7508549c6218334e2bf9bd2266d677795a2335717aca466a3c58ea39b6fd7",
+      "sourceDigest": "be0fa407a587e0f2aaddccda0870b1d46a7a57ed5af636326c16e52c9043332b",
       "channels": [
         "internal"
       ],
@@ -7344,7 +7344,7 @@
     {
       "id": "security-model-review",
       "file": "packages/security/model-review.ts",
-      "sourceDigest": "dba149d5a3cca733d5d3d857d62c251447b757f5b77ee518b79196b320665547",
+      "sourceDigest": "70ffa644e288869509385e32f0c00ff2f70caaaecf873454f8c9048431340b87",
       "channels": [
         "internal"
       ],
@@ -7848,7 +7848,7 @@
     {
       "id": "trusted-definition-registry",
       "file": "packages/ontology/model-compiler.ts",
-      "sourceDigest": "53c070667f35392c75abe139e29797033c4d9bba9dede67b6391c14ad927d5ed",
+      "sourceDigest": "dbb386fafa3b4fb846dbdb769f9f6e45502f71a916a65634027126176697ecf0",
       "channels": [
         "authorization_control"
       ],
@@ -7860,7 +7860,7 @@
     {
       "id": "trusted-kernel-bootstrap",
       "file": "packages/ontology/seed-definition.ts",
-      "sourceDigest": "7bc826de364081e6183656b80f5288a943927890289cbd18effc5b07f3fe755c",
+      "sourceDigest": "ae5584dd1f36a0cc138343b903b28255807781ea5f0e7e765149423e6446d0ff",
       "channels": [
         "authorization_control"
       ],
@@ -7905,6 +7905,84 @@
       "currentControl": "Parameterized scalar predicates apply after the materialized owner, namespace and visible-object boundary. Unsafe representations and historical definitions continue through the existing checked reader. Aggregate raw-body budget bounds server JSON parsing.",
       "targetControl": "Preserve exact scalar semantics, authorized visibility, bounded continuation and rejection of incompatible stored data",
       "stage": "S5"
+    },
+    {
+      "id": "ontology-function-contracts",
+      "file": "packages/ontology/function-contracts.ts",
+      "channels": [
+        "internal",
+        "definition_metadata"
+      ],
+      "content": "Definition-only schemas for validated and explicit legacy invocation contracts",
+      "currentControl": "Strict bounded schema separates known/unknown envelope, declared reads and undeclared legacy output; JSON carries no code.",
+      "targetControl": "Strict bounded schema separates known/unknown envelope, declared reads and undeclared legacy output; JSON carries no code.",
+      "stage": "S2",
+      "sourceDigest": "cebbfc1bb42390a0f139db1a2cd64ab3c63f7397bc392e75f6022342099537c1"
+    },
+    {
+      "id": "ontology-function-runtime",
+      "file": "packages/ontology/function-runtime.ts",
+      "channels": [
+        "internal",
+        "definition_metadata"
+      ],
+      "content": "Exact compiled function execution and result/read validation",
+      "currentControl": "Compiler-owned immutable bindings; input/result validation; declared reads bound generators, original owner/task/field authorization remains in force; unknown preserves evidence without business value.",
+      "targetControl": "Compiler-owned immutable bindings; input/result validation; declared reads bound generators, original owner/task/field authorization remains in force; unknown preserves evidence without business value.",
+      "stage": "S2",
+      "sourceDigest": "f5981974bc1c4506c5b9ff6ce00f8f6eb67e56eb284c2f6f7486a9d80f582a45"
+    },
+    {
+      "id": "ontology-builtin-function-implementations",
+      "file": "packages/ontology/builtin-function-implementations.ts",
+      "channels": [
+        "internal",
+        "definition_metadata"
+      ],
+      "content": "Software-owned adapters for existing function evaluators",
+      "currentControl": "Explicit built-in parser allowlist, pinned model version, validated DiDi result/read contracts and honest legacy coverage; no executable source in definitions.",
+      "targetControl": "Explicit built-in parser allowlist, pinned model version, validated DiDi result/read contracts and honest legacy coverage; no executable source in definitions.",
+      "stage": "S2",
+      "sourceDigest": "5dcf2377e500fab5dbde7e7fd2da8a25fb8a0ec678ff6d5352a46308d74745a9"
+    },
+    {
+      "id": "ontology-action-criteria",
+      "file": "packages/ontology/action-criteria.ts",
+      "channels": [
+        "internal",
+        "definition_metadata"
+      ],
+      "content": "Submission criterion enforcement bindings",
+      "currentControl": "Every strict criterion is covered by a real engine guard, existing declarative condition, protected personal guard or exact trusted runtime; registered vocabulary alone cannot bypass checks.",
+      "targetControl": "Every strict criterion is covered by a real engine guard, existing declarative condition, protected personal guard or exact trusted runtime; registered vocabulary alone cannot bypass checks.",
+      "stage": "S2",
+      "sourceDigest": "9014c73f7ed7a5c867949105ae8fa1eceefabbbfccdc6650a9beda6bc1264038"
+    },
+    {
+      "id": "ontology-executable-contract-kernel",
+      "file": "packages/ontology/executable-contract-kernel.ts",
+      "channels": [
+        "internal",
+        "definition_metadata"
+      ],
+      "content": "Forward v34 executable contracts",
+      "currentControl": "Preserves prior bodies; explicit compatibility references and identity-v2 metadata; no activation, grants or provider calls.",
+      "targetControl": "Preserves prior bodies; explicit compatibility references and identity-v2 metadata; no activation, grants or provider calls.",
+      "stage": "S2",
+      "sourceDigest": "4c9ab762cbc13aab6b5b64022fc915052ee4f106e9c50479bdc25938eb6064d6"
+    },
+    {
+      "id": "ontology-executable-contract-compatibility",
+      "file": "packages/ontology/executable-contract-compatibility.ts",
+      "channels": [
+        "internal",
+        "definition_metadata"
+      ],
+      "content": "Exact installed v34 compatibility and field policy reference",
+      "currentControl": "Fixed full model digests only; fields reuse reviewed v28 policy, tasks keep exact release/function versions and separate namespace roles; no automatic new invocation rights.",
+      "targetControl": "Fixed full model digests only; fields reuse reviewed v28 policy, tasks keep exact release/function versions and separate namespace roles; no automatic new invocation rights.",
+      "stage": "S2",
+      "sourceDigest": "9020a008d7d440c58c0ae3d3b43b2c01018227ebbf37ff565c90489845b80c0e"
     }
   ]
 }

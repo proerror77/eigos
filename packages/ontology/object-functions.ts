@@ -40,6 +40,7 @@ import { digest } from '../core/delegation.js';
 import { domainFunctionCallSchemas } from './service-domains.js';
 import { DomainError } from '../core/domain.js';
 import type { OntologyObjectStore, ObjectView, ReadBudget } from './object-store.js';
+import { constrainFunctionReads, parseFunctionInvocation, resolveFunctionRuntime, validateFunctionComputation } from './function-runtime.js';
 
 export interface Computation { status: 'known' | 'unknown'; value?: unknown; reason?: string; evidenceRefs: ObjectRef[]; evidenceLevels: string[] }
 const simple = (name: string) => z.object({ function: z.literal(name), object: objectRefSchema }).strict();
@@ -94,9 +95,23 @@ function* freshnessProgram(store: ProjectionMetadata, owner: string, object: Obj
 }
 
 /** Registered read-only functions. Missing evidence is never replaced by zero or a model inference. */
-export function evaluateFunction(store: OntologyObjectStore, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): Computation { return runGraphProgram(store, evaluateFunctionProgram(store, owner, input, budget)); }
+export function evaluateFunction(store: OntologyObjectStore, owner: string, input: unknown, budget: ReadBudget): Computation { return runGraphProgram(store, evaluateFunctionProgram(store, owner, input, budget)); }
 
-export function* evaluateFunctionProgram(store: ProjectionMetadata, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): GraphProgram<Computation> {
+export function* evaluateFunctionProgram(store: ProjectionMetadata, owner: string, input: unknown, budget: ReadBudget): GraphProgram<Computation> {
+  const args = parseFunctionInvocation(store.model, input), definition = store.model.function(args.function), binding = resolveFunctionRuntime(store.model, args.function);
+  if (!binding) {
+    if (definition.executionContract) throw new DomainError('CONFLICT', 'The exact function executor is unavailable');
+    return yield* evaluateLegacyFunctionProgram(store, owner, functionCallSchema.parse(input), budget);
+  }
+  if (!definition.inputTypes.some(type => store.model.implements(args.object.type, type))) throw new DomainError('INVALID_INPUT', 'Function requires its registered object type');
+  const program = binding.implementation.execute(store, owner, args, budget), contract = binding.implementation.contract;
+  const result = yield* constrainFunctionReads(program, contract.mode === 'validated' ? contract.reads : undefined);
+  return validateFunctionComputation(binding, result);
+}
+
+/** Existing business evaluators; invoked through the exact compiled binding for
+ * forward releases. Historical models retain their original dispatch behavior. */
+export function* evaluateLegacyFunctionProgram(store: ProjectionMetadata, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): GraphProgram<Computation> {
   if(input.function==='semanticCandidates')return yield* graphSemanticCandidates(owner,semanticCandidatesSchema.parse(input),budget);
   const commerceRead = (yield* evaluateCommerceReadProgram(store, owner, input, budget));
   if (commerceRead) return commerceRead;
