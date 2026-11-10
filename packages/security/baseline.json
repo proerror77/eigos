@@ -5688,7 +5688,7 @@
     {
       "id": "postgres-projection-graph",
       "file": "packages/postgres/projection-graph.ts",
-      "sourceDigest": "c4a4a7ff1688ae7b895784b9afd2253a35bb76601e4aa453cc7364af2d2e4219",
+      "sourceDigest": "21096b41ba375ef255c2c816bd61f30c2cb6894bfae214b21943bdb086de3e9f",
       "channels": [
         "internal"
       ],
@@ -7892,6 +7892,19 @@
       "targetControl": "Keep rejection diagnostics separate from task state, permission, retry and business acceptance",
       "stage": "S3",
       "sourceDigest": "0d87682a27d4c0654aa6b13748fd71de4e0e150733b2cf6c17aa14521c132fb1"
+    },
+    {
+      "id": "postgres-scalar-query-predicate",
+      "file": "packages/postgres/scalar-query-predicate.ts",
+      "sourceDigest": "58520825604acf0dd72437d9427ff5dca0bbbf61cdd7f60cd9464d72640e870f",
+      "channels": [
+        "internal",
+        "postgres"
+      ],
+      "content": "Typed SQL predicates over an explicitly admitted object set",
+      "currentControl": "Parameterized scalar predicates apply after the materialized owner, namespace and visible-object boundary. Unsafe representations and historical definitions continue through the existing checked reader. Aggregate raw-body budget bounds server JSON parsing.",
+      "targetControl": "Preserve exact scalar semantics, authorized visibility, bounded continuation and rejection of incompatible stored data",
+      "stage": "S5"
     }
   ]
 }

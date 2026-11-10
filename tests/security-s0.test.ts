@@ -28,7 +28,8 @@ test('S0 inventories every definition and nested subtree without changing runtim
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
   assert.equal(report.counts.objectTypes, 204); assert.equal(report.counts.properties, 1863); assert.equal(report.counts.interfaces, 14);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 401, 'the reviewed domain vocabulary and its v31 release are inventoried');
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 402, 'the reviewed vocabulary and bounded SQL predicate compiler are inventoried');
+  assert(report.surfaces.some(surface => surface.id === 'postgres-scalar-query-predicate'));
   for (const id of ['ontology-domain-vocabulary', 'ontology-domain-vocabulary-kernel']) assert(report.surfaces.some(surface => surface.id === id), `Unreviewed ontology vocabulary surface: ${id}`);
   assert.equal(report.surfaces.find(surface => surface.id === 'pa-classification-contract')!.file, 'packages/ontology/pa-classification-contract.ts');
   assert.equal(report.surfaces.find(surface => surface.id === 'pa-classification-kernel')!.file, 'packages/ontology/pa-classification-kernel.ts');
