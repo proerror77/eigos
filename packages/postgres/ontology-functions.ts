@@ -11,7 +11,7 @@ import { combineEnvelopes, type SecurityEnvelope } from '../security/envelope.js
 import { projectFunctionValue } from '../security/projections.js';
 import { SecurityError } from '../security/errors.js';
 import { secureEvaluateSchema, secureQuerySchema, secureFunctionCallSchema } from '../security/view-contracts.js';
-import { postgresBusinessSchema, postgresConstrainReadDeadline } from './runtime-transaction.js';
+import { postgresConstrainReadDeadline } from './runtime-transaction.js';
 import { postgresTaskReadOntology, postgresTaskResourceViewValidUntil, withPostgresTaskReadGrant } from './task-read-access.js';
 import { withPostgresTaskReadAuthorization, type PostgresFunctionReadAuthorization, type PostgresTaskReadAuthorization } from './task-output.js';
 import { PostgresProjectionGraph } from './projection-graph.js';
@@ -70,11 +70,7 @@ class FunctionGraph implements GraphStorage,ProjectionMetadata {
   async related(owner:string,from:ObjectRef,link:string,budget:ReadBudget){
     const result=await this.query(owner,{from,link,limit:50},budget);
     if(result.page.hasMore)throw new IncompleteRelationshipRead();
-    const nav=this.model.navigation(from.type,link),side=nav.direction==='forward'?'from':'to';
-    const count=await this.client.query(`SELECT count(*) AS n FROM "${postgresBusinessSchema(this.client)}".ontology_links
-      WHERE owner=$1 AND type=$2 AND ${side}_type=$3 AND ${side}_id=$4`,[this.owner,nav.link.id,from.type,from.id]);
-    const total=Number(count.rows[0]?.n);
-    if(!Number.isSafeInteger(total)||total<0)throw new DomainError('CONFLICT','Invalid relationship count');
+    const total=await this.graph.relationshipCount(owner,from,link);
     if(total!==result.items.length)throw new IncompleteRelationshipRead();
     return result.items;
   }

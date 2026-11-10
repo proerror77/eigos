@@ -16,6 +16,8 @@ import {postgresAssertOntologyAccess,postgresOntologyRelease,postgresOntologyDef
 import {assertIdentityAssertionWriteProgram} from '../ontology/identity-mapping.js';
 import {assertTransactionPartyRoleWriteProgram} from '../ontology/errand-domain.js';
 import {postgresScalarQueryPredicate} from './scalar-query-predicate.js';
+import {relationCountQuery, relationNavigation} from './relation-query-plan.js';
+import {validateQueryFields} from './query-field-validation.js';
 
 function fail(message:string):never {throw new DomainError('INVALID_INPUT',message);}
 type RawObject={view:ObjectView;definitionDigest:string;body:string};
@@ -263,10 +265,7 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     if(!historical){values.push(this.ontologyId);where.push(`NOT EXISTS(SELECT 1 FROM "${this.schema}".ontology_tombstones deleted WHERE deleted.ontology_id=$${values.length} AND deleted.owner=o.owner AND deleted.type=o.type AND deleted.id=o.id)`);}
     if(boundary){values.push(JSON.stringify(boundary.refs));where.push(`EXISTS(SELECT 1 FROM jsonb_to_recordset($${values.length}::jsonb) AS visible(type text,id text) WHERE visible.type=o.type AND visible.id=o.id)`);}
     const properties=boundary?boundary.properties(target):this.model.properties(target);
-    for(const name of args.select??[]){if(!Object.hasOwn(properties,name))fail('Unknown selected property');if(properties[name]!.restricted)throw new DomainError('FORBIDDEN','Restricted property cannot be selected');}
-    for(const filter of args.where){const property=properties[filter.property];if(!property||property.derived||['struct','array'].includes(property.kind))fail('Filter requires a registered stored scalar property');
-      if(property.restricted)throw new DomainError('FORBIDDEN','Restricted property cannot be filtered');if(!['eq','in'].includes(filter.op)&&!['integer','timestamp','decimal'].includes(property.kind))fail('Unsupported comparison for this property');
-      const options=filter.op==='in'?filter.value:[filter.value];if(!Array.isArray(options)||options.some(value=>!property.schema.safeParse(value).success))fail('Filter value does not match property type');}
+    validateQueryFields(properties,args.select,args.where);
     if(last){values.push(last.type,last.id);where.push(`(o.type COLLATE "C">$${values.length-1} OR(o.type=$${values.length-1} AND o.id COLLATE "C">$${values.length}))`);}
     // Only a host-supplied visible set (at most 2,000 refs) can use this plan.
     // Materialize its owner/namespace/visibility boundary before inspecting any
@@ -302,6 +301,14 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     return {model:this.model.ref,items,page:{limit:args.limit,scanned,hasMore,cursor},datasetRevision:revision,...('type'in args&&args.currentDefinitionsOnly?{definitionScope:'current_definitions_only' as const}:{})};
   }
   async related(owner:string,from:ObjectRef,link:string,budget:ReadBudget):Promise<ObjectView[]>{const result=await this.query(owner,{from,link,limit:50},budget);if(result.page.hasMore)throw new IncompleteRelationshipRead();return result.items;}
+  /** Internal completeness check after the caller authorized a relationship
+   * read. Retain dangling/hidden edges in this count; they cannot certify a
+   * complete business calculation. Namespace and owner never come from SQL. */
+  async relationshipCount(owner:string,from:ObjectRef,link:string):Promise<number>{
+    this.assertOpen(owner);
+    const navigation=relationNavigation(this.model,from,link),compiled=relationCountQuery(this.schema,this.ontologyId,owner,navigation);
+    return this.count(await this.sql(compiled.text,compiled.values));
+  }
   private async persistObject(ref:ObjectRef,revision:number,definitionDigest:string,body:string,old?:RawObject,deleted=false){
     const versions=[...(old?[{revision:old.view.revision,definition_digest:old.definitionDigest,release_id:null,release_digest:null,body:old.body,deleted:0}]:[]),
       {revision,definition_digest:definitionDigest,release_id:this.releaseRef.releaseId,release_digest:this.releaseRef.digest,body,deleted:deleted?1:0}];
