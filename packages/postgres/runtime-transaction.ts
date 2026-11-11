@@ -3,11 +3,13 @@ import {createHash} from 'node:crypto';
 import {postgresEligibilityReferenceSchema,type PostgresEligibilityReference,type PostgresEligibilityInspector,type PostgresEligibilityEgress} from './eligibility-reference.js';
 import type { Client, QueryResult } from 'pg';
 import { SecurityError } from '../security/errors.js';
+import {postgresAuthorityWriteLockMode} from './authority-lock.js';
+import {lockPostgresWriteScope,postgresWriteScope,tryPostgresOwnerWriteLock,type PostgresWriteScope} from './write-scope.js';
 
 const schemaPattern = /^eigos_business_[a-z0-9_]{1,40}$/;
 const digestPattern = /^[a-f0-9]{64}$/;
 const active = new WeakSet<object>();
-const contexts = new WeakMap<object, { schema: string; authorityDigest: string; readUntil:number;token:object;readOnly:boolean;kernel?:StagedKernelBuilder;leases:Map<string,()=>Promise<{validUntil:number}|undefined>>;eligibilityInspector?:PostgresEligibilityInspector;eligibility:Map<string,Promise<void>>;eligibilityReferences:Map<string,PostgresEligibilityReference>;egressReferences:PostgresEligibilityReference[] }>();
+const contexts = new WeakMap<object, { schema: string; authorityDigest: string; readUntil:number;token:object;readOnly:boolean;writeScope?:PostgresWriteScope;writeOwners:Set<string>;kernel?:StagedKernelBuilder;leases:Map<string,()=>Promise<{validUntil:number}|undefined>>;eligibilityInspector?:PostgresEligibilityInspector;eligibility:Map<string,Promise<void>>;eligibilityReferences:Map<string,PostgresEligibilityReference>;egressReferences:PostgresEligibilityReference[] }>();
 
 /** An original-token inspector, never business/model/provider work. Lease
  * evidence is refreshed at the outer commit; fixed read deadlines stay fixed. */
@@ -51,6 +53,28 @@ export function postgresBusinessReadOnly(client:Client,expectedToken:object):boo
   const context=contexts.get(client);
   if(!context||context.token!==expectedToken)throw new Error('The exact active PostgreSQL business transaction is required');
   return context.readOnly;
+}
+
+/** Owner-wide projections may not be smuggled into a task-only accounting or
+ * release transaction. A lock scope never substitutes for data authorization. */
+export function postgresRequireOwnerWrite(client:Client,owner:string):void{
+  const context=contexts.get(client),scope=context?.writeScope;
+  if(!context||context.readOnly||scope&&(scope.kind==='task'||scope.kind==='owner'&&scope.owner!==owner||scope.kind==='queue'&&!context.writeOwners.has(owner)))
+    throw new SecurityError('AUTHORIZATION_REQUIRED');
+}
+/** Queue callers must never wait for an owner holding business projections.
+ * No reservation is recorded unless the actual transaction lock was obtained. */
+export async function postgresTryQueueOwner(client:Client,owner:string):Promise<boolean>{
+  const context=contexts.get(client);if(!context||context.readOnly)throw new SecurityError('AUTHORIZATION_REQUIRED');
+  if(!context.writeScope)return true; // Legacy globally exclusive fallback.
+  if(context.writeScope.kind!=='queue')throw new SecurityError('AUTHORIZATION_REQUIRED');
+  const locked=await tryPostgresOwnerWriteLock(client,context.schema,owner);
+  if(contexts.get(client)!==context)throw new SecurityError('AUTHORIZATION_REQUIRED');
+  if(locked)context.writeOwners.add(owner);return locked;
+}
+export function postgresForgetQueueOwner(client:Client,owner:string):void{
+  const context=contexts.get(client);if(!context||context.readOnly||context.writeScope&&context.writeScope.kind!=='queue')throw new SecurityError('AUTHORIZATION_REQUIRED');
+  context.writeOwners.delete(owner);
 }
 
 /** Host-only immutable compiler context. It grants no namespace, task, role,
@@ -98,6 +122,8 @@ export interface PostgresTransactionOptions {
   kernel?: StagedKernelBuilder;
   /** Host-selected query path. Only private cursor bookkeeping may write here. */
   access?: 'read' | 'write';
+  /** Explicit audited writer, never inferred from a caller/model label. */
+  writeScope?:PostgresWriteScope;
 }
 
 /** Serialize a PostgreSQL business mutation and fence it to the reviewed
@@ -110,6 +136,8 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
   if (!schemaPattern.test(schema) || !authority.id || !Number.isSafeInteger(authority.revision) || authority.revision < 1 || !digestPattern.test(authority.digest)) throw new Error('Invalid PostgreSQL business authority');
   if (options.access !== undefined && options.access !== 'read' && options.access !== 'write') throw new Error('Invalid PostgreSQL transaction access');
   const reading = options.access === 'read';
+  const writeScope=options.writeScope===undefined?undefined:postgresWriteScope(options.writeScope);
+  if(reading&&writeScope)throw new Error('A read transaction cannot acquire a business write scope');
   const kernel=options.kernel;if(kernel!==undefined)stagedKernelComponents(kernel);
   const releaseClient=reservePostgresTransactionClient(client);
   const expected = { id: authority.id, revision: authority.revision, digest: authority.digest };
@@ -159,20 +187,29 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
       checkAuthority(results[3] as QueryResult);
       transactionId = results[3].rows[0]?.transaction_id;
     } else {
-      await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+      await client.query(writeScope ? 'BEGIN ISOLATION LEVEL READ COMMITTED' : 'BEGIN ISOLATION LEVEL SERIALIZABLE');
       beginning = false;
       opened = true;
       checkStatus();
-      await client.query(`LOCK TABLE "${schema}".eigos_business_mutex IN EXCLUSIVE MODE`);
+      if (writeScope) await lockPostgresWriteScope(client, schema, writeScope);
+      // Scoped writers share the table with other scoped writers, and still
+      // conflict with every read and with legacy globally fenced mutations.
+      await client.query(`LOCK TABLE "${schema}".eigos_business_mutex IN ${writeScope ? 'ROW EXCLUSIVE' : 'EXCLUSIVE'} MODE`);
+      if (writeScope && await postgresAuthorityWriteLockMode(client, schema) !== 'share') {
+        throw new Error('Concurrent write authority lock has not been installed');
+      }
       transactionId = (await client.query(identityQuery)).rows[0]?.id;
       if (typeof transactionId !== 'string' || !/^\d+$/.test(transactionId)) throw new Error('PostgreSQL transaction identity unavailable');
       await client.query(searchPath);
       checkAuthority(await client.query(authorityQuery));
       await assertBoundary();
+      if (writeScope?.kind === 'task') {
+        await client.query(`SELECT id FROM "${schema}".jobs WHERE owner=$1 AND id=$2 FOR UPDATE`, [writeScope.owner, writeScope.taskId]);
+      }
       await client.query(savepoint);
     }
     if (typeof transactionId !== 'string' || !/^\d+$/.test(transactionId)) throw new Error('PostgreSQL transaction identity unavailable');
-    const context={schema,authorityDigest:expected.digest,readUntil:Infinity,token:Object.freeze({}),readOnly:reading,kernel,leases:new Map<string,()=>Promise<{validUntil:number}|undefined>>(),eligibilityInspector:options.eligibilityInspector,eligibility:new Map<string,Promise<void>>(),eligibilityReferences:new Map<string,PostgresEligibilityReference>(),egressReferences:[] as PostgresEligibilityReference[]};
+    const context={schema,authorityDigest:expected.digest,readUntil:Infinity,token:Object.freeze({}),readOnly:reading,writeScope,writeOwners:new Set<string>(),kernel,leases:new Map<string,()=>Promise<{validUntil:number}|undefined>>(),eligibilityInspector:options.eligibilityInspector,eligibility:new Map<string,Promise<void>>(),eligibilityReferences:new Map<string,PostgresEligibilityReference>(),egressReferences:[] as PostgresEligibilityReference[]};
     contexts.set(client,context);
     let result: T;
     try {

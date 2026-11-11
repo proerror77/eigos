@@ -183,6 +183,19 @@ node scripts/postgres-primary-handoff.mjs --input /absolute/private/prepare-sche
 
 `PREPARE_PREVIEW_DIGEST` 只取自上一条已审核预览，输入改变后重新预览。预览不取凭据、不连接数据库。应用从宿主秘密环境读取既有 `EIGOS_POSTGRES_ADMIN_USER`／`EIGOS_POSTGRES_ADMIN_PASSWORD`，按绑定中的 CA 与主机名验证 TLS。提交后另开连接核对实际 schema 和 receipt；此阶段仍未激活，也不启动 publisher／Relay／Worker。基础业务独立验证在扩展安装前保存，安装后使用扩展专用校验，不篡改原回执的 `false` 标志。
 
+### 既有安装的写锁升级
+
+新导入的业务 schema 将受保护的 authority 函数安装为 `FOR SHARE`。已审查的 Worker 写入口按 owner 或原任务串行；领取队列单独串行分配共享容量，以非阻塞 owner 锁和 `FOR UPDATE SKIP LOCKED` 跳过占锁候选。对象／Function 读取仍用 `SHARE` 表锁，与这些写入口的 `ROW EXCLUSIVE` 冲突；未审查的写入口继续使用全局排他锁。此分区只改变调度，不授予权限或延长原领取。
+
+既有 schema 的原函数为 `FOR UPDATE` 时，新运行代码自动保留全局写锁，不在启动时执行 DDL。要启用并发写，先停止旧 Worker 的新领取并排空所有原领取和正在执行的安全恢复，再使用该安装原来已审查的 handoff 输入：
+
+```sh
+node scripts/postgres-write-lock-upgrade.mjs --input /absolute/private/reviewed-handoff.json
+node scripts/postgres-write-lock-upgrade.mjs --input /absolute/private/reviewed-handoff.json --apply --expected-preview-digest "$WRITE_LOCK_PREVIEW_DIGEST" --output /absolute/private/new-write-lock-receipt.json
+```
+
+预览不连接数据库。应用沿用绑定中的目标、TLS 和管理员身份；在全局排他围栏内检查原 authority、函数正文／归属／权限及领取排空状态，只替换锁函数并保留原角色 ACL。随后用独立连接核对函数和 authority，再写入新的私有回执。已有输出不会被覆盖；提交结果未知时先检查原函数和回执，不自动重试业务。命令不会启动或切换服务，正式部署和业务验收仍分别执行。
+
 ### 完整迁入节点并独立回读
 
 Relay 服务端数据库和 Gateway／通信节点的本地私有状态分别迁移。关闭原节点后，用 [`readRelayNodeMigrationSource`](../../packages/agent-transport/client.ts) 从原凭据文件和完整 SQLite 状态导出 v2 私有快照及两文件摘要；快照含私钥和密文，只能保存到受控私有目录。v2 保留原 receipt TEXT、原游标以及全部 outbox／inbox／retained 记录，不能从 v1 推造未知原文、只选活跃记录或生成新 Agent 身份。

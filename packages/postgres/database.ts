@@ -13,6 +13,8 @@ import {postgresWorkAvailable} from './work-availability.js';
 import {registerPostgresConsentKernel} from './consent.js';
 import {withPostgresVectorFeature} from './embedding-index.js';
 import {postgresVectorFeatureSchema,type PostgresVectorFeature} from './embedding-schema.js';
+import {postgresAuthorityWriteLockMode} from './authority-lock.js';
+import {postgresWriteScope,type PostgresWriteScope} from './write-scope.js';
 
 /** Owns the runtime's connection pool, not a second business authority. Each
  * operation gets one client and one fenced transaction. No implicit retries. */
@@ -55,6 +57,22 @@ export class PostgresDatabase {
   }
   run<T>(action:(client:Client)=>Promise<T>):Promise<T>{
     return this.transaction(action, 'write');
+  }
+  /** Audited owner-owned business state, including shared projections. */
+  runOwner<T>(owner:string,action:(client:Client)=>Promise<T>):Promise<T>{return this.scopedWrite({kind:'owner',owner},action);}
+  /** Only original-task accounting/claim changes; graph writes are prohibited. */
+  runTask<T>(owner:string,taskId:string,action:(client:Client)=>Promise<T>):Promise<T>{return this.scopedWrite({kind:'task',owner,taskId},action);}
+  /** Queue capacity allocation. Candidates must try-lock their owner and row. */
+  runQueue<T>(action:(client:Client)=>Promise<T>):Promise<T>{return this.scopedWrite({kind:'queue'},action);}
+  private scopedWrite<T>(input:PostgresWriteScope,action:(client:Client)=>Promise<T>):Promise<T>{
+    const scope=postgresWriteScope(input),eligibilityInspector=this.eligibilityPool?(reference:PostgresEligibilityReference)=>postgresInspectEligibility(this.eligibilityPool!,this.schema,this.authority,reference):undefined;
+    return this.use(this.pool,async client=>{
+      // Choosing the compatible legacy path happens before the callback or any
+      // business transaction. Unknown commits/errors are never retried.
+      const shared=await postgresAuthorityWriteLockMode(client,this.schema)==='share';
+      return postgresBusinessTransaction(client,this.schema,this.authority,c=>this.vectorFeature?withPostgresVectorFeature(c,this.vectorFeature,()=>action(c)):action(c),
+        {eligibilityInspector,prepareEligibilityAtEgress:eligibilityInspector?postgresEligibilityAtEgress:undefined,kernel:this.kernel,access:'write',...(shared?{writeScope:scope}:{})});
+    });
   }
   /** Concurrent object/Function reads with the existing per-request fences.
    * Callbacks may persist their own pagination cursors, but no business edits. */

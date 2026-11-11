@@ -11,7 +11,7 @@ import {IncompleteRelationshipRead,linkSnapshotDigest,objectQuerySchema,ontology
   type ObjectBatch,type ManagedObjectBatch,type ObjectTombstone,type ObjectSource,type ObjectView,type ObjectQuery,type OntologyQueryResult,type ReadBudget,type LinkWrite} from '../ontology/object-store.js';
 import {runGraphProgramAsync,type GraphProgram,type GraphStorage,type ProjectionMetadata} from '../ontology/graph-program.js';
 import type {StagedKernelBuilder} from '../ontology/seed-definition.js';
-import {postgresBusinessSchema,postgresBusinessToken} from './runtime-transaction.js';
+import {postgresBusinessSchema,postgresBusinessToken,postgresRequireOwnerWrite} from './runtime-transaction.js';
 import {postgresAssertOntologyAccess,postgresOntologyRelease,postgresOntologyDefinitionCompatible} from './ontology-release.js';
 import {assertIdentityAssertionWriteProgram} from '../ontology/identity-mapping.js';
 import {assertTransactionPartyRoleWriteProgram} from '../ontology/errand-domain.js';
@@ -371,7 +371,7 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     try{return await this.read(owner,ref);}catch(error){if(error instanceof DomainError&&error.code==='NOT_FOUND')return undefined;throw error;}
   }
   async previewManaged(owner:string,input:ManagedObjectBatch,source:ObjectSource):Promise<void>{
-    this.assertOpen(owner);if(this.readOnly)throw new SecurityError('AUTHORIZATION_REQUIRED');
+    this.assertOpen(owner);if(this.readOnly)throw new SecurityError('AUTHORIZATION_REQUIRED');postgresRequireOwnerWrite(this.client,owner);
     await this.sql('SAVEPOINT eigos_managed_preview');
     try{await this.writeManaged(owner,input,source);}
     finally{
@@ -381,11 +381,11 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     }
   }
   async applyManaged(owner:string,input:ManagedObjectBatch,source:ObjectSource):Promise<void>{
-    this.assertOpen(owner);if(this.readOnly)throw new SecurityError('AUTHORIZATION_REQUIRED');
+    this.assertOpen(owner);if(this.readOnly)throw new SecurityError('AUTHORIZATION_REQUIRED');postgresRequireOwnerWrite(this.client,owner);
     await this.writeManaged(owner,input,source);
   }
   private async writeManaged(owner:string,input:ManagedObjectBatch,source:ObjectSource):Promise<void>{
-    this.assertOpen(owner);if(this.readOnly)throw new SecurityError('AUTHORIZATION_REQUIRED');
+    this.assertOpen(owner);if(this.readOnly)throw new SecurityError('AUTHORIZATION_REQUIRED');postgresRequireOwnerWrite(this.client,owner);
     if(source.kind!=='user'&&source.kind!=='task')throw new DomainError('FORBIDDEN','Managed actions cannot fabricate provider provenance');
     const batch=ontologyBatchSchema.parse(structuredClone({objects:input.objects,links:input.links,removeLinks:input.removeLinks}));
     const creates=z.array(objectRefSchema).max(200).parse(input.creates??[]),tombstones=z.array(z.strictObject({ref:objectRefSchema,expectedRevision:z.number().int().positive()})).max(64).parse(input.tombstones??[]);
@@ -416,7 +416,7 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
   }
   async ingest(owner:string,input:ObjectBatch,provenance:ObjectSource):Promise<void>{return this.ingestBatch(owner,input,provenance);}
   private async ingestBatch(owner:string,input:ObjectBatch,provenance:ObjectSource,tombstones:ObjectTombstone[]=[]):Promise<void>{
-    this.assertOpen(owner);if(this.readOnly)throw new SecurityError('AUTHORIZATION_REQUIRED');
+    this.assertOpen(owner);if(this.readOnly)throw new SecurityError('AUTHORIZATION_REQUIRED');postgresRequireOwnerWrite(this.client,owner);
     if(Buffer.byteLength(JSON.stringify(input))>1000000)fail('Ontology import byte limit exceeded');
     const batch=ontologyBatchSchema.parse(structuredClone(input)),source=ontologySourceSchema.parse(structuredClone(provenance));
     if(batch.objects.some(object=>isVirtualRef(object.ref))||[...batch.links,...batch.removeLinks].some(link=>isVirtualRef(link.from)||isVirtualRef(link.to)||networkLinkIds.has(link.type)))throw new DomainError('FORBIDDEN','Network facts must remain in the authorized network read view');

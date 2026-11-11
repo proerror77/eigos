@@ -2,6 +2,27 @@ import type { Client } from 'pg';
 
 const schemaPattern = /^eigos_business_[a-z0-9_]{1,40}$/;
 
+export const postgresAuthorityLockBody=(schema:string,mode:'update'|'share')=>{
+  if(!schemaPattern.test(schema))throw new Error('Invalid PostgreSQL business schema');
+  return `SELECT a.id,a.revision,a.configuration_digest FROM "${schema}".runtime_authority a WHERE a.slot=1 FOR ${mode.toUpperCase()}`;
+};
+
+/** Physical reviewed contract, not a receipt boolean. Old installations remain
+ * supported but cannot opt in to concurrent owner/task writes until upgraded. */
+export async function postgresAuthorityWriteLockMode(client:Client,schema:string):Promise<'update'|'share'>{
+  if(!schemaPattern.test(schema))throw new Error('Invalid PostgreSQL business schema');
+  const rows=await client.query(`SELECT p.prosrc,p.prosecdef,p.proretset,p.proisstrict,p.proleakproof,p.provolatile,p.proparallel,p.prokind,p.pronargs,p.proconfig,p.proowner=n.nspowner AS owner_matches,l.lanname,
+    EXISTS(SELECT 1 FROM pg_catalog.aclexplode(COALESCE(p.proacl,pg_catalog.acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE') AS public_execute
+    FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace JOIN pg_catalog.pg_language l ON l.oid=p.prolang
+    WHERE n.nspname=$1 AND p.proname='eigos_lock_runtime_authority'`,[schema]);
+  const fn=rows.rows[0];
+  if(rows.rowCount!==1||typeof fn?.prosrc!=='string'||fn.prosecdef!==true||fn.proretset!==true||fn.proisstrict!==false||fn.proleakproof!==false
+    ||fn.provolatile!=='v'||fn.proparallel!=='u'||fn.prokind!=='f'||Number(fn.pronargs)!==0||fn.owner_matches!==true||fn.lanname!=='sql'||fn.public_execute!==false
+    ||JSON.stringify(fn.proconfig)!==JSON.stringify(['search_path=pg_catalog, pg_temp']))throw new Error('Protected authority write-lock function differs from the reviewed contract');
+  for(const mode of ['update','share'] as const)if(fn.prosrc.trim()===postgresAuthorityLockBody(schema,mode))return mode;
+  throw new Error('Protected authority write-lock function differs from the reviewed contract');
+}
+
 /** Create the authority row lock under the migration owner's privileges. The
  * function and PUBLIC revoke are one SQL batch and must be installed before
  * any runtime role receives schema access. Grant EXECUTE separately to a
@@ -12,7 +33,7 @@ export async function installPostgresAuthorityLock(client: Client, schema: strin
     CREATE FUNCTION "${schema}".eigos_lock_runtime_authority()
     RETURNS TABLE(id text, revision bigint, configuration_digest text)
     LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp
-    AS $$ SELECT a.id,a.revision,a.configuration_digest FROM "${schema}".runtime_authority a WHERE a.slot=1 FOR UPDATE $$;
+    AS $$ ${postgresAuthorityLockBody(schema,'share')} $$;
     REVOKE ALL ON FUNCTION "${schema}".eigos_lock_runtime_authority() FROM PUBLIC;
     CREATE FUNCTION "${schema}".eigos_current_runtime_authority()
     RETURNS TABLE(id text, revision bigint, configuration_digest text)
