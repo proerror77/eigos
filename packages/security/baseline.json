@@ -5040,10 +5040,10 @@
         "postgres"
       ],
       "content": "Privileged runtime authority row lock function",
-      "currentControl": "Empty transaction mutex precedes the first data snapshot; fixed-schema security-definer authority readers revoke PUBLIC execution and preserve denial of direct authority-table access",
+      "currentControl": "Protected owner-controlled security-definer functions. The reviewed historical FOR UPDATE form serializes legacy writers. The reviewed FOR SHARE form permits scoped writers and still fences administrative authority changes.",
       "targetControl": "Empty transaction mutex precedes the first data snapshot; fixed-schema security-definer authority readers revoke PUBLIC execution and preserve denial of direct authority-table access",
       "stage": "S5",
-      "sourceDigest": "2ea6fa3edb0f7cc805eaf5abc0a3471fa41ca2f1df3f6dacc2ee4aa87e87a6f3"
+      "sourceDigest": "214b3f81c368d96bcbafed99d2565149e16dd65ad6616da334d39f8f0f44e912"
     },
     {
       "id": "postgres-authority-publisher",
@@ -5145,7 +5145,7 @@
     {
       "id": "postgres-database-runtime",
       "file": "packages/postgres/database.ts",
-      "sourceDigest": "a048305618bddb8fb44ae4911411c2626387cb5b8d55060c80c26b0c0dd8ab9d",
+      "sourceDigest": "27142d4dbc445102ef6a138371dfadf5d52428118573a583136d3185e39a76ae",
       "channels": [
         "internal"
       ],
@@ -5688,7 +5688,7 @@
     {
       "id": "postgres-projection-graph",
       "file": "packages/postgres/projection-graph.ts",
-      "sourceDigest": "2f1c38994d2d4b92cda6da8c85ed2b9c67c2e42bd5fb955e4340aa4b4a64d0ff",
+      "sourceDigest": "fce2fbe080ead65058aeddb1ea6dd044590c3ad2cd0463c0c0d8a70793ae70c8",
       "channels": [
         "internal"
       ],
@@ -5712,7 +5712,7 @@
     {
       "id": "postgres-runtime-handoff",
       "file": "packages/deployment/postgres-handoff.ts",
-      "sourceDigest": "8d3d31fdfd8296653a2e3f400400bc1a33fc1cc5578b1f2ef37699d429b854cb",
+      "sourceDigest": "b8de37cfd6ca90b7eb7c7801cf8a7539015cc5b732804cd9b10b0d84ab24ef79",
       "channels": [
         "internal"
       ],
@@ -5741,10 +5741,10 @@
         "postgres"
       ],
       "content": "PostgreSQL business mutation transaction primitive",
-      "currentControl": "Business writes retain serializable exclusive fencing. Audited query callbacks share the fence under READ COMMITTED, resolve current authority without a row lock, and recheck authority after commit. Exact transaction identity, deadlines, current eligibility, uncertain-outcome eviction and cursor scope remain enforced.",
+      "currentControl": "Exact transaction identity, authority and fixed deadline checks. Shared readers fence every business writer. Audited writers may use scoped locks only with the reviewed shared authority helper, and unknown outcomes evict without automatic retry.",
       "targetControl": "Serializable business state after transaction-scoped table serialization, exact authority/transaction identity and savepoint guards; current deadlines before/after commit, unknown-outcome eviction and no automatic retries",
       "stage": "S5",
-      "sourceDigest": "4250b441a9a076cb541cbf76e0ea7a30fb58a958a8d12a7115dfbfdbc30a5162"
+      "sourceDigest": "aabc2a5de850510454e2c3b6706ec715c54bf74286544631dc3f68b02d640f9d"
     },
     {
       "id": "postgres-source-projection",
@@ -5941,7 +5941,7 @@
     {
       "id": "postgres-task-storage",
       "file": "packages/postgres/task-storage.ts",
-      "sourceDigest": "7d55666bc2cfc4a0536707bf91b73c7948804ab668b8c63b2b79c2d744a2552f",
+      "sourceDigest": "857451cf8209d43adee7423d1acfc3ca76407ce42fb9fcf5d01fcb8f3fe6dd38",
       "channels": [
         "internal"
       ],
@@ -6116,12 +6116,12 @@
     {
       "id": "postgres-worker-store",
       "file": "packages/postgres/worker-store.ts",
-      "sourceDigest": "fa9000f7b2bd6dfb21c23fd4b653dbeee519884a69eaff1e4fdf6cfb4c1ed7fd",
+      "sourceDigest": "5ceb14c58c0eab49315934c3df60b213f16fefca432cce2ec0d0936d5bc54d6a",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL durable Worker queue and writeback",
-      "currentControl": "Shared bounded model/execution and per-owner capacity checked in the serialized business transaction; owner occupancy fairness and bounded candidate pagination. Immutable versioned opaque-token reservation, exact active-contract match, conservative legacy-token accounting and total budget including safety recovery. Execution reservations cannot begin model usage. Original authority/token, renewal, cancel/late-output fences and unknown-effect preservation remain.",
+      "currentControl": "Bounded original-claim admissions and leases. Scoped queue capacity is serialized briefly, with busy owner and row locks skipped. Owner projection writes and task-only usage/release operations retain their applicable lock and original effect fences.",
       "targetControl": "Shared bounded model/execution and per-owner capacity checked in the serialized business transaction; owner occupancy fairness and bounded candidate pagination. Immutable versioned opaque-token reservation, exact active-contract match, conservative legacy-token accounting and total budget including safety recovery. Execution reservations cannot begin model usage. Original authority/token, renewal, cancel/late-output fences and unknown-effect preservation remain.",
       "stage": "S5"
     },
@@ -8079,6 +8079,42 @@
       "content": "PostgreSQL query selection and predicate validation",
       "currentControl": "Selections and predicates use the pinned property contract. Restricted properties, unsupported kinds and values outside the exact schema are refused before use.",
       "targetControl": "Selections and predicates use the pinned property contract. Restricted properties, unsupported kinds and values outside the exact schema are refused before use.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-write-scope",
+      "file": "packages/postgres/write-scope.ts",
+      "sourceDigest": "348b81d00e548b1a73b063bf5b067c975cc0e8b712677628f7c288b707dab2ec",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL transaction-local write partition locks",
+      "currentControl": "Owner locks partition shared projections. Task locks follow a shared owner lock. Queue capacity uses a transaction-local lock, and owner selection skips busy partitions. These locks convey no authority.",
+      "targetControl": "Owner locks partition shared projections. Task locks follow a shared owner lock. Queue capacity uses a transaction-local lock, and owner selection skips busy partitions. These locks convey no authority.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-write-lock-upgrade",
+      "file": "packages/postgres/write-lock-upgrade.ts",
+      "sourceDigest": "26f9cf1471e26c938cc95b221f45a96cf0714939d6c0b697ff31dbde9d6baf19",
+      "channels": [
+        "internal"
+      ],
+      "content": "Explicit administrative PostgreSQL write-lock upgrade",
+      "currentControl": "The original authority and global fence guard schema-owner-only upgrade. An empty original claim/recovery set is required, the original ACL is retained, and the exact shared lock function is checked before returning.",
+      "targetControl": "The original authority and global fence guard schema-owner-only upgrade. An empty original claim/recovery set is required, the original ACL is retained, and the exact shared lock function is checked before returning.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-write-lock-upgrade-cli",
+      "file": "scripts/postgres-write-lock-upgrade.mjs",
+      "sourceDigest": "050ed989c71746219d3a4b4e8bf1dbfce01348b55ea29939a0fc1e9f63cda1ae",
+      "channels": [
+        "internal"
+      ],
+      "content": "Reviewed PostgreSQL write-lock upgrade command",
+      "currentControl": "Preview is offline. Apply matches the exact reviewed binding, preview digest, administrator and authority. A separate TLS connection verifies the installed lock and original authority before writing the private receipt.",
+      "targetControl": "Preview is offline. Apply matches the exact reviewed binding, preview digest, administrator and authority. A separate TLS connection verifies the installed lock and original authority before writing the private receipt.",
       "stage": "S5"
     }
   ]

@@ -8,7 +8,7 @@ let values;
 try{({values}=parseArgs({options:{help:{type:'boolean'},input:{type:'string'},apply:{type:'boolean'},'expected-preview-digest':{type:'string'},output:{type:'string'}}}));}catch{console.error(usage);process.exit(2);}
 if(values.help){console.log(usage);process.exit(0);}
 if(!values.input||!isAbsolute(values.input)||values.apply&&(!/^[a-f0-9]{64}$/.test(values['expected-preview-digest']??'')||!values.output||!isAbsolute(values.output))||!values.apply&&(values.output||values['expected-preview-digest'])){console.error(usage);process.exit(2);}
-let admin,readback,adminErrors,readbackErrors,acknowledged=false;
+let admin,readback,adminErrors,readbackErrors,attempted=false,acknowledged=false;
 try{
   const {readOwnedBindingFile,postgresConnectionOptions,postgresBindingIdentity}=await import('../dist/packages/deployment/postgres-binding.js');
   const {readPostgresHandoffOperation}=await import('../dist/packages/deployment/postgres-handoff.js');
@@ -31,6 +31,7 @@ try{
     admin=new pg.Client(connection);adminErrors=observePostgresClient(admin);await admin.connect();
     const identity=(await admin.query('SELECT current_database() AS database,current_user AS role,session_user AS session_role')).rows[0];
     if(identity?.database!==binding.connection.database||identity.role!==operation.adminIdentity.role||identity.session_role!==operation.adminIdentity.role)throw new Error('Administrator target differs from the reviewed identity');
+    attempted=true;
     const result=await upgradePostgresWriteLock(admin,binding.business.schema,binding.authority);adminErrors.check();acknowledged=true;
     readback=new pg.Client(connection);readbackErrors=observePostgresClient(readback);await readback.connect();
     if(await postgresAuthorityWriteLockMode(readback,binding.business.schema)!=='share')throw new Error('Independent write-lock readback failed');
@@ -40,7 +41,12 @@ try{
     console.log(JSON.stringify({status:result.status,receiptWritten:true,runtimeStarted:false}));
   }
 }catch{
-  console.error(`PostgreSQL write-lock upgrade refused; ${acknowledged?'the administrative commit was acknowledged':'commit outcome may be unknown'}. Inspect the original authority/function before retrying. No runtime was started.`);process.exitCode=1;
+  const message=acknowledged
+    ? 'The write-lock transaction committed. Inspect the function and receipt before retrying.'
+    : attempted
+      ? 'The write-lock upgrade did not return a commit acknowledgement. Inspect the original function before retrying.'
+      : 'The write-lock upgrade was refused before the transaction started. Check the reviewed input, target and credentials.';
+  console.error(message);process.exitCode=1;
 }finally{
   for(const [client,observer] of [[readback,readbackErrors],[admin,adminErrors]])if(client){try{await client.end();observer?.check();}catch{process.exitCode=1;}finally{observer?.close();}}
 }
