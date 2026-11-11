@@ -141,7 +141,9 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
     },options.builder,options.modelChannel,options.inspectClaim);
     return {admission,selected};
   };
-  await source();const job=await new PostgresTaskStorage(client,options.builder).get(claim.owner,claim.job.id),release=job.delegation?.ontologyRelease;
+  const originalSource=await source();
+  const sourceStamp=(value:typeof originalSource)=>digest({parent:value.admission.parent,grant:value.admission.grant,source:value.selected,policy:value.admission.policyRevision});
+  const job=await new PostgresTaskStorage(client,options.builder).get(claim.owner,claim.job.id),release=job.delegation?.ontologyRelease;
   if(!release||release.ontologyId!=='eigos.business'||request.revision!==job.delegation?.request.revision)throw new SecurityError('POLICY_CHANGED');
   const metadata=await PostgresProjectionGraph.create(client,claim.owner,release,options.builder,{readOnly:true});
   const canonicalRestrictions=new Map<string,SecurityEnvelope>();
@@ -195,8 +197,8 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
       const job=await new PostgresTaskStorage(client,options.builder).get(claim.owner,request.id);
       await postgresCallerActionAuthority(client,principal,admission,job,new DynamicOntologyProgram(metadata.model,metadata.releaseRef,claim.owner),options,managed);
     },options.builder,undefined,options.inspectClaim);
-    const stamp=digest({parent:initial.admission.parent,grant:initial.admission.grant,source:initial.selected,policy:initial.admission.policyRevision});
-    const current=async()=>{const next=await source();if(digest({parent:next.admission.parent,grant:next.admission.grant,source:next.selected,policy:next.admission.policyRevision})!==stamp)throw new SecurityError('POLICY_CHANGED');};
+    const initialStamp=sourceStamp(initial);
+    const current=async()=>{if(sourceStamp(await source())!==initialStamp)throw new SecurityError('POLICY_CHANGED');};
     for(const object of batch.objects){
       const rule=initial.admission.grant.outputs.find(rule=>rule.programId===origin.programId&&rule.programDigest===origin.programDigest&&rule.sourceBindingId===origin.sourceBindingId&&rule.type===object.ref.type);
       const allowed=initial.admission.parent.resources.find(resource=>resource.type===object.ref.type)?.fields??[];
@@ -207,13 +209,17 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
     try{
       const graph=await PostgresProjectionGraph.create(client,claim.owner,release,options.builder);if(managed)await graph.applyManaged(owner,managed,provenance);else await graph.ingest(owner,batch,provenance);
       const binder=new PostgresTaskBindings(client,options.builder);
+      // The canonical DiDi batch is fully server-derived. Only its graph,
+      // bindings and origins change here. Recheck the exact source after the
+      // batch, inside the savepoint, so a stale authority rolls back all rows.
+      const checkBinding=canonical?async()=>{active();if(initial.admission.validUntil<=Date.now())throw new SecurityError('ACCESS_REVOKED');}:current;
       for(const object of batch.objects){
         const row=await client.query(`SELECT revision,definition_digest FROM ${q}.ontology_objects WHERE owner=$1 AND type=$2 AND id=$3 LIMIT 2`,[owner,object.ref.type,object.ref.id]);
         if(row.rowCount!==1)throw new SecurityError('POLICY_CHANGED');const revision=Number(row.rows[0].revision);
         const rule=initial.admission.grant.outputs.find(rule=>rule.programId===origin.programId&&rule.programDigest===origin.programDigest&&rule.sourceBindingId===origin.sourceBindingId&&rule.type===object.ref.type)!;
         const permit:PostgresSourceBindingPermit=Object.freeze({[brand]:true as const});
         permits.set(permit,{client,token,grant:initial.admission.grant,ref:object.ref,revision,fingerprint:String(row.rows[0].definition_digest),fields:object.observedFields?rule.fields.filter(field=>object.observedFields!.includes(field)):rule.fields,
-          sourceBindingId:origin.sourceBindingId,evidence:inherited,...(metadata.model.hasType('ObservedFact')&&object.reuseIfUnchanged?{sourceObservation:origin}:{}),assertCurrent:current});
+          sourceBindingId:origin.sourceBindingId,evidence:inherited,...(metadata.model.hasType('ObservedFact')&&object.reuseIfUnchanged?{sourceObservation:origin}:{}),assertCurrent:checkBinding});
         await binder.bindSourceProjection(permit);
         const personal=await personalAsset(object.ref,provenance);
         const existing=await client.query(`SELECT CASE WHEN octet_length(body)<=8388608 THEN body END AS body FROM ${q}.security_object_origins WHERE owner=$1 AND type=$2 AND object_id=$3 AND object_revision=$4 LIMIT 2`,[owner,object.ref.type,object.ref.id,revision]);
@@ -267,6 +273,20 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
     }catch(error){await client.query(`ROLLBACK TO SAVEPOINT ${name}`);await client.query(`RELEASE SAVEPOINT ${name}`);throw error;}
   };
   const canonicalTypes=new Set(['Place','Provider','RideRoute','RideEstimate']);
+  const canonicalViews=new Map<string,number>();
+  const checkCanonicalView=async(type:string)=>{
+    const until=await authorize(client,claim,options.policyDigest,(_auth,_admission,principal)=>
+      postgresTaskResourceViewValidUntil(client,principal,request.id,options.policyDigest,'objectType',type,options.builder),options.builder,options.modelChannel,options.inspectClaim);
+    if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');
+    postgresConstrainReadDeadline(client,until);
+    return until;
+  };
+  const canonicalView=async(type:string)=>{
+    let until=canonicalViews.get(type);
+    if(until===undefined){until=await checkCanonicalView(type);canonicalViews.set(type,until);}
+    if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');
+    postgresConstrainReadDeadline(client,until);
+  };
   const expectedAbsences=new WeakSet<object>();
   const absent=():never=>{const error=new DomainError('NOT_FOUND','Original DiDi output has not been projected');expectedAbsences.add(error);throw error;};
   const storedPresence=async(owner:string,ref:ObjectRef)=>{
@@ -283,16 +303,17 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
     // original receipt may establish absence without a binding. Existing or
     // tombstoned objects retain the normal authorization/replay refusal.
     if(canonical&&owner===claim.owner&&freshObservationRefs.has(key(ref))){
-      await source();await canonical.account.assert(client,claim,job,options.policyDigest);
       const exists=await storedPresence(owner,ref);if(!exists.present&&!exists.tombstoned)absent();
     }
     return read(graph=>graph.read(...args));
   };
   const canonicalRead=async(owner:string,ref:ObjectRef,budget:import('../ontology/object-store.js').ReadBudget={remaining:1000})=>{
     active();if(!canonical||caller||owner!==claim.owner||!canonicalTypes.has(ref.type)||metadata.model.objectWritePolicy(ref.type)!=='source')throw new SecurityError('AUTHORIZATION_REQUIRED');
-    await canonical.account.assert(client,claim,job,options.policyDigest);const current=await source(),rule=current.admission.grant.outputs.find(value=>value.type===ref.type&&value.programId===current.selected.programId&&value.programDigest===current.selected.programDigest&&value.sourceBindingId===current.selected.bindingId),allowed=current.admission.parent.resources.find(value=>value.type===ref.type)?.fields??[];
+    // Immutable source authority in the owner-fenced mapper, validated again
+    // before the projection savepoint can release. Object data is read fresh.
+    const current=originalSource,rule=current.admission.grant.outputs.find(value=>value.type===ref.type&&value.programId===current.selected.programId&&value.programDigest===current.selected.programDigest&&value.sourceBindingId===current.selected.bindingId),allowed=current.admission.parent.resources.find(value=>value.type===ref.type)?.fields??[];
     if(!rule||!current.selected.outputTypes.includes(ref.type)||!rule.fields.every(field=>allowed.includes(field)))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
-    await authorize(client,claim,options.policyDigest,async(_auth,_admission,principal)=>{const until=await postgresTaskResourceViewValidUntil(client,principal,request.id,options.policyDigest,'objectType',ref.type,options.builder);if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');postgresConstrainReadDeadline(client,until);},options.builder,options.modelChannel,options.inspectClaim);
+    await canonicalView(ref.type);
     const exists=await storedPresence(owner,ref);if(exists.tombstoned)throw new DomainError('CONFLICT','A deleted canonical source entity cannot be recreated');if(!exists.present)absent();
     const storage=await PostgresProjectionGraph.create(client,owner,release,options.builder,{readOnly:true});
     const view=await storage.readPrivate(owner,ref,budget);
@@ -362,7 +383,17 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
   // snapshots; never reinterpret an older read as the new written revision.
   if(onInfluence)onInfluence(structuredClone(await evidence()));
   const frame=`source_frame_${randomUUID().replaceAll('-','')}`;await client.query(`SAVEPOINT ${frame}`);
-  try{const result=await action(driver);if(pending){open=false;await queue;throw new Error('Source projection callback must await every storage operation');}await source();if(canonical)await canonical.account.assert(client,claim,job,options.policyDigest);await client.query(`RELEASE SAVEPOINT ${frame}`);return result;}
+  try{
+    const result=await action(driver);
+    if(pending){open=false;await queue;throw new Error('Source projection callback must await every storage operation');}
+    const latestSource=await source();
+    if(canonical){
+      if(sourceStamp(latestSource)!==sourceStamp(originalSource))throw new SecurityError('POLICY_CHANGED');
+      for(const type of canonicalViews.keys())await checkCanonicalView(type);
+      await canonical.account.assert(client,claim,job,options.policyDigest);
+    }
+    await client.query(`RELEASE SAVEPOINT ${frame}`);return result;
+  }
   catch(error){open=false;await queue;await client.query(`ROLLBACK TO SAVEPOINT ${frame}`);await client.query(`RELEASE SAVEPOINT ${frame}`);throw error;}
   finally{open=false;await queue;}
 }

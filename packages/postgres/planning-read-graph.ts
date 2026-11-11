@@ -61,6 +61,7 @@ class PlanningReadGraph implements GraphStorage, ProjectionMetadata {
   private charge(budget: ReadBudget) { if (--budget.remaining < 0) throw new DomainError('CONFLICT', 'Ontology read work budget exhausted; narrow the query'); }
   private capture = (input: SecurityEnvelope) => { this.active(); this.inputs.set(digest(input), structuredClone(input)); };
   evidence() { this.active(); return this.inputs.size ? combineEnvelopes([...this.inputs.values()]) : undefined; }
+  clearEvidence() { this.active(); this.inputs.clear(); }
   async authorize() { this.active(); const evidence = this.evidence(); if (!evidence) return undefined; const result = await this.auth.authorizeEvidence(evidence); this.active(); return result; }
   async read(owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 1000 }) {
     this.active(owner); this.charge(budget); objectRefSchema.parse(ref);

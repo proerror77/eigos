@@ -22,7 +22,7 @@ import {postgresWorkerAdmission} from './worker-admission.js';
 import {PostgresTaskStorage} from './task-storage.js';
 import {postgresPrepareWorkerSeal,postgresRecordWorkerOutputs} from './worker-output.js';
 import {postgresRecordClaimRelease} from './claim-release.js';
-import {withPostgresWorkerEvidenceAuthorization} from './task-output.js';
+import {withPostgresWorkerEvidenceAuthorization,withPostgresWorkerRequestAuthorization} from './task-output.js';
 import {withPostgresPlanningReadGraph,postgresPlanningAccessDigest} from './planning-read-graph.js';
 import {withPostgresTaskDefinitionAccess} from './ontology-metadata.js';
 import {assertPostgresPlanningDecisionEvidence,postgresGoalProgram} from './goal-contexts.js';
@@ -57,7 +57,8 @@ export async function acceptPostgresGoal(client:Client,input:PostgresWorkReferen
       if(resolved.size!==1||registration?.registration.kind!=='didi'||!same(didiShortPathGoal(job,registration.program.capability()),state.composition!.goal))fail('DiDi short path completion differs from its fixed quote goal');
     }
     const intents=await store.intents(claim.owner,job.id);
-    const evaluated=await withPostgresWorkerEvidenceAuthorization(client,claim,options.policyDigest,(auth,admission,principal)=>
+    const authorize=didi?withPostgresWorkerRequestAuthorization:withPostgresWorkerEvidenceAuthorization;
+    const evaluated=await authorize(client,claim,options.policyDigest,(auth,admission,principal)=>
       withPostgresPlanningReadGraph(client,principal,job.id,options.policyDigest,auth,admission,graph=>withPostgresTaskDefinitionAccess(client,principal,job.id,options.policyDigest,async(access,model)=>{
         const metadata:PlanningMetadata={model:graph.model,now:graph.now,releaseRef:graph.releaseRef,security:true,authorization:{accessDigest:()=>postgresPlanningAccessDigest(admission),
           definitions:()=>authorizedDefinitionCatalogue(access,model),describe:value=>describeDefinitionCatalogue(access,value,model),

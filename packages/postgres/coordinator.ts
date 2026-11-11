@@ -139,8 +139,9 @@ export class PostgresCoordinator {
   }
   private async access(claim:WorkClaim,job:Job,purpose:'grounding'|'agent',signal:AbortSignal,bootstrapComplete=true){
     const state=job.delegation?.agent,refs=[...(state?[state.scope,...state.observations]:[]),...(state?.composition?.contexts??[]).filter(component=>!state?.composition?.retiredContexts?.some(retired=>retired.id===component.id)).map(component=>component.scope)];
+    const fixedDidi=purpose==='agent'&&job.delegation?.didiEstimate!==undefined;
     const session=await PostgresNativePlanningSession.create(this.configured.store,claim,this.options.policyDigest,this.options.modelChannel,{builder:this.options.builder,signal,boundRefs:refs,readScope:'request',priorReads:job.delegation?.ontologyReads,actionCatalog:this.runtime.catalog,
-      taskContext:{purpose,refs,capabilityDirectory:{bootstrapComplete,discoveryTool:'discover_actions'}},
+      ...(fixedDidi?{}:{taskContext:{purpose,refs,capabilityDirectory:{bootstrapComplete,discoveryTool:'discover_actions'}}}),
       discoverActions:(graph,owner,request,input,context)=>discoverPostgresDocumentActions(graph,owner,request,input,context,this.options)});
     claim.modelContextKey=session.modelSessionKey();
     const record=async(evidence:RunEvidence)=>{if(!await this.configured.store.recordRun(claim,evidence,purpose==='grounding'?'request_interpreted':'agent_decision'))throw new SecurityError('ACCESS_REVOKED');};
@@ -202,15 +203,25 @@ export class PostgresCoordinator {
     }
     if(d.agent!.pendingPlanId){
       const plan=d.agent!.plans.find(value=>value.id===d.agent!.pendingPlanId);if(!plan)fail('The original pending plan is missing');
-      for(const step of plan.steps){
+      const execute=async(step:typeof plan.steps[number])=>{
         const intent=intents.find(value=>value.id===step.intentId);if(!intent)fail('The original plan intent is missing');
-        if(intent.state==='effect_confirmed')continue;
+        if(intent.state==='effect_confirmed')return;
         if(intent.state!=='ready')throw new SecurityError('AUTHORITY_UNAVAILABLE','An original dispatched operation must be reconciled; automatic replay is prohibited');
         const entry=this.runtime.require(step.binding?.programRef??plan.programRef,step.binding?.configurationDigest??plan.programDigest);
         if(entry.kind==='document'&&step.action==='ComposeDocument'&&step.effect==='local')await this.execution.execute(claim,intent.id,signal);
         else if(entry.kind==='didi'&&step.effect==='read')await this.didi.execute(claim,intent.id,signal);
         else throw new SecurityError('AUTHORITY_UNAVAILABLE','The selected program has no installed PostgreSQL execution adapter');
-      }
+      };
+      if(plan.didiDecision&&plan.steps.length===2&&plan.steps.every(step=>step.action==='SearchDidiPlaces'&&step.effect==='read'&&!step.dependsOn.length)){
+        // An old uncertain attempt must be reconciled before any new dispatch.
+        if(plan.steps.some(step=>!intents.some(intent=>intent.id===step.intentId&&['ready','effect_confirmed'].includes(intent.state))))
+          throw new SecurityError('AUTHORITY_UNAVAILABLE','An original dispatched operation must be reconciled; automatic replay is prohibited');
+        // Both searches use only the original route. Their journal commits
+        // still serialize by owner, but neither source call depends on the
+        // other search returning or its observation being projected.
+        const results=await Promise.allSettled(plan.steps.map(execute));
+        for(const result of results)if(result.status==='rejected')throw result.reason;
+      }else for(const step of plan.steps)await execute(step);
       await this.transition(claim,current=>{delete current.delegation!.agent!.pendingPlanId;current.delegation!.phase='planning';current.delegation!.nextAt=0;});return;
     }
     if(d.didiEstimate)await this.advanceDidiEstimate(claim,job,intents,signal);
@@ -278,39 +289,38 @@ export class PostgresCoordinator {
     if(!same(composition.goal,didiShortPathGoal(job,program))||state.plans.length>2||composition.contexts.length>1)fail('The original DiDi estimate workflow changed');
     const readStarted=performance.now(),{session}=await this.access(claim,job,'agent',signal);
     try{
-      const read=async(tool:string,input:unknown)=>{
-        const output=await session.call(tool,input,{origin:'worker_context',maxOutputBytes:150000});
-        if(session.lastReceipt()?.status!=='ok')fail('A required DiDi Ontology read is unavailable');
-        return output;
-      };
-      const binding=async(action:string)=>{
-        const page=await read('discover_actions',{actionId:action,programRef:DIDI_PROGRAM_REF}) as ActionDiscoveryPage;
-        const current=page.items.flatMap(item=>item.bindings).filter(value=>value.readiness==='ready');
-        if(current.length!==1)throw new SecurityError('SOURCE_NOT_AUTHORIZED','A unique current DiDi binding is required');
-        return current[0]!.pin.digest;
-      };
-      const result=(planIndex:number,stepId:string)=>{
-        const step=state.plans[planIndex]?.steps.find(value=>value.id===stepId);
-        const intent=step&&intents.find(value=>value.id===step.intentId&&value.state==='effect_confirmed');
-        return intent?.acceptedOutput?.object??fail('The original DiDi step has no accepted source observation');
-      };
-      const root={type:'ServiceRequest',id:job.id},context=composition.contexts[0],criteria=composition.goal.criteria.map(item=>item.id);
-      const base={requestRevision:session.request.revision,message:'Fixed DiDi read-only estimate workflow',steps:[],completionJson:''};
-      let decision:AgentDecision;
-      await read('read_task_context',{});
-      await read('query_ontology',{object:root});
-      if(!context){
-        if(state.plans.length)fail('DiDi scope is missing from the original frontier');
-        decision={...base,kind:'prepare',contexts:[{id:didiEstimateComponent,bindingDigest:await binding('SearchDidiPlaces'),inputJson:JSON.stringify(route)}]};
-      }else{
+      const {value:planned,reads}=await session.readWorkerContext(async(read):Promise<AgentDecision|undefined>=>{
+        const binding=async(action:string)=>{
+          const page=await read('discover_actions',{actionId:action,programRef:DIDI_PROGRAM_REF}) as ActionDiscoveryPage;
+          const current=page.items.flatMap(item=>item.bindings).filter(value=>value.readiness==='ready');
+          if(current.length!==1)throw new SecurityError('SOURCE_NOT_AUTHORIZED','A unique current DiDi binding is required');
+          return current[0]!.pin.digest;
+        };
+        const result=(planIndex:number,stepId:string)=>{
+          const step=state.plans[planIndex]?.steps.find(value=>value.id===stepId);
+          const intent=step&&intents.find(value=>value.id===step.intentId&&value.state==='effect_confirmed');
+          return intent?.acceptedOutput?.object??fail('The original DiDi step has no accepted source observation');
+        };
+        const root={type:'ServiceRequest',id:job.id},context=composition.contexts[0],criteria=composition.goal.criteria.map(item=>item.id);
+        const base={requestRevision:session.request.revision,message:'Fixed DiDi read-only estimate workflow',steps:[],completionJson:''};
+        // The fixed decision already binds every original instruction through
+        // didiShortPathDecisionId. Its actual evidence is the exact action
+        // contract, task, scope and source observations it uses below.
+        await read('describe_ontology',{kind:'actions',actions:[state.plans.length?'EstimateDidiRide':'SearchDidiPlaces'],limit:1,includeLinks:false});
+        await read('query_ontology',{object:root});
+        if(!context){
+          if(state.plans.length)fail('DiDi scope is missing from the original frontier');
+          return {...base,kind:'prepare',contexts:[{id:didiEstimateComponent,bindingDigest:await binding('SearchDidiPlaces'),inputJson:JSON.stringify(route)}]};
+        }
         await read('query_ontology',{object:context.scope});
         const step=(id:string,action:string,bindingDigest:string,input:Record<string,unknown>)=>({
           id,action,bindingDigest,contextId:context.id,contributesTo:criteria,argumentsJson:JSON.stringify({scope:context.scope,...input}),dependsOn:[],inputRefs:[],
         });
         if(!state.plans.length){
           const pin=await binding('SearchDidiPlaces');
-          decision={...base,kind:'execute',steps:(['origin','destination'] as const).map(role=>step(role,'SearchDidiPlaces',pin,{role,keywords:route[role]}))};
-        }else if(state.plans.length===1){
+          return {...base,kind:'execute',steps:(['origin','destination'] as const).map(role=>step(role,'SearchDidiPlaces',pin,{role,keywords:route[role]}))};
+        }
+        if(state.plans.length===1){
           const originObservation=result(0,'origin'),destinationObservation=result(0,'destination');
           const select=async(object:typeof originObservation)=>{
             await read('query_ontology',{object});
@@ -320,27 +330,25 @@ export class PostgresCoordinator {
             return parsed.success?parsed.data.value.placeId:undefined;
           };
           const originPlaceId=await select(originObservation),destinationPlaceId=await select(destinationObservation);
-          if(!originPlaceId||!destinationPlaceId){
-            await this.transition(claim,current=>{
-              current.state='input-required';current.delegation!.phase='clarifying';
-              current.question='滴滴没有唯一匹配的起点或终点。请提供对应地点的完整地址。';
-              current.updatedAt=new Date().toISOString();
-            },{release:true});return;
-          }
-          decision={...base,kind:'execute',steps:[step('estimate','EstimateDidiRide',await binding('EstimateDidiRide'),{originObservation,originPlaceId,destinationObservation,destinationPlaceId})]};
-        }else{
-          const observation=result(1,'estimate');
-          await read('query_ontology',{object:observation});
-          await read('evaluate_ontology',{function:'rideEstimateStatus',object:observation});
-          decision={...base,kind:'complete',completionJson:JSON.stringify({
-            components:[{contextId:context.id,proposalJson:JSON.stringify({observation,rationale:'Verify the original DiDi estimate source observation'})}],
-            criteria:criteria.map(criterion=>({id:criterion,contextIds:[context.id]})),conditions:[],
-          })};
+          if(!originPlaceId||!destinationPlaceId)return undefined;
+          return {...base,kind:'execute',steps:[step('estimate','EstimateDidiRide',await binding('EstimateDidiRide'),{originObservation,originPlaceId,destinationObservation,destinationPlaceId})]};
         }
+        const observation=result(1,'estimate');
+        await read('query_ontology',{object:observation});
+        await read('evaluate_ontology',{function:'rideEstimateStatus',object:observation});
+        return {...base,kind:'complete',completionJson:JSON.stringify({
+          components:[{contextId:context.id,proposalJson:JSON.stringify({observation,rationale:'Verify the original DiDi estimate source observation'})}],
+          criteria:criteria.map(criterion=>({id:criterion,contextIds:[context.id]})),conditions:[],
+        })};
+      });
+      if(!planned){
+        await this.transition(claim,current=>{
+          current.state='input-required';current.delegation!.phase='clarifying';
+          current.question='滴滴没有唯一匹配的起点或终点。请提供对应地点的完整地址。';
+          current.updatedAt=new Date().toISOString();
+        },{release:true});return;
       }
-      decision=agentDecisionSchema.parse(decision);
-      await session.acceptReceipts(session.receipts().map(receipt=>receipt.id));
-      const reads=await session.finish(),options={...this.options,programs:this.runtime.policies(),maxTaskMs:this.maximum,
+      const decision=agentDecisionSchema.parse(planned),options={...this.options,programs:this.runtime.policies(),maxTaskMs:this.maximum,
         didiReadTiming:{durationMs:Math.round(performance.now()-readStarted),receipts:reads.reads.length}};
       signal.throwIfAborted();
       if(decision.kind==='prepare')await this.ownerRun(claim,client=>preparePostgresGoalContexts(client,claim,decision,id,reads,options));

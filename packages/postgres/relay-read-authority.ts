@@ -28,7 +28,7 @@ import {withPostgresWorkerEvidenceAuthorization} from './task-output.js';
 import {postgresConsentIndex} from './consent.js';
 import {PostgresDidiAccount} from './didi-account.js';
 
-export type PostgresRelayReadAuthorityOptions=Omit<PostgresTaskRelayAuthorityOptions,'database'>&{database:Pick<PostgresDatabase,'run'|'inspectClaim'>;builder?:StagedKernelBuilder;didiAccount?:PostgresDidiAccount};
+export type PostgresRelayReadAuthorityOptions=Omit<PostgresTaskRelayAuthorityOptions,'database'>&{database:Pick<PostgresDatabase,'run'|'inspectClaim'>&Partial<Pick<PostgresDatabase,'relayReadMayAdvance'>>;builder?:StagedKernelBuilder;didiAccount?:PostgresDidiAccount};
 type ReadRow={id:string;retry_key:string;peer_id:string;actor:string;policy_revision:unknown;request:string;state:string;connection_id:string|null;result:string|null;has_result:boolean;expires_at:unknown};
 const same=(a:unknown,b:unknown)=>a===undefined?b===undefined:b!==undefined&&digest(a)===digest(b);
 const intentSchema=z.looseObject({id:z.string().min(1),owner:z.string().min(1),jobId:z.string().min(1),planDigest:z.string().regex(/^[a-f0-9]{64}$/),effect:z.string().min(1),dispatchInput:z.record(z.string(),z.unknown()).optional()});
@@ -132,6 +132,7 @@ export class PostgresRelayReadAuthority {
     });
   }
   async pending(){
+    if(await this.options.database.relayReadMayAdvance?.()===false)return [];
     const rows=await this.options.database.run(async client=>{await this.authority.assertCurrent(client);return(await client.query(`SELECT id FROM "${postgresBusinessSchema(client)}".security_relay_reads WHERE state='queued' ORDER BY __eigos_rowid LIMIT 20`)).rows;});
     const result:{peerId:string;request:SourceReadRequest}[]=[];
     for(const item of rows){const id=String(item.id);try{
@@ -149,5 +150,9 @@ export class PostgresRelayReadAuthority {
   async accept(peerId:string,connectionId:string,input:unknown){const result=sourceReadResponseSchema.parse(input);await this.options.database.run(async client=>{const row=await this.row(client,result.callId),request=await this.assert(client,row);if(row.peer_id!==peerId||row.connection_id!==connectionId||result.requestDigest!==digest(request)||result.authorityId!==request.authorityId)throw new SecurityError('AUTHORIZATION_REQUIRED');if(row.result!==null&&!same(JSON.parse(row.result),result))throw new SecurityError('POLICY_CHANGED');await client.query(`UPDATE "${postgresBusinessSchema(client)}".security_relay_reads SET state='completed',result=$1 WHERE id=$2`,[JSON.stringify(result),row.id]);});}
   async ready(claim:PostgresWorkReference,id:string){return this.options.database.run(async client=>{const row=await this.row(client,id);await this.assert(client,row,claim);return row.result!==null;});}
   async result(claim:PostgresWorkReference,id:string):Promise<SourceReadResponse|undefined>{return this.options.database.run(async client=>{const row=await this.row(client,id);await this.assert(client,row,claim);return row.result!==null?sourceReadResponseSchema.parse(JSON.parse(row.result)):undefined;});}
+  async resultIfReady(claim:PostgresWorkReference,id:string):Promise<SourceReadResponse|undefined>{
+    if(await this.options.database.relayReadMayAdvance?.(z.uuid().parse(id))===false)return undefined;
+    return this.result(claim,id);
+  }
   async revoke(id:string){await this.options.database.run(client=>client.query(`UPDATE "${postgresBusinessSchema(client)}".security_relay_reads SET state='revoked' WHERE id=$1 AND state<>'completed'`,[z.uuid().parse(id)]).then(()=>{}));}
 }

@@ -74,6 +74,28 @@ async function fixture(){
   }catch(error){if(target)await target.close();f.close();throw error;}
 }
 
+test('Relay hints skip empty polls but send terminal and missing calls to the fenced result reader',local,async()=>{
+  const x=await fixture();
+  try{
+    const {t,q}=x,id=randomUUID();
+    assert.equal(await t.database.relayReadMayAdvance(),false);
+    assert.equal(await t.database.relayReadMayAdvance(id),true);
+    await t.client.query(`INSERT INTO ${q}.security_relay_reads(id,retry_key,peer_id,actor,policy_revision,request,state,expires_at)
+      VALUES($1,$1,'test-peer','{}',1,'{}','queued',$2)`,[id,Date.now()+60000]);
+    assert.equal(await t.database.relayReadMayAdvance(),true);
+    assert.equal(await t.database.relayReadMayAdvance(id),false);
+    await t.client.query(`UPDATE ${q}.security_relay_reads SET state='dispatched' WHERE id=$1`,[id]);
+    assert.equal(await t.database.relayReadMayAdvance(),false);
+    assert.equal(await t.database.relayReadMayAdvance(id),false);
+    for(const state of ['completed','revoked']){
+      await t.client.query(`UPDATE ${q}.security_relay_reads SET state=$2 WHERE id=$1`,[id,state]);
+      assert.equal(await t.database.relayReadMayAdvance(id),true);
+    }
+    await t.client.query(`UPDATE ${q}.security_relay_reads SET state='dispatched',expires_at=0 WHERE id=$1`,[id]);
+    assert.equal(await t.database.relayReadMayAdvance(id),true);
+  }finally{await x.close();}
+});
+
 test('actual SQL hints cover normal/recovery scheduling and cleanup without granting or renewing a claim',local,async()=>{
   const x=await fixture();try{
     const {t,q,worker,commands,principal}=x;

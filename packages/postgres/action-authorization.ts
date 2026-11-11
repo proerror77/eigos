@@ -32,7 +32,7 @@ import {postgresBusinessSchema,postgresBusinessToken,postgresConstrainReadDeadli
 import {assertFreshPostgresActionIntent,type PostgresActionJournalOptions} from './action-journal.js';
 import {PostgresTaskStorage} from './task-storage.js';
 import {PostgresProjectionGraph} from './projection-graph.js';
-import {withPostgresWorkerEvidenceAuthorization,withPostgresCallerEvidenceAuthorization} from './task-output.js';
+import {withPostgresWorkerEvidenceAuthorization,withPostgresCallerEvidenceAuthorization,withPostgresWorkerRequestAuthorization} from './task-output.js';
 import {withPostgresPlanningReadGraph,postgresPlanningAccessDigest} from './planning-read-graph.js';
 import {withPostgresTaskDefinitionAccess} from './ontology-metadata.js';
 import {postgresTaskReadOntology,postgresTaskResourcePermissionValidUntil} from './task-read-access.js';
@@ -207,7 +207,8 @@ function actionAuthorization(client:Client,options:PostgresActionAuthorizationOp
       return semantic;
     }):undefined;
     const evidence:typeof withPostgresWorkerEvidenceAuthorization=plan.callerDecision?
-      (client,claim,policy,action,builder,_modelChannel,inspect)=>withPostgresCallerEvidenceAuthorization(client,claim,policy,action,builder,inspect):withPostgresWorkerEvidenceAuthorization;
+      (client,claim,policy,action,builder,_modelChannel,inspect)=>withPostgresCallerEvidenceAuthorization(client,claim,policy,action,builder,inspect)
+      :plan.didiDecision?withPostgresWorkerRequestAuthorization:withPostgresWorkerEvidenceAuthorization;
     return evidence(client,check.claim,options.policyDigest,async(auth,admission,principal)=>{
       if(admission.actor.actorKind!=='worker'||admission.actor.taskId!==job.id||admission.grant.taskId!==job.id||admission.grant.requestRevision!==request.revision||!admission.grant.operations.includes('task.process')
         ||![program.ref.id,capability.ref.id].some(id=>admission.parent.capabilityIds.includes(id)))deny();

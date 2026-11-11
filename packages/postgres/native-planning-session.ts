@@ -185,6 +185,34 @@ export class PostgresNativePlanningSession implements ExecutablePlanningSession 
   call(tool: string, input: unknown, options?: { origin: 'worker_context'; maxOutputBytes: number }) {
     return this.rpc((next, _graph, driver) => runGraphProgramAsync(driver, next.callProgram(tool, input, options)));
   }
+  /** Fixed host steps share one checked snapshot and commit their receipts
+   * together. This callback only receives the existing planning reads. */
+  readWorkerContext<T>(action: (read: (tool: string, input: unknown) => Promise<unknown>) => Promise<T>) {
+    return this.rpc(async (next, graph, driver) => {
+      let open = true, reading = false;
+      const read = async (tool: string, input: unknown) => {
+        this.active();
+        if (!open || reading) throw new SecurityError('AUTHORIZATION_REQUIRED');
+        reading = true;
+        try {
+          const value = await runGraphProgramAsync(driver, next.callProgram(tool, input, { origin: 'worker_context', maxOutputBytes: 150000 }));
+          if (next.lastReceipt()?.status !== 'ok') throw new DomainError('CONFLICT', 'A required Worker Ontology read is unavailable');
+          // recordRead already authorized and persisted this exact influence.
+          // The next receipt must carry its own reads, even in this snapshot.
+          graph.clearEvidence();
+          return value;
+        } finally { reading = false; }
+      };
+      try {
+        const value = await action(read);
+        if (reading) throw new SecurityError('AUTHORIZATION_REQUIRED');
+        open = false;
+        await runGraphProgramAsync(driver, next.acceptReceiptsProgram(next.receipts().map(receipt => receipt.id)));
+        const reads = await runGraphProgramAsync(driver, next.finishProgram());
+        return { value, reads };
+      } finally { open = false; }
+    });
+  }
   acceptReceipts(ids: string[]) { return this.rpc((next, _graph, driver) => runGraphProgramAsync(driver, next.acceptReceiptsProgram(ids))); }
   finish(candidate?: ResolvedCandidate) { return this.rpc((next, _graph, driver) => runGraphProgramAsync(driver, next.finishProgram(candidate))); }
   authorizeModel(channel?: string) {

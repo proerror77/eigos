@@ -9,7 +9,7 @@ import {postgresRenewWorkerLease,postgresInspectWorkerLease} from './lease-renew
 import type {WorkClaim} from '../core/store.js';
 import {postgresCleanupReleasedClaims} from './claim-release.js';
 import {stagedKernelComponents,type StagedKernelBuilder} from '../ontology/seed-definition.js';
-import {postgresWorkAvailable} from './work-availability.js';
+import {postgresRelayReadMayAdvance,postgresWorkAvailable} from './work-availability.js';
 import {registerPostgresConsentKernel} from './consent.js';
 import {withPostgresVectorFeature} from './embedding-index.js';
 import {postgresVectorFeatureSchema,type PostgresVectorFeature} from './embedding-schema.js';
@@ -96,6 +96,7 @@ export class PostgresDatabase {
   cleanupReleasedClaims():Promise<void>{return this.use(this.pool,client=>postgresCleanupReleasedClaims(client,this.schema,this.authority.digest));}
   /** A false result skips one empty poll; true grants no claim or authority. */
   workAvailable():Promise<boolean>{return this.use(this.pool,client=>postgresWorkAvailable(client,this.schema,this.authority));}
+  relayReadMayAdvance(callId?:string):Promise<boolean>{return this.use(this.pool,client=>postgresRelayReadMayAdvance(client,this.schema,this.authority,callId));}
   async close():Promise<void> {
     this.closing??=Promise.all([...new Set([this.pool,...(this.leasePool?[this.leasePool]:[]),...(this.eligibilityPool?[this.eligibilityPool]:[])])].map(pool=>pool.end())).then(()=>{});
     await this.closing;

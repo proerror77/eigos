@@ -24,9 +24,7 @@ export class PostgresDidiRelayConnector implements DidiConnector {
     let failure:unknown;
     try{
       while(!signal.aborted&&Date.now()<request.expiresAt){
-        await beforeCall?.();signal.throwIfAborted();
-        if(!await this.reads.ready(claim,request.callId)){await delay(100,undefined,{signal});continue;}
-        const response=await this.reads.result(claim,request.callId);
+        const response=await this.reads.resultIfReady(claim,request.callId);
         if(response?.error)throw new DidiReadError(response.error);
         if(response?.result){signal.throwIfAborted();await beforeCall?.();signal.throwIfAborted();if(request.expiresAt<=Date.now())throw new DidiReadError('READ_OUTCOME_UNKNOWN');return response.result;}
         await delay(100,undefined,{signal});

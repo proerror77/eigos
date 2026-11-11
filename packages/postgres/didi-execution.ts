@@ -6,12 +6,12 @@ import type {WorkClaim} from '../core/store.js';
 import {executionBudgetStatus} from '../core/execution-budget.js';
 import {canRecoverReadOnly,resolveTaskRecovery} from '../core/task-recovery.js';
 import {sealComposedOutputsProgram} from '../core/composed-actions.js';
-import {validateDidiCallPlanningProgram,didiCallContext,buildDidiReadResult,projectDidiProgram,didiOutputPorts,type DidiResolvedCall,type DidiReadInvocationContext} from '../capabilities/didi/program.js';
+import {validateDidiCallPlanningProgram,didiCallContext,buildDidiReadResult,didiOutputPorts,type DidiResolvedCall,type DidiReadInvocationContext} from '../capabilities/didi/program.js';
 import type {DidiCallContext} from '../capabilities/didi/connector.js';
 import type {AgentActionResult} from '../core/agent-program.js';
 import type {ActionIntent,ExecutionAttempt} from '../ontology/actions.js';
 import type {ObjectRef} from '../ontology/model.js';
-import {checkedRideEstimate} from '../ontology/ride-estimate-projection.js';
+import {checkedRideEstimate,projectRideEstimateProgram} from '../ontology/ride-estimate-projection.js';
 import {runGraphProgramAsync,type ProjectionMetadata} from '../ontology/graph-program.js';
 import type {StagedKernelBuilder} from '../ontology/seed-definition.js';
 import {SecurityError} from '../security/errors.js';
@@ -22,7 +22,11 @@ import {PostgresActionJournal} from './action-journal.js';
 import {createPostgresActionAuthorization,type PostgresActionSemanticContext} from './action-authorization.js';
 import {PostgresProjectionGraph} from './projection-graph.js';
 import {PostgresTaskStorage} from './task-storage.js';
-import {withPostgresSourceProjection,withPostgresDidiCanonicalSourceProjection,type PostgresSourceProjectionOptions} from './source-projection.js';
+import {withPostgresDidiCanonicalSourceProjection,type PostgresSourceProjectionOptions} from './source-projection.js';
+import {withPostgresPlanningReadGraph} from './planning-read-graph.js';
+import {withPostgresWorkerRequestAuthorization} from './task-output.js';
+import {withPostgresOntologyReleaseSnapshot} from './ontology-release.js';
+import {postgresBusinessSchema} from './runtime-transaction.js';
 import {postgresWorkerAdmission} from './worker-admission.js';
 import {postgresWorkReference,type PostgresWorkReference} from './work-claim.js';
 
@@ -67,12 +71,18 @@ export class PostgresDidiExecution {
     if(intent.state!=='ready')fail('A dispatched DiDi read retains its original outcome; automatic replay is prohibited');
     if(!intent.dispatchInput){intent.dispatchInput=structuredClone(selected.input);await store.saveIntent(claim.owner,intent);}
     const attempt=await journal.startAttempt(claim,intentId,'dispatch',digest(selected.input));intent=await journal.intent(claim.owner,intentId);
-    return withPostgresSourceProjection(client,claim,this.source(selected.entry,selected.step.action),async graph=>{
-      const semantic=await this.context(client,claim,job,intent,graph,'dispatch',attempt),program=selected.entry.didi!.program,ctx=await runGraphProgramAsync(graph,postgresDidiContextProgram(semantic,program));
-      const {call}=await runGraphProgramAsync(graph,validateDidiCallPlanningProgram(program,ctx,selected.step.action,selected.input,selected.plan.ontologyPlanning)),action=didiActionContext(semantic,ctx,attempt);
-      const invocation:DidiReadInvocationContext={request:structuredClone(action.request),state:structuredClone(action.state),planId:action.planId,intentId:action.intentId,attemptId:action.attemptId,modelRunId:action.modelRunId};
-      return {entry:selected.entry,attempt,input:selected.input,action:selected.step.action,call,wire:didiCallContext(program,invocation,selected.step.action,selected.input),invocation,requestDigest:digest(job.delegation!.request),releaseDigest:digest(job.delegation!.ontologyRelease)};
-    });
+    const {policyDigest,builder,modelChannel,database}=this.options;
+    // The journal just authorized the dispatch. Resolve the wire input with
+    // one protected read graph, with no mapper, external call or writes.
+    return withPostgresOntologyReleaseSnapshot(client,()=>withPostgresWorkerRequestAuthorization(client,claim,policyDigest,(auth,admission,principal)=>
+      withPostgresPlanningReadGraph(client,principal,job.id,policyDigest,auth,admission,async graph=>{
+        const semantic=await this.context(client,claim,job,intent,graph,'dispatch',attempt),program=selected.entry.didi!.program,ctx=await runGraphProgramAsync(graph,postgresDidiContextProgram(semantic,program));
+        const {call}=await runGraphProgramAsync(graph,validateDidiCallPlanningProgram(program,ctx,selected.step.action,selected.input,selected.plan.ontologyPlanning)),action=didiActionContext(semantic,ctx,attempt);
+        const invocation:DidiReadInvocationContext={request:structuredClone(action.request),state:structuredClone(action.state),planId:action.planId,intentId:action.intentId,attemptId:action.attemptId,modelRunId:action.modelRunId};
+        const influence=await graph.authorize();
+        if(influence)await client.query(`INSERT INTO "${postgresBusinessSchema(client)}".security_reads(grant_id,digest,body) VALUES($1,$2,$3) ON CONFLICT(grant_id,digest) DO NOTHING`,[admission.grant.id,digest(influence),JSON.stringify(influence)]);
+        return {entry:selected.entry,attempt,input:selected.input,action:selected.step.action,call,wire:didiCallContext(program,invocation,selected.step.action,selected.input),invocation,requestDigest:digest(job.delegation!.request),releaseDigest:digest(job.delegation!.ontologyRelease)};
+      },builder),builder,modelChannel,value=>database.inspectClaim(value,policyDigest)));
   }
   private async assertCurrent(client:Client,claim:PostgresWorkReference,intentId:string,prepared:Prepared){
     const journal=this.journal(client);
@@ -98,7 +108,7 @@ export class PostgresDidiExecution {
     const current=async()=>{signal.throwIfAborted();await this.ownerRun(claim,client=>this.assertCurrent(client,reference,intentId,prepared));if(digest({input:prepared.input,action:prepared.action,call:prepared.call,wire:prepared.wire})!==fixed)fail('DiDi original invocation changed before source dispatch or return');signal.throwIfAborted();};
     try{
       const raw=await this.options.registry.withClaim(reference,()=>program.invokeRead(prepared.wire,prepared.call.tool,prepared.call.args,signal,current));
-      response=buildDidiReadResult(program,prepared.invocation,prepared.action,prepared.input,prepared.call,raw);receipt=await audit();await current();
+      response=buildDidiReadResult(program,prepared.invocation,prepared.action,prepared.input,prepared.call,raw);receipt=await audit();signal.throwIfAborted();
       const actual=response,observationId=receipt.id;let object:ObjectRef|undefined;
       const accepted=await this.ownerRun(claim,async client=>{
         const journal=this.journal(client,{attemptId:prepared.attempt.id,response:actual});
@@ -110,7 +120,10 @@ export class PostgresDidiExecution {
           const semantic=await this.context(client,reference,job,intent,metadata,'accept',prepared.attempt);
           await withPostgresDidiCanonicalSourceProjection(client,reference,this.source(prepared.entry,prepared.action),{journal,program,account:prepared.entry.didi!.account,transport:prepared.entry.didi!.transport,context:semantic,attempt:prepared.attempt,observationId,response:actual},async graph=>{
             const ctx=await runGraphProgramAsync(graph,postgresDidiContextProgram({...semantic,graph},program)),action=didiActionContext(semantic,ctx,prepared.attempt);
-            object=await runGraphProgramAsync(graph,projectDidiProgram(program,action,prepared.action,prepared.input,actual));
+            // commitObservation already ran the registered result verifier,
+            // and the mapper independently matched the exact Relay receipt
+            // and current dispatch in this transaction.
+            object=await runGraphProgramAsync(graph,projectRideEstimateProgram(graph,claim.owner,actual.value));
             const snapshot=checkedRideEstimate(actual.value),ports=job.delegation!.agent!.composition?await runGraphProgramAsync(graph,sealComposedOutputsProgram(action,semantic.step,prepared.input,actual,object,intent,graph.model.action(prepared.action),()=>didiOutputPorts(snapshot,actual,object!),
               semantic.plan.didiDecision?value=>assertDidiShortPathComponent(job,value):undefined)):undefined;
             intent.acceptedOutput={object,...(ports?{ports}:{})};if(!job.delegation!.agent!.observations.some(value=>same(value,object)))job.delegation!.agent!.observations.push(object);
