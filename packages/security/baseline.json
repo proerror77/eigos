@@ -5170,14 +5170,28 @@
     {
       "id": "postgres-definition-store",
       "file": "packages/postgres/definition-store.ts",
-      "sourceDigest": "140ae6b23c09f1a5e99702b960bf1c3627cc0bd7a1ab3d0ce4084abce93b8969",
+      "sourceDigest": "715ed22239becd07a2e339c1f7f396dc2d8c03e401446a87f32b847364e1fa1a",
       "channels": [
         "internal",
         "ontology_metadata"
       ],
       "content": "Serialized PostgreSQL immutable definition publication and explicit activation",
-      "currentControl": "Same owner/namespace, immutable published metadata and original task pins. Controlled semantic installation requires exact description28 predecessor, current generation, real administrator and receipt proof; no startup upgrade.",
+      "currentControl": "Same owner/namespace, immutable published metadata and original task pins. Controlled semantic installation requires exact description28 predecessor, current generation, real administrator and receipt proof; no startup upgrade. Fixed v35 maintenance preserves exact document/model pins, canonical predecessor content, original publication lineage/review/generation and separate fact-checked activation; retries cannot change generation or rewrite history.",
       "targetControl": "Preserve original task pins and current source/role/recipient authorization; no implicit activation or fake evidence",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-kernel-release-maintenance",
+      "file": "packages/deployment/postgres-kernel-release.ts",
+      "sourceDigest": "59cf9f98939bb64ed06034347d7c5396618d1b7b94fa774176a06b4713811dab",
+      "channels": [
+        "private_file",
+        "postgres",
+        "ontology_metadata"
+      ],
+      "content": "Explicit fixed v35 publication and separate activation on the original PostgreSQL primary",
+      "currentControl": "Original private binding and pinned activation/import evidence, verified TLS, actual matching runtime session role and fenced business transaction; fixed target pins and canonical predecessor, exact generation/review/lineage and independent readback operations. No DDL, publisher, permission change, task rewrite or business execution.",
+      "targetControl": "Preserve one original primary and immutable releases; no new database authority, grants or implicit activation",
       "stage": "S5"
     },
     {
