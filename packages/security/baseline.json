@@ -5170,14 +5170,28 @@
     {
       "id": "postgres-definition-store",
       "file": "packages/postgres/definition-store.ts",
-      "sourceDigest": "140ae6b23c09f1a5e99702b960bf1c3627cc0bd7a1ab3d0ce4084abce93b8969",
+      "sourceDigest": "519cad90ad9a3aa408b293ed4356a203ba1bd64593da6d0df6198cfa86033d66",
       "channels": [
         "internal",
         "ontology_metadata"
       ],
       "content": "Serialized PostgreSQL immutable definition publication and explicit activation",
-      "currentControl": "Same owner/namespace, immutable published metadata and original task pins. Controlled semantic installation requires exact description28 predecessor, current generation, real administrator and receipt proof; no startup upgrade.",
+      "currentControl": "Same owner/namespace, immutable published metadata and original task pins. Controlled semantic installation requires exact description28 predecessor, current generation, real administrator and receipt proof; no startup upgrade. Fixed v35 maintenance preserves exact document/model pins, canonical predecessor content excluding the separate v29 vector installation, original publication lineage/review/generation and separate fact-checked activation; retries cannot change generation or rewrite history.",
       "targetControl": "Preserve original task pins and current source/role/recipient authorization; no implicit activation or fake evidence",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-kernel-release-maintenance",
+      "file": "packages/deployment/postgres-kernel-release.ts",
+      "sourceDigest": "5c30c58635bb88ff9304295f3a299b8c4dd3ef74518241e53f757685605af7cb",
+      "channels": [
+        "private_file",
+        "postgres",
+        "ontology_metadata"
+      ],
+      "content": "Explicit fixed v35 publication and separate activation on the original PostgreSQL primary",
+      "currentControl": "Original private binding and pinned activation/import evidence, verified TLS, actual matching runtime session role and fenced business transaction; existing reviewed v28 field policy, fixed target pins and canonical predecessor, exact generation/review/lineage and independent readback operations. No DDL, publisher, permission change, task rewrite or business execution.",
+      "targetControl": "Preserve one original primary and immutable releases; no new database authority, grants or implicit activation",
       "stage": "S5"
     },
     {

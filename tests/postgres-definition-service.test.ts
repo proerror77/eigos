@@ -15,6 +15,9 @@ import {SecurityError} from '../packages/security/errors.js';
 import {parsePipelineIntake,pipelineMappingDigest,type PipelineIntake} from '../packages/ontology/pipeline/contracts.js';
 import type {DefinitionDraft} from '../packages/ontology/definition-store.js';
 import type {OntologyReleaseRef,SerializableObjectType} from '../packages/ontology/definition-contracts.js';
+import {preparePostgresKernel} from '../packages/postgres/kernel-runtime.js';
+import {createPaClassificationKernelDefinition,createSemanticRetrievalKernelDefinition,StagedKernelBuilder} from '../packages/ontology/seed-definition.js';
+import {FUNCTION_CONTRACT_CLOSEOUT_DOCUMENT_DIGEST,FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF} from '../packages/ontology/function-contract-closeout-compatibility.js';
 import {managedFixtureObject} from './fixtures/dynamic-ontology.js';
 
 const local={skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'};
@@ -149,5 +152,62 @@ test('PG draft revisions roll back with events and compatibility refuses narrowi
     const overflow=await x.run(store=>store.createDraft(x.f.owner,namespace.id,'Unknown fact coverage'));const optional={...newer,properties:{...newer.properties,note:{kind:'string' as const,schema:{type:'string',maxLength:200},description:'Optional synthetic note',source:'Owner input'}}};const edited=await x.run(store=>store.putResource(x.f.owner,overflow.id,overflow.revision,'object',optional));
     await x.t.client.query(`UPDATE ${x.q}.ontology_scoped_objects SET body=jsonb_set(body::jsonb,'{padding}',to_jsonb($1::text))::text WHERE ontology_id=$2 AND owner=$3 AND type=$4`,['x'.repeat(1048577),namespace.id,x.f.owner,newer.id]);
     const incomplete=await x.run(store=>store.validate(edited.id));assert.equal(incomplete.valid,false);assert.equal(incomplete.migrationRequired,true);
+  }finally{await x.close();}
+});
+
+test('PG fixed v35 publication preserves canonical historical versions, lineage, tasks and separate activation',local,async()=>{
+  const x=await fixture(),kernel=await preparePostgresKernel(undefined,'35');
+  const run=<T>(action:(store:PostgresDefinitionStore)=>Promise<T>)=>x.t.database.run(client=>action(new PostgresDefinitionStore(client,{builder:kernel})));
+  try{
+    const originalPin=x.original.job.delegation!.ontologyRelease!,before=await run(store=>store.namespace()),actor='system:synthetic-kernel-maintenance';
+    const historical={...createPaClassificationKernelDefinition().document,version:'release-13'},legacyRef={ontologyId:historical.id,releaseId:randomUUID(),digest:digest(historical)};
+    // Fixture-only historical ordinary publication. Its document is canonical
+    // v30 apart from the display version; no production row is rewritten.
+    await x.t.database.run(async client=>{
+      const store=new PostgresDefinitionStore(client,{builder:kernel});
+      await client.query(`INSERT INTO ${x.q}.ontology_definition_releases(id,ontology_id,sequence,digest,model_digest,body,created_at)
+        VALUES($1,$2,(SELECT max(sequence)+1 FROM ${x.q}.ontology_definition_releases),$3,$4,$5,$6)`,[legacyRef.releaseId,legacyRef.ontologyId,legacyRef.digest,store.compile(historical).ref.digest,JSON.stringify(historical),new Date().toISOString()]);
+      await client.query(`UPDATE ${x.q}.ontology_namespaces SET active_release_id=$1,generation=generation+1 WHERE id=$2`,[legacyRef.releaseId,legacyRef.ontologyId]);
+    });
+    const expectedActive={ref:legacyRef,generation:before.generation+1},request={expectedActive,reviewDigest:digest('synthetic v35 review')};
+    const events=async()=>Number((await x.t.client.query(`SELECT count(*) AS n FROM ${x.q}.ontology_definition_events`)).rows[0].n);
+    await assert.rejects(run(store=>store.publishReviewedKernel(actor,request)),/administrator/);
+    await assert.rejects(run(store=>store.publishReviewedKernel(actor,{...request,expectedActive:{...expectedActive,generation:expectedActive.generation+1}},true)),/active ontology changed/);
+    await assert.rejects(x.t.database.run(async client=>{
+      const semantic=createSemanticRetrievalKernelDefinition(),ref={ontologyId:semantic.document.id,releaseId:randomUUID(),digest:digest(semantic.document)};
+      await client.query(`INSERT INTO ${x.q}.ontology_definition_releases(id,ontology_id,sequence,digest,model_digest,body,created_at)
+        VALUES($1,$2,(SELECT max(sequence)+1 FROM ${x.q}.ontology_definition_releases),$3,$4,$5,$6)`,[ref.releaseId,ref.ontologyId,ref.digest,semantic.audit.model.digest,JSON.stringify(semantic.document),new Date().toISOString()]);
+      await client.query(`UPDATE ${x.q}.ontology_namespaces SET active_release_id=$1 WHERE id=$2`,[ref.releaseId,ref.ontologyId]);
+      await new PostgresDefinitionStore(client,{builder:kernel}).publishReviewedKernel(actor,{...request,expectedActive:{...expectedActive,ref}},true);
+    }),/canonical predecessor/,'The independently installed v29 vector branch is explicitly refused before optional handler resolution');
+    assert.deepEqual((await run(store=>store.namespace())).active,legacyRef);
+    for(const variant of ['predecessor','target'] as const){
+      await assert.rejects(x.t.database.run(async client=>{
+        const store=new PostgresDefinitionStore(client,{builder:kernel}),document={...(variant==='predecessor'?historical:StagedKernelBuilder.prototype.result.call(kernel).document),pipeline:[]};
+        const ref={ontologyId:document.id,releaseId:randomUUID(),digest:digest(document)};
+        await client.query(`INSERT INTO ${x.q}.ontology_definition_releases(id,ontology_id,sequence,digest,model_digest,body,created_at)
+          VALUES($1,$2,(SELECT max(sequence)+1 FROM ${x.q}.ontology_definition_releases),$3,$4,$5,$6)`,[ref.releaseId,ref.ontologyId,ref.digest,store.compile(document).ref.digest,JSON.stringify(document),new Date().toISOString()]);
+        if(variant==='predecessor')await client.query(`UPDATE ${x.q}.ontology_namespaces SET active_release_id=$1 WHERE id=$2`,[ref.releaseId,ref.ontologyId]);
+        await store.publishReviewedKernel(actor,variant==='predecessor'?{...request,expectedActive:{...expectedActive,ref}}:request,true);
+      }),variant==='predecessor'?/unchanged canonical predecessor/:/existing v35 release differs/);
+    }
+    const published=await run(store=>store.publishReviewedKernel(actor,request,true));assert(published.created);
+    assert.equal(published.release.digest,FUNCTION_CONTRACT_CLOSEOUT_DOCUMENT_DIGEST);assert.deepEqual(published.namespace.active,legacyRef);assert.equal(published.namespace.generation,expectedActive.generation);
+    const resolved=await run(store=>store.resolve(published.release));assert.equal(resolved.document.version,'35');assert.deepEqual(resolved.model.ref,FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF);
+    const count=await events(),repeat=await run(store=>store.publishReviewedKernel(actor,request,true));assert.equal(repeat.created,false);assert.deepEqual(repeat.release,published.release);assert.equal(await events(),count);
+    await assert.rejects(run(store=>store.publishReviewedKernel(actor,{...request,reviewDigest:digest('another review')},true)),/publication preconditions changed/);
+    const changedLineage={...request,expectedActive:{...expectedActive,ref:before.active}};
+    await assert.rejects(run(store=>store.inspectReviewedKernel(actor,changedLineage,published.release,'published',true)),/publication lineage changed/);
+    await x.t.client.query(`INSERT INTO ${x.q}.ontology_objects(owner,type,id,revision,definition_digest,body) VALUES('synthetic','UnreviewedType','fixture',1,$1,'{"properties":{}}')`,['a'.repeat(64)]);
+    await assert.rejects(run(store=>store.activateReviewedKernel(actor,request,published.release,true)),/data migration/);
+    assert.deepEqual((await run(store=>store.namespace())).active,legacyRef);
+    await x.t.client.query(`DELETE FROM ${x.q}.ontology_objects WHERE owner='synthetic' AND type='UnreviewedType' AND id='fixture'`);
+    const activated=await run(store=>store.activateReviewedKernel(actor,request,published.release,true));assert.equal(activated.namespace.generation,expectedActive.generation+1);assert.deepEqual(activated.namespace.active,published.release);
+    const activatedEvents=await events();assert.deepEqual(await run(store=>store.activateReviewedKernel(actor,request,published.release,true)),activated);assert.equal(await events(),activatedEvents);
+    await assert.rejects(run(store=>store.publishReviewedKernel(actor,request,true)),/active ontology changed/);
+    await assert.rejects(run(store=>store.inspectReviewedKernel(actor,{...request,expectedActive:{...expectedActive,generation:expectedActive.generation+1}},published.release,'active',true)),/publication preconditions changed/);
+    assert.deepEqual(JSON.parse((await x.t.client.query(`SELECT body FROM ${x.q}.jobs WHERE id=$1`,[x.original.job.id])).rows[0].body).delegation.ontologyRelease,originalPin);
+    await x.t.client.query(`UPDATE ${x.q}.ontology_namespaces SET generation=generation+1 WHERE id=$1`,[legacyRef.ontologyId]);
+    await assert.rejects(run(store=>store.activateReviewedKernel(actor,request,published.release,true)),/activation generation changed/);
   }finally{await x.close();}
 });

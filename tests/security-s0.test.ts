@@ -28,7 +28,8 @@ test('S0 inventories every definition and nested subtree without changing runtim
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
   assert.equal(report.counts.objectTypes, 204); assert.equal(report.counts.properties, 1863); assert.equal(report.counts.interfaces, 14);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 424, 'the reviewed Ontology contracts, query engine and Worker boundaries are inventoried');
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 425, 'the reviewed Ontology contracts, query engine and Worker boundaries are inventoried');
+  assert.equal(report.surfaces.find(surface => surface.id === 'postgres-kernel-release-maintenance')?.file, 'packages/deployment/postgres-kernel-release.ts');
   assert(report.surfaces.some(surface => surface.id === 'postgres-scalar-query-predicate'));
   for (const id of ['postgres-read-batch', 'postgres-authorized-relation-plan', 'postgres-relation-query-plan', 'postgres-query-field-validation',
     'postgres-write-scope', 'postgres-write-lock-upgrade', 'postgres-write-lock-upgrade-cli',

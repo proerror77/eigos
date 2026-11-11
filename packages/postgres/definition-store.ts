@@ -7,7 +7,11 @@ import {definitionKindSchema,ontologyIdSchema,ontologyReleaseRefSchema,parseOnto
   type DefinitionKind,type OntologyDocument,type OntologyReleaseRef} from '../ontology/definition-contracts.js';
 import type {DefinitionDraft,DefinitionResource,DefinitionValidation,OntologyNamespace} from '../ontology/definition-store.js';
 import {compileOntologyDocument,normalizeOntologyDocument,type TrustedDefinitionRegistry} from '../ontology/model-compiler.js';
-import {createSeedDefinition,createCurrentKernelDefinition,stagedKernelComponents,StagedKernelBuilder} from '../ontology/seed-definition.js';
+import {createSeedDefinition,createCurrentKernelDefinition,stagedKernelComponents,StagedKernelBuilder,BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF,
+  PA_CLASSIFICATION_KERNEL_MODEL_REF,DOMAIN_VOCABULARY_KERNEL_MODEL_REF,CONTRACT_CLOSURE_KERNEL_MODEL_REF,EFFECT_COVERAGE_KERNEL_MODEL_REF,EXECUTABLE_CONTRACT_KERNEL_MODEL_REF} from '../ontology/seed-definition.js';
+import {FUNCTION_CONTRACT_CLOSEOUT_DOCUMENT_DIGEST,FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF} from '../ontology/function-contract-closeout-compatibility.js';
+import {reviewedExecutableModelPair} from '../ontology/executable-contract-compatibility.js';
+import {assertReviewedModel} from '../security/model-review.js';
 import {SecurityError} from '../security/errors.js';
 import type {ActionIntent} from '../ontology/actions.js';
 import type {OntologyModel} from '../ontology/model.js';
@@ -26,6 +30,15 @@ const invalid=(message:string):never=>{throw new DomainError('INVALID_INPUT',mes
 const summary=({document:_document,...value}:DefinitionDraft)=>value;
 let templates:{registry:TrustedDefinitionRegistry;document:OntologyDocument}|undefined;
 function trusted(){if(!templates){const seed=createSeedDefinition(),current=createCurrentKernelDefinition(seed.registry);templates={registry:seed.registry,document:current.document};}return templates;}
+
+export const reviewedKernelReleaseRequestSchema=z.strictObject({
+  expectedActive:z.strictObject({ref:ontologyReleaseRefSchema,generation:z.number().int().positive().max(Number.MAX_SAFE_INTEGER-1)}),
+  reviewDigest:z.string().regex(/^[a-f0-9]{64}$/),
+});
+export type ReviewedKernelReleaseRequest=z.infer<typeof reviewedKernelReleaseRequestSchema>;
+// The separate v29 vector installation still requires an exact active v29 host.
+const reviewedPredecessors=[BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF,PA_CLASSIFICATION_KERNEL_MODEL_REF,DOMAIN_VOCABULARY_KERNEL_MODEL_REF,
+  CONTRACT_CLOSURE_KERNEL_MODEL_REF,EFFECT_COVERAGE_KERNEL_MODEL_REF,EXECUTABLE_CONTRACT_KERNEL_MODEL_REF];
 
 /** Internal metadata persistence on the caller's original serialized business
  * transaction. This class grants no namespace, OAuth scope or actor authority,
@@ -65,6 +78,78 @@ export class PostgresDefinitionStore {
     const result=[];for(const row of rows.rows)result.push(await this.namespace(String(row.id)));return result;
   }
   async active(id='eigos.business'){return this.resolve((await this.namespace(id)).active);}
+  private reviewedKernel(){
+    if(!this.options.builder)return conflict('The actual completed v35 software kernel is required');
+    const document=StagedKernelBuilder.prototype.result.call(this.options.builder).document,model=this.compile(document);
+    if(document.id!=='eigos.business'||document.version!=='35'||digest(document)!==FUNCTION_CONTRACT_CLOSEOUT_DOCUMENT_DIGEST
+      ||digest(model.ref)!==digest(FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF))return conflict('The fixed reviewed v35 document or model changed');
+    assertReviewedModel(stagedKernelComponents(this.options.builder).model,model);return {document,model};
+  }
+  private async reviewedKernelBase(owner:string,input:ReviewedKernelReleaseRequest,admin:boolean){
+    const request=reviewedKernelReleaseRequestSchema.parse(input),expected=request.expectedActive;
+    if(!admin||expected.ref.ontologyId!=='eigos.business')throw new DomainError('FORBIDDEN','Reviewed kernel maintenance requires an authenticated system administrator');
+    const namespace=await this.assertManagement(owner,expected.ref.ontologyId,admin);
+    const identity=await this.sql(`SELECT model_digest FROM ${this.q}.ontology_definition_releases WHERE id=$1 AND ontology_id=$2 AND digest=$3 LIMIT 2`,[expected.ref.releaseId,expected.ref.ontologyId,expected.ref.digest]);
+    if(identity.rowCount!==1||!reviewedPredecessors.some(ref=>ref.digest===identity.rows[0]?.model_digest))return conflict('Reviewed kernel maintenance requires an unchanged canonical predecessor');
+    const base=await this.resolve(expected.ref);
+    // Only the historical display version may differ. Reuse the exact reviewed
+    // document/implementation pins, rather than treating a model digest alone
+    // as proof that metadata and immutable handler references are unchanged.
+    const canonical=reviewedPredecessors.find(ref=>ref.digest===base.model.ref.digest);
+    if(!canonical||base.document.version!==canonical.version&&!/^release-[1-9][0-9]*$/.test(base.document.version)
+      ||!reviewedExecutableModelPair(this.reviewedKernel().model,this.compile({...base.document,version:canonical.version})))return conflict('Reviewed kernel maintenance requires an unchanged canonical predecessor');
+    return {request,namespace,base};
+  }
+  private async reviewedKernelTarget(){
+    const {document,model}=this.reviewedKernel(),rows=await this.sql(`SELECT id,digest,model_digest FROM ${this.q}.ontology_definition_releases
+      WHERE ontology_id=$1 AND(digest=$2 OR model_digest=$3 OR ${this.q}.eigos_try_jsonb(body)->>'version'='35') LIMIT 2`,[document.id,FUNCTION_CONTRACT_CLOSEOUT_DOCUMENT_DIGEST,model.ref.digest]);
+    if(!rows.rowCount)return {document,model};
+    if(rows.rowCount!==1||rows.rows[0].digest!==FUNCTION_CONTRACT_CLOSEOUT_DOCUMENT_DIGEST||rows.rows[0].model_digest!==model.ref.digest)return conflict('An existing v35 release differs from the fixed reviewed document');
+    const release=await this.resolve({ontologyId:document.id,releaseId:String(rows.rows[0].id),digest:FUNCTION_CONTRACT_CLOSEOUT_DOCUMENT_DIGEST});
+    return {document,model,release};
+  }
+  private kernelPublication(request:ReviewedKernelReleaseRequest,ref:OntologyReleaseRef){return {release:ref,expectedActive:request.expectedActive,reviewDigest:request.reviewDigest,model:FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF};}
+  private async assertKernelPublication(request:ReviewedKernelReleaseRequest,ref:OntologyReleaseRef){
+    const lineage=await this.sql(`SELECT CASE WHEN octet_length(base_ref)<=1024 THEN base_ref END AS base_ref FROM ${this.q}.ontology_definition_lineage WHERE ontology_id=$1 AND release_id=$2 LIMIT 2`,[ref.ontologyId,ref.releaseId]);
+    if(lineage.rowCount!==1||typeof lineage.rows[0]?.base_ref!=='string'||digest(ontologyReleaseRefSchema.parse(JSON.parse(lineage.rows[0].base_ref)))!==digest(request.expectedActive.ref))return conflict('Reviewed kernel publication lineage changed');
+    const events=await this.sql(`SELECT CASE WHEN octet_length(body)<=4096 THEN body END AS body FROM ${this.q}.ontology_definition_events
+      WHERE ontology_id=$1 AND kind='reviewed_kernel_published' AND ${this.q}.eigos_try_jsonb(body)#>>'{release,releaseId}'=$2 LIMIT 2`,[ref.ontologyId,ref.releaseId]);
+    if(events.rowCount!==1||typeof events.rows[0]?.body!=='string'||digest(JSON.parse(events.rows[0].body))!==digest(this.kernelPublication(request,ref)))return conflict('Reviewed kernel publication preconditions changed');
+  }
+  /** Host-only metadata publication. The maintenance wrapper proves the actual
+   * database identity; no public command accepts this operation or a document. */
+  async publishReviewedKernel(owner:string,input:ReviewedKernelReleaseRequest,admin=false){
+    const {request,namespace}=await this.reviewedKernelBase(owner,input,admin),target=await this.reviewedKernelTarget(),expected=request.expectedActive;
+    if(namespace.generation!==expected.generation||digest(namespace.active)!==digest(expected.ref))return conflict('Reviewed active ontology changed before publication');
+    if(target.release){await this.assertKernelPublication(request,target.release.ref);return {release:target.release.ref,namespace,created:false};}
+    const release=await this.insertRelease(target.document,owner,expected.ref);
+    await this.event(namespace.id,owner,'reviewed_kernel_published',this.kernelPublication(request,release.ref));
+    return {release:release.ref,namespace,created:true};
+  }
+  async inspectReviewedKernel(owner:string,input:ReviewedKernelReleaseRequest,inputRef:OntologyReleaseRef,state:'published'|'active',admin=false){
+    const {request,namespace}=await this.reviewedKernelBase(owner,input,admin),ref=ontologyReleaseRefSchema.parse(inputRef),target=await this.reviewedKernelTarget(),expected=request.expectedActive;
+    if(!target.release||digest(target.release.ref)!==digest(ref))return conflict('The exact reviewed kernel publication is unavailable');
+    await this.assertKernelPublication(request,ref);
+    if(state==='published'){
+      if(namespace.generation!==expected.generation||digest(namespace.active)!==digest(expected.ref))return conflict('Reviewed active ontology changed after publication');
+    }else{
+      if(state!=='active'||namespace.generation!==expected.generation+1||digest(namespace.active)!==digest(ref))return conflict('Reviewed kernel activation generation changed');
+      const events=await this.sql(`SELECT CASE WHEN octet_length(body)<=4096 THEN body END AS body FROM ${this.q}.ontology_definition_events WHERE ontology_id=$1 AND kind='activated'
+        AND ${this.q}.eigos_try_jsonb(body)#>>'{to,releaseId}'=$2 AND ${this.q}.eigos_try_jsonb(body)->>'generation'=$3 LIMIT 2`,[ref.ontologyId,ref.releaseId,String(namespace.generation)]);
+      const promoted=await this.sql(`SELECT 1 FROM ${this.q}.ontology_definition_promotions WHERE ontology_id=$1 AND release_id=$2 LIMIT 2`,[ref.ontologyId,ref.releaseId]);
+      if(promoted.rowCount!==1||events.rowCount!==1||typeof events.rows[0]?.body!=='string'||digest(JSON.parse(events.rows[0].body))!==digest({from:expected.ref,to:ref,generation:expected.generation+1}))return conflict('Reviewed kernel activation history changed');
+    }
+    return {release:ref,namespace,state};
+  }
+  /** Publication and activation are separate transactions. The original
+   * activation path retains all Pipeline, in-flight task and fact checks. */
+  async activateReviewedKernel(owner:string,input:ReviewedKernelReleaseRequest,ref:OntologyReleaseRef,admin=false){
+    const request=reviewedKernelReleaseRequestSchema.parse(input),namespace=await this.namespace(request.expectedActive.ref.ontologyId);
+    if(digest(namespace.active)===digest(ref))return this.inspectReviewedKernel(owner,request,ref,'active',admin);
+    await this.inspectReviewedKernel(owner,request,ref,'published',admin);
+    await this.activate(owner,ref,request.expectedActive.generation,admin);
+    return this.inspectReviewedKernel(owner,request,ref,'active',admin);
+  }
   /** Explicit software installation, never startup or request JSON. The host
    * must separately prove its real namespace-owner administrator identity. */
   async installSemanticRetrieval(owner:string,expected:OntologyReleaseRef,expectedGeneration:number,admin=false){

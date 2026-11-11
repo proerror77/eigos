@@ -26,6 +26,9 @@ import {ExecutionCatalog} from '../packages/core/catalog.js';
 import {DocumentAgentProgram} from '../packages/capabilities/document-agent.js';
 import {SCOPES} from '../packages/core/domain.js';
 import {roleSchema} from '../packages/security/resource-role.js';
+import {postgresTlsFixture} from './fixtures/postgres-tls.js';
+import {PostgresDefinitionStore} from '../packages/postgres/definition-store.js';
+import {runPostgresKernelRelease,POSTGRES_KERNEL_RELEASE_TARGET} from '../packages/deployment/postgres-kernel-release.js';
 
 const local={skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'};
 const connection=()=>({host:'127.0.0.1',port:Number(process.env.PGPORT??52744),user:'postgres',database:'postgres',password:process.env.PGPASSWORD,ssl:false as const});
@@ -104,6 +107,7 @@ test('PostgreSQL handoff prepares exact schema and least privileges before a sep
     // acknowledged TLS required by the actual formal host verifier.
     await assert.rejects(verifyPostgresHandoffRuntime(runtime,operation),/verified TLS/);
     await exerciseRuntimeTaskConsent(f);
+    await exerciseReviewedKernelRelease(f,finalBinding);
   }finally{await runtime?.end();await f.close();}
 });
 
@@ -147,4 +151,33 @@ async function exerciseRuntimeTaskConsent(f:Awaited<ReturnType<typeof fixture>>)
     try{const job=await tasks.submit(p,{goal:'Synthetic runtime-role task only',requestId:randomUUID()});assert.equal((await tasks.get(p,job.id)).id,job.id);assert.equal((await tasks.cancel(p,job.id)).state,'canceled');}
     finally{await tasks.close();}
   }finally{await publisher.close();await Promise.all([database.close(),members.close(),control.end()]);}
+}
+
+async function exerciseReviewedKernelRelease(f:Awaited<ReturnType<typeof fixture>>,binding:PostgresBinding){
+  const kernel=await preparePostgresKernel(undefined,'35'),tls=await postgresTlsFixture(connection().port),schema=`"${binding.business.schema}"`;
+  const options={...connection(),host:tls.host,port:tls.port,user:f.role,password:'synthetic-handoff-runtime-only',ssl:{ca:tls.ca,servername:tls.host,rejectUnauthorized:true}};
+  const make=(overrides={})=>new PostgresDatabase(new pg.Pool({...options,...overrides,max:1}),binding.business.schema,binding.authority,{kernel});
+  const database=make(),reader=make(),wrongIdentity=make({user:'postgres',password:process.env.PGPASSWORD}),plaintext=make({...connection(),user:f.role,password:'synthetic-handoff-runtime-only'});
+  try{
+    const namespace=await database.run(client=>new PostgresDefinitionStore(client,{builder:kernel}).namespace());
+    const operation={action:'publish',target:POSTGRES_KERNEL_RELEASE_TARGET,expectedActive:{ref:namespace.active,generation:namespace.generation},reviewDigest:digest('synthetic verified runtime maintenance')};
+    const businessState=async()=>{
+      const rows=[];for(const table of ['jobs','work_claims','ontology_objects','ontology_links','security_roles','security_grants','security_policy_definitions','security_policy'])rows.push([table,(await f.client.query(`SELECT * FROM ${schema}.${table} ORDER BY __eigos_rowid`)).rows]);return digest(rows);
+    };
+    const original=await businessState();
+    await assert.rejects(runPostgresKernelRelease(wrongIdentity,binding,operation,kernel),/connection differs/);
+    await assert.rejects(runPostgresKernelRelease(plaintext,binding,operation,kernel),/verified TLS/);
+    await assert.rejects(runPostgresKernelRelease(database,{...binding,policyDigest:'f'.repeat(64)},operation,kernel),/explicit supported kernel review/);
+    await assert.rejects(runPostgresKernelRelease(database,{...binding,authority:{...binding.authority,digest:'f'.repeat(64)}},operation,kernel),/another business authority/);
+    await assert.rejects(runPostgresKernelRelease(database,binding,{...operation,target:{...operation.target,documentDigest:'f'.repeat(64)}},kernel),/Invalid input/);
+    const published=await runPostgresKernelRelease(database,binding,operation,kernel);
+    assert.equal(published.namespace.generation,namespace.generation);assert.deepEqual(published.namespace.active,namespace.active);assert.equal(published.release.digest,POSTGRES_KERNEL_RELEASE_TARGET.documentDigest);
+    const readback=await runPostgresKernelRelease(reader,binding,{...operation,action:'verify-published',release:published.release},kernel);assert.deepEqual(readback.namespace,namespace);
+    const repeated=await runPostgresKernelRelease(database,binding,operation,kernel);assert.deepEqual(repeated.release,published.release);assert.equal(repeated.namespace.generation,namespace.generation);
+    const activated=await runPostgresKernelRelease(database,binding,{...operation,action:'activate',release:published.release},kernel);
+    assert.deepEqual(activated.namespace.active,published.release);assert.equal(activated.namespace.generation,namespace.generation+1);
+    const activeReadback=await runPostgresKernelRelease(reader,binding,{...operation,action:'verify-active',release:published.release},kernel);assert.deepEqual(activeReadback.namespace,activated.namespace);
+    const retry=await runPostgresKernelRelease(database,binding,{...operation,action:'activate',release:published.release},kernel);assert.deepEqual(retry.namespace,activated.namespace);
+    assert.equal(await businessState(),original,'Kernel maintenance must preserve tasks, facts, policy and grants exactly');
+  }finally{await Promise.all([database.close(),reader.close(),wrongIdentity.close(),plaintext.close()]);await tls.close();}
 }
