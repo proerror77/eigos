@@ -21,10 +21,15 @@ export class PostgresDidiRelayConnector implements DidiConnector {
     signal.throwIfAborted();await beforeCall?.();signal.throwIfAborted();const claim=postgresWorkReference(this.captureClaim());
     const request=await this.reads.create(claim,this.peerId,{authorityId:this.authority.id,gatewayOrigin:this.authority.gatewayOrigin,
       source:{bindingId:this.binding.bindingId,keySha256:this.binding.keySha256,environment:'production'},context:sourceReadContextSchema.parse(context),tool,input});
-    let failure:unknown;
+    const authorityCheckInterval=5000;
+    let failure:unknown,nextAuthorityCheck=performance.now()+authorityCheckInterval;
     try{
       while(!signal.aborted&&Date.now()<request.expiresAt){
-        const response=await this.reads.resultIfReady(claim,request.callId);
+        // A denied source may leave no result to wake the normal poll.
+        // Recheck its current grant and claim at a bounded interval.
+        const checkAuthority=performance.now()>=nextAuthorityCheck;
+        const response=checkAuthority?await this.reads.result(claim,request.callId):await this.reads.resultIfReady(claim,request.callId);
+        if(checkAuthority)nextAuthorityCheck=performance.now()+authorityCheckInterval;
         if(response?.error)throw new DidiReadError(response.error);
         if(response?.result){signal.throwIfAborted();await beforeCall?.();signal.throwIfAborted();if(request.expiresAt<=Date.now())throw new DidiReadError('READ_OUTCOME_UNKNOWN');return response.result;}
         await delay(100,undefined,{signal});

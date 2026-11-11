@@ -3,6 +3,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {digest} from '../packages/core/delegation.js';
+import {SecurityError} from '../packages/security/errors.js';
 import {postgresDidiRelayFixture,waitForDidiRelay} from './fixtures/postgres-didi-relay.js';
 
 const local={skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'};
@@ -39,7 +40,8 @@ test('actual encrypted DiDi SourceAgent and PG Gateway verify canonical facts on
 test('source permission revoked while the actual encrypted ServiceAgent prepares tools blocks the real provider callback and preserves the original uncompleted task',local,async()=>{
   let x:Fixture,revoked=false;x=await postgresDidiRelayFixture({afterToolsListed:async()=>{assert.equal(x.provider.calls.filter(call=>call.method==='tools/call').length,0);revoked=true;await x.revokeSource();}});
   try{
-    const original=await x.stored(),component=await x.prepare(),plan=await x.install(component);await assert.rejects(x.execution.execute(x.claim,plan.steps[0]!.intentId,AbortSignal.timeout(120000)));
+    const original=await x.stored(),component=await x.prepare(),plan=await x.install(component);
+    await assert.rejects(x.execution.execute(x.claim,plan.steps[0]!.intentId,AbortSignal.timeout(120000)),error=>error instanceof SecurityError&&error.reason==='SOURCE_NOT_AUTHORIZED');
     await waitForDidiRelay(async()=>x.sourceEvents.some(event=>event.stage==='provider_dispatch'&&event.outcome==='denied'));assert(revoked);assert.equal(x.provider.calls.filter(call=>call.method==='tools/call').length,0);assert(x.httpChecks.some(check=>check.status===403));
     const current=await unchangedTask(x,original);assert.notEqual(current.state,'completed');assert.equal(current.delegation!.acceptance,undefined);assert.equal(current.delegation!.agent!.observations.length,0);assert.equal(await canonicalCount(x),0);
     assert.equal(Number((await x.t.client.query(`SELECT count(*) AS n FROM ${x.q}.action_attempts`)).rows[0].n),1);assert.equal(Number((await x.t.client.query(`SELECT count(*) AS n FROM ${x.q}.action_observations WHERE applied=1`)).rows[0].n),0);assert.equal(Number((await x.t.client.query(`SELECT count(*) AS n FROM ${x.q}.security_relay_reads WHERE state='completed'`)).rows[0].n),0);
@@ -49,7 +51,8 @@ test('source permission revoked while the actual encrypted ServiceAgent prepares
 test('a receipt persisted by the real encrypted SourceAgent after provider response cannot be projected or complete the same task after source revocation',local,async()=>{
   let x:Fixture,receiptId:string|undefined;x=await postgresDidiRelayFixture({afterProviderReceipt:async result=>{receiptId=result.receipt.id;await x.revokeSource();}});
   try{
-    const original=await x.stored(),component=await x.prepare(),plan=await x.install(component);await assert.rejects(x.execution.execute(x.claim,plan.steps[0]!.intentId,AbortSignal.timeout(120000)));
+    const original=await x.stored(),component=await x.prepare(),plan=await x.install(component);
+    await assert.rejects(x.execution.execute(x.claim,plan.steps[0]!.intentId,AbortSignal.timeout(120000)),error=>error instanceof SecurityError&&error.reason==='SOURCE_NOT_AUTHORIZED');
     await waitForDidiRelay(async()=>x.sourceEvents.some(event=>event.stage==='result'&&event.outcome==='denied'));assert(receiptId);const ledger=x.sourceLedger();assert.equal(ledger.length,1);assert.equal(ledger[0]!.state,'completed');assert.equal(ledger[0]!.result.result.receipt.id,receiptId,'The actual provider receipt remains private on the source for accounting/recovery');
     assert.deepEqual(x.provider.calls.filter(call=>call.method==='tools/call').map(call=>call.name),['maps_textsearch']);assert.equal(JSON.parse(x.sourceAudit().trim()).receipt.id,receiptId);assert(x.httpChecks.some(check=>check.status===403));
     const current=await unchangedTask(x,original);assert.notEqual(current.state,'completed');assert.equal(current.delegation!.acceptance,undefined);assert.equal(current.delegation!.agent!.observations.length,0);assert.equal(await canonicalCount(x),0);assert.equal(Number((await x.t.client.query(`SELECT count(*) AS n FROM ${x.q}.action_observations WHERE applied=1`)).rows[0].n),0);assert.equal(Number((await x.t.client.query(`SELECT count(*) AS n FROM ${x.q}.security_relay_reads WHERE state='completed'`)).rows[0].n),0);

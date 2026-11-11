@@ -5787,7 +5787,7 @@
     {
       "id": "postgres-source-relay-connector",
       "file": "packages/postgres/relay-read-connector.ts",
-      "sourceDigest": "8720d9d422c5a0eb9b39366cd3ac10eda748c56bcfd715bc91a4d2bfc40d5ab4",
+      "sourceDigest": "c754532a12114ac0e12ecd16f4af2ee4633e83516e24770b7b06b4259e65c315",
       "channels": [
         "internal"
       ],
