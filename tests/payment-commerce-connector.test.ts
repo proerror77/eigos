@@ -131,10 +131,11 @@ test('A real MCP process receives only query authority and private provider cred
     const script = join(directory, 'source.mjs'), credentialFile = join(directory, 'key.json'), connectionFile = join(directory, 'connection.json'), calls = join(directory, 'calls.json');
     const source = `import {McpServer} from ${JSON.stringify(import.meta.resolve('@modelcontextprotocol/server'))};
 import {StdioServerTransport} from ${JSON.stringify(import.meta.resolve('@modelcontextprotocol/server/stdio'))};
-import {z} from ${JSON.stringify(import.meta.resolve('zod'))};import {writeFileSync} from 'node:fs';
+import {z} from ${JSON.stringify(import.meta.resolve('zod'))};import {writeFileSync,renameSync} from 'node:fs';
 const server=new McpServer({name:'synthetic-alipay',version:'1'});
 server.registerTool('query-alipay-payment',{inputSchema:z.strictObject({outTradeNo:z.string()})},async args=>{
-writeFileSync(${JSON.stringify(calls)},JSON.stringify({args,selected:process.env.AP_SELECT_TOOLS,log:process.env.AP_LOG_ENABLED,unrelated:process.env.EIGOS_SYNTHETIC_OTHER_SECRET,home:process.env.HOME}),{mode:384});
+writeFileSync(${JSON.stringify(calls + '.tmp')},JSON.stringify({args,selected:process.env.AP_SELECT_TOOLS,log:process.env.AP_LOG_ENABLED,unrelated:process.env.EIGOS_SYNTHETIC_OTHER_SECRET,home:process.env.HOME}),{mode:0o600,flag:'wx'});
+renameSync(${JSON.stringify(calls + '.tmp')},${JSON.stringify(calls)});
 if(args.outTradeNo==='wait')await new Promise(()=>{});
 return {content:[{type:'text',text:'交易状态: WAIT_BUYER_PAY , 交易金额: 1.00 , 支付宝交易号: 12345'}]};});
 server.registerTool('refund-alipay-payment',{inputSchema:z.strictObject({})},()=>{throw new Error('Write must never be called');});
@@ -156,12 +157,18 @@ await server.connect(new StdioServerTransport());`;
     assert.deepEqual(recorded.args, { outTradeNo: 'owned_order' }); assert.equal(recorded.selected, 'query-alipay-payment'); assert.equal(recorded.log, 'false');
     assert.equal(recorded.unrelated, undefined); assert(!existsSync(recorded.home));
     const cancelled = controller(), pending = connector.invoke({ action: 'QueryAlipayTrade', parameters: { outTradeNo: 'wait' } }, cancelled.signal);
-    const deadline = Date.now() + 5000;
-    while (JSON.parse(readFileSync(calls, 'utf8')).args.outTradeNo !== 'wait' && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
-    const waiting = JSON.parse(readFileSync(calls, 'utf8'));
-    assert.equal(waiting.args.outTradeNo, 'wait');
-    cancelled.abort(new Error('cancelled-in-flight'));
-    await assert.rejects(pending, /cancelled-in-flight/); assert(!existsSync(waiting.home));
+    const finished = pending.catch(() => undefined);
+    try {
+      const deadline = Date.now() + 5000;
+      while (JSON.parse(readFileSync(calls, 'utf8')).args.outTradeNo !== 'wait' && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+      const waiting = JSON.parse(readFileSync(calls, 'utf8'));
+      assert.equal(waiting.args.outTradeNo, 'wait');
+      cancelled.abort(new Error('cancelled-in-flight'));
+      await assert.rejects(pending, /cancelled-in-flight/); assert(!existsSync(waiting.home));
+    } finally {
+      cancelled.abort(new Error('cancelled-in-flight'));
+      await finished;
+    }
     writeFileSync(script, source + '\n// changed');
     await assert.rejects(connector.invoke({ action: 'QueryAlipayTrade', parameters: { outTradeNo: 'owned_order' } }, controller().signal), /unavailable/);
   } finally { rmSync(directory, { recursive: true, force: true }); }
