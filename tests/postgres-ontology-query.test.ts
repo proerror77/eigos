@@ -465,6 +465,16 @@ test('internal PostgreSQL relation plans authorize every hop before exact SQL ag
         const time = await execute({ ...pricePlan, select: ['observedAt'], terminal: { kind: 'rows', orderBy: [{ property: 'observedAt', direction: 'asc' }] } });
         assert.equal(time.kind, 'rows'); if (time.kind !== 'rows') assert.fail();
         assert.deepEqual(time.items.map(object => object.ref.id), [prices[0]!.id, prices[1]!.id, prices[3]!.id, prices[4]!.id].sort());
+        const marked = prices[3]!;
+        await t.client.query(`INSERT INTO ${q}.security_labels(owner,type,object_id,field,body) VALUES($1,$2,$3,'referenceAmount',$4)`,
+          [f.owner,marked.type,marked.id,JSON.stringify({classification:'sensitive',requiredMarkings:['health'],channels:['agent_response']})]);
+        try {
+          await assert.rejects(execute({ ...pricePlan, terminal: { kind: 'rows', orderBy: [{ property: 'referenceAmount', direction: 'asc' }] } }),
+            /INSUFFICIENT_ACCESS/, 'Default projection cannot silently sort a denied field as null');
+        } finally {
+          await t.client.query(`DELETE FROM ${q}.security_labels WHERE owner=$1 AND type=$2 AND object_id=$3 AND field='referenceAmount'`,
+            [f.owner,marked.type,marked.id]);
+        }
       });
       await testContext.test('the public query contract remains unchanged and incomplete plans fail closed', async () => {
         for (const extension of [{ hops: [{ link: 'hotel' }] }, { aggregate: 'count' }, { orderBy: 'referenceAmount' }]) assert.equal(objectQuerySchema.safeParse({ type: 'HotelPrice', ...extension }).success, false);

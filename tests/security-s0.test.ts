@@ -28,9 +28,11 @@ test('S0 inventories every definition and nested subtree without changing runtim
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
   assert.equal(report.counts.objectTypes, 204); assert.equal(report.counts.properties, 1863); assert.equal(report.counts.interfaces, 14);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 413, 'the reviewed Ontology contracts, query engine and Worker boundaries are inventoried');
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 416, 'the reviewed Ontology contracts, query engine and Worker boundaries are inventoried');
   assert(report.surfaces.some(surface => surface.id === 'postgres-scalar-query-predicate'));
-  assert(report.surfaces.some(surface => surface.id === 'postgres-read-batch'));
+  for (const id of ['postgres-read-batch', 'postgres-authorized-relation-plan', 'postgres-relation-query-plan', 'postgres-query-field-validation']) {
+    assert(report.surfaces.some(surface => surface.id === id));
+  }
   for (const id of ['ontology-domain-vocabulary', 'ontology-domain-vocabulary-kernel']) assert(report.surfaces.some(surface => surface.id === id), `Unreviewed ontology vocabulary surface: ${id}`);
   assert.equal(report.surfaces.find(surface => surface.id === 'didi-estimate-submission-contract')?.file, 'packages/core/didi-estimate-request.ts');
   assert.equal(report.surfaces.find(surface => surface.id === 'postgres-didi-short-path-proof')?.file, 'packages/postgres/didi-short-path.ts');

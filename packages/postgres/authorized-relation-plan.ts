@@ -150,7 +150,17 @@ export async function postgresQueryAuthorizedRelationPlan(client: Client, princi
   if (terminal.kind === 'rows') for (const [index, order] of terminal.orderBy.entries()) {
     const property = scalar(properties[order.property], order.property);
     const kind = property.kind === 'string' ? 'text' : 'numeric';
-    leaves.forEach((object, n) => { rows[n]!.keys[index] = normalizedScalar(property, object.properties[order.property])?.value ?? null; });
+    for (const [position, object] of leaves.entries()) {
+      let value = object.properties[order.property];
+      if (!Object.hasOwn(object.properties, order.property) && plan.select === undefined) {
+        // A default projection omits denied fields. Explicitly authorize an
+        // absent sort key before treating it as an optional null value.
+        const checked = await auth.readView(object.ref, targets.at(-1)!, [order.property]);
+        capture(checked.envelope);
+        value = checked.object.properties[order.property];
+      }
+      rows[position]!.keys[index] = normalizedScalar(property, value)?.value ?? null;
+    }
     ordering.push(`${kind === 'text' ? `(keys->>${index}) COLLATE "C"` : `(keys->>${index})::numeric`} ${order.direction === 'asc' ? 'ASC' : 'DESC'} NULLS LAST`);
   }
   let aggregateProperty: PropertyDefinition | undefined;

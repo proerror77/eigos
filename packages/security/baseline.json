@@ -5578,7 +5578,7 @@
     {
       "id": "postgres-ontology-functions",
       "file": "packages/postgres/ontology-functions.ts",
-      "sourceDigest": "621fab3f18268d9c366f94a7e6fe24e4d20235d39b57862bbc1319c24f7b4107",
+      "sourceDigest": "6b2562e1e2d40117b53aaddaaa3371e9b0d87123ecfc62b724d70bf4a1135faf",
       "channels": [
         "internal"
       ],
@@ -5626,7 +5626,7 @@
     {
       "id": "postgres-ontology-read-query",
       "file": "packages/postgres/ontology-read-query.ts",
-      "sourceDigest": "ac9d9ef8dbfd1694845b8f540cd6b0dcbd237db63810cc5d84c1d2c4a2e9bc16",
+      "sourceDigest": "f7a9e435e084278dce96e819c1203b15b35955d6b15f844b175dbd4a9f428ece",
       "channels": [
         "internal"
       ],
@@ -5688,7 +5688,7 @@
     {
       "id": "postgres-projection-graph",
       "file": "packages/postgres/projection-graph.ts",
-      "sourceDigest": "21096b41ba375ef255c2c816bd61f30c2cb6894bfae214b21943bdb086de3e9f",
+      "sourceDigest": "2f1c38994d2d4b92cda6da8c85ed2b9c67c2e42bd5fb955e4340aa4b4a64d0ff",
       "channels": [
         "internal"
       ],
@@ -8043,6 +8043,42 @@
       "content": "Bounded PostgreSQL raw read batching",
       "currentControl": "Only host-authored bounded SELECT fragments are grouped in the owning transaction. Values are bound parameters. Callers retain row validation and all admission, source and output decisions.",
       "targetControl": "Only host-authored bounded SELECT fragments are grouped in the owning transaction. Values are bound parameters. Callers retain row validation and all admission, source and output decisions.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-authorized-relation-plan",
+      "file": "packages/postgres/authorized-relation-plan.ts",
+      "sourceDigest": "cd1456943b1d86de9343191f9f7b0472cad3dec710b3c848a0cf2e3c4a68c802",
+      "channels": [
+        "internal"
+      ],
+      "content": "Bounded internal PostgreSQL relation execution",
+      "currentControl": "Each hop uses the existing task authorization path. Sorting and aggregates consume only checked values, require their fields and units, and retain the original transaction, evidence and read bounds.",
+      "targetControl": "Each hop uses the existing task authorization path. Sorting and aggregates consume only checked values, require their fields and units, and retain the original transaction, evidence and read bounds.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-relation-query-plan",
+      "file": "packages/postgres/relation-query-plan.ts",
+      "sourceDigest": "e65c6d50c737343557d2487791b733b2e2b9d9b9046dcea01a39ff3eea87c9d0",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL relation candidate SQL",
+      "currentControl": "Schema and typed navigation are selected by the host. Candidate identities are bounded and parameterized, with exact owner, namespace and direction. Counts are internal completeness evidence.",
+      "targetControl": "Schema and typed navigation are selected by the host. Candidate identities are bounded and parameterized, with exact owner, namespace and direction. Counts are internal completeness evidence.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-query-field-validation",
+      "file": "packages/postgres/query-field-validation.ts",
+      "sourceDigest": "d7279022e0485eee46a939e64bc6087397be01c35cd9a6ec8847a7585b0a35b2",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL query selection and predicate validation",
+      "currentControl": "Selections and predicates use the pinned property contract. Restricted properties, unsupported kinds and values outside the exact schema are refused before use.",
+      "targetControl": "Selections and predicates use the pinned property contract. Restricted properties, unsupported kinds and values outside the exact schema are refused before use.",
       "stage": "S5"
     }
   ]
