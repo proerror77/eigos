@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
-import { nameSchema, objectRefSchema, type FunctionDefinition, type OntologyModel } from './model.js';
+import { nameSchema, objectRefSchema, type FunctionDefinition, type OntologyModel, type ObjectRef } from './model.js';
 import type { HandlerRef } from './definition-contracts.js';
 import type { FunctionExecutionContract, FunctionReadSet } from './function-contracts.js';
 import type { Computation } from './object-functions.js';
@@ -96,11 +96,28 @@ export function validateFunctionComputation(binding: FunctionRuntimeBinding, com
 
 /** Declared reads bound code, not permission. Every yielded operation still goes
  * through the existing owner/task/field authorization and evidence envelope. */
-export function* constrainFunctionReads<T>(program: GraphProgram<T>, reads?: FunctionReadSet, model?: OntologyModel): GraphProgram<T> {
+const sourceContextSchema = z.strictObject({ query: objectRefSchema, collection: nameSchema, observation: objectRefSchema });
+interface FunctionReadScope { root?: ObjectRef; context?: z.infer<typeof sourceContextSchema>; observations: Set<string> }
+const refKey = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);
+export function* constrainFunctionReads<T>(program: GraphProgram<T>, reads?: FunctionReadSet, model?: OntologyModel, root?: ObjectRef, scope: FunctionReadScope = { root: root && structuredClone(root), observations: new Set() }): GraphProgram<T> {
   let state = program.next();
   try { while (!state.done) {
     let operation = state.value;
-    const type = (ref: { type: string }) => { if (reads && !reads.types.some(target => ref.type === target || model?.implements(ref.type, target))) fail('Function read exceeds its declared object types'); };
+    const type = (ref: ObjectRef) => { if (reads && !reads.types.some(target => ref.type === target || model?.implements(ref.type, target)) && !scope.observations.has(refKey(ref))) fail('Function read exceeds its declared object types'); };
+    const dynamicCollection = (from: ObjectRef, name: string) => !!reads?.sourceContext && !!scope.context && refKey(from) === refKey(scope.context.query) && name === scope.context.collection;
+    const relationship = (from: ObjectRef, name: string, as?: string) => {
+      if (dynamicCollection(from, name)) return;
+      type(from);
+      if (reads?.sourceContext && scope.observations.has(refKey(from)) && name === 'sourceReceipts' && model?.navigation(from.type, name).other.type === 'SourceReceipt') return;
+      const actualName = model?.navigation(from.type, name, as).side.name ?? name;
+      const declared = reads!.relationships.some(link => {
+        if (!model) return link.type === from.type && link.name === actualName;
+        if (!model.implements(from.type, link.type)) return false;
+        try { return model.navigation(from.type, link.name, model.isInterface(link.type) ? link.type : undefined).side.name === actualName; }
+        catch { return false; }
+      });
+      if (!declared) fail('Function read exceeds its declared relationships');
+    };
     if (!reads) {
       if (operation.method === 'integrity' || operation.method === 'registeredFunction') operation = { ...operation, program: constrainFunctionReads(operation.program) };
       else if (!['read', 'readPrivate', 'related', 'query', 'relationshipDigest', 'evidencePropertiesDigest', 'containsLinks', 'semanticCandidates', 'revision', 'evaluate', 'virtualMembership'].includes(operation.method)) fail('Function attempted an undeclared graph operation');
@@ -109,32 +126,65 @@ export function* constrainFunctionReads<T>(program: GraphProgram<T>, reads?: Fun
     }
     if (operation.method === 'integrity') {
       if (!reads.sourceProof) fail('Function has no declared source-proof read');
-      operation = { ...operation, program: constrainFunctionReads(operation.program, reads, model) };
+      operation = { ...operation, program: constrainFunctionReads(operation.program, reads, model, root, scope) };
     }
     else if (operation.method === 'read' || operation.method === 'readPrivate' || operation.method === 'relationshipDigest' || operation.method === 'evidencePropertiesDigest') {
       type(operation.args[1]);
       if (['readPrivate', 'evidencePropertiesDigest'].includes(operation.method) && !reads.sourceProof) fail('Function has no declared source-proof read');
     }
     else if (operation.method === 'related') {
-      const [, from, name] = operation.args; type(from);
-      const declared = reads.relationships.some(link => {
-        if (!model) return link.type === from.type && link.name === name;
-        if (!model.implements(from.type, link.type)) return false;
-        return model.navigation(from.type, link.name, model.isInterface(link.type) ? link.type : undefined).side.name === name;
-      });
-      if (!declared) fail('Function read exceeds its declared relationships');
+      const [, from, name] = operation.args; relationship(from, name);
+    } else if (operation.method === 'query') {
+      const query = operation.args[1];
+      if ('object' in query) {
+        type(query.object);
+        if (!query.as || !reads.objectViews?.includes(query.as) || !model?.implements(query.object.type, query.as)) fail('Function object query exceeds its declared views');
+      } else if ('from' in query) {
+        if (!query.as || !reads.relationshipViews?.includes(query.as) || !model?.implements(query.from.type, query.as)) fail('Function relationship query exceeds its declared views');
+        relationship(query.from, query.link, query.as);
+      } else fail('Functions cannot enumerate undeclared type-wide queries');
+    } else if (operation.method === 'containsLinks') {
+      for (const link of operation.args[1]) {
+        if (!reads.linkProofs?.includes(link.type)) fail('Function link proof exceeds its declared relationships');
+        type(link.from); type(link.to);
+        const definition = model?.link(link.type);
+        if (!definition || !model!.implements(link.from.type, definition.from.type) || !model!.implements(link.to.type, definition.to.type)) fail('Function link proof has incompatible endpoints');
+      }
     } else fail('Function attempted an undeclared graph operation');
     try {
       const result = yield operation;
-      if (operation.method === 'related' && result !== undefined) {
-        if (!Array.isArray(result)) fail('Function relationship returned an invalid collection');
-        const [, from, name] = operation.args, target = model?.navigation(from.type, name).other.type;
-        for (const object of result as unknown[]) {
+      if (reads.sourceContext && operation.method === 'readPrivate' && scope.root && refKey(operation.args[1]) === refKey(scope.root)) {
+        const rawContext = (result as { source?: { readContext?: unknown } } | undefined)?.source?.readContext;
+        if (rawContext !== undefined) {
+          const context = sourceContextSchema.parse(rawContext), navigation = model?.navigation(context.query.type, context.collection);
+          if (!navigation || !model!.implements(context.observation.type, navigation.other.type)) fail('Source read context does not match its declared collection');
+          if (scope.context && digest(context) !== digest(scope.context)) fail('Function source read context changed');
+          scope.context = context; scope.observations.add(refKey(context.observation));
+        }
+      }
+      if ((operation.method === 'related' || operation.method === 'query') && result !== undefined) {
+        const query = operation.method === 'query' ? operation.args[1] : undefined;
+        const point = query && 'object' in query ? query.object : undefined;
+        const from = operation.method === 'related' ? operation.args[1] : query && 'from' in query ? query.from : undefined;
+        const name = operation.method === 'related' ? operation.args[2] : query && 'from' in query ? query.link : undefined;
+        const as = query && 'from' in query ? query.as : undefined;
+        const target = from && name ? model?.navigation(from.type, name, as).other.type : undefined;
+        const objects = operation.method === 'related' ? result : (result as { items?: unknown }).items;
+        if (!Array.isArray(objects)) fail('Function read returned an invalid collection');
+        for (const object of objects as unknown[]) {
           const parsed = objectRefSchema.safeParse(object && typeof object === 'object' ? (object as { ref?: unknown }).ref : undefined);
           if (!parsed.success) fail('Function relationship returned an invalid object reference');
+          if (point && refKey(parsed.data!) !== refKey(point)) fail('Function point query returned another object');
+          if (from && name && dynamicCollection(from, name)) {
+            if (target && !model!.implements(parsed.data!.type, target)) fail('Function relationship returned the wrong target type');
+            if (!scope.observations.has(refKey(parsed.data!)) && scope.observations.size >= 5000) fail('Function source read context exceeds its reference bound');
+            scope.observations.add(refKey(parsed.data!));
+          }
           type(parsed.data!);
           if (target && !model!.implements(parsed.data!.type, target)) fail('Function relationship returned the wrong target type');
         }
+      } else if (operation.method === 'containsLinks' && typeof result !== 'boolean') {
+        fail('Function link proof returned an invalid result');
       }
       state = program.next(result);
     } catch (error) { state = program.throw(error); }

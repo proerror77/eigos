@@ -3,6 +3,7 @@ import { compiledOntologyDocumentDigest } from './model-compiler.js';
 import { resolveFunctionRuntime } from './function-runtime.js';
 import { builtinFunctionImplementation } from './builtin-function-implementations.js';
 import { digest } from '../core/delegation.js';
+import { FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF, FUNCTION_CONTRACT_CLOSEOUT_DOCUMENT_DIGEST } from './function-contract-closeout-compatibility.js';
 
 export const EXECUTABLE_CONTRACT_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '34', digest: 'ec1f188fde14f8aff144d78eda632ae0f2464ea86374f4bebfd157c40da208c3' });
 const executableDocumentDigest = 'f0ba7a406667d4563d0b9fe4136d95dfc0c9a55845db62eb08d7967d9b5f6fd2';
@@ -29,7 +30,9 @@ function installedFunctions(model: OntologyModel): boolean {
   const valid = model.functionIds().every(id => {
     const fn = model.function(id), binding = resolveFunctionRuntime(model, id);
     if (!binding) return !fn.executionContract;
-    const expected = builtinFunctionImplementation(fn), actual = binding.implementation;
+    let expected;
+    try { expected = builtinFunctionImplementation(fn); } catch { return false; }
+    const actual = binding.implementation;
     return actual.execute === expected.execute && actual.input === expected.input && actual.value === expected.value
       && digest(actual.contract) === digest(expected.contract);
   });
@@ -39,8 +42,9 @@ function installedFunctions(model: OntologyModel): boolean {
  * completed compilation of the exact document (including Action handlerRefs),
  * plus the actual installed Function executors before reusing policy. */
 export function reviewedExecutableRuntime(model: OntologyModel): boolean {
-  return model.ref.id === EXECUTABLE_CONTRACT_KERNEL_MODEL_REF.id && model.ref.version === '34' && model.ref.digest === EXECUTABLE_CONTRACT_KERNEL_MODEL_REF.digest
-    && compiledOntologyDocumentDigest(model) === executableDocumentDigest && installedFunctions(model);
+  const ref = model.ref.version === '35' ? FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF : model.ref.version === '34' ? EXECUTABLE_CONTRACT_KERNEL_MODEL_REF : undefined;
+  const document = model.ref.version === '35' ? FUNCTION_CONTRACT_CLOSEOUT_DOCUMENT_DIGEST : executableDocumentDigest;
+  return !!ref && model.ref.id === ref.id && model.ref.digest === ref.digest && compiledOntologyDocumentDigest(model) === document && installedFunctions(model);
 }
 /** Only fields/projections reuse v28 policy. Functions remain selected by the
  * task release and require that release's explicit current invocation role. */
@@ -50,7 +54,9 @@ export function executableFieldPolicyRef(model: OntologyModel) { return reviewed
  * keeps its own function definitions and exact executable bindings. The optional
  * v29 semantic function stays present only in tasks pinned to that branch. */
 export function reviewedExecutableModelPair(left: OntologyModel, right: OntologyModel): boolean {
-  const prior = reviewedExecutableRuntime(left) ? right : reviewedExecutableRuntime(right) ? left : undefined;
+  const leftReviewed = reviewedExecutableRuntime(left), rightReviewed = reviewedExecutableRuntime(right);
+  if (leftReviewed && rightReviewed) return true;
+  const prior = leftReviewed ? right : rightReviewed ? left : undefined;
   return !!prior && prior.ref.id === descriptions.id && reviewedPredecessors[prior.ref.version] === prior.ref.digest
     && compiledOntologyDocumentDigest(prior) === reviewedDocuments[prior.ref.version] && installedFunctions(prior);
 }

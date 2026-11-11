@@ -6,8 +6,11 @@ import { extendDomainVocabularyKernel } from './domain-vocabulary-kernel.js';
 import { extendContractClosureKernel } from './contract-closure-kernel.js';
 import { extendEffectCoverageKernel } from './effect-coverage-kernel.js';
 import { extendExecutableContractKernel } from './executable-contract-kernel.js';
+import { extendFunctionContractCloseoutKernel } from './function-contract-closeout-kernel.js';
 import { EXECUTABLE_CONTRACT_KERNEL_MODEL_REF } from './executable-contract-compatibility.js';
 export { EXECUTABLE_CONTRACT_KERNEL_MODEL_REF } from './executable-contract-compatibility.js';
+import { FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF } from './function-contract-closeout-compatibility.js';
+export { FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF } from './function-contract-closeout-compatibility.js';
 import { extendRollingGoKernel } from './rollinggo-kernel.js';
 import { extendBusinessFactsKernel } from './business-facts-kernel.js';
 import { extendPersonalContextKernel } from './personal-context-kernel.js';
@@ -32,7 +35,7 @@ import type { ActionDefinition, InterfaceDefinition, ModelDefinition, ObjectType
 
 export const LEGACY_SEED_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '15', digest: 'efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776' });
 export const CURRENT_KERNEL_VERSION = '28';
-export type ReviewedKernelVersion = '27' | '28' | '29' | '30' | '31' | '32' | '33' | '34';
+export type ReviewedKernelVersion = '27' | '28' | '29' | '30' | '31' | '32' | '33' | '34' | '35';
 export const DOMAIN_VOCABULARY_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '31', digest: '2eb7c0911c04c38bb0cc0f8316c12d86318f8612f675506436b41d871ce66f51' });
 export const EFFECT_COVERAGE_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '33', digest: '5a721eaa695d262725ad3d515c3ff8e098d0858011e55ca4e3a31e84bc6b08a0' });
 export const CONTRACT_CLOSURE_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '32', digest: '53bdaa43dd60980322180e1a9aafa52a8669056aeef245fd9fc983a7a5322e04' });
@@ -235,6 +238,11 @@ export function createExecutableContractKernelDefinition(registry = new TrustedD
   assertRelease(executable, EXECUTABLE_CONTRACT_KERNEL_MODEL_REF, 'The reviewed executable contract fingerprint changed');
   return executable;
 }
+export function createFunctionContractCloseoutDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
+  const closed = complete(extendFunctionContractCloseoutKernel(createExecutableContractKernelDefinition(registry).document, registry), registry, false);
+  assertRelease(closed, FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF, 'The reviewed complete Function contract fingerprint changed');
+  return closed;
+}
 export function createBusinessDescriptionsKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const described = complete(extendBusinessDescriptions(createPaymentCommerceKernelDefinition(registry).document), registry, false);
   assertRelease(described, BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF, 'The original v28 description kernel fingerprint changed');
@@ -273,9 +281,9 @@ export class StagedKernelBuilder {
   readonly #targetVersion: ReviewedKernelVersion;
   readonly #stageCount: number;
   constructor(targetVersion: ReviewedKernelVersion = CURRENT_KERNEL_VERSION) {
-    if (!['27', '28', '29', '30', '31', '32', '33', '34'].includes(targetVersion)) throw new Error('Unsupported reviewed kernel target');
+    if (!['27', '28', '29', '30', '31', '32', '33', '34', '35'].includes(targetVersion)) throw new Error('Unsupported reviewed kernel target');
     this.#targetVersion = targetVersion;
-    this.#stageCount = targetVersion === '27' ? 14 : targetVersion === '28' ? 15 : targetVersion === '31' ? 17 : targetVersion === '32' ? 18 : targetVersion === '33' ? 19 : targetVersion === '34' ? 20 : 16;
+    this.#stageCount = targetVersion === '27' ? 14 : targetVersion === '28' ? 15 : targetVersion === '31' ? 17 : targetVersion === '32' ? 18 : targetVersion === '33' ? 19 : targetVersion === '34' ? 20 : targetVersion === '35' ? 21 : 16;
   }
 
   step(expected: number): { completed: number; total: number; ready: boolean } {
@@ -330,12 +338,12 @@ export class StagedKernelBuilder {
           if(this.#targetVersion==='28'){this.#documentDigest=digest(this.#current.document); this.#registry.seal();}
           break;
         case 15: {
-          const classified = this.#targetVersion === '30' || this.#targetVersion === '31' || this.#targetVersion === '32' || this.#targetVersion === '33' || this.#targetVersion === '34';
+          const classified = ['30', '31', '32', '33', '34', '35'].includes(this.#targetVersion);
           this.#current=complete(classified ? extendPaClassificationKernel(this.#current!.document) : extendSemanticRetrievalKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
           const expected = classified ? PA_CLASSIFICATION_KERNEL_MODEL_REF : SEMANTIC_RETRIEVAL_KERNEL_MODEL_REF;
           assertRelease(this.#current, expected, `The reviewed ${expected.version === '30' ? 'PA classification' : 'semantic retrieval'} fingerprint changed`);
           // The v31 vocabulary stage republishes this release, so sealing waits for stage 16.
-          if (!['31', '32', '33', '34'].includes(this.#targetVersion)) { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
+          if (!['31', '32', '33', '34', '35'].includes(this.#targetVersion)) { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
           break;
         }
         case 16:
@@ -343,12 +351,12 @@ export class StagedKernelBuilder {
           assertRelease(this.#current, DOMAIN_VOCABULARY_KERNEL_MODEL_REF, 'The reviewed domain vocabulary fingerprint changed');
           // The v32 contract closure still registers reviewed function contracts,
           // so sealing waits for stage 17 when that release is the target.
-          if (!['32', '33', '34'].includes(this.#targetVersion)) { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
+          if (!['32', '33', '34', '35'].includes(this.#targetVersion)) { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
           break;
         case 17:
           this.#current=complete(extendContractClosureKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
           assertRelease(this.#current, CONTRACT_CLOSURE_KERNEL_MODEL_REF, 'The reviewed contract closure fingerprint changed');
-          if (!['33', '34'].includes(this.#targetVersion)) { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
+          if (!['33', '34', '35'].includes(this.#targetVersion)) { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
           break;
         case 18:
           this.#current=complete(extendEffectCoverageKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
@@ -358,6 +366,11 @@ export class StagedKernelBuilder {
         case 19:
           this.#current=complete(extendExecutableContractKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
           assertRelease(this.#current, EXECUTABLE_CONTRACT_KERNEL_MODEL_REF, 'The reviewed executable contract fingerprint changed');
+          if (this.#targetVersion === '34') { this.#documentDigest=digest(this.#current.document);this.#registry.seal(); }
+          break;
+        case 20:
+          this.#current=complete(extendFunctionContractCloseoutKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
+          assertRelease(this.#current, FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF, 'The reviewed complete Function contract fingerprint changed');
           this.#documentDigest=digest(this.#current.document);this.#registry.seal();
           break;
         default: throw new Error('Unknown kernel stage');
@@ -377,7 +390,7 @@ export class StagedKernelBuilder {
    * Reuse the prepared v28 node; never rebuild the historical seed chain. */
   installExecutableContracts(): void {
     if (this.#failed || this.#position !== this.#stageCount || !this.#current) throw new Error('Kernel builder is not ready');
-    if (this.#forwardInstalled || this.#targetVersion === '34') return;
+    if (this.#forwardInstalled || this.#targetVersion === '35') return;
     const registry = this.#registry.fork();
     const base = this.#base28 ?? complete(extendBusinessDescriptions(this.#current.document), registry, false).document;
     const classified = complete(extendPaClassificationKernel(base), registry, false);
@@ -386,6 +399,8 @@ export class StagedKernelBuilder {
     const covered = complete(extendEffectCoverageKernel(closed.document, registry), registry, false);
     const executable = complete(extendExecutableContractKernel(covered.document, registry), registry, false);
     if (digest(executable.audit.model) !== digest(EXECUTABLE_CONTRACT_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'Installed executable contract fingerprint changed');
+    const functionClosed = complete(extendFunctionContractCloseoutKernel(executable.document, registry), registry, false);
+    if (digest(functionClosed.audit.model) !== digest(FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF)) throw new DomainError('CONFLICT', 'Installed complete Function contract fingerprint changed');
     registry.seal(); this.#registry = registry; this.#forwardInstalled = true;
   }
 

@@ -5,6 +5,7 @@ import { objectRefSchema, type FunctionDefinition } from './model.js';
 import { rideEstimateObservationSchema } from './ride-estimate.js';
 import { functionInputNormalizes, type FunctionImplementation } from './function-runtime.js';
 import type { FunctionReadSet } from './function-contracts.js';
+import { completeFunctionImplementation } from './complete-function-implementations.js';
 
 const observations = ['DidiPlaceObservation', 'RideEstimateObservation'];
 const rideReads: FunctionReadSet = {
@@ -32,7 +33,8 @@ const implementations = new Map<string, FunctionImplementation>();
 /** Software-owned adapter around the existing evaluators. A definition publisher
  * cannot invent a name: the executable input union is the allowlist. Versioned
  * evaluators (including identity v1/v2) inspect the same pinned model passed here. */
-export function builtinFunctionImplementation(definition: Pick<FunctionDefinition, 'id' | 'version'>): FunctionImplementation {
+export function builtinFunctionImplementation(definition: Pick<FunctionDefinition, 'id' | 'version' | 'executionContract'>): FunctionImplementation {
+  if (definition.executionContract?.version === '2') return completeFunctionImplementation(definition);
   const { id, version } = definition, key = JSON.stringify([id, version]), previous = implementations.get(key);
   if (previous) return previous;
   const input = functionCallSchema.options.find(schema => schema.shape.function.value === definition.id);
