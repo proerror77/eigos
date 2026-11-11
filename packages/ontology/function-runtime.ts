@@ -154,6 +154,8 @@ export function* constrainFunctionReads<T>(program: GraphProgram<T>, reads?: Fun
     try {
       const result = yield operation;
       if (reads.sourceContext && operation.method === 'readPrivate' && scope.root && refKey(operation.args[1]) === refKey(scope.root)) {
+        const returned = objectRefSchema.safeParse((result as { ref?: unknown } | undefined)?.ref);
+        if (!returned.success || refKey(returned.data) !== refKey(scope.root)) fail('Function source context returned another root object');
         const rawContext = (result as { source?: { readContext?: unknown } } | undefined)?.source?.readContext;
         if (rawContext !== undefined) {
           const context = sourceContextSchema.parse(rawContext), navigation = model?.navigation(context.query.type, context.collection);
