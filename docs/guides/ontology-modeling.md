@@ -53,7 +53,9 @@ MCP 工具、供应商端点和运行步骤不是业务 Action Type 的同义词
 
 本体 Function 用于可复用的领域查询、计算和明确契约的逻辑，不要求把每条 SQL 行过滤、claim、租约或字段授权检查都暴露为 Function。存储与安全层保留完整检查；将读取命名为一个 Function 或 Action，也不会自动消除重复查询或网络往返。
 
-查询预算仍是待验收项：应在固定数据规模、同一原任务及实际 PostgreSQL 链路上，分别测量初始化、来源读取、规划验证、Kernel 许可与独立规范投影的 SQL 条数、往返和时延，并核对有效期、撤权、取消及迟到结果。目标预算须依据基线与负载另行明确，不能编造固定阈值；CPU 测试或本地绿灯不能代替网络链路和业务回读。优化可以合并同次调用中的纯重复计算，不能跨信任边界复用授权结论。
+完成入口认证后的热态任务根对象读取预算为 8 次数据库请求。实际 PostgreSQL 回归通过查询服务读取当前任务的直接绑定根对象，并将事务控制和独立资格连接计入预算。普通根对象读仍需核对准确发布、对象及字段授权、来源和输出证据，提交前后重新检查原授权。
+
+关系、函数和完整任务流程的预算应按数据规模及具体请求分别测量。记录初始化、来源读取、规划验证、Kernel 许可与独立规范投影的 SQL 条数、往返和时延，同时核对有效期、撤权、取消及迟到结果。生产时延以真实运行链路和业务回读为准。
 
 ## 原始模型与迁移
 
@@ -73,6 +75,12 @@ MCP 工具、供应商端点和运行步骤不是业务 Action Type 的同义词
 | 29 | 语义检索（向量链强制要求） | `SEMANTIC_RETRIEVAL_KERNEL_MODEL_REF` |
 | 30 | PA 分类标签 | `PA_CLASSIFICATION_KERNEL_MODEL_REF` |
 | 31 | 领域词表（行程域改用运行时拼写） | `DOMAIN_VOCABULARY_KERNEL_MODEL_REF` |
+| 32 | 本体合同与受审动作条件 | `CONTRACT_CLOSURE_KERNEL_MODEL_REF` |
+| 33 | 可执行动作的效果范围 | `EFFECT_COVERAGE_KERNEL_MODEL_REF` |
+| 34 | 函数执行绑定及两项已验证合同 | `EXECUTABLE_CONTRACT_KERNEL_MODEL_REF` |
+| 35 | 全部 54 项函数合同验证 | `FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF` |
+
+v35 保留已有函数的业务语义版本，为此前处于兼容模式的 52 项函数绑定输入校验、结果结构与读取范围。运行时按任务固定的发布检查调用、实际读依赖和结果。目录向调用方展示当前角色可见的依赖与投影后的结果结构。宿主安装受信实现后，选择 v35 的任务仍需对应版本角色。旧任务沿用自己的不可变发布。
 
 `npm run ontology:integrity` 逐个重建可选定版本并核对指纹，同时检查悬空关系、孤立类型、分类词表闭合、每域可发现性，以及"没有实现的动作必须显式声明"。CI 的 `ontology-integrity` 任务在 `packages/ontology/`、已审阅模型兼容层或词表契约文档变更时强制运行；新增可选定版本却没有指纹常量会直接失败。
 
@@ -114,6 +122,14 @@ Auth0 操作员保护 Action 为 `integrations/auth0/ontology-operator.cjs`，�
 本机入口为 `node scripts/ontology-operator.mjs --profile /private/operator/profile.json login|status|query|command`。`query`／`command` 使用明确的 `--input` JSON 文件。profile 包含规范 `baseUrl`、`issuer`、`audience`、`clientId`、`subject`、`tenant`、`tenantClaim` 和 `callbackUrl`；回调须为固定端口的 `http://127.0.0.1:<port>/callback`。目录权限为 0700，profile 与独立 credentials 文件为 0600。登录使用授权码、PKCE、state 和 nonce，验证签名及精确会员身份后才保存令牌；登录不会发放来源或任务授权。
 
 现有 `/ontology/describe`、`query`、`evaluate` 和对应工具支持 `ontologyId`、准确 `release` 或 `taskId` 上下文；任务引用和显式版本不能相互冲突。MCP 与 A2A 的业务任务共用 TaskService 版本解析。
+
+实例查询的公开合同仍是按类型、准确对象或单条命名关系读取，支持既有标量筛选与游标；默认按 `(type,id)` 排序。`path`、`hops`、`aggregate`、`groupBy`、`orderBy` 不是公开参数。注册 Function 可以组织多次获准读取，但不能把未读取或不可见的范围说成空集。
+
+PostgreSQL 的 `postgresQueryAuthorizedRelationPlan` 是宿主内部合同，不注册新工具。它最多接受 8 个起点、3 跳关系，每跳完整的获准前沿最多 50 个对象，授权查询／分页调用最多 64 次；每个前沿成员分别通过原来的对象、字段、关系与证据授权，只有可见结果可以进入下一跳。返回的 `authorizedQueryPages` 记录这些调用／分页次数，不是数据库往返数，也不是单条 SQL 完成整个多跳。普通单跳查询复用同一参数化关系候选编译器，完整性检查使用准确 owner／namespace 下的物理关系数，隐藏或悬空端点不会被当成完整业务证据。
+
+当前正常执行路径已消费单跳候选编译和关系完整性计数。完整的多跳、自定义排序和聚合计划已有宿主级 PostgreSQL 验收，但尚未绑定新的业务 Function；不能将这项内部接口描述为对外通用查询已经支持相应参数。
+
+内部终端在获准值上执行 SQL `count`、整数／定点小数 `sum/min/max` 和稳定排序。数字不转浮点，小数按六位定点比较；时间先按现有 JavaScript 毫秒语义归一化，字符串按 UTF-8 字节序排列，最终以 `(type,id)` 打破并列。数值聚合必须明确列出需保持一致的单位字段，缺失值、单位冲突和非规范值拒绝计算；它不推定参考价格可相加为应付总价。内部结果窗口最多 50 条，窗口位置只用于重新执行同一获准计划，不替代公开游标或持久授权。
 
 基础页面为 `/ontology/manager`。页面只把访问令牌保存在当前页面内存，不写入 URL、浏览器持久存储或定义文档；所有数据和操作仍经过同一管理服务。页面内容包括目录、定义和依赖、差异、校验、发布／激活与历史。
 

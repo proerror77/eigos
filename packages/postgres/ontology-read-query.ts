@@ -14,6 +14,7 @@ import { projectionFields } from '../security/projections.js';
 import type { SecurityEnvelope } from '../security/envelope.js';
 import { secureQuerySchema } from '../security/view-contracts.js';
 import { PostgresProjectionGraph } from './projection-graph.js';
+import { relationCandidateQuery, relationNavigation, type RelationNavigation } from './relation-query-plan.js';
 import { postgresBusinessSchema, postgresBusinessToken, postgresConstrainReadDeadline } from './runtime-transaction.js';
 import { withPostgresTaskReadGrant, postgresTaskReadOntology, postgresTaskQuerySelection, postgresTaskResourceViewValidUntil } from './task-read-access.js';
 import type { PostgresTaskReadAuthorization, PostgresDerivedRead } from './task-output.js';
@@ -79,35 +80,27 @@ export async function postgresQueryAuthorizedObjects(client:Client,principal:Pri
     };
     if ('as' in query && query.as) await requireResource('interface', query.as);
     let target: string;
-    let relationship: { from:ObjectRef; type:string; side:'from'|'to'; other:'from'|'to' } | undefined;
+    let relationship: RelationNavigation | undefined;
     if ('object' in query) {
       await checkedRead(query.object,[model.object(query.object.type).primaryKey,model.object(query.object.type).titleKey]);
       target = query.as ?? query.object.type;
     } else if ('from' in query) {
       await checkedRead(query.from,[model.object(query.from.type).primaryKey,model.object(query.from.type).titleKey]);
-      const nav = model.navigation(query.from.type, query.link, query.as);
-      await requireResource('linkType', nav.link.id);
-      target = nav.viewType ?? nav.other.type;
-      const side=nav.direction==='forward'?'from':'to';
-      relationship={from:query.from,type:nav.link.id,side,other:side==='from'?'to':'from'};
+      relationship=relationNavigation(model,query.from,query.link,query.as);
+      await requireResource('linkType', relationship.linkId);
+      target = relationship.target;
     } else target = query.type;
     await requireResource(model.isInterface(target) ? 'interface' : 'objectType', target);
     const selection=await postgresTaskQuerySelection(client,p,args.taskId,policyDigest);
     const types = new Set(model.concreteTypes(target)), visible: ObjectRef[] = [];
     let candidates=selection.rows;
     if(relationship){
-      const {from,type,side,other}=relationship,scoped=ontology.ref.ontologyId!=='eigos.business';
       // Narrow the already admitted inventory, without reading object bodies or
       // granting access. queryVisible still validates every stored definition
       // and relationship; checkedRead retains each candidate's full boundary.
-      const values=[JSON.stringify(selection.rows),owner,type,from.type,from.id,...(scoped?[ontology.ref.ontologyId]:[])];
-      const load=async()=>(await client.query<{type:string;object_id:string}>(`SELECT selected.type,selected.object_id
-        FROM jsonb_to_recordset($1::jsonb) AS selected(type text,object_id text)
-        WHERE EXISTS(SELECT 1 FROM ${q}.ontology_${scoped?'scoped_':''}links l
-          WHERE l.owner=$2 AND l.type=$3 AND l.${side}_type=$4 AND l.${side}_id=$5
-            AND l.${other}_type=selected.type AND l.${other}_id=selected.object_id${scoped?' AND l.ontology_id=$6':''})`,
-      values)).rows;
-      candidates=options.readRows?await options.readRows.read(client,['related-candidates',q,side,other,values],load):await load();
+      const compiled=relationCandidateQuery(postgresBusinessSchema(client),ontology.ref.ontologyId,owner,[relationship],selection.rows.map(row=>({type:row.type,id:row.object_id})));
+      const load=async()=>(await client.query<{type:string;id:string}>(compiled.text,compiled.values)).rows.map(row=>({type:row.type,object_id:row.id}));
+      candidates=options.readRows?await options.readRows.read(client,['related-candidates',compiled.text,compiled.values],load):await load();
     }
     for (const row of candidates) {
       if (!types.has(String(row.type)) || 'object' in query && (row.type !== query.object.type || row.object_id !== query.object.id)) continue;

@@ -11,7 +11,7 @@ import {cancelTaskIntent} from '../core/task-intents.js';
 import type {StagedKernelBuilder} from '../ontology/seed-definition.js';
 import {taskDataGrantSchema,agentAccessGrantSchema} from '../security/contracts.js';
 import {SecurityError} from '../security/errors.js';
-import {postgresBusinessSchema,postgresBusinessToken} from './runtime-transaction.js';
+import {postgresBusinessSchema,postgresBusinessToken,postgresRequireOwnerWrite} from './runtime-transaction.js';
 import {PostgresProjectionGraph} from './projection-graph.js';
 import {PostgresTaskBindings} from './task-bindings.js';
 
@@ -177,6 +177,7 @@ export class PostgresTaskStorage {
   }
   }
   async save(owner:string,supplied:Job):Promise<Job>{
+    postgresRequireOwnerWrite(this.client,owner);
     const job=structuredClone(supplied),q=`"${this.schema}"`;
     const authority=await this.query(`SELECT id FROM ${q}.eigos_lock_runtime_authority()`);
     if(authority.rowCount!==1)throw new DomainError('CONFLICT','Runtime authority is unavailable');

@@ -4158,7 +4158,7 @@
       "currentControl": "Core resources remain protected; ordinary business display text cannot change data schemas, source binding or execution authority.",
       "targetControl": "Immutable compiled definitions and exact trusted handler contracts",
       "stage": "S2",
-      "sourceDigest": "e05030cd7b40b1eb716505d74f184b9e8d992c562040d244ab688ce4b4327e72"
+      "sourceDigest": "070b416bc9629af8f9b7cd1a23dab20bac728d978cf58ce4f0c5e9c0498009c1"
     },
     {
       "id": "ontology-definition-contracts",
@@ -4257,7 +4257,7 @@
       "currentControl": "Every selectable release (v27-v31) keeps an explicit digest constant and is asserted during construction; historical releases are never rewritten.",
       "targetControl": "Accurate release construction and immutable historical interpretation",
       "stage": "S2",
-      "sourceDigest": "ae5584dd1f36a0cc138343b903b28255807781ea5f0e7e765149423e6446d0ff"
+      "sourceDigest": "6ba1003f70f4fdf55ef81276f1eb767bc7aa477a9fea9104ab3037e57a51b940"
     },
     {
       "id": "ontology-metadata-http",
@@ -4391,7 +4391,7 @@
     {
       "id": "ontology-registered-calculations",
       "file": "packages/ontology/object-functions.ts",
-      "sourceDigest": "afce1b79c4e52641d5ca3d06b4c78d92cb558d5ef19539ad2844b9ea3244a30b",
+      "sourceDigest": "04d141202a82ffadc8764998a1aa959e2cd4f403bb025d3697637d1f5af8e121",
       "channels": [
         "internal"
       ],
@@ -5040,10 +5040,10 @@
         "postgres"
       ],
       "content": "Privileged runtime authority row lock function",
-      "currentControl": "Empty transaction mutex precedes the first data snapshot; fixed-schema security-definer authority readers revoke PUBLIC execution and preserve denial of direct authority-table access",
+      "currentControl": "Protected owner-controlled security-definer functions. The reviewed historical FOR UPDATE form serializes legacy writers. The reviewed FOR SHARE form permits scoped writers and still fences administrative authority changes.",
       "targetControl": "Empty transaction mutex precedes the first data snapshot; fixed-schema security-definer authority readers revoke PUBLIC execution and preserve denial of direct authority-table access",
       "stage": "S5",
-      "sourceDigest": "2ea6fa3edb0f7cc805eaf5abc0a3471fa41ca2f1df3f6dacc2ee4aa87e87a6f3"
+      "sourceDigest": "214b3f81c368d96bcbafed99d2565149e16dd65ad6616da334d39f8f0f44e912"
     },
     {
       "id": "postgres-authority-publisher",
@@ -5060,7 +5060,7 @@
     {
       "id": "postgres-caller-action",
       "file": "packages/postgres/caller-action.ts",
-      "sourceDigest": "68e8fe80b9d884f75bf042363d5ad9b2df6154fe7972d6f0329d9be6c7025196",
+      "sourceDigest": "3ba996a377dc5026c62e94b426f913a0310cb4e8d9f1e873b4869fb32a564d99",
       "channels": [
         "internal",
         "agent_response"
@@ -5085,7 +5085,7 @@
     {
       "id": "postgres-ci-groups",
       "file": "scripts/postgres-tests.mjs",
-      "sourceDigest": "baf4109856e8212acc2c4735a9e786725f689415193912e9ac94887f4f8b367a",
+      "sourceDigest": "9cae05b9b986d2712a44d95d5897131ea9e88ecdc2ed1a9155dd3749f63298b6",
       "channels": [
         "internal"
       ],
@@ -5133,7 +5133,7 @@
     {
       "id": "postgres-coordinator",
       "file": "packages/postgres/coordinator.ts",
-      "sourceDigest": "19cc486079e3ca6192ccbe2524294efd0af1dc1994666a7aa9fafe165ac98c57",
+      "sourceDigest": "2f431ff9bddf8c0f99259fa896943f7be31f9a7ac5cef8929cc61189c86dba6e",
       "channels": [
         "internal"
       ],
@@ -5145,12 +5145,12 @@
     {
       "id": "postgres-database-runtime",
       "file": "packages/postgres/database.ts",
-      "sourceDigest": "08a463b6068a6203e2e23db2b8d9576795c6cd4240e093b7853e267e2baf6e2b",
+      "sourceDigest": "27142d4dbc445102ef6a138371dfadf5d52428118573a583136d3185e39a76ae",
       "channels": [
         "internal"
       ],
       "content": "Request-owned PostgreSQL transaction pool",
-      "currentControl": "One fenced transaction per borrowed connection; exact captured authority, single lease release and eviction after uncertain outcomes; no implicit retry",
+      "currentControl": "One fenced transaction per borrowed connection; independent current eligibility checks on a separate pool, with a fixed read-only batch for public reads. Single lease release and eviction after uncertain outcomes.",
       "targetControl": "One fenced transaction per borrowed connection; exact captured authority, single lease release and eviction after uncertain outcomes; no implicit retry",
       "stage": "S5"
     },
@@ -5196,7 +5196,7 @@
     {
       "id": "postgres-didi-execution",
       "file": "packages/postgres/didi-execution.ts",
-      "sourceDigest": "3df560001da74b1b757766f04b16d5b0d6eedb9b9d795b595d381025712e507f",
+      "sourceDigest": "7ebe40559d97c1836c3b71db25515ab23f0340b4b94117b0d1bab05f7bac8f9e",
       "channels": [
         "internal",
         "provider"
@@ -5246,7 +5246,7 @@
     {
       "id": "postgres-document-execution",
       "file": "packages/postgres/document-execution.ts",
-      "sourceDigest": "7bb9b0f0e98d50f569f67af7d78ba2de7918ac5d4f34cea75b49c90dc757ef9f",
+      "sourceDigest": "1bf91bd5957f52af86e3bea392f2669868f027d67df1896704e01055ac1ba25b",
       "channels": [
         "internal"
       ],
@@ -5270,7 +5270,7 @@
     {
       "id": "postgres-eligibility-inspection",
       "file": "packages/postgres/eligibility-inspection.ts",
-      "sourceDigest": "1ba24d13486d73ec328bb226a5a559d0d06e56ffe36b995e58d00d6d38010a2b",
+      "sourceDigest": "8a2367c3cdc96c7ee3a011a66bdab1f044143f06c55c78df6d73368991015281",
       "channels": [
         "internal"
       ],
@@ -5578,7 +5578,7 @@
     {
       "id": "postgres-ontology-functions",
       "file": "packages/postgres/ontology-functions.ts",
-      "sourceDigest": "621fab3f18268d9c366f94a7e6fe24e4d20235d39b57862bbc1319c24f7b4107",
+      "sourceDigest": "6b2562e1e2d40117b53aaddaaa3371e9b0d87123ecfc62b724d70bf4a1135faf",
       "channels": [
         "internal"
       ],
@@ -5602,12 +5602,12 @@
     {
       "id": "postgres-ontology-query",
       "file": "packages/postgres/ontology-query.ts",
-      "sourceDigest": "dacee20520357a8859ae2d30d72a9ae8b6553d13accd6880923f8530ca4ead0e",
+      "sourceDigest": "16b11514b07e88175e05db5ea6ed3b0abaf801220e0a5a87d9f1177ba7a51fb2",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL task-scoped Ontology queries",
-      "currentControl": "Complete bounded task binding and current field/lineage/recipient visibility before predicates and pagination; exact release/revision, opaque installation/grant/policy cursors and checked field projection; raw graph never exposed",
+      "currentControl": "Exact release and revision, direct binding and current field, lineage and recipient visibility. Ordinary task-root reads batch bounded raw inputs and validate the same inventory budget and output evidence. Other queries retain opaque cursors and checked field projection.",
       "targetControl": "Complete bounded task binding and current field/lineage/recipient visibility before predicates and pagination; exact release/revision, opaque installation/grant/policy cursors and checked field projection; raw graph never exposed",
       "stage": "S5"
     },
@@ -5618,7 +5618,7 @@
       "stage": "S5",
       "id": "postgres-ontology-read",
       "file": "packages/postgres/ontology-release.ts",
-      "sourceDigest": "b110d69e4e5363386c751e8f15e97a1e485786976136972c549963a4a9575592",
+      "sourceDigest": "f857a1367a7f3f58275e5a6a50fd9c77d10e81fe017e1c89c9da3c83b6fcc53f",
       "content": "PostgreSQL ontology release and historical witness reader",
       "currentControl": "Every lookup checks the persisted release identity, actual stored-body SHA-256 and model fingerprint. Immutable documents and compiled models are reused only within the same trusted registry, bounded to eight entries and 16 MiB of serialized content. Namespace, task, role, source and output checks execute at their existing boundaries.",
       "targetControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions"
@@ -5626,7 +5626,7 @@
     {
       "id": "postgres-ontology-read-query",
       "file": "packages/postgres/ontology-read-query.ts",
-      "sourceDigest": "ac9d9ef8dbfd1694845b8f540cd6b0dcbd237db63810cc5d84c1d2c4a2e9bc16",
+      "sourceDigest": "f7a9e435e084278dce96e819c1203b15b35955d6b15f844b175dbd4a9f428ece",
       "channels": [
         "internal"
       ],
@@ -5688,7 +5688,7 @@
     {
       "id": "postgres-projection-graph",
       "file": "packages/postgres/projection-graph.ts",
-      "sourceDigest": "21096b41ba375ef255c2c816bd61f30c2cb6894bfae214b21943bdb086de3e9f",
+      "sourceDigest": "fce2fbe080ead65058aeddb1ea6dd044590c3ad2cd0463c0c0d8a70793ae70c8",
       "channels": [
         "internal"
       ],
@@ -5712,7 +5712,7 @@
     {
       "id": "postgres-runtime-handoff",
       "file": "packages/deployment/postgres-handoff.ts",
-      "sourceDigest": "8d3d31fdfd8296653a2e3f400400bc1a33fc1cc5578b1f2ef37699d429b854cb",
+      "sourceDigest": "b8de37cfd6ca90b7eb7c7801cf8a7539015cc5b732804cd9b10b0d84ab24ef79",
       "channels": [
         "internal"
       ],
@@ -5741,10 +5741,10 @@
         "postgres"
       ],
       "content": "PostgreSQL business mutation transaction primitive",
-      "currentControl": "Business writes retain serializable exclusive fencing. Audited query callbacks share the fence under READ COMMITTED, resolve current authority without a row lock, and recheck authority after commit. Exact transaction identity, deadlines, current eligibility, uncertain-outcome eviction and cursor scope remain enforced.",
+      "currentControl": "Exact transaction identity, authority and fixed deadline checks. Shared readers fence every business writer. Audited writers may use scoped locks only with the reviewed shared authority helper, and unknown outcomes evict without automatic retry.",
       "targetControl": "Serializable business state after transaction-scoped table serialization, exact authority/transaction identity and savepoint guards; current deadlines before/after commit, unknown-outcome eviction and no automatic retries",
       "stage": "S5",
-      "sourceDigest": "a545fe409772c6f8637eda9647871fabfd4797451fc6920fb84d27b49980a4e1"
+      "sourceDigest": "aabc2a5de850510454e2c3b6706ec715c54bf74286544631dc3f68b02d640f9d"
     },
     {
       "id": "postgres-source-projection",
@@ -5869,7 +5869,7 @@
     {
       "id": "postgres-task-output-authorization",
       "file": "packages/postgres/task-output.ts",
-      "sourceDigest": "c4e7aa1d464f1d216512440c3f427735a2d12699e5e28696b6c2fe3f388475eb",
+      "sourceDigest": "98b89fe67eae05d1749c2f3fd60941a492a2948bfca017b6a6f2b9031c937d7a",
       "channels": [
         "internal"
       ],
@@ -5897,7 +5897,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "bde6e43ad0fb2ff8ea1c1d2eac84de24198c487de502b41695d8ea3437b688f6",
+      "sourceDigest": "77eadda331ddb6a14909b5e46c442a727ae23aad920e0afc7ffcd7891095a0da",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current task, identity, source and expiry checks remain. Resource roles pin the exact checked task release, independently of the compatible field policy. Raw binding reuse is bounded to 64 entries/8 MiB and the same callback, transaction token, actor, owner, task and grant revisions; public reuse additionally requires the shared read fence.",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
@@ -5941,7 +5941,7 @@
     {
       "id": "postgres-task-storage",
       "file": "packages/postgres/task-storage.ts",
-      "sourceDigest": "7d55666bc2cfc4a0536707bf91b73c7948804ab668b8c63b2b79c2d744a2552f",
+      "sourceDigest": "857451cf8209d43adee7423d1acfc3ca76407ce42fb9fcf5d01fcb8f3fe6dd38",
       "channels": [
         "internal"
       ],
@@ -6116,12 +6116,12 @@
     {
       "id": "postgres-worker-store",
       "file": "packages/postgres/worker-store.ts",
-      "sourceDigest": "fa9000f7b2bd6dfb21c23fd4b653dbeee519884a69eaff1e4fdf6cfb4c1ed7fd",
+      "sourceDigest": "aef2f3f90c4f41ea1a843873aa4a4a2ac42c3042b5e68a65793961c4fadfd48d",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL durable Worker queue and writeback",
-      "currentControl": "Shared bounded model/execution and per-owner capacity checked in the serialized business transaction; owner occupancy fairness and bounded candidate pagination. Immutable versioned opaque-token reservation, exact active-contract match, conservative legacy-token accounting and total budget including safety recovery. Execution reservations cannot begin model usage. Original authority/token, renewal, cancel/late-output fences and unknown-effect preservation remain.",
+      "currentControl": "Bounded original-claim admissions and leases. Scoped queue capacity is serialized briefly, with busy owner and row locks skipped. Owner projection writes and task-only usage/release operations retain their applicable lock and original effect fences.",
       "targetControl": "Shared bounded model/execution and per-owner capacity checked in the serialized business transaction; owner occupancy fairness and bounded candidate pagination. Immutable versioned opaque-token reservation, exact active-contract match, conservative legacy-token accounting and total budget including safety recovery. Execution reservations cannot begin model usage. Original authority/token, renewal, cancel/late-output fences and unknown-effect preservation remain.",
       "stage": "S5"
     },
@@ -7258,12 +7258,12 @@
     {
       "id": "security-definition-view",
       "file": "packages/security/definition-view.ts",
-      "sourceDigest": "69a8b3ed1b516a5734ad4fd897ff544971e79b0530a34985374f5718f344ede3",
+      "sourceDigest": "65dff7bdd62ee75b20a62e1055b7d5f3cb97c97564d8241fb293ef5baf1e234d",
       "channels": [
         "internal"
       ],
       "content": "Shared authorized definition discovery",
-      "currentControl": "Current reviewed definitions, parent resource fields, resource roles and internal field exclusions before paging; hidden metadata does not affect public digest or counts",
+      "currentControl": "Current exact role and reviewed types determine catalogue visibility. Forward contracts expose only authorized dependencies and projected data schemas, while the compiled runtime enforces its full original contract.",
       "targetControl": "Current reviewed definitions, parent resource fields, resource roles and internal field exclusions before paging; hidden metadata does not affect public digest or counts",
       "stage": "S5"
     },
@@ -7344,7 +7344,7 @@
     {
       "id": "security-model-review",
       "file": "packages/security/model-review.ts",
-      "sourceDigest": "0f7cbf95b89cc99f9fa11c84acb4d8b175cb6cbd3bdd346104d5470a1794ff6b",
+      "sourceDigest": "de082005ee308d12c1ae7a27df3f3ea5511d6fba2f291e79f252c92c99b0559c",
       "channels": [
         "internal"
       ],
@@ -7429,12 +7429,12 @@
     {
       "id": "security-safe-projections",
       "file": "packages/security/projections.ts",
-      "sourceDigest": "86bf1d06f4a265ae9db2265ca148dd607778f19b8364c103ac577bca76c3e8fb",
+      "sourceDigest": "19ea38324263223c2340d517f991cc6743a86510badbf58410528be3701e8676",
       "channels": [
         "model-and-agent"
       ],
       "content": "Explicit typed DiDi observedData projections; raw snapshots remain internal",
-      "currentControl": "Foundation v2: Explicit typed DiDi observedData projections; raw snapshots remain internal",
+      "currentControl": "Fixed task projections guard provider and personal fields. The public status Function schema uses the same projection as actual result delivery.",
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "stage": "S4"
     },
@@ -7848,7 +7848,7 @@
     {
       "id": "trusted-definition-registry",
       "file": "packages/ontology/model-compiler.ts",
-      "sourceDigest": "e05030cd7b40b1eb716505d74f184b9e8d992c562040d244ab688ce4b4327e72",
+      "sourceDigest": "070b416bc9629af8f9b7cd1a23dab20bac728d978cf58ce4f0c5e9c0498009c1",
       "channels": [
         "authorization_control"
       ],
@@ -7860,7 +7860,7 @@
     {
       "id": "trusted-kernel-bootstrap",
       "file": "packages/ontology/seed-definition.ts",
-      "sourceDigest": "ae5584dd1f36a0cc138343b903b28255807781ea5f0e7e765149423e6446d0ff",
+      "sourceDigest": "6ba1003f70f4fdf55ef81276f1eb767bc7aa477a9fea9104ab3037e57a51b940",
       "channels": [
         "authorization_control"
       ],
@@ -7917,7 +7917,7 @@
       "currentControl": "Strict bounded schema separates known/unknown envelope, declared reads and undeclared legacy output; JSON carries no code.",
       "targetControl": "Strict bounded schema separates known/unknown envelope, declared reads and undeclared legacy output; JSON carries no code.",
       "stage": "S2",
-      "sourceDigest": "7aa9252495c20b79cb8520ee249fdde1392fb44eabf460df7e3444b9ccb3e8f8"
+      "sourceDigest": "d94c264796c51bccc60617837b00ca83449675d106dad8bf09ebb8c03738523a"
     },
     {
       "id": "ontology-function-runtime",
@@ -7930,7 +7930,7 @@
       "currentControl": "Immutable once-only bindings and opaque set identity; explicit parameter normalization cannot change function/object identity; declared reads cover interface mappings and returned targets; all registered functions remain read-only with current authorization and evidence.",
       "targetControl": "Immutable once-only bindings and opaque set identity; explicit parameter normalization cannot change function/object identity; declared reads cover interface mappings and returned targets; all registered functions remain read-only with current authorization and evidence.",
       "stage": "S2",
-      "sourceDigest": "62560ea76c23a4cd39f4d83c20978307fc142ab16a70da8c38812660b8fdc1e9"
+      "sourceDigest": "364831a8b6b8a5ca6057a20bc49831ffc200e2fedad256ae73228479709875fe"
     },
     {
       "id": "ontology-builtin-function-implementations",
@@ -7943,7 +7943,7 @@
       "currentControl": "Explicit built-in parser allowlist, pinned model version, validated DiDi result/read contracts and honest legacy coverage; no executable source in definitions.",
       "targetControl": "Explicit built-in parser allowlist, pinned model version, validated DiDi result/read contracts and honest legacy coverage; no executable source in definitions.",
       "stage": "S2",
-      "sourceDigest": "4379bf62bf07b7b0e48b1365fa4baa25f978385010debf64c90122303f783fa6"
+      "sourceDigest": "3370ab8b4acacf5314eaab1a83d3931fd55ee39b45e24d10956be4b83f5a9ea0"
     },
     {
       "id": "ontology-action-criteria",
@@ -7982,7 +7982,7 @@
       "currentControl": "Exact public and complete document pins plus genuine compiler completion and installed Function callback identity; metadata copies, missing bindings, substituted callbacks and method overrides cannot borrow policy; immutable validation is reused without per-field catalogue scans.",
       "targetControl": "Exact public and complete document pins plus genuine compiler completion and installed Function callback identity; metadata copies, missing bindings, substituted callbacks and method overrides cannot borrow policy; immutable validation is reused without per-field catalogue scans.",
       "stage": "S2",
-      "sourceDigest": "240169437122ae0bb38197fc7c0f5a2fbf921007dbf49b9eeeabcb5815440f3f"
+      "sourceDigest": "1ef257c193e2f3874f9c2cc6a5120b6ce72091eb4e03b8cba24fe15d7a92e17d"
     },
     {
       "id": "postgres-worker-capacity",
@@ -8031,6 +8031,150 @@
       "content": "Fixed DiDi read-only workflow evidence",
       "currentControl": "Exact current request/release/route and actual Worker read receipts bind the fixed estimate phases to only the two registered source reads. Each natural interpretation pins its acknowledged invocation, request digest, revision and original run; historical runs remain in the cumulative ledger. Explicit idempotent user replies alone establish a new interpretation window after safe clarification. Classification and batching use this checked proof, never missing ordinary Goal coverage.",
       "targetControl": "The current request and release, exact authorized route, optional single grounded model receipt and actual Worker-context receipts bind the fixed estimate phases. Only the two registered source read actions can enter the original journal. Common fixed-request validation also runs before natural interpretation; accepted natural evidence must declare exactly one tool-free model request. Classification and batching consume this same checked contract, not the absence of ordinary Goal coverage.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-read-batch",
+      "file": "packages/postgres/read-batch.ts",
+      "sourceDigest": "b4f8e0c61a2e6e6f13334d51106898e943af80be061cb4e5e5d2a0f1b9f377f9",
+      "channels": [
+        "internal"
+      ],
+      "content": "Bounded PostgreSQL raw read batching",
+      "currentControl": "Only host-authored bounded SELECT fragments are grouped in the owning transaction. Values are bound parameters. Callers retain row validation and all admission, source and output decisions.",
+      "targetControl": "Only host-authored bounded SELECT fragments are grouped in the owning transaction. Values are bound parameters. Callers retain row validation and all admission, source and output decisions.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-authorized-relation-plan",
+      "file": "packages/postgres/authorized-relation-plan.ts",
+      "sourceDigest": "cd1456943b1d86de9343191f9f7b0472cad3dec710b3c848a0cf2e3c4a68c802",
+      "channels": [
+        "internal"
+      ],
+      "content": "Bounded internal PostgreSQL relation execution",
+      "currentControl": "Each hop uses the existing task authorization path. Sorting and aggregates consume only checked values, require their fields and units, and retain the original transaction, evidence and read bounds.",
+      "targetControl": "Each hop uses the existing task authorization path. Sorting and aggregates consume only checked values, require their fields and units, and retain the original transaction, evidence and read bounds.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-relation-query-plan",
+      "file": "packages/postgres/relation-query-plan.ts",
+      "sourceDigest": "e65c6d50c737343557d2487791b733b2e2b9d9b9046dcea01a39ff3eea87c9d0",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL relation candidate SQL",
+      "currentControl": "Schema and typed navigation are selected by the host. Candidate identities are bounded and parameterized, with exact owner, namespace and direction. Counts are internal completeness evidence.",
+      "targetControl": "Schema and typed navigation are selected by the host. Candidate identities are bounded and parameterized, with exact owner, namespace and direction. Counts are internal completeness evidence.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-query-field-validation",
+      "file": "packages/postgres/query-field-validation.ts",
+      "sourceDigest": "d7279022e0485eee46a939e64bc6087397be01c35cd9a6ec8847a7585b0a35b2",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL query selection and predicate validation",
+      "currentControl": "Selections and predicates use the pinned property contract. Restricted properties, unsupported kinds and values outside the exact schema are refused before use.",
+      "targetControl": "Selections and predicates use the pinned property contract. Restricted properties, unsupported kinds and values outside the exact schema are refused before use.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-write-scope",
+      "file": "packages/postgres/write-scope.ts",
+      "sourceDigest": "348b81d00e548b1a73b063bf5b067c975cc0e8b712677628f7c288b707dab2ec",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL transaction-local write partition locks",
+      "currentControl": "Owner locks partition shared projections. Task locks follow a shared owner lock. Queue capacity uses a transaction-local lock, and owner selection skips busy partitions. These locks convey no authority.",
+      "targetControl": "Owner locks partition shared projections. Task locks follow a shared owner lock. Queue capacity uses a transaction-local lock, and owner selection skips busy partitions. These locks convey no authority.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-write-lock-upgrade",
+      "file": "packages/postgres/write-lock-upgrade.ts",
+      "sourceDigest": "26f9cf1471e26c938cc95b221f45a96cf0714939d6c0b697ff31dbde9d6baf19",
+      "channels": [
+        "internal"
+      ],
+      "content": "Explicit administrative PostgreSQL write-lock upgrade",
+      "currentControl": "The original authority and global fence guard schema-owner-only upgrade. An empty original claim/recovery set is required, the original ACL is retained, and the exact shared lock function is checked before returning.",
+      "targetControl": "The original authority and global fence guard schema-owner-only upgrade. An empty original claim/recovery set is required, the original ACL is retained, and the exact shared lock function is checked before returning.",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-write-lock-upgrade-cli",
+      "file": "scripts/postgres-write-lock-upgrade.mjs",
+      "sourceDigest": "050ed989c71746219d3a4b4e8bf1dbfce01348b55ea29939a0fc1e9f63cda1ae",
+      "channels": [
+        "internal"
+      ],
+      "content": "Reviewed PostgreSQL write-lock upgrade command",
+      "currentControl": "Preview is offline. Apply matches the exact reviewed binding, preview digest, administrator and authority. A separate TLS connection verifies the installed lock and original authority before writing the private receipt.",
+      "targetControl": "Preview is offline. Apply matches the exact reviewed binding, preview digest, administrator and authority. A separate TLS connection verifies the installed lock and original authority before writing the private receipt.",
+      "stage": "S5"
+    },
+    {
+      "id": "ontology-complete-function-implementations",
+      "file": "packages/ontology/complete-function-implementations.ts",
+      "sourceDigest": "f79f5bf33345303cd36304c391d0a4c2d8eff54104dda0597eebcdd0416019ae",
+      "channels": [
+        "internal"
+      ],
+      "content": "v35 trusted Function implementations",
+      "currentControl": "Each reviewed implementation keeps its original semantic version. The forward contract binds the strict input parser, checked output schema and original handler to the immutable release.",
+      "targetControl": "Each reviewed implementation keeps its original semantic version. The forward contract binds the strict input parser, checked output schema and original handler to the immutable release.",
+      "stage": "S5"
+    },
+    {
+      "id": "ontology-complete-function-reads",
+      "file": "packages/ontology/complete-function-reads.ts",
+      "sourceDigest": "bd463f9a89b3078b9697a667c05f80dee363f9a13290a680c73530e72d6696a6",
+      "channels": [
+        "internal"
+      ],
+      "content": "v35 reviewed Function dependency sets",
+      "currentControl": "Each of the 52 migrated Functions declares the union of allowed existing read paths. Dynamic provider evidence is restricted to the stored source context of the exact root and its verified observations.",
+      "targetControl": "Each of the 52 migrated Functions declares the union of allowed existing read paths. Dynamic provider evidence is restricted to the stored source context of the exact root and its verified observations.",
+      "stage": "S5"
+    },
+    {
+      "id": "ontology-complete-function-values",
+      "file": "packages/ontology/complete-function-values.ts",
+      "sourceDigest": "fbb15d3186c4df32513a98270591e4d80442a98d0308dd7be6877cdbd886e0a0",
+      "channels": [
+        "internal"
+      ],
+      "content": "v35 reviewed Function result schemas",
+      "currentControl": "Known results follow the actual evaluator shape and source schemas. Unknown remains an explicit evidence envelope. Delivery projections govern what can leave the task scope.",
+      "targetControl": "Known results follow the actual evaluator shape and source schemas. Unknown remains an explicit evidence envelope. Delivery projections govern what can leave the task scope.",
+      "stage": "S5"
+    },
+    {
+      "id": "ontology-function-contract-closeout-compatibility",
+      "file": "packages/ontology/function-contract-closeout-compatibility.ts",
+      "sourceDigest": "51186285d2ebf29dfad72d1bb51f4d68e1acbd221d88a4cb16dd88f3d7428c19",
+      "channels": [
+        "internal"
+      ],
+      "content": "v35 immutable contract release pins",
+      "currentControl": "Model and document digests are both pinned. A matching public model digest alone grants no compatibility or execution rights.",
+      "targetControl": "Model and document digests are both pinned. A matching public model digest alone grants no compatibility or execution rights.",
+      "stage": "S5"
+    },
+    {
+      "id": "ontology-function-contract-closeout-kernel",
+      "file": "packages/ontology/function-contract-closeout-kernel.ts",
+      "sourceDigest": "a400aceedf4023321a3f80c1904118579026661a835324da562230fbe88ab61a",
+      "channels": [
+        "internal"
+      ],
+      "content": "v35 forward-only Function contract release",
+      "currentControl": "The factory extends the exact v34 predecessor and keeps historical definitions. All 54 Function contracts are validated before the release can be selected.",
+      "targetControl": "The factory extends the exact v34 predecessor and keeps historical definitions. All 54 Function contracts are validated before the release can be selected.",
       "stage": "S5"
     }
   ]

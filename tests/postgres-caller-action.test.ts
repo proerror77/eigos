@@ -52,7 +52,12 @@ test('PostgreSQL caller preparation, exact approval and actual managed readback 
     const p={...f.principal,access:f.coordinator.authenticate(f.principal,installation.token)};
     target=await importPostgresFixture(f);const t=target,q=`"${t.schema}"`,tasks=new PostgresTaskCommandService(t.database,t.policy,t.kernel),registry=new PostgresReadProgramRegistry(t.policy),
       worker=new PostgresWorkerStore(t.database,t.policy,t.kernel,{classify:(job,intents)=>postgresWorkerLane(job,intents,registry)});
-    const execution=new PostgresCallerActionExecution({database:t.database,policyDigest:t.policy,builder:t.kernel});
+    const database={inspectClaim:t.database.inspectClaim.bind(t.database),run:()=>{throw new Error('Caller execution must use the original owner scope');},
+      runOwner:<T>(owner:string,action:Parameters<typeof t.database.run<T>>[0])=>t.database.runOwner(owner,async client=>{
+        assert.equal(owner,f.owner);const modes=(await client.query('SELECT mode FROM pg_catalog.pg_locks WHERE pid=pg_backend_pid() AND relation=$1::regclass AND granted',[`${q}.eigos_business_mutex`])).rows.map(row=>row.mode);
+        assert(modes.includes('RowExclusiveLock'));assert(!modes.includes('ExclusiveLock'));return action(client);
+      })};
+    const execution=new PostgresCallerActionExecution({database,policyDigest:t.policy,builder:t.kernel});
     const read=(id:string)=>t.run(c=>new PostgresTaskStorage(c,t.kernel).get(f.owner,id));
     const perform=async(action:string,input:Record<string,unknown>)=>{
       await t.refreshEligibility();const command={action,input,requestId:randomUUID()},prepared=await tasks.prepareOntologyAction(p,command),raw=await read(prepared.id);

@@ -81,7 +81,12 @@ async function fixture(composed=false){
       const authorization={policyDigest:t.policy,modelChannel:channel,inspectClaim:(value:Parameters<typeof t.database.inspectClaim>[0])=>t.database.inspectClaim(value,t.policy),programs:[createPostgresDocumentPolicy()]};
       await t.database.run(c=>new PostgresActionJournal(c,{...authorization,authorize:createPostgresActionAuthorization(c,authorization)}).createIntent(claim,intent));
       let calls=0,runs=0,activeTransactions=0,prompt:Parameters<Executor['run']>[0]|undefined,beforeDispatch:()=>Promise<void>=async()=>{},afterDispatch:()=>Promise<void>=async()=>{};
-      const database={inspectClaim:t.database.inspectClaim.bind(t.database),run:<T>(action:Parameters<typeof t.database.run<T>>[0])=>t.database.run(async client=>{activeTransactions++;try{return await action(client);}finally{activeTransactions--;}})};
+      const database={inspectClaim:t.database.inspectClaim.bind(t.database),run:()=>{throw new Error('Document execution must use the original owner scope');},
+        runOwner:<T>(owner:string,action:Parameters<typeof t.database.run<T>>[0])=>t.database.runOwner(owner,async client=>{
+          assert.equal(owner,claim.owner);const modes=(await client.query('SELECT mode FROM pg_catalog.pg_locks WHERE pid=pg_backend_pid() AND relation=$1::regclass AND granted',[`${q}.eigos_business_mutex`])).rows.map(row=>row.mode);
+          assert(modes.includes('RowExclusiveLock'));assert(!modes.includes('ExclusiveLock'));
+          activeTransactions++;try{return await action(client);}finally{activeTransactions--;}
+        })};
       const executor:Executor&{securityChannelId:string}={securityChannelId:channel,run:async(job,signal)=>{
         runs++;assert.equal(activeTransactions,0,'model call must be outside the document business transaction');const recorder=modelUsageRecorder();assert(recorder);const run=evidence();await recorder.begin(run.id,run.runtime,run.startedAt);let receipt:ExecutionResult['evidence']|undefined,outcome:'completed'|'failed'|'interrupted'='failed';
         try{await beforeDispatch();await authorizeModelDispatch(channel);signal.throwIfAborted();calls++;prompt=job;await afterDispatch();receipt={...run,completedAt:new Date().toISOString()};outcome='completed';return {output:{decision:'complete',message:'Synthetic document produced',artifact:'# Supplied information\n\nThis is an explicit synthetic executor output.'},evidence:receipt};}

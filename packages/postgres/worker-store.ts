@@ -9,7 +9,7 @@ import {BACKEND_VERSION} from '../ontology/execution.js';
 import type {StagedKernelBuilder} from '../ontology/seed-definition.js';
 import {SecurityError} from '../security/errors.js';
 import type {PostgresDatabase} from './database.js';
-import {postgresBusinessSchema,postgresBusinessAuthorityDigest,postgresConstrainReadDeadline,postgresRequireLeaseAtCommit} from './runtime-transaction.js';
+import {postgresBusinessSchema,postgresBusinessAuthorityDigest,postgresConstrainReadDeadline,postgresRequireLeaseAtCommit,postgresTryQueueOwner,postgresForgetQueueOwner} from './runtime-transaction.js';
 import {postgresClaimSnapshotMatches,postgresWorkReference,type PostgresWorkReference} from './work-claim.js';
 import {postgresWorkerAdmission} from './worker-admission.js';
 import {PostgresTaskStorage} from './task-storage.js';
@@ -49,15 +49,30 @@ class LostClaim extends Error{}
 export class PostgresWorkerStore {
   readonly capacity:PostgresWorkerCapacity;
   private readonly scans=new Map<string,{occupancy:string;ownerActive:number;createdAt:string;id:string}>();
-  constructor(private readonly db:Pick<PostgresDatabase,'run'|'renewClaim'|'inspectClaim'|'cleanupReleasedClaims'>&Partial<Pick<PostgresDatabase,'workAvailable'>>,private readonly policy:string,private readonly kernel?:StagedKernelBuilder,private readonly scheduling:PostgresWorkerScheduling={}){
+  constructor(private readonly db:Pick<PostgresDatabase,'run'|'renewClaim'|'inspectClaim'|'cleanupReleasedClaims'>&Partial<Pick<PostgresDatabase,'workAvailable'|'runOwner'|'runTask'|'runQueue'>>,private readonly policy:string,private readonly kernel?:StagedKernelBuilder,private readonly scheduling:PostgresWorkerScheduling={}){
     if(!/^[a-f0-9]{64}$/.test(policy))throw new Error('Invalid PostgreSQL Worker policy');
     this.capacity=postgresWorkerCapacity(scheduling.capacity);
+  }
+  private ownerRun<T>(owner:string,action:(client:Client)=>Promise<T>){return this.db.runOwner?.(owner,action)??this.db.run(action);}
+  private taskRun<T>(claim:PostgresWorkReference,action:(client:Client)=>Promise<T>){return this.db.runTask?.(claim.owner,claim.job.id,action)??this.db.run(action);}
+  private async queueOwner<T>(client:Client,owner:string,action:()=>Promise<T|undefined>):Promise<T|undefined>{
+    await client.query('SAVEPOINT eigos_queue_owner');let keep=false;
+    try{
+      const result=await postgresTryQueueOwner(client,owner)?await action():undefined;
+      if(result===undefined)await client.query('ROLLBACK TO SAVEPOINT eigos_queue_owner');else keep=true;
+      await client.query('RELEASE SAVEPOINT eigos_queue_owner');return result;
+    }catch(error){await client.query('ROLLBACK TO SAVEPOINT eigos_queue_owner');await client.query('RELEASE SAVEPOINT eigos_queue_owner');throw error;}
+    finally{if(!keep)postgresForgetQueueOwner(client,owner);}
   }
   private async expire(client:Client){
     const q=`"${postgresBusinessSchema(client)}"`,now=Date.now(),store=new PostgresTaskStorage(client,this.kernel);
     const rows=await client.query(`SELECT j.id,j.owner,c.token,c.revision FROM ${q}.work_claims c JOIN ${q}.jobs j ON j.id=c.job_id WHERE c.expires_at<=$1 ORDER BY c.job_id LIMIT 257`,[now]);
     if(rows.rows.length>256)throw new DomainError('CONFLICT','Expired Worker claims exceed the recovery batch bound');
     for(const row of rows.rows){
+      await this.queueOwner(client,String(row.owner),async()=>{
+      const locked=await client.query(`SELECT c.job_id FROM ${q}.work_claims c JOIN ${q}.jobs j ON j.id=c.job_id
+        WHERE c.job_id=$1 AND c.token=$2 AND c.expires_at<=$3 AND j.owner=$4 FOR UPDATE OF j,c SKIP LOCKED`,[row.id,row.token,now,row.owner]);
+      if(locked.rowCount!==1)return;
       const owner=String(row.owner),job=await store.get(owner,String(row.id));
       await client.query(`UPDATE ${q}.member_model_usage SET state='unknown' WHERE owner=$1 AND job_id=$2 AND state='running'
         AND ${q}.eigos_try_jsonb(body)->>'claimTokenDigest'=$3`,[owner,job.id,digest(String(row.token))]);
@@ -78,6 +93,8 @@ export class PostgresWorkerStore {
       }
       await client.query(`DELETE FROM ${q}.runtime_work_claims WHERE job_id=$1 AND token=$2`,[job.id,row.token]);
       await client.query(`DELETE FROM ${q}.work_claims WHERE job_id=$1 AND token=$2 AND expires_at<=$3`,[job.id,row.token,now]);
+      return true;
+      });
     }
   }
   async claim(services:string[],leaseMs:number,lanes:readonly PostgresWorkerLane[]=postgresWorkerLanes):Promise<WorkClaim|undefined>{
@@ -87,7 +104,8 @@ export class PostgresWorkerStore {
     if(!services.includes('eigos.delegate'))return;
     if(this.db.workAvailable&&!await this.db.workAvailable())return;
     await this.db.cleanupReleasedClaims();
-    return this.db.run(async client=>{
+    const run=this.db.runQueue?.bind(this.db)??this.db.run.bind(this.db);
+    return run(async client=>{
       await this.expire(client);const q=`"${postgresBusinessSchema(client)}"`,now=Date.now();
       const reservations=await client.query(`SELECT j.owner,c.token FROM ${q}.work_claims c JOIN ${q}.jobs j ON j.id=c.job_id ORDER BY c.job_id LIMIT 65`);
       if(reservations.rows.length>64)throw new DomainError('CONFLICT','Active Worker claims exceed the supported capacity bound');
@@ -124,11 +142,17 @@ export class PostgresWorkerStore {
         [BACKEND_VERSION,now,cursor?.ownerActive??-1,cursor?.createdAt??'',cursor?.id??'',available.includes('model')]);
       const store=new PostgresTaskStorage(client,this.kernel);
       for(const row of rows.rows.slice(0,64)){
+        const selected=await this.queueOwner(client,String(row.owner),async()=>{
+        const locked=await client.query(`SELECT j.id FROM ${q}.jobs j WHERE j.id=$1 AND j.owner=$2
+          AND NOT EXISTS(SELECT 1 FROM ${q}.work_claims c WHERE c.job_id=j.id) FOR UPDATE OF j SKIP LOCKED`,[row.id,row.owner]);
+        if(locked.rowCount!==1)return;
         let admission;try{admission=await postgresWorkerAdmission(client,String(row.owner),String(row.id),this.policy);}
-        catch(error){if(error instanceof SecurityError)continue;throw error;}
+        catch(error){if(error instanceof SecurityError)return;throw error;}
         let job=await store.get(String(row.owner),String(row.id));
+        if((!['working','submitted'].includes(job.state)&&!(['canceled','failed','rejected','completed','auth-required'].includes(job.state)&&job.delegation?.recoveryPending===true))
+          ||(job.delegation?.nextAt??0)>Date.now())return;
         const lane=this.scheduling.classify?.(job,job.delegation?.agent?.pendingPlanId?await store.intents(String(row.owner),job.id):[])??'model';
-        if(!available.includes(lane)||!occupied.available(lane,String(row.owner)))continue;
+        if(!available.includes(lane)||!occupied.available(lane,String(row.owner)))return;
         if(job.state==='submitted'){job.state='working';job.updatedAt=new Date().toISOString();job=await store.save(String(row.owner),job);}
         const token=postgresWorkerClaimToken(lane,this.capacity),at=Date.now();
         await client.query(`INSERT INTO ${q}.work_claims(job_id,token,revision,expires_at) VALUES($1,$2,$3,$4)`,[job.id,token,job.revision??0,at+leaseMs]);
@@ -138,6 +162,8 @@ export class PostgresWorkerStore {
         this.scans.delete(scanKey);
         return {owner:String(row.owner),job,token,recovery:job.state!=='working'&&job.delegation?.recoveryPending===true,securityAuthorityId:admission.authority.id,
           securityEpoch:admission.authority.authEpoch,securityPolicyRevision:admission.policyRevision};
+        });
+        if(selected)return selected;
       }
       // Advance only after a whole bounded page contained no claimable work.
       // This avoids hiding a short task behind old model/ineligible candidates;
@@ -147,7 +173,7 @@ export class PostgresWorkerStore {
       else this.scans.delete(scanKey);
     });
   }
-  async active(input:WorkClaim){const claim=postgresWorkReference(input);return this.db.run(async client=>{
+  async active(input:WorkClaim){const claim=postgresWorkReference(input);return this.taskRun(claim,async client=>{
     if(!await this.db.inspectClaim(claim,this.policy)||!await postgresClaimSnapshotMatches(client,claim,this.policy))return false;
     const admission=await postgresWorkerAdmission(client,claim.owner,claim.job.id,this.policy);
     if(admission.authority.id!==claim.securityAuthorityId||admission.authority.authEpoch!==claim.securityEpoch||admission.policyRevision!==claim.securityPolicyRevision)return false;
@@ -158,7 +184,7 @@ export class PostgresWorkerStore {
   /** Real host registry metadata, never an arbitrary MCP-provided catalogue.
    * The helper owns current admission, reserved bindings and atomic rollback. */
   catalogue(claim:WorkClaim,entries:readonly PostgresCapabilityCatalogEntry[],modelChannel:string){
-    return this.db.run(client=>postgresProjectCapabilityCatalog(client,claim,entries,{policyDigest:this.policy,modelChannel,
+    return this.ownerRun(claim.owner,client=>postgresProjectCapabilityCatalog(client,claim,entries,{policyDigest:this.policy,modelChannel,
       inspectClaim:fence=>this.db.inspectClaim(fence,this.policy),builder:this.kernel}));
   }
   readRequest(claim:PostgresWorkReference,modelChannel:string){
@@ -180,12 +206,15 @@ export class PostgresWorkerStore {
   readEvidence<T>(claim:PostgresWorkReference,modelChannel:string,action:(authorization:PostgresTaskReadAuthorization,admission:PostgresTaskReadAdmission,
     principal:Principal,client:Client)=>Promise<T>):Promise<T>{
     const reference=postgresWorkReference(claim);
+    // Evidence callbacks retain the original SERIALIZABLE snapshot.
+    // Heartbeats refresh the independently inspected lease without changing
+    // any of the facts already captured by this read.
     return this.db.run(client=>withPostgresOntologyReleaseSnapshot(client,()=>withPostgresWorkerRequestAuthorization(client,reference,this.policy,
       (auth,admission,principal)=>action(auth,admission,principal,client),this.kernel,modelChannel,fence=>this.db.inspectClaim(fence,this.policy))));
   }
   private withUsageClaim<T>(input:PostgresWorkReference,action:(client:Client,claim:PostgresWorkReference)=>Promise<T>):Promise<T>{
     const claim=postgresWorkReference(input);
-    return this.db.run(async client=>{
+    return this.taskRun(claim,async client=>{
       if(!await postgresClaimSnapshotMatches(client,claim,this.policy)||!await this.db.inspectClaim(claim,this.policy))throw new DomainError('CONFLICT','Model dispatch lease is no longer active');
       const before=await postgresWorkerAdmission(client,claim.owner,claim.job.id,this.policy);
       const result=await action(client,claim);
@@ -202,7 +231,7 @@ export class PostgresWorkerStore {
   }
   finishModelUsage(claim:PostgresWorkReference,id:string,evidence:ModelUsageEvidence|undefined,outcome:'completed'|'failed'|'interrupted'){
     const reference=postgresWorkReference(claim),captured=evidence===undefined?undefined:structuredClone(evidence);
-    return this.db.run(client=>postgresFinishModelUsage(client,reference,id,captured,outcome));
+    return this.taskRun(reference,client=>postgresFinishModelUsage(client,reference,id,captured,outcome));
   }
   recordModelUsage(claim:PostgresWorkReference,evidence:RunEvidence){
     const captured=structuredClone(evidence);return this.withUsageClaim(claim,(client,reference)=>postgresRecordModelResponse(client,reference,captured));
@@ -238,7 +267,7 @@ export class PostgresWorkerStore {
   }
   private async mutateCurrent(claim:WorkClaim,update:(job:Job,client:Client)=>Promise<void>,finish:boolean,modelEvidence?:RunEvidence,additionalInfluence?:()=>SecurityEnvelope|undefined,existingRun?:RunEvidence){
     const original=postgresWorkReference(claim);
-    try{const committed=await this.db.run(async client=>{
+    try{const committed=await this.ownerRun(original.owner,async client=>{
       if(!await this.db.inspectClaim(original,this.policy)||!await postgresClaimSnapshotMatches(client,original,this.policy))return false;
       const before=await postgresWorkerAdmission(client,original.owner,original.job.id,this.policy),store=new PostgresTaskStorage(client,this.kernel);
       const current=await store.get(original.owner,original.job.id),request=current.delegation!.request.revision,revision=current.revision;
@@ -279,7 +308,7 @@ export class PostgresWorkerStore {
   async releaseCheckpoint(claim:WorkClaim,signal?:AbortSignal):Promise<boolean>{
     const original=postgresWorkReference(claim);
     try{
-      const committed=await this.db.run(async client=>{
+      const committed=await this.taskRun(original,async client=>{
         // The former outer active() and empty finish() share this one fenced
         // transaction. An already finished or invalid original token is a no-op.
         if(!await this.db.inspectClaim(original,this.policy)||!await postgresClaimSnapshotMatches(client,original,this.policy))return false;

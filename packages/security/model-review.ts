@@ -11,7 +11,7 @@ import { compiledOntologyDocumentDigest } from '../ontology/model-compiler.js';
 /** Exact reviewed historical kernel compatibility; never grants data access. */
 export function assertReviewedModel(current: OntologyModel, model: OntologyModel): void {
   for (const value of [current, model]) if (value.criteriaVersion === '2' && (!compiledOntologyDocumentDigest(value)
-    || value.ref.id === 'eigos.business' && value.ref.version === '34' && !reviewedExecutableRuntime(value))) throw new SecurityError('POLICY_CHANGED');
+    || value.ref.id === 'eigos.business' && ['34', '35'].includes(value.ref.version) && !reviewedExecutableRuntime(value))) throw new SecurityError('POLICY_CHANGED');
   if (current === model) return;
   if (reviewedExecutableModelPair(current, model)) return;
   if (digest(paFieldPolicyRef(current)) === digest(paFieldPolicyRef(model))

@@ -371,14 +371,24 @@ export function compileOntologyDocument(input: OntologyDocument | unknown, regis
     for (const type of fn.executionContract.reads.types) if (!model.hasType(type)) fail('Function declares an unknown read type');
     const declared = fn.executionContract.reads.types;
     const covered = (type: string) => model.concreteTypes(type).every(actual => declared.some(target => model.implements(actual, target)));
-    for (const link of fn.executionContract.reads.relationships) {
+    const reads = fn.executionContract.reads as import('./function-contracts.js').FunctionReadSet;
+    for (const link of reads.relationships) {
       const as = model.isInterface(link.type) ? link.type : undefined;
-      if (as && !(model.describeType(as) as { linkConstraints: { name: string }[] }).linkConstraints.some(value => value.name === link.name)) fail('Function declares an unknown interface relationship');
+      const constraint = as && (model.describeType(as) as { linkConstraints: { name: string; optional?: boolean }[] }).linkConstraints.find(value => value.name === link.name);
+      if (as && !constraint) fail('Function declares an unknown interface relationship');
+      if (link.optional && (!constraint || !constraint.optional)) fail('Optional function relationships require an optional interface capability');
       for (const source of as ? model.concreteTypes(as) : [link.type]) {
-        const navigation = model.navigation(source, link.name, as);
+        let navigation;
+        try { navigation = model.navigation(source, link.name, as); } catch (error) { if (link.optional) continue; throw error; }
         if (!covered(source) || !covered(navigation.other.type)) fail('Function relationship exceeds its declared read types');
       }
     }
+    for (const view of [...(reads.objectViews ?? []), ...(reads.relationshipViews ?? [])]) if (!model.isInterface(view)) fail('Function query views require a registered interface');
+    // Proofs name exact endpoints rather than enumerate a relationship. A
+    // function may deliberately support only part of an interface's instances.
+    const supportedEndpoint = (type: string) => model.concreteTypes(type).some(actual => declared.some(target => model.implements(actual, target)));
+    for (const id of reads.linkProofs ?? []) { const link = model.link(id); if (!supportedEndpoint(link.from.type) || !supportedEndpoint(link.to.type)) fail('Function link proof exceeds its declared read types'); }
+    if (reads.sourceContext && (!reads.sourceProof || fn.inputTypes.some(type => !model.assignableType(type, 'ObservedFact')))) fail('Source read context is available only for evidenced observation functions');
   }
   bindCompositionCompiler(model, { schema: compileJsonSchema, validator: (ref, schema) => registry.resolveValidator(ref, schema) });
   for (const action of model.actionDefinitions()) {

@@ -54,7 +54,7 @@ export type PostgresReasoner=Reasoner&PostgresModelDispatchContract;
 export type PostgresExecutor=Executor&{readonly securityChannelId:string;
   runStructured?(prompt:string,schema:object,signal:AbortSignal,options?:ModelRunOptions):Promise<{output:unknown;evidence:RunEvidence}>}&PostgresModelDispatchContract;
 export interface PostgresCoordinatorOptions extends Omit<PostgresDocumentBindingOptions,'inspectClaim'> {
-  database:Pick<PostgresDatabase,'run'|'inspectClaim'>;
+  database:Pick<PostgresDatabase,'run'|'inspectClaim'>&Partial<Pick<PostgresDatabase,'runOwner'>>;
   store:PostgresWorkerStore;
   reasoner:PostgresReasoner;
   executor:PostgresExecutor;
@@ -93,12 +93,17 @@ export class PostgresCoordinator {
     this.execution=new PostgresDocumentExecution({...configured,modelChannel:configured.modelChannel,policyDigest:configured.policyDigest});
     this.didi=new PostgresDidiExecution({...configured,registry:this.runtime,modelChannel:configured.modelChannel,policyDigest:configured.policyDigest});
   }
-  private load(claim:WorkClaim){return this.configured.database.run(client=>new PostgresTaskStorage(client,this.options.builder).get(claim.owner,claim.job.id));}
+  /** Only this original claim's owner state is touched; shared policy and
+   * definition writes retain their global fence. Older hosts keep run(). */
+  private ownerRun<T>(claim:Pick<WorkClaim,'owner'>,action:(client:Client)=>Promise<T>):Promise<T>{
+    const database=this.configured.database;return database.runOwner?database.runOwner(claim.owner,action):database.run(action);
+  }
+  private load(claim:WorkClaim){return this.ownerRun(claim,client=>new PostgresTaskStorage(client,this.options.builder).get(claim.owner,claim.job.id));}
   /** Host task transition, with the same original claim and output fences as
    * the store's checked mutation path. No raw state is sent to a model. */
   private transition(claim:WorkClaim,change:(job:Job,client:Client)=>Promise<void>|void,mode:{operationalOnly?:boolean;release?:boolean}={}):Promise<boolean>{
     const reference=postgresWorkReference(claim);
-    return this.configured.database.run(async client=>{
+    return this.ownerRun(claim,async client=>{
       if(!await this.options.inspectClaim(reference)||!await postgresClaimSnapshotMatches(client,reference,this.options.policyDigest))return false;
       const admission=await postgresWorkerAdmission(client,claim.owner,claim.job.id,this.options.policyDigest),store=new PostgresTaskStorage(client,this.options.builder),job=await store.get(claim.owner,claim.job.id);
       const immutable=digest({id:job.id,owner:claim.owner,contextId:job.contextId,goal:job.goal,revision:job.revision,requestRevision:job.delegation?.request.revision,release:job.delegation?.ontologyRelease});
@@ -172,7 +177,7 @@ export class PostgresCoordinator {
       if(!drain)return;
       signal.throwIfAborted();const job=await this.load(claim);
       if(job.state!=='working'||!job.delegation?.didiEstimate||(job.delegation.nextAt??0)>Date.now()||!await this.configured.store.active(claim))return;
-      const intents=await this.configured.database.run(client=>new PostgresTaskStorage(client,this.options.builder).intents(claim.owner,job.id));
+      const intents=await this.ownerRun(claim,client=>new PostgresTaskStorage(client,this.options.builder).intents(claim.owner,job.id));
       if(postgresWorkerLane(job,intents,this.runtime)!=='execution')return;
     }
   }
@@ -181,7 +186,7 @@ export class PostgresCoordinator {
     signal.throwIfAborted();const job=await this.load(claim),d=job.delegation;
     if(!d||d.backendVersion!==BACKEND_VERSION||claim.recovery||d.plan||d.suspendedAgent)throw new SecurityError('AUTHORITY_UNAVAILABLE','This PostgreSQL candidate has no installed legacy or terminal-effect recovery adapter');
     if(d.callerAction){await new PostgresCallerActionExecution({database:this.configured.database,policyDigest:this.options.policyDigest,builder:this.options.builder,maxTaskMs:this.maximum}).run(claim,signal);return;}
-    const intents=await this.configured.database.run(client=>new PostgresTaskStorage(client,this.options.builder).intents(claim.owner,job.id));
+    const intents=await this.ownerRun(claim,client=>new PostgresTaskStorage(client,this.options.builder).intents(claim.owner,job.id));
     if(Date.now()>Date.parse(canRecoverReadOnly(job,intents)?executionBudgetStatus(job).window.startedAt:job.createdAt)+this.maximum){await this.transition(claim,current=>pauseExecutionBudget(current,'time','window'));return;}
     if(!d.didiEstimate&&remainingModelTurns(job)<MIN_REASONING_TURNS&&!d.agent?.pendingPlanId){await this.transition(claim,current=>pauseExecutionBudget(current,'modelTurns','window'));return;}
     if(d.recovery?.state==='scheduled'){await this.transition(claim,current=>resumeScheduledRecovery(current));}
@@ -338,9 +343,9 @@ export class PostgresCoordinator {
       const reads=await session.finish(),options={...this.options,programs:this.runtime.policies(),maxTaskMs:this.maximum,
         didiReadTiming:{durationMs:Math.round(performance.now()-readStarted),receipts:reads.reads.length}};
       signal.throwIfAborted();
-      if(decision.kind==='prepare')await this.configured.database.run(client=>preparePostgresGoalContexts(client,claim,decision,id,reads,options));
-      else if(decision.kind==='execute')await this.configured.database.run(client=>installPostgresAgentPlan(client,claim,decision,id,reads,options));
-      else if(!(await this.configured.database.run(client=>acceptPostgresGoal(client,claim,decision,id,reads,options))).accepted){
+      if(decision.kind==='prepare')await this.ownerRun(claim,client=>preparePostgresGoalContexts(client,claim,decision,id,reads,options));
+      else if(decision.kind==='execute')await this.ownerRun(claim,client=>installPostgresAgentPlan(client,claim,decision,id,reads,options));
+      else if(!(await this.ownerRun(claim,client=>acceptPostgresGoal(client,claim,decision,id,reads,options))).accepted){
         fail('The original DiDi source result did not pass independent acceptance');
       }
     }finally{session.close();}
@@ -372,9 +377,9 @@ export class PostgresCoordinator {
   }
   private async cover(claim:WorkClaim,program:GoalProgram,signal:AbortSignal){
     if(!this.configured.reasoner.reviewGoal)fail('The configured runtime has no independent whole-goal reviewer');
-    const context=await this.configured.database.run(client=>postgresGoalReviewContext(client,claim,program,{...this.options,componentPrograms:this.runtime.entries.map(entry=>entry.program)}));
+    const context=await this.ownerRun(claim,client=>postgresGoalReviewContext(client,claim,program,{...this.options,componentPrograms:this.runtime.entries.map(entry=>entry.program)}));
     const response=await this.model(claim,signal,'goal_coverage_reviewed',async()=>{
-      const fresh=await this.configured.database.run(client=>postgresGoalReviewContext(client,claim,program,{...this.options,componentPrograms:this.runtime.entries.map(entry=>entry.program)}));if(!same(fresh.context,context.context))throw new SecurityError('POLICY_CHANGED');
+      const fresh=await this.ownerRun(claim,client=>postgresGoalReviewContext(client,claim,program,{...this.options,componentPrograms:this.runtime.entries.map(entry=>entry.program)}));if(!same(fresh.context,context.context))throw new SecurityError('POLICY_CHANGED');
     },()=>this.configured.reasoner.reviewGoal!(context.context,signal));
     const proof=createGoalCoverage(context.context,response.decision,response.evidence);
     await this.transition(claim,async(current,client)=>{
@@ -386,17 +391,17 @@ export class PostgresCoordinator {
   }
   private async act(claim:WorkClaim,job:Job,program:GoalProgram,signal:AbortSignal){
     if(!this.configured.reasoner.act)fail('The configured model has no Agent decision port');
-    const dto=await this.configured.database.run(client=>postgresAgentPlanningContext(client,claim,program,{...this.options,componentPrograms:this.runtime.entries.map(entry=>entry.program)})),{session,access}=await this.access(claim,job,'agent',signal);
+    const dto=await this.ownerRun(claim,client=>postgresAgentPlanningContext(client,claim,program,{...this.options,componentPrograms:this.runtime.entries.map(entry=>entry.program)})),{session,access}=await this.access(claim,job,'agent',signal);
     access.executionBudget=dto.executionBudget;access.maxTurns=Math.min(access.maxTurns,dto.maxTurns);
     try{
       const response=await this.model(claim,signal,'agent_decision',async()=>{
-        await this.available(claim,signal);const fresh=await this.configured.database.run(client=>postgresAgentPlanningContext(client,claim,program,{...this.options,componentPrograms:this.runtime.entries.map(entry=>entry.program)}));if(!same(fresh.context,dto.context))throw new SecurityError('POLICY_CHANGED');await session.authorizeModel(this.options.modelChannel);
+        await this.available(claim,signal);const fresh=await this.ownerRun(claim,client=>postgresAgentPlanningContext(client,claim,program,{...this.options,componentPrograms:this.runtime.entries.map(entry=>entry.program)}));if(!same(fresh.context,dto.context))throw new SecurityError('POLICY_CHANGED');await session.authorizeModel(this.options.modelChannel);
       },()=>this.configured.reasoner.act!(dto.context,signal,access));
       const decision=agentDecisionSchema.parse(response.decision),reads=await session.finish(),configured={...this.options,programs:this.runtime.policies(),maxTaskMs:this.maximum};
       signal.throwIfAborted();
-      if(decision.kind==='prepare')await this.configured.database.run(client=>preparePostgresGoalContexts(client,claim,decision,response.evidence.id,reads,configured));
+      if(decision.kind==='prepare')await this.ownerRun(claim,client=>preparePostgresGoalContexts(client,claim,decision,response.evidence.id,reads,configured));
       else if(decision.kind==='execute'){
-        try{await this.configured.database.run(client=>installPostgresAgentPlan(client,claim,decision,response.evidence.id,reads,configured));}
+        try{await this.ownerRun(claim,client=>installPostgresAgentPlan(client,claim,decision,response.evidence.id,reads,configured));}
         catch(error){
           if(!(error instanceof PostgresPlanValidationFeedback))throw error;
           // The failed plan transaction has fully rolled back. Fresh claim and
@@ -406,7 +411,7 @@ export class PostgresCoordinator {
             await new PostgresTaskStorage(client,this.options.builder).intents(claim.owner,current.id),error)))throw new SecurityError('ACCESS_REVOKED');
         }
       }
-      else if(decision.kind==='complete')await this.configured.database.run(client=>acceptPostgresGoal(client,claim,decision,response.evidence.id,reads,this.options));
+      else if(decision.kind==='complete')await this.ownerRun(claim,client=>acceptPostgresGoal(client,claim,decision,response.evidence.id,reads,this.options));
       else throw new SecurityError('AUTHORITY_UNAVAILABLE','The selected component has no installed PostgreSQL clarification/infeasibility semantic verifier');
     }finally{session.close();}
   }

@@ -1,3 +1,4 @@
+import {AsyncLocalStorage} from 'node:async_hooks';
 import {consentExpiryIndex} from '../packages/security/consent-lifetime.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -51,7 +52,7 @@ test('public PostgreSQL queries reuse exact read-window rows and proofs but reop
       type Counts={direct:Map<string,number>;members:number;submissions:number};const windows:Counts[]=[];
       const measured={read:<T>(action:(client:pg.Client)=>Promise<T>)=>t.database.read(async client=>{
         assert.equal(postgresBusinessReadOnly(client,postgresBusinessToken(client)),true);
-        const counts:Counts={direct:new Map(),members:0,submissions:0},query=client.query;windows.push(counts);
+        const counts:Counts={direct:new Map(),members:0,submissions:0},query=client.query,priorQuery=Object.getOwnPropertyDescriptor(client,'query');windows.push(counts);
         client.query=new Proxy(query,{apply(method,self,args){
           const sql=typeof args[0]==='string'?args[0]:args[0]?.text,values=typeof args[0]==='string'?args[1]:args[0]?.values;
           if(typeof sql==='string'){
@@ -61,7 +62,10 @@ test('public PostgreSQL queries reuse exact read-window rows and proofs but reop
           }
           return Reflect.apply(method,self,args);
         }});
-        try{return await action(client);}finally{client.query=query;}
+        try{return await action(client);}finally{
+          if (priorQuery) Object.defineProperty(client,'query',priorQuery);
+          else Reflect.deleteProperty(client,'query');
+        }
       })};
       const service=new PostgresTaskReadService(measured,t.policy),metadata={version:2,taskId:task.id,query:{type:'RegisteredCapability',select:['id','name']}};
       const first=await service.queryOntology(principal,metadata),second=await service.queryOntology(principal,metadata);assert.deepEqual(second,first);
@@ -100,7 +104,42 @@ test('public PostgreSQL queries reuse exact read-window rows and proofs but reop
       }));
       assert.deepEqual(await service.queryOntology(principal,metadata),first);
       const parent=(await t.client.query(`SELECT id FROM ${q}.security_grants WHERE installation_id=$1 AND kind='agent_access'`,[installation.id])).rows[0].id;
-      await t.database.run(client=>client.query(`UPDATE ${q}.security_grants SET state='revoked' WHERE id=$1`,[parent]).then(()=>{}));
+      const pointService = new PostgresTaskReadService(t.database,t.policy,t.kernel);
+      const pointQuery = {version:2,taskId:task.id,query:{object:root,select:['originalGoal']}};
+      const warm = await pointService.queryOntology(principal,pointQuery);
+      assert.equal(warm.items[0]?.properties.originalGoal,'Synthetic public read-window proof');
+      type Trace = { count:number; committed?:boolean; afterCommit?:()=>Promise<void> };
+      const traces = new AsyncLocalStorage<Trace>(), originalQuery = pg.Client.prototype.query;
+      pg.Client.prototype.query = new Proxy(originalQuery,{
+        apply(method,client,args) {
+          const trace = traces.getStore();
+          if (trace) {
+            trace.count++;
+            if (args[0] === 'COMMIT') trace.committed=true;
+          }
+          const result = Reflect.apply(method,client,args);
+          if (trace?.afterCommit && args[0] === 'COMMIT') {
+            const afterCommit = trace.afterCommit;
+            delete trace.afterCommit;
+            return Promise.resolve(result).then(async value => {
+              await traces.exit(afterCommit);
+              return value;
+            });
+          }
+          return result;
+        },
+      });
+      try {
+        const measured: Trace = { count:0 };
+        assert.deepEqual(await traces.run(measured,()=>pointService.queryOntology(principal,pointQuery)),warm);
+        assert.equal(measured.committed,true);
+        assert(measured.count<=8,`Warm task root exceeded 8 database requests (observed ${measured.count})`);
+        await assert.rejects(traces.run({count:0,afterCommit:async()=>{
+          await t.database.run(client=>client.query(`UPDATE ${q}.security_grants SET state='revoked' WHERE id=$1`,[parent]).then(()=>{}));
+        }},()=>pointService.queryOntology(principal,pointQuery)),/ACCESS_REVOKED|AUTHORIZATION_REQUIRED/);
+      } finally {
+        pg.Client.prototype.query = originalQuery;
+      }
       await assert.rejects(service.queryOntology(principal,metadata),/ACCESS_REVOKED|AUTHORIZATION_REQUIRED/);
       await assert.rejects(service.evaluateOntology(principal,{version:2,taskId:task.id,call:{function:'taskOutcomeStatus',object:root}}),/ACCESS_REVOKED|AUTHORIZATION_REQUIRED/);
     }finally{if(target)await target.close();f.close();}

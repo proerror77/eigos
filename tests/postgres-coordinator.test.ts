@@ -61,7 +61,7 @@ test('an unadapted synchronous model port is rejected before any prompt or datab
 async function fixture(hooks:Hooks={}){
   const f=securityFixture(Date.now,{unified:true}),doc=new DocumentAgentProgram();let target:Awaited<ReturnType<typeof importPostgresPrimaryFixture>>|undefined;
   let protocol:Awaited<ReturnType<typeof postgresGatewayProtocolFixture>>|undefined,runtime:ReturnType<typeof createPostgresWorker>|undefined;
-  const stats={models:0,documents:0,documentBegins:0,nativeDecisions:0,invalidPlans:0,feedbackReads:0},errors:string[]=[];
+  const stats={models:0,documents:0,documentBegins:0,nativeDecisions:0,invalidPlans:0,feedbackReads:0,ownerTransactions:0},errors:string[]=[];
   try{
     const installation=f.installation('Synthetic actual PostgreSQL coordinator',3600000),expiry=new Date(Date.now()+3600000).toISOString(),bindingId='synthetic-coordinator-doc';
     const types=[...new Set(['ServiceRequest','DocumentTask','DocumentDraft','Place',...Object.keys(taskContextFields)])];
@@ -120,7 +120,17 @@ async function fixture(hooks:Hooks={}){
     const executor:PostgresExecutor={postgresModelDispatch:'acknowledged-v1',securityChannelId:channel,run:async(job,signal)=>{
       const result=await acknowledge('document',job.id,signal,async()=>{stats.documents++;await hooks.afterDocumentDispatch?.(job.id);return {decision:'complete' as const,message:'Synthetic document model response',artifact:'# Synthetic original document\n\nSupplied fixture information only.'};});return {output:result.value,evidence:result.evidence};
     }};
-    runtime=createPostgresWorker({EIGOS_CODEX_BIN:'unused-with-explicit-fixture-ports',EIGOS_EXECUTOR_TIMEOUT_MS:180000,EIGOS_CODEX_MODEL:'inherited-fixture-config',EIGOS_CODEX_REASONING_EFFORT:'medium',EIGOS_CODEX_SERVICE_TIER:'priority',EIGOS_TASK_MAX_MS:86400000},{database:t.database,policyDigest:t.policy,sourceBindingId:bindingId,reasoner,executor,modelChannel:channel,timing:{leaseMs:15000,pollMs:250,timeoutMs:600000}});
+    // Gateway and fixed-snapshot evidence reads retain their existing port.
+    // Every audited owner callback still runs through the real database and
+    // checks the physical PostgreSQL lock rather than a capability flag.
+    const workerDatabase=new Proxy(t.database,{get(database,key){
+      if(key==='runOwner')return <T>(owner:string,action:Parameters<typeof t.database.run<T>>[0])=>database.runOwner(owner,async client=>{
+        assert.equal(owner,f.owner);const modes=(await client.query('SELECT mode FROM pg_catalog.pg_locks WHERE pid=pg_backend_pid() AND relation=$1::regclass AND granted',[`${q}.eigos_business_mutex`])).rows.map(row=>row.mode);
+        assert(modes.includes('RowExclusiveLock'));assert(!modes.includes('ExclusiveLock'));stats.ownerTransactions++;return action(client);
+      });
+      const value=Reflect.get(database,key,database);return typeof value==='function'?value.bind(database):value;
+    }});
+    runtime=createPostgresWorker({EIGOS_CODEX_BIN:'unused-with-explicit-fixture-ports',EIGOS_EXECUTOR_TIMEOUT_MS:180000,EIGOS_CODEX_MODEL:'inherited-fixture-config',EIGOS_CODEX_REASONING_EFFORT:'medium',EIGOS_CODEX_SERVICE_TIER:'priority',EIGOS_TASK_MAX_MS:86400000},{database:workerDatabase,policyDigest:t.policy,sourceBindingId:bindingId,reasoner,executor,modelChannel:channel,timing:{leaseMs:15000,pollMs:250,timeoutMs:600000}});
     const onError=runtime.coordinator.onError.bind(runtime.coordinator);runtime.coordinator.onError=async(claim,error,signal)=>{errors.push(String(error).slice(0,1000));await onError(claim,error,signal);};
     const state=async(id:string)=>(await t.client.query(`SELECT state FROM ${q}.jobs WHERE id=$1`,[id])).rows[0]?.state as string|undefined;
     const wait=async(check:()=>Promise<boolean>,timeout=600000)=>{const until=Date.now()+timeout;while(!await check()){if(Date.now()>until)throw new Error('Actual PostgreSQL coordinator did not reach its expected durable boundary');await delay(250);}};
@@ -146,7 +156,7 @@ test('HTTP MCP and A2A reach the same original SQL task through native compose, 
       const row=(await x.t.client.query(`SELECT ${x.q}.eigos_try_jsonb(body) AS body FROM ${x.q}.jobs WHERE id=$1`,[id])).rows[0].body;
       assert.equal(row.delegation.groundingDecisions[0].decision.kind,'compose');assert.equal(row.delegation.agent.composition.assessment.accepted,true);assert.equal(row.delegation.outcome.status,'satisfied');assert.equal(row.delegation.agent.plans[0].version,'3');
     }
-    assert.equal(x.stats.documents,2);assert(x.stats.nativeDecisions>=8);
+    assert.equal(x.stats.documents,2);assert(x.stats.nativeDecisions>=8);assert(x.stats.ownerTransactions>0);
     assert.deepEqual((await x.t.client.query(`SELECT id FROM ${x.q}.jobs ORDER BY id`)).rows.map(row=>row.id),originalIds.sort(),'both protocols must preserve exactly the two original tasks');
   }finally{await x.close();}
 });

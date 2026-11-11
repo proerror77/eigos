@@ -2,11 +2,13 @@ import { z } from 'zod';
 import { isDeepStrictEqual } from 'node:util';
 import { digest } from '../core/delegation.js';
 import { filterRelationshipMetadata } from '../ontology/model.js';
-import type { OntologyModel, PropertyDefinition } from '../ontology/model.js';
+import type { FunctionDefinition, OntologyModel, PropertyDefinition } from '../ontology/model.js';
+import type { JsonSchema } from '../ontology/definition-contracts.js';
 import { functionCallSchema } from '../ontology/object-functions.js';
 import type { AgentAccessGrant } from './store.js';
 import { assertReviewedModel } from './model-review.js';
 import { SecurityError } from './errors.js';
+import { functionValueProjectionSchema } from './projections.js';
 import { paDiscoverySelection, paDefinitionLinks, withPaTaskDomains, type PaDiscoveryInput } from '../ontology/pa-classification-contract.js';
 
 export interface DefinitionAccess {
@@ -41,6 +43,79 @@ function definitionSchema(model: OntologyModel, schema: z.ZodType, pinned?: Reco
     metadata.schemas.set(schema, json); metadata.conversions++;
   }
   return structuredClone(json);
+}
+
+// The trusted status evaluators have these pinned result branches. Commerce
+// uses an explicit type discriminator in each branch.
+const statusResultTypes = new Map([
+  ['registrationStatus', ['RegistrationOffer', 'RegistrationRecord']],
+  ['bookingObservationStatus', ['BookingOffers', 'BookingObservation', 'BookingPaymentObservation']],
+]);
+
+function publicResultSchema(model: OntologyModel, fn: FunctionDefinition, schema: JsonSchema, typeAllowed: (id: string) => boolean) {
+  const orderedTypes = statusResultTypes.get(fn.id);
+  if (!orderedTypes && fn.id !== 'commerceObservationStatus') return undefined;
+  if (!Array.isArray(schema.anyOf) || orderedTypes && schema.anyOf.length !== orderedTypes.length) {
+    throw new SecurityError('POLICY_CHANGED');
+  }
+  const anyOf = (schema.anyOf as JsonSchema[]).flatMap((branch, index) => {
+    const properties = branch.properties as Record<string, JsonSchema> | undefined;
+    const type = orderedTypes?.[index] ?? properties?.type?.const;
+    if (typeof type !== 'string' || !fn.inputTypes.includes(type) || !properties?.data) throw new SecurityError('POLICY_CHANGED');
+    if (!typeAllowed(type)) return [];
+    const projected = functionValueProjectionSchema(fn.id, type);
+    if (!projected) throw new SecurityError('POLICY_CHANGED');
+    const { $schema: _dialect, ...data } = definitionSchema(model, projected);
+    return [{ ...branch, properties: { ...properties, data } }];
+  });
+  if (!anyOf.length) throw new SecurityError('POLICY_CHANGED');
+  return { ...schema, anyOf };
+}
+
+interface AuthorizedFunctionContractFields {
+  executionContract?: FunctionDefinition['executionContract'];
+  readsFiltered?: true;
+  resultProjection?: 'authorized_data';
+}
+function authorizedFunctionContract(access: DefinitionAccess, model: OntologyModel, fn: FunctionDefinition,
+  typeAllowed: (id: string) => boolean): AuthorizedFunctionContractFields {
+  const contract = fn.executionContract;
+  if (contract?.mode !== 'validated' || contract.version !== '2') return {};
+  const reads = contract.reads;
+  let incompleteRelationship = false;
+  const relationships = reads.relationships.filter(link => {
+    if (!typeAllowed(link.type)) return false;
+    const as = model.isInterface(link.type) ? link.type : undefined;
+    const sources = model.concreteTypes(link.type);
+    const allowed = sources.filter(type => {
+      if (!typeAllowed(type)) return false;
+      try {
+        const navigation = model.navigation(type, link.name, as);
+        return typeAllowed(navigation.other.type) && access.resourceAllowed('linkType', navigation.link.id);
+      } catch { return false; }
+    });
+    if (allowed.length !== sources.length) incompleteRelationship = true;
+    return allowed.length > 0;
+  });
+  const view = {
+    ...reads,
+    types: reads.types.filter(typeAllowed),
+    relationships,
+    ...(reads.objectViews ? { objectViews: reads.objectViews.filter(typeAllowed) } : {}),
+    ...(reads.relationshipViews ? { relationshipViews: reads.relationshipViews.filter(typeAllowed) } : {}),
+    ...(reads.linkProofs ? { linkProofs: reads.linkProofs.filter(id => {
+      const link = model.link(id);
+      return typeAllowed(link.from.type) && typeAllowed(link.to.type) && access.resourceAllowed('linkType', id);
+    }) } : {}),
+  };
+  const valueSchema = publicResultSchema(model, fn, contract.valueSchema, typeAllowed);
+  const filtered = incompleteRelationship || !isDeepStrictEqual(view, reads) || reads.types.some(type =>
+    model.isInterface(type) && model.concreteTypes(type).some(concrete => !typeAllowed(concrete)));
+  return {
+    executionContract: { ...contract, reads: view, ...(valueSchema ? { valueSchema } : {}) },
+    ...(filtered ? { readsFiltered: true } : {}),
+    ...(valueSchema ? { resultProjection: 'authorized_data' as const } : {}),
+  };
 }
 
 /** Pure startup preparation, before acquiring a publisher lease. This does not
@@ -99,14 +174,14 @@ export function authorizedDefinitionCatalogue(access: DefinitionAccess, model: O
   })) : definitions;
   const strictFunctions = model.criteriaVersion === '2';
   const functions = model.functionIds().map(id => model.function(id)).filter(f => policy.resourceAllowed('function', f.id) && (strictFunctions ? f.inputTypes.some(typeAllowed) : f.inputTypes.every(typeAllowed))
-    && (f.executionContract?.mode !== 'validated' || f.executionContract.reads.types.every(typeAllowed)
+    && (f.executionContract?.mode !== 'validated' || f.executionContract.version === '2' || f.executionContract.reads.types.every(typeAllowed)
       && f.executionContract.reads.relationships.every(link => {
         const as = model.isInterface(link.type) ? link.type : undefined, sources = (as ? model.concreteTypes(as) : [link.type]).filter(typeAllowed);
         return sources.length > 0 && sources.every(source => policy.resourceAllowed('linkType', model.navigation(source, link.name, as).link.id));
       }))).map(f=>{
     const schema=functionCallSchema.options.find(schema=>schema.shape.function.value===f.id);
     const inputTypes = strictFunctions ? f.inputTypes.filter(typeAllowed) : f.inputTypes;
-    return {...f, inputTypes, ...(inputTypes.length !== f.inputTypes.length ? { inputTypesFiltered: true } : {}),
+    return {...f, ...authorizedFunctionContract(access, model, f, typeAllowed), inputTypes, ...(inputTypes.length !== f.inputTypes.length ? { inputTypesFiltered: true } : {}),
       ...(f.executionContract ? { inputSchema: structuredClone(f.executionContract.inputSchema) } : schema ? {inputSchema:definitionSchema(access.model, schema)} : {}), ...(strictFunctions ? { binding: model.functionBindingStatus(f.id) } : {})};
   });
   // Build one authorized definition set for internal context selection and public paging.

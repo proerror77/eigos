@@ -381,7 +381,7 @@ test('scoped roles reuse existing actors and selected contacts; user declaration
     const create = (value: typeof assignment, evidenceLevel: 'synthetic' | 'user_asserted') => projectTransactionPartyRole(f.graph, owner, value, { sourceIdentity: value.issuerIdentity, sourceEventId: `${value.role}:${value.sourceVersion}`, assignmentDigest: digest(value), observedAt: value.observedAt, evidenceLevel });
     assert.throws(() => create(assignment, 'user_asserted'), /cannot prove/);
     const ref = create(assignment, 'synthetic'), before = f.graph.read(owner, ref);
-    const evaluate = (object: ObjectRef) => evaluateErrandFunction(f.graph, owner, { function: 'transactionRoleStatus', object }, { remaining: 1000 })!;
+    const evaluate = (object: ObjectRef) => f.graph.evaluate(owner, { function: 'transactionRoleStatus', object }, { remaining: 1000 });
     assert.equal((evaluate(ref).value as any).status, 'assigned');
     const sender = create({ ...assignment, role: 'sender', party: pinTransactionRoleObject(f.graph, owner, address) }, 'user_asserted');
     assert.equal((evaluate(sender).value as any).status, 'declared');

@@ -5,11 +5,76 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { readFileSync } from 'node:fs';
 const clientOptions = () => process.env.EIGOS_TEST_PG_CA_FILE ? { ssl: { ca: readFileSync(process.env.EIGOS_TEST_PG_CA_FILE, 'utf8'), rejectUnauthorized: true } } : {};
-import { postgresBusinessTransaction, postgresConstrainReadDeadline } from '../packages/postgres/runtime-transaction.js';
-import { installPostgresAuthorityLock,postgresBusinessMutexValid } from '../packages/postgres/authority-lock.js';
+import { postgresBusinessTransaction, postgresConstrainReadDeadline,postgresRequireOwnerWrite } from '../packages/postgres/runtime-transaction.js';
+import { installPostgresAuthorityLock,postgresBusinessMutexValid,postgresAuthorityLockBody,postgresAuthorityWriteLockMode } from '../packages/postgres/authority-lock.js';
+import {upgradePostgresWriteLock} from '../packages/postgres/write-lock-upgrade.js';
+import {setTimeout as delay} from 'node:timers/promises';
 import { PostgresDatabase } from '../packages/postgres/database.js';
 import type {WorkClaim} from '../packages/core/store.js';
 import {BACKEND_VERSION} from '../packages/ontology/execution.js';
+
+test('owner and task writes keep the shared reader fence, serialize conflicts and release locks on rollback or unknown commit',
+  {skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'},async()=>{
+    const clients=Array.from({length:4},()=>new pg.Client(clientOptions()));await Promise.all(clients.map(client=>client.connect()));
+    const [admin,a,b,reader]=clients as [pg.Client,pg.Client,pg.Client,pg.Client],schema=`eigos_business_${randomUUID().replaceAll('-','')}`,q=`"${schema}"`,authority={id:randomUUID(),revision:1,digest:'a'.repeat(64)};
+    const ownerA=JSON.stringify(['https://synthetic.example','tests','owner-a']),ownerB=JSON.stringify(['https://synthetic.example','tests','owner-b']),tasks=[randomUUID(),randomUUID()];
+    const pending:Promise<unknown>[]=[],releases:(()=>void)[]=[];
+    const gate=()=>{let release!:()=>void;const promise=new Promise<void>(resolve=>{release=resolve;});releases.push(release);return {promise,release};};
+    const entered=()=>{let signal!:()=>void;const promise=new Promise<void>(resolve=>{signal=resolve;});return {promise,signal};};
+    const blocked=async(pid:number)=>{for(let n=0;n<100;n++){if((await admin.query('SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_locks WHERE pid=$1 AND NOT granted) AS blocked',[pid])).rows[0].blocked)return;await delay(10);}throw Error('Synthetic contender never reached a real PostgreSQL lock wait');};
+    try{
+      await admin.query(`CREATE SCHEMA ${q};CREATE TABLE ${q}.runtime_authority(slot BIGINT PRIMARY KEY,id TEXT,revision BIGINT,configuration_digest TEXT);CREATE TABLE ${q}.jobs(id TEXT PRIMARY KEY,owner TEXT);CREATE TABLE ${q}.example(id INTEGER PRIMARY KEY,value INTEGER)`);
+      await admin.query(`INSERT INTO ${q}.runtime_authority VALUES(1,$1,$2,$3);`,[authority.id,authority.revision,authority.digest]);await installPostgresAuthorityLock(admin,schema);
+      await admin.query(`INSERT INTO ${q}.jobs VALUES($1,$3),($2,$3)`,[...tasks,ownerA]);await admin.query(`INSERT INTO ${q}.example VALUES(1,0),(2,0)`);
+      const bPid=Number((await b.query('SELECT pg_backend_pid() AS pid')).rows[0].pid),readPid=Number((await reader.query('SELECT pg_backend_pid() AS pid')).rows[0].pid);
+      const firstGate=gate(),firstEntered=entered();
+      const first=postgresBusinessTransaction(a,schema,authority,async c=>{postgresRequireOwnerWrite(c,ownerA);await c.query(`UPDATE ${q}.example SET value=1 WHERE id=1`);firstEntered.signal();await firstGate.promise;},{writeScope:{kind:'owner',owner:ownerA}});pending.push(first);await firstEntered.promise;
+      await postgresBusinessTransaction(b,schema,authority,async c=>{postgresRequireOwnerWrite(c,ownerB);assert.throws(()=>postgresRequireOwnerWrite(c,ownerA),/AUTHORIZATION_REQUIRED/);await c.query(`UPDATE ${q}.example SET value=1 WHERE id=2`);},{writeScope:{kind:'owner',owner:ownerB}});
+      let readEntered=false,sameEntered=false;
+      const read=postgresBusinessTransaction(reader,schema,authority,async c=>{readEntered=true;return c.query(`SELECT sum(value)::int AS n FROM ${q}.example`);},{access:'read'});pending.push(read);
+      const same=postgresBusinessTransaction(b,schema,authority,async c=>{sameEntered=true;await c.query(`UPDATE ${q}.example SET value=value+1 WHERE id=1`);},{writeScope:{kind:'owner',owner:ownerA}});pending.push(same);
+      await Promise.all([blocked(bPid),blocked(readPid)]);assert.equal(readEntered,false);assert.equal(sameEntered,false);
+      firstGate.release();await first;await Promise.all([read,same]);
+      assert.equal((await admin.query(`SELECT sum(value)::int AS n FROM ${q}.example`)).rows[0].n,3);
+      const taskGate=gate(),taskEntered=entered();
+      const task=postgresBusinessTransaction(a,schema,authority,async c=>{assert.throws(()=>postgresRequireOwnerWrite(c,ownerA),/AUTHORIZATION_REQUIRED/);taskEntered.signal();await taskGate.promise;},{writeScope:{kind:'task',owner:ownerA,taskId:tasks[0]!}});pending.push(task);await taskEntered.promise;
+      await postgresBusinessTransaction(b,schema,authority,async c=>{await c.query(`UPDATE ${q}.example SET value=value+1 WHERE id=2`);},{writeScope:{kind:'task',owner:ownerA,taskId:tasks[1]!}});
+      let sameTaskEntered=false,ownerEntered=false;
+      const sameTask=postgresBusinessTransaction(b,schema,authority,async()=>{sameTaskEntered=true;},{writeScope:{kind:'task',owner:ownerA,taskId:tasks[0]!}});pending.push(sameTask);
+      const wholeOwner=postgresBusinessTransaction(reader,schema,authority,async()=>{ownerEntered=true;},{writeScope:{kind:'owner',owner:ownerA}});pending.push(wholeOwner);
+      await Promise.all([blocked(bPid),blocked(readPid)]);assert.equal(sameTaskEntered,false);assert.equal(ownerEntered,false);
+      taskGate.release();await task;await Promise.all([sameTask,wholeOwner]);
+      await assert.rejects(postgresBusinessTransaction(a,schema,authority,async c=>{await c.query(`UPDATE ${q}.example SET value=999 WHERE id=1`);throw Error('Synthetic rolled-back owner write');},{writeScope:{kind:'owner',owner:ownerA}}),/rolled-back owner write/);
+      assert.equal((await admin.query(`SELECT value FROM ${q}.example WHERE id=1`)).rows[0].value,2);
+      let calls=0;const query=a.query;a.query=new Proxy(query,{apply:async(fn,self,args)=>{const result=await Reflect.apply(fn,self,args);if(args[0]==='COMMIT')throw Error('Synthetic lost commit response');return result;}});
+      await assert.rejects(postgresBusinessTransaction(a,schema,authority,async c=>{calls++;await c.query(`UPDATE ${q}.example SET value=7 WHERE id=1`);},{writeScope:{kind:'owner',owner:ownerA}}),/commit outcome is unknown/);
+      assert.equal(calls,1);assert.equal((await admin.query(`SELECT value FROM ${q}.example WHERE id=1`)).rows[0].value,7);
+      await postgresBusinessTransaction(b,schema,authority,async()=>{}, {writeScope:{kind:'owner',owner:ownerA}});
+    }finally{releases.forEach(release=>release());await Promise.allSettled(pending);await admin.query(`DROP SCHEMA IF EXISTS ${q} CASCADE`);await Promise.allSettled(clients.map(client=>client.end()));}
+  });
+
+test('existing write-lock upgrade drains claims, preserves ACL and keeps legacy database entrypoints compatible',
+  {skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'},async()=>{
+    const admin=new pg.Client(clientOptions());await admin.connect();const suffix=randomUUID().replaceAll('-',''),schema=`eigos_business_${suffix}`,q=`"${schema}"`,role=`eigos_lock_${suffix}`,authority={id:randomUUID(),revision:1,digest:'a'.repeat(64)},owner=JSON.stringify(['https://synthetic.example','tests','owner']);
+    let database:PostgresDatabase|undefined;
+    try{
+      await admin.query(`CREATE SCHEMA ${q};CREATE TABLE ${q}.runtime_authority(slot BIGINT PRIMARY KEY,id TEXT,revision BIGINT,configuration_digest TEXT);CREATE TABLE ${q}.work_claims(job_id TEXT PRIMARY KEY);CREATE TABLE ${q}.security_recoveries(state TEXT,lease_until BIGINT);CREATE ROLE "${role}" NOLOGIN`);
+      await admin.query(`INSERT INTO ${q}.runtime_authority VALUES(1,$1,$2,$3)`,[authority.id,authority.revision,authority.digest]);await installPostgresAuthorityLock(admin,schema);
+      await admin.query(`CREATE OR REPLACE FUNCTION ${q}.eigos_lock_runtime_authority() RETURNS TABLE(id text,revision bigint,configuration_digest text) LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $$ ${postgresAuthorityLockBody(schema,'update')} $$;GRANT EXECUTE ON FUNCTION ${q}.eigos_lock_runtime_authority() TO "${role}"`);
+      assert.equal(await postgresAuthorityWriteLockMode(admin,schema),'update');database=new PostgresDatabase(new pg.Pool({...clientOptions(),max:1}),schema,authority);
+      const mode=()=>database!.runOwner(owner,async c=>(await c.query('SELECT mode FROM pg_catalog.pg_locks WHERE pid=pg_backend_pid() AND relation=$1::regclass AND granted',[`${q}.eigos_business_mutex`])).rows.map(row=>row.mode));
+      assert((await mode()).includes('ExclusiveLock'),'Legacy helper selects the original global writer before running the callback');
+      const acl=async()=>(await admin.query('SELECT proacl::text AS acl FROM pg_catalog.pg_proc WHERE oid=$1::regprocedure',[`${q}.eigos_lock_runtime_authority()`])).rows[0].acl;
+      const before=await acl();await admin.query(`INSERT INTO ${q}.work_claims VALUES('synthetic-active-original')`);
+      await assert.rejects(upgradePostgresWriteLock(admin,schema,authority),/Drain original Worker/);assert.equal(await postgresAuthorityWriteLockMode(admin,schema),'update');
+      await admin.query(`DELETE FROM ${q}.work_claims;INSERT INTO ${q}.security_recoveries VALUES('running',9007199254740991)`);
+      await assert.rejects(upgradePostgresWriteLock(admin,schema,authority),/Drain original Worker/);assert.equal(await postgresAuthorityWriteLockMode(admin,schema),'update');
+      await admin.query(`UPDATE ${q}.security_recoveries SET lease_until=0`);assert.equal((await upgradePostgresWriteLock(admin,schema,authority)).status,'installed');assert.equal(await acl(),before);
+      assert((await mode()).includes('RowExclusiveLock'));assert.equal((await upgradePostgresWriteLock(admin,schema,authority)).status,'already-installed');
+      await admin.query(`CREATE OR REPLACE FUNCTION ${q}.eigos_lock_runtime_authority() RETURNS TABLE(id text,revision bigint,configuration_digest text) LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $$ SELECT a.id,a.revision,a.configuration_digest FROM ${q}.runtime_authority a WHERE a.slot=1 FOR KEY SHARE $$`);
+      let called=false;await assert.rejects(database.runOwner(owner,async()=>{called=true;}),/reviewed contract/);assert.equal(called,false);
+    }finally{await database?.close();await admin.query(`DROP SCHEMA IF EXISTS ${q} CASCADE;DROP ROLE IF EXISTS "${role}"`);await admin.end();}
+  });
 
 test('PostgreSQL business mutations fence authority, roll back and report uncertain commits', { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async () => {
   const client = new pg.Client(clientOptions()); await client.connect();
@@ -183,6 +248,8 @@ test('restricted runtime can lock authority without reading or updating its tabl
     assert.equal((await admin.query(`SELECT value FROM "${schema}".example`)).rows[0].value,'1');
     const read = await postgresBusinessTransaction(admin,schema,authority,c => c.query('SELECT value FROM example'), { access: 'read' });
     assert.equal(read.rows[0].value, '1');
+    await postgresBusinessTransaction(admin,schema,authority,async c=>{await c.query('UPDATE example SET value=2');},{writeScope:{kind:'owner',owner:JSON.stringify(['https://synthetic.example','tests','restricted'])}});
+    assert.equal((await admin.query(`SELECT value FROM "${schema}".example`)).rows[0].value,'2');
     await assert.rejects(admin.query(`UPDATE "${schema}".runtime_authority SET revision=2`), /permission denied/);
   } finally { await admin.query('RESET ROLE'); await admin.query('DROP TABLE IF EXISTS pg_temp.runtime_authority'); await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE; DROP ROLE IF EXISTS "${role}"`); await admin.end(); }
 });

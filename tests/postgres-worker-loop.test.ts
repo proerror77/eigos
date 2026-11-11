@@ -6,6 +6,7 @@ import { securityFixture } from './fixtures/security.js';
 import { importPostgresFixture } from './fixtures/postgres-business.js';
 import { PostgresTaskCommandService } from '../packages/postgres/task-command-service.js';
 import { PostgresWorkerStore } from '../packages/postgres/worker-store.js';
+import {ownerKey} from '../packages/core/domain.js';
 import { PostgresTaskWorker } from '../apps/worker/postgres-worker.js';
 import type {WorkClaim} from '../packages/core/store.js';
 import {defaultPostgresWorkerCapacity,postgresWorkerCapacity,postgresWorkerClaimToken,postgresWorkerOccupancy,postgresWorkerReservation,type PostgresWorkerLane} from '../packages/postgres/worker-capacity.js';
@@ -93,6 +94,47 @@ test('PostgreSQL historical untagged leases keep exact renewal and release recei
       const next=await store.claim(['eigos.delegate'],30000);assert(next);assert.notEqual(next.token,legacy.token);assert.equal(postgresWorkerReservation(next.token).lane,'model');
       assert(await store.finish(next,current=>{current.state='paused';}));
     }finally{if(target)await target.close();f.close();}
+  });
+
+test('concurrent SQL Workers skip locked candidates and busy owners without duplicating claims or exceeding shared capacity',
+  {skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'},async()=>{
+    const f=securityFixture(Date.now,{unified:true});let target:Awaited<ReturnType<typeof importPostgresFixture>>|undefined;
+    let rowLocked=false,releaseOwner!:()=>void,ownerWrite:Promise<void>|undefined;
+    try{
+      const alice=f.installation('Synthetic concurrent Alice',3600000);f.approve(alice.id);
+      const aliceIdentity={...f.principal,scopes:['tasks:write']},alicePrincipal={...aliceIdentity,access:f.coordinator.authenticate(aliceIdentity,alice.token)};
+      const bobIdentity={...f.principal,subject:'bob',scopes:['tasks:write']},bob=f.members.login(bobIdentity),bobId=randomUUID(),credential='b'.repeat(43),token=`synthetic-${randomUUID()}`;
+      f.members.apply(bob.id,{displayName:'Synthetic Bob',locale:'zh-CN',timezone:'Asia/Shanghai',consent:true},false);
+      f.members.agents.create({registrationId:bobId,displayName:'Synthetic concurrent Bob'},credential);
+      f.members.agents.bind(bobId,credential,bobIdentity,bob.id,token,Date.now()+3600000,Date.now(),true);f.members.authorize(bobIdentity);
+      f.coordinator.approveAgentGrant(bob.id,{installationId:bobId,capabilityIds:['brief.prepare'],resources:[{type:'ServiceRequest',fields:['requestId','originalGoal']}],
+        sourceBindingIds:[],channels:['agent_response','registered_model'],expiresAt:new Date(Date.now()+3600000).toISOString()});
+      const bobPrincipal={...bobIdentity,access:f.coordinator.authenticate(bobIdentity,token)};
+      target=await importPostgresFixture(f);const t=target,q=`"${t.schema}"`,commands=new PostgresTaskCommandService(t.database,t.policy);
+      const capacity=postgresWorkerCapacity({slots:{model:2,execution:1},perOwner:{model:1,execution:1}});
+      const workers=Array.from({length:4},()=>new PostgresWorkerStore(t.database,t.policy,undefined,{capacity}));
+      const tasks:Awaited<ReturnType<PostgresTaskCommandService['submit']>>[]=[];
+      for(const [index,principal] of [alicePrincipal,alicePrincipal,bobPrincipal,bobPrincipal].entries())tasks.push(await commands.submit(principal,{requestId:`parallel-claim-${index}`,goal:'Synthetic shared queue capacity only'}));
+      await t.client.query('BEGIN');rowLocked=true;
+      await t.client.query(`SELECT id FROM ${q}.jobs WHERE id=$1 FOR UPDATE`,[tasks[0]!.id]);
+      const claimed=(await Promise.all(workers.map(worker=>worker.claim(['eigos.delegate'],30000)))).filter((claim):claim is WorkClaim=>claim!==undefined);
+      assert.equal(claimed.length,2);assert.equal(new Set(claimed.map(claim=>claim.job.id)).size,2);
+      assert(!claimed.some(claim=>claim.job.id===tasks[0]!.id),'A row lock must be skipped rather than wait or duplicate its task');
+      assert.deepEqual(new Set(claimed.map(claim=>claim.owner)),new Set([f.owner,ownerKey(bobIdentity)]));
+      assert.equal((await t.client.query(`SELECT count(*)::int AS n FROM ${q}.work_claims`)).rows[0].n,2);
+      await t.client.query('ROLLBACK');rowLocked=false;
+      for(const claim of claimed)assert(await workers[0]!.finish(claim,job=>{job.state='paused';}));
+      let entered!:()=>void;const holding=new Promise<void>(resolve=>{entered=resolve;}),untilRelease=new Promise<void>(resolve=>{releaseOwner=resolve;});
+      ownerWrite=t.database.runOwner(f.owner,async()=>{entered();await untilRelease;});await holding;
+      const remaining=await workers[1]!.claim(['eigos.delegate'],30000);assert(remaining);
+      assert.equal(remaining.owner,ownerKey(bobIdentity),'A busy owner cannot block another owner from receiving its reserved slot');
+      assert.equal(await workers[2]!.claim(['eigos.delegate'],30000),undefined,'A busy owner cannot be reserved without acquiring its lock');
+      releaseOwner();await ownerWrite;ownerWrite=undefined;
+      const aliceRemaining=await workers[3]!.claim(['eigos.delegate'],30000);assert(aliceRemaining);assert.equal(aliceRemaining.job.id,tasks[0]!.id);
+      assert.equal(await workers[0]!.claim(['eigos.delegate'],30000),undefined);
+      for(const claim of [remaining,aliceRemaining])assert(await workers[0]!.finish(claim,job=>{job.state='paused';}));
+      assert.equal((await t.client.query(`SELECT count(*)::int AS n FROM ${q}.work_claims`)).rows[0].n,0);
+    }finally{releaseOwner?.();await ownerWrite;if(target){if(rowLocked)await target.client.query('ROLLBACK');await target.close();}f.close();}
   });
 
 test('the default SQL Worker keeps the existing five-minute execution deadline',async context=>{

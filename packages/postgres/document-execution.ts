@@ -28,7 +28,7 @@ import {PostgresActionJournal} from './action-journal.js';
 import {createPostgresDocumentPolicy,postgresDocumentContextProgram} from './document-policy.js';
 
 interface Options {
-  database:Pick<PostgresDatabase,'run'|'inspectClaim'>;
+  database:Pick<PostgresDatabase,'run'|'inspectClaim'>&Partial<Pick<PostgresDatabase,'runOwner'>>;
   store:Pick<PostgresWorkerStore,'readRequest'|'recordActionRun'|'beginModelUsage'|'finishModelUsage'>;
   executor:Executor&{readonly securityChannelId:string};
   modelChannel:string;policyDigest:string;sourceBindingId?:string;builder?:StagedKernelBuilder;maxTaskMs?:number;
@@ -58,6 +58,11 @@ export class PostgresDocumentExecution {
       ||options.sourceBindingId!==undefined&&(!options.sourceBindingId||options.sourceBindingId.length>200))throw new Error('Explicit registered document execution authority is required');
     this.maxTaskMs=options.maxTaskMs??86400000;if(!Number.isSafeInteger(this.maxTaskMs)||this.maxTaskMs<1||this.maxTaskMs>86400000)throw new Error('Invalid fixed document task deadline');
     this.database=options.database;this.store=options.store;this.executor=options.executor;this.modelChannel=options.modelChannel;this.policyDigest=options.policyDigest;this.sourceBindingId=options.sourceBindingId;this.builder=options.builder;
+  }
+  /** Only this original claim's owner state is touched; shared policy and
+   * definition writes retain their global fence. Older hosts keep run(). */
+  private ownerRun<T>(claim:Pick<WorkClaim,'owner'>,action:(client:Client)=>Promise<T>):Promise<T>{
+    const database=this.database;return database.runOwner?database.runOwner(claim.owner,action):database.run(action);
   }
   private source():PostgresSourceProjectionOptions{return {policyDigest:this.policyDigest,modelChannel:this.modelChannel,programRef:{...this.program.ref},configurationDigest:this.program.configurationDigest,sourceBindingId:this.sourceBindingId,action:'ComposeDocument',builder:this.builder,inspectClaim:claim=>this.database.inspectClaim(claim,this.policyDigest)};}
   private journal(client:Client,observation?:PostgresActionAuthorizationOptions['observation']){
@@ -92,9 +97,9 @@ export class PostgresDocumentExecution {
   }
   async execute(supplied:WorkClaim,intentId:string,signal:AbortSignal):Promise<PostgresDocumentExecutionResult>{
     if(!intentId||intentId.length>200)throw new Error('Original document intent is required');signal.throwIfAborted();
-    const claim=structuredClone(supplied),reference=postgresWorkReference(claim),prepared=freezeData(await this.database.run(client=>this.prepare(client,reference,intentId)));
+    const claim=structuredClone(supplied),reference=postgresWorkReference(claim),prepared=freezeData(await this.ownerRun(claim,client=>this.prepare(client,reference,intentId)));
     let response:AgentActionResult|undefined,receipt:{id:string}|undefined;
-    const audit=()=>this.database.run(client=>this.journal(client).recordObservation(claim.owner,intentId,prepared.attempt.id,response?
+    const audit=()=>this.ownerRun(claim,client=>this.journal(client).recordObservation(claim.owner,intentId,prepared.attempt.id,response?
       {kind:'confirmed',eventId:prepared.attempt.id,sourceVersion:prepared.attempt.ordinal,output:{source:response.value},evidenceRefs:response.evidenceRefs}:
       {kind:'unknown',eventId:prepared.attempt.id,sourceVersion:prepared.attempt.ordinal,evidenceRefs:[],message:'Document invocation ended without an accepted model response'}));
     try{
@@ -107,7 +112,7 @@ export class PostgresDocumentExecution {
         await this.store.finishModelUsage(claim,id,evidence,outcome);reserved.finished={evidence:structuredClone(evidence),outcome};
       }},()=>withModelDispatchGuard({channelId:this.modelChannel,authorize:async()=>{
         if(!reserved||reserved.finishAttempted||++dispatches!==1)fail('Document model dispatch requires its original acknowledged usage reservation');signal.throwIfAborted();
-        const current=await this.database.run(client=>this.prepare(client,reference,intentId,prepared.attempt));
+        const current=await this.ownerRun(claim,client=>this.prepare(client,reference,intentId,prepared.attempt));
         if(invocationDigest(current.invocation)!==invocationDigest(prepared.invocation))fail('Document input or source evidence changed before model dispatch');
         if(prepared.invocation.evidenceValidUntil!==undefined&&prepared.invocation.evidenceValidUntil<=Date.now())throw new SecurityError('ACCESS_REVOKED');signal.throwIfAborted();
       }},async()=>{
@@ -121,7 +126,7 @@ export class PostgresDocumentExecution {
       const recorded=await this.store.recordActionRun(claim,{...response.runEvidence,purpose:'document'});
       receipt=await audit();if(!recorded)throw new SecurityError('ACCESS_REVOKED');signal.throwIfAborted();
       const actualResponse=response,observationId=receipt.id;let object:ObjectRef|undefined;
-      const accepted=await this.database.run(client=>this.journal(client,{attemptId:prepared.attempt.id,response:actualResponse}).commitObservation(intentId,observationId,true,{claim:reference,apply:async(job,intent)=>{
+      const accepted=await this.ownerRun(claim,client=>this.journal(client,{attemptId:prepared.attempt.id,response:actualResponse}).commitObservation(intentId,observationId,true,{claim:reference,apply:async(job,intent)=>{
         signal.throwIfAborted();await withPostgresSourceProjection(client,reference,this.source(),async graph=>{
           const semantic=await this.context(client,reference,job,intent,graph,'accept',prepared.attempt),ctx=await runGraphProgramAsync(graph,postgresDocumentContextProgram(semantic,this.program));
           const action:DocumentActionProgramContext={...ctx,planId:semantic.plan.id,intentId,attemptId:prepared.attempt.id,modelRunId:semantic.plan.modelRunId,operationKey:intent.businessOperationKey};

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { securityFixture } from './fixtures/security.js';
 import { importPostgresFixture } from './fixtures/postgres-business.js';
-import { OntologyObjectStore, ontologyCursorSchema, type ObjectWrite, type LinkWrite } from '../packages/ontology/object-store.js';
+import { OntologyObjectStore, objectQuerySchema, ontologyCursorSchema, type ObjectWrite, type LinkWrite } from '../packages/ontology/object-store.js';
 import { currentKernelImplementation } from '../packages/ontology/definition-store.js';
 import { AuthorizedOntologyView } from '../packages/security/view.js';
 import { PostgresTaskReadService } from '../packages/postgres/task-read-service.js';
@@ -13,6 +13,13 @@ import type { TaskServicePort } from '../packages/core/task-service-port.js';
 import { taskProtocolFixture } from './fixtures/task-protocol.js';
 import { PostgresProjectionGraph } from '../packages/postgres/projection-graph.js';
 import { postgresScalarQueryPredicate } from '../packages/postgres/scalar-query-predicate.js';
+import { postgresQueryAuthorizedRelationPlan, type AuthorizedRelationPlan } from '../packages/postgres/authorized-relation-plan.js';
+import { relationCandidateQuery, relationNavigation } from '../packages/postgres/relation-query-plan.js';
+import { withPostgresTaskReadAuthorization } from '../packages/postgres/task-output.js';
+import { compileOntologyDocument } from '../packages/ontology/model-compiler.js';
+import { stagedKernelComponents } from '../packages/ontology/seed-definition.js';
+import { digest } from '../packages/core/delegation.js';
+import type { ObjectRef } from '../packages/ontology/model.js';
 
 test('PostgreSQL task queries filter visibility before predicates and pages, retaining opaque cursor and field boundaries',
   { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async () => {
@@ -151,6 +158,9 @@ test('PostgreSQL relationship queries authorize only related admitted candidates
       const expected=source.query(input(relationship));
       target=await importPostgresFixture(f);
       const t=target,q=`"${t.schema}"`,bindings=new Set<string>(),labels=new Set<string>();
+      await t.client.query(`INSERT INTO ${q}.security_bindings
+        SELECT grant_id,owner,task_id,request_revision,'unrelated-invalid-type','unrelated',object_revision,'invalid unrelated body'
+        FROM ${q}.security_bindings WHERE grant_id=$1 LIMIT 1`,[grant.id]);
       // Observe the real client without replacing any authorization result.
       const service=new PostgresTaskReadService({read:action=>t.database.read(async client=>{
         const original=client.query;
@@ -339,6 +349,169 @@ test('bounded PostgreSQL scalar filtering preserves interface values, exact nume
       await corrupt(preciseNumber, async () => {
         const page = await query({ type: 'HotelPrice', where: [{ property: 'adultCount', op: 'eq', value: 1 }], select: ['adultCount'] }, [ref]);
         assert.deepEqual(page.items.map(item => item.properties.adultCount), [1], 'Noncanonical JSON numbers retain JavaScript number precision');
+      });
+    } finally { if (target) await target.close(); sqlite.close(); f.close(); }
+  });
+
+test('internal PostgreSQL relation plans authorize every hop before exact SQL aggregates and ordering',
+  { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async testContext => {
+    const f = securityFixture(Date.now, { unified: true }), sqlite = new DatabaseSync(f.database);
+    let target: Awaited<ReturnType<typeof importPostgresFixture>> | undefined;
+    try {
+      const release = f.jobs.definitions.active(), model = release.model;
+      const raw = new OntologyObjectStore(sqlite, model, Date.now, undefined, { skipLegacyMigration: true });
+      const installation = f.installation('Synthetic bounded relationship plan', 3600000), expiresAt = new Date(Date.now() + 3600000).toISOString();
+      const types = ['ServiceRequest', 'HotelProperty', 'HotelPrice', 'Place', 'Provider', 'SourceReceipt'];
+      const resources = types.map(type => ({ type, fields: Object.keys(model.properties(type)).filter(field => f.jobs.security.policies.fieldPolicy(type, field) !== 'internal_only') }));
+      f.coordinator.approveAgentGrant(f.member.id, { installationId: installation.id, capabilityIds: ['brief.prepare'], resources, sourceBindingIds: [], channels: ['agent_response', 'registered_model'], expiresAt });
+      f.jobs.security.policies.setRecipient(installation.id, { classification: 'sensitive', markings: ['member_private', 'personal_data', 'financial', 'precise_location'], channels: ['agent_response'], expiresAt }, f.jobs.security.policies.revision());
+      f.jobs.security.policies.setRole({ subjectKind: 'installation', subjectId: installation.id, role: 'Viewer', expiresAt,
+        resource: { kind: 'namespace', id: model.ref.id, version: model.ref.digest } }, f.jobs.security.policies.revision());
+      const principal = { ...f.principal, access: f.coordinator.authenticate(f.principal, installation.token) }, task = f.task(installation.id);
+      const root = { type: 'ServiceRequest', id: task.job.id }, receipt = { type: 'SourceReceipt', id: 'plan-receipt' }, provider = { type: 'Provider', id: 'plan-provider' };
+      const wideReceipt = { type: 'SourceReceipt', id: 'wide-plan-receipt' }, widePlaces = Array.from({ length: 51 }, (_, index) => ({ type: 'Place', id: `wide-plan-${index}` }));
+      const places = ['a', 'b', 'c', 'd'].map(id => ({ type: 'Place', id: `plan-place-${id}` }));
+      const hotels = ['a', 'b', 'c', 'd'].map(id => ({ type: 'HotelProperty', id: `plan-hotel-${id}` }));
+      const prices = ['a1', 'a2', 'b', 'c', 'd', 'e'].map(id => ({ type: 'HotelPrice', id: `plan-price-${id}` }));
+      const amounts = ['9007199254740993.123456', '1.000001', '999999999999999999.999999', '4', '2.5', '3'];
+      const hotelIndexes = [0, 0, 1, 2, 3, 3];
+      const objects: ObjectWrite[] = [
+        { ref: receipt, properties: { receiptId: receipt.id, displayTitle: 'Synthetic plan receipt', safeSummary: 'Synthetic plan evidence', evidenceLevel: 'synthetic' } },
+        { ref: provider, properties: { providerId: provider.id, displayTitle: 'Synthetic plan provider', name: 'Synthetic plan provider' } },
+        { ref: wideReceipt, properties: { receiptId: wideReceipt.id, displayTitle: 'Synthetic wide relation', safeSummary: 'Bounded frontier fixture', evidenceLevel: 'synthetic' } },
+        ...widePlaces.map(ref => ({ ref, properties: { placeId: ref.id, displayTitle: ref.id, name: ref.id } })),
+        ...places.map((ref, index) => ({ ref, properties: { placeId: ref.id, displayTitle: ref.id, name: index === 0 ? '\uE000' : index === 3 ? '😀' : `Hidden path ${index}` } })),
+        ...hotels.map(ref => ({ ref, properties: { objectId: ref.id, displayTitle: ref.id, hotelName: ref.id } })),
+        ...prices.map((ref, index) => ({ ref, properties: { id: ref.id, displayTitle: ref.id,
+          observedAt: index % 2 ? '2026-11-10T09:00:00.123+08:00' : '2026-11-10T01:00:00.123999Z', expiresAt: '2099-01-01T00:00:00Z',
+          hotelRevision: 1, requestRevision: 1, checkInDate: '2099-01-01', stayNights: 1, adultCount: 2, referenceAmount: amounts[index],
+          currency: index === 5 ? 'EUR' : 'USD', hasPrice: index !== 3, priceKind: 'reference', amountUnit: 'major', priceBasis: 'unknown', pricingCompleteness: 'unknown' } })),
+      ];
+      const links: LinkWrite[] = [
+        ...places.map(from => ({ type: 'PlaceEvidence', from, to: receipt })),
+        ...widePlaces.map(from => ({ type: 'PlaceEvidence', from, to: wideReceipt })),
+        ...hotels.map((from, index) => ({ type: 'HotelPropertyLocation', from, to: places[index]! })),
+        ...prices.flatMap((from, index) => [
+          { type: 'HotelPriceEvidence', from, to: receipt }, { type: 'HotelPriceRequest', from, to: root },
+          { type: 'HotelPriceHotel', from, to: hotels[hotelIndexes[index]!]! }, { type: 'HotelPriceProvider', from, to: provider },
+        ]),
+      ];
+      raw.ingest(f.owner, { objects, links }, { kind: 'synthetic', id: 'relation-plan-fixture', observedAt: new Date().toISOString() });
+      const hidden = new Set([prices[2]!.id]);
+      f.jobs.security.revokeGrant(f.owner, task.grant.id, 1);
+      const grant = f.jobs.security.issueTaskGrant({ ...task.grant, id: randomUUID(), operations: ['task.query', 'task.result.read', 'member_asset.read'], channels: ['agent_response', 'registered_model'],
+        inputs: objects.filter(object => !hidden.has(object.ref.id)).map(object => ({ object: object.ref, objectRevision: 1, fields: resources.find(resource => resource.type === object.ref.type)!.fields })) });
+      f.jobs.security.policies.restrictObject({ ownerKey: f.owner, object: hotels[2]!, expectedObjectRevision: 1,
+        classification: 'sensitive', requiredMarkings: ['health'], channels: ['agent_response'] }, f.jobs.security.policies.revision());
+      const source = new AuthorizedOntologyView(f.jobs.ontology, f.jobs.security, principal);
+      const oracle = (starts: ObjectRef[], hops: { link: string; as?: string }[], select?: string[]) => {
+        let frontier = starts, result: { ref: ObjectRef; revision: number; properties: Record<string, unknown> }[] = [];
+        for (const [index, hop] of hops.entries()) {
+          const next = new Map<string, typeof result[number]>();
+          for (const from of frontier) {
+            const read = source.query({ version: 2, taskId: task.job.id, expectedRequestRevision: 1,
+              query: { from, link: hop.link, ...(hop.as ? { as: hop.as } : {}), ...(index === hops.length - 1 && select ? { select } : {}), limit: 50 } });
+            assert.equal(read.page.hasMore, false);
+            for (const object of read.items) next.set(JSON.stringify(object.ref), object);
+          }
+          result = [...next.values()]; frontier = result.map(object => object.ref);
+        }
+        return result;
+      };
+      const hops = [{ link: 'hotelPriceFacts' }, { link: 'hotel' }, { as: 'Located', link: 'location' }];
+      const expected = oracle([root], hops, ['name']);
+      assert.deepEqual(expected.map(object => object.ref.id).sort(), [places[0]!.id, places[3]!.id]);
+      target = await importPostgresFixture(f);
+      const t = target, q = `"${t.schema}"`, statements: string[] = [];
+      const execute = async (plan: AuthorizedRelationPlan) => {
+        await t.refreshEligibility();
+        return t.database.read(client => withPostgresTaskReadAuthorization(client, principal, task.job.id, t.policy, async auth => {
+          const query = client.query;
+          client.query = (async (...args: unknown[]) => { if (String(args[0]).startsWith('WITH authorized AS')) statements.push(String(args[0])); return Reflect.apply(query, client, args); }) as typeof client.query;
+          try { return await postgresQueryAuthorizedRelationPlan(client, principal, task.job.id, plan, t.policy, auth); }
+          finally { client.query = query; }
+        }));
+      };
+      const pricePlan = { starts: [root], hops: [{ link: 'hotelPriceFacts' }], where: [{ property: 'currency', op: 'eq' as const, value: 'USD' }] };
+      await testContext.test('three hops cannot cross a hidden intermediate and keep bytewise scalar ordering', async () => {
+        const result = await execute({ starts: [root], hops, select: ['name'], terminal: { kind: 'rows', orderBy: [{ property: 'name', direction: 'asc' }] } });
+        assert.equal(result.kind, 'rows'); if (result.kind !== 'rows') assert.fail();
+        const sorted = expected.sort((a, b) => Buffer.compare(Buffer.from(String(a.properties.name)), Buffer.from(String(b.properties.name))));
+        assert.deepEqual(result.items.map(({ ref, revision, properties }) => ({ ref, revision, properties })), sorted);
+        assert.equal(result.count, 2); assert.equal(result.sourceCalls, 0);
+        assert.equal(result.authorizedQueryPages, 8, 'one first-hop page, five second-hop pages and two final-hop pages; not a SQL round-trip metric');
+        const alias = await execute({ starts: [prices[0]!], hops: [{ as: 'ObservedFact', link: 'subject' }, { as: 'Located', link: 'location' }], select: ['name'], terminal: { kind: 'rows' } });
+        assert.equal(alias.kind, 'rows'); if (alias.kind !== 'rows') assert.fail();
+        assert.deepEqual(alias.items.map(object => object.ref), [places[0]]);
+      });
+      await testContext.test('complete authorized counts and exact numeric aggregates use SQL with explicit units', async () => {
+        const count = await execute({ starts: [root], hops: [{ link: 'hotelPriceFacts' }], terminal: { kind: 'count' } });
+        assert.equal(count.kind, 'count'); if (count.kind !== 'count') assert.fail(); assert.equal(count.value, 5);
+        for (const [kind, value] of [['sum', '9007199254741000.623457'], ['min', '1.000001'], ['max', '9007199254740993.123456']] as const) {
+          const result = await execute({ ...pricePlan, terminal: { kind, property: 'referenceAmount', unitFields: ['currency', 'amountUnit'] } });
+          assert.equal(result.kind, kind); if (result.kind !== kind) assert.fail();
+          assert.equal(result.value, value); assert.equal(result.count, 4); assert.deepEqual(result.units, { currency: 'USD', amountUnit: 'major' });
+        }
+        assert(statements.some(sql => sql.includes('sum(aggregate::numeric)')));
+        await assert.rejects(execute({ starts: [root], hops: [{ link: 'hotelPriceFacts' }], terminal: { kind: 'sum', property: 'referenceAmount', unitFields: ['currency'] } }), /units are missing or inconsistent/);
+      });
+      await testContext.test('numeric and timestamp sorts have stable ties and bounded windows', async () => {
+        const ordered = await execute({ ...pricePlan, select: ['referenceAmount'], terminal: { kind: 'rows', orderBy: [{ property: 'referenceAmount', direction: 'desc' }], offset: 1, limit: 2 } });
+        assert.equal(ordered.kind, 'rows'); if (ordered.kind !== 'rows') assert.fail();
+        assert.deepEqual(ordered.items.map(object => object.ref), [prices[3], prices[4]]); assert.equal(ordered.nextOffset, 3); assert.equal(ordered.hasMore, true);
+        const next = await execute({ ...pricePlan, select: ['referenceAmount'], terminal: { kind: 'rows', orderBy: [{ property: 'referenceAmount', direction: 'desc' }], offset: ordered.nextOffset, limit: 2 } });
+        assert.equal(next.kind, 'rows'); if (next.kind !== 'rows') assert.fail();
+        assert.deepEqual(next.items.map(object => object.ref), [prices[1]]); assert.equal(next.hasMore, false);
+        const time = await execute({ ...pricePlan, select: ['observedAt'], terminal: { kind: 'rows', orderBy: [{ property: 'observedAt', direction: 'asc' }] } });
+        assert.equal(time.kind, 'rows'); if (time.kind !== 'rows') assert.fail();
+        assert.deepEqual(time.items.map(object => object.ref.id), [prices[0]!.id, prices[1]!.id, prices[3]!.id, prices[4]!.id].sort());
+        const marked = prices[3]!;
+        await t.client.query(`INSERT INTO ${q}.security_labels(owner,type,object_id,field,body) VALUES($1,$2,$3,'referenceAmount',$4)`,
+          [f.owner,marked.type,marked.id,JSON.stringify({classification:'sensitive',requiredMarkings:['health'],channels:['agent_response']})]);
+        try {
+          await assert.rejects(execute({ ...pricePlan, terminal: { kind: 'rows', orderBy: [{ property: 'referenceAmount', direction: 'asc' }] } }),
+            /INSUFFICIENT_ACCESS/, 'Default projection cannot silently sort a denied field as null');
+        } finally {
+          await t.client.query(`DELETE FROM ${q}.security_labels WHERE owner=$1 AND type=$2 AND object_id=$3 AND field='referenceAmount'`,
+            [f.owner,marked.type,marked.id]);
+        }
+      });
+      await testContext.test('the public query contract remains unchanged and incomplete plans fail closed', async () => {
+        for (const extension of [{ hops: [{ link: 'hotel' }] }, { aggregate: 'count' }, { orderBy: 'referenceAmount' }]) assert.equal(objectQuerySchema.safeParse({ type: 'HotelPrice', ...extension }).success, false);
+        await assert.rejects(execute({ starts: [root], hops: [...hops, { link: 'sourceReceipts' }], terminal: { kind: 'count' } }));
+        await assert.rejects(execute({ starts: [root, root], hops: [{ link: 'hotelPriceFacts' }], terminal: { kind: 'count' } }), /unique/);
+        await assert.rejects(execute({ starts: [prices[2]!], hops: [{ link: 'hotel' }], terminal: { kind: 'count' } }), /AUTHORIZATION_REQUIRED|not available/);
+        await assert.rejects(execute({ starts: [wideReceipt], hops: [{ link: 'places' }], terminal: { kind: 'count' } }), /complete frontier bound/);
+        const empty = await execute({ starts: [places[1]!], hops: [{ link: 'hotels' }, { link: 'roomTypes' }], terminal: { kind: 'count' } });
+        assert.equal(empty.kind, 'count'); if (empty.kind !== 'count') assert.fail(); assert.equal(empty.value, 0);
+        await assert.rejects(execute({ starts: [places[1]!], hops: [{ link: 'hotels' }, { link: 'roomTypes' }],
+          where: [{ property: 'notRegistered', op: 'eq', value: 'not read' }], terminal: { kind: 'count' } }), /registered stored scalar/);
+      });
+      await testContext.test('relationship completeness and candidate selection use the exact namespace and direction', async () => {
+        const scopedDocument = structuredClone(release.document); scopedDocument.id = 'synthetic.relation-scope';
+        const scopedModel = compileOntologyDocument(scopedDocument, stagedKernelComponents(t.kernel).registry);
+        const scoped = { ontologyId: scopedDocument.id, releaseId: `synthetic-scope-${randomUUID()}`, digest: digest(scopedDocument) };
+        await t.client.query(`INSERT INTO ${q}.ontology_definition_releases(id,ontology_id,sequence,digest,model_digest,body,created_at) VALUES($1,$2,1,$3,$4,$5,$6)`, [scoped.releaseId, scoped.ontologyId, scoped.digest, scopedModel.ref.digest, JSON.stringify(scopedDocument), new Date().toISOString()]);
+        await t.client.query(`INSERT INTO ${q}.ontology_namespaces(id,owner,name,active_release_id,generation,created_at) VALUES($1,$2,$3,$4,1,$5)`, [scoped.ontologyId, f.owner, 'Synthetic scoped relation', scoped.releaseId, new Date().toISOString()]);
+        await t.client.query(`INSERT INTO ${q}.ontology_scoped_objects(ontology_id,owner,type,id,revision,definition_digest,body)
+          SELECT $1,owner,type,id,revision,definition_digest,body FROM ${q}.ontology_objects WHERE owner=$2 AND id=ANY($3::text[])`, [scoped.ontologyId, f.owner, [receipt.id, prices[0]!.id, prices[1]!.id]]);
+        await t.client.query(`INSERT INTO ${q}.ontology_scoped_links(ontology_id,owner,type,from_type,from_id,to_type,to_id,definition_digest)
+          SELECT $1,owner,type,from_type,from_id,to_type,to_id,definition_digest FROM ${q}.ontology_links WHERE owner=$2 AND type='HotelPriceEvidence' AND from_id=ANY($3::text[])`, [scoped.ontologyId, f.owner, [prices[0]!.id, prices[1]!.id]]);
+        await t.run(async client => {
+          const graph = await PostgresProjectionGraph.create(client, f.owner, scoped, t.kernel, { readOnly: true });
+          assert.equal(await graph.relationshipCount(f.owner, receipt, 'hotelPriceFacts'), 2);
+          assert.equal(await graph.relationshipCount(f.owner, prices[0]!, 'sourceReceipts'), 1);
+          const compiled = relationCandidateQuery(t.schema, scoped.ontologyId, f.owner, [relationNavigation(scopedModel, receipt, 'hotelPriceFacts')], prices);
+          assert.deepEqual((await client.query(compiled.text, compiled.values)).rows.map(row => row.id), [prices[0]!.id, prices[1]!.id]);
+          await assert.rejects(graph.relationshipCount('other-owner', receipt, 'hotelPriceFacts'), /another owner/);
+        });
+      });
+      await testContext.test('revocation invalidates a later plan and the ordinary cursor path', async () => {
+        const service = new PostgresTaskReadService(t.database, t.policy), publicQuery = { version: 2, taskId: task.job.id, query: { from: root, link: 'hotelPriceFacts', limit: 1 } };
+        const page = await service.queryOntology(principal, publicQuery); assert(page.page.cursor);
+        await t.client.query(`UPDATE ${q}.security_grants SET state='revoked',revision=revision+1 WHERE id=$1`, [grant.id]);
+        await assert.rejects(execute({ ...pricePlan, terminal: { kind: 'count' } }), /AUTHORIZATION_REQUIRED|ACCESS_REVOKED|POLICY_CHANGED/);
+        await assert.rejects(service.queryOntology(principal, { ...publicQuery, query: { ...publicQuery.query, cursor: page.page.cursor } }), /AUTHORIZATION_REQUIRED|ACCESS_REVOKED|POLICY_CHANGED/);
       });
     } finally { if (target) await target.close(); sqlite.close(); f.close(); }
   });

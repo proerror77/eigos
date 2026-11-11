@@ -26,7 +26,7 @@ import {withPostgresSourceProjection,withPostgresDidiCanonicalSourceProjection,t
 import {postgresWorkerAdmission} from './worker-admission.js';
 import {postgresWorkReference,type PostgresWorkReference} from './work-claim.js';
 
-interface Options {database:Pick<PostgresDatabase,'run'|'inspectClaim'>;registry:PostgresReadProgramRegistry;policyDigest:string;modelChannel:string;builder?:StagedKernelBuilder;maxTaskMs?:number}
+interface Options {database:Pick<PostgresDatabase,'run'|'inspectClaim'>&Partial<Pick<PostgresDatabase,'runOwner'>>;registry:PostgresReadProgramRegistry;policyDigest:string;modelChannel:string;builder?:StagedKernelBuilder;maxTaskMs?:number}
 interface Prepared {entry:PostgresReadRegistration;attempt:ExecutionAttempt;input:Record<string,unknown>;action:string;call:DidiResolvedCall;wire:DidiCallContext;invocation:DidiReadInvocationContext;requestDigest:string;releaseDigest:string}
 const same=(a:unknown,b:unknown)=>digest(a)===digest(b);
 function fail(message:string):never{throw new DomainError('CONFLICT',message);}
@@ -39,6 +39,11 @@ export class PostgresDidiExecution {
   constructor(private readonly options:Options){
     if(!(options.registry instanceof PostgresReadProgramRegistry)||options.registry.policyDigest!==options.policyDigest||!options.modelChannel)throw new Error('Actual configured DiDi registry and model read channel are required');
     this.maximum=options.maxTaskMs??86400000;if(!Number.isSafeInteger(this.maximum)||this.maximum<1||this.maximum>86400000)throw new Error('Invalid fixed DiDi task deadline');
+  }
+  /** Only this original claim's owner state is touched; shared policy and
+   * definition writes retain their global fence. Older hosts keep run(). */
+  private ownerRun<T>(claim:Pick<WorkClaim,'owner'>,action:(client:Client)=>Promise<T>):Promise<T>{
+    const database=this.options.database;return database.runOwner?database.runOwner(claim.owner,action):database.run(action);
   }
   private source(entry:PostgresReadRegistration,action:string):PostgresSourceProjectionOptions{return {policyDigest:this.options.policyDigest,modelChannel:this.options.modelChannel,builder:this.options.builder,programRef:entry.program.ref,configurationDigest:entry.program.configurationDigest,sourceBindingId:entry.sourceBindingId,action,inspectClaim:claim=>this.options.database.inspectClaim(claim,this.options.policyDigest)};}
   private journal(client:Client,observation?:{attemptId:string;response:AgentActionResult}){
@@ -87,15 +92,15 @@ export class PostgresDidiExecution {
     // by the journal; opening another source graph would repeat those checks.
   }
   async execute(input:WorkClaim,intentId:string,signal:AbortSignal){
-    signal.throwIfAborted();const claim=structuredClone(input),reference=postgresWorkReference(claim),prepared=await this.options.database.run(client=>this.prepare(client,reference,intentId)),program=prepared.entry.didi!.program;
+    signal.throwIfAborted();const claim=structuredClone(input),reference=postgresWorkReference(claim),prepared=await this.ownerRun(claim,client=>this.prepare(client,reference,intentId)),program=prepared.entry.didi!.program;
     const fixed=digest({input:prepared.input,action:prepared.action,call:prepared.call,wire:prepared.wire});let response:AgentActionResult|undefined,receipt:{id:string}|undefined;
-    const audit=()=>this.options.database.run(client=>this.journal(client).recordObservation(claim.owner,intentId,prepared.attempt.id,response?{kind:'confirmed',eventId:prepared.attempt.id,sourceVersion:prepared.attempt.ordinal,output:{source:response.value},evidenceRefs:response.evidenceRefs}:{kind:'unknown',eventId:prepared.attempt.id,sourceVersion:prepared.attempt.ordinal,evidenceRefs:[],message:'Original DiDi source read ended without a verified source response'}));
-    const current=async()=>{signal.throwIfAborted();await this.options.database.run(client=>this.assertCurrent(client,reference,intentId,prepared));if(digest({input:prepared.input,action:prepared.action,call:prepared.call,wire:prepared.wire})!==fixed)fail('DiDi original invocation changed before source dispatch or return');signal.throwIfAborted();};
+    const audit=()=>this.ownerRun(claim,client=>this.journal(client).recordObservation(claim.owner,intentId,prepared.attempt.id,response?{kind:'confirmed',eventId:prepared.attempt.id,sourceVersion:prepared.attempt.ordinal,output:{source:response.value},evidenceRefs:response.evidenceRefs}:{kind:'unknown',eventId:prepared.attempt.id,sourceVersion:prepared.attempt.ordinal,evidenceRefs:[],message:'Original DiDi source read ended without a verified source response'}));
+    const current=async()=>{signal.throwIfAborted();await this.ownerRun(claim,client=>this.assertCurrent(client,reference,intentId,prepared));if(digest({input:prepared.input,action:prepared.action,call:prepared.call,wire:prepared.wire})!==fixed)fail('DiDi original invocation changed before source dispatch or return');signal.throwIfAborted();};
     try{
       const raw=await this.options.registry.withClaim(reference,()=>program.invokeRead(prepared.wire,prepared.call.tool,prepared.call.args,signal,current));
       response=buildDidiReadResult(program,prepared.invocation,prepared.action,prepared.input,prepared.call,raw);receipt=await audit();await current();
       const actual=response,observationId=receipt.id;let object:ObjectRef|undefined;
-      const accepted=await this.options.database.run(async client=>{
+      const accepted=await this.ownerRun(claim,async client=>{
         const journal=this.journal(client,{attemptId:prepared.attempt.id,response:actual});
         return journal.commitObservation(intentId,observationId,true,{claim:reference,apply:async(job,intent)=>{
           signal.throwIfAborted();await this.options.registry.assertConfigured(client,prepared.entry,reference,job);

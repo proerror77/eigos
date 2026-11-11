@@ -38,7 +38,7 @@ const DEFINITION_ONLY_ACTIONS = new Set([
   'AssessServiceOutcome', 'RequestServiceRemedy',
 ]);
 
-const KERNEL_TARGETS = ['27', '28', '29', '30', '31', '32', '33', '34'];
+const KERNEL_TARGETS = ['27', '28', '29', '30', '31', '32', '33', '34', '35'];
 const PIN_CONSTANTS = {
   '26': 'SINGLE_READ_KERNEL_MODEL_REF',
   '27': 'PAYMENT_COMMERCE_KERNEL_MODEL_REF',
@@ -49,6 +49,7 @@ const PIN_CONSTANTS = {
   '32': 'CONTRACT_CLOSURE_KERNEL_MODEL_REF',
   '33': 'EFFECT_COVERAGE_KERNEL_MODEL_REF',
   '34': 'EXECUTABLE_CONTRACT_KERNEL_MODEL_REF',
+  '35': 'FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF',
 };
 /** Legacy releases accepted by the reviewed-model compatibility matrix that have
  * no reconstruction path in this codebase. Declaring them here is the reviewed
@@ -74,9 +75,14 @@ async function kernels() {
     const builder = new seed.StagedKernelBuilder(target);
     let progress = builder.step(0);
     while (!progress.ready) progress = builder.step(progress.completed);
-    const built = builder.result().audit.model;
+    const { audit, document } = builder.result(), built = audit.model;
     record(`kernel:${target}:fingerprint`, built.version === target && built.digest === pin.digest,
       `built ${built.version}@${built.digest.slice(0, 16)} expected ${pin.version}@${pin.digest.slice(0, 16)} (${progress.total} stages)`);
+    if (target === '35') {
+      const undeclared = document.functions.filter(fn => fn.executionContract?.mode !== 'validated').map(fn => fn.id);
+      record('kernel:35:function-contracts', document.functions.length === 54 && undeclared.length === 0,
+        undeclared.length ? `unvalidated functions: ${undeclared.join(', ')}` : `${document.functions.length} validated functions`);
+    }
   }
   const current = seed.createCurrentKernelDefinition().audit.model;
   record('kernel:current:unchanged', current.version === seed.CURRENT_KERNEL_VERSION,

@@ -113,10 +113,19 @@ export function integrityField(type:string,field:string,allowed:string[]):boolea
   return allowed.includes('observedData') && !!registry[type]?.observedData && ['snapshot','data'].includes(field) || type==='MeituanReadTask' && field==='input' && allowed.includes('authorizedInput');
 }
 export const integrityFunctions=new Set(['paymentCommerceReadStatus','rollingGoSearchStatus','rideEstimateStatus','selectDidiPlace','catalogObservationStatus','meituanReadStatus','registrationStatus','bookingObservationStatus','commerceObservationStatus','commerceJourneyStatus','shippingGateStatus','customsGateStatus']);
+const projectedStatusFunctions = new Set(['registrationStatus', 'bookingObservationStatus', 'commerceObservationStatus']);
+function functionValueProjection(functionId: string, type: string) {
+  return projectedStatusFunctions.has(functionId) ? registry[type]?.observedData : undefined;
+}
+export function functionValueProjectionSchema(functionId: string, type: string) {
+  return functionValueProjection(functionId, type)?.schema;
+}
+
 /** Registered status functions may validate private source records internally;
  * their returned data uses the same field projection as ordinary queries. */
-export function projectFunctionValue(functionId:string,type:string,value:unknown):unknown {
-  if(!['registrationStatus','bookingObservationStatus','commerceObservationStatus'].includes(functionId) || !value || typeof value!=='object')return value;
-  const result=value as Record<string,unknown>;if(!result.data || !registry[type]?.observedData)return value;
-  return {...result,data:registry[type]!.observedData!.value({data:result.data})};
+export function projectFunctionValue(functionId: string, type: string, value: unknown): unknown {
+  const projection = functionValueProjection(functionId, type);
+  if (!projection || !value || typeof value !== 'object') return value;
+  const result = value as Record<string, unknown>;
+  return result.data ? { ...result, data: projection.value({ data: result.data }) } : value;
 }

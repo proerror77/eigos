@@ -1,3 +1,4 @@
+import type { PostgresSelect, PostgresSelectResult } from './read-batch.js';
 import type { Client } from 'pg';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -172,55 +173,92 @@ export async function postgresOntologyRelease(client:Client,input:OntologyReleas
 
 /** Resolve an exact persisted release using the same trusted compiler as the
  * SQLite authority. The caller owns namespace and task/source authorization. */
-async function resolveOntologyRelease(client: Client, input: OntologyReleaseRef, builder?: StagedKernelBuilder) {
-  const schema = postgresBusinessSchema(client), ref = ontologyReleaseRefSchema.parse(input), q = `"${schema}"`;
+function releaseReader(client: Client, builder?: StagedKernelBuilder) {
   const kernel=builder===undefined?postgresBusinessKernel(client,postgresBusinessToken(client)):builder;
   const staged = kernel === undefined ? undefined : stagedKernelComponents(kernel);
   const registry = staged?.registry ?? trustedRegistry(), cache = contentCache(registry);
   const offered = new Map(cache.entries);
-  const values = [ref.releaseId, ref.ontologyId, ref.digest, [...offered.keys()]];
-  // The database hashes the actual stored bytes on every lookup. A cache hit
-  // avoids transferring/parsing the document while still detecting corruption,
-  // deletion, alias changes and a changed stored model fingerprint.
-  const project = (selection: string) => `SELECT
-    CASE WHEN content_digest=ANY($4::text[]) THEN NULL ELSE body END AS body,
-    model_digest,created_at,sequence,content_digest
+  // Hash the stored bytes even on a cache hit. The cache holds content,
+  // never the current release row or namespace permission.
+  const project = (selection: string, offeredParameter: string, metadata = '') => `SELECT
+    model_digest,created_at,sequence,content_digest${metadata},
+    CASE WHEN content_digest=ANY(${offeredParameter}::text[]) THEN NULL ELSE body END AS body
     FROM (SELECT selected.*,pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(body,'UTF8')),'hex') AS content_digest
       FROM (${selection}) selected OFFSET 0) verified`;
-  let result = await client.query(project(`SELECT body,model_digest,created_at,sequence FROM ${q}.ontology_definition_releases WHERE id=$1 AND ontology_id=$2 AND digest=$3`), values);
-  if (!result.rowCount) result = await client.query(project(`SELECT r.body,r.model_digest,r.created_at,r.sequence FROM ${q}.ontology_definition_release_aliases a JOIN ${q}.ontology_definition_releases r ON r.id=a.canonical_id AND r.ontology_id=a.ontology_id AND r.digest=a.digest WHERE a.alias_id=$1 AND a.ontology_id=$2 AND a.digest=$3`), values);
+  const read = (ref: OntologyReleaseRef, row: Record<string, unknown>) => {
+    if (typeof row.content_digest !== 'string' || !/^[a-f0-9]{64}$/.test(row.content_digest)) return conflict('Stored ontology content fingerprint is invalid');
+    // Keep the offered entries alive until the query returns, even when another
+    // request evicts one from the shared LRU while this connection is waiting.
+    let content = cache.entries.get(row.content_digest) ?? offered.get(row.content_digest);
+    if (!content) {
+      if (typeof row.body !== 'string' || createHash('sha256').update(row.body).digest('hex') !== row.content_digest) return conflict('Stored ontology release bytes changed');
+      let document;
+      try { document = parseOntologyDocument(JSON.parse(row.body)); }
+      catch { return conflict('Stored ontology release is invalid'); }
+      const documentDigest = digest(document);
+      if (document.id !== ref.ontologyId || documentDigest !== ref.digest) return conflict('Stored ontology release digest is invalid');
+      const model = staged && documentDigest === staged.documentDigest ? staged.model : compileOntologyDocument(document, registry);
+      content = { document: freeze(document), documentDigest, model, bytes: Buffer.byteLength(row.body) };
+    }
+    const { document, documentDigest, model } = content;
+    if (document.id !== ref.ontologyId || documentDigest !== ref.digest) return conflict('Stored ontology release digest is invalid');
+    if (model.ref.digest !== row.model_digest) return conflict('Ontology compiler or trusted handler contract changed');
+    const sequence = Number(row.sequence);
+    if (!Number.isSafeInteger(sequence) || sequence < 1 || typeof row.created_at !== 'string') return conflict('Stored ontology release metadata is invalid');
+    if (content.bytes <= 16777216) {
+      if (cache.entries.delete(row.content_digest)) cache.bytes -= content.bytes;
+      while (cache.entries.size >= 8 || cache.bytes + content.bytes > 16777216) {
+        const oldest = cache.entries.keys().next().value!;
+        cache.bytes -= cache.entries.get(oldest)!.bytes;
+        cache.entries.delete(oldest);
+      }
+      cache.entries.set(row.content_digest, content);
+      cache.bytes += content.bytes;
+    }
+    return Object.freeze({ ref: freeze(ref), document: freeze(document), model, sequence, createdAt: row.created_at });
+  };
+  return {offered, project, read};
+}
+
+async function resolveOntologyRelease(client: Client, input: OntologyReleaseRef, builder?: StagedKernelBuilder) {
+  const schema = postgresBusinessSchema(client), ref = ontologyReleaseRefSchema.parse(input), q = `"${schema}"`;
+  const {offered, project, read} = releaseReader(client, builder);
+  const values = [ref.releaseId, ref.ontologyId, ref.digest, [...offered.keys()]];
+  let result = await client.query(project(`SELECT body,model_digest,created_at,sequence FROM ${q}.ontology_definition_releases WHERE id=$1 AND ontology_id=$2 AND digest=$3`, '$4'), values);
+  if (!result.rowCount) result = await client.query(project(`SELECT r.body,r.model_digest,r.created_at,r.sequence FROM ${q}.ontology_definition_release_aliases a JOIN ${q}.ontology_definition_releases r ON r.id=a.canonical_id AND r.ontology_id=a.ontology_id AND r.digest=a.digest WHERE a.alias_id=$1 AND a.ontology_id=$2 AND a.digest=$3`, '$4'), values);
   if (result.rowCount !== 1) return conflict('The exact ontology release is unavailable');
   const row = result.rows[0];
-  if (typeof row.content_digest !== 'string' || !/^[a-f0-9]{64}$/.test(row.content_digest)) return conflict('Stored ontology content fingerprint is invalid');
-  // Keep the offered entries alive until the query returns, even when another
-  // request evicts one from the shared LRU while this connection is waiting.
-  let content = cache.entries.get(row.content_digest) ?? offered.get(row.content_digest);
-  if (!content) {
-    if (typeof row.body !== 'string' || createHash('sha256').update(row.body).digest('hex') !== row.content_digest) return conflict('Stored ontology release bytes changed');
-    let document;
-    try { document = parseOntologyDocument(JSON.parse(row.body)); }
-    catch { return conflict('Stored ontology release is invalid'); }
-    const documentDigest = digest(document);
-    if (document.id !== ref.ontologyId || documentDigest !== ref.digest) return conflict('Stored ontology release digest is invalid');
-    const model = staged && documentDigest === staged.documentDigest ? staged.model : compileOntologyDocument(document, registry);
-    content = { document: freeze(document), documentDigest, model, bytes: Buffer.byteLength(row.body) };
-  }
-  const { document, documentDigest, model } = content;
-  if (document.id !== ref.ontologyId || documentDigest !== ref.digest) return conflict('Stored ontology release digest is invalid');
-  if (model.ref.digest !== row.model_digest) return conflict('Ontology compiler or trusted handler contract changed');
-  const sequence = Number(row.sequence);
-  if (!Number.isSafeInteger(sequence) || sequence < 1 || typeof row.created_at !== 'string') return conflict('Stored ontology release metadata is invalid');
-  if (content.bytes <= 16777216) {
-    if (cache.entries.delete(row.content_digest)) cache.bytes -= content.bytes;
-    while (cache.entries.size >= 8 || cache.bytes + content.bytes > 16777216) {
-      const oldest = cache.entries.keys().next().value!;
-      cache.bytes -= cache.entries.get(oldest)!.bytes;
-      cache.entries.delete(oldest);
-    }
-    cache.entries.set(row.content_digest, content);
-    cache.bytes += content.bytes;
-  }
-  return Object.freeze({ ref: freeze(ref), document: freeze(document), model, sequence, createdAt: row.created_at });
+  return read(ref, row);
+}
+
+/** A bounded fast lookup for an ordinary canonical task release. A legacy pin,
+ * historical witness or alias still uses the full task-release resolver. */
+export function postgresPointReadRelease(client: Client, owner: string, taskId: string, builder?: StagedKernelBuilder) {
+  const schema = postgresBusinessSchema(client), q = `"${schema}"`;
+  const {offered, project, read} = releaseReader(client, builder);
+  const select: PostgresSelect = {
+    text: project(`SELECT r.body,r.model_digest,r.created_at,r.sequence,pin.ref::text AS release_ref,n.owner AS namespace_owner
+      FROM ${q}.jobs j
+      CROSS JOIN LATERAL (SELECT ${q}.eigos_try_jsonb(j.body)#>'{delegation,ontologyRelease}' AS ref OFFSET 0) pin
+      JOIN ${q}.ontology_namespaces n ON n.id='eigos.business' AND n.id=pin.ref->>'ontologyId'
+      JOIN ${q}.ontology_definition_releases active ON active.id=n.active_release_id
+      JOIN ${q}.ontology_definition_releases r ON r.ontology_id=n.id AND r.id=pin.ref->>'releaseId' AND r.digest=pin.ref->>'digest'
+      WHERE j.owner=$1 AND j.id=$2 AND octet_length(pin.ref::text)<=1024
+        AND NOT EXISTS(SELECT 1 FROM ${q}.ontology_task_read_projections p WHERE p.owner=j.owner AND p.task_id=j.id)
+      LIMIT 2`, '$3', ',release_ref,namespace_owner'),
+    values: [owner, taskId, [...offered.keys()]],
+  };
+  return {
+    select,
+    read(result: PostgresSelectResult, admin: boolean) {
+      if (result.rowCount === 0) return undefined;
+      if (result.rowCount !== 1) return conflict('The exact ontology release is unavailable');
+      const row = result.rows[0]!;
+      if (row.namespace_owner !== null && row.namespace_owner !== owner && !admin) throw new DomainError('FORBIDDEN', 'Ontology belongs to another owner');
+      const ref = ontologyReleaseRefSchema.parse(JSON.parse(String(row.release_ref)));
+      return read(ref, row);
+    },
+  };
 }
 
 /** Resolve the release pinned to an owned task, including the explicit legacy
