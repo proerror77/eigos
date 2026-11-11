@@ -6116,7 +6116,7 @@
     {
       "id": "postgres-worker-store",
       "file": "packages/postgres/worker-store.ts",
-      "sourceDigest": "5ceb14c58c0eab49315934c3df60b213f16fefca432cce2ec0d0936d5bc54d6a",
+      "sourceDigest": "aef2f3f90c4f41ea1a843873aa4a4a2ac42c3042b5e68a65793961c4fadfd48d",
       "channels": [
         "internal"
       ],
@@ -7930,7 +7930,7 @@
       "currentControl": "Immutable once-only bindings and opaque set identity; explicit parameter normalization cannot change function/object identity; declared reads cover interface mappings and returned targets; all registered functions remain read-only with current authorization and evidence.",
       "targetControl": "Immutable once-only bindings and opaque set identity; explicit parameter normalization cannot change function/object identity; declared reads cover interface mappings and returned targets; all registered functions remain read-only with current authorization and evidence.",
       "stage": "S2",
-      "sourceDigest": "ccec9be38cb9b56a13b8d33644e9d449875913a3ee2e1baa640fc9249e194d1c"
+      "sourceDigest": "39fd2a1a8039a533b6619871e829d39c78347b4d0ee0da1140a128adefe795a4"
     },
     {
       "id": "ontology-builtin-function-implementations",

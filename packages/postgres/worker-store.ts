@@ -196,7 +196,7 @@ export class PostgresWorkerStore {
    * providers, or mutate task, policy or claim state. */
   withAuthorizedRequest<T>(claim:PostgresWorkReference,modelChannel:string,action:(request:ServiceRequest,client:Client)=>Promise<T>):Promise<T>{
     const reference=postgresWorkReference(claim);
-    return this.ownerRun(claim.owner,async client=>{
+    return this.db.run(async client=>{
       const request=await postgresWorkerRequest(client,reference,this.policy,modelChannel,this.kernel,fence=>this.db.inspectClaim(fence,this.policy));
       return action(request,client);
     });
@@ -206,7 +206,10 @@ export class PostgresWorkerStore {
   readEvidence<T>(claim:PostgresWorkReference,modelChannel:string,action:(authorization:PostgresTaskReadAuthorization,admission:PostgresTaskReadAdmission,
     principal:Principal,client:Client)=>Promise<T>):Promise<T>{
     const reference=postgresWorkReference(claim);
-    return this.ownerRun(claim.owner,client=>withPostgresOntologyReleaseSnapshot(client,()=>withPostgresWorkerRequestAuthorization(client,reference,this.policy,
+    // Evidence callbacks retain the original SERIALIZABLE snapshot.
+    // Heartbeats refresh the independently inspected lease without changing
+    // any of the facts already captured by this read.
+    return this.db.run(client=>withPostgresOntologyReleaseSnapshot(client,()=>withPostgresWorkerRequestAuthorization(client,reference,this.policy,
       (auth,admission,principal)=>action(auth,admission,principal,client),this.kernel,modelChannel,fence=>this.db.inspectClaim(fence,this.policy))));
   }
   private withUsageClaim<T>(input:PostgresWorkReference,action:(client:Client,claim:PostgresWorkReference)=>Promise<T>):Promise<T>{
