@@ -8,6 +8,7 @@ import type {PostgresDatabase} from '../postgres/database.js';
 import {PostgresDefinitionStore,reviewedKernelReleaseRequestSchema} from '../postgres/definition-store.js';
 import {assertPostgresImportReceipts,assertReviewedPostgresActivation,checkActivationSchema} from '../postgres/host-runtime.js';
 import {postgresBusinessSchema,postgresBusinessAuthorityDigest} from '../postgres/runtime-transaction.js';
+import {reviewedKernelVersionForPolicy} from '../security/policy-store.js';
 import {postgresBindingSchema,postgresHandoffSchema,readPinnedPostgresJson,type PostgresBinding} from './postgres-binding.js';
 
 export const POSTGRES_KERNEL_RELEASE_TARGET=Object.freeze({version:'35' as const,documentDigest:FUNCTION_CONTRACT_CLOSEOUT_DOCUMENT_DIGEST,modelDigest:FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF.digest});
@@ -29,6 +30,7 @@ function verifiedTls(client:Client){
 export async function runPostgresKernelRelease(database:Pick<PostgresDatabase,'run'>,inputBinding:PostgresBinding,input:unknown,builder:StagedKernelBuilder){
   const binding=postgresBindingSchema.parse(inputBinding),operation=postgresKernelReleaseOperationSchema.parse(input);
   if(!binding.handoff||!binding.activation)throw new Error('Kernel maintenance requires the original activated primary binding');
+  if(reviewedKernelVersionForPolicy(binding.policyDigest)!=='28')throw new Error('The fixed v35 kernel requires the already-reviewed descriptions-v28 field policy');
   const handoff=postgresHandoffSchema.parse(readPinnedPostgresJson(binding.handoff,65536));
   const evidence={handoff,sourceFence:readPinnedPostgresJson(handoff.sourceFence,1048576),businessVerification:readPinnedPostgresJson(handoff.businessVerification),identityAudit:readPinnedPostgresJson(handoff.identityAudit,1048576)};
   return database.run(async client=>{

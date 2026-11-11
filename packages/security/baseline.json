@@ -5183,14 +5183,14 @@
     {
       "id": "postgres-kernel-release-maintenance",
       "file": "packages/deployment/postgres-kernel-release.ts",
-      "sourceDigest": "59cf9f98939bb64ed06034347d7c5396618d1b7b94fa774176a06b4713811dab",
+      "sourceDigest": "5c30c58635bb88ff9304295f3a299b8c4dd3ef74518241e53f757685605af7cb",
       "channels": [
         "private_file",
         "postgres",
         "ontology_metadata"
       ],
       "content": "Explicit fixed v35 publication and separate activation on the original PostgreSQL primary",
-      "currentControl": "Original private binding and pinned activation/import evidence, verified TLS, actual matching runtime session role and fenced business transaction; fixed target pins and canonical predecessor, exact generation/review/lineage and independent readback operations. No DDL, publisher, permission change, task rewrite or business execution.",
+      "currentControl": "Original private binding and pinned activation/import evidence, verified TLS, actual matching runtime session role and fenced business transaction; existing reviewed v28 field policy, fixed target pins and canonical predecessor, exact generation/review/lineage and independent readback operations. No DDL, publisher, permission change, task rewrite or business execution.",
       "targetControl": "Preserve one original primary and immutable releases; no new database authority, grants or implicit activation",
       "stage": "S5"
     },

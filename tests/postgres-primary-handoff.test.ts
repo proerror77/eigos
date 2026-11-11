@@ -167,6 +167,7 @@ async function exerciseReviewedKernelRelease(f:Awaited<ReturnType<typeof fixture
     const original=await businessState();
     await assert.rejects(runPostgresKernelRelease(wrongIdentity,binding,operation,kernel),/connection differs/);
     await assert.rejects(runPostgresKernelRelease(plaintext,binding,operation,kernel),/verified TLS/);
+    await assert.rejects(runPostgresKernelRelease(database,{...binding,policyDigest:'f'.repeat(64)},operation,kernel),/explicit supported kernel review/);
     await assert.rejects(runPostgresKernelRelease(database,{...binding,authority:{...binding.authority,digest:'f'.repeat(64)}},operation,kernel),/another business authority/);
     await assert.rejects(runPostgresKernelRelease(database,binding,{...operation,target:{...operation.target,documentDigest:'f'.repeat(64)}},kernel),/Invalid input/);
     const published=await runPostgresKernelRelease(database,binding,operation,kernel);
