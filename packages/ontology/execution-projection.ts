@@ -73,7 +73,11 @@ function* writeProgram(graph: ProjectionMetadata, owner: string, ref: ObjectRef,
     let linksVerified = false;
     if (previous && omitted) {
       const bindingIntent = ref.type === 'ExecutionStep' && previous.properties.intentId === undefined && typeof values.intentId === 'string';
-      const immutable = (record: Record<string, unknown>) => Object.fromEntries(Object.entries(record).filter(([name]) => !omitted.includes(name) && !(bindingIntent && name === 'intentId')));
+      // Another read can project the durable audit while this observation is
+      // waiting to be applied. Only its original receipt may advance once.
+      const applyingResult = ref.type === 'ExecutionResult' && previous.properties.applied === false && values.applied === true;
+      const immutable = (record: Record<string, unknown>) => Object.fromEntries(Object.entries(record).filter(([name]) =>
+        !omitted.includes(name) && !(bindingIntent && name === 'intentId') && !(applyingResult && name === 'applied')));
       if (!same(immutable(previous.properties), immutable(values))) fail('Immutable execution graph data changed');
       const existingLinks = ref.type === 'ExecutionResult' && !previous.properties.output ? links.filter(link => !link.type.startsWith('ExecutionResultOutput')) : links;
       (yield* assertLinksProgram(graph, owner, ref, existingLinks));

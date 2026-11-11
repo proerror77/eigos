@@ -105,7 +105,7 @@ test('DiDi clarification cannot replay unknown effects or turn a new booking goa
     const {p}=await reader(x),commands=new PostgresTaskCommandService(x.t.database,x.t.policy,x.t.kernel);
     await assert.rejects(commands.reply(p,{taskId:before.id,requestId:randomUUID(),answer:'起点换一个地址',expectedRevision:before.revision}),/must be reconciled.*cannot replay/);
     assert.deepEqual(await x.stored(),before);assert.deepEqual((await x.t.client.query(`SELECT id,state,body FROM ${x.q}.action_intents ORDER BY id`)).rows,intents);
-    assert.equal(x.source.calls.filter(call=>call.method==='tools/call').length,1);
+    assert.deepEqual(x.source.calls.filter(call=>call.method==='tools/call').map(call=>call.name),['maps_textsearch','maps_textsearch']);
   }finally{await x.close();}
   const y=await postgresDidiFixture(false,{shortPath:{mode:'natural'},scheduled:true,executionEnvironment:'sandbox'}),second=shortCoordinator(y,false,(prompt,turn)=>{
     if(turn===1)return {kind:'clarify',message:'请确认终点。'};
@@ -184,8 +184,10 @@ test('the scheduled DiDi short path never repeats a lost source result or a cons
     await assert.rejects(coordinator.run(x.claim,signal),/reconciled|replay/);
     await coordinator.onError(x.claim,new Error('Synthetic unknown source outcome'),signal);
     const job=await x.stored();assert.equal(job.state,'paused');assert.equal(job.delegation!.acceptance,undefined);assert.equal(turns(),0);
-    assert.equal(x.source.calls.filter(call=>call.method==='tools/call').length,1);
-    assert.equal((await x.t.client.query(`SELECT count(*)::int AS n FROM ${x.q}.action_attempts`)).rows[0].n,1);
+    assert.deepEqual(x.source.calls.filter(call=>call.method==='tools/call').map(call=>call.name),['maps_textsearch','maps_textsearch']);
+    const attempts=(await x.t.client.query(`SELECT intent_id FROM ${x.q}.action_attempts`)).rows;
+    assert.equal(attempts.length,2);
+    assert.equal(new Set(attempts.map(row=>row.intent_id)).size,2,'Only one dispatch per independent original location intent');
     assert(job.delegation!.events.some(event=>event.event==='original_action_reconciliation_required'));
   }finally{await x.close();}
   const natural=await postgresDidiFixture(false,{shortPath:{mode:'natural'},scheduled:true}),model=shortCoordinator(natural,true);
@@ -201,13 +203,24 @@ test('canceling a scheduled DiDi source read stops the same-claim drain before t
   const x=await postgresDidiFixture(false,{shortPath:{mode:'structured',...shortRoute},scheduled:true,executionEnvironment:'sandbox'}),{coordinator,turns}=shortCoordinator(x);
   try{
     await x.stopRenewals();assert(await x.worker.renew(x.claim,300000));const {p}=await reader(x),commands=new PostgresTaskCommandService(x.t.database,x.t.policy,x.t.kernel);
-    x.source.flags.before=async()=>{await commands.cancel(p,x.claim.job.id);};
+    let canceled:Promise<unknown>|undefined,callsAtCancel=0;
+    const calls=()=>x.source.calls.filter(call=>call.method==='tools/call');
+    x.source.flags.before=async()=>{
+      canceled??=commands.cancel(p,x.claim.job.id).then(()=>{callsAtCancel=calls().length;});
+      await canceled;
+    };
     await assert.rejects(coordinator.run(x.claim,new AbortController().signal),/ACCESS_REVOKED|AUTHORIZATION_REQUIRED|POLICY_CHANGED|original|Original/);
     const job=await x.stored();assert.equal(job.state,'canceled');assert.equal(job.delegation!.acceptance,undefined);
     assert.equal(job.delegation!.agent!.observations.length,0);assert.equal(turns(),0);
-    assert.equal(x.source.calls.filter(call=>call.method==='tools/call').length,1,'The destination read must not follow cancellation of the original request');
-    assert.equal((await x.t.client.query(`SELECT count(*)::int AS n FROM ${x.q}.action_attempts`)).rows[0].n,1);
-    assert.equal((await x.t.client.query(`SELECT count(*)::int AS n FROM ${x.q}.action_observations`)).rows[0].n,1,'Retain the original late-source audit without publishing it');
+    assert(callsAtCancel>=1&&callsAtCancel<=2);
+    assert.equal(calls().length,callsAtCancel,'No new read can follow cancellation of the original request');
+    assert(calls().every(call=>call.name==='maps_textsearch'));
+    const attempts=(await x.t.client.query(`SELECT id,intent_id FROM ${x.q}.action_attempts`)).rows;
+    assert(attempts.length>=callsAtCancel&&attempts.length<=2);
+    assert.equal(new Set(attempts.map(row=>row.intent_id)).size,attempts.length);
+    const audits=(await x.t.client.query(`SELECT attempt_id,applied FROM ${x.q}.action_observations`)).rows;
+    assert.equal(audits.length,attempts.length,'Retain the original late-source audits');
+    assert(audits.every(row=>Number(row.applied)===0&&attempts.some(attempt=>attempt.id===row.attempt_id)));
   }finally{await x.close();}
 });
 

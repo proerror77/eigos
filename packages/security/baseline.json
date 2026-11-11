@@ -3418,7 +3418,7 @@
     {
       "id": "execution-projection",
       "file": "packages/ontology/execution-projection.ts",
-      "sourceDigest": "9874226b347a8f1412ef45d61504e7d5ee6314801c62baff4d8063d1da8ea3a4",
+      "sourceDigest": "14167fa0bcd2f6bdd1f1d5ba6a33de118ccf9b4a7b6ad301d0b48c8cbb111224",
       "channels": [
         "model",
         "artifact"
