@@ -24,7 +24,12 @@ async function reader(x:Awaited<ReturnType<typeof postgresDidiFixture>>){const p
 const shortRoute={city:'北京市',origin:'北京西站',destination:'西二旗地铁站'};
 function shortCoordinator(x:Awaited<ReturnType<typeof postgresDidiFixture>>,loseDecision=false,choose?:(prompt:string,turn:number)=>DidiEstimateDecision){
   let turns=0;const unexpected=async():Promise<never>=>{throw Error('Unexpected model stage');},port={securityChannelId:x.channel,postgresModelDispatch:'acknowledged-v1' as const};
-  const coordinator=new PostgresCoordinator({...x.options,database:x.t.database,store:x.worker,
+  const database={inspectClaim:x.t.database.inspectClaim.bind(x.t.database),run:()=>{throw new Error('DiDi Coordinator execution must use the original owner scope');},
+    runOwner:<T>(owner:string,action:Parameters<typeof x.t.database.run<T>>[0])=>x.t.database.runOwner(owner,async client=>{
+      assert.equal(owner,x.claim.owner);const modes=(await client.query('SELECT mode FROM pg_catalog.pg_locks WHERE pid=pg_backend_pid() AND relation=$1::regclass AND granted',[`${x.q}.eigos_business_mutex`])).rows.map(row=>row.mode);
+      assert(modes.includes('RowExclusiveLock'));assert(!modes.includes('ExclusiveLock'));return action(client);
+    })};
+  const coordinator=new PostgresCoordinator({...x.options,database,store:x.worker,
     reasoner:{...port,ground:unexpected,plan:unexpected,act:unexpected,reviewGoal:unexpected},
     executor:{...port,run:unexpected,async runStructured(prompt,_schema,_signal,options){
       assert.equal(options?.toolFree,true);assert.equal(options?.mcp,undefined);

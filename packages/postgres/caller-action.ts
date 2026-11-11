@@ -200,13 +200,18 @@ export function createPostgresCallerActionPolicy(program:DynamicOntologyProgram)
   };
 }
 
-interface CallerExecutionOptions extends PostgresCallerActionOptions {database:Pick<PostgresDatabase,'run'|'inspectClaim'>;maxTaskMs?:number}
+interface CallerExecutionOptions extends PostgresCallerActionOptions {database:Pick<PostgresDatabase,'run'|'inspectClaim'>&Partial<Pick<PostgresDatabase,'runOwner'>>;maxTaskMs?:number}
 /** One original caller frontier. It performs no model/provider I/O and never
  * replays an interrupted dispatch. The journal owns acceptance, then a fresh
  * readback transaction owns completion of that same task. */
 export class PostgresCallerActionExecution {
   private readonly maximum:number;
   constructor(private readonly options:CallerExecutionOptions){this.maximum=options.maxTaskMs??86400000;if(!Number.isSafeInteger(this.maximum)||this.maximum<1||this.maximum>86400000)throw new Error('Invalid original caller deadline');}
+  /** Only this original claim's owner state is touched; shared policy and
+   * definition writes retain their global fence. Older hosts keep run(). */
+  private ownerRun<T>(claim:Pick<WorkClaim,'owner'>,action:(client:Client)=>Promise<T>):Promise<T>{
+    const database=this.options.database;return database.runOwner?database.runOwner(claim.owner,action):database.run(action);
+  }
   private inspect=(claim:PostgresWorkReference)=>this.options.database.inspectClaim(claim,this.options.policyDigest);
   private async journal(client:Client,claim:PostgresWorkReference,proof?:{attemptId:string;response:AgentActionResult}){
     const job=await new PostgresTaskStorage(client,this.options.builder).get(claim.owner,claim.job.id),pin=job.delegation?.ontologyRelease;if(!pin)deny('POLICY_CHANGED');
@@ -221,7 +226,7 @@ export class PostgresCallerActionExecution {
   }
   async run(input:WorkClaim,signal:AbortSignal):Promise<void>{
     signal.throwIfAborted();const claim=postgresWorkReference(input);
-    const prepared=await this.options.database.run(async client=>{
+    const prepared=await this.ownerRun(claim,async client=>{
       const {journal,job}=await this.journal(client,claim),{plan,step}=this.select(job),intent=await journal.intent(claim.owner,step.intentId);
       if(intent.state==='effect_confirmed')return undefined;
       if(intent.state!=='ready')throw new SecurityError('AUTHORITY_UNAVAILABLE','The original dispatched caller operation requires reconciliation; automatic replay is prohibited');
@@ -237,10 +242,10 @@ export class PostgresCallerActionExecution {
       signal.throwIfAborted();return {response,attempt,intentId:intent.id,planId:plan.id,action:step.action,input:structuredClone(step.input)};
     });
     if(prepared){
-      signal.throwIfAborted();const receipt=await this.options.database.run(async client=>{
+      signal.throwIfAborted();const receipt=await this.ownerRun(claim,async client=>{
         const {journal}=await this.journal(client,claim);return journal.recordObservation(claim.owner,prepared.intentId,prepared.attempt.id,{kind:'confirmed',eventId:prepared.attempt.id,sourceVersion:prepared.attempt.ordinal,output:{source:prepared.response.value},evidenceRefs:prepared.response.evidenceRefs});
       });
-      signal.throwIfAborted();await this.options.database.run(async client=>{
+      signal.throwIfAborted();await this.ownerRun(claim,async client=>{
         const {journal,program}=await this.journal(client,claim,{attemptId:prepared.attempt.id,response:prepared.response});
         await journal.commitObservation(prepared.intentId,receipt.id,true,{claim,apply:async(job,intent)=>{
           signal.throwIfAborted();await withPostgresCallerSourceProjection(client,claim,{policyDigest:this.options.policyDigest,programRef:program.ref,configurationDigest:program.configurationDigest,action:prepared.action,inspectClaim:this.inspect,builder:this.options.builder},
@@ -256,7 +261,7 @@ export class PostgresCallerActionExecution {
     signal.throwIfAborted();await this.complete(claim,signal);
   }
   private async complete(claim:PostgresWorkReference,signal:AbortSignal){
-    await this.options.database.run(async client=>{
+    await this.ownerRun(claim,async client=>{
       signal.throwIfAborted();if(!await this.inspect(claim)||!await postgresClaimSnapshotMatches(client,claim,this.options.policyDigest))deny('ACCESS_REVOKED');
       const store=new PostgresTaskStorage(client,this.options.builder),job=await store.get(claim.owner,claim.job.id),{state,plan}=this.select(job),intents=await store.intents(claim.owner,job.id),q=`"${postgresBusinessSchema(client)}"`;
       const deadline=Date.parse(job.createdAt)+this.maximum;if(!Number.isSafeInteger(deadline)||deadline<=Date.now())deny('ACCESS_REVOKED');postgresConstrainReadDeadline(client,deadline);
