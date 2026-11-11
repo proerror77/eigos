@@ -53,15 +53,18 @@ test('another private root or collection cannot lend source-context authority', 
 });
 
 test('a malformed collection cannot poison the subsequent allowed reference set', () => {
-  const s = storage(), hidden = { type: 'PersonalPreference', id: 'not-an-observation' };
-  s.graph.related = () => [view(hidden)];
-  function* program() {
-    yield* graphReadPrivate('owner', root);
-    try { yield* graphRelated('owner', query, context.collection, { remaining: 50 }); } catch { /* The failed collection grants no reference. */ }
-    return yield* graphRead('owner', hidden);
+  const hidden = { type: 'PersonalPreference', id: 'not-an-observation' };
+  for (const [target, values] of [[hidden, [hidden]], [peer, [peer, hidden]]] as const) {
+    const s = storage();
+    s.graph.related = () => values.map(ref => view(ref));
+    function* program() {
+      yield* graphReadPrivate('owner', root);
+      try { yield* graphRelated('owner', query, context.collection, { remaining: 50 }); } catch { /* A rejected collection grants no reference. */ }
+      return yield* graphRead('owner', target);
+    }
+    assert.throws(() => run(s.graph, program()), /declared object types/);
+    assert(!s.accessed.some(value => value.startsWith('read:')));
   }
-  assert.throws(() => run(s.graph, program()), /declared object types/);
-  assert(!s.accessed.some(value => value.startsWith('read:PersonalPreference')));
 });
 
 test('v2 query contracts permit named point views but not type-wide enumeration or a different point result', () => {

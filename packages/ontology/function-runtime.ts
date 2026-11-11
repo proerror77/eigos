@@ -173,18 +173,22 @@ export function* constrainFunctionReads<T>(program: GraphProgram<T>, reads?: Fun
         const target = from && name ? model?.navigation(from.type, name, as).other.type : undefined;
         const objects = operation.method === 'related' ? result : (result as { items?: unknown }).items;
         if (!Array.isArray(objects)) fail('Function read returned an invalid collection');
+        const dynamic = from && name && dynamicCollection(from, name);
+        const observations = new Set<string>();
         for (const object of objects as unknown[]) {
           const parsed = objectRefSchema.safeParse(object && typeof object === 'object' ? (object as { ref?: unknown }).ref : undefined);
           if (!parsed.success) fail('Function relationship returned an invalid object reference');
-          if (point && refKey(parsed.data!) !== refKey(point)) fail('Function point query returned another object');
-          if (from && name && dynamicCollection(from, name)) {
-            if (target && !model!.implements(parsed.data!.type, target)) fail('Function relationship returned the wrong target type');
-            if (!scope.observations.has(refKey(parsed.data!)) && scope.observations.size >= 5000) fail('Function source read context exceeds its reference bound');
-            scope.observations.add(refKey(parsed.data!));
+          const ref = parsed.data!, key = refKey(ref);
+          if (point && key !== refKey(point)) fail('Function point query returned another object');
+          if (!dynamic) type(ref);
+          if (target && !model!.implements(ref.type, target)) fail('Function relationship returned the wrong target type');
+          if (dynamic) {
+            if (!scope.observations.has(key)) observations.add(key);
+            if (scope.observations.size + observations.size > 5000) fail('Function source read context exceeds its reference bound');
           }
-          type(parsed.data!);
-          if (target && !model!.implements(parsed.data!.type, target)) fail('Function relationship returned the wrong target type');
         }
+        // A rejected collection cannot admit even its otherwise valid prefix.
+        for (const key of observations) scope.observations.add(key);
       } else if (operation.method === 'containsLinks' && typeof result !== 'boolean') {
         fail('Function link proof returned an invalid result');
       }

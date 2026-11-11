@@ -7930,7 +7930,7 @@
       "currentControl": "Immutable once-only bindings and opaque set identity; explicit parameter normalization cannot change function/object identity; declared reads cover interface mappings and returned targets; all registered functions remain read-only with current authorization and evidence.",
       "targetControl": "Immutable once-only bindings and opaque set identity; explicit parameter normalization cannot change function/object identity; declared reads cover interface mappings and returned targets; all registered functions remain read-only with current authorization and evidence.",
       "stage": "S2",
-      "sourceDigest": "39fd2a1a8039a533b6619871e829d39c78347b4d0ee0da1140a128adefe795a4"
+      "sourceDigest": "364831a8b6b8a5ca6057a20bc49831ffc200e2fedad256ae73228479709875fe"
     },
     {
       "id": "ontology-builtin-function-implementations",
