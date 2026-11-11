@@ -16,7 +16,7 @@ import {parsePipelineIntake,pipelineMappingDigest,type PipelineIntake} from '../
 import type {DefinitionDraft} from '../packages/ontology/definition-store.js';
 import type {OntologyReleaseRef,SerializableObjectType} from '../packages/ontology/definition-contracts.js';
 import {preparePostgresKernel} from '../packages/postgres/kernel-runtime.js';
-import {createPaClassificationKernelDefinition,StagedKernelBuilder} from '../packages/ontology/seed-definition.js';
+import {createPaClassificationKernelDefinition,createSemanticRetrievalKernelDefinition,StagedKernelBuilder} from '../packages/ontology/seed-definition.js';
 import {FUNCTION_CONTRACT_CLOSEOUT_DOCUMENT_DIGEST,FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF} from '../packages/ontology/function-contract-closeout-compatibility.js';
 import {managedFixtureObject} from './fixtures/dynamic-ontology.js';
 
@@ -173,6 +173,14 @@ test('PG fixed v35 publication preserves canonical historical versions, lineage,
     const events=async()=>Number((await x.t.client.query(`SELECT count(*) AS n FROM ${x.q}.ontology_definition_events`)).rows[0].n);
     await assert.rejects(run(store=>store.publishReviewedKernel(actor,request)),/administrator/);
     await assert.rejects(run(store=>store.publishReviewedKernel(actor,{...request,expectedActive:{...expectedActive,generation:expectedActive.generation+1}},true)),/active ontology changed/);
+    await assert.rejects(x.t.database.run(async client=>{
+      const semantic=createSemanticRetrievalKernelDefinition(),ref={ontologyId:semantic.document.id,releaseId:randomUUID(),digest:digest(semantic.document)};
+      await client.query(`INSERT INTO ${x.q}.ontology_definition_releases(id,ontology_id,sequence,digest,model_digest,body,created_at)
+        VALUES($1,$2,(SELECT max(sequence)+1 FROM ${x.q}.ontology_definition_releases),$3,$4,$5,$6)`,[ref.releaseId,ref.ontologyId,ref.digest,semantic.audit.model.digest,JSON.stringify(semantic.document),new Date().toISOString()]);
+      await client.query(`UPDATE ${x.q}.ontology_namespaces SET active_release_id=$1 WHERE id=$2`,[ref.releaseId,ref.ontologyId]);
+      await new PostgresDefinitionStore(client,{builder:kernel}).publishReviewedKernel(actor,{...request,expectedActive:{...expectedActive,ref}},true);
+    }),/canonical predecessor/,'The independently installed v29 vector branch is explicitly refused before optional handler resolution');
+    assert.deepEqual((await run(store=>store.namespace())).active,legacyRef);
     for(const variant of ['predecessor','target'] as const){
       await assert.rejects(x.t.database.run(async client=>{
         const store=new PostgresDefinitionStore(client,{builder:kernel}),document={...(variant==='predecessor'?historical:StagedKernelBuilder.prototype.result.call(kernel).document),pipeline:[]};

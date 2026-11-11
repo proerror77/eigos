@@ -5170,13 +5170,13 @@
     {
       "id": "postgres-definition-store",
       "file": "packages/postgres/definition-store.ts",
-      "sourceDigest": "715ed22239becd07a2e339c1f7f396dc2d8c03e401446a87f32b847364e1fa1a",
+      "sourceDigest": "519cad90ad9a3aa408b293ed4356a203ba1bd64593da6d0df6198cfa86033d66",
       "channels": [
         "internal",
         "ontology_metadata"
       ],
       "content": "Serialized PostgreSQL immutable definition publication and explicit activation",
-      "currentControl": "Same owner/namespace, immutable published metadata and original task pins. Controlled semantic installation requires exact description28 predecessor, current generation, real administrator and receipt proof; no startup upgrade. Fixed v35 maintenance preserves exact document/model pins, canonical predecessor content, original publication lineage/review/generation and separate fact-checked activation; retries cannot change generation or rewrite history.",
+      "currentControl": "Same owner/namespace, immutable published metadata and original task pins. Controlled semantic installation requires exact description28 predecessor, current generation, real administrator and receipt proof; no startup upgrade. Fixed v35 maintenance preserves exact document/model pins, canonical predecessor content excluding the separate v29 vector installation, original publication lineage/review/generation and separate fact-checked activation; retries cannot change generation or rewrite history.",
       "targetControl": "Preserve original task pins and current source/role/recipient authorization; no implicit activation or fake evidence",
       "stage": "S5"
     },

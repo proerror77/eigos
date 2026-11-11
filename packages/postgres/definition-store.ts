@@ -7,7 +7,7 @@ import {definitionKindSchema,ontologyIdSchema,ontologyReleaseRefSchema,parseOnto
   type DefinitionKind,type OntologyDocument,type OntologyReleaseRef} from '../ontology/definition-contracts.js';
 import type {DefinitionDraft,DefinitionResource,DefinitionValidation,OntologyNamespace} from '../ontology/definition-store.js';
 import {compileOntologyDocument,normalizeOntologyDocument,type TrustedDefinitionRegistry} from '../ontology/model-compiler.js';
-import {createSeedDefinition,createCurrentKernelDefinition,stagedKernelComponents,StagedKernelBuilder,BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF,SEMANTIC_RETRIEVAL_KERNEL_MODEL_REF,
+import {createSeedDefinition,createCurrentKernelDefinition,stagedKernelComponents,StagedKernelBuilder,BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF,
   PA_CLASSIFICATION_KERNEL_MODEL_REF,DOMAIN_VOCABULARY_KERNEL_MODEL_REF,CONTRACT_CLOSURE_KERNEL_MODEL_REF,EFFECT_COVERAGE_KERNEL_MODEL_REF,EXECUTABLE_CONTRACT_KERNEL_MODEL_REF} from '../ontology/seed-definition.js';
 import {FUNCTION_CONTRACT_CLOSEOUT_DOCUMENT_DIGEST,FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF} from '../ontology/function-contract-closeout-compatibility.js';
 import {reviewedExecutableModelPair} from '../ontology/executable-contract-compatibility.js';
@@ -36,7 +36,8 @@ export const reviewedKernelReleaseRequestSchema=z.strictObject({
   reviewDigest:z.string().regex(/^[a-f0-9]{64}$/),
 });
 export type ReviewedKernelReleaseRequest=z.infer<typeof reviewedKernelReleaseRequestSchema>;
-const reviewedPredecessors=[BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF,SEMANTIC_RETRIEVAL_KERNEL_MODEL_REF,PA_CLASSIFICATION_KERNEL_MODEL_REF,DOMAIN_VOCABULARY_KERNEL_MODEL_REF,
+// The separate v29 vector installation still requires an exact active v29 host.
+const reviewedPredecessors=[BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF,PA_CLASSIFICATION_KERNEL_MODEL_REF,DOMAIN_VOCABULARY_KERNEL_MODEL_REF,
   CONTRACT_CLOSURE_KERNEL_MODEL_REF,EFFECT_COVERAGE_KERNEL_MODEL_REF,EXECUTABLE_CONTRACT_KERNEL_MODEL_REF];
 
 /** Internal metadata persistence on the caller's original serialized business
@@ -87,7 +88,10 @@ export class PostgresDefinitionStore {
   private async reviewedKernelBase(owner:string,input:ReviewedKernelReleaseRequest,admin:boolean){
     const request=reviewedKernelReleaseRequestSchema.parse(input),expected=request.expectedActive;
     if(!admin||expected.ref.ontologyId!=='eigos.business')throw new DomainError('FORBIDDEN','Reviewed kernel maintenance requires an authenticated system administrator');
-    const namespace=await this.assertManagement(owner,expected.ref.ontologyId,admin),base=await this.resolve(expected.ref);
+    const namespace=await this.assertManagement(owner,expected.ref.ontologyId,admin);
+    const identity=await this.sql(`SELECT model_digest FROM ${this.q}.ontology_definition_releases WHERE id=$1 AND ontology_id=$2 AND digest=$3 LIMIT 2`,[expected.ref.releaseId,expected.ref.ontologyId,expected.ref.digest]);
+    if(identity.rowCount!==1||!reviewedPredecessors.some(ref=>ref.digest===identity.rows[0]?.model_digest))return conflict('Reviewed kernel maintenance requires an unchanged canonical predecessor');
+    const base=await this.resolve(expected.ref);
     // Only the historical display version may differ. Reuse the exact reviewed
     // document/implementation pins, rather than treating a model digest alone
     // as proof that metadata and immutable handler references are unchanged.
