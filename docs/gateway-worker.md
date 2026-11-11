@@ -80,7 +80,7 @@ PostgreSQL 适配器把任务、授权、发布引用和本体投影放在同一
 
 任务读取服务使用 `PostgresDatabase.read()`。读取事务以 READ COMMITTED 取得同一互斥表的 SHARE 锁，多个读取可以并行，并各自维护私有分页游标。业务写入采用 EXCLUSIVE 或 ROW EXCLUSIVE，两者都与该读锁互斥。运行权威通过受限函数检查，并在 COMMIT 确认后重新核对。
 
-安装共享运行权威锁后，已审查的 Worker 写入可按所有者隔离。不同所有者可并行投影和保存任务。同一所有者的共享投影持有所有者独占锁，仅记录用量或释放领取的事务持有所有者共享锁与任务独占锁。领取使用短时容量锁和 `FOR UPDATE SKIP LOCKED`，跳过忙碌所有者和已锁定任务。权限和配置变更继续使用全局业务锁。Worker 证据读取和授权请求回调保留 SERIALIZABLE 快照，续租时只通过独立连接核验原令牌的最新期限。既有 schema 的兼容模式与升级步骤见 [PostgreSQL 部署指南](guides/deployment.md)。
+安装共享运行权威锁后，Coordinator、DiDi、Document 和 CallerAction 的已审查事务按原领取的所有者隔离。不同所有者可并行投影和保存任务。同一所有者的共享投影持有所有者独占锁，仅记录用量或释放领取的事务持有所有者共享锁与任务独占锁。领取使用短时容量锁和 `FOR UPDATE SKIP LOCKED`，跳过忙碌所有者和已锁定任务。权限和配置变更继续使用全局业务锁。Worker 证据读取和授权请求回调保留 SERIALIZABLE 快照，续租时只通过独立连接核验原令牌的最新期限。既有 schema 的兼容模式与升级步骤见 [PostgreSQL 部署指南](guides/deployment.md)。
 
 对象查询和 Function 在同一次请求内共享准确发布的只读快照。共享范围随事务结束关闭，下一次请求重新核对发布。运行权威、权限和当前业务事实使用各自的实时检查。
 
