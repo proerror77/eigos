@@ -78,6 +78,8 @@ export const serializableLinkSchema = z.strictObject({ resourceId: resourceIdSch
 export const serializableActionSchema = z.strictObject({
   resourceId: resourceIdSchema, id: nameSchema, version: versionSchema.optional(), kind: z.enum(['decision', 'source_read', 'business']).optional(),
   effects: effects.optional(), resultTypes: names.optional(), description: text, inputs: inputTypes,
+  /** Palantir Action Type writeback: what is written, how, and what comes back. */
+  writeback: z.strictObject({ target: z.string().min(1).max(200), mode: z.enum(['insert', 'update', 'append']), returns: z.string().min(1).max(200), derivedFrom: z.enum(['operation.effect', 'changes']).optional() }).optional(),
   changes: z.array(z.string().min(1).max(200)).min(1).max(200), submissionCriteria: z.array(z.string().min(1).max(200)).min(1).max(100),
   providerOperation: z.string().min(1).max(200).optional(),
   read: z.strictObject({ version: versionSchema, effect: z.literal('read'), inputSchema: schema, resultType: nameSchema, mcp: mcpReadBindingSchema.optional(), module: z.strictObject({ id: ontologyIdSchema, version: versionSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), completion: z.strictObject({ evaluate: nameSchema, planned: z.boolean().optional(), afterAuthorizedOperation: z.boolean().optional() }) }).optional() }).optional(),
@@ -93,9 +95,6 @@ export const ontologyDocumentSchema = z.strictObject({
   links: z.array(serializableLinkSchema).max(10000), actions: z.array(serializableActionSchema).max(2000), functions: z.array(serializableFunctionSchema).max(1000),
   pipeline: z.array(z.strictObject({ serviceId: resourceIdSchema, intakeDigest: z.string().regex(/^[a-f0-9]{64}$/) })).max(100).optional(),
   criteriaVersion: z.string().min(1).max(20).optional(),
-  /** Palantir writeback per action. Kept beside the action definition so adding it
-   * does not change any trusted action contract in this release. */
-  writebacks: z.record(nameSchema, z.strictObject({ target: z.string().min(1).max(200), mode: z.enum(['insert', 'update', 'append']), returns: z.string().min(1).max(200), derivedFrom: z.enum(['operation.effect', 'changes']).optional() })).optional(),
   effectCoverage: z.strictObject({ derived: z.number().int().nonnegative(), kept: z.number().int().nonnegative(), undeclared: z.array(nameSchema).max(200) }).optional(),
 });
 

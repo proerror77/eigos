@@ -1,5 +1,6 @@
 import { DomainError } from '../core/domain.js';
 import type { OntologyDocument } from './definition-contracts.js';
+import type { TrustedDefinitionRegistry } from './model-compiler.js';
 import { DERIVED_TYPES, OBJECT_DATASOURCE } from './palantir-datasource-map.js';
 
 /**
@@ -19,12 +20,11 @@ import { DERIVED_TYPES, OBJECT_DATASOURCE } from './palantir-datasource-map.js';
  * they already return. Read-only actions get none, because they write nothing back.
  */
 
-export function extendPalantirModelKernel(original: OntologyDocument): { document: OntologyDocument; summary: Record<string, unknown> } {
+export function extendPalantirModelKernel(original: OntologyDocument, registry?: TrustedDefinitionRegistry): { document: OntologyDocument; summary: Record<string, unknown> } {
   if (original.version !== '36') throw new DomainError('CONFLICT', 'Palantir model metadata requires the reviewed v36 predecessor');
   const document = structuredClone(original);
   const derivedSet = new Set(DERIVED_TYPES);
-  let withDatasource = 0, derivedTypes = 0, undeclared = 0, writebackCount = 0, readOnly = 0, noTarget = 0;
-  const writebacks: Record<string, unknown> = {};
+  let withDatasource = 0, derivedTypes = 0, undeclared = 0, writebackCount = 0, readOnly = 0, noTarget = 0, reRegistered = 0;
 
   for (const object of document.objects as unknown as Record<string, unknown>[]) {
     const id = String(object.id);
@@ -41,14 +41,22 @@ export function extendPalantirModelKernel(original: OntologyDocument): { documen
     const target = changes[0] ?? resultTypes[0];
     if (!target) { noTarget++; continue; }
     const effect = (action.operation as { effect?: string } | undefined)?.effect;
-    writebacks[String(action.id)] = { target, mode: effect === 'local' ? 'append' : 'update', returns: resultTypes[0] ?? target, derivedFrom: effect ? 'operation.effect' : 'changes' };
+    action.writeback = { target, mode: effect === 'local' ? 'append' : 'update', returns: resultTypes[0] ?? target, derivedFrom: effect ? 'operation.effect' : 'changes' };
+    // The writeback is part of the action contract, so the trusted handler has to be
+    // registered again against the new contract; otherwise the registry keeps only the
+    // pre-writeback digest and refuses to resolve the action.
+    const implementation = action.implementation as { kind?: string; handlerRef?: unknown } | undefined;
+    if (registry && implementation?.kind === 'trusted') {
+      const { resourceId: _rid, implementation: _impl, ...contract } = action as unknown as Record<string, unknown>;
+      action.implementation = { ...implementation, handlerRef: (registry as unknown as { registerAction(definition: unknown): unknown }).registerAction(contract) };
+      reRegistered++;
+    }
     writebackCount++;
   }
 
-  (document as unknown as Record<string, unknown>).writebacks = writebacks;
   document.version = '37';
   return {
     document,
-    summary: { withDatasource, derivedTypes, undeclared, writebacks: writebackCount, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；其余标 derived，不编 provider' },
+    summary: { withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；其余标 derived，不编 provider' },
   };
 }
