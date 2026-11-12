@@ -186,10 +186,22 @@ export function assertRelease(seed: SeedDefinition, expected: { id: string; vers
   if (digest(seed.audit.model) !== digest(expected)) throw new DomainError('CONFLICT', `${label} changed`);
 }
 
+/**
+ * Every release the chain builds, kept as its own body.
+ *
+ * A release is data: with the document in hand the version can be read back without running the
+ * modules that produced it, which is what lets a provider module stop describing the graph. These
+ * are recorded as they are built, not rebuilt later.
+ */
+export const SEED_RELEASE_SNAPSHOTS: { id: string; version: string; documentDigest: string; document: OntologyDocument }[] = [];
+
 function complete(document: OntologyDocument, registry: TrustedDefinitionRegistry, original: boolean, onCompiled?: (model: OntologyModel) => void): SeedDefinition {
   freezeRelease(document);
   registry.protect(document);
   const documentDigest = digest(document);
+  if (!SEED_RELEASE_SNAPSHOTS.some(entry => entry.version === document.version)) {
+    SEED_RELEASE_SNAPSHOTS.push({ id: document.id, version: document.version, documentDigest, document });
+  }
   // Compiling is only needed when someone asks for the model. The chain publishes
   // sixteen intermediate releases that nobody reads a model from, so compiling
   // them eagerly cost ~85% of the build for fingerprints alone.
