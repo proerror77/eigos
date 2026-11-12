@@ -1,5 +1,4 @@
 import { DomainError } from '../core/domain.js';
-import { LINK_TYPES, linkTypeDrift } from './link-types.js';
 import type { OntologyDocument } from './definition-contracts.js';
 import type { TrustedDefinitionRegistry } from './model-compiler.js';
 import { DERIVED_TYPES, OBJECT_DATASOURCE } from './palantir-datasource-map.js';
@@ -226,37 +225,6 @@ function extendInterfaceCapabilityActions(document: OntologyDocument) {
   return { created };
 }
 
-
-/**
- * The registry wins. Palantir keeps link types in the ontology and lets data sources supply
- * instances only, so a provider module must not be able to reshape the graph: whatever those
- * modules pushed is checked against LINK_TYPES and rebuilt from it, keeping the extension data
- * a declaration carries (role facets) but not the structure it chose.
- */
-function enforceLinkTypeAuthority(document: OntologyDocument) {
-  const existing = new Map((document.links as unknown as Record<string, any>[]).map(link => [String(link.id), link]));
-  const drift = linkTypeDrift(document.links as never);
-  if (drift.length) throw new Error(`Link types drifted from the authoritative table: ${drift.slice(0, 5).join('; ')}`);
-  // Keep the document's own objects and order: generated relationships are pinned by identity,
-  // so a link is only replaced when its declared shape actually differs from the registry.
-  let replaced = 0;
-  const rebuilt = (document.links as unknown as Record<string, any>[]).map(link => {
-    const declaration = LINK_TYPES.find(candidate => candidate.apiName === String(link.id));
-    if (!declaration) return link;
-    const same = link.from.type === declaration.from && link.from.name === declaration.fromName && !!link.from.many === declaration.fromMany && !!link.from.required === declaration.fromRequired
-      && link.to.type === declaration.to && link.to.name === declaration.toName && !!link.to.many === declaration.toMany && !!link.to.required === declaration.toRequired;
-    if (same) return link;
-    replaced++;
-    return {
-      ...link,
-      from: { ...link.from, type: declaration.from, name: declaration.fromName, many: declaration.fromMany, required: declaration.fromRequired },
-      to: { ...link.to, type: declaration.to, name: declaration.toName, many: declaration.toMany, required: declaration.toRequired },
-    };
-  });
-  (document as unknown as Record<string, unknown>).links = rebuilt;
-  return { linkTypes: rebuilt.length, replaced, drift: drift.length };
-}
-
 export function extendPalantirModelKernel(original: OntologyDocument, registry?: TrustedDefinitionRegistry): { document: OntologyDocument; summary: Record<string, unknown> } {
   if (original.version !== '36') throw new DomainError('CONFLICT', 'Palantir model metadata requires the reviewed v36 predecessor');
   const document = structuredClone(original);
@@ -311,11 +279,10 @@ export function extendPalantirModelKernel(original: OntologyDocument, registry?:
   const sharedProperties = extendSharedProperties(document);
   const sharedPropertyTypes = extendSharedPropertyTypes(document);
   const capabilityActions = extendInterfaceCapabilityActions(document);
-  const linkAuthority = enforceLinkTypeAuthority(document);
   const interfaceActions = extendInterfaceActions(document);
   document.version = '37';
   return {
     document,
-    summary: { linkAuthority, capabilityActions, sharedPropertyTypes, sharedProperties, interfaceActions, interfaceIdentity, relocatedRoles, withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
+    summary: { capabilityActions, sharedPropertyTypes, sharedProperties, interfaceActions, interfaceIdentity, relocatedRoles, withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
   };
 }

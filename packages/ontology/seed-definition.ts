@@ -24,7 +24,6 @@ import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import { BUSINESS_MODEL_DEFINITION } from './business-model.js';
-import { LINK_TYPE_BY_API_NAME } from './link-types.js';
 import frozen from './history/business-v15.json' with { type: 'json' };
 import frozenV16 from './history/business-v16.json' with { type: 'json' };
 import { extendCompositionKernel } from './composition-kernel.js';
@@ -133,21 +132,7 @@ function documentFromDefinition(definition: FrozenDefinition | ModelDefinition, 
     formatVersion: 1 as const, id: definition.id, version: definition.version,
     objects: definition.objects.map(value => ({ ...value, resourceId: resourceId('object', value.id), writePolicy: 'source' as const, properties: serializeProperties('object', value.id, value.properties) })),
     interfaces: definition.interfaces.map(value => ({ ...value, resourceId: resourceId('interface', value.id), properties: serializeProperties('interface', value.id, value.properties) })),
-    // Palantir keeps link types in the ontology and lets a data source supply instances only.
-    // The document's link list therefore takes its structure from LINK_TYPES, the single
-    // authority, keeping each declaration's own metadata (role facets) and the order the model
-    // already had, so a provider module can no longer reshape the graph.
-    links: definition.links.map(value => {
-      const declared = LINK_TYPE_BY_API_NAME.get(value.id);
-      if (!declared) throw new Error(`Link type ${value.id} is not in the authoritative table`);
-      return {
-        ...value,
-        from: { ...value.from, type: declared.from, name: declared.fromName, many: declared.fromMany, required: declared.fromRequired },
-        to: { ...value.to, type: declared.to, name: declared.toName, many: declared.toMany, required: declared.toRequired },
-        resourceId: resourceId('link', value.id),
-        writePolicy: 'source' as const,
-      };
-    }),
+    links: definition.links.map(value => ({ ...value, resourceId: resourceId('link', value.id), writePolicy: 'source' as const })),
     actions: definition.actions.map(value => {
       if (frozenMode && hasTrustedActionContract(value) && digest(historicalImplementation.actions.find(action => action.id === value.id) ?? null) !== digest(value)) throw new DomainError('CONFLICT', `Pinned seed action implementation is unavailable: ${value.id}`);
       return { ...value, resourceId: resourceId('action', value.id), ...(hasTrustedActionContract(value) ? { implementation: { kind: 'trusted' as const, handlerRef: registry.registerAction(value) } } : {}) };
