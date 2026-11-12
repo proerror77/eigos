@@ -70,8 +70,24 @@ Type X implements A and B, both declare `status` with different contracts;
 either unify the declarations or give one of them a different apiName.
 ```
 
+## 三点五、第 7 次失败：归一化会吞掉新字段
+
+按 3.1 实现 `polymorphic` 后，规则写好、编译通过、原有断言全绿，但两条新断言 fail：
+
+```
+not ok - a polymorphic interface property accepts an implementation with a different schema
+not ok - a polymorphic interface property still rejects a restricted implementation
+```
+
+原因：`propertyMetadata()` 把属性归一化成**它认识的字段集合**，`polymorphic` 被丢掉，规则永远读到 `undefined`。
+这与第 6 次（`validationSchema()` 丢 `anyOf`）是**同一类问题**：模型里有两层归一化，
+任何新字段/新结构都必须先在这两层登记，否则写再多规则也不会被触发。
+
 ## 四、实施顺序（每步可独立验收）
 
+0. **先改两层归一化**（这是前置，不做则后面全部无效）：
+   - `propertyMetadata()` 的白名单加入 `polymorphic`；
+   - `validationSchema()` 对未识别结构**不再静默丢弃**，改为保留或显式报错 —— 静默丢字段是前面 3 次失败的共同根因；
 1. `InterfaceProperty` 增加 `polymorphic` 字段（schema + 类型 + `describeType()` 投影）；
 2. `acceptingCompatible` 增加多态优先规则 + 单测（多态接受、非多态仍严格）；
 3. `propertyName` 增加 primaryKey 自动映射 + 单测；
