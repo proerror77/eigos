@@ -33,6 +33,7 @@ const UNPINNED_ALLOWLIST = new Map();
 /** Actions that deliberately exist as definitions without an executable
  * implementation. Adding an entry is a reviewed decision, never a silent pass. */
 const DEFINITION_ONLY_ACTIONS = new Set([
+  'LinkEvidence', 'Cite', 'Observe',
   'RequestDeliveryQuote', 'SelectOffer', 'SubmitServiceRequest', 'ProposeServiceExecution',
   'AuthorizeProposal', 'ConfirmSimulationQuote', 'RevokeProposalAuthorization',
   'AssessServiceOutcome', 'RequestServiceRemedy',

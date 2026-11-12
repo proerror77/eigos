@@ -40,7 +40,7 @@ import { parseOntologyDocument, type DefinitionKind, type JsonSchema, type Ontol
 import type { ActionDefinition, InterfaceDefinition, ModelDefinition, ObjectTypeDefinition, OntologyModel, PropertyDefinition } from './model.js';
 
 export const LEGACY_SEED_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '15', digest: 'efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776' });
-export const CURRENT_KERNEL_VERSION = '28';
+export const CURRENT_KERNEL_VERSION = '37';
 export type ReviewedKernelVersion = '27' | '28' | '29' | '30' | '31' | '32' | '33' | '34' | '35' | '36' | '37';
 export const PALANTIR_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '37', digest: 'ede0f64a5205c7d76e87689deff8cbeebdc1b4b2c0e318134346faec2ac9a1d4' });
 export const DOMAIN_VOCABULARY_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '31', digest: '2eb7c0911c04c38bb0cc0f8316c12d86318f8612f675506436b41d871ce66f51' });
@@ -189,7 +189,11 @@ export function assertRelease(seed: SeedDefinition, expected: { id: string; vers
   // identity is the stored document, which is what Palantir stores and what an edit set advances.
   const kept = SEED_RELEASE_SNAPSHOTS.find(entry => entry.version === expected.version);
   if (kept && registry) {
-    return { document: kept.document, registry, audit: { ...seed.audit, model: compileOntologyDocument(kept.document, registry).ref } };
+    const model = compileOntologyDocument(kept.document, registry);
+    const release: SeedDefinition = { document: kept.document, registry, audit: { ...seed.audit, model: model.ref } };
+    // The served release is a genuine completion: record it so its compiled model is reusable.
+    compiledSeeds.set(release, { registry, documentDigest: digest(kept.document), model });
+    return release;
   }
   if (!kept) SEED_RELEASE_SNAPSHOTS.push({ id: seed.document.id, version: expected.version, documentDigest: digest(seed.document), document: seed.document });
   return seed;
@@ -244,7 +248,12 @@ export function createConsolidatedKernelDefinition(registry = new TrustedDefinit
   return predecessor;
 }
 export function createCurrentKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
-  return createBusinessDescriptionsKernelDefinition(registry);
+  // One version axis: the ontology release in force is v37. The store used to describe the current
+  // release as the v28 kernel, which is why the live version could not be held by it.
+  const builder = new StagedKernelBuilder('37', registry);
+  let progress = builder.step(0), guard = 0;
+  while (!progress.ready && guard++ < 40) progress = builder.step(progress.completed);
+  return builder.release();
 }
 export function createSemanticRetrievalKernelDefinition(registry=new TrustedDefinitionRegistry()):SeedDefinition{
   const semantic = complete(extendSemanticRetrievalKernel(createBusinessDescriptionsKernelDefinition(registry).document,registry),registry,false);
@@ -318,7 +327,7 @@ export function createSingleReadKernelDefinition(registry = new TrustedDefinitio
  * compile/protection and historical fingerprint checks as the normal builder.
  * An interrupted or failed builder must be discarded and restarted. */
 export class StagedKernelBuilder {
-  #registry = new TrustedDefinitionRegistry();
+  #registry: TrustedDefinitionRegistry;
   #position = 0;
   #failed = false;
   #composition?: SeedDefinition;
@@ -334,7 +343,8 @@ export class StagedKernelBuilder {
   static readonly stages = 15;
   readonly #targetVersion: ReviewedKernelVersion;
   readonly #stageCount: number;
-  constructor(targetVersion: ReviewedKernelVersion = CURRENT_KERNEL_VERSION) {
+  constructor(targetVersion: ReviewedKernelVersion = CURRENT_KERNEL_VERSION, registry = new TrustedDefinitionRegistry()) {
+    this.#registry = registry;
     if (!['27', '28', '29', '30', '31', '32', '33', '34', '35', '36', '37'].includes(targetVersion)) throw new Error('Unsupported reviewed kernel target');
     this.#targetVersion = targetVersion;
     // Where kept bodies live. With bodies in hand the chain reads them instead of re-deriving them.
@@ -448,6 +458,12 @@ export class StagedKernelBuilder {
       this.#position++;
       return this.progress();
     } catch (error) { this.#failed=true; throw error; }
+  }
+
+  /** The completion itself, not a copy, so its compiled model stays reusable. */
+  release(): SeedDefinition {
+    if (this.#failed || this.#position !== this.#stageCount || !this.#current) throw new Error('Kernel builder is not ready');
+    return this.#current;
   }
 
   result(): SeedDefinition {
