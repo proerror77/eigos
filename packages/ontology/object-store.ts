@@ -3,6 +3,7 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
+import { compileJsonSchema } from './model-compiler.js';
 import { businessModel, businessModelV9 } from './business-model.js';
 import { migrateIntegratedOntology } from './integration-migration.js';
 import { nameSchema, objectRefSchema, type ObjectRef, type OntologyModel } from './model.js';
@@ -218,10 +219,12 @@ export class OntologyObjectStore {
     for (const [name, value] of Object.entries(edge.properties ?? {})) {
       const property = declared[name];
       if (!property) throw new DomainError('INVALID_INPUT', `Link ${edge.type} does not declare property ${name}`);
-      const schema = property.schema as unknown as { safeParse?: (value: unknown) => { success: boolean } };
-      // Link property schemas are compiled by the model compiler; until a link
-      // declares one through the compiled path, the name check is the guard.
-      if (typeof schema.safeParse === 'function' && !schema.safeParse(value).success) throw new DomainError('INVALID_INPUT', `Link ${edge.type} property ${name} is invalid`);
+      // Link property schemas stay as JSON in the model (a compiled validator
+      // cannot be structured-cloned), so compile on write.
+      const schema = typeof (property.schema as { safeParse?: unknown }).safeParse === 'function'
+        ? property.schema as unknown as { safeParse: (value: unknown) => { success: boolean } }
+        : compileJsonSchema(property.schema as never);
+      if (!schema.safeParse(value).success) throw new DomainError('INVALID_INPUT', `Link ${edge.type} property ${name} is invalid`);
     }
     for (const [name, property] of Object.entries(declared)) {
       if (property.required && !(name in (edge.properties ?? {}))) throw new DomainError('INVALID_INPUT', `Link ${edge.type} property ${name} is required`);

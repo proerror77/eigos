@@ -28,7 +28,6 @@ const CAMEL = (id: string) => `${id.charAt(0).toLowerCase()}${id.slice(1)}`;
 const EVIDENCE_PROPERTIES = {
   evidenceLevel: { description: 'How directly this link is backed by the upstream response', kind: 'string' as const, schema: { type: 'string', enum: ['primary', 'secondary', 'derived'] }, source: 'managed', required: false },
   observedAt: { description: 'When the upstream response behind this link was received', kind: 'timestamp' as const, schema: { type: 'string', format: 'date-time' }, source: 'managed', required: false },
-  confidence: { description: 'Agreement between the response and the linked fact, 0 to 1', kind: 'decimal' as const, schema: { type: 'number', minimum: 0, maximum: 1 }, source: 'managed', required: false },
   sourceRevision: { description: 'Receipt revision this link was written from', kind: 'string' as const, schema: { type: 'string', minLength: 1 }, source: 'managed', required: false },
 };
 
