@@ -191,10 +191,33 @@ export function extendInterfaceContractsKernel(original: OntologyDocument, regis
   }
   (summary as Record<string, unknown>).roles = roleCounts;
 
+  // Action capabilities. Foundry's action type constraint is a *declared
+  // capability* with its own API name that each implementer binds to a concrete
+  // action; it cannot be derived from action ids because every implementation
+  // names its own action. The reviewed capability table below is the authored
+  // part, and every constraint is optional until an implementer binds one.
+  const CAPABILITIES: Record<string, { id: string; effects: string[]; inputs: Record<string, string> }> = {
+    CitableObject: { id: 'AttachEvidence', effects: ['object_write'], inputs: { receipt: 'SourceReceipt' } },
+    EvidenceBacked: { id: 'AttachEvidence', effects: ['object_write'], inputs: { receipt: 'SourceReceipt' } },
+    IdentitySubject: { id: 'MergeIdentity', effects: ['change'], inputs: { source: 'IdentitySubject' } },
+    TransactionParty: { id: 'AssignParty', effects: ['object_write'], inputs: { party: 'Provider' } },
+    TransactionRoleScope: { id: 'ScopeTransaction', effects: ['object_write'], inputs: { request: 'ServiceRequest' } },
+  };
+  let actionConstraints = 0;
+  for (const iface of document.interfaces) {
+    const capability = CAPABILITIES[iface.id];
+    const descendantsOf = (id: string, seen = new Set<string>()): string[] => { const kids = document.interfaces.filter(item => (item.parents ?? []).includes(id)); const out: string[] = []; for (const kid of kids) { if (seen.has(kid.id)) continue; seen.add(kid.id); out.push(kid.id, ...descendantsOf(kid.id, seen)); } return out; };
+    const projectionDescendant = descendantsOf(iface.id).some(id => document.interfaces.find(item => item.id === id)?.projectionOnly);
+    if (!capability || iface.projectionOnly || projectionDescendant) continue;
+    iface.actions = [{ id: capability.id, inputs: capability.inputs as never, effects: capability.effects as never, optional: true }];
+    actionConstraints++;
+  }
+  (summary as Record<string, unknown>).actionConstraints = actionConstraints;
+
   // Two of the eight (CommerceFact, EvidenceBacked) inherit their contract from
   // CitableObject and are deliberately left without local properties: declaring
   // the same name in a parent and a child makes the model reject the interface as
   // conflicting, so inheritance carries them.
   if (summary.interfaces.length !== 6) throw new DomainError('CONFLICT', `Interface contract expected six property-less root interfaces, found ${summary.interfaces.length}`);
-  return { document, summary: { ...summary, propertyNormalisation: normalised.summary, actionConstraints: 0 } };
+  return { document, summary: { ...summary, propertyNormalisation: normalised.summary } };
 }
