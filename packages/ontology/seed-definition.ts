@@ -24,6 +24,7 @@ import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import { BUSINESS_MODEL_DEFINITION } from './business-model.js';
+import { LINK_TYPES, LINK_TYPE_BY_API_NAME } from './link-types.js';
 import frozen from './history/business-v15.json' with { type: 'json' };
 import frozenV16 from './history/business-v16.json' with { type: 'json' };
 import { extendCompositionKernel } from './composition-kernel.js';
@@ -132,7 +133,22 @@ function documentFromDefinition(definition: FrozenDefinition | ModelDefinition, 
     formatVersion: 1 as const, id: definition.id, version: definition.version,
     objects: definition.objects.map(value => ({ ...value, resourceId: resourceId('object', value.id), writePolicy: 'source' as const, properties: serializeProperties('object', value.id, value.properties) })),
     interfaces: definition.interfaces.map(value => ({ ...value, resourceId: resourceId('interface', value.id), properties: serializeProperties('interface', value.id, value.properties) })),
-    links: definition.links.map(value => ({ ...value, resourceId: resourceId('link', value.id), writePolicy: 'source' as const })),
+    // Palantir keeps a link type in the ontology and lets a data source supply instances only, so
+    // the current graph is synthesised from the authoritative table, in the order the table records.
+    // A pinned historical seed keeps its own links verbatim: its digest is already in the release
+    // record, and applying today's table to it would rewrite history.
+    links: (!frozenMode && definition.links.every(value => LINK_TYPE_BY_API_NAME.has(value.id)))
+      ? [...LINK_TYPES].sort((a, b) => a.order - b.order).map(declared => ({
+          id: declared.apiName,
+          ...(declared.description ? { description: declared.description } : {}),
+          from: { type: declared.from.type, name: declared.from.name, ...(declared.from.many === null ? {} : { many: declared.from.many }), ...(declared.from.required === null ? {} : { required: declared.from.required }) },
+          to: { type: declared.to.type, name: declared.to.name, ...(declared.to.many === null ? {} : { many: declared.to.many }), ...(declared.to.required === null ? {} : { required: declared.to.required }) },
+          ...(declared.roles ? { extensions: { roles: declared.roles } } : {}),
+          ...(declared.properties ? { properties: declared.properties } : {}),
+          resourceId: resourceId('link', declared.apiName),
+          writePolicy: 'source' as const,
+        }))
+      : definition.links.map(value => ({ ...value, resourceId: resourceId('link', value.id), writePolicy: 'source' as const })),
     actions: definition.actions.map(value => {
       if (frozenMode && hasTrustedActionContract(value) && digest(historicalImplementation.actions.find(action => action.id === value.id) ?? null) !== digest(value)) throw new DomainError('CONFLICT', `Pinned seed action implementation is unavailable: ${value.id}`);
       return { ...value, resourceId: resourceId('action', value.id), ...(hasTrustedActionContract(value) ? { implementation: { kind: 'trusted' as const, handlerRef: registry.registerAction(value) } } : {}) };

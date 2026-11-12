@@ -295,12 +295,13 @@ export function extendPalantirModelKernel(original: OntologyDocument, registry?:
   for (const link of document.links as unknown as Record<string, any>[]) {
     const declaration = LINK_TYPE_BY_API_NAME.get(String(link.id));
     if (!declaration) continue;
-    for (const [side, type, name, many, required] of [['from', declaration.from, declaration.fromName, declaration.fromMany, declaration.fromRequired], ['to', declaration.to, declaration.toName, declaration.toMany, declaration.toRequired]] as const) {
+    for (const [side, declared] of [['from', declaration.from], ['to', declaration.to]] as const) {
       const end = link[side];
-      if (end.type !== type) { end.type = type; reshaped++; }
-      if (end.name !== name) { end.name = name; reshaped++; }
-      if ('many' in end && !!end.many !== many) { end.many = many; reshaped++; }
-      if ('required' in end && !!end.required !== required) { end.required = required; reshaped++; }
+      if (end.type !== declared.type) { end.type = declared.type; reshaped++; }
+      if (end.name !== declared.name) { end.name = declared.name; reshaped++; }
+      // A null means the model never stated the key; it is not a value to write back.
+      if (declared.many !== null && 'many' in end && !!end.many !== declared.many) { end.many = declared.many; reshaped++; }
+      if (declared.required !== null && 'required' in end && !!end.required !== declared.required) { end.required = declared.required; reshaped++; }
     }
   }
   return {
