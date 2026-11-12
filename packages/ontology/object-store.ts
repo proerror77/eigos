@@ -419,6 +419,24 @@ export class OntologyObjectStore {
     if (result.size > 200) failure('Relationship evidence exceeds its bound');
     return linkSnapshotDigest(ref, [...result.values()]);
   }
+  /**
+   * Relationship attributes, read back with the edge itself.
+   *
+   * The navigation query returns target objects, so an attribute written on the
+   * relationship had no read path. This returns the edges of one relationship
+   * type with their declared attributes; the definition is still asserted, so a
+   * stored edge whose definition moved is rejected rather than reinterpreted.
+   */
+  readLinkAttributes(owner: string, from: ObjectRef, type: string, budget: ReadBudget = { remaining: 200 }): { to: ObjectRef; properties: Record<string, unknown> }[] {
+    this.model.navigation(from.type, type);
+    const rows = this.db.prepare(`SELECT to_type,to_id,definition_digest,properties FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND from_type=? AND from_id=? ORDER BY to_type,to_id LIMIT 201`).all(...this.ownerParameters(owner), type, from.type, from.id) as { to_type: string; to_id: string; definition_digest: string; properties: string | null }[];
+    this.charge(budget, rows.length);
+    if (rows.length > 200) throw new DomainError('CONFLICT', 'Relationship attribute read exceeds the bound');
+    return rows.map(row => {
+      this.assertLinkDefinition(type, String(row.definition_digest));
+      return { to: { type: String(row.to_type), id: String(row.to_id) }, properties: row.properties ? JSON.parse(String(row.properties)) as Record<string, unknown> : {} };
+    });
+  }
   /** Internal projection fast path. Checks exact owner/endpoint/definition
    * membership; this grants no write or execution authority to callers. */
   containsLinks(owner: string, links: LinkWrite[]): boolean {
