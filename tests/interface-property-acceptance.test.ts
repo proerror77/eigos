@@ -42,3 +42,4 @@ test('different kinds never match', () => {
   assert.equal(acceptingCompatible(property('integer', z.number().int()), property('string', z.string())), false);
 });
 
+
