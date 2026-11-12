@@ -53,6 +53,8 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
   private hits=0;
   private misses=0;
   private readonly typeMisses=new Map<string,number>();
+  private readonly queryMemo=new Map<string,OntologyQueryResult>();
+  private queryMemoHits=0;
   private readonly prefetchedTypes=new Set<string>();
   private readRevision:number|undefined;
   private readonly readRows=new Map<string,{value:QueryResult<QueryResultRow>;bytes:number}>();
@@ -73,7 +75,7 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     return new PostgresProjectionGraph(client,owner,release,builder,options.now??Date.now,options.readOnly??false);
   }
   /** Cheap evidence for query-budget gates: what this projection actually asked the database. */
-  stats(){return {queries:this.queryCount,hits:this.hits,misses:this.misses,prefetches:this.prefetchedTypes.size,cachedObjects:this.objects.size};}
+  stats(){return {queries:this.queryCount,hits:this.hits,misses:this.misses,prefetches:this.prefetchedTypes.size,cachedObjects:this.objects.size,queryMemoHits:this.queryMemoHits};}
   private assertOpen(owner=this.owner) {
     if(owner!==this.owner)throw new DomainError('FORBIDDEN','Projection belongs to another owner');
     try {if(postgresBusinessSchema(this.client)!==this.schema || postgresBusinessToken(this.client)!==this.token)throw new Error('Transaction changed');}
@@ -293,6 +295,11 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     if('type' in args&&isVirtualRef({type:args.type}))throw new DomainError('FORBIDDEN','Network facts require their authorized read view');
     if('as' in args&&args.as){const ref='object' in args?args.object:args.from;if(!this.model.isInterface(args.as)||!this.model.implements(ref.type,args.as))fail('Object does not implement the requested interface');}
     const datasetRevision=await this.revision(),revision=boundary?.revision??datasetRevision,query=digest({...args,cursor:undefined,...(readScope?{readScope}:{})});let last:ObjectRef|undefined=boundary?.after;
+    // A read-only projection cannot change between two identical queries, so an
+    // authorized result is reusable within this transaction. Revalidation walks
+    // (the agent loop asks the same question several times) stop re-asking SQL.
+    const memoKey=this.readOnly&&!args.cursor&&!boundary?digest([query,revision,readScope??'']):undefined;
+    if(memoKey){const memoized=this.queryMemo.get(memoKey);if(memoized){this.queryMemoHits++;this.charge(budget);return structuredClone(memoized);}}
     if(args.cursor){let cursor:z.infer<typeof ontologyCursorSchema>;try{cursor=ontologyCursorSchema.parse(JSON.parse(Buffer.from(args.cursor,'base64url').toString()));}catch{return fail('Invalid ontology cursor');}
       if(cursor.owner!==digest(this.owner)||(cursor.ontologyId??'eigos.business')!==this.ontologyId||cursor.query!==query||cursor.model!==this.model.ref.digest||cursor.revision!==revision)throw new DomainError('CONFLICT','Query context changed; restart the bounded query');last=cursor.last;}
     let target:string,historical=false;const values:unknown[]=[],where:string[]=[];let from:string;
@@ -342,7 +349,9 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     }
     const cursor=hasMore&&last?Buffer.from(JSON.stringify({owner:digest(this.owner),ontologyId:this.ontologyId,query,model:this.model.ref.digest,revision,last})).toString('base64url'):undefined;
     if(await this.revision()!==datasetRevision)throw new DomainError('CONFLICT','Objects changed during query; retry against the current revision');
-    return {model:this.model.ref,items,page:{limit:args.limit,scanned,hasMore,cursor},datasetRevision:revision,...('type'in args&&args.currentDefinitionsOnly?{definitionScope:'current_definitions_only' as const}:{})};
+    const result={model:this.model.ref,items,page:{limit:args.limit,scanned,hasMore,cursor},datasetRevision:revision,...('type'in args&&args.currentDefinitionsOnly?{definitionScope:'current_definitions_only' as const}:{})};
+    if(memoKey&&this.queryMemo.size<256)this.queryMemo.set(memoKey,structuredClone(result));
+    return result;
   }
   async related(owner:string,from:ObjectRef,link:string,budget:ReadBudget):Promise<ObjectView[]>{const result=await this.query(owner,{from,link,limit:50},budget);if(result.page.hasMore)throw new IncompleteRelationshipRead();return result.items;}
   /** Internal completeness check after the caller authorized a relationship

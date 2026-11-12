@@ -40,7 +40,18 @@ test('a bounded type working set is read in a handful of statements, not one per
       assert.ok(stats.prefetches>=1,'the type working set must be prefetched');
       assert.ok(stats.hits>=ids.length-2,`expected cache hits for the walked set, got ${stats.hits}`);
       // The batched path must not invent objects that do not exist.
-      await assert.rejects(()=>graph.read(owner,{type:'Proposal',id:`missing-${randomUUID()}`}),/not found/i);
+      await assert.rejects(()=>graph.read(owner,{type:'SavedAddress',id:`missing-${randomUUID()}`}),/not found/i);
+
+      // The agent loop revalidates by asking the same question again; on a
+      // read-only projection that second answer must not reach the database.
+      const first=await graph.query(owner,{type:'SavedAddress',limit:20});
+      const afterFirst=graph.stats().queries;
+      const second=await graph.query(owner,{type:'SavedAddress',limit:20});
+      assert.deepEqual(second.items.map(item=>item.properties.savedAddressId),first.items.map(item=>item.properties.savedAddressId));
+      assert.equal(graph.stats().queries,afterFirst,'the repeated identical query must not reach the database again');
+      assert.ok(graph.stats().queryMemoHits>=1,'repeated queries must be counted as memo hits');
+      // Budget gate: a small working set plus repeated reads must stay in single digits.
+      assert.ok(graph.stats().queries<=10,`statement budget exceeded: ${graph.stats().queries}`);
     });
   } finally {if(target)await target.close();f.close();}
 });
