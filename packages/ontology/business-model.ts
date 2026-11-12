@@ -22,6 +22,8 @@ import { networkObjects, networkLinks, isVirtualRef } from './network-model.js';
 import { capabilityCatalogObjects, capabilityCatalogLinks } from './capability-catalog.js';
 import { commerceJourneyActions, commerceJourneyFunctions, commerceJourneyLinks, commerceJourneyObjects } from './commerce-journey.js';
 import { customsPolicyObjects, customsPolicyLinks, customsPolicyFunctions } from './customs-policy.js';
+import { digest } from '../core/delegation.js';
+import { loadReleaseSnapshots } from './release-snapshot.js';
 import { OntologyModel, objectRefSchema, type ModelDefinition, type ObjectTypeDefinition, type PropertyDefinition as P, type LinkDefinition } from './model.js';
 
 export const decimalSchema = z.string().regex(/^(0|[1-9]\d{0,14})(?:\.\d{1,6})?$/);
@@ -276,3 +278,21 @@ for (const [id, from, name, to, reverse, many, reverseMany, required] of [
 ] as const) BUSINESS_MODEL_DEFINITION.links.push({ id, description: `${from}.${name} → ${to}`, from: { type: from, name, many, required }, to: { type: to, name: reverse, many: reverseMany } });
 
 export const businessModel = new OntologyModel(BUSINESS_MODEL_DEFINITION);
+
+/**
+ * The base ontology as data.
+ *
+ * A release is read from its kept body; compiling this module is only the cold start. This is the
+ * seam that lets a provider module stop declaring the graph: once the body is served, emptying a
+ * declaration cannot break the import of this file.
+ */
+export function resolveBaseOntology(dir: string | undefined = process.env.EIGOS_RELEASE_DIR): { document: any; source: 'release' | 'code' } {
+  if (dir) {
+    // Match the content, not the name: a body filed under the same ontology id but holding a
+    // different document is a different release.
+    const wanted = digest(BUSINESS_MODEL_DEFINITION);
+    const kept = loadReleaseSnapshots(dir).find(entry => entry.documentDigest === wanted);
+    if (kept) return { document: kept.document, source: 'release' };
+  }
+  return { document: BUSINESS_MODEL_DEFINITION, source: 'code' };
+}
