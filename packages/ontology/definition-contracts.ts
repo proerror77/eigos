@@ -56,6 +56,10 @@ export const serializableObjectTypeSchema = z.strictObject({
   resourceId: resourceIdSchema, id: nameSchema, version: versionSchema, name: text, aliases: z.array(z.string().min(1).max(500)).max(100), description: text,
   primaryKey: nameSchema, titleKey: nameSchema, properties, interfaces: z.array(interfaceImplementation).max(100).optional(),
   businessDescription: text.optional(),
+  /** Palantir requires a data source before an object type can exist. */
+  datasource: z.string().min(1).max(300).optional(),
+  /** Computed from other objects rather than fed by a provider. */
+  derived: z.boolean().optional(),
   classification: paClassificationSchema.optional(),
   visibility: z.enum(['business', 'technical']).optional(), writePolicy: z.enum(['managed', 'source']),
 });
@@ -89,6 +93,9 @@ export const ontologyDocumentSchema = z.strictObject({
   links: z.array(serializableLinkSchema).max(10000), actions: z.array(serializableActionSchema).max(2000), functions: z.array(serializableFunctionSchema).max(1000),
   pipeline: z.array(z.strictObject({ serviceId: resourceIdSchema, intakeDigest: z.string().regex(/^[a-f0-9]{64}$/) })).max(100).optional(),
   criteriaVersion: z.string().min(1).max(20).optional(),
+  /** Palantir writeback per action. Kept beside the action definition so adding it
+   * does not change any trusted action contract in this release. */
+  writebacks: z.record(nameSchema, z.strictObject({ target: z.string().min(1).max(200), mode: z.enum(['insert', 'update', 'append']), returns: z.string().min(1).max(200), derivedFrom: z.enum(['operation.effect', 'changes']).optional() })).optional(),
   effectCoverage: z.strictObject({ derived: z.number().int().nonnegative(), kept: z.number().int().nonnegative(), undeclared: z.array(nameSchema).max(200) }).optional(),
 });
 

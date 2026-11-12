@@ -8,6 +8,7 @@ import { extendEffectCoverageKernel } from './effect-coverage-kernel.js';
 import { extendExecutableContractKernel } from './executable-contract-kernel.js';
 import { extendFunctionContractCloseoutKernel } from './function-contract-closeout-kernel.js';
 import { extendInterfaceContractsKernel } from './interface-contract-kernel.js';
+import { extendPalantirModelKernel } from './palantir-model-kernel.js';
 import { EXECUTABLE_CONTRACT_KERNEL_MODEL_REF } from './executable-contract-compatibility.js';
 export { EXECUTABLE_CONTRACT_KERNEL_MODEL_REF } from './executable-contract-compatibility.js';
 import { FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF } from './function-contract-closeout-compatibility.js';
@@ -38,7 +39,8 @@ import type { ActionDefinition, InterfaceDefinition, ModelDefinition, ObjectType
 
 export const LEGACY_SEED_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '15', digest: 'efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776' });
 export const CURRENT_KERNEL_VERSION = '28';
-export type ReviewedKernelVersion = '27' | '28' | '29' | '30' | '31' | '32' | '33' | '34' | '35' | '36';
+export type ReviewedKernelVersion = '27' | '28' | '29' | '30' | '31' | '32' | '33' | '34' | '35' | '36' | '37';
+export const PALANTIR_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '37', digest: 'fd9b2abe9134509c91f4103c21f908c608633bf744e1a9880cc9d8f995536c00' });
 export const DOMAIN_VOCABULARY_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '31', digest: '2eb7c0911c04c38bb0cc0f8316c12d86318f8612f675506436b41d871ce66f51' });
 export const EFFECT_COVERAGE_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '33', digest: '5a721eaa695d262725ad3d515c3ff8e098d0858011e55ca4e3a31e84bc6b08a0' });
 export const CONTRACT_CLOSURE_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '32', digest: '53bdaa43dd60980322180e1a9aafa52a8669056aeef245fd9fc983a7a5322e04' });
@@ -251,6 +253,11 @@ export function createInterfaceContractDefinition(registry = new TrustedDefiniti
   assertRelease(contracted, INTERFACE_CONTRACT_MODEL_REF, 'The reviewed interface contract fingerprint changed');
   return contracted;
 }
+export function createPalantirModelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
+  const modelled = complete(extendPalantirModelKernel(createInterfaceContractDefinition(registry).document).document, registry, false);
+  assertRelease(modelled, PALANTIR_MODEL_REF, 'The reviewed Palantir model metadata fingerprint changed');
+  return modelled;
+}
 export function createBusinessDescriptionsKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const described = complete(extendBusinessDescriptions(createPaymentCommerceKernelDefinition(registry).document), registry, false);
   assertRelease(described, BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF, 'The original v28 description kernel fingerprint changed');
@@ -289,9 +296,9 @@ export class StagedKernelBuilder {
   readonly #targetVersion: ReviewedKernelVersion;
   readonly #stageCount: number;
   constructor(targetVersion: ReviewedKernelVersion = CURRENT_KERNEL_VERSION) {
-    if (!['27', '28', '29', '30', '31', '32', '33', '34', '35', '36'].includes(targetVersion)) throw new Error('Unsupported reviewed kernel target');
+    if (!['27', '28', '29', '30', '31', '32', '33', '34', '35', '36', '37'].includes(targetVersion)) throw new Error('Unsupported reviewed kernel target');
     this.#targetVersion = targetVersion;
-    this.#stageCount = targetVersion === '27' ? 14 : targetVersion === '28' ? 15 : targetVersion === '31' ? 17 : targetVersion === '32' ? 18 : targetVersion === '33' ? 19 : targetVersion === '34' ? 20 : targetVersion === '35' ? 21 : targetVersion === '36' ? 22 : 16;
+    this.#stageCount = targetVersion === '27' ? 14 : targetVersion === '28' ? 15 : targetVersion === '31' ? 17 : targetVersion === '32' ? 18 : targetVersion === '33' ? 19 : targetVersion === '34' ? 20 : targetVersion === '35' ? 21 : targetVersion === '36' ? 22 : targetVersion === '37' ? 23 : 16;
   }
 
   step(expected: number): { completed: number; total: number; ready: boolean } {
@@ -384,6 +391,11 @@ export class StagedKernelBuilder {
         case 21:
           this.#current=complete(extendInterfaceContractsKernel(this.#current!.document).document,this.#registry,false,model=>{this.#model=model;});
           assertRelease(this.#current, INTERFACE_CONTRACT_MODEL_REF, 'The reviewed interface contract fingerprint changed');
+          if (Number(this.#targetVersion) < 37) { this.#documentDigest=digest(this.#current.document);this.#registry.seal(); }
+          break;
+        case 22:
+          this.#current=complete(extendPalantirModelKernel(this.#current!.document).document,this.#registry,false,model=>{this.#model=model;});
+          assertRelease(this.#current, PALANTIR_MODEL_REF, 'The reviewed Palantir model metadata fingerprint changed');
           this.#documentDigest=digest(this.#current.document);this.#registry.seal();
           break;
         default: throw new Error('Unknown kernel stage');
