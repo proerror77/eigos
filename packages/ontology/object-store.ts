@@ -216,6 +216,11 @@ export class OntologyObjectStore {
   /** A relationship may carry attributes, but only the ones its definition declares. */
   private assertLinkProperties(edge: LinkWrite) {
     const declared = this.model.link(edge.type).properties ?? {};
+    // A relationship in a definition that declares no attributes has no attribute
+    // contract at all (v35 and earlier), so a projection that always sends them is
+    // not writing undocumented data — there is nothing to document it against.
+    // Once any attribute is declared the check is strict: unknown names are rejected.
+    if (!Object.keys(declared).length) return;
     for (const [name, value] of Object.entries(edge.properties ?? {})) {
       const property = declared[name];
       if (!property) throw new DomainError('INVALID_INPUT', `Link ${edge.type} does not declare property ${name}`);

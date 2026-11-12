@@ -69,7 +69,12 @@ export function* projectRideEstimateProgram(graph: ProjectionMetadata, owner: st
   yield* add(receipt, '滴滴只读来源回执', { sourceIdentity: `didi-mcp:${s.receipt.environment}:${s.receipt.bindingId}`, sourceEventId: s.receipt.id, scope: 'domain_ride', observedAt: s.observedAt,
     evidenceLevel: s.evidenceKind === 'fixture' ? 'synthetic' : s.evidenceKind === 'provider_mock' ? 'provider_test' : 'live_readonly', contentDigest: s.contentDigest,
     subjects: [{ object: subject, digest: digest(record.properties), linksDigest: linkSnapshotDigest(subject, links) }, ...(facts ? yield* facts.subjects() : [])], safeSummary: '一次地点或车型估价读取；价格是预估，完整费用、叫车可用性与接送承诺未知' });
-  links.push({ type: 'ReceiptRequest', from: receipt, to: root }, { type: `${subject.type}Evidence`, from: subject, to: receipt });
+  links.push({ type: 'ReceiptRequest', from: receipt, to: root }, {
+    type: `${subject.type}Evidence`, from: subject, to: receipt,
+    // The receipt is the evidence, so the edge says how directly it supports the
+    // subject and when it was observed. A fixture is derived, never primary.
+    properties: { evidenceLevel: s.evidenceKind === 'fixture' ? 'derived' : 'primary', observedAt: s.observedAt, sourceRevision: String(s.requestRevision) },
+  });
   yield* graphIngest(owner, { objects, links, removeLinks: facts?.removeLinks }, { kind: s.evidenceKind === 'fixture' ? 'synthetic' : 'provider', id: s.receipt.id, observedAt: s.observedAt, ...(facts?.readContext ? { readContext: facts.readContext } : {}) });
   return subject;
 }
