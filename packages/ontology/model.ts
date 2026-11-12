@@ -497,9 +497,15 @@ export class OntologyModel {
     const i = this.interfaces.get(id)!;
     const actions = new Map<string, InterfaceActionConstraint>();
     for (const action of [...(i.parents ?? []).flatMap(parent => this.interfaceActions(parent)), ...(i.actions ?? [])]) {
-      const prior = actions.get(action.id);
-      if (prior && digest(prior) !== digest(action)) invalid('Conflicting inherited interface action');
-      actions.set(action.id, action);
+      // Palantir names a constraint by apiName; older definitions used id, so both key the map.
+      const key = String((action as { apiName?: string }).apiName ?? (action as { id?: string }).id);
+      const prior = actions.get(key);
+      // A constraint's description is presentation, not contract: Palantir lets two interfaces
+      // declare the same capability in their own words. Compatibility compares the name, whether
+      // it is required, and the parameter shape — nothing else.
+      const contractOf = (constraint: Record<string, unknown>) => digest({ apiName: constraint.apiName ?? constraint.id, required: constraint.required ?? !constraint.optional, parameters: constraint.parameters ?? null });
+      if (prior && contractOf(prior as unknown as Record<string, unknown>) !== contractOf(action as unknown as Record<string, unknown>)) invalid('Conflicting inherited interface action');
+      actions.set(key, action);
     }
     return [...actions.values()];
   }

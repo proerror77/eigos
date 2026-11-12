@@ -195,6 +195,8 @@ function extendInterfaceCapabilityActions(document: OntologyDocument) {
   const actions = document.actions as unknown as Record<string, unknown>[];
   const declarations: [string, string, string][] = [
     ['LinkEvidence', 'EvidenceBacked', 'Attach an evidence object to any evidence-backed object'],
+    ['Cite', 'CitableObject', 'Mark any citable object as referenced by a consumer'],
+    ['Observe', 'SourceEntityObservation', 'Record an observation against any observed source entity'],
   ];
   let created = 0;
   for (const [id, iface, description] of declarations) {
