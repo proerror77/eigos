@@ -433,7 +433,11 @@ export class OntologyObjectStore {
    * stored edge whose definition moved is rejected rather than reinterpreted.
    */
   readLinkAttributes(owner: string, from: ObjectRef, type: string, budget: ReadBudget = { remaining: 200 }): { to: ObjectRef; properties: Record<string, unknown> }[] {
-    this.model.navigation(from.type, type);
+    // A relationship published in the document is reachable by its endpoint even
+    // when the object type does not enumerate it: Place carries 125 evidence links
+    // and declares none of them locally.
+    const definition = this.model.link(type);
+    if (definition.from.type !== from.type) throw new DomainError('INVALID_INPUT', `Relationship ${type} does not start at ${from.type}`);
     const rows = this.db.prepare(`SELECT to_type,to_id,definition_digest,properties FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND from_type=? AND from_id=? ORDER BY to_type,to_id LIMIT 201`).all(...this.ownerParameters(owner), type, from.type, from.id) as { to_type: string; to_id: string; definition_digest: string; properties: string | null }[];
     this.charge(budget, rows.length);
     if (rows.length > 200) throw new DomainError('CONFLICT', 'Relationship attribute read exceeds the bound');
