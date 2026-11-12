@@ -22,6 +22,7 @@ import { DERIVED_TYPES, OBJECT_DATASOURCE } from './palantir-datasource-map.js';
 
 /** `api://didi` becomes `{type:'api', path:'didi'}` — the scheme is the datasource kind,
  * the rest is where it points. A bare scheme keeps no path. */
+
 export function parseDatasource(uri: string): { type: 'api' | 'dataset' | 'store' | 'internal' | 'function'; path?: string } {
   const match = /^(api|dataset|store|internal|function):\/\/(.+)$/.exec(uri);
   if (!match) return { type: 'internal', path: uri };

@@ -58,3 +58,19 @@
 - 接口查询能返回属性（不是只有类型集合）；
 - 关系导航能读回边属性；
 - 动作能经接口解析出具体 action 并执行一次。
+
+## 五、接口身份属性：实测结论（2026-11-13）
+
+试了三轮，每轮撞到不同的门禁，按顺序记录：
+
+1. `Unknown optional interface property` —— 我先用 `iface.properties = {id}` **整块覆盖**，
+   把已有接口的 `optionalProperties` 引用全部打空。改为**合并**后此错消失；
+2. `Conflicting inherited property` —— 一个类型实现两个接口、两者都声明同名属性时契约必须一致；
+3. `Incompatible interface property: Place.id` —— 最终挡住的地方：接口声明 `id`，实现侧是
+   `placeId`（uuid/pattern 类 schema），结构性兼容检查判定不兼容。
+
+第 3 条是**模型缺口**，不是数据问题：`acceptingCompatible()`（`accepting_v1`）能接受「更窄的实现」，
+但这条检查走的是结构全等路径，且在 `propertyCompatibility` 生效之前执行。要让接口声明身份属性，
+必须先让这条检查认识 `accepting_v1`，否则任何 `X.id ← placeId` 的映射都会被判不兼容。
+
+未做，不谎报完成。下一步应从这里下手，而不是继续在模型里加声明。
