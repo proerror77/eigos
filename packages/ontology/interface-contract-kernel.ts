@@ -90,6 +90,9 @@ export function extendInterfaceContractsKernel(original: OntologyDocument, regis
         implementation.propertyMap = { ...(implementation.propertyMap ?? {}), id: object.primaryKey };
       }
     } else summary.skippedIdentity += implementers.length;
+    // Foundry metadata: a searchable interface is limited to 75 implementations.
+    iface.status = 'experimental';
+    iface.searchable = implementers.length <= 75;
     summary.interfaces.push(iface.id);
 
     // Relationship constraints: a target becomes required only when every
@@ -112,7 +115,7 @@ export function extendInterfaceContractsKernel(original: OntologyDocument, regis
       // published as optional so descendants are not forced to invent the link.
       const hasChildren = document.interfaces.some(item => (item.parents ?? []).includes(iface.id));
       const optional = hasChildren || entry.perObject.size !== implementers.length;
-      iface.links = [...(iface.links ?? []), { name, target, many: entry.many, optional }];
+      iface.links = [...(iface.links ?? []), { name, target, many: entry.many, optional, description: `${iface.id} reaches ${target} through ${name}` }];
       summary[optional ? 'optionalLinks' : 'requiredLinks']++;
       for (const object of implementers) {
         const actual = entry.perObject.get(object.id);

@@ -16,7 +16,7 @@ export interface OntologyReleaseRef { ontologyId: string; releaseId: string; dig
 export interface DefinitionIdentity { resourceId: string; id: string }
 export interface SerializableProperty extends Omit<PropertyDefinition, 'schema' | 'schemaMetadata' | 'sourceBinding'> { schema: JsonSchema; validatorRef?: HandlerRef }
 export interface SerializableObjectType extends Omit<ObjectTypeDefinition, 'properties'>, DefinitionIdentity { properties: Record<string, SerializableProperty>; writePolicy: 'managed' | 'source' }
-export interface SerializableInterface extends Omit<InterfaceDefinition, 'properties'>, DefinitionIdentity { properties: Record<string, SerializableProperty> }
+export interface SerializableInterface extends Omit<InterfaceDefinition, 'properties' | 'links'>, DefinitionIdentity { properties: Record<string, SerializableProperty>; status?: 'active' | 'experimental' | 'example' | 'deprecated'; searchable?: boolean; links?: (NonNullable<InterfaceDefinition['links']>[number] & { description?: string })[] }
 export interface SerializableLink extends LinkDefinition, DefinitionIdentity { writePolicy: 'managed' | 'source' }
 export interface SerializableAction extends ActionDefinition, DefinitionIdentity { implementation?: ActionImplementation }
 export interface SerializableFunction extends FunctionDefinition { handlerRef?: HandlerRef }
@@ -63,8 +63,10 @@ export const serializableInterfaceSchema = z.strictObject({
   resourceId: resourceIdSchema, id: nameSchema, description: text, parents: names.optional(), properties,
   propertyCompatibility: z.literal('structural_v1').optional(),
   projectionOnly: z.boolean().optional(),
+  status: z.enum(['active', 'experimental', 'example', 'deprecated']).optional(),
+  searchable: z.boolean().optional(),
   optionalProperties: names.optional(),
-  links: z.array(z.strictObject({ name: nameSchema, target: nameSchema, many: z.boolean(), optional: z.boolean().optional() })).max(200).optional(),
+  links: z.array(z.strictObject({ name: nameSchema, target: nameSchema, many: z.boolean(), optional: z.boolean().optional(), description: text.optional() })).max(200).optional(),
   actions: z.array(z.strictObject({ id: nameSchema, inputs: inputTypes, effects, resultTypes: names.optional(), optional: z.boolean().optional(), ports: z.strictObject({ inputs: z.record(nameSchema, compositionPortSchema), outputs: z.record(nameSchema, compositionPortSchema) }).optional() })).max(100).optional(),
 });
 const endpoint = z.strictObject({ type: nameSchema, name: nameSchema, many: z.boolean(), required: z.boolean().optional() });
