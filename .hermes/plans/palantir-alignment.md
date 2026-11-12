@@ -73,4 +73,17 @@
 但这条检查走的是结构全等路径，且在 `propertyCompatibility` 生效之前执行。要让接口声明身份属性，
 必须先让这条检查认识 `accepting_v1`，否则任何 `X.id ← placeId` 的映射都会被判不兼容。
 
-未做，不谎报完成。下一步应从这里下手，而不是继续在模型里加声明。
+未做，不谎报完成。
+
+### 根因已定位到函数级（`model.ts:157 acceptingCompatible`）
+
+| 行 | 规则 | 对接口身份的影响 |
+|---|---|---|
+| 160 | `if (actual.kind !== expected.kind && !timestampView) return false` | 接口只有**一个** kind，实现者主键 kind 不同就一定失败 —— 所以「允许不同 kind」在现有实现里做不到 |
+| 167 | `Object.keys(x).some(key => !scalar.has(key))` → false | `anyOf` 不在 scalar 白名单 → 联合 schema 一律判不兼容 |
+
+结论：要让接口声明身份属性，必须扩展 `acceptingCompatible`：
+- 期望侧 schema 为 `anyOf` 时，逐个成员递归判定（任一成员接受即通过）；
+- kind 检查在联合场景下改为「成员之一 kind 相符」。
+
+这是**一个函数的改动**，不是模型层能绕过的。改动前需要保证 `tests/interface-property-acceptance.test.ts` 6 条断言仍全绿，并补两条联合 schema 用例。

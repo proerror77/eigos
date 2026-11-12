@@ -29,6 +29,7 @@ export function parseDatasource(uri: string): { type: 'api' | 'dataset' | 'store
   return { type: match[1] as 'api' | 'dataset' | 'store' | 'internal' | 'function', path: match[2] };
 }
 
+
 export function extendPalantirModelKernel(original: OntologyDocument, registry?: TrustedDefinitionRegistry): { document: OntologyDocument; summary: Record<string, unknown> } {
   if (original.version !== '36') throw new DomainError('CONFLICT', 'Palantir model metadata requires the reviewed v36 predecessor');
   const document = structuredClone(original);
