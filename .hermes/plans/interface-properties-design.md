@@ -25,7 +25,13 @@
 | 5 | 编译器 | `Incompatible interface property: Place.id` | `acceptingCompatible` 第 160 行要求 `actual.kind === expected.kind`，接口只有一个 kind，混合 kind 必然失败 |
 | 6 | 编译器 | 同上（改了 `required:false`、单一基线、只映射同签名实现者后仍失败） | 第 167 行的 scalar 白名单把 `anyOf` 直接否掉；加联合分支后**分支从不执行**，因为 `validationSchema()` 归一化后 `anyOf` 不保留 |
 
-第 6 条是**结论性**的：属性模型里没有能表示「联合」的结构，加分支无用。
+第 6 条需要更正：复查 `model.ts:134 validationSchema()` 后确认它**保留** `anyOf`（第 140 行显式处理）。
+所以当初「归一化把 `anyOf` 丢了」的判断不成立，联合分支没被触发另有原因 —— 最可能是
+`propertyMetadata(expected).schema` 已经是编译后的 zod 对象，`validationSchema()` 对非普通对象原样返回，
+于是读不到 `anyOf`。下一次应当先打印 `propertyMetadata()` 的返回值确认，而不是继续改规则。
+
+结论仍然是：**用 `anyOf` 表达接口属性收益低**（第 167 行白名单 + 归一化路径双重不确定），
+显式多态字段是更稳的方向。
 
 ## 三、唯一可行的设计
 
