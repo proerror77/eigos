@@ -318,7 +318,10 @@ export class OntologyModel {
       if (a.effects && (!a.effects.length || a.effects.some(effect => !['local', 'read', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'external_draft'].includes(effect)))) invalid('Invalid declared action effects');
       if (a.resultTypes?.some(type => !this.hasType(type))) invalid('Unknown declared action result type');
       if (a.read && (a.kind && a.kind !== 'source_read' || a.effects && (a.effects.length !== 1 || a.effects[0] !== 'read') || a.resultTypes && !a.resultTypes.includes(a.read.resultType))) invalid('Read action contract conflicts with its declared semantics');
-      if (!a.changes.length || !a.submissionCriteria.length || Object.values(a.inputs).some(t => !this.hasType(t))) invalid('Invalid action definition');
+      // Palantir lets an action parameter be typed as an interface: the concrete object type is
+      // resolved per implementation at execution time. Accept an interface name here for that
+      // reason, while link endpoints keep requiring a concrete object type.
+      if (!a.changes.length || !a.submissionCriteria.length || Object.values(a.inputs).some(t => !this.hasType(t) && !this.interfaces.has(t))) invalid('Invalid action definition');
       if (a.read && (a.read.effect !== 'read' || !a.read.version || !this.objects.has(a.read.resultType) || !a.read.inputSchema || typeof a.read.inputSchema !== 'object')) invalid('Invalid read action definition');
       if (a.read?.mcp) {
         mcpReadBindingSchema.parse(a.read.mcp);
