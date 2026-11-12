@@ -259,7 +259,6 @@ export class OntologyModel {
       const optional = this.interfaceOptionalProperties(id);
       if (optional.some(name => !Object.hasOwn(properties, name))) invalid('Unknown optional interface property');
       for (const constraint of this.interfaceLinks(id)) if (!nameSchema.safeParse(constraint.name).success || !this.hasType(constraint.target)) invalid('Invalid or unresolved interface link constraint');
-      if (this.interfaces.get(id)!.projectionOnly && this.interfaceActions(id).length) invalid('Projection-only interfaces cannot introduce action constraints');
     }
     this.functions = freezeMetadata(structuredClone(definition.functions));
     if (new Set(this.functions.map(f => f.id)).size !== this.functions.length) invalid('Duplicate function');

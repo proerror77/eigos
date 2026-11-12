@@ -32,6 +32,36 @@ export function parseDatasource(uri: string): { type: 'api' | 'dataset' | 'store
 
 
 
+
+/** Interfaces declare identity; implementations map their primary key onto it. The type
+ * is `string` with a polymorphic contract, so a uuid key and a business-number key both
+ * satisfy it — the interface states what the field is, not which schema it has. */
+function extendInterfaceIdentity(document: OntologyDocument): { interfaces: number; mapped: number } {
+  let interfaces = 0, mapped = 0;
+  const all = document.interfaces as unknown as Record<string, unknown>[];
+  const parentsOf = (key: string) => ((all.find(x => String(x.id) === key)?.parents as string[] | undefined) ?? []);
+  for (const iface of all) {
+    const ifaceId = String(iface.id);
+    if (parentsOf(ifaceId).length) continue;
+    const chain = all.filter(other => other !== iface && (parentsOf(String(other.id)).includes(ifaceId) || parentsOf(ifaceId).includes(String(other.id))));
+    if (chain.some(other => Object.prototype.hasOwnProperty.call((other.properties as Record<string, unknown> | undefined) ?? {}, 'id'))) continue;
+    const implementers = (document.objects as unknown as Record<string, unknown>[]).filter(object => ((object.interfaces as { id: string; propertyMap?: Record<string, string> }[] | undefined) ?? []).some(i => i.id === ifaceId));
+    if (implementers.length < 2) continue;
+    iface.properties = { ...((iface.properties as Record<string, unknown> | undefined) ?? {}), id: { kind: 'string', source: 'managed', required: true, polymorphic: true, description: 'Stable identity of one business object', schema: { type: 'string', minLength: 1 } } };
+    iface.propertyCompatibility = 'accepting_v1';
+    iface.optionalProperties = [...new Set([...(iface.optionalProperties as string[] | undefined ?? []), 'id'])];
+    interfaces++;
+    for (const object of implementers) {
+      const implementation = ((object.interfaces as { id: string; propertyMap?: Record<string, string> }[]) ?? []).find(i => i.id === ifaceId)!;
+      const primaryKey = String(object.primaryKey);
+      if (primaryKey === 'id') continue;
+      implementation.propertyMap = { ...(implementation.propertyMap ?? {}), id: primaryKey };
+      mapped++;
+    }
+  }
+  return { interfaces, mapped };
+}
+
 export function extendPalantirModelKernel(original: OntologyDocument, registry?: TrustedDefinitionRegistry): { document: OntologyDocument; summary: Record<string, unknown> } {
   if (original.version !== '36') throw new DomainError('CONFLICT', 'Palantir model metadata requires the reviewed v36 predecessor');
   const document = structuredClone(original);
@@ -82,9 +112,10 @@ export function extendPalantirModelKernel(original: OntologyDocument, registry?:
     relocatedRoles++;
   }
 
+  const interfaceIdentity = extendInterfaceIdentity(document);
   document.version = '37';
   return {
     document,
-    summary: { relocatedRoles, withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
+    summary: { interfaceIdentity, relocatedRoles, withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
   };
 }
