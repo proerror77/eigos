@@ -563,7 +563,22 @@ export class OntologyModel {
   }
   navigation(type: string, name: string, as?: string) {
     const actual = as ? this.linkName(type, as, name) : name;
-    const side = this.sides(type).find(s => s.side.name === actual) ?? invalid('Unknown relationship on this object type');
+    // A relationship declared from one side only is still navigable from the other: the
+    // link id names it, and the missing side is synthesised as an optional many-side.
+    // Palantir does not require both endpoints to be declared before the edge exists.
+    const side = this.sides(type).find(s => s.side.name === actual)
+      ?? (() => {
+        const link = this.links.find(l => l.id === actual && (l.from.type === type || l.to.type === type));
+        if (!link) return invalid('Unknown relationship on this object type');
+        const outward = link.from.type === type;
+        return {
+          link,
+          direction: (outward ? 'forward' : 'reverse') as 'forward' | 'reverse',
+          side: { type, name: link.id, many: outward ? !!link.from.many : !!link.to.many, required: outward ? !!link.to.required : !!link.from.required },
+          other: { type: outward ? link.to.type : link.from.type, name: outward ? link.to.name : link.from.name, many: outward ? !!link.to.many : !!link.from.many, required: outward ? !!link.from.required : !!link.to.required },
+        };
+      })();
+    if (!side) invalid('Unknown relationship on this object type');
     return { ...side, ...(as ? { viewType: this.interfaceLinks(as).find(link => link.name === name)!.target } : {}) };
   }
   describeType(id: string): object {
