@@ -37,6 +37,7 @@ export interface PropertyDefinition {
   authority?: 'managed' | 'source';
   /** Compiler evidence: an added source field has no registered source mapping. */
   sourceBinding?: 'unbound';
+  polymorphic?: boolean;
 }
 export interface InterfaceActionConstraint {
   id: string; inputs: Record<string, string>; effects: import('./actions.js').EffectClass[]; resultTypes?: string[]; optional?: boolean;
@@ -129,7 +130,7 @@ function immutableProperties(properties: Record<string, PropertyDefinition>): Re
     return [name, Object.freeze({ ...freezeMetadata(structuredClone(metadata)), schema })];
   })));
 }
-const propertyMetadata = (p: PropertyDefinition) => ({ description: p.description, kind: p.kind, source: p.source, required: !!p.required, restricted: !!p.restricted, derived: p.derived, schema: p.schemaMetadata ?? z.toJSONSchema(p.schema), ...(p.authority ? { authority: p.authority } : {}), ...(p.sourceBinding ? { sourceBinding: p.sourceBinding } : {}) });
+const propertyMetadata = (p: PropertyDefinition) => ({ description: p.description, kind: p.kind, source: p.source, required: !!p.required, restricted: !!p.restricted, derived: p.derived, schema: p.schemaMetadata ?? z.toJSONSchema(p.schema), ...(p.authority ? { authority: p.authority } : {}), ...(p.sourceBinding ? { sourceBinding: p.sourceBinding } : {}) , ...(p.polymorphic ? { polymorphic: true } : {}) });
 const propertyContract = (p: PropertyDefinition) => { const { sourceBinding: _sourceBinding, ...metadata } = propertyMetadata(p); return metadata; };
 function validationSchema(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
@@ -157,6 +158,15 @@ function validationSchema(value: unknown): unknown {
 
 export function acceptingCompatible(actual: PropertyDefinition, expected: PropertyDefinition): boolean {
   const a = propertyMetadata(actual).schema, b = propertyMetadata(expected).schema;
+  // A polymorphic interface property declares meaning, not one concrete schema: `id` means
+  // "the stable identity of this object" whether the implementation stores a uuid, a
+  // business number or a ULID. So the width is checked, not the schema. `required` still
+  // holds, and a restricted implementation cannot satisfy a shared property.
+  if ((propertyMetadata(expected) as { polymorphic?: boolean }).polymorphic) {
+    if (expected.required && !actual.required) return false;
+    if (actual.restricted) return false;
+    return actual.kind === expected.kind || expected.kind === 'string';
+  }
   const timestampView = actual.kind === 'string' && expected.kind === 'timestamp' && a.format === 'date-time';
   if (actual.kind !== expected.kind && !timestampView) return false;
   if (expected.required && !actual.required) return false;

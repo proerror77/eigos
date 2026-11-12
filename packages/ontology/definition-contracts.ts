@@ -46,6 +46,8 @@ const propertySchema = z.strictObject({
   description: text, kind: z.enum(['string', 'integer', 'boolean', 'timestamp', 'decimal', 'struct', 'array']), schema,
   source: text, required: z.boolean().optional(), restricted: z.boolean().optional(), derived: nameSchema.optional(),
   authority: z.enum(['managed', 'source']).optional(), validatorRef: handlerRefSchema.optional(),
+  /** Declares the meaning of an interface property instead of one concrete schema. */
+  polymorphic: z.boolean().optional(),
 });
 const properties = z.record(nameSchema, propertySchema).refine(value => Object.keys(value).length <= 300, 'Too many properties');
 const inputTypes = z.record(nameSchema, nameSchema).refine(value => Object.keys(value).length <= 100, 'Too many inputs');

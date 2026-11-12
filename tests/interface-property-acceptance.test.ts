@@ -43,3 +43,16 @@ test('different kinds never match', () => {
 });
 
 
+
+/** A polymorphic interface property declares meaning, not one concrete schema. */
+test('a polymorphic interface property accepts a different implementation schema', () => {
+  const local = property('string', z.string().regex(/^PLACE-[0-9]{6}$/));
+  const contract = property('string', z.string().uuid(), { polymorphic: true });
+  assert.equal(acceptingCompatible(local, contract), true);
+});
+
+test('a polymorphic interface property still rejects a restricted implementation', () => {
+  const local = property('string', z.string().uuid(), { restricted: true });
+  const contract = property('string', z.string().uuid(), { polymorphic: true });
+  assert.equal(acceptingCompatible(local, contract), false);
+});
