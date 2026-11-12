@@ -56,10 +56,9 @@ export const serializableObjectTypeSchema = z.strictObject({
   resourceId: resourceIdSchema, id: nameSchema, version: versionSchema, name: text, aliases: z.array(z.string().min(1).max(500)).max(100), description: text,
   primaryKey: nameSchema, titleKey: nameSchema, properties, interfaces: z.array(interfaceImplementation).max(100).optional(),
   businessDescription: text.optional(),
-  /** Palantir requires a data source before an object type can exist. */
-  datasource: z.string().min(1).max(300).optional(),
-  /** Computed from other objects rather than fed by a provider. */
-  derived: z.boolean().optional(),
+  /** Palantir requires a data source before an object type can exist. Computed types
+   * are expressed as a function datasource, not as a flag beside it. */
+  datasource: z.strictObject({ type: z.enum(['api', 'dataset', 'store', 'internal', 'function']), path: z.string().min(1).max(300).optional(), functionId: nameSchema.optional() }).optional(),
   classification: paClassificationSchema.optional(),
   visibility: z.enum(['business', 'technical']).optional(), writePolicy: z.enum(['managed', 'source']),
 });

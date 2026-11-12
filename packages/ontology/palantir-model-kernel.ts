@@ -20,6 +20,14 @@ import { DERIVED_TYPES, OBJECT_DATASOURCE } from './palantir-datasource-map.js';
  * they already return. Read-only actions get none, because they write nothing back.
  */
 
+/** `api://didi` becomes `{type:'api', path:'didi'}` — the scheme is the datasource kind,
+ * the rest is where it points. A bare scheme keeps no path. */
+export function parseDatasource(uri: string): { type: 'api' | 'dataset' | 'store' | 'internal' | 'function'; path?: string } {
+  const match = /^(api|dataset|store|internal|function):\/\/(.+)$/.exec(uri);
+  if (!match) return { type: 'internal', path: uri };
+  return { type: match[1] as 'api' | 'dataset' | 'store' | 'internal' | 'function', path: match[2] };
+}
+
 export function extendPalantirModelKernel(original: OntologyDocument, registry?: TrustedDefinitionRegistry): { document: OntologyDocument; summary: Record<string, unknown> } {
   if (original.version !== '36') throw new DomainError('CONFLICT', 'Palantir model metadata requires the reviewed v36 predecessor');
   const document = structuredClone(original);
@@ -29,8 +37,8 @@ export function extendPalantirModelKernel(original: OntologyDocument, registry?:
   for (const object of document.objects as unknown as Record<string, unknown>[]) {
     const id = String(object.id);
     const datasource = OBJECT_DATASOURCE[id];
-    if (datasource) { object.datasource = datasource; withDatasource++; continue; }
-    if (derivedSet.has(id)) { object.derived = true; derivedTypes++; continue; }
+    if (datasource) { object.datasource = parseDatasource(datasource); withDatasource++; continue; }
+    if (derivedSet.has(id)) { object.datasource = { type: 'function' }; derivedTypes++; continue; }
     undeclared++;
   }
 
@@ -57,6 +65,6 @@ export function extendPalantirModelKernel(original: OntologyDocument, registry?:
   document.version = '37';
   return {
     document,
-    summary: { withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；其余标 derived，不编 provider' },
+    summary: { withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
   };
 }
