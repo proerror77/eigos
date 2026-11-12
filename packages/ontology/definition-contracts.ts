@@ -61,7 +61,7 @@ export const serializableObjectTypeSchema = z.strictObject({
 });
 export const serializableInterfaceSchema = z.strictObject({
   resourceId: resourceIdSchema, id: nameSchema, description: text, parents: names.optional(), properties,
-  propertyCompatibility: z.literal('structural_v1').optional(),
+  propertyCompatibility: z.enum(['structural_v1', 'accepting_v1']).optional(),
   projectionOnly: z.boolean().optional(),
   status: z.enum(['active', 'experimental', 'example', 'deprecated']).optional(),
   searchable: z.boolean().optional(),

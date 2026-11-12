@@ -49,7 +49,7 @@ export interface InterfaceDefinition {
   parents?: string[];
   properties: Record<string, PropertyDefinition>;
   /** Opt-in validation contract; historical interfaces retain exact metadata matching. */
-  propertyCompatibility?: 'structural_v1';
+  propertyCompatibility?: 'structural_v1' | 'accepting_v1';
   /** Read-only view contracts do not change the stored object's validation shape. */
   projectionOnly?: boolean;
   /** A capability may be absent from an implementing type; required still governs stored values. */
@@ -144,6 +144,33 @@ function validationSchema(value: unknown): unknown {
 }
 /** Metadata is not a validation constraint. Finite schemas can safely narrow an
  * interface; other schemas must retain the same reviewed validation shape. */
+/**
+ * `accepting_v1`: the interface accepts every value the implementation accepts.
+ *
+ * Foundry maps an interface property onto a local field; the local field owns its
+ * own validation and may be narrower (a SourceReceipt's evidenceLevel enum can be
+ * a subset of the interface's). What it may not be is *wider* — that would let an
+ * interface constraint be bypassed through an implementation. Ownership metadata
+ * (authority, derived, restricted) is deliberately not compared: it describes who
+ * writes the field, not which values are legal.
+ */
+export function acceptingCompatible(actual: PropertyDefinition, expected: PropertyDefinition): boolean {
+  const a = propertyMetadata(actual).schema, b = propertyMetadata(expected).schema;
+  const timestampView = actual.kind === 'string' && expected.kind === 'timestamp' && a.format === 'date-time';
+  if (actual.kind !== expected.kind && !timestampView) return false;
+  if (expected.required && !actual.required) return false;
+  if (digest(validationSchema(a)) === digest(validationSchema(b))) return true;
+  const finite = Object.hasOwn(a, 'const') ? [a.const] : Array.isArray(a.enum) ? a.enum : undefined;
+  if (finite?.length) return finite.every(value => expected.schema.safeParse(value).success);
+  const x = validationSchema(a) as Record<string, unknown>, y = validationSchema(b) as Record<string, unknown>;
+  const scalar = new Set(['type', 'minLength', 'maxLength', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'pattern', 'format', 'multipleOf']);
+  if (x.type !== y.type || !['string', 'integer', 'number', 'boolean'].includes(String(x.type)) || [...Object.keys(x), ...Object.keys(y)].some(key => !scalar.has(key))) return false;
+  for (const key of ['minLength', 'minimum', 'exclusiveMinimum']) if (y[key] !== undefined && (typeof x[key] !== 'number' || Number(x[key]) < Number(y[key]))) return false;
+  for (const key of ['maxLength', 'maximum', 'exclusiveMaximum']) if (y[key] !== undefined && (typeof x[key] !== 'number' || Number(x[key]) > Number(y[key]))) return false;
+  for (const key of ['pattern', 'format', 'multipleOf']) if (y[key] !== undefined && x[key] !== y[key]) return false;
+  return true;
+}
+
 function structurallyCompatible(actual: PropertyDefinition, expected: PropertyDefinition): boolean {
   const a = propertyMetadata(actual).schema, b = propertyMetadata(expected).schema;
   const timestampView = actual.kind === 'string' && expected.kind === 'timestamp' && a.format === 'date-time';
@@ -234,7 +261,8 @@ export class OntologyModel {
       for (const [alias, p] of Object.entries(expected)) {
         const actual = item.properties[this.propertyName(item.id, implementation.id, alias)];
         if (!actual && this.interfaceOptionalProperties(implementation.id).includes(alias) && !Object.hasOwn(implementation.propertyMap ?? {}, alias)) continue;
-        if (!actual || (this.structuralInterface(implementation.id) ? !structurallyCompatible(actual, p) : digest(propertyContract(actual)) !== digest(propertyContract(p)))) invalid(`Incompatible interface property: ${item.id}.${alias}`);
+        const mode = this.interfaceCompatibility(implementation.id);
+        if (!actual || (mode === 'accepting_v1' ? !acceptingCompatible(actual, p) : mode === 'structural_v1' ? !structurallyCompatible(actual, p) : digest(propertyContract(actual)) !== digest(propertyContract(p)))) invalid(`Incompatible interface property: ${item.id}.${alias}`);
       }
       if (Object.keys(implementation.propertyMap ?? {}).some(k => !Object.hasOwn(expected, k))) invalid('Unknown interface property mapping');
     }
@@ -399,6 +427,15 @@ export class OntologyModel {
     }
     return [...result.values()];
   }
+  /** How this interface compares an implementation's own property contract. */
+  private interfaceCompatibility(id: string): 'strict' | 'structural_v1' | 'accepting_v1' {
+    const value = this.interfaces.get(id);
+    if (!value) return 'strict';
+    if (value.propertyCompatibility) return value.propertyCompatibility;
+    const inherited = (value.parents ?? []).map(parent => this.interfaceCompatibility(parent)).find(mode => mode !== 'strict');
+    return inherited ?? 'strict';
+  }
+
   private structuralInterface(id: string): boolean {
     const value = this.interfaces.get(id)!;
     return value.propertyCompatibility === 'structural_v1' || (value.parents ?? []).some(parent => this.structuralInterface(parent));
