@@ -54,8 +54,11 @@ export interface InterfaceDefinition {
   projectionOnly?: boolean;
   /** A capability may be absent from an implementing type; required still governs stored values. */
   optionalProperties?: string[];
-  links?: { name: string; target: string; many: boolean; optional?: boolean }[];
+  links?: { name: string; target: string; many: boolean; optional?: boolean; description?: string }[];
   actions?: InterfaceActionConstraint[];
+  /** Foundry interface metadata: lifecycle signal and collection-query opt-in. */
+  status?: 'active' | 'experimental' | 'example' | 'deprecated';
+  searchable?: boolean;
 }
 export interface ObjectTypeDefinition {
   id: string;
@@ -516,7 +519,7 @@ export class OntologyModel {
     if (cached) return structuredClone(cached);
     const i = this.interfaces.get(id), o = this.objects.get(id);
     if (!i && !o) invalid('Unknown ontology type');
-    const description = { kind: i ? 'interface' : 'object', id, ...(o ? { version: o.version, name: o.name, aliases: o.aliases, description: o.businessDescription ?? o.description, primaryKey: o.primaryKey, titleKey: o.titleKey, interfaces: o.interfaces ?? [], ...(o.visibility ? { visibility: o.visibility } : {}), ...(o.classification ? { classification: o.classification } : {}), ...(o.writePolicy ? { writePolicy: o.writePolicy } : {}) } : { description: i!.description, parents: i!.parents ?? [], linkConstraints: this.interfaceLinks(id), ...(i!.optionalProperties ? { optionalProperties: this.interfaceOptionalProperties(id) } : {}), ...(this.interfaceActions(id).length ? { actionConstraints: this.interfaceActions(id) } : {}) }),
+    const description = { kind: i ? 'interface' : 'object', id, ...(o ? { version: o.version, name: o.name, aliases: o.aliases, description: o.businessDescription ?? o.description, primaryKey: o.primaryKey, titleKey: o.titleKey, interfaces: o.interfaces ?? [], ...(o.visibility ? { visibility: o.visibility } : {}), ...(o.classification ? { classification: o.classification } : {}), ...(o.writePolicy ? { writePolicy: o.writePolicy } : {}) } : { description: i!.description, parents: i!.parents ?? [], linkConstraints: this.interfaceLinks(id), ...(i!.status ? { status: i!.status } : {}), ...(i!.searchable !== undefined ? { searchable: i!.searchable } : {}), ...(i!.optionalProperties ? { optionalProperties: this.interfaceOptionalProperties(id) } : {}), ...(this.interfaceActions(id).length ? { actionConstraints: this.interfaceActions(id) } : {}) }),
       ...(i?.propertyCompatibility ? { propertyCompatibility: i.propertyCompatibility } : {}),
       ...(i?.projectionOnly ? { projectionOnly: true } : {}),
       ...(o && this.#bindActions ? { actions: this.typeActions(id) } : {}),

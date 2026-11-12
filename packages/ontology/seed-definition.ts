@@ -247,7 +247,7 @@ export function createFunctionContractCloseoutDefinition(registry = new TrustedD
   return closed;
 }
 export function createInterfaceContractDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
-  const contracted = complete(extendInterfaceContractsKernel(createFunctionContractCloseoutDefinition(registry).document, registry).document, registry, false);
+  const contracted = complete(extendInterfaceContractsKernel(createFunctionContractCloseoutDefinition(registry).document).document, registry, false);
   assertRelease(contracted, INTERFACE_CONTRACT_MODEL_REF, 'The reviewed interface contract fingerprint changed');
   return contracted;
 }
@@ -382,7 +382,7 @@ export class StagedKernelBuilder {
           if (this.#targetVersion === '35') { this.#documentDigest=digest(this.#current.document);this.#registry.seal(); }
           break;
         case 21:
-          this.#current=complete(extendInterfaceContractsKernel(this.#current!.document,this.#registry).document,this.#registry,false,model=>{this.#model=model;});
+          this.#current=complete(extendInterfaceContractsKernel(this.#current!.document).document,this.#registry,false,model=>{this.#model=model;});
           assertRelease(this.#current, INTERFACE_CONTRACT_MODEL_REF, 'The reviewed interface contract fingerprint changed');
           this.#documentDigest=digest(this.#current.document);this.#registry.seal();
           break;
