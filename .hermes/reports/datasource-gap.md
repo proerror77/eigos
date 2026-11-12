@@ -1,31 +1,63 @@
-# datasource 推导（第二遍：四路扫描）
+# datasource 推导（第三遍：模板类型的家族映射）
 
-- 对象类型 204
-- 已推导出 datasource：136
-- 仍缺：68
+## 总账（三遍合并）
 
-## 已推导的分布
+| 状态 | 数量 | 可信度 |
+|---|---:|---|
+| 有写入点证据 | 136 | 高（带来源文件） |
+| 族推断候选 | 43 | **中——按类型名族 + 声明文件归属推断，未逐条取证** |
+| 仍无任何来源 | 25 | — |
 
-- `api://` 81（写入点在 `packages/capabilities/<provider>`）
-- `dataset://` 25（写入点在投影/agent 模块）
-- `internal://` 28（网关/核心内部写入）
-- `store://business` 2（postgres 写入）
-- 94 个类型有多处证据（需人工择一，不自动挑）
+204 = 136 + 43 + 25
 
-## 仍缺的 68 个（按能力系列分组）
+## 族推断候选（需人工确认，不可直接落库）
 
-- 其他 系列：31
-- Vehicle 系列：6
-- Transport 系列：5
-- Food 系列：5
-- Hotel 系列：5
-- Itinerary 系列：5
-- Ride 系列：4
-- Appointment 系列：4
-- Medical 系列：3
+- `RideRequest` → `api://didi`（依据：声明文件 未定位）
+- `RideOption` → `api://didi`（依据：声明文件 未定位）
+- `RideTrip` → `api://didi`（依据：声明文件 未定位）
+- `RideRouteObservation` → `api://didi`（依据：声明文件 未定位）
+- `TransportVehicle` → `api://didi`（依据：声明文件 未定位）
+- `TransportVehicleObservation` → `api://didi`（依据：声明文件 未定位）
+- `TransportDriver` → `api://didi`（依据：声明文件 未定位）
+- `TransportDriverObservation` → `api://didi`（依据：声明文件 未定位）
+- `TransportAssignmentObservation` → `api://didi`（依据：声明文件 未定位）
+- `AppointmentRequest` → `api://booking`（依据：声明文件 未定位）
+- `AppointmentOption` → `api://booking`（依据：声明文件 未定位）
+- `MedicalAppointment` → `api://booking`（依据：声明文件 未定位）
+- `Hospital` → `api://booking`（依据：声明文件 未定位）
+- `HospitalObservation` → `api://booking`（依据：声明文件 未定位）
+- `MedicalDepartment` → `api://booking`（依据：声明文件 未定位）
+- `MedicalDepartmentObservation` → `api://booking`（依据：声明文件 未定位）
+- `Practitioner` → `api://booking`（依据：声明文件 未定位）
+- `PractitionerObservation` → `api://booking`（依据：声明文件 未定位）
+- `PatientProfile` → `api://booking`（依据：声明文件 未定位）
+- `PatientProfileObservation` → `api://booking`（依据：声明文件 未定位）
+- `AppointmentSlot` → `api://booking`（依据：声明文件 未定位）
+- `AppointmentSlotObservation` → `api://booking`（依据：声明文件 未定位）
+- `FoodRequest` → `api://meituan`（依据：声明文件 未定位）
+- `FoodOption` → `api://meituan`（依据：声明文件 未定位）
+- `FoodDelivery` → `api://meituan`（依据：声明文件 未定位）
+- `FoodMerchant` → `api://meituan`（依据：声明文件 未定位）
+- `FoodMerchantObservation` → `api://meituan`（依据：声明文件 未定位）
+- `MenuItem` → `api://meituan`（依据：声明文件 未定位）
+- `MenuItemObservation` → `api://meituan`（依据：声明文件 未定位）
+- `HotelRequest` → `api://booking`（依据：声明文件 未定位）
+- `HotelOption` → `api://booking`（依据：声明文件 未定位）
+- `HotelReservation` → `api://booking`（依据：声明文件 未定位）
+- `HotelPropertyObservation` → `api://booking`（依据：声明文件 未定位）
+- `RoomTypeObservation` → `api://booking`（依据：声明文件 未定位）
+- `RoomInventory` → `api://booking`（依据：声明文件 未定位）
+- `RoomInventoryObservation` → `api://booking`（依据：声明文件 未定位）
+- `HotelRatePlanObservation` → `api://booking`（依据：声明文件 未定位）
+- `VehicleRequest` → `api://didi`（依据：声明文件 未定位）
+- `VehicleOption` → `api://didi`（依据：声明文件 未定位）
+- `VehicleBooking` → `api://didi`（依据：声明文件 未定位）
+- `VehicleClass` → `api://didi`（依据：声明文件 未定位）
+- `VehicleClassObservation` → `api://didi`（依据：声明文件 未定位）
+- `VehicleInspectionObservation` → `api://didi`（依据：声明文件 未定位）
 
-这些类型的写入点用模板拼类型名（`${subject.type}…`），字面量扫描不到；下一步按「能力系列 → provider」映射，逐个列出证据，仍然不猜具体单类型。
+## 仍无来源（25）
 
-## 逐类型明细
+`ChannelParticipation`, `Venue`, `ReservationSlot`, `ReservationOffer`, `Reservation`, `ItineraryRequest`, `ItineraryOption`, `Itinerary`, `ItineraryItem`, `ItineraryItemObservation`, `TravelLegObservation`, `RentalPolicy`, `RentalPolicyObservation`, `InventoryReservation`, `FactRequirement`, `NetworkInquiry`, `NetworkNeed`, `NetworkPublication`, `NetworkProfile`, `NetworkListing`, `NetworkRepresentation`, `NetworkVisibility`, `NetworkSelection`, `DocumentTask`, `DocumentDraft`
 
-`datasource-derived.json`（含 evidence 文件路径）
+这 25 个集中在 Network* / Itinerary* / Rental* / Document* 四族：它们更像**派生/中间表示**（发布、可见性、需求、草稿），可能本来就没有外部数据源，而是由其它对象计算得出 —— 这种情况在 Palantir 里应写成派生态（dataset//函数产出），或明确标注 `derived: true`，而不是硬编一个 provider。

@@ -1,0 +1,482 @@
+[
+ {
+  "type": "ChannelParticipation",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "Venue",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "ReservationSlot",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "ReservationOffer",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "Reservation",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "RideRequest",
+  "datasource": "api://didi",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "RideOption",
+  "datasource": "api://didi",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "RideTrip",
+  "datasource": "api://didi",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "RideRouteObservation",
+  "datasource": "api://didi",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "TransportVehicle",
+  "datasource": "api://didi",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "TransportVehicleObservation",
+  "datasource": "api://didi",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "TransportDriver",
+  "datasource": "api://didi",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "TransportDriverObservation",
+  "datasource": "api://didi",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "TransportAssignmentObservation",
+  "datasource": "api://didi",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "AppointmentRequest",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "AppointmentOption",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "MedicalAppointment",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "Hospital",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "HospitalObservation",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "MedicalDepartment",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "MedicalDepartmentObservation",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "Practitioner",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "PractitionerObservation",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "PatientProfile",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "PatientProfileObservation",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "AppointmentSlot",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "AppointmentSlotObservation",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "FoodRequest",
+  "datasource": "api://meituan",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "FoodOption",
+  "datasource": "api://meituan",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "FoodDelivery",
+  "datasource": "api://meituan",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "FoodMerchant",
+  "datasource": "api://meituan",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "FoodMerchantObservation",
+  "datasource": "api://meituan",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "MenuItem",
+  "datasource": "api://meituan",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "MenuItemObservation",
+  "datasource": "api://meituan",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "HotelRequest",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "HotelOption",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "HotelReservation",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "HotelPropertyObservation",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "RoomTypeObservation",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "RoomInventory",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "RoomInventoryObservation",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "HotelRatePlanObservation",
+  "datasource": "api://booking",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "ItineraryRequest",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "ItineraryOption",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "Itinerary",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "ItineraryItem",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "ItineraryItemObservation",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "TravelLegObservation",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "VehicleRequest",
+  "datasource": "api://didi",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "VehicleOption",
+  "datasource": "api://didi",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "VehicleBooking",
+  "datasource": "api://didi",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "VehicleClass",
+  "datasource": "api://didi",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "VehicleClassObservation",
+  "datasource": "api://didi",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "RentalPolicy",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "RentalPolicyObservation",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "VehicleInspectionObservation",
+  "datasource": "api://didi",
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": true
+ },
+ {
+  "type": "InventoryReservation",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "FactRequirement",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "NetworkInquiry",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "NetworkNeed",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "NetworkPublication",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "NetworkProfile",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "NetworkListing",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "NetworkRepresentation",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "NetworkVisibility",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "NetworkSelection",
+  "datasource": null,
+  "evidence": [],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "DocumentTask",
+  "datasource": null,
+  "evidence": [
+   "ontology/document-action.ts"
+  ],
+  "capabilities": [],
+  "guessedFromFamily": false
+ },
+ {
+  "type": "DocumentDraft",
+  "datasource": null,
+  "evidence": [
+   "ontology/document-action.ts"
+  ],
+  "capabilities": [],
+  "guessedFromFamily": false
+ }
+]
