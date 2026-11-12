@@ -130,6 +130,9 @@ export function extendInterfaceContractsKernel(original: OntologyDocument): { do
   for (const iface of document.interfaces) {
     const capability = CAPABILITIES[iface.id];
     if (!capability || iface.projectionOnly) continue;
+    // EIGOS refuses action constraints anywhere under a projection-only interface,
+    // and both CitableObject and EvidenceBacked sit under one, so only
+    // IdentitySubject can publish a capability today.
     if (descendantsOf(iface.id).some(id => document.interfaces.find(item => item.id === id)?.projectionOnly)) continue;
     iface.actions = [{ id: capability.id, inputs: capability.inputs as never, effects: capability.effects as never, optional: true }];
     actionConstraints++;
