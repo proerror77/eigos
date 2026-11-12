@@ -58,6 +58,7 @@ export function extendInterfaceContractsKernel(original: OntologyDocument): { do
   };
   const implementersOf = (id: string) => document.objects.filter(object => (object.interfaces ?? []).some(item => item.id === id));
 
+  let addedEvidenceLinks = 0;
   let requiredLinks = 0, optionalLinks = 0, skippedLinks = 0, linkMaps = 0, actionConstraints = 0;
   const roles: Record<string, number> = { EvidenceOf: 0, Observation: 0, Scope: 0 };
   const touched: string[] = [];
@@ -125,6 +126,24 @@ export function extendInterfaceContractsKernel(original: OntologyDocument): { do
     for (const role of assigned) roles[role] = (roles[role] ?? 0) + 1;
   }
 
+  // Citable types had no relationship to the receipt that cites them, so an
+  // AttachEvidence action would have written an edge the model does not declare.
+  // These are additive link definitions; no object property contract changes.
+  const PLURAL: Record<string, string> = { TaskBrief: 'taskBriefs', CsvSnapshot: 'csvSnapshots', CsvAuditReport: 'csvAuditReports' };
+  for (const object of document.objects) {
+    if (!(object.interfaces ?? []).some(item => item.id === 'CitableObject')) continue;
+    if (document.links.some(link => link.from.type === object.id && link.to.type === 'SourceReceipt')) continue;
+    const id = `${object.id}Evidence`;
+    document.links.push({
+      resourceId: `builtin:eigos.business:link:${id}`, id, writePolicy: 'source', roles: ['EvidenceOf'], properties: EVIDENCE_PROPERTIES,
+      description: `${object.id}.sourceReceipts ↔ SourceReceipt.${PLURAL[object.id] ?? `${CAMEL(object.id)}s`}`,
+      from: { type: object.id, name: 'sourceReceipts', many: true, required: false },
+      to: { type: 'SourceReceipt', name: PLURAL[object.id] ?? `${CAMEL(object.id)}s`, many: true, required: false },
+    } as never);
+    roles.EvidenceOf = (roles.EvidenceOf ?? 0) + 1;
+    addedEvidenceLinks++;
+  }
+
   // Action capabilities. Optional and unbound: the interface states the capability
   // exists, and an implementation binds a concrete action once it has one.
   for (const iface of document.interfaces) {
@@ -143,7 +162,7 @@ export function extendInterfaceContractsKernel(original: OntologyDocument): { do
     document,
     summary: {
       interfaces: touched,
-      requiredLinks, optionalLinks, skippedLinks, linkMaps, actionConstraints, roles,
+      addedEvidenceLinks, requiredLinks, optionalLinks, skippedLinks, linkMaps, actionConstraints, roles,
       properties: 0, propertyMaps: 0,
       note: 'v36 adds constraints, roles, capabilities and metadata. Object property contracts stay exactly as v35 published them.',
     },
