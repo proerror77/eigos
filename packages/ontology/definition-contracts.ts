@@ -93,6 +93,11 @@ export const serializableFunctionSchema = z.strictObject({ id: nameSchema, versi
 export const ontologyDocumentSchema = z.strictObject({
   formatVersion: z.literal(1), id: ontologyIdSchema, version: versionSchema,
   objects: z.array(serializableObjectTypeSchema).max(2000), interfaces: z.array(serializableInterfaceSchema).max(500),
+  // Palantir keeps a shared property type as its own entity so several interfaces can reference
+  // one definition instead of each restating it. Additive for now: an interface property may
+  // point at one, and the inline kind/schema stays authoritative until the reference layer is
+  // the only source.
+  sharedPropertyTypes: z.array(z.strictObject({ apiName: nameSchema, type: z.enum(['string','timestamp','integer','decimal','boolean','object','array']), description: text.optional() })).max(1000).optional(),
   links: z.array(serializableLinkSchema).max(10000), actions: z.array(serializableActionSchema).max(2000), functions: z.array(serializableFunctionSchema).max(1000),
   pipeline: z.array(z.strictObject({ serviceId: resourceIdSchema, intakeDigest: z.string().regex(/^[a-f0-9]{64}$/) })).max(100).optional(),
   criteriaVersion: z.string().min(1).max(20).optional(),

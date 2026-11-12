@@ -163,6 +163,28 @@ function extendSharedProperties(document: OntologyDocument) {
   return { interfaces, declared, mappings };
 }
 
+
+/**
+ * Shared property types. Palantir keeps each shared property as its own entity so that N
+ * interfaces reference one definition instead of restating it. The interface properties
+ * already declared above are the same names every implementer maps through propertyMap, so
+ * one shared property type per distinct name is generated here; the inline kind stays the
+ * authority until the reference is the only source.
+ */
+function extendSharedPropertyTypes(document: OntologyDocument) {
+  const byName = new Map<string, { apiName: string; type: string; description: string }>();
+  for (const iface of document.interfaces as unknown as Record<string, unknown>[]) {
+    for (const [name, definition] of Object.entries((iface.properties as Record<string, { kind?: string }> | undefined) ?? {})) {
+      const kind = String(definition.kind ?? 'string');
+      const type = kind === 'timestamp' ? 'timestamp' : kind === 'integer' ? 'integer' : kind === 'decimal' ? 'decimal' : kind === 'boolean' ? 'boolean' : kind === 'object' ? 'object' : kind === 'array' ? 'array' : 'string';
+      if (!byName.has(name)) byName.set(name, { apiName: name, type, description: `Shared property promised by ${String(iface.id)} and any interface that declares the same name` });
+    }
+  }
+  const shared = [...byName.values()];
+  (document as unknown as Record<string, unknown>).sharedPropertyTypes = shared;
+  return { sharedPropertyTypes: shared.length };
+}
+
 export function extendPalantirModelKernel(original: OntologyDocument, registry?: TrustedDefinitionRegistry): { document: OntologyDocument; summary: Record<string, unknown> } {
   if (original.version !== '36') throw new DomainError('CONFLICT', 'Palantir model metadata requires the reviewed v36 predecessor');
   const document = structuredClone(original);
@@ -215,10 +237,11 @@ export function extendPalantirModelKernel(original: OntologyDocument, registry?:
 
   const interfaceIdentity = extendInterfaceIdentity(document);
   const sharedProperties = extendSharedProperties(document);
+  const sharedPropertyTypes = extendSharedPropertyTypes(document);
   const interfaceActions = extendInterfaceActions(document);
   document.version = '37';
   return {
     document,
-    summary: { sharedProperties, interfaceActions, interfaceIdentity, relocatedRoles, withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
+    summary: { sharedPropertyTypes, sharedProperties, interfaceActions, interfaceIdentity, relocatedRoles, withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
   };
 }
