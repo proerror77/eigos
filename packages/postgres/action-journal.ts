@@ -259,7 +259,9 @@ export class PostgresActionJournal {
       await this.fence(claim);
       if(verified&&result.kind==='confirmed'&&(intent.effect==='payment'||intent.additionalEffects?.includes('payment')))await this.query(`UPDATE ${q}.budget_reservations SET state='consumed' WHERE owner=$1 AND intent_id=$2`,[claim.owner,intentId]);
       if(verified&&result.kind==='rejected')await this.query(`UPDATE ${q}.budget_reservations SET state='released' WHERE owner=$1 AND intent_id=$2 AND state='held'`,[claim.owner,intentId]);
-      await this.store.saveIntent(claim.owner,intent);await this.store.save(claim.owner,job);
+      if(job.state==='working'&&intent.state==='effect_confirmed'&&intent.effect==='read'&&!intent.additionalEffects?.length)
+        await this.store.saveWorkingReadObservation(claim.owner,job,intent);
+      else {await this.store.saveIntent(claim.owner,intent);await this.store.save(claim.owner,job);}
       if(seal)await postgresRecordWorkerOutputs(this.client,claim.owner,job,seal);
       await this.commitFence(claim);
       if(!['submitted','working'].includes(job.state)){

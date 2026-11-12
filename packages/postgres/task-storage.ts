@@ -78,19 +78,35 @@ export class PostgresTaskStorage {
   async saveIntent(owner:string,intent:ActionIntent):Promise<void>{
     await this.query('SAVEPOINT eigos_intent_save');
     try{
-      const current=await this.intent(owner,intent.id);
-      if(intent.owner!==owner||intent.jobId!==current.jobId||intent.businessOperationKey!==current.businessOperationKey||intent.planDigest!==current.planDigest)throw new DomainError('CONFLICT','Action identity changed');
-      const {privateData:_private,...body}=intent,text=JSON.stringify(body);
-      if(Buffer.byteLength(text)>8388608)throw new DomainError('CONFLICT','Intent exceeds its safe runtime bound');
-      const q=`"${this.schema}"`,written=await this.query(`WITH checked AS(SELECT ${q}.eigos_try_jsonb($2::text) IS NOT NULL AS valid),
-        written AS(UPDATE ${q}.action_intents SET state=$1,body=$2 WHERE owner=$3 AND id=$4 AND job_id=$5 AND business_key=$6
-          AND state=$7 AND ${q}.eigos_try_jsonb(body)->>'planDigest'=$8 AND(SELECT valid FROM checked) RETURNING id)
-        SELECT valid,(SELECT count(*) FROM written)=1 AS wrote FROM checked`,[intent.state,text,owner,intent.id,intent.jobId,intent.businessOperationKey,current.state,current.planDigest]);
-      if(written.rowCount!==1||written.rows[0]?.valid!==true)throw new DomainError('INVALID_INPUT','Intent JSON is not representable in PostgreSQL storage');
-      if(written.rows[0].wrote!==true)throw new DomainError('CONFLICT','Action identity or state changed');
+      await this.writeIntentRow(owner,intent);
       await this.project(owner,await this.get(owner,intent.jobId),false);
       await this.query('RELEASE SAVEPOINT eigos_intent_save');
     }catch(error){await this.query('ROLLBACK TO SAVEPOINT eigos_intent_save');await this.query('RELEASE SAVEPOINT eigos_intent_save');throw error;}
+  }
+  private async writeIntentRow(owner:string,intent:ActionIntent):Promise<void>{
+    const current=await this.intent(owner,intent.id);
+    if(intent.owner!==owner||intent.jobId!==current.jobId||intent.businessOperationKey!==current.businessOperationKey||intent.planDigest!==current.planDigest)throw new DomainError('CONFLICT','Action identity changed');
+    const {privateData:_private,...body}=intent,text=JSON.stringify(body);
+    if(Buffer.byteLength(text)>8388608)throw new DomainError('CONFLICT','Intent exceeds its safe runtime bound');
+    const q=`"${this.schema}"`,written=await this.query(`WITH checked AS(SELECT ${q}.eigos_try_jsonb($2::text) IS NOT NULL AS valid),
+      written AS(UPDATE ${q}.action_intents SET state=$1,body=$2 WHERE owner=$3 AND id=$4 AND job_id=$5 AND business_key=$6
+        AND state=$7 AND ${q}.eigos_try_jsonb(body)->>'planDigest'=$8 AND(SELECT valid FROM checked) RETURNING id)
+      SELECT valid,(SELECT count(*) FROM written)=1 AS wrote FROM checked`,[intent.state,text,owner,intent.id,intent.jobId,intent.businessOperationKey,current.state,current.planDigest]);
+    if(written.rowCount!==1||written.rows[0]?.valid!==true)throw new DomainError('INVALID_INPUT','Intent JSON is not representable in PostgreSQL storage');
+    if(written.rows[0].wrote!==true)throw new DomainError('CONFLICT','Action identity or state changed');
+  }
+  /** The working task save projects the same execution and business ledger.
+   * Save an accepted read and its task together to project that ledger once. */
+  async saveWorkingReadObservation(owner:string,job:Job,intent:ActionIntent):Promise<void>{
+    if(job.state!=='working'||intent.jobId!==job.id||intent.effect!=='read'||intent.additionalEffects?.length||intent.state!=='effect_confirmed')
+      throw new DomainError('CONFLICT','An accepted read on the original working task is required');
+    postgresRequireOwnerWrite(this.client,owner);
+    await this.query('SAVEPOINT eigos_working_read_save');
+    try{
+      await this.writeIntentRow(owner,intent);
+      await this.save(owner,job);
+      await this.query('RELEASE SAVEPOINT eigos_working_read_save');
+    }catch(error){await this.query('ROLLBACK TO SAVEPOINT eigos_working_read_save');await this.query('RELEASE SAVEPOINT eigos_working_read_save');throw error;}
   }
   /** Revoke only existing original-task plan permits. Parent/data grants and
    * financial reservation amounts, states and fixed expirations stay intact. */

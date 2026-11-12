@@ -58,7 +58,7 @@ function freeze<T>(value: T): T { if (value && typeof value === 'object' && !Obj
 
 /** Receipt-only bookkeeping on the existing checked read transaction. It does
  * not advance the Job fence, reproject the task, or grant execution authority. */
-async function recordRead(client: Client, claim: PostgresWorkReference, admission: PostgresTaskReadAdmission,
+async function authorizeRead(client: Client, claim: PostgresWorkReference, admission: PostgresTaskReadAdmission,
   auth: PostgresTaskReadAuthorization, input: PlanningReadReceipt, influence: SecurityEnvelope | undefined) {
   const receipt = structuredClone(input); receiptSchema.parse(receipt);
   if (receipt.accessDigest !== postgresPlanningAccessDigest(admission) || admission.actor.actorKind !== 'worker'
@@ -71,6 +71,14 @@ async function recordRead(client: Client, claim: PostgresWorkReference, admissio
     await client.query(`INSERT INTO ${q}.security_reads(grant_id,digest,body) VALUES($1,$2,$3) ON CONFLICT(grant_id,digest) DO NOTHING`,
       [admission.grant.id, digest(approved), JSON.stringify(approved)]);
   }
+  return receipt;
+}
+
+async function appendReads(client: Client, claim: PostgresWorkReference, receipts: readonly PlanningReadReceipt[]) {
+  const ids = receipts.map(receipt => receipt.id), body = JSON.stringify(receipts);
+  if (!ids.length || ids.length > 20 || new Set(ids).size !== ids.length || Buffer.byteLength(body) > 8388608)
+    throw new DomainError('CONFLICT', 'Planning receipts exceed the bounded task append');
+  const q = `"${postgresBusinessSchema(client)}"`;
   const result = await client.query(`WITH candidate AS MATERIALIZED (
     SELECT j.id,j.owner,j.body AS original,${q}.eigos_try_jsonb(j.body) AS value FROM ${q}.jobs j
     WHERE j.owner=$1 AND j.id=$2 AND octet_length(j.body)<=8388608),
@@ -80,9 +88,10 @@ async function recordRead(client: Client, claim: PostgresWorkReference, admissio
       CASE WHEN value->'revision' IS NULL OR value->'revision'='null'::jsonb THEN 0
         WHEN jsonb_typeof(value->'revision')='number' AND octet_length(value->>'revision')<=64 THEN (value->>'revision')::numeric END AS revision FROM candidate),
     appended AS MATERIALIZED (SELECT *,jsonb_set(value,'{delegation,ontologyReads}',reads||$4::jsonb)::text AS body FROM checked
-      WHERE revision=$3 AND reads IS NOT NULL AND jsonb_array_length(reads)<2000 AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(reads) item WHERE item->>'id'=$5))
+      WHERE revision=$3 AND reads IS NOT NULL AND jsonb_array_length(reads)+cardinality($5::text[])<=2000
+        AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(reads) item WHERE item->>'id'=ANY($5::text[])))
     UPDATE ${q}.jobs j SET body=a.body FROM appended a WHERE j.id=a.id AND j.owner=a.owner AND j.body=a.original
-      AND octet_length(a.body)<=8388608 RETURNING j.id`, [claim.owner, claim.job.id, claim.job.revision ?? 0, JSON.stringify([receipt]), receipt.id]);
+      AND octet_length(a.body)<=8388608 RETURNING j.id`, [claim.owner, claim.job.id, claim.job.revision ?? 0, body, ids]);
   if (result.rowCount !== 1) throw new DomainError('CONFLICT', 'Planning receipt no longer matches the current bounded task');
 }
 
@@ -143,7 +152,8 @@ export class PostgresNativePlanningSession implements ExecutablePlanningSession 
     const execute = async () => { this.active(); return action(); };
     const pending = this.operations.then(execute, execute); this.operations = pending.then(() => undefined, () => undefined); return pending;
   }
-  private rpc<T>(action: (next: PlanningSessionState, graph: ReadGraph, driver: GraphStorage) => Promise<T>, navigation = false): Promise<T> {
+  private rpc<T>(action: (next: PlanningSessionState, graph: ReadGraph, driver: GraphStorage) => Promise<T>,
+    options: { navigation?: boolean; batchWorkerReads?: boolean } = {}): Promise<T> {
     return this.serial(() => this.operation(async () => {
       const committed = await this.store.readEvidence(this.claim, this.channel, (auth, admission, principal, client) =>
         withPostgresPlanningReadGraph(client, principal, this.request.id, this.policy, auth, admission, graph =>
@@ -151,7 +161,7 @@ export class PostgresNativePlanningSession implements ExecutablePlanningSession 
             this.active(); if (digest(selected.ref) !== digest(this.graph.model.ref)) throw new SecurityError('POLICY_CHANGED');
             await auth.readTaskRoot();
             const allowed = new Set<string>();
-            if (navigation) for (const ref of this.bounds) {
+            if (options.navigation) for (const ref of this.bounds) {
               try { const definition = graph.model.object(ref.type); await auth.readObject(ref, [definition.primaryKey, definition.titleKey]); allowed.add(refKey(ref)); }
               catch (error) { if (!(error instanceof SecurityError && ['AUTHORIZATION_REQUIRED','INSUFFICIENT_ACCESS','OUTPUT_NOT_ALLOWED'].includes(error.reason) || error instanceof DomainError && error.code === 'NOT_FOUND')) throw error; }
             }
@@ -164,11 +174,27 @@ export class PostgresNativePlanningSession implements ExecutablePlanningSession 
             const discovery:PostgresPlanningDiscoveryContext=Object.freeze({client,claim:postgresWorkReference(this.claim),principal:freeze(structuredClone(principal)),authorization:auth,admission:freeze(structuredClone(admission)),policyDigest:this.policy,modelChannel:this.channel,
               assertActive:()=>assertPostgresPlanningDiscoveryContext(discovery)});
             discoveryScopes.set(discovery,{client,token,open:()=>discoveryOpen,active:()=>this.active()});
+            const pending: PlanningReadReceipt[] = [];
+            let revision: Promise<number> | undefined;
             const next = this.state.fork(meta), driver = storage(graph, {
-              recordRead: receipt => recordRead(client, this.claim, admission, auth, receipt, graph.evidence()),
+              // Fixed Worker reads never change bindings in this transaction.
+              ...(options.batchWorkerReads ? { revision: (owner: string) => {
+                if (owner !== this.claim.owner) throw new SecurityError('AUTHORIZATION_REQUIRED');
+                return revision ??= graph.planning.revision(owner);
+              } } : {}),
+              recordRead: async input => {
+                const receipt = await authorizeRead(client, this.claim, admission, auth, input, graph.evidence());
+                if (options.batchWorkerReads) pending.push(receipt);
+                else await appendReads(client, this.claim, [receipt]);
+              },
               ...(this.options.discoverActions ? { discoverActions: (owner, request, input) => this.options.discoverActions!(graph, owner, request, input,discovery) } : {}),
             });
-            try{const value = await action(next, graph, driver); this.active(); return { value, next };}
+            try{
+              const value = await action(next, graph, driver);
+              this.active();
+              if (pending.length) await appendReads(client, this.claim, pending);
+              return { value, next };
+            }
             finally{discoveryOpen=false;discoveryScopes.delete(discovery);}
           }, this.options.builder), this.options.builder));
       this.active(); this.state.adopt(committed.next); return committed.value;
@@ -181,7 +207,7 @@ export class PostgresNativePlanningSession implements ExecutablePlanningSession 
   readBudget() { return this.state.readBudget(); }
   retrievedRefs() { return this.state.retrievedRefs(); }
   modelSessionKey() { return this.key; }
-  catalog() { return this.rpc(async next => next.catalog(), true); }
+  catalog() { return this.rpc(async next => next.catalog(), { navigation: true }); }
   call(tool: string, input: unknown, options?: { origin: 'worker_context'; maxOutputBytes: number }) {
     return this.rpc((next, _graph, driver) => runGraphProgramAsync(driver, next.callProgram(tool, input, options)));
   }
@@ -197,7 +223,7 @@ export class PostgresNativePlanningSession implements ExecutablePlanningSession 
         try {
           const value = await runGraphProgramAsync(driver, next.callProgram(tool, input, { origin: 'worker_context', maxOutputBytes: 150000 }));
           if (next.lastReceipt()?.status !== 'ok') throw new DomainError('CONFLICT', 'A required Worker Ontology read is unavailable');
-          // recordRead already authorized and persisted this exact influence.
+          // The recording hook already authorized and persisted this exact influence.
           // The next receipt must carry its own reads, even in this snapshot.
           graph.clearEvidence();
           return value;
@@ -211,7 +237,7 @@ export class PostgresNativePlanningSession implements ExecutablePlanningSession 
         const reads = await runGraphProgramAsync(driver, next.finishProgram());
         return { value, reads };
       } finally { open = false; }
-    });
+    }, { batchWorkerReads: true });
   }
   acceptReceipts(ids: string[]) { return this.rpc((next, _graph, driver) => runGraphProgramAsync(driver, next.acceptReceiptsProgram(ids))); }
   finish(candidate?: ResolvedCandidate) { return this.rpc((next, _graph, driver) => runGraphProgramAsync(driver, next.finishProgram(candidate))); }

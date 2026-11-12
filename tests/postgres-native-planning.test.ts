@@ -91,6 +91,24 @@ test('native MCP uses real PostgreSQL planning state, durable receipts and rollb
       stage = 'snapshot_finish';
       const snapshot = await session.finish(); assert.equal(snapshot.context!.receiptId, context.receipt.id); assert.deepEqual(snapshot.reads.map(receipt => receipt.id), receiptIds);
       assert.deepEqual((await t.client.query(`SELECT body FROM ${q}.security_grants WHERE owner=$1 ORDER BY id`, [claim.owner])).rows, grants);
+      stage = 'worker_read_batch';
+      const fixed = await PostgresNativePlanningSession.create(store, claim, t.policy, channel);
+      try {
+        const batch = () => fixed.readWorkerContext(async read => {
+          await read('describe_ontology', { kind: 'types', search: 'ServiceRequest', limit: 1 });
+          await read('query_ontology', { object: { type: 'ServiceRequest', id: task.id }, select: ['originalGoal'] });
+        });
+        rejectCommit = true;
+        await assert.rejects(batch(), /Synthetic failure before receipt commit/);
+        assert.equal(fixed.receipts().length, 0);
+        assert.equal((await stored()).length, 4);
+        rejectCommit = false;
+        const { reads } = await batch();
+        assert.equal(reads.mode, 'worker_context');
+        assert.deepEqual((await stored()).slice(4), reads.reads);
+        assert.equal(reads.reads.length, 2);
+        assert.equal(reads.reads[0]!.datasetRevision, reads.reads[1]!.datasetRevision);
+      } finally { fixed.close(); }
       await client.close(); client = undefined; await transport.close(); transport = undefined; await mcp.close(); mcp = undefined;
       stage = 'worker_finish';
       assert.equal(await worker.finish(claim, job => { job.state = 'paused'; }), true);

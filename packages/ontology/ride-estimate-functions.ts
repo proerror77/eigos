@@ -12,39 +12,19 @@ import type { OntologyObjectStore, ReadBudget } from './object-store.js';
 export function evaluateRideEstimate(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined { return runGraphProgram(graph, evaluateRideEstimateProgram(graph, owner, input, budget)); }
 
 export function* evaluateRideEstimateProgram(graph: ProjectionMetadata, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): GraphProgram<Computation | undefined> {
-  if (input.function === 'selectDidiPlace') {
-    const status = (yield* evaluateRideEstimateProgram(graph, owner, { ...input, function: 'rideEstimateStatus' }, budget))!;
-    if (status.status !== 'known') return status;
-    const s = checkedRideEstimate((yield* graphRead(owner, input.object, budget)).properties.snapshot);
-    const unknown = (reason: string): Computation => ({ ...status, status: 'unknown', value: undefined, reason });
-    if (s.data.kind !== 'places') return unknown('A place selection needs a place-search observation');
-    const scopes = (yield* graphRelated(owner, input.object, 'scope', budget)), roots = (yield* graphRelated(owner, input.object, 'request', budget));
-    const task = rideEstimateInputSchema.parse(scopes?.[0]?.properties.input), role = s.actionInput.role;
-    if (task.mode !== 'estimate' || role !== 'origin' && role !== 'destination') return unknown('A route endpoint role is required');
-    const normalize = (value: string) => value.replace(/\s+/g, '').toLowerCase();
-    const city = (value: string) => normalize(value).replace(/市$/, '');
-    const places = s.data.places.filter(place => city(place.city) === city(task.city));
-    const target = task[role], original = String(roots?.[0]?.properties.originalGoal ?? '');
-    const addressed = places.filter(place => place.addressAll.length > place.name.length
-      && places.filter(other => other.addressAll === place.addressAll).length === 1
-      && (normalize(target) === normalize(place.addressAll) || normalize(place.name) === normalize(target) && original.includes(place.addressAll)));
-    const exact = places.filter(place => normalize(place.name) === normalize(target));
-    const matches = addressed.length ? addressed : exact;
-    if (matches.length !== 1) return unknown('Ambiguous place selection needs a new decision or an explicit full address; no first-candidate default');
-    return { ...status, value: { placeId: matches[0]!.id, observation: input.object, selectionRule: addressed.length ? 'explicit_unique_address' : 'unique_exact_name' } };
-  }
-  if (input.function !== 'rideEstimateStatus') return;
-  return (yield* observationStatusProgram(graph, owner, input.object, budget));
+  if (input.function !== 'rideEstimateStatus' && input.function !== 'selectDidiPlace') return;
+  return yield* observationStatusProgram(graph, owner, input.object, budget, { select: input.function === 'selectDidiPlace' });
 }
 
-function* observationStatusProgram(graph: ProjectionMetadata, owner: string, object: ObjectRef, budget: ReadBudget, freshnessAt?: number): GraphProgram<Computation> {
+function* observationStatusProgram(graph: ProjectionMetadata, owner: string, object: ObjectRef, budget: ReadBudget,
+  options: { freshnessAt?: number; select?: boolean }): GraphProgram<Computation> {
   if (!['DidiPlaceObservation', 'RideEstimateObservation'].includes(object.type)) throw new DomainError('INVALID_INPUT', 'Ride estimate status needs a DiDi observation');
   const unknown = (reason: string): Computation => ({ status: 'unknown', reason, evidenceRefs: [object], evidenceLevels: [] });
   const record = (yield* graphRead(owner, object, budget)), proof = (yield* sourceProofProgram(graph, owner, object, budget));
   if (!proof) return unknown('DiDi source evidence no longer matches');
   let s; try { s = checkedRideEstimate(record.properties.snapshot); } catch { return unknown('DiDi snapshot is invalid'); }
   const observedAt = Date.parse(s.observedAt), expiresAt = Date.parse(s.expiresAt);
-  const isFresh = () => { const at = freshnessAt ?? graph.now(); return observedAt <= at && at < expiresAt; };
+  const isFresh = () => { const at = options.freshnessAt ?? graph.now(); return observedAt <= at && at < expiresAt; };
   if (!isFresh()) return unknown('DiDi read expired under the local freshness policy');
   const roots = (yield* graphRelated(owner, object, 'request', budget)), scopes = (yield* graphRelated(owner, object, 'scope', budget));
   if (roots?.length !== 1 || roots[0]!.ref.id !== s.requestId || roots[0]!.properties.revision !== s.requestRevision || scopes?.length !== 1 || digest(scopes[0]!.ref) !== digest(s.scope) || scopes[0]!.properties.configurationDigest !== s.configurationDigest || scopes[0]!.properties.requestRevision !== s.requestRevision) return unknown('DiDi observation belongs to another scope or revision');
@@ -59,11 +39,29 @@ function* observationStatusProgram(graph: ProjectionMetadata, owner: string, obj
       // Places supplied coordinates when this quote was requested. Their later
       // expiry cannot invalidate a still-current quote. Only this data timestamp
       // is historical: graph reads, authorization and provenance remain current.
-      const status = (yield* observationStatusProgram(graph, owner, expected, budget, Date.parse(s.receipt.startedAt)));
+      const status = (yield* observationStatusProgram(graph, owner, expected, budget, { freshnessAt: Date.parse(s.receipt.startedAt) }));
       let place; try { place = checkedRideEstimate(refs[0]!.properties.snapshot); } catch { return unknown('Place source is invalid'); }
       if (status?.status !== 'known' || place.data.kind !== 'places' || place.requestId !== s.requestId || place.requestRevision !== s.requestRevision || digest(place.scope) !== digest(s.scope) || place.actionInput.role !== role || !place.data.places.some(p => digest(p) === digest(s.route![role]))) return unknown('Coordinates are not backed by the owned current place observation');
     }
   }
   if (!isFresh()) return unknown('DiDi read expired under the local freshness policy');
+  if (options.select) {
+    const evidence = { evidenceRefs: [object, ...proof.refs], evidenceLevels: proof.levels };
+    const unresolved = (reason: string): Computation => ({ ...evidence, status: 'unknown', value: undefined, reason });
+    if (s.data.kind !== 'places') return unresolved('A place selection needs a place-search observation');
+    const role = s.actionInput.role;
+    if (task.data.mode !== 'estimate' || role !== 'origin' && role !== 'destination') return unresolved('A route endpoint role is required');
+    const normalize = (value: string) => value.replace(/\s+/g, '').toLowerCase();
+    const city = (value: string) => normalize(value).replace(/市$/, '');
+    const places = s.data.places.filter(place => city(place.city) === city(task.data.city));
+    const target = task.data[role], original = String(roots[0]!.properties.originalGoal ?? '');
+    const addressed = places.filter(place => place.addressAll.length > place.name.length
+      && places.filter(other => other.addressAll === place.addressAll).length === 1
+      && (normalize(target) === normalize(place.addressAll) || normalize(place.name) === normalize(target) && original.includes(place.addressAll)));
+    const exact = places.filter(place => normalize(place.name) === normalize(target));
+    const matches = addressed.length ? addressed : exact;
+    if (matches.length !== 1) return unresolved('Ambiguous place selection needs a new decision or an explicit full address; no first-candidate default');
+    return { ...evidence, status: 'known', value: { placeId: matches[0]!.id, observation: object, selectionRule: addressed.length ? 'explicit_unique_address' : 'unique_exact_name' } };
+  }
   return { status: 'known', value: { data: s.data, ...(s.route ? { route: s.route } : {}), observedAt: s.observedAt, freshnessPolicyUntil: s.expiresAt, providerQuoteExpiry: 'unknown', feesComplete: 'unknown', availability: 'unknown', pickupCommitment: 'unknown', arrivalCommitment: 'unknown', evidenceKind: s.evidenceKind, noBusinessWrites: true }, evidenceRefs: [object, ...proof.refs], evidenceLevels: proof.levels };
 }

@@ -5,8 +5,8 @@ import {digest} from '../core/delegation.js';
 import {DomainError} from '../core/domain.js';
 import {componentContext,componentScopeDigestProgram} from '../core/composed-actions.js';
 import type {DidiBinding} from '../capabilities/didi/contracts.js';
-import type {DidiAgentProgram,DidiProgramContext,DidiActionProgramContext} from '../capabilities/didi/program.js';
-import {validateDidiCallPlanningProgram,verifyDidiResultProgram,didiCallContext,resolveDidiCallProgram} from '../capabilities/didi/program.js';
+import type {DidiAgentProgram,DidiProgramContext,DidiActionProgramContext,DidiResolvedCall,DidiReadInvocationContext} from '../capabilities/didi/program.js';
+import {validateDidiCallPlanningProgram,verifyDidiResultProgram} from '../capabilities/didi/program.js';
 import {checkedRideEstimate} from '../ontology/ride-estimate-projection.js';
 import {readOntologyRequestProgram} from '../ontology/execution-projection.js';
 import {objectRefSchema} from '../ontology/model.js';
@@ -66,13 +66,24 @@ export async function verifyPostgresDidiSourceReceipt(client:Client,claim:Postgr
   if(postgresBusinessToken(client)!==token)throw new SecurityError('AUTHORIZATION_REQUIRED');
 }
 
-export function createPostgresDidiPolicy(options:PostgresDidiPolicyOptions):PostgresActionProgramPolicy{
+export interface PostgresValidatedDidiDispatch {call:DidiResolvedCall;invocation:DidiReadInvocationContext}
+
+export function createPostgresDidiPolicy(options:PostgresDidiPolicyOptions,
+  captureDispatch?:(dispatch:PostgresValidatedDidiDispatch)=>void):PostgresActionProgramPolicy{
   const {program,account,transport}=options;
   return {program,assertConfigured:(client,claim,job)=>account.assert(client,claim,job,options.policyDigest),verifySourceReceipt:(client,claim,context,attempt,response,result)=>verifyPostgresDidiSourceReceipt(client,claim,context,attempt,response,result,transport),
     validate:function*(context){
       const ctx=yield* postgresDidiContextProgram(context,program),checked=yield* validateDidiCallPlanningProgram(program,ctx,context.step.action,context.input,context.plan.ontologyPlanning);
       let validUntil=context.validUntil;for(const {snapshot} of checked.dependencies)validUntil=Math.min(validUntil,Date.parse(snapshot.expiresAt));
-      if(validUntil<=context.graph.now())fail('DiDi dependency expired');return {privateDigest:digest({}),validUntil};
+      if(validUntil<=context.graph.now())fail('DiDi dependency expired');
+      // Reuse the pure wire calculation when this same journal starts its
+      // attempt. The caller still waits for the transaction to commit.
+      if(captureDispatch&&context.operation==='dispatch'&&context.attempt){
+        const action=didiActionContext(context,ctx,context.attempt);
+        captureDispatch({call:checked.call,invocation:{request:action.request,state:action.state,
+          planId:action.planId,intentId:action.intentId,attemptId:action.attemptId,modelRunId:action.modelRunId}});
+      }
+      return {privateDigest:digest({}),validUntil};
     },
     verifyObservation:function*(context,attempt,response){
       if(attempt.kind!=='dispatch'||attempt.intentId!==context.intent.id||attempt.planDigest!==context.plan.digest||attempt.requestRevision!==(context.job.revision??0)||attempt.inputDigest!==digest(context.input)||context.attempt&&!same(context.attempt,attempt))fail('DiDi result differs from its original dispatch attempt');

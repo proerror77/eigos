@@ -6,7 +6,7 @@ import type {WorkClaim} from '../core/store.js';
 import {executionBudgetStatus} from '../core/execution-budget.js';
 import {canRecoverReadOnly,resolveTaskRecovery} from '../core/task-recovery.js';
 import {sealComposedOutputsProgram} from '../core/composed-actions.js';
-import {validateDidiCallPlanningProgram,didiCallContext,buildDidiReadResult,didiOutputPorts,type DidiResolvedCall,type DidiReadInvocationContext} from '../capabilities/didi/program.js';
+import {didiCallContext,buildDidiReadResult,didiOutputPorts,type DidiResolvedCall,type DidiReadInvocationContext} from '../capabilities/didi/program.js';
 import type {DidiCallContext} from '../capabilities/didi/connector.js';
 import type {AgentActionResult} from '../core/agent-program.js';
 import type {ActionIntent,ExecutionAttempt} from '../ontology/actions.js';
@@ -17,16 +17,12 @@ import type {StagedKernelBuilder} from '../ontology/seed-definition.js';
 import {SecurityError} from '../security/errors.js';
 import type {PostgresDatabase} from './database.js';
 import {PostgresReadProgramRegistry,type PostgresReadRegistration} from './didi-registry.js';
-import {postgresDidiContextProgram,didiActionContext} from './didi-policy.js';
+import {postgresDidiContextProgram,didiActionContext,createPostgresDidiPolicy,type PostgresValidatedDidiDispatch} from './didi-policy.js';
 import {PostgresActionJournal} from './action-journal.js';
 import {createPostgresActionAuthorization,type PostgresActionSemanticContext} from './action-authorization.js';
 import {PostgresProjectionGraph} from './projection-graph.js';
 import {PostgresTaskStorage} from './task-storage.js';
 import {withPostgresDidiCanonicalSourceProjection,type PostgresSourceProjectionOptions} from './source-projection.js';
-import {withPostgresPlanningReadGraph} from './planning-read-graph.js';
-import {withPostgresWorkerRequestAuthorization} from './task-output.js';
-import {withPostgresOntologyReleaseSnapshot} from './ontology-release.js';
-import {postgresBusinessSchema} from './runtime-transaction.js';
 import {postgresWorkerAdmission} from './worker-admission.js';
 import {postgresWorkReference,type PostgresWorkReference} from './work-claim.js';
 
@@ -50,8 +46,8 @@ export class PostgresDidiExecution {
     const database=this.options.database;return database.runOwner?database.runOwner(claim.owner,action):database.run(action);
   }
   private source(entry:PostgresReadRegistration,action:string):PostgresSourceProjectionOptions{return {policyDigest:this.options.policyDigest,modelChannel:this.options.modelChannel,builder:this.options.builder,programRef:entry.program.ref,configurationDigest:entry.program.configurationDigest,sourceBindingId:entry.sourceBindingId,action,inspectClaim:claim=>this.options.database.inspectClaim(claim,this.options.policyDigest)};}
-  private journal(client:Client,observation?:{attemptId:string;response:AgentActionResult}){
-    const options={policyDigest:this.options.policyDigest,modelChannel:this.options.modelChannel,builder:this.options.builder,maxTaskMs:this.maximum,programs:this.options.registry.policies(),inspectClaim:(claim:PostgresWorkReference)=>this.options.database.inspectClaim(claim,this.options.policyDigest),...(observation?{observation}:{})};
+  private journal(client:Client,observation?:{attemptId:string;response:AgentActionResult},programs=this.options.registry.policies()){
+    const options={policyDigest:this.options.policyDigest,modelChannel:this.options.modelChannel,builder:this.options.builder,maxTaskMs:this.maximum,programs,inspectClaim:(claim:PostgresWorkReference)=>this.options.database.inspectClaim(claim,this.options.policyDigest),...(observation?{observation}:{})};
     return new PostgresActionJournal(client,{...options,authorize:createPostgresActionAuthorization(client,options)});
   }
   private select(job:Job,intent:ActionIntent){
@@ -66,23 +62,23 @@ export class PostgresDidiExecution {
     return {model:graph.model,graph,owner:claim.owner,intents,validUntil,job,plan:selected.plan,step:selected.step,intent,input:selected.input,operation,attempt} satisfies PostgresActionSemanticContext;
   }
   private async prepare(client:Client,claim:PostgresWorkReference,intentId:string):Promise<Prepared>{
-    const store=new PostgresTaskStorage(client,this.options.builder),journal=this.journal(client);let intent=await journal.intent(claim.owner,intentId);
+    const store=new PostgresTaskStorage(client,this.options.builder),intent=await this.journal(client).intent(claim.owner,intentId);
     const job=await store.get(claim.owner,claim.job.id),selected=this.select(job,intent);await this.options.registry.assertConfigured(client,selected.entry,claim,job);
     if(intent.state!=='ready')fail('A dispatched DiDi read retains its original outcome; automatic replay is prohibited');
     if(!intent.dispatchInput){intent.dispatchInput=structuredClone(selected.input);await store.saveIntent(claim.owner,intent);}
-    const attempt=await journal.startAttempt(claim,intentId,'dispatch',digest(selected.input));intent=await journal.intent(claim.owner,intentId);
-    const {policyDigest,builder,modelChannel,database}=this.options;
-    // The journal just authorized the dispatch. Resolve the wire input with
-    // one protected read graph, with no mapper, external call or writes.
-    return withPostgresOntologyReleaseSnapshot(client,()=>withPostgresWorkerRequestAuthorization(client,claim,policyDigest,(auth,admission,principal)=>
-      withPostgresPlanningReadGraph(client,principal,job.id,policyDigest,auth,admission,async graph=>{
-        const semantic=await this.context(client,claim,job,intent,graph,'dispatch',attempt),program=selected.entry.didi!.program,ctx=await runGraphProgramAsync(graph,postgresDidiContextProgram(semantic,program));
-        const {call}=await runGraphProgramAsync(graph,validateDidiCallPlanningProgram(program,ctx,selected.step.action,selected.input,selected.plan.ontologyPlanning)),action=didiActionContext(semantic,ctx,attempt);
-        const invocation:DidiReadInvocationContext={request:structuredClone(action.request),state:structuredClone(action.state),planId:action.planId,intentId:action.intentId,attemptId:action.attemptId,modelRunId:action.modelRunId};
-        const influence=await graph.authorize();
-        if(influence)await client.query(`INSERT INTO "${postgresBusinessSchema(client)}".security_reads(grant_id,digest,body) VALUES($1,$2,$3) ON CONFLICT(grant_id,digest) DO NOTHING`,[admission.grant.id,digest(influence),JSON.stringify(influence)]);
-        return {entry:selected.entry,attempt,input:selected.input,action:selected.step.action,call,wire:didiCallContext(program,invocation,selected.step.action,selected.input),invocation,requestDigest:digest(job.delegation!.request),releaseDigest:digest(job.delegation!.ontologyRelease)};
-      },builder),builder,modelChannel,value=>database.inspectClaim(value,policyDigest)));
+    const didi=selected.entry.didi!;
+    let validated:PostgresValidatedDidiDispatch|undefined;
+    const policy=createPostgresDidiPolicy(didi,value=>{
+      if(validated||value.invocation.intentId!==intentId||value.invocation.planId!==selected.plan.id)fail('DiDi dispatch was validated for another invocation');
+      validated=structuredClone(value);
+    });
+    const programs=this.options.registry.policies().map(value=>value===selected.entry.policy?policy:value);
+    const attempt=await this.journal(client,undefined,programs).startAttempt(claim,intentId,'dispatch',digest(selected.input));
+    const {call,invocation}=validated??fail('DiDi dispatch was not validated');
+    if(invocation.attemptId!==attempt.id)fail('DiDi dispatch was validated for another attempt');
+    return {entry:selected.entry,attempt,input:selected.input,action:selected.step.action,call,
+      wire:didiCallContext(didi.program,invocation,selected.step.action,selected.input),invocation,
+      requestDigest:digest(job.delegation!.request),releaseDigest:digest(job.delegation!.ontologyRelease)};
   }
   private async assertCurrent(client:Client,claim:PostgresWorkReference,intentId:string,prepared:Prepared){
     const journal=this.journal(client);
