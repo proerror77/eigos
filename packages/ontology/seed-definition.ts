@@ -400,9 +400,10 @@ export class StagedKernelBuilder {
           break;
         case 15: {
           const classified = Number(this.#targetVersion) >= 30;
-          this.#current=complete(classified ? extendPaClassificationKernel(this.#current!.document) : extendSemanticRetrievalKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
-          const expected = classified ? PA_CLASSIFICATION_KERNEL_MODEL_REF : SEMANTIC_RETRIEVAL_KERNEL_MODEL_REF;
-          assertRelease(this.#current, expected, `The reviewed ${expected.version === '30' ? 'PA classification' : 'semantic retrieval'} fingerprint changed`);
+          const expectedAt15 = classified ? PA_CLASSIFICATION_KERNEL_MODEL_REF : SEMANTIC_RETRIEVAL_KERNEL_MODEL_REF;
+          this.#current=complete(classified ? extendPaClassificationKernel(this.#current!.document) : extendSemanticRetrievalKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;},expectedAt15);
+          const expected = expectedAt15;
+          this.#current = assertRelease(this.#current, expected, `The reviewed ${expected.version === '30' ? 'PA classification' : 'semantic retrieval'} fingerprint changed`, this.#registry);
           // The v31 vocabulary stage republishes this release, so sealing waits for stage 16.
           if (Number(this.#targetVersion) < 31) { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
           break;
