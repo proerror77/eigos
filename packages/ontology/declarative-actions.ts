@@ -147,7 +147,7 @@ export function* previewDeclarativeActionProgram(graph:ProjectionMetadata,owner:
         batch.tombstones!.push({ ref, expectedRevision }); objects.push({ operation: 'tombstone', ref, expectedRevision, fields: [], before: before.properties });
       }
     } else {
-      const link = { type: mutation.type, from: yield* reference(mutation.from), to: yield* reference(mutation.to) };
+      const link = { type: mutation.type, from: yield* reference(mutation.from), to: yield* reference(mutation.to), ...(mutation.op === 'add_link' && mutation.properties ? { properties: yield* properties(mutation.properties) } : {}) };
       if (changedLinks.has(edgeKey(link))) fail('One action cannot change a relationship more than once');
       changedLinks.add(edgeKey(link));
       for (const ref of [link.from, link.to]) if (!batch.creates!.some(created => key(created) === key(ref))) yield* read(ref);
