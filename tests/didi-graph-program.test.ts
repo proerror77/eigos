@@ -48,7 +48,7 @@ test('shared DiDi readonly initialization and canonical projection preserve the 
   }finally{for(const store of stores)store.close();source.close();}
 });
 
-test('one DiDi validation reuses checked dependency snapshots but retains fresh planning evaluations and rejects changed roles or missing reads',async()=>{
+test('DiDi validates each dependency once per invocation and rejects changed roles, mismatched receipts or missing reads',async()=>{
   const source=didiFixture(),store=new JobStore(':memory:');try{
     const program=new DidiAgentProgram(source.binding,{connector:source.connector}),job=new TaskService(store,{catalog:new ExecutionCatalog([program.capability()],[],[],[],[program])}).submit(principal,{goal:'Synthetic source-backed route estimate only',requestId:randomUUID()}),request=store.get(owner,job.id).delegation!.request,graph=store.ontologyForJob(owner,job.id),input={mode:'estimate',city:'北京市',origin:'北京西站',destination:'西二旗地铁站'},initialized=program.initialize(graph,owner,request,input);
     const context:DidiActionProgramContext={graph,owner,request,state:{version:'1',programRef:program.ref,programDigest:program.configurationDigest,scope:initialized.scope,input,requestRevision:request.revision,plans:[],observations:[],feedback:[]},planId:'synthetic-plan',intentId:'synthetic-intent',attemptId:'synthetic-attempt',modelRunId:'synthetic-model'};
@@ -63,7 +63,13 @@ test('one DiDi validation reuses checked dependency snapshots but retains fresh 
     const reads=planningSnapshot({mode:'model_queries',model:graph.model.ref,requestRevision:request.revision,conditionsDigest:digest(request.conditions??[]),objects,conditionChecks:[],actionProposals:[],reads:refs.map((ref,index)=>{const args={function:'rideEstimateStatus',object:ref};return {id:randomUUID(),at:new Date().toISOString(),tool:'evaluate_ontology',inputDigest:digest(args),outputDigest:digest(graph.evaluate(owner,args)),datasetRevision:graph.revision(owner),status:'ok',objects:[objects[index]!]};})});
     const estimate={scope:initialized.scope,originObservation:refs[0]!,originPlaceId:placeIds[0]!,destinationObservation:refs[1]!,destinationPlaceId:placeIds[1]!},counts={scope:0,observations:0,evaluations:0},storage=countedStorage(graph,counts);
     const checked=runGraphProgram(storage,validateDidiCallPlanningProgram(program,context,'EstimateDidiRide',estimate,reads));
-    assert.equal(checked.call.tool,'taxi_estimate');assert.equal(checked.dependencies.length,2);assert.equal(counts.observations,2,'Each dependency snapshot is source-checked once within this invocation');assert.equal(counts.evaluations,4,'Source evaluation and fresh exact planning evaluation remain separate for both dependencies');
+    assert.equal(checked.call.tool,'taxi_estimate');assert.equal(checked.dependencies.length,2);
+    assert.equal(counts.scope,1,'Both dependencies use the same checked route scope');
+    assert.equal(counts.observations,2,'Each dependency snapshot is source-checked once within this invocation');
+    assert.equal(counts.evaluations,2,'The exact current registered evaluation is reused for the receipt comparison');
+    const mismatched={...reads,reads:reads.reads.map((receipt,index)=>index===0?{...receipt,outputDigest:digest('other output')}:receipt)};
+    assert.throws(()=>runGraphProgram(storage,validateDidiCallPlanningProgram(program,context,'EstimateDidiRide',estimate,mismatched)),/read and evaluate/);
+    assert.equal(counts.evaluations,4,'A separate validation invocation resolves both dependencies again');
     assert.throws(()=>runGraphProgram(storage,validateDidiCallPlanningProgram(program,context,'EstimateDidiRide',estimate,{...reads,reads:[]})),/read and evaluate/);
     assert.throws(()=>runGraphProgram(storage,validateDidiCallPlanningProgram(program,context,'EstimateDidiRide',{...estimate,originObservation:refs[1]!},reads)),/Wrong place source/);
     const changed={...context,state:{...context.state,observations:[refs[0]!]}};assert.throws(()=>runGraphProgram(storage,validateDidiCallPlanningProgram(program,changed,'EstimateDidiRide',estimate,reads)),/not accepted by this task/);
