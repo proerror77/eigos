@@ -1,5 +1,6 @@
 import { mcpReadBindingSchema, type McpReadBinding } from './mcp-read.js';
 import { z } from 'zod';
+import { isSubtype, propertyTypeOf } from './property-types.js';
 import { paClassificationSchema, paDiscoveryFields, paDiscoverySelection, paDefinitionLinks, type PaClassification, type PaDiscoveryInput } from './pa-classification-contract.js';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -165,7 +166,9 @@ export function acceptingCompatible(actual: PropertyDefinition, expected: Proper
   if ((propertyMetadata(expected) as { polymorphic?: boolean }).polymorphic) {
     if (expected.required && !actual.required) return false;
     if (actual.restricted) return false;
-    return actual.kind === expected.kind || expected.kind === 'string';
+    // Subtyping, not equality: an identity (uuid, business number, ulid) satisfies a
+    // string contract, and any subtype of the declared type satisfies it too.
+    return isSubtype(propertyTypeOf(actual.kind), propertyTypeOf(expected.kind));
   }
   const timestampView = actual.kind === 'string' && expected.kind === 'timestamp' && a.format === 'date-time';
   if (actual.kind !== expected.kind && !timestampView) return false;
