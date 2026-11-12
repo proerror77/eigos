@@ -43,6 +43,10 @@ export function extendPalantirModelKernel(original: OntologyDocument, registry?:
   }
 
   for (const action of document.actions as unknown as Record<string, unknown>[]) {
+    // `effects` stays where it is: the compiler refuses an implemented action without
+    // it, so it is an engine contract, not a container we picked. `criteriaBindings` is
+    // a name->binding record, while Palantir's submissionCriteria is an ordered list of
+    // conditions; renaming one into the other would be a lie about the shape.
     if ((action.read as { effect?: string } | undefined)?.effect === 'read' || (action.operation as { effect?: string } | undefined)?.effect === 'read') { readOnly++; continue; }
     const changes = (action.changes as string[] | undefined) ?? [];
     const resultTypes = (action.resultTypes as string[] | undefined) ?? [];

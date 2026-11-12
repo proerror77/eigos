@@ -27,7 +27,7 @@
 | 2 | `objects[].datasource` 是 URI 字符串（136 条） | 结构化 `{type,...,path}` | 改成对象 |
 | 3 | `objects[].derived: true`（68 条） | `datasource.type='function'` | 删除该字段，改写成 datasource |
 | 4 | `links[].roles`（125/93/124 条） | Palantir 无此字段；语义由 Link Type 表达 | 迁到 `extensions.roles`，或拆成独立 link type（待定） |
-| 5 | `actions[].criteriaBindings` / `effects` | `submissionCriteria` + `rules` | 评估后迁入 `rules`，过渡期放 `extensions` |
+| 5 | `actions[].criteriaBindings` / `effects` | —— | **不迁**：`effects` 是编译器强制字段（无它直接拒绝已实现动作）；`criteriaBindings` 是 name→binding 记录，Palantir 的 `submissionCriteria` 是有序条件列表，改名等于谎报形状。实测见 commit 说明 |
 | 6 | 接口属性 6/14、`propertyMap` 7/129 | 每个接口都有共享属性 + 全部实现有映射 | 根接口声明 + 实现映射（`accepting_v1`） |
 | 7 | 接口 action 约束 1 条、`actionMap` 0 条 | 能力声明 + 实现侧绑定 | 先补基础关系，再绑定 |
 
