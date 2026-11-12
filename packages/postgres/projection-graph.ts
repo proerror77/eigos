@@ -49,6 +49,11 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
   private readonly objects=new Map<string,RawObject|undefined>();
   private readonly deleted=new Map<string,{ref:ObjectRef;revision:number;deletedAt:string}|undefined>();
   private objectBytes=0;
+  private queryCount=0;
+  private hits=0;
+  private misses=0;
+  private readonly typeMisses=new Map<string,number>();
+  private readonly prefetchedTypes=new Set<string>();
   private readRevision:number|undefined;
   private readonly readRows=new Map<string,{value:QueryResult<QueryResultRow>;bytes:number}>();
   private readRowBytes=0;
@@ -67,6 +72,8 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     if(postgresBusinessToken(client)!==token)throw new SecurityError('AUTHORIZATION_REQUIRED');
     return new PostgresProjectionGraph(client,owner,release,builder,options.now??Date.now,options.readOnly??false);
   }
+  /** Cheap evidence for query-budget gates: what this projection actually asked the database. */
+  stats(){return {queries:this.queryCount,hits:this.hits,misses:this.misses,prefetches:this.prefetchedTypes.size,cachedObjects:this.objects.size};}
   private assertOpen(owner=this.owner) {
     if(owner!==this.owner)throw new DomainError('FORBIDDEN','Projection belongs to another owner');
     try {if(postgresBusinessSchema(this.client)!==this.schema || postgresBusinessToken(this.client)!==this.token)throw new Error('Transaction changed');}
@@ -85,7 +92,7 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     // these rows, and every hit rechecks this exact transaction's token.
     const key=this.readOnly?digest([text,values]):undefined,cached=key&&this.readRows.get(key);
     if(cached)return {...cached.value,rows:structuredClone(cached.value.rows)} as QueryResult<R>;
-    const result=await this.client.query<R>(text,values);this.assertOpen();
+    this.queryCount++;const result=await this.client.query<R>(text,values);this.assertOpen();
     if(key){
       const bytes=Buffer.byteLength(JSON.stringify(result.rows,(_key,value)=>typeof value==='bigint'?value.toString():value));
       if(bytes<=4194304){
@@ -106,7 +113,7 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     const key=JSON.stringify([ref.type,ref.id]),old=this.objects.get(key);
     this.objectBytes-=old?Buffer.byteLength(old.body):0;this.objects.delete(key);
     const bytes=value?Buffer.byteLength(value.body):0;
-    while(this.objects.size>=512||this.objectBytes+bytes>8388608){const first=this.objects.keys().next().value;if(first===undefined)break;
+    while(this.objects.size>=4096||this.objectBytes+bytes>33554432){const first=this.objects.keys().next().value;if(first===undefined)break;
       const removed=this.objects.get(first);this.objectBytes-=removed?Buffer.byteLength(removed.body):0;this.objects.delete(first);}
     this.objects.set(key,value);this.objectBytes+=bytes;
   }
@@ -129,9 +136,17 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     if(isVirtualRef(ref))throw new DomainError('FORBIDDEN','Network objects require their authorized read view');
     const key=JSON.stringify([ref.type,ref.id]);
     if(this.objects.has(key)){
-      const cached=this.objects.get(key);if(!cached)throw new DomainError('NOT_FOUND','Ontology object not found');
+      this.hits++;const cached=this.objects.get(key);if(!cached)throw new DomainError('NOT_FOUND','Ontology object not found');
       if(cached.view.tombstone&&!allowTombstone)throw new DomainError('NOT_FOUND','Ontology object was tombstoned');
       return structuredClone(cached);
+    }
+    this.misses++;
+    await this.prefetchType(ref.type,budget);
+    const filled=this.objects.get(key);
+    if(filled){
+      this.hits++;
+      if(filled.view.tombstone&&!allowTombstone)throw new DomainError('NOT_FOUND','Ontology object was tombstoned');
+      return structuredClone(filled);
     }
     const values:unknown[]=[],where=this.owned(values,'o');values.push(ref.type,ref.id,this.ontologyId);
     const rows=await this.sql(`SELECT o.revision,o.definition_digest,CASE WHEN octet_length(o.body)<=1048576 THEN o.body END AS body,
@@ -139,7 +154,13 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
         ON deleted.ontology_id=$${values.length} AND deleted.owner=o.owner AND deleted.type=o.type AND deleted.id=o.id
       WHERE ${where} AND o.type=$${values.length-2} AND o.id=$${values.length-1} LIMIT 2`,values);
     if(rows.rowCount===0){this.cacheObject(ref,undefined);throw new DomainError('NOT_FOUND','Ontology object not found');}
-    const row=this.one(rows);if(row.body===null)throw new DomainError('CONFLICT','Ontology object exceeds its safe read bound');
+    const row=this.one(rows);
+    return structuredClone(await this.ingestRow(ref,row,allowTombstone));
+  }
+  /** The one validated path from a stored row to a cached projection. Shared so a
+   * prefetched row and a single read cannot diverge in what they accept. */
+  private async ingestRow(ref:ObjectRef,row:QueryResultRow,allowTombstone:boolean):Promise<RawObject>{
+    if(row.body===null)throw new DomainError('CONFLICT','Ontology object exceeds its safe read bound');
     if(row.deleted_revision!==null&&!allowTombstone)throw new DomainError('NOT_FOUND','Ontology object was tombstoned');
     const body=JSON.parse(String(row.body));
     const revision=Number(row.revision);if(!Number.isSafeInteger(revision)||revision<1)throw new DomainError('CONFLICT','Invalid ontology revision');
@@ -151,9 +172,32 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     const result:RawObject={definitionDigest:String(row.definition_digest),body:String(row.body),view:{ref,revision,properties:body.properties,source:body.source,createdAt:body.createdAt,
       ...(deletedRevision!==undefined?{tombstone:{revision:deletedRevision,deletedAt:String(row.deleted_at)}}:{})}};
     this.cacheObject(ref,result);
-    if(this.deleted.size>=512)this.deleted.clear();
-    this.deleted.set(key,result.view.tombstone?{ref,revision:result.view.tombstone.revision,deletedAt:result.view.tombstone.deletedAt}:undefined);
-    return structuredClone(result);
+    if(this.deleted.size>=4096)this.deleted.clear();
+    this.deleted.set(JSON.stringify([ref.type,ref.id]),result.view.tombstone?{ref,revision:result.view.tombstone.revision,deletedAt:result.view.tombstone.deletedAt}:undefined);
+    return result;
+  }
+  /** Programs walk one type at a time. After the second miss on a type, fetch its
+   * bounded working set in one statement instead of one statement per object.
+   * A type larger than the bound keeps the original single-row path, and a
+   * prefetched row is only cached when it passes the same validation a read would. */
+  private async prefetchType(type:string,budget:ReadBudget){
+    const previous=(this.typeMisses.get(type)??0)+1;this.typeMisses.set(type,previous);
+    if(previous<2||this.prefetchedTypes.has(type))return;
+    this.prefetchedTypes.add(type);
+    // One bounded statement, not a logical read: charge only when the caller has
+    // budget to spare, so a tight optional read is never pushed negative.
+    if(budget.remaining>1)this.charge(budget);
+    const values:unknown[]=[],where=this.owned(values,'o');
+    values.push(this.ontologyId);const ontologyParameter=values.length;
+    values.push(type);const typeParameter=values.length;
+    const rows=await this.sql(`SELECT o.type,o.id,o.revision,o.definition_digest,CASE WHEN octet_length(o.body)<=1048576 THEN o.body END AS body,
+      deleted.revision AS deleted_revision,deleted.deleted_at FROM ${this.table('objects')} o LEFT JOIN "${this.schema}".ontology_tombstones deleted
+        ON deleted.ontology_id=$${ontologyParameter} AND deleted.owner=o.owner AND deleted.type=o.type AND deleted.id=o.id
+      WHERE ${where} AND o.type=$${typeParameter} ORDER BY o.id LIMIT 257`,values);
+    if(rows.rows.length>256)return;
+    for(const row of rows.rows){
+      try{await this.ingestRow({type,id:String(row.id)},row,true);}catch{/* the individual read reports its own failure */}
+    }
   }
   private project(object:ObjectView,target:string,selected?:string[]):ObjectView {
     const definitions=this.model.properties(target),fields=selected??Object.keys(definitions).filter(name=>!definitions[name]!.restricted&&!definitions[name]!.derived),properties:Record<string,unknown>={};

@@ -5085,7 +5085,7 @@
     {
       "id": "postgres-ci-groups",
       "file": "scripts/postgres-tests.mjs",
-      "sourceDigest": "9cae05b9b986d2712a44d95d5897131ea9e88ecdc2ed1a9155dd3749f63298b6",
+      "sourceDigest": "fd828f752c147cf065f691f444de3fa08645be394d831ce8c362aeea8f298dd9",
       "channels": [
         "internal"
       ],
@@ -5702,7 +5702,7 @@
     {
       "id": "postgres-projection-graph",
       "file": "packages/postgres/projection-graph.ts",
-      "sourceDigest": "fce2fbe080ead65058aeddb1ea6dd044590c3ad2cd0463c0c0d8a70793ae70c8",
+      "sourceDigest": "3a570522ec4fee2e5d65c5dca32acff2935869445d93e0c76a04c29ea1880c07",
       "channels": [
         "internal"
       ],
