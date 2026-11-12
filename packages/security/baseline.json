@@ -5284,7 +5284,7 @@
     {
       "id": "postgres-eligibility-inspection",
       "file": "packages/postgres/eligibility-inspection.ts",
-      "sourceDigest": "8a2367c3cdc96c7ee3a011a66bdab1f044143f06c55c78df6d73368991015281",
+      "sourceDigest": "407f87d3b65414a00e36ebb0f06464bba6516a8ace6b6a5035bba937d8917968",
       "channels": [
         "internal"
       ],
@@ -5758,12 +5758,12 @@
       "currentControl": "Exact transaction identity, authority and fixed deadline checks. Shared readers fence every business writer. Audited writers may use scoped locks only with the reviewed shared authority helper, and unknown outcomes evict without automatic retry.",
       "targetControl": "Serializable business state after transaction-scoped table serialization, exact authority/transaction identity and savepoint guards; current deadlines before/after commit, unknown-outcome eviction and no automatic retries",
       "stage": "S5",
-      "sourceDigest": "aabc2a5de850510454e2c3b6706ec715c54bf74286544631dc3f68b02d640f9d"
+      "sourceDigest": "bbcf5d05c204d026d46a0287b9c722e8a3c02db5a6eb4835f9f13d9a2717f0c6"
     },
     {
       "id": "postgres-source-projection",
       "file": "packages/postgres/source-projection.ts",
-      "sourceDigest": "d2aba5f2494f139ab81d72fa9cef319366c38a7069691086247cb64559ed3d24",
+      "sourceDigest": "99d13d9c7ac159a574441f5808fda0c500a0382c47beff23cbd3227a38381687",
       "channels": [
         "internal"
       ],
@@ -5911,7 +5911,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "3dbac738303ff38e5fb7caca9bc8e37ac998b00e03500bd3dd624cd81f91b470",
+      "sourceDigest": "0510d592e0f45786c5f0c2893d3961cdcb2e35713042706d16e531c3d3216eee",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current task, identity, source and expiry checks remain. Resource roles pin the exact checked task release, independently of the compatible field policy. Raw binding reuse is bounded to 64 entries/8 MiB and the same callback, transaction token, actor, owner, task and grant revisions; public reuse additionally requires the shared read fence.",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
@@ -6070,7 +6070,7 @@
     {
       "id": "postgres-worker-admission",
       "file": "packages/postgres/worker-admission.ts",
-      "sourceDigest": "0c76f58a81da3b2672eb2ddac326faeab969fd79c79f9dc08c4f7e0266710f0e",
+      "sourceDigest": "742da46e4443046fd06b50401254d1986bdad641c005b573e9fbb4ed25b78615",
       "channels": [
         "internal"
       ],

@@ -9,7 +9,7 @@ import {lockPostgresWriteScope,postgresWriteScope,tryPostgresOwnerWriteLock,type
 const schemaPattern = /^eigos_business_[a-z0-9_]{1,40}$/;
 const digestPattern = /^[a-f0-9]{64}$/;
 const active = new WeakSet<object>();
-const contexts = new WeakMap<object, { schema: string; authorityDigest: string; readUntil:number;token:object;readOnly:boolean;writeScope?:PostgresWriteScope;writeOwners:Set<string>;kernel?:StagedKernelBuilder;leases:Map<string,()=>Promise<{validUntil:number}|undefined>>;eligibilityInspector?:PostgresEligibilityInspector;eligibility:Map<string,Promise<void>>;eligibilityReferences:Map<string,PostgresEligibilityReference>;egressReferences:PostgresEligibilityReference[] }>();
+const contexts = new WeakMap<object, { schema: string; authorityDigest: string; readUntil:number;token:object;readOnly:boolean;writeScope?:PostgresWriteScope;writeOwners:Set<string>;kernel?:StagedKernelBuilder;leases:Map<string,()=>Promise<{validUntil:number}|undefined>>;eligibilityInspector?:PostgresEligibilityInspector;eligibility:Map<string,Promise<void>>;eligibilityReferences:Map<string,PostgresEligibilityReference>;egressReferences:PostgresEligibilityReference[];admissions:Map<string,unknown> }>();
 
 /** An original-token inspector, never business/model/provider work. Lease
  * evidence is refreshed at the outer commit; fixed read deadlines stay fixed. */
@@ -30,6 +30,28 @@ export async function postgresRequireCurrentEligibility(client:Client,input:Post
   let checked=context.eligibility.get(key);
   if(!checked){checked=inspect().then(()=>{});context.eligibility.set(key,checked);context.eligibilityReferences.set(key,reference);context.leases.set(key,inspect);}
   await checked;
+}
+
+/**
+ * Admission is a property of this transaction, not of each operation inside it.
+ * The same claim under the same policy digest is admitted once; the caller keeps
+ * its commit-time lease re-check, so a revocation between admission and commit is
+ * still refused. Outside a managed transaction this degrades to a plain call.
+ */
+export function postgresMemoizedLease<T>(client:Client,key:string,compute:()=>Promise<T>):Promise<T>{
+  const context=contexts.get(client);if(!context)return compute();
+  const id=createHash('sha256').update('lease:'+key).digest('hex');
+  let value=context.admissions.get(id) as Promise<T>|undefined;
+  if(!value){value=compute();context.admissions.set(id,value);}
+  return value;
+}
+
+export function postgresMemoizedAdmission<T>(client:Client,key:string,compute:()=>Promise<T>):Promise<T>{
+  const context=contexts.get(client);if(!context)return compute();
+  const id=createHash('sha256').update('admission:'+key).digest('hex');
+  let value=context.admissions.get(id) as Promise<T>|undefined;
+  if(!value){value=compute();context.admissions.set(id,value);}
+  return value;
 }
 
 /** Reserve one request-owned connection before its first awaited command. */
@@ -209,7 +231,7 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
       await client.query(savepoint);
     }
     if (typeof transactionId !== 'string' || !/^\d+$/.test(transactionId)) throw new Error('PostgreSQL transaction identity unavailable');
-    const context={schema,authorityDigest:expected.digest,readUntil:Infinity,token:Object.freeze({}),readOnly:reading,writeScope,writeOwners:new Set<string>(),kernel,leases:new Map<string,()=>Promise<{validUntil:number}|undefined>>(),eligibilityInspector:options.eligibilityInspector,eligibility:new Map<string,Promise<void>>(),eligibilityReferences:new Map<string,PostgresEligibilityReference>(),egressReferences:[] as PostgresEligibilityReference[]};
+    const context={schema,authorityDigest:expected.digest,readUntil:Infinity,token:Object.freeze({}),readOnly:reading,writeScope,writeOwners:new Set<string>(),kernel,leases:new Map<string,()=>Promise<{validUntil:number}|undefined>>(),eligibilityInspector:options.eligibilityInspector,eligibility:new Map<string,Promise<void>>(),eligibilityReferences:new Map<string,PostgresEligibilityReference>(),egressReferences:[] as PostgresEligibilityReference[],admissions:new Map<string,unknown>()};
     contexts.set(client,context);
     let result: T;
     try {

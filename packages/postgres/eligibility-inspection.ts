@@ -81,10 +81,11 @@ function parse(row:Row,runtime:PostgresRuntimeAuthority,reference:PostgresEligib
  * This is not permission issuance, a Worker claim or a role/request check.
  * The caller retains its captured fixed authority/role/claim deadlines and
  * original-task checks. No database row is renewed or changed here. */
+import {noteRead} from './read-attribution.js';
 export function postgresInspectEligibility(pool:Pick<Pool,'connect'>,schema:string,runtime:PostgresRuntimeAuthority,reference:PostgresEligibilityReference, options: { batch?: boolean } = {}):Promise<{validUntil:number}>{
   if(!/^eigos_business_[a-z0-9_]{1,40}$/.test(schema)||typeof runtime.id!=='string'||!runtime.id||runtime.id.length>2000
     ||!Number.isSafeInteger(runtime.revision)||runtime.revision<1||!/^[a-f0-9]{64}$/.test(runtime.digest))return Promise.reject(new Error('Invalid PostgreSQL eligibility configuration'));
-  let captured:PostgresEligibilityReference;
+  noteRead('eligibility:inspect',[reference.installationId,reference.parentGrant.id,reference.taskGrant?.id??'-',reference.policyDigest].join('|'));let captured:PostgresEligibilityReference;
   try{captured=postgresEligibilityReferenceSchema.parse(reference);}catch(error){return Promise.reject(changed(error));}
   const expected=Object.freeze(structuredClone(runtime)),watch:Watch={};let timer:ReturnType<typeof setTimeout>;
   const timeout=new Promise<never>((_resolve,reject)=>{timer=setTimeout(()=>{

@@ -1,6 +1,6 @@
 import {postgresConsentDeadline} from './consent.js';
 import {digest} from '../core/delegation.js';
-import {postgresCanInspectEligibility,postgresRequireCurrentEligibility} from './runtime-transaction.js';
+import {postgresCanInspectEligibility,postgresRequireCurrentEligibility,postgresMemoizedAdmission} from './runtime-transaction.js';
 import type {Client} from 'pg';
 import {agentAccessGrantSchema,taskDataGrantSchema,taskExecutionAuthoritySchema} from '../security/contracts.js';
 import {SecurityError} from '../security/errors.js';
@@ -83,10 +83,14 @@ export function parsePostgresWorkerScope(row:Record<string,unknown>,owner:string
 
 /** Business operations additionally retain the original transaction's authority
  * and response deadline. A Worker never borrows an Agent bearer identity. */
+import {noteRead} from './read-attribution.js';
 export async function postgresWorkerAdmission(client:Client,owner:string,taskId:string,policyDigest:string){
+  return postgresMemoizedAdmission(client,['worker',owner,taskId,policyDigest].join('|'),()=>readWorkerAdmission(client,owner,taskId,policyDigest));
+}
+async function readWorkerAdmission(client:Client,owner:string,taskId:string,policyDigest:string){
   const schema=postgresBusinessSchema(client);
   const currentEligibility=postgresCanInspectEligibility(client);
-  const rows=await client.query(workerScopeQuery(schema,currentEligibility),[policyDigest,owner,taskId,Date.now()]);
+  noteRead('admission:worker-scope',[owner,taskId,policyDigest].join('|'));const rows=await client.query(workerScopeQuery(schema,currentEligibility),[policyDigest,owner,taskId,Date.now()]);
   if(rows.rowCount!==1)throw new SecurityError('AUTHORIZATION_REQUIRED');
   const row=rows.rows[0];if(row.runtime_digest!==postgresBusinessAuthorityDigest(client))throw new SecurityError('POLICY_CHANGED');
   const scope=parseWorkerScope(row,owner,taskId,policyDigest,currentEligibility);

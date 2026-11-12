@@ -3,7 +3,7 @@ import {noteRead} from './read-attribution.js';
 import {consentExpirySchema} from '../security/consent-lifetime.js';
 import {postgresConsentDeadline,postgresConsentIndex} from './consent.js';
 import {postgresIsNewTaskGrant} from './task-grants.js';
-import {postgresCanInspectEligibility,postgresRequireCurrentEligibility} from './runtime-transaction.js';
+import {postgresCanInspectEligibility,postgresRequireCurrentEligibility,postgresMemoizedAdmission} from './runtime-transaction.js';
 import type {PostgresEligibilityReference} from './eligibility-reference.js';
 import type { Client } from 'pg';
 import { z } from 'zod';
@@ -201,6 +201,10 @@ function currentBindingsSelect(q: string, grantId?: string): PostgresSelect {
  * This is an internal admission check, not field/output authorization. All writers must use the business
  * transaction fence; callers must recheck before returning protected data. */
 async function postgresAgentAdmission(client: Client, principal: Principal, policyDigest: string,scope?:Scope,deferEligibility = false,supplied?:readonly [PostgresSelectResult, PostgresSelectResult]) {
+  return postgresMemoizedAdmission(client,['agent',digest([principal.clientId,principal.scopes,scope??'',policyDigest,deferEligibility,supplied?'supplied':'fresh'])].join('|'),
+    ()=>readAgentAdmission(client,principal,policyDigest,scope,deferEligibility,supplied));
+}
+async function readAgentAdmission(client: Client, principal: Principal, policyDigest: string,scope?:Scope,deferEligibility = false,supplied?:readonly [PostgresSelectResult, PostgresSelectResult]) {
   const schema = postgresBusinessSchema(client), q = `"${schema}"`;
   if(scope!==undefined)requireScope(principal,scope);
   if (!/^[a-f0-9]{64}$/.test(policyDigest)) throw new Error('Invalid PostgreSQL policy digest');

@@ -29,7 +29,7 @@ import {storedSourceSchema,type ObservationSource} from '../security/source-poli
 import {SecurityError,SecurityLineageLimitError} from '../security/errors.js';
 import {combineEnvelopes,type SecurityEnvelope} from '../security/envelope.js';
 import {submissionDigest} from '../security/submission-digest.js';
-import {postgresBusinessSchema,postgresBusinessToken,postgresConstrainReadDeadline,postgresRequireLeaseAtCommit} from './runtime-transaction.js';
+import {postgresBusinessSchema,postgresBusinessToken,postgresConstrainReadDeadline,postgresRequireLeaseAtCommit,postgresMemoizedLease} from './runtime-transaction.js';
 import {postgresWorkReference,postgresClaimSnapshotMatches,type PostgresWorkReference} from './work-claim.js';
 import {postgresWorkerAdmission} from './worker-admission.js';
 import {postgresWorkerRequest} from './worker-input.js';
@@ -119,9 +119,13 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
   const authorize:typeof withPostgresWorkerEvidenceAuthorization=caller?(client,claim,policy,action,builder,_modelChannel,inspect)=>withPostgresCallerEvidenceAuthorization(client,claim,policy,action,builder,inspect):withPostgresWorkerEvidenceAuthorization;
   let open=true,failed=false,pending=0,queue:Promise<unknown>=Promise.resolve(),writes=0,reads=0,steps=0;
   const active=()=>{if(!open||failed||postgresBusinessToken(client)!==token)throw new SecurityError('AUTHORIZATION_REQUIRED');};
+  // One lease inspection per transaction: the claim fence cannot change between
+  // two reads in the same snapshot, and the commit hook below still inspects the
+  // raw lease, so a revocation before commit is refused.
+  const leaseCheck=()=>postgresMemoizedLease(client,digest(claim),()=>options.inspectClaim(claim));
   const scope=async()=>{
     active();if(!await postgresClaimSnapshotMatches(client,claim,options.policyDigest))throw new SecurityError('ACCESS_REVOKED');
-    const lease=await options.inspectClaim(claim);if(!lease||!Number.isSafeInteger(lease.validUntil)||lease.validUntil<=Date.now())throw new SecurityError('ACCESS_REVOKED');
+    const lease=await leaseCheck();if(!lease||!Number.isSafeInteger(lease.validUntil)||lease.validUntil<=Date.now())throw new SecurityError('ACCESS_REVOKED');
     const admission=await postgresWorkerAdmission(client,claim.owner,claim.job.id,options.policyDigest);
     if(admission.authority.id!==claim.securityAuthorityId||admission.authority.authEpoch!==claim.securityEpoch||admission.policyRevision!==claim.securityPolicyRevision)throw new SecurityError('POLICY_CHANGED');
     postgresConstrainReadDeadline(client,admission.validUntil);postgresRequireLeaseAtCommit(client,digest(claim),()=>options.inspectClaim(claim));return admission;
@@ -139,7 +143,7 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
     if(configured.action)await authorize(client,claim,options.policyDigest,async(_auth,_scope,principal)=>{
       for(const permission of ['resource.view','action.execute'] as const){const until=await postgresTaskResourcePermissionValidUntil(client,principal,request.id,options.policyDigest,'actionType',configured.action!,permission,options.builder);
         if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');postgresConstrainReadDeadline(client,until);}
-    },options.builder,options.modelChannel,options.inspectClaim);
+    },options.builder,options.modelChannel,leaseCheck);
     return {admission,selected};
   };
   await source();const job=await new PostgresTaskStorage(client,options.builder).get(claim.owner,claim.job.id),release=job.delegation?.ontologyRelease;
@@ -163,14 +167,14 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
         if(influence){const approved=await auth.authorizeEvidence(influence);await client.query(`INSERT INTO ${q}.security_reads(grant_id,digest,body) VALUES($1,$2,$3) ON CONFLICT(grant_id,digest) DO NOTHING`,[admission.grant.id,digest(approved),JSON.stringify(approved)]);
           onInfluence?.(structuredClone(approved));}
         return result;
-      },options.builder),options.builder,options.modelChannel,options.inspectClaim));
+      },options.builder),options.builder,options.modelChannel,leaseCheck));
   const permission=async(type:string)=>authorize(client,claim,options.policyDigest,async(_auth,_admission,principal)=>{
     const until=await postgresTaskResourceViewValidUntil(client,principal,request.id,options.policyDigest,'linkType',type,options.builder);
     if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');postgresConstrainReadDeadline(client,until);
-  },options.builder,options.modelChannel,options.inspectClaim);
+  },options.builder,options.modelChannel,leaseCheck);
   const requireObject=async(ref:ObjectRef)=>authorize(client,claim,options.policyDigest,async auth=>{
     if(!await auth.bindingMetadata(ref))throw new SecurityError('AUTHORIZATION_REQUIRED');
-  },options.builder,options.modelChannel,options.inspectClaim);
+  },options.builder,options.modelChannel,leaseCheck);
   const personalAsset=async(ref:ObjectRef,provenance:ObjectSource)=>{
     if(provenance.kind!=='user'||!['Person','PersonalPreference'].includes(ref.type))return false;
     const current=await new PostgresTaskStorage(client,options.builder).get(claim.owner,request.id);
@@ -255,7 +259,7 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
               const id=key(ref);if(endpoints.has(id))return;
               if(!await auth.bindingMetadata(ref))throw new SecurityError('AUTHORIZATION_REQUIRED');endpoints.add(id);
             });
-          },options.builder,options.modelChannel,options.inspectClaim);
+          },options.builder,options.modelChannel,leaseCheck);
         }catch(error){
           // A union of individually bounded ancestry can exceed one scope's
           // unchanged limit. The failed read-only scope is already closed;
@@ -293,7 +297,7 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
     active();if(!canonical||caller||owner!==claim.owner||!canonicalTypes.has(ref.type)||metadata.model.objectWritePolicy(ref.type)!=='source')throw new SecurityError('AUTHORIZATION_REQUIRED');
     await canonical.account.assert(client,claim,job,options.policyDigest);const current=await source(),rule=current.admission.grant.outputs.find(value=>value.type===ref.type&&value.programId===current.selected.programId&&value.programDigest===current.selected.programDigest&&value.sourceBindingId===current.selected.bindingId),allowed=current.admission.parent.resources.find(value=>value.type===ref.type)?.fields??[];
     if(!rule||!current.selected.outputTypes.includes(ref.type)||!rule.fields.every(field=>allowed.includes(field)))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
-    await authorize(client,claim,options.policyDigest,async(_auth,_admission,principal)=>{const until=await postgresTaskResourceViewValidUntil(client,principal,request.id,options.policyDigest,'objectType',ref.type,options.builder);if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');postgresConstrainReadDeadline(client,until);},options.builder,options.modelChannel,options.inspectClaim);
+    await authorize(client,claim,options.policyDigest,async(_auth,_admission,principal)=>{const until=await postgresTaskResourceViewValidUntil(client,principal,request.id,options.policyDigest,'objectType',ref.type,options.builder);if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');postgresConstrainReadDeadline(client,until);},options.builder,options.modelChannel,leaseCheck);
     const exists=await storedPresence(owner,ref);if(exists.tombstoned)throw new DomainError('CONFLICT','A deleted canonical source entity cannot be recreated');if(!exists.present)absent();
     const storage=await PostgresProjectionGraph.create(client,owner,release,options.builder,{readOnly:true});
     const view=await storage.readPrivate(owner,ref,budget);
@@ -319,7 +323,7 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
   const canonicalRelated=async(owner:string,ref:ObjectRef,link:string,budget:import('../ontology/object-store.js').ReadBudget)=>{
     if(!canonical||link!=='sourceReceipts'||!canonicalTypes.has(ref.type))throw new SecurityError('AUTHORIZATION_REQUIRED');await canonicalRead(owner,ref,budget);const current=await source();await permission(metadata.model.navigation(ref.type,link).link.id);
     if(!current.selected.outputTypes.includes('SourceReceipt')||!current.admission.grant.outputs.some(value=>value.type==='SourceReceipt'&&value.programId===current.selected.programId&&value.programDigest===current.selected.programDigest&&value.sourceBindingId===current.selected.bindingId))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
-    await authorize(client,claim,options.policyDigest,async(_auth,_admission,principal)=>{const until=await postgresTaskResourceViewValidUntil(client,principal,request.id,options.policyDigest,'objectType','SourceReceipt',options.builder);if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');postgresConstrainReadDeadline(client,until);},options.builder,options.modelChannel,options.inspectClaim);
+    await authorize(client,claim,options.policyDigest,async(_auth,_admission,principal)=>{const until=await postgresTaskResourceViewValidUntil(client,principal,request.id,options.policyDigest,'objectType','SourceReceipt',options.builder);if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');postgresConstrainReadDeadline(client,until);},options.builder,options.modelChannel,leaseCheck);
     const receiptRule=current.admission.grant.outputs.find(value=>value.type==='SourceReceipt'&&value.programId===current.selected.programId&&value.programDigest===current.selected.programDigest&&value.sourceBindingId===current.selected.bindingId),receiptFields=current.admission.parent.resources.find(value=>value.type==='SourceReceipt')?.fields??[],definition=metadata.model.object('SourceReceipt');
     if(!receiptRule||![definition.primaryKey,definition.titleKey,'observedAt'].every(field=>receiptFields.includes(field)&&receiptRule.fields.includes(field)))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
     const storage=await PostgresProjectionGraph.create(client,owner,release,options.builder,{readOnly:true}),rows=await storage.related(owner,ref,link,budget);if(rows===undefined)throw new DomainError('CONFLICT','Canonical source evidence is incomplete');
