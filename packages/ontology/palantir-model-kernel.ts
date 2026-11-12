@@ -18,6 +18,7 @@ import { DERIVED_TYPES, OBJECT_DATASOURCE } from './palantir-datasource-map.js';
  * `changes` target, a mode from the declared operation effect, and the result type
  * they already return. Read-only actions get none, because they write nothing back.
  */
+
 export function extendPalantirModelKernel(original: OntologyDocument): { document: OntologyDocument; summary: Record<string, unknown> } {
   if (original.version !== '36') throw new DomainError('CONFLICT', 'Palantir model metadata requires the reviewed v36 predecessor');
   const document = structuredClone(original);
