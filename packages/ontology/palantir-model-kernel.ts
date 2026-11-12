@@ -1,4 +1,5 @@
 import { DomainError } from '../core/domain.js';
+import { linkTypeDrift } from './link-types.js';
 import type { OntologyDocument } from './definition-contracts.js';
 import type { TrustedDefinitionRegistry } from './model-compiler.js';
 import { DERIVED_TYPES, OBJECT_DATASOURCE } from './palantir-datasource-map.js';
@@ -281,8 +282,13 @@ export function extendPalantirModelKernel(original: OntologyDocument, registry?:
   const capabilityActions = extendInterfaceCapabilityActions(document);
   const interfaceActions = extendInterfaceActions(document);
   document.version = '37';
+  // The registry is checked, never applied. Generated execution relationships are pinned by
+  // object and array identity, so a graph that disagrees with the authoritative table is a fatal
+  // error rather than something the builder silently corrects.
+  const linkDrift = linkTypeDrift(document.links as never);
+  if (linkDrift.length) throw new Error(`Link types drifted from the authoritative table: ${linkDrift.slice(0, 5).join('; ')}`);
   return {
     document,
-    summary: { capabilityActions, sharedPropertyTypes, sharedProperties, interfaceActions, interfaceIdentity, relocatedRoles, withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
+    summary: { linkTypes: (document.links as unknown as unknown[]).length, capabilityActions, sharedPropertyTypes, sharedProperties, interfaceActions, interfaceIdentity, relocatedRoles, withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
   };
 }
