@@ -50,6 +50,7 @@ const propertySchema = z.strictObject({
 const properties = z.record(nameSchema, propertySchema).refine(value => Object.keys(value).length <= 300, 'Too many properties');
 const inputTypes = z.record(nameSchema, nameSchema).refine(value => Object.keys(value).length <= 100, 'Too many inputs');
 const actionMap = z.record(nameSchema, z.strictObject({ actionId: nameSchema, inputMap: z.record(nameSchema, nameSchema), outputMap: z.record(nameSchema, nameSchema).optional() }));
+export const linkRoleSchema = z.enum(['EvidenceOf', 'Observation', 'Scope', 'LocationRole', 'Schedule']);
 const interfaceImplementation = z.strictObject({ id: nameSchema, propertyMap: z.record(nameSchema, nameSchema).optional(), linkMap: z.record(nameSchema, nameSchema).optional(), actionMap: actionMap.optional() });
 export const serializableObjectTypeSchema = z.strictObject({
   resourceId: resourceIdSchema, id: nameSchema, version: versionSchema, name: text, aliases: z.array(z.string().min(1).max(500)).max(100), description: text,
@@ -67,7 +68,7 @@ export const serializableInterfaceSchema = z.strictObject({
   actions: z.array(z.strictObject({ id: nameSchema, inputs: inputTypes, effects, resultTypes: names.optional(), optional: z.boolean().optional(), ports: z.strictObject({ inputs: z.record(nameSchema, compositionPortSchema), outputs: z.record(nameSchema, compositionPortSchema) }).optional() })).max(100).optional(),
 });
 const endpoint = z.strictObject({ type: nameSchema, name: nameSchema, many: z.boolean(), required: z.boolean().optional() });
-export const serializableLinkSchema = z.strictObject({ resourceId: resourceIdSchema, id: nameSchema, description: text, from: endpoint, to: endpoint, writePolicy: z.enum(['managed', 'source']), properties: properties.optional() });
+export const serializableLinkSchema = z.strictObject({ resourceId: resourceIdSchema, id: nameSchema, description: text, from: endpoint, to: endpoint, writePolicy: z.enum(['managed', 'source']), properties: properties.optional(), roles: z.array(linkRoleSchema).max(4).optional() });
 export const serializableActionSchema = z.strictObject({
   resourceId: resourceIdSchema, id: nameSchema, version: versionSchema.optional(), kind: z.enum(['decision', 'source_read', 'business']).optional(),
   effects: effects.optional(), resultTypes: names.optional(), description: text, inputs: inputTypes,

@@ -1,1 +1,1 @@
-export const INTERFACE_CONTRACT_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '36', digest: '441c9697bde4555db8543aeb4da6fe4eeee2dfec554cb40a1c854c70142b85d7' });
+export const INTERFACE_CONTRACT_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '36', digest: '60e6d7253af1c9b9e88e9d12bcd0eb8559122aa15bd63499a9e621a41a319182' });
