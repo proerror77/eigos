@@ -1,34 +1,31 @@
-# datasource 推导（第一遍扫描）
+# datasource 推导（第二遍：四路扫描）
 
-- 对象类型：204
-- 能定位到写入方：58
-- 定位不到：146
+- 对象类型 204
+- 已推导出 datasource：136
+- 仍缺：68
 
-定位不到不等于没有数据源，只说明「字面量 type + ingest/objects.push 同文件」这条启发式覆盖不到（变量拼装、路由层、postgres 写入、按请求构造的投影都不在内）。
+## 已推导的分布
 
-## 已定位（示例）
+- `api://` 81（写入点在 `packages/capabilities/<provider>`）
+- `dataset://` 25（写入点在投影/agent 模块）
+- `internal://` 28（网关/核心内部写入）
+- `store://business` 2（postgres 写入）
+- 94 个类型有多处证据（需人工择一，不自动挑）
 
-- `ServiceRequest` ← capabilities/booking, capabilities/catalog-agent.ts, capabilities/commerce-agent.ts, capabilities/didi, capabilities/domain-agent.ts, capabilities/free-booking, capabilities/geo-agent.ts, capabilities/local-artifact-agent.ts, capabilities/meituan-agent.ts, capabilities/paotui-agent.ts, capabilities/payment-commerce, capabilities/rollinggo, capabilities/sandbox-agent.ts, capabilities/shopify, capabilities/ucp, /Users/proerror/Documents/eigos-worktrees/kernel-cow/packages/coordinator/composition-program.ts, ontology/booking-functions.ts, ontology/capability-catalog.ts, ontology/catalog-agent-projection.ts, ontology/catalog-projection.ts, ontology/commerce-journey-projection.ts, ontology/commerce-projection.ts, ontology/composition-kernel.ts, ontology/customs-policy.ts, ontology/didi-order-test-functions.ts, ontology/domain-projection.ts, ontology/free-booking-functions.ts, ontology/meituan-read-projection.ts, ontology/offer-selection.ts, ontology/paotui-agent-projection.ts, ontology/paotui-business-context.ts, ontology/ride-booking-functions.ts, ontology/ride-estimate-projection.ts, ontology/sandbox-business-projection.ts, ontology/shopify-pa-payment-functions.ts, ontology/stripe-payment-functions.ts, ontology/task-projection.ts
-- `Proposal` ← ontology/offer-selection.ts
-- `Provider` ← ontology/catalog-agent-projection.ts, ontology/catalog-projection.ts, ontology/paotui-business-context.ts, ontology/ride-estimate-projection.ts
-- `Channel` ← ontology/catalog-agent-projection.ts, ontology/catalog-projection.ts, ontology/paotui-business-context.ts
-- `SavedAddress` ← ontology/paotui-business-context.ts
-- `Parcel` ← ontology/paotui-business-context.ts
-- `DeliveryRoute` ← ontology/paotui-business-context.ts
-- `DeliveryQuote` ← capabilities/paotui-agent.ts, ontology/offer-selection.ts, ontology/paotui-agent-projection.ts
-- `ProductVariant` ← ontology/catalog-agent-projection.ts, ontology/catalog-projection.ts, ontology/commerce-projection.ts
-- `ProductOffer` ← ontology/catalog-agent-projection.ts, ontology/catalog-projection.ts
-- `Order` ← ontology/commerce-projection.ts
-- `OrderLine` ← ontology/commerce-projection.ts
-- `AfterSalesCase` ← ontology/sandbox-business-projection.ts
-- `SourceReceipt` ← capabilities/geo-agent.ts, capabilities/payment-commerce, capabilities/rollinggo, capabilities/sandbox-agent.ts, capabilities/shopify, capabilities/ucp, ontology/booking-functions.ts, ontology/catalog-agent-projection.ts, ontology/catalog-projection.ts, ontology/commerce-journey-projection.ts, ontology/commerce-projection.ts, ontology/didi-order-test-functions.ts, ontology/errand-domain.ts, ontology/free-booking-functions.ts, ontology/identity-mapping.ts, ontology/meituan-read-projection.ts, ontology/paotui-agent-projection.ts, ontology/ride-booking-functions.ts, ontology/ride-estimate-projection.ts, ontology/shopify-pa-payment-functions.ts, ontology/stripe-payment-functions.ts, ontology/task-projection.ts
-- `RideRoute` ← ontology/ride-estimate-projection.ts
-- `CheckoutRequest` ← ontology/capability-catalog.ts, ontology/commerce-projection.ts
-- `CheckoutSession` ← ontology/commerce-projection.ts
-- `CatalogRead` ← ontology/catalog-projection.ts
-- `CatalogTask` ← capabilities/catalog-agent.ts
-- `CatalogObservation` ← ontology/catalog-agent-projection.ts
+## 仍缺的 68 个（按能力系列分组）
 
-## 未定位（前 40）
+- 其他 系列：31
+- Vehicle 系列：6
+- Transport 系列：5
+- Food 系列：5
+- Hotel 系列：5
+- Itinerary 系列：5
+- Ride 系列：4
+- Appointment 系列：4
+- Medical 系列：3
 
-`Authorization`, `OutcomeAssessment`, `ChannelParticipation`, `ServiceEngagement`, `Place`, `Shipment`, `DeliveryEvent`, `DeliveryAllocation`, `Venue`, `ReservationSlot`, `ReservationOffer`, `Reservation`, `Payment`, `Refund`, `RideRequest`, `RideOption`, `RideTrip`, `RideRouteObservation`, `TransportVehicle`, `TransportVehicleObservation`, `TransportDriver`, `TransportDriverObservation`, `TransportAssignment`, `TransportAssignmentObservation`, `AppointmentRequest`, `AppointmentOption`, `MedicalAppointment`, `Hospital`, `HospitalObservation`, `MedicalDepartment`, `MedicalDepartmentObservation`, `Practitioner`, `PractitionerObservation`, `PatientProfile`, `PatientProfileObservation`, `AppointmentSlot`, `AppointmentSlotObservation`, `FoodRequest`, `FoodOption`, `FoodDelivery`
+这些类型的写入点用模板拼类型名（`${subject.type}…`），字面量扫描不到；下一步按「能力系列 → provider」映射，逐个列出证据，仍然不猜具体单类型。
+
+## 逐类型明细
+
+`datasource-derived.json`（含 evidence 文件路径）
