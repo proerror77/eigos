@@ -73,7 +73,7 @@ export const serializableInterfaceSchema = z.strictObject({
   actions: z.array(z.strictObject({ id: nameSchema, inputs: inputTypes, effects, resultTypes: names.optional(), optional: z.boolean().optional(), ports: z.strictObject({ inputs: z.record(nameSchema, compositionPortSchema), outputs: z.record(nameSchema, compositionPortSchema) }).optional() })).max(100).optional(),
 });
 const endpoint = z.strictObject({ type: nameSchema, name: nameSchema, many: z.boolean(), required: z.boolean().optional() });
-export const serializableLinkSchema = z.strictObject({ resourceId: resourceIdSchema, id: nameSchema, description: text, from: endpoint, to: endpoint, writePolicy: z.enum(['managed', 'source']), properties: properties.optional(), roles: z.array(linkRoleSchema).max(4).optional() });
+export const serializableLinkSchema = z.strictObject({ resourceId: resourceIdSchema, id: nameSchema, description: text, from: endpoint, to: endpoint, writePolicy: z.enum(['managed', 'source']), properties: properties.optional(), roles: z.array(linkRoleSchema).max(4).optional(), extensions: z.strictObject({ roles: z.array(linkRoleSchema).max(4).optional() }).optional() });
 export const serializableActionSchema = z.strictObject({
   resourceId: resourceIdSchema, id: nameSchema, version: versionSchema.optional(), kind: z.enum(['decision', 'source_read', 'business']).optional(),
   effects: effects.optional(), resultTypes: names.optional(), description: text, inputs: inputTypes,

@@ -62,9 +62,21 @@ export function extendPalantirModelKernel(original: OntologyDocument, registry?:
     writebackCount++;
   }
 
+  // Palantir has no `roles` on a link type; relationship semantics live in the type
+  // itself. Our role facets are an EIGOS idea, so they move under `extensions` rather
+  // than sitting at the top level as if Palantir defined them.
+  let relocatedRoles = 0;
+  for (const link of document.links as unknown as Record<string, unknown>[]) {
+    const roles = link.roles as unknown;
+    if (!Array.isArray(roles) || !roles.length) continue;
+    link.extensions = { roles };
+    delete link.roles;
+    relocatedRoles++;
+  }
+
   document.version = '37';
   return {
     document,
-    summary: { withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
+    summary: { relocatedRoles, withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
   };
 }
