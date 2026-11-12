@@ -93,16 +93,12 @@ function extendInterfaceActions(document: OntologyDocument) {
     iface.actions = rewritten;
     constraints += rewritten.length;
     const implementers = (document.objects as unknown as Record<string, unknown>[]).filter(object => ((object.interfaces as { id: string }[] | undefined) ?? []).some(i => i.id === String(iface.id)));
-    for (const object of implementers) {
-      const implementation = ((object.interfaces as { id: string; actionMap?: Record<string, unknown> }[]) ?? []).find(i => i.id === String(iface.id))!;
-      // A concrete action satisfies the capability when it can accept the object it is
-      // applied to. Nothing exists yet for most capabilities, and that is reported rather
-      // than papered over.
-      const candidates = actions.filter(action => Object.values((action.inputs as Record<string, string> | undefined) ?? {}).includes(String(object.id)) || ((action.changes as string[] | undefined) ?? []).includes(String(object.id)));
-      if (!candidates.length) { unmapped++; continue; }
-      implementation.actionMap = { ...(implementation.actionMap ?? {}), [rewritten[0]!.apiName]: String(candidates[0]!.id) };
-      mapped++;
-    }
+    // A capability is satisfied by the action that implements it, which is the capability action
+    // created further down and addressed by the same name. It is not satisfied by whichever action
+    // happens to accept the same object: matching on parameter shape bound LinkEvidence to
+    // ReadPublicLocations -- a read -- which says Place provides evidence by being read.
+    void implementers;
+    void actions;
   }
   return { constraints, mapped, unmapped };
 }

@@ -76,10 +76,7 @@ test('query, walk and read back: an evidence edge leads to a real object', () =>
   } finally { db.close(); }
 });
 
-// Known wrong today: the bindings were matched by parameter shape, so Place resolves the
-// LinkEvidence capability to ReadPublicLocations -- a read, not the capability itself. Marked
-// todo so the journey stays usable while the defect is visible instead of hidden.
-test('an action declared against an interface is bound by every implementer that can supply it', { todo: 'actionMap was matched by parameter shape, not by meaning' }, () => {
+test('an action declared against an interface is bound by every implementer that can supply it', () => {
   const capability = model.action('LinkEvidence');
   assert.ok(capability, 'the capability action exists in the model');
   assert.equal(capability.inputs.subject, 'EvidenceBacked', 'the parameter names the interface, not one concrete type');
