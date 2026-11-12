@@ -182,6 +182,11 @@ function freezeRelease<T>(value: T): T {
  */
 const FULL_PINS = process.env.EIGOS_KERNEL_PINS === 'full';
 export function assertRelease(seed: SeedDefinition, expected: { id: string; version: string; digest: string }, label: string): void {
+  // Every pinned version is kept as the body that produced it. This is the record a later rebuild
+  // reads from, so a release stops being a recipe re-run from today's modules.
+  if (!SEED_RELEASE_SNAPSHOTS.some(entry => entry.version === expected.version)) {
+    SEED_RELEASE_SNAPSHOTS.push({ id: seed.document.id, version: expected.version, documentDigest: digest(seed.document), document: seed.document });
+  }
   if (!FULL_PINS && expected.version !== CURRENT_KERNEL_VERSION) return;
   if (digest(seed.audit.model) !== digest(expected)) throw new DomainError('CONFLICT', `${label} changed`);
 }
@@ -199,9 +204,7 @@ function complete(document: OntologyDocument, registry: TrustedDefinitionRegistr
   freezeRelease(document);
   registry.protect(document);
   const documentDigest = digest(document);
-  if (!SEED_RELEASE_SNAPSHOTS.some(entry => entry.version === document.version)) {
-    SEED_RELEASE_SNAPSHOTS.push({ id: document.id, version: document.version, documentDigest, document });
-  }
+
   // Compiling is only needed when someone asks for the model. The chain publishes
   // sixteen intermediate releases that nobody reads a model from, so compiling
   // them eagerly cost ~85% of the build for fingerprints alone.
