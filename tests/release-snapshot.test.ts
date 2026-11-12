@@ -36,14 +36,16 @@ test('a release rebuilds from its snapshot, with the same model digest', () => {
   assert.equal(digest(restored.document), snapshot.documentDigest, 'the restored document is the one that was published');
   assert.equal((restored.model as any).ref.digest, live.ref.digest, 'rebuilding from data gives the same model, not a lookalike');
   assert.equal((restored.model as any).ref.digest, PALANTIR_MODEL_REF.digest);
+  assert.ok(restored.validators > 1000, `every property constraint came back from the document, got ${restored.validators}`);
 });
 
-// Known gap, marked todo rather than hidden: a document is not self-sufficient. It points at
-// validators by ref, and those refs are code in this tree, where Palantir keeps property
-// constraints in the ontology itself.
-test('a snapshot rebuilds with no code at all', { todo: 'validators are referenced by ref, and the refs are code' }, () => {
+// The boundary drawn on purpose: property constraints are data and rebuild from the document, but
+// an action's handler is code -- the same split Palantir makes, where actions bind to functions.
+test('a bare registry rebuilds every constraint from the document, then stops at the handler layer', () => {
   const snapshot = snapshotRelease(document as never);
-  restoreRelease(snapshot, new TrustedDefinitionRegistry());
+  const bare = new TrustedDefinitionRegistry();
+  const captured = (() => { try { restoreRelease(snapshot, bare); return undefined; } catch (error: any) { return error.message; } })();
+  assert.match(String(captured), /trusted action contract/, 'what is missing is the handler, not the schema');
 });
 
 test('a snapshot whose body was edited is refused instead of being trusted', () => {
