@@ -104,6 +104,65 @@ function extendInterfaceActions(document: OntologyDocument) {
   return { constraints, mapped, unmapped };
 }
 
+
+/**
+ * Shared properties beyond identity. A property every implementer already carries, with the
+ * same kind, is what the interface can legitimately promise: it is a fact about the data, not
+ * a new requirement invented by the interface. Anything that only some implementers carry is
+ * left alone, and properties the interface already declares are untouched.
+ */
+function extendSharedProperties(document: OntologyDocument) {
+  let interfaces = 0, declared = 0, mappings = 0;
+  const allInterfaces = document.interfaces as unknown as Record<string, unknown>[];
+  // A name already promised by another interface keeps its single contract: two interfaces
+  // with different wording of the same property would make every joint implementer invalid.
+  const promised = new Set(allInterfaces.flatMap(iface => Object.keys((iface.properties as Record<string, unknown> | undefined) ?? {})));
+  for (const iface of allInterfaces) {
+    const ifaceId = String(iface.id);
+    const implementers = (document.objects as unknown as Record<string, unknown>[]).filter(object => ((object.interfaces as { id: string }[] | undefined) ?? []).some(i => i.id === ifaceId));
+    if (implementers.length < 2) continue;
+    const properties = (iface.properties as Record<string, Record<string, unknown>> | undefined) ?? {};
+    const taken = new Set(Object.keys(properties));
+    const shared: string[] = [];
+    const first = (implementers[0]!.properties as Record<string, { kind: string; source?: string; required?: boolean; schema?: Record<string, unknown> }> | undefined) ?? {};
+    for (const [name, definition] of Object.entries(first)) {
+      if (taken.has(name) || promised.has(name) || name === String(implementers[0]!.primaryKey) || definition.source === 'derived') continue;
+      // Only value kinds with a primitive JSON type can be promised at interface level.
+      if (!['string', 'timestamp', 'number', 'decimal', 'integer', 'boolean'].includes(definition.kind)) continue;
+      const common = implementers.every(object => {
+        const candidate = ((object.properties as Record<string, { kind: string; source?: string }> | undefined) ?? {})[name];
+        return !!candidate && candidate.kind === definition.kind && candidate.source !== 'derived';
+      });
+      if (common) shared.push(name);
+    }
+    if (!shared.length) continue;
+    for (const name of shared.slice(0, 12)) {
+      const definition = first[name]!;
+      // A shared property states the shape every implementer already satisfies. Constraints
+      // that only one implementation could honour (pattern, validator binding) are not part of
+      // that promise, and an interface property cannot carry a validator anyway.
+      // The interface promises the kind of value, not one implementation's pattern or validator
+      // binding: those are narrowing constraints no sibling could be expected to honour.
+      const primitive: Record<string, string> = { string: 'string', identity: 'string', timestamp: 'string', number: 'number', decimal: 'number', integer: 'integer', boolean: 'boolean' };
+      const declaredSchema: Record<string, unknown> = { type: primitive[definition.kind] ?? 'string' };
+      if (definition.kind === 'timestamp') declaredSchema.format = 'date-time';
+      properties[name] = { kind: definition.kind, source: 'managed', required: false, schema: declaredSchema, description: 'Shared property; every implementer already carries it' };
+      shared.push(name);
+    }
+    iface.properties = properties;
+    iface.optionalProperties = [...new Set([...(iface.optionalProperties as string[] | undefined ?? []), ...shared].filter(name => name in properties))];
+    interfaces++;
+    declared += shared.length;
+    for (const object of implementers) {
+      const implementation = ((object.interfaces as { id: string; propertyMap?: Record<string, string> }[]) ?? []).find(i => i.id === ifaceId)!;
+      const map = { ...(implementation.propertyMap ?? {}) };
+      for (const name of shared) { if (!(name in map) && name !== String(object.primaryKey)) { map[name] = name; mappings++; } }
+      implementation.propertyMap = map;
+    }
+  }
+  return { interfaces, declared, mappings };
+}
+
 export function extendPalantirModelKernel(original: OntologyDocument, registry?: TrustedDefinitionRegistry): { document: OntologyDocument; summary: Record<string, unknown> } {
   if (original.version !== '36') throw new DomainError('CONFLICT', 'Palantir model metadata requires the reviewed v36 predecessor');
   const document = structuredClone(original);
@@ -155,10 +214,11 @@ export function extendPalantirModelKernel(original: OntologyDocument, registry?:
   }
 
   const interfaceIdentity = extendInterfaceIdentity(document);
+  const sharedProperties = extendSharedProperties(document);
   const interfaceActions = extendInterfaceActions(document);
   document.version = '37';
   return {
     document,
-    summary: { interfaceActions, interfaceIdentity, relocatedRoles, withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
+    summary: { sharedProperties, interfaceActions, interfaceIdentity, relocatedRoles, withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
   };
 }
