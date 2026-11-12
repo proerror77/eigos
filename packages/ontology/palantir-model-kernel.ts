@@ -1,5 +1,5 @@
 import { DomainError } from '../core/domain.js';
-import { linkTypeDrift } from './link-types.js';
+import { LINK_TYPE_BY_API_NAME, linkTypeDrift } from './link-types.js';
 import type { OntologyDocument } from './definition-contracts.js';
 import type { TrustedDefinitionRegistry } from './model-compiler.js';
 import { DERIVED_TYPES, OBJECT_DATASOURCE } from './palantir-datasource-map.js';
@@ -287,8 +287,24 @@ export function extendPalantirModelKernel(original: OntologyDocument, registry?:
   // error rather than something the builder silently corrects.
   const linkDrift = linkTypeDrift(document.links as never);
   if (linkDrift.length) throw new Error(`Link types drifted from the authoritative table: ${linkDrift.slice(0, 5).join('; ')}`);
+  // Structure comes from the registry, applied without inventing keys: the compiler compares a
+  // digest of each link definition against the canonical generated one, and an explicit
+  // `many: false` where the declaration had no key at all changes that digest. Only an existing
+  // field whose value differs is rewritten.
+  let reshaped = 0;
+  for (const link of document.links as unknown as Record<string, any>[]) {
+    const declaration = LINK_TYPE_BY_API_NAME.get(String(link.id));
+    if (!declaration) continue;
+    for (const [side, type, name, many, required] of [['from', declaration.from, declaration.fromName, declaration.fromMany, declaration.fromRequired], ['to', declaration.to, declaration.toName, declaration.toMany, declaration.toRequired]] as const) {
+      const end = link[side];
+      if (end.type !== type) { end.type = type; reshaped++; }
+      if (end.name !== name) { end.name = name; reshaped++; }
+      if ('many' in end && !!end.many !== many) { end.many = many; reshaped++; }
+      if ('required' in end && !!end.required !== required) { end.required = required; reshaped++; }
+    }
+  }
   return {
     document,
-    summary: { linkTypes: (document.links as unknown as unknown[]).length, capabilityActions, sharedPropertyTypes, sharedProperties, interfaceActions, interfaceIdentity, relocatedRoles, withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
+    summary: { reshaped, linkTypes: (document.links as unknown as unknown[]).length, capabilityActions, sharedPropertyTypes, sharedProperties, interfaceActions, interfaceIdentity, relocatedRoles, withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
   };
 }
