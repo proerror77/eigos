@@ -372,7 +372,12 @@ export class OntologyModel {
         if (parameters?.length) {
           // The satisfying action must be able to accept every declared parameter.
           const actualTypes = Object.values(action.inputs ?? {}) as string[];
-          const satisfied = parameters.every(parameter => actualTypes.some(type => this.assignableType(type, parameter.type) || this.assignableType(parameter.type, type)));
+          // Palantir: object reference, interface reference and object set parameters describe
+          // the general kind, not one concrete object type, so any object-typed input satisfies them.
+          const generic = new Set(['interface', 'objectReference', 'objectSet', 'attachment', 'struct']);
+          const satisfied = parameters.every(parameter => generic.has(parameter.type)
+            ? actualTypes.some(type => this.hasType(type))
+            : actualTypes.some(type => this.assignableType(type, parameter.type) || this.assignableType(parameter.type, type)));
           if (!satisfied) invalid('Incompatible interface action mapping');
           continue;
         }

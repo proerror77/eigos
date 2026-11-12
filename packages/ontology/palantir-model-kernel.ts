@@ -62,6 +62,48 @@ function extendInterfaceIdentity(document: OntologyDocument): { interfaces: numb
   return { interfaces, mapped };
 }
 
+
+/**
+ * Palantir interface action type constraints describe a capability — a name, whether it is
+ * required, and the shape of its parameters. Execution logic, submission criteria, side
+ * effects and writeback belong to the satisfying action type. EIGOS declared effects and
+ * input types on the constraint, so they are rewritten here; each implementing object type
+ * then maps the capability onto a concrete action through actionMap.
+ */
+function extendInterfaceActions(document: OntologyDocument) {
+  let constraints = 0, mapped = 0, unmapped = 0;
+  const interfaces = new Map((document.interfaces as unknown as Record<string, unknown>[]).map(i => [String(i.id), i]));
+  const isInterface = (name: string) => interfaces.has(name);
+  const actions = document.actions as unknown as Record<string, unknown>[];
+  for (const iface of interfaces.values()) {
+    const declared = ((iface.actions as Record<string, unknown>[] | undefined) ?? (iface.actionConstraints as Record<string, unknown>[] | undefined) ?? []);
+    if (!declared.length) continue;
+    const rewritten = declared.map(constraint => {
+      const inputs = (constraint.inputs as Record<string, string> | undefined) ?? {};
+      return {
+        apiName: String(constraint.apiName ?? constraint.id),
+        required: constraint.required ?? !constraint.optional,
+        description: (constraint.description as string | undefined) ?? 'Capability declared by the interface; behaviour is defined on the satisfying action type.',
+        parameters: Object.entries(inputs).map(([apiName, type]) => ({ apiName, type: isInterface(type) ? 'interface' : 'objectReference', required: true, many: false })),
+      };
+    });
+    iface.actions = rewritten;
+    constraints += rewritten.length;
+    const implementers = (document.objects as unknown as Record<string, unknown>[]).filter(object => ((object.interfaces as { id: string }[] | undefined) ?? []).some(i => i.id === String(iface.id)));
+    for (const object of implementers) {
+      const implementation = ((object.interfaces as { id: string; actionMap?: Record<string, unknown> }[]) ?? []).find(i => i.id === String(iface.id))!;
+      // A concrete action satisfies the capability when it can accept the object it is
+      // applied to. Nothing exists yet for most capabilities, and that is reported rather
+      // than papered over.
+      const candidates = actions.filter(action => Object.values((action.inputs as Record<string, string> | undefined) ?? {}).includes(String(object.id)) || ((action.changes as string[] | undefined) ?? []).includes(String(object.id)));
+      if (!candidates.length) { unmapped++; continue; }
+      implementation.actionMap = { ...(implementation.actionMap ?? {}), [rewritten[0]!.apiName]: String(candidates[0]!.id) };
+      mapped++;
+    }
+  }
+  return { constraints, mapped, unmapped };
+}
+
 export function extendPalantirModelKernel(original: OntologyDocument, registry?: TrustedDefinitionRegistry): { document: OntologyDocument; summary: Record<string, unknown> } {
   if (original.version !== '36') throw new DomainError('CONFLICT', 'Palantir model metadata requires the reviewed v36 predecessor');
   const document = structuredClone(original);
@@ -113,9 +155,10 @@ export function extendPalantirModelKernel(original: OntologyDocument, registry?:
   }
 
   const interfaceIdentity = extendInterfaceIdentity(document);
+  const interfaceActions = extendInterfaceActions(document);
   document.version = '37';
   return {
     document,
-    summary: { interfaceIdentity, relocatedRoles, withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
+    summary: { interfaceActions, interfaceIdentity, relocatedRoles, withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
   };
 }
