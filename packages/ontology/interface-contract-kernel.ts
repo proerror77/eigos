@@ -92,6 +92,38 @@ export function extendInterfaceContractsKernel(original: OntologyDocument, regis
     } else summary.skippedIdentity += implementers.length;
     summary.interfaces.push(iface.id);
 
+    // Relationship constraints: a target becomes required only when every
+    // implementer reaches it through exactly one link of the same cardinality.
+    // Anything else is counted, never guessed.
+    const targets = new Map<string, { many: boolean; perObject: Map<string, string>; mixed: boolean; duplicate: boolean }>();
+    for (const object of implementers) {
+      for (const link of document.links.filter(item => item.from.type === object.id)) {
+        const entry = targets.get(link.to.type) ?? { many: link.from.many, perObject: new Map<string, string>(), mixed: false, duplicate: false };
+        if (entry.many !== link.from.many) entry.mixed = true;
+        if (entry.perObject.has(object.id)) entry.duplicate = true;
+        else entry.perObject.set(object.id, link.from.name);
+        targets.set(link.to.type, entry);
+      }
+    }
+    const publishable = [...targets.entries()].filter(([target, entry]) => !entry.mixed && !entry.duplicate && entry.perObject.size >= 2 && /^[A-Za-z][A-Za-z0-9]*$/.test(target));
+    for (const [target, entry] of publishable) {
+      const name = `${iface.id.charAt(0).toLowerCase()}${iface.id.slice(1)}${target}`;
+      // A constraint every implementer satisfies is required; one only some reach is
+      // published as optional so descendants are not forced to invent the link.
+      const hasChildren = document.interfaces.some(item => (item.parents ?? []).includes(iface.id));
+      const optional = hasChildren || entry.perObject.size !== implementers.length;
+      iface.links = [...(iface.links ?? []), { name, target, many: entry.many, optional }];
+      summary[optional ? 'optionalLinks' : 'requiredLinks']++;
+      for (const object of implementers) {
+        const actual = entry.perObject.get(object.id);
+        if (!actual) continue;
+        const implementation = (object.interfaces ?? []).find(item => item.id === iface.id)!;
+        implementation.linkMap = { ...(implementation.linkMap ?? {}), [name]: actual };
+        summary.linkMaps++;
+      }
+    }
+    summary.skippedLinks += targets.size - publishable.length;
+
     // Properties every implementer declares under the same name.
     for (const name of Object.keys(first.properties)) {
       if (name === 'id' || name === first.primaryKey || parentNames.has(name) || declaredAnywhere.has(name) || Object.hasOwn(iface.properties, name)) continue;
@@ -115,24 +147,6 @@ export function extendInterfaceContractsKernel(original: OntologyDocument, regis
       if (Object.keys(map).length) { implementation.propertyMap = map; summary.propertyMaps++; }
     }
 
-    // Relationship targets reached by every implementer with one cardinality.
-    const allTargets = new Set<string>();
-    for (const object of implementers) for (const link of document.links.filter(item => item.from.type === object.id)) allTargets.add(link.to.type);
-    const targets = new Map<string, { name: string; target: string; many: boolean; perObject: Map<string, string> }>();
-    for (const target of [...allTargets].sort()) {
-      if (!/^[A-Za-z][A-Za-z0-9]*$/.test(target)) { summary.skippedLinks++; continue; }
-      const lists = implementers.map(object => document.links.filter(link => link.from.type === object.id && link.to.type === target));
-      if (lists.some(list => list.length !== 1)) { summary.skippedLinks++; continue; }
-      const many = lists[0]![0]!.from.many;
-      if (!lists.every(list => list[0]!.from.many === many)) { summary.skippedLinks++; continue; }
-      targets.set(target, { name: `${iface.id.charAt(0).toLowerCase()}${iface.id.slice(1)}${target}`, target, many, perObject: new Map(implementers.map((object, index) => [object.id, lists[index]![0]!.id])) });
-    }
-    // Relationship constraints are derived but not published in this release:
-    // the model resolves each constraint against every implementer's own links,
-    // and a partially shared target cannot be declared required. The count is
-    // reported so the next release can carry them with per-link evidence.
-    summary.requiredLinks += targets.size;
-    summary.skippedLinks += allTargets.size - targets.size;
   }
 
   // Identity may be declared on a parent interface (CitableObject) while a type
