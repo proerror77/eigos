@@ -1,4 +1,5 @@
 import { postgresSelectBatch, type PostgresSelect, type PostgresSelectResult } from './read-batch.js';
+import {noteRead} from './read-attribution.js';
 import {consentExpirySchema} from '../security/consent-lifetime.js';
 import {postgresConsentDeadline,postgresConsentIndex} from './consent.js';
 import {postgresIsNewTaskGrant} from './task-grants.js';
@@ -208,7 +209,7 @@ async function postgresAgentAdmission(client: Client, principal: Principal, poli
     || digest([...actor.tokenScopes].sort()) !== digest([...new Set(principal.scopes)].sort())) throw new SecurityError('AUTHORIZATION_REQUIRED');
   const now = Date.now();
   const identityQuery = agentAdmissionSelect(q, actor.installationId);
-  const row = (supplied?.[0] ?? await client.query(identityQuery.text, [...identityQuery.values])).rows[0];
+  noteRead('admission:identity-fence');const row = (supplied?.[0] ?? await client.query(identityQuery.text, [...identityQuery.values])).rows[0];
   const revision = Number(row?.policy_revision), managerExpiry = Number(row?.manager_expires_at),currentEligibility=postgresCanInspectEligibility(client);
   if (!row || !Number.isSafeInteger(revision) || revision < 1 || row.policy_digest !== policyDigest || !Number.isSafeInteger(managerExpiry) || (!currentEligibility&&managerExpiry <= now)) throw new SecurityError('AUTHORITY_UNAVAILABLE');
   const epoch = Number(row.epoch), subjectExpiry = Number(row.valid_until);
@@ -216,7 +217,7 @@ async function postgresAgentAdmission(client: Client, principal: Principal, poli
     || row.state !== 'active' || row.fenced !== false || !Number.isSafeInteger(subjectExpiry) || (!currentEligibility&&subjectExpiry <= now)) throw new SecurityError('ACCESS_REVOKED');
   if (!Number.isSafeInteger(epoch) || epoch !== actor.authEpoch) throw new SecurityError('POLICY_CHANGED');
   const parentQuery = parentAdmissionSelect(q, actor.installationId, now);
-  const parentRows = supplied?.[1] ?? await client.query(parentQuery.text, [...parentQuery.values]);
+  noteRead('admission:parent-grant');const parentRows = supplied?.[1] ?? await client.query(parentQuery.text, [...parentQuery.values]);
   const parentRow = parentRows.rows[0];
   if (parentRows.rowCount !== 1 || typeof parentRow?.body !== 'string') throw new SecurityError('AUTHORIZATION_REQUIRED');
   const parent = agentAccessGrantSchema.parse({ ...JSON.parse(String(parentRow.body)), revision:Number(parentRow.revision),status:parentRow.state });
@@ -351,7 +352,7 @@ async function postgresTaskGrant(client: Client, principal: Principal, taskId: s
       : await postgresAgentWriteAdmission(client,principal,policyDigest);
   const {actor,parent}=base;
   const taskQuery = taskGrantSelect(q, id, owner, actor.installationId, now, parent.id, parent.revision);
-  const rows = supplied?.[2] ?? await client.query(taskQuery.text, [...taskQuery.values]);
+  noteRead('admission:task-grant');const rows = supplied?.[2] ?? await client.query(taskQuery.text, [...taskQuery.values]);
   const grantRow = rows.rows[0];
   if (rows.rowCount !== 1 || typeof grantRow?.body !== 'string') throw new SecurityError('AUTHORIZATION_REQUIRED');
   const grant = taskDataGrantSchema.parse({ ...JSON.parse(String(grantRow.body)),revision:Number(grantRow.revision),status:grantRow.state });

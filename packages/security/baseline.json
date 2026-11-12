@@ -5763,7 +5763,7 @@
     {
       "id": "postgres-source-projection",
       "file": "packages/postgres/source-projection.ts",
-      "sourceDigest": "5ba54f83bbf6e40bb989dca9ffdea898ba2a7e5deec6b518cd9ec7ff8bbf66ce",
+      "sourceDigest": "d2aba5f2494f139ab81d72fa9cef319366c38a7069691086247cb64559ed3d24",
       "channels": [
         "internal"
       ],
@@ -5799,7 +5799,7 @@
     {
       "id": "postgres-task-binding-batch",
       "file": "packages/postgres/task-binding-batch.ts",
-      "sourceDigest": "05ffef453107f0d7c7d72690bd6dfa7d931125e6797fc14130f1cac79cc0db54",
+      "sourceDigest": "a293f0087188583df657f9671da21ee2023a00d0724654c105d31119727d4eea",
       "channels": [
         "internal"
       ],
@@ -5811,7 +5811,7 @@
     {
       "id": "postgres-task-bindings",
       "file": "packages/postgres/task-bindings.ts",
-      "sourceDigest": "c379d88e76d9e633863ad78b376e38eab51c2cd965e02e2f4c1f2c59bda99ffe",
+      "sourceDigest": "5ce388055e53066b6286ada702c9af83e2fa6372c0dd50ead73c5c97bd1fa9a1",
       "channels": [
         "internal"
       ],
@@ -5911,7 +5911,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "77eadda331ddb6a14909b5e46c442a727ae23aad920e0afc7ffcd7891095a0da",
+      "sourceDigest": "3dbac738303ff38e5fb7caca9bc8e37ac998b00e03500bd3dd624cd81f91b470",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current task, identity, source and expiry checks remain. Resource roles pin the exact checked task release, independently of the compatible field policy. Raw binding reuse is bounded to 64 entries/8 MiB and the same callback, transaction token, actor, owner, task and grant revisions; public reuse additionally requires the shared read fence.",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"

@@ -1,3 +1,4 @@
+import {noteRead} from './read-attribution.js';
 import {POSTGRES_TASK_BINDING_CHUNK_REFS,PostgresTaskBindingBatch,type PostgresBindingWrite} from './task-binding-batch.js';
 import {postgresTaskReadHistory} from './task-lineage.js';
 import type {Client} from 'pg';
@@ -43,7 +44,7 @@ export class PostgresTaskBindings {
   protected async query(text:string,values:unknown[]=[]){this.assertCurrent();const result=await this.client.query(text,values);this.assertCurrent();return result;}
   private async raw(owner:string,ref:ObjectRef,scope?:{batch:PostgresTaskBindingBatch;grant:TaskGrant}){
     objectRefSchema.parse(ref);
-    const result=scope?.batch.get('raw',scope.grant,ref)??await this.query(`SELECT revision,definition_digest,CASE WHEN octet_length(body)<=1048576 THEN body END AS body
+    noteRead(scope?.batch?'bindings:raw:batched':'bindings:raw:per-ref');const result=scope?.batch.get('raw',scope.grant,ref)??await this.query(`SELECT revision,definition_digest,CASE WHEN octet_length(body)<=1048576 THEN body END AS body
       FROM "${this.schema}".ontology_objects WHERE owner=$1 AND type=$2 AND id=$3 LIMIT 2`,[owner,ref.type,ref.id]);
     const row=result.rows[0];if(result.rowCount!==1||!row||row.body===null)throw new SecurityError('POLICY_CHANGED');
     const revision=Number(row.revision);if(!Number.isSafeInteger(revision)||revision<1)throw new SecurityError('POLICY_CHANGED');
@@ -56,7 +57,7 @@ export class PostgresTaskBindings {
    * writes ontology facts; current labels and private views are still queried. */
   private async envelopeFor(owner:string,ref:ObjectRef,fields:string[],channels:SecurityEnvelope['channels'],row:Awaited<ReturnType<PostgresTaskBindings['raw']>>,scope?:{batch:PostgresTaskBindingBatch;grant:TaskGrant}):Promise<SecurityEnvelope>{
     this.assertCurrent();const policy=(field:string)=>reviewedFieldPolicy(this.model,ref.type,field);
-    const labels=scope?.batch.get('labels',scope.grant,ref)??await this.query(`SELECT field,CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${this.schema}".security_labels
+    noteRead(scope?.batch?'bindings:labels:batched':'bindings:labels:per-ref');const labels=scope?.batch.get('labels',scope.grant,ref)??await this.query(`SELECT field,CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${this.schema}".security_labels
       WHERE owner=$1 AND type=$2 AND object_id=$3 ORDER BY field LIMIT 257`,[owner,ref.type,ref.id]);
     if(labels.rows.length>256||labels.rows.some(row=>row.body===null))throw new SecurityError('OUTPUT_NOT_ALLOWED');
     const restrictions:ObjectRestriction[]=labels.rows.map(row=>({field:String(row.field),...labelSchema.parse(JSON.parse(String(row.body)))}));

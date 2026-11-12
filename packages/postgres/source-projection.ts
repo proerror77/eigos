@@ -2,6 +2,7 @@ import {DomainError} from '../core/domain.js';
 import {postgresConsentDeadline,postgresConstrainConsent} from './consent.js';
 import {randomUUID} from 'node:crypto';
 import type {Client} from 'pg';
+import {noteRead} from './read-attribution.js';
 import {z} from 'zod';
 import {digest} from '../core/delegation.js';
 import {matchesAgentGrant} from '../core/agent-authorization.js';
@@ -208,20 +209,20 @@ async function sourceProjection<T>(client:Client,input:PostgresWorkReference,opt
       const graph=await PostgresProjectionGraph.create(client,claim.owner,release,options.builder);if(managed)await graph.applyManaged(owner,managed,provenance);else await graph.ingest(owner,batch,provenance);
       const binder=new PostgresTaskBindings(client,options.builder);
       for(const object of batch.objects){
-        const row=await client.query(`SELECT revision,definition_digest FROM ${q}.ontology_objects WHERE owner=$1 AND type=$2 AND id=$3 LIMIT 2`,[owner,object.ref.type,object.ref.id]);
+        noteRead('source:revision-read');const row=await client.query(`SELECT revision,definition_digest FROM ${q}.ontology_objects WHERE owner=$1 AND type=$2 AND id=$3 LIMIT 2`,[owner,object.ref.type,object.ref.id]);
         if(row.rowCount!==1)throw new SecurityError('POLICY_CHANGED');const revision=Number(row.rows[0].revision);
         const rule=initial.admission.grant.outputs.find(rule=>rule.programId===origin.programId&&rule.programDigest===origin.programDigest&&rule.sourceBindingId===origin.sourceBindingId&&rule.type===object.ref.type)!;
         const permit:PostgresSourceBindingPermit=Object.freeze({[brand]:true as const});
         permits.set(permit,{client,token,grant:initial.admission.grant,ref:object.ref,revision,fingerprint:String(row.rows[0].definition_digest),fields:object.observedFields?rule.fields.filter(field=>object.observedFields!.includes(field)):rule.fields,
           sourceBindingId:origin.sourceBindingId,evidence:inherited,...(metadata.model.hasType('ObservedFact')&&object.reuseIfUnchanged?{sourceObservation:origin}:{}),assertCurrent:current});
-        await binder.bindSourceProjection(permit);
+        noteRead('source:bind');await binder.bindSourceProjection(permit);
         const personal=await personalAsset(object.ref,provenance);
-        const existing=await client.query(`SELECT CASE WHEN octet_length(body)<=8388608 THEN body END AS body FROM ${q}.security_object_origins WHERE owner=$1 AND type=$2 AND object_id=$3 AND object_revision=$4 LIMIT 2`,[owner,object.ref.type,object.ref.id,revision]);
+        noteRead('source:origins-read');const existing=await client.query(`SELECT CASE WHEN octet_length(body)<=8388608 THEN body END AS body FROM ${q}.security_object_origins WHERE owner=$1 AND type=$2 AND object_id=$3 AND object_revision=$4 LIMIT 2`,[owner,object.ref.type,object.ref.id,revision]);
         if(existing.rowCount){if(existing.rowCount!==1||typeof existing.rows[0].body!=='string')throw new SecurityError('POLICY_CHANGED');
           const value=z.looseObject({programId:z.string().min(1),programDigest:z.string().regex(/^[a-f0-9]{64}$/),sourceBindingId:z.string().min(1),inputEnvelope:securityEnvelopeSchema,personalAsset:z.boolean().optional()}).parse(JSON.parse(existing.rows[0].body));
           if(value.inputEnvelope.ownerKey!==owner)throw new SecurityError('POLICY_CHANGED');
           if(!object.reuseIfUnchanged&&(value.programId!==origin.programId||value.programDigest!==origin.programDigest||value.sourceBindingId!==origin.sourceBindingId))throw new SecurityError('SOURCE_NOT_AUTHORIZED');}
-        await client.query(`INSERT INTO ${q}.security_object_origins(owner,type,object_id,object_revision,body) VALUES($1,$2,$3,$4,$5) ON CONFLICT(owner,type,object_id,object_revision) DO NOTHING`,
+        noteRead('source:origins-write');await client.query(`INSERT INTO ${q}.security_object_origins(owner,type,object_id,object_revision,body) VALUES($1,$2,$3,$4,$5) ON CONFLICT(owner,type,object_id,object_revision) DO NOTHING`,
           [owner,object.ref.type,object.ref.id,revision,JSON.stringify({...origin,inputEnvelope:inherited,...(personal?{personalAsset:true}:{})})]);
       }
       // Bind all new endpoints before checking links, exactly as the source

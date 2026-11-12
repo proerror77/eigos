@@ -4,6 +4,7 @@ import {digest} from '../core/delegation.js';
 import type {ObjectRef} from '../ontology/model.js';
 import type {TaskDataGrant} from '../security/store.js';
 import {postgresBusinessToken} from './runtime-transaction.js';
+import {noteRead} from './read-attribution.js';
 
 type Rows={rowCount:number|null;rows:Record<string,unknown>[]};
 type ReadKind='raw'|'previous'|'links'|'labels';
@@ -36,7 +37,7 @@ export class PostgresTaskBindingBatch {
   /** Queries return bounded data and overflow markers. Semantic validation and
    * failures still occur in the original per-reference order in the writer. */
   async load(grant:TaskDataGrant,schema:string,query:(text:string,values:unknown[])=>Promise<QueryResult>,context=true){
-    this.active(grant);if(!/^eigos_business_[a-z0-9_]{1,40}$/.test(schema))throw new Error('Invalid task binding schema');const q=`"${schema}"`,requested=JSON.stringify(this.refs.map((ref,n)=>({n,...ref}))),args=[requested,grant.ownerKey,grant.id,grant.taskId,grant.requestRevision,grant.installationId];
+    this.active(grant);noteRead('bindings:batch-load');if(!/^eigos_business_[a-z0-9_]{1,40}$/.test(schema))throw new Error('Invalid task binding schema');const q=`"${schema}"`,requested=JSON.stringify(this.refs.map((ref,n)=>({n,...ref}))),args=[requested,grant.ownerKey,grant.id,grant.taskId,grant.requestRevision,grant.installationId];
     const run=async(kind:ReadKind,sql:string,decode:(row:Record<string,unknown>)=>Rows|undefined)=>{
       const result=await query(sql,args);this.active(grant);
       if(result.rowCount!==this.refs.length)throw new SecurityError('POLICY_CHANGED');const map=new Map<string,Rows|undefined>();
