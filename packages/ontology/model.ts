@@ -1,6 +1,7 @@
 import { mcpReadBindingSchema, type McpReadBinding } from './mcp-read.js';
 import { z } from 'zod';
 import { isSubtype, propertyTypeOf } from './property-types.js';
+import { LINK_TYPES } from './link-types.js';
 import { paClassificationSchema, paDiscoveryFields, paDiscoverySelection, paDefinitionLinks, type PaClassification, type PaDiscoveryInput } from './pa-classification-contract.js';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -227,7 +228,10 @@ export class OntologyModel {
   private typeDescriptions = new Map<string, object>();
   private actions: ActionDefinition[];
   private functions: FunctionDefinition[];
+  /** The seed version this model was compiled from; the link registry governs only the current one. */
+  private readonly seedVersion: string;
   constructor(definition: ModelDefinition, private options: OntologyModelOptions = {}) {
+    this.seedVersion = definition.version;
     this.criteriaVersion = definition.criteriaVersion;
     Object.defineProperty(this, 'criteriaVersion', { writable: false, configurable: false });
     this.options = freezeMetadata(structuredClone(options));
@@ -590,7 +594,18 @@ export class OntologyModel {
   sides(type: string) {
     let sides = this.linkSides.get(type);
     if (!sides) {
-      sides = this.links.flatMap(link => [
+      // The registry is the authority on which links exist. A link the document no longer carries
+      // is still a relationship of the ontology, so its sides are resolvable: this is what lets a
+      // provider module stop declaring the graph without the interfaces losing their vocabulary.
+      // Only the current version is governed this way; a pinned earlier version is what its release
+      // record says it is, and adding links to it would rewrite a fingerprint that is already fixed.
+      const declared = new Set(this.links.map(link => link.id));
+      const governed = this.seedVersion !== '37' ? [] : LINK_TYPES.filter(linkType => !declared.has(linkType.apiName)).map(linkType => ({
+        id: linkType.apiName,
+        from: { type: linkType.from.type, name: linkType.from.name, many: linkType.from.many ?? false, required: linkType.from.required ?? false },
+        to: { type: linkType.to.type, name: linkType.to.name, many: linkType.to.many ?? false, required: linkType.to.required ?? false },
+      }));
+      sides = [...this.links, ...(governed as unknown as typeof this.links)].flatMap(link => [
         ...(this.implements(type, link.from.type) ? [{ link, side: link.from, other: link.to, direction: 'forward' as const }] : []),
         ...(this.implements(type, link.to.type) ? [{ link, side: link.to, other: link.from, direction: 'reverse' as const }] : []),
       ]);
