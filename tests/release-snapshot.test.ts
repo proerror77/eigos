@@ -4,7 +4,10 @@ import { digest } from '../packages/core/delegation.js';
 import { createInterfaceContractDefinition, PALANTIR_MODEL_REF } from '../packages/ontology/seed-definition.js';
 import { extendPalantirModelKernel } from '../packages/ontology/palantir-model-kernel.js';
 import { compileOntologyDocument, TrustedDefinitionRegistry } from '../packages/ontology/model-compiler.js';
-import { restoreRelease, snapshotRelease } from '../packages/ontology/release-snapshot.js';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { loadReleaseSnapshots, restoreRelease, snapshotRelease } from '../packages/ontology/release-snapshot.js';
 
 /**
  * The point of a snapshot is that the release survives the source tree. These assertions produce the
@@ -53,4 +56,21 @@ test('a snapshot whose body was edited is refused instead of being trusted', () 
   const tampered = { ...snapshot, document: structuredClone(snapshot.document) as any };
   tampered.document.objects[0].properties = {};
   assert.throws(() => restoreRelease(tampered, new TrustedDefinitionRegistry()), /does not match its recorded digest/);
+});
+
+test('a body written to disk is the body that comes back', () => {
+  const snapshot = snapshotRelease(document as never);
+  const dir = mkdtempSync(join(tmpdir(), 'eigos-releases-'));
+  writeFileSync(join(dir, `eigos.business@${snapshot.version}.json`), JSON.stringify(snapshot));
+  const [loaded] = loadReleaseSnapshots(dir);
+  assert.equal(loaded!.documentDigest, snapshot.documentDigest);
+  assert.equal(loaded!.document.objects.length, document.objects.length);
+
+  const second = new TrustedDefinitionRegistry();
+  extendPalantirModelKernel(createInterfaceContractDefinition(second as never).document, second as never);
+  assert.equal((restoreRelease(loaded!, second).model as any).ref.digest, live.ref.digest, 'the file reproduces the release, not a lookalike');
+});
+
+test('a directory with no bodies loads as nothing, not as an error', () => {
+  assert.deepEqual(loadReleaseSnapshots(join(tmpdir(), 'eigos-does-not-exist')), []);
 });

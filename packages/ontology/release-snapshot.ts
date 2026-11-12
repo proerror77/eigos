@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { compileOntologyDocument, type TrustedDefinitionRegistry } from './model-compiler.js';
@@ -30,6 +32,17 @@ export function snapshotRelease(document: OntologyDocument): ReleaseSnapshot {
 }
 
 export class ReleaseSnapshotError extends Error {}
+
+/** Read kept bodies back from wherever they were written. */
+export function loadReleaseSnapshots(dir: string): ReleaseSnapshot[] {
+  let names: string[];
+  try { names = readdirSync(dir).filter(name => name.endsWith('.json')); } catch { return []; }
+  return names.map(name => {
+    const raw = JSON.parse(readFileSync(join(dir, name), 'utf8')) as ReleaseSnapshot;
+    if (!raw?.document || !raw?.documentDigest || !raw?.version) throw new ReleaseSnapshotError(`${name} is not a release body`);
+    return raw;
+  }).sort((left, right) => Number(left.version) - Number(right.version));
+}
 
 /**
  * Property constraints travel with the document.
