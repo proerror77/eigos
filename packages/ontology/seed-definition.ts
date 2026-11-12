@@ -35,6 +35,7 @@ import { extendCheckoutKernel } from './checkout-kernel.js';
 import { extendPAPaymentKernel } from './pa-payment-kernel.js';
 import { extendProviderReadKernel } from './provider-read-kernel.js';
 import { compileOntologyDocument, TrustedDefinitionRegistry } from './model-compiler.js';
+import { loadReleaseSnapshots } from './release-snapshot.js';
 import { parseOntologyDocument, type DefinitionKind, type JsonSchema, type OntologyDocument, type SerializableProperty } from './definition-contracts.js';
 import type { ActionDefinition, InterfaceDefinition, ModelDefinition, ObjectTypeDefinition, OntologyModel, PropertyDefinition } from './model.js';
 
@@ -181,14 +182,19 @@ function freezeRelease<T>(value: T): T {
  * is what CI runs: intermediate releases are reviewed there, not on every boot.
  */
 const FULL_PINS = process.env.EIGOS_KERNEL_PINS === 'full';
-export function assertRelease(seed: SeedDefinition, expected: { id: string; version: string; digest: string }, label: string): void {
+export function assertRelease(seed: SeedDefinition, expected: { id: string; version: string; digest: string }, label: string, registry?: TrustedDefinitionRegistry): SeedDefinition {
   // Every pinned version is kept as the body that produced it. This is the record a later rebuild
   // reads from, so a release stops being a recipe re-run from today's modules.
-  if (!SEED_RELEASE_SNAPSHOTS.some(entry => entry.version === expected.version)) {
-    SEED_RELEASE_SNAPSHOTS.push({ id: seed.document.id, version: expected.version, documentDigest: digest(seed.document), document: seed.document });
-  }
-  if (!FULL_PINS && expected.version !== CURRENT_KERNEL_VERSION) return;
-  if (digest(seed.audit.model) !== digest(expected)) throw new DomainError('CONFLICT', `${label} changed`);
+  const kept = SEED_RELEASE_SNAPSHOTS.find(entry => entry.version === expected.version);
+  // A release whose body was kept is read back, not re-derived: history is storage, and the code
+  // that once assembled it is only the cold-start path. The body is still checked against the pin.
+  const release = kept && registry
+    ? { document: kept.document, registry, audit: { ...seed.audit, model: compileOntologyDocument(kept.document, registry).ref } }
+    : seed;
+  if (!kept) SEED_RELEASE_SNAPSHOTS.push({ id: seed.document.id, version: expected.version, documentDigest: digest(seed.document), document: seed.document });
+  if (!FULL_PINS && expected.version !== CURRENT_KERNEL_VERSION) return release;
+  if (digest((release as any).audit.model) !== digest(expected)) throw new DomainError('CONFLICT', `${label} changed`);
+  return release;
 }
 
 /**
@@ -200,7 +206,11 @@ export function assertRelease(seed: SeedDefinition, expected: { id: string; vers
  */
 export const SEED_RELEASE_SNAPSHOTS: { id: string; version: string; documentDigest: string; document: OntologyDocument }[] = [];
 
-function complete(document: OntologyDocument, registry: TrustedDefinitionRegistry, original: boolean, onCompiled?: (model: OntologyModel) => void): SeedDefinition {
+function complete(document: OntologyDocument, registry: TrustedDefinitionRegistry, original: boolean, onCompiled?: (model: OntologyModel) => void, pin?: { id: string; version: string; digest: string }): SeedDefinition {
+  // Read the kept body when this stage has one, before anything is compiled: the code that once
+  // assembled a released version is the cold-start path, not the way the version is defined.
+  const pinned = pin ? SEED_RELEASE_SNAPSHOTS.find(entry => entry.version === pin.version) : undefined;
+  if (pinned) document = structuredClone(pinned.document) as OntologyDocument;
   freezeRelease(document);
   registry.protect(document);
   const documentDigest = digest(document);
@@ -329,6 +339,11 @@ export class StagedKernelBuilder {
   constructor(targetVersion: ReviewedKernelVersion = CURRENT_KERNEL_VERSION) {
     if (!['27', '28', '29', '30', '31', '32', '33', '34', '35', '36', '37'].includes(targetVersion)) throw new Error('Unsupported reviewed kernel target');
     this.#targetVersion = targetVersion;
+    // Where kept bodies live. With bodies in hand the chain reads them instead of re-deriving them.
+    const releaseDir = process.env.EIGOS_RELEASE_DIR;
+    if (releaseDir) for (const body of loadReleaseSnapshots(releaseDir)) {
+      if (!SEED_RELEASE_SNAPSHOTS.some(entry => entry.version === body.version)) SEED_RELEASE_SNAPSHOTS.push(body);
+    }
     this.#stageCount = targetVersion === '27' ? 14 : targetVersion === '28' ? 15 : targetVersion === '31' ? 17 : targetVersion === '32' ? 18 : targetVersion === '33' ? 19 : targetVersion === '34' ? 20 : targetVersion === '35' ? 21 : targetVersion === '36' ? 22 : targetVersion === '37' ? 23 : 16;
   }
 
@@ -370,17 +385,17 @@ export class StagedKernelBuilder {
         case 11: this.#current = complete(extendPersonalContextKernel(this.#current!.document,this.#registry),this.#registry,false); break;
         case 12:
           this.#current = complete(extendSingleReadKernel(this.#current!.document,this.#registry),this.#registry,false);
-          assertRelease(this.#current, SINGLE_READ_KERNEL_MODEL_REF, 'The original v26 kernel fingerprint changed');
+          this.#current = assertRelease(this.#current, SINGLE_READ_KERNEL_MODEL_REF, 'The original v26 kernel fingerprint changed', this.#registry);
           break;
         case 13:
           this.#current = complete(extendPaymentCommerceKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
-          assertRelease(this.#current, PAYMENT_COMMERCE_KERNEL_MODEL_REF, 'The original v27 kernel fingerprint changed');
+          this.#current = assertRelease(this.#current, PAYMENT_COMMERCE_KERNEL_MODEL_REF, 'The original v27 kernel fingerprint changed', this.#registry);
           if (this.#targetVersion === '27') { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
           break;
         case 14:
           this.#current = complete(extendBusinessDescriptions(this.#current!.document),this.#registry,false,model=>{this.#model=model;});
           this.#base28 = this.#current.document;
-          assertRelease(this.#current, BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF, 'The reviewed v28 description fingerprint changed');
+          this.#current = assertRelease(this.#current, BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF, 'The reviewed v28 description fingerprint changed', this.#registry);
           if(this.#targetVersion==='28'){this.#documentDigest=digest(this.#current.document); this.#registry.seal();}
           break;
         case 15: {
@@ -393,40 +408,40 @@ export class StagedKernelBuilder {
           break;
         }
         case 16:
-          this.#current=complete(extendDomainVocabularyKernel(this.#current!.document),this.#registry,false,model=>{this.#model=model;});
-          assertRelease(this.#current, DOMAIN_VOCABULARY_KERNEL_MODEL_REF, 'The reviewed domain vocabulary fingerprint changed');
+          this.#current=complete(extendDomainVocabularyKernel(this.#current!.document),this.#registry,false,model=>{this.#model=model;},DOMAIN_VOCABULARY_KERNEL_MODEL_REF);
+          this.#current = assertRelease(this.#current, DOMAIN_VOCABULARY_KERNEL_MODEL_REF, 'The reviewed domain vocabulary fingerprint changed', this.#registry);
           // The v32 contract closure still registers reviewed function contracts,
           // so sealing waits for stage 17 when that release is the target.
           if (Number(this.#targetVersion) < 32) { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
           break;
         case 17:
-          this.#current=complete(extendContractClosureKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
-          assertRelease(this.#current, CONTRACT_CLOSURE_KERNEL_MODEL_REF, 'The reviewed contract closure fingerprint changed');
+          this.#current=complete(extendContractClosureKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;},CONTRACT_CLOSURE_KERNEL_MODEL_REF);
+          this.#current = assertRelease(this.#current, CONTRACT_CLOSURE_KERNEL_MODEL_REF, 'The reviewed contract closure fingerprint changed', this.#registry);
           if (Number(this.#targetVersion) < 33) { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
           break;
         case 18:
-          this.#current=complete(extendEffectCoverageKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
-          assertRelease(this.#current, EFFECT_COVERAGE_KERNEL_MODEL_REF, 'The reviewed effect coverage fingerprint changed');
+          this.#current=complete(extendEffectCoverageKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;},EFFECT_COVERAGE_KERNEL_MODEL_REF);
+          this.#current = assertRelease(this.#current, EFFECT_COVERAGE_KERNEL_MODEL_REF, 'The reviewed effect coverage fingerprint changed', this.#registry);
           if (this.#targetVersion === '33') { this.#documentDigest=digest(this.#current.document);this.#registry.seal(); }
           break;
         case 19:
-          this.#current=complete(extendExecutableContractKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
-          assertRelease(this.#current, EXECUTABLE_CONTRACT_KERNEL_MODEL_REF, 'The reviewed executable contract fingerprint changed');
+          this.#current=complete(extendExecutableContractKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;},EXECUTABLE_CONTRACT_KERNEL_MODEL_REF);
+          this.#current = assertRelease(this.#current, EXECUTABLE_CONTRACT_KERNEL_MODEL_REF, 'The reviewed executable contract fingerprint changed', this.#registry);
           if (this.#targetVersion === '34') { this.#documentDigest=digest(this.#current.document);this.#registry.seal(); }
           break;
         case 20:
-          this.#current=complete(extendFunctionContractCloseoutKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
-          assertRelease(this.#current, FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF, 'The reviewed complete Function contract fingerprint changed');
+          this.#current=complete(extendFunctionContractCloseoutKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;},FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF);
+          this.#current = assertRelease(this.#current, FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF, 'The reviewed complete Function contract fingerprint changed', this.#registry);
           if (this.#targetVersion === '35') { this.#documentDigest=digest(this.#current.document);this.#registry.seal(); }
           break;
         case 21:
-          this.#current=complete(extendInterfaceContractsKernel(this.#current!.document).document,this.#registry,false,model=>{this.#model=model;});
-          assertRelease(this.#current, INTERFACE_CONTRACT_MODEL_REF, 'The reviewed interface contract fingerprint changed');
+          this.#current=complete(extendInterfaceContractsKernel(this.#current!.document).document,this.#registry,false,model=>{this.#model=model;},INTERFACE_CONTRACT_MODEL_REF);
+          this.#current = assertRelease(this.#current, INTERFACE_CONTRACT_MODEL_REF, 'The reviewed interface contract fingerprint changed', this.#registry);
           if (Number(this.#targetVersion) < 37) { this.#documentDigest=digest(this.#current.document);this.#registry.seal(); }
           break;
         case 22:
-          this.#current=complete(extendPalantirModelKernel(this.#current!.document,this.#registry as never).document,this.#registry,false,model=>{this.#model=model;});
-          assertRelease(this.#current, PALANTIR_MODEL_REF, 'The reviewed Palantir model metadata fingerprint changed');
+          this.#current=complete(extendPalantirModelKernel(this.#current!.document,this.#registry as never).document,this.#registry,false,model=>{this.#model=model;},PALANTIR_MODEL_REF);
+          this.#current = assertRelease(this.#current, PALANTIR_MODEL_REF, 'The reviewed Palantir model metadata fingerprint changed', this.#registry);
           this.#documentDigest=digest(this.#current.document);this.#registry.seal();
           break;
         default: throw new Error('Unknown kernel stage');
