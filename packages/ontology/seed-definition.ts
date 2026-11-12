@@ -40,7 +40,7 @@ import type { ActionDefinition, InterfaceDefinition, ModelDefinition, ObjectType
 export const LEGACY_SEED_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '15', digest: 'efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776' });
 export const CURRENT_KERNEL_VERSION = '28';
 export type ReviewedKernelVersion = '27' | '28' | '29' | '30' | '31' | '32' | '33' | '34' | '35' | '36' | '37';
-export const PALANTIR_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '37', digest: '5750a49f1f848a51d614c7990690aaf73fcc6378aee455c9bc966a23d09582d7' });
+export const PALANTIR_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '37', digest: '669225d6b3acf20871e815b8d2f7b8c00d05503e48677e8094b1088303e5f2c7' });
 export const DOMAIN_VOCABULARY_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '31', digest: '2eb7c0911c04c38bb0cc0f8316c12d86318f8612f675506436b41d871ce66f51' });
 export const EFFECT_COVERAGE_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '33', digest: '5a721eaa695d262725ad3d515c3ff8e098d0858011e55ca4e3a31e84bc6b08a0' });
 export const CONTRACT_CLOSURE_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '32', digest: '53bdaa43dd60980322180e1a9aafa52a8669056aeef245fd9fc983a7a5322e04' });

@@ -343,6 +343,9 @@ export class OntologyModel {
       }
       for (const path of a.changes) {
         const [type, field, extra] = path.split('.');
+        // A change path on an interface is resolved per implementation at execution time, so it
+        // is not resolvable here; Palantir leaves the same decision to run time.
+        if (type && this.interfaces.has(type)) continue;
         if (!type || !this.objects.has(type) || extra || field && (!Object.hasOwn(this.properties(type), field) && !this.sides(type).some(s => s.side.name === field))) invalid('Unresolved action change path');
         if (field && this.properties(type)[field]?.derived) invalid('Actions cannot write derived properties');
       }

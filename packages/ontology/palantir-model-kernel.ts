@@ -79,6 +79,8 @@ function extendInterfaceActions(document: OntologyDocument) {
     const declared = ((iface.actions as Record<string, unknown>[] | undefined) ?? (iface.actionConstraints as Record<string, unknown>[] | undefined) ?? []);
     if (!declared.length) continue;
     const rewritten = declared.map(constraint => {
+      const declaredParameters = (constraint.parameters as Record<string, unknown>[] | undefined);
+      if (declaredParameters?.length) return { ...constraint, apiName: String(constraint.apiName ?? constraint.id), required: constraint.required ?? !constraint.optional };
       const inputs = (constraint.inputs as Record<string, string> | undefined) ?? {};
       return {
         apiName: String(constraint.apiName ?? constraint.id),
@@ -186,6 +188,41 @@ function extendSharedPropertyTypes(document: OntologyDocument) {
 }
 
 
+
+/** Capability actions whose subject is typed as an interface: Palantir resolves the concrete
+ * object type per implementation, so one action serves every implementer. */
+function extendInterfaceCapabilityActions(document: OntologyDocument) {
+  const actions = document.actions as unknown as Record<string, unknown>[];
+  const declarations: [string, string, string][] = [
+    ['LinkEvidence', 'EvidenceBacked', 'Attach an evidence object to any evidence-backed object'],
+  ];
+  let created = 0;
+  for (const [id, iface, description] of declarations) {
+    if (actions.some(action => action.id === id)) continue;
+    actions.push({
+      resourceId: `builtin:eigos.interface:action:${id}`,
+      id,
+      description,
+      inputs: { subject: iface },
+      changes: [`${iface}.lastObservedAt`],
+      submissionCriteria: ['explicit_read_scope'],
+      criteriaBindings: { explicit_read_scope: { kind: 'definition_only' } },
+      effects: ['object_write'],
+    });
+    created++;
+    const target = (document.interfaces as unknown as Record<string, unknown>[]).find(candidate => String(candidate.id) === iface);
+    if (!target) continue;
+    const capability = { apiName: id, required: false, description, parameters: [{ apiName: 'subject', type: 'interface', required: true, many: false }] };
+    target.actions = [...((target.actions as Record<string, unknown>[] | undefined) ?? []), capability];
+    for (const object of (document.objects as unknown as Record<string, unknown>[])) {
+      const implementation = ((object.interfaces as { id: string; actionMap?: Record<string, unknown> }[] | undefined) ?? []).find(i => i.id === iface);
+      if (!implementation) continue;
+      implementation.actionMap = { ...(implementation.actionMap ?? {}), [id]: id };
+    }
+  }
+  return { created };
+}
+
 export function extendPalantirModelKernel(original: OntologyDocument, registry?: TrustedDefinitionRegistry): { document: OntologyDocument; summary: Record<string, unknown> } {
   if (original.version !== '36') throw new DomainError('CONFLICT', 'Palantir model metadata requires the reviewed v36 predecessor');
   const document = structuredClone(original);
@@ -239,10 +276,11 @@ export function extendPalantirModelKernel(original: OntologyDocument, registry?:
   const interfaceIdentity = extendInterfaceIdentity(document);
   const sharedProperties = extendSharedProperties(document);
   const sharedPropertyTypes = extendSharedPropertyTypes(document);
+  const capabilityActions = extendInterfaceCapabilityActions(document);
   const interfaceActions = extendInterfaceActions(document);
   document.version = '37';
   return {
     document,
-    summary: { sharedPropertyTypes, sharedProperties, interfaceActions, interfaceIdentity, relocatedRoles, withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
+    summary: { capabilityActions, sharedPropertyTypes, sharedProperties, interfaceActions, interfaceIdentity, relocatedRoles, withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
   };
 }
