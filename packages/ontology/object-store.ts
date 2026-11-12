@@ -33,7 +33,7 @@ export const objectQuerySchema = z.union([
 ]).describe('Each response covers only the requested object, type, or named relationship. Empty results on one relationship do not prove that other relationships or participants are absent. Inspect pagination and state the scope actually read; unqueried information remains unverified.');
 export type ObjectQuery = z.input<typeof objectQuerySchema>;
 export interface ObjectWrite { ref: ObjectRef; properties: Record<string, unknown>; expectedRevision?: number; reuseIfUnchanged?: boolean; observedFields?: string[] }
-export interface LinkWrite { type: string; from: ObjectRef; to: ObjectRef }
+export interface LinkWrite { type: string; from: ObjectRef; to: ObjectRef; properties?: Record<string, unknown> }
 export function linkSnapshotDigest(ref: ObjectRef, links: LinkWrite[]): string {
   const values = links.filter(l => l.from.type === ref.type && l.from.id === ref.id && l.to.type !== 'SourceReceipt').map(l => ({ type: l.type, to: l.to }));
   return digest(values.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
@@ -59,7 +59,7 @@ export interface OntologyQueryResult {
   datasetRevision: number;
   definitionScope?: 'current_definitions_only';
 }
-const batchSchema = z.object({ objects: z.array(z.object({ ref: objectRefSchema, properties: z.record(z.string(), z.unknown()), expectedRevision: z.number().int().min(1).optional(), reuseIfUnchanged: z.boolean().optional(), observedFields: z.array(nameSchema).min(1).max(100).optional() }).strict()).max(200), links: z.array(z.object({ type: nameSchema, from: objectRefSchema, to: objectRefSchema }).strict()).max(500).default([]), removeLinks: z.array(z.object({ type: nameSchema, from: objectRefSchema, to: objectRefSchema }).strict()).max(100).default([]) }).strict();
+const batchSchema = z.object({ objects: z.array(z.object({ ref: objectRefSchema, properties: z.record(z.string(), z.unknown()), expectedRevision: z.number().int().min(1).optional(), reuseIfUnchanged: z.boolean().optional(), observedFields: z.array(nameSchema).min(1).max(100).optional() }).strict()).max(200), links: z.array(z.object({ type: nameSchema, from: objectRefSchema, to: objectRefSchema, properties: z.record(z.string(), z.unknown()).optional() }).strict()).max(500).default([]), removeLinks: z.array(z.object({ type: nameSchema, from: objectRefSchema, to: objectRefSchema, properties: z.record(z.string(), z.unknown()).optional() }).strict()).max(100).default([]) }).strict();
 const cursorSchema = z.object({ owner: z.string(), ontologyId: z.string().optional(), query: z.string(), model: z.string(), revision: z.number().int(), last: objectRefSchema }).strict();
 const key = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);
 function failure(message: string): never { throw new DomainError('INVALID_INPUT', message); }
@@ -113,14 +113,14 @@ export class OntologyObjectStore {
       CREATE TABLE IF NOT EXISTS ontology_objects (owner TEXT NOT NULL,type TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,definition_digest TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(owner,type,id));
       CREATE INDEX IF NOT EXISTS ontology_objects_task_source ON ontology_objects(owner,CASE WHEN json_valid(body) THEN json_extract(body,'$.source.id') END,type,id);
       CREATE INDEX IF NOT EXISTS ontology_objects_body_validity ON ontology_objects(owner,json_valid(body));
-      CREATE TABLE IF NOT EXISTS ontology_links (owner TEXT NOT NULL,type TEXT NOT NULL,from_type TEXT NOT NULL,from_id TEXT NOT NULL,to_type TEXT NOT NULL,to_id TEXT NOT NULL,definition_digest TEXT NOT NULL,PRIMARY KEY(owner,type,from_type,from_id,to_type,to_id));
+      CREATE TABLE IF NOT EXISTS ontology_links (owner TEXT NOT NULL,type TEXT NOT NULL,from_type TEXT NOT NULL,from_id TEXT NOT NULL,to_type TEXT NOT NULL,to_id TEXT NOT NULL,definition_digest TEXT NOT NULL,properties TEXT,PRIMARY KEY(owner,type,from_type,from_id,to_type,to_id));
       CREATE INDEX IF NOT EXISTS ontology_links_reverse ON ontology_links(owner,type,to_type,to_id,from_type,from_id);
       CREATE INDEX IF NOT EXISTS ontology_links_outgoing ON ontology_links(owner,from_type,from_id,type,to_type,to_id);
       CREATE INDEX IF NOT EXISTS ontology_links_forward_definitions ON ontology_links(owner,type,from_type,from_id,definition_digest);
       CREATE INDEX IF NOT EXISTS ontology_links_reverse_definitions ON ontology_links(owner,type,to_type,to_id,definition_digest);
       CREATE TABLE IF NOT EXISTS ontology_revisions (owner TEXT PRIMARY KEY,revision INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS ontology_scoped_objects (ontology_id TEXT NOT NULL,owner TEXT NOT NULL,type TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,definition_digest TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(ontology_id,owner,type,id));
-      CREATE TABLE IF NOT EXISTS ontology_scoped_links (ontology_id TEXT NOT NULL,owner TEXT NOT NULL,type TEXT NOT NULL,from_type TEXT NOT NULL,from_id TEXT NOT NULL,to_type TEXT NOT NULL,to_id TEXT NOT NULL,definition_digest TEXT NOT NULL,PRIMARY KEY(ontology_id,owner,type,from_type,from_id,to_type,to_id));
+      CREATE TABLE IF NOT EXISTS ontology_scoped_links (ontology_id TEXT NOT NULL,owner TEXT NOT NULL,type TEXT NOT NULL,from_type TEXT NOT NULL,from_id TEXT NOT NULL,to_type TEXT NOT NULL,to_id TEXT NOT NULL,definition_digest TEXT NOT NULL,properties TEXT,PRIMARY KEY(ontology_id,owner,type,from_type,from_id,to_type,to_id));
       CREATE INDEX IF NOT EXISTS ontology_scoped_links_reverse ON ontology_scoped_links(ontology_id,owner,type,to_type,to_id,from_type,from_id);
       CREATE INDEX IF NOT EXISTS ontology_scoped_links_outgoing ON ontology_scoped_links(ontology_id,owner,from_type,from_id,type,to_type,to_id);
       CREATE INDEX IF NOT EXISTS ontology_scoped_links_forward_definitions ON ontology_scoped_links(ontology_id,owner,type,from_type,from_id,definition_digest);
@@ -131,6 +131,10 @@ export class OntologyObjectStore {
       CREATE TRIGGER IF NOT EXISTS ontology_object_versions_no_update BEFORE UPDATE ON ontology_object_versions BEGIN SELECT RAISE(ABORT,'Object writer history is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS ontology_object_versions_no_delete BEFORE DELETE ON ontology_object_versions BEGIN SELECT RAISE(ABORT,'Object writer history is immutable'); END;
     `);
+    // Existing databases keep their rows; the column is additive and nullable.
+    for (const table of ['ontology_links', 'ontology_scoped_links']) {
+      try { this.db.prepare(`ALTER TABLE ${table} ADD COLUMN properties TEXT`).run(); } catch { /* column already present */ }
+    }
     initializeProjectionDelta(this.db);
     if (model.ref.id === 'eigos.business' && model.ref.version === '15' && !context.skipLegacyMigration) migrateIntegratedOntology(this.db, businessModelV9, model);
   }
@@ -208,6 +212,22 @@ export class OntologyObjectStore {
     if (this.delta) this.delta.apply(key,input,action);
     else action();
   }
+  /** A relationship may carry attributes, but only the ones its definition declares. */
+  private assertLinkProperties(edge: LinkWrite) {
+    const declared = this.model.link(edge.type).properties ?? {};
+    for (const [name, value] of Object.entries(edge.properties ?? {})) {
+      const property = declared[name];
+      if (!property) throw new DomainError('INVALID_INPUT', `Link ${edge.type} does not declare property ${name}`);
+      const schema = property.schema as unknown as { safeParse?: (value: unknown) => { success: boolean } };
+      // Link property schemas are compiled by the model compiler; until a link
+      // declares one through the compiled path, the name check is the guard.
+      if (typeof schema.safeParse === 'function' && !schema.safeParse(value).success) throw new DomainError('INVALID_INPUT', `Link ${edge.type} property ${name} is invalid`);
+    }
+    for (const [name, property] of Object.entries(declared)) {
+      if (property.required && !(name in (edge.properties ?? {}))) throw new DomainError('INVALID_INPUT', `Link ${edge.type} property ${name} is required`);
+    }
+  }
+
   private get linkTable() { return this.scoped ? 'ontology_scoped_links' : 'ontology_links'; }
   private get revisionTable() { return this.scoped ? 'ontology_scoped_revisions' : 'ontology_revisions'; }
   private owned(alias = '') { return this.scoped ? `${alias}ontology_id=? AND ${alias}owner=?` : `${alias}owner=?`; }
@@ -582,6 +602,7 @@ export class OntologyObjectStore {
         }
         const def = this.model.link(edge.type);
         if (!this.model.implements(edge.from.type, def.from.type) || !this.model.implements(edge.to.type, def.to.type)) failure('Link endpoint type mismatch');
+        this.assertLinkProperties(edge);
         const checkHistory = source.kind === 'task' && this.model.linkWritePolicy(edge.type) === 'source';
         const historicalEdge = checkHistory && this.containsLinks(owner, [edge]);
         for (const ref of [edge.from, edge.to]) { this.raw(owner, ref, { remaining: 1 }, historicalEdge); touched.set(key(ref), ref); }
@@ -592,8 +613,8 @@ export class OntologyObjectStore {
           // The historical lookup above used this same edge in the same savepoint.
           if (!checkHistory) this.containsLinks(owner, [edge]);
           const result = this.scoped
-            ? this.db.prepare('INSERT OR IGNORE INTO ontology_scoped_links VALUES(?,?,?,?,?,?,?,?)').run(this.ontologyId, owner, edge.type, edge.from.type, edge.from.id, edge.to.type, edge.to.id, digest(def))
-            : this.db.prepare('INSERT OR IGNORE INTO ontology_links VALUES(?,?,?,?,?,?,?)').run(owner, edge.type, edge.from.type, edge.from.id, edge.to.type, edge.to.id, digest(def));
+            ? this.db.prepare('INSERT OR IGNORE INTO ontology_scoped_links VALUES(?,?,?,?,?,?,?,?,?)').run(this.ontologyId, owner, edge.type, edge.from.type, edge.from.id, edge.to.type, edge.to.id, digest(def), edge.properties ? JSON.stringify(edge.properties) : null)
+            : this.db.prepare('INSERT OR IGNORE INTO ontology_links VALUES(?,?,?,?,?,?,?,?)').run(owner, edge.type, edge.from.type, edge.from.id, edge.to.type, edge.to.id, digest(def), edge.properties ? JSON.stringify(edge.properties) : null);
           changed = !!result.changes || changed;
         }
       }

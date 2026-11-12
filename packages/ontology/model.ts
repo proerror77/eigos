@@ -82,6 +82,8 @@ export interface ObjectTypeDefinition {
 export interface LinkDefinition {
   id: string;
   description: string;
+  /** Attributes carried by the relationship itself, not by either endpoint. */
+  properties?: Record<string, PropertyDefinition>;
   from: { type: string; name: string; many: boolean; required?: boolean };
   to: { type: string; name: string; many: boolean; required?: boolean };
   writePolicy?: 'managed' | 'source';
