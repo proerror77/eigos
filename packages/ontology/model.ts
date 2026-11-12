@@ -154,6 +154,7 @@ function validationSchema(value: unknown): unknown {
  * (authority, derived, restricted) is deliberately not compared: it describes who
  * writes the field, not which values are legal.
  */
+
 export function acceptingCompatible(actual: PropertyDefinition, expected: PropertyDefinition): boolean {
   const a = propertyMetadata(actual).schema, b = propertyMetadata(expected).schema;
   const timestampView = actual.kind === 'string' && expected.kind === 'timestamp' && a.format === 'date-time';
