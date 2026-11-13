@@ -25,10 +25,11 @@ export class Effects {
   async enqueue(client: Sql, access: Access, model: PublishedOntology, action: string, requestId: string, effects: { name: string; handler: string; payload: Record<string, unknown> }[]) {
     if (model.scenario) return;
     this.check(effects.map(effect => effect.handler));
+    const requirements=await access.finalRequirements(client);
     for (const effect of effects) {
       const id = digest([access.principal.owner, requestId, effect.name]);
       await this.db.query(`INSERT INTO ${this.db.schema}.action_effects(id,owner,request_id,release,ontology,action,name,handler,payload,requirements,scopes)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [id, access.principal.owner, requestId, model.release, model.document.id, action, effect.name, effect.handler, effect.payload, JSON.stringify(access.requirements()), JSON.stringify(access.principal.scopes)], client);
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [id, access.principal.owner, requestId, model.release, model.document.id, action, effect.name, effect.handler, effect.payload, JSON.stringify(requirements), JSON.stringify(access.principal.scopes)], client);
     }
   }
   async status(access: Access, requestId: string) {

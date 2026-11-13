@@ -1,3 +1,4 @@
+import {resourceGroups} from '../ontology/resource-mapping.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Conflict, NotFound, digest } from '../core/identity.js';
@@ -32,8 +33,10 @@ interface Branch {
   body: OntologyDocument; revision: number; state: string; candidate: string | null; reviewer: string | null; reviewed_digest: string | null;
 }
 const resources = (document: OntologyDocument) => {
-  const groups = { object: document.objectTypes, interface: document.interfaceTypes, link: document.linkTypes, function: document.functionTypes, action: document.actionTypes, datasource: document.dataSources };
-  return new Map(Object.entries(groups).flatMap(([kind, entries]) => entries.map(entry => [resource(document.id, kind, entry.apiName), digest(entry)] as const)));
+  const expanded=new Ontology(document).resourceDocument;
+  const entries=Object.entries(resourceGroups).flatMap(([kind,field])=>(expanded[field]??[]).map(entry=>[resource(document.id,kind,entry.apiName+(kind==='valueType'&&'version'in entry?'@'+entry.version:'')),digest(entry)] as const));
+  for(const imported of document.imports??[])entries.push([resource(document.id,'import',imported.namespace),digest(imported)]);
+  return new Map(entries);
 };
 export class Governance {
   constructor(private readonly db: Database, private readonly metadata: Metadata, private readonly bindings: Bindings) {}
@@ -157,15 +160,22 @@ export class Governance {
         if(oldResources.get(name)!==draftResources.get(name) && oldResources.get(name)!==liveResources.get(name) && draftResources.get(name)!==liveResources.get(name)) throw new Conflict(`Ontology rebase conflict: ${name}`);
       }
       const body=structuredClone(current.document);
-      for(const field of ['objectTypes','interfaceTypes','linkTypes','functionTypes','actionTypes','dataSources'] as const) {
-        const oldEntries=new Map(old.document[field].map(item=>[item.apiName,digest(item)]));
-        const drafts=new Map(row.body[field].map(item=>[item.apiName,item]));
-        const merged=new Map(body[field].map(item=>[item.apiName,item]));
+      for(const field of Object.values(resourceGroups)) {
+        const oldEntries=new Map((old.document[field]??[]).map(item=>[item.apiName+('version'in item?'@'+item.version:''),digest(item)]));
+        const drafts=new Map((row.body[field]??[]).map(item=>[item.apiName+('version'in item?'@'+item.version:''),item]));
+        const merged=new Map((body[field]??[]).map(item=>[item.apiName+('version'in item?'@'+item.version:''),item]));
         for(const name of new Set([...oldEntries.keys(),...drafts.keys()])) if(oldEntries.get(name)!==(drafts.has(name)?digest(drafts.get(name)):undefined)) {
           const draft=drafts.get(name); if(draft)merged.set(name,draft); else merged.delete(name);
         }
         (body[field] as unknown[])=[...merged.values()];
       }
+      const imports=new Map((current.document.imports??[]).map(item=>[item.namespace,item]));
+      const oldImports=new Map((old.document.imports??[]).map(item=>[item.namespace,item]));
+      const draftImports=new Map((row.body.imports??[]).map(item=>[item.namespace,item]));
+      for(const name of new Set([...oldImports.keys(),...draftImports.keys()]))if(digest(oldImports.get(name)??null)!==digest(draftImports.get(name)??null)){
+        const value=draftImports.get(name);if(value)imports.set(name,value);else imports.delete(name);
+      }
+      if(imports.size||row.body.imports||current.document.imports)body.imports=[...imports.values()];
       body.version=row.body.version;
       await this.validateChanges(access,row,current.document,body,client);await access.refresh(client);
       await this.db.query(`UPDATE ${this.db.schema}.ontology_branches SET body=$2,base_release=$3,revision=revision+1,state='draft',candidate=NULL,reviewer=NULL,reviewed_digest=NULL,updated_at=now() WHERE id=$1`, [row.id,body,current.release], client);

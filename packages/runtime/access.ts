@@ -4,7 +4,7 @@ import type { Ontology } from '../ontology/model.js';
 import { Database, type Sql } from './database.js';
 import { markingsOf, permits, policySql, type ObjectPolicy, type SecurityContext } from './security.js';
 
-export const permissionSchema = z.enum(['view_definition', 'edit_definition', 'manage_definition', 'view_objects', 'view_property', 'apply_action', 'execute_function', 'read_source', 'ingest_source']);
+export const permissionSchema = z.enum(['view_definition', 'edit_definition', 'manage_definition', 'view_objects', 'view_property', 'apply_action', 'execute_function', 'read_source', 'ingest_source', 'migrate_objects']);
 export type Permission = z.infer<typeof permissionSchema>;
 export const grantSchema = z.strictObject({ resource: z.string().min(1).max(300), permission: permissionSchema });
 export type Grant = z.infer<typeof grantSchema>;
@@ -77,13 +77,38 @@ export class Access {
     if (!this.allows({ ontology: model.document.id, permission: 'view_property', resource: target })) return false;
     this.require(model.document.id, 'view_property', target, true); return true;
   }
+  adoptReads(other: Access) {
+    if(other.principal.owner!==this.principal.owner)throw new PermissionDenied('Read context owner differs');
+    for(const [key,value] of other.data)this.data.set(key,structuredClone(value));
+    for(const [key,value] of other.required)this.required.set(key,structuredClone(value));
+    for(const marking of other.readMarkings)this.readMarkings.add(marking);
+  }
+  readMarkingsSnapshot(): string[] {
+    return [...this.readMarkings].sort();
+  }
+  /** Restore the security context of persisted inputs without recomputing their frozen values. */
+  async restoreReads(requirements: Requirement[], markings: string[], client?: Sql): Promise<void> {
+    if (!(await this.canReturn(requirements, client))) {
+      throw new PermissionDenied('Frozen input permissions changed');
+    }
+    if (markings.some(marking => !this.security.markings.includes(marking))) {
+      throw new PermissionDenied('Frozen input markings are unavailable');
+    }
+    for (const requirement of requirements) {
+      const key = 'restored:' + digest(requirement);
+      const copy = structuredClone(requirement);
+      this.data.set(key, copy);
+      this.required.set(key, copy);
+    }
+    for (const marking of markings) this.readMarkings.add(marking);
+  }
   private trackSecurity(model: Ontology, type: string) {
     const r: Requirement = { ontology: model.document.id, permission: 'view_objects', resource: resource(model.document.id,'object',type), security: this.securityDigest };
     this.required.set('security:'+r.resource,r); this.data.set('security:'+r.resource,r);
   }
   private trackRow(model: Ontology, type: string, properties: Record<string, unknown>, field?: string) {
-    if (!this.policies.has(model.document.id + '/' + type)) return;
     const publication = model as Ontology & { projection?: string; scenario?: string };
+    if (!this.policies.has(model.document.id+'/'+type) && !publication.scenario && type!=='OntologyScenario') return;
     const id = properties[model.object(type).primaryKey];
     if (!publication.projection || typeof id !== 'string') throw new PermissionDenied('A published object identity is required for policy evaluation');
     const key = 'row:' + digest([model.document.id, publication.projection, publication.scenario, type, id]);
@@ -96,13 +121,16 @@ export class Access {
   private async rowsAllowed(requirements: Requirement[], client?: Sql): Promise<boolean> {
     const dependencies = requirements.filter((requirement): requirement is Requirement & { row: RowRequirement } => Boolean(requirement.row));
     if (!dependencies.length) return true;
-    const rows = await this.db.query(`SELECT input.ordinal,CASE WHEN delta.scenario_id IS NULL THEN object.properties ELSE delta.properties END AS properties,
-      input.scenario IS NULL OR (scenario.id IS NOT NULL AND scenario.state='open' AND scenario.release=active.release AND scenario.expires_at>now()) AS current
+    const rows = await this.db.query(`SELECT input.ordinal,CASE WHEN input.type='OntologyScenario' THEN jsonb_build_object('id',meta.id::text,'name',meta.name,'owner',meta.owner,'state',meta.state,'release',meta.release,'revision',meta.revision,'expiresAt',to_char(meta.expires_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),'kind',meta.kind,'description',meta.description) WHEN delta.scenario_id IS NULL THEN object.properties ELSE delta.properties END AS properties,
+      CASE WHEN input.type='OntologyScenario' THEN meta.id IS NOT NULL AND meta.kind='persisted' AND meta.release=active.release AND meta.expires_at>now() AND (meta.owner=$1 OR meta.readers ? $1)
+      ELSE input.scenario IS NULL OR (scenario.id IS NOT NULL AND scenario.state='open' AND scenario.release=active.release AND scenario.expires_at>now() AND (scenario.session_id IS NULL OR (session.id IS NOT NULL AND session.closed_at IS NULL AND session.expires_at>now()))) END AS current
       FROM jsonb_to_recordset($2::jsonb) AS input(ordinal integer,ontology text,projection text,type text,id text,scenario uuid)
       LEFT JOIN ${this.db.schema}.ontology active ON active.id=input.ontology
       LEFT JOIN ${this.db.schema}.releases current_release ON current_release.digest=active.release
       LEFT JOIN ${this.db.schema}.objects object ON object.projection=CASE WHEN input.scenario IS NULL THEN current_release.projection ELSE input.projection END AND object.owner=$1 AND object.type=input.type AND object.id=input.id
       LEFT JOIN ${this.db.schema}.scenarios scenario ON scenario.id=input.scenario AND scenario.owner=$1
+      LEFT JOIN ${this.db.schema}.scenario_sessions session ON session.id=scenario.session_id
+      LEFT JOIN ${this.db.schema}.scenarios meta ON input.type='OntologyScenario' AND meta.id::text=input.id
       LEFT JOIN ${this.db.schema}.scenario_objects delta ON delta.scenario_id=input.scenario AND delta.owner=$1 AND delta.type=input.type AND delta.id=input.id`,
       [this.principal.owner, JSON.stringify(dependencies.map((requirement, ordinal) => ({ ordinal, ontology:requirement.ontology, ...requirement.row })))], client);
     return rows.rows.length === dependencies.length && rows.rows.every(row => {
@@ -163,6 +191,34 @@ export class Access {
   source(model: Ontology, name: string) { this.require(model.document.id, 'read_source', resource(model.document.id, 'source', name), true); }
   dataRequirements(): Requirement[] { return structuredClone([...this.data.values()]); }
   requirements(): Requirement[] { return structuredClone([...new Map([...this.required.values(), ...this.data.values()].map(item => [digest(item), item])).values()]); }
+  /** Return a copy of the dependencies, preserving deleted inputs and all permission evidence. */
+  private async requirementsAfterMerges(requirements: Requirement[], client?: Sql): Promise<Requirement[]> {
+    const pending=requirements.flatMap((requirement,ordinal)=>requirement.row?.scenario?[{ordinal,ontology:requirement.ontology,...requirement.row}]:[]);
+    if(!pending.length)return requirements;
+    const merged=await this.db.query(`SELECT input.ordinal,live.projection
+      FROM jsonb_to_recordset($2::jsonb) AS input(ordinal integer,ontology text,projection text,type text,id text,scenario uuid)
+      JOIN ${this.db.schema}.scenarios scenario ON scenario.id=input.scenario AND scenario.owner=$1 AND scenario.state='merged'
+      JOIN ${this.db.schema}.releases original ON original.digest=scenario.release AND original.projection=input.projection AND original.body->>'id'=input.ontology
+      JOIN ${this.db.schema}.ontology active ON active.id=input.ontology
+      JOIN ${this.db.schema}.releases live ON live.digest=active.release
+      JOIN ${this.db.schema}.objects object ON object.projection=live.projection AND object.owner=$1 AND object.type=input.type AND object.id=input.id
+      LEFT JOIN ${this.db.schema}.scenario_objects delta ON delta.scenario_id=scenario.id AND delta.owner=$1 AND delta.type=input.type AND delta.id=input.id
+      WHERE input.type<>'OntologyScenario' AND (delta.id IS NULL OR delta.properties IS NOT NULL)`,[this.principal.owner,JSON.stringify(pending)],client);
+    for(const item of merged.rows){
+      const requirement=requirements[Number(item.ordinal)]!;
+      const {scenario:_scenario,...row}=requirement.row!;
+      requirement.row={...row,projection:String(item.projection)};
+    }
+    return requirements;
+  }
+  /** Use after Action commit for final task results. Failed merges leave the original dependency intact. */
+  finalDataRequirements(client?: Sql): Promise<Requirement[]> {
+    return this.requirementsAfterMerges(this.dataRequirements(),client);
+  }
+  /** Queue effects with the same transaction that commits the scenario, so rollback also removes this copy. */
+  finalRequirements(client?: Sql): Promise<Requirement[]> {
+    return this.requirementsAfterMerges(this.requirements(),client);
+  }
   async canReturn(requirements: Requirement[], client?: Sql): Promise<boolean> {
     try { await this.refresh(client); }
     catch (error) { if (error instanceof PermissionDenied) return false; throw error; }
@@ -180,7 +236,7 @@ export class Access {
     return grantsAllowed && await this.rowsAllowed(requirements, client);
   }
   describe(model: Ontology, executable = false) {
-    const document = structuredClone(model.document);
+    const document = structuredClone(model.resolvedDocument);
     document.objectTypes = document.objectTypes.filter(type => this.canDefine(model, 'object', type.apiName));
     document.interfaceTypes = document.interfaceTypes.filter(type => this.canDefine(model, 'interface', type.apiName));
     const objects = new Set(document.objectTypes.map(type => type.apiName)), interfaces = new Set(document.interfaceTypes.map(type => type.apiName));
@@ -198,6 +254,11 @@ export class Access {
       type.links = Object.fromEntries(Object.entries(type.links).filter(([, link]) => objects.has(link.target) || interfaces.has(link.target)));
       type.actions = Object.fromEntries(Object.entries(type.actions).filter(([name]) => document.objectTypes.some(object => object.interfaces[type.apiName]?.actions[name])));
     }
+    document.sharedProperties=document.sharedProperties?.filter(item=>this.canDefine(model,'sharedProperty',item.apiName));
+    document.valueTypes=document.valueTypes?.filter(item=>this.canDefine(model,'valueType',item.apiName+'@'+item.version));
+    document.structTypes=document.structTypes?.filter(item=>this.canDefine(model,'struct',item.apiName));
+    document.typeGroups=document.typeGroups?.filter(item=>this.canDefine(model,'group',item.apiName)).map(item=>({...item,objectTypes:item.objectTypes.filter(type=>objects.has(type))}));
+    delete document.imports;
     return document;
   }
 }
@@ -213,9 +274,9 @@ export async function setGrants(db: Database, subject: string, grants: Grant[], 
 }
 export function memberGrants(model: Ontology): Grant[] {
   return [{ resource: model.document.id, permission: 'view_definition' },
-    ...model.document.objectTypes.map(type => ({ resource: resource(model.document.id, 'object', type.apiName), permission: 'view_objects' as const })),
-    ...model.document.functionTypes.map(fn => ({ resource: resource(model.document.id, 'function', fn.apiName), permission: 'execute_function' as const })),
-    ...model.document.actionTypes.map(action => ({ resource: resource(model.document.id, 'action', action.apiName), permission: 'apply_action' as const })),
-    ...[...new Set(model.document.functionTypes.flatMap(fn => fn.source ? [fn.source] : []))].map(name => ({ resource: resource(model.document.id, 'source', name), permission: 'read_source' as const })),
+    ...model.resolvedDocument.objectTypes.map(type => ({ resource: resource(model.document.id, 'object', type.apiName), permission: 'view_objects' as const })),
+    ...model.resolvedDocument.functionTypes.map(fn => ({ resource: resource(model.document.id, 'function', fn.apiName), permission: 'execute_function' as const })),
+    ...model.resolvedDocument.actionTypes.map(action => ({ resource: resource(model.document.id, 'action', action.apiName), permission: 'apply_action' as const })),
+    ...[...new Set(model.resolvedDocument.functionTypes.flatMap(fn => fn.source ? [fn.source] : []))].map(name => ({ resource: resource(model.document.id, 'source', name), permission: 'read_source' as const })),
   ];
 }

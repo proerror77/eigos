@@ -13,7 +13,7 @@ export function implementationDigest(): string {
   if (!existsSync(join(root, 'package.json'))) root = dirname(root);
   const paths: string[] = ['package.json', 'package-lock.json', 'tsconfig.json'];
   const visit = (path: string) => { for (const entry of readdirSync(path, { withFileTypes: true })) {
-    const child = join(path, entry.name); if (entry.isDirectory()) visit(child); else if (/\.(ts|json)$/.test(entry.name)) paths.push(relative(root, child));
+    const child = join(path, entry.name); if (entry.isDirectory()) visit(child); else if (/\.(ts|json|js|css|html)$/.test(entry.name)) paths.push(relative(root, child));
   } };
   visit(join(root, 'apps')); visit(join(root, 'packages'));
   const hash = createHash('sha256');

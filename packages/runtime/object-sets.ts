@@ -5,6 +5,7 @@ import { objectRefSchema, type ObjectData, type ObjectRef } from '../ontology/sc
 import { Access, PermissionDenied } from './access.js';
 import { Database, type Sql } from './database.js';
 import { PublishedOntology } from './metadata.js';
+import { nestedValue } from './query-filter.js';
 import { Objects, querySchema } from './objects.js';
 
 const setQuerySchema = querySchema.omit({ limit: true, cursor: true, select: true });
@@ -206,8 +207,8 @@ export class ObjectSets {
       if (!input.groupBy.length) groups.set('all', { keys: {}, objects: [] });
       const field = (object: ObjectData, name: string) => {
         const type = input.view ?? object.ref.type;
-        model.propertyName(object.ref.type, type, name);
-        return object.properties[name] ?? null;
+        model.propertyName(object.ref.type, type, name.split('.')[0]!);
+        return nestedValue(object.properties,name);
       };
       for (const object of all) {
         const keys = Object.fromEntries(input.groupBy.map(name => [name, field(object, name)])), key = canonical(keys);

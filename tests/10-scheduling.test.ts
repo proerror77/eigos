@@ -104,11 +104,12 @@ test('the restricted database role completes PA handoff and merge without metada
  let limited:import('../packages/runtime/database.js').Database|undefined;
  try{
   await f.db.query(`CREATE ROLE "${role}"; GRANT USAGE ON SCHEMA ${f.db.schema} TO "${role}";
-    GRANT SELECT ON ${f.db.schema}.ontology,${f.db.schema}.releases,${f.db.schema}.resource_grants,${f.db.schema}.property_security,${f.db.schema}.object_policies,${f.db.schema}.security_memberships,${f.db.schema}.edit_policies,${f.db.schema}.ontology_resource_projects TO "${role}";
+    GRANT SELECT ON ${f.db.schema}.ontology,${f.db.schema}.releases,${f.db.schema}.resource_grants,${f.db.schema}.property_security,${f.db.schema}.object_policies,${f.db.schema}.security_memberships,${f.db.schema}.edit_policies,${f.db.schema}.ontology_resource_projects,${f.db.schema}.entity_bindings,${f.db.schema}.entity_binding_history TO "${role}";
     GRANT SELECT,INSERT,UPDATE,DELETE ON ${f.db.schema}.objects,${f.db.schema}.links TO "${role}";
     GRANT SELECT,INSERT,UPDATE ON ${f.db.schema}.tasks,${f.db.schema}.source_calls,${f.db.schema}.scenarios,${f.db.schema}.scenario_objects,${f.db.schema}.scenario_links,${f.db.schema}.pa_requests TO "${role}";
       GRANT SELECT,INSERT,UPDATE,DELETE ON ${f.db.schema}.source_values,${f.db.schema}.object_edits TO "${role}";
       GRANT SELECT,INSERT ON ${f.db.schema}.edit_history TO "${role}";
+      GRANT SELECT,INSERT,UPDATE ON ${f.db.schema}.action_changes,${f.db.schema}.action_undo_requests,${f.db.schema}.scenario_sessions TO "${role}";
       GRANT USAGE ON ALL SEQUENCES IN SCHEMA ${f.db.schema} TO "${role}";
       GRANT SELECT,INSERT ON ${f.db.schema}.actions,${f.db.schema}.scenario_actions TO "${role}";`);
   const {Database}=await import('../packages/runtime/database.js'),{Metadata}=await import('../packages/runtime/metadata.js'),{Tasks}=await import('../packages/runtime/tasks.js'),{createCapabilities}=await import('../packages/capabilities/index.js'),{Worker}=await import('../apps/worker/worker.js'),{OntologyAgent}=await import('../packages/runtime/agent.js');

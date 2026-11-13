@@ -4,6 +4,7 @@ import type { FunctionContext, FunctionHandler } from '../../runtime/functions.j
 import type { Database } from '../../runtime/database.js';
 import { Scenarios } from '../../runtime/scenarios.js';
 import { PARequests } from '../../runtime/pa.js';
+import { Objects } from '../../runtime/objects.js';
 import { currentService } from '../services/functions.js';
 import { activityInputSchema, calendarResponseSchema, commitPlanSchema, jsonSchema, planInputSchema, planRefSchema, removeActivitySchema, searchSlotsSchema } from './contracts.js';
 
@@ -57,11 +58,12 @@ export async function readPlan(objects: Reader, raw: ObjectRef) {
   return { plan, range, calendars, activities };
 }
 
-export async function validate(objects: Reader, plan: ObjectRef, sourceTrip?:ObjectRef) {
+export async function validate(objects: Reader, plan: ObjectRef, sourceTrip?:ObjectRef, proposedTimes:ReadonlySet<string>=new Set()) {
   const state = await readPlan(objects, plan), violations: { severity: 'hard'; code: string; activity: ObjectRef; related: ObjectRef[] }[] = [];
   const add = (code: string, activity: ObjectRef, related: ObjectRef[] = []) => violations.push({ severity: 'hard', code, activity, related });
   for (const activity of state.activities) {
     const span = interval(activity.properties.start,activity.properties.end);
+    if(proposedTimes.has(activity.ref.id)&&ms(span.start)<Date.now())add('activity_in_past',activity.ref);
     if (!contained(state.range,span)) add('outside_plan_window', activity.ref);
     const assigned = await objects.follow(activity.ref,'resources');
     if (assigned.length !== state.calendars.length || state.calendars.some(c => !assigned.some(r => same(r.ref,c.resource.ref)))) add('required_resource_missing',activity.ref);
@@ -99,9 +101,17 @@ export async function validate(objects: Reader, plan: ObjectRef, sourceTrip?:Obj
 }
 
 export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionHandler> {
+  const proposedTimes=async(objects:Reader)=>{
+    if(!objects.model.scenario)return new Set<string>();
+    const rows=(await db.query(`SELECT id FROM ${db.schema}.scenario_objects WHERE scenario_id=$1 AND owner=$2 AND type='ScheduledActivity' AND properties IS NOT NULL
+      AND (base_properties IS NULL OR properties->'start' IS DISTINCT FROM base_properties->'start' OR properties->'end' IS DISTINCT FROM base_properties->'end')`,[objects.model.scenario,objects.access.principal.owner],objects instanceof Objects?objects.client:undefined)).rows;
+    return new Set(rows.map(row=>String(row.id)));
+  };
   return new Map<string, FunctionHandler>([
     ['prepareSchedulePlan', async (raw, context) => {
       const input = planInputSchema.parse(raw); zone(input.timeZone);
+      if(input.plan&&!input.scenarioId)throw new Conflict('Replanning an existing plan requires a scenarioId');
+      if(input.scenarioId&&!input.plan)throw new Conflict('Scenario preparation requires an existing plan');
       const range = interval(input.start,input.end);
       if (ms(range.end)-ms(range.start) > 31*86400000 || ms(range.end) <= Date.now()) throw new Conflict('Use a future planning window of at most 31 days');
       if (!context.execution || !context.operationId || !context.edit) throw new Conflict('Request calendar information through the original PA task');
@@ -117,7 +127,9 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       const availability = { type:'CalendarAvailability',id:digest([resource.id,plan.id]) };
       if (plan.type !== 'SchedulePlan') throw new Conflict('Expected a SchedulePlan');
       if (input.plan) await context.objects.read(plan);
-      return context.edit(plan, async graph => {
+      return context.edit(plan, async live => {
+        const view=input.scenarioId?await new Scenarios(db).view(live.access,live.model,input.scenarioId,live.client):undefined;
+        const graph=view?new Objects(db,view,live.access,live.client):live;
         await graph.create(resource,{ id: resource.id, name: 'User calendar' });
         const { status: _status, ...facts } = response;
         const properties = { id: availability.id, name: 'PA calendar availability', ...facts };
@@ -129,6 +141,8 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
         const fields = { id: plan.id, name: input.title, start: input.start, end: input.end, timeZone: input.timeZone, durationMinutes: input.durationMinutes };
         if (input.plan) { const current = await graph.read(plan); await graph.edit(plan,current.revision,fields); } else await graph.create(plan,fields);
         await graph.linkBatch([{ type:'ResourceAvailability',from:resource,to:availability },{ type:'PlanResource',from:plan,to:resource },{ type:'PlanAvailability',from:plan,to:availability }]);
+        if(input.scenarioId)await db.query(`INSERT INTO ${db.schema}.scenario_actions(scenario_id,owner,request_id,digest,action,result,requirements)
+          VALUES($1,$2,$3,$4,'PrepareSchedulePlan',$5,$6)`,[input.scenarioId,graph.owner,context.operationId,digest({input,response}),plan,JSON.stringify(graph.access.requirements())],graph.client);
       });
     }],
     ['findScheduleSlots', async (raw, context) => {
@@ -153,12 +167,18 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       return { plan: input.plan, slots, timeZone: state.plan.properties.timeZone, resources:state.calendars.map(c=>c.resource.ref), calendarEvidence:state.calendars.map(c=>({resource:c.resource.ref,sourceVersion:c.snapshot.properties.sourceVersion,observedAt:c.snapshot.properties.observedAt,expiresAt:c.snapshot.properties.expiresAt,evidence:c.snapshot.properties.evidence})),evaluatedAt:new Date().toISOString(),externalCalendarUpdated:false };
     }],
     ['editScheduleActivity', async (raw, context) => {
-      const input = activityInputSchema.parse(raw), ref = { type:'ScheduledActivity',id:digest([input.plan.id,input.id]) };
+      const input = activityInputSchema.parse(raw), ref = input.activity??{ type:'ScheduledActivity',id:digest([input.plan.id,input.id]) };
+      if(ref.type!=='ScheduledActivity')throw new Conflict('Expected a ScheduledActivity reference');
+      if(input.activity&&!input.revision)throw new Conflict('Editing an activity reference requires its current revision');
       interval(input.start,input.end);
       if (context.execution && !context.objects.model.scenario) throw new Conflict('The Agent must propose activity edits in a scenario for PA review');
       if (!context.edit) throw new Conflict('Activity edits require an Action');
       return context.edit(ref,async graph => {
         const state = await readPlan(graph,input.plan), fields = { id:ref.id,name:input.name,start:input.start,end:input.end };
+        if(!graph.model.scenario&&ms(input.start)<Date.now()){
+          const old=state.activities.find(activity=>same(activity.ref,ref));
+          if(!old||old.properties.start!==input.start||old.properties.end!==input.end)throw new Conflict('New or moved activities must start in the future');
+        }
         if (input.revision) {
           if (!state.activities.some(a=>same(a.ref,ref))) throw new Conflict('Activity does not belong to this plan');
           await graph.edit(ref,input.revision,fields);
@@ -184,23 +204,36 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       const plans=await context.objects.follow(input.activity,'plan'); if(plans.length!==1)throw new Conflict('Activity must have one plan');
       return context.edit(plans[0]!.ref,async graph=>{await graph.remove(input.activity,input.revision);});
     }],
-    ['validateSchedule', async (raw,context)=>validate(context.objects,planRefSchema.parse(raw).plan)],
+    ['validateSchedule', async (raw,context)=>validate(context.objects,planRefSchema.parse(raw).plan,undefined,await proposedTimes(context.objects))],
     ['readSchedulePlan', async (raw,context)=>{
       const input=planRefSchema.parse(raw),state=await readPlan(context.objects,input.plan);
-      return { plan:state.plan,activities:state.activities,validation:await validate(context.objects,input.plan),scenarioId:context.objects.model.scenario??null,externalCalendarUpdated:false };
+      return { plan:state.plan,activities:state.activities,validation:await validate(context.objects,input.plan,undefined,await proposedTimes(context.objects)),scenarioId:context.objects.model.scenario??null,externalCalendarUpdated:false };
     }],
     ['commitSchedulePlan',async(raw,context)=>{
       const input=commitPlanSchema.parse(raw);
       if (!context.edit || context.execution) throw new Conflict('The PA must apply the reviewed merge Action explicitly');
       return context.edit(input.plan,async graph=>{
         const serviceLinks=[...graph.model.objects.keys()].filter(type=>graph.model.implements(type,'ServiceOffering')).map(type=>graph.model.navigation(type,'plans','ServiceOffering').link);
-        await new Scenarios(db).mergeInto(graph,input.scenarioId,input.revision,{objects:['ScheduledActivity','EventTrip'],links:['ActivityPlan','ActivityResource','ActivityDependency','TripPlan','TripEvent','TripTravel','TripActivities',...serviceLinks],validate:async(view,touched,links)=>{
+        await new Scenarios(db).mergeInto(graph,input.scenarioId,input.revision,{objects:['ScheduledActivity','SchedulePlan','CalendarAvailability','EventTrip'],links:['ActivityPlan','ActivityResource','ActivityDependency','PlanResource','PlanAvailability','ResourceAvailability','TripPlan','TripEvent','TripTravel','TripActivities',...serviceLinks],validate:async(view,touched,links)=>{
           if(links.some(link=>link.to.type==='SchedulePlan'&&!same(link.to,input.plan)))throw new Conflict('Scenario contains service links outside the selected plan');
           for(const item of touched){
             if(view.model.implements(item.ref.type,'ServiceOffering')){await currentService(view,item.ref);continue;}
+            if(item.ref.type==='SchedulePlan'){
+              if(item.deleted||!same(item.ref,input.plan))throw new Conflict('Scenario changes another plan');
+              continue;
+            }
+            if(item.ref.type==='CalendarAvailability'){
+              if(item.deleted||!(await view.follow(input.plan,'availability')).some(snapshot=>same(snapshot.ref,item.ref)))throw new Conflict('Scenario changes unrelated calendar coverage');
+              continue;
+            }
+            if(item.ref.type==='ScheduleResource'){
+              if(item.deleted||!(await view.follow(input.plan,'resources')).some(resource=>same(resource.ref,item.ref)))throw new Conflict('Scenario changes unrelated resources');
+              continue;
+            }
             const plans=await (item.deleted?graph:view).follow(item.ref,'plan');
             if(plans.length!==1 || !same(plans[0]!.ref,input.plan))throw new Conflict('Scenario contains activities outside the selected plan');
           }
+          if(!(await validate(view,input.plan,undefined,await proposedTimes(view))).valid)throw new Conflict('Proposed schedule constraints reject this scenario');
         }});
         const result=await validate(graph,input.plan);
         if (!result.valid) throw new Conflict('Current calendar or schedule constraints reject this scenario');

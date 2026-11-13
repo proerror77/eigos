@@ -10,7 +10,7 @@ import { Access } from './access.js';
 export interface BindingManifest { functions: Record<string, string>; sources: Record<string, string> }
 export interface Bindings { describe(model: Ontology): BindingManifest }
 export class PublishedOntology extends Ontology {
-  constructor(body: unknown, readonly release: string, readonly projection: string, readonly runtimeId: string, readonly bindings: BindingManifest, readonly scenario?: string) { super(body); }
+  constructor(body: unknown, readonly release: string, readonly projection: string, readonly runtimeId: string, readonly bindings: BindingManifest, readonly scenario?: string) { super(body,{published:true}); }
 }
 export type ProjectionTransform = (ref: ObjectRef, properties: Record<string, unknown>) => Record<string, unknown>;
 
@@ -51,17 +51,24 @@ export class Metadata {
     await this.db.transaction(async client => {
       await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', [], client);
       const current = (await this.db.query(`SELECT r.digest,r.projection FROM ${this.db.schema}.ontology o JOIN ${this.db.schema}.releases r ON r.digest=o.release WHERE o.id=$1`, [model.document.id], client)).rows[0];
+      if(current){
+        const history=(await this.db.query(`SELECT body FROM ${this.db.schema}.releases WHERE body->>'id'=$1 AND state IN ('active','retired')`,[model.document.id],client)).rows;
+        for(const record of history){
+          const previous=new Ontology(record.body,{published:true});
+          for(const value of model.resourceDocument.valueTypes??[]){const old=previous.resourceDocument.valueTypes?.find(item=>item.apiName===value.apiName&&item.version===value.version);if(old&&digest(old.schema)!==digest(value.schema))throw new Conflict('Value Type constraints require a new version');}
+        }
+      }
       if (current && !current.projection) throw new Conflict('Upgrade the existing data before preparing a release');
       const fingerprint = current ? await this.fingerprint(current.projection, client, model.document.id) : null;
       if (current) {
         const rows = await this.db.query(`SELECT owner,type,id,revision,properties FROM ${this.db.schema}.objects WHERE projection=$1 ORDER BY owner,type,id`, [current.projection], client);
-        const projected = rows.rows.filter(row => model.objects.has(row.type)).map(row => {
+        const projected = rows.rows.filter(row => model.objects.has(row.type)&&row.type!=='OntologyScenario').map(row => {
           const fields = Object.fromEntries(Object.entries(row.properties).filter(([name]) => model.object(row.type).properties[name]));
           return { ...row, properties: model.parseObject({ type: row.type, id: row.id }, transform ? transform({ type: row.type, id: row.id }, structuredClone(row.properties)) : fields) };
         });
         for (let offset = 0; offset < projected.length; offset += 500) await this.db.query(`INSERT INTO ${this.db.schema}.objects(projection,owner,type,id,revision,properties)
           SELECT $1,owner,type,id,revision,properties FROM jsonb_to_recordset($2::jsonb) AS r(owner text,type text,id text,revision bigint,properties jsonb)`, [projection, JSON.stringify(projected.slice(offset, offset + 500))], client);
-        const links = (await this.db.query(`SELECT owner,type,from_type,from_id,to_type,to_id FROM ${this.db.schema}.links WHERE projection=$1`, [current.projection], client)).rows.filter(row => model.links.has(row.type));
+        const links = (await this.db.query(`SELECT owner,type,from_type,from_id,to_type,to_id FROM ${this.db.schema}.links WHERE projection=$1`, [current.projection], client)).rows.filter(row => model.links.has(row.type)&&row.from_type!=='OntologyScenario'&&row.to_type!=='OntologyScenario');
         const mapped = links.map(row => {
           const link = model.links.get(row.type)!;
           if (link.from.type !== row.from_type || link.to.type !== row.to_type) throw new Conflict('Link endpoints need a compatible source projection');
@@ -96,6 +103,8 @@ export class Metadata {
       if (running.rowCount) throw new Conflict('Complete or cancel unfinished tasks before changing their publication');
       const indexing = await this.db.query(`SELECT 1 FROM ${this.db.schema}.index_transactions WHERE ontology=$1 AND state IN ('pending','failed') LIMIT 1`,[model.document.id],client);
       if (indexing.rowCount) throw new Conflict('Resolve pending or failed source transactions before activation');
+      const workflows=await this.db.query(`SELECT 1 FROM ${this.db.schema}.workflow_runs WHERE ontology=$1 AND state IN ('pending','working','failed') LIMIT 1`,[model.document.id],client);
+      if(workflows.rowCount)throw new Conflict('Complete or cancel unfinished workflows before changing their publication');
       if (current && await this.fingerprint((await this.get(current)).projection, client, model.document.id) !== prepared.source_fingerprint) throw new Conflict('Source data changed; rebuild the candidate projection');
       if (await this.fingerprint(model.projection, client) !== prepared.projection_fingerprint) throw new Conflict('Prepared projection changed');
       await access.refresh(client);
@@ -118,7 +127,7 @@ export class Metadata {
       const live = await this.active(candidate.document.id, client);
       if (stored.state !== 'prepared' || stored.prepared_from !== live.release) throw new Conflict('Candidate base changed; rebase before catching up');
       if (await this.fingerprint(candidate.projection, client) !== stored.projection_fingerprint) throw new Conflict('Prepared projection changed');
-      const types = [...candidate.objects.keys()], links = [...candidate.links.keys()];
+      const types = [...candidate.objects.keys()].filter(type=>type!=='OntologyScenario'), links = [...candidate.links.keys()];
       // Remove outdated edges before objects, preserving foreign-key validity throughout catch-up.
       await this.db.query(`DELETE FROM ${this.db.schema}.links target WHERE target.projection=$1 AND NOT EXISTS(
         SELECT 1 FROM ${this.db.schema}.links source WHERE source.projection=$2 AND source.owner=target.owner AND source.type=target.type
@@ -140,7 +149,7 @@ export class Metadata {
         updated += rows.length;
         const last=rows.at(-1)!; cursor=[last.owner,last.type,last.id];
       }
-      const edges=(await this.db.query(`SELECT source.* FROM ${this.db.schema}.links source WHERE source.projection=$1 AND source.type=ANY($2::text[]) AND NOT EXISTS(
+      const edges=(await this.db.query(`SELECT source.* FROM ${this.db.schema}.links source WHERE source.projection=$1 AND source.type=ANY($2::text[]) AND source.from_type<>'OntologyScenario' AND source.to_type<>'OntologyScenario' AND NOT EXISTS(
         SELECT 1 FROM ${this.db.schema}.links target WHERE target.projection=$3 AND target.owner=source.owner AND target.type=source.type
         AND target.from_type=source.from_type AND target.from_id=source.from_id AND target.to_type=source.to_type AND target.to_id=source.to_id)`,[live.projection,links,candidate.projection],client)).rows;
       for(let offset=0;offset<edges.length;offset+=500) {

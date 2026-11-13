@@ -4,6 +4,8 @@ EIGOS 通过共享 PostgreSQL 本体提供对象集查询、Function 和 Action�
 
 架构、Schema 和实际支持范围见 [Ontology 架构](docs/architecture/ontology.md)。
 
+本体模型的定义、查询、Action、Scenario 和持久化验收见 [Ontology 模型验证](docs/guides/ontology-model-validation.md)。这些能力可直接通过 MCP、HTTP 和 TypeScript 客户端使用。
+
 ## 启动
 
 使用 Node.js 22.22.3、PostgreSQL 17 和 npm。
@@ -116,13 +118,15 @@ npm run test:e2e:run
 }
 ```
 
-省略 properties 保持当前属性限制；提供该数组则完整替换限制。`access:grant-member` 只授予指定账号当前定义中的业务能力，未来新能力不会自动获得执行授权。受限属性权限需明确配置。这里实现 owner 范围的对象策略和属性可见性，没有额外的通用条件规则语言。
+省略 properties 保持当前属性限制；提供该数组则完整替换限制。`access:grant-member` 只授予指定账号当前定义中的业务能力，未来新能力不会自动获得执行授权。受限属性权限需明确配置。对象内容策略、属性策略、组织组和标记规则的配置见 [Ontology 运行服务](docs/guides/ontology-services.md)，实例仍按 owner 隔离。
 
 ## Scenario 与日历排程
 
 Agent 可通过 `SchedulablePlan.prepare` 向用户 PA 请求指定范围的完整忙闲信息。缺少日历时原任务返回 `input-required`；PA 用 `respond_to_task`（或 A2A 原任务续接）回传后，Worker 继续相同任务。日历凭据留在 PA。
 
 `create_scenario`、`list_scenarios`、`inspect_scenario`、`discard_scenario` 管理隔离方案；现有查询、Function 与 Action 接受 `scenarioId`。排程 Functions 搜索可行时段、检查资源冲突及活动依赖。Agent 保存候选方案，PA 明确选择后用 `CommitSchedulePlan` 合并；外部日历不会被写入。
+
+这些 MCP 入口及对应 HTTP API 可以用 `ontology` 选择本体，默认 `Eigos`。任务保持其原始发布版本。临时会话、可关联的 Scenario 元数据、通用合并、声明式删除和 Action 补偿见 [Scenario 生命周期](docs/guides/scenario-lifecycle.md)。
 
 完整协议、数据格式、权限升级和当前支持范围见 [Scenario 与 PA 日历排程](docs/guides/scenarios-scheduling.md)。
 
@@ -135,3 +139,7 @@ Luma 默认沿用原 PA 已连接的 MCP。未来执行需要 PA 持续处理 `l
 ## Ontology 运行服务
 
 对象集、发布提案、来源索引、编辑历史、物化、策略和独立进程的入口见 [Ontology 运行服务](docs/guides/ontology-services.md)。构建后用 `npm run start:indexer` 运行来源消费与已配置的 Action 副作用。可用 `QUERY_DATABASE_URL` 配置只读查询节点，`EIGOS_EXTENSION_MODULE` 注册受信任的 Function 版本与副作用处理函数。
+
+[类型系统与资源包](docs/guides/type-system.md) 支持共享属性、版本化值类型、Struct、Interface 继承及可审阅的共享定义导入。[查询与语义检索](docs/guides/search.md) 支持嵌套字段、组合筛选、派生属性和本地多语言向量；`npm run embeddings:warm` 可提前下载固定版本模型。[实体归一](docs/guides/entity-resolution.md)、[跨本体对象复制](docs/guides/ontology-data-migration.md) 和 [Workflow 与规则](docs/guides/automation.md) 保留独立授权与审计。
+
+`/workbench/` 提供同一套服务的浏览器入口，包括建模提案、对象及关系探索、查询、Scenario、排程和规则。宿主提供当前身份的 Bearer token；界面不授予额外业务权限。三维文件与标注是独立的可选应用领域，Ontology 核心运行不依赖它。

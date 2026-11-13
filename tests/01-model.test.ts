@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import { Ontology } from '../packages/ontology/model.js';
 import { document, fixture, principal } from './fixture.js';
 import { Objects } from '../packages/runtime/objects.js';
+import { Metadata, PublishedOntology } from '../packages/runtime/metadata.js';
+import { digest } from '../packages/core/identity.js';
 
 test('five schema kinds resolve properties, directional links and action parameters', () => {
   const model = new Ontology(document);
@@ -56,6 +58,22 @@ test('replacement publication prepares compatible data before activation and pre
     assert.deepEqual((await old.read(ref)).properties, { id: 'existing', name: 'original' });
     await assert.rejects(old.edit(ref, 1, { name: 'late write' }), /read-only/);
   } finally { await f.close(); }
+});
+
+test('stored basic-type contracts remain readable while replacement publication requires current compatibility proofs',async()=>{
+  const f=await fixture();try{
+    const legacy=structuredClone(f.model.document);
+    legacy.objectTypes.find(type=>type.apiName==='LumaEvent')!.properties.nativeId!.schema={type:'string'};
+    assert.throws(()=>new Ontology(legacy),/Invalid property mapping LumaEvent.nativeId/);
+    const id=digest({legacy:legacy.version}),stored=new PublishedOntology(legacy,id,f.model.projection,'previous-runtime',f.model.bindings);
+    await f.db.query(`INSERT INTO ${f.db.schema}.releases(digest,body,definition_digest,projection,runtime_id,bindings,state) VALUES($1,$2,$3,$4,$5,$6,'retired')`,[id,legacy,stored.digest,f.model.projection,'previous-runtime',f.model.bindings]);
+    const loaded=await new Metadata(f.db).get(id);
+    assert.deepEqual(loaded.document,stored.document);assert.equal(loaded.digest,stored.digest);
+    await assert.rejects(f.metadata.prepare(legacy,f.capabilities,f.publisher),/Invalid property mapping LumaEvent.nativeId/);
+    const next=await f.metadata.prepare(f.model.document,f.capabilities,f.publisher);
+    assert.equal(next.digest,f.model.digest);
+    await assert.rejects(f.capabilities.functions.invoke(loaded,'readRideEstimates',{request:{type:'RideRequest',id:'historical'}},{principal,objects:new Objects(f.db,loaded,f.access),signal:AbortSignal.timeout(1000)}),/Historical Function/);
+  }finally{await f.close();}
 });
 
 test('stale data, missing bindings and unfinished tasks cannot replace the live publication', async () => {

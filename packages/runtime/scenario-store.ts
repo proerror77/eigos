@@ -2,6 +2,7 @@ import { Conflict, NotFound } from '../core/identity.js';
 import type { ObjectRef, LinkData } from '../ontology/schema.js';
 import { Database, type Sql } from './database.js';
 import type { PublishedOntology } from './metadata.js';
+import { syncScenarioMetadata } from './scenario-metadata.js';
 
 /** Shared by live and scenario edits, including source ingestion and scenario merge. */
 export async function lockEdits(db: Database, model: PublishedOntology, owner: string, client: Sql) {
@@ -12,7 +13,9 @@ export async function lockEdits(db: Database, model: PublishedOntology, owner: s
 
 export async function checkScenario(db: Database, model: PublishedOntology, owner: string, client: Sql = db.pool, lock = false) {
   if (!model.scenario) return;
-  const row = (await db.query(`SELECT *,expires_at>now() AS current FROM ${db.schema}.scenarios WHERE id=$1 AND owner=$2${lock ? ' FOR UPDATE' : ''}`, [model.scenario, owner], client)).rows[0];
+  const row = (await db.query(`SELECT s.*,s.expires_at>now() AND (s.session_id IS NULL OR (session.closed_at IS NULL AND session.expires_at>now())) AS current
+    FROM ${db.schema}.scenarios s LEFT JOIN ${db.schema}.scenario_sessions session ON session.id=s.session_id
+    WHERE s.id=$1 AND s.owner=$2${lock ? ' FOR UPDATE OF s' : ''}`, [model.scenario, owner], client)).rows[0];
   if (!row) throw new NotFound('Scenario is unavailable');
   if (row.release !== model.release || row.state !== 'open' || !row.current) throw new Conflict('Scenario is closed, expired or belongs to another publication');
 }
@@ -59,4 +62,5 @@ export async function stageLink(db: Database, model: PublishedOntology, owner: s
 }
 export async function bumpScenario(db: Database, model: PublishedOntology, owner: string, client: Sql) {
   await db.query(`UPDATE ${db.schema}.scenarios SET revision=revision+1 WHERE id=$1 AND owner=$2`, [model.scenario, owner], client);
+  await syncScenarioMetadata(db,model,model.scenario!,client);
 }

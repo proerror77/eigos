@@ -1,3 +1,6 @@
+import { scenarioMetadataRead, scenarioMetadataQuery, scenarioMetadataType } from './scenario-metadata.js';
+import { DerivedProperties } from './derived.js';
+import { compareValues, matchesPredicate, nestedValue, orderSchema, predicateFields, predicateSchema, regexMatches, propertyPathSchema } from './query-filter.js';
 import { recordObjectEdit, resolveSourceEdit } from './edit-history.js';
 import { z } from 'zod';
 import { Conflict, NotFound, digest } from '../core/identity.js';
@@ -9,7 +12,8 @@ import { checkScenario, lockEdits, viewTables, stageObject, stageLink } from './
 
 export const querySchema = z.strictObject({
   type: z.string(), where: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).default({}),
-  select: z.array(z.string()).max(30).optional(), limit: z.number().int().min(1).max(100).default(50), cursor: z.string().optional(),
+  filter: predicateSchema.optional(), orderBy: orderSchema.optional(),
+  select: z.array(propertyPathSchema).max(30).optional(), limit: z.number().int().min(1).max(100).default(50), cursor: z.string().optional(),
   from: z.strictObject({ object: objectRefSchema, link: z.string(), as: z.string().optional() }).optional(),
 });
 export type Query = z.input<typeof querySchema>;
@@ -24,7 +28,11 @@ export class Objects {
       await checkScenario(this.db, this.model, this.owner, this.client, true);
     })();
   }
-  private writeType(type: string) {
+  private assertStoredFields(ref:ObjectRef,properties:Record<string,unknown>) {
+    if(Object.keys(properties).some(field=>this.model.object(ref.type).properties[field]?.derived))throw new Conflict('Derived properties are read-only');
+  }
+  private writeType(type: string, endpoint=false) {
+    if(type===scenarioMetadataType&&!endpoint)throw new Conflict('Edit Scenario metadata through its lifecycle API');
     this.access.definition(this.model, 'object', type);
     for (const source of this.model.sources.values()) if (source.objectType === type) {
       const provider = this.model.functions.get(source.function)?.source;
@@ -54,7 +62,8 @@ export class Objects {
     if (!rows.rows[0]) throw new NotFound('Object is unavailable');
     return this.row(rows.rows[0]);
   }
-  async read(input: ObjectRef): Promise<ObjectData> {
+  async readStored(input: ObjectRef): Promise<ObjectData> {
+    if(input.type===scenarioMetadataType)return scenarioMetadataRead(this,input);
     this.access.read(this.model, input.type);
     return this.visible(await this.stored(input));
   }
@@ -68,14 +77,81 @@ export class Objects {
     if(!baseline)return false;
     return Object.entries(baseline).every(([field,value])=>Object.hasOwn(object.properties,field)&&this.access.cell(this.model,ref.type,field,object.properties)&&digest(object.properties[field])===digest(value));
   }
-  async query(input: Query) {
+  async propertyVisible(ref:ObjectRef,field:string):Promise<boolean> {
+    const object=await this.stored(ref);
+    this.access.readRow(this.model,ref.type,object.properties);
+    return this.access.cell(this.model,ref.type,field,object.properties);
+  }
+  async read(input: ObjectRef): Promise<ObjectData> {
+    if(this.client===this.db.pool&&Object.values(this.model.object(input.type).properties).some(property=>property.derived)) {
+      const access=await Access.load(this.db,this.access.principal);
+      const result=await this.db.transaction(async client=>{
+        await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',[],client);
+        return new Objects(this.db,this.model,access,client).read(input);
+      });
+      if(!await access.canReturn(access.dataRequirements()))throw new Conflict('Derived result permissions changed');
+      this.access.adoptReads(access);return result;
+    }
+    return new DerivedProperties(this).enrich(await this.readStored(input));
+  }
+  async query(input: Query):Promise<{items:ObjectData[];cursor?:string}> {
+    const args=querySchema.parse(input);
+    const fields=[...Object.keys(args.where),...predicateFields(args.filter),...(args.orderBy??[]).map(item=>item.property),...(args.select??[])];
+    const types=this.model.concreteTypes(args.type);
+    const derived=types.some(type=>Object.values(this.model.object(type).properties).some(property=>property.derived));
+    if(!args.filter&&!args.orderBy&&!derived&&!fields.some(field=>field.includes('.')))return this.queryStored(args);
+    if(this.client===this.db.pool) {
+      const access=await Access.load(this.db,this.access.principal);
+      const result=await this.db.transaction(async client=>{
+        await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',[],client);
+        return new Objects(this.db,this.model,access,client).query(args);
+      });
+      if(!await access.canReturn(access.dataRequirements()))throw new Conflict('Query permissions changed');
+      this.access.adoptReads(access);return result;
+    }
+    for(const field of fields)for(const type of types)this.model.propertyName(type,args.type,field.split('.')[0]!);
+    const evaluator=new DerivedProperties(this),all:ObjectData[]=[];
+    let cursor:string|undefined;
+    do {
+      const page=await this.queryStored({type:args.type,from:args.from,limit:100,cursor});
+      for(const item of page.items) {
+        const raw=args.type===item.ref.type?item:await this.readStored(item.ref);
+        const enriched=await evaluator.enrich(raw);
+        const definitions=this.model.interfaces.get(args.type)?.properties??this.model.object(args.type).properties;
+        const properties=Object.fromEntries(Object.keys(definitions).map(field=>{
+          const local=this.model.propertyName(item.ref.type,args.type,field);
+          return [field,local?enriched.properties[local]??null:null];
+        }));
+        all.push({...enriched,properties});
+        if(all.length>10000)throw new Conflict('Extended query exceeds 10000 complete candidate objects');
+      }
+      cursor=page.cursor;
+    }while(cursor);
+    const regex=await regexMatches(args.filter,all);
+    const matching=all.filter(object=>Object.entries(args.where).every(([field,value])=>digest(nestedValue(object.properties,field))===digest(value))&&(!args.filter||matchesPredicate(args.filter,object.properties,regex)));
+    matching.sort((left,right)=>{
+      for(const order of args.orderBy??[]) {
+        const a=nestedValue(left.properties,order.property),b=nestedValue(right.properties,order.property);
+        const comparison=compareValues(a,b);
+        if(comparison)return a===null||b===null?comparison:order.direction==='desc'?-comparison:comparison;
+      }
+      return Buffer.compare(Buffer.from(JSON.stringify(left.ref)),Buffer.from(JSON.stringify(right.ref)));
+    });
+    const identity=digest({owner:this.owner,release:this.model.release,scenario:this.model.scenario,args:{...args,cursor:undefined,limit:undefined},objects:matching});
+    const offset=args.cursor?z.strictObject({query:z.literal(identity),offset:z.number().int().min(0).max(matching.length)}).parse(JSON.parse(Buffer.from(args.cursor,'base64url').toString())).offset:0;
+    const end=offset+args.limit;
+    const items=matching.slice(offset,end).map(object=>args.select?{...object,properties:Object.fromEntries(args.select.map(field=>[field,nestedValue(object.properties,field)]))}:object);
+    return {items,cursor:end<matching.length?Buffer.from(JSON.stringify({query:identity,offset:end})).toString('base64url'):undefined};
+  }
+  async queryStored(input: Query):Promise<{items:ObjectData[];cursor?:string}> {
+    if(input.type===scenarioMetadataType)return scenarioMetadataQuery(this,input);
     await checkScenario(this.db, this.model, this.owner, this.client);
     const args = querySchema.parse(input);
     this.access.definition(this.model, this.model.interfaces.has(args.type) ? 'interface' : 'object', args.type);
     const navigation = args.from ? this.model.navigation(args.from.object.type, args.from.link, args.from.as) : undefined;
     if (args.from && navigation) {
       if (args.from.as) this.access.definition(this.model, 'interface', args.from.as);
-      await this.read(args.from.object); this.access.read(this.model, navigation.target);
+      await this.readStored(args.from.object); this.access.read(this.model, navigation.target);
       this.access.definition(this.model, 'link', navigation.link);
     }
     const types = this.model.concreteTypes(args.type).filter(type => (!navigation || type === navigation.target) && this.access.canRead(this.model, type));
@@ -117,7 +193,7 @@ export class Objects {
     const limitParameter = values.length, tables = viewTables(this.db, this.model, this.owner, values);
     const result = await this.db.readQuery(`${tables.prefix}SELECT type,id,revision,properties FROM ${tables.objects} o WHERE ${clauses.join(' AND ')} ORDER BY type COLLATE "C",id COLLATE "C" LIMIT $${limitParameter}`, values, this.client);
     const records = result.rows.slice(0, args.limit).map(row => this.row(row));
-    const fields = args.select ?? Object.keys(this.model.interfaces.get(args.type)?.properties ?? this.model.object(args.type).properties);
+    const fields = args.select ?? Object.keys(this.model.interfaces.get(args.type)?.properties ?? this.model.object(args.type).properties).filter(field=>types.some(type=>{const local=this.model.propertyName(type,args.type,field);return local&&!this.model.object(type).properties[local]?.derived;}));
     const items = records.map(object => { this.access.readRow(this.model,object.ref.type,object.properties); return { ...object, properties: Object.fromEntries(fields.flatMap(field => {
       const local = this.model.propertyName(object.ref.type, args.type, field);
       return local === undefined ? [] : [[field, this.access.cell(this.model, object.ref.type, local, object.properties) ? object.properties[local] : null]];
@@ -128,6 +204,15 @@ export class Objects {
   async follow(ref: ObjectRef, link: string, view = ref.type): Promise<ObjectData[]> {
     if (view !== ref.type) this.access.definition(this.model, 'interface', view);
     const nav = this.model.navigation(ref.type, link, view);
+    if(this.client===this.db.pool&&[ref.type,nav.target].some(type=>Object.values(this.model.object(type).properties).some(property=>property.derived))) {
+      const access=await Access.load(this.db,this.access.principal);
+      const result=await this.db.transaction(async client=>{
+        await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',[],client);
+        return new Objects(this.db,this.model,access,client).follow(ref,link,view);
+      });
+      if(!await access.canReturn(access.dataRequirements()))throw new Conflict('Derived result permissions changed');
+      this.access.adoptReads(access);return result;
+    }
     await this.read(ref); this.access.read(this.model, nav.target); this.access.definition(this.model, 'link', nav.link);
     const from = nav.forward ? 'from' : 'to', to = nav.forward ? 'to' : 'from';
     await checkScenario(this.db, this.model, this.owner, this.client);
@@ -138,11 +223,18 @@ export class Objects {
       JOIN ${tables.objects} o ON o.projection=l.projection AND o.owner=l.owner AND o.type=l.${to}_type AND o.id=l.${to}_id
       WHERE l.owner=$1 AND l.type=$2 AND l.${from}_type=$3 AND l.${from}_id=$4 AND l.projection=$5 AND ${policy} ORDER BY o.id COLLATE "C" LIMIT 101`, values, this.client);
     if (result.rows.length > 100) throw new Error('Relationship exceeds the complete read limit');
-    return result.rows.map(row => this.visible(this.row(row)));
+    if(nav.target===scenarioMetadataType){
+      const items:ObjectData[]=[];
+      for(const row of result.rows)try{items.push(await scenarioMetadataRead(this,{type:scenarioMetadataType,id:String(row.id)}));}catch(error){if(!(error instanceof NotFound))throw error;}
+      return items;
+    }
+    const evaluator=new DerivedProperties(this);
+    return Promise.all(result.rows.map(row=>evaluator.enrich(this.visible(this.row(row)))));
   }
   async create(ref: ObjectRef, input: Record<string, unknown>): Promise<void> {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).create(ref, input));
     this.writeType(ref.type); await this.prepareWrite();
+    this.assertStoredFields(ref,input);
     const properties = this.model.parseObject(ref, input);
     this.access.writeRow(this.model,ref.type,properties);
     if (this.model.scenario) {
@@ -162,6 +254,7 @@ export class Objects {
     const unique = new Map<string,{ref:ObjectRef;properties:Record<string,unknown>|null}>();
     for (const item of input) {
       this.writeType(item.ref.type);
+      if(item.properties)this.assertStoredFields(item.ref,item.properties);
       const properties = item.properties === null ? null : this.model.parseObject(item.ref,item.properties);
       const key = JSON.stringify(item.ref), prior = unique.get(key);
       if (prior && digest(prior.properties)!==digest(properties)) throw new Conflict('Source rows disagree about one object');
@@ -187,6 +280,7 @@ export class Objects {
   async edit(ref: ObjectRef, revision: number, fields: Record<string, unknown>): Promise<void> {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).edit(ref, revision, fields));
     this.writeType(ref.type); await this.prepareWrite();
+    this.assertStoredFields(ref,fields);
     const old = await this.stored(ref), properties = this.model.parseObject(ref, { ...old.properties, ...fields });
     this.access.readRow(this.model,ref.type,old.properties);
     for (const field of Object.keys(fields)) if (!this.access.cell(this.model,ref.type,field,old.properties)) throw new Error('Cannot edit a hidden property');
@@ -206,7 +300,7 @@ export class Objects {
     if (!edges.length) return;
     for (const edge of edges) { await this.read(edge.from); await this.read(edge.to); }
     const rows = edges.map(edge => {
-      this.access.definition(this.model, 'link', edge.type); this.writeType(edge.from.type); this.writeType(edge.to.type);
+      this.access.definition(this.model, 'link', edge.type); this.writeType(edge.from.type,true); this.writeType(edge.to.type,true);
       const definition = this.model.links.get(edge.type);
       if (!definition || edge.from.type !== definition.from.type || edge.to.type !== definition.to.type) throw new Error('Invalid link endpoints');
       return { type: edge.type, from_type: edge.from.type, from_id: edge.from.id, to_type: edge.to.type, to_id: edge.to.id, single_from: definition.from.cardinality === 'one', single_to: definition.to.cardinality === 'one' };
@@ -230,7 +324,7 @@ export class Objects {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).unlink(edge));
     await this.prepareWrite(); this.access.definition(this.model, 'link', edge.type);
     await this.read(edge.from); await this.read(edge.to);
-    this.writeType(edge.from.type); this.writeType(edge.to.type);
+    this.writeType(edge.from.type,true); this.writeType(edge.to.type,true);
     const definition = this.model.links.get(edge.type);
     if (!definition || definition.from.type !== edge.from.type || definition.to.type !== edge.to.type) throw new Error('Invalid link endpoints');
     if (this.model.scenario) return stageLink(this.db, this.model, this.owner, edge, true, this.client);

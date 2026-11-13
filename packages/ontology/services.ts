@@ -114,7 +114,7 @@ export const servicesDefinition: OntologyDocument = {
     const offer = object(
       service.object,
       `${service.provider} account-scoped service facts. Not a reservation or fulfillment receipt.`,
-      { ...service.facts.shape, ...common },
+      { ...common, ...service.facts.shape },
     );
     offer.interfaces.ServiceOffering = {
       properties: identity(Object.keys(commonOffer.shape).concat(['provider', 'observedAt', 'expiresAt', 'evidence'])),

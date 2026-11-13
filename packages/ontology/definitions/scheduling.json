@@ -329,7 +329,8 @@
                 "end": "end",
                 "timeZone": "timeZone",
                 "durationMinutes": "durationMinutes",
-                "plan": "plan"
+                "plan": "plan",
+                "scenarioId": "scenarioId"
               }
             }
           }
@@ -460,6 +461,10 @@
                   "id"
                 ],
                 "additionalProperties": false
+              },
+              "scenarioId": {
+                "type": "string",
+                "format": "uuid"
               }
             },
             "required": [
@@ -615,6 +620,10 @@
               "id"
             ],
             "additionalProperties": false
+          },
+          "scenarioId": {
+            "type": "string",
+            "format": "uuid"
           }
         },
         "required": [
@@ -946,6 +955,26 @@
               ],
               "additionalProperties": false
             }
+          },
+          "activity": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9]*$",
+                "maxLength": 80
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [
@@ -1644,6 +1673,10 @@
               "id"
             ],
             "additionalProperties": false
+          },
+          "scenarioId": {
+            "type": "string",
+            "format": "uuid"
           }
         },
         "required": [
@@ -1735,6 +1768,26 @@
               ],
               "additionalProperties": false
             }
+          },
+          "activity": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9]*$",
+                "maxLength": 80
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [

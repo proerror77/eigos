@@ -1,0 +1,71 @@
+# Workflow 与对象规则
+
+Workflow 保存一组已发布 Action 的执行顺序。对象规则定期查询本体，对新进入匹配集合的对象提交 Workflow。执行使用创建请求的身份、原始 OAuth scopes 和当前资源权限。
+
+## 定义与启动
+
+`Automation.workflow` 接收名称、说明和最多二十个具名步骤。步骤名称在同一 Workflow 中唯一。每步指定 Action 和参数绑定。
+
+```json
+{
+  "name": "Record a route",
+  "steps": [{
+    "name": "Create record",
+    "action": "CopyRoute",
+    "input": {
+      "id": {"property": "name"},
+      "name": {"literal": "Copied route"}
+    }
+  }]
+}
+```
+
+`literal` 传递显式值，`property` 读取原始触发对象的可见属性或嵌套属性，`object: true` 传递该对象引用。`step: "Create record"` 引用之前具名步骤返回的对象，因此创建 Action 的结果可以成为后续修改或关联 Action 的输入。保存定义时拒绝不存在、向前或自身引用。运行时从已提交的 Action 与持久步骤记录读取引用，并重新检查结果对象当前可读性。每一步首次执行时重新读取对象并绑定参数，随后使用 Action 的参数契约规范化，包括默认值。
+
+`run` 接收 `{workflow, object, requestId}`。服务检查原始对象可读和步骤 Action 可执行，并固定 Workflow 正文、发布版本及原始 scopes。相同请求和相同 Workflow 内容可重试；同一 requestId 绑定不同内容会被拒绝。
+
+更新 Workflow 或规则需提交 `id` 和当前正整数 `revision`。创建时 revision 为零。更新定义影响后续新运行，已经提交的运行保留原有正文。
+
+## 执行恢复
+
+冻结记录同时保存原输入的安全标记。重试在执行前及提交锁内复核当前权限，恢复原始依赖与标记，不能因为输入后来改名、降级标记或步骤重试而降低输出保护。旧版未提交步骤若没有这份历史上下文，会明确要求新建运行；已经提交的 Action 仍可根据原凭据恢复进度。Scenario 合并后，仍存活对象的依赖转为正式对象，删除和回滚的依赖继续拒绝复用。
+
+步骤结果绑定在首次求值后固定为准确 ObjectRef，重试继续使用该引用；尚未执行的 Action 会重新检查该对象当前权限。每步在调用 Action 前将规范化参数、授权依赖和稳定 requestId 保存到 `workflow_steps`。即使 Action 改变了触发对象，恢复时仍使用已保存参数。
+
+Action 的对象写入和执行记录使用现有原子事务。Workflow 在 Action 提交后记录步骤完成。进程在两者之间中断时，恢复会核对 Action 执行记录的摘要并补记完成，随后继续下一步。Action 事务中的提交回调同时更新该步骤的数据授权依赖。
+
+多个 Worker 使用领取租约和行锁分配运行。提交前检查租约、取消状态与当前发布。一次 `runOne` 执行最多两分钟，租约为一百五十秒；逾期 Worker 的后续提交会被拒绝。失败状态需要显式 `retry`，运行从第一个未完成步骤继续。重试重新检查当前 Action 权限和原始发布，未提交步骤重新检查冻结参数所依赖的数据权限。
+
+`cancel(access, model, id)` 停止后续步骤，可用于待执行、执行中或失败运行。取消会在同一事务中补记已提交但尚未写入 Workflow 进度的 Action 记录，再清除领取令牌。已提交步骤保留在 Workflow 和 Action 审计中。取消后的运行不能重试。
+
+## 对象规则
+
+`rule` 接收 `{name, query, workflow, enabled}`。`enabled` 默认为 false，只有显式启用后才参与扫描。查询使用现有对象条件、关系导航、派生字段和权限控制。
+
+每次扫描在一致的数据库事务中完成，最多匹配 10,000 个对象。规则每三十秒进入一次可扫描状态。对象从不匹配变为匹配时生成运行；持续匹配期间不会反复生成。每次进入使用独立递增代次，所以关系变化引起的离开和重新进入，即使对象 revision 相同，也会重新触发。
+
+保存规则时记录调用者原始 scopes。扫描和所提交的 Workflow 使用这份记录。旧规则缺少 scopes 时，升级会将其停用，并要求重新保存。
+
+查询、权限或定义错误会回滚当次扫描产生的运行和匹配变化，将规则停用，并记录诊断状态。用户修正原因后重新保存并启用规则。扫描错误不会让 Indexer 持续崩溃或无休止重试同一规则。
+
+## 查看与权限
+
+写操作需要 `ontology:write`，列表需要 `ontology:read`。Workflow 和规则检查本体定义可见性及 Action 资源权限。输入属性经过当前行和属性策略遮罩。
+
+运行列表重新检查原始对象、已完成步骤的数据依赖和每个结果对象的当前可见性。失去权限的对象引用返回 `null`。列表返回最多一百条记录及 `hasMore`。
+
+## 存储与升级
+
+管理员调用 `initializeAutomation(db)` 建立或升级以下表。
+
+- `workflows` 保存定义。
+- `object_rules` 保存规则、启用状态、原始 scopes 和扫描错误。
+- `rule_matches` 保存匹配状态和进入代次。
+- `workflow_runs` 保存运行、租约、冻结正文与进度。
+- `workflow_steps` 保存逐步参数、授权依赖及执行记录。
+
+业务运行角色需要这些表的 SELECT、INSERT、UPDATE 权限，修改规则还需要 `rule_matches` 的 DELETE。定义编辑与执行使用同一个 PostgreSQL schema。Indexer 通过 `scanOne` 和 `runOne` 驱动后台执行。
+
+## 验证
+
+`tests/22-automation.test.ts` 覆盖并发领取、重复提交、Action 已提交但进度未记录时的恢复、取消提交隔离、取消时补记执行记录、原始 scopes、关系变化触发、错误扫描停用、输出引用权限和发布版本保护。测试使用隔离数据库和合成 Action。

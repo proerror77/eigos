@@ -1,3 +1,10 @@
+import {initializeOntologyDataMigrations} from './ontology-migrations.js';
+import {initializeEntityResolution} from './entity-resolution.js';
+import {initializeSemantic} from './semantic.js';
+import {initializeApplications} from './applications.js';
+import {initializeAutomation} from './automation.js';
+import {initializeScenarioLifecycle} from './scenarios.js';
+import {initializeActionUndo} from './action-journal.js';
 import { initializeObjectSets } from './object-sets.js';
 import { initializeGovernance } from './governance.js';
 import { initializeEffects } from './effects.js';
@@ -134,6 +141,14 @@ export class Database {
       CREATE INDEX IF NOT EXISTS scheduled_actions_due ON ${s}.scheduled_actions(run_at) WHERE state='scheduled';`);
     await this.query(`ALTER TABLE ${s}.scheduled_actions ADD COLUMN IF NOT EXISTS continue_at timestamptz`);
     await this.query(`ALTER TABLE ${s}.external_operations ADD COLUMN IF NOT EXISTS requirements jsonb NOT NULL DEFAULT '[]'`);
+
+    await initializeOntologyDataMigrations(this);
+    await initializeEntityResolution(this);
+    await initializeSemantic(this);
+    await initializeApplications(this);
+    await initializeAutomation(this);
+    await initializeScenarioLifecycle(this);
+    await initializeActionUndo(this);
     await initializeSecurity(this);
     await initializeObjectSets(this);
     await initializeGovernance(this);

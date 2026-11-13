@@ -1,3 +1,6 @@
+import {localEmbeddingVersion} from '../runtime/local-embeddings.js';
+import {Ontology} from '../ontology/model.js';
+import {applicationFunctions} from '../runtime/applications.js';
 import type { RuntimeExtensions } from '../runtime/extensions.js';
 import type { Database } from '../runtime/database.js';
 import { businessDefinition } from '../ontology/definition.js';
@@ -11,7 +14,10 @@ import { travelFunctions } from './travel/functions.js';
 
 export function createCapabilities(db: Database, source: SourceResolver, extensions: RuntimeExtensions = {}, services: ServiceResolver = unavailableServices) {
   let sources: Sources;
-  const capabilities = rideCapabilities(db, source, new Map([...schedulingFunctions(db), ...serviceFunctions(services, () => sources), ...travelFunctions(db,source,services,()=>sources)]), businessDefinition.functionTypes, extensions, serviceProjections(services));
+  const capabilities = rideCapabilities(db, source,
+    new Map([...schedulingFunctions(db), ...applicationFunctions(db), ...serviceFunctions(services, () => sources), ...travelFunctions(db, source, services, () => sources)]),
+    new Ontology(businessDefinition).resolvedDocument.functionTypes,
+    {...extensions, functions: [localEmbeddingVersion, ...(extensions.functions ?? [])]}, serviceProjections(services));
   sources = capabilities.sources;
   return capabilities;
 }
