@@ -11,7 +11,7 @@ import { Database } from '../../packages/runtime/database.js';
 import { Metadata } from '../../packages/runtime/metadata.js';
 import { Objects, querySchema } from '../../packages/runtime/objects.js';
 import { Tasks, submitSchema, publicTask, placeSelectionSchema } from '../../packages/runtime/tasks.js';
-import { RideWorkflow } from '../../packages/capabilities/didi/workflow.js';
+import { rideCapabilities } from '../../packages/capabilities/didi/pipeline.js';
 import type { SourceResolver } from '../../packages/capabilities/didi/functions.js';
 import { verifier, type VerifyToken } from './auth.js';
 import { A2A, AgentUser, agentCard } from './a2a.js';
@@ -23,7 +23,7 @@ const actionInput = z.strictObject({ requestId: z.string().min(1).max(128), acti
   .refine(value => !!value.action !== !!value.interface, 'Select an Action or an Interface Action');
 
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config)) {
-  const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), workflow = new RideWorkflow(db, metadata, tasks, source);
+  const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = rideCapabilities(db, source);
   const principals = new WeakMap<Request, Principal>();
   app.disable('x-powered-by'); app.use(express.json({ limit: '64kb' }));
   app.use((req, res, next) => {
@@ -51,12 +51,12 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   };
   const evaluate = async (p: Principal, raw: unknown) => {
     const input = functionInput.parse(raw), model = await modelFor(p, input.taskId);
-    return workflow.functions.invoke(model, input.function, input.input, { principal: p, objects: new Objects(db, model, p.owner), signal: AbortSignal.timeout(30000) });
+    return capabilities.functions.invoke(model, input.function, input.input, { principal: p, objects: new Objects(db, model, p.owner), signal: AbortSignal.timeout(30000) });
   };
   const apply = async (p: Principal, raw: unknown) => {
     const input = actionInput.parse(raw), model = await metadata.active();
     const selected = input.interface ? model.resolveAction(input.interface.object, input.interface.type, input.interface.action, input.input) : { action: input.action!, input: input.input };
-    return workflow.actions.apply(p, model, selected.action, selected.input, input.requestId);
+    return capabilities.actions.apply(p, model, selected.action, selected.input, input.requestId);
   };
   app.get('/identity', (req, res) => res.json(principal(req)));
   app.post('/tasks', async (req, res) => res.json(publicTask(await tasks.submit(principal(req), req.body))));
