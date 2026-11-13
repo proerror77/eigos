@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { canonical, Conflict, digest, NotFound } from '../core/identity.js';
+import { propertyPathSchema } from '../ontology/property-path.js';
 import { objectRefSchema, type ObjectData, type ObjectRef } from '../ontology/schema.js';
 import { Access, PermissionDenied } from './access.js';
 import { Database, type Sql } from './database.js';
@@ -41,10 +42,12 @@ function boundedExpression(input: unknown): boolean {
 export const setExpressionSchema = z.unknown().refine(boundedExpression, 'Object set expression is too large or deeply nested').pipe(expression);
 export const evaluateSetSchema = z.strictObject({ set: setExpressionSchema, view: z.string().optional(), limit: z.number().int().min(1).max(100).default(50), cursor: z.string().optional() });
 const metricSchema = z.discriminatedUnion('op', [
-  z.strictObject({ op: z.literal('count'), property: z.string().min(1).optional() }),
-  z.strictObject({ op: z.enum(['sum', 'min', 'max', 'avg']), property: z.string().min(1) }),
+  z.strictObject({ op: z.literal('count'), property: propertyPathSchema.optional() }),
+  z.strictObject({ op: z.enum(['sum', 'min', 'max', 'avg']), property: propertyPathSchema }),
 ]);
-export const aggregateSetSchema = z.strictObject({ set: setExpressionSchema, view: z.string().optional(), groupBy: z.array(z.string().min(1)).max(5).default([]), metrics: z.record(z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/), metricSchema).refine(value => Object.keys(value).length > 0 && Object.keys(value).length <= 20) });
+export const aggregateSetSchema = z.strictObject({ set: setExpressionSchema, view: z.string().optional(), groupBy: z.array(propertyPathSchema).max(5).default([]), metrics: z.record(z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/), metricSchema).refine(value => Object.keys(value).length > 0 && Object.keys(value).length <= 20) });
+export const evaluateSetViewSchema = evaluateSetSchema.extend({ scenarioId: z.uuid().optional() });
+export const aggregateSetViewSchema = aggregateSetSchema.extend({ scenarioId: z.uuid().optional() });
 export const saveSetSchema = z.strictObject({ id: z.uuid().optional(), revision: z.number().int().positive().optional(), requestId: z.string().min(1).max(128), name: z.string().min(1).max(200), mode: z.enum(['static', 'dynamic']), set: setExpressionSchema, readers: z.array(z.string().min(1).max(200)).max(100).default([]) }).refine(value => Boolean(value.id) === Boolean(value.revision), 'Updating a set requires its ID and revision');
 export const listSetsSchema = z.strictObject({ cursor: z.uuid().optional(), limit: z.number().int().min(1).max(100).default(50) });
 
@@ -68,11 +71,17 @@ export class ObjectSets {
   constructor(private readonly db: Database, private readonly maximumObjects = 10000) {
     if (!Number.isInteger(maximumObjects) || maximumObjects < 1 || maximumObjects > 10000) throw new Error('Object set maximum must be between 1 and 10000');
   }
-  private async snapshot<T>(access: Access, action: (client: Sql) => Promise<T>): Promise<T> {
+  private async snapshot<T>(access: Access, action: (client: Sql) => Promise<T>, saveAgainst?: PublishedOntology): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       try {
         const result = await this.db.transaction(async client => {
           await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', [], client);
+          if (saveAgainst) {
+            // Lock before the first read so a save sees any publication that made it wait.
+            await this.db.query(`LOCK TABLE ${this.db.schema}.object_sets IN ROW EXCLUSIVE MODE`, [], client);
+            const active = await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [saveAgainst.document.id], client);
+            if (active.rows[0]?.release !== saveAgainst.release) throw new Conflict('Object set publication changed; retry against the active Ontology');
+          }
           await access.refresh(client);
           return action(client);
         });
@@ -130,6 +139,7 @@ export class ObjectSets {
         }
         case 'refs':
           for (const ref of node.objects) {
+            if (!model.objects.has(ref.type)) continue;
             try { add(await read(ref)); }
             catch (error) { if (!(error instanceof NotFound) && !(error instanceof PermissionDenied)) throw error; }
           }
@@ -203,13 +213,13 @@ export class ObjectSets {
     return this.snapshot(access, async client => {
       if (input.view) access.definition(model, model.interfaces.has(input.view) ? 'interface' : 'object', input.view);
       const all = (await this.resolve(access, model, input.set, client)).map(object => this.project(model, object, input.view));
+      const fields = new Set([...input.groupBy, ...Object.values(input.metrics).flatMap(metric => metric.property ? [metric.property] : [])]);
+      const types = new Set(input.view ? [input.view] : all.map(object => object.ref.type));
+      if (!types.size && input.set.op === 'query') types.add(input.set.query.type);
+      for (const type of types) for (const field of fields) model.propertyPath(type, field);
       const groups = new Map<string, { keys: Record<string, unknown>; objects: ObjectData[] }>();
       if (!input.groupBy.length) groups.set('all', { keys: {}, objects: [] });
-      const field = (object: ObjectData, name: string) => {
-        const type = input.view ?? object.ref.type;
-        model.propertyName(object.ref.type, type, name.split('.')[0]!);
-        return nestedValue(object.properties,name);
-      };
+      const field = (object: ObjectData, name: string) => nestedValue(object.properties, name);
       for (const object of all) {
         const keys = Object.fromEntries(input.groupBy.map(name => [name, field(object, name)])), key = canonical(keys);
         const group = input.groupBy.length ? groups.get(key) ?? { keys, objects: [] } : groups.get('all')!;
@@ -263,7 +273,7 @@ export class ObjectSets {
         : await this.db.query(`INSERT INTO ${this.db.schema}.object_sets(id,ontology,owner,request_id,name,mode,expression,readers,input_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [randomUUID(), model.document.id, owner, input.requestId, input.name, input.mode, JSON.stringify(stored), JSON.stringify([...new Set(input.readers)]), fingerprint], client);
       if (!result.rows[0]) throw new Conflict('Object set revision changed');
       return this.metadata(result.rows[0] as SavedRow, owner);
-    });
+    }, model);
   }
   async get(access: Access, model: PublishedOntology, id: string) {
     return this.snapshot(access, async client => this.metadata(await this.saved(access, model, id, client), access.principal.owner));

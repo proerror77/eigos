@@ -1,7 +1,10 @@
 import { z } from 'zod';
 import { compileTypes } from './type-system.js';
 import { expandImports } from './resource-mapping.js';
+import { actionParametersCompatible } from './action-compatibility.js';
 import { schemaSubset } from './schema-compatibility.js';
+import { validateDerivedProperties } from './derived-validation.js';
+import { fieldSchema, propertyPathSchema } from './property-path.js';
 import { digest } from '../core/identity.js';
 import { ontologySchema, type OntologyDocument, type ObjectRef } from './schema.js';
 
@@ -94,13 +97,21 @@ export class Ontology {
         for (const parameter of expectedRequired) if (!local.parameters[parameter]) throw new Error('Incompatible action parameters');
         for (const [parameter,target] of Object.entries(local.parameters)) {
           if (!expected[parameter] || !actual[target] || !compatible(expected[parameter],actual[target])) throw new Error('Incompatible action parameter constraints');
-          if (actualRequired.has(target) && !expectedRequired.has(parameter) && !Object.hasOwn(actual[target],'default')) throw new Error('Optional Interface input cannot satisfy a required Action input');
+          if (actualRequired.has(target) && !expectedRequired.has(parameter) && !Object.hasOwn(actual[target],'default') && !Object.hasOwn(expected[parameter],'default')) throw new Error('Optional Interface input cannot satisfy a required Action input');
           const objectType=constraint.objectParameters[parameter],targetType=action.objectParameters[target];
           if (objectType && (!targetType || !this.concreteTypes(objectType).every(type=>this.implements(type,targetType)))) throw new Error('Incompatible Action object parameter type');
+          if (!options.published && targetType && !objectType) throw new Error('Incompatible Action object parameter type');
         }
         for(const parameter of actualRequired)if(!targets.includes(parameter)&&!Object.hasOwn(actual[parameter]??{},'default'))throw new Error('Action requires an unmapped parameter');
+        if (!options.published) {
+          if (Object.keys(action.objectParameters).some(parameter => !targets.includes(parameter)))
+            throw new Error('Action requires an unmapped object parameter');
+          if (!actionParametersCompatible(constraint.parameters, action.parameters, local.parameters))
+            throw new Error('Incompatible action parameter constraints for ' + type.apiName + '.' + alias);
+        }
       }
     }
+    if (!options.published) validateDerivedProperties(this, validator);
     for (const action of this.actions.values()) {
       if (new Set(action.effects?.map(effect => effect.name)).size !== (action.effects?.length ?? 0)) throw new Error('Duplicate Action effect name');
       validator(action.parameters);
@@ -141,10 +152,18 @@ export class Ontology {
     return [...this.objects.keys()].filter(type => this.implements(type, target));
   }
   propertyName(type: string, view: string, property: string): string | undefined {
-    if (type === view) { if (!this.object(type).properties[property]) throw new Error('Unknown property'); return property; }
+    if (type === view) { if (!Object.hasOwn(this.object(type).properties, property)) throw new Error('Unknown property ' + type + '.' + property); return property; }
     const mapping = this.object(type).interfaces[view];
-    if (!mapping || !required(this.interfaces, view).properties[property]) throw new Error('Unknown interface property');
-    return mapping.properties[property];
+    if (!mapping || !Object.hasOwn(required(this.interfaces, view).properties, property)) throw new Error('Unknown interface property ' + view + '.' + property);
+    return Object.hasOwn(mapping.properties, property) ? mapping.properties[property] : undefined;
+  }
+  propertyPath(view: string, path: string): Record<string, unknown> {
+    const [name, ...fields] = propertyPathSchema.parse(path).split('.');
+    const definitions = this.interfaces.get(view)?.properties ?? this.object(view).properties;
+    let schema = Object.hasOwn(definitions, name!) ? definitions[name!]!.schema : undefined;
+    for (const field of fields) schema = schema && fieldSchema(schema, field);
+    if (!schema) throw new Error('Unknown property ' + view + '.' + path);
+    return schema;
   }
   parseObject(ref: ObjectRef, properties: Record<string, unknown>): Record<string, unknown> {
     if (properties[this.object(ref.type).primaryKey] !== ref.id) throw new Error('Primary key differs from object reference');
@@ -172,13 +191,15 @@ export class Ontology {
     const supplied = validator(contract.parameters).parse(input) as Record<string, unknown>;
     const subjects = Object.keys(contract.objectParameters).filter(parameter => this.implements(ref.type, contract.objectParameters[parameter]!));
     if (!subjects.some(parameter => digest(supplied[parameter]) === digest(ref))) throw new Error('Interface action must bind the selected object');
-    return { action: mapping.action, input: Object.fromEntries(Object.entries(mapping.parameters).map(([alias, local]) => [local, supplied[alias]])) };
+    return { action: mapping.action, input: Object.fromEntries(Object.entries(mapping.parameters)
+      .flatMap(([alias, local]) => supplied[alias] === undefined ? [] : [[local, supplied[alias]]])) };
   }
   resolveTypeAction(type: string, interfaceName: string, name: string, input: Record<string, unknown>) {
     const contract = required(this.interfaces, interfaceName).actions[name];
     const mapping = this.object(type).interfaces[interfaceName]?.actions[name];
     if (!contract || !mapping) throw new Error('Interface action is unavailable');
     const supplied = validator(contract.parameters).parse(input) as Record<string, unknown>;
-    return { action: mapping.action, input: Object.fromEntries(Object.entries(mapping.parameters).map(([alias, local]) => [local, supplied[alias]])) };
+    return { action: mapping.action, input: Object.fromEntries(Object.entries(mapping.parameters)
+      .flatMap(([alias, local]) => supplied[alias] === undefined ? [] : [[local, supplied[alias]]])) };
   }
 }

@@ -36,8 +36,8 @@ import { Scenarios } from './scenarios.js';
 import { Objects } from './objects.js';
 import {
   ObjectSets,
-  evaluateSetSchema,
-  aggregateSetSchema,
+  evaluateSetViewSchema,
+  aggregateSetViewSchema,
   saveSetSchema,
   listSetsSchema,
 } from './object-sets.js';
@@ -112,14 +112,14 @@ export function ontologyServices(
   register(
     'evaluate_set',
     'Evaluate a composed or saved object set with current permissions.',
-    evaluateSetSchema.extend({ scenarioId: z.uuid().optional() }),
+    evaluateSetViewSchema,
     false,
     async (a, { scenarioId, ...input }) => sets.evaluate(a, await view(a, scenarioId), input),
   );
   register(
     'aggregate_set',
     'Group and aggregate a complete authorized object set.',
-    aggregateSetSchema.extend({ scenarioId: z.uuid().optional() }),
+    aggregateSetViewSchema,
     false,
     async (a, { scenarioId, ...input }) => sets.aggregate(a, await view(a, scenarioId), input),
   );

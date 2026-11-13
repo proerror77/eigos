@@ -18,6 +18,7 @@ import { DidiMcpConnector } from '../packages/capabilities/didi/connector.js';
 import { didiToolInputs } from '../packages/capabilities/didi/contracts.js';
 import type { DidiSource } from '../packages/capabilities/didi/functions.js';
 import type { ServiceResolver } from '../packages/capabilities/services/sources.js';
+import type { StripeSandboxResolver } from '../packages/capabilities/payments/stripe-sandbox.js';
 import { ScheduledActions,ScheduledActionRunner } from '../packages/runtime/scheduled-actions.js';
 import { digest } from '../packages/core/identity.js';
 
@@ -57,7 +58,7 @@ export async function provider() {
   source.orders={environment:'mock',supportedCurrencies:['CNY'],async assertAvailable(){if(!flags.orderEnabled)throw new Error('DIDI_ORDER_EXECUTION_DISABLED');},async quote(_input,category){return {traceId:'PRIVATE_ORDER_TOKEN',amountMinor:flags.amountMinor,currency:'CNY',category};},async create(_quote,_signal,guard){await guard();flags.orderCreates++;if(flags.loseOrderReply)throw new Error('Synthetic lost reply');return {orderId:'synthetic-original-order',status:'Created by fixture',state:'created',independentRead:false,evidence:'synthetic',observedAt:new Date().toISOString(),contentDigest:digest('created')};},async query(orderId){flags.orderQueries++;return {orderId,status:'Independent fixture status',state:'reported',independentRead:true,evidence:'synthetic',observedAt:new Date().toISOString(),contentDigest:digest('queried')};},async cancel(){throw new Error('No synthetic cancellation requested');}};
   return { source, calls, inputs, flags, close: () => rm(directory, { recursive: true, force: true }) };
 }
-export async function fixture(driver: AgentDriver = new FixtureAgent(),services?:ServiceResolver) {
+export async function fixture(driver: AgentDriver = new FixtureAgent(),services?:ServiceResolver,stripe?:StripeSandboxResolver) {
   const url = process.env.EIGOS_TEST_DATABASE_URL;
   if (!url || new URL(url).hostname !== '127.0.0.1' || new URL(url).password !== 'synthetic-only') throw new Error('Use npm test to provision the isolated test database');
   const schema = 'eigos_test_' + randomUUID().replaceAll('-', ''), db = new Database(url, schema);
@@ -68,7 +69,7 @@ export async function fixture(driver: AgentDriver = new FixtureAgent(),services?
   await setGrants(db, principal.owner, memberGrants(new Ontology(document)));
   const access = await Access.load(db, principal);
   const source = async (owner: string) => { if (owner !== principal.owner) throw new Error('Wrong source owner'); return p.source; };
-  const capabilities = createCapabilities(db, source,{},services), model = await metadata.publish(document, capabilities, publisher), agent = new OntologyAgent(db, metadata, tasks, capabilities, driver), worker = new Worker(tasks, agent,new ScheduledActions(db,metadata),new ScheduledActionRunner(db,metadata,tasks,capabilities.actions));
+  const capabilities = createCapabilities(db, source,{},services,stripe), model = await metadata.publish(document, capabilities, publisher), agent = new OntologyAgent(db, metadata, tasks, capabilities, driver), worker = new Worker(tasks, agent,new ScheduledActions(db,metadata),new ScheduledActionRunner(db,metadata,tasks,capabilities.actions));
   return { db, schema, model, metadata, tasks, capabilities, access, publisher, agent, worker, source, provider: p,
     submit: () => tasks.submit(principal, { requestId: randomUUID(), message: '从中企云翠森林到前滩太古里，只询价', route }),
     async close() { worker.stop(); await db.query(`DROP SCHEMA ${db.schema} CASCADE`); await db.close(); await p.close(); },

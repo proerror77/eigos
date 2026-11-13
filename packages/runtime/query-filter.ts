@@ -2,12 +2,9 @@ import { Worker } from 'node:worker_threads';
 import { z } from 'zod';
 import { canonical, Conflict } from '../core/identity.js';
 import type { ObjectData } from '../ontology/schema.js';
+import { propertyPathSchema } from '../ontology/property-path.js';
+export { propertyPathSchema } from '../ontology/property-path.js';
 
-export const propertyPathSchema = z
-  .string()
-  .min(1)
-  .max(500)
-  .regex(/^[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z0-9]+)*$/);
 const scalar = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
 export type Predicate =
   | { op: 'all'; predicates: Predicate[] }

@@ -19,6 +19,7 @@ export const configSchema = z.object({
   EIGOS_SOURCE_COMMIT: z.string().regex(/^[a-f0-9]{40}$/).optional(),
   EIGOS_DIDI_CONNECTION_FILE: z.string().optional(),
   EIGOS_SERVICE_CONNECTION_FILE: z.string().optional(),
+  EIGOS_STRIPE_SANDBOX_CONNECTION_FILE: z.string().optional(),
   EIGOS_HARNESS_BIN: z.string().optional(), EIGOS_HARNESS_CREDENTIAL_FILE: z.string().optional(),
   EIGOS_HARNESS_MODEL: z.string().default('gpt-6.1-sol'), EIGOS_HARNESS_REASONING_EFFORT: z.string().default('low'),
 });

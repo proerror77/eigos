@@ -634,6 +634,7 @@ async function renderObjects() {
                         ? { op: 'count' }
                         : { op: metric.value, property: property.value },
                   },
+                  ...(state.scenario ? { scenarioId: state.scenario } : {}),
                 });
                 modal(
                   '聚合结果',

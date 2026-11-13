@@ -17,6 +17,10 @@ export const querySchema = z.strictObject({
   from: z.strictObject({ object: objectRefSchema, link: z.string(), as: z.string().optional() }).optional(),
 });
 export type Query = z.input<typeof querySchema>;
+export function queryFields(query: Pick<z.output<typeof querySchema>, 'where' | 'filter' | 'orderBy' | 'select'>) {
+  return [...new Set([...Object.keys(query.where ?? {}), ...predicateFields(query.filter),
+    ...(query.orderBy ?? []).map(item => item.property), ...(query.select ?? [])])];
+}
 export class Objects {
   constructor(readonly db: Database, readonly model: PublishedOntology, readonly access: Access, readonly client: Sql = db.pool) {}
   get owner() { return this.access.principal.owner; }
@@ -96,8 +100,10 @@ export class Objects {
   }
   async query(input: Query):Promise<{items:ObjectData[];cursor?:string}> {
     const args=querySchema.parse(input);
-    const fields=[...Object.keys(args.where),...predicateFields(args.filter),...(args.orderBy??[]).map(item=>item.property),...(args.select??[])];
-    const types=this.model.concreteTypes(args.type);
+    const fields = queryFields(args);
+    this.access.definition(this.model, this.model.interfaces.has(args.type) ? 'interface' : 'object', args.type);
+    const types = this.model.concreteTypes(args.type);
+    for (const field of fields) this.model.propertyPath(args.type, field);
     const derived=types.some(type=>Object.values(this.model.object(type).properties).some(property=>property.derived));
     if(!args.filter&&!args.orderBy&&!derived&&!fields.some(field=>field.includes('.')))return this.queryStored(args);
     if(this.client===this.db.pool) {
@@ -109,7 +115,6 @@ export class Objects {
       if(!await access.canReturn(access.dataRequirements()))throw new Conflict('Query permissions changed');
       this.access.adoptReads(access);return result;
     }
-    for(const field of fields)for(const type of types)this.model.propertyName(type,args.type,field.split('.')[0]!);
     const evaluator=new DerivedProperties(this),all:ObjectData[]=[];
     let cursor:string|undefined;
     do {
