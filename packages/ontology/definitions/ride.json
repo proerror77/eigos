@@ -1,6 +1,6 @@
 {
   "id": "Eigos",
-  "version": "1",
+  "version": "2",
   "objectTypes": [
     {
       "apiName": "Place",
@@ -371,7 +371,7 @@
   "interfaceTypes": [
     {
       "apiName": "Location",
-      "description": "Location",
+      "description": "A source-resolved location with its address and provider coordinate reference system. Query from a SourceReceipt via the places Link to restrict candidates to that source response.",
       "properties": {
         "name": {
           "schema": {
@@ -435,7 +435,7 @@
     },
     {
       "apiName": "RideEstimatable",
-      "description": "RideEstimatable",
+      "description": "A route with origin and destination Location Links. Its requestEstimate Action records the inquiry and returns the RideRequest needed to refresh price data.",
       "properties": {
         "name": {
           "schema": {
@@ -507,7 +507,7 @@
     },
     {
       "apiName": "PriceEstimate",
-      "description": "PriceEstimate",
+      "description": "A current provider price observation, linked to its inquiry request and source receipt. Amount may be null for price ranges.",
       "properties": {
         "amount": {
           "schema": {
@@ -661,7 +661,7 @@
   "functionTypes": [
     {
       "apiName": "searchPlaces",
-      "description": "Search the provider for the given name and city",
+      "description": "Read current place candidates for city and keywords from DiDi. DidiPlaces is the data source that maps this result into Location objects and SourceReceipt links.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -929,11 +929,11 @@
     },
     {
       "apiName": "estimateRoute",
-      "description": "Read a provider estimate using the route origin and destination",
+      "description": "Read real prices for an existing RideRequest. Navigates its route Link and the RideEstimatable origin/destination Links. DidiEstimates maps this response to PriceEstimate objects linked to that request. Inquiry only, no order.",
       "parameters": {
         "type": "object",
         "properties": {
-          "route": {
+          "request": {
             "type": "object",
             "properties": {
               "type": {
@@ -953,7 +953,7 @@
           }
         },
         "required": [
-          "route"
+          "request"
         ],
         "additionalProperties": false
       },
@@ -1240,7 +1240,7 @@
     },
     {
       "apiName": "readRideEstimates",
-      "description": "Read and validate current estimates and their sources",
+      "description": "Final read and acceptance of one RideRequest: query linked PriceEstimate objects, verify source Links and freshness, return prices, route and accepted. Use after its DidiEstimates source refresh. Optional serviceClass selects a provider product name.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1261,6 +1261,10 @@
               "id"
             ],
             "additionalProperties": false
+          },
+          "serviceClass": {
+            "type": "string",
+            "minLength": 1
           }
         },
         "required": [
@@ -1375,19 +1379,349 @@
           },
           "accepted": {
             "type": "boolean"
+          },
+          "route": {
+            "type": "object",
+            "properties": {
+              "origin": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "city": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "address": {
+                    "type": "string"
+                  },
+                  "coordinates": {
+                    "type": "object",
+                    "properties": {
+                      "lat": {
+                        "type": "number",
+                        "minimum": -90,
+                        "maximum": 90
+                      },
+                      "lng": {
+                        "type": "number",
+                        "minimum": -180,
+                        "maximum": 180
+                      }
+                    },
+                    "required": [
+                      "lat",
+                      "lng"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "coordinateSystem": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "sourceBinding": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "observedAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "city",
+                  "address",
+                  "coordinates",
+                  "coordinateSystem",
+                  "sourceBinding",
+                  "observedAt"
+                ],
+                "additionalProperties": false
+              },
+              "destination": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "city": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "address": {
+                    "type": "string"
+                  },
+                  "coordinates": {
+                    "type": "object",
+                    "properties": {
+                      "lat": {
+                        "type": "number",
+                        "minimum": -90,
+                        "maximum": 90
+                      },
+                      "lng": {
+                        "type": "number",
+                        "minimum": -180,
+                        "maximum": 180
+                      }
+                    },
+                    "required": [
+                      "lat",
+                      "lng"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "coordinateSystem": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "sourceBinding": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "observedAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "city",
+                  "address",
+                  "coordinates",
+                  "coordinateSystem",
+                  "sourceBinding",
+                  "observedAt"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "origin",
+              "destination"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [
           "request",
           "estimates",
           "evidence",
-          "accepted"
+          "accepted",
+          "route"
         ],
         "additionalProperties": false
+      }
+    },
+    {
+      "apiName": "locationsReady",
+      "description": "Whether both selected source locations have current coordinates and provenance. Used by route Action submission criteria.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "origin": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          "destination": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "origin",
+          "destination"
+        ],
+        "additionalProperties": false
+      },
+      "returns": {
+        "type": "boolean"
       }
     }
   ],
   "actionTypes": [
+    {
+      "apiName": "CreateRideRoute",
+      "description": "Create a route from the two source locations chosen to match the user intent. If candidates are ambiguous, ask the user before applying. Both references must be source Place objects implementing Location. Creates origin/destination Links; the resulting Route implements RideEstimatable. This does not request a car or a quote.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "routeId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "origin": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          "destination": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "routeId",
+          "name",
+          "origin",
+          "destination"
+        ],
+        "additionalProperties": false
+      },
+      "objectParameters": {
+        "origin": "Place",
+        "destination": "Place"
+      },
+      "submissionCriteria": [
+        {
+          "function": "locationsReady",
+          "arguments": {
+            "origin": {
+              "parameter": "origin"
+            },
+            "destination": {
+              "parameter": "destination"
+            }
+          }
+        }
+      ],
+      "rules": [
+        {
+          "op": "createObject",
+          "object": {
+            "type": "Route",
+            "id": {
+              "parameter": "routeId"
+            }
+          },
+          "properties": {
+            "id": {
+              "parameter": "routeId"
+            },
+            "name": {
+              "parameter": "name"
+            }
+          }
+        },
+        {
+          "op": "addLink",
+          "link": "RouteOrigin",
+          "from": {
+            "type": "Route",
+            "id": {
+              "parameter": "routeId"
+            }
+          },
+          "to": {
+            "type": "Place",
+            "id": {
+              "parameter": "origin",
+              "path": [
+                "id"
+              ]
+            }
+          }
+        },
+        {
+          "op": "addLink",
+          "link": "RouteDestination",
+          "from": {
+            "type": "Route",
+            "id": {
+              "parameter": "routeId"
+            }
+          },
+          "to": {
+            "type": "Place",
+            "id": {
+              "parameter": "destination",
+              "path": [
+                "id"
+              ]
+            }
+          }
+        }
+      ],
+      "result": {
+        "type": "Route",
+        "id": {
+          "parameter": "routeId"
+        }
+      }
+    },
     {
       "apiName": "RequestRideEstimate",
       "description": "Record the user decision to request prices for a selected route",

@@ -15,6 +15,8 @@ export const configSchema = z.object({
   OAUTH_TENANT_CLAIM: z.string().min(1).default('tenant_id'),
   EIGOS_SOURCE_COMMIT: z.string().regex(/^[a-f0-9]{40}$/).optional(),
   EIGOS_DIDI_CONNECTION_FILE: z.string().optional(),
+  EIGOS_HARNESS_BIN: z.string().optional(), EIGOS_HARNESS_CREDENTIAL_FILE: z.string().optional(),
+  EIGOS_HARNESS_MODEL: z.string().default('gpt-6.1-sol'), EIGOS_HARNESS_REASONING_EFFORT: z.string().default('low'),
 });
 export type Config = z.infer<typeof configSchema>;
 export function readConfig(env = process.env): Config {

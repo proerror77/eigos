@@ -7,7 +7,9 @@ import { z } from 'zod';
 import { Database } from '../packages/runtime/database.js';
 import { Metadata } from '../packages/runtime/metadata.js';
 import { Tasks } from '../packages/runtime/tasks.js';
-import { RideWorkflow } from '../packages/capabilities/didi/workflow.js';
+import { rideCapabilities } from '../packages/capabilities/didi/pipeline.js';
+import { OntologyAgent, type AgentDriver } from '../packages/runtime/agent.js';
+import { FixtureAgent } from './agent-driver.js';
 import { Worker } from '../apps/worker/worker.js';
 import { developmentPrincipal } from '../apps/gateway/auth.js';
 import { DidiMcpConnector } from '../packages/capabilities/didi/connector.js';
@@ -45,15 +47,15 @@ export async function provider() {
   const source: DidiSource = { bindingId: 'synthetic', connector, async assertCurrent() { if (!flags.active) throw new Error('Source revoked'); } };
   return { source, calls, inputs, flags, close: () => rm(directory, { recursive: true, force: true }) };
 }
-export async function fixture() {
+export async function fixture(driver: AgentDriver = new FixtureAgent()) {
   const url = process.env.EIGOS_TEST_DATABASE_URL;
   if (!url || new URL(url).hostname !== '127.0.0.1' || new URL(url).password !== 'synthetic-only') throw new Error('Use npm test to provision the isolated test database');
   const schema = 'eigos_test_' + randomUUID().replaceAll('-', ''), db = new Database(url, schema);
   await db.initialize();
   const metadata = new Metadata(db), model = await metadata.publish(document), tasks = new Tasks(db, metadata), p = await provider();
   const source = async (owner: string) => { if (owner !== principal.owner) throw new Error('Wrong source owner'); return p.source; };
-  const workflow = new RideWorkflow(db, metadata, tasks, source), worker = new Worker(tasks, workflow);
-  return { db, schema, model, metadata, tasks, workflow, worker, source, provider: p,
+  const capabilities = rideCapabilities(db, source), agent = new OntologyAgent(db, metadata, tasks, capabilities, driver), worker = new Worker(tasks, agent);
+  return { db, schema, model, metadata, tasks, capabilities, agent, worker, source, provider: p,
     submit: () => tasks.submit(principal, { requestId: randomUUID(), message: '从中企云翠森林到前滩太古里，只询价', route }),
     async close() { worker.stop(); await db.query(`DROP SCHEMA ${db.schema} CASCADE`); await db.close(); await p.close(); },
   };

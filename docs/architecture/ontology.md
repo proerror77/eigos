@@ -26,9 +26,10 @@ flowchart TD
     Gateway --> Action[Actions]
     Gateway --> Task[任务队列]
     Task --> Worker[Worker]
-    Worker --> Query
-    Worker --> Function
-    Worker --> Action
+    Worker --> Model[模型 Agent]
+    Model --> Query
+    Model --> Function
+    Model --> Action
     Definition[发布的 Ontology JSON] --> Query
     Definition --> Function
     Definition --> Action
@@ -50,7 +51,10 @@ flowchart TD
 | `packages/runtime/functions.ts` | 参数与返回值校验、函数和来源绑定 |
 | `packages/runtime/actions.ts` | 提交条件、编辑规则、幂等事务与操作记录 |
 | `packages/runtime/tasks.ts` | 任务状态、领取租约、取消与来源调用记录 |
-| `packages/capabilities/didi/` | 滴滴响应解析、外部 Function 和询价用例 |
+| `packages/runtime/agent.ts` | 从任务发布版本提供发现与工具调用，返回模型选择的 Function 结果 |
+| `packages/runtime/harness.ts` | 独立模型会话与任务专用 Ontology MCP，不保存第二份任务 |
+| `packages/runtime/sources.ts` | 执行发布的数据源 Function，把服务端持有的回值交给来源投影 |
+| `packages/capabilities/didi/` | 滴滴响应解析、领域 Function 与来源投影 |
 | `apps/gateway/`、`apps/worker/` | 协议认证与执行进程 |
 
 这些职责对应 Foundry 的 Metadata、Object databases、Object Set Service、Actions、Object Data Funnel 和 Functions。这里采用单个 PostgreSQL 存储服务，定义解析与来源连接器通过进程内模块实现。[官方运行架构](https://www.palantir.com/docs/foundry/object-backend/overview)
@@ -68,11 +72,16 @@ flowchart LR
     Place -->|sources| Receipt
 ```
 
-1. PA 提交城市、起点与终点。Worker 并行调用 `searchPlaces` 外部 Function，取得两组地点与来源记录。
-2. 来源映射写入 `Place`，通过 `Location` Interface 查询候选。所选地点必须出现在本任务的来源结果中。名称有歧义时返回候选，由 PA 补充选择。
-3. 建立 `Route` 的起终点 Link。通过 `RideEstimatable.requestEstimate` 映射到 `RequestRideEstimate`，执行 `routeReady` 提交条件，原子写入 `RideRequest` 和路线关系。
-4. `estimateRoute` Function 沿路线的起终点 Link 取得坐标，调用 `taxi_estimate`。来源映射写入 `RideEstimate` 与 `SourceReceipt`，连接询价请求。
-5. `readRideEstimates` Function 按 `PriceEstimate` 查询该请求的结果，沿 source Link 检查来源与时效，再返回验收结果。
+模型接收用户原文与任务发布版本的 Interface、Link、Function、Action 和 data source 目录。运行层不指定调用顺序，也不解析路线或选择地点。模型可查阅完整定义，并通过独立查询批次并行取得数据。[Palantir Agent 工具](https://www.palantir.com/docs/foundry/agent-sdk/customize-agent)、[Ontology MCP 工具说明](https://www.palantir.com/docs/foundry/ontology-mcp/mcp-tools-and-agent-configuration)
+
+当前业务能力如下；这些是可供模型组合的操作。
+
+- `DidiPlaces` 数据源运行 `searchPlaces`，按发布的字段映射批量写入 Place 与来源 Link。模型通过 `Location` 查询属性并选择地点，歧义时暂停原任务。
+- `CreateRideRoute` Action 把所选地点连接为路线。`RideEstimatable.requestEstimate` 映射到 `RequestRideEstimate`，按提交条件创建询价请求。
+- `DidiEstimates` 数据源运行 `estimateRoute`，沿请求和路线的 Links 取得坐标，调用真实 `taxi_estimate`，映射报价与来源对象。
+- `readRideEstimates` Function 查询请求关联的 `PriceEstimate`，检查来源与时效，返回路线、价格与验收结果。
+
+`refresh_sources` 负责来源读取和入库，模型不能提供入库价格。普通 Function 求值不写入对象，业务编辑由 Action 执行。`complete_with_function` 重新执行模型选择的结果 Function，把服务端返回值直接交回原任务，省去一次模型改写报价的往返。没有在调度器中写死结果 Function 名称。工具失败可以由模型根据回值纠正，取消或租约失效仍阻止后续提交。
 
 对象集查询示例。
 
@@ -99,6 +108,6 @@ Worker 使用 PostgreSQL 通知唤醒，行锁领取单个任务，并在执行�
 
 对象查询支持类型或 Interface、等值筛选、字段选择和游标。关系支持双向导航与一对多基数。Action 支持创建对象、按 revision 编辑对象和添加关系。Function 具有独立参数与返回契约，已接入外部来源读取和对象计算。
 
-第一条实现的领域用例是滴滴估价。自然语言入口解析明确的中文城市与起终点，PA 也可直接提供结构化参数。完整 Foundry 产品的界面、任意领域规划、属性 reducer、媒体类型、跨组织共享和通用删除规则尚未在本版实现。
+第一条实现的领域用例是滴滴估价。模型解释自然语言并使用发布的业务能力，PA 也可提供结构化参数。通用调度器的跨定义行为有工程回归，真实业务验收范围仍是本次滴滴路线。完整 Foundry 产品的界面、其他业务领域的真实验收、属性 reducer、媒体类型、跨组织共享和通用删除规则尚未在本版实现。
 
 验收使用实际业务问题从入口走到结果，并记录耗时、路径和歧义。合成回归保持可重复，真实 MCP 验收另存私有记录。[官方验证方法](https://www.palantir.com/docs/foundry/ontology/ontology-design-validation)

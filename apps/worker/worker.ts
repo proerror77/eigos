@@ -1,12 +1,11 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import type { RideWorkflow } from '../../packages/capabilities/didi/workflow.js';
-import { Clarification } from '../../packages/capabilities/didi/workflow.js';
+import { Clarification } from '../../packages/runtime/agent.js';
 import { Tasks, type Task } from '../../packages/runtime/tasks.js';
 
 export class Worker {
   private readonly controller = new AbortController();
   private wake?: () => void;
-  constructor(private readonly tasks: Tasks, private readonly workflow: RideWorkflow) {}
+  constructor(private readonly tasks: Tasks, private readonly agent: { run(task: Task, signal: AbortSignal): Promise<unknown> }) {}
   async runOne(): Promise<boolean> {
     const task = await this.tasks.claim();
     if (!task) return false;
@@ -21,7 +20,7 @@ export class Worker {
     }, 10000);
     timer.unref();
     try {
-      const result = await this.workflow.run(task, signal);
+      const result = await this.agent.run(task, signal);
       signal.throwIfAborted();
       await this.tasks.finish(task, 'completed', result);
     } catch (error) {

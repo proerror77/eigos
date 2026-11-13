@@ -10,9 +10,9 @@ test('Action submission criteria reject an incomplete route and roll back all ed
     const objects = new Objects(f.db, f.model, principal.owner), route = { type: 'Route', id: 'incomplete' };
     await objects.create(route, { id: route.id, name: 'incomplete route' });
     const action = f.model.resolveAction(route, 'RideEstimatable', 'requestEstimate', { requestId: 'request', route, requestedAt: new Date().toISOString() });
-    await assert.rejects(f.workflow.actions.apply(principal, f.model, action.action, action.input, 'request'));
+    await assert.rejects(f.capabilities.actions.apply(principal, f.model, action.action, action.input, 'request'));
     assert.equal((await objects.query({ type: 'RideRequest' })).items.length, 0);
-    await assert.rejects(f.workflow.actions.apply({ ...principal, scopes: [] }, f.model, action.action, action.input, 'request'), /Permission/);
+    await assert.rejects(f.capabilities.actions.apply({ ...principal, scopes: [] }, f.model, action.action, action.input, 'request'), /Permission/);
   } finally { await f.close(); }
 });
 
@@ -26,10 +26,10 @@ test('generic action rules commit once, detect changed retries and roll back a f
     const model = new Ontology({ ...document, actionTypes: [...document.actionTypes, action] });
     await f.metadata.publish(model.document);
     const args = { id: 'new-route', name: 'Route created by a generic rule' };
-    const [first, repeated] = await Promise.all([f.workflow.actions.apply(principal, model, 'CreateRoute', args, 'atomic'), f.workflow.actions.apply(principal, model, 'CreateRoute', args, 'atomic')]);
+    const [first, repeated] = await Promise.all([f.capabilities.actions.apply(principal, model, 'CreateRoute', args, 'atomic'), f.capabilities.actions.apply(principal, model, 'CreateRoute', args, 'atomic')]);
     assert.deepEqual(first, repeated);
-    await assert.rejects(f.workflow.actions.apply(principal, model, 'CreateRoute', { ...args, name: 'changed' }, 'atomic'), /already used/);
-    await assert.rejects(f.workflow.actions.apply(principal, model, 'CreateRoute', { ...args, id: 'rolled-back' }, 'abort', async () => { throw Error('cancel'); }));
+    await assert.rejects(f.capabilities.actions.apply(principal, model, 'CreateRoute', { ...args, name: 'changed' }, 'atomic'), /already used/);
+    await assert.rejects(f.capabilities.actions.apply(principal, model, 'CreateRoute', { ...args, id: 'rolled-back' }, 'abort', async () => { throw Error('cancel'); }));
     await assert.rejects(new Objects(f.db, model, principal.owner).read({ type: 'Route', id: 'rolled-back' }));
   } finally { await f.close(); }
 });
