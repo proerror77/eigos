@@ -1,5 +1,6 @@
 import { copyEditState } from './edit-history.js';
 import { migrateProjectionState } from './projection-migration.js';
+import { checkSavedObjectSets } from './object-set-compatibility.js';
 import { randomUUID } from 'node:crypto';
 import { digest, Conflict } from '../core/identity.js';
 import { Ontology, validator } from '../ontology/model.js';
@@ -58,6 +59,7 @@ export class Metadata {
           for(const value of model.resourceDocument.valueTypes??[]){const old=previous.resourceDocument.valueTypes?.find(item=>item.apiName===value.apiName&&item.version===value.version);if(old&&digest(old.schema)!==digest(value.schema))throw new Conflict('Value Type constraints require a new version');}
         }
       }
+      if (current?.projection) await checkSavedObjectSets(this.db, client, await this.get(current.digest, client), model);
       if (current && !current.projection) throw new Conflict('Upgrade the existing data before preparing a release');
       const fingerprint = current ? await this.fingerprint(current.projection, client, model.document.id) : null;
       if (current) {
@@ -99,13 +101,22 @@ export class Metadata {
       const prepared = (await this.db.query(`SELECT * FROM ${this.db.schema}.releases WHERE digest=$1`, [release], client)).rows[0]!;
       if (current === release) return;
       if (prepared.state !== 'prepared' || (prepared.prepared_from ?? null) !== (current ?? null)) throw new Conflict('Prepare against the current live release before activation');
+      const candidate = new Ontology(model.document);
       const running = await this.db.query(`SELECT 1 FROM ${this.db.schema}.tasks t JOIN ${this.db.schema}.releases r ON r.digest=t.release WHERE r.body->>'id'=$1 AND t.state IN('submitted','working','input-required') LIMIT 1`, [model.document.id], client);
       if (running.rowCount) throw new Conflict('Complete or cancel unfinished tasks before changing their publication');
       const indexing = await this.db.query(`SELECT 1 FROM ${this.db.schema}.index_transactions WHERE ontology=$1 AND state IN ('pending','failed') LIMIT 1`,[model.document.id],client);
       if (indexing.rowCount) throw new Conflict('Resolve pending or failed source transactions before activation');
       const workflows=await this.db.query(`SELECT 1 FROM ${this.db.schema}.workflow_runs WHERE ontology=$1 AND state IN ('pending','working','failed') LIMIT 1`,[model.document.id],client);
       if(workflows.rowCount)throw new Conflict('Complete or cancel unfinished workflows before changing their publication');
-      if (current && await this.fingerprint((await this.get(current)).projection, client, model.document.id) !== prepared.source_fingerprint) throw new Conflict('Source data changed; rebuild the candidate projection');
+      if (current) {
+        const live = await this.get(current, client);
+        if (await this.fingerprint(live.projection, client, model.document.id) !== prepared.source_fingerprint)
+          throw new Conflict('Source data changed; rebuild the candidate projection');
+        if (live.digest !== model.digest) {
+          await this.db.query(`LOCK TABLE ${this.db.schema}.object_sets IN SHARE MODE`, [], client);
+          await checkSavedObjectSets(this.db, client, live, candidate);
+        }
+      }
       if (await this.fingerprint(model.projection, client) !== prepared.projection_fingerprint) throw new Conflict('Prepared projection changed');
       await access.refresh(client);
       if (current) await this.db.query(`UPDATE ${this.db.schema}.releases SET state='retired' WHERE digest=$1`, [current], client);

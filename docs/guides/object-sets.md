@@ -69,3 +69,9 @@ Object Sets 将本体查询、对象引用和关系导航组合为可复用集�
 ## 验证
 
 `tests/11-object-sets.test.ts` 使用隔离的 PostgreSQL，覆盖超过一页的完整集合、多跳关系、Scenario 视图、分组与数值指标、属性遮罩、静态和动态成员变化、跨 owner 分享、撤销共享、并发创建重试、版本冲突和引用循环。
+
+## 定义变更
+
+候选定义在准备和激活时都会检查已保存的动态集合及其引用。删除集合依赖的属性或 Link、改变筛选字段的数据类型，或改动遍历使用的 Link 契约，会阻止发布并指出受影响的集合数量。集合所有者可用现有的 revision 更新集合，再发布新定义。静态集合继续保存对象引用，已删除或不可见的对象在求值时被隐藏。[Palantir 的属性变更说明](https://www.palantir.com/docs/foundry/object-link-types/edit-properties)
+
+Gateway 和任务 Agent 均支持用 `scenarioId` 对集合求值和聚合。Agent 可以直接返回该方案的集合结果或指标。保存操作仍使用正式本体。

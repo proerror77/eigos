@@ -106,3 +106,31 @@ test('regular expressions have a deadline and cannot block unrelated event loop 
     await assert.rejects(graph.query({type:'Route',filter:{op:'regex',property:'name',value:'['}}),/Invalid regular/);
   }finally{await f.close();}
 });
+
+test('Struct paths use the declared fields for queries and set aggregation, including empty results', async () => {
+  const f = await fixture();
+  try {
+    const graph = new Objects(f.db, f.model, f.access);
+    await graph.create({ type: 'Place', id: 'struct-query' }, { id: 'struct-query', name: 'Station', city: 'Shanghai',
+      address: 'Main Street', coordinates: { lat: 31, lng: 121 }, coordinateSystem: 'GCJ02', sourceBinding: 'fixture',
+      observedAt: new Date().toISOString() });
+    const invalid = 'coordinates.latt';
+    for (const query of [
+      { where: { [invalid]: null } },
+      { filter: { op: 'eq', property: invalid, value: null } },
+      { select: [invalid] },
+      { orderBy: [{ property: invalid }] },
+    ]) await assert.rejects(graph.query({ type: 'Location', ...query }), /Unknown property Location.coordinates.latt/);
+    await assert.rejects(graph.query({ type: 'Place', where: { city: 'nowhere' }, select: [invalid] }), /Unknown property/);
+    const places = await graph.query({ type: 'Location', select: ['coordinates.lat'] });
+    assert.deepEqual(places.items[0]!.properties, { 'coordinates.lat': 31 });
+
+    const sets = new ObjectSets(f.db);
+    const set = { op: 'query', query: { type: 'Location', where: { city: 'nowhere' } } };
+    await assert.rejects(sets.aggregate(f.access, f.model, { set, metrics: { n: { op: 'count', property: invalid } } }), /Unknown property/);
+    await assert.rejects(sets.aggregate(f.access, f.model, { set, groupBy: [invalid], metrics: { n: { op: 'count' } } }), /Unknown property/);
+    const result = await sets.aggregate(f.access, f.model, { set: { op: 'query', query: { type: 'Location' } },
+      view: 'Location', groupBy: ['coordinates.lng'], metrics: { latitude: { op: 'sum', property: 'coordinates.lat' } } });
+    assert.deepEqual(result.items, [{ group: { 'coordinates.lng': 121 }, metrics: { latitude: 31 } }]);
+  } finally { await f.close(); }
+});

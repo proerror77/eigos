@@ -118,3 +118,41 @@ test('saved set mutations enforce retries, revisions, ownership and acyclic refe
     await assert.rejects(f.sets.evaluate(f.access, f.model, { set: { op: 'saved', id: b.id } }), /unavailable/);
   } finally { await f.close(); }
 });
+
+test('publication checks dynamic set dependencies at preparation and again at activation', async () => {
+  const f = await setup();
+  try {
+    const ref = { type: 'Route', id: 'versioned' };
+    await f.objects.create(ref, { id: ref.id, name: 'Route' });
+    const oldBody = structuredClone(f.model.document);
+    oldBody.version = 'sets-with-legacy-filter';
+    oldBody.objectTypes.find(type => type.apiName === 'Route')!.properties.region =
+      { description: 'Filter used by saved sets', schema: { type: 'string' }, required: false };
+    const old = await f.metadata.publish(oldBody, f.capabilities, f.publisher);
+    const oldGraph = new Objects(f.db, old, f.access);
+    await oldGraph.edit(ref, 1, { region: 'east' });
+    const next = structuredClone(oldBody);
+    next.version = 'sets-without-legacy-filter';
+    delete next.objectTypes.find(type => type.apiName === 'Route')!.properties.region;
+    const candidate = await f.metadata.prepare(next, f.capabilities, f.publisher);
+
+    const expression: SetExpression = { op: 'query', query: { type: 'Route', where: { region: 'east' } } };
+    const fixed = await f.sets.save(f.access, old, { requestId: 'fixed-v1', name: 'Fixed', mode: 'static', set: expression });
+    const dynamic = await f.sets.save(f.access, old, { requestId: 'dynamic-v1', name: 'Dynamic', mode: 'dynamic', set: expression });
+    const saved = (id: string) => ({ op: 'saved', id });
+    const composed = await f.sets.save(f.access, old, { requestId: 'composed-v1', name: 'Composed', mode: 'dynamic', set: saved(dynamic.id) });
+    await assert.rejects(f.metadata.prepare(next, f.capabilities, f.publisher), /break 2 saved dynamic object set.*Route.region/);
+    await assert.rejects(f.metadata.activate(candidate.release, f.capabilities, f.publisher), /break 2 saved dynamic object set/);
+    assert.equal((await f.metadata.active()).release, old.release);
+    assert.equal((await f.sets.evaluate(f.access, old, { set: saved(composed.id) })).total, 1);
+
+    const changedType = structuredClone(oldBody);
+    changedType.objectTypes.find(type => type.apiName === 'Route')!.properties.region!.schema = { type: 'number' };
+    await assert.rejects(f.metadata.prepare(changedType, f.capabilities, f.publisher), /Property type changed: Route.region/);
+    await f.sets.save(f.access, old, { id: dynamic.id, revision: 1, requestId: 'update-filter', name: 'Dynamic', mode: 'dynamic', set: routes });
+    await f.metadata.activate(candidate.release, f.capabilities, f.publisher);
+    assert.equal((await f.sets.evaluate(f.access, candidate, { set: saved(fixed.id) })).total, 1);
+    assert.equal((await f.sets.evaluate(f.access, candidate, { set: saved(composed.id) })).total, 1);
+    await assert.rejects(f.sets.save(f.access, old, { requestId: 'late-old-save', name: 'Old', mode: 'dynamic', set: expression }), /publication changed/);
+  } finally { await f.close(); }
+});

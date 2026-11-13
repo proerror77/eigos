@@ -9,6 +9,7 @@ import { OntologyAgent } from '../packages/runtime/agent.js';
 import { Functions } from '../packages/runtime/functions.js';
 import { Actions } from '../packages/runtime/actions.js';
 import { Sources } from '../packages/runtime/sources.js';
+import { Scenarios } from '../packages/runtime/scenarios.js';
 import { Worker } from '../apps/worker/worker.js';
 
 test('one Agent capability choice completes the inquiry despite related entrance candidates', async t => {
@@ -181,4 +182,45 @@ test('the production database role can execute an inquiry without publication up
     await f.db.query(`DROP OWNED BY "${role}"; DROP ROLE "${role}"`);
     await f.close();
   }
+});
+
+test('the Agent evaluates, aggregates and completes object sets in the task Scenario', async () => {
+  const ref = { type: 'Route', id: 'scenario-set-route' };
+  const set = { op: 'refs', objects: [ref] };
+  const metrics = { n: { op: 'count' } };
+  const f = await fixture({ model: 'fixture-scenario-object-set', async run(prompt, tools) {
+    const { scenarioId, completion } = JSON.parse(JSON.parse(prompt.split('\n').at(-1)!).userRequest.message) as
+      { scenarioId?: string; completion?: string };
+    assert(scenarioId);
+    const invoke = (name: string, input: unknown) => tools.get(name)!.invoke(input);
+    const live = await invoke('evaluate_object_set', { set }) as { items: { properties: { name: string } }[] };
+    assert.equal(live.items[0]!.properties.name, 'Live');
+    const candidate = await invoke('evaluate_object_set', { set, scenarioId }) as typeof live;
+    assert.equal(candidate.items[0]!.properties.name, 'Proposed');
+    const proposed = { op: 'query', query: { type: 'Route', where: { name: 'Proposed' } } };
+    const liveCount = await invoke('aggregate_object_set', { set: proposed, metrics }) as { count: number };
+    const scenarioCount = await invoke('aggregate_object_set', { set: proposed, metrics, scenarioId }) as typeof liveCount;
+    assert.equal(liveCount.count, 0);
+    assert.equal(scenarioCount.count, 1);
+    await assert.rejects(invoke('evaluate_object_set', { set, scenarioId: '7c03109b-4281-4e2b-ace3-8ca697184b8e' }), /Scenario is unavailable/);
+    if (completion === 'aggregate') await invoke('complete_with_aggregate', { set: proposed, metrics, scenarioId });
+    else await invoke('complete_with_object_set', { set, scenarioId });
+  } });
+  try {
+    await new Objects(f.db, f.model, f.access).create(ref, { id: ref.id, name: 'Live' });
+    const scenarios = new Scenarios(f.db);
+    const scene = await scenarios.create(f.access, f.model, { requestId: 'task-set-scenario', name: 'Proposal' });
+    const view = await scenarios.view(f.access, f.model, scene.id);
+    await new Objects(f.db, view, f.access).edit(ref, 1, { name: 'Proposed' });
+    for (const completion of ['set', 'aggregate']) {
+      const task = await f.tasks.submit(principal, { requestId: 'scenario-complete-' + completion,
+        message: JSON.stringify({ scenarioId: scene.id, completion }) });
+      assert(await f.worker.runOne());
+      const done = await f.tasks.get(principal, task.id);
+      assert.equal(done.state, 'completed', done.error ?? undefined);
+      const result = done.result as { count?: number; items: { properties: { name: string } }[] };
+      if (completion === 'aggregate') assert.equal(result.count, 1);
+      else assert.equal(result.items[0]!.properties.name, 'Proposed');
+    }
+  } finally { await f.close(); }
 });

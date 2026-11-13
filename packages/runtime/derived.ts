@@ -2,7 +2,7 @@ import { Conflict, digest } from '../core/identity.js';
 import { validator } from '../ontology/model.js';
 import type { DerivedExpression, ObjectData, ObjectRef } from '../ontology/schema.js';
 import type { Objects } from './objects.js';
-import { nestedValue, propertyPathSchema } from './query-filter.js';
+import { nestedValue } from './query-filter.js';
 
 /** One evaluation shares authorized reads and detects cycles across linked and local properties. */
 export class DerivedProperties {
@@ -30,7 +30,7 @@ export class DerivedProperties {
     return this.objects.get(key)!;
   }
   private async field(ref: ObjectRef, path: string, stack: Set<string>): Promise<unknown> {
-    propertyPathSchema.parse(path);
+    this.graph.model.propertyPath(ref.type, path);
     const [name, ...nested] = path.split('.'),
       definition = this.graph.model.object(ref.type).properties[name!];
     if (!definition) throw new Conflict('Derived expression references an unknown property');
