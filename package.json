@@ -25,7 +25,9 @@
     "ontology:prepare": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts prepare",
     "ontology:activate": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts activate",
     "access:grant-member": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts grant-member",
-    "access:configure": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts permissions"
+    "access:configure": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts permissions",
+    "start:indexer": "node --env-file-if-exists=.env dist/apps/indexer/main.js",
+    "dev:indexer": "node --env-file-if-exists=.env --import tsx apps/indexer/main.ts"
   },
   "dependencies": {
     "@a2a-js/sdk": "1.3.0",

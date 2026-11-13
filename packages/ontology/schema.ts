@@ -33,7 +33,7 @@ export const ontologySchema = z.strictObject({
   })),
   functionTypes: z.array(z.strictObject({
     apiName: name, description: z.string().min(1), parameters: jsonSchema, returns: jsonSchema,
-    source: name.optional(), edits: z.boolean().optional(),
+    source: name.optional(), edits: z.boolean().optional(), version: z.string().min(1).max(100).optional(),
   })),
   actionTypes: z.array(z.strictObject({
     apiName: name, description: z.string().min(1), parameters: jsonSchema, objectParameters: z.record(name, name),
@@ -44,6 +44,7 @@ export const ontologySchema = z.strictObject({
       z.strictObject({ op: z.literal('addLink'), link: name, from: reference, to: reference }),
     ])).min(1).optional(),
     result: reference.optional(), function: name.optional(),
+    effects: z.array(z.strictObject({ name, handler: name, payload: z.record(name, value) })).max(20).optional(),
   }).refine(action => action.function ? !action.rules && !action.result : !!action.rules && !!action.result, 'Select declarative rules or an edit Function')),
   dataSources: z.array(z.strictObject({
     apiName: name, objectType: name, function: name,

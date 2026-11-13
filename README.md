@@ -125,3 +125,7 @@ Agent 可通过 `SchedulablePlan.prepare` 向用户 PA 请求指定范围的完�
 `create_scenario`、`list_scenarios`、`inspect_scenario`、`discard_scenario` 管理隔离方案；现有查询、Function 与 Action 接受 `scenarioId`。排程 Functions 搜索可行时段、检查资源冲突及活动依赖。Agent 保存候选方案，PA 明确选择后用 `CommitSchedulePlan` 合并；外部日历不会被写入。
 
 完整协议、数据格式、权限升级和当前支持范围见 [Scenario 与 PA 日历排程](docs/guides/scenarios-scheduling.md)。
+
+## Ontology 运行服务
+
+对象集、发布提案、来源索引、编辑历史、物化、策略和独立进程的入口见 [Ontology 运行服务](docs/guides/ontology-services.md)。构建后用 `npm run start:indexer` 运行来源消费与已配置的 Action 副作用。可用 `QUERY_DATABASE_URL` 配置只读查询节点，`EIGOS_EXTENSION_MODULE` 注册受信任的 Function 版本与副作用处理函数。

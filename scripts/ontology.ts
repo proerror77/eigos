@@ -1,8 +1,10 @@
+import { loadExtensions } from '../packages/runtime/extensions.js';
 import { readFile } from 'node:fs/promises';
 import { businessDefinition } from '../packages/ontology/definition.js';
 import { Ontology } from '../packages/ontology/model.js';
 import { Database } from '../packages/runtime/database.js';
 import { Metadata } from '../packages/runtime/metadata.js';
+import { objectPolicySchema } from '../packages/runtime/security.js';
 import { Access, setGrants, memberGrants, grantSchema } from '../packages/runtime/access.js';
 import { upgradePublicationStorage } from '../packages/runtime/upgrade.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
@@ -28,9 +30,21 @@ else {
       const owner = process.argv[3]; if (!owner) throw new Error('Provide the verified member owner');
       await setGrants(db, owner, memberGrants(model));
     } else if (command === 'permissions') {
-      const config = z.strictObject({ subjects: z.array(z.strictObject({ owner: z.string().min(1), grants: z.array(grantSchema) })), properties: z.array(z.strictObject({ ontology: z.string(), type: z.string(), property: z.string() })).optional() }).parse(JSON.parse(await readFile(process.argv[3]!, 'utf8')));
+      const config = z.strictObject({ subjects: z.array(z.strictObject({ owner: z.string().min(1), grants: z.array(grantSchema) })), properties: z.array(z.strictObject({ ontology: z.string(), type: z.string(), property: z.string() })).optional(), policies: z.array(z.strictObject({ type:z.string(),policy:objectPolicySchema })).optional(), memberships:z.array(z.strictObject({subject:z.string(),groups:z.array(z.string()),markings:z.array(z.string())})).optional() }).parse(JSON.parse(await readFile(process.argv[3]!, 'utf8')));
       for (const property of config.properties ?? []) if (property.ontology !== model.document.id || !model.object(property.type).properties[property.property]) throw new Error('Unknown protected property');
+      for (const item of config.policies ?? []) {
+        const type = model.object(item.type);
+        if (item.policy.properties[type.primaryKey]) throw new Error('Primary key cannot have a property policy');
+        const expressions = [item.policy.read,...Object.values(item.policy.properties)];
+        const fields = [...Object.keys(item.policy.properties),...expressions.flatMap(e=>e?[...e.all,...e.any].map(c=>c.property):[]),...(item.policy.markingsProperty?[item.policy.markingsProperty]:[])];
+        if (fields.some(field=>!type.properties[field])) throw new Error('Unknown security policy property');
+      }
       await db.transaction(async client => {
+        for (const item of config.policies ?? []) await db.query(`INSERT INTO ${db.schema}.object_policies VALUES($1,$2,$3) ON CONFLICT(ontology,type) DO UPDATE SET policy=excluded.policy`,[model.document.id,item.type,item.policy],client);
+        for (const membership of config.memberships ?? []) {
+          await db.query(`DELETE FROM ${db.schema}.security_memberships WHERE subject=$1`,[membership.subject],client);
+          for (const [kind,names] of [['group',membership.groups],['marking',membership.markings]] as const) for (const name of names) await db.query(`INSERT INTO ${db.schema}.security_memberships VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,[membership.subject,kind,name],client);
+        }
         for (const subject of config.subjects) await setGrants(db, subject.owner, subject.grants, client);
         if (config.properties) {
           await db.query(`DELETE FROM ${db.schema}.property_security`, [], client);
@@ -38,7 +52,7 @@ else {
         }
       });
     } else {
-      const access = await Access.load(db, publisher), bindings = createCapabilities(db, configuredSource(process.env.EIGOS_DIDI_CONNECTION_FILE));
+      const access = await Access.load(db, publisher), bindings = createCapabilities(db, configuredSource(process.env.EIGOS_DIDI_CONNECTION_FILE),await loadExtensions(process.env.EIGOS_EXTENSION_MODULE));
       let transform: ProjectionTransform | undefined;
       if ((command === 'prepare' || command === 'publish') && process.argv[3]) {
         if (!isAbsolute(process.argv[3])) throw new Error('Use an absolute source transformation module path');

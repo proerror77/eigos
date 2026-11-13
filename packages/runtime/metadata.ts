@@ -1,6 +1,8 @@
+import { copyEditState } from './edit-history.js';
+import { migrateProjectionState } from './projection-migration.js';
 import { randomUUID } from 'node:crypto';
 import { digest, Conflict } from '../core/identity.js';
-import { Ontology } from '../ontology/model.js';
+import { Ontology, validator } from '../ontology/model.js';
 import type { ObjectRef } from '../ontology/schema.js';
 import { Database, type Sql } from './database.js';
 import { Access } from './access.js';
@@ -14,23 +16,43 @@ export type ProjectionTransform = (ref: ObjectRef, properties: Record<string, un
 
 export class Metadata {
   private readonly models = new Map<string, PublishedOntology>();
+  private readonly transforms = new Map<string, ProjectionTransform>();
   constructor(private readonly db: Database) {}
-  async fingerprint(projection: string, client: Sql = this.db.pool): Promise<string> {
+  async fingerprint(projection: string, client: Sql = this.db.pool, ontology?: string): Promise<string> {
     const row = (await this.db.query(`SELECT
       (SELECT md5(coalesce(string_agg(md5(row(owner,type,id,revision,properties)::text),'' ORDER BY owner,type,id),'')) FROM ${this.db.schema}.objects WHERE projection=$1) AS objects,
       (SELECT md5(coalesce(string_agg(md5(row(owner,type,from_type,from_id,to_type,to_id,single_from,single_to)::text),'' ORDER BY owner,type,from_type,from_id,to_type,to_id),'')) FROM ${this.db.schema}.links WHERE projection=$1) AS links`, [projection], client)).rows[0]!;
-    return digest(row);
+    const edits = (await this.db.query(`SELECT
+      (SELECT md5(coalesce(string_agg(md5(row(owner,type,id,source,properties,observed_at)::text),'' ORDER BY owner,type,id,source),'')) FROM ${this.db.schema}.source_values WHERE projection=$1) AS sources,
+      (SELECT md5(coalesce(string_agg(md5(row(owner,type,id,overrides,deleted,created)::text),'' ORDER BY owner,type,id),'')) FROM ${this.db.schema}.object_edits WHERE projection=$1) AS edits,
+      (SELECT md5(coalesce(string_agg(row(ontology,type,policy)::text,'' ORDER BY ontology,type),'')) FROM ${this.db.schema}.edit_policies WHERE ontology=$2) AS policies`,[projection,ontology??null],client)).rows[0];
+    return digest({row,edits});
   }
-  async prepare(input: unknown, bindings: Bindings, access: Access, transform?: ProjectionTransform): Promise<PublishedOntology> {
+  private async validateEditState(model: PublishedOntology | Ontology, projection: string, client: Sql) {
+    const sources = (await this.db.query(`SELECT type,properties FROM ${this.db.schema}.source_values WHERE projection=$1 AND properties IS NOT NULL`,[projection],client)).rows;
+    const overrides = (await this.db.query(`SELECT type,overrides FROM ${this.db.schema}.object_edits WHERE projection=$1`,[projection],client)).rows;
+    const validate = (type: string, values: Record<string,unknown>) => {
+      const definition = model.object(type);
+      for (const [name,value] of Object.entries(values)) {
+        if (!definition.properties[name]) continue;
+        try { validator(definition.properties[name].schema).parse(value); }
+        catch { throw new Conflict('Candidate edit or source state needs migration for '+type+'.'+name); }
+      }
+    };
+    for (const row of sources) validate(row.type,row.properties);
+    for (const row of overrides) validate(row.type,Object.fromEntries(Object.entries(row.overrides as Record<string,{value:unknown}>).map(([name,edit])=>[name,edit.value])));
+  }
+  async prepare(input: unknown, bindings: Bindings, access: Access, transform?: ProjectionTransform, permissionTarget?: string): Promise<PublishedOntology> {
     const model = new Ontology(input);
-    await access.refresh(); access.require(model.document.id, 'manage_definition', model.document.id);
+    await access.refresh(); access.require(model.document.id, 'edit_definition', permissionTarget ?? model.document.id);
     const manifest = bindings.describe(model), projection = randomUUID();
+    const transformId = transform ? randomUUID() : null;
     const release = digest({ definition: model.digest, runtime: this.db.runtimeId, manifest, projection });
     await this.db.transaction(async client => {
       await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', [], client);
       const current = (await this.db.query(`SELECT r.digest,r.projection FROM ${this.db.schema}.ontology o JOIN ${this.db.schema}.releases r ON r.digest=o.release WHERE o.id=$1`, [model.document.id], client)).rows[0];
       if (current && !current.projection) throw new Conflict('Upgrade the existing data before preparing a release');
-      const fingerprint = current ? await this.fingerprint(current.projection, client) : null;
+      const fingerprint = current ? await this.fingerprint(current.projection, client, model.document.id) : null;
       if (current) {
         const rows = await this.db.query(`SELECT owner,type,id,revision,properties FROM ${this.db.schema}.objects WHERE projection=$1 ORDER BY owner,type,id`, [current.projection], client);
         const projected = rows.rows.filter(row => model.objects.has(row.type)).map(row => {
@@ -48,17 +70,23 @@ export class Metadata {
         for (let offset = 0; offset < mapped.length; offset += 500) await this.db.query(`INSERT INTO ${this.db.schema}.links(projection,owner,type,from_type,from_id,to_type,to_id,single_from,single_to)
           SELECT $1,owner,type,from_type,from_id,to_type,to_id,single_from,single_to FROM jsonb_to_recordset($2::jsonb) AS r(owner text,type text,from_type text,from_id text,to_type text,to_id text,single_from boolean,single_to boolean)`, [projection, JSON.stringify(mapped.slice(offset, offset + 500))], client);
       }
+      if (current) {
+        await copyEditState(this.db,current.projection,projection,client,[...model.objects.keys()]);
+        if (transform) await migrateProjectionState(this.db,current.projection,projection,model,transform,client);
+        await this.validateEditState(model,projection,client);
+      }
       await access.refresh(client);
-      await this.db.query(`INSERT INTO ${this.db.schema}.releases(digest,body,definition_digest,projection,runtime_id,bindings,state,prepared_from,source_fingerprint,projection_fingerprint)
-        VALUES($1,$2,$3,$4,$5,$6,'prepared',$7,$8,$9)`, [release, model.document, model.digest, projection, this.db.runtimeId, manifest, current?.digest ?? null, fingerprint, await this.fingerprint(projection, client)], client);
+      await this.db.query(`INSERT INTO ${this.db.schema}.releases(digest,body,definition_digest,projection,runtime_id,bindings,state,prepared_from,source_fingerprint,projection_fingerprint,transform_id)
+        VALUES($1,$2,$3,$4,$5,$6,'prepared',$7,$8,$9,$10)`, [release, model.document, model.digest, projection, this.db.runtimeId, manifest, current?.digest ?? null, fingerprint, await this.fingerprint(projection, client), transformId], client);
     });
+    if (transformId && transform) this.transforms.set(transformId, transform);
     return this.get(release);
   }
-  async activate(release: string, bindings: Bindings, access: Access) {
+  async activate(release: string, bindings: Bindings, access: Access, transaction?: Sql) {
     const model = await this.get(release);
     await access.refresh(); access.require(model.document.id, 'manage_definition', model.document.id);
     this.checkBindings(model, bindings);
-    await this.db.transaction(async client => {
+    const activate = async (client: Sql) => {
       await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['publication:' + model.document.id], client);
       const current = (await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1 FOR UPDATE`, [model.document.id], client)).rows[0]?.release;
       const prepared = (await this.db.query(`SELECT * FROM ${this.db.schema}.releases WHERE digest=$1`, [release], client)).rows[0]!;
@@ -66,14 +94,72 @@ export class Metadata {
       if (prepared.state !== 'prepared' || (prepared.prepared_from ?? null) !== (current ?? null)) throw new Conflict('Prepare against the current live release before activation');
       const running = await this.db.query(`SELECT 1 FROM ${this.db.schema}.tasks t JOIN ${this.db.schema}.releases r ON r.digest=t.release WHERE r.body->>'id'=$1 AND t.state IN('submitted','working','input-required') LIMIT 1`, [model.document.id], client);
       if (running.rowCount) throw new Conflict('Complete or cancel unfinished tasks before changing their publication');
-      if (current && await this.fingerprint((await this.get(current)).projection, client) !== prepared.source_fingerprint) throw new Conflict('Source data changed; rebuild the candidate projection');
+      const indexing = await this.db.query(`SELECT 1 FROM ${this.db.schema}.index_transactions WHERE ontology=$1 AND state IN ('pending','failed') LIMIT 1`,[model.document.id],client);
+      if (indexing.rowCount) throw new Conflict('Resolve pending or failed source transactions before activation');
+      if (current && await this.fingerprint((await this.get(current)).projection, client, model.document.id) !== prepared.source_fingerprint) throw new Conflict('Source data changed; rebuild the candidate projection');
       if (await this.fingerprint(model.projection, client) !== prepared.projection_fingerprint) throw new Conflict('Prepared projection changed');
       await access.refresh(client);
       if (current) await this.db.query(`UPDATE ${this.db.schema}.releases SET state='retired' WHERE digest=$1`, [current], client);
       await this.db.query(`INSERT INTO ${this.db.schema}.ontology(id,release) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET release=excluded.release`, [model.document.id, release], client);
       await this.db.query(`UPDATE ${this.db.schema}.releases SET state='active' WHERE digest=$1`, [release], client);
-    });
+    };
+    if (transaction) await activate(transaction); else await this.db.transaction(activate);
     return model;
+  }
+  async catchUp(release: string, bindings: Bindings, access: Access, permissionTarget?: string, transaction?: Sql) {
+    const candidate = await this.get(release);
+    this.checkBindings(candidate, bindings);
+    await access.refresh(); access.require(candidate.document.id, 'edit_definition', permissionTarget ?? candidate.document.id);
+    const synchronize = async (client: Sql) => {
+      await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['publication:' + candidate.document.id], client);
+      const stored = (await this.db.query(`SELECT * FROM ${this.db.schema}.releases WHERE digest=$1 FOR UPDATE`, [release], client)).rows[0]!;
+      const transform = stored.transform_id ? this.transforms.get(stored.transform_id) : undefined;
+      if (stored.transform_id && !transform) throw new Conflict('Candidate transformation is unavailable; prepare it again with the original migration implementation');
+      const live = await this.active(candidate.document.id, client);
+      if (stored.state !== 'prepared' || stored.prepared_from !== live.release) throw new Conflict('Candidate base changed; rebase before catching up');
+      if (await this.fingerprint(candidate.projection, client) !== stored.projection_fingerprint) throw new Conflict('Prepared projection changed');
+      const types = [...candidate.objects.keys()], links = [...candidate.links.keys()];
+      // Remove outdated edges before objects, preserving foreign-key validity throughout catch-up.
+      await this.db.query(`DELETE FROM ${this.db.schema}.links target WHERE target.projection=$1 AND NOT EXISTS(
+        SELECT 1 FROM ${this.db.schema}.links source WHERE source.projection=$2 AND source.owner=target.owner AND source.type=target.type
+        AND source.from_type=target.from_type AND source.from_id=target.from_id AND source.to_type=target.to_type AND source.to_id=target.to_id)`, [candidate.projection,live.projection], client);
+      await this.db.query(`DELETE FROM ${this.db.schema}.objects target WHERE target.projection=$1 AND NOT EXISTS(
+        SELECT 1 FROM ${this.db.schema}.objects source WHERE source.projection=$2 AND source.owner=target.owner AND source.type=target.type AND source.id=target.id)`, [candidate.projection,live.projection], client);
+      let cursor: string[] | null = null;
+      let updated = 0;
+      for (;;) {
+        const rows: Record<string, any>[] = (await this.db.query(`SELECT source.owner,source.type,source.id,source.revision,source.properties FROM ${this.db.schema}.objects source
+          LEFT JOIN ${this.db.schema}.objects target ON target.projection=$1 AND target.owner=source.owner AND target.type=source.type AND target.id=source.id
+          WHERE source.projection=$2 AND source.type=ANY($3::text[]) AND (target.id IS NULL OR source.revision IS DISTINCT FROM target.revision OR source.properties IS DISTINCT FROM target.properties)
+          AND ($4::text[] IS NULL OR (source.owner,source.type,source.id)>($4[1],$4[2],$4[3])) ORDER BY source.owner,source.type,source.id LIMIT 500`, [candidate.projection,live.projection,types,cursor], client)).rows;
+        if (!rows.length) break;
+        const projected = rows.map(row => ({ ...row, properties: candidate.parseObject({type:row.type,id:row.id}, transform ? transform({type:row.type,id:row.id},structuredClone(row.properties)) : Object.fromEntries(Object.entries(row.properties).filter(([name])=>candidate.object(row.type).properties[name]))) }));
+        await this.db.query(`INSERT INTO ${this.db.schema}.objects(projection,owner,type,id,revision,properties)
+          SELECT $1,owner,type,id,revision,properties FROM jsonb_to_recordset($2::jsonb) AS r(owner text,type text,id text,revision bigint,properties jsonb)
+          ON CONFLICT(projection,owner,type,id) DO UPDATE SET revision=excluded.revision,properties=excluded.properties`, [candidate.projection,JSON.stringify(projected)], client);
+        updated += rows.length;
+        const last=rows.at(-1)!; cursor=[last.owner,last.type,last.id];
+      }
+      const edges=(await this.db.query(`SELECT source.* FROM ${this.db.schema}.links source WHERE source.projection=$1 AND source.type=ANY($2::text[]) AND NOT EXISTS(
+        SELECT 1 FROM ${this.db.schema}.links target WHERE target.projection=$3 AND target.owner=source.owner AND target.type=source.type
+        AND target.from_type=source.from_type AND target.from_id=source.from_id AND target.to_type=source.to_type AND target.to_id=source.to_id)`,[live.projection,links,candidate.projection],client)).rows;
+      for(let offset=0;offset<edges.length;offset+=500) {
+        const mapped=edges.slice(offset,offset+500).map(row=>{const link=candidate.links.get(row.type)!;
+          if(link.from.type!==row.from_type||link.to.type!==row.to_type)throw new Conflict('Link endpoints need a compatible source projection');
+          return {...row,single_from:link.from.cardinality==='one',single_to:link.to.cardinality==='one'};
+        });
+        await this.db.query(`INSERT INTO ${this.db.schema}.links(projection,owner,type,from_type,from_id,to_type,to_id,single_from,single_to)
+          SELECT $1,owner,type,from_type,from_id,to_type,to_id,single_from,single_to FROM jsonb_to_recordset($2::jsonb)
+          AS r(owner text,type text,from_type text,from_id text,to_type text,to_id text,single_from boolean,single_to boolean)`,[candidate.projection,JSON.stringify(mapped)],client);
+      }
+      await copyEditState(this.db,live.projection,candidate.projection,client,types);
+      if (transform) await migrateProjectionState(this.db,live.projection,candidate.projection,candidate,transform,client);
+      await this.validateEditState(candidate,candidate.projection,client);
+      await access.refresh(client);
+      await this.db.query(`UPDATE ${this.db.schema}.releases SET source_fingerprint=$2,projection_fingerprint=$3 WHERE digest=$1`,[release,await this.fingerprint(live.projection,client,candidate.document.id),await this.fingerprint(candidate.projection,client)],client);
+      return {release,projection:candidate.projection,objectsUpdated:updated,linksAdded:edges.length};
+    };
+    return transaction ? synchronize(transaction) : this.db.transaction(synchronize);
   }
   async publish(input: unknown, bindings: Bindings, access: Access, transform?: ProjectionTransform) { return this.activate((await this.prepare(input, bindings, access, transform)).release, bindings, access); }
   checkBindings(model: PublishedOntology, bindings: Bindings) {

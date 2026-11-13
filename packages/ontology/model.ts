@@ -84,6 +84,7 @@ export class Ontology {
       }
     }
     for (const action of this.actions.values()) {
+      if (new Set(action.effects?.map(effect => effect.name)).size !== (action.effects?.length ?? 0)) throw new Error('Duplicate Action effect name');
       validator(action.parameters);
       for (const type of Object.values(action.objectParameters)) this.concreteTypes(type);
       for (const criterion of action.submissionCriteria) required(this.functions, criterion.function);

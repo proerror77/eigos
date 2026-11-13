@@ -1,9 +1,10 @@
+import { loadExtensions } from '../../packages/runtime/extensions.js';
 import { readConfig, configuredSource } from '../../packages/core/config.js';
 import { Database } from '../../packages/runtime/database.js';
 import { createApp } from './app.js';
 
-const config = readConfig(), db = new Database(config.DATABASE_URL, config.EIGOS_PG_SCHEMA);
-const gateway = createApp(config, db, configuredSource(config.EIGOS_DIDI_CONNECTION_FILE));
+const config = readConfig(), db = new Database(config.DATABASE_URL, config.EIGOS_PG_SCHEMA, undefined, config.QUERY_DATABASE_URL);
+const gateway = createApp(config, db, configuredSource(config.EIGOS_DIDI_CONNECTION_FILE),undefined,await loadExtensions(config.EIGOS_EXTENSION_MODULE));
 gateway.metadata.checkBindings(await gateway.metadata.active(), gateway.capabilities);
 const server = gateway.app.listen(config.PORT, config.HOST, () => console.log(`EIGOS listening on ${config.HOST}:${config.PORT}`));
 const close = () => server.close(() => { void db.close(); });

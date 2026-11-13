@@ -1,3 +1,6 @@
+import type { RuntimeExtensions } from '../../packages/runtime/extensions.js';
+import { ontologyServices } from '../../packages/runtime/services.js';
+import { Effects } from '../../packages/runtime/effects.js';
 import express, { type Request } from 'express';
 import { McpServer } from '@modelcontextprotocol/server';
 import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
@@ -26,8 +29,8 @@ const actionInput = z.strictObject({ scenarioId: z.uuid().optional(), requestId:
     .refine(value => !!value.object !== !!value.implementation, 'Select an object or implementing Object Type').optional(), input: z.record(z.string(), z.unknown()) })
   .refine(value => !!value.action !== !!value.interface, 'Select an Action or an Interface Action');
 
-export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config)) {
-  const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source);
+export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {}) {
+  const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source,extensions);
   const scenarios = new Scenarios(db), pa = new PARequests(tasks);
   const principals = new WeakMap<Request, Principal>();
   app.disable('x-powered-by'); app.use(express.json({ limit: '256kb' }));
@@ -49,6 +52,12 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     catch { res.setHeader('WWW-Authenticate', 'Bearer'); res.status(401).json({ error: 'Authentication required' }); }
   });
   const principal = (req: Request) => principals.get(req)!;
+  const services=ontologyServices(db,metadata,capabilities,capabilities.functions,new Effects(db,extensions.effects??new Map()));
+  app.post('/ontology/services/:operation',async(req,res)=>{
+    const service=services.get(String(req.params.operation));
+    if(!service)throw new NotFound('Ontology service is unavailable');
+    res.json(await service.invoke(principal(req),req.body));
+  });
   const modelFor = async (p: Principal, taskId?: string, scenarioId?: string, access?: Access) => {
     const model = await (taskId ? metadata.get((await tasks.get(p, taskId)).release) : metadata.active());
     return scenarioId ? scenarios.view(access ?? await Access.load(db,p),model,scenarioId) : model;
@@ -56,13 +65,15 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   const query = async (p: Principal, raw: unknown) => {
     requireScope(p, 'ontology:read'); const input = queryInput.parse(raw);
     const access = await Access.load(db, p), result = await new Objects(db, await modelFor(p, input.taskId, input.scenarioId), access).query(input.query);
-    await access.refresh(); return result;
+    if(!await access.canReturn(access.dataRequirements()))throw new Error('Result permissions changed');
+    return result;
   };
   const evaluate = async (p: Principal, raw: unknown) => {
     requireScope(p, 'ontology:read');
     const input = functionInput.parse(raw), model = await modelFor(p, input.taskId, input.scenarioId), access = await Access.load(db, p);
     const result = await capabilities.functions.invoke(model, input.function, input.input, { principal: p, objects: new Objects(db, model, access), signal: AbortSignal.timeout(30000) });
-    await access.refresh(); return result;
+    if(!await access.canReturn(access.dataRequirements()))throw new Error('Result permissions changed');
+    return result;
   };
   const apply = async (p: Principal, raw: unknown) => {
     requireScope(p, 'ontology:write');
@@ -97,6 +108,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       try { const result = await operation(); return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] }; }
       catch (error) { return { isError: true, content: [{ type: 'text' as const, text: error instanceof Error ? error.message : 'Request failed' }] }; }
     };
+    for(const [name,service] of services) server.registerTool('ontology_'+name,{description:service.description,inputSchema:service.schema as z.ZodObject},input=>response(()=>service.invoke(p,input)));
     server.registerTool('submit_task', { description: 'Submit an inquiry or calendar-backed planning request. PA information requests resume on the original task.', inputSchema: submitSchema }, input => response(async () => publicTask(await tasks.submit(p, input))));
     server.registerTool('get_task', { description: 'Read your original task, result or PA information request.', inputSchema: z.strictObject({ taskId: z.uuid() }) }, input => response(async () => publicTask(await tasks.get(p, input.taskId))));
     server.registerTool('select_task_places', { description: 'Select source-returned endpoints for a task waiting for clarification.', inputSchema: z.strictObject({ taskId: z.uuid(), places: placeSelectionSchema }) }, input => response(async () => publicTask(await tasks.selectPlaces(p, input.taskId, input.places))));

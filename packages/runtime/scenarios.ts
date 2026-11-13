@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { Conflict, digest } from '../core/identity.js';
+import { Conflict, NotFound, digest } from '../core/identity.js';
 import type { LinkData, ObjectRef } from '../ontology/schema.js';
-import { Access, type Requirement } from './access.js';
+import { Access, PermissionDenied, type Requirement } from './access.js';
 import { Database, type Sql } from './database.js';
 import { PublishedOntology } from './metadata.js';
 import { Objects } from './objects.js';
@@ -49,17 +49,47 @@ export class Scenarios {
       const changes = await this.changes(owner, id, client), objects = [];
       for (const item of changes.objects) {
         access.read(model, item.type);
-        const mask = (properties: Record<string, unknown> | null) => properties && Object.fromEntries(Object.entries(properties).map(([key, value]) => [key, access.property(model, item.type, key) ? value : null]));
+        const mask = (properties: Record<string, unknown> | null) => {
+          if (!properties) return null;
+          access.readRow(model,item.type,properties);
+          return new Objects(this.db,view,access,client).maskSnapshot({type:item.type,id:item.id},properties);
+        };
         const live = (await this.db.query(`SELECT revision,properties FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`, [model.projection, owner, item.type, item.id], client)).rows[0];
         objects.push({ ref: { type: item.type, id: item.id }, before: mask(item.base_properties), after: mask(item.properties), conflict: (String(live?.revision ?? '') !== String(item.base_revision ?? '') || digest(live?.properties ?? null)!==digest(item.base_properties)) || item.properties===null && digest(await objectLinks(this.db,model,owner,{type:item.type,id:item.id},client))!==digest(item.base_links) });
       }
+      const proposed = new Objects(this.db,view,access,client), live = new Objects(this.db,model,access,client);
+      const requireEndpoint = async (ref: ObjectRef) => {
+        try { await proposed.read(ref); }
+        catch (error) {
+          if (!(error instanceof NotFound)) throw error;
+          // A removed endpoint is absent from the proposed view; its live instance still governs access.
+          await live.read(ref);
+        }
+      };
       const links = await Promise.all(changes.links.map(async item => {
-        access.read(model, item.from_type); access.read(model, item.to_type); access.definition(model, 'link', item.type);
+        await requireEndpoint({type:item.from_type,id:item.from_id});
+        await requireEndpoint({type:item.to_type,id:item.to_id});
+        access.definition(model, 'link', item.type);
         const present=(await this.db.query(`SELECT 1 FROM ${this.db.schema}.links WHERE projection=$1 AND owner=$2 AND type=$3 AND from_type=$4 AND from_id=$5 AND to_type=$6 AND to_id=$7`,[model.projection,owner,item.type,item.from_type,item.from_id,item.to_type,item.to_id],client)).rowCount!>0;
-        return { type: item.type, from: { type: item.from_type, id: item.from_id }, to: { type: item.to_type, id: item.to_id }, removed: item.removed,conflict:present!==item.base_present };
+        return { type: item.type, from: { type: item.from_type, id: item.from_id }, to: { type: item.to_type, id: item.to_id }, removed: item.removed,conflict:present!==item.base_present || await this.cardinalityConflict(model,owner,item,client) };
       }));
       await access.refresh(client); return { id:String(row.id),name:String(row.name),revision:Number(row.revision),state:String(row.state),expiresAt:row.expires_at as Date,objects,links };
     });
+  }
+  private async cardinalityConflict(model: PublishedOntology, owner: string, item: Record<string,any>, client: Sql): Promise<boolean> {
+    if (item.removed) return false;
+    const definition = model.links.get(item.type)!;
+    const directions = (['from','to'] as const).filter(side=>definition[side].cardinality==='one');
+    for (const side of directions) {
+      const other = side==='from'?'to':'from';
+      const rows = await this.db.query(`SELECT 1 FROM ${this.db.schema}.links l WHERE projection=$1 AND owner=$2 AND type=$3
+        AND ${side}_type=$4 AND ${side}_id=$5 AND (${other}_type,${other}_id)<>($6,$7)
+        AND NOT EXISTS(SELECT 1 FROM ${this.db.schema}.scenario_links d WHERE d.scenario_id=$8 AND d.owner=l.owner AND d.type=l.type
+          AND d.from_type=l.from_type AND d.from_id=l.from_id AND d.to_type=l.to_type AND d.to_id=l.to_id AND d.removed) LIMIT 1`,
+        [model.projection,owner,item.type,item[side+'_type'],item[side+'_id'],item[other+'_type'],item[other+'_id'],item.scenario_id],client);
+      if (rows.rowCount) return true;
+    }
+    return false;
   }
   async discard(access: Access, model: PublishedOntology, id: string, revision: number, beforeCommit?: (client: Sql) => Promise<void>) {
     const view = await this.view(access, model, id), owner = access.principal.owner;
@@ -82,7 +112,25 @@ export class Scenarios {
     const changes = await this.changes(owner, id, client);
     if (changes.objects.some(item => !scope.objects.includes(item.type)) || changes.links.some(item => !scope.links.includes(item.type))) throw new Conflict('Scenario contains edits outside this merge Action scope');
     const actions = (await this.db.query(`SELECT requirements FROM ${this.db.schema}.scenario_actions WHERE owner=$1 AND scenario_id=$2`, [owner, id], client)).rows;
-    for (const action of actions) for (const requirement of action.requirements as Requirement[]) access.require(requirement.ontology, requirement.permission, requirement.resource);
+    const deleted = (await this.db.query(`SELECT type,id,base_revision FROM ${this.db.schema}.scenario_objects WHERE owner=$1 AND scenario_id=$2 AND properties IS NULL`, [owner,id],client)).rows;
+    const deletions = new Map(deleted.map(item => [digest({type:item.type,id:item.id}),item]));
+    for (const action of actions) {
+      const requirements = (action.requirements as Requirement[]).map(requirement => {
+        const dependency = requirement.row;
+        const deletion = dependency?.scenario === id ? deletions.get(digest({type:dependency.type,id:dependency.id})) : undefined;
+        if (!dependency || !deletion) return requirement;
+        if (deletion.base_revision !== null) {
+          // Authorize a staged deletion against the surviving live input, before its atomic removal.
+          const { scenario: _scenario, ...row } = dependency;
+          return { ...requirement, row };
+        }
+        // Created-then-deleted objects have no surviving input. Grants and the recorded policy context still apply.
+        const { row: _row, ...permissions } = requirement;
+        return permissions;
+      });
+      if (!await access.canReturn(requirements,client)) throw new PermissionDenied('Permission changed for scenario inputs');
+      for (const requirement of action.requirements as Requirement[]) access.require(requirement.ontology, requirement.permission, requirement.resource);
+    }
     for (const item of changes.objects) {
       const live = (await this.db.query(`SELECT revision,properties FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`, [model.projection, owner, item.type, item.id], client)).rows[0];
       if ((String(live?.revision ?? '') !== String(item.base_revision ?? '') || digest(live?.properties ?? null)!==digest(item.base_properties))) throw new Conflict('Scenario object conflicts with current data');
@@ -95,7 +143,7 @@ export class Scenarios {
     const edge = (item: Record<string, any>): LinkData => ({ type: item.type, from: { type: item.from_type, id: item.from_id }, to: { type: item.to_type, id: item.to_id } });
     for (const item of changes.links) {
       const current = (await this.db.query(`SELECT 1 FROM ${this.db.schema}.links WHERE projection=$1 AND owner=$2 AND type=$3 AND from_type=$4 AND from_id=$5 AND to_type=$6 AND to_id=$7`, [model.projection, owner, item.type, item.from_type, item.from_id, item.to_type, item.to_id], client)).rowCount! > 0;
-      if (current !== item.base_present) throw new Conflict('Scenario link conflicts with current data');
+      if (current !== item.base_present || await this.cardinalityConflict(model,owner,item,client)) throw new Conflict('Scenario link conflicts with current data or cardinality');
       if (item.removed) await graph.unlink(edge(item));
     }
     for (const item of changes.objects) {
