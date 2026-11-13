@@ -14,6 +14,8 @@ import type { ObjectRef } from '../packages/ontology/schema.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import { Effects, type EffectHandler } from '../packages/runtime/effects.js';
 import { Actions } from '../packages/runtime/actions.js';
+import { OntologyAgent } from '../packages/runtime/agent.js';
+import { Worker } from '../apps/worker/worker.js';
 
 async function lifecycleFixture(driver=new PlanningFixtureAgent()){
   const f=await fixture(driver);
@@ -107,6 +109,86 @@ test('definitions without Scenario metadata continue creating isolated scenarios
     assert.equal((await f.scenarios.inspect(access,model,scene.id)).objects.length,1);
     assert.equal((await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.objects WHERE projection=$1 AND type='OntologyScenario'`,[model.projection])).rows[0]!.n,0);
   }finally{await f.close();}
+});
+
+test('merged surviving read dependencies transfer to live rows and retain current row authorization',async()=>{
+  const f=await lifecycleFixture();try{
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies(ontology,type,policy) VALUES('Eigos','Route',$1)`,[{read:{all:[],any:[{op:'equals',property:'name',value:'before'},{op:'equals',property:'name',value:'after'}]},properties:{}}]);
+    const access=await Access.load(f.db,principal),live=new Objects(f.db,f.model,access),ref={type:'Route',id:'merged-dependency'};
+    await live.create(ref,{id:ref.id,name:'before'});
+    const scene=await f.scenarios.create(access,f.model,{requestId:'dependencies',name:'Dependencies'}),view=await f.scenarios.view(access,f.model,scene.id);
+    const draft=new Objects(f.db,view,access);await draft.edit(ref,1,{name:'after'});await draft.read(ref);
+    const requirements=access.dataRequirements(),row=requirements.find(item=>item.row&&item.row.scenario===scene.id&&item.row.id===ref.id)!;
+    assert(row);const inspected=await f.scenarios.inspect(access,f.model,scene.id);
+    await f.db.transaction(client=>f.scenarios.mergeInto(new Objects(f.db,f.model,access,client),scene.id,inspected.revision,{objects:['Route'],links:[]}));
+    const original=access.dataRequirements(),ordinal=original.findIndex(item=>item.row&&item.row.scenario===scene.id&&item.row.id===ref.id);
+    const transferred=await access.finalDataRequirements();
+    const liveRequirement=transferred[ordinal]!;
+    assert.equal(liveRequirement.row!.scenario,undefined);assert.deepEqual(liveRequirement.row!.fields,original[ordinal]!.row!.fields);
+    assert(access.dataRequirements().some(item=>item.row?.scenario===scene.id));
+    assert.equal(await access.canReturn(transferred),true);
+    await f.db.query(`UPDATE ${f.db.schema}.objects SET properties=jsonb_set(properties,'{name}','"denied"') WHERE projection=$1 AND owner=$2 AND type='Route' AND id=$3`,[f.model.projection,principal.owner,ref.id]);
+    assert.equal(await access.canReturn(transferred),false);
+  }finally{await f.close();}
+});
+
+test('rolled back merges and deleted inputs retain their scenario read dependency',async()=>{
+  const f=await lifecycleFixture();try{
+    const access=await Access.load(f.db,principal),live=new Objects(f.db,f.model,access),ref={type:'Route',id:'rollback-dependency'};
+    await live.create(ref,{id:ref.id,name:'before'});
+    const scene=await f.scenarios.create(access,f.model,{requestId:'rollback-reads',name:'Rollback reads'}),view=await f.scenarios.view(access,f.model,scene.id),draft=new Objects(f.db,view,access);
+    await draft.edit(ref,1,{name:'after'});await draft.read(ref);
+    const inspected=await f.scenarios.inspect(access,f.model,scene.id);
+    await assert.rejects(f.db.transaction(async client=>{await f.scenarios.mergeInto(new Objects(f.db,f.model,access,client),scene.id,inspected.revision,{objects:['Route'],links:[]});throw new Error('rollback merge');}),/rollback merge/);
+    assert((await access.finalDataRequirements()).some(item=>item.row?.scenario===scene.id));
+    await draft.remove(ref,2);const deletion=await f.scenarios.inspect(access,f.model,scene.id);
+    await f.db.transaction(client=>f.scenarios.mergeInto(new Objects(f.db,f.model,access,client),scene.id,deletion.revision,{objects:['Route'],links:[]}));
+    await new Objects(f.db,f.model,await Access.load(f.db,principal)).create(ref,{id:ref.id,name:'replacement'});
+    const requirements=await access.finalDataRequirements();
+    assert(requirements.some(item=>item.row&&item.row.scenario===scene.id&&item.row.id===ref.id));
+    assert.equal(await access.canReturn(requirements),false);
+  }finally{await f.close();}
+});
+
+test('Agent completes a generic merge with live permissions and effect delivery retains the same dependencies',async()=>{
+  const route={type:'Route',id:'agent-merged-route'};
+  class MergeDriver extends PlanningFixtureAgent {
+    override async run(_prompt:string,tools:Parameters<PlanningFixtureAgent['run']>[1]){
+      const scenario=await tools.get('create_scenario')!.invoke({requestId:'agent-merge',name:'Agent merge'}) as {id:string};
+      await tools.get('apply_action')!.invoke({scenarioId:scenario.id,action:'StageRouteName',input:{route,revision:1,name:'after'}});
+      const inspected=await tools.get('inspect_scenario')!.invoke({scenarioId:scenario.id}) as {revision:number};
+      await tools.get('complete_with_action')!.invoke({action:{interface:{type:'MergeableRoute',object:route,action:'merge'},input:{route,scenarioId:scenario.id,revision:inspected.revision}},read:{function:'readMergedRoute',resultParameter:'route'}});
+    }
+  }
+  const f=await lifecycleFixture();let worker:Worker|undefined;try{
+    const object={type:'object',properties:{type:{type:'string'},id:{type:'string'}},required:['type','id'],additionalProperties:false};
+    const parameters={type:'object',properties:{route:object,scenarioId:{type:'string'},revision:{type:'integer'}},required:['route','scenarioId','revision'],additionalProperties:false};
+    const readFunction={apiName:'readMergedRoute',description:'Read the committed route',version:'1',parameters:{type:'object',properties:{route:object},required:['route'],additionalProperties:false},returns:{type:'object',properties:{name:{type:'string'}},required:['name'],additionalProperties:false}};
+    let delivered=0;
+    const handlers=new Map<string,EffectHandler>([['RecordMerge',async()=>{delivered++;}]]);
+    const capabilities=createCapabilities(f.db,f.source,{effects:handlers,functions:[{definition:readFunction,implementationId:'read-merged-route-v1',handler:async(input,context)=>({name:(await context.objects.read(input.route as ObjectRef)).properties.name})}]});
+    const document=structuredClone(f.model.document);
+    document.functionTypes.push(readFunction);
+    document.interfaceTypes.push({apiName:'MergeableRoute',description:'Merge a reviewed route proposal',properties:{},optionalProperties:[],links:{},actions:{merge:{parameters,objectParameters:{route:'Route'},required:true}}});
+    document.objectTypes.find(type=>type.apiName==='Route')!.interfaces.MergeableRoute={properties:{},links:{},actions:{merge:{action:'MergeProposedRoute',parameters:{route:'route',scenarioId:'scenarioId',revision:'revision'}}}};
+    document.actionTypes.push({apiName:'StageRouteName',description:'Stage route name',parameters:{type:'object',properties:{route:object,revision:{type:'integer'},name:{type:'string'}},required:['route','revision','name'],additionalProperties:false},objectParameters:{route:'Route'},submissionCriteria:[],rules:[{op:'editObject',object:{parameter:'route'},expectedRevision:{parameter:'revision'},properties:{name:{parameter:'name'}}}],result:{type:'Route',id:{parameter:'route',path:['id']}}});
+    document.actionTypes.push({apiName:'MergeProposedRoute',description:'Merge reviewed changes',parameters,objectParameters:{route:'Route'},submissionCriteria:[],rules:[{op:'applyScenario',scenario:{parameter:'scenarioId'},expectedRevision:{parameter:'revision'},objectTypes:['Route'],linkTypes:[]}],result:{type:'Route',id:{parameter:'route',path:['id']}},effects:[{name:'Merged',handler:'RecordMerge',payload:{route:{parameter:'route'}}}]});
+    const model=await f.metadata.publish(document,capabilities,f.publisher);
+    await setGrants(f.db,principal.owner,memberGrants(model));
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies(ontology,type,policy) VALUES('Eigos','Route',$1)`,[{read:{all:[],any:[{op:'equals',property:'name',value:'before'},{op:'equals',property:'name',value:'after'}]},properties:{}}]);
+    const access=await Access.load(f.db,principal);await new Objects(f.db,model,access).create(route,{id:route.id,name:'before'});
+    const agent=new OntologyAgent(f.db,f.metadata,f.tasks,capabilities,new MergeDriver());worker=new Worker(f.tasks,agent);
+    const task=await f.tasks.submit(principal,{requestId:'merge-task',message:'Merge the reviewed route proposal and return the live name'});
+    await worker.runOne();
+    const completed=await f.tasks.get(principal,task.id);assert.equal(completed.state,'completed',JSON.stringify(completed));
+    const result=completed.result as {name:string;execution:{steps:{tool:string;input:unknown}[]}};
+    assert.equal(result.name,'after');assert(result.execution.steps.some(step=>step.tool==='apply_action'&&step.input));
+    assert(completed.result_permissions!.some(requirement=>requirement.row?.id===route.id));
+    assert(completed.result_permissions!.every(requirement=>!requirement.row?.scenario));
+    const effects=new Effects(f.db,handlers);await effects.runOne();assert.equal(delivered,1);
+    await f.db.query(`UPDATE ${f.db.schema}.objects SET properties=jsonb_set(properties,'{name}','"denied"') WHERE projection=$1 AND owner=$2 AND type='Route' AND id=$3`,[model.projection,principal.owner,route.id]);
+    assert.equal((await f.tasks.get(principal,task.id)).result,null);
+  }finally{worker?.stop();await f.close();}
 });
 
 test('Action compensation restores edits once and rejects newer object revisions',async()=>{

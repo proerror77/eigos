@@ -172,6 +172,34 @@ export class Access {
   source(model: Ontology, name: string) { this.require(model.document.id, 'read_source', resource(model.document.id, 'source', name), true); }
   dataRequirements(): Requirement[] { return structuredClone([...this.data.values()]); }
   requirements(): Requirement[] { return structuredClone([...new Map([...this.required.values(), ...this.data.values()].map(item => [digest(item), item])).values()]); }
+  /** Return a copy of the dependencies, preserving deleted inputs and all permission evidence. */
+  private async requirementsAfterMerges(requirements: Requirement[], client?: Sql): Promise<Requirement[]> {
+    const pending=requirements.flatMap((requirement,ordinal)=>requirement.row?.scenario?[{ordinal,ontology:requirement.ontology,...requirement.row}]:[]);
+    if(!pending.length)return requirements;
+    const merged=await this.db.query(`SELECT input.ordinal,live.projection
+      FROM jsonb_to_recordset($2::jsonb) AS input(ordinal integer,ontology text,projection text,type text,id text,scenario uuid)
+      JOIN ${this.db.schema}.scenarios scenario ON scenario.id=input.scenario AND scenario.owner=$1 AND scenario.state='merged'
+      JOIN ${this.db.schema}.releases original ON original.digest=scenario.release AND original.projection=input.projection AND original.body->>'id'=input.ontology
+      JOIN ${this.db.schema}.ontology active ON active.id=input.ontology
+      JOIN ${this.db.schema}.releases live ON live.digest=active.release
+      JOIN ${this.db.schema}.objects object ON object.projection=live.projection AND object.owner=$1 AND object.type=input.type AND object.id=input.id
+      LEFT JOIN ${this.db.schema}.scenario_objects delta ON delta.scenario_id=scenario.id AND delta.owner=$1 AND delta.type=input.type AND delta.id=input.id
+      WHERE input.type<>'OntologyScenario' AND (delta.id IS NULL OR delta.properties IS NOT NULL)`,[this.principal.owner,JSON.stringify(pending)],client);
+    for(const item of merged.rows){
+      const requirement=requirements[Number(item.ordinal)]!;
+      const {scenario:_scenario,...row}=requirement.row!;
+      requirement.row={...row,projection:String(item.projection)};
+    }
+    return requirements;
+  }
+  /** Use after Action commit for final task results. Failed merges leave the original dependency intact. */
+  finalDataRequirements(client?: Sql): Promise<Requirement[]> {
+    return this.requirementsAfterMerges(this.dataRequirements(),client);
+  }
+  /** Queue effects with the same transaction that commits the scenario, so rollback also removes this copy. */
+  finalRequirements(client?: Sql): Promise<Requirement[]> {
+    return this.requirementsAfterMerges(this.requirements(),client);
+  }
   async canReturn(requirements: Requirement[], client?: Sql): Promise<boolean> {
     try { await this.refresh(client); }
     catch (error) { if (error instanceof PermissionDenied) return false; throw error; }
