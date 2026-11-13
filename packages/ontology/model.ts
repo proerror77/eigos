@@ -121,7 +121,13 @@ export class Ontology {
       if (Object.keys(source.properties).some(name => !type.properties[name] || type.properties[name]?.derived)) throw new Error('Datasource maps an unknown property');
       if (Object.entries(type.properties).some(([name, property]) => property.required && !property.derived && !source.properties[name])) throw new Error('Datasource lacks a required property mapping');
     }
-    for (const fn of this.functions.values()) { validator(fn.parameters); validator(fn.returns); }
+    for (const fn of this.functions.values()) {
+      validator(fn.parameters); validator(fn.returns);
+      const resources={objectTypes:this.objects,interfaceTypes:this.interfaces,linkTypes:this.links,functions:this.functions,dataSources:this.sources,actions:this.actions};
+      for(const [kind,names] of Object.entries(fn.dependencies??{}))for(const name of names){
+        if(!(resources[kind as keyof typeof resources] as ReadonlyMap<string,unknown>).has(name))throw new Error(`Unknown Function dependency ${fn.apiName}: ${kind}/${name}`);
+      }
+    }
   }
   object(name: string) { return required(this.objects, name); }
   action(name: string) { return required(this.actions, name); }

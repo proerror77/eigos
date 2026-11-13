@@ -33,6 +33,8 @@ Interface 使用 `extends` 指定父接口名称数组。多重继承支持共�
 
 `OntologyPackages.export` 接收 `{ontology,resources}`。每个资源用 `{kind,name,version?}` 定位，Value Type 要提供版本。导出会补全类型、属性、Interface、Link、Action、Function 等依赖，并逐个检查读取定义的权限。返回包包含 `format`、来源 Ontology、版本、摘要和定义快照。
 
+代码实现的 Function 通过 `dependencies` 声明它使用的 `objectTypes`、`interfaceTypes`、`linkTypes`、`functions`、`dataSources` 和 `actions` 名称数组。纯计算函数可以声明空对象 `{}`。发布前会验证每个声明的资源，导出会沿这些声明递归补全依赖，命名空间导入同步重映射声明。旧 Function 定义可以继续加载，但缺少依赖声明时，导出会明确要求补充声明。Value Type 的定义权限按名称与版本检查，例如 `Eigos/valueType/Email@1`。
+
 `OntologyPackages.import` 接收目标 Ontology、命名空间、资源包和分支名。默认 `mode: shared` 保存摘要和版本固定的共享快照导入，`mode: copy` 复制为本地具名定义。命名空间作为资源名称前缀，属性名称保持原有业务含义。导入创建可审阅的 Governance 分支，随后使用现有 prepare、review、merge 流程发布。
 
 `OntologyPackages.migrate` 从一个已发布的 Ontology 导出所选依赖闭包，通过显式 `mapping` 将各资源映射到另一个 Ontology 的名称，并创建目标提案。映射必须覆盖每个依赖，未知源名称、重名、摘要错误和未授权依赖均被拒绝。

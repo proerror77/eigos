@@ -58,7 +58,13 @@ export function remapResources(input: OntologyDocument, ontology: string, names:
     }
   }
   for(const link of document.linkTypes){link.apiName=rename('link',link.apiName);link.from.type=rename('object',link.from.type);link.to.type=rename('object',link.to.type);}
-  for(const fn of document.functionTypes){fn.apiName=rename('function',fn.apiName);fn.parameters=schema(fn.parameters) as Record<string,unknown>;fn.returns=schema(fn.returns) as Record<string,unknown>;}
+  for(const fn of document.functionTypes){
+    fn.apiName=rename('function',fn.apiName);fn.parameters=schema(fn.parameters) as Record<string,unknown>;fn.returns=schema(fn.returns) as Record<string,unknown>;
+    if(fn.dependencies){
+      const kinds={objectTypes:'object',interfaceTypes:'interface',linkTypes:'link',functions:'function',dataSources:'datasource',actions:'action'} as const;
+      for(const field of Object.keys(kinds) as (keyof typeof kinds)[])if(fn.dependencies[field])fn.dependencies[field]=fn.dependencies[field]!.map(name=>rename(kinds[field],name));
+    }
+  }
   for(const action of document.actionTypes){
     action.apiName=rename('action',action.apiName);action.parameters=schema(action.parameters) as Record<string,unknown>;
     action.objectParameters=Object.fromEntries(Object.entries(action.objectParameters).map(([name,target])=>[name,reference(target)]));

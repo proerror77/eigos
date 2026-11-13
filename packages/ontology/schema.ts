@@ -35,6 +35,11 @@ const parameter = z.strictObject({ parameter: name, path: z.array(name).optional
 const value = z.union([parameter, z.strictObject({ literal: z.unknown() })]);
 const reference = z.strictObject({ type: name, id: value });
 const linkConstraint = z.strictObject({ target: name, cardinality: z.enum(['one', 'many']), required: z.boolean() });
+export const functionDependenciesSchema = z.strictObject({
+  objectTypes:z.array(name).optional(),interfaceTypes:z.array(name).optional(),linkTypes:z.array(name).optional(),
+  functions:z.array(name).optional(),dataSources:z.array(name).optional(),actions:z.array(name).optional(),
+});
+export type FunctionDependencies = z.infer<typeof functionDependenciesSchema>;
 const actionConstraint = z.strictObject({ parameters: jsonSchema, objectParameters: z.record(name, name), required: z.boolean() });
 
 export const ontologySchema = z.strictObject({
@@ -65,6 +70,7 @@ export const ontologySchema = z.strictObject({
   functionTypes: z.array(z.strictObject({
     apiName: name, description: z.string().min(1), parameters: jsonSchema, returns: jsonSchema,
     ...metadata,source: name.optional(), edits: z.boolean().optional(), version: z.string().min(1).max(100).optional(),
+    dependencies:functionDependenciesSchema.optional(),
   })),
   actionTypes: z.array(z.strictObject({
     apiName: name, description: z.string().min(1),...metadata, parameters: jsonSchema, objectParameters: z.record(name, name),

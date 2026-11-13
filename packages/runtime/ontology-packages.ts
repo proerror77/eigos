@@ -77,7 +77,12 @@ function dependencies(model: Ontology, ref:Resource, value:Record<string,any>):R
     for(const action of Object.values(value.actions) as {parameters:unknown;objectParameters:Record<string,string>}[]){schema(action.parameters);Object.values(action.objectParameters).forEach(target);}
   }
   if(ref.kind==='link'){add('object',value.from.type);add('object',value.to.type);}
-  if(ref.kind==='function'){schema(value.parameters);schema(value.returns);}
+  if(ref.kind==='function'){
+    if(!Object.hasOwn(value,'dependencies'))throw new Conflict('Function packaging requires declared resource dependencies: '+ref.name);
+    const kinds={objectTypes:'object',interfaceTypes:'interface',linkTypes:'link',functions:'function',dataSources:'datasource',actions:'action'} as const;
+    for(const [field,kind] of Object.entries(kinds))for(const name of value.dependencies[field]??[])add(kind,name);
+    schema(value.parameters);schema(value.returns);
+  }
   if(ref.kind==='action'){
     schema(value.parameters);Object.values(value.objectParameters as Record<string,string>).forEach(target);
     if(value.function)add('function',value.function);
@@ -106,7 +111,7 @@ export class OntologyPackages {
     while(pending.length){
       const reference=pending.pop()!,key=identity(reference);if(selected.has(key))continue;
       const entry=index.get(key);if(!entry)throw new Conflict('Unknown package resource '+key);
-      access.definition(model,reference.kind,reference.name);
+      access.definition(model,reference.kind,reference.kind==='valueType'?reference.name+'@'+reference.version:reference.name);
       selected.add(key);pending.push(...dependencies(model,reference,entry.value));
     }
     const document:OntologyDocument={id:model.document.id,version:model.document.version,objectTypes:[],interfaceTypes:[],linkTypes:[],functionTypes:[],actionTypes:[],dataSources:[]};

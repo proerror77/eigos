@@ -144,3 +144,68 @@ test('metadata supports namespaced type classes and validates unused Struct decl
   const model=new Ontology(input);assert.equal(model.object('Item').properties.name!.typeClasses?.[0]!.name,'cad_media_reference');
   assert.throws(()=>new Ontology({...basic(),structTypes:[{apiName:'Empty',description:'Invalid empty structure',fields:{}}]}),/Struct requires fields/);
 });
+
+test('function-backed Action packages include executable code resource dependencies recursively',async()=>{
+  const f=await fixture();try{
+    const parameters={type:'object',properties:{name:{type:'string'}},required:['name'],additionalProperties:false};
+    const reference={type:'object',properties:{type:{type:'string'},id:{type:'string'}},required:['type','id'],additionalProperties:false};
+    const input={...basic(),functionTypes:[
+      {apiName:'normalizeName',description:'Normalize a label',parameters,returns:{type:'string'},dependencies:{}},
+      {apiName:'observeItems',description:'Declared source reader',parameters:{type:'object',properties:{},additionalProperties:false},returns:{type:'boolean'},dependencies:{}},
+      {apiName:'createItem',description:'Create through the declared object and source mapping',parameters,returns:reference,edits:true,dependencies:{objectTypes:['Item'],functions:['normalizeName'],dataSources:['ItemFeed']}},
+    ],dataSources:[{apiName:'ItemFeed',objectType:'Item',function:'observeItems',properties:{id:'id',name:'name'}}],actionTypes:[{apiName:'CreateItem',description:'Create a named item',parameters,objectParameters:{},submissionCriteria:[],function:'createItem'}]};
+    const model=new Ontology(input);
+    let functions:Functions;
+    functions=new Functions(new Map<string,import('../packages/runtime/functions.js').FunctionHandler>([
+      ['normalizeName',(input)=>String(input.name).toUpperCase()],
+      ['observeItems',()=>true],
+      ['createItem',async(input,context)=>{
+        const mapping=context.objects.model.sources.get('ItemFeed');assert(mapping);
+        const normalized=await functions.invoke(context.objects.model,'normalizeName',input,context);
+        const ref={type:mapping.objectType,id:'created'};
+        return context.edit!(ref,objects=>objects.create(ref,{id:ref.id,name:normalized}));
+      }],
+    ]),model.resolvedDocument.functionTypes);
+    const bindings={describe:(ontology:Ontology)=>({functions:functions.bindings(ontology),sources:Object.fromEntries([...ontology.sources.keys()].map(name=>[name,name]))})};
+    await f.metadata.publish(model.document,bindings,f.publisher);
+    const packages=new OntologyPackages(f.db,f.metadata,bindings);
+    const packet=await packages.export(f.publisher,{ontology:'Eigos',resources:[{kind:'action',name:'CreateItem'}]});
+    assert.deepEqual(packet.document.objectTypes.map(type=>type.apiName),['Item']);
+    assert.deepEqual(packet.document.dataSources.map(source=>source.apiName),['ItemFeed']);
+    assert.equal(packet.document.functionTypes.length,3);
+    const publication=await f.metadata.publish(packet.document,bindings,f.publisher);
+    await setGrants(f.db,principal.owner,memberGrants(publication));
+    const access=await Access.load(f.db,principal);
+    const ref=await new Actions(f.db,functions).apply(access,publication,'CreateItem',{name:'usable package'},'packaged-create');
+    assert.equal((await new Objects(f.db,publication,access).read(ref)).properties.name,'USABLE PACKAGE');
+    const imported=await packages.import(f.publisher,{targetOntology:'Eigos',namespace:'Copy',package:packet,branchName:'Import executable declarations'});
+    const compiled=new Ontology(imported.body);
+    assert.deepEqual(compiled.functions.get('CopycreateItem')!.dependencies,{objectTypes:['CopyItem'],functions:['CopynormalizeName'],dataSources:['CopyItemFeed']});
+  }finally{await f.close();}
+});
+
+test('legacy Functions remain loadable but package export requires an explicit dependency declaration',async()=>{
+  const f=await fixture();try{
+    const input={...basic(),functionTypes:[{apiName:'Pure',description:'Legacy calculation',parameters:{type:'object',properties:{},additionalProperties:false},returns:{type:'number'}}]};
+    const model=new Ontology(input),functions=new Functions(new Map([['Pure',()=>1]]),model.document.functionTypes);
+    const bindings={describe:(ontology:Ontology)=>({functions:functions.bindings(ontology),sources:{}})};
+    await f.metadata.publish(model.document,bindings,f.publisher);
+    const packages=new OntologyPackages(f.db,f.metadata,bindings);
+    await assert.rejects(packages.export(f.publisher,{ontology:'Eigos',resources:[{kind:'function',name:'Pure'}]}),/declared resource dependencies/);
+    const invalid={...input,functionTypes:[{...input.functionTypes[0]!,dependencies:{objectTypes:['Missing']}}]};
+    assert.throws(()=>new Ontology(invalid),/Unknown Function dependency/);
+  }finally{await f.close();}
+});
+
+test('package export honors version-qualified Value Type definition grants',async()=>{
+  const f=await fixture();try{
+    const document={...basic(),valueTypes:[{apiName:'Label',version:'1',description:'A label',schema:{type:'string'}}]};
+    await f.metadata.publish(document,noBindings,f.publisher);
+    const packages=new OntologyPackages(f.db,f.metadata,noBindings);
+    await setGrants(f.db,'value-reader',[{resource:'Eigos/valueType/Label@1',permission:'view_definition'}]);
+    const access=await Access.load(f.db,{owner:'value-reader',scopes:[]});
+    const packet=await packages.export(access,{ontology:'Eigos',resources:[{kind:'valueType',name:'Label',version:'1'}]});
+    assert.equal(packet.document.valueTypes?.[0]!.apiName,'Label');
+    assert.equal(packet.document.objectTypes.length,0);
+  }finally{await f.close();}
+});
