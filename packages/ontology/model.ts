@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { compileTypes } from './type-system.js';
+import { expandImports } from './resource-mapping.js';
+import { schemaSubset } from './schema-compatibility.js';
 import { digest } from '../core/identity.js';
 import { ontologySchema, type OntologyDocument, type ObjectRef } from './schema.js';
 
@@ -21,6 +24,8 @@ const required = <T>(map: ReadonlyMap<string, T>, name: string): T => {
 
 export class Ontology {
   readonly document: OntologyDocument;
+  readonly resourceDocument: OntologyDocument;
+  readonly resolvedDocument: OntologyDocument;
   readonly digest: string;
   readonly objects: ReadonlyMap<string, OntologyDocument['objectTypes'][number]>;
   readonly interfaces: ReadonlyMap<string, OntologyDocument['interfaceTypes'][number]>;
@@ -33,18 +38,20 @@ export class Ontology {
   constructor(input: unknown) {
     this.document = ontologySchema.parse(input);
     this.digest = digest(this.document);
-    this.objects = unique(this.document.objectTypes);
-    this.interfaces = unique(this.document.interfaceTypes);
-    this.links = unique(this.document.linkTypes);
-    this.functions = unique(this.document.functionTypes);
-    this.actions = unique(this.document.actionTypes);
-    this.sources = unique(this.document.dataSources);
+    this.resourceDocument = expandImports(this.document);
+    this.resolvedDocument = compileTypes(this.resourceDocument);
+    this.objects = unique(this.resolvedDocument.objectTypes);
+    this.interfaces = unique(this.resolvedDocument.interfaceTypes);
+    this.links = unique(this.resolvedDocument.linkTypes);
+    this.functions = unique(this.resolvedDocument.functionTypes);
+    this.actions = unique(this.resolvedDocument.actionTypes);
+    this.sources = unique(this.resolvedDocument.dataSources);
     for (const type of this.objects.values()) {
       if (this.interfaces.has(type.apiName)) throw new Error('Object and interface names must be distinct');
       for (const key of [type.primaryKey, type.titleProperty]) {
-        if (type.properties[key]?.schema.type !== 'string' || !type.properties[key]?.required) throw new Error(`Missing required string key on ${type.apiName}`);
+        if (type.properties[key]?.derived || type.properties[key]?.schema.type !== 'string' || !type.properties[key]?.required) throw new Error(`Missing required string key on ${type.apiName}`);
       }
-      this.objectValidators.set(type.apiName, z.strictObject(Object.fromEntries(Object.entries(type.properties)
+      this.objectValidators.set(type.apiName, z.strictObject(Object.fromEntries(Object.entries(type.properties).filter(([,property])=>!property.derived)
         .map(([name, property]) => [name, property.required ? validator(property.schema) : validator(property.schema).optional()]))));
     }
     for (const link of this.links.values()) {
@@ -59,7 +66,7 @@ export class Ontology {
       for (const [alias, property] of Object.entries(contract.properties)) {
         const local = mapping.properties[alias];
         if (!local && contract.optionalProperties.includes(alias)) continue;
-        if (!local || type.properties[local]?.schema.type !== property.schema.type) throw new Error(`Invalid property mapping ${type.apiName}.${alias}`);
+        if (!local || !type.properties[local] || !schemaSubset(type.properties[local]!.schema, property.schema)) throw new Error(`Invalid property mapping ${type.apiName}.${alias}`);
       }
       if (Object.keys(mapping.properties).some(name => !contract.properties[name])) throw new Error('Unknown interface property');
       for (const [alias, constraint] of Object.entries(contract.links)) {
@@ -73,14 +80,20 @@ export class Ontology {
         if (!local && !constraint.required) continue;
         if (!local) throw new Error(`Missing action mapping ${type.apiName}.${alias}`);
         const action = this.action(local.action);
-        const expected = constraint.parameters.properties as Record<string, { type?: string }>;
-        const actual = action.parameters.properties as Record<string, { type?: string }>;
+        const expected = constraint.parameters.properties as Record<string, Record<string,unknown>> ?? {};
+        const actual = action.parameters.properties as Record<string, Record<string,unknown>> ?? {};
+        const expectedRequired = new Set(constraint.parameters.required as string[] ?? []);
+        const actualRequired = new Set(action.parameters.required as string[] ?? []);
         const targets = Object.values(local.parameters);
         if (new Set(targets).size !== targets.length) throw new Error('An action parameter can satisfy one interface parameter');
-        for (const parameter of constraint.parameters.required as string[] ?? []) {
-          const target = local.parameters[parameter];
-          if (!target || !expected[parameter] || actual[target]?.type !== expected[parameter].type || !(action.parameters.required as string[] ?? []).includes(target)) throw new Error('Incompatible action parameters');
+        for (const parameter of expectedRequired) if (!local.parameters[parameter]) throw new Error('Incompatible action parameters');
+        for (const [parameter,target] of Object.entries(local.parameters)) {
+          if (!expected[parameter] || !actual[target] || !schemaSubset(expected[parameter],actual[target])) throw new Error('Incompatible action parameter constraints');
+          if (actualRequired.has(target) && !expectedRequired.has(parameter) && !Object.hasOwn(actual[target],'default')) throw new Error('Optional Interface input cannot satisfy a required Action input');
+          const objectType=constraint.objectParameters[parameter],targetType=action.objectParameters[target];
+          if (objectType && (!targetType || !this.concreteTypes(objectType).every(type=>this.implements(type,targetType)))) throw new Error('Incompatible Action object parameter type');
         }
+        for(const parameter of actualRequired)if(!targets.includes(parameter)&&!Object.hasOwn(actual[parameter]??{},'default'))throw new Error('Action requires an unmapped parameter');
       }
     }
     for (const action of this.actions.values()) {
@@ -94,7 +107,8 @@ export class Ontology {
           const object = this.object(rule.object.type);
           if (Object.keys(rule.properties).some(name => !object.properties[name])) throw new Error('Action writes an undeclared property');
         }
-        if (rule.op === 'addLink') {
+        if (rule.op === 'applyScenario') { for(const name of rule.objectTypes)this.object(name);for(const name of rule.linkTypes)required(this.links,name); }
+        if (rule.op === 'addLink' || rule.op === 'removeLink') {
           const link = required(this.links, rule.link);
           if (rule.from.type !== link.from.type || rule.to.type !== link.to.type) throw new Error('Action link endpoints differ from the Link Type');
         }
@@ -103,8 +117,8 @@ export class Ontology {
     for (const source of this.sources.values()) {
       const type = this.object(source.objectType);
       required(this.functions, source.function);
-      if (Object.keys(source.properties).some(name => !type.properties[name])) throw new Error('Datasource maps an unknown property');
-      if (Object.entries(type.properties).some(([name, property]) => property.required && !source.properties[name])) throw new Error('Datasource lacks a required property mapping');
+      if (Object.keys(source.properties).some(name => !type.properties[name] || type.properties[name]?.derived)) throw new Error('Datasource maps an unknown property');
+      if (Object.entries(type.properties).some(([name, property]) => property.required && !property.derived && !source.properties[name])) throw new Error('Datasource lacks a required property mapping');
     }
     for (const fn of this.functions.values()) { validator(fn.parameters); validator(fn.returns); }
   }
@@ -127,7 +141,7 @@ export class Ontology {
     for (const [name, mapping] of Object.entries(this.object(ref.type).interfaces)) {
       for (const [alias, local] of Object.entries(mapping.properties)) {
         const property = required(this.interfaces, name).properties[alias]!;
-        if (value[local] !== undefined || property.required) validator(property.schema).parse(value[local]);
+        if (value[local] !== undefined || property.required && !this.object(ref.type).properties[local]?.derived) validator(property.schema).parse(value[local]);
       }
     }
     return value;
