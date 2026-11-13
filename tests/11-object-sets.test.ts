@@ -156,3 +156,43 @@ test('publication checks dynamic set dependencies at preparation and again at ac
     await assert.rejects(f.sets.save(f.access, old, { requestId: 'late-old-save', name: 'Old', mode: 'dynamic', set: expression }), /publication changed/);
   } finally { await f.close(); }
 });
+
+test('an Object Set save waiting on publication cannot commit against the retired release', async () => {
+  const f = await setup();
+  let releasePublication = () => {};
+  let publication: Promise<unknown> | undefined;
+  let save: Promise<unknown> | undefined;
+  try {
+    const body = structuredClone(f.model.document);
+    body.version = 'concurrent-set-publication';
+    const candidate = await f.metadata.prepare(body, f.capabilities, f.publisher);
+    let activated = () => {};
+    const activationReady = new Promise<void>(resolve => { activated = resolve; });
+    const finish = new Promise<void>(resolve => { releasePublication = resolve; });
+    publication = f.db.transaction(async client => {
+      await f.metadata.activate(candidate.release, f.capabilities, f.publisher, client);
+      activated();
+      await finish;
+    });
+    await Promise.race([activationReady, publication]);
+    save = assert.rejects(f.sets.save(f.access, f.model, {
+      requestId: 'waiting-old-release', name: 'Concurrent set', mode: 'dynamic', set: routes,
+    }), /publication changed/);
+    let waiting = false;
+    for (let attempt = 0; attempt < 100 && !waiting; attempt++) {
+      const locks = await f.db.query('SELECT 1 FROM pg_locks WHERE relation=$1::regclass AND mode=$2 AND NOT granted',
+        [f.db.schema + '.object_sets', 'RowExclusiveLock']);
+      waiting = locks.rows.length > 0;
+      if (!waiting) await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert(waiting, 'the save must wait for the candidate publication lock');
+    releasePublication();
+    await publication;
+    await save;
+    assert.equal((await f.sets.list(f.access, candidate)).items.length, 0);
+  } finally {
+    releasePublication();
+    await Promise.allSettled([publication, save]);
+    await f.close();
+  }
+});
