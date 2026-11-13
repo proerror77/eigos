@@ -3,16 +3,14 @@ import { open, mkdir, writeFile, appendFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-import type { z } from 'zod';
-import { digest } from '../../core/delegation.js';
-import { AgentReadError } from '../../core/agent-program.js';
+import { digest } from '../../core/identity.js';
 import { didiBindingSchema, didiEndpoint, didiReceiptSchema, didiToolInputs, DIDI_TOOLS, type DidiBinding, type DidiData, type DidiEvidenceKind, type DidiReceipt, type DidiTool } from './contracts.js';
 import { mapDidiResult } from './mapping.js';
 
-export class DidiReadError extends AgentReadError {
+export class DidiReadError extends Error {
   constructor(readonly code: string) { super(code === 'RATE_LIMITED' ? 'DiDi read quota is exhausted (RATE_LIMITED); wait for the provider window to reset before a new read. No business operation was sent.' : `DiDi read failed (${code}); check the private connection or choose a new read. No business operation was sent.`); }
 }
-export interface DidiCallContext { requestId: string; requestRevision: number; actionInputDigest: string; planId: string; intentId: string; attemptId: string; modelRunId: string; programId?: string; programDigest?: string; action?: string }
+export interface DidiCallContext { requestId: string; requestRevision: number }
 export interface DidiReadResult { data: DidiData; receipt: DidiReceipt }
 type DidiDirectory = { name: string; inputSchema: object }[];
 export interface DidiConnector {
@@ -49,9 +47,8 @@ export class DidiMcpConnector implements DidiConnector {
   }
   private key() { return readDidiCredential(this.binding); }
   async verifyCredential(): Promise<void> { await this.key(); }
-  protected async session<T>(signal: AbortSignal, run: (client: Client, secret: string) => Promise<T>, mock?: { tools: Record<string, z.ZodType>; beforeCall?: () => void }, beforeCall?: (phase?: 'prepare'|'dispatch') => void | Promise<void>): Promise<T> {
-    if (mock && this.binding.environment !== 'mock') throw new DidiReadError('MOCK_OPERATIONS_ONLY');
-    const allowed = mock?.tools ?? didiToolInputs;
+  private async session<T>(signal: AbortSignal, run: (client: Client, secret: string) => Promise<T>, beforeCall?: (phase?: 'prepare'|'dispatch') => void | Promise<void>): Promise<T> {
+    const allowed = didiToolInputs;
     signal.throwIfAborted();
     const secret = await this.key(), endpoint = didiEndpoint(this.binding.environment), url = new URL(endpoint);
     url.searchParams.set('key', secret);
@@ -69,7 +66,6 @@ export class DidiMcpConnector implements DidiConnector {
           if (!Object.hasOwn(allowed, request.params?.name)) throw new DidiReadError('TOOL_NOT_ALLOWED');
           if (!allowed[request.params.name as keyof typeof allowed]!.safeParse(request.params.arguments).success) throw new DidiReadError('INVALID_TOOL_INPUT');
           await beforeCall?.('dispatch');
-          mock?.beforeCall?.();
         }
       }
       const response = await this.fetcher(target, { ...init, redirect: 'manual', signal: bounded });
@@ -150,6 +146,6 @@ export class DidiMcpConnector implements DidiConnector {
         await appendFile(join(this.binding.auditDirectory, 'reads.jsonl'), JSON.stringify({ ...context, receipt, input: parsed.data, evidenceKind: this.evidenceKind }) + '\n', { mode: 0o600 });
       }
       return { data, receipt };
-    }, undefined, beforeCall).catch(error => { this.directoryCache = undefined; throw error; });
+    }, beforeCall).catch(error => { this.directoryCache = undefined; throw error; });
   }
 }

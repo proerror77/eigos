@@ -1,38 +1,30 @@
-import { spawn } from 'node:child_process';
-import { scopeFromGit, shardFiles, testFiles } from './test-scope.mjs';
+import { spawn, execFileSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
+import pg from 'pg';
 
-const args = process.argv.slice(2), e2e = args.includes('--e2e'), changed = args.includes('--changed');
-const base = args.find(arg => arg.startsWith('--base='))?.slice(7) || 'origin/main';
-const shard = args.find(arg => arg.startsWith('--test-shard='));
-const nodeArgs = args.filter(arg => !['--changed', '--e2e', '--list'].includes(arg) && !arg.startsWith('--base=') && arg !== shard);
-const available = testFiles(process.cwd(), e2e);
-let files = available;
-if (process.env.EIGOS_TEST_FILES !== undefined) {
-  files = JSON.parse(process.env.EIGOS_TEST_FILES);
-  if (!Array.isArray(files) || files.some(file => !available.includes(file)) || new Set(files).size !== files.length) {
-    throw new Error('EIGOS_TEST_FILES must contain distinct current test files from the selected suite');
+const e2e = process.argv.includes('--e2e'), suite = process.argv.find(arg => arg.startsWith('--suite='))?.split('=')[1];
+const files = e2e ? ['dist/tests/e2e/gateway.test.js'] : readdirSync('tests').filter(name => /^\d\d-.+\.test\.ts$/.test(name) && (!suite || name.startsWith(suite.padStart(2, '0') + '-'))).map(name => 'tests/' + name);
+if (!files.length) throw new Error('No test files selected');
+let url = process.env.EIGOS_TEST_DATABASE_URL, container;
+try {
+  if (!url) {
+    container = 'eigos-test-' + randomUUID();
+    execFileSync('docker', ['run', '--detach', '--rm', '--name', container, '--publish', '127.0.0.1::5432', '--env', 'POSTGRES_PASSWORD=synthetic-only', 'postgres:17'], { stdio: 'ignore' });
+    const address = execFileSync('docker', ['port', container, '5432/tcp'], { encoding: 'utf8' }).trim();
+    url = `postgres://postgres:synthetic-only@${address}/postgres`;
   }
-} else if (changed) {
-  const scope = await scopeFromGit({ base });
-  console.log(`Test scope: ${scope.mode} (${scope.reason})`);
-  files = e2e ? scope.e2e : scope.unit;
-}
-if (shard) {
-  const match = /^--test-shard=([1-9]\d*)\/([1-9]\d*)$/.exec(shard);
-  if (!match || Number(match[1]) > Number(match[2])) throw new Error('Expected --test-shard=index/count');
-  files = shardFiles(files, Number(match[2]))[Number(match[1])];
-}
-console.log(`Selected ${files.length}/${available.length} ${e2e ? 'process E2E' : 'unit/integration'} test files.`);
-if (args.includes('--list')) console.log(files.join('\n'));
-else if (!files.length) console.log('No tests in this scope; test discovery was not invoked.');
-else {
-  const paths = e2e ? files.map(file => 'dist/' + file.replace(/\.ts$/, '.js')) : files;
-  // Process E2E keeps one file at a time (shared fixtures and ports); unit and
-  // integration files are independent processes, so the width follows the runner.
-  // Hosted CI runners expose four cores; a laptop defaults to the conservative 2.
-  const requested = Number(process.env.EIGOS_TEST_CONCURRENCY ?? '');
-  const width = Number.isInteger(requested) && requested > 0 ? requested : (e2e ? 1 : 2);
-  const child = spawn(process.execPath, [...(e2e ? [] : ['--import', 'tsx']), '--test', `--test-concurrency=${width}`, ...nodeArgs, ...paths], { stdio: 'inherit' });
-  child.on('error', error => { console.error(error.message); process.exitCode = 1; });
-  child.on('close', (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0); });
-}
+  const endpoint = new URL(url);
+  if (endpoint.hostname !== '127.0.0.1' || endpoint.password !== 'synthetic-only') throw new Error('Tests require their loopback synthetic PostgreSQL database');
+  const deadline = Date.now() + 15000;
+  for (;;) {
+    const client = new pg.Client({ connectionString: url, connectionTimeoutMillis: 1000 });
+    try { await client.connect(); await client.end(); break; }
+    catch (error) { await client.end().catch(() => {}); if (Date.now() >= deadline) throw error; await delay(100); }
+  }
+  process.exitCode = await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [...(e2e ? [] : ['--import', 'tsx']), '--test', '--test-concurrency=2', ...files], { stdio: 'inherit', env: { ...process.env, EIGOS_TEST_DATABASE_URL: url } });
+    child.on('error', reject); child.on('exit', code => resolve(code ?? 1));
+  });
+} finally { if (container) execFileSync('docker', ['stop', container], { stdio: 'ignore' }); }

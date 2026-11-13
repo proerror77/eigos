@@ -1,36 +1,84 @@
-# EIGOS · 艾戈斯
+# EIGOS
 
-**Consider It Done.** — The Execution Network for AI Agents.
+EIGOS 通过共享 PostgreSQL 本体提供对象集查询、Function 和 Action。Gateway 接收 MCP、A2A 与 HTTP 请求，Worker 执行来源读取。第一条业务链查询滴滴路线估价。
 
-EIGOS 正在构建一个 **Agentic Network**：通过我们的 Agent 连接各类服务，协调所需能力，完成用户与其 Agent 委托的任务。
+架构、Schema 和实际支持范围见 [Ontology 架构](docs/architecture/ontology.md)。
 
-用户通过自己的 Personal Agent（PA，个人 Agent）表达目标，EIGOS Agent 负责发现和连接适合的服务、组织行动、推进执行，并核验最终结果。服务提供者负责各自系统中的操作与交付。
+## 启动
 
-## 网络如何协作
+使用 Node.js 22.22.3、PostgreSQL 17 和 npm。
 
-```mermaid
-flowchart LR
-    P[用户的 Personal Agent] <-->|目标、约束与结果| E[EIGOS Agent]
-    E <-->|服务连接与任务执行| S[各类服务提供者]
+```sh
+npm ci
+cp .env.example .env
 ```
 
-我们要建立的网络围绕三个重点展开：
+在 `.env` 中配置 PostgreSQL 连接与认证。初始化表和发布定义后启动两个进程。
 
-- **服务连接**：让数据、工具、数字服务和现实业务能力能够被 Agent 发现并使用。
-- **任务执行**：围绕明确目标，在授权范围内组织一个或多个服务协作，根据反馈持续推进。
-- **任务完成**：跟踪执行进度，核对交付结果，向用户的 Agent 返回完成情况与依据；遇到异常时明确反馈。
+```sh
+npm run db:init
+npm run ontology:publish
+npm run dev:gateway
+npm run dev:worker
+```
 
-信息查询、数据处理、购物、预约和出行都是应用场景。EIGOS 的建设主线是把分散的服务连接成能够协作完成任务的网络。
+Gateway 和 Worker 使用相同的 `DATABASE_URL`、`EIGOS_PG_SCHEMA`。构建后的入口为 `npm run start:gateway` 和 `npm run start:worker`。Docker 的 `runtime` 与 `worker` target 使用相同代码。
 
-## 项目进展与文档
+JWT 身份由现有身份提供方验证，owner 由 issuer、tenant 和 subject 计算。`GET /identity` 返回当前 owner 与 scopes。本地开发使用 `.env` 中的随机令牌，owner 为 `local-developer`。
 
-项目目前处于开发原型阶段。具体能力、接入方式、实现设计和验证范围见：
+## 滴滴来源
 
-- [文档导航](docs/README.md)
-- [Agent 接入指南](docs/integration.md)
-- [能力实现与验证范围](docs/architecture/capabilities.md)
-- [共享本体与 MCP](packages/ontology/README.md)
-- [单次模型决策的只读执行与测速](docs/guides/single-read-execution.md)
-- [仓库结构与维护](docs/architecture/repository.md)
+`EIGOS_DIDI_CONNECTION_FILE` 指向私有 JSON 文件。
 
-EIGOS（艾戈斯）为当前候选品牌，详见[品牌说明](docs/brand-brief.md)。
+```json
+{
+  "owner": "local-developer",
+  "active": true,
+  "binding": {
+    "bindingId": "my-didi-account",
+    "keyFile": "/absolute/private/didi.key",
+    "keySha256": "SHA256_OF_TRIMMED_KEY",
+    "environment": "production"
+  }
+}
+```
+
+Key 文件由运行用户拥有，权限为 `0600`。连接器调用滴滴官方 MCP 的 `maps_textsearch` 与 `taxi_estimate`，价格标记为估计，坐标保留供应商声明。真实读取要求 `sources:Didi:read`。
+
+## Agent 入口
+
+MCP 位于 `/mcp`，提供 `describe_ontology`、`query_ontology`、`evaluate_ontology`、`apply_ontology_action`、`submit_task`、`get_task`、`select_task_places`。
+
+A2A Agent Card 位于 `/.well-known/agent-card.json`，JSON-RPC 位于 `/a2a`，使用 A2A 1.0 的 `SendMessage`、`GetTask`、`CancelTask`。两个协议共用任务与本体服务。
+
+HTTP 示例请求体如下，通过 `POST /tasks` 提交，使用 Bearer 身份。
+
+```json
+{
+  "requestId": "my-inquiry-1",
+  "message": "上海从中企·云萃森林到前滩太古里，只询价",
+  "route": {
+    "city": "上海市",
+    "origin": "中企·云萃森林",
+    "destination": "前滩太古里"
+  }
+}
+```
+
+`route` 可由 PA 提供。明确包含城市、起点和终点的中文消息也可解析。地点有歧义时，原任务返回 `input-required` 和候选对象。向 `/tasks/:id/places` 提交候选的 origin、destination ObjectRef 后继续原任务。执行完成后从 `/tasks/:id` 读取价格及来源。
+
+`POST /ontology/query` 按 Object Type 或 Interface 查询。`POST /ontology/functions` 调用发布的 Function，`POST /ontology/actions` 应用发布的 Action。接口细节和示例见 [架构说明](docs/architecture/ontology.md)。
+
+## 验证
+
+```sh
+npm run check
+npm run build
+npm run ontology:check
+npm test
+npm run test:e2e:run
+```
+
+测试自动创建临时 PostgreSQL 容器，结束后移除。CI 使用独立 PostgreSQL 服务。工程回归通过官方 MCP SDK 处理合成响应，真实供应商验收使用私有账号单独执行。`accepted=true` 要求链路来源为 `live_readonly`。
+
+这一版替换了测试期 SQLite 运行链、历史内核构造链和重复授权投影。旧源码可从 Git 提交 `6eeaf93` 恢复。当前交付的业务领域为滴滴询价，旧的支付、预订、跨 Agent 通信与其他供应商执行流程退出本版运行入口。

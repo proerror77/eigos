@@ -1,235 +1,46 @@
-import { AgentCard, Message, Task, TaskState, Role, type SendMessageRequest, type GetTaskRequest, type CancelTaskRequest, type ListTasksRequest, type ListTasksResponse, type StreamResponse } from '@a2a-js/sdk';
-import { randomUUID } from 'node:crypto';
+import { AgentCard, Task as A2ATask, type SendMessageRequest, type GetTaskRequest, type CancelTaskRequest, type ListTasksRequest, type StreamResponse } from '@a2a-js/sdk';
 import type { A2ARequestHandler, ServerCallContext, User } from '@a2a-js/sdk/server';
-import { ContentTypeNotSupportedError, ExtendedAgentCardNotConfiguredError, PushNotificationNotSupportedError, RequestMalformedError, TaskNotCancelableError, TaskNotFoundError, UnsupportedOperationError } from '@a2a-js/sdk/errors';
-import { z } from 'zod';
-import { prepareObservationSchema } from '../../packages/ontology/observation-contract.js';
-import type { Config } from '../../packages/core/config.js';
-import { DomainError, ownerKey, submitSchema, versionedReplySchema, resumeTaskSchema, type Job, type JobState, type Principal } from '../../packages/core/domain.js';
-import type { GatewayTaskService } from './task-service.js';
-import { taskSummary } from '../../packages/core/task-summary.js';
-import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
-import type { TaskView } from '../../packages/security/task-service.js';
-import { externalDraftPermitSchema } from '../../packages/ontology/external-draft.js';
-import { PA_DISCOVERY_GUIDANCE } from '../../packages/core/services.js';
-import { paOnboardingAvailable } from '../../packages/members/pa-onboarding.js';
-import { SecurityError } from '../../packages/security/store.js';
-import { securityErrorResponse } from '../../packages/security/error-guidance.js';
-import { communicationRequestSchema, MessagingError, type MessagingIdentity } from '../../packages/agent-messaging/contracts.js';
-import type {AgentMessagingExecutionPort} from '../../packages/agent-messaging/ports.js';
+import { UnsupportedOperationError, PushNotificationNotSupportedError, ExtendedAgentCardNotConfiguredError, RequestMalformedError } from '@a2a-js/sdk/errors';
+import type { Principal } from '../../packages/core/identity.js';
+import { Tasks, type Task } from '../../packages/runtime/tasks.js';
 
 export class AgentUser implements User {
   readonly isAuthenticated = true;
-  constructor(readonly principal: Principal, readonly messagingIdentity?: MessagingIdentity) {}
-  get userName(): string { return ownerKey(this.principal); }
+  constructor(readonly principal: Principal) {}
+  get userName() { return this.principal.owner; }
 }
-
-const states: Record<JobState, TaskState> = {
-  submitted: TaskState.TASK_STATE_SUBMITTED,
-  'auth-required': TaskState.TASK_STATE_AUTH_REQUIRED,
-  rejected: TaskState.TASK_STATE_REJECTED,
-  'input-required': TaskState.TASK_STATE_INPUT_REQUIRED,
-  completed: TaskState.TASK_STATE_COMPLETED,
-  canceled: TaskState.TASK_STATE_CANCELED,
-  working: TaskState.TASK_STATE_WORKING,
-  paused: TaskState.TASK_STATE_WORKING,
-  failed: TaskState.TASK_STATE_FAILED,
-};
-
-function toTask(job: Job, historyLength?: number): Task {
-  const safe='view' in job && job.view==='eigos.task.v2' ? job as TaskView : undefined;
-  if (historyLength !== undefined) z.number().int().min(0).max(1000).parse(historyLength);
-  const summary = taskSummary(job);
-  const messages = job.messages.map(message => ({
-    messageId: message.id, contextId: job.contextId, taskId: job.id,
-    role: message.role === 'user' ? 'ROLE_USER' : 'ROLE_AGENT',
-    parts: [{ text: message.text }],
-  }));
-  return Task.fromJSON({
-    id: job.id, contextId: job.contextId,
-    status: { state: states[job.state], timestamp: job.updatedAt, message: messages.at(-1) },
-    history: !historyLength ? [] : messages.slice(-historyLength),
-    artifacts: job.artifact ? [{ artifactId: job.artifact.id, name: job.artifact.name, parts: job.artifact.data.markdown
-      ? [{ text: job.artifact.data.markdown, mediaType: 'text/markdown' }, { data: job.artifact.data, mediaType: 'application/json' }]
-      : [{ data: job.artifact.data, mediaType: 'application/json' }] }] : [],
-    metadata: safe ? {service:job.service,view:safe.view,revision:safe.revision,internalState:safe.state,outputStatus:safe.outputStatus,...(safe.observation?{observation:safe.observation}:{}),...(safe.authorityId?{authorityId:safe.authorityId}:{}),...(safe.accepted?{accepted:true}:{}),...(safe.attachments?{attachments:safe.attachments}:{}),...(safe.authorization?{authorization:safe.authorization}:{}),...(safe.recovery?{recovery:safe.recovery}:{}),...(safe.payment?{payment:safe.payment}:{}),...(safe.question?{question:safe.question}:{}),...(safe.error?{error:safe.error}:{})} : { view: summary.view, service: summary.service, revision: summary.revision, ...(summary.authorityId?{authorityId:summary.authorityId}:{}), internalState: summary.state, counts: summary.counts,
-      ...(summary.latestInput ? { latestInput: summary.latestInput } : {}),
-      ...(summary.memberUsage ? { memberUsage: summary.memberUsage } : {}), ...(summary.delegation ? { delegation: summary.delegation } : {}),
-      ...(summary.afterSales ? { afterSales: summary.afterSales } : {}), ...(summary.question ? { question: summary.question } : {}), ...(summary.error ? { error: summary.error } : {}) },
-  });
+const states: Record<string, string> = { submitted: 'TASK_STATE_SUBMITTED', working: 'TASK_STATE_WORKING', completed: 'TASK_STATE_COMPLETED', failed: 'TASK_STATE_FAILED', canceled: 'TASK_STATE_CANCELED', 'input-required': 'TASK_STATE_INPUT_REQUIRED' };
+const taskView = (task: Task) => A2ATask.fromJSON({ id: task.id, contextId: task.id, status: { state: states[task.state], timestamp: task.updated_at.toISOString() },
+  artifacts: task.result ? [{ artifactId: task.id, name: 'Ride estimate', parts: [{ data: task.result, mediaType: 'application/json' }] }] : [], metadata: { error: task.error } });
+export function agentCard(url: string) {
+  return AgentCard.fromJSON({ name: 'EIGOS', description: 'Source-backed ride estimates through Ontology queries, functions and actions.', version: '0.2.0',
+    supportedInterfaces: [{ url: url + '/a2a', protocolBinding: 'JSONRPC', protocolVersion: '1.0' }], capabilities: { streaming: false, pushNotifications: false },
+    defaultInputModes: ['text/plain', 'application/json'], defaultOutputModes: ['application/json'],
+    skills: [{ id: 'rideEstimate', name: 'Ride estimate', description: 'Find route endpoints and return provider price estimates.', tags: ['ride', 'estimate'] }],
+    securitySchemes: { bearer: { httpAuthSecurityScheme: { scheme: 'Bearer' } } }, securityRequirements: [{ schemes: { bearer: { list: [] } } }] });
 }
-
-export function agentCard(c: Config, services: ReturnType<GatewayTaskService['services']>): AgentCard {
-  return AgentCard.fromJSON({
-    name: 'EIGOS', version: '0.1.0',
-    description: PA_DISCOVERY_GUIDANCE + ' ' + (c.EIGOS_SECURITY_MODE === 'foundation' ? 'Task-scoped delegated execution. Installation grants, resources, task data, sources and output channels are checked separately. Replies require expectedRevision from current Task metadata. Connecting never authorizes a source, purchase, message or payment.' : 'Delegate only tasks matching the enabled skills below. EIGOS preserves task identity, asks for missing inputs and returns service-specific deliverables. Replies and corrections require expectedRevision from the current Task metadata. SendMessage metadata.taskOperation=amend corrects an open read-only task; resume continues a technical pause using data.expectedRevision without an answer. metadata.internalState=paused is a technical pause, not missing owner input. Connecting this agent does not authorize purchases, sending or payments. No general shopping or coffee ordering capability is currently available.'),
-    supportedInterfaces: [{ url: `${c.PUBLIC_URL}/a2a`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
-    documentationUrl: paOnboardingAvailable(c) ? `${c.PUBLIC_URL}/connect` : 'https://github.com/proerror77/eigos',
-    capabilities: { streaming: false, pushNotifications: false, extendedAgentCard: false,
-      extensions: [...(paOnboardingAvailable(c) ? [{ uri: `${c.PUBLIC_URL}/connect/agent.json`, description: PA_DISCOVERY_GUIDANCE, required: false }] : []), ...(c.EIGOS_MESSAGING_ENABLED === 'true' ? [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-communications`, description: 'Explicit structured Personal Agent communication operations return Message receipts and do not create business tasks. Separate messaging scopes and controller communication consent are required.', required: false }] : []), ...(c.EIGOS_INVITE_BETA === 'true' ? [] : [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-pa-payment`, description: 'Prefer the PA Link Agent Wallet; fall back to provider Link checkout before payment. Route selection and notifications never prove payment; independent provider readback is required.', required: false }]), ...(c.OIDC_AGENT_CLIENT_ID ? [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-agent-registration`, description: 'Agent installation registration, admission status and device authorization metadata.', required: false }] : [])],
-    },
-    defaultInputModes: ['text/plain', 'application/json'], defaultOutputModes: ['text/plain', 'application/json', 'text/markdown'],
-    securitySchemes: {
-      eigos: c.EIGOS_AUTH_MODE === 'jwt'
-        ? { openIdConnectSecurityScheme: { openIdConnectUrl: `${c.OAUTH_ISSUER!.replace(/\/$/, '')}/.well-known/openid-configuration` } }
-        : { httpAuthSecurityScheme: { scheme: 'Bearer', bearerFormat: 'opaque', description: 'Loopback-only development credential' } },
-    },
-    securityRequirements: [{ schemes: { eigos: { list: c.EIGOS_AUTH_MODE === 'jwt' ? ['tasks:read', 'tasks:write'] : [] } } },
-      ...(c.EIGOS_MESSAGING_ENABLED === 'true' ? [{ schemes: { eigos: { list: ['messaging:read', 'messaging:write'] } } }] : [])],
-    skills: [...services.map(service => ({
-      id: service.id, name: service.name, description: service.description,
-      tags: service.tags, examples: service.examples,
-      inputModes: service.inputModes, outputModes: service.outputModes,
-    })), ...(c.EIGOS_MESSAGING_ENABLED === 'true' ? [{ id: 'eigos.agent-communication', name: 'Personal Agent communication',
-      description: 'Find permitted PA endpoints and exchange messages through the Relay using one data part with schema=eigos.agent-communication/1 and a validated operation. Returns Message receipts, not business Tasks. Requires independent messaging scopes, controller communication consent and accepted contacts.',
-      tags: ['communication', 'relay'], examples: ['Find a permitted PA', 'Send or reply to a PA message', 'Read your PA inbox'], inputModes: ['application/json'], outputModes: ['application/json'] }] : [])],
-  });
-}
-
-export class A2AGateway implements A2ARequestHandler {
-  constructor(private tasks: GatewayTaskService, private card: AgentCard, private messaging?: AgentMessagingExecutionPort) {}
-  async getAgentCard(): Promise<AgentCard> { return this.card; }
-
-  private principal(ctx: ServerCallContext, tenant?: string): Principal {
-    if (!(ctx.user instanceof AgentUser)) throw new RequestMalformedError('Authenticated principal required');
-    if ((tenant && tenant !== ctx.user.principal.tenant) || (ctx.tenant && ctx.tenant !== ctx.user.principal.tenant)) {
-      throw new TaskNotFoundError();
-    }
-    return ctx.user.principal;
+export class A2A implements A2ARequestHandler {
+  constructor(private readonly tasks: Tasks, private readonly card: AgentCard) {}
+  private principal(context: ServerCallContext) {
+    if (!(context.user instanceof AgentUser)) throw new RequestMalformedError('Authenticated user required');
+    return context.user.principal;
   }
-
-  private async adapt<T>(action: () => T | Promise<T>, cancel = false): Promise<T> {
-    try { return await action(); } catch (error) {
-      if (error instanceof SecurityError) {
-        const response = securityErrorResponse(error, this.card.supportedInterfaces[0]?.url);
-        throw new RequestMalformedError({ message: response.message, metadata: {
-          eigosCode: response.code, eigosAuthorization: JSON.stringify(response.authorization),
-        } });
-      }
-      if (error instanceof DomainError) {
-        if (error.code === 'NOT_FOUND') throw new TaskNotFoundError();
-        if (cancel && error.code === 'CONFLICT') throw new TaskNotCancelableError(error.message);
-        throw new RequestMalformedError(error.message);
-      }
-      if (error instanceof z.ZodError) throw new RequestMalformedError('Invalid task input');
-      throw error;
-    }
+  async getAgentCard() { return this.card; }
+  async sendMessage(params: SendMessageRequest, context: ServerCallContext) {
+    const message = params.message;
+    if (!message?.messageId) throw new RequestMalformedError('Message ID is required');
+    const text = message.parts.flatMap(part => part.content?.$case === 'text' ? [part.content.value] : []).join('\n');
+    const dataPart = message.parts.find(part => part.content?.$case === 'data')?.content;
+    const data = dataPart?.$case === 'data' ? dataPart.value as Record<string, unknown> : undefined;
+    const task = await this.tasks.submit(this.principal(context), { requestId: message.messageId, message: text || data?.message, route: data?.route });
+    return taskView(task);
   }
-
-  async sendMessage(params: SendMessageRequest, ctx: ServerCallContext): Promise<Task | Message> {
-    const communication = params.message?.parts.some(part => part.content?.$case === 'data' && part.content.value && typeof part.content.value === 'object'
-      && 'schema' in part.content.value && String(part.content.value.schema).startsWith('eigos.agent-communication/'));
-    if (communication) {
-      this.principal(ctx, params.tenant);
-      const message = params.message!, identity = ctx.user instanceof AgentUser ? ctx.user.messagingIdentity : undefined;
-      if (!this.messaging || !identity || message.role !== Role.ROLE_USER || !message.messageId || message.taskId || message.contextId
-        || message.referenceTaskIds.length || message.extensions.length || message.parts.length !== 1 || message.parts[0]?.content?.$case !== 'data'
-        || params.configuration?.taskPushNotificationConfig || message.metadata?.taskOperation !== undefined) throw new RequestMalformedError('Invalid communication envelope');
-      const parsed = communicationRequestSchema.safeParse(message.parts[0].content.value);
-      if (!parsed.success) throw new RequestMalformedError('Invalid communication contract');
-      const modes = params.configuration?.acceptedOutputModes;
-      if (modes?.length && !modes.includes('application/json')) throw new ContentTypeNotSupportedError('Communication receipts use application/json');
-      if (params.configuration?.historyLength !== undefined) z.number().int().min(0).max(1000).parse(params.configuration.historyLength);
-      if ('requestId' in parsed.data.operation && parsed.data.operation.requestId !== message.messageId) throw new RequestMalformedError('Communication requestId must match messageId');
-      try {
-        const result = await this.messaging.execute(identity, parsed.data.operation);
-        return Message.fromJSON({ messageId: randomUUID(), role: 'ROLE_AGENT', parts: [{ data: { schema: 'eigos.agent-communication/1', result } }] });
-      } catch (error) {
-        if (!(error instanceof MessagingError)) throw error;
-        return Message.fromJSON({ messageId: randomUUID(), role: 'ROLE_AGENT', parts: [{ data: { schema: 'eigos.agent-communication/1', error: error.code,
-          ...(error.code === 'MESSAGING_AUTHORIZATION_REQUIRED' && this.messaging.permissionsUrl ? { permissions_url: this.messaging.permissionsUrl } : {}) } }] });
-      }
-    }
-    return this.adapt(async () => {
-      const p = this.principal(ctx, params.tenant);
-      const message = params.message;
-      if (!message || message.role !== Role.ROLE_USER || !message.messageId) throw new RequestMalformedError('A user message with messageId is required');
-      if (params.configuration?.taskPushNotificationConfig) throw new PushNotificationNotSupportedError();
-      const modes = params.configuration?.acceptedOutputModes;
-      if (modes?.length && !modes.some(mode => ['text/plain', 'application/json', 'text/markdown'].includes(mode))) throw new ContentTypeNotSupportedError();
-      const length = params.configuration?.historyLength;
-      // Validate response controls before any mutation.
-      if (length !== undefined) z.number().int().min(0).max(1000).parse(length);
-      if (message.referenceTaskIds.length || message.extensions.length) throw new RequestMalformedError('Task references and message extensions are not supported');
-      const parts = message.parts;
-      let input: unknown;
-      if (parts.length === 1 && parts[0]?.content?.$case === 'data') {
-        input = parts[0].content.value;
-      } else if (parts.length && parts.every(part => part.content?.$case === 'text')) {
-        const text = parts.map(part => part.content?.value).join('\n');
-        input = message.taskId ? { answer: text, expectedRevision: message.metadata?.expectedRevision } : { goal: text, service: 'eigos.delegate' };
-      } else throw new ContentTypeNotSupportedError('Use text parts or a single structured data part');
-      let job: Job;
-      if (message.metadata?.taskOperation !== undefined && !['reply', 'amend', 'resume'].includes(String(message.metadata.taskOperation))) throw new RequestMalformedError('Unknown task continuation operation');
-      if (message.taskId) {
-        if (input && typeof input === 'object' && 'action' in input && input.action === 'prepare_observation_contract') {
-          if (message.metadata?.taskOperation !== undefined) throw new RequestMalformedError('Observation preparation is a separate delegation, not a continuation operation');
-          if ('originalTaskId' in input && input.originalTaskId !== message.taskId) throw new RequestMalformedError('Original task reference does not match');
-          const observation = prepareObservationSchema.parse({ ...input, originalTaskId: message.taskId, requestId: message.messageId });
-          job = await this.tasks.prepareObservationContract(p, observation, message.contextId || undefined);
-        } else if (input && typeof input === 'object' && 'action' in input && input.action === 'approve_external_draft') {
-          const permit = externalDraftPermitSchema.parse({ ...input, requestId: message.messageId });
-          job = await this.tasks.authorize(p, message.taskId, permit, message.contextId || undefined);
-        } else if (input && typeof input === 'object' && 'action' in input && input.action === 'select_payment_route') {
-          const route = paPaymentRouteSchema.parse({ ...input, taskId: message.taskId, requestId: message.messageId });
-          job = await this.tasks.selectPaymentRoute(p, route, message.contextId || undefined);
-        } else if (input && typeof input === 'object' && 'action' in input && input.action === 'report_payment_result') {
-          const report = paPaymentReportSchema.parse({ ...input, taskId: message.taskId, requestId: message.messageId });
-          job = await this.tasks.reportPayment(p, report, message.contextId || undefined);
-        } else if (message.metadata?.taskOperation === 'resume') {
-          const resume = resumeTaskSchema.parse({ ...(input as object), taskId: message.taskId, requestId: message.messageId });
-          job = await this.tasks.resume(p, resume, message.contextId || undefined);
-        } else {
-          const answer = versionedReplySchema.parse({ ...(input as object), taskId: message.taskId, requestId: message.messageId });
-          job = message.metadata?.taskOperation === 'amend' ? await this.tasks.amend(p, answer, message.contextId || undefined) : await this.tasks.reply(p, answer, message.contextId || undefined);
-        }
-      } else {
-        const data = submitSchema.parse({ ...(input as object), requestId: message.messageId });
-        job = await this.tasks.submit(p, { ...data, requestId: message.messageId }, message.contextId || undefined);
-      }
-      if ((job.state === 'working' || job.state === 'submitted') && !params.configuration?.returnImmediately) {
-        return toTask(await this.tasks.wait(p, job.id), params.configuration?.historyLength);
-      }
-      return toTask(job, params.configuration?.historyLength);
-    });
-  }
-
-  async getTask(params: GetTaskRequest, ctx: ServerCallContext): Promise<Task> {
-    return this.adapt(async () => toTask(await this.tasks.get(this.principal(ctx, params.tenant), params.id), params.historyLength));
-  }
-
-  async cancelTask(params: CancelTaskRequest, ctx: ServerCallContext): Promise<Task> {
-    return this.adapt(async () => toTask(await this.tasks.cancel(this.principal(ctx, params.tenant), params.id)), true);
-  }
-
-  async listTasks(params: ListTasksRequest, ctx: ServerCallContext): Promise<ListTasksResponse> {
-    return this.adapt(async () => {
-      const principal = this.principal(ctx, params.tenant);
-      if (params.pageToken && !/^\d{1,7}$/.test(params.pageToken)) throw new RequestMalformedError('Invalid page token');
-      const limit = params.pageSize ?? 50;
-      const offset = Number(params.pageToken || 0);
-      const state = (Object.entries(states) as [JobState, TaskState][]).find(([, value]) => value === params.status)?.[0];
-      if (params.status !== TaskState.TASK_STATE_UNSPECIFIED && !state) {
-        // This gateway never produces other states. Still validate pagination and identity.
-        await this.tasks.list(principal, { limit, offset });
-        return { tasks: [], nextPageToken: '', pageSize: limit, totalSize: 0 };
-      }
-      const found = await this.tasks.list(principal, { limit, offset, state, contextId: params.contextId, updatedAfter: params.statusTimestampAfter });
-      return {
-        tasks: found.jobs.map(job => {
-          const task = toTask(job, params.historyLength);
-          if (!params.includeArtifacts) task.artifacts = [];
-          return task;
-        }),
-        nextPageToken: offset + found.jobs.length < found.total ? String(offset + found.jobs.length) : '',
-        pageSize: limit, totalSize: found.total,
-      };
-    });
-  }
-
+  async getTask(params: GetTaskRequest, context: ServerCallContext) { return taskView(await this.tasks.get(this.principal(context), params.id)); }
+  async cancelTask(params: CancelTaskRequest, context: ServerCallContext) { return taskView(await this.tasks.cancel(this.principal(context), params.id)); }
+  async listTasks(_params: ListTasksRequest): Promise<never> { throw new UnsupportedOperationError('Use GetTask with the submitted task ID'); }
   async getAuthenticatedExtendedAgentCard(): Promise<never> { throw new ExtendedAgentCardNotConfiguredError(); }
-  async *sendMessageStream(): AsyncGenerator<StreamResponse, void, undefined> { throw new UnsupportedOperationError('Streaming is not advertised; use SendMessage and GetTask'); }
-  async *resubscribe(): AsyncGenerator<StreamResponse, void, undefined> { throw new UnsupportedOperationError('Subscriptions are not advertised; use GetTask'); }
+  async *sendMessageStream(): AsyncGenerator<StreamResponse, void, undefined> { throw new UnsupportedOperationError('Streaming is unavailable'); }
+  async *resubscribe(): AsyncGenerator<StreamResponse, void, undefined> { throw new UnsupportedOperationError('Subscriptions are unavailable'); }
   async createTaskPushNotificationConfig(): Promise<never> { throw new PushNotificationNotSupportedError(); }
   async getTaskPushNotificationConfig(): Promise<never> { throw new PushNotificationNotSupportedError(); }
   async listTaskPushNotificationConfigs(): Promise<never> { throw new PushNotificationNotSupportedError(); }
