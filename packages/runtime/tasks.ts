@@ -5,39 +5,46 @@ import type { Sql } from './database.js';
 import { Database } from './database.js';
 import { Metadata } from './metadata.js';
 import { objectRefSchema } from '../ontology/schema.js';
+import { Access, type Requirement } from './access.js';
 
 export const routeInputSchema = z.strictObject({ city: z.string().min(1).max(100), origin: z.string().min(1).max(500), destination: z.string().min(1).max(500), serviceClass: z.string().min(1).max(100).optional() });
 export type RouteInput = z.infer<typeof routeInputSchema>;
 export const placeSelectionSchema = z.strictObject({ origin: objectRefSchema, destination: objectRefSchema });
 export const submitSchema = z.strictObject({ requestId: z.string().min(1).max(128), message: z.string().min(1).max(4000), route: routeInputSchema.optional() });
 const storedInputSchema = submitSchema.extend({ places: placeSelectionSchema.optional() });
-export interface Task { id: string; owner: string; request_id: string; input: z.infer<typeof storedInputSchema>; release: string; scopes: string[]; state: string; token: string | null; result: unknown; error: string | null; created_at: Date; updated_at: Date }
+export interface Task { id: string; owner: string; request_id: string; input: z.infer<typeof storedInputSchema>; release: string; scopes: string[]; state: string; token: string | null; result: unknown; result_permissions?: Requirement[] | null; error: string | null; created_at: Date; updated_at: Date }
 export const publicTask = (task: Task) => ({ id: task.id, state: task.state, result: task.result, error: task.error, createdAt: task.created_at, updatedAt: task.updated_at });
 export class Tasks {
   constructor(readonly db: Database, private readonly metadata: Metadata) {}
   async submit(principal: Principal, raw: unknown): Promise<Task> {
     requireScope(principal, 'tasks:write');
-    const input = submitSchema.parse(raw), model = await this.metadata.active();
+    const input = submitSchema.parse(raw);
     const fingerprint = digest(input);
-    return this.db.transaction(async client => {
-      await this.db.query(`INSERT INTO ${this.db.schema}.tasks(id,owner,request_id,input_digest,input,release,scopes) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(owner,request_id) DO NOTHING`, [randomUUID(), principal.owner, input.requestId, fingerprint, input, model.digest, JSON.stringify(principal.scopes)], client);
+    const task = await this.db.transaction(async client => {
+      const model = await this.metadata.active('Eigos', client, true);
+      await this.db.query(`INSERT INTO ${this.db.schema}.tasks(id,owner,request_id,input_digest,input,release,scopes) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(owner,request_id) DO NOTHING`, [randomUUID(), principal.owner, input.requestId, fingerprint, input, model.release, JSON.stringify(principal.scopes)], client);
       const result = await this.db.query(`SELECT * FROM ${this.db.schema}.tasks WHERE owner=$1 AND request_id=$2`, [principal.owner, input.requestId], client);
       if (result.rows[0]!.input_digest !== fingerprint) throw new Conflict('Request ID already used with different input');
       await this.db.query("SELECT pg_notify('eigos_tasks','ready')", [], client);
       return result.rows[0] as Task;
     });
+    return this.visible(principal, task);
+  }
+  private async visible(principal: Principal, task: Task): Promise<Task> {
+    if (task.result !== null && (!task.result_permissions || !(await Access.load(this.db, principal)).canReturn(task.result_permissions))) return { ...task, result: null, error: 'Result access is unavailable' };
+    return task;
   }
   async get(principal: Principal, id: string): Promise<Task> {
     requireScope(principal, 'tasks:read'); z.uuid().parse(id);
     const result = await this.db.query(`SELECT * FROM ${this.db.schema}.tasks WHERE owner=$1 AND id=$2`, [principal.owner, id]);
     if (!result.rows[0]) throw new NotFound('Task is unavailable');
-    return result.rows[0] as Task;
+    return this.visible(principal, result.rows[0] as Task);
   }
   async cancel(principal: Principal, id: string): Promise<Task> {
     requireScope(principal, 'tasks:write'); z.uuid().parse(id);
     const result = await this.db.query(`UPDATE ${this.db.schema}.tasks SET state='canceled',token=NULL,lease_until=NULL,updated_at=now() WHERE owner=$1 AND id=$2 AND state IN('submitted','working','input-required') RETURNING *`, [principal.owner, id]);
     if (!result.rows[0]) throw new Conflict('Task is unavailable or already terminal');
-    return result.rows[0] as Task;
+    return this.visible(principal, result.rows[0] as Task);
   }
   async selectPlaces(principal: Principal, id: string, input: unknown): Promise<Task> {
     requireScope(principal, 'tasks:write'); z.uuid().parse(id);
@@ -63,10 +70,11 @@ export class Tasks {
     const result = await this.db.query(`UPDATE ${this.db.schema}.tasks SET lease_until=now()+interval '30 seconds' WHERE id=$1 AND token=$2 AND state='working' AND lease_until>now()`, [task.id, task.token]);
     if (!result.rowCount) throw new Conflict('Execution lease ended');
   }
-  async finish(task: Task, state: 'completed' | 'failed' | 'input-required', result: unknown, error?: string) {
+  async finish(task: Task, state: 'completed' | 'failed' | 'input-required', result: unknown, error?: string, permissions: Requirement[] = []) {
     await this.db.transaction(async client => {
       await this.current(task, client, true);
-      await this.db.query(`UPDATE ${this.db.schema}.tasks SET state=$2,result=$3,error=$4,token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1`, [task.id, state, result ?? null, error ?? null], client);
+      if (result !== null && !(await Access.load(this.db, { owner: task.owner, scopes: task.scopes }, client)).canReturn(permissions)) throw new Conflict('Result permissions changed');
+      await this.db.query(`UPDATE ${this.db.schema}.tasks SET state=$2,result=$3,error=$4,result_permissions=$5,token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1`, [task.id, state, result ?? null, error ?? null, JSON.stringify(permissions)], client);
     });
   }
   async source<T>(task: Task, name: string, input: unknown, invoke: () => Promise<T>): Promise<T> {

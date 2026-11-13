@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import { Database } from '../packages/runtime/database.js';
+import { Access, setGrants, memberGrants } from '../packages/runtime/access.js';
+import { Ontology } from '../packages/ontology/model.js';
 import { Metadata } from '../packages/runtime/metadata.js';
 import { Tasks } from '../packages/runtime/tasks.js';
 import { rideCapabilities } from '../packages/capabilities/didi/pipeline.js';
@@ -55,10 +57,14 @@ export async function fixture(driver: AgentDriver = new FixtureAgent()) {
   if (!url || new URL(url).hostname !== '127.0.0.1' || new URL(url).password !== 'synthetic-only') throw new Error('Use npm test to provision the isolated test database');
   const schema = 'eigos_test_' + randomUUID().replaceAll('-', ''), db = new Database(url, schema);
   await db.initialize();
-  const metadata = new Metadata(db), model = await metadata.publish(document), tasks = new Tasks(db, metadata), p = await provider();
+  const metadata = new Metadata(db), tasks = new Tasks(db, metadata), p = await provider();
+  await setGrants(db, 'deployment', [{ resource: 'Eigos', permission: 'manage_definition' }]);
+  const publisher = await Access.load(db, { owner: 'deployment', scopes: [] });
+  await setGrants(db, principal.owner, memberGrants(new Ontology(document)));
+  const access = await Access.load(db, principal);
   const source = async (owner: string) => { if (owner !== principal.owner) throw new Error('Wrong source owner'); return p.source; };
-  const capabilities = rideCapabilities(db, source), agent = new OntologyAgent(db, metadata, tasks, capabilities, driver), worker = new Worker(tasks, agent);
-  return { db, schema, model, metadata, tasks, capabilities, agent, worker, source, provider: p,
+  const capabilities = rideCapabilities(db, source), model = await metadata.publish(document, capabilities, publisher), agent = new OntologyAgent(db, metadata, tasks, capabilities, driver), worker = new Worker(tasks, agent);
+  return { db, schema, model, metadata, tasks, capabilities, access, publisher, agent, worker, source, provider: p,
     submit: () => tasks.submit(principal, { requestId: randomUUID(), message: '从中企云翠森林到前滩太古里，只询价', route }),
     async close() { worker.stop(); await db.query(`DROP SCHEMA ${db.schema} CASCADE`); await db.close(); await p.close(); },
   };

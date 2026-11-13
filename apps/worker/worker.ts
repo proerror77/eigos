@@ -1,3 +1,4 @@
+import { TaskResult } from '../../packages/runtime/access.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Clarification } from '../../packages/runtime/agent.js';
 import { Tasks, type Task } from '../../packages/runtime/tasks.js';
@@ -22,11 +23,11 @@ export class Worker {
     try {
       const result = await this.agent.run(task, signal);
       signal.throwIfAborted();
-      await this.tasks.finish(task, 'completed', result);
+      await this.tasks.finish(task, 'completed', result instanceof TaskResult ? result.value : result, undefined, result instanceof TaskResult ? result.permissions : []);
     } catch (error) {
       const clarification = error instanceof Clarification;
       if (!clarification) console.error('Inquiry execution failed', error instanceof Error ? error.message : 'Unknown error');
-      await this.tasks.finish(task, clarification ? 'input-required' : 'failed', clarification ? error.choices ?? null : null, clarification ? error.message : 'Inquiry failed. Check the configured source or retry with a new request ID.').catch(() => {});
+      await this.tasks.finish(task, clarification ? 'input-required' : 'failed', clarification ? error.choices ?? null : null, clarification ? error.message : 'Inquiry failed. Check the configured source or retry with a new request ID.', clarification ? error.permissions : []).catch(() => {});
     } finally { clearInterval(timer); await renewing; }
   }
   async run() {

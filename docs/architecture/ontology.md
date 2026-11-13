@@ -117,3 +117,20 @@ Worker 使用 PostgreSQL 通知唤醒，行锁领取单个任务，并在执行�
 第一条实现的领域用例是滴滴估价。模型解释自然语言并使用发布的业务能力，PA 也可提供结构化参数。通用调度器的跨定义行为有工程回归，真实业务验收范围仍是本次滴滴路线。完整 Foundry 产品的界面、其他业务领域的真实验收、属性 reducer、媒体类型、跨组织共享和通用删除规则尚未在本版实现。
 
 验收使用实际业务问题从入口走到结果，并记录耗时、路径和歧义。合成回归保持可重复，真实 MCP 验收另存私有记录。[官方验证方法](https://www.palantir.com/docs/foundry/ontology/ontology-design-validation)
+
+
+## 发布与投影
+
+`PublishedOntology` 属于运行层，包含语义定义、发布引用、数据投影标识和实现绑定。语义定义类只解释 Schema。定义摘要可保持相同，而不同实现或数据投影产生不同发布引用。所有对象和关系查询按发布引用对应的投影执行。
+
+候选投影在现有 PostgreSQL 表中准备，验证数据类型、主键、Link 端点与基数，以及 Function 参数/返回契约和来源处理器绑定。源数据保持对当前用户可见。激活时检查准备基线、数据指纹与实现摘要，短事务切换活动指针；业务写事务使用相容的共享锁保护当前发布，供应商请求不占用该锁。旧任务结束后再切换，旧投影不接受写入。该方式对应 live/replacement pipeline 的职责，未增加数据库或复制 Foundry 的分布式服务。[Funnel 发布机制](https://www.palantir.com/docs/foundry/object-indexing/funnel-batch-pipelines/)
+
+## 权限边界
+
+OAuth scopes 控制协议入口。当前身份对应的资源授权控制本体操作。定义管理、实例数据、属性和 Action 执行相互独立；Function 和来源也需要对应授权。Worker 使用任务原始身份与资源授权，不因某个能力被发布而生成更多权限。[Ontology permissions](https://www.palantir.com/docs/foundry/object-permissioning/ontology-permissions/)
+
+对象查询保持 owner 行隔离。属性策略在对象读取、Interface 映射和筛选中一致返回 null；知道隐藏值不能通过筛选反推出它。缺少关联目标的读取权限时，关系查询明确拒绝，不能被业务函数解释为“不存在”。定义管理员可查看 Schema，但不会因此读到对象或执行 Action。[对象和属性策略](https://www.palantir.com/docs/foundry/object-permissioning/object-security-policies/)
+
+Action 检查自身应用权限，以及实际访问的对象、关系和来源。源读取权限与对象可见性独立，授予原始来源读取意味着允许读取该来源的原始数据。只读对象接口不能取得编辑上下文；所有业务编辑仍通过 Action 提交。[Action 权限](https://www.palantir.com/docs/foundry/action-types/permissions/)
+
+权限在一次执行上下文中读取并复用，源调用、函数返回及提交前重新检查；没有逐对象开启授权事务。任务结果记录读取依赖，当前授权不再满足时整个缓存结果被隐藏。授权表由数据库管理角色维护，常驻运行角色仅有读取权限。当前没有实现任意属性表达式、组织共享或完整 CBAC/markings 产品功能。

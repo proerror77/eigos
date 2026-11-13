@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { Conflict, NotFound, requireScope, type Principal } from '../../packages/core/identity.js';
 import type { Config } from '../../packages/core/config.js';
 import { objectRefSchema } from '../../packages/ontology/schema.js';
+import { Access } from '../../packages/runtime/access.js';
 import { Database } from '../../packages/runtime/database.js';
 import { Metadata } from '../../packages/runtime/metadata.js';
 import { Objects, querySchema } from '../../packages/runtime/objects.js';
@@ -33,8 +34,8 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     next();
   });
   app.get('/health', async (_req, res) => {
-    const model = await metadata.active();
-    res.json({ status: 'ok', backend: 'postgres', sourceCommit: config.EIGOS_SOURCE_COMMIT, ontologyRelease: model.digest });
+    const model = await metadata.active(); metadata.checkBindings(model, capabilities);
+    res.json({ status: 'ok', backend: 'postgres', sourceCommit: config.EIGOS_SOURCE_COMMIT, ontologyRelease: model.release, definitionDigest: model.digest, implementationDigest: db.runtimeId });
   });
   const card = agentCard(config.PUBLIC_URL);
   app.get('/.well-known/agent-card.json', (_req, res) => res.json(AgentCard.toJSON(card)));
@@ -48,25 +49,30 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   const modelFor = async (p: Principal, taskId?: string) => taskId ? metadata.get((await tasks.get(p, taskId)).release) : metadata.active();
   const query = async (p: Principal, raw: unknown) => {
     requireScope(p, 'ontology:read'); const input = queryInput.parse(raw);
-    return new Objects(db, await modelFor(p, input.taskId), p.owner).query(input.query);
+    const access = await Access.load(db, p), result = await new Objects(db, await modelFor(p, input.taskId), access).query(input.query);
+    await access.refresh(); return result;
   };
   const evaluate = async (p: Principal, raw: unknown) => {
-    const input = functionInput.parse(raw), model = await modelFor(p, input.taskId);
-    return capabilities.functions.invoke(model, input.function, input.input, { principal: p, objects: new Objects(db, model, p.owner), signal: AbortSignal.timeout(30000) });
+    requireScope(p, 'ontology:read');
+    const input = functionInput.parse(raw), model = await modelFor(p, input.taskId), access = await Access.load(db, p);
+    const result = await capabilities.functions.invoke(model, input.function, input.input, { principal: p, objects: new Objects(db, model, access), signal: AbortSignal.timeout(30000) });
+    await access.refresh(); return result;
   };
   const apply = async (p: Principal, raw: unknown) => {
-    const input = actionInput.parse(raw), model = await metadata.active();
+    requireScope(p, 'ontology:write');
+    const input = actionInput.parse(raw), model = await metadata.active(), access = await Access.load(db, p);
     const target = input.interface;
+    if (target) { access.definition(model, 'interface', target.type); access.definition(model, 'object', target.implementation ?? target.object!.type); }
     const selected = target ? target.object ? model.resolveAction(target.object, target.type, target.action, input.input)
       : model.resolveTypeAction(target.implementation!, target.type, target.action, input.input) : { action: input.action!, input: input.input };
-    return capabilities.actions.apply(p, model, selected.action, selected.input, input.requestId);
+    return capabilities.actions.apply(access, model, selected.action, selected.input, input.requestId);
   };
   app.get('/identity', (req, res) => res.json(principal(req)));
   app.post('/tasks', async (req, res) => res.json(publicTask(await tasks.submit(principal(req), req.body))));
   app.get('/tasks/:id', async (req, res) => res.json(publicTask(await tasks.get(principal(req), String(req.params.id)))));
   app.post('/tasks/:id/cancel', async (req, res) => res.json(publicTask(await tasks.cancel(principal(req), String(req.params.id)))));
   app.post('/tasks/:id/places', async (req, res) => res.json(publicTask(await tasks.selectPlaces(principal(req), String(req.params.id), req.body))));
-  app.get('/ontology', async (req, res) => { requireScope(principal(req), 'ontology:read'); res.json((await metadata.active()).document); });
+  app.get('/ontology', async (req, res) => { requireScope(principal(req), 'ontology:read'); res.json((await Access.load(db, principal(req))).describe(await metadata.active())); });
   app.post('/ontology/query', async (req, res) => res.json(await query(principal(req), req.body)));
   app.post('/ontology/functions', async (req, res) => res.json(await evaluate(principal(req), req.body)));
   app.post('/ontology/actions', async (req, res) => res.json(await apply(principal(req), req.body)));
@@ -82,7 +88,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     server.registerTool('query_ontology', { description: 'Query object sets using an Object Type or Interface and its property and link names.', inputSchema: queryInput }, input => response(() => query(p, input)));
     server.registerTool('evaluate_ontology', { description: 'Invoke a published Function.', inputSchema: functionInput }, input => response(() => evaluate(p, input)));
     server.registerTool('apply_ontology_action', { description: 'Submit a published Action through its declared parameters and submission criteria.', inputSchema: actionInput }, input => response(() => apply(p, input)));
-    server.registerTool('describe_ontology', { description: 'Read published types, properties, interfaces, links, functions and actions.', inputSchema: z.strictObject({}) }, () => response(async () => { requireScope(p, 'ontology:read'); return (await metadata.active()).document; }));
+    server.registerTool('describe_ontology', { description: 'Read published types, properties, interfaces, links, functions and actions.', inputSchema: z.strictObject({}) }, () => response(async () => { requireScope(p, 'ontology:read'); return (await Access.load(db, p)).describe(await metadata.active()); }));
     const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     await server.connect(transport);
     res.on('close', () => { void server.close(); });
@@ -93,5 +99,5 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const status = error instanceof NotFound ? 404 : error instanceof Conflict ? 409 : error instanceof z.ZodError ? 400 : 403;
     res.status(status).json({ error: error instanceof Error ? error.message : 'Request failed' });
   });
-  return { app, tasks, metadata };
+  return { app, tasks, metadata, capabilities };
 }

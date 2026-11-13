@@ -6,6 +6,7 @@ import { ingest } from '../../runtime/ingestion.js';
 import { Sources, type SourceProjection } from '../../runtime/sources.js';
 import { rideFunctions, sourceResultSchema, type SourceResolver } from './functions.js';
 import { prepareRideInquiry, resolveRideLocations } from './inquiry.js';
+import type { Ontology } from '../../ontology/model.js';
 
 /** DiDi's source normalization and Object Data Funnel. It does not choose an operation. */
 export function rideCapabilities(db: Database, resolve: SourceResolver) {
@@ -48,5 +49,5 @@ export function rideCapabilities(db: Database, resolve: SourceResolver) {
     },
   };
   sources = new Sources(db, functions, new Map(['DidiPlaces', 'DidiEstimates'].map(name => [name, projection])));
-  return { functions, actions: new Actions(db, functions), sources };
+  return { functions, actions: new Actions(db, functions), sources, describe: (model: Ontology) => ({ functions: functions.bindings(model), sources: sources.bindings(model) }) };
 }

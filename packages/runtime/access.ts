@@ -1,0 +1,107 @@
+import { z } from 'zod';
+import { type Principal } from '../core/identity.js';
+import type { Ontology } from '../ontology/model.js';
+import { Database, type Sql } from './database.js';
+
+export const permissionSchema = z.enum(['view_definition', 'edit_definition', 'manage_definition', 'view_objects', 'view_property', 'apply_action', 'execute_function', 'read_source']);
+export type Permission = z.infer<typeof permissionSchema>;
+export const grantSchema = z.strictObject({ resource: z.string().min(1).max(300), permission: permissionSchema });
+export type Grant = z.infer<typeof grantSchema>;
+export type Requirement = Grant & { ontology: string };
+export class TaskResult {
+  constructor(readonly value: unknown, readonly permissions: Requirement[]) {}
+}
+export const resource = (ontology: string, kind: string, name: string) => `${ontology}/${kind}/${name}`;
+export class PermissionDenied extends Error {}
+
+/** Resource grants and object/property visibility, independent of OAuth transport scopes. */
+export class Access {
+  private grants = new Set<string>();
+  private properties = new Set<string>();
+  private required = new Map<string, Requirement>();
+  private data = new Map<string, Requirement>();
+  readonly principal: Principal;
+  private constructor(private readonly db: Database, principal: Principal) { this.principal = Object.freeze({ owner: principal.owner, scopes: Object.freeze([...principal.scopes]) }); }
+  get runtimeId() { return this.db.runtimeId; }
+  static async load(db: Database, principal: Principal, client?: Sql) {
+    if (!principal.owner) throw new PermissionDenied('Authenticated owner is required');
+    const access = new Access(db, principal); await access.refresh(client); return access;
+  }
+  async refresh(client?: Sql) {
+    const result = await this.db.query(`SELECT
+      (SELECT coalesce(jsonb_agg(jsonb_build_object('resource',resource,'permission',permission)),'[]') FROM ${this.db.schema}.resource_grants WHERE subject=$1) AS grants,
+      (SELECT coalesce(jsonb_agg(ontology||'/property/'||type||'/'||property),'[]') FROM ${this.db.schema}.property_security) AS properties`, [this.principal.owner], client);
+    this.grants = new Set((result.rows[0]!.grants as Grant[]).map(grant => `${grant.permission}:${grant.resource}`));
+    this.properties = new Set(result.rows[0]!.properties as string[]);
+    for (const requirement of this.required.values()) if (!this.allows(requirement)) throw new PermissionDenied('Permission changed during execution');
+  }
+  allows({ permission, resource: target, ontology }: Requirement): boolean {
+    if (permission === 'view_property' && !this.properties.has(target)) return true;
+    const permissions: Permission[] = permission === 'view_definition' ? ['view_definition', 'edit_definition', 'manage_definition']
+      : permission === 'edit_definition' ? ['edit_definition', 'manage_definition'] : [permission];
+    return permissions.some(p => this.grants.has(`${p}:${target}`) || permission.endsWith('_definition') && this.grants.has(`${p}:${ontology}`));
+  }
+  require(ontology: string, permission: Permission, target: string, data = false) {
+    const requirement = { ontology, permission, resource: target };
+    if (!this.allows(requirement)) throw new PermissionDenied(`Permission required: ${permission}`);
+    const key = `${permission}:${target}`; this.required.set(key, requirement); if (data) this.data.set(key, requirement);
+  }
+  definition(model: Ontology, kind: string, name: string) { this.require(model.document.id, 'view_definition', resource(model.document.id, kind, name)); }
+  canDefine(model: Ontology, kind: string, name: string) { return this.allows({ ontology: model.document.id, permission: 'view_definition', resource: resource(model.document.id, kind, name) }); }
+  canRead(model: Ontology, type: string) { return this.canDefine(model, 'object', type) && this.allows({ ontology: model.document.id, permission: 'view_objects', resource: resource(model.document.id, 'object', type) }); }
+  read(model: Ontology, type: string) {
+    this.definition(model, 'object', type);
+    this.require(model.document.id, 'view_objects', resource(model.document.id, 'object', type), true);
+  }
+  property(model: Ontology, type: string, property: string): boolean {
+    const target = resource(model.document.id, 'property', `${type}/${property}`);
+    if (!this.allows({ ontology: model.document.id, permission: 'view_property', resource: target })) return false;
+    this.require(model.document.id, 'view_property', target, true); return true;
+  }
+  action(model: Ontology, name: string) { this.definition(model, 'action', name); this.require(model.document.id, 'apply_action', resource(model.document.id, 'action', name)); }
+  function(model: Ontology, name: string) { this.definition(model, 'function', name); this.require(model.document.id, 'execute_function', resource(model.document.id, 'function', name)); }
+  source(model: Ontology, name: string) { this.require(model.document.id, 'read_source', resource(model.document.id, 'source', name), true); }
+  dataRequirements(): Requirement[] { return [...this.data.values()]; }
+  canReturn(requirements: Requirement[]): boolean {
+    return requirements.every(r => this.allows(r) && (r.permission !== 'view_objects' || this.allows({ ...r, permission: 'view_definition' })));
+  }
+  describe(model: Ontology, executable = false) {
+    const document = structuredClone(model.document);
+    document.objectTypes = document.objectTypes.filter(type => this.canDefine(model, 'object', type.apiName));
+    document.interfaceTypes = document.interfaceTypes.filter(type => this.canDefine(model, 'interface', type.apiName));
+    const objects = new Set(document.objectTypes.map(type => type.apiName)), interfaces = new Set(document.interfaceTypes.map(type => type.apiName));
+    document.linkTypes = document.linkTypes.filter(link => this.canDefine(model, 'link', link.apiName) && objects.has(link.from.type) && objects.has(link.to.type));
+    document.functionTypes = document.functionTypes.filter(fn => this.canDefine(model, 'function', fn.apiName) && (!executable || this.allows({ ontology: model.document.id, permission: 'execute_function', resource: resource(model.document.id, 'function', fn.apiName) })));
+    const functions = new Set(document.functionTypes.map(fn => fn.apiName));
+    document.actionTypes = document.actionTypes.filter(action => this.canDefine(model, 'action', action.apiName) && (!executable || this.allows({ ontology: model.document.id, permission: 'apply_action', resource: resource(model.document.id, 'action', action.apiName) })) && (!action.function || functions.has(action.function)) && Object.values(action.objectParameters).every(type => objects.has(type) || interfaces.has(type)));
+    const actions = new Set(document.actionTypes.map(action => action.apiName));
+    document.dataSources = document.dataSources.filter(source => this.canDefine(model, 'datasource', source.apiName) && objects.has(source.objectType) && functions.has(source.function));
+    for (const type of document.objectTypes) {
+      type.interfaces = Object.fromEntries(Object.entries(type.interfaces).filter(([name]) => interfaces.has(name)));
+      for (const mapping of Object.values(type.interfaces)) mapping.actions = Object.fromEntries(Object.entries(mapping.actions).filter(([, action]) => actions.has(action.action)));
+    }
+    for (const type of document.interfaceTypes) {
+      type.links = Object.fromEntries(Object.entries(type.links).filter(([, link]) => objects.has(link.target) || interfaces.has(link.target)));
+      type.actions = Object.fromEntries(Object.entries(type.actions).filter(([name]) => document.objectTypes.some(object => object.interfaces[type.apiName]?.actions[name])));
+    }
+    return document;
+  }
+}
+
+/** Administrative configuration, run using the existing database administration role. */
+export async function setGrants(db: Database, subject: string, grants: Grant[], client?: Sql) {
+  z.string().min(1).max(200).parse(subject); grants = z.array(grantSchema).parse(grants);
+  const write = async (client: Sql) => {
+    await db.query(`DELETE FROM ${db.schema}.resource_grants WHERE subject=$1`, [subject], client);
+    await db.query(`INSERT INTO ${db.schema}.resource_grants(subject,resource,permission) SELECT $1,resource,permission FROM jsonb_to_recordset($2::jsonb) AS g(resource text,permission text) ON CONFLICT DO NOTHING`, [subject, JSON.stringify(grants)], client);
+  };
+  if (client) await write(client); else await db.transaction(write);
+}
+export function memberGrants(model: Ontology): Grant[] {
+  return [{ resource: model.document.id, permission: 'view_definition' },
+    ...model.document.objectTypes.map(type => ({ resource: resource(model.document.id, 'object', type.apiName), permission: 'view_objects' as const })),
+    ...model.document.functionTypes.map(fn => ({ resource: resource(model.document.id, 'function', fn.apiName), permission: 'execute_function' as const })),
+    ...model.document.actionTypes.map(action => ({ resource: resource(model.document.id, 'action', action.apiName), permission: 'apply_action' as const })),
+    ...[...new Set(model.document.functionTypes.flatMap(fn => fn.source ? [fn.source] : []))].map(name => ({ resource: resource(model.document.id, 'source', name), permission: 'read_source' as const })),
+  ];
+}

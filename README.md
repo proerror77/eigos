@@ -17,10 +17,13 @@ cp .env.example .env
 
 ```sh
 npm run db:init
+npm run access:grant-member -- local-developer
 npm run ontology:publish
 npm run dev:gateway
 npm run dev:worker
 ```
+
+初始化、升级、授权配置及发布使用现有数据库的管理凭据；常驻 Gateway/Worker 账号只读取授权记录，不能自行授权或发布。生产账号用其已验证的 owner 标识代替 `local-developer`。
 
 Gateway 和 Worker 使用相同的 `DATABASE_URL`、`EIGOS_PG_SCHEMA`。构建后的入口为 `npm run start:gateway` 和 `npm run start:worker`。Docker 的 `runtime` 与 `worker` target 使用相同代码。
 
@@ -90,3 +93,27 @@ npm run test:e2e:run
 测试自动创建临时 PostgreSQL 容器，结束后移除。CI 使用独立 PostgreSQL 服务。工程回归使用明确标注的录制 Agent 决策与合成供应商响应，真实模型和真实供应商的端到端计时通过生产入口另行执行。`accepted=true` 要求链路来源为 `live_readonly`。
 
 这一版替换了测试期 SQLite 运行链、历史内核构造链和重复授权投影。旧源码可从 Git 提交 `6eeaf93` 恢复。当前交付的业务领域为滴滴询价，旧的支付、预订、跨 Agent 通信与其他供应商执行流程退出本版运行入口。
+
+
+## 发布和权限
+
+定义摘要与发布引用分开。发布引用同时绑定定义、实现摘要和对象/关系投影，任务保存该引用。`ontology:prepare` 在同一 PostgreSQL 库内准备候选投影，校验数据和已注册 Function/来源绑定；`ontology:activate -- <release>` 在原子事务中切换。`ontology:publish` 连续完成两步。候选失败或准备后源数据发生变化时，当前版本继续服务。切换前需完成或取消尚未结束的旧任务，避免同一任务混用实现与数据。历史任务和旧投影保留只读。
+
+已有安装先停止写入、备份原 schema，再用 `npm run db:upgrade` 在原库升级。没有新增数据库。生产实现摘要由构建输入生成，Gateway/Worker 在启动与调用时检查绑定。更改属性类型需先修正来源数据；可向 prepare/publish 传入一个绝对路径的普通模块，导出 `project(ref, properties)` 做明确的数据转换，不能隐式强制转换。
+
+权限记录分为定义的 view/edit/manage、对象数据读取、受限属性读取、Action 应用、Function 执行和来源读取。owner 行隔离继续生效。定义管理不授予数据或 Action 权限。额外受限属性没有授权时返回 null，筛选条件也只能看到遮罩后的值。任务输出保留其读取权限依赖，撤权后不会从缓存继续返回受限结果。
+
+`npm run access:configure -- /absolute/private/access.json` 使用数据库管理角色原子配置授权。例如：
+
+```json
+{
+  "subjects": [{"owner": "VERIFIED_OWNER", "grants": [
+    {"resource": "Eigos", "permission": "view_definition"},
+    {"resource": "Eigos/object/Place", "permission": "view_objects"},
+    {"resource": "Eigos/property/Place/coordinates", "permission": "view_property"}
+  ]}],
+  "properties": [{"ontology": "Eigos", "type": "Place", "property": "coordinates"}]
+}
+```
+
+省略 properties 保持当前属性限制；提供该数组则完整替换限制。`access:grant-member` 只授予指定账号当前定义中的业务能力，未来新能力不会自动获得执行授权。受限属性权限需明确配置。这里实现 owner 范围的对象策略和属性可见性，没有额外的通用条件规则语言。

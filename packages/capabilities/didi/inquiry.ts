@@ -31,7 +31,7 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
     if (!context.edit || !context.operationId) throw new Error('Ride inquiry requires an Action edit context');
     const model = context.objects.model, sources = getSources(), functions = getFunctions(), execution = context.execution;
     const results = await Promise.all(['origin', 'destination'].map(role => sources.refresh(model, 'DidiPlaces',
-      { city: input.city, keywords: input[role] }, context.principal, execution?.task, execution?.tasks, context.signal)));
+      { city: input.city, keywords: input[role] }, context.objects.access, execution?.task, execution?.tasks, context.signal)));
     const resolution = await functions.invoke(model, 'resolveRideLocations', {
       origin: input.origin, destination: input.destination, originReceipt: results[0]!.receipt, destinationReceipt: results[1]!.receipt,
       ...(execution?.task.input.places ? { selection: execution.task.input.places } : {}),
@@ -40,7 +40,7 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
     const request = { type: 'RideRequest', id: context.operationId }, route = { type: 'Route', id: context.operationId };
     const quoteInput = { requestId: request.id, origin: resolution.origin, destination: resolution.destination };
     // All provider I/O finishes before opening the business edit transaction.
-    const quote = await sources.read(model, 'DidiEstimates', quoteInput, context.principal, execution?.task, execution?.tasks, context.signal);
+    const quote = await sources.read(model, 'DidiEstimates', quoteInput, context.objects.access, execution?.task, execution?.tasks, context.signal);
     const [origin, destination] = await Promise.all([context.objects.read(resolution.origin), context.objects.read(resolution.destination)]);
     return context.edit(request, async graph => {
       await graph.create(route, { id: route.id, name: `${origin.properties.name} → ${destination.properties.name}` });

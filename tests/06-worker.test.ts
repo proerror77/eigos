@@ -1,3 +1,5 @@
+import { Access, setGrants, memberGrants } from '../packages/runtime/access.js';
+import { Ontology } from '../packages/ontology/model.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Objects } from '../packages/runtime/objects.js';
@@ -24,7 +26,7 @@ test('one Agent capability choice completes the inquiry despite related entrance
     assert(result.elapsedMs < 20000);
     assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
     assert(!JSON.stringify(done.result).includes('PRIVATE_ORDER_TOKEN'));
-    const objects = new Objects(f.db, f.model, principal.owner);
+    const objects = new Objects(f.db, f.model, f.access);
     const routes = await objects.query({ type: 'RideEstimatable' }); assert.equal(routes.items.length, 1);
     assert.equal((await objects.follow(routes.items[0]!.ref, 'origin', 'RideEstimatable'))[0]!.properties.name, route.origin);
     assert.equal(Number((await f.db.query(`SELECT count(*) FROM ${f.db.schema}.actions`)).rows[0]!.count), 1);
@@ -38,10 +40,12 @@ test('the same Agent runtime discovers and completes a different published Funct
   try {
     const definitions = { id: 'Eigos', version: '1', objectTypes: [], interfaceTypes: [], linkTypes: [], actionTypes: [], dataSources: [],
       functionTypes: [{ apiName: 'countAvailableItems', description: 'Return the available item count', parameters: { type: 'object', properties: {}, additionalProperties: false }, returns: { type: 'integer' } }] };
-    const published = await f.metadata.publish(definitions);
-    const functions = new Functions(new Map([['countAvailableItems', () => 7]]));
+    const definition = new Ontology(definitions), functions = new Functions(new Map([['countAvailableItems', () => 7]]), definition.document.functionTypes);
+    const bindings = { describe: (model: Ontology) => ({ functions: functions.bindings(model), sources: {} }) };
+    const published = await f.metadata.publish(definitions, bindings, f.publisher);
+    await setGrants(f.db, principal.owner, memberGrants(published));
     const agent = new OntologyAgent(f.db, f.metadata, f.tasks,
-      { functions, actions: new Actions(f.db, functions), sources: new Sources(f.db, functions, new Map()) }, {
+      { ...bindings, functions, actions: new Actions(f.db, functions), sources: new Sources(f.db, functions, new Map()) }, {
         model: 'fixture-unrelated-domain', async run(prompt, tools) {
           assert(prompt.includes('countAvailableItems')); assert(!prompt.includes('RideEstimatable')); assert(!prompt.includes('searchPlaces'));
           const [definition] = await tools.get('describe_ontology')!.invoke({ names: ['countAvailableItems'] }) as { apiName: string }[];
@@ -49,7 +53,7 @@ test('the same Agent runtime discovers and completes a different published Funct
         },
       });
     const task = await f.tasks.submit(principal, { requestId: 'independent-function', message: 'How many items are available?' });
-    assert.equal(task.release, published.digest);
+    assert.equal(task.release, published.release);
     await new Worker(f.tasks, agent).runOne();
     const done = await f.tasks.get(principal, task.id);
     assert.equal(done.state, 'completed'); assert.equal((done.result as { value: number }).value, 7);
@@ -75,7 +79,7 @@ test('canceling a model-driven source read prevents its late projection and furt
     f.provider.flags.before = async () => { await f.tasks.cancel(principal, task.id).catch(() => {}); };
     await f.worker.runOne();
     assert.equal((await f.tasks.get(principal, task.id)).state, 'canceled');
-    assert.equal((await new Objects(f.db, f.model, principal.owner).query({ type: 'RideEstimatable' })).items.length, 0);
+    assert.equal((await new Objects(f.db, f.model, f.access).query({ type: 'RideEstimatable' })).items.length, 0);
   } finally { await f.close(); }
 });
 test('ambiguous places ask for the original address before requesting a quote', async () => {
@@ -104,7 +108,7 @@ test('revocation during the real connector callback cannot produce an accepted i
     f.provider.flags.before = async () => { f.provider.flags.active = false; };
     const task = await f.submit(); await f.worker.runOne();
     assert.equal((await f.tasks.get(principal, task.id)).state, 'failed');
-    assert.equal((await new Objects(f.db, f.model, principal.owner).query({ type: 'PriceEstimate' })).items.length, 0);
+    assert.equal((await new Objects(f.db, f.model, f.access).query({ type: 'PriceEstimate' })).items.length, 0);
   } finally { await f.close(); }
 });
 
@@ -115,6 +119,30 @@ test('task-only PA permission executes the inquiry through the source-bound Work
     const task = await f.tasks.submit(caller, { requestId: 'task-permission', message: '上海只询价', route });
     await f.worker.runOne();
     assert.equal((await f.tasks.get(caller, task.id)).state, 'completed');
-    await assert.rejects(f.capabilities.actions.apply(caller, f.model, 'EstimateRide', {}, 'direct-write'), /Permission/);
+    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant => grant.permission !== 'apply_action'));
+    await assert.rejects(f.capabilities.actions.apply(await Access.load(f.db, caller), f.model, 'EstimateRide', route, 'direct-write'), /Permission/);
+  } finally { await f.close(); }
+});
+
+test('revoked data rights also remove access to a cached task result', async () => {
+  const f = await fixture();
+  try {
+    const task = await f.submit(); await f.worker.runOne();
+    assert((await f.tasks.get(principal, task.id)).result);
+    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant => grant.resource !== 'Eigos/object/Place' || grant.permission !== 'view_objects'));
+    const hidden = await f.tasks.get(principal, task.id);
+    assert.equal(hidden.state, 'completed'); assert.equal(hidden.result, null);
+    const retry = await f.tasks.submit(principal, task.input);
+    assert.equal(retry.id, task.id); assert.equal(retry.result, null);
+  } finally { await f.close(); }
+});
+
+test('permission revocation during a source response blocks late business edits', async () => {
+  const f = await fixture();
+  try {
+    f.provider.flags.before = async () => { await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant => grant.permission !== 'read_source')); };
+    const task = await f.submit(); await f.worker.runOne();
+    assert.equal((await f.tasks.get(principal, task.id)).state, 'failed');
+    assert.equal((await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.objects WHERE projection=$1 AND type='RideRequest'`, [f.model.projection])).rows[0]!.n, 0);
   } finally { await f.close(); }
 });
