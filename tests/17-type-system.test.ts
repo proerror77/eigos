@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { digest } from '../packages/core/identity.js';
 import { Ontology } from '../packages/ontology/model.js';
 import { propertyDisplay } from '../packages/ontology/type-system.js';
-import { fixture, principal } from './fixture.js';
+import { document as businessDefinition, fixture, principal } from './fixture.js';
 import { Functions } from '../packages/runtime/functions.js';
 import { Actions } from '../packages/runtime/actions.js';
 import { Objects } from '../packages/runtime/objects.js';
@@ -281,4 +281,32 @@ test('numeric bounds compare inclusive and exclusive limits without weakening eq
   assert.equal(schemaSubset({type:'integer',exclusiveMinimum:0},{type:'integer',minimum:1}),true);
   assert.equal(schemaSubset({type:'integer',exclusiveMaximum:10},{type:'integer',maximum:9}),true);
   assert.equal(schemaSubset({type:'number',minimum:1,maximum:9},{type:'number',exclusiveMinimum:0,exclusiveMaximum:10}),true);
+});
+
+test('Interface Action mappings preserve object-level conditions across renamed parameters', () => {
+  const body = structuredClone(businessDefinition);
+  const implementation = body.objectTypes.find(type => type.apiName === 'Route')!;
+  const label = { type: 'string' };
+  const condition = (name: string) => ({ type: 'object', properties: { [name]: label }, required: [name] });
+  const expected = { type: 'object', properties: { name: label, label }, additionalProperties: false, anyOf: [condition('name'), condition('label')] };
+  const concrete = { type: 'object', properties: { title: label, caption: label }, additionalProperties: false, anyOf: [condition('title'), condition('caption')] };
+  body.interfaceTypes.push({ apiName: 'RouteCreation', description: 'Route creation contract', properties: {}, optionalProperties: [], links: {},
+    actions: { create: { required: true, objectParameters: {}, parameters: expected } } });
+  body.actionTypes.push({ apiName: 'CreateNamedRoute', description: 'Create a named route', parameters: concrete, objectParameters: {}, submissionCriteria: [],
+    rules: [{ op: 'createObject', object: { type: 'Route', id: { literal: 'new' } }, properties: { id: { literal: 'new' }, name: { literal: 'New route' } } }],
+    result: { type: 'Route', id: { literal: 'new' } } });
+  implementation.interfaces.RouteCreation = { properties: {}, links: {}, actions: { create: { action: 'CreateNamedRoute', parameters: { name: 'title', label: 'caption' } } } };
+  const model = new Ontology(body);
+  assert.equal(model.resolveTypeAction('Route', 'RouteCreation', 'create', { name: 'Named' }).input.title, 'Named');
+  assert.throws(() => model.resolveTypeAction('Route', 'RouteCreation', 'create', {}));
+  const unconstrained = structuredClone(body);
+  delete unconstrained.interfaceTypes.at(-1)!.actions.create!.parameters.anyOf;
+  assert.throws(() => new Ontology(unconstrained), /Incompatible action parameter constraints for Route.create/);
+  assert.doesNotThrow(() => new Ontology(unconstrained, { published: true }));
+  const narrowed = structuredClone(body);
+  narrowed.actionTypes.at(-1)!.parameters.anyOf = [condition('caption')];
+  assert.throws(() => new Ontology(narrowed), /Incompatible action parameter constraints/);
+  const conditionOnly = structuredClone(unconstrained);
+  conditionOnly.actionTypes.at(-1)!.parameters.anyOf = [{ required: ['title'] }, { required: ['caption'] }];
+  assert.throws(() => new Ontology(conditionOnly), /Incompatible action parameter constraints/);
 });
