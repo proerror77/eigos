@@ -14,7 +14,7 @@
 
 Interface 通过实现映射引用具体 Object Type 的属性、关系与 Action 参数。查询由本体查询服务执行，Function 可以组合查询和计算。Action 表达用户或 Agent 提交的变更。[Interface 实现](https://www.palantir.com/docs/foundry/interfaces/implement-interface)、[Action 参数约束](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints)
 
-关系带有日期、角色或状态等业务信息时，用独立对象保存这些信息，并通过 Link 连接两端。当前来源时间和证据类型保存在 `SourceReceipt` 对象中。[Object-backed links](https://www.palantir.com/docs/foundry/object-link-types/create-link-type)
+关系带有日期、角色或状态等业务信息时，用独立对象保存这些信息，并通过 Link 连接两端。来源时间和证据类型保存在 `SourceReceipt` 及实现 `ServiceSearchResult` 的供应商结果对象中。[Object-backed links](https://www.palantir.com/docs/foundry/object-link-types/create-link-type)
 
 ## 模块边界
 
@@ -26,6 +26,7 @@ flowchart TD
     Gateway --> Action[Actions]
     Gateway --> Task[任务队列]
     Task --> Worker[Worker]
+    Schedule[持久化定时 Action] --> Task
     Worker --> Model[模型 Agent]
     Model --> Query
     Model --> Function
@@ -45,12 +46,15 @@ flowchart TD
 | `packages/ontology/schema.ts` | 声明定义的数据结构 |
 | `packages/ontology/model.ts` | 解析定义、属性映射、Link 导航、Action 参数映射 |
 | `packages/ontology/definitions/ride.json` | 滴滴领域的发布定义及来源字段映射 |
+| `packages/ontology/services.ts`、`travel.ts` | 服务 Interface、活动报名、出行对象与 Action 契约，组合成同一发布定义 |
 | `packages/runtime/metadata.ts` | 发布定义并按任务引用解析 |
 | `packages/runtime/objects.ts` | Owner 范围内的对象集查询、关系查询与存储 |
 | `packages/runtime/ingestion.ts` | 将来源行按发布映射写入对象 |
 | `packages/runtime/functions.ts` | 参数与返回值校验、函数和来源绑定 |
 | `packages/runtime/actions.ts` | 提交条件、编辑规则、幂等事务与操作记录 |
 | `packages/runtime/tasks.ts` | 任务状态、领取租约、取消与来源调用记录 |
+| `packages/runtime/scheduled-actions.ts` | 到时按当前兼容契约启动 Action，保存周期性检查与 PA 续接 |
+| `packages/runtime/external-operations.ts` | 外部变更的发出标记、回执与未知结果恢复边界 |
 | `packages/runtime/agent.ts` | 从任务发布版本提供发现与工具调用，返回模型选择的 Function 结果 |
 | `packages/runtime/harness.ts` | 独立模型会话与任务专用 Ontology MCP，不保存第二份任务 |
 | `packages/runtime/sources.ts` | 执行发布的数据源 Function，把服务端持有的回值交给来源投影 |
@@ -114,7 +118,7 @@ Worker 使用 PostgreSQL 通知唤醒，行锁领取单个任务，并在执行�
 
 对象查询支持类型或 Interface、等值筛选、字段选择和游标。关系支持双向导航与一对多基数。Action 支持声明式对象与关系编辑，以及 Function-backed Action 的原子提交。Function 具有独立参数与返回契约，已接入外部来源读取和对象计算。
 
-第一条实现的领域用例是滴滴估价。模型解释自然语言并使用发布的业务能力，PA 也可提供结构化参数。通用调度器的跨定义行为有工程回归，真实业务验收范围仍是本次滴滴路线。完整 Foundry 产品的界面、其他业务领域的真实验收、属性 reducer、媒体类型、跨组织共享和通用删除规则尚未在本版实现。
+第一条实现的领域用例是滴滴估价，后续加入 PA 日历 Scenario、服务选项和定时出行。模型解释自然语言并使用发布的业务能力，PA 也可提供结构化参数。真实查询、工程回归和供应商履约分开验收；定时链路的 synthetic 结果不证明真实报名或接驾。完整 Foundry 产品的界面、属性 reducer、媒体类型、跨组织共享和通用删除规则尚未在本版实现。
 
 验收使用实际业务问题从入口走到结果，并记录耗时、路径和歧义。合成回归保持可重复，真实 MCP 验收另存私有记录。[官方验证方法](https://www.palantir.com/docs/foundry/ontology/ontology-design-validation)
 
@@ -143,6 +147,16 @@ Action 检查自身应用权限，以及实际访问的对象、关系和来源�
 `packages/runtime/pa.ts` 在原任务中记录带响应契约的信息请求，只有原 owner 的 PA 可以回传并继续该任务。`packages/capabilities/scheduling/` 绑定 Calendar 数据校验、候选时间搜索和排程 Actions。日历汇总数据由 PA 提供，Agent 不能把猜测的空闲时间写成来源事实。
 
 活动和资源是业务对象，Worker 租约和 PA 请求记录留在运行层。Functions 在 Scenario 中读取拟议状态；合并 Action 在同一事务中重检权限、版本、关系和业务约束。真实日历写入尚未接入。协议及边界见 [Scenario 与 PA 日历排程](../guides/scenarios-scheduling.md)。
+
+## 服务组合和时间触发
+
+`LumaEvent`、`RollingGoHotelOffer`、`ShopifyProductOffer` 通过 `ServiceOffering` 共享来源与有效期，通过 `AttendableEvent`、`HotelOffer`、`ProductOffer` 保留报名、住宿日期、商家变体等业务语义。Interface 不使用供应商品牌命名，具体实现和来源绑定明确供应商。后续携程、飞猪的酒店实现可共用 `HotelOffer`，机票需独立的航班业务契约；Uber、Grab 也需自己的出行来源和执行实现，不能把滴滴的参数或币种直接当作通用规则。
+
+`EventTrip` 连接活动、已确认的参与者报名、驾驶时长、计划及资源占用。当前执行实现连接 Luma 与滴滴。出发时间、预算和身份检查属于领域 Functions，Worker 不包含 Luma 或滴滴的业务步骤。
+
+`scheduled_actions` 把时间条件转成已发布的 Action。尚未启动的未来计划记录契约而不锁住旧运行版本；到时复核契约和当前资源授权，再生成有原任务关联的执行任务。正在执行的任务继续遵守发布锁定、租约和 PA 续接规则。这个职责对应 Palantir 在 Dynamic Scheduling 之外提供的时间/数据条件与自动 Action 效果。[Automate](https://www.palantir.com/docs/foundry/automate/overview)
+
+数据库事务保证本体编辑的原子性，不能回滚已经发生的供应商变更。`external_operations` 因此先持久化原操作，再发请求，保存供应商回执；结果未知时禁止自动重发。独立订单查询使用原订单身份，创建订单不被升级成到达或履约成功。账号、业务授权、执行配置和最终供应商结果分别校验，见 [服务接口与定时出行](../guides/service-planning.md)。
 
 
 ## 完整运行服务

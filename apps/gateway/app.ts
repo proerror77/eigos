@@ -15,9 +15,10 @@ import { Database } from '../../packages/runtime/database.js';
 import { Metadata } from '../../packages/runtime/metadata.js';
 import { Objects, querySchema } from '../../packages/runtime/objects.js';
 import { Scenarios, createScenarioSchema } from '../../packages/runtime/scenarios.js';
-import { PARequests, paResponseSchema } from '../../packages/runtime/pa.js';
+import { PARequests, paResponseSchema,paInboxSchema } from '../../packages/runtime/pa.js';
 import { Tasks, submitSchema, publicTask, placeSelectionSchema } from '../../packages/runtime/tasks.js';
 import { createCapabilities } from '../../packages/capabilities/index.js';
+import { configuredServices } from '../../packages/capabilities/services/sources.js';
 import type { SourceResolver } from '../../packages/capabilities/didi/functions.js';
 import { verifier, type VerifyToken } from './auth.js';
 import { A2A, AgentUser, agentCard } from './a2a.js';
@@ -30,7 +31,7 @@ const actionInput = z.strictObject({ scenarioId: z.uuid().optional(), requestId:
   .refine(value => !!value.action !== !!value.interface, 'Select an Action or an Interface Action');
 
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {}) {
-  const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source,extensions);
+  const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE));
   const scenarios = new Scenarios(db), pa = new PARequests(tasks);
   const principals = new WeakMap<Request, Principal>();
   app.disable('x-powered-by'); app.use(express.json({ limit: '256kb' }));
@@ -93,6 +94,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   app.get('/ontology/scenarios/:id', async (req,res)=>res.json(await scenarioRead(principal(req),String(req.params.id))));
   app.post('/ontology/scenarios/:id/discard', async (req,res)=>res.json(await scenarioDiscard(principal(req),String(req.params.id),req.body.revision)));
   app.post('/tasks/:id/pa-response', async (req,res)=>res.json(publicTask(await pa.respond(principal(req),String(req.params.id),req.body))));
+  app.get('/pa/requests',async(req,res)=>res.json(await pa.pending(principal(req),{...(typeof req.query.cursor==='string'?{cursor:req.query.cursor}:{}),...(typeof req.query.limit==='string'?{limit:Number(req.query.limit)}:{})})));
   app.get('/identity', (req, res) => res.json(principal(req)));
   app.post('/tasks', async (req, res) => res.json(publicTask(await tasks.submit(principal(req), req.body))));
   app.get('/tasks/:id', async (req, res) => res.json(publicTask(await tasks.get(principal(req), String(req.params.id)))));
@@ -113,6 +115,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     server.registerTool('get_task', { description: 'Read your original task, result or PA information request.', inputSchema: z.strictObject({ taskId: z.uuid() }) }, input => response(async () => publicTask(await tasks.get(p, input.taskId))));
     server.registerTool('select_task_places', { description: 'Select source-returned endpoints for a task waiting for clarification.', inputSchema: z.strictObject({ taskId: z.uuid(), places: placeSelectionSchema }) }, input => response(async () => publicTask(await tasks.selectPlaces(p, input.taskId, input.places))));
     server.registerTool('respond_to_task', { description:'Supply the authenticated PA response to the original task information request. Use the responseSchema returned with that request.',inputSchema:z.strictObject({taskId:z.uuid(),...paResponseSchema.shape}) }, input=>response(async()=>publicTask(await pa.respond(p,input.taskId,{requestId:input.requestId,response:input.response}))));
+    server.registerTool('list_pa_requests',{description:'Read your pending PA requests, including scheduled event and ride executions. Preserve returned taskId and requestId when replying. Follow cursor for subsequent pages.',inputSchema:paInboxSchema},input=>response(()=>pa.pending(p,input)));
     server.registerTool('create_scenario', { description:'Create an isolated what-if view over current Ontology data.',inputSchema:createScenarioSchema }, input=>response(()=>scenarioCreate(p,input)));
     server.registerTool('list_scenarios', { description:'List your open scenarios; follow cursor for the next page.',inputSchema:z.strictObject({cursor:z.uuid().optional()}) }, input=>response(()=>scenarioList(p,input.cursor)));
     server.registerTool('inspect_scenario', { description:'Read a scenario revision, proposed object/link changes and object conflicts.',inputSchema:z.strictObject({scenarioId:z.uuid()}) }, input=>response(()=>scenarioRead(p,input.scenarioId)));

@@ -3,6 +3,7 @@ import { open, mkdir, writeFile, appendFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { z } from 'zod';
 import { digest } from '../../core/identity.js';
 import { didiBindingSchema, didiEndpoint, didiReceiptSchema, didiToolInputs, DIDI_TOOLS, type DidiBinding, type DidiData, type DidiEvidenceKind, type DidiReceipt, type DidiTool } from './contracts.js';
 import { mapDidiResult } from './mapping.js';
@@ -33,8 +34,8 @@ export async function readDidiCredential(binding: DidiBinding): Promise<string> 
     finally { await file?.close(); }
   }
 
-/** Official SDK handles MCP handshake, sessions and SSE. The network guard is
- * separate from model instructions: only two exact tools can reach the wire. */
+/** Official SDK handles MCP handshake, sessions and SSE. Only the published
+ * place, estimate and driving-time reads can reach this transport. */
 export class DidiMcpConnector implements DidiConnector {
   readonly evidenceKind: DidiEvidenceKind;
   readonly binding: DidiBinding;
@@ -92,12 +93,13 @@ export class DidiMcpConnector implements DidiConnector {
       for (const tool of result.tools) {
         if (!DIDI_TOOLS.includes(tool.name as DidiTool)) continue;
         if (found.has(tool.name)) throw new DidiReadError('DUPLICATE_TOOL');
-        const expected = didiToolInputs[tool.name as DidiTool].shape;
+        const expected = z.toJSONSchema(didiToolInputs[tool.name as DidiTool]) as {properties:Record<string,{type?:string}>};
         const schema = tool.inputSchema;
         const required = [...(schema.required ?? [])].sort();
-        if (schema.type !== 'object' || digest(required) !== digest(Object.keys(expected).sort()) || Object.keys(expected).some(k => (schema.properties?.[k] as { type?: unknown } | undefined)?.type !== 'string')) throw new DidiReadError('TOOL_SCHEMA_CHANGED');
+        const mandatory = tool.name === 'maps_direction_driving' ? ['destination','origin'] : Object.keys(expected.properties).sort();
+        if (schema.type !== 'object' || digest(required) !== digest(mandatory) || Object.keys(expected.properties).some(k => (schema.properties?.[k] as { type?: unknown } | undefined)?.type !== expected.properties[k]!.type)) throw new DidiReadError('TOOL_SCHEMA_CHANGED');
         // Do not send upstream descriptions, annotations or instructions to models.
-        found.set(tool.name, { name: tool.name, inputSchema: { type: 'object', properties: Object.fromEntries(Object.keys(expected).map(k => [k, { type: 'string' }])), required } });
+        found.set(tool.name, { name: tool.name, inputSchema: { type: 'object', properties: Object.fromEntries(Object.entries(expected.properties).map(([k,v]) => [k, { type: v.type }])), required } });
       }
       cursor = result.nextCursor;
       if (!cursor) break;

@@ -4,6 +4,7 @@ import type { FunctionContext, FunctionHandler } from '../../runtime/functions.j
 import type { Database } from '../../runtime/database.js';
 import { Scenarios } from '../../runtime/scenarios.js';
 import { PARequests } from '../../runtime/pa.js';
+import { currentService } from '../services/functions.js';
 import { activityInputSchema, calendarResponseSchema, commitPlanSchema, jsonSchema, planInputSchema, planRefSchema, removeActivitySchema, searchSlotsSchema } from './contracts.js';
 
 type Reader = FunctionContext['objects'];
@@ -36,7 +37,7 @@ const subtract = (windows: Interval[], busy: Interval[]) => busy.reduce((free, b
   return pieces;
 }), windows);
 
-async function readPlan(objects: Reader, raw: ObjectRef) {
+export async function readPlan(objects: Reader, raw: ObjectRef) {
   if (raw.type !== 'SchedulePlan') throw new Conflict('A SchedulePlan reference is required');
   const plan = await objects.read(raw), range = interval(plan.properties.start, plan.properties.end);
   const resources = await objects.follow(raw, 'resources');
@@ -56,7 +57,7 @@ async function readPlan(objects: Reader, raw: ObjectRef) {
   return { plan, range, calendars, activities };
 }
 
-async function validate(objects: Reader, plan: ObjectRef) {
+export async function validate(objects: Reader, plan: ObjectRef, sourceTrip?:ObjectRef) {
   const state = await readPlan(objects, plan), violations: { severity: 'hard'; code: string; activity: ObjectRef; related: ObjectRef[] }[] = [];
   const add = (code: string, activity: ObjectRef, related: ObjectRef[] = []) => violations.push({ severity: 'hard', code, activity, related });
   for (const activity of state.activities) {
@@ -74,6 +75,26 @@ async function validate(objects: Reader, plan: ObjectRef) {
       if (ms(predecessor.properties.end) > ms(span.start) || same(predecessor.ref,activity.ref)) add('dependency_order',activity.ref,[predecessor.ref]);
     }
   }
+  if(objects.model.objects.has('EventTrip'))for(const trip of await objects.follow(plan,'trips')){
+    // Completed dispatch/cancellation is historical. Its remaining activities
+    // still participate in the resource and dependency checks above.
+    if(trip.properties.state==='dispatched'||trip.properties.state==='canceled')continue;
+    // Execution rechecks the selected trip's external facts. Other reviewed
+    // activities still participate in all resource/time conflict checks above.
+    if(sourceTrip&&!same(trip.ref,sourceTrip))continue;
+    const events=await objects.follow(trip.ref,'event'),travels=await objects.follow(trip.ref,'travel'),activities=await objects.follow(trip.ref,'activities');
+    if(events.length!==1||travels.length!==1||activities.length!==2){add('trip_relationship_incomplete',trip.ref);continue;}
+    await currentService(objects,events[0]!.ref);
+    const travel=travels[0]!,event=events[0]!,p=trip.properties;
+    if(event.properties.status!=='active')add('event_not_active',trip.ref);
+    if(!Number.isFinite(ms(travel.properties.expiresAt))||!Number.isFinite(ms(travel.properties.observedAt))||ms(travel.properties.expiresAt)<=Date.now()||ms(travel.properties.observedAt)>Date.now()+5000)add('trip_route_stale',trip.ref);
+    if(typeof p.waitMinutes!=='number'||typeof p.entryMinutes!=='number'||typeof travel.properties.durationSeconds!=='number')add('trip_timing_unknown',trip.ref);
+    if(p.eventBindingId!==event.properties.bindingId||p.sourceAuthority!==travel.properties.authorityId)add('trip_source_changed',trip.ref);
+    const call=ms(event.properties.start)-Number(p.entryMinutes)*60000-Number(travel.properties.durationSeconds)*1000-Number(p.waitMinutes)*60000;
+    if(ms(p.callAt)!==call||ms(p.eventStart)!==ms(event.properties.start)||ms(p.eventEnd)!==ms(event.properties.end)||p.eventIdentity!==event.properties.nativeId||p.venueAddress!==event.properties.address)add('trip_timing_changed',trip.ref);
+    const expected=[{id:digest([trip.ref.id,'travel']),start:ms(p.callAt),end:ms(p.eventStart)},{id:digest([trip.ref.id,'event']),start:ms(p.eventStart),end:ms(p.eventEnd)}];
+    for(const span of expected)if(!activities.some(a=>a.ref.id===span.id&&ms(a.properties.start)===span.start&&ms(a.properties.end)===span.end))add('trip_activity_changed',trip.ref);
+  }
   return { valid: violations.length === 0, evaluatedAt:new Date().toISOString(), violations, calendarEvidence: state.calendars.map(c => ({ resource: c.resource.ref, sourceVersion: c.snapshot.properties.sourceVersion, observedAt: c.snapshot.properties.observedAt, expiresAt: c.snapshot.properties.expiresAt, evidence: c.snapshot.properties.evidence })), externalCalendarUpdated: false };
 }
 
@@ -87,6 +108,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       const response = calendarResponseSchema.parse(await new PARequests(context.execution.tasks).request(context.execution.task, context.operationId, 'calendar.freebusy',
         { start: input.start, end: input.end, timeZone: input.timeZone, fields: ['busy', 'windows'], purpose: input.title }, jsonSchema(calendarResponseSchema), { start:new Date(ms(input.start)).toISOString(),end:new Date(ms(input.end)).toISOString(),timeZone:input.timeZone }));
       if (response.status !== 'available') throw new Conflict(`PA calendar response is ${response.status}`);
+      if(response.exclusions?.length)throw new Conflict('This planning request did not authorize calendar exclusions');
       const now = Date.now();
       if (ms(response.start) !== ms(input.start) || ms(response.end) !== ms(input.end) || response.timeZone !== input.timeZone || ms(response.observedAt)>now+5000 || ms(response.observedAt)<now-300000 || ms(response.expiresAt)<=now || ms(response.expiresAt)>ms(response.observedAt)+300000) throw new Conflict('PA calendar response has a stale or mismatched range');
       for (const span of [...response.windows,...response.busy]) if (!contained(range,interval(span.start,span.end))) throw new Conflict('PA must clip availability to the requested range');
@@ -171,8 +193,11 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       const input=commitPlanSchema.parse(raw);
       if (!context.edit || context.execution) throw new Conflict('The PA must apply the reviewed merge Action explicitly');
       return context.edit(input.plan,async graph=>{
-        await new Scenarios(db).mergeInto(graph,input.scenarioId,input.revision,{objects:['ScheduledActivity'],links:['ActivityPlan','ActivityResource','ActivityDependency'],validate:async(view,touched)=>{
+        const serviceLinks=[...graph.model.objects.keys()].filter(type=>graph.model.implements(type,'ServiceOffering')).map(type=>graph.model.navigation(type,'plans','ServiceOffering').link);
+        await new Scenarios(db).mergeInto(graph,input.scenarioId,input.revision,{objects:['ScheduledActivity','EventTrip'],links:['ActivityPlan','ActivityResource','ActivityDependency','TripPlan','TripEvent','TripTravel','TripActivities',...serviceLinks],validate:async(view,touched,links)=>{
+          if(links.some(link=>link.to.type==='SchedulePlan'&&!same(link.to,input.plan)))throw new Conflict('Scenario contains service links outside the selected plan');
           for(const item of touched){
+            if(view.model.implements(item.ref.type,'ServiceOffering')){await currentService(view,item.ref);continue;}
             const plans=await (item.deleted?graph:view).follow(item.ref,'plan');
             if(plans.length!==1 || !same(plans[0]!.ref,input.plan))throw new Conflict('Scenario contains activities outside the selected plan');
           }

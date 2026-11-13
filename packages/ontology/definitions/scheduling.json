@@ -204,6 +204,45 @@
           },
           "description": "PA calendar busy",
           "required": true
+        },
+        "exclusions": {
+          "description": "Only the explicitly selected event may be excluded after the PA verifies its calendar identity. Internal activity allocation still reserves that event time.",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "maxItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "provider": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "eventId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "calendarEventId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "identityVerified": {
+                  "type": "boolean",
+                  "const": true
+                }
+              },
+              "required": [
+                "provider",
+                "eventId",
+                "calendarEventId",
+                "identityVerified"
+              ]
+            }
+          }
         }
       },
       "interfaces": {}

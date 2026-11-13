@@ -1,6 +1,6 @@
 # EIGOS
 
-EIGOS 通过共享 PostgreSQL 本体提供对象集查询、Function 和 Action。Gateway 接收 MCP、A2A 与 HTTP 请求，Worker 中的模型 Agent 根据任务锁定的 Ontology 自行选择查询、来源读取、Function 与 Action。业务链支持滴滴路线估价，以及向用户 PA 请求日历忙闲信息后生成排程方案。
+EIGOS 通过共享 PostgreSQL 本体提供对象集查询、Function 和 Action。Gateway 接收 MCP、A2A 与 HTTP 请求，Worker 中的模型 Agent 根据任务锁定的 Ontology 自行选择查询、来源读取、Function 与 Action。当前代码覆盖服务查询、PA 日历排程，以及经明确授权的活动报名和定时出行执行链。
 
 架构、Schema 和实际支持范围见 [Ontology 架构](docs/architecture/ontology.md)。
 
@@ -54,11 +54,11 @@ Worker 使用已安装的 `@deepseek-ai/dsh` 0.2.1-rc.5（含 `dsh-llm-pi-ai`、
 }
 ```
 
-Key 文件由运行用户拥有，权限为 `0600`。连接器调用滴滴官方 MCP 的 `maps_textsearch` 与 `taxi_estimate`，价格标记为估计，坐标保留供应商声明。真实读取要求 `sources:Didi:read`。
+Key 文件由运行用户拥有，权限为 `0600`。查询连接器调用滴滴官方 MCP 的 `maps_textsearch`、`taxi_estimate` 与 `maps_direction_driving`，价格和时长标记为估计，坐标保留供应商声明。读取要求 `Eigos/source/Didi` 的 `read_source` 资源授权。订单连接器独立，默认禁用，具体行程还需 PA 的限时授权。
 
 ## Agent 入口
 
-MCP 位于 `/mcp`，提供 `describe_ontology`、`query_ontology`、`evaluate_ontology`、`apply_ontology_action`、`submit_task`、`get_task`、`select_task_places`。
+MCP 位于 `/mcp`，提供 `describe_ontology`、`query_ontology`、`evaluate_ontology`、`apply_ontology_action`、`submit_task`、`get_task`、`select_task_places`，以及 PA 的 `list_pa_requests`、`respond_to_task` 和 Scenario 生命周期工具。
 
 A2A Agent Card 位于 `/.well-known/agent-card.json`，JSON-RPC 位于 `/a2a`，使用 A2A 1.0 的 `SendMessage`、`GetTask`、`CancelTask`。两个协议共用任务与本体服务。
 
@@ -90,9 +90,9 @@ npm test
 npm run test:e2e:run
 ```
 
-测试自动创建临时 PostgreSQL 容器，结束后移除。CI 使用独立 PostgreSQL 服务。工程回归使用明确标注的录制 Agent 决策与合成供应商响应，真实模型和真实供应商的端到端计时通过生产入口另行执行。`accepted=true` 要求链路来源为 `live_readonly`。
+测试自动创建临时 PostgreSQL 容器，结束后移除。CI 使用独立 PostgreSQL 服务。工程回归使用明确标注的录制 Agent 决策与合成供应商响应，真实模型和真实供应商的端到端计时通过生产入口另行执行。滴滴估价结果的 `accepted=true` 要求链路来源为 `live_readonly`；PA 报告、测试订单和已创建订单分别保留自己的证据与状态。
 
-这一版替换了测试期 SQLite 运行链、历史内核构造链和重复授权投影。旧源码可从 Git 提交 `6eeaf93` 恢复。当前交付的业务领域为滴滴询价和 PA 日历支持的内部排程。旧的支付、预订与其他供应商执行流程退出本版运行入口；日历通过原任务中的结构化 PA 请求／回传接入。
+这一版替换了测试期 SQLite 运行链、历史内核构造链和重复授权投影。旧源码可从 Git 提交 `6eeaf93` 恢复。服务能力通过当前 Ontology 发布定义重新接入，不恢复旧任务库或另一套执行权威。PA 的账号和日历通过结构化请求／回传接入。
 
 
 ## 发布和权限
@@ -125,6 +125,12 @@ Agent 可通过 `SchedulablePlan.prepare` 向用户 PA 请求指定范围的完�
 `create_scenario`、`list_scenarios`、`inspect_scenario`、`discard_scenario` 管理隔离方案；现有查询、Function 与 Action 接受 `scenarioId`。排程 Functions 搜索可行时段、检查资源冲突及活动依赖。Agent 保存候选方案，PA 明确选择后用 `CommitSchedulePlan` 合并；外部日历不会被写入。
 
 完整协议、数据格式、权限升级和当前支持范围见 [Scenario 与 PA 日历排程](docs/guides/scenarios-scheduling.md)。
+
+## 服务与定时出行
+
+Luma 活动、RollingGo 酒店和 Shopify 商品实现各自的 Interface，并通过 `ServiceOffering` 与 `SchedulePlan` 关联。活动出行先比较并合并 Scenario，再由 PA 批准确切的报名或叫车权限。定时检查和外部操作记录保存在同一个 PostgreSQL schema；重启、超时或未知订单结果不会触发重复发单。
+
+Luma 默认沿用原 PA 已连接的 MCP。未来执行需要 PA 持续处理 `list_pa_requests`；只有一个已登录但离线的聊天会话不足以保证无人值守。连接配置、调用契约、价格边界和当前验收范围见 [服务接口与定时出行](docs/guides/service-planning.md)。
 
 ## Ontology 运行服务
 

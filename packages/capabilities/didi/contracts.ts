@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const DIDI_TOOLS = ['maps_textsearch', 'taxi_estimate'] as const;
+export const DIDI_TOOLS = ['maps_textsearch', 'taxi_estimate', 'maps_direction_driving'] as const;
 export type DidiTool = typeof DIDI_TOOLS[number];
 const text = z.string().min(1).max(500);
 export const didiBindingSchema = z.strictObject({
@@ -12,6 +12,7 @@ const coordinate = (limit: number) => z.string().regex(/^-?\d+(?:\.\d+)?$/).refi
 export const didiToolInputs = {
   maps_textsearch: z.strictObject({ keywords: text, city: text }),
   taxi_estimate: z.strictObject({ from_lng: coordinate(180), from_lat: coordinate(90), from_name: text, to_lng: coordinate(180), to_lat: coordinate(90), to_name: text }),
+  maps_direction_driving: z.strictObject({ origin: z.string().regex(/^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$/), destination: z.string().regex(/^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$/), need_geo: z.literal(false).default(false) }),
 };
 export const didiPlaceSchema = z.strictObject({
   id: z.string().regex(/^[a-f0-9]{64}$/), name: text, address: z.string().max(1000), addressAll: z.string().max(1500), city: text,
@@ -27,6 +28,7 @@ export const didiPriceSchema = z.strictObject({
 export const didiDataSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('places'), places: z.array(didiPlaceSchema).max(50) }),
   z.strictObject({ kind: z.literal('estimate'), items: z.array(didiPriceSchema).max(50) }),
+  z.strictObject({ kind: z.literal('driving'), durationSeconds: z.number().int().positive().max(604800), distanceMeters: z.number().int().nonnegative().max(20000000) }),
 ]);
 export type DidiData = z.infer<typeof didiDataSchema>;
 export const didiReceiptSchema = z.strictObject({

@@ -80,6 +80,7 @@ export class Actions {
     let staged: { result: ObjectRef; write: (objects: Objects) => Promise<void> } | undefined;
     const result = await this.functions.invoke(model, action.function, input, {
       principal, objects: new Objects(this.db, model, access), signal, operationId: requestId, taskId: execution?.task.id, execution,
+      assertCurrent: async (client = this.db.pool) => { signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client); },
       edit: (result, write) => {
         if (staged) throw new Error('An edit Function stages one Action');
         staged = { result: objectRefSchema.parse(result), write }; return staged.result;

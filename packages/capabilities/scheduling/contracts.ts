@@ -10,7 +10,8 @@ export const calendarResponseSchema = z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('available'), complete: z.literal(true), start: timestamp, end: timestamp, timeZone: timeZoneSchema,
     observedAt: timestamp, expiresAt: timestamp, sourceVersion: z.string().min(1).max(200),
     evidence: z.enum(['pa_reported', 'synthetic']), calendars: z.array(z.string().min(1).max(200)).min(1).max(50),
-    windows: z.array(intervalSchema).max(500), busy: z.array(intervalSchema).max(1000) }),
+    windows: z.array(intervalSchema).max(500), busy: z.array(intervalSchema).max(1000),
+    exclusions:z.array(z.strictObject({provider:z.string().min(1).max(80),eventId:z.string().min(1).max(500),calendarEventId:z.string().min(1).max(500),identityVerified:z.literal(true)})).max(1).optional() }),
   z.strictObject({ status: z.enum(['denied', 'unavailable', 'incomplete']), reason: z.string().min(1).max(500) }),
 ]);
 export type CalendarResponse = z.infer<typeof calendarResponseSchema>;

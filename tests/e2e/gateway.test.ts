@@ -64,9 +64,9 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
       assert.equal(indexStatus.state,'applied',JSON.stringify(indexStatus));
       assert.equal((await call('query_ontology',{query:{type:'Place',where:{id:'process-indexed-place'}}})).items.length,1);
       const planning=planningInput(),created=await call('submit_task',{requestId:'e2e-calendar',message:JSON.stringify({planning})});
-      const poll=async()=>{
+      const poll=async(taskId=created.id)=>{
         const until=Date.now()+15000;
-        for(;;){const current=await call('get_task',{taskId:created.id});if(!['working','submitted'].includes(current.state))return current;
+        for(;;){const current=await call('get_task',{taskId});if(!['working','submitted'].includes(current.state))return current;
           if(Date.now()>until)throw new Error('Calendar task did not reach its next state');await delay(25);}
       };
       const waiting=await poll();assert.equal(waiting.state,'input-required');assert.equal(waiting.result.capability,'calendar.freebusy');
@@ -82,6 +82,25 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
       await call('apply_ontology_action',{requestId:'e2e-explicit-merge',action:'CommitSchedulePlan',input:{plan:completed.result.plan.ref,scenarioId,revision:diff.revision}});
       assert.equal((await call('query_ontology',{query:{type:'ScheduledActivity'}})).items.length,1);
       t.diagnostic(JSON.stringify({calendarTask:created.id,PA:'synthetic free/busy',submission:'MCP',continuation:'A2A',scenarioMerge:'explicit MCP Action',externalCalendarUpdated:false}));
+      const luma=await call('submit_task',{requestId:'e2e-luma',message:'luma discovery'}),lumaWait=await poll(luma.id);
+      assert.equal(lumaWait.state,'input-required');assert.equal(lumaWait.result.capability,'luma.events.read');
+      assert((await call('list_pa_requests',{})).items.some((item:{taskId:string})=>item.taskId===luma.id));
+      const eventStart=new Date(Date.now()+7200000).toISOString();
+      await call('respond_to_task',{taskId:luma.id,requestId:lumaWait.result.requestId,response:{status:'available',accountRef:'synthetic-grok-account',source:'https://mcp.luma.com',observedAt:new Date().toISOString(),expiresAt:new Date(Date.now()+240000).toISOString(),complete:true,cursor:null,proofDigest:'a'.repeat(64),items:[{nativeId:'evt-e2e',name:'Synthetic event',url:'https://luma.com/synthetic',status:'active',start:eventStart,end:new Date(Date.parse(eventStart)+3600000).toISOString(),timeZone:'Asia/Shanghai',address:'Synthetic venue',locationPrecision:'exact',registrationOpen:true,approvalRequired:false,startingPrice:0,currency:'CNY'}]}});
+      const lumaDone=await poll(luma.id);assert.equal(lumaDone.state,'completed',JSON.stringify(lumaDone));
+      const event=lumaDone.result.items[0].ref;
+      const registration=await call('apply_ontology_action',{requestId:'e2e-register-proposal',interface:{type:'AttendableEvent',object:event,action:'register'},input:{event,ticketId:'free-ticket',sourceTaskId:luma.id}});
+      const registrationData=(await call('query_ontology',{query:{type:'EventRegistration',where:{id:registration.id}}})).items[0];
+      await call('apply_ontology_action',{requestId:'e2e-register-permit',action:'AuthorizeEventRegistration',input:{registration,revision:registrationData.revision,expiresAt:new Date(Date.now()+120000).toISOString()}});
+      let request;const inboxDeadline=Date.now()+15000;
+      while(!request&&Date.now()<inboxDeadline){request=(await call('list_pa_requests',{})).items.find((item:{request:{capability:string}})=>item.request.capability==='luma.participant.register');if(!request)await delay(25);}
+      assert(request);assert.equal(request.sourceTaskId,luma.id);
+      await call('respond_to_task',{taskId:request.taskId,requestId:request.request.requestId,response:{status:'confirmed',eventId:'evt-e2e',ticketId:'free-ticket',registrationId:'reg-e2e-original',participantRef:'synthetic-participant',accountRef:'synthetic-grok-account',amountMinor:'0',independentRead:true,observedAt:new Date().toISOString(),proofDigest:'b'.repeat(64)}});
+      assert.equal((await poll(request.taskId)).state,'completed');
+      const registered=(await call('evaluate_ontology',{function:'readEventRegistration',input:{registration}})).registration;
+      assert.equal(registered.properties.state,'confirmed');assert.equal(registered.properties.evidence,'pa_reported');assert.equal((await call('get_task',{taskId:luma.id})).state,'completed');
+      assert.equal((await call('query_ontology',{query:{type:'RideOrder'}})).items.length,0);
+      t.diagnostic(JSON.stringify({lumaTask:luma.id,scheduledRegistrationTask:request.taskId,PA:'synthetic Grok/Luma responses',externalMutations:0}));
     } finally {await client.close();}
     t.diagnostic(JSON.stringify({ messageToQuoteMs: quoteElapsed, source: 'synthetic MCP responses', database: 'PostgreSQL', processes: ['Gateway', 'Worker', 'Indexer'] }));
   } finally { await Promise.all([stop(gateway), stop(worker),stop(indexer)]); await f.close(); }

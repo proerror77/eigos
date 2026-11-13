@@ -13,7 +13,7 @@ import type { OntologyDocument } from '../../ontology/schema.js';
 import type { FunctionHandler } from '../../runtime/functions.js';
 
 /** DiDi's source normalization and Object Data Funnel. It does not choose an operation. */
-export function rideCapabilities(db: Database, resolve: SourceResolver, additional: ReadonlyMap<string, FunctionHandler> = new Map(), definitions?: OntologyDocument['functionTypes'], extensions: RuntimeExtensions = {}) {
+export function rideCapabilities(db: Database, resolve: SourceResolver, additional: ReadonlyMap<string, FunctionHandler> = new Map(), definitions?: OntologyDocument['functionTypes'], extensions: RuntimeExtensions = {}, additionalSources: ReadonlyMap<string, SourceProjection> = new Map()) {
   let sources: Sources;
   const effects=new Effects(db,extensions.effects??new Map());
   const functions = rideFunctions(resolve, new Map([
@@ -54,7 +54,7 @@ export function rideCapabilities(db: Database, resolve: SourceResolver, addition
       return { receipt, objects, request };
     },
   };
-  sources = new Sources(db, functions, new Map(['DidiPlaces', 'DidiEstimates'].map(name => [name, projection])));
+  sources = new Sources(db, functions, new Map([...['DidiPlaces', 'DidiEstimates'].map(name => [name, projection] as const), ...additionalSources]));
   return { functions, actions: new Actions(db, functions, effects), sources, describe: (model: Ontology) => {
     effects.check(model.document.actionTypes.flatMap(action=>action.effects?.map(effect=>effect.handler)??[]));
     return {functions:functions.bindings(model),sources:sources.bindings(model)};

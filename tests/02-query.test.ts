@@ -27,7 +27,7 @@ test('definition administration does not grant object data or Action execution',
     await new Objects(f.db, f.model, f.access).create(ref, { id: ref.id, name: 'private' });
     await setGrants(f.db, principal.owner, [{ resource: 'Eigos', permission: 'manage_definition' }]);
     const access = await Access.load(f.db, principal), objects = new Objects(f.db, f.model, access);
-    assert.equal(access.describe(f.model).objectTypes.length, 9);
+    assert.equal(access.describe(f.model).objectTypes.length, f.model.document.objectTypes.length);
     assert.equal((await objects.query({ type: 'RideEstimatable' })).items.length, 0);
     await assert.rejects(objects.read(ref), /Permission/);
     await assert.rejects(f.capabilities.actions.apply(access, f.model, 'EstimateRide', { city: '上海', origin: 'A', destination: 'B' }, 'denied'), /Permission/);

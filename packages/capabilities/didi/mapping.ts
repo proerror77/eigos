@@ -11,6 +11,12 @@ export function estimatedMoney(price: string) {
 
 export function mapDidiResult(tool: DidiTool, value: unknown): DidiData {
   const result = z.object({ isError: z.boolean().optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional() })).max(100).optional(), structuredContent: z.unknown().optional() }).parse(value);
+  if (tool === 'maps_direction_driving') {
+    if (result.isError) throw new Error('Driving route rejected');
+    const raw = result.structuredContent ?? JSON.parse(result.content?.find(item=>item.type==='text')?.text ?? 'null');
+    const route = z.object({ status:z.literal('success'),duration:z.object({value:z.number().int().positive()}),distance:z.object({value:z.number().int().nonnegative()}) }).parse(raw);
+    return didiDataSchema.parse({kind:'driving',durationSeconds:route.duration.value,distanceMeters:route.distance.value});
+  }
   if (result.isError) throw new Error('Rejected MCP result');
   if (tool === 'maps_textsearch') {
     if (result.content?.[0]?.type !== 'text' || !result.content[0].text) throw new Error('Missing map JSON');

@@ -58,6 +58,16 @@ export class Objects {
     this.access.read(this.model, input.type);
     return this.visible(await this.stored(input));
   }
+  /** Source fields must match their baseline; unrelated local notes may remain. */
+  async matchesSource(ref:ObjectRef,sourceName:string):Promise<boolean>{
+    const mapping=this.model.sources.get(sourceName),provider=mapping&&this.model.functions.get(mapping.function)?.source;
+    if(!mapping||mapping.objectType!==ref.type||!provider)throw new Error('Source certification requires a matching datasource');
+    this.access.source(this.model,provider);
+    const object=await this.stored(ref);this.access.readRow(this.model,ref.type,object.properties);
+    const baseline=(await this.db.readQuery(`SELECT properties FROM ${this.db.schema}.source_values WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND source=$5`,[this.model.projection,this.owner,ref.type,ref.id,sourceName],this.client)).rows[0]?.properties as Record<string,unknown>|undefined;
+    if(!baseline)return false;
+    return Object.entries(baseline).every(([field,value])=>Object.hasOwn(object.properties,field)&&this.access.cell(this.model,ref.type,field,object.properties)&&digest(object.properties[field])===digest(value));
+  }
   async query(input: Query) {
     await checkScenario(this.db, this.model, this.owner, this.client);
     const args = querySchema.parse(input);

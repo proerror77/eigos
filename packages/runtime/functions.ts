@@ -4,11 +4,13 @@ import { Objects } from './objects.js';
 import type { Tasks, Task } from './tasks.js';
 import type { ObjectRef, OntologyDocument } from '../ontology/schema.js';
 import type { PublishedOntology } from './metadata.js';
+import type { Sql } from './database.js';
 
 export interface FunctionContext {
-  principal: Principal; objects: Pick<Objects, 'model' | 'access' | 'read' | 'query' | 'follow'>; signal: AbortSignal; taskId?: string;
+  principal: Principal; objects: Pick<Objects, 'model' | 'access' | 'read' | 'query' | 'follow' | 'matchesSource'>; signal: AbortSignal; taskId?: string;
   execution?: { task: Task; tasks: Tasks };
   operationId?: string;
+  assertCurrent?: (client?: Sql) => Promise<void>;
   edit?: (result: ObjectRef, write: (objects: Objects) => Promise<void>) => ObjectRef;
 }
 export type FunctionHandler = (input: Record<string, unknown>, context: FunctionContext) => unknown | Promise<unknown>;
