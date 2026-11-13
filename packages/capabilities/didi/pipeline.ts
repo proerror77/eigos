@@ -1,3 +1,4 @@
+import {EntityResolution} from '../../runtime/entity-resolution.js';
 import type { RuntimeExtensions } from '../../runtime/extensions.js';
 import { Effects } from '../../runtime/effects.js';
 import { digest } from '../../core/identity.js';
@@ -28,9 +29,9 @@ export function rideCapabilities(db: Database, resolve: SourceResolver, addition
       await graph.create(receipt, { id: receipt.id, name: result.receipt.tool, bindingId: result.receipt.bindingId, tool: result.receipt.tool,
         observedAt: result.receipt.receivedAt, evidence: result.evidence, contentDigest: result.receipt.resultDigest });
       if (result.data.kind === 'places' && source === 'DidiPlaces') {
-        const rows = result.data.places.map(place => ({ id: digest([result.receipt.bindingId, place.id]), name: place.name, city: place.city,
+        const rows = await Promise.all(result.data.places.map(async place => ({ id: (await new EntityResolution(db).resolve(graph,source,String(place.id),digest([result.receipt.bindingId,place.id]))).id, name: place.name, city: place.city,
           address: place.addressAll || place.address || place.name, coordinates: { lat: place.lat, lng: place.lng }, coordinateSystem: place.coordinateSystem,
-          sourceBinding: result.receipt.bindingId, observedAt: result.receipt.receivedAt }));
+          sourceBinding: result.receipt.bindingId, observedAt: result.receipt.receivedAt })));
         const objects = await ingest(graph, graph.model, source, rows);
         await graph.linkBatch(objects.map(ref => ({ type: 'PlaceSource', from: ref, to: receipt })));
         return { receipt, objects };
@@ -56,7 +57,7 @@ export function rideCapabilities(db: Database, resolve: SourceResolver, addition
   };
   sources = new Sources(db, functions, new Map(['DidiPlaces', 'DidiEstimates'].map(name => [name, projection])));
   return { functions, actions: new Actions(db, functions, effects), sources, describe: (model: Ontology) => {
-    effects.check(model.document.actionTypes.flatMap(action=>action.effects?.map(effect=>effect.handler)??[]));
+    effects.check(model.resolvedDocument.actionTypes.flatMap(action=>action.effects?.map(effect=>effect.handler)??[]));
     return {functions:functions.bindings(model),sources:sources.bindings(model)};
   } };
 }

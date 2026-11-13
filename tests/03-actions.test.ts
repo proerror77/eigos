@@ -40,7 +40,7 @@ test('an invalid edit Function return cannot commit its staged writes', async ()
   const f = await fixture();
   try {
     const parameters = { type: 'object', properties: {}, additionalProperties: false };
-    const definition = new Ontology({ id: 'Eigos', version: 'broken-edit', objectTypes: [{ ...f.model.object('Route'), interfaces: {} }], interfaceTypes: [], linkTypes: [], dataSources: [],
+    const definition = new Ontology({ id: 'Eigos', version: 'broken-edit', objectTypes: [{apiName:'Route',displayName:'Route',description:'Route',primaryKey:'id',titleProperty:'name',interfaces:{},properties:{id:{description:'ID',schema:{type:'string'},required:true},name:{description:'Name',schema:{type:'string'},required:true}}}], interfaceTypes: [], linkTypes: [], dataSources: [],
       functionTypes: [{ apiName: 'BrokenEdit', description: 'Invalid return regression', edits: true, parameters, returns: { type: 'string' } }],
       actionTypes: [{ apiName: 'BrokenAction', description: 'Invalid return regression', parameters, objectParameters: {}, submissionCriteria: [], function: 'BrokenEdit' }],
     });

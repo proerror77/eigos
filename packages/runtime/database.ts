@@ -1,3 +1,10 @@
+import {initializeOntologyDataMigrations} from './ontology-migrations.js';
+import {initializeEntityResolution} from './entity-resolution.js';
+import {initializeSemantic} from './semantic.js';
+import {initializeApplications} from './applications.js';
+import {initializeAutomation} from './automation.js';
+import {initializeScenarioLifecycle} from './scenarios.js';
+import {initializeActionUndo} from './action-journal.js';
 import { initializeObjectSets } from './object-sets.js';
 import { initializeGovernance } from './governance.js';
 import { initializeEffects } from './effects.js';
@@ -125,6 +132,13 @@ export class Database {
       CREATE TABLE IF NOT EXISTS ${s}.pa_requests (id uuid PRIMARY KEY, task_id uuid NOT NULL REFERENCES ${s}.tasks(id), owner text NOT NULL,
         request_key text NOT NULL, request jsonb NOT NULL, response jsonb, response_digest text, created_at timestamptz NOT NULL DEFAULT now(),
         UNIQUE(task_id,request_key));`);
+    await initializeOntologyDataMigrations(this);
+    await initializeEntityResolution(this);
+    await initializeSemantic(this);
+    await initializeApplications(this);
+    await initializeAutomation(this);
+    await initializeScenarioLifecycle(this);
+    await initializeActionUndo(this);
     await initializeSecurity(this);
     await initializeObjectSets(this);
     await initializeGovernance(this);

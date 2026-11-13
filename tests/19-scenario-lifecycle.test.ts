@@ -98,6 +98,7 @@ test('persisted Scenario objects are linkable through Actions and shared readers
 test('definitions without Scenario metadata continue creating isolated scenarios',async()=>{
   const f=await lifecycleFixture();try{
     const document=structuredClone(f.model.document);document.objectTypes=document.objectTypes.filter(type=>type.apiName!=='OntologyScenario');
+  for(const group of document.typeGroups??[])group.objectTypes=group.objectTypes.filter(type=>type!=='OntologyScenario');
     const model=await f.metadata.publish(document,f.capabilities,f.publisher);
     await setGrants(f.db,principal.owner,memberGrants(model));const access=await Access.load(f.db,principal);
     const scene=await f.scenarios.create(access,model,{requestId:'legacy-definition',name:'Legacy definition'});

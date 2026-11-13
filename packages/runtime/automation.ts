@@ -175,6 +175,7 @@ export class Automation {
             if('literal'in binding)return [key,binding.literal];
             if('object'in binding)return [key,object.ref];
             let value:unknown=object.properties;
+            if(binding.property==='$revision')return [key,object.revision];
             for(const field of binding.property.split('.'))value=value&&typeof value==='object'&&Object.hasOwn(value,field)?Reflect.get(value,field):undefined;
             return [key,value];
           }));

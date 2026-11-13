@@ -31,8 +31,8 @@ export class Objects {
   private assertStoredFields(ref:ObjectRef,properties:Record<string,unknown>) {
     if(Object.keys(properties).some(field=>this.model.object(ref.type).properties[field]?.derived))throw new Conflict('Derived properties are read-only');
   }
-  private writeType(type: string) {
-    if(type===scenarioMetadataType)throw new Conflict('Edit Scenario metadata through its lifecycle API');
+  private writeType(type: string, endpoint=false) {
+    if(type===scenarioMetadataType&&!endpoint)throw new Conflict('Edit Scenario metadata through its lifecycle API');
     this.access.definition(this.model, 'object', type);
     for (const source of this.model.sources.values()) if (source.objectType === type) {
       const provider = this.model.functions.get(source.function)?.source;
@@ -74,12 +74,13 @@ export class Objects {
   }
   async read(input: ObjectRef): Promise<ObjectData> {
     if(this.client===this.db.pool&&Object.values(this.model.object(input.type).properties).some(property=>property.derived)) {
+      const access=await Access.load(this.db,this.access.principal);
       const result=await this.db.transaction(async client=>{
         await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',[],client);
-        return new Objects(this.db,this.model,this.access,client).read(input);
+        return new Objects(this.db,this.model,access,client).read(input);
       });
-      if(!await this.access.canReturn(this.access.dataRequirements()))throw new Conflict('Derived result permissions changed');
-      return result;
+      if(!await access.canReturn(access.dataRequirements()))throw new Conflict('Derived result permissions changed');
+      this.access.adoptReads(access);return result;
     }
     return new DerivedProperties(this).enrich(await this.readStored(input));
   }
@@ -90,12 +91,13 @@ export class Objects {
     const derived=types.some(type=>Object.values(this.model.object(type).properties).some(property=>property.derived));
     if(!args.filter&&!args.orderBy&&!derived&&!fields.some(field=>field.includes('.')))return this.queryStored(args);
     if(this.client===this.db.pool) {
+      const access=await Access.load(this.db,this.access.principal);
       const result=await this.db.transaction(async client=>{
         await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',[],client);
-        return new Objects(this.db,this.model,this.access,client).query(args);
+        return new Objects(this.db,this.model,access,client).query(args);
       });
-      if(!await this.access.canReturn(this.access.dataRequirements()))throw new Conflict('Query permissions changed');
-      return result;
+      if(!await access.canReturn(access.dataRequirements()))throw new Conflict('Query permissions changed');
+      this.access.adoptReads(access);return result;
     }
     for(const field of fields)for(const type of types)this.model.propertyName(type,args.type,field.split('.')[0]!);
     const evaluator=new DerivedProperties(this),all:ObjectData[]=[];
@@ -193,12 +195,13 @@ export class Objects {
     if (view !== ref.type) this.access.definition(this.model, 'interface', view);
     const nav = this.model.navigation(ref.type, link, view);
     if(this.client===this.db.pool&&[ref.type,nav.target].some(type=>Object.values(this.model.object(type).properties).some(property=>property.derived))) {
+      const access=await Access.load(this.db,this.access.principal);
       const result=await this.db.transaction(async client=>{
         await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',[],client);
-        return new Objects(this.db,this.model,this.access,client).follow(ref,link,view);
+        return new Objects(this.db,this.model,access,client).follow(ref,link,view);
       });
-      if(!await this.access.canReturn(this.access.dataRequirements()))throw new Conflict('Derived result permissions changed');
-      return result;
+      if(!await access.canReturn(access.dataRequirements()))throw new Conflict('Derived result permissions changed');
+      this.access.adoptReads(access);return result;
     }
     await this.read(ref); this.access.read(this.model, nav.target); this.access.definition(this.model, 'link', nav.link);
     const from = nav.forward ? 'from' : 'to', to = nav.forward ? 'to' : 'from';
@@ -210,6 +213,11 @@ export class Objects {
       JOIN ${tables.objects} o ON o.projection=l.projection AND o.owner=l.owner AND o.type=l.${to}_type AND o.id=l.${to}_id
       WHERE l.owner=$1 AND l.type=$2 AND l.${from}_type=$3 AND l.${from}_id=$4 AND l.projection=$5 AND ${policy} ORDER BY o.id COLLATE "C" LIMIT 101`, values, this.client);
     if (result.rows.length > 100) throw new Error('Relationship exceeds the complete read limit');
+    if(nav.target===scenarioMetadataType){
+      const items:ObjectData[]=[];
+      for(const row of result.rows)try{items.push(await scenarioMetadataRead(this,{type:scenarioMetadataType,id:String(row.id)}));}catch(error){if(!(error instanceof NotFound))throw error;}
+      return items;
+    }
     const evaluator=new DerivedProperties(this);
     return Promise.all(result.rows.map(row=>evaluator.enrich(this.visible(this.row(row)))));
   }
@@ -282,7 +290,7 @@ export class Objects {
     if (!edges.length) return;
     for (const edge of edges) { await this.read(edge.from); await this.read(edge.to); }
     const rows = edges.map(edge => {
-      this.access.definition(this.model, 'link', edge.type); this.writeType(edge.from.type); this.writeType(edge.to.type);
+      this.access.definition(this.model, 'link', edge.type); this.writeType(edge.from.type,true); this.writeType(edge.to.type,true);
       const definition = this.model.links.get(edge.type);
       if (!definition || edge.from.type !== definition.from.type || edge.to.type !== definition.to.type) throw new Error('Invalid link endpoints');
       return { type: edge.type, from_type: edge.from.type, from_id: edge.from.id, to_type: edge.to.type, to_id: edge.to.id, single_from: definition.from.cardinality === 'one', single_to: definition.to.cardinality === 'one' };
@@ -306,7 +314,7 @@ export class Objects {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).unlink(edge));
     await this.prepareWrite(); this.access.definition(this.model, 'link', edge.type);
     await this.read(edge.from); await this.read(edge.to);
-    this.writeType(edge.from.type); this.writeType(edge.to.type);
+    this.writeType(edge.from.type,true); this.writeType(edge.to.type,true);
     const definition = this.model.links.get(edge.type);
     if (!definition || definition.from.type !== edge.from.type || definition.to.type !== edge.to.type) throw new Error('Invalid link endpoints');
     if (this.model.scenario) return stageLink(this.db, this.model, this.owner, edge, true, this.client);

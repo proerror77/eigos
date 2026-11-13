@@ -19,7 +19,7 @@ export interface VersionedFunction {
   implementationId: string;
   handler: FunctionHandler;
 }
-const contract = ({ parameters, returns, source, edits }: Definition) => digest({ parameters, returns, source, edits });
+const contract = ({ parameters, returns, source, edits, dependencies }: Definition) => digest({ parameters, returns, source, edits, ...(dependencies?{dependencies}:{}) });
 const key = (definition: Definition) => JSON.stringify([definition.apiName, definition.version ?? null]);
 export class Functions {
   private readonly registered = new Map<string, { contract: string; binding: string; handler: FunctionHandler }>();
@@ -42,7 +42,7 @@ export class Functions {
     });
   }
   bindings(model: Ontology): Record<string, string> {
-    return Object.fromEntries(model.document.functionTypes.map(fn => {
+    return Object.fromEntries(model.resolvedDocument.functionTypes.map(fn => {
       const entry = this.registered.get(key(fn));
       if (!entry || entry.contract !== contract(fn)) throw new Error(`Function implementation is unavailable or incompatible: ${fn.apiName}`);
       return [fn.apiName, entry.binding];

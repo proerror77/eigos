@@ -11,6 +11,7 @@ export const configSchema = z.object({
   HOST: z.string().default('127.0.0.1'), PORT: z.coerce.number().int().default(3000),
   PUBLIC_URL: z.url().default('http://127.0.0.1:3000'),
   EIGOS_AUTH_MODE: z.enum(['jwt', 'development']).default('jwt'), EIGOS_DEV_TOKEN: z.string().min(32).optional(),
+  OAUTH_WORKBENCH_CLIENT_ID: z.string().min(1).optional(),
   OAUTH_ISSUER: z.url().optional(), OAUTH_AUDIENCE: z.string().optional(), OAUTH_JWKS_URL: z.url().optional(),
   OAUTH_TENANT_CLAIM: z.string().min(1).default('tenant_id'),
   EIGOS_EXTENSION_MODULE: z.string().optional(),

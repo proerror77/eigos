@@ -38,6 +38,8 @@ else {
         const expressions = [item.policy.read,...Object.values(item.policy.properties)];
         const fields = [...Object.keys(item.policy.properties),...expressions.flatMap(e=>e?[...e.all,...e.any].map(c=>c.property):[]),...(item.policy.markingsProperty?[item.policy.markingsProperty]:[])];
         if (fields.some(field=>!type.properties[field])) throw new Error('Unknown security policy property');
+        const controls=[...expressions.flatMap(e=>e?[...e.all,...e.any].map(c=>c.property):[]),...(item.policy.markingsProperty?[item.policy.markingsProperty]:[])];
+        if(controls.some(field=>type.properties[field]?.derived))throw new Error('Security controls require stored properties');
       }
       await db.transaction(async client => {
         for (const item of config.policies ?? []) await db.query(`INSERT INTO ${db.schema}.object_policies VALUES($1,$2,$3) ON CONFLICT(ontology,type) DO UPDATE SET policy=excluded.policy`,[model.document.id,item.type,item.policy],client);

@@ -21,7 +21,7 @@ export class Sources {
     return { mapping, projection };
   }
   bindings(model: Ontology) {
-    return Object.fromEntries(model.document.dataSources.map(source => { this.projection(model, source.apiName); return [source.apiName, digest(source)]; }));
+    return Object.fromEntries(model.resolvedDocument.dataSources.map(source => { this.projection(model, source.apiName); return [source.apiName, digest(source)]; }));
   }
   async read(model: PublishedOntology, name: string, input: Record<string, unknown>, access: Access, task: Task | undefined, tasks: Tasks | undefined, signal: AbortSignal) {
     const principal = access.principal; access.definition(model, 'datasource', name);
