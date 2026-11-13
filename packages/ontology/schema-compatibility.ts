@@ -10,6 +10,24 @@ const types = (schema: Schema): string[] =>
 const object = (value: unknown): Schema =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Schema) : {};
 
+function numericBounds(schema: Schema, integers: boolean) {
+  const minimum = typeof schema.minimum === 'number' ? schema.minimum : -Infinity;
+  const exclusiveMinimum = typeof schema.exclusiveMinimum === 'number' ? schema.exclusiveMinimum : -Infinity;
+  const maximum = typeof schema.maximum === 'number' ? schema.maximum : Infinity;
+  const exclusiveMaximum = typeof schema.exclusiveMaximum === 'number' ? schema.exclusiveMaximum : Infinity;
+  let lower = Math.max(minimum, exclusiveMinimum);
+  let lowerExclusive = Number.isFinite(exclusiveMinimum) && exclusiveMinimum >= minimum;
+  let upper = Math.min(maximum, exclusiveMaximum);
+  let upperExclusive = Number.isFinite(exclusiveMaximum) && exclusiveMaximum <= maximum;
+  if (integers) {
+    const first = lowerExclusive ? Math.floor(lower) + 1 : Math.ceil(lower);
+    const last = upperExclusive ? Math.ceil(upper) - 1 : Math.floor(upper);
+    if (Number.isSafeInteger(first)) { lower = first; lowerExclusive = false; }
+    if (Number.isSafeInteger(last)) { upper = last; upperExclusive = false; }
+  }
+  return { lower, lowerExclusive, upper, upperExclusive };
+}
+
 function choicesDisjoint(left: Schema, right: Schema): boolean {
   const leftTypes = types(left), rightTypes = types(right);
   const overlap = (a: string, b: string) => a === b || [a, b].every(type => type === 'number' || type === 'integer');
@@ -68,14 +86,20 @@ export function schemaSubset(supplied: Schema, accepted: Schema): boolean {
       values.some((value) => !permitted.some((option) => digest(option) === digest(value))))
   )
     return false;
-  for (const keyword of ['minimum', 'exclusiveMinimum', 'minLength', 'minItems', 'minProperties']) {
+  const integers = actualTypes.includes('integer') && !actualTypes.includes('number');
+  const actualBounds = numericBounds(supplied, integers), allowedBounds = numericBounds(accepted, integers);
+  if (actualBounds.lower < allowedBounds.lower
+    || actualBounds.lower === allowedBounds.lower && allowedBounds.lowerExclusive && !actualBounds.lowerExclusive
+    || actualBounds.upper > allowedBounds.upper
+    || actualBounds.upper === allowedBounds.upper && allowedBounds.upperExclusive && !actualBounds.upperExclusive) return false;
+  for (const keyword of ['minLength', 'minItems', 'minProperties']) {
     if (
       typeof accepted[keyword] === 'number' &&
       (typeof supplied[keyword] !== 'number' || supplied[keyword] < accepted[keyword])
     )
       return false;
   }
-  for (const keyword of ['maximum', 'exclusiveMaximum', 'maxLength', 'maxItems', 'maxProperties']) {
+  for (const keyword of ['maxLength', 'maxItems', 'maxProperties']) {
     if (
       typeof accepted[keyword] === 'number' &&
       (typeof supplied[keyword] !== 'number' || supplied[keyword] > accepted[keyword])

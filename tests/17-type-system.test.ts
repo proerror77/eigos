@@ -263,3 +263,22 @@ test('packages include shared derived links and target types using each concrete
     assert.notEqual(publication.release,model.release);
   }finally{await f.close();}
 });
+
+
+test('numeric bounds compare inclusive and exclusive limits without weakening equal boundaries',async()=>{
+  const {schemaSubset}=await import('../packages/ontology/schema-compatibility.js');
+  const widestInteger={type:'integer',minimum:-9007199254740991,maximum:9007199254740991};
+  assert.equal(schemaSubset({type:'integer',exclusiveMinimum:0,maximum:9007199254740991},widestInteger),true);
+  for(const type of ['number','integer']){
+    assert.equal(schemaSubset({type,exclusiveMinimum:0},{type,minimum:0}),true);
+    assert.equal(schemaSubset({type,minimum:0},{type,exclusiveMinimum:0}),false);
+    assert.equal(schemaSubset({type,exclusiveMaximum:10},{type,maximum:10}),true);
+    assert.equal(schemaSubset({type,maximum:10},{type,exclusiveMaximum:10}),false);
+    assert.equal(schemaSubset({type,minimum:1,exclusiveMinimum:0},{type,exclusiveMinimum:1}),false);
+    assert.equal(schemaSubset({type,maximum:9,exclusiveMaximum:10},{type,exclusiveMaximum:9}),false);
+  }
+  assert.equal(schemaSubset({type:'number',exclusiveMinimum:0},{type:'number',minimum:1}),false);
+  assert.equal(schemaSubset({type:'integer',exclusiveMinimum:0},{type:'integer',minimum:1}),true);
+  assert.equal(schemaSubset({type:'integer',exclusiveMaximum:10},{type:'integer',maximum:9}),true);
+  assert.equal(schemaSubset({type:'number',minimum:1,maximum:9},{type:'number',exclusiveMinimum:0,exclusiveMaximum:10}),true);
+});
