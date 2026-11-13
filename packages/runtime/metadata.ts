@@ -80,7 +80,8 @@ export class Metadata {
     if (model.runtimeId !== this.db.runtimeId || digest(model.bindings) !== digest(bindings.describe(model))) throw new Conflict('The publication does not match this runtime implementation');
   }
   async active(id = 'Eigos', client?: Sql, lock = false): Promise<PublishedOntology> {
-    const result = await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1${lock ? ' FOR SHARE' : ''}`, [id], client);
+    if (lock) await this.db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', ['publication:' + id], client);
+    const result = await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [id], client);
     if (!result.rows[0]) throw new Error('Publish the ontology before starting the runtime');
     return this.get(String(result.rows[0].release), client);
   }

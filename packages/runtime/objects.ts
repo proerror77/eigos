@@ -17,7 +17,8 @@ export class Objects {
   private writeReady?: Promise<void>;
   private prepareWrite() {
     return this.writeReady ??= (async () => {
-      const current = await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1 FOR SHARE`, [this.model.document.id], this.client);
+      await this.db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', ['publication:' + this.model.document.id], this.client);
+      const current = await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [this.model.document.id], this.client);
       if (current.rows[0]?.release !== this.model.release) throw new Conflict('Historical and prepared projections are read-only');
     })();
   }

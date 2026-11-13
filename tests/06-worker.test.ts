@@ -146,3 +146,35 @@ test('permission revocation during a source response blocks late business edits'
     assert.equal((await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.objects WHERE projection=$1 AND type='RideRequest'`, [f.model.projection])).rows[0]!.n, 0);
   } finally { await f.close(); }
 });
+
+test('the production database role can execute an inquiry without publication update privileges', async () => {
+  const f = await fixture();
+  const role = 'eigos_limited_' + f.schema.slice(-32);
+  let limited: import('../packages/runtime/database.js').Database | undefined;
+  try {
+    await f.db.query(`CREATE ROLE "${role}"`);
+    await f.db.query(`GRANT USAGE ON SCHEMA ${f.db.schema} TO "${role}";
+      GRANT SELECT ON ${f.db.schema}.ontology,${f.db.schema}.releases,${f.db.schema}.resource_grants,${f.db.schema}.property_security TO "${role}";
+      GRANT SELECT,INSERT,UPDATE ON ${f.db.schema}.objects,${f.db.schema}.tasks,${f.db.schema}.source_calls TO "${role}";
+      GRANT SELECT,INSERT ON ${f.db.schema}.links,${f.db.schema}.actions TO "${role}";`);
+    const { Database } = await import('../packages/runtime/database.js');
+    const { Metadata } = await import('../packages/runtime/metadata.js');
+    const { Tasks } = await import('../packages/runtime/tasks.js');
+    const { rideCapabilities } = await import('../packages/capabilities/didi/pipeline.js');
+    const { FixtureAgent } = await import('./agent-driver.js');
+    const url = new URL(process.env.EIGOS_TEST_DATABASE_URL!); url.searchParams.set('options', '-c role=' + role);
+    limited = new Database(url.toString(), f.schema);
+    const metadata = new Metadata(limited), tasks = new Tasks(limited, metadata), capabilities = rideCapabilities(limited, f.source);
+    const worker = new Worker(tasks, new OntologyAgent(limited, metadata, tasks, capabilities, new FixtureAgent()));
+    await assert.rejects(limited.query(`UPDATE ${limited.schema}.ontology SET release=release`), /permission denied/);
+    const task = await tasks.submit(principal, { requestId: 'production-role', message: '只询价', route });
+    await worker.runOne();
+    assert.equal((await tasks.get(principal, task.id)).state, 'completed');
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    worker.stop();
+  } finally {
+    await limited?.close();
+    await f.db.query(`DROP OWNED BY "${role}"; DROP ROLE "${role}"`);
+    await f.close();
+  }
+});
