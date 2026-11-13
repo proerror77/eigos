@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { OntologyDataMigrations } from './ontology-migrations.js';
+export { migrateOntologyDataSchema, readDataMigrationSchema } from './ontology-migrations.js';
 import { Conflict, digest } from '../core/identity.js';
 import { Ontology } from '../ontology/model.js';
 import { ontologyName, ontologySchema, type OntologyDocument } from '../ontology/schema.js';
@@ -142,6 +144,8 @@ export class OntologyPackages {
       (target[field] as unknown[]).push(entry.value);
     }
   }
+  async migrateData(access:Access,raw:unknown){ return new OntologyDataMigrations(this.db,this.metadata).copy(access,raw); }
+  async migrationReceipt(access:Access,raw:unknown){ return new OntologyDataMigrations(this.db,this.metadata).read(access,raw); }
   async migrate(access:Access,raw:unknown){
     const input=migrateDefinitionsSchema.parse(raw);
     if(input.ontology===input.targetOntology)throw new Conflict('Definition migration requires distinct Ontologies');
