@@ -1,5 +1,7 @@
-import { digest, Conflict, requireScope, type Principal } from '../core/identity.js';
-import { validator, Ontology } from '../ontology/model.js';
+import { digest, Conflict } from '../core/identity.js';
+import { validator } from '../ontology/model.js';
+import { PublishedOntology } from './metadata.js';
+import { Access } from './access.js';
 import { objectRefSchema, type ObjectRef, type Value } from '../ontology/schema.js';
 import { Database, type Sql } from './database.js';
 import { Objects } from './objects.js';
@@ -13,20 +15,23 @@ const evaluate = (expression: Value, input: Record<string, unknown>): unknown =>
 };
 export class Actions {
   constructor(private readonly db: Database, private readonly functions: Functions) {}
-  async apply(principal: Principal, model: Ontology, actionName: string, raw: Record<string, unknown>, requestId: string, beforeCommit?: (client: Sql) => Promise<void>, execution?: FunctionContext['execution'], signal = AbortSignal.timeout(120000)) {
-    requireScope(principal, 'ontology:write');
+  async apply(access: Access, model: PublishedOntology, actionName: string, raw: Record<string, unknown>, requestId: string, beforeCommit?: (client: Sql) => Promise<void>, execution?: FunctionContext['execution'], signal = AbortSignal.timeout(120000)) {
+    const principal = access.principal;
+    await access.refresh(); access.action(model, actionName);
+    if (model.runtimeId !== this.db.runtimeId) throw new Conflict('Historical Actions are read-only');
+    if ((await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [model.document.id])).rows[0]?.release !== model.release) throw new Conflict('Historical and prepared Actions are read-only');
     const action = model.action(actionName), input = validator(action.parameters).parse(raw) as Record<string, unknown>;
-    const fingerprint = digest({ release: model.digest, action: actionName, input });
+    const fingerprint = digest({ release: model.release, action: actionName, input });
     const commit = (write?: (objects: Objects) => Promise<ObjectRef>) => this.db.transaction(async client => {
       // The request key serializes only duplicate submissions of this action.
       await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify([principal.owner, requestId])], client);
       const previous = await this.db.query(`SELECT digest,result FROM ${this.db.schema}.actions WHERE owner=$1 AND request_id=$2`, [principal.owner, requestId], client);
       if (previous.rows[0]) {
         if (previous.rows[0].digest !== fingerprint) throw new Conflict('Request ID already used with different action input');
-        signal.throwIfAborted(); await beforeCommit?.(client);
+        signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client);
         return objectRefSchema.parse(previous.rows[0].result);
       }
-      const objects = new Objects(this.db, model, principal.owner, client);
+      const objects = new Objects(this.db, model, access, client);
       for (const [name, type] of Object.entries(action.objectParameters)) {
         const ref = objectRefSchema.parse(input[name]);
         if (!model.implements(ref.type, type)) throw new Error('Action input type does not satisfy its contract');
@@ -49,8 +54,8 @@ export class Actions {
         }
       }
       const result = write ? objectRefSchema.parse(await write(objects)) : ref(action.result!);
-      await this.db.query(`INSERT INTO ${this.db.schema}.actions(owner,request_id,digest,action,release,result) VALUES($1,$2,$3,$4,$5,$6)`, [principal.owner, requestId, fingerprint, actionName, model.digest, result], client);
-      signal.throwIfAborted(); await beforeCommit?.(client);
+      await this.db.query(`INSERT INTO ${this.db.schema}.actions(owner,request_id,digest,action,release,result) VALUES($1,$2,$3,$4,$5,$6)`, [principal.owner, requestId, fingerprint, actionName, model.release, result], client);
+      signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client);
       return result;
     });
     if (!action.function) return commit();
@@ -61,7 +66,7 @@ export class Actions {
     }
     let staged: { result: ObjectRef; write: (objects: Objects) => Promise<void> } | undefined;
     const result = await this.functions.invoke(model, action.function, input, {
-      principal, objects: new Objects(this.db, model, principal.owner), signal, operationId: requestId, taskId: execution?.task.id, execution,
+      principal, objects: new Objects(this.db, model, access), signal, operationId: requestId, taskId: execution?.task.id, execution,
       edit: (result, write) => {
         if (staged) throw new Error('An edit Function stages one Action');
         staged = { result: objectRefSchema.parse(result), write }; return staged.result;

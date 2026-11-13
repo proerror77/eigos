@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import type { OntologyDocument } from '../../ontology/schema.js';
 import { digest } from '../../core/identity.js';
 import { objectRefSchema, type ObjectData } from '../../ontology/schema.js';
 import { Functions, type FunctionContext, type FunctionHandler } from '../../runtime/functions.js';
@@ -34,7 +36,7 @@ export function rideFunctions(resolveSource: SourceResolver, additional: Readonl
     const source = await resolveSource(context.principal.owner);
     await source.assertCurrent();
     const call: DidiCallContext = { requestId: context.taskId ?? randomUUID(), requestRevision: 1 };
-    const result: DidiReadResult = await source.connector.invoke(call, tool, input, context.signal, () => source.assertCurrent());
+    const result: DidiReadResult = await source.connector.invoke(call, tool, input, context.signal, async () => { await context.objects.access.refresh(); await source.assertCurrent(); });
     await source.assertCurrent();
     if (result.receipt.bindingId !== source.bindingId || result.receipt.inputDigest !== digest(input) || result.receipt.resultDigest !== digest(result.data) || result.receipt.tool !== tool) throw new Error('Source receipt does not match the invoked function');
     return sourceResultSchema.parse({ ...result, evidence: source.connector.evidenceKind });
@@ -83,5 +85,5 @@ export function rideFunctions(resolveSource: SourceResolver, additional: Readonl
       return { request, estimates, evidence: [...evidence], accepted: evidence.size === 1 && evidence.has('live_readonly'), route: { origin: origin.properties, destination: destination.properties } };
     }],
     ...additional,
-  ]));
+  ]), (JSON.parse(readFileSync(new URL('../../ontology/definitions/ride.json', import.meta.url), 'utf8')) as OntologyDocument).functionTypes);
 }
