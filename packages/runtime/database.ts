@@ -113,6 +113,8 @@ export class Database {
       CREATE TABLE IF NOT EXISTS ${s}.tasks (id uuid PRIMARY KEY, owner text NOT NULL, request_id text NOT NULL, input_digest text NOT NULL, input jsonb NOT NULL, release text NOT NULL REFERENCES ${s}.releases(digest), scopes jsonb NOT NULL,
         state text NOT NULL DEFAULT 'submitted', token uuid, lease_until timestamptz, result jsonb, error text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(owner,request_id));
       ALTER TABLE ${s}.tasks ADD COLUMN IF NOT EXISTS result_permissions jsonb;
+      ALTER TABLE ${s}.tasks ADD COLUMN IF NOT EXISTS available_at timestamptz NOT NULL DEFAULT now();
+      ALTER TABLE ${s}.tasks ADD COLUMN IF NOT EXISTS execution_step integer NOT NULL DEFAULT 0;
       CREATE INDEX IF NOT EXISTS tasks_queue ON ${s}.tasks(state,created_at);
       CREATE TABLE IF NOT EXISTS ${s}.source_calls (task_id uuid NOT NULL REFERENCES ${s}.tasks(id), name text NOT NULL, state text NOT NULL, input_digest text NOT NULL, result jsonb, PRIMARY KEY(task_id,name));`);
     await this.query(`
@@ -131,7 +133,15 @@ export class Database {
         PRIMARY KEY(scenario_id,owner,request_id));
       CREATE TABLE IF NOT EXISTS ${s}.pa_requests (id uuid PRIMARY KEY, task_id uuid NOT NULL REFERENCES ${s}.tasks(id), owner text NOT NULL,
         request_key text NOT NULL, request jsonb NOT NULL, response jsonb, response_digest text, created_at timestamptz NOT NULL DEFAULT now(),
-        UNIQUE(task_id,request_key));`);
+        UNIQUE(task_id,request_key));
+      CREATE TABLE IF NOT EXISTS ${s}.external_operations (owner text NOT NULL,operation_key text NOT NULL,scope_digest text NOT NULL,state text NOT NULL,result jsonb,
+        requirements jsonb NOT NULL DEFAULT '[]',created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner,operation_key));
+      CREATE TABLE IF NOT EXISTS ${s}.scheduled_actions (id text NOT NULL,owner text NOT NULL,body jsonb NOT NULL,scopes jsonb NOT NULL,run_at timestamptz NOT NULL,deadline timestamptz NOT NULL,
+        state text NOT NULL DEFAULT 'scheduled',task_id uuid UNIQUE REFERENCES ${s}.tasks(id),error text,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner,id));
+      CREATE INDEX IF NOT EXISTS scheduled_actions_due ON ${s}.scheduled_actions(run_at) WHERE state='scheduled';`);
+    await this.query(`ALTER TABLE ${s}.scheduled_actions ADD COLUMN IF NOT EXISTS continue_at timestamptz`);
+    await this.query(`ALTER TABLE ${s}.external_operations ADD COLUMN IF NOT EXISTS requirements jsonb NOT NULL DEFAULT '[]'`);
+
     await initializeOntologyDataMigrations(this);
     await initializeEntityResolution(this);
     await initializeSemantic(this);
