@@ -90,7 +90,6 @@ const recipeSchema = z.strictObject({
   hotelNativeId: z.string().min(1).max(500),
   bindingId: z.string().min(1).max(200),
   window: windowOffsets,
-  title: z.string().min(1).max(200),
   steps: z.array(replayStepSchema).min(6).max(40),
 });
 type Recipe = z.infer<typeof recipeSchema>;
@@ -401,7 +400,6 @@ function compile(
       startOffset: (Date.parse(input.start) - midnight(checkIn)) / minute,
       endOffset: (Date.parse(input.end) - midnight(checkIn)) / minute,
     },
-    title: dateText(input.title, checkIn),
     steps: compileSteps(trace.events, checkIn, input.title),
   });
 }
@@ -640,7 +638,7 @@ export class HotelWorkflows {
         await this.db.query(
           `INSERT INTO ${this.db.schema}.workflows(id,owner,ontology,name,body,revision)
         VALUES($1,$2,$3,$4,$5,1)`,
-          [workflowId, principal.owner, model.document.id, review.recipe.title, review.recipe],
+          [workflowId, principal.owner, model.document.id, '酒店行程 · ' + current.offer.properties.name, review.recipe],
           client,
         );
       const estimatedArrival =
