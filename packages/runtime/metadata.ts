@@ -1,4 +1,5 @@
 import { copyEditState } from './edit-history.js';
+import { migrateProjectionState } from './projection-migration.js';
 import { randomUUID } from 'node:crypto';
 import { digest, Conflict } from '../core/identity.js';
 import { Ontology, validator } from '../ontology/model.js';
@@ -15,6 +16,7 @@ export type ProjectionTransform = (ref: ObjectRef, properties: Record<string, un
 
 export class Metadata {
   private readonly models = new Map<string, PublishedOntology>();
+  private readonly transforms = new Map<string, ProjectionTransform>();
   constructor(private readonly db: Database) {}
   async fingerprint(projection: string, client: Sql = this.db.pool, ontology?: string): Promise<string> {
     const row = (await this.db.query(`SELECT
@@ -44,6 +46,7 @@ export class Metadata {
     const model = new Ontology(input);
     await access.refresh(); access.require(model.document.id, 'edit_definition', permissionTarget ?? model.document.id);
     const manifest = bindings.describe(model), projection = randomUUID();
+    const transformId = transform ? randomUUID() : null;
     const release = digest({ definition: model.digest, runtime: this.db.runtimeId, manifest, projection });
     await this.db.transaction(async client => {
       await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', [], client);
@@ -69,12 +72,14 @@ export class Metadata {
       }
       if (current) {
         await copyEditState(this.db,current.projection,projection,client,[...model.objects.keys()]);
+        if (transform) await migrateProjectionState(this.db,current.projection,projection,model,transform,client);
         await this.validateEditState(model,projection,client);
       }
       await access.refresh(client);
-      await this.db.query(`INSERT INTO ${this.db.schema}.releases(digest,body,definition_digest,projection,runtime_id,bindings,state,prepared_from,source_fingerprint,projection_fingerprint)
-        VALUES($1,$2,$3,$4,$5,$6,'prepared',$7,$8,$9)`, [release, model.document, model.digest, projection, this.db.runtimeId, manifest, current?.digest ?? null, fingerprint, await this.fingerprint(projection, client)], client);
+      await this.db.query(`INSERT INTO ${this.db.schema}.releases(digest,body,definition_digest,projection,runtime_id,bindings,state,prepared_from,source_fingerprint,projection_fingerprint,transform_id)
+        VALUES($1,$2,$3,$4,$5,$6,'prepared',$7,$8,$9,$10)`, [release, model.document, model.digest, projection, this.db.runtimeId, manifest, current?.digest ?? null, fingerprint, await this.fingerprint(projection, client), transformId], client);
     });
+    if (transformId && transform) this.transforms.set(transformId, transform);
     return this.get(release);
   }
   async activate(release: string, bindings: Bindings, access: Access, transaction?: Sql) {
@@ -108,6 +113,8 @@ export class Metadata {
     const synchronize = async (client: Sql) => {
       await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['publication:' + candidate.document.id], client);
       const stored = (await this.db.query(`SELECT * FROM ${this.db.schema}.releases WHERE digest=$1 FOR UPDATE`, [release], client)).rows[0]!;
+      const transform = stored.transform_id ? this.transforms.get(stored.transform_id) : undefined;
+      if (stored.transform_id && !transform) throw new Conflict('Candidate transformation is unavailable; prepare it again with the original migration implementation');
       const live = await this.active(candidate.document.id, client);
       if (stored.state !== 'prepared' || stored.prepared_from !== live.release) throw new Conflict('Candidate base changed; rebase before catching up');
       if (await this.fingerprint(candidate.projection, client) !== stored.projection_fingerprint) throw new Conflict('Prepared projection changed');
@@ -126,7 +133,7 @@ export class Metadata {
           WHERE source.projection=$2 AND source.type=ANY($3::text[]) AND (target.id IS NULL OR source.revision IS DISTINCT FROM target.revision OR source.properties IS DISTINCT FROM target.properties)
           AND ($4::text[] IS NULL OR (source.owner,source.type,source.id)>($4[1],$4[2],$4[3])) ORDER BY source.owner,source.type,source.id LIMIT 500`, [candidate.projection,live.projection,types,cursor], client)).rows;
         if (!rows.length) break;
-        const projected = rows.map(row => ({ ...row, properties: candidate.parseObject({type:row.type,id:row.id}, Object.fromEntries(Object.entries(row.properties).filter(([name])=>candidate.object(row.type).properties[name]))) }));
+        const projected = rows.map(row => ({ ...row, properties: candidate.parseObject({type:row.type,id:row.id}, transform ? transform({type:row.type,id:row.id},structuredClone(row.properties)) : Object.fromEntries(Object.entries(row.properties).filter(([name])=>candidate.object(row.type).properties[name]))) }));
         await this.db.query(`INSERT INTO ${this.db.schema}.objects(projection,owner,type,id,revision,properties)
           SELECT $1,owner,type,id,revision,properties FROM jsonb_to_recordset($2::jsonb) AS r(owner text,type text,id text,revision bigint,properties jsonb)
           ON CONFLICT(projection,owner,type,id) DO UPDATE SET revision=excluded.revision,properties=excluded.properties`, [candidate.projection,JSON.stringify(projected)], client);
@@ -146,6 +153,7 @@ export class Metadata {
           AS r(owner text,type text,from_type text,from_id text,to_type text,to_id text,single_from boolean,single_to boolean)`,[candidate.projection,JSON.stringify(mapped)],client);
       }
       await copyEditState(this.db,live.projection,candidate.projection,client,types);
+      if (transform) await migrateProjectionState(this.db,live.projection,candidate.projection,candidate,transform,client);
       await this.validateEditState(candidate,candidate.projection,client);
       await access.refresh(client);
       await this.db.query(`UPDATE ${this.db.schema}.releases SET source_fingerprint=$2,projection_fingerprint=$3 WHERE digest=$1`,[release,await this.fingerprint(live.projection,client,candidate.document.id),await this.fingerprint(candidate.projection,client)],client);

@@ -171,3 +171,57 @@ test('candidate catch-up can incorporate changed edit policies without corruptin
     assert.equal((await f.metadata.active()).release,candidate.release);
   }finally{await f.close();}
 });
+
+test('transformed candidates preserve user edits through catch-up and subsequent source updates', async () => {
+  const f = await setup();
+  try {
+    const graph = new Objects(f.db, f.model, f.access), ref = { type: 'Route', id: 'transformed-edit' };
+    await graph.create(ref, { id: ref.id, name: 'original' });
+    const transform = (_ref: unknown, properties: Record<string, unknown>) => ({ ...properties, name: String(properties.name).toUpperCase() });
+    const candidate = await f.metadata.prepare(f.model.document, f.capabilities, f.publisher, transform);
+    const view = new Objects(f.db, candidate, f.access);
+    assert.equal((await view.read(ref)).properties.name, 'ORIGINAL');
+    await graph.edit(ref, 1, { name: 'changed' });
+    await f.metadata.catchUp(candidate.release, f.capabilities, f.publisher);
+    assert.equal((await view.read(ref)).properties.name, 'CHANGED');
+    await f.metadata.activate(candidate.release, f.capabilities, f.publisher);
+    await view.ingestBatch([{ ref, properties: { id: ref.id, name: 'new-source' } }], 'Feed', new Date().toISOString());
+    assert.equal((await view.read(ref)).properties.name, 'CHANGED');
+    const overrides = (await f.db.query(`SELECT overrides FROM ${f.db.schema}.object_edits WHERE projection=$1 AND id=$2`, [candidate.projection, ref.id])).rows[0]!.overrides;
+    assert.equal(overrides.name.value, 'CHANGED');
+  } finally { await f.close(); }
+});
+
+test('migration converts source and partial user-edit layers while retaining edit timestamps', async () => {
+  const f = await setup();
+  try {
+    const graph = new Objects(f.db, f.model, f.access), ref = { type: 'Route', id: 'partial-edit' };
+    await graph.ingestBatch([{ ref, properties: { id: ref.id, name: 'source' } }], 'Feed', '2026-01-01T00:00:00Z');
+    await graph.edit(ref, 1, { name: 'manual' });
+    const before = (await f.db.query(`SELECT overrides FROM ${f.db.schema}.object_edits WHERE projection=$1 AND id=$2`, [f.model.projection, ref.id])).rows[0]!.overrides;
+    const candidate = await f.metadata.prepare(f.model.document, f.capabilities, f.publisher, (_ref, properties) => ({ ...properties, name: String(properties.name).toUpperCase() }));
+    const values = (await f.db.query(`SELECT properties FROM ${f.db.schema}.source_values WHERE projection=$1 AND id=$2`, [candidate.projection, ref.id])).rows[0]!.properties;
+    const after = (await f.db.query(`SELECT overrides FROM ${f.db.schema}.object_edits WHERE projection=$1 AND id=$2`, [candidate.projection, ref.id])).rows[0]!.overrides;
+    assert.equal(values.name, 'SOURCE'); assert.equal(after.name.value, 'MANUAL'); assert.equal(after.name.at, before.name.at);
+    await f.metadata.activate(candidate.release, f.capabilities, f.publisher);
+    const current = new Objects(f.db, candidate, f.access);
+    await current.ingestBatch([{ ref, properties: { id: ref.id, name: 'provider' } }], 'Feed', '2026-02-01T00:00:00Z');
+    assert.equal((await current.read(ref)).properties.name, 'MANUAL');
+  } finally { await f.close(); }
+});
+
+test('a transformed candidate cannot catch up in a process without the original transformation', async () => {
+  const f = await setup();
+  try {
+    const graph = new Objects(f.db, f.model, f.access), ref = { type: 'Route', id: 'transform-identity' };
+    await graph.create(ref, { id: ref.id, name: 'original' });
+    const candidate = await f.metadata.prepare(f.model.document, f.capabilities, f.publisher, (_ref, properties) => ({ ...properties, name: 'migrated' }));
+    const { Metadata } = await import('../packages/runtime/metadata.js');
+    const restarted = new Metadata(f.db);
+    await assert.rejects(restarted.catchUp(candidate.release, f.capabilities, f.publisher), /transformation is unavailable/);
+    assert.equal((await new Objects(f.db, candidate, f.access).read(ref)).properties.name, 'migrated');
+    // Activation does not execute migration code. It verifies the already materialized, reviewed state.
+    await restarted.activate(candidate.release, f.capabilities, f.publisher);
+    assert.equal((await restarted.active()).release, candidate.release);
+  } finally { await f.close(); }
+});
