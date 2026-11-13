@@ -4,12 +4,28 @@ import { Conflict, NotFound, digest, requireScope, type Principal } from '../cor
 import { validator } from '../ontology/model.js';
 import { Clarification } from './clarification.js';
 import { Tasks, type Task } from './tasks.js';
+import { Access } from './access.js';
 
 export const paResponseSchema = z.strictObject({ requestId: z.uuid(), response: z.record(z.string(), z.unknown()) });
+export const paInboxSchema=z.strictObject({cursor:z.uuid().optional(),limit:z.number().int().min(1).max(50).default(20)});
 
 /** The authenticated original PA supplies requested context; the model cannot impersonate it. */
 export class PARequests {
   constructor(private readonly tasks: Tasks) {}
+  async pending(principal:Principal,raw:unknown={}){
+    requireScope(principal,'tasks:read');const input=paInboxSchema.parse(raw),{db}=this.tasks,access=await Access.load(db,principal);
+    let after:{created_at:Date;id:string}|undefined;
+    if(input.cursor){after=(await db.query(`SELECT created_at,id FROM ${db.schema}.pa_requests WHERE owner=$1 AND id=$2`,[principal.owner,input.cursor])).rows[0] as typeof after;if(!after)throw new NotFound('PA request cursor is unavailable');}
+    const rows=(await db.query(`SELECT r.id,r.created_at,t.id AS task_id,t.result,t.result_permissions,s.id AS schedule_id,s.body->>'sourceTaskId' AS source_task_id
+      FROM ${db.schema}.pa_requests r JOIN ${db.schema}.tasks t ON t.id=r.task_id AND t.owner=r.owner
+      LEFT JOIN ${db.schema}.scheduled_actions s ON s.task_id=t.id AND s.owner=t.owner
+      WHERE r.owner=$1 AND r.response IS NULL AND t.state='input-required' AND t.result->>'requestId'=r.id::text
+        AND ($2::timestamptz IS NULL OR (r.created_at,r.id)>($2::timestamptz,$3::uuid)) ORDER BY r.created_at,r.id LIMIT $4`,[principal.owner,after?.created_at??null,after?.id??null,input.limit+1])).rows;
+    const page=rows.slice(0,input.limit);
+    await access.refresh();
+    const items=page.filter(row=>Array.isArray(row.result_permissions)&&access.canReturn(row.result_permissions)).map(row=>({taskId:row.task_id,sourceTaskId:row.source_task_id??null,scheduleId:row.schedule_id??null,request:row.result}));
+    return {items,cursor:rows.length>input.limit?page.at(-1)!.id:undefined};
+  }
   async request(task: Task, operation: string, capability: string, input: Record<string, unknown>, responseSchema: Record<string, unknown>, dataScope?: Record<string, unknown>) {
     const { db } = this.tasks, request = { capability, input, responseSchema };
     // Data identity is independent of a model's wording or Action request ID.

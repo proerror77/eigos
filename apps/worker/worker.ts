@@ -1,13 +1,16 @@
-import { TaskResult } from '../../packages/runtime/access.js';
+import { TaskResult,PermissionDenied } from '../../packages/runtime/access.js';
+import { Conflict } from '../../packages/core/identity.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Clarification } from '../../packages/runtime/agent.js';
 import { Tasks, type Task } from '../../packages/runtime/tasks.js';
+import { DeferredExecution } from '../../packages/runtime/scheduled-actions.js';
 
 export class Worker {
   private readonly controller = new AbortController();
   private wake?: () => void;
-  constructor(private readonly tasks: Tasks, private readonly agent: { run(task: Task, signal: AbortSignal): Promise<unknown> }) {}
+  constructor(private readonly tasks: Tasks, private readonly agent: { run(task: Task, signal: AbortSignal): Promise<unknown> }, private readonly schedules?: {promoteOne():Promise<boolean>}, private readonly scheduledRunner?: {run(task:Task,signal:AbortSignal):Promise<unknown>}) {}
   async runOne(): Promise<boolean> {
+    await this.schedules?.promoteOne();
     const task = await this.tasks.claim();
     if (!task) return false;
     await this.execute(task);
@@ -21,13 +24,16 @@ export class Worker {
     }, 10000);
     timer.unref();
     try {
-      const result = await this.agent.run(task, signal);
+      if(task.input.scheduledAction&&!this.scheduledRunner)throw new Error('Scheduled Action runner is unavailable');
+      const result = await (task.input.scheduledAction?this.scheduledRunner!:this.agent).run(task, signal);
       signal.throwIfAborted();
       await this.tasks.finish(task, 'completed', result instanceof TaskResult ? result.value : result, undefined, result instanceof TaskResult ? result.permissions : []);
     } catch (error) {
+      if(error instanceof DeferredExecution){await this.tasks.defer(task,error.until).catch(()=>{});return;}
       const clarification = error instanceof Clarification;
       if (!clarification) console.error('Inquiry execution failed', error instanceof Error ? error.message : 'Unknown error');
-      await this.tasks.finish(task, clarification ? 'input-required' : 'failed', clarification ? error.choices ?? null : null, clarification ? error.message : 'Inquiry failed. Check the configured source or retry with a new request ID.', clarification ? error.permissions : []).catch(() => {});
+      const safeError=error instanceof Conflict||error instanceof PermissionDenied?error.message:'Execution failed. Check the original operation and configured source before retrying.';
+      await this.tasks.finish(task, clarification ? 'input-required' : 'failed', clarification ? error.choices ?? null : null, clarification ? error.message : safeError, clarification ? error.permissions : []).catch(() => {});
     } finally { clearInterval(timer); await renewing; }
   }
   async run() {

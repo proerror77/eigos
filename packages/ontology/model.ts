@@ -59,7 +59,7 @@ export class Ontology {
       for (const [alias, property] of Object.entries(contract.properties)) {
         const local = mapping.properties[alias];
         if (!local && contract.optionalProperties.includes(alias)) continue;
-        if (!local || type.properties[local]?.schema.type !== property.schema.type) throw new Error(`Invalid property mapping ${type.apiName}.${alias}`);
+        if (!local || !type.properties[local] || digest(type.properties[local]!.schema.type ?? null) !== digest(property.schema.type ?? null)) throw new Error(`Invalid property mapping ${type.apiName}.${alias}`);
       }
       if (Object.keys(mapping.properties).some(name => !contract.properties[name])) throw new Error('Unknown interface property');
       for (const [alias, constraint] of Object.entries(contract.links)) {

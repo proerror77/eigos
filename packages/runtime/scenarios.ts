@@ -53,11 +53,12 @@ export class Scenarios {
         const live = (await this.db.query(`SELECT revision,properties FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`, [model.projection, owner, item.type, item.id], client)).rows[0];
         objects.push({ ref: { type: item.type, id: item.id }, before: mask(item.base_properties), after: mask(item.properties), conflict: (String(live?.revision ?? '') !== String(item.base_revision ?? '') || digest(live?.properties ?? null)!==digest(item.base_properties)) || item.properties===null && digest(await objectLinks(this.db,model,owner,{type:item.type,id:item.id},client))!==digest(item.base_links) });
       }
-      const links = await Promise.all(changes.links.map(async item => {
+      const links = [];
+      for(const item of changes.links){
         access.read(model, item.from_type); access.read(model, item.to_type); access.definition(model, 'link', item.type);
         const present=(await this.db.query(`SELECT 1 FROM ${this.db.schema}.links WHERE projection=$1 AND owner=$2 AND type=$3 AND from_type=$4 AND from_id=$5 AND to_type=$6 AND to_id=$7`,[model.projection,owner,item.type,item.from_type,item.from_id,item.to_type,item.to_id],client)).rowCount!>0;
-        return { type: item.type, from: { type: item.from_type, id: item.from_id }, to: { type: item.to_type, id: item.to_id }, removed: item.removed,conflict:present!==item.base_present };
-      }));
+        links.push({ type: item.type, from: { type: item.from_type, id: item.from_id }, to: { type: item.to_type, id: item.to_id }, removed: item.removed,conflict:present!==item.base_present });
+      }
       await access.refresh(client); return { id:String(row.id),name:String(row.name),revision:Number(row.revision),state:String(row.state),expiresAt:row.expires_at as Date,objects,links };
     });
   }
@@ -72,7 +73,7 @@ export class Scenarios {
     });
   }
   /** Called only from a published merge Action, inside its atomic edit transaction. */
-  async mergeInto(graph: Objects, id: string, revision: number, scope: { objects: string[]; links: string[]; validate?: (view: Objects, touched: { ref: ObjectRef; deleted: boolean }[]) => Promise<void> }) {
+  async mergeInto(graph: Objects, id: string, revision: number, scope: { objects: string[]; links: string[]; validate?: (view: Objects, touched: { ref: ObjectRef; deleted: boolean }[], links: LinkData[]) => Promise<void> }) {
     if (graph.client === this.db.pool || graph.model.scenario) throw new Conflict('Merge requires a live Action transaction');
     const { model, owner, access, client } = graph;
     await graph.lockWrites();
@@ -91,8 +92,8 @@ export class Scenarios {
     const touched = new Map<string, { ref: ObjectRef; deleted: boolean }>();
     for (const item of changes.objects) { const ref={type:String(item.type),id:String(item.id)}; touched.set(digest(ref),{ref,deleted:item.properties===null}); }
     for (const item of changes.links) { const ref={type:String(item.from_type),id:String(item.from_id)}; if(!touched.has(digest(ref)))touched.set(digest(ref),{ref,deleted:false}); }
-    await scope.validate?.(new Objects(this.db,view,access,client),[...touched.values()]);
     const edge = (item: Record<string, any>): LinkData => ({ type: item.type, from: { type: item.from_type, id: item.from_id }, to: { type: item.to_type, id: item.to_id } });
+    await scope.validate?.(new Objects(this.db,view,access,client),[...touched.values()],changes.links.map(edge));
     for (const item of changes.links) {
       const current = (await this.db.query(`SELECT 1 FROM ${this.db.schema}.links WHERE projection=$1 AND owner=$2 AND type=$3 AND from_type=$4 AND from_id=$5 AND to_type=$6 AND to_id=$7`, [model.projection, owner, item.type, item.from_type, item.from_id, item.to_type, item.to_id], client)).rowCount! > 0;
       if (current !== item.base_present) throw new Conflict('Scenario link conflicts with current data');

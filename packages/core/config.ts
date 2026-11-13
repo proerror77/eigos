@@ -5,6 +5,7 @@ import { DidiMcpConnector } from '../capabilities/didi/connector.js';
 import { didiBindingSchema } from '../capabilities/didi/contracts.js';
 import type { SourceResolver } from '../capabilities/didi/functions.js';
 import { digest } from './identity.js';
+import { DidiOperations } from '../capabilities/didi/operations.js';
 
 export const configSchema = z.object({
   DATABASE_URL: z.string().min(1), EIGOS_PG_SCHEMA: z.string().default('eigos'),
@@ -15,6 +16,7 @@ export const configSchema = z.object({
   OAUTH_TENANT_CLAIM: z.string().min(1).default('tenant_id'),
   EIGOS_SOURCE_COMMIT: z.string().regex(/^[a-f0-9]{40}$/).optional(),
   EIGOS_DIDI_CONNECTION_FILE: z.string().optional(),
+  EIGOS_SERVICE_CONNECTION_FILE: z.string().optional(),
   EIGOS_HARNESS_BIN: z.string().optional(), EIGOS_HARNESS_CREDENTIAL_FILE: z.string().optional(),
   EIGOS_HARNESS_MODEL: z.string().default('gpt-6.1-sol'), EIGOS_HARNESS_REASONING_EFFORT: z.string().default('low'),
 });
@@ -26,7 +28,7 @@ export function readConfig(env = process.env): Config {
   } else if (!config.OAUTH_ISSUER || !config.OAUTH_AUDIENCE || !config.OAUTH_JWKS_URL) throw new Error('Configure JWT issuer, audience and verification keys');
   return config;
 }
-const connectionSchema = z.strictObject({ owner: z.string().min(1), active: z.boolean(), expiresAt: z.iso.datetime().nullable().optional(), binding: didiBindingSchema });
+const connectionSchema = z.strictObject({ owner: z.string().min(1), active: z.boolean(), expiresAt: z.iso.datetime().nullable().optional(), binding: didiBindingSchema, ordersEnabled:z.boolean().default(false) });
 export function configuredSource(path?: string): SourceResolver {
   const cache = new Map<string, DidiMcpConnector>();
   const read = async () => {
@@ -38,7 +40,7 @@ export function configuredSource(path?: string): SourceResolver {
     if (!connection.active || connection.owner !== owner || connection.expiresAt && Date.parse(connection.expiresAt) <= Date.now()) throw new Error('DiDi source is unavailable for this owner');
     let connector = cache.get(hash);
     if (!connector) { cache.clear(); connector = new DidiMcpConnector(connection.binding); cache.set(hash, connector); }
-    return { bindingId: connection.binding.bindingId, connector, async assertCurrent() {
+    return { bindingId: connection.binding.bindingId, authorityId:hash, connector, orders:new DidiOperations(connection.binding,connection.ordersEnabled), async assertCurrent() {
       if (digest(await read()) !== hash || connection.expiresAt && Date.parse(connection.expiresAt) <= Date.now()) throw new Error('DiDi source configuration changed or expired');
       await connector!.verifyCredential();
     } };

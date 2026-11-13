@@ -6,13 +6,15 @@ import { Database } from './database.js';
 import { Metadata } from './metadata.js';
 import { objectRefSchema } from '../ontology/schema.js';
 import { Access, type Requirement } from './access.js';
+import type { ScheduledCall } from './scheduled-actions.js';
+import { Clarification } from './clarification.js';
 
 export const routeInputSchema = z.strictObject({ city: z.string().min(1).max(100), origin: z.string().min(1).max(500), destination: z.string().min(1).max(500), serviceClass: z.string().min(1).max(100).optional() });
 export type RouteInput = z.infer<typeof routeInputSchema>;
 export const placeSelectionSchema = z.strictObject({ origin: objectRefSchema, destination: objectRefSchema });
 export const submitSchema = z.strictObject({ requestId: z.string().min(1).max(128), message: z.string().min(1).max(4000), route: routeInputSchema.optional() });
 const storedInputSchema = submitSchema.extend({ places: placeSelectionSchema.optional() });
-export interface Task { id: string; owner: string; request_id: string; input: z.infer<typeof storedInputSchema>; release: string; scopes: string[]; state: string; token: string | null; result: unknown; result_permissions?: Requirement[] | null; error: string | null; created_at: Date; updated_at: Date }
+export interface Task { id: string; owner: string; request_id: string; input: z.infer<typeof storedInputSchema> & {scheduledAction?:ScheduledCall}; release: string; scopes: string[]; state: string; token: string | null; result: unknown; result_permissions?: Requirement[] | null; error: string | null; created_at: Date; updated_at: Date; execution_step?:number }
 export const publicTask = (task: Task) => ({ id: task.id, state: task.state, result: task.result, error: task.error, createdAt: task.created_at, updatedAt: task.updated_at });
 export class Tasks {
   constructor(readonly db: Database, private readonly metadata: Metadata) {}
@@ -58,7 +60,7 @@ export class Tasks {
     });
   }
   async claim(): Promise<Task | undefined> {
-    const result = await this.db.query(`WITH next AS(SELECT id FROM ${this.db.schema}.tasks WHERE state='submitted' OR(state='working' AND lease_until<now()) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
+    const result = await this.db.query(`WITH next AS(SELECT id FROM ${this.db.schema}.tasks WHERE (state='submitted' AND available_at<=now()) OR(state='working' AND lease_until<now()) ORDER BY available_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1)
       UPDATE ${this.db.schema}.tasks t SET state='working',token=$1,lease_until=now()+interval '30 seconds',updated_at=now() FROM next WHERE t.id=next.id RETURNING t.*`, [randomUUID()]);
     return result.rows[0] as Task | undefined;
   }
@@ -69,6 +71,14 @@ export class Tasks {
   async renew(task: Task) {
     const result = await this.db.query(`UPDATE ${this.db.schema}.tasks SET lease_until=now()+interval '30 seconds' WHERE id=$1 AND token=$2 AND state='working' AND lease_until>now()`, [task.id, task.token]);
     if (!result.rowCount) throw new Conflict('Execution lease ended');
+  }
+  async defer(task:Task,until:string){
+    if(!task.input.scheduledAction||Date.parse(until)<=Date.now()||Date.parse(until)>=Date.parse(task.input.scheduledAction.deadline))throw new Conflict('Invalid scheduled continuation');
+    await this.db.transaction(async client=>{
+      await this.current(task,client,true);
+      await this.db.query(`UPDATE ${this.db.schema}.tasks SET state='submitted',available_at=$2,execution_step=execution_step+1,token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1`,[task.id,until],client);
+      await this.db.query(`UPDATE ${this.db.schema}.scheduled_actions SET continue_at=NULL WHERE owner=$1 AND id=$2 AND task_id=$3`,[task.owner,task.input.scheduledAction!.scheduleId,task.id],client);
+    });
   }
   async finish(task: Task, state: 'completed' | 'failed' | 'input-required', result: unknown, error?: string, permissions: Requirement[] = []) {
     await this.db.transaction(async client => {
@@ -83,14 +93,24 @@ export class Tasks {
       await this.current(task, client, true);
       const row = await this.db.query(`SELECT state,input_digest,result FROM ${this.db.schema}.source_calls WHERE task_id=$1 AND name=$2`, [task.id, name], client);
       if (row.rows[0]) {
-        if (row.rows[0].input_digest !== fingerprint || row.rows[0].state !== 'completed') throw new Conflict('Original source call has an unresolved result');
-        return { result: row.rows[0].result as T };
+        if (row.rows[0].input_digest !== fingerprint) throw new Conflict('Original source call has different input');
+        if(row.rows[0].state==='completed')return { result: row.rows[0].result as T };
+        if(row.rows[0].state!=='waiting_pa')throw new Conflict('Original source call has an unresolved result');
+        await this.db.query(`UPDATE ${this.db.schema}.source_calls SET state='running' WHERE task_id=$1 AND name=$2`,[task.id,name],client);
+        return undefined;
       }
       await this.db.query(`INSERT INTO ${this.db.schema}.source_calls(task_id,name,state,input_digest) VALUES($1,$2,'running',$3)`, [task.id, name, fingerprint], client);
       return undefined;
     });
     if (prior) return prior.result;
-    const result = await invoke();
+    let result:T;
+    try{result=await invoke();}catch(error){
+      // An authenticated PA request suspends a read before data is available.
+      // Its durable pa_requests row owns continuation; it is not an unknown
+      // provider mutation or a completed/empty source read.
+      if(error instanceof Clarification)await this.db.query(`UPDATE ${this.db.schema}.source_calls SET state='waiting_pa' WHERE task_id=$1 AND name=$2 AND state='running' AND input_digest=$3`,[task.id,name,fingerprint]);
+      throw error;
+    }
     await this.db.transaction(async client => {
       await this.current(task, client, true);
       await this.db.query(`UPDATE ${this.db.schema}.source_calls SET state='completed',result=$3 WHERE task_id=$1 AND name=$2`, [task.id, name, result], client);
