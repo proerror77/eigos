@@ -61,14 +61,14 @@ async function saveState(graph: Objects, ref: ObjectRef, value: EditState) {
     SET overrides=excluded.overrides,deleted=excluded.deleted,created=excluded.created`,[...key(graph,ref),value.overrides,value.deleted,value.created],graph.client);
 }
 async function append(graph: Objects, ref: ObjectRef, operation: string, before: Properties | null, after: Properties | null, source: string | null) {
-  if (digest(before) === digest(after)) return;
+  if (operation === 'source' && digest(before) === digest(after)) return;
   await graph.db.query(`INSERT INTO ${graph.db.schema}.edit_history(projection,owner,type,id,release,operation,source,before_values,after_values,actor)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[...key(graph,ref),graph.model.release,operation,source,before,after,graph.access.principal.owner],graph.client);
 }
 
 /** Called after the live mutation, in the same transaction. Scenario deltas are journaled when merged. */
 export async function recordObjectEdit(graph: Objects, ref: ObjectRef, before: Properties | null, after: Properties | null, changedFields?: Properties, kind: 'create' | 'edit' | 'delete' = 'edit') {
-  if (graph.model.scenario || digest(before) === digest(after)) return;
+  if (graph.model.scenario) return;
   requireTransaction(graph);
   const value = await state(graph,ref);
   const at = (await graph.db.query('SELECT clock_timestamp() AS at',[],graph.client)).rows[0]!.at.toISOString();

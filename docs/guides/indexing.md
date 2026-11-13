@@ -10,6 +10,8 @@
 
 生产者必须拥有 datasource 的 `ingest_source` 授权，以及对应来源的 `read_source` 授权。普通成员默认授权不包含 `ingest_source`。Worker 在实际消费时重新加载原始提交身份的当前授权，授权撤销会阻止写入。
 
+`cancel` 允许原始生产者在当前授权有效时取消 pending 或 failed 事务。取消可重复提交，已应用的事务会拒绝取消。Worker 按顺序跳过取消的事务并推进 offset，后续事务继续消费。取消的旧发布事务也可在发布切换后推进，整个过程不会执行其来源编辑。
+
 `Indexing.runOne()` 供单次消费和测试使用，`Indexing.run(signal)` 通过 PostgreSQL 通知唤醒并定期检查队列。多个索引进程通过行锁分摊独立事务，同一 stream 保持顺序。状态接口显示当前 offset、已应用 offset、应用时间和重试次数。
 
 ## 来源值与用户编辑

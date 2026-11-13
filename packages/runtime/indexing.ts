@@ -25,9 +25,11 @@ export async function initializeIndexing(db: Database) {
       id uuid PRIMARY KEY, owner text NOT NULL, ontology text NOT NULL, release text NOT NULL REFERENCES ${db.schema}.releases(digest),
       source text NOT NULL, stream text NOT NULL, offset_value bigint NOT NULL, mode text NOT NULL,
       digest text NOT NULL, input jsonb NOT NULL, scopes jsonb NOT NULL,
-      state text NOT NULL DEFAULT 'pending' CHECK(state IN('pending','applied','failed')),
+      state text NOT NULL DEFAULT 'pending' CHECK(state IN('pending','applied','failed','canceled')),
       attempts integer NOT NULL DEFAULT 0, error text, submitted_at timestamptz NOT NULL DEFAULT now(), applied_at timestamptz,
       UNIQUE(owner,ontology,source,stream,offset_value));
+    ALTER TABLE ${db.schema}.index_transactions DROP CONSTRAINT IF EXISTS index_transactions_state_check;
+    ALTER TABLE ${db.schema}.index_transactions ADD CONSTRAINT index_transactions_state_check CHECK(state IN('pending','applied','failed','canceled'));
     CREATE INDEX IF NOT EXISTS index_transactions_queue ON ${db.schema}.index_transactions(state,submitted_at);`);
 }
 
@@ -103,16 +105,36 @@ export class Indexing {
     });
     return this.inspect(access,model,id);
   }
+  async cancel(access: Access, model: PublishedOntology, id: string) {
+    z.uuid().parse(id);
+    await this.db.transaction(async client => {
+      await access.refresh(client);
+      const row = (await this.db.query(`SELECT source,state FROM ${this.db.schema}.index_transactions WHERE id=$1 AND owner=$2 AND ontology=$3 FOR UPDATE`,[id,access.principal.owner,model.document.id],client)).rows[0];
+      if (!row) throw new NotFound('Index transaction is unavailable');
+      authorize(access,model,row.source);
+      if (row.state === 'applied') throw new Conflict('Applied index transactions cannot be canceled');
+      if (row.state === 'canceled') return;
+      await this.db.query(`UPDATE ${this.db.schema}.index_transactions SET state='canceled',error=NULL WHERE id=$1`,[id],client);
+      await access.refresh(client);
+      await this.db.query("SELECT pg_notify('eigos_indexing','ready')",[],client);
+    });
+    return this.inspect(access,model,id);
+  }
   async runOne(): Promise<boolean> {
     let selected: string | undefined;
     try {
       return await this.db.transaction(async client => {
         const row = (await this.db.query(`SELECT t.* FROM ${this.db.schema}.index_transactions t
           JOIN ${this.db.schema}.index_streams s USING(owner,ontology,source,stream)
-          WHERE t.state='pending' AND t.offset_value=s.applied_offset+1
+          WHERE t.state IN('pending','canceled') AND t.offset_value=s.applied_offset+1
           ORDER BY t.submitted_at FOR UPDATE OF t,s SKIP LOCKED LIMIT 1`,[],client)).rows[0];
         if (!row) return false;
         selected=String(row.id);
+        if (row.state === 'canceled') {
+          await this.db.query(`UPDATE ${this.db.schema}.index_streams SET applied_offset=$5,updated_at=now() WHERE owner=$1 AND ontology=$2 AND source=$3 AND stream=$4`,[row.owner,row.ontology,row.source,row.stream,row.offset_value],client);
+          await this.db.query(`UPDATE ${this.db.schema}.index_transactions SET applied_at=now() WHERE id=$1`,[row.id],client);
+          return true;
+        }
         const model=await this.metadata.get(row.release,client), access=await Access.load(this.db,{owner:row.owner,scopes:row.scopes},client);
         const input=indexingInputSchema.parse(row.input); authorize(access,model,input.source);
         const graph=new Objects(this.db,model,access,client);
@@ -134,17 +156,20 @@ export class Indexing {
   async run(signal: AbortSignal) {
     const listener=await this.db.pool.connect();
     let wake: (()=>void)|undefined;
+    let listenerError: Error | undefined;
     listener.on('notification',()=>wake?.());
+    listener.on('error',error=>{listenerError=error;wake?.();});
     const abort=()=>wake?.(); signal.addEventListener('abort',abort);
     try {
       await listener.query('LISTEN eigos_indexing');
       while (!signal.aborted) {
+        if(listenerError)throw listenerError;
         if (await this.runOne()) continue;
         await Promise.race([new Promise<void>(resolve=>{wake=resolve;}),delay(1000)]);
       }
     } finally {
       signal.removeEventListener('abort',abort);
-      await listener.query('UNLISTEN eigos_indexing'); listener.release();
+      await listener.query('UNLISTEN eigos_indexing').catch(()=>{}); listener.release(!!listenerError);
     }
   }
 }

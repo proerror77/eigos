@@ -65,6 +65,29 @@ test('an invalid later row rolls back earlier changes and concurrent workers app
   }finally{await f.close();}
 });
 
+test('canceling a pending or failed source transaction advances its offset without applying data',async()=>{
+  const f=await indexedFixture();try{
+    const first=await f.indexing.submit(f.access,f.model,transaction(1,[sourceRow('discarded','Discarded')]));
+    const second=await f.indexing.submit(f.access,f.model,transaction(2,[sourceRow('kept','Kept')]));
+    await f.indexing.cancel(f.access,f.model,first.id);await f.indexing.cancel(f.access,f.model,first.id);
+    assert.equal(await f.indexing.runOne(),true);assert.equal(await f.indexing.runOne(),true);
+    const graph=new Objects(f.db,f.model,f.access);
+    await assert.rejects(graph.read({type:'Place',id:'discarded'}),/unavailable/);
+    assert.equal((await graph.read({type:'Place',id:'kept'})).properties.name,'Kept');
+    await assert.rejects(f.indexing.cancel(f.access,f.model,second.id),/Applied/);
+    const third=await f.indexing.submit(f.access,f.model,transaction(3,[sourceRow('kept','Conflicting')]));
+    await f.indexing.runOne();assert.equal((await f.indexing.inspect(f.access,f.model,third.id)).state,'failed');
+    await f.indexing.cancel(f.access,f.model,third.id);await f.indexing.runOne();
+    assert.equal((await f.indexing.inspect(f.access,f.model,third.id)).applied_offset,'3');
+    const other=await Access.load(f.db,{owner:'another-producer',scopes:principal.scopes});
+    await assert.rejects(f.indexing.cancel(other,f.model,first.id),/unavailable/);
+    // The additive initializer also upgrades the first deployed constraint safely.
+    await f.db.query(`ALTER TABLE ${f.db.schema}.index_transactions DROP CONSTRAINT index_transactions_state_check`);
+    await initializeIndexing(f.db);
+    assert.equal((await f.indexing.inspect(f.access,f.model,first.id)).state,'canceled');
+  }finally{await f.close();}
+});
+
 test('source updates preserve edited fields, latest policy can replace them, and user deletion survives source refresh',async()=>{
   const f=await indexedFixture();try{
     const graph=new Objects(f.db,f.model,f.access),ref={type:'Place',id:'a'};
@@ -92,6 +115,18 @@ test('source deletion removes its object without creating a permanent user tombs
     const newest=new Date(Date.parse(later)+1000).toISOString();
     await f.indexing.submit(f.access,f.model,transaction(3,[sourceRow('a','reappeared',newest)],newest));await f.indexing.runOne();
     assert.equal((await graph.read(ref)).properties.name,'reappeared');
+  }finally{await f.close();}
+});
+
+test('explicitly setting the existing value still establishes a user override',async()=>{
+  const f=await indexedFixture();try{
+    const graph=new Objects(f.db,f.model,f.access),ref={type:'Place',id:'unchanged-edit'};
+    await f.indexing.submit(f.access,f.model,transaction(1,[sourceRow(ref.id,'Confirmed name')]));await f.indexing.runOne();
+    const before=await graph.read(ref);
+    await graph.edit(ref,before.revision,{name:'Confirmed name'});
+    await f.indexing.submit(f.access,f.model,transaction(2,[sourceRow(ref.id,'New source name',later)],later));await f.indexing.runOne();
+    assert.equal((await graph.read(ref)).properties.name,'Confirmed name');
+    assert.equal((await new EditHistory(f.db).read(graph,ref)).items.filter(row=>row.operation==='edit').length,1);
   }finally{await f.close();}
 });
 
