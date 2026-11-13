@@ -23,6 +23,10 @@ test('DiDi is off by default, account scoped, pure on construction, and configur
     assert(!createExecutionCatalog().summaries(owner).some(c => c.ref.id === DIDI_PROGRAM_REF.id));
     const catalog = createExecutionCatalog({ didi: f.binding });
     assert(catalog.summaries(owner).some(c => c.ref.id === DIDI_PROGRAM_REF.id));
+    for (const executionHost of ['gateway', 'worker'] as const) {
+      const hosted = createExecutionCatalog({ didi: f.binding, executionHost });
+      assert(!hosted.summaries(owner).some(c => c.ref.id === DIDI_PROGRAM_REF.id));
+    }
     assert(!catalog.summaries('other-owner').some(c => c.ref.id === DIDI_PROGRAM_REF.id));
     assert(!catalog.summaries(owner, 16, 'sandbox').some(c => c.ref.id === DIDI_PROGRAM_REF.id));
     const env = { EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'x'.repeat(40), EIGOS_DIDI_KEY_FILE: f.keyFile, EIGOS_DIDI_KEY_SHA256: f.binding.keySha256, EIGOS_DIDI_BINDING_ID: f.binding.bindingId };

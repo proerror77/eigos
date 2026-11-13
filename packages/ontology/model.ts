@@ -1,7 +1,5 @@
 import { mcpReadBindingSchema, type McpReadBinding } from './mcp-read.js';
 import { z } from 'zod';
-import { isSubtype, propertyTypeOf } from './property-types.js';
-import { LINK_TYPES } from './link-types.js';
 import { paClassificationSchema, paDiscoveryFields, paDiscoverySelection, paDefinitionLinks, type PaClassification, type PaDiscoveryInput } from './pa-classification-contract.js';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -41,11 +39,21 @@ export interface PropertyDefinition {
   sourceBinding?: 'unbound';
   polymorphic?: boolean;
 }
-export interface InterfaceActionConstraint {
+interface LegacyInterfaceActionConstraint {
   id: string; inputs: Record<string, string>; effects: import('./actions.js').EffectClass[]; resultTypes?: string[]; optional?: boolean;
   ports?: { inputs: Record<string, CompositionPort>; outputs: Record<string, CompositionPort> };
 }
+interface InterfaceActionParameter {
+  apiName: string;
+  type: 'string' | 'timestamp' | 'integer' | 'boolean' | 'decimal' | 'objectReference' | 'interface' | 'objectSet' | 'attachment' | 'struct';
+  required: boolean;
+  many?: boolean;
+}
+export type InterfaceActionConstraint = LegacyInterfaceActionConstraint | {
+  apiName: string; required: boolean; description?: string; parameters: InterfaceActionParameter[];
+};
 export interface InterfaceActionMapping { actionId: string; inputMap: Record<string, string>; outputMap?: Record<string, string> }
+const interfaceActionName = (constraint: InterfaceActionConstraint) => 'apiName' in constraint ? constraint.apiName : constraint.id;
 export interface InterfaceDefinition {
   id: string;
   description: string;
@@ -76,7 +84,7 @@ export interface ObjectTypeDefinition {
   classification?: PaClassification;
   titleKey: string;
   properties: Record<string, PropertyDefinition>;
-  interfaces?: { id: string; propertyMap?: Record<string, string>; linkMap?: Record<string, string>; actionMap?: Record<string, InterfaceActionMapping> }[];
+  interfaces?: { id: string; propertyMap?: Record<string, string>; linkMap?: Record<string, string>; actionMap?: Record<string, InterfaceActionMapping | string> }[];
   /** Discovery presentation only; never an object permission or data-schema change. */
   visibility?: 'business' | 'technical';
   /** Missing policy means source-authoritative, preserving pre-registry contracts. */
@@ -160,17 +168,9 @@ function validationSchema(value: unknown): unknown {
 
 export function acceptingCompatible(actual: PropertyDefinition, expected: PropertyDefinition): boolean {
   const a = propertyMetadata(actual).schema, b = propertyMetadata(expected).schema;
-  // A polymorphic interface property declares meaning, not one concrete schema: `id` means
-  // "the stable identity of this object" whether the implementation stores a uuid, a
-  // business number or a ULID. So the width is checked, not the schema. `required` still
-  // holds, and a restricted implementation cannot satisfy a shared property.
-  if ((propertyMetadata(expected) as { polymorphic?: boolean }).polymorphic) {
-    if (expected.required && !actual.required) return false;
-    if (actual.restricted) return false;
-    // Subtyping, not equality: an identity (uuid, business number, ulid) satisfies a
-    // string contract, and any subtype of the declared type satisfies it too.
-    return isSubtype(propertyTypeOf(actual.kind), propertyTypeOf(expected.kind));
-  }
+  // The v37 identity view maps a shared string property to the local primary
+  // key. The local object's existing key validator still validates the value.
+  if (expected.polymorphic) return actual.kind === expected.kind && !actual.restricted && (!expected.required || !!actual.required);
   const timestampView = actual.kind === 'string' && expected.kind === 'timestamp' && a.format === 'date-time';
   if (actual.kind !== expected.kind && !timestampView) return false;
   if (expected.required && !actual.required) return false;
@@ -228,10 +228,7 @@ export class OntologyModel {
   private typeDescriptions = new Map<string, object>();
   private actions: ActionDefinition[];
   private functions: FunctionDefinition[];
-  /** The seed version this model was compiled from; the link registry governs only the current one. */
-  private readonly seedVersion: string;
   constructor(definition: ModelDefinition, private options: OntologyModelOptions = {}) {
-    this.seedVersion = definition.version;
     this.criteriaVersion = definition.criteriaVersion;
     Object.defineProperty(this, 'criteriaVersion', { writable: false, configurable: false });
     this.options = freezeMetadata(structuredClone(options));
@@ -322,10 +319,7 @@ export class OntologyModel {
       if (a.effects && (!a.effects.length || a.effects.some(effect => !['local', 'read', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'external_draft'].includes(effect)))) invalid('Invalid declared action effects');
       if (a.resultTypes?.some(type => !this.hasType(type))) invalid('Unknown declared action result type');
       if (a.read && (a.kind && a.kind !== 'source_read' || a.effects && (a.effects.length !== 1 || a.effects[0] !== 'read') || a.resultTypes && !a.resultTypes.includes(a.read.resultType))) invalid('Read action contract conflicts with its declared semantics');
-      // Palantir lets an action parameter be typed as an interface: the concrete object type is
-      // resolved per implementation at execution time. Accept an interface name here for that
-      // reason, while link endpoints keep requiring a concrete object type.
-      if (!a.changes.length || !a.submissionCriteria.length || Object.values(a.inputs).some(t => !this.hasType(t) && !this.interfaces.has(t))) invalid('Invalid action definition');
+      if (!a.changes.length || !a.submissionCriteria.length || Object.values(a.inputs).some(t => !this.hasType(t))) invalid('Invalid action definition');
       if (a.read && (a.read.effect !== 'read' || !a.read.version || !this.objects.has(a.read.resultType) || !a.read.inputSchema || typeof a.read.inputSchema !== 'object')) invalid('Invalid read action definition');
       if (a.read?.mcp) {
         mcpReadBindingSchema.parse(a.read.mcp);
@@ -347,82 +341,87 @@ export class OntologyModel {
       }
       for (const path of a.changes) {
         const [type, field, extra] = path.split('.');
-        // A change path on an interface is resolved per implementation at execution time, so it
-        // is not resolvable here; Palantir leaves the same decision to run time.
-        if (type && this.interfaces.has(type)) continue;
+        // v37 includes definition-only capability descriptions with interface targets.
+        if (type && this.interfaces.has(type) && !extra
+          && !a.implementation && !this.options.trustedActionImplementations?.[a.id] && !a.operation && !a.read) continue;
         if (!type || !this.objects.has(type) || extra || field && (!Object.hasOwn(this.properties(type), field) && !this.sides(type).some(s => s.side.name === field))) invalid('Unresolved action change path');
         if (field && this.properties(type)[field]?.derived) invalid('Actions cannot write derived properties');
       }
     }
     for (const id of this.interfaces.keys()) for (const constraint of this.interfaceActions(id)) {
-      nameSchema.parse((constraint as { apiName?: string }).apiName ?? constraint.id);
-      const modern = constraint as unknown as { parameters?: { apiName: string; type: string }[] };
-      const legacy = constraint as unknown as { inputs?: Record<string, string>; effects?: string[]; resultTypes?: string[] };
-      // Palantir's interface constraint declares a capability and its parameter shape.
-      // Execution semantics (effects, criteria, writeback) live on the concrete action type,
-      // so a modern constraint is not required to declare any effects at all.
-      if (modern.parameters?.length) {
-        if (modern.parameters.some(parameter => !nameSchema.safeParse(parameter.apiName).success)) invalid('Invalid interface action constraint');
-      } else if (!Object.keys(legacy.inputs ?? {}).length || Object.entries(legacy.inputs ?? {}).some(([name, type]) => !nameSchema.safeParse(name).success || !this.hasType(type)) || !(legacy.effects ?? []).length || (legacy.effects ?? []).some(effect => !['local', 'read', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'external_draft'].includes(effect)) || legacy.resultTypes?.some(type => !this.hasType(type))) invalid('Invalid interface action constraint');
+      nameSchema.parse(interfaceActionName(constraint));
+      if ('parameters' in constraint) {
+        if (new Set(constraint.parameters.map(parameter => parameter.apiName)).size !== constraint.parameters.length
+          || constraint.parameters.some(parameter => !nameSchema.safeParse(parameter.apiName).success)) invalid('Invalid interface action constraint');
+      } else {
+        if (this.interfaces.get(id)!.projectionOnly) invalid('Projection-only interfaces cannot introduce action constraints');
+        if (!Object.keys(constraint.inputs).length || Object.entries(constraint.inputs).some(([name, type]) => !nameSchema.safeParse(name).success || !this.hasType(type)) || !constraint.effects.length || constraint.effects.some(effect => !['local', 'read', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'external_draft'].includes(effect)) || constraint.resultTypes?.some(type => !this.hasType(type))) invalid('Invalid interface action constraint');
+      }
     }
     for (const item of definition.objects) for (const implementation of item.interfaces ?? []) {
       const constraints = this.interfaceActions(implementation.id);
-      const constraintKeys = (constraints as unknown as { id?: string; apiName?: string }[]).map(constraint => constraint.apiName ?? constraint.id);
-      if (Object.keys(implementation.actionMap ?? {}).some(key => !constraintKeys.includes(key))) invalid('Unknown interface action mapping');
-      for (const constraint of constraints as unknown as Record<string, unknown>[]) {
-        const key = String((constraint as { apiName?: string }).apiName ?? (constraint as { id?: string }).id);
-        const raw = (implementation.actionMap as Record<string, unknown> | undefined)?.[key];
-        const mapping = typeof raw === 'string' ? { actionId: raw, inputMap: {} } : raw as { actionId: string; inputMap?: Record<string, string> } | undefined;
-        const optional = (constraint as { optional?: boolean }).optional ?? !(constraint as { required?: boolean }).required;
-        if (!mapping && optional) continue;
-        if (!mapping) invalid(`Missing interface action implementation: ${item.id}.${key}`);
-        const action = this.actions.find(candidate => candidate.id === mapping.actionId);
+      if (Object.keys(implementation.actionMap ?? {}).some(key => !constraints.some(constraint => interfaceActionName(constraint) === key))) invalid('Unknown interface action mapping');
+      for (const constraint of constraints) {
+        const key = interfaceActionName(constraint), raw = implementation.actionMap?.[key];
+        const optional = 'parameters' in constraint ? !constraint.required : constraint.optional;
+        if (!raw && optional) continue;
+        if (!raw) invalid(`Missing interface action implementation: ${item.id}.${key}`);
+        const action = this.actions.find(candidate => candidate.id === (typeof raw === 'string' ? raw : raw.actionId));
         if (!action) invalid('Unresolved interface action implementation');
-        const parameters = (constraint as { parameters?: { apiName: string; type: string }[] }).parameters;
-        if (parameters?.length) {
-          // The satisfying action must be able to accept every declared parameter.
-          const actualTypes = Object.values(action.inputs ?? {}) as string[];
-          // Palantir: object reference, interface reference and object set parameters describe
-          // the general kind, not one concrete object type, so any object-typed input satisfies them.
-          const generic = new Set(['interface', 'objectReference', 'objectSet', 'attachment', 'struct']);
-          const satisfied = parameters.every(parameter => generic.has(parameter.type)
-            ? actualTypes.some(type => this.hasType(type))
-            : actualTypes.some(type => this.assignableType(type, parameter.type) || this.assignableType(parameter.type, type)));
-          if (!satisfied) invalid('Incompatible interface action mapping');
+        if (typeof raw === 'string') {
+          // v37 retained these definition-only references without parameter mappings.
+          if (!optional || action.implementation || this.options.trustedActionImplementations?.[action.id] || action.read || action.operation) invalid('Interface action requires an explicit parameter mapping');
           continue;
         }
-        const constraintInputs = ((constraint as { inputs?: Record<string, string> }).inputs) ?? {};
-        const constraintEffects = ((constraint as { effects?: string[] }).effects) ?? [];
-        const inputMap = mapping.inputMap ?? {};
-        const actualInputs = Object.keys(action.inputs), mappedInputs = Object.keys(inputMap);
-        if (actualInputs.length !== mappedInputs.length || actualInputs.some(input => !Object.hasOwn(inputMap, input))
-          || new Set(Object.values(inputMap)).size !== Object.keys(constraintInputs).length
-          || Object.entries(inputMap).some(([actual, expected]) => {
-            const target = constraintInputs[expected], actualType = action.inputs[actual];
+        const mapping = raw;
+        if ('parameters' in constraint) {
+          const input = (action.inputSchema ?? action.read?.inputSchema ?? action.operation?.inputSchema) as {
+            properties?: Record<string, { type?: string; format?: string; items?: { type?: string; format?: string } }>;
+            required?: string[];
+          } | undefined;
+          const mapped = Object.values(mapping.inputMap);
+          if (new Set(mapped).size !== mapped.length || constraint.parameters.some(parameter => parameter.required && !mapped.includes(parameter.apiName))) invalid('Incompatible interface action mapping');
+          for (const [actual, expected] of Object.entries(mapping.inputMap)) {
+            const parameter = constraint.parameters.find(value => value.apiName === expected);
+            const target = action.inputs[actual], property = input?.properties?.[actual];
+            const kind = target ? this.isInterface(target) ? 'interface' : 'objectReference' : undefined;
+            const value = parameter?.many ? property?.items : property;
+            const valueKind = value?.format === 'date-time' ? 'timestamp' : value?.type === 'object' ? 'struct' : value?.type === 'number' ? 'decimal' : value?.type;
+            const required = input ? input.required?.includes(actual) : !!target;
+            if (!parameter || input && !property || !!parameter.many !== (property?.type === 'array')
+              || parameter.required && !required || (kind ?? valueKind) !== parameter.type) invalid('Incompatible interface action mapping');
+          }
+          continue;
+        }
+        const actualInputs = Object.keys(action.inputs), mappedInputs = Object.keys(mapping.inputMap);
+        if (actualInputs.length !== mappedInputs.length || actualInputs.some(input => !Object.hasOwn(mapping.inputMap, input))
+          || new Set(Object.values(mapping.inputMap)).size !== Object.keys(constraint.inputs).length
+          || Object.entries(mapping.inputMap).some(([actual, expected]) => {
+            const target = constraint.inputs[expected], actualType = action.inputs[actual];
             if (!target || !actualType || !this.assignableType(actualType, target)) return true;
             return (target === implementation.id || this.interfaceAncestors(implementation.id).includes(target)) && !this.implements(item.id, actualType);
           })
-          || !action.effects || digest([...new Set(action.effects)].sort()) !== digest([...new Set(constraintEffects)].sort())
-          || ((constraint as { resultTypes?: string[] }).resultTypes)?.some(expected => !action.resultTypes?.some(actual => this.assignableType(actual, expected)))) invalid('Incompatible interface action mapping');
+          || !action.effects || digest([...new Set(action.effects)].sort()) !== digest([...new Set(constraint.effects)].sort())
+          || constraint.resultTypes?.some(expected => !action.resultTypes?.some(actual => this.assignableType(actual, expected)))) invalid('Incompatible interface action mapping');
         if (constraint.ports) {
           if (!action.composition) invalid('Interface ports require an explicit action composition contract');
-          const actual = action.composition as any;
-          for (const [input, expected] of Object.entries((constraint as unknown as { ports: { inputs: Record<string, unknown> } }).ports.inputs) as [string, any][]) {
-            const concrete = Object.entries((mapping as { inputMap: Record<string, string> }).inputMap).find(([ , alias]) => alias === input)?.[0];
+          const actual = action.composition;
+          for (const [input, expected] of Object.entries(constraint.ports.inputs)) {
+            const concrete = Object.entries(mapping.inputMap).find(([, alias]) => alias === input)?.[0];
             if (!concrete || !actual.inputs[concrete]) invalid('Missing interface input port mapping');
             const port = expected.kind === 'object' && expected.type === implementation.id ? { ...expected, type: item.id } : expected;
             assertPortCompatible(this, port, actual.inputs[concrete]);
-            if (expected.evidence.origins.some((origin: string) => !actual.inputs[concrete]!.evidence.origins.includes(origin))) invalid('Interface input provenance cannot be narrowed by an implementation');
+            if (expected.evidence.origins.some(origin => !actual.inputs[concrete]!.evidence.origins.includes(origin))) invalid('Interface input provenance cannot be narrowed by an implementation');
           }
-          const outputMap = (mapping as any).outputMap ?? Object.fromEntries(Object.keys((constraint as any).ports.outputs).map((name: string) => [name, name]));
-          if (new Set(Object.values(outputMap)).size !== Object.keys(outputMap).length || Object.keys(outputMap).some((name: string) => !actual.outputs[name]) || Object.values(outputMap).some((name: any) => !(constraint as any).ports.outputs[name])) invalid('Invalid interface output port mapping');
-          for (const [output, expected] of Object.entries((constraint as any).ports.outputs) as [string, any][]) {
+          const outputMap = mapping.outputMap ?? Object.fromEntries(Object.keys(constraint.ports.outputs).map(name => [name, name]));
+          if (new Set(Object.values(outputMap)).size !== Object.keys(outputMap).length || Object.keys(outputMap).some(name => !actual.outputs[name]) || Object.values(outputMap).some(name => !constraint.ports!.outputs[name])) invalid('Invalid interface output port mapping');
+          for (const [output, expected] of Object.entries(constraint.ports.outputs)) {
             const concrete = Object.entries(outputMap).find(([, alias]) => alias === output)?.[0];
             if (!concrete || !actual.outputs[concrete]) invalid('Missing interface output port mapping');
             assertPortCompatible(this, actual.outputs[concrete], expected);
-            if (actual.outputs[concrete]!.evidence.origins.some((origin: string) => !expected.evidence.origins.includes(origin))) invalid('Interface output provenance cannot be weakened by an implementation');
+            if (actual.outputs[concrete]!.evidence.origins.some(origin => !expected.evidence.origins.includes(origin))) invalid('Interface output provenance cannot be weakened by an implementation');
           }
-        } else if ((mapping as any).outputMap) invalid('Output port mappings require an interface port contract');
+        } else if (mapping.outputMap) invalid('Output port mappings require an interface port contract');
       }
     }
     const documented = [...this.objects.values()].filter(type => type.businessDescription !== undefined);
@@ -486,10 +485,6 @@ export class OntologyModel {
     return inherited ?? 'strict';
   }
 
-  private structuralInterface(id: string): boolean {
-    const value = this.interfaces.get(id)!;
-    return value.propertyCompatibility === 'structural_v1' || (value.parents ?? []).some(parent => this.structuralInterface(parent));
-  }
   private interfaceOptionalProperties(id: string): string[] {
     const i = this.interfaces.get(id)!;
     const own = i.optionalProperties ?? [];
@@ -501,14 +496,13 @@ export class OntologyModel {
     const i = this.interfaces.get(id)!;
     const actions = new Map<string, InterfaceActionConstraint>();
     for (const action of [...(i.parents ?? []).flatMap(parent => this.interfaceActions(parent)), ...(i.actions ?? [])]) {
-      // Palantir names a constraint by apiName; older definitions used id, so both key the map.
-      const key = String((action as { apiName?: string }).apiName ?? (action as { id?: string }).id);
-      const prior = actions.get(key);
-      // A constraint's description is presentation, not contract: Palantir lets two interfaces
-      // declare the same capability in their own words. Compatibility compares the name, whether
-      // it is required, and the parameter shape — nothing else.
-      const contractOf = (constraint: Record<string, unknown>) => digest({ apiName: constraint.apiName ?? constraint.id, required: constraint.required ?? !constraint.optional, parameters: constraint.parameters ?? null });
-      if (prior && contractOf(prior as unknown as Record<string, unknown>) !== contractOf(action as unknown as Record<string, unknown>)) invalid('Conflicting inherited interface action');
+      const key = interfaceActionName(action), prior = actions.get(key);
+      const contract = (constraint: InterfaceActionConstraint) => {
+        if ('id' in constraint) return constraint;
+        const { description: _description, ...shape } = constraint;
+        return shape;
+      };
+      if (prior && digest(contract(prior)) !== digest(contract(action))) invalid('Conflicting inherited interface action');
       actions.set(key, action);
     }
     return [...actions.values()];
@@ -533,6 +527,10 @@ export class OntologyModel {
   concreteTypes(target: string): string[] {
     if (!this.hasType(target)) invalid('Unknown ontology type');
     return [...this.objects.keys()].filter(type => this.implements(type, target)).sort();
+  }
+  searchableTypes(target: string): string[] {
+    if (this.interfaces.get(target)?.searchable === false) invalid('Interface does not support object-set searches');
+    return this.concreteTypes(target);
   }
   propertyName(type: string, target: string, name: string): string {
     if (!this.implements(type, target) && type !== target) invalid('Object does not implement requested type');
@@ -594,18 +592,7 @@ export class OntologyModel {
   sides(type: string) {
     let sides = this.linkSides.get(type);
     if (!sides) {
-      // The registry is the authority on which links exist. A link the document no longer carries
-      // is still a relationship of the ontology, so its sides are resolvable: this is what lets a
-      // provider module stop declaring the graph without the interfaces losing their vocabulary.
-      // Only the current version is governed this way; a pinned earlier version is what its release
-      // record says it is, and adding links to it would rewrite a fingerprint that is already fixed.
-      const declared = new Set(this.links.map(link => link.id));
-      const governed = this.seedVersion !== '37' ? [] : LINK_TYPES.filter(linkType => !declared.has(linkType.apiName)).map(linkType => ({
-        id: linkType.apiName,
-        from: { type: linkType.from.type, name: linkType.from.name, many: linkType.from.many ?? false, required: linkType.from.required ?? false },
-        to: { type: linkType.to.type, name: linkType.to.name, many: linkType.to.many ?? false, required: linkType.to.required ?? false },
-      }));
-      sides = [...this.links, ...(governed as unknown as typeof this.links)].flatMap(link => [
+      sides = this.links.flatMap(link => [
         ...(this.implements(type, link.from.type) ? [{ link, side: link.from, other: link.to, direction: 'forward' as const }] : []),
         ...(this.implements(type, link.to.type) ? [{ link, side: link.to, other: link.from, direction: 'reverse' as const }] : []),
       ]);
@@ -617,21 +604,7 @@ export class OntologyModel {
   }
   navigation(type: string, name: string, as?: string) {
     const actual = as ? this.linkName(type, as, name) : name;
-    // A relationship declared from one side only is still navigable from the other: the
-    // link id names it, and the missing side is synthesised as an optional many-side.
-    // Palantir does not require both endpoints to be declared before the edge exists.
-    const side = this.sides(type).find(s => s.side.name === actual)
-      ?? (() => {
-        const link = this.links.find(l => l.id === actual && (l.from.type === type || l.to.type === type));
-        if (!link) return invalid('Unknown relationship on this object type');
-        const outward = link.from.type === type;
-        return {
-          link,
-          direction: (outward ? 'forward' : 'reverse') as 'forward' | 'reverse',
-          side: { type, name: link.id, many: outward ? !!link.from.many : !!link.to.many, required: outward ? !!link.to.required : !!link.from.required },
-          other: { type: outward ? link.to.type : link.from.type, name: outward ? link.to.name : link.from.name, many: outward ? !!link.to.many : !!link.from.many, required: outward ? !!link.from.required : !!link.to.required },
-        };
-      })();
+    const side = this.sides(type).find(value => value.side.name === actual);
     if (!side) invalid('Unknown relationship on this object type');
     return { ...side, ...(as ? { viewType: this.interfaceLinks(as).find(link => link.name === name)!.target } : {}) };
   }
@@ -698,8 +671,14 @@ export class OntologyModel {
   }
   resolveInterfaceAction(type: string, interfaceId: string, actionId: string): { action: ActionDefinition; inputMap: Record<string, string> } {
     if (!this.isInterface(interfaceId) || !this.implements(type, interfaceId)) invalid('Object does not implement the action interface');
-    if (!this.interfaceActions(interfaceId).some(action => action.id === actionId)) invalid('Unknown interface action constraint');
-    const mappings = (this.object(type).interfaces ?? []).filter(i => i.id === interfaceId || this.interfaceAncestors(i.id).includes(interfaceId)).flatMap(i => i.actionMap?.[actionId] ? [i.actionMap[actionId]!] : []);
+    const constraint = this.interfaceActions(interfaceId).find(value => interfaceActionName(value) === actionId);
+    if (!constraint) invalid('Unknown interface action constraint');
+    const mappings = (this.object(type).interfaces ?? [])
+      .filter(implementation => implementation.id === interfaceId || this.interfaceAncestors(implementation.id).includes(interfaceId))
+      .flatMap(implementation => {
+        const mapping = implementation.actionMap?.[actionId];
+        return mapping && typeof mapping !== 'string' ? [mapping] : [];
+      });
     if (!mappings.length) invalid('Optional interface action is not implemented by this type');
     if (mappings.some(mapping => digest(mapping) !== digest(mappings[0]))) invalid('Ambiguous interface action mapping');
     return { action: this.action(mappings[0]!.actionId), inputMap: structuredClone(mappings[0]!.inputMap) };

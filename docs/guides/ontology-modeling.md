@@ -2,11 +2,11 @@
 
 ## 运行结构
 
-四类定义的权威来源已进入 SQLite 注册库。代码中的原有业务数组仅提供初始种子、明确版本的校验器和受信任实现；新任务读取命名空间的 active release，并保存准确的 `ontologyId / releaseId / digest`。后续规划、Action、数据投影、权限和结果读取使用同一任务版本。
+正式运行从共享 PostgreSQL 本体库读取命名空间的当前发布。新任务保存准确的 `ontologyId / releaseId / digest`，后续规划、Action、数据投影、权限和结果读取都使用该发布。代码提供初始种子、版本化校验器和受信实现。SQLite 注册库仍用于兼容旧数据和本地测试。
 
 - [定义契约](../../packages/ontology/definition-contracts.ts)声明 Object Type、Link Type、Interface、Action Type 和受控 JSON Schema。
 - [编译器](../../packages/ontology/model-compiler.ts)检查依赖、接口实现、字段权限、动作规则和准确受信任处理器引用，生成不可变模型。
-- [注册库](../../packages/ontology/definition-store.ts)保存命名空间、稳定资源身份、追加修订、草稿、不可变发布、激活和审计。模型缓存只含静态定义；进程编译缓存、每个注册库的解析缓存和每个任务库的图视图均采用 16 项 LRU 上限。每次解析仍核对持久发布身份，事实与权限不进入该缓存。
+- [PostgreSQL 发布解析](../../packages/postgres/ontology-release.ts)从持久发布读取任务版本。关系导航从该版本的 Link Type 和 Interface 映射解析端点。模型缓存只保存已编译定义，事实与权限仍由任务作用域查询取得。
 - [管理服务](../../packages/ontology/definition-service.ts)同时服务 HTTP、MCP 和基础审查页面；创建定义、发布定义和执行业务分别鉴权。
 - [通用数据动作](../../packages/capabilities/dynamic-ontology.ts)使用[受限声明式规则](../../packages/ontology/action-dsl.ts)，复用现有 Task、Intent、Attempt、Observation、授权、Worker 领取、租约和取消检查。
 
@@ -34,7 +34,7 @@ MCP 工具、供应商端点和运行步骤不是业务 Action Type 的同义词
 
 来源采集与[事实投影](../../packages/ontology/ride-estimate-projection.ts)保存“来源在何时说了什么”，可以产生来源观察及关联事实；它们不代表用户已选择方案、建立订单或完成出行。当前仍不允许真实下单或付款。扩展到业务 Action Type 前，需核对实际对象／关系变更、原用户授权、供应方回执、幂等、撤销、取消与迟到结果，而非给现有读取步骤换名称。
 
-本次概念修正不重命名已发布 API、不改写历史指纹，也不修改既有 v27 定义或任何 active release。后续边界调整须经草稿、兼容性检查和明确发布；在途任务保留其原版本与原输入。
+现有滴滴读取 ID 仍由 v35 发布解析。读取结果落为 `RideEstimate` 后，可以按 `MonetaryFact` 查询价格，通过 `route` 和 `sourceReceipts` 读取路线及来源。独立验收依据原任务的来源回执与函数结果。
 
 ## PostgreSQL与pgvector语义检索目标
 
@@ -65,7 +65,7 @@ MCP 工具、供应商端点和运行步骤不是业务 Action Type 的同义词
 
 ### 已审阅内核发布
 
-每一层都是独立、不可变的发布；软件安装只重建定义，不激活已存命名空间。当前默认目标仍是 v28。
+每一层都可按版本重建。v28 用于默认权限基线，业务版本由 PostgreSQL 当前发布决定。v36、v37 保留为可重放的定义，v37 的来源和 writeback 注记还未接入运行。
 
 | 版本 | 内容 | 指纹常量 |
 | --- | --- | --- |

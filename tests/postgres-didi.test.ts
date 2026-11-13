@@ -15,6 +15,7 @@ import {authorizeModelDispatch} from '../packages/core/model-dispatch-context.js
 import {evidence} from './backend-fixture.js';
 import {verifyPostgresDidiSourceReceipt} from '../packages/postgres/didi-policy.js';
 import {checkedRideEstimate} from '../packages/ontology/ride-estimate-projection.js';
+import {postgresOntologyRelease} from '../packages/postgres/ontology-release.js';
 import {digest} from '../packages/core/delegation.js';
 import {SecurityError} from '../packages/security/errors.js';
 import type {AgentActionResult} from '../packages/core/agent-program.js';
@@ -115,7 +116,7 @@ test('a Worker-shaped live DiDi snapshot with a valid self-digest is not a compl
 
 for(const mode of ['structured','natural'] as const)test(`PG DiDi ${mode} short path executes the original task with bounded calls and refuses to promote synthetic evidence`,local,async()=>{
   const route={city:'北京市',origin:'北京西站',destination:'西二旗地铁站'};
-  const x=await postgresDidiFixture(mode==='natural',{shortPath:mode==='structured'?{mode,...route}:{mode}});
+  const x=await postgresDidiFixture(mode==='natural',mode==='structured'?{shortPath:{mode,...route},releaseVersion:'35'}:{shortPath:{mode}});
   let turns=0;
   const unexpected=async():Promise<never>=>{throw Error('Unexpected model stage');};
   try{
@@ -158,12 +159,24 @@ for(const mode of ['structured','natural'] as const)test(`PG DiDi ${mode} short 
     const result=await service.queryOntology(p,{version:2,taskId:done.id,query:{object:observation}}) as any;
     assert.equal(result.items[0]?.properties.observedData?.data?.kind,'estimate');
     if(mode==='structured'){
+      const release=await x.t.database.read(client=>postgresOntologyRelease(client,done.delegation!.ontologyRelease!,x.t.kernel));
+      assert.equal(release.model.ref.version,'35');
+      const read=(query:Parameters<PostgresProjectionGraph['query']>[1])=>service.queryOntology(p,{version:2,taskId:done.id,query});
+      const quotes=await read({type:'MonetaryFact',select:['amount','currency','pricingCompleteness']});
+      const quote=quotes.items.find(item=>item.properties.amount==='73.05');assert(quote);
+      assert.equal(quote.properties.currency,'CNY');
+      assert.equal(quote.properties.pricingCompleteness,'unknown');
+      const receipts=await read({from:quote.ref,as:'EvidenceBacked',link:'sourceReceipts',select:['evidenceLevel']});
+      assert.deepEqual(receipts.items.map(item=>item.properties.evidenceLevel),['synthetic']);
+      const routes=await read({from:quote.ref,link:'route',select:['origin','destination']});
+      assert.deepEqual(routes.items.map(item=>item.properties),[{origin:route.origin,destination:route.destination}]);
       const commands=new PostgresTaskCommandService(x.t.database,x.t.policy,x.t.kernel);
       const input={mode:'structured' as const,...route},request={requestId:randomUUID(),goal:didiEstimateGoal,didiEstimate:input};
       await assert.rejects(commands.submit(p,{...request,goal:'请真实叫车'}),/read-only estimate/);
       const submitted=await commands.submit(p,request),repeated=await commands.submit(p,request);
       assert.equal(submitted.id,repeated.id);
       const stored=await x.t.database.run(client=>new PostgresTaskStorage(client,x.t.kernel).get(x.f.owner,submitted.id));
+      assert.deepEqual(stored.delegation?.ontologyRelease,done.delegation!.ontologyRelease);
       assert.equal(stored.goal,structuredDidiGoal(input));
       assert.deepEqual(stored.delegation?.didiEstimate,{request:input,revision:1});
       assert.deepEqual(stored.delegation?.request.capabilityRef,x.program.ref);

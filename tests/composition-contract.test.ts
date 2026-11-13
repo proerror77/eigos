@@ -165,6 +165,8 @@ test('interface action mappings preserve port roles and cannot weaken output pro
   doc.actions[0]!.composition!.outputs.quote!.evidence.origins.push('model');
   assert.throws(() => compileOntologyDocument(doc, registry), /provenance cannot be weakened/);
   doc.actions[0]!.composition!.outputs.quote!.evidence.origins = ['provider'];
-  doc.interfaces[0]!.actions![0]!.ports!.outputs.result!.semantics.phase = 'delivery';
+  const constraint=doc.interfaces[0]!.actions![0]!;
+  assert('ports' in constraint);
+  constraint.ports!.outputs.result!.semantics.phase = 'delivery';
   assert.throws(() => compileOntologyDocument(doc, registry), /result phase differs/);
 });

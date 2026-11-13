@@ -11,8 +11,7 @@ export type ActionMutation =
   | { op: 'create'; type: string; id: ActionValue; properties: Record<string, ActionValue> }
   | { op: 'update'; object: ActionObjectRef; expectedRevision: ActionValue; properties: Record<string, ActionValue> }
   | { op: 'tombstone'; object: ActionObjectRef; expectedRevision: ActionValue }
-  | { op: 'add_link'; type: string; from: ActionObjectRef; to: ActionObjectRef; properties?: Record<string, ActionValue> }
-  | { op: 'remove_link'; type: string; from: ActionObjectRef; to: ActionObjectRef };
+  | { op: 'add_link' | 'remove_link'; type: string; from: ActionObjectRef; to: ActionObjectRef };
 export type ManagedResultFact =
   | { kind: 'budget'; amountProperty: string; currencyProperty: string; role?: typeof amountRoles[number] }
   | { kind: 'quantity'; amountProperty: string; unit: string; role?: typeof quantityRoles[number] };

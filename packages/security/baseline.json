@@ -3292,7 +3292,7 @@
     {
       "id": "definition-validation",
       "file": "packages/ontology/definition-validation.ts",
-      "sourceDigest": "5aba90283804391f290868ff01470b3edfd2e4efc5cebb6cb06683fba0d8d8ed",
+      "sourceDigest": "adf9463134584b6e8d3510b189fc2b995d64180233567eeb45d1e91b5b39178f",
       "channels": [
         "internal",
         "ontology_metadata"
@@ -4163,7 +4163,7 @@
     {
       "id": "ontology-definition-contracts",
       "file": "packages/ontology/definition-contracts.ts",
-      "sourceDigest": "18581bf60618561f27db21f59458363e99726c84ec5ec129d124df55a8da33f2",
+      "sourceDigest": "4001883fd2d96bd8a85434c5f0821709c71d6ccbc5027fba90171941602ded94",
       "channels": [
         "management",
         "sqlite"
@@ -4176,7 +4176,7 @@
     {
       "id": "ontology-definition-service",
       "file": "packages/ontology/definition-service.ts",
-      "sourceDigest": "e0b86eb945a2c6e8ec89ee105598c5576e45d08edc4491764b274ed8c7442cc0",
+      "sourceDigest": "a50ada5db01b1878ccf428f2a3dd3fe9dc8b0795410ecb70ff4f444be54a3358",
       "channels": [
         "http",
         "mcp"
@@ -4189,7 +4189,7 @@
     {
       "id": "ontology-definitions",
       "file": "packages/ontology/model.ts",
-      "sourceDigest": "902d2c899853e0f1fcf0bcf2fef803ea53ab70e58412a03b02bc3b5f617c8b89",
+      "sourceDigest": "4803e4ad40a8599229a760e1cd3d96ac2ad2394461ec3b453d563b4a7bca807d",
       "channels": [
         "definition"
       ],
@@ -4257,7 +4257,7 @@
       "currentControl": "Every selectable release (v27-v31) keeps an explicit digest constant and is asserted during construction; historical releases are never rewritten.",
       "targetControl": "Accurate release construction and immutable historical interpretation",
       "stage": "S2",
-      "sourceDigest": "6ba1003f70f4fdf55ef81276f1eb767bc7aa477a9fea9104ab3037e57a51b940"
+      "sourceDigest": "f898177002cab6036ee71080053d8eca1a4abf52e4431d74ed2a75dffdd27175"
     },
     {
       "id": "ontology-metadata-http",
@@ -4441,7 +4441,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "64195a3aaaea2d9da1689480d88a58ff3102d49eaa2c73040b75c66bd6833c1a",
+      "sourceDigest": "09f4193bce892c078171d043c760fc65313ff305799da7d0c65e4bb7c51a7e0c",
       "channels": [
         "query",
         "function"
@@ -5640,7 +5640,7 @@
     {
       "id": "postgres-ontology-read-query",
       "file": "packages/postgres/ontology-read-query.ts",
-      "sourceDigest": "f7a9e435e084278dce96e819c1203b15b35955d6b15f844b175dbd4a9f428ece",
+      "sourceDigest": "cb46bb134b7a5d3889e51a8e0819845200f4b1f032cf5298f231a842b6c987ab",
       "channels": [
         "internal"
       ],
@@ -5702,7 +5702,7 @@
     {
       "id": "postgres-projection-graph",
       "file": "packages/postgres/projection-graph.ts",
-      "sourceDigest": "fce2fbe080ead65058aeddb1ea6dd044590c3ad2cd0463c0c0d8a70793ae70c8",
+      "sourceDigest": "f20c47b65118decf6c030b49b21bc45cf6d2adad8aec21110f9c66285763c16e",
       "channels": [
         "internal"
       ],
@@ -7638,7 +7638,7 @@
     {
       "id": "source-catalog",
       "file": "packages/capabilities/catalog.ts",
-      "sourceDigest": "e757d4b77b308bdd4268040dda7cbba3da18fedcf11e76f0bf488987e1e7c8d7",
+      "sourceDigest": "0326c23cc6b1de4a9a54dc4eb616fe89bbc34795d567435b05284d817c8379dd",
       "channels": [
         "source",
         "dispatch"
@@ -7874,7 +7874,7 @@
     {
       "id": "trusted-kernel-bootstrap",
       "file": "packages/ontology/seed-definition.ts",
-      "sourceDigest": "6ba1003f70f4fdf55ef81276f1eb767bc7aa477a9fea9104ab3037e57a51b940",
+      "sourceDigest": "f898177002cab6036ee71080053d8eca1a4abf52e4431d74ed2a75dffdd27175",
       "channels": [
         "authorization_control"
       ],

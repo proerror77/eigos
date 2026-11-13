@@ -1,5 +1,4 @@
-// Generated from .hermes/reports/datasource-derived.json —每一条都带来源文件，见该报告。
-// 只有能从写入点取证的类型才写 datasource；剩下的标 derived，不编造 provider。
+// Datasource annotations from the v37 writer inventory. Retained for v37 replay.
 export const OBJECT_DATASOURCE: Readonly<Record<string, string>> = Object.freeze({
  "ServiceRequest": "api://booking",
  "Proposal": "dataset://postgres/projection-graph",

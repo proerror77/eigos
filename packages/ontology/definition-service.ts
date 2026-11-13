@@ -7,7 +7,7 @@ import type { JobStore } from '../core/store.js';
 import type { TaskService } from '../core/tasks.js';
 import type { ExecutionCatalog } from '../core/catalog.js';
 import { taskSummary } from '../core/task-summary.js';
-import { definitionKindSchema, ontologyIdSchema, ontologyReleaseRefSchema, resourceIdSchema } from './definition-contracts.js';
+import { definitionKindSchema, ontologyIdSchema, ontologyReleaseRefSchema, resourceIdSchema, type SerializableInterface, type SerializableObjectType } from './definition-contracts.js';
 import type { DefinitionDraft } from './definition-store.js';
 import { previewDeclarativeAction } from './declarative-actions.js';
 import type { ManagedActionPreview } from './declarative-actions.js';
@@ -361,11 +361,16 @@ export class DefinitionService {
       for (const mutation of implementation?.mutations ?? []) if (mutation.type) dependencies.add((['add_link', 'remove_link'].includes(mutation.op) ? 'link:' : '') + mutation.type);
     } else {
       for (const property of Object.values((value.properties ?? {}) as Record<string, { derived?: string }>)) if (property.derived) dependencies.add('function:' + property.derived);
-      if (kind === 'object') for (const item of (value.interfaces ?? []) as { id: string; actionMap?: Record<string, { actionId: string }> }[]) { dependencies.add(item.id); for (const mapping of Object.values(item.actionMap ?? {})) dependencies.add('action:' + mapping.actionId); }
+      if (kind === 'object') for (const item of (definition as SerializableObjectType).interfaces ?? []) {
+        dependencies.add(item.id);
+        for (const mapping of Object.values(item.actionMap ?? {})) dependencies.add('action:' + (typeof mapping === 'string' ? mapping : mapping.actionId));
+      }
       else {
         for (const parent of (value.parents ?? []) as string[]) dependencies.add(parent);
         for (const link of (value.links ?? []) as { target: string }[]) dependencies.add(link.target);
-        for (const action of (value.actions ?? []) as { inputs: Record<string, string>; resultTypes?: string[] }[]) [...Object.values(action.inputs), ...(action.resultTypes ?? [])].forEach(item => dependencies.add(item));
+        for (const action of (definition as SerializableInterface).actions ?? []) {
+          if ('inputs' in action) for (const type of [...Object.values(action.inputs), ...(action.resultTypes ?? [])]) dependencies.add(type);
+        }
       }
     }
     return [...dependencies].sort();

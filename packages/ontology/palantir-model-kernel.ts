@@ -1,24 +1,12 @@
 import { DomainError } from '../core/domain.js';
-import { LINK_TYPE_BY_API_NAME, linkTypeDrift } from './link-types.js';
 import type { OntologyDocument } from './definition-contracts.js';
 import type { TrustedDefinitionRegistry } from './model-compiler.js';
 import { DERIVED_TYPES, OBJECT_DATASOURCE } from './palantir-datasource-map.js';
 
 /**
- * v37 gives every object type the two things Palantir requires before a type can
- * exist at all: a data source, and — for types that are computed rather than fed —
- * an explicit derived marker.
- *
- * Nothing here is guessed. `OBJECT_DATASOURCE` only contains types whose writer was
- * located in code (136 of 204, each carrying its file in
- * `.hermes/reports/datasource-derived.json`). The remaining 68 were checked against
- * real execution: 9,742 object writes across 319 type and relationship names
- * produced by the suite, and not one of them touched any of these types. So they are
- * declared derived instead of being given a fabricated provider.
- *
- * Actions get a `writeback` derived from what they already declare: the first
- * `changes` target, a mode from the declared operation effect, and the result type
- * they already return. Read-only actions get none, because they write nothing back.
+ * Reconstructs the pinned v37 metadata. Its datasource and writeback annotations
+ * are descriptive. Provider reads and action execution still use the release's
+ * registered source and action bindings.
  */
 
 /** `api://didi` becomes `{type:'api', path:'didi'}` — the scheme is the datasource kind,
@@ -278,30 +266,8 @@ export function extendPalantirModelKernel(original: OntologyDocument, registry?:
   const capabilityActions = extendInterfaceCapabilityActions(document);
   const interfaceActions = extendInterfaceActions(document);
   document.version = '37';
-  // The registry is checked, never applied. Generated execution relationships are pinned by
-  // object and array identity, so a graph that disagrees with the authoritative table is a fatal
-  // error rather than something the builder silently corrects.
-  const linkDrift = linkTypeDrift(document.links as never);
-  if (linkDrift.length) throw new Error(`Link types drifted from the authoritative table: ${linkDrift.slice(0, 5).join('; ')}`);
-  // Structure comes from the registry, applied without inventing keys: the compiler compares a
-  // digest of each link definition against the canonical generated one, and an explicit
-  // `many: false` where the declaration had no key at all changes that digest. Only an existing
-  // field whose value differs is rewritten.
-  let reshaped = 0;
-  for (const link of document.links as unknown as Record<string, any>[]) {
-    const declaration = LINK_TYPE_BY_API_NAME.get(String(link.id));
-    if (!declaration) continue;
-    for (const [side, declared] of [['from', declaration.from], ['to', declaration.to]] as const) {
-      const end = link[side];
-      if (end.type !== declared.type) { end.type = declared.type; reshaped++; }
-      if (end.name !== declared.name) { end.name = declared.name; reshaped++; }
-      // A null means the model never stated the key; it is not a value to write back.
-      if (declared.many !== null && 'many' in end && !!end.many !== declared.many) { end.many = declared.many; reshaped++; }
-      if (declared.required !== null && 'required' in end && !!end.required !== declared.required) { end.required = declared.required; reshaped++; }
-    }
-  }
   return {
     document,
-    summary: { reshaped, linkTypes: (document.links as unknown as unknown[]).length, capabilityActions, sharedPropertyTypes, sharedProperties, interfaceActions, interfaceIdentity, relocatedRoles, withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
+    summary: { linkTypes: document.links.length, capabilityActions, sharedPropertyTypes, sharedProperties, interfaceActions, interfaceIdentity, relocatedRoles, withDatasource, derivedTypes, undeclared, writebacks: writebackCount, reRegistered, readOnly, noTarget, note: 'datasource 只写取得出写入点的类型；无写入方的类型用 function datasource 表达，不编 provider' },
   };
 }

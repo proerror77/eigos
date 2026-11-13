@@ -72,7 +72,7 @@ export function workbenchRelations(document: OntologyDocument): WorkbenchRelatio
   for (const object of document.objects) {
     for (const implementation of object.interfaces ?? []) {
       edge('object', object.id, 'interface', implementation.id, 'implements');
-      for (const [name, mapping] of Object.entries(implementation.actionMap ?? {})) edge('object', object.id, 'action', mapping.actionId, `action:${name}`);
+      for (const [name, mapping] of Object.entries(implementation.actionMap ?? {})) edge('object', object.id, 'action', typeof mapping === 'string' ? mapping : mapping.actionId, `action:${name}`);
     }
     for (const [name, property] of Object.entries(object.properties)) edge('object', object.id, 'function', property.derived, `derived:${name}`);
   }
@@ -81,6 +81,7 @@ export function workbenchRelations(document: OntologyDocument): WorkbenchRelatio
     for (const [name, property] of Object.entries(iface.properties)) edge('interface', iface.id, 'function', property.derived, `derived:${name}`);
     for (const link of iface.links ?? []) typeEdge('interface', iface.id, link.target, `link:${link.name}`);
     for (const action of iface.actions ?? []) {
+      if (!('inputs' in action)) continue;
       for (const [name, type] of Object.entries(action.inputs)) typeEdge('interface', iface.id, type, `input:${action.id}.${name}`);
       for (const type of action.resultTypes ?? []) typeEdge('interface', iface.id, type, `result:${action.id}`);
     }

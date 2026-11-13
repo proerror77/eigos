@@ -91,8 +91,8 @@ export async function postgresQueryAuthorizedObjects(client:Client,principal:Pri
       target = relationship.target;
     } else target = query.type;
     await requireResource(model.isInterface(target) ? 'interface' : 'objectType', target);
+    const types = new Set('type' in query ? model.searchableTypes(target) : model.concreteTypes(target)), visible: ObjectRef[] = [];
     const selection=await postgresTaskQuerySelection(client,p,args.taskId,policyDigest);
-    const types = new Set(model.concreteTypes(target)), visible: ObjectRef[] = [];
     let candidates=selection.rows;
     if(relationship){
       // Narrow the already admitted inventory, without reading object bodies or

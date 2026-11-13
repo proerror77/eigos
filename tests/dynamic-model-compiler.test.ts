@@ -107,7 +107,7 @@ test('shared compiled models expose immutable metadata without freezing Zod pars
 test('interface constraints reject missing required capabilities and invalid concrete action mappings', () => {
   let document = dynamicDefinition(); delete document.objects[0]!.interfaces![0]!.actionMap;
   assert.throws(() => compileOntologyDocument(document, new TrustedDefinitionRegistry()), /Missing interface action/);
-  document = dynamicDefinition(); document.objects[0]!.interfaces![0]!.actionMap!.RequestUse!.inputMap = { device: 'unknown' };
+  document = dynamicDefinition(); document.objects[0]!.interfaces![0]!.actionMap!.RequestUse = { actionId: 'RequestDevice', inputMap: { device: 'unknown' } };
   assert.throws(() => compileOntologyDocument(document, new TrustedDefinitionRegistry()), /Incompatible interface action/);
   document = dynamicDefinition(); document.objects[0]!.interfaces![0]!.actionMap!.RequestUse = { actionId: 'RequestRoom', inputMap: { room: 'resource' } };
   assert.throws(() => compileOntologyDocument(document, new TrustedDefinitionRegistry()), /Incompatible interface action/);
@@ -115,6 +115,20 @@ test('interface constraints reject missing required capabilities and invalid con
   assert.throws(() => compileOntologyDocument(document, new TrustedDefinitionRegistry()), /Incompatible interface property/);
   document = dynamicDefinition(); document.interfaces[0]!.parents = ['RequestableResource'];
   assert.throws(() => compileOntologyDocument(document, new TrustedDefinitionRegistry()), /cyclic/);
+});
+
+test('interface action parameters resolve only through their declared concrete mappings', () => {
+  const document = dynamicDefinition();
+  document.interfaces[0]!.actions = [{ apiName: 'RequestUse', required: true, parameters: [
+    { apiName: 'resource', type: 'objectReference', required: true },
+    { apiName: 'requestName', type: 'string', required: true },
+  ] }];
+  document.objects[0]!.interfaces![0]!.actionMap!.RequestUse = { actionId: 'RequestDevice', inputMap: { device: 'resource', name: 'requestName' } };
+  document.objects[1]!.interfaces![0]!.actionMap!.RequestUse = { actionId: 'RequestRoom', inputMap: { room: 'resource', name: 'requestName' } };
+  const compile = () => compileOntologyDocument(document, new TrustedDefinitionRegistry());
+  assert.deepEqual(compile().resolveInterfaceAction('Device', 'RequestableResource', 'RequestUse').inputMap, { device: 'resource', name: 'requestName' });
+  document.objects[0]!.interfaces![0]!.actionMap!.RequestUse = { actionId: 'RequestDevice', inputMap: { device: 'requestName', name: 'resource' } };
+  assert.throws(compile, /Incompatible interface action/);
 });
 
 test('new interface optional fields and bidirectional typed links work through the object query runtime', () => {
@@ -139,7 +153,9 @@ test('new interface optional fields and bidirectional typed links work through t
 
 test('optional interface actions and relationships may be absent but cannot be invoked as present', () => {
   const document = dynamicDefinition();
-  document.interfaces[0]!.actions![0]!.optional = true;
+  const constraint = document.interfaces[0]!.actions![0]!;
+  assert('id' in constraint);
+  constraint.optional = true;
   document.interfaces[0]!.links = [{ name: 'optionalPeer', target: 'Device', many: false, optional: true }];
   delete document.objects[0]!.interfaces![0]!.actionMap;
   const model = compileOntologyDocument(document, new TrustedDefinitionRegistry());

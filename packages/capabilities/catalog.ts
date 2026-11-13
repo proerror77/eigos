@@ -58,7 +58,11 @@ export function createExecutionCatalog(options: { paymentCommerce?: CommerceRead
   const didiBinding = didiSource ? { bindingId: didiSource.bindingId, keyFile: didiSource.keyFile, keySha256: didiSource.keySha256, environment: didiSource.environment, auditDirectory: didiSource.auditDirectory } : undefined;
   if (options.didiRelayAgentId && (!options.store || !didiBinding)) throw new Error('Relay DiDi requires its read-only binding and primary store');
   const relayDidi = options.didiRelayAgentId ? new DidiRelayConnector(options.store!, options.didiRelayAgentId, didiBinding!) : undefined;
-  const didi = didiBinding ? new DidiAgentProgram(didiBinding, { connector: relayDidi ?? options.didiMember?.connector ?? options.didi?.connector, ...(unifiedDidi ? { accountAccess: didiAccess } : { memberAccess: didiAccess }) }) : undefined;
+  // Both hosted runtimes using this catalog are SQLite. Live estimates use the
+  // PostgreSQL catalog; direct fixtures and the explicit mock remain usable.
+  const didi = didiBinding && (!options.executionHost || didiBinding.environment === 'mock')
+    ? new DidiAgentProgram(didiBinding, { connector: relayDidi ?? options.didiMember?.connector ?? options.didi?.connector, ...(unifiedDidi ? { accountAccess: didiAccess } : { memberAccess: didiAccess }) })
+    : undefined;
   if (options.didiOrderTestEnabled && (!options.didi || !options.store || options.didiMember && !unifiedDidi)) throw new Error('Order testing requires the explicit owned DiDi binding and shared store');
   const didiOrder = options.didiOrderTestEnabled ? new DidiOrderTestProgram(didiBinding!, options.store!, { maps: options.didi!.connector, orders: options.didiOrderTestSource, accountAccess: unifiedDidi ? didiAccess : undefined }) : undefined;
   const didiBooking = didi && options.didi?.bookingEnabled ? new DidiBookingProgram(didi.binding, options.didi.bookingConnector, options.didi.connector) : undefined;

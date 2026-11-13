@@ -24,21 +24,6 @@ export const didiPriceSchema = z.strictObject({
   estimatedMoney: z.strictObject({ minor: z.string().regex(/^(0|[1-9]\d{0,17})$/), currency: z.literal('CNY') }).optional(),
   feesComplete: z.literal('unknown'),
 });
-// A place already recorded in the ontology. It is deliberately a different kind
-// from `places`: it makes no claim about what the provider returned, so reusing it
-// never fabricates a search result. Provenance is the Place object's own evidence
-// link to a SourceReceipt.
-export const didiKnownPlaceSchema = z.strictObject({
-  placeRef: z.string().regex(/^[a-z][A-Za-z0-9]*$/), name: text, address: z.string().max(1000), city: text,
-  lng: z.number().finite().min(-180).max(180), lat: z.number().finite().min(-90).max(90),
-  coordinateSystem: z.enum(['WGS84', 'GCJ02', 'BD09']),
-  evidence: z.strictObject({ receiptId: z.uuid(), observedAt: z.iso.datetime() }),
-});
-export type DidiKnownPlace = z.infer<typeof didiKnownPlaceSchema>;
-// Kept out of `didiDataSchema`: a provider-derived read can never be of this kind,
-// so the runtime union stays exactly what the provider can return.
-export const didiKnownPlaceDataSchema = z.strictObject({ kind: z.literal('known_places'), places: z.array(didiKnownPlaceSchema).max(50) });
-export type DidiKnownPlaceData = z.infer<typeof didiKnownPlaceDataSchema>;
 export const didiDataSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('places'), places: z.array(didiPlaceSchema).max(50) }),
   z.strictObject({ kind: z.literal('estimate'), items: z.array(didiPriceSchema).max(50) }),

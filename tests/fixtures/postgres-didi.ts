@@ -29,7 +29,7 @@ import {securityFixture} from './security.js';
 import {didiFixture} from './didi.js';
 import {importPostgresPrimaryFixture} from './postgres-primary.js';
 import {evidence,syntheticGoalReview} from '../backend-fixture.js';
-import {createExecutableContractKernelDefinition,compiledSeedModel} from '../../packages/ontology/seed-definition.js';
+import {createExecutableContractKernelDefinition,createFunctionContractCloseoutDefinition,compiledSeedModel} from '../../packages/ontology/seed-definition.js';
 import {createSubmittedTask} from '../../packages/core/task-submission.js';
 import {postgresProvisionTask} from '../../packages/postgres/task-grants.js';
 import {withPostgresAgentWrite,postgresTaskProcessingGrant} from '../../packages/postgres/task-read-access.js';
@@ -37,16 +37,16 @@ import {withPostgresAgentWrite,postgresTaskProcessingGrant} from '../../packages
 /** All choices and upstream MCP responses are explicitly synthetic. The
  * PostgreSQL current account, native read ledger, real semantic/journal/source
  * projection and whole-goal acceptance have no permissive verifier callback. */
-export async function postgresDidiFixture(relay=false,transport:{deliverSource?:boolean;shortPath?:DidiEstimateRequest;scheduled?:boolean;executionEnvironment?:'live'|'sandbox';goal?:string;releaseVersion?:'34'}={}){
+export async function postgresDidiFixture(relay=false,transport:{deliverSource?:boolean;shortPath?:DidiEstimateRequest;scheduled?:boolean;executionEnvironment?:'live'|'sandbox';goal?:string;releaseVersion?:'34'|'35'}={}){
   const f=securityFixture(Date.now,{unified:true}),source=didiFixture(),sourceKeys=relay?await createNodeKeys('Explicit synthetic provider transport'):undefined,peerId=sourceKeys?.identity.card.agentId;
   const transportDigest=relay?digest({transport:digest({protocol:'eigos.source-read/1',authorityId:f.authority!.id,gatewayOrigin:f.authority!.canonicalOrigin,peerId}),fixture:'explicit-synthetic-provider-v1'}):undefined;
   let pumping:Promise<void>|undefined,pumpTimer:ReturnType<typeof setInterval>|undefined,pumpFailure:unknown,target:Awaited<ReturnType<typeof importPostgresPrimaryFixture>>|undefined,timer:ReturnType<typeof setInterval>|undefined,pending:Promise<void>|undefined,heartbeatFailure:unknown;
   try{
     if(relay&&transport.executionEnvironment==='sandbox')throw new Error('Sandbox fixture registration does not replace a Relay production registration');
     if(transport.releaseVersion&&!transport.shortPath)throw new Error('The forward execution fixture requires an explicit short path');
-    const forward=transport.releaseVersion==='34'?createExecutableContractKernelDefinition():undefined;
+    const forward=transport.releaseVersion==='35'?createFunctionContractCloseoutDefinition():transport.releaseVersion==='34'?createExecutableContractKernelDefinition():undefined;
     const forwardModel=forward?compiledSeedModel(forward,forward.registry):undefined;
-    const forwardRef=forward?{ontologyId:forward.document.id,releaseId:`synthetic-didi-v34-${randomUUID()}`,digest:digest(forward.document)}:undefined;
+    const forwardRef=forward?{ontologyId:forward.document.id,releaseId:`synthetic-didi-v${forward.document.version}-${randomUUID()}`,digest:digest(forward.document)}:undefined;
     const installation=f.installation('Synthetic DiDi readonly owner',3600000),expiresAt=new Date(Date.now()+3600000).toISOString(),channel='synthetic:didi-readonly',bindingId='synthetic-pg-didi-source',model=f.jobs.ontology.model;
     let descriptor:DidiMemberConnection={version:1,connectionId:randomUUID(),revision:1,memberId:f.member.id,owner:{issuer:f.principal.issuer,tenant:f.principal.tenant,subject:f.principal.subject},localUid:process.getuid?.()??0,purpose:'ride_estimate_readonly',state:'active',expiresAt,binding:{...source.binding,environment:'production',auditDirectory:source.binding.auditDirectory!}};
     const accountDigest=digest({policy:'member-didi-estimate@1',connection:descriptor});f.jobs.admitMemberDidiSource(descriptor,accountDigest);

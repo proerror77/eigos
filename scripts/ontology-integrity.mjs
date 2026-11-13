@@ -101,7 +101,7 @@ async function kernels() {
 
 async function structure() {
   const seed = await load('packages/ontology/seed-definition.ts');
-  const document = seed.createCurrentKernelDefinition().document;
+  const document = seed.createPalantirModelDefinition().document;
   const known = new Set([...document.objects, ...document.interfaces].map(type => type.id));
   const dangling = document.links.filter(link => !known.has(link.from.type) || !known.has(link.to.type));
   record('structure:dangling-links', dangling.length === 0, `${dangling.length} unresolved of ${document.links.length} links`);
@@ -146,7 +146,7 @@ async function classification() {
 
 async function actions() {
   const seed = await load('packages/ontology/seed-definition.ts');
-  const document = seed.createCurrentKernelDefinition().document;
+  const document = seed.createPalantirModelDefinition().document;
   const unimplemented = document.actions.filter(action => !action.implementation).map(action => action.id);
   const undeclared = unimplemented.filter(id => !DEFINITION_ONLY_ACTIONS.has(id));
   record('actions:definition-only-declared', undeclared.length === 0, undeclared.join(', ') || `${unimplemented.length} reviewed definition-only actions`);

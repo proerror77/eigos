@@ -27,9 +27,10 @@ export function additiveInterfaceDefinition(old:SerializableInterface,next:Seria
   if(Object.entries(old.properties).some(([name,value])=>!next.properties[name]||digest(value)!==digest(next.properties[name])||(old.optionalProperties??[]).includes(name)!==(next.optionalProperties??[]).includes(name)))return false;
   if(Object.keys(next.properties).some(name=>!Object.hasOwn(old.properties,name)&&!(next.optionalProperties??[]).includes(name)))return false;
   for(const key of ['links','actions'] as const){
-    const identity=(item:{name?:string;id?:string})=>item.name??item.id;
+    const identity=(item:{name?:string;id?:string;apiName?:string})=>item.name??item.apiName??item.id;
     if((old[key]??[]).some(item=>!(next[key]??[]).some(candidate=>identity(candidate)===identity(item)&&digest(candidate)===digest(item))))return false;
-    if((next[key]??[]).some(item=>!(old[key]??[]).some(previous=>identity(previous)===identity(item))&&!item.optional))return false;
+    if((next[key]??[]).some(item=>!(old[key]??[]).some(previous=>identity(previous)===identity(item))
+      &&('required' in item?item.required:!item.optional)))return false;
   }return true;
 }
 

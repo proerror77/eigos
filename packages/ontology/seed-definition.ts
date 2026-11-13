@@ -24,7 +24,6 @@ import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import { BUSINESS_MODEL_DEFINITION } from './business-model.js';
-import { LINK_TYPES, LINK_TYPE_BY_API_NAME } from './link-types.js';
 import frozen from './history/business-v15.json' with { type: 'json' };
 import frozenV16 from './history/business-v16.json' with { type: 'json' };
 import { extendCompositionKernel } from './composition-kernel.js';
@@ -35,12 +34,12 @@ import { extendCheckoutKernel } from './checkout-kernel.js';
 import { extendPAPaymentKernel } from './pa-payment-kernel.js';
 import { extendProviderReadKernel } from './provider-read-kernel.js';
 import { compileOntologyDocument, TrustedDefinitionRegistry } from './model-compiler.js';
-import { loadReleaseSnapshots } from './release-snapshot.js';
 import { parseOntologyDocument, type DefinitionKind, type JsonSchema, type OntologyDocument, type SerializableProperty } from './definition-contracts.js';
 import type { ActionDefinition, InterfaceDefinition, ModelDefinition, ObjectTypeDefinition, OntologyModel, PropertyDefinition } from './model.js';
 
 export const LEGACY_SEED_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '15', digest: 'efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776' });
-export const CURRENT_KERNEL_VERSION = '37';
+// The trusted policy baseline; PostgreSQL selects the business release from its release store.
+export const CURRENT_KERNEL_VERSION = '28';
 export type ReviewedKernelVersion = '27' | '28' | '29' | '30' | '31' | '32' | '33' | '34' | '35' | '36' | '37';
 export const PALANTIR_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '37', digest: 'ede0f64a5205c7d76e87689deff8cbeebdc1b4b2c0e318134346faec2ac9a1d4' });
 export const DOMAIN_VOCABULARY_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '31', digest: '2eb7c0911c04c38bb0cc0f8316c12d86318f8612f675506436b41d871ce66f51' });
@@ -134,22 +133,7 @@ function documentFromDefinition(definition: FrozenDefinition | ModelDefinition, 
     formatVersion: 1 as const, id: definition.id, version: definition.version,
     objects: definition.objects.map(value => ({ ...value, resourceId: resourceId('object', value.id), writePolicy: 'source' as const, properties: serializeProperties('object', value.id, value.properties) })),
     interfaces: definition.interfaces.map(value => ({ ...value, resourceId: resourceId('interface', value.id), properties: serializeProperties('interface', value.id, value.properties) })),
-    // Palantir keeps a link type in the ontology and lets a data source supply instances only, so
-    // the current graph is synthesised from the authoritative table, in the order the table records.
-    // A pinned historical seed keeps its own links verbatim: its digest is already in the release
-    // record, and applying today's table to it would rewrite history.
-    links: (!frozenMode && definition.links.every(value => LINK_TYPE_BY_API_NAME.has(value.id)))
-      ? [...LINK_TYPES].sort((a, b) => a.order - b.order).map(declared => ({
-          id: declared.apiName,
-          ...(declared.description ? { description: declared.description } : {}),
-          from: { type: declared.from.type, name: declared.from.name, ...(declared.from.many === null ? {} : { many: declared.from.many }), ...(declared.from.required === null ? {} : { required: declared.from.required }) },
-          to: { type: declared.to.type, name: declared.to.name, ...(declared.to.many === null ? {} : { many: declared.to.many }), ...(declared.to.required === null ? {} : { required: declared.to.required }) },
-          ...(declared.roles ? { extensions: { roles: declared.roles } } : {}),
-          ...(declared.properties ? { properties: declared.properties } : {}),
-          resourceId: resourceId('link', declared.apiName),
-          writePolicy: 'source' as const,
-        }))
-      : definition.links.map(value => ({ ...value, resourceId: resourceId('link', value.id), writePolicy: 'source' as const })),
+    links: definition.links.map(value => ({ ...value, resourceId: resourceId('link', value.id), writePolicy: 'source' as const })),
     actions: definition.actions.map(value => {
       if (frozenMode && hasTrustedActionContract(value) && digest(historicalImplementation.actions.find(action => action.id === value.id) ?? null) !== digest(value)) throw new DomainError('CONFLICT', `Pinned seed action implementation is unavailable: ${value.id}`);
       return { ...value, resourceId: resourceId('action', value.id), ...(hasTrustedActionContract(value) ? { implementation: { kind: 'trusted' as const, handlerRef: registry.registerAction(value) } } : {}) };
@@ -182,37 +166,12 @@ function freezeRelease<T>(value: T): T {
  * is what CI runs: intermediate releases are reviewed there, not on every boot.
  */
 const FULL_PINS = process.env.EIGOS_KERNEL_PINS === 'full';
-export function assertRelease(seed: SeedDefinition, expected: { id: string; version: string; digest: string }, label: string, registry?: TrustedDefinitionRegistry): SeedDefinition {
-  void label;
-  // A release is served, not re-derived. When its body was kept the body is what this version is;
-  // there is no fingerprint to compare against because there is nothing being rebuilt. The version
-  // identity is the stored document, which is what Palantir stores and what an edit set advances.
-  const kept = SEED_RELEASE_SNAPSHOTS.find(entry => entry.version === expected.version);
-  if (kept && registry) {
-    const model = compileOntologyDocument(kept.document, registry);
-    const release: SeedDefinition = { document: kept.document, registry, audit: { ...seed.audit, model: model.ref } };
-    // The served release is a genuine completion: record it so its compiled model is reusable.
-    compiledSeeds.set(release, { registry, documentDigest: digest(kept.document), model });
-    return release;
-  }
-  if (!kept) SEED_RELEASE_SNAPSHOTS.push({ id: seed.document.id, version: expected.version, documentDigest: digest(seed.document), document: seed.document });
-  return seed;
+export function assertRelease(seed: SeedDefinition, expected: { id: string; version: string; digest: string }, label: string): void {
+  if (!FULL_PINS && expected.version !== CURRENT_KERNEL_VERSION) return;
+  if (digest(seed.audit.model) !== digest(expected)) throw new DomainError('CONFLICT', label);
 }
 
-/**
- * Every release the chain builds, kept as its own body.
- *
- * A release is data: with the document in hand the version can be read back without running the
- * modules that produced it, which is what lets a provider module stop describing the graph. These
- * are recorded as they are built, not rebuilt later.
- */
-export const SEED_RELEASE_SNAPSHOTS: { id: string; version: string; documentDigest: string; document: OntologyDocument }[] = [];
-
-function complete(document: OntologyDocument, registry: TrustedDefinitionRegistry, original: boolean, onCompiled?: (model: OntologyModel) => void, pin?: { id: string; version: string; digest: string }): SeedDefinition {
-  // Read the kept body when this stage has one, before anything is compiled: the code that once
-  // assembled a released version is the cold-start path, not the way the version is defined.
-  const pinned = pin ? SEED_RELEASE_SNAPSHOTS.find(entry => entry.version === pin.version) : undefined;
-  if (pinned) document = structuredClone(pinned.document) as OntologyDocument;
+function complete(document: OntologyDocument, registry: TrustedDefinitionRegistry, original: boolean, onCompiled?: (model: OntologyModel) => void): SeedDefinition {
   freezeRelease(document);
   registry.protect(document);
   const documentDigest = digest(document);
@@ -248,12 +207,7 @@ export function createConsolidatedKernelDefinition(registry = new TrustedDefinit
   return predecessor;
 }
 export function createCurrentKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
-  // One version axis: the ontology release in force is v37. The store used to describe the current
-  // release as the v28 kernel, which is why the live version could not be held by it.
-  const builder = new StagedKernelBuilder('37', registry);
-  let progress = builder.step(0), guard = 0;
-  while (!progress.ready && guard++ < 40) progress = builder.step(progress.completed);
-  return builder.release();
+  return createBusinessDescriptionsKernelDefinition(registry);
 }
 export function createSemanticRetrievalKernelDefinition(registry=new TrustedDefinitionRegistry()):SeedDefinition{
   const semantic = complete(extendSemanticRetrievalKernel(createBusinessDescriptionsKernelDefinition(registry).document,registry),registry,false);
@@ -302,7 +256,7 @@ export function createInterfaceContractDefinition(registry = new TrustedDefiniti
   return contracted;
 }
 export function createPalantirModelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
-  const modelled = complete(extendPalantirModelKernel(createInterfaceContractDefinition(registry).document).document, registry, false);
+  const modelled = complete(extendPalantirModelKernel(createInterfaceContractDefinition(registry).document, registry).document, registry, false);
   assertRelease(modelled, PALANTIR_MODEL_REF, 'The reviewed Palantir model metadata fingerprint changed');
   return modelled;
 }
@@ -347,11 +301,6 @@ export class StagedKernelBuilder {
     this.#registry = registry;
     if (!['27', '28', '29', '30', '31', '32', '33', '34', '35', '36', '37'].includes(targetVersion)) throw new Error('Unsupported reviewed kernel target');
     this.#targetVersion = targetVersion;
-    // Where kept bodies live. With bodies in hand the chain reads them instead of re-deriving them.
-    const releaseDir = process.env.EIGOS_RELEASE_DIR;
-    if (releaseDir) for (const body of loadReleaseSnapshots(releaseDir)) {
-      if (!SEED_RELEASE_SNAPSHOTS.some(entry => entry.version === body.version)) SEED_RELEASE_SNAPSHOTS.push(body);
-    }
     this.#stageCount = targetVersion === '27' ? 14 : targetVersion === '28' ? 15 : targetVersion === '31' ? 17 : targetVersion === '32' ? 18 : targetVersion === '33' ? 19 : targetVersion === '34' ? 20 : targetVersion === '35' ? 21 : targetVersion === '36' ? 22 : targetVersion === '37' ? 23 : 16;
   }
 
@@ -393,64 +342,63 @@ export class StagedKernelBuilder {
         case 11: this.#current = complete(extendPersonalContextKernel(this.#current!.document,this.#registry),this.#registry,false); break;
         case 12:
           this.#current = complete(extendSingleReadKernel(this.#current!.document,this.#registry),this.#registry,false);
-          this.#current = assertRelease(this.#current, SINGLE_READ_KERNEL_MODEL_REF, 'The original v26 kernel fingerprint changed', this.#registry);
+          assertRelease(this.#current, SINGLE_READ_KERNEL_MODEL_REF, 'The original v26 kernel fingerprint changed');
           break;
         case 13:
           this.#current = complete(extendPaymentCommerceKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
-          this.#current = assertRelease(this.#current, PAYMENT_COMMERCE_KERNEL_MODEL_REF, 'The original v27 kernel fingerprint changed', this.#registry);
+          assertRelease(this.#current, PAYMENT_COMMERCE_KERNEL_MODEL_REF, 'The original v27 kernel fingerprint changed');
           if (this.#targetVersion === '27') { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
           break;
         case 14:
           this.#current = complete(extendBusinessDescriptions(this.#current!.document),this.#registry,false,model=>{this.#model=model;});
           this.#base28 = this.#current.document;
-          this.#current = assertRelease(this.#current, BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF, 'The reviewed v28 description fingerprint changed', this.#registry);
+          assertRelease(this.#current, BUSINESS_DESCRIPTIONS_KERNEL_MODEL_REF, 'The reviewed v28 description fingerprint changed');
           if(this.#targetVersion==='28'){this.#documentDigest=digest(this.#current.document); this.#registry.seal();}
           break;
         case 15: {
           const classified = Number(this.#targetVersion) >= 30;
-          const expectedAt15 = classified ? PA_CLASSIFICATION_KERNEL_MODEL_REF : SEMANTIC_RETRIEVAL_KERNEL_MODEL_REF;
-          this.#current=complete(classified ? extendPaClassificationKernel(this.#current!.document) : extendSemanticRetrievalKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;},expectedAt15);
-          const expected = expectedAt15;
-          this.#current = assertRelease(this.#current, expected, `The reviewed ${expected.version === '30' ? 'PA classification' : 'semantic retrieval'} fingerprint changed`, this.#registry);
+          this.#current=complete(classified ? extendPaClassificationKernel(this.#current!.document) : extendSemanticRetrievalKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
+          const expected = classified ? PA_CLASSIFICATION_KERNEL_MODEL_REF : SEMANTIC_RETRIEVAL_KERNEL_MODEL_REF;
+          assertRelease(this.#current, expected, `The reviewed ${expected.version === '30' ? 'PA classification' : 'semantic retrieval'} fingerprint changed`);
           // The v31 vocabulary stage republishes this release, so sealing waits for stage 16.
           if (Number(this.#targetVersion) < 31) { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
           break;
         }
         case 16:
-          this.#current=complete(extendDomainVocabularyKernel(this.#current!.document),this.#registry,false,model=>{this.#model=model;},DOMAIN_VOCABULARY_KERNEL_MODEL_REF);
-          this.#current = assertRelease(this.#current, DOMAIN_VOCABULARY_KERNEL_MODEL_REF, 'The reviewed domain vocabulary fingerprint changed', this.#registry);
+          this.#current=complete(extendDomainVocabularyKernel(this.#current!.document),this.#registry,false,model=>{this.#model=model;});
+          assertRelease(this.#current, DOMAIN_VOCABULARY_KERNEL_MODEL_REF, 'The reviewed domain vocabulary fingerprint changed');
           // The v32 contract closure still registers reviewed function contracts,
           // so sealing waits for stage 17 when that release is the target.
           if (Number(this.#targetVersion) < 32) { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
           break;
         case 17:
-          this.#current=complete(extendContractClosureKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;},CONTRACT_CLOSURE_KERNEL_MODEL_REF);
-          this.#current = assertRelease(this.#current, CONTRACT_CLOSURE_KERNEL_MODEL_REF, 'The reviewed contract closure fingerprint changed', this.#registry);
+          this.#current=complete(extendContractClosureKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
+          assertRelease(this.#current, CONTRACT_CLOSURE_KERNEL_MODEL_REF, 'The reviewed contract closure fingerprint changed');
           if (Number(this.#targetVersion) < 33) { this.#documentDigest=digest(this.#current.document); this.#registry.seal(); }
           break;
         case 18:
-          this.#current=complete(extendEffectCoverageKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;},EFFECT_COVERAGE_KERNEL_MODEL_REF);
-          this.#current = assertRelease(this.#current, EFFECT_COVERAGE_KERNEL_MODEL_REF, 'The reviewed effect coverage fingerprint changed', this.#registry);
+          this.#current=complete(extendEffectCoverageKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
+          assertRelease(this.#current, EFFECT_COVERAGE_KERNEL_MODEL_REF, 'The reviewed effect coverage fingerprint changed');
           if (this.#targetVersion === '33') { this.#documentDigest=digest(this.#current.document);this.#registry.seal(); }
           break;
         case 19:
-          this.#current=complete(extendExecutableContractKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;},EXECUTABLE_CONTRACT_KERNEL_MODEL_REF);
-          this.#current = assertRelease(this.#current, EXECUTABLE_CONTRACT_KERNEL_MODEL_REF, 'The reviewed executable contract fingerprint changed', this.#registry);
+          this.#current=complete(extendExecutableContractKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
+          assertRelease(this.#current, EXECUTABLE_CONTRACT_KERNEL_MODEL_REF, 'The reviewed executable contract fingerprint changed');
           if (this.#targetVersion === '34') { this.#documentDigest=digest(this.#current.document);this.#registry.seal(); }
           break;
         case 20:
-          this.#current=complete(extendFunctionContractCloseoutKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;},FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF);
-          this.#current = assertRelease(this.#current, FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF, 'The reviewed complete Function contract fingerprint changed', this.#registry);
+          this.#current=complete(extendFunctionContractCloseoutKernel(this.#current!.document,this.#registry),this.#registry,false,model=>{this.#model=model;});
+          assertRelease(this.#current, FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF, 'The reviewed complete Function contract fingerprint changed');
           if (this.#targetVersion === '35') { this.#documentDigest=digest(this.#current.document);this.#registry.seal(); }
           break;
         case 21:
-          this.#current=complete(extendInterfaceContractsKernel(this.#current!.document).document,this.#registry,false,model=>{this.#model=model;},INTERFACE_CONTRACT_MODEL_REF);
-          this.#current = assertRelease(this.#current, INTERFACE_CONTRACT_MODEL_REF, 'The reviewed interface contract fingerprint changed', this.#registry);
+          this.#current=complete(extendInterfaceContractsKernel(this.#current!.document).document,this.#registry,false,model=>{this.#model=model;});
+          assertRelease(this.#current, INTERFACE_CONTRACT_MODEL_REF, 'The reviewed interface contract fingerprint changed');
           if (Number(this.#targetVersion) < 37) { this.#documentDigest=digest(this.#current.document);this.#registry.seal(); }
           break;
         case 22:
-          this.#current=complete(extendPalantirModelKernel(this.#current!.document,this.#registry as never).document,this.#registry,false,model=>{this.#model=model;},PALANTIR_MODEL_REF);
-          this.#current = assertRelease(this.#current, PALANTIR_MODEL_REF, 'The reviewed Palantir model metadata fingerprint changed', this.#registry);
+          this.#current=complete(extendPalantirModelKernel(this.#current!.document,this.#registry).document,this.#registry,false,model=>{this.#model=model;});
+          assertRelease(this.#current, PALANTIR_MODEL_REF, 'The reviewed Palantir model metadata fingerprint changed');
           this.#documentDigest=digest(this.#current.document);this.#registry.seal();
           break;
         default: throw new Error('Unknown kernel stage');

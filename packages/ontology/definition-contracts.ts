@@ -16,7 +16,7 @@ export interface OntologyReleaseRef { ontologyId: string; releaseId: string; dig
 export interface DefinitionIdentity { resourceId: string; id: string }
 export interface SerializableProperty extends Omit<PropertyDefinition, 'schema' | 'schemaMetadata' | 'sourceBinding'> { schema: JsonSchema; validatorRef?: HandlerRef }
 export interface SerializableObjectType extends Omit<ObjectTypeDefinition, 'properties'>, DefinitionIdentity { properties: Record<string, SerializableProperty>; writePolicy: 'managed' | 'source' }
-export interface SerializableInterface extends Omit<InterfaceDefinition, 'properties' | 'links'>, DefinitionIdentity { properties: Record<string, SerializableProperty>; status?: 'active' | 'experimental' | 'example' | 'deprecated'; searchable?: boolean; links?: (NonNullable<InterfaceDefinition['links']>[number] & { description?: string })[] }
+export interface SerializableInterface extends Omit<InterfaceDefinition, 'properties'>, DefinitionIdentity { properties: Record<string, SerializableProperty> }
 export interface SerializableLink extends LinkDefinition, DefinitionIdentity { writePolicy: 'managed' | 'source' }
 export interface SerializableAction extends ActionDefinition, DefinitionIdentity { implementation?: ActionImplementation }
 export interface SerializableFunction extends FunctionDefinition { handlerRef?: HandlerRef }
@@ -51,7 +51,7 @@ const propertySchema = z.strictObject({
 });
 const properties = z.record(nameSchema, propertySchema).refine(value => Object.keys(value).length <= 300, 'Too many properties');
 const inputTypes = z.record(nameSchema, nameSchema).refine(value => Object.keys(value).length <= 100, 'Too many inputs');
-const actionMap = z.record(nameSchema, z.union([nameSchema, z.strictObject({ actionId: nameSchema, inputMap: z.record(nameSchema, nameSchema).optional(), outputMap: z.record(nameSchema, nameSchema).optional() })]));
+const actionMap = z.record(nameSchema, z.union([nameSchema, z.strictObject({ actionId: nameSchema, inputMap: z.record(nameSchema, nameSchema), outputMap: z.record(nameSchema, nameSchema).optional() })]));
 export const linkRoleSchema = z.enum(['EvidenceOf', 'Observation', 'Scope', 'LocationRole', 'Schedule']);
 const interfaceImplementation = z.strictObject({ id: nameSchema, propertyMap: z.record(nameSchema, nameSchema).optional(), linkMap: z.record(nameSchema, nameSchema).optional(), actionMap: actionMap.optional() });
 export const serializableObjectTypeSchema = z.strictObject({
@@ -72,7 +72,12 @@ export const serializableInterfaceSchema = z.strictObject({
   searchable: z.boolean().optional(),
   optionalProperties: names.optional(),
   links: z.array(z.strictObject({ name: nameSchema, target: nameSchema, many: z.boolean(), optional: z.boolean().optional(), description: text.optional() })).max(200).optional(),
-  actions: z.array(z.strictObject({ id: nameSchema.optional(), inputs: inputTypes.optional(), effects: effects.optional(), resultTypes: names.optional(), optional: z.boolean().optional(), apiName: nameSchema.optional(), required: z.boolean().optional(), description: text.optional(), parameters: z.array(z.strictObject({ apiName: nameSchema, type: z.enum(['string','timestamp','integer','boolean','decimal','objectReference','interface','objectSet','attachment','struct']), required: z.boolean(), many: z.boolean().optional() })).max(50).optional(), ports: z.strictObject({ inputs: z.record(nameSchema, compositionPortSchema), outputs: z.record(nameSchema, compositionPortSchema) }).optional() })).max(100).optional(),
+  actions: z.array(z.union([
+    z.strictObject({ id: nameSchema, inputs: inputTypes, effects, resultTypes: names.optional(), optional: z.boolean().optional(),
+      ports: z.strictObject({ inputs: z.record(nameSchema, compositionPortSchema), outputs: z.record(nameSchema, compositionPortSchema) }).optional() }),
+    z.strictObject({ apiName: nameSchema, required: z.boolean(), description: text.optional(),
+      parameters: z.array(z.strictObject({ apiName: nameSchema, type: z.enum(['string', 'timestamp', 'integer', 'boolean', 'decimal', 'objectReference', 'interface', 'objectSet', 'attachment', 'struct']), required: z.boolean(), many: z.boolean().optional() })).max(50) }),
+  ])).max(100).optional(),
 });
 const endpoint = z.strictObject({ type: nameSchema, name: nameSchema, many: z.boolean(), required: z.boolean().optional() });
 export const serializableLinkSchema = z.strictObject({ resourceId: resourceIdSchema, id: nameSchema, description: text, from: endpoint, to: endpoint, writePolicy: z.enum(['managed', 'source']), properties: properties.optional(), roles: z.array(linkRoleSchema).max(4).optional(), extensions: z.strictObject({ roles: z.array(linkRoleSchema).max(4).optional() }).optional() });
