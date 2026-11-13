@@ -46,8 +46,13 @@ test('query pools verify storage identity and fall back without changing owner i
     await new Objects(f.db,f.model,f.access).create({type:'Route',id:'query-store'},{id:'query-store',name:'query store'});
     const graph=new Objects(db,f.model,await Access.load(db,principal));
     assert.equal((await graph.query({type:'Route'})).items.length,1);
-    await assert.rejects(db.queryPool!.query(`DELETE FROM ${db.schema}.objects`),/read-only/);
+    // Model the production pooler accepting the connection while ignoring startup settings.
+    await db.queryPool!.query('SET default_transaction_read_only=off');
+    assert.equal((await db.readQuery("SELECT current_setting('transaction_read_only') AS value")).rows[0]!.value,'on');
+    await assert.rejects(db.readQuery(`DELETE FROM ${db.schema}.objects`),/read-only/);
+    assert.equal((await graph.query({type:'Route'})).items.length,1);
     await db.queryPool!.end();
     assert.equal((await graph.query({type:'Route'})).items.length,1);
+    await assert.rejects(db.readQuery(`DELETE FROM ${db.schema}.objects`),/read-only/);
   } finally { await db.pool.end(); await f.close(); }
 });
