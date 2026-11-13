@@ -76,6 +76,7 @@ export function compileTypes(input: OntologyDocument): OntologyDocument {
     return value;
   };
   for(const value of values.values())schema(value.schema,[value.apiName+'@'+value.version]);
+  for(const struct of structs.values())compileProperty({description:struct.description,schema:{},required:false,struct:{type:struct.apiName}});
   for(const sharedProperty of shared.values())compileProperty(sharedProperty,[sharedProperty.apiName]);
   for(const type of [...document.objectTypes,...document.interfaceTypes])type.properties=Object.fromEntries(Object.entries(type.properties).map(([name,property])=>[name,compileProperty(property)]));
   for(const fn of document.functionTypes){fn.parameters=schema(fn.parameters);fn.returns=schema(fn.returns);}
@@ -135,7 +136,7 @@ export function propertyDisplay(property:Property,value:unknown):unknown {
   if(struct?.array&&Array.isArray(value)){
     const reducer=struct.reducer;
     if(reducer){
-      const rows=[...value];
+      const rows=(reducer.op==='min'||reducer.op==='max')?value.filter(row=>row?.[reducer.field!]!==undefined&&row?.[reducer.field!]!==null):[...value];
       if(reducer.op==='min'||reducer.op==='max')rows.sort((left,right)=>{
         const a=left?.[reducer.field!],b=right?.[reducer.field!];return a===b?0:a<b?-1:1;
       });

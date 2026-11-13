@@ -138,3 +138,9 @@ test('definition migration requires explicit names for dependency closure and va
     assert.equal((await f.metadata.active('Consumer')).document.objectTypes.length,0);
   }finally{await f.close();}
 });
+
+test('metadata supports namespaced type classes and validates unused Struct declarations',()=>{
+  const input=basic();Object.assign(input.objectTypes[0]!.properties.name,{typeClasses:[{kind:'vulcan',name:'cad_media_reference'}],renderHints:{prominent:true},status:'active'});
+  const model=new Ontology(input);assert.equal(model.object('Item').properties.name!.typeClasses?.[0]!.name,'cad_media_reference');
+  assert.throws(()=>new Ontology({...basic(),structTypes:[{apiName:'Empty',description:'Invalid empty structure',fields:{}}]}),/Struct requires fields/);
+});

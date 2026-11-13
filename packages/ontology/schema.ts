@@ -19,7 +19,7 @@ export const derivedExpressionSchema: z.ZodType<DerivedExpression> = z.lazy(() =
 export const valueTypeRefSchema = z.strictObject({name,version:z.string().min(1).max(100)});
 const formatting = z.strictObject({kind:z.enum(['number','date','currency','percent','text']),locale:z.string().optional(),currency:z.string().length(3).optional(),minimumFractionDigits:z.number().int().min(0).max(20).optional(),maximumFractionDigits:z.number().int().min(0).max(20).optional()});
 const metadata = {
-  typeClasses:z.array(z.strictObject({kind:name,name})).optional(),
+  typeClasses:z.array(z.strictObject({kind:z.string().regex(/^[A-Za-z][A-Za-z0-9_.-]*$/).max(128),name:z.string().regex(/^[A-Za-z][A-Za-z0-9_.-]*$/).max(128)})).optional(),
   renderHints:z.record(z.string(),z.union([z.string(),z.boolean(),z.number()])).optional(),
   status:z.enum(['experimental','active','deprecated']).optional(),
 };

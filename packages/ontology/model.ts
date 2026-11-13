@@ -67,6 +67,7 @@ export class Ontology {
         const local = mapping.properties[alias];
         if (!local && contract.optionalProperties.includes(alias)) continue;
         if (!local || !type.properties[local] || !schemaSubset(type.properties[local]!.schema, property.schema)) throw new Error(`Invalid property mapping ${type.apiName}.${alias}`);
+        if (property.derived && !type.properties[local]!.derived) throw new Error('Derived Interface properties require a derived implementation');
       }
       if (Object.keys(mapping.properties).some(name => !contract.properties[name])) throw new Error('Unknown interface property');
       for (const [alias, constraint] of Object.entries(contract.links)) {
