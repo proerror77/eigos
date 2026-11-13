@@ -43,6 +43,7 @@ export class Effects {
       const row = (await this.db.query(`SELECT * FROM ${this.db.schema}.action_effects WHERE id=$1 AND owner=$2 FOR UPDATE`, [id, access.principal.owner], client)).rows[0];
       if (!row || row.state !== 'failed') throw new Conflict('Only a failed owned effect can be retried');
       access.require(row.ontology, 'apply_action', `${row.ontology}/action/${row.action}`);
+      if (!access.canReturn(row.requirements)) throw new Error('Effect data permissions changed');
       for (const requirement of row.requirements as Requirement[]) access.require(requirement.ontology, requirement.permission, requirement.resource);
       await access.refresh(client);
       await this.db.query(`UPDATE ${this.db.schema}.action_effects SET state='pending',available_at=now(),error=NULL WHERE id=$1`, [id], client);
@@ -73,6 +74,7 @@ export class Effects {
     try {
       const principal = { owner: String(row.owner), scopes: row.scopes as string[] };
       const access = await Access.load(this.db, principal);
+      if (!access.canReturn(row.requirements)) throw new Error('Effect data permissions changed');
       for (const requirement of row.requirements as Requirement[]) access.require(requirement.ontology, requirement.permission, requirement.resource);
       this.check([row.handler]);
       executionSignal.throwIfAborted();

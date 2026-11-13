@@ -1,3 +1,4 @@
+import { loadExtensions } from '../packages/runtime/extensions.js';
 import { readFile } from 'node:fs/promises';
 import { businessDefinition } from '../packages/ontology/definition.js';
 import { Ontology } from '../packages/ontology/model.js';
@@ -51,7 +52,7 @@ else {
         }
       });
     } else {
-      const access = await Access.load(db, publisher), bindings = createCapabilities(db, configuredSource(process.env.EIGOS_DIDI_CONNECTION_FILE));
+      const access = await Access.load(db, publisher), bindings = createCapabilities(db, configuredSource(process.env.EIGOS_DIDI_CONNECTION_FILE),await loadExtensions(process.env.EIGOS_EXTENSION_MODULE));
       let transform: ProjectionTransform | undefined;
       if ((command === 'prepare' || command === 'publish') && process.argv[3]) {
         if (!isAbsolute(process.argv[3])) throw new Error('Use an absolute source transformation module path');

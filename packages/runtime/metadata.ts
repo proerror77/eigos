@@ -1,3 +1,4 @@
+import { copyEditState } from './edit-history.js';
 import { randomUUID } from 'node:crypto';
 import { digest, Conflict } from '../core/identity.js';
 import { Ontology } from '../ontology/model.js';
@@ -19,7 +20,11 @@ export class Metadata {
     const row = (await this.db.query(`SELECT
       (SELECT md5(coalesce(string_agg(md5(row(owner,type,id,revision,properties)::text),'' ORDER BY owner,type,id),'')) FROM ${this.db.schema}.objects WHERE projection=$1) AS objects,
       (SELECT md5(coalesce(string_agg(md5(row(owner,type,from_type,from_id,to_type,to_id,single_from,single_to)::text),'' ORDER BY owner,type,from_type,from_id,to_type,to_id),'')) FROM ${this.db.schema}.links WHERE projection=$1) AS links`, [projection], client)).rows[0]!;
-    return digest(row);
+    const edits = (await this.db.query(`SELECT
+      (SELECT md5(coalesce(string_agg(md5(row(owner,type,id,source,properties,observed_at)::text),'' ORDER BY owner,type,id,source),'')) FROM ${this.db.schema}.source_values WHERE projection=$1) AS sources,
+      (SELECT md5(coalesce(string_agg(md5(row(owner,type,id,overrides,deleted,created)::text),'' ORDER BY owner,type,id),'')) FROM ${this.db.schema}.object_edits WHERE projection=$1) AS edits,
+      (SELECT md5(coalesce(string_agg(row(ontology,type,policy)::text,'' ORDER BY ontology,type),'')) FROM ${this.db.schema}.edit_policies) AS policies`,[projection],client)).rows[0];
+    return digest({row,edits});
   }
   async prepare(input: unknown, bindings: Bindings, access: Access, transform?: ProjectionTransform, permissionTarget?: string): Promise<PublishedOntology> {
     const model = new Ontology(input);
@@ -48,6 +53,7 @@ export class Metadata {
         for (let offset = 0; offset < mapped.length; offset += 500) await this.db.query(`INSERT INTO ${this.db.schema}.links(projection,owner,type,from_type,from_id,to_type,to_id,single_from,single_to)
           SELECT $1,owner,type,from_type,from_id,to_type,to_id,single_from,single_to FROM jsonb_to_recordset($2::jsonb) AS r(owner text,type text,from_type text,from_id text,to_type text,to_id text,single_from boolean,single_to boolean)`, [projection, JSON.stringify(mapped.slice(offset, offset + 500))], client);
       }
+      if (current) await copyEditState(this.db,current.projection,projection,client,[...model.objects.keys()]);
       await access.refresh(client);
       await this.db.query(`INSERT INTO ${this.db.schema}.releases(digest,body,definition_digest,projection,runtime_id,bindings,state,prepared_from,source_fingerprint,projection_fingerprint)
         VALUES($1,$2,$3,$4,$5,$6,'prepared',$7,$8,$9)`, [release, model.document, model.digest, projection, this.db.runtimeId, manifest, current?.digest ?? null, fingerprint, await this.fingerprint(projection, client)], client);
@@ -66,6 +72,8 @@ export class Metadata {
       if (prepared.state !== 'prepared' || (prepared.prepared_from ?? null) !== (current ?? null)) throw new Conflict('Prepare against the current live release before activation');
       const running = await this.db.query(`SELECT 1 FROM ${this.db.schema}.tasks t JOIN ${this.db.schema}.releases r ON r.digest=t.release WHERE r.body->>'id'=$1 AND t.state IN('submitted','working','input-required') LIMIT 1`, [model.document.id], client);
       if (running.rowCount) throw new Conflict('Complete or cancel unfinished tasks before changing their publication');
+      const indexing = await this.db.query(`SELECT 1 FROM ${this.db.schema}.index_transactions WHERE ontology=$1 AND state IN ('pending','failed') LIMIT 1`,[model.document.id],client);
+      if (indexing.rowCount) throw new Conflict('Resolve pending or failed source transactions before activation');
       if (current && await this.fingerprint((await this.get(current)).projection, client) !== prepared.source_fingerprint) throw new Conflict('Source data changed; rebuild the candidate projection');
       if (await this.fingerprint(model.projection, client) !== prepared.projection_fingerprint) throw new Conflict('Prepared projection changed');
       await access.refresh(client);
@@ -120,6 +128,7 @@ export class Metadata {
           SELECT $1,owner,type,from_type,from_id,to_type,to_id,single_from,single_to FROM jsonb_to_recordset($2::jsonb)
           AS r(owner text,type text,from_type text,from_id text,to_type text,to_id text,single_from boolean,single_to boolean)`,[candidate.projection,JSON.stringify(mapped)],client);
       }
+      await copyEditState(this.db,live.projection,candidate.projection,client,types);
       await access.refresh(client);
       await this.db.query(`UPDATE ${this.db.schema}.releases SET source_fingerprint=$2,projection_fingerprint=$3 WHERE digest=$1`,[release,await this.fingerprint(live.projection,client),await this.fingerprint(candidate.projection,client)],client);
       return {release,projection:candidate.projection,objectsUpdated:updated,linksAdded:edges.length};

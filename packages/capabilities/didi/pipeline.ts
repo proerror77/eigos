@@ -1,3 +1,5 @@
+import type { RuntimeExtensions } from '../../runtime/extensions.js';
+import { Effects } from '../../runtime/effects.js';
 import { digest } from '../../core/identity.js';
 import { objectRefSchema, type ObjectRef } from '../../ontology/schema.js';
 import { Database } from '../../runtime/database.js';
@@ -11,13 +13,13 @@ import type { OntologyDocument } from '../../ontology/schema.js';
 import type { FunctionHandler } from '../../runtime/functions.js';
 
 /** DiDi's source normalization and Object Data Funnel. It does not choose an operation. */
-export function rideCapabilities(db: Database, resolve: SourceResolver, additional: ReadonlyMap<string, FunctionHandler> = new Map(), definitions?: OntologyDocument['functionTypes']) {
+export function rideCapabilities(db: Database, resolve: SourceResolver, additional: ReadonlyMap<string, FunctionHandler> = new Map(), definitions?: OntologyDocument['functionTypes'], extensions: RuntimeExtensions = {}) {
   let sources: Sources;
   const functions = rideFunctions(resolve, new Map([
     ...additional,
     ['resolveRideLocations', resolveRideLocations],
     ['prepareRideInquiry', prepareRideInquiry(() => sources, () => functions)],
-  ]), definitions);
+  ]), definitions, extensions.functions);
   const projection: SourceProjection = {
     async assertCurrent(owner) { await (await resolve(owner)).assertCurrent(); },
     async apply(graph, source, input, raw) {
@@ -52,5 +54,5 @@ export function rideCapabilities(db: Database, resolve: SourceResolver, addition
     },
   };
   sources = new Sources(db, functions, new Map(['DidiPlaces', 'DidiEstimates'].map(name => [name, projection])));
-  return { functions, actions: new Actions(db, functions), sources, describe: (model: Ontology) => ({ functions: functions.bindings(model), sources: sources.bindings(model) }) };
+  return { functions, actions: new Actions(db, functions, new Effects(db,extensions.effects??new Map())), sources, describe: (model: Ontology) => ({ functions: functions.bindings(model), sources: sources.bindings(model) }) };
 }

@@ -1,3 +1,4 @@
+import { ObjectSets, evaluateSetSchema, aggregateSetSchema, saveSetSchema } from './object-sets.js';
 import { z } from 'zod';
 import { digest, requireScope } from '../core/identity.js';
 import { objectRefSchema } from '../ontology/schema.js';
@@ -83,6 +84,12 @@ export class OntologyAgent {
         }
       } });
     };
+    const objectSets = new ObjectSets(this.db);
+    add('evaluate_object_set','Evaluate composed object sets with current permissions.',evaluateSetSchema,input=>objectSets.evaluate(access,model,input));
+    add('aggregate_object_set','Compute grouped metrics over a complete authorized set.',aggregateSetSchema,input=>objectSets.aggregate(access,model,input));
+    add('save_object_set','Save a static or dynamic object set with explicit readers.',saveSetSchema,input=>objectSets.save(access,model,input));
+    add('complete_with_object_set','Return an evaluated object set as the task result.',evaluateSetSchema,async input=>{const result=await objectSets.evaluate(access,model,input);final={result};return {completed:true};});
+    add('complete_with_aggregate','Return computed metrics as the task result.',aggregateSetSchema,async input=>{const result=await objectSets.aggregate(access,model,input);final={result};return {completed:true};});
     add('describe_ontology', 'Read full published definitions by API name, or the discovery catalogue when names is omitted.',
       z.strictObject({ names: z.array(z.string()).optional() }), async ({ names }: { names?: string[] }) => names ? Object.values(access.describe(model)).filter(Array.isArray).flat().filter(item => item && typeof item === 'object' && names.includes(item.apiName)) : catalogue(model, access));
     add('query_ontology', 'Query Object or Interface sets, optionally reached through a Link. Independent queries run together. Read cursor before assuming completeness.',

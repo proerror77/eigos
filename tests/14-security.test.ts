@@ -37,3 +37,17 @@ test('all edit paths require instance readability', async () => {
     await assert.rejects(graph.remove(ref,1),/Permission/);
   } finally { await f.close(); }
 });
+
+test('query pools verify storage identity and fall back without changing owner isolation', async () => {
+  const f=await fixture();
+  const { Database }=await import('../packages/runtime/database.js');
+  const db=new Database(process.env.EIGOS_TEST_DATABASE_URL!,f.schema,undefined,process.env.EIGOS_TEST_DATABASE_URL!);
+  try {
+    await new Objects(f.db,f.model,f.access).create({type:'Route',id:'query-store'},{id:'query-store',name:'query store'});
+    const graph=new Objects(db,f.model,await Access.load(db,principal));
+    assert.equal((await graph.query({type:'Route'})).items.length,1);
+    await assert.rejects(db.queryPool!.query(`DELETE FROM ${db.schema}.objects`),/read-only/);
+    await db.queryPool!.end();
+    assert.equal((await graph.query({type:'Route'})).items.length,1);
+  } finally { await db.pool.end(); await f.close(); }
+});

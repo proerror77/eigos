@@ -35,7 +35,7 @@ export class Objects {
     this.access.read(this.model,ref.type);
     if (!this.access.rowAllowed(this.model,ref.type,properties)) return null;
     this.access.readRow(this.model,ref.type,properties);
-    return Object.fromEntries(Object.entries(properties).map(([field,value])=>[field,this.access.cell(this.model,ref.type,field,properties)?value:null]));
+    return Object.fromEntries(Object.entries(properties).filter(([field])=>this.model.object(ref.type).properties[field]).map(([field,value])=>[field,this.access.cell(this.model,ref.type,field,properties)?value:null]));
   }
   private visible(object: ObjectData): ObjectData {
     this.access.readRow(this.model,object.ref.type,object.properties);
