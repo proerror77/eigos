@@ -31,7 +31,7 @@ export class Tasks {
     return this.visible(principal, task);
   }
   private async visible(principal: Principal, task: Task): Promise<Task> {
-    if (task.result !== null && (!task.result_permissions || !(await Access.load(this.db, principal)).canReturn(task.result_permissions))) return { ...task, result: null, error: 'Result access is unavailable' };
+    if (task.result !== null && (!task.result_permissions || !await (await Access.load(this.db, principal)).canReturn(task.result_permissions))) return { ...task, result: null, error: 'Result access is unavailable' };
     return task;
   }
   async get(principal: Principal, id: string): Promise<Task> {
@@ -73,7 +73,7 @@ export class Tasks {
   async finish(task: Task, state: 'completed' | 'failed' | 'input-required', result: unknown, error?: string, permissions: Requirement[] = []) {
     await this.db.transaction(async client => {
       await this.current(task, client, true);
-      if (result !== null && !(await Access.load(this.db, { owner: task.owner, scopes: task.scopes }, client)).canReturn(permissions)) throw new Conflict('Result permissions changed');
+      if (result !== null && !await (await Access.load(this.db, { owner: task.owner, scopes: task.scopes }, client)).canReturn(permissions, client)) throw new Conflict('Result permissions changed');
       await this.db.query(`UPDATE ${this.db.schema}.tasks SET state=$2,result=$3,error=$4,result_permissions=$5,token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1`, [task.id, state, result ?? null, error ?? null, JSON.stringify(permissions)], client);
     });
   }

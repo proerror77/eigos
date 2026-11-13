@@ -45,7 +45,7 @@ export function policySql(expression: Expression | undefined, values: unknown[],
     const field = `${column}->${bind(item.property)}::text`;
     if (item.op === 'equals') return `COALESCE(${field},'null'::jsonb)=${bind(JSON.stringify(item.value))}::jsonb`;
     if (item.op === 'subject') return `${field}=${bind(JSON.stringify(context.subject))}::jsonb`;
-    return `EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(${field})='array' THEN ${field} ELSE jsonb_build_array(${field}) END) g WHERE g#>>'{}'=ANY(${bind(context.groups)}::text[]))`;
+    return `EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(${field})='array' THEN ${field} ELSE jsonb_build_array(${field}) END) g WHERE jsonb_typeof(g)='string' AND g#>>'{}'=ANY(${bind(context.groups)}::text[]))`;
   };
   const all = expression.all.map(check), any = expression.any.map(check);
   return [...all, ...(any.length ? ['(' + any.join(' OR ') + ')'] : [])].join(' AND ') || 'TRUE';

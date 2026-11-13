@@ -8,7 +8,8 @@ export const permissionSchema = z.enum(['view_definition', 'edit_definition', 'm
 export type Permission = z.infer<typeof permissionSchema>;
 export const grantSchema = z.strictObject({ resource: z.string().min(1).max(300), permission: permissionSchema });
 export type Grant = z.infer<typeof grantSchema>;
-export type Requirement = Grant & { ontology: string; security?: string };
+export interface RowRequirement { projection: string; type: string; id: string; fields: string[]; scenario?: string }
+export type Requirement = Grant & { ontology: string; security?: string; row?: RowRequirement };
 export class TaskResult {
   constructor(readonly value: unknown, readonly permissions: Requirement[]) {}
 }
@@ -80,6 +81,40 @@ export class Access {
     const r: Requirement = { ontology: model.document.id, permission: 'view_objects', resource: resource(model.document.id,'object',type), security: this.securityDigest };
     this.required.set('security:'+r.resource,r); this.data.set('security:'+r.resource,r);
   }
+  private trackRow(model: Ontology, type: string, properties: Record<string, unknown>, field?: string) {
+    if (!this.policies.has(model.document.id + '/' + type)) return;
+    const publication = model as Ontology & { projection?: string; scenario?: string };
+    const id = properties[model.object(type).primaryKey];
+    if (!publication.projection || typeof id !== 'string') throw new PermissionDenied('A published object identity is required for policy evaluation');
+    const key = 'row:' + digest([model.document.id, publication.projection, publication.scenario, type, id]);
+    const previous = this.data.get(key)?.row;
+    const fields = [...new Set([...(previous?.fields ?? []), ...(field ? [field] : [])])];
+    const row: RowRequirement = { projection: publication.projection, type, id, fields, ...(publication.scenario ? { scenario: publication.scenario } : {}) };
+    const requirement: Requirement = { ontology: model.document.id, permission: 'view_objects', resource: resource(model.document.id, 'object', type), row };
+    this.data.set(key, requirement);
+  }
+  private async rowsAllowed(requirements: Requirement[], client?: Sql): Promise<boolean> {
+    const dependencies = requirements.filter((requirement): requirement is Requirement & { row: RowRequirement } => Boolean(requirement.row));
+    if (!dependencies.length) return true;
+    const rows = await this.db.query(`SELECT input.ordinal,CASE WHEN delta.scenario_id IS NULL THEN object.properties ELSE delta.properties END AS properties,
+      input.scenario IS NULL OR (scenario.id IS NOT NULL AND scenario.state='open' AND scenario.expires_at>now()) AS current
+      FROM jsonb_to_recordset($2::jsonb) AS input(ordinal integer,projection text,type text,id text,scenario uuid)
+      LEFT JOIN ${this.db.schema}.objects object ON object.projection=input.projection AND object.owner=$1 AND object.type=input.type AND object.id=input.id
+      LEFT JOIN ${this.db.schema}.scenarios scenario ON scenario.id=input.scenario AND scenario.owner=$1
+      LEFT JOIN ${this.db.schema}.scenario_objects delta ON delta.scenario_id=input.scenario AND delta.owner=$1 AND delta.type=input.type AND delta.id=input.id`,
+      [this.principal.owner, JSON.stringify(dependencies.map((requirement, ordinal) => ({ ordinal, ...requirement.row })))], client);
+    return rows.rows.length === dependencies.length && rows.rows.every(row => {
+      const requirement = dependencies[Number(row.ordinal)]!;
+      if (!row.current || !row.properties) return false;
+      const policy = this.policies.get(requirement.ontology + '/' + requirement.row.type);
+      if (!permits(policy?.read, row.properties, this.security)) return false;
+      if (!markingsOf(policy, row.properties).every(marking => this.security.markings.includes(marking))) return false;
+      return requirement.row.fields.every(field => {
+        const target = resource(requirement.ontology, 'property', requirement.row.type + '/' + field);
+        return this.allows({ ontology: requirement.ontology, permission: 'view_property', resource: target }) && permits(policy?.properties[field], row.properties, this.security);
+      });
+    });
+  }
   rowAllowed(model: Ontology, type: string, properties: Record<string,unknown>): boolean {
     this.trackSecurity(model,type);
     const policy = this.policies.get(model.document.id+'/'+type);
@@ -88,10 +123,13 @@ export class Access {
   readRow(model: Ontology, type: string, properties: Record<string,unknown>) {
     this.read(model,type);
     if (!this.rowAllowed(model,type,properties)) throw new PermissionDenied('Object policy denied access');
+    this.trackRow(model, type, properties);
     for (const marking of markingsOf(this.policies.get(model.document.id+'/'+type),properties)) this.readMarkings.add(marking);
   }
   cell(model: Ontology, type: string, field: string, properties: Record<string,unknown>) {
-    return this.property(model,type,field) && permits(this.policies.get(model.document.id+'/'+type)?.properties[field],properties,this.security);
+    const allowed = this.property(model,type,field) && permits(this.policies.get(model.document.id+'/'+type)?.properties[field],properties,this.security);
+    if (allowed) this.trackRow(model, type, properties, field);
+    return allowed;
   }
   rowSql(model: Ontology, type: string, values: unknown[], column = 'properties') {
     this.trackSecurity(model,type);
@@ -100,7 +138,7 @@ export class Access {
     if (policy?.markingsProperty) {
       values.push(policy.markingsProperty); const field = `${column}->$${values.length}::text`;
       values.push(JSON.stringify(this.security.markings));
-      clauses.push(`COALESCE(${field},'[]'::jsonb) <@ $${values.length}::jsonb`);
+      clauses.push(`COALESCE(NULLIF(${field},'null'::jsonb),'[]'::jsonb) <@ $${values.length}::jsonb`);
     }
     return '('+clauses.join(' AND ')+')';
   }
@@ -116,10 +154,23 @@ export class Access {
   action(model: Ontology, name: string) { this.definition(model, 'action', name); this.require(model.document.id, 'apply_action', resource(model.document.id, 'action', name)); }
   function(model: Ontology, name: string) { this.definition(model, 'function', name); this.require(model.document.id, 'execute_function', resource(model.document.id, 'function', name)); }
   source(model: Ontology, name: string) { this.require(model.document.id, 'read_source', resource(model.document.id, 'source', name), true); }
-  dataRequirements(): Requirement[] { return [...this.data.values()]; }
-  requirements(): Requirement[] { return [...this.required.values()]; }
-  canReturn(requirements: Requirement[]): boolean {
-    return requirements.every(r => this.allows(r) && (r.permission !== 'view_objects' || this.allows({ ...r, permission: 'view_definition' })));
+  dataRequirements(): Requirement[] { return structuredClone([...this.data.values()]); }
+  requirements(): Requirement[] { return structuredClone([...new Map([...this.required.values(), ...this.data.values()].map(item => [digest(item), item])).values()]); }
+  async canReturn(requirements: Requirement[], client?: Sql): Promise<boolean> {
+    try { await this.refresh(client); }
+    catch (error) { if (error instanceof PermissionDenied) return false; throw error; }
+    const evidencedResources = new Set(requirements.filter(requirement => requirement.security === this.securityDigest).map(requirement => requirement.resource));
+    const grantsAllowed = requirements.every(requirement => {
+      if (!this.allows(requirement)) return false;
+      if (requirement.permission !== 'view_objects') return true;
+      if (!this.allows({ ...requirement, permission: 'view_definition' })) return false;
+      const prefix = requirement.ontology + '/object/';
+      const type = requirement.resource.startsWith(prefix) ? requirement.resource.slice(prefix.length) : '';
+      if (!this.policies.has(requirement.ontology + '/' + type)) return true;
+      // Older cached results have no policy evidence. Require a recorded policy context before reusing them.
+      return evidencedResources.has(requirement.resource);
+    });
+    return grantsAllowed && await this.rowsAllowed(requirements, client);
   }
   describe(model: Ontology, executable = false) {
     const document = structuredClone(model.document);
