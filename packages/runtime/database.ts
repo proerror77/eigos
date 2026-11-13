@@ -41,15 +41,37 @@ export class Database {
       throw error;
     } finally { client.release(); }
   }
+  private async readTransaction<T extends QueryResultRow>(pool: pg.Pool, text: string, values: unknown[], authority?: {id:string;position:string}) {
+    const connection = await pool.connect();
+    try {
+      await connection.query('BEGIN READ ONLY');
+      if (authority) {
+        const replica=(await connection.query(`SELECT id,NOT pg_is_in_recovery() OR pg_last_wal_replay_lsn()>=$1::pg_lsn AS current FROM ${this.schema}.storage_identity`,[authority.position])).rows[0];
+        if (replica?.id !== authority.id || !replica.current) {
+          await connection.query('ROLLBACK');
+          return undefined;
+        }
+      }
+      const result=await this.query<T>(text,values,connection);
+      await connection.query('COMMIT');
+      return result;
+    } catch(error) {
+      await connection.query('ROLLBACK').catch(()=>{});
+      throw error;
+    } finally { connection.release(); }
+  }
   async readQuery<T extends QueryResultRow = QueryResultRow>(text: string, values: unknown[] = [], client: Sql = this.pool) {
     if (!this.queryPool || client !== this.pool) return this.query<T>(text,values,client);
-    const primary = (await this.query(`SELECT id,pg_current_wal_lsn()::text AS position FROM ${this.schema}.storage_identity`)).rows[0];
+    const primary=(await this.query<{id:string;position:string}>(`SELECT id,pg_current_wal_lsn()::text AS position FROM ${this.schema}.storage_identity`)).rows[0];
     if (!primary) throw new Error('Storage identity is unavailable');
     try {
-      const replica = (await this.queryPool.query(`SELECT id,NOT pg_is_in_recovery() OR pg_last_wal_replay_lsn()>=$1::pg_lsn AS current FROM ${this.schema}.storage_identity`,[primary.position])).rows[0];
-      if (replica?.id === primary.id && replica.current) return await this.query<T>(text,values,this.queryPool);
-    } catch { /* An unavailable or lagging query store falls back to current authority. */ }
-    return this.query<T>(text,values,client);
+      const result=await this.readTransaction<T>(this.queryPool,text,values,primary);
+      if(result)return result;
+    } catch(error) {
+      if ((error as {code?:string}).code==='25006') throw error;
+      // A pooler may ignore startup options. Both paths use explicit read-only transactions.
+    }
+    return (await this.readTransaction<T>(this.pool,text,values))!;
   }
   async close() { await this.queryPool?.end(); await this.pool.end(); }
   async initialize() {

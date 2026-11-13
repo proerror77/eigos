@@ -41,7 +41,7 @@ flowchart LR
 
 构建后使用 `npm run start:indexer` 启动独立索引与副作用进程。多个实例通过 PostgreSQL 行锁和租约分配工作。Gateway、任务 Worker 和 Indexer 可分别增加实例数。索引数据和源 offset 原子提交，Action 编辑、历史及副作用入队也共用事务。
 
-Gateway 可配置 `QUERY_DATABASE_URL` 使用独立只读连接池，包括已有的物理复制只读节点。每次读取核对数据库身份及主库 WAL 位置，副本延迟、身份不符或不可用时回读主库。Action 内部读取保持原事务连接，确保提交前校验与编辑一致。数据库复制、容量和网络由部署环境配置。
+Gateway 可配置 `QUERY_DATABASE_URL` 使用独立只读连接池，包括已有的物理复制只读节点。每次分离查询显式开启只读事务，并核对数据库身份及主库 WAL 位置，副本延迟、身份不符或不可用时在主库只读事务中读取。Action 内部读取保持原事务连接，确保提交前校验与编辑一致。数据库复制、容量和网络由部署环境配置。
 
 `EIGOS_EXTENSION_MODULE` 是受信任部署模块的绝对路径，可导出 `functions` 版本注册数组和 `effects` 处理函数 Map。发布工具、Gateway、Worker、Indexer 使用相同配置。Function 的不可变实现标识和版本共同决定绑定摘要。副作用由已注册名称调用，处理函数接收稳定幂等键和取消信号。远端系统应据此去重，投递采用至少一次语义。
 
