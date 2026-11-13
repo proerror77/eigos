@@ -68,10 +68,14 @@ export async function initializeAutomation(db: Database) {
     CREATE TABLE IF NOT EXISTS ${db.schema}.workflow_steps(run_id uuid NOT NULL REFERENCES ${db.schema}.workflow_runs(id),position integer NOT NULL,
       action text NOT NULL,input jsonb NOT NULL,requirements jsonb NOT NULL,request_id text NOT NULL,result jsonb,completed_at timestamptz,
       PRIMARY KEY(run_id,position));
+    ALTER TABLE ${db.schema}.workflow_steps ADD COLUMN IF NOT EXISTS read_markings jsonb;
     CREATE INDEX IF NOT EXISTS workflow_runs_queue ON ${db.schema}.workflow_runs(state,created_at);`);
 }
 const failureMessage =
   'Workflow execution failed; check current permissions, publication and Action input before retrying';
+class MissingFrozenSecurityContext extends Conflict {}
+const missingSecurityContextMessage =
+  'Frozen input security context is unavailable; submit a new workflow run';
 const revisionMatches = (id: string | undefined, revision: number) => {
   if (id ? revision < 1 : revision !== 0)
     throw new Conflict('Updates require the current revision; creates use revision zero');
@@ -499,14 +503,15 @@ export class Automation {
           await access.refresh(client);
           return (
             await this.db.query(
-              `INSERT INTO ${this.db.schema}.workflow_steps(run_id,position,action,input,requirements,request_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,
+              `INSERT INTO ${this.db.schema}.workflow_steps(run_id,position,action,input,requirements,request_id,read_markings) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
               [
                 row.id,
                 position,
                 item.action,
                 validated,
-                JSON.stringify(access.dataRequirements()),
+                JSON.stringify(await access.finalDataRequirements(client)),
                 requestId,
+                JSON.stringify(access.readMarkingsSnapshot()),
               ],
               client,
             )
@@ -527,25 +532,34 @@ export class Automation {
             throw new Conflict('Workflow Action receipt has different input');
           result = objectRefSchema.parse(committed.result);
         } else {
-          if (!(await access.canReturn(frozen.requirements as Requirement[])))
-            throw new PermissionDenied('Workflow input permissions changed');
+          if (frozen.read_markings === null || frozen.read_markings === undefined) {
+            throw new MissingFrozenSecurityContext(missingSecurityContextMessage);
+          }
+          const markings = z.array(z.string()).parse(frozen.read_markings);
+          await access.restoreReads(frozen.requirements as Requirement[], markings);
           const boundResults = Object.entries(item.input)
             .filter(([, binding]) => 'step' in binding)
             .map(([parameter]) => objectRefSchema.parse(frozen.input[parameter]));
           for (const reference of boundResults) await new Objects(this.db, model, access).read(reference);
-          let checkedResults = false;
+          let checkedInputs = false;
           const commitGuard = async (client: Sql) => {
             await guard(client);
             // Authorize before edits under the write lock; a valid Action may subsequently delete its input.
-            if (!checkedResults && boundResults.length) {
+            if (!checkedInputs) {
               const graph = new Objects(this.db, model, access, client);
               await graph.lockWrites();
+              await access.restoreReads(frozen.requirements as Requirement[], markings, client);
               for (const reference of boundResults) await graph.read(reference);
-              checkedResults = true;
+              checkedInputs = true;
             }
             await this.db.query(
-              `UPDATE ${this.db.schema}.workflow_steps SET requirements=$3 WHERE run_id=$1 AND position=$2`,
-              [row.id, position, JSON.stringify(access.dataRequirements())],
+              `UPDATE ${this.db.schema}.workflow_steps SET requirements=$3,read_markings=$4 WHERE run_id=$1 AND position=$2`,
+              [
+                row.id,
+                position,
+                JSON.stringify(await access.finalDataRequirements(client)),
+                JSON.stringify(access.readMarkingsSnapshot()),
+              ],
               client,
             );
           };
@@ -584,10 +598,10 @@ export class Automation {
           client,
         );
       });
-    } catch {
+    } catch (error) {
       await this.db.query(
         `UPDATE ${this.db.schema}.workflow_runs SET state='failed',error=$3,token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1 AND token=$2 AND state='working'`,
-        [row.id, token, failureMessage],
+        [row.id, token, error instanceof MissingFrozenSecurityContext ? missingSecurityContextMessage : failureMessage],
       );
     }
     return true;

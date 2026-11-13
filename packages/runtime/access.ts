@@ -83,6 +83,25 @@ export class Access {
     for(const [key,value] of other.required)this.required.set(key,structuredClone(value));
     for(const marking of other.readMarkings)this.readMarkings.add(marking);
   }
+  readMarkingsSnapshot(): string[] {
+    return [...this.readMarkings].sort();
+  }
+  /** Restore the security context of persisted inputs without recomputing their frozen values. */
+  async restoreReads(requirements: Requirement[], markings: string[], client?: Sql): Promise<void> {
+    if (!(await this.canReturn(requirements, client))) {
+      throw new PermissionDenied('Frozen input permissions changed');
+    }
+    if (markings.some(marking => !this.security.markings.includes(marking))) {
+      throw new PermissionDenied('Frozen input markings are unavailable');
+    }
+    for (const requirement of requirements) {
+      const key = 'restored:' + digest(requirement);
+      const copy = structuredClone(requirement);
+      this.data.set(key, copy);
+      this.required.set(key, copy);
+    }
+    for (const marking of markings) this.readMarkings.add(marking);
+  }
   private trackSecurity(model: Ontology, type: string) {
     const r: Requirement = { ontology: model.document.id, permission: 'view_objects', resource: resource(model.document.id,'object',type), security: this.securityDigest };
     this.required.set('security:'+r.resource,r); this.data.set('security:'+r.resource,r);

@@ -4,10 +4,12 @@ import { fixture, principal } from './fixture.js';
 import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
 import { Actions } from '../packages/runtime/actions.js';
 import { initializeActionUndo } from '../packages/runtime/action-journal.js';
-import { initializeScenarioLifecycle } from '../packages/runtime/scenarios.js';
+import { Scenarios, initializeScenarioLifecycle } from '../packages/runtime/scenarios.js';
 import { Automation, initializeAutomation } from '../packages/runtime/automation.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { objectPolicySchema } from '../packages/runtime/security.js';
+import { createCapabilities } from '../packages/capabilities/index.js';
+import type { ObjectRef } from '../packages/ontology/schema.js';
 
 async function setup() {
   const f=await fixture();await initializeActionUndo(f.db);await initializeScenarioLifecycle(f.db);await initializeAutomation(f.db);
@@ -52,12 +54,123 @@ test('retry after committed Action and before checkpoint uses its frozen validat
     assert.equal(failed.state,'failed');assert.equal(failed.step,0);
     const frozen=(await f.db.query(`SELECT input FROM ${f.db.schema}.workflow_steps WHERE run_id=$1`,[run.id])).rows[0]!.input;
     assert.deepEqual(frozen,{id:'original',name:'Copied',tag:'copied'});
+    // A committed legacy receipt can finish checkpoint recovery without re-executing frozen inputs.
+    await f.db.query(`UPDATE ${f.db.schema}.workflow_steps SET read_markings=NULL WHERE run_id=$1`,[run.id]);
     await f.objects.edit(f.source,1,{name:'changed-after-commit'});
     await automation.retry(await Access.load(f.db,principal),f.model,run.id);await automation.runOne();
     const completed=(await f.db.query(`SELECT state,step,results FROM ${f.db.schema}.workflow_runs WHERE id=$1`,[run.id])).rows[0]!;
     assert.equal(completed.state,'completed');assert.equal(completed.step,1);assert.equal(completed.results[0].object.id,'original');
     await assert.rejects(f.objects.read({type:'Route',id:'changed-after-commit'}),/unavailable/);
     assert.equal((await f.db.query(`SELECT count(*)::int count FROM ${f.db.schema}.actions WHERE request_id=$1`,['workflow:'+run.id+':0'])).rows[0]!.count,1);
+  }finally{await f.close();}
+});
+
+async function markedSetup() {
+  const f=await setup(),document=structuredClone(f.model.document);
+  document.objectTypes.find(type=>type.apiName==='Route')!.properties.labels={description:'Security markings',schema:{type:'array',items:{type:'string'}},required:false};
+  document.actionTypes.push({apiName:'CopyMarkedRoute',description:'Copy with input security markings',parameters:{type:'object',properties:{id:{type:'string'},name:{type:'string'},labels:{type:'array',items:{type:'string'}}},required:['id','name','labels'],additionalProperties:false},objectParameters:{},submissionCriteria:[],rules:[{op:'createObject',object:{type:'Route',id:{parameter:'id'}},properties:{id:{parameter:'id'},name:{parameter:'name'},labels:{parameter:'labels'}}}],result:{type:'Route',id:{parameter:'id'}}});
+  const model=await f.metadata.publish(document,f.capabilities,f.publisher);
+  await setGrants(f.db,principal.owner,memberGrants(model));
+  await f.db.query(`INSERT INTO ${f.db.schema}.object_policies(ontology,type,policy) VALUES('Eigos','Route',$1)`,[objectPolicySchema.parse({markingsProperty:'labels'})]);
+  await f.db.query(`INSERT INTO ${f.db.schema}.security_memberships(subject,kind,name) VALUES($1,'marking','Secret')`,[principal.owner]);
+  const access=await Access.load(f.db,principal),objects=new Objects(f.db,model,access),actions=new Actions(f.db,f.capabilities.functions),automation=new Automation(f.db,f.metadata,actions);
+  await objects.edit(f.source,1,{name:'Classified payload',labels:['Secret']});
+  return {...f,model,access,objects,actions,automation};
+}
+
+test('unchanged frozen retries preserve original input markings even after source markings change',async()=>{
+  const f=await markedSetup();try{
+    const workflow=await f.automation.workflow(f.access,f.model,{name:'Reject declassification',steps:[{name:'Copy',action:'CopyRoute',input:{id:{literal:'unmarked-output'},name:{property:'name'}}}]});
+    const run=await f.automation.run(f.access,f.model,{workflow:workflow.id,object:f.source,requestId:'marked-retry'});
+    const state=async()=>(await f.db.query(`SELECT state FROM ${f.db.schema}.workflow_runs WHERE id=$1`,[run.id])).rows[0]!.state;
+    await f.automation.runOne();assert.equal(await state(),'failed');
+    const original=(await f.db.query(`SELECT input,requirements,read_markings FROM ${f.db.schema}.workflow_steps WHERE run_id=$1`,[run.id])).rows[0]!;
+    assert.deepEqual(original.read_markings,['Secret']);assert(original.requirements.some((requirement:any)=>requirement.row?.id===f.source.id));
+    await f.automation.retry(await Access.load(f.db,principal),f.model,run.id);await f.automation.runOne();assert.equal(await state(),'failed');
+    await f.db.query(`UPDATE ${f.db.schema}.objects SET properties=jsonb_set(properties,'{labels}','[]') WHERE projection=$1 AND owner=$2 AND type='Route' AND id=$3`,[f.model.projection,principal.owner,f.source.id]);
+    await f.automation.retry(await Access.load(f.db,principal),f.model,run.id);await f.automation.runOne();assert.equal(await state(),'failed');
+    assert.equal((await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.objects WHERE projection=$1 AND owner=$2 AND id='unmarked-output'`,[f.model.projection,principal.owner])).rows[0]!.n,0);
+    const after=(await f.db.query(`SELECT input,requirements,read_markings FROM ${f.db.schema}.workflow_steps WHERE run_id=$1`,[run.id])).rows[0]!;
+    assert.deepEqual(after,original);
+  }finally{await f.close();}
+});
+
+test('retry preserves frozen values and source dependencies for a correctly marked output',async()=>{
+  const f=await markedSetup();try{
+    class FailBeforeApply extends Actions {
+      failed=false;
+      override async apply(...args:Parameters<Actions['apply']>){if(!this.failed){this.failed=true;throw new Error('Synthetic interruption before Action');}return super.apply(...args);}
+    }
+    const automation=new Automation(f.db,f.metadata,new FailBeforeApply(f.db,f.capabilities.functions));
+    const workflow=await automation.workflow(f.access,f.model,{name:'Preserve marked values',steps:[{name:'Copy',action:'CopyMarkedRoute',input:{id:{literal:'marked-output'},name:{property:'name'},labels:{property:'labels'}}}]});
+    const run=await automation.run(f.access,f.model,{workflow:workflow.id,object:f.source,requestId:'safe-marked-retry'});await automation.runOne();
+    await f.db.query(`UPDATE ${f.db.schema}.objects SET properties=jsonb_set(properties,'{name}','"New source value"') WHERE projection=$1 AND owner=$2 AND type='Route' AND id=$3`,[f.model.projection,principal.owner,f.source.id]);
+    await automation.retry(await Access.load(f.db,principal),f.model,run.id);await automation.runOne();
+    assert.equal((await f.db.query(`SELECT state FROM ${f.db.schema}.workflow_runs WHERE id=$1`,[run.id])).rows[0]!.state,'completed');
+    const output=await new Objects(f.db,f.model,await Access.load(f.db,principal)).read({type:'Route',id:'marked-output'});
+    assert.equal(output.properties.name,'Classified payload');assert.deepEqual(output.properties.labels,['Secret']);
+    const receipt=(await f.db.query(`SELECT requirements,read_markings FROM ${f.db.schema}.workflow_steps WHERE run_id=$1`,[run.id])).rows[0]!;
+    assert(receipt.requirements.some((requirement:any)=>requirement.row?.id===f.source.id));assert.deepEqual(receipt.read_markings,['Secret']);
+    await f.db.query(`DELETE FROM ${f.db.schema}.security_memberships WHERE subject=$1 AND kind='marking'`,[principal.owner]);
+    await assert.rejects(new Objects(f.db,f.model,await Access.load(f.db,principal)).read({type:'Route',id:'marked-output'}),/denied/);
+  }finally{await f.close();}
+});
+
+test('current source row authorization is rechecked after input freezing and before Action edits',async()=>{
+  const f=await setup();try{
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies(ontology,type,policy) VALUES('Eigos','Route',$1)`,[objectPolicySchema.parse({read:{any:[{op:'equals',property:'name',value:'original'},{op:'equals',property:'name',value:'Copied'}]}})]);
+    class RevokeBeforeApply extends Actions {
+      override async apply(...args:Parameters<Actions['apply']>){
+        await f.db.query(`UPDATE ${f.db.schema}.objects SET properties=jsonb_set(properties,'{name}','"revoked"') WHERE projection=$1 AND owner=$2 AND type='Route' AND id=$3`,[f.model.projection,principal.owner,f.source.id]);
+        return super.apply(...args);
+      }
+    }
+    const automation=new Automation(f.db,f.metadata,new RevokeBeforeApply(f.db,f.capabilities.functions));
+    const run=await automation.run(await Access.load(f.db,principal),f.model,{workflow:f.workflow.id,object:f.source,requestId:'revoke-before-edit'});await automation.runOne();
+    assert.equal((await f.db.query(`SELECT state FROM ${f.db.schema}.workflow_runs WHERE id=$1`,[run.id])).rows[0]!.state,'failed');
+    assert.equal((await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.objects WHERE projection=$1 AND owner=$2 AND id='original'`,[f.model.projection,principal.owner])).rows[0]!.n,0);
+  }finally{await f.close();}
+});
+
+test('a workflow can merge a Scenario and continue using its committed surviving object',async()=>{
+  const f=await setup();try{
+    const document=structuredClone(f.model.document),object={type:'object',properties:{type:{type:'string'},id:{type:'string'}},required:['type','id'],additionalProperties:false};
+    const parameters={type:'object',properties:{route:object,scenarioId:{type:'string'},revision:{type:'integer'}},required:['route','scenarioId','revision'],additionalProperties:false};
+    const definition={apiName:'mergeInspectedRoute',description:'Validate the proposed object before merging',version:'1',edits:true,parameters,returns:object};
+    const capabilities=createCapabilities(f.db,async()=>f.provider.source,{functions:[{definition,implementationId:'merge-inspected-route-v1',handler:async(input,context)=>context.edit!(input.route as ObjectRef,async graph=>{
+      await new Scenarios(f.db).mergeInto(graph,String(input.scenarioId),Number(input.revision),{objects:['Route'],links:[],validate:async view=>{await view.read(input.route as ObjectRef);}});
+    })}]});
+    document.functionTypes.push(definition);
+    document.actionTypes.push({apiName:'MergeRouteScenario',description:'Merge a reviewed Route scenario',parameters,objectParameters:{route:'Route'},submissionCriteria:[],function:'mergeInspectedRoute'});
+    const model=await f.metadata.publish(document,capabilities,f.publisher);await setGrants(f.db,principal.owner,memberGrants(model));
+    const access=await Access.load(f.db,principal),scenarios=new Scenarios(f.db),scene=await scenarios.create(access,model,{requestId:'workflow-scenario',name:'Workflow scenario'}),view=await scenarios.view(access,model,scene.id);
+    await new Objects(f.db,view,access).edit(f.source,1,{name:'Merged route'});
+    const inspected=await scenarios.inspect(access,model,scene.id),automation=new Automation(f.db,f.metadata,new Actions(f.db,capabilities.functions));
+    const workflow=await automation.workflow(access,model,{name:'Merge and rename',steps:[
+      {name:'Merge',action:'MergeRouteScenario',input:{route:{object:true},scenarioId:{literal:scene.id},revision:{literal:inspected.revision}}},
+      {name:'Rename',action:'RenameRoute',input:{route:{step:'Merge'},revision:{property:'$revision'},name:{literal:'Final route'}}},
+    ]});
+    const run=await automation.run(access,model,{workflow:workflow.id,object:f.source,requestId:'workflow-merge-chain'});await automation.runOne();
+    const state=(await f.db.query(`SELECT state,step FROM ${f.db.schema}.workflow_runs WHERE id=$1`,[run.id])).rows[0]!;
+    assert.equal(state.state,'completed');assert.equal(state.step,2);
+    assert.equal((await new Objects(f.db,model,await Access.load(f.db,principal)).read(f.source)).properties.name,'Final route');
+    const requirements=(await f.db.query(`SELECT requirements FROM ${f.db.schema}.workflow_steps WHERE run_id=$1 AND position=0`,[run.id])).rows[0]!.requirements;
+    assert(requirements.some((requirement:any)=>requirement.row?.id===f.source.id));assert(requirements.every((requirement:any)=>!requirement.row?.scenario));
+  }finally{await f.close();}
+});
+
+test('upgraded unfinished frozen inputs without markings fail safely with a diagnostic',async()=>{
+  const f=await setup();try{
+    class PauseBeforeAction extends Actions {override async apply(..._args:Parameters<Actions['apply']>):Promise<{type:string;id:string}>{throw new Error('Synthetic interruption before Action');}}
+    const interrupted=new Automation(f.db,f.metadata,new PauseBeforeAction(f.db,f.capabilities.functions));
+    const run=await interrupted.run(f.access,f.model,{workflow:f.workflow.id,object:f.source,requestId:'legacy-frozen'});await interrupted.runOne();
+    await f.db.query(`UPDATE ${f.db.schema}.workflow_steps SET read_markings=NULL WHERE run_id=$1`,[run.id]);
+    await initializeAutomation(f.db);await initializeAutomation(f.db);
+    const resumed=new Automation(f.db,f.metadata,new Actions(f.db,f.capabilities.functions));
+    await resumed.retry(await Access.load(f.db,principal),f.model,run.id);await resumed.runOne();
+    const state=(await f.db.query(`SELECT state,error FROM ${f.db.schema}.workflow_runs WHERE id=$1`,[run.id])).rows[0]!;
+    assert.equal(state.state,'failed');assert.match(state.error,/security context.*new workflow run/);
+    assert.equal((await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.actions WHERE request_id=$1`,['workflow:'+run.id+':0'])).rows[0]!.n,0);
   }finally{await f.close();}
 });
 
