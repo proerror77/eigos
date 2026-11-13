@@ -64,17 +64,23 @@ export class Indexing {
     const input = indexingInputSchema.parse(raw);
     if (JSON.stringify(input).length > 2_000_000) throw new Conflict('Source transaction exceeds the payload limit');
     if (model.scenario) throw new Conflict('Indexing requires a live publication');
-    await access.refresh(); authorize(access,model,input.source); mapRows(model,input);
+    await access.refresh(); authorize(access,model,input.source);
     const fingerprint = digest({input,release:model.release});
     return this.db.transaction(async client => {
       await this.db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',['publication:'+model.document.id],client);
       if ((await this.metadata.active(model.document.id,client)).release !== model.release) throw new Conflict('Indexing publication changed');
-      await this.db.query(`INSERT INTO ${this.db.schema}.index_streams(owner,ontology,source,stream) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`,[access.principal.owner,model.document.id,input.source,input.stream],client);
-      const id = randomUUID();
-      await this.db.query(`INSERT INTO ${this.db.schema}.index_transactions(id,owner,ontology,release,source,stream,offset_value,mode,digest,input,scopes)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(owner,ontology,source,stream,offset_value) DO NOTHING`,[id,access.principal.owner,model.document.id,model.release,input.source,input.stream,input.offset,input.mode,fingerprint,input,JSON.stringify(access.principal.scopes)],client);
-      const row = (await this.db.query(`SELECT id,digest,state FROM ${this.db.schema}.index_transactions WHERE owner=$1 AND ontology=$2 AND source=$3 AND stream=$4 AND offset_value=$5`,[access.principal.owner,model.document.id,input.source,input.stream,input.offset],client)).rows[0]!;
-      if (row.digest !== fingerprint) throw new Conflict('Source offset already contains another transaction');
+      const findPrevious = () => this.db.query(`SELECT id,digest,state,input,release FROM ${this.db.schema}.index_transactions WHERE owner=$1 AND ontology=$2 AND source=$3 AND stream=$4 AND offset_value=$5`,[access.principal.owner,model.document.id,input.source,input.stream,input.offset],client);
+      let row = (await findPrevious()).rows[0];
+      if (!row) {
+        mapRows(model,input);
+        await this.db.query(`INSERT INTO ${this.db.schema}.index_streams(owner,ontology,source,stream) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`,[access.principal.owner,model.document.id,input.source,input.stream],client);
+        await this.db.query(`INSERT INTO ${this.db.schema}.index_transactions(id,owner,ontology,release,source,stream,offset_value,mode,digest,input,scopes)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(owner,ontology,source,stream,offset_value) DO NOTHING`,[randomUUID(),access.principal.owner,model.document.id,model.release,input.source,input.stream,input.offset,input.mode,fingerprint,input,JSON.stringify(access.principal.scopes)],client);
+        row = (await findPrevious()).rows[0]!;
+      }
+      // Producer identity is the immutable payload at this offset. Its original publication stays pinned across retries.
+      if (digest(row.input) !== digest(input)) throw new Conflict('Source offset already contains another transaction');
+      if (row.digest !== digest({input:row.input,release:row.release})) throw new Conflict('Stored source transaction differs from its fingerprint');
       await access.refresh(client);
       await this.db.query("SELECT pg_notify('eigos_indexing','ready')",[],client);
       return {id:String(row.id),state:String(row.state),offset:input.offset,provenance:'authenticated_producer'};

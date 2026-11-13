@@ -93,13 +93,26 @@ export async function resolveSourceEdit(graph: Objects, ref: ObjectRef, incoming
   const before = await stored(graph,ref);
   const candidateTime = observedAt ?? (typeof incoming?.observedAt === 'string' ? incoming.observedAt : new Date().toISOString());
   const observed = z.iso.datetime({offset:true}).parse(candidateTime);
-  const prior = (await graph.db.query(`SELECT properties,observed_at FROM ${graph.db.schema}.source_values WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND source=$5`,[...key(graph,ref),source],graph.client)).rows[0];
+  let prior = (await graph.db.query(`SELECT properties,observed_at FROM ${graph.db.schema}.source_values WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND source=$5`,[...key(graph,ref),source],graph.client)).rows[0];
+  const edits = await state(graph,ref);
+  if (!prior && before && !edits.created) {
+    const baselines = (await graph.db.query(`SELECT source,properties FROM ${graph.db.schema}.source_values WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`,key(graph,ref),graph.client)).rows;
+    // An upgraded row has no source history yet. Retain its observed time before handling the first refresh or deletion.
+    if (baselines.every(row=>row.source==='__legacy__')) {
+      const baseline = baselines.find(row=>row.source==='__legacy__')?.properties ?? before;
+      const timestamp = z.iso.datetime({offset:true}).safeParse(baseline.observedAt);
+      if (timestamp.success) {
+        prior = {properties:baseline,observed_at:timestamp.data};
+        await graph.db.query(`INSERT INTO ${graph.db.schema}.source_values(projection,owner,type,id,source,properties,observed_at)
+          VALUES($1,$2,$3,$4,$5,$6,$7)`,[...key(graph,ref),source,baseline,timestamp.data],graph.client);
+      }
+    }
+  }
   if (prior && new Date(prior.observed_at).getTime() > Date.parse(observed)) return before;
   if (prior && new Date(prior.observed_at).getTime() === Date.parse(observed) && digest(prior.properties) !== digest(incoming)) throw new Conflict('One source timestamp contains conflicting object data');
   await graph.db.query(`DELETE FROM ${graph.db.schema}.source_values WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND source='__legacy__'`,key(graph,ref),graph.client);
   await graph.db.query(`INSERT INTO ${graph.db.schema}.source_values(projection,owner,type,id,source,properties,observed_at)
     VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(projection,owner,type,id,source) DO UPDATE SET properties=excluded.properties,observed_at=excluded.observed_at`,[...key(graph,ref),source,incoming,observed],graph.client);
-  const edits = await state(graph,ref);
   let resolved: Properties | null = null;
   if (!edits.deleted) {
     const rows = (await graph.db.query(`SELECT properties,observed_at,source FROM ${graph.db.schema}.source_values WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 ORDER BY observed_at,source`,key(graph,ref),graph.client)).rows;

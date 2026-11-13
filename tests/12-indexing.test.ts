@@ -6,6 +6,7 @@ import { Objects } from '../packages/runtime/objects.js';
 import { Indexing, initializeIndexing } from '../packages/runtime/indexing.js';
 import { EditHistory, initializeEditHistory, setConflictPolicy } from '../packages/runtime/edit-history.js';
 import { Materializations, initializeMaterializations } from '../packages/runtime/materializations.js';
+import { upgradePublicationStorage } from '../packages/runtime/upgrade.js';
 
 async function indexedFixture() {
   const f=await fixture();
@@ -20,6 +21,46 @@ function sourceRow(id:string,name:string,observedAt=origin) {
   return {id,name,city:'上海',address:'上海',coordinates:{lat:31.2,lng:121.5},coordinateSystem:'GCJ-02',sourceBinding:'synthetic',observedAt};
 }
 const transaction=(offset:number,rows:Record<string,unknown>[],observedAt=origin)=>({source:'DidiPlaces',stream:'synthetic-stream',offset,mode:'stream',observedAt,rows});
+
+test('upgrade preserves source observation ordering before the first refresh or deletion',async()=>{
+  const f=await indexedFixture();try{
+    const newer=new Date(Date.parse(origin)+10000).toISOString();
+    for(const id of ['legacy-update','legacy-delete','legacy-edited']){
+      await f.db.query(`INSERT INTO ${f.db.schema}.objects(projection,owner,type,id,properties) VALUES($1,$2,'Place',$3,$4)`,[f.model.projection,principal.owner,id,sourceRow(id,'Newer stored data',newer)]);
+    }
+    await upgradePublicationStorage(f.db);
+    const graph=new Objects(f.db,f.model,f.access);
+    await graph.edit({type:'Place',id:'legacy-edited'},1,{name:'User correction'});
+    await f.indexing.submit(f.access,f.model,{...transaction(1,[sourceRow('legacy-update','Stale data'),sourceRow('legacy-edited','Stale data')]),deleted:['legacy-delete']});
+    await f.indexing.runOne();
+    assert.equal((await graph.read({type:'Place',id:'legacy-update'})).properties.name,'Newer stored data');
+    assert.equal((await graph.read({type:'Place',id:'legacy-delete'})).properties.observedAt,newer);
+    assert.equal((await graph.read({type:'Place',id:'legacy-edited'})).properties.name,'User correction');
+    assert.equal((await graph.read({type:'Place',id:'legacy-edited'})).properties.observedAt,newer);
+    await f.indexing.submit(f.access,f.model,{...transaction(2,[sourceRow('legacy-update','Fresh data',later)],later),deleted:['legacy-delete']});
+    await f.indexing.runOne();
+    assert.equal((await graph.read({type:'Place',id:'legacy-update'})).properties.name,'Fresh data');
+    await assert.rejects(graph.read({type:'Place',id:'legacy-delete'}),/unavailable/);
+  }finally{await f.close();}
+});
+
+test('exact source replay preserves its original publication after a mapping change',async()=>{
+  const f=await indexedFixture();try{
+    const input=transaction(1,[sourceRow('a','Original mapping')]);
+    const original=await f.indexing.submit(f.access,f.model,input);await f.indexing.runOne();
+    const document=structuredClone(f.model.document);
+    document.dataSources.find(source=>source.apiName==='DidiPlaces')!.properties.name='displayName';
+    const next=await f.metadata.publish(document,f.capabilities,f.publisher),access=await Access.load(f.db,principal);
+    const replay=await f.indexing.submit(access,next,input);
+    assert.equal(replay.id,original.id);assert.equal(replay.state,'applied');
+    assert.equal((await f.indexing.inspect(access,next,replay.id)).release,f.model.release);
+    await assert.rejects(f.indexing.submit(access,next,transaction(1,[{...sourceRow('a','Original mapping'),displayName:'Changed payload'}])),/another transaction/);
+    const second=await f.indexing.submit(access,next,transaction(2,[{...sourceRow('b','Unused old field'),displayName:'New mapping'}]));
+    assert.equal((await f.indexing.inspect(access,next,second.id)).release,next.release);
+    await f.indexing.runOne();
+    assert.equal((await new Objects(f.db,next,access).read({type:'Place',id:'b'})).properties.name,'New mapping');
+  }finally{await f.close();}
+});
 
 test('index transactions enforce source grants, ordered offsets and exact retries',async()=>{
   const f=await indexedFixture();try{
