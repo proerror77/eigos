@@ -65,23 +65,29 @@ flowchart TD
 flowchart LR
     Location[Location Interface] --> Place[Place]
     Route[Route / RideEstimatable] -->|origin / destination| Place
-    Decision[RequestRideEstimate Action] --> Request[RideRequest]
+    Decision[RideInquiry.estimate / EstimateRide Action] --> Request[RideRequest]
     Request -->|route| Route
     Estimate[RideEstimate / PriceEstimate] -->|request| Request
     Estimate -->|source| Receipt[SourceReceipt]
     Place -->|sources| Receipt
 ```
 
-模型接收用户原文与任务发布版本的 Interface、Link、Function、Action 和 data source 目录。运行层不指定调用顺序，也不解析路线或选择地点。模型可查阅完整定义，并通过独立查询批次并行取得数据。[Palantir Agent 工具](https://www.palantir.com/docs/foundry/agent-sdk/customize-agent)、[Ontology MCP 工具说明](https://www.palantir.com/docs/foundry/ontology-mcp/mcp-tools-and-agent-configuration)
+模型接收用户原文与任务发布版本的 Interface、Link、Function、Action 和 data source 目录。Agent 理解需求并选择业务能力，确定性的业务步骤由该能力绑定的 Function 和 Action 执行。运行调度器不包含滴滴步骤或地点名称。[Palantir Agent 工具](https://www.palantir.com/docs/foundry/agent-sdk/customize-agent)
 
-当前业务能力如下；这些是可供模型组合的操作。
+`RideRequest` 实现 `RideInquiry` Interface，其 `estimate` 能力映射到 `EstimateRide` Action。参数是城市、起终点场所名及可选车型。创建能力通过实现类型解析，无需编造一个尚不存在的对象引用。这对应官方 Ticket Interface 将创建能力映射到具体创建 Action 的模式。[Interface Action](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints)
 
-- `DidiPlaces` 数据源运行 `searchPlaces`，按发布的字段映射批量写入 Place 与来源 Link。模型指定 `Location` Interface 及 `places` Link，在刷新返回中查询属性并选择地点，歧义时暂停原任务。
-- `Location.requestEstimate` 映射到 `RequestRideEstimate`，在一个事务中把所选地点连接为路线，并创建询价请求。提交条件检查两端来源，失败时两种对象及所有关系一起回滚。
-- `DidiEstimates` 数据源运行 `estimateRoute`，沿请求和路线的 Links 取得坐标，调用真实 `taxi_estimate`，映射报价与来源对象。
-- `readRideEstimates` Function 查询请求关联的 `PriceEstimate`，检查来源与时效，返回路线、价格与验收结果。
+`EstimateRide` 使用 `prepareRideInquiry` edit Function。函数完成以下确定性工作：
 
-`refresh_sources` 负责来源读取和入库，模型可指定返回的 Interface 视图及来源 Link，避免为不含属性的引用再做一次模型往返。模型不能提供入库价格。普通 Function 求值不写入对象，业务编辑由 Action 执行。`complete_with_function` 重新执行模型选择的结果 Function，把服务端返回值直接交回原任务，省去一次模型改写报价的往返。没有在调度器中写死结果 Function 名称。工具失败可以由模型根据回值纠正，取消或租约失效仍阻止后续提交。
+1. 并行读取 `DidiPlaces`，来源投影按发布映射写入地点事实及来源 Link。
+2. `resolveRideLocations` 通过 `Location.name` 和各自的来源 Link 查询完整名称匹配。唯一匹配直接使用；入口、商铺等不同名称不会造成歧义。同名或没有匹配时返回真实候选及 ObjectRef。用户明确选择后复核其属于对应来源结果，并刷新来源读取。
+3. `estimateLocations` 用来源坐标取得真实价格。外部请求全部发生在业务编辑事务之外。
+4. Action 在一次事务内创建路线、询价请求、报价及关联 Links。Function 通过 Action 的编辑上下文提交，直接求值 edit Function 会被拒绝。失败的业务编辑整体回滚；已接收的来源事实保持独立。
+
+这些是 Function-backed Action 的实现职责。通用 Action 运行层负责参数、提交条件、事务及幂等记录，没有新增工作流规则语言。[Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview)
+
+Agent 可在一次 `complete_with_action` 调用中选择 Interface Action 与结果 Function，并指定把 Action 返回的对象引用绑定到哪个函数参数。运行层执行 Action 后调用 `readRideEstimates`，后者按 `PriceEstimate` 和 source Links 检查当前来源、有效期和报价，再直接返回真实结果。验收在读取时重新执行，重复 Action 不会使旧的验收标志跳过检查。Agent 不需要在来源读取、对象创建或验收之间继续往返。
+
+普通 Function 仅获得对象读取接口；edit Function 的写入上下文由 Action 提供。来源价格由连接器和字段映射生成，模型不能提供入库价格。取消或租约失效阻止后续提交。
 
 对象集查询示例。
 
@@ -106,7 +112,7 @@ Worker 使用 PostgreSQL 通知唤醒，行锁领取单个任务，并在执行�
 
 ## 当前支持范围
 
-对象查询支持类型或 Interface、等值筛选、字段选择和游标。关系支持双向导航与一对多基数。Action 支持创建对象、按 revision 编辑对象和添加关系。Function 具有独立参数与返回契约，已接入外部来源读取和对象计算。
+对象查询支持类型或 Interface、等值筛选、字段选择和游标。关系支持双向导航与一对多基数。Action 支持声明式对象与关系编辑，以及 Function-backed Action 的原子提交。Function 具有独立参数与返回契约，已接入外部来源读取和对象计算。
 
 第一条实现的领域用例是滴滴估价。模型解释自然语言并使用发布的业务能力，PA 也可提供结构化参数。通用调度器的跨定义行为有工程回归，真实业务验收范围仍是本次滴滴路线。完整 Foundry 产品的界面、其他业务领域的真实验收、属性 reducer、媒体类型、跨组织共享和通用删除规则尚未在本版实现。
 

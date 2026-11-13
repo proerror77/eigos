@@ -5,10 +5,15 @@ import { Actions } from '../../runtime/actions.js';
 import { ingest } from '../../runtime/ingestion.js';
 import { Sources, type SourceProjection } from '../../runtime/sources.js';
 import { rideFunctions, sourceResultSchema, type SourceResolver } from './functions.js';
+import { prepareRideInquiry, resolveRideLocations } from './inquiry.js';
 
 /** DiDi's source normalization and Object Data Funnel. It does not choose an operation. */
 export function rideCapabilities(db: Database, resolve: SourceResolver) {
-  const functions = rideFunctions(resolve);
+  let sources: Sources;
+  const functions = rideFunctions(resolve, new Map([
+    ['resolveRideLocations', resolveRideLocations],
+    ['prepareRideInquiry', prepareRideInquiry(() => sources, () => functions)],
+  ]));
   const projection: SourceProjection = {
     async assertCurrent(owner) { await (await resolve(owner)).assertCurrent(); },
     async apply(graph, source, input, raw) {
@@ -25,7 +30,13 @@ export function rideCapabilities(db: Database, resolve: SourceResolver) {
       }
       if (result.data.kind !== 'estimate' || source !== 'DidiEstimates') throw new Error('Datasource response differs from its mapping');
       if (!result.data.items.length) throw new Error('Provider returned no estimates');
-      const request = objectRefSchema.parse(input.request);
+      const request = objectRefSchema.parse(input.request ?? { type: 'RideRequest', id: input.requestId });
+      if (input.origin && input.destination) {
+        const routes = await graph.follow(request, 'route');
+        if (routes.length !== 1) throw new Error('Estimate requires one request route');
+        const [origin, destination] = await Promise.all([graph.follow(routes[0]!.ref, 'origin', 'RideEstimatable'), graph.follow(routes[0]!.ref, 'destination', 'RideEstimatable')]);
+        if (origin.length !== 1 || destination.length !== 1 || digest(origin[0]!.ref) !== digest(input.origin) || digest(destination[0]!.ref) !== digest(input.destination)) throw new Error('Quote endpoints differ from its request');
+      }
       const rows = result.data.items.map(item => ({ id: digest([receipt.id, item.productCategory]), name: item.productName, productCategory: item.productCategory,
         priceText: item.priceText, estimatedAmount: item.estimatedMoney ? `${BigInt(item.estimatedMoney.minor) / 100n}.${String(BigInt(item.estimatedMoney.minor) % 100n).padStart(2, '0')}` : null,
         currency: 'CNY', feesComplete: 'unknown', observedAt: result.receipt.receivedAt, expiresAt: new Date(Date.parse(result.receipt.startedAt) + 300000).toISOString() }));
@@ -36,5 +47,6 @@ export function rideCapabilities(db: Database, resolve: SourceResolver) {
       return { receipt, objects, request };
     },
   };
-  return { functions, actions: new Actions(db, functions), sources: new Sources(db, functions, new Map(['DidiPlaces', 'DidiEstimates'].map(name => [name, projection]))) };
+  sources = new Sources(db, functions, new Map(['DidiPlaces', 'DidiEstimates'].map(name => [name, projection])));
+  return { functions, actions: new Actions(db, functions), sources };
 }

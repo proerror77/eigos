@@ -87,7 +87,8 @@ export class Ontology {
       validator(action.parameters);
       for (const type of Object.values(action.objectParameters)) this.concreteTypes(type);
       for (const criterion of action.submissionCriteria) required(this.functions, criterion.function);
-      for (const rule of action.rules) {
+      if (action.function && !required(this.functions, action.function).edits) throw new Error('Function-backed Actions require an ontology edit Function');
+      for (const rule of action.rules ?? []) {
         if (rule.op === 'createObject') {
           const object = this.object(rule.object.type);
           if (Object.keys(rule.properties).some(name => !object.properties[name])) throw new Error('Action writes an undeclared property');
@@ -145,6 +146,13 @@ export class Ontology {
     const supplied = validator(contract.parameters).parse(input) as Record<string, unknown>;
     const subjects = Object.keys(contract.objectParameters).filter(parameter => this.implements(ref.type, contract.objectParameters[parameter]!));
     if (!subjects.some(parameter => digest(supplied[parameter]) === digest(ref))) throw new Error('Interface action must bind the selected object');
+    return { action: mapping.action, input: Object.fromEntries(Object.entries(mapping.parameters).map(([alias, local]) => [local, supplied[alias]])) };
+  }
+  resolveTypeAction(type: string, interfaceName: string, name: string, input: Record<string, unknown>) {
+    const contract = required(this.interfaces, interfaceName).actions[name];
+    const mapping = this.object(type).interfaces[interfaceName]?.actions[name];
+    if (!contract || !mapping) throw new Error('Interface action is unavailable');
+    const supplied = validator(contract.parameters).parse(input) as Record<string, unknown>;
     return { action: mapping.action, input: Object.fromEntries(Object.entries(mapping.parameters).map(([alias, local]) => [local, supplied[alias]])) };
   }
 }

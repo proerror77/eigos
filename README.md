@@ -32,7 +32,7 @@ JWT 身份由现有身份提供方验证，owner 由 issuer、tenant 和 subject
 
 Worker 使用已安装的 `@deepseek-ai/dsh` 0.2.1-rc.5（含 `dsh-llm-pi-ai`、`dsh-mcp-client`），通过其 SDK 协议运行一个任务会话。配置 `EIGOS_HARNESS_BIN`、`EIGOS_HARNESS_CREDENTIAL_FILE`、`EIGOS_HARNESS_MODEL` 和 `EIGOS_HARNESS_REASONING_EFFORT`。凭据文件由原云端登录流程续期，格式为 `{ "auth_mode": "chatgpt", "tokens": { "access_token": "..." } }`，须由运行用户拥有且权限为 `0600`。刷新令牌不进入模型会话。
 
-模型只获得当前任务的 Ontology 工具，文件、Shell 等执行工具关闭。运行时从任务锁定的发布版本生成目录，模型自行选择 Interface 查询、Link 导航、来源接入、Function 和 Action；完成时直接返回其所选 Function 的实际结果。结果中的 `execution` 记录模型、发布引用、工具参数和每次调用耗时。
+模型只获得当前任务的 Ontology 工具，文件、Shell 等执行工具关闭。运行时从任务锁定的发布版本生成目录，模型选择发布的 Interface 业务能力与结果 Function。当前 `RideInquiry.estimate` 由 Function-backed Action 完成地点解析、来源读取和原子编辑，再由结果 Function 返回验收报价。模型无需参与每个确定性步骤。结果中的 `execution` 记录模型、发布引用、工具参数和每次调用耗时。
 
 ## 滴滴来源
 
@@ -73,9 +73,9 @@ HTTP 示例请求体如下，通过 `POST /tasks` 提交，使用 Bearer 身份�
 }
 ```
 
-`route` 可由 PA 提供，也可只发送自然语言消息，由模型理解需求并选择本体能力。地点有歧义时，原任务返回 `input-required` 和候选对象。向 `/tasks/:id/places` 提交候选的 origin、destination ObjectRef 后继续原任务。执行完成后从 `/tasks/:id` 读取价格及来源。
+`route` 可由 PA 提供，也可只发送自然语言消息，由模型理解需求并选择本体能力。完整场所名称在来源中唯一匹配时直接询价，不要求选择入口。同名或没有完整匹配时，原任务返回 `input-required` 和真实候选对象。向 `/tasks/:id/places` 提交候选的 origin、destination ObjectRef 后继续原任务。执行完成后从 `/tasks/:id` 读取价格及来源。
 
-`POST /ontology/query` 按 Object Type 或 Interface 查询。`POST /ontology/functions` 调用发布的 Function，`POST /ontology/actions` 应用发布的 Action。接口细节和示例见 [架构说明](docs/architecture/ontology.md)。
+`POST /ontology/query` 按 Object Type 或 Interface 查询。`POST /ontology/functions` 调用发布的 Function，`POST /ontology/actions` 应用发布的 Action。创建类 Interface Action 使用 `interface: { type: "RideInquiry", implementation: "RideRequest", action: "estimate" }`；实例操作仍可使用 `object` 引用。接口细节和示例见 [架构说明](docs/architecture/ontology.md)。
 
 ## 验证
 
