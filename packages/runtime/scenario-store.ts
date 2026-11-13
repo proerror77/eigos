@@ -2,6 +2,7 @@ import { Conflict, NotFound } from '../core/identity.js';
 import type { ObjectRef, LinkData } from '../ontology/schema.js';
 import { Database, type Sql } from './database.js';
 import type { PublishedOntology } from './metadata.js';
+import { syncScenarioMetadata } from './scenario-metadata.js';
 
 /** Shared by live and scenario edits, including source ingestion and scenario merge. */
 export async function lockEdits(db: Database, model: PublishedOntology, owner: string, client: Sql) {
@@ -61,4 +62,5 @@ export async function stageLink(db: Database, model: PublishedOntology, owner: s
 }
 export async function bumpScenario(db: Database, model: PublishedOntology, owner: string, client: Sql) {
   await db.query(`UPDATE ${db.schema}.scenarios SET revision=revision+1 WHERE id=$1 AND owner=$2`, [model.scenario, owner], client);
+  await syncScenarioMetadata(db,model,model.scenario!,client);
 }

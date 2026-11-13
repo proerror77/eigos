@@ -57,6 +57,44 @@ test('persisted scenario metadata can be shared and revoked without sharing priv
   }finally{await f.close();}
 });
 
+test('persisted Scenario objects are linkable through Actions and shared readers retain local relationships until revocation',async()=>{
+  const f=await lifecycleFixture();try{
+    const document=structuredClone(f.model.document);
+    document.linkTypes.push({apiName:'RouteScenario',description:'Route planning alternatives',from:{type:'Route',name:'scenarios',cardinality:'many'},to:{type:'OntologyScenario',name:'routes',cardinality:'many'}});
+    const object={type:'object',properties:{type:{type:'string'},id:{type:'string'}},required:['type','id'],additionalProperties:false};
+    document.actionTypes.push({apiName:'LinkRouteScenario',description:'Attach a route to a persisted scenario',parameters:{type:'object',properties:{route:object,scenario:object},required:['route','scenario'],additionalProperties:false},objectParameters:{route:'Route',scenario:'OntologyScenario'},submissionCriteria:[],rules:[{op:'addLink',link:'RouteScenario',from:{type:'Route',id:{parameter:'route',path:['id']}},to:{type:'OntologyScenario',id:{parameter:'scenario',path:['id']}}}],result:{type:'Route',id:{parameter:'route',path:['id']}}});
+    const model=await f.metadata.publish(document,f.capabilities,f.publisher);
+    await setGrants(f.db,principal.owner,memberGrants(model));await setGrants(f.db,'reader',memberGrants(model));
+    const access=await Access.load(f.db,principal),graph=new Objects(f.db,model,access),route={type:'Route',id:'linked-route'};
+    await graph.create(route,{id:route.id,name:'Linked route'});
+    const scene=await f.scenarios.create(access,model,{requestId:'linked-scenario',name:'Linked scenario'}),scenario={type:'OntologyScenario',id:String(scene.id)};
+    await f.db.query(`DELETE FROM ${f.db.schema}.objects WHERE projection=$1 AND type='OntologyScenario' AND id=$2`,[model.projection,scene.id]);
+    await initializeScenarioLifecycle(f.db);
+    await f.capabilities.actions.apply(access,model,'LinkRouteScenario',{route,scenario},'link-scenario');
+    assert.equal((await graph.follow(route,'scenarios'))[0]!.ref.id,scene.id);
+    assert.equal((await scenarioMetadataQuery(graph,{type:'OntologyScenario',from:{object:route,link:'scenarios'}})).items[0]!.ref.id,scene.id);
+    assert.equal((await graph.follow(scenario,'routes'))[0]!.ref.id,route.id);
+    const proposal=await f.scenarios.view(access,model,scene.id);
+    await new Objects(f.db,proposal,access).edit(route,1,{name:'Candidate route'});
+    const revision=(await f.scenarios.inspect(access,model,scene.id)).revision;
+    assert.equal((await graph.follow(route,'scenarios'))[0]!.revision,revision);
+    const shared=await f.scenarios.share(access,model,scene.id,revision,['reader']);
+    const peer=await Access.load(f.db,{...principal,owner:'reader'}),peerGraph=new Objects(f.db,model,peer),peerRoute={type:'Route',id:'reader-route'};
+    await peerGraph.create(peerRoute,{id:peerRoute.id,name:'Reader route'});
+    await f.capabilities.actions.apply(peer,model,'LinkRouteScenario',{route:peerRoute,scenario},'reader-link');
+    assert.equal((await peerGraph.follow(peerRoute,'scenarios'))[0]!.properties.owner,principal.owner);
+    const changed=await f.scenarios.share(access,model,scene.id,shared.revision,[]);
+    assert.equal((await peerGraph.follow(peerRoute,'scenarios')).length,0);
+    assert.equal((await graph.follow(route,'scenarios'))[0]!.revision,changed.revision);
+    await f.scenarios.discard(access,model,scene.id,changed.revision);
+    assert.equal((await graph.follow(route,'scenarios'))[0]!.properties.state,'discarded');
+    await f.db.query(`UPDATE ${f.db.schema}.scenarios SET expires_at=now()-interval '1 second' WHERE id=$1`,[scene.id]);
+    await f.scenarios.cleanup();
+    assert.equal((await graph.follow(route,'scenarios')).length,0);
+    assert.equal((await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.objects WHERE type='OntologyScenario' AND id=$1`,[scene.id])).rows[0]!.n,0);
+  }finally{await f.close();}
+});
+
 test('Action compensation restores edits once and rejects newer object revisions',async()=>{
   const f=await lifecycleFixture();try{
     const document=structuredClone(f.model.document);

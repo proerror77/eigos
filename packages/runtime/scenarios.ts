@@ -7,7 +7,7 @@ import { Database, type Sql } from './database.js';
 import { PublishedOntology } from './metadata.js';
 import { Objects } from './objects.js';
 import { checkScenario, lockEdits, objectLinks } from './scenario-store.js';
-import { scenarioMetadataRead } from './scenario-metadata.js';
+import { scenarioMetadataRead, syncScenarioMetadata, removeScenarioMetadata } from './scenario-metadata.js';
 
 export const createScenarioSchema = z.strictObject({
   requestId: z.string().min(1).max(128), name: z.string().min(1).max(200),
@@ -21,7 +21,18 @@ export async function initializeScenarioLifecycle(db: Database) {
     ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS description text NOT NULL DEFAULT '';
     ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS readers jsonb NOT NULL DEFAULT '[]';
     ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS session_id uuid REFERENCES ${db.schema}.scenario_sessions(id);
-    ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS creation_digest text;`);
+    ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS creation_digest text;
+    CREATE INDEX IF NOT EXISTS objects_scenario_metadata ON ${db.schema}.objects(id,projection,owner) WHERE type='OntologyScenario';`);
+  const releases=(await db.query(`SELECT DISTINCT r.* FROM ${db.schema}.releases r JOIN ${db.schema}.scenarios s ON s.release=r.digest
+    WHERE s.kind='persisted' AND s.expires_at>now() AND r.projection IS NOT NULL
+    AND r.body->'objectTypes' @> '[{"apiName":"OntologyScenario"}]'::jsonb`)).rows;
+  for(const release of releases){
+    const model=new PublishedOntology(release.body,release.digest,release.projection,release.runtime_id,release.bindings);
+    await db.transaction(async client=>{
+      const ids=(await db.query(`SELECT id FROM ${db.schema}.scenarios WHERE release=$1 AND kind='persisted' AND expires_at>now() ORDER BY id FOR UPDATE`,[model.release],client)).rows;
+      for(const row of ids)await syncScenarioMetadata(db,model,String(row.id),client);
+    });
+  }
 }
 export class Scenarios {
   constructor(private readonly db: Database) {}
@@ -45,6 +56,7 @@ export class Scenarios {
         AND ($1::uuid IS NULL OR s.session_id=$1) AND ($2::text IS NULL OR s.owner=$2)
         ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 500`,[sessionId??null,owner??null],client)).rows;
       const ids=rows.map(row=>row.id);
+      await removeScenarioMetadata(this.db,ids,client);
       for(const table of ['scenario_actions','scenario_links','scenario_objects','scenarios']){
         await this.db.query(`DELETE FROM ${this.db.schema}.${table} WHERE ${table==='scenarios'?'id':'scenario_id'}=ANY($1::uuid[])`,[ids],client);
       }
@@ -63,6 +75,8 @@ export class Scenarios {
         WHERE id=$1 AND owner=$2 AND revision=$3 AND release=$5 AND kind='persisted' AND state='open' AND expires_at>now()
         RETURNING id,revision`,[id,access.principal.owner,revision,JSON.stringify([...new Set(shared)]),model.release],client)).rows[0];
       if(!row)throw new Conflict('Scenario is unavailable or its revision changed');
+      await syncScenarioMetadata(this.db,model,id,client);
+      await access.refresh(client);
       return {id:String(row.id),revision:Number(row.revision),readers:[...new Set(shared)]};
     });
   }
@@ -94,6 +108,7 @@ export class Scenarios {
         [randomUUID(),owner,input.requestId,input.name,model.release,input.kind,input.description,input.sessionId??null,input.ttlSeconds??31*86400,sessionExpires,creation],client);
       const row = (await this.db.query(`SELECT id,name,release,revision,state,expires_at,kind,description,creation_digest FROM ${this.db.schema}.scenarios WHERE owner=$1 AND request_id=$2`, [owner, input.requestId], client)).rows[0]!;
       if (row.creation_digest?row.creation_digest!==creation:row.name !== input.name || row.release !== model.release) throw new Conflict('Scenario request ID already has different input');
+      await syncScenarioMetadata(this.db,model,String(row.id),client);
       await access.refresh(client); await beforeCommit?.(client); return row;
     });
   }
@@ -166,6 +181,7 @@ export class Scenarios {
       await lockEdits(this.db, model, owner, client); await checkScenario(this.db, view, owner, client, true);
       const result = await this.db.query(`UPDATE ${this.db.schema}.scenarios SET state='discarded',revision=revision+1 WHERE id=$1 AND owner=$2 AND revision=$3 RETURNING id,state,revision`, [id, owner, z.number().int().positive().parse(revision)], client);
       if (!result.rowCount) throw new Conflict('Scenario revision changed');
+      await syncScenarioMetadata(this.db,model,id,client);
       await access.refresh(client); await beforeCommit?.(client); return result.rows[0];
     });
   }
@@ -225,5 +241,6 @@ export class Scenarios {
     }
     for (const item of changes.links) if (!item.removed) await graph.link(edge(item));
     await this.db.query(`UPDATE ${this.db.schema}.scenarios SET state='merged',revision=revision+1 WHERE owner=$1 AND id=$2`, [owner, id], client);
+    await syncScenarioMetadata(this.db,model,id,client);
   }
 }
