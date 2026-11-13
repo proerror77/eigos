@@ -456,11 +456,39 @@ test('a validated hotel task learns only after approval and replays with fresh i
     assert.equal(repeated.status, 'simulated');
     assert.equal((await hotelWorkflows.list(principal)).items.length, 1);
     const automation = new Automation(f.db, f.metadata, f.capabilities.actions);
+    const names = await automation.list(f.access, f.model, 'workflows');
+    assert.deepEqual(names.items.map((item) => (item as { name: string }).name), ['酒店行程 · Synthetic hotel']);
     await assert.rejects(automation.run(f.access, f.model, { workflow: approved.workflowId,
       object: approved.plan, requestId: 'wrong-automation-runner' }), /Workflow is unavailable/);
     await assert.rejects(automation.workflow(f.access, f.model, { id: approved.workflowId, revision: 1,
       name: 'Attempt overwrite', steps: [{ name: 'One', action: 'SearchRollingGoHotels', input: {} }],
     }), /changed or is unavailable/);
+
+    const interrupted = await f.tasks.submit(principal, {
+      requestId: randomUUID(), message: 'Recover this replay', replayHotelWorkflow: { workflowId: approved.workflowId, checkIn: day(9) },
+    });
+    await f.worker.runOne();
+    const pending = await f.tasks.get(principal, interrupted.id);
+    const ask = pending.result as { requestId: string; input: ReturnType<typeof planningInput> };
+    await pa.respond(principal, interrupted.id, { requestId: ask.requestId, response: calendarAnswer(ask.input) });
+    const claimed = await f.tasks.claim();
+    assert.equal(claimed?.id, interrupted.id);
+    const invoke = f.capabilities.functions.invoke.bind(f.capabilities.functions);
+    f.capabilities.functions.invoke = async (...args) => {
+      if (args[1] === 'findScheduleSlots') throw new Error('Synthetic Worker termination after hotel selection');
+      return invoke(...args);
+    };
+    try {
+      await assert.rejects(f.agent.run(claimed!, AbortSignal.timeout(5000)), /Synthetic Worker termination/);
+    } finally { f.capabilities.functions.invoke = invoke; }
+    const savedTrace = (await f.db.query(`SELECT workflow_trace FROM ${f.db.schema}.tasks WHERE id=$1`, [interrupted.id])).rows[0]!.workflow_trace;
+    assert(savedTrace.some((event: { input?: { interface?: { type?: string } } }) => event.input?.interface?.type === 'HotelOffer'));
+    await f.db.query(`UPDATE ${f.db.schema}.tasks SET lease_until=now()-interval '1 second' WHERE id=$1`, [interrupted.id]);
+    await f.worker.runOne();
+    const recovered = await f.tasks.get(principal, interrupted.id);
+    assert.equal(recovered.state, 'completed', recovered.error ?? '');
+    assert.equal((recovered.result as { hotelWorkflow: { status: string } }).hotelWorkflow.status, 'awaiting_approval');
+    await hotelWorkflows.approve(principal, approvedBody(recovered));
 
     const changed = await prepare('Another rehearsal', { replayHotelWorkflow: { workflowId: approved.workflowId, checkIn: thirdDate } });
     const change = approvedBody(changed);

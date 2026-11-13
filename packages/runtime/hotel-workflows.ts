@@ -523,12 +523,10 @@ export class HotelWorkflows {
   ) {
     const result = planResultSchema.parse(output);
     if (!result.scenarioId) throw new Conflict('A hotel itinerary must be a Scenario before approval');
-    const selections = trace.actions.filter(
-      (step) =>
-        step.action === 'AttachPlanService' &&
-        step.scenarioId === result.scenarioId &&
-        step.output.id === result.plan.ref.id,
-    );
+    const selections = [...new Map(trace.actions.filter(
+      step => step.action === 'AttachPlanService' &&
+        step.scenarioId === result.scenarioId && step.output.id === result.plan.ref.id,
+    ).map(step => [digest([step.scenarioId, step.input, step.output]), step])).values()];
     const reads = [
       ...new Map(
         trace.reads

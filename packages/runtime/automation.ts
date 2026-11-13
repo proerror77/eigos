@@ -237,6 +237,7 @@ export class Automation {
       } else
         items.push({
           ...row.body,
+          name: row.name,
           id: row.id,
           revision: row.revision,
           enabled: row.enabled,
