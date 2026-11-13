@@ -76,3 +76,16 @@ test('deleting an object cannot silently delete relationships added after the pr
   assert.equal((await live.follow(request,'route')).length,1);
  }finally{await f.close();}
 });
+
+test('a deleted and recreated live object cannot masquerade as the scenario baseline',async()=>{
+ const f=await fixture();try{
+  const live=new Objects(f.db,f.model,f.access),s=new Scenarios(f.db);await live.create(ref,{id:ref.id,name:'original'});
+  const a=await s.create(f.access,f.model,{requestId:'recreated',name:'recreated'}),view=await s.view(f.access,f.model,a.id);
+  await new Objects(f.db,view,f.access).edit(ref,1,{name:'stale proposal'});
+  await live.remove(ref,1);await live.create(ref,{id:ref.id,name:'replacement'});
+  assert.equal((await live.read(ref)).revision,1);
+  const diff=await s.inspect(f.access,f.model,a.id);assert.equal(diff.objects[0]!.conflict,true);
+  await assert.rejects(f.db.transaction(c=>s.mergeInto(new Objects(f.db,f.model,f.access,c),a.id,diff.revision,{objects:['Route'],links:[]})),/conflicts/);
+  assert.equal((await live.read(ref)).properties.name,'replacement');
+ }finally{await f.close();}
+});

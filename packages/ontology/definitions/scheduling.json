@@ -445,7 +445,7 @@
       "from": {
         "type": "ScheduleResource",
         "name": "availability",
-        "cardinality": "one"
+        "cardinality": "many"
       },
       "to": {
         "type": "CalendarAvailability",
@@ -507,6 +507,20 @@
         "type": "ScheduledActivity",
         "name": "successors",
         "cardinality": "many"
+      }
+    },
+    {
+      "apiName": "PlanAvailability",
+      "description": "The independently refreshable calendar coverage used by one planning request",
+      "from": {
+        "type": "SchedulePlan",
+        "name": "availability",
+        "cardinality": "many"
+      },
+      "to": {
+        "type": "CalendarAvailability",
+        "name": "plans",
+        "cardinality": "one"
       }
     }
   ],

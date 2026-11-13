@@ -8,7 +8,7 @@ Scenario 为正式 Ontology 提供隔离的对象与关系修改视图。查询�
 - 支持对象创建、修改、删除和关系增删。仅保存修改差量，未修改的数据实时读取当前发布的正式投影，没有复制整库。
 - 对象与关系冲突、已改变的方案修订号、权限撤销、过期和跨 owner 请求都会阻止合并。发布更换后需重新建立方案；Scenario 不是历史快照。
 - 排程领域包含 `SchedulePlan`、`ScheduledActivity`、`ScheduleResource`、`CalendarAvailability` 及活动、资源、依赖 Links。Functions 计算可用时间并校验冲突，Actions 保存活动与合并方案。[Palantir 排程概念](https://www.palantir.com/docs/foundry/dynamic-scheduling/scheduling-concepts/)
-- 第一条排程用例使用用户 PA 提供的个人日历汇总忙闲数据。求解器返回最早可行时段，考虑活动占用、时间窗口和前后依赖。它不执行外部日历写入、邀约、预订或付款，也不声称具备全局优化器或甘特图界面。
+- 第一条排程用例使用用户 PA 提供的个人日历汇总忙闲数据。各计划独立保存所需窗口的日历覆盖，资源身份共享以检查跨计划占用。求解器返回最早可行时段，考虑活动占用、时间窗口和前后依赖。它不执行外部日历写入、邀约、预订或付款，也不声称具备全局优化器或甘特图界面。
 
 ## 原任务中的 PA 请求与回传
 

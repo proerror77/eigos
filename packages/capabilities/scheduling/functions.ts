@@ -41,8 +41,9 @@ async function readPlan(objects: Reader, raw: ObjectRef) {
   const plan = await objects.read(raw), range = interval(plan.properties.start, plan.properties.end);
   const resources = await objects.follow(raw, 'resources');
   if (!resources.length) throw new Conflict('The plan has no authorized calendar resource');
+  const coverage = await Promise.all((await objects.follow(raw,'availability')).map(async snapshot => ({snapshot,resources:await objects.follow(snapshot.ref,'resource')})));
   const calendars = await Promise.all(resources.map(async resource => {
-    const snapshots = await objects.follow(resource.ref, 'availability');
+    const snapshots = coverage.filter(item=>item.resources.length===1 && same(item.resources[0]!.ref,resource.ref)).map(item=>item.snapshot);
     if (snapshots.length !== 1) throw new Conflict('Calendar availability is missing or ambiguous');
     objects.access.source(objects.model, 'PACalendar');
     const snapshot = snapshots[0]!, p = snapshot.properties;
@@ -89,8 +90,9 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       const now = Date.now();
       if (ms(response.start) !== ms(input.start) || ms(response.end) !== ms(input.end) || response.timeZone !== input.timeZone || ms(response.observedAt)>now+5000 || ms(response.observedAt)<now-300000 || ms(response.expiresAt)<=now || ms(response.expiresAt)>ms(response.observedAt)+300000) throw new Conflict('PA calendar response has a stale or mismatched range');
       for (const span of [...response.windows,...response.busy]) if (!contained(range,interval(span.start,span.end))) throw new Conflict('PA must clip availability to the requested range');
-      const resource = { type: 'ScheduleResource', id: digest([context.principal.owner,'personal-calendar']) }, availability = { type: 'CalendarAvailability', id: resource.id };
+      const resource = { type: 'ScheduleResource', id: digest([context.principal.owner,'personal-calendar']) };
       const plan = input.plan ?? { type: 'SchedulePlan', id: context.operationId };
+      const availability = { type:'CalendarAvailability',id:digest([resource.id,plan.id]) };
       if (plan.type !== 'SchedulePlan') throw new Conflict('Expected a SchedulePlan');
       if (input.plan) await context.objects.read(plan);
       return context.edit(plan, async graph => {
@@ -104,7 +106,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
         } else await graph.create(availability,properties);
         const fields = { id: plan.id, name: input.title, start: input.start, end: input.end, timeZone: input.timeZone, durationMinutes: input.durationMinutes };
         if (input.plan) { const current = await graph.read(plan); await graph.edit(plan,current.revision,fields); } else await graph.create(plan,fields);
-        await graph.linkBatch([{ type:'ResourceAvailability',from:resource,to:availability },{ type:'PlanResource',from:plan,to:resource }]);
+        await graph.linkBatch([{ type:'ResourceAvailability',from:resource,to:availability },{ type:'PlanResource',from:plan,to:resource },{ type:'PlanAvailability',from:plan,to:availability }]);
       });
     }],
     ['findScheduleSlots', async (raw, context) => {

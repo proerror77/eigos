@@ -128,3 +128,18 @@ test('the Agent cannot bypass scenario review with a live activity Action',async
   assert.equal((await new Objects(f.db,f.model,f.access).query({type:'ScheduledActivity'})).items.length,0);
  }finally{await f.close();}
 });
+
+test('separate plans retain independent calendar coverage on the same resource',async()=>{
+ const f=await fixture(new PlanningFixtureAgent());try{
+  const first=await proposed(f),secondInput={...first.input,start:new Date(Date.parse(first.input.start)+86400000).toISOString(),end:new Date(Date.parse(first.input.end)+86400000).toISOString()};
+  const task=await f.tasks.submit(principal,{requestId:'second-window',message:JSON.stringify({planning:secondInput})});await f.worker.runOne();
+  const waiting=await f.tasks.get(principal,task.id);assert.equal(waiting.state,'input-required');
+  await new PARequests(f.tasks).respond(principal,task.id,{requestId:(waiting.result as {requestId:string}).requestId,response:calendarAnswer(secondInput)});await f.worker.runOne();
+  assert.equal((await f.tasks.get(principal,task.id)).state,'completed');
+  const context={principal,objects:new Objects(f.db,f.model,f.access),signal:AbortSignal.timeout(5000)};
+  const result=await f.capabilities.functions.invoke(f.model,'findScheduleSlots',{plan:first.result.plan.ref},context) as {slots:unknown[]};
+  assert(result.slots.length>0);
+  assert.equal((await context.objects.query({type:'ScheduleResource'})).items.length,1);
+  assert.equal((await context.objects.query({type:'CalendarAvailability'})).items.length,2);
+ }finally{await f.close();}
+});

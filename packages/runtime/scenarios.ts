@@ -50,8 +50,8 @@ export class Scenarios {
       for (const item of changes.objects) {
         access.read(model, item.type);
         const mask = (properties: Record<string, unknown> | null) => properties && Object.fromEntries(Object.entries(properties).map(([key, value]) => [key, access.property(model, item.type, key) ? value : null]));
-        const live = (await this.db.query(`SELECT revision FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`, [model.projection, owner, item.type, item.id], client)).rows[0];
-        objects.push({ ref: { type: item.type, id: item.id }, before: mask(item.base_properties), after: mask(item.properties), conflict: String(live?.revision ?? '') !== String(item.base_revision ?? '') || item.properties===null && digest(await objectLinks(this.db,model,owner,{type:item.type,id:item.id},client))!==digest(item.base_links) });
+        const live = (await this.db.query(`SELECT revision,properties FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`, [model.projection, owner, item.type, item.id], client)).rows[0];
+        objects.push({ ref: { type: item.type, id: item.id }, before: mask(item.base_properties), after: mask(item.properties), conflict: (String(live?.revision ?? '') !== String(item.base_revision ?? '') || digest(live?.properties ?? null)!==digest(item.base_properties)) || item.properties===null && digest(await objectLinks(this.db,model,owner,{type:item.type,id:item.id},client))!==digest(item.base_links) });
       }
       const links = await Promise.all(changes.links.map(async item => {
         access.read(model, item.from_type); access.read(model, item.to_type); access.definition(model, 'link', item.type);
@@ -84,8 +84,8 @@ export class Scenarios {
     const actions = (await this.db.query(`SELECT requirements FROM ${this.db.schema}.scenario_actions WHERE owner=$1 AND scenario_id=$2`, [owner, id], client)).rows;
     for (const action of actions) for (const requirement of action.requirements as Requirement[]) access.require(requirement.ontology, requirement.permission, requirement.resource);
     for (const item of changes.objects) {
-      const live = (await this.db.query(`SELECT revision FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`, [model.projection, owner, item.type, item.id], client)).rows[0];
-      if (String(live?.revision ?? '') !== String(item.base_revision ?? '')) throw new Conflict('Scenario object conflicts with current data');
+      const live = (await this.db.query(`SELECT revision,properties FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`, [model.projection, owner, item.type, item.id], client)).rows[0];
+      if ((String(live?.revision ?? '') !== String(item.base_revision ?? '') || digest(live?.properties ?? null)!==digest(item.base_properties))) throw new Conflict('Scenario object conflicts with current data');
       if (item.properties === null && digest(await objectLinks(this.db,model,owner,{type:item.type,id:item.id},client)) !== digest(item.base_links)) throw new Conflict('Scenario deletion conflicts with current relationships');
     }
     const touched = new Map<string, { ref: ObjectRef; deleted: boolean }>();
