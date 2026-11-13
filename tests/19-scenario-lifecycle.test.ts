@@ -95,6 +95,19 @@ test('persisted Scenario objects are linkable through Actions and shared readers
   }finally{await f.close();}
 });
 
+test('definitions without Scenario metadata continue creating isolated scenarios',async()=>{
+  const f=await lifecycleFixture();try{
+    const document=structuredClone(f.model.document);document.objectTypes=document.objectTypes.filter(type=>type.apiName!=='OntologyScenario');
+    const model=await f.metadata.publish(document,f.capabilities,f.publisher);
+    await setGrants(f.db,principal.owner,memberGrants(model));const access=await Access.load(f.db,principal);
+    const scene=await f.scenarios.create(access,model,{requestId:'legacy-definition',name:'Legacy definition'});
+    const view=await f.scenarios.view(access,model,scene.id);
+    await new Objects(f.db,view,access).create({type:'Route',id:'legacy-scenario-route'},{id:'legacy-scenario-route',name:'Legacy route'});
+    assert.equal((await f.scenarios.inspect(access,model,scene.id)).objects.length,1);
+    assert.equal((await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.objects WHERE projection=$1 AND type='OntologyScenario'`,[model.projection])).rows[0]!.n,0);
+  }finally{await f.close();}
+});
+
 test('Action compensation restores edits once and rejects newer object revisions',async()=>{
   const f=await lifecycleFixture();try{
     const document=structuredClone(f.model.document);
