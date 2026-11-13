@@ -128,6 +128,11 @@ export class Access {
     this.trackRow(model, type, properties);
     for (const marking of markingsOf(this.policies.get(model.document.id+'/'+type),properties)) this.readMarkings.add(marking);
   }
+  sourceRow(model: Ontology, type: string, properties: Record<string,unknown>) {
+    this.read(model,type);
+    if (!this.rowAllowed(model,type,properties)) throw new PermissionDenied('Source object policy denied access');
+    this.trackRow(model,type,properties);
+  }
   cell(model: Ontology, type: string, field: string, properties: Record<string,unknown>) {
     const allowed = this.property(model,type,field) && permits(this.policies.get(model.document.id+'/'+type)?.properties[field],properties,this.security);
     if (allowed) this.trackRow(model, type, properties, field);

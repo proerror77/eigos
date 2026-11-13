@@ -158,16 +158,16 @@ export class Objects {
       unique.set(key,{ref:item.ref,properties});
     }
     for (const {ref,properties} of unique.values()) {
-      if (properties) this.access.writeRow(this.model,ref.type,properties);
+      if (properties) this.access.sourceRow(this.model,ref.type,properties);
       const old = await this.stored(ref).catch(error=>{if(error instanceof NotFound)return undefined;throw error;});
-      if (old) this.access.readRow(this.model,ref.type,old.properties);
+      if (old) this.access.sourceRow(this.model,ref.type,old.properties);
       const resolved = await resolveSourceEdit(this,ref,properties,source,observedAt);
       const key=[this.model.projection,this.owner,ref.type,ref.id];
       if (resolved === null) {
         await this.db.query(`DELETE FROM ${this.db.schema}.links WHERE projection=$1 AND owner=$2 AND ((from_type=$3 AND from_id=$4) OR (to_type=$3 AND to_id=$4))`,key,this.client);
         await this.db.query(`DELETE FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`,key,this.client);
       } else {
-        this.access.writeRow(this.model,ref.type,resolved);
+        this.access.sourceRow(this.model,ref.type,resolved);
         await this.db.query(`INSERT INTO ${this.db.schema}.objects AS o(projection,owner,type,id,properties) VALUES($1,$2,$3,$4,$5)
           ON CONFLICT(projection,owner,type,id) DO UPDATE SET properties=excluded.properties,revision=o.revision+1
           WHERE o.properties IS DISTINCT FROM excluded.properties`,[...key,resolved],this.client);

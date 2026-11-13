@@ -60,6 +60,7 @@ export class Database {
       CREATE TABLE IF NOT EXISTS ${s}.releases (digest text PRIMARY KEY, body jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
       CREATE TABLE IF NOT EXISTS ${s}.ontology (id text PRIMARY KEY, release text NOT NULL REFERENCES ${s}.releases(digest));
       ALTER TABLE ${s}.releases ADD COLUMN IF NOT EXISTS definition_digest text;
+      ALTER TABLE ${s}.releases ADD COLUMN IF NOT EXISTS transform_id uuid;
       ALTER TABLE ${s}.releases ADD COLUMN IF NOT EXISTS projection text;
       ALTER TABLE ${s}.releases ADD COLUMN IF NOT EXISTS runtime_id text;
       ALTER TABLE ${s}.releases ADD COLUMN IF NOT EXISTS bindings jsonb;

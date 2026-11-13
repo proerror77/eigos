@@ -162,3 +162,20 @@ test('materialization rechecks historical row policy even when the live row is v
     assert.equal((await materializations.read(access,f.model,snapshot.id)).items.length,0);
   }finally{await f.close();}
 });
+
+test('independent source objects retain their own markings within one ordered transaction',async()=>{
+  const f=await indexedFixture();try{
+    const body=structuredClone(f.model.document);
+    body.objectTypes.find(t=>t.apiName==='Place')!.properties.marks={description:'Source security markings',schema:{type:'array',items:{type:'string'}},required:true};
+    body.dataSources.find(s=>s.apiName==='DidiPlaces')!.properties.marks='marks';
+    const model=await f.metadata.publish(body,f.capabilities,f.publisher);
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies VALUES('Eigos','Place',$1)`,[{properties:{},markingsProperty:'marks'}]);
+    await f.db.query(`INSERT INTO ${f.db.schema}.security_memberships VALUES($1,'marking','A'),($1,'marking','B')`,[principal.owner]);
+    const access=await Access.load(f.db,principal);
+    const submitted=await f.indexing.submit(access,model,transaction(1,[{...sourceRow('a','A'),marks:['A']},{...sourceRow('b','B'),marks:['B']}]));
+    await f.indexing.runOne();
+    assert.equal((await f.indexing.inspect(access,model,submitted.id)).state,'applied');
+    const rows=(await new Objects(f.db,model,access).query({type:'Place'})).items;
+    assert.deepEqual(rows.map(row=>row.properties.marks),[['A'],['B']]);
+  }finally{await f.close();}
+});
