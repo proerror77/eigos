@@ -39,7 +39,7 @@ const connection = z.strictObject({
   credentialFile: z.string().min(1),
   credentialSha256: z.string().regex(/^[a-f0-9]{64}$/),
 });
-async function privateFile(path: string) {
+export async function privateFile(path: string) {
   if (!isAbsolute(path)) throw new Error('Service credentials require an absolute private path');
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
