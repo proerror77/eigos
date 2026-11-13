@@ -51,7 +51,6 @@ export function rideFunctions(resolveSource: SourceResolver) {
       return read(context, 'taxi_estimate', { from_lng: String(from.lng), from_lat: String(from.lat), from_name: String(origin.properties.name), to_lng: String(to.lng), to_lat: String(to.lat), to_name: String(destination.properties.name) });
     }],
     ['locationsReady', async (input, context) => locationsReady(context, await Promise.all([input.origin, input.destination].map(ref => context.objects.read(objectRefSchema.parse(ref)))))],
-    ['routeReady', async (input, context) => locationsReady(context, await endpoints(context, input.route))],
     ['readRideEstimates', async (input, context) => {
       const request = objectRefSchema.parse(input.request);
       const binding = await resolveSource(context.principal.owner); await binding.assertCurrent();
