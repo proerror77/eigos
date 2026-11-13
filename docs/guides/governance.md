@@ -1,0 +1,36 @@
+# Ontology 发布治理、Function 版本与 Action 副作用
+
+Ontology 分支保存基于某个正式发布的完整定义。项目为对象、Interface、Link、Function、Action、数据源定义分配管理归属。项目权限资源名称为 `Eigos/project/Travel`，可授予 `view_definition`、`edit_definition` 或 `manage_definition`。这些权限仅覆盖定义管理。
+
+分支正文包含全本体定义，读取和创建分支需要本体级 `view_definition`。项目编辑者只能修改本项目已分配的资源，可以在项目中创建新资源。项目外已有资源的修改会被拒绝。项目及资源归属由本体管理者配置。
+
+## 分支提案
+
+`Governance` 使用以下步骤完成发布。
+
+1. `create` 保存名称、项目、基线发布和定义。`update` 要求准确的 `revision`，每次更新清除候选与审阅状态。
+2. `prepare` 校验定义、Function 绑定、数据和关系，生成独立的只读候选投影，进入 `submitted`。
+3. `review` 要求项目或本体的 `manage_definition`。审阅绑定准确的分支版本、候选发布、定义和数据指纹。
+4. `merge` 要求准确审阅版本，原子切换正式发布并将提案标记为 `merged`。激活仍需本体级 `manage_definition`，并遵守未完成任务保护。
+
+正式定义发生变化后，`rebase` 按资源进行三方合并。双方同时修改同一资源且结果不同会返回冲突。成功合并清除旧审阅。
+
+只有数据变化时，`catchUp` 保留候选投影身份，补充改变的对象和关系，删除已移除的数据，并更新来源与候选指纹。对象处理采用 500 行游标批次。同步期间使用发布排他锁保证数据一致性。完成后提案回到 `submitted`，需要审阅新版本。直接对候选调用 catch-up 也会使旧的数据审阅指纹失效。新增必填字段或数据类型变化需要可兼容的来源数据或显式迁移，catch-up 会校验映射后的对象。
+
+## 独立 Function 版本
+
+Function 定义可以设置 `version`。运行环境通过 `Functions` 构造函数的第三个参数注册版本列表，每项包含定义、不可变 `implementationId` 和处理函数。一个运行环境可以同时保留多个版本，发布定义选择其中一个。
+
+发布绑定同时包含契约、版本和实现标识的摘要。历史发布的具名版本可在新运行环境中执行，前提是对应实现仍然存在且摘要一致。无版本的既有 Function 继续使用原有运行版本校验。版本注册由受信任的部署代码完成。修改处理函数时必须更换实现标识和版本。
+
+## Action 副作用
+
+Action 定义可声明 `effects`，每项指定唯一名称、已注册 handler 和参数映射。`Actions` 的第三个构造参数接收 `Effects` 实例。缺少注册的 handler 时提交会失败。
+
+对象修改、Action 记录和 outbox 写入在同一事务中完成。Scenario 中的 Action 不投递副作用。真实 Action 重试使用原 requestId，返回既有结果并保留同一 outbox 记录。
+
+独立运行的 `Effects.runOne()` 通过数据库租约领取消息，在调用 handler 前重新检查原始操作依赖的权限。调用时传入稳定的 `idempotencyKey` 和取消信号。失败记录进入 `failed`，`retry` 验证当前权限后重新排队，重试保持原幂等键。`status` 返回当前调用者自己操作的投递状态。
+
+处理函数必须支持幂等键和取消信号。远端已完成、当前进程尚未确认的故障可能导致重试，交付语义为至少一次。部署方需要为每种外部行为注册明确的 handler，并通过独立进程运行 dispatcher。仓库默认不注册外部通知、支付、下单或日历写入 handler。
+
+新增数据库表由 `initializeGovernance` 和 `initializeEffects` 创建。它们供统一数据库升级入口调用。治理表写入由定义管理服务执行，业务运行身份只获得其所需的读取、Action outbox 写入和租约处理权限。

@@ -194,6 +194,8 @@ export class Governance {
     return this.db.transaction(async client=>{
       const row=await this.row(input.id,client,true);
       this.authorize(access,row,'manage_definition');
+      await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['publication:' + row.ontology], client);
+      await this.validateChanges(access,row,(await this.metadata.get(row.base_release,client)).document,row.body,client);
       if(row.state!=='approved'||row.revision!==input.revision||row.candidate!==input.release||row.reviewed_digest!==await this.reviewDigest(row,client))throw new Conflict('Merge requires the exact approved candidate');
       await this.metadata.activate(input.release,this.bindings,access,client);
       if(row.project) {
