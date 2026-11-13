@@ -19,7 +19,8 @@ import { A2A, AgentUser, agentCard } from './a2a.js';
 const queryInput = z.strictObject({ taskId: z.uuid().optional(), query: querySchema });
 const functionInput = z.strictObject({ taskId: z.uuid().optional(), function: z.string(), input: z.record(z.string(), z.unknown()) });
 const actionInput = z.strictObject({ requestId: z.string().min(1).max(128), action: z.string().optional(),
-  interface: z.strictObject({ object: objectRefSchema, type: z.string(), action: z.string() }).optional(), input: z.record(z.string(), z.unknown()) })
+  interface: z.strictObject({ object: objectRefSchema.optional(), implementation: z.string().optional(), type: z.string(), action: z.string() })
+    .refine(value => !!value.object !== !!value.implementation, 'Select an object or implementing Object Type').optional(), input: z.record(z.string(), z.unknown()) })
   .refine(value => !!value.action !== !!value.interface, 'Select an Action or an Interface Action');
 
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config)) {
@@ -55,7 +56,9 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   };
   const apply = async (p: Principal, raw: unknown) => {
     const input = actionInput.parse(raw), model = await metadata.active();
-    const selected = input.interface ? model.resolveAction(input.interface.object, input.interface.type, input.interface.action, input.input) : { action: input.action!, input: input.input };
+    const target = input.interface;
+    const selected = target ? target.object ? model.resolveAction(target.object, target.type, target.action, input.input)
+      : model.resolveTypeAction(target.implementation!, target.type, target.action, input.input) : { action: input.action!, input: input.input };
     return capabilities.actions.apply(p, model, selected.action, selected.input, input.requestId);
   };
   app.get('/identity', (req, res) => res.json(principal(req)));

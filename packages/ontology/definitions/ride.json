@@ -1,6 +1,6 @@
 {
   "id": "Eigos",
-  "version": "3",
+  "version": "4",
   "objectTypes": [
     {
       "apiName": "Place",
@@ -99,18 +99,7 @@
             "coordinateSystem": "coordinateSystem"
           },
           "links": {},
-          "actions": {
-            "requestEstimate": {
-              "action": "RequestRideEstimate",
-              "parameters": {
-                "name": "name",
-                "origin": "origin",
-                "destination": "destination",
-                "requestId": "requestId",
-                "requestedAt": "requestedAt"
-              }
-            }
-          }
+          "actions": {}
         }
       }
     },
@@ -192,9 +181,39 @@
           },
           "description": "Request time",
           "required": true
+        },
+        "serviceClass": {
+          "description": "Requested provider product name, if the user selected one",
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "required": false
         }
       },
-      "interfaces": {}
+      "interfaces": {
+        "RideInquiry": {
+          "properties": {
+            "name": "name",
+            "status": "status"
+          },
+          "links": {
+            "route": "route",
+            "estimates": "estimates"
+          },
+          "actions": {
+            "estimate": {
+              "action": "EstimateRide",
+              "parameters": {
+                "city": "city",
+                "origin": "origin",
+                "destination": "destination",
+                "serviceClass": "serviceClass"
+              }
+            }
+          }
+        }
+      }
     },
     {
       "apiName": "RideEstimate",
@@ -373,7 +392,7 @@
   "interfaceTypes": [
     {
       "apiName": "Location",
-      "description": "A source-resolved location with its address and provider coordinate reference system. DidiPlaces can return this Interface view through the receipt places Link. Its requestEstimate Action accepts origin and destination Location references and returns a RideRequest.",
+      "description": "A source-resolved place. Name identifies the venue; source results may also contain entrances, sections and nearby businesses with different names. The Location Interface supports exact name filtering and source-receipt Link queries.",
       "properties": {
         "name": {
           "schema": {
@@ -433,80 +452,11 @@
       },
       "optionalProperties": [],
       "links": {},
-      "actions": {
-        "requestEstimate": {
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "name": {
-                "type": "string",
-                "minLength": 1
-              },
-              "origin": {
-                "type": "object",
-                "properties": {
-                  "type": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "id": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "required": [
-                  "type",
-                  "id"
-                ],
-                "additionalProperties": false
-              },
-              "destination": {
-                "type": "object",
-                "properties": {
-                  "type": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "id": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "required": [
-                  "type",
-                  "id"
-                ],
-                "additionalProperties": false
-              },
-              "requestId": {
-                "type": "string",
-                "minLength": 1
-              },
-              "requestedAt": {
-                "type": "string",
-                "format": "date-time"
-              }
-            },
-            "required": [
-              "name",
-              "origin",
-              "destination",
-              "requestId",
-              "requestedAt"
-            ],
-            "additionalProperties": false
-          },
-          "objectParameters": {
-            "origin": "Location",
-            "destination": "Location"
-          },
-          "required": true
-        }
-      }
+      "actions": {}
     },
     {
       "apiName": "RideEstimatable",
-      "description": "A route created by a Location requestEstimate Action. Its origin/destination Links expose the source endpoints for price calculation.",
+      "description": "A route whose origin and destination Links expose source Location objects for price calculation.",
       "properties": {
         "name": {
           "schema": {
@@ -597,6 +547,77 @@
         }
       },
       "actions": {}
+    },
+    {
+      "apiName": "RideInquiry",
+      "description": "Obtain current ride prices between two named venues in a city. The estimate Action resolves Location objects, gets real provider prices and records the inquiry. It returns a RideRequest; readRideEstimates returns its verified quote. Venue coordinates suffice for an estimate; a pickup entrance is not required. Genuine unresolved venue identity returns source choices. No order or payment.",
+      "properties": {
+        "name": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Display name",
+          "required": true
+        },
+        "status": {
+          "schema": {
+            "type": "string",
+            "enum": [
+              "requested",
+              "quoted"
+            ]
+          },
+          "description": "Inquiry status",
+          "required": true
+        }
+      },
+      "optionalProperties": [],
+      "links": {
+        "route": {
+          "target": "RideEstimatable",
+          "cardinality": "one",
+          "required": true
+        },
+        "estimates": {
+          "target": "PriceEstimate",
+          "cardinality": "many",
+          "required": true
+        }
+      },
+      "actions": {
+        "estimate": {
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string",
+                "minLength": 1
+              },
+              "origin": {
+                "type": "string",
+                "minLength": 1
+              },
+              "destination": {
+                "type": "string",
+                "minLength": 1
+              },
+              "serviceClass": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "city",
+              "origin",
+              "destination"
+            ],
+            "additionalProperties": false
+          },
+          "objectParameters": {},
+          "required": true
+        }
+      }
     }
   ],
   "linkTypes": [
@@ -956,7 +977,7 @@
     },
     {
       "apiName": "estimateRoute",
-      "description": "Read real prices for an existing RideRequest. Navigates its route Link and the RideEstimatable origin/destination Links. DidiEstimates maps this response to PriceEstimate objects linked to that request. Inquiry only, no order.",
+      "description": "Read provider prices along the Links of an existing RideRequest. For a complete named-place inquiry use the RideInquiry estimate Action; the DidiEstimates source is backed by estimateLocations.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1572,16 +1593,15 @@
       "returns": {
         "type": "boolean"
       }
-    }
-  ],
-  "actionTypes": [
+    },
     {
-      "apiName": "RequestRideEstimate",
-      "description": "Request prices between two source Place objects implementing Location, chosen to match the user intent. Creates the route, its origin/destination Links, and the RideRequest with its route Link atomically. Both endpoints require fresh source provenance. If source locations are ambiguous, ask the user before applying. Returns the request used by DidiEstimates. No car is ordered and no payment is made.",
+      "apiName": "estimateLocations",
+      "description": "Read provider prices between two current Location references. requestId identifies the inquiry whose data source projection will attach the prices; it need not exist until the edit Action commits. Does not order or pay.",
+      "source": "Didi",
       "parameters": {
         "type": "object",
         "properties": {
-          "name": {
+          "requestId": {
             "type": "string",
             "minLength": 1
           },
@@ -1620,144 +1640,686 @@
               "id"
             ],
             "additionalProperties": false
-          },
-          "requestId": {
-            "type": "string",
-            "minLength": 1
-          },
-          "requestedAt": {
-            "type": "string",
-            "format": "date-time"
           }
         },
         "required": [
-          "name",
-          "origin",
-          "destination",
           "requestId",
-          "requestedAt"
+          "origin",
+          "destination"
         ],
         "additionalProperties": false
       },
-      "objectParameters": {
-        "origin": "Place",
-        "destination": "Place"
-      },
-      "submissionCriteria": [
-        {
-          "function": "locationsReady",
-          "arguments": {
-            "origin": {
-              "parameter": "origin"
-            },
-            "destination": {
-              "parameter": "destination"
-            }
-          }
-        }
-      ],
-      "rules": [
-        {
-          "op": "createObject",
-          "object": {
-            "type": "Route",
-            "id": {
-              "parameter": "requestId"
-            }
+      "returns": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "data": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "places"
+                  },
+                  "places": {
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "address": {
+                          "type": "string",
+                          "maxLength": 1000
+                        },
+                        "addressAll": {
+                          "type": "string",
+                          "maxLength": 1500
+                        },
+                        "city": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "lng": {
+                          "type": "number",
+                          "minimum": -180,
+                          "maximum": 180
+                        },
+                        "lat": {
+                          "type": "number",
+                          "minimum": -90,
+                          "maximum": 90
+                        },
+                        "coordinateSystem": {
+                          "type": "string",
+                          "const": "provider_unspecified"
+                        },
+                        "identityKind": {
+                          "type": "string",
+                          "const": "local_snapshot_digest"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "address",
+                        "addressAll",
+                        "city",
+                        "lng",
+                        "lat",
+                        "coordinateSystem",
+                        "identityKind"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "kind",
+                  "places"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "estimate"
+                  },
+                  "items": {
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "productName": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "productCategory": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "priceText": {
+                          "type": "string",
+                          "maxLength": 500
+                        },
+                        "priceKind": {
+                          "type": "string",
+                          "const": "estimate"
+                        },
+                        "estimatedMoney": {
+                          "type": "object",
+                          "properties": {
+                            "minor": {
+                              "type": "string",
+                              "pattern": "^(0|[1-9]\\d{0,17})$"
+                            },
+                            "currency": {
+                              "type": "string",
+                              "const": "CNY"
+                            }
+                          },
+                          "required": [
+                            "minor",
+                            "currency"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "feesComplete": {
+                          "type": "string",
+                          "const": "unknown"
+                        }
+                      },
+                      "required": [
+                        "productName",
+                        "productCategory",
+                        "priceText",
+                        "priceKind",
+                        "feesComplete"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "kind",
+                  "items"
+                ],
+                "additionalProperties": false
+              }
+            ]
           },
-          "properties": {
-            "id": {
-              "parameter": "requestId"
+          "receipt": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "bindingId": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9_-]{1,80}$"
+              },
+              "environment": {
+                "type": "string",
+                "enum": [
+                  "production",
+                  "mock"
+                ]
+              },
+              "endpoint": {
+                "type": "string",
+                "enum": [
+                  "https://mcp.didichuxing.com/mcp-servers",
+                  "https://mcp.didichuxing.com/mcp-servers-sandbox"
+                ]
+              },
+              "tool": {
+                "type": "string",
+                "enum": [
+                  "maps_textsearch",
+                  "taxi_estimate"
+                ]
+              },
+              "inputDigest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "resultDigest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "responseSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "toolSchemaDigest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "startedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "receivedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              }
             },
-            "name": {
-              "parameter": "name"
-            }
+            "required": [
+              "id",
+              "bindingId",
+              "environment",
+              "endpoint",
+              "tool",
+              "inputDigest",
+              "resultDigest",
+              "responseSha256",
+              "toolSchemaDigest",
+              "startedAt",
+              "receivedAt"
+            ],
+            "additionalProperties": false
+          },
+          "evidence": {
+            "type": "string",
+            "enum": [
+              "live_readonly",
+              "provider_mock",
+              "fixture"
+            ]
           }
         },
-        {
-          "op": "addLink",
-          "link": "RouteOrigin",
-          "from": {
-            "type": "Route",
-            "id": {
-              "parameter": "requestId"
-            }
-          },
-          "to": {
-            "type": "Place",
-            "id": {
-              "parameter": "origin",
-              "path": [
-                "id"
-              ]
-            }
-          }
-        },
-        {
-          "op": "addLink",
-          "link": "RouteDestination",
-          "from": {
-            "type": "Route",
-            "id": {
-              "parameter": "requestId"
-            }
-          },
-          "to": {
-            "type": "Place",
-            "id": {
-              "parameter": "destination",
-              "path": [
-                "id"
-              ]
-            }
-          }
-        },
-        {
-          "op": "createObject",
-          "object": {
-            "type": "RideRequest",
-            "id": {
-              "parameter": "requestId"
-            }
-          },
-          "properties": {
-            "id": {
-              "parameter": "requestId"
-            },
-            "name": {
-              "literal": "Ride estimate request"
-            },
-            "status": {
-              "literal": "requested"
-            },
-            "requestedAt": {
-              "parameter": "requestedAt"
-            }
-          }
-        },
-        {
-          "op": "addLink",
-          "link": "RequestRoute",
-          "from": {
-            "type": "RideRequest",
-            "id": {
-              "parameter": "requestId"
-            }
-          },
-          "to": {
-            "type": "Route",
-            "id": {
-              "parameter": "requestId"
-            }
-          }
-        }
-      ],
-      "result": {
-        "type": "RideRequest",
-        "id": {
-          "parameter": "requestId"
-        }
+        "required": [
+          "data",
+          "receipt",
+          "evidence"
+        ],
+        "additionalProperties": false
       }
+    },
+    {
+      "apiName": "resolveRideLocations",
+      "description": "Resolve each venue by querying exact Location.name within its source receipt. One exact match resolves even when other entrances or nearby shops were returned. Multiple exact matches or no exact match require clarification. Explicit selections must belong to the corresponding source response.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "origin": {
+            "type": "string",
+            "minLength": 1
+          },
+          "destination": {
+            "type": "string",
+            "minLength": 1
+          },
+          "originReceipt": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          "destinationReceipt": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          "selection": {
+            "type": "object",
+            "properties": {
+              "origin": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "type",
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              "destination": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "type",
+                  "id"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "origin",
+              "destination"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "origin",
+          "destination",
+          "originReceipt",
+          "destinationReceipt"
+        ],
+        "additionalProperties": false
+      },
+      "returns": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "resolved"
+              },
+              "origin": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "type",
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              "destination": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "type",
+                  "id"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "status",
+              "origin",
+              "destination"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "input-required"
+              },
+              "origin": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "ref": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "revision": {
+                      "type": "integer"
+                    },
+                    "properties": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "city": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "address": {
+                          "type": "string"
+                        },
+                        "coordinates": {
+                          "type": "object",
+                          "properties": {
+                            "lat": {
+                              "type": "number",
+                              "minimum": -90,
+                              "maximum": 90
+                            },
+                            "lng": {
+                              "type": "number",
+                              "minimum": -180,
+                              "maximum": 180
+                            }
+                          },
+                          "required": [
+                            "lat",
+                            "lng"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "coordinateSystem": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "city",
+                        "address",
+                        "coordinates",
+                        "coordinateSystem"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "ref",
+                    "revision",
+                    "properties"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "destination": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "ref": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "revision": {
+                      "type": "integer"
+                    },
+                    "properties": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "city": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "address": {
+                          "type": "string"
+                        },
+                        "coordinates": {
+                          "type": "object",
+                          "properties": {
+                            "lat": {
+                              "type": "number",
+                              "minimum": -90,
+                              "maximum": 90
+                            },
+                            "lng": {
+                              "type": "number",
+                              "minimum": -180,
+                              "maximum": 180
+                            }
+                          },
+                          "required": [
+                            "lat",
+                            "lng"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "coordinateSystem": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "city",
+                        "address",
+                        "coordinates",
+                        "coordinateSystem"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "ref",
+                    "revision",
+                    "properties"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "status",
+              "origin",
+              "destination"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    {
+      "apiName": "prepareRideInquiry",
+      "description": "Ontology edit Function backing EstimateRide: resolve source Location objects, read prices, then atomically record request, route, estimates and their Links. Provider reads occur before the edit transaction. Invoke through the mapped Action.",
+      "edits": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string",
+            "minLength": 1
+          },
+          "origin": {
+            "type": "string",
+            "minLength": 1
+          },
+          "destination": {
+            "type": "string",
+            "minLength": 1
+          },
+          "serviceClass": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "city",
+          "origin",
+          "destination"
+        ],
+        "additionalProperties": false
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "actionTypes": [
+    {
+      "apiName": "EstimateRide",
+      "description": "Complete a quote-only ride inquiry from city and venue names through the RideInquiry interface. Its edit Function queries Location names, performs real provider reads and atomically writes the route, inquiry, quotes and provenance links. Returns a RideRequest reference for readRideEstimates. No booking, order or payment.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string",
+            "minLength": 1
+          },
+          "origin": {
+            "type": "string",
+            "minLength": 1
+          },
+          "destination": {
+            "type": "string",
+            "minLength": 1
+          },
+          "serviceClass": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "city",
+          "origin",
+          "destination"
+        ],
+        "additionalProperties": false
+      },
+      "objectParameters": {},
+      "submissionCriteria": [],
+      "function": "prepareRideInquiry"
     }
   ],
   "dataSources": [
@@ -1779,7 +2341,7 @@
     {
       "apiName": "DidiEstimates",
       "objectType": "RideEstimate",
-      "function": "estimateRoute",
+      "function": "estimateLocations",
       "properties": {
         "id": "id",
         "name": "name",

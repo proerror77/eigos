@@ -29,7 +29,7 @@ async function locationsReady(context: FunctionContext, places: ObjectData[]) {
   }
   return true;
 }
-export function rideFunctions(resolveSource: SourceResolver) {
+export function rideFunctions(resolveSource: SourceResolver, additional: ReadonlyMap<string, FunctionHandler> = new Map()) {
   const read = async (context: FunctionContext, tool: 'maps_textsearch' | 'taxi_estimate', input: Record<string, string>): Promise<SourceResult> => {
     const source = await resolveSource(context.principal.owner);
     await source.assertCurrent();
@@ -50,6 +50,15 @@ export function rideFunctions(resolveSource: SourceResolver) {
       const from = origin.properties.coordinates as { lat: number; lng: number }, to = destination.properties.coordinates as { lat: number; lng: number };
       return read(context, 'taxi_estimate', { from_lng: String(from.lng), from_lat: String(from.lat), from_name: String(origin.properties.name), to_lng: String(to.lng), to_lat: String(to.lat), to_name: String(destination.properties.name) });
     }],
+    ['estimateLocations', async (input, context) => {
+      const [origin, destination] = await Promise.all([input.origin, input.destination].map(ref => context.objects.read(objectRefSchema.parse(ref))));
+      const source = await resolveSource(context.principal.owner);
+      for (const place of [origin!, destination!]) {
+        if (!context.objects.model.implements(place.ref.type, 'Location') || place.properties.sourceBinding !== source.bindingId || !fresh(place.properties.observedAt)) throw new Error('Estimate requires current source Location objects');
+      }
+      const from = origin!.properties.coordinates as { lat: number; lng: number }, to = destination!.properties.coordinates as { lat: number; lng: number };
+      return read(context, 'taxi_estimate', { from_lng: String(from.lng), from_lat: String(from.lat), from_name: String(origin!.properties.name), to_lng: String(to.lng), to_lat: String(to.lat), to_name: String(destination!.properties.name) });
+    }],
     ['locationsReady', async (input, context) => locationsReady(context, await Promise.all([input.origin, input.destination].map(ref => context.objects.read(objectRefSchema.parse(ref)))))],
     ['readRideEstimates', async (input, context) => {
       const request = objectRefSchema.parse(input.request);
@@ -67,10 +76,12 @@ export function rideFunctions(resolveSource: SourceResolver) {
       const routes = await context.objects.follow(request, 'route');
       if (routes.length !== 1) throw new Error('Quote has no single route');
       const [origin, destination] = await endpoints(context, routes[0]!.ref);
-      const estimates = quotes.items.filter(item => !input.serviceClass || item.properties.name === input.serviceClass);
+      const serviceClass = input.serviceClass ?? root.properties.serviceClass;
+      const estimates = quotes.items.filter(item => !serviceClass || item.properties.name === serviceClass);
       if (!estimates.length) throw new Error('No estimate for the selected service class');
       await binding.assertCurrent();
       return { request, estimates, evidence: [...evidence], accepted: evidence.size === 1 && evidence.has('live_readonly'), route: { origin: origin.properties, destination: destination.properties } };
     }],
+    ...additional,
   ]));
 }

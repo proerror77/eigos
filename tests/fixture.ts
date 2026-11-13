@@ -23,7 +23,7 @@ export async function provider() {
   const directory = await mkdtemp(join(tmpdir(), 'eigos-provider-')), key = 'synthetic-didi-key';
   const keyFile = join(directory, 'key'); await writeFile(keyFile, key, { mode: 0o600 });
   const calls: string[] = [], inputs: Record<string, unknown>[] = [];
-  const flags = { active: true, ambiguous: false, before: undefined as (() => Promise<void>) | undefined };
+  const flags = { active: true, ambiguous: false, related: true, before: undefined as (() => Promise<void>) | undefined };
   const fetcher: typeof fetch = async (_url, init) => {
     if (init?.method === 'GET') return new Response(null, { status: 405 });
     if (init?.method === 'DELETE') return new Response(null, { status: 200 });
@@ -37,7 +37,10 @@ export async function provider() {
       calls.push(name); inputs.push(args); await flags.before?.();
       if (name === 'maps_textsearch') {
         const place = { display_name: args.keywords, address: '浦东新区', address_all: args.keywords + '上海市浦东新区', city: args.city, location: { lat: 31.2, lng: args.keywords === route.origin ? 121.5 : 121.48 } };
-        result = { content: [{ type: 'text', text: JSON.stringify(flags.ambiguous ? [place, { ...place, location: { lat: 31.3, lng: 121.6 } }] : [place]) }] };
+        const places = [place];
+        if (flags.related) places.push({ ...place, display_name: args.keywords + '东门', location: { lat: 31.21, lng: 121.51 } });
+        if (flags.ambiguous) places.push({ ...place, location: { lat: 31.3, lng: 121.6 } });
+        result = { content: [{ type: 'text', text: JSON.stringify(places) }] };
       } else if (name === 'taxi_estimate') result = { structuredContent: { traceId: 'PRIVATE_ORDER_TOKEN', items: [{ productName: '快车', productCategory: 'fast', priceText: '73.05' }, { productName: '专车', productCategory: 'premium', priceText: '100-120元' }] } };
       else throw new Error('Unexpected provider tool');
     }

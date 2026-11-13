@@ -9,14 +9,15 @@ import { Actions } from '../packages/runtime/actions.js';
 import { Sources } from '../packages/runtime/sources.js';
 import { Worker } from '../apps/worker/worker.js';
 
-test('recorded Agent decisions execute Interface, Links, Functions and Actions against PostgreSQL', async t => {
+test('one Agent capability choice completes the inquiry despite related entrance candidates', async t => {
   const f = await fixture();
   try {
     const task = await f.submit(), before = f.db.queries;
     assert(await f.worker.runOne());
     const done = await f.tasks.get(principal, task.id);
     assert.equal(done.state, 'completed', done.error ?? undefined);
-    const result = done.result as { estimates: { properties: { amount: string | null } }[]; accepted: boolean; elapsedMs: number; evidence: string[] };
+    const result = done.result as { execution: { steps: { tool: string }[] }; estimates: { properties: { amount: string | null } }[]; accepted: boolean; elapsedMs: number; evidence: string[] };
+    assert.deepEqual(result.execution.steps.map(step => step.tool), ['complete_with_action']);
     assert.equal(result.estimates.length, 2); assert.equal(result.accepted, false); assert.deepEqual(result.evidence, ['fixture']);
     assert(result.estimates.some(item => item.properties.amount === '73.05'));
     assert(result.estimates.some(item => item.properties.amount === null));
@@ -93,7 +94,7 @@ test('ambiguous places ask for the original address before requesting a quote', 
     await f.tasks.selectPlaces(principal, task.id, { origin: choose('origin'), destination: choose('destination') });
     await f.worker.runOne();
     assert.equal((await f.tasks.get(principal, task.id)).state, 'completed');
-    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
   } finally { await f.close(); }
 });
 
@@ -114,6 +115,6 @@ test('task-only PA permission executes the inquiry through the source-bound Work
     const task = await f.tasks.submit(caller, { requestId: 'task-permission', message: '上海只询价', route });
     await f.worker.runOne();
     assert.equal((await f.tasks.get(caller, task.id)).state, 'completed');
-    await assert.rejects(f.capabilities.actions.apply(caller, f.model, 'RequestRideEstimate', {}, 'direct-write'), /Permission/);
+    await assert.rejects(f.capabilities.actions.apply(caller, f.model, 'EstimateRide', {}, 'direct-write'), /Permission/);
   } finally { await f.close(); }
 });
