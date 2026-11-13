@@ -1,3 +1,4 @@
+import { recordObjectEdit, resolveSourceEdit } from './edit-history.js';
 import { z } from 'zod';
 import { Conflict, NotFound, digest } from '../core/identity.js';
 import { PublishedOntology } from './metadata.js';
@@ -142,25 +143,36 @@ export class Objects {
     const result = await this.db.query(`INSERT INTO ${this.db.schema}.objects(owner,type,id,properties,projection) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING id`, [this.owner, ref.type, ref.id, properties, this.model.projection], this.client);
     if (!result.rowCount) {
       if (digest((await this.stored(ref)).properties) !== digest(properties)) throw new Conflict('Object identity already contains different data');
-    }
+    } else await recordObjectEdit(this,ref,null,properties,properties,'create');
   }
-  async ingestBatch(input: readonly { ref: ObjectRef; properties: Record<string, unknown> }[]): Promise<void> {
-    if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).ingestBatch(input));
-    for (const item of input) this.writeType(item.ref.type);
+  async ingestBatch(input: readonly { ref: ObjectRef; properties: Record<string,unknown> | null }[], source = 'default', observedAt?: string): Promise<void> {
+    if (this.client === this.db.pool) return this.db.transaction(client=>new Objects(this.db,this.model,this.access,client).ingestBatch(input,source,observedAt));
     await this.prepareWrite();
-    if (!input.length) return;
     if (this.model.scenario) throw new Conflict('Source ingestion is unavailable inside a scenario');
-    const unique = new Map<string, { type: string; id: string; properties: Record<string, unknown> }>();
+    const unique = new Map<string,{ref:ObjectRef;properties:Record<string,unknown>|null}>();
     for (const item of input) {
-      const row = { ...item.ref, properties: this.model.parseObject(item.ref, item.properties) }, key = JSON.stringify(item.ref);
-      const previous = unique.get(key);
-      if (previous && digest(previous) !== digest(row)) throw new Conflict('Source rows disagree about one object');
-      unique.set(key, row);
+      this.writeType(item.ref.type);
+      const properties = item.properties === null ? null : this.model.parseObject(item.ref,item.properties);
+      const key = JSON.stringify(item.ref), prior = unique.get(key);
+      if (prior && digest(prior.properties)!==digest(properties)) throw new Conflict('Source rows disagree about one object');
+      unique.set(key,{ref:item.ref,properties});
     }
-    await this.db.query(`INSERT INTO ${this.db.schema}.objects AS o(owner,type,id,properties,projection)
-      SELECT $1,type,id,properties,$3 FROM jsonb_to_recordset($2::jsonb) AS input(type text,id text,properties jsonb)
-      ON CONFLICT(projection,owner,type,id) DO UPDATE SET properties=excluded.properties,revision=o.revision+1
-      WHERE o.properties IS DISTINCT FROM excluded.properties AND o.properties->>'observedAt' <= excluded.properties->>'observedAt'`, [this.owner, JSON.stringify([...unique.values()]), this.model.projection], this.client);
+    for (const {ref,properties} of unique.values()) {
+      if (properties) this.access.writeRow(this.model,ref.type,properties);
+      const old = await this.stored(ref).catch(error=>{if(error instanceof NotFound)return undefined;throw error;});
+      if (old) this.access.readRow(this.model,ref.type,old.properties);
+      const resolved = await resolveSourceEdit(this,ref,properties,source,observedAt);
+      const key=[this.model.projection,this.owner,ref.type,ref.id];
+      if (resolved === null) {
+        await this.db.query(`DELETE FROM ${this.db.schema}.links WHERE projection=$1 AND owner=$2 AND ((from_type=$3 AND from_id=$4) OR (to_type=$3 AND to_id=$4))`,key,this.client);
+        await this.db.query(`DELETE FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`,key,this.client);
+      } else {
+        this.access.writeRow(this.model,ref.type,resolved);
+        await this.db.query(`INSERT INTO ${this.db.schema}.objects AS o(projection,owner,type,id,properties) VALUES($1,$2,$3,$4,$5)
+          ON CONFLICT(projection,owner,type,id) DO UPDATE SET properties=excluded.properties,revision=o.revision+1
+          WHERE o.properties IS DISTINCT FROM excluded.properties`,[...key,resolved],this.client);
+      }
+    }
   }
   async edit(ref: ObjectRef, revision: number, fields: Record<string, unknown>): Promise<void> {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).edit(ref, revision, fields));
@@ -173,6 +185,7 @@ export class Objects {
     if (this.model.scenario) { await stageObject(this.db, this.model, this.owner, ref, revision + 1, properties, this.client); return; }
     const result = await this.db.query(`UPDATE ${this.db.schema}.objects SET properties=$4,revision=revision+1 WHERE owner=$1 AND type=$2 AND id=$3 AND revision=$5 AND projection=$6`, [this.owner, ref.type, ref.id, properties, revision, this.model.projection], this.client);
     if (!result.rowCount) throw new Conflict('Object revision changed');
+    await recordObjectEdit(this,ref,old.properties,properties,fields,'edit');
   }
   async link(edge: LinkData) {
     return this.linkBatch([edge]);
@@ -228,6 +241,7 @@ export class Objects {
     }
     if (this.model.scenario) return stageObject(this.db, this.model, this.owner, ref, revision + 1, null, this.client);
     await this.db.query(`DELETE FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND revision=$5`, [this.model.projection, this.owner, ref.type, ref.id, revision], this.client);
+    await recordObjectEdit(this,ref,old.properties,null,undefined,'delete');
   }
 
 }

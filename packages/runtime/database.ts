@@ -1,3 +1,6 @@
+import { initializeIndexing } from './indexing.js';
+import { initializeEditHistory } from './edit-history.js';
+import { initializeMaterializations } from './materializations.js';
 import pg, { type PoolClient, type QueryResultRow } from 'pg';
 import { initializeSecurity } from './security.js';
 import { implementationDigest } from './implementation.js';
@@ -97,5 +100,8 @@ export class Database {
         request_key text NOT NULL, request jsonb NOT NULL, response jsonb, response_digest text, created_at timestamptz NOT NULL DEFAULT now(),
         UNIQUE(task_id,request_key));`);
     await initializeSecurity(this);
+    await initializeEditHistory(this);
+    await initializeIndexing(this);
+    await initializeMaterializations(this);
   }
 }
