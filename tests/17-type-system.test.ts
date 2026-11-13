@@ -209,3 +209,57 @@ test('package export honors version-qualified Value Type definition grants',asyn
     assert.equal(packet.document.objectTypes.length,0);
   }finally{await f.close();}
 });
+
+test('schema inclusion keeps composition siblings and oneOf exclusivity',async()=>{
+  const {schemaSubset}=await import('../packages/ontology/schema-compatibility.js');
+  assert.equal(schemaSubset({type:'string'},{type:'string',minLength:5,anyOf:[{type:'string'},{type:'number'}]}),false);
+  assert.equal(schemaSubset({type:'string',minLength:5},{type:'string',minLength:5,anyOf:[{type:'string'},{type:'number'}]}),true);
+  assert.equal(schemaSubset({type:'string'},{oneOf:[{type:'string'},{type:'string'}]}),false);
+  assert.equal(schemaSubset({type:'string'},{oneOf:[{type:'string'},{type:'number'}]}),true);
+  assert.equal(schemaSubset({anyOf:[{type:'string'},{type:'number'}]},{oneOf:[{type:'string'},{type:'number'}]}),true);
+  assert.equal(schemaSubset({type:'number'},{anyOf:[false,{type:'string'}]}),false);
+  const actual={type:'string',minLength:1,maxLength:500,allOf:[{type:'string'},{type:'string',minLength:1,maxLength:500,$schema:'https://json-schema.org/draft/2020-12/schema'}]};
+  const accepted={type:'string',allOf:[{type:'string'},{type:'string',$schema:'https://json-schema.org/draft/2020-12/schema'}]};
+  assert.equal(schemaSubset(actual,accepted),true);
+  assert.equal(schemaSubset(actual,{...accepted,minLength:600}),false);
+  assert.equal(schemaSubset({type:'object',additionalProperties:true},{type:'object',properties:{age:{type:'number'}},additionalProperties:true}),false);
+  assert.equal(schemaSubset({type:'object',additionalProperties:false,patternProperties:{'.*':{type:'string'}}},{type:'object',properties:{age:{type:'number'}},additionalProperties:true}),false);
+});
+
+test('Shared Property allOf contracts preserve constrained fields while rejecting narrower Interface Actions',()=>{
+  const input={...basic(),sharedProperties:[{apiName:'BusinessName',description:'Reusable name',schema:{type:'string'}}],interfaceTypes:[{
+    apiName:'Named',description:'Named entity',properties:{label:{...property({type:'string',$schema:'https://json-schema.org/draft/2020-12/schema'}),sharedProperty:'BusinessName'}},optionalProperties:[],links:{},actions:{},
+  }]};
+  input.objectTypes[0]!.properties.name={...property({type:'string',minLength:1,maxLength:500,$schema:'https://json-schema.org/draft/2020-12/schema'},true),sharedProperty:'BusinessName'} as never;
+  input.objectTypes[0]!.interfaces={Named:{properties:{label:'name'},links:{},actions:{}}} as never;
+  const model=new Ontology(input);
+  assert.equal(model.propertyName('Item','Named','label'),'name');
+  assert.equal(model.parseObject({type:'Item',id:'one'},{id:'one',name:'Valid'}).name,'Valid');
+  assert.throws(()=>model.parseObject({type:'Item',id:'one'},{id:'one',name:''}));
+  const action={...basic(),interfaceTypes:[{apiName:'Creatable',description:'Create named items',properties:{},optionalProperties:[],links:{},actions:{create:{required:true,objectParameters:{},parameters:{type:'object',properties:{label:{type:'string'}},required:['label'],additionalProperties:false}}}}],actionTypes:[{apiName:'CreateItem',description:'Create an item',parameters:{type:'object',properties:{label:{type:'string',minLength:5,anyOf:[{type:'string'},{type:'number'}]}},required:['label'],additionalProperties:false},objectParameters:{},submissionCriteria:[],rules:[{op:'createObject',object:{type:'Item',id:{parameter:'label'}},properties:{id:{parameter:'label'},name:{parameter:'label'}}}],result:{type:'Item',id:{parameter:'label'}}}]};
+  action.objectTypes[0]!.interfaces={Creatable:{properties:{},links:{},actions:{create:{action:'CreateItem',parameters:{label:'label'}}}}} as never;
+  assert.throws(()=>new Ontology(action),/parameter constraints/);
+});
+
+test('packages include shared derived links and target types using each concrete object context',async()=>{
+  const f=await fixture();try{
+    const input=basic();
+    input.objectTypes.push({...structuredClone(input.objectTypes[0]!),apiName:'Child',displayName:'Child',description:'Linked child'});
+    Object.assign(input.objectTypes[0]!.properties,{childCount:{sharedProperty:'ChildCount'}});
+    const body={...input,sharedProperties:[{apiName:'ChildCount',description:'Visible linked children',schema:{type:'integer',minimum:0},derived:{op:'linked',path:[{link:'children'}],aggregate:'count'}}],linkTypes:[{apiName:'ItemChildren',description:'Item children',from:{type:'Item',name:'children',cardinality:'many'},to:{type:'Child',name:'parent',cardinality:'one'}}]};
+    const model=await f.metadata.publish(body,noBindings,f.publisher),packages=new OntologyPackages(f.db,f.metadata,noBindings);
+    const packet=await packages.export(f.publisher,{ontology:'Eigos',resources:[{kind:'object',name:'Item'}]});
+    assert.deepEqual(new Set(packet.document.objectTypes.map(type=>type.apiName)),new Set(['Item','Child']));
+    assert.deepEqual(packet.document.linkTypes.map(link=>link.apiName),['ItemChildren']);
+    assert.equal(packet.document.sharedProperties?.[0]!.apiName,'ChildCount');
+    await setGrants(f.db,'limited-derived',[{resource:'Eigos/object/Item',permission:'view_definition'},{resource:'Eigos/sharedProperty/ChildCount',permission:'view_definition'}]);
+    await assert.rejects(packages.export(await Access.load(f.db,{owner:'limited-derived',scopes:[]}),{ontology:'Eigos',resources:[{kind:'object',name:'Item'}]}),/Permission/);
+    const publication=await f.metadata.publish(packet.document,noBindings,f.publisher);
+    await setGrants(f.db,principal.owner,memberGrants(publication));
+    const graph=new Objects(f.db,publication,await Access.load(f.db,principal)),parent={type:'Item',id:'parent'},child={type:'Child',id:'child'};
+    await graph.create(parent,{id:'parent',name:'Parent'});await graph.create(child,{id:'child',name:'Child'});
+    await graph.link({type:'ItemChildren',from:parent,to:child});
+    assert.equal((await graph.read(parent)).properties.childCount,1);
+    assert.notEqual(publication.release,model.release);
+  }finally{await f.close();}
+});

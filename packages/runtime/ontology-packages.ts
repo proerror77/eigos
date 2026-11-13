@@ -95,31 +95,34 @@ function dependencies(model: Ontology, ref: Resource, value: Record<string, any>
     ])
       schema(definition[key]);
   };
+  const expression = (node: Record<string, any>, objectType?: string) => {
+    if (node.op === 'linked' && objectType) {
+      let type = objectType;
+      for (const hop of node.path) {
+        if (hop.as) add('interface', hop.as);
+        const nav = model.navigation(type, hop.link, hop.as);
+        add('link', nav.link);
+        add('object', nav.target);
+        type = nav.target;
+      }
+    }
+    if (node.left) {
+      expression(node.left, objectType);
+      expression(node.right, objectType);
+    }
+  };
   const property = (definition: Record<string, any>) => {
     if (definition.sharedProperty) add('sharedProperty', definition.sharedProperty);
     if (definition.valueType) add('valueType', definition.valueType.name, definition.valueType.version);
     if (definition.struct) add('struct', definition.struct.type);
     schema(definition.schema);
-    const expression = (node: Record<string, any>) => {
-      if (node.op === 'linked' && ref.kind === 'object') {
-        let type = ref.name;
-        for (const hop of node.path) {
-          if (hop.as) add('interface', hop.as);
-          const nav = model.navigation(type, hop.link, hop.as);
-          add('link', nav.link);
-          add('object', nav.target);
-          type = nav.target;
-        }
-      }
-      if (node.left) {
-        expression(node.left);
-        expression(node.right);
-      }
-    };
-    if (definition.derived) expression(definition.derived);
   };
   if (ref.kind === 'object') {
     Object.values(value.properties).forEach((item) => property(item as Record<string, any>));
+    // Shared properties may supply the expression, whose Link names resolve on this concrete type.
+    for (const definition of Object.values(model.object(ref.name).properties)) {
+      if (definition.derived) expression(definition.derived, ref.name);
+    }
     for (const group of value.groups ?? []) add('group', group);
     for (const [name, mapping] of Object.entries(value.interfaces) as [string, any][]) {
       add('interface', name);
