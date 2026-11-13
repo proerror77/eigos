@@ -1,4 +1,4 @@
-import type { ObjectData, ObjectRef } from '../ontology/schema.js';
+import type { ObjectData, ObjectRef, OntologyDocument } from '../ontology/schema.js';
 import type { Query } from '../runtime/objects.js';
 
 export class OntologyHttpError extends Error {
@@ -61,6 +61,16 @@ export class OntologyClient {
     return this.scenario(result.id,input.sessionId);
   }
   scenario(id:string,sessionId?:string){return new ScenarioClient(this,id,sessionId);}
+  describe(signal?:AbortSignal){
+    return this.request<OntologyDocument>('ontology'+(this.ontology?'?ontology='+encodeURIComponent(this.ontology):''),undefined,signal);
+  }
+  async listScenarios(cursor?:string,signal?:AbortSignal):Promise<QueryResult<ScenarioInfo>>{
+    const parameters=new URLSearchParams();
+    if(this.ontology)parameters.set('ontology',this.ontology);
+    if(cursor)parameters.set('cursor',cursor);
+    const result=await this.request<QueryResult<{id:string;name:string;revision:string|number;state:string;expires_at:string}>>('ontology/scenarios'+(parameters.size?'?'+parameters:''),undefined,signal);
+    return {...result,items:result.items.map(row=>({id:row.id,name:row.name,revision:Number(row.revision),state:row.state,expiresAt:row.expires_at}))};
+  }
   async openSession(ttlSeconds=3600,signal?:AbortSignal){
     return this.service<{id:string;expiresAt:string}>('open_scenario_session',{ttlSeconds},signal);
   }

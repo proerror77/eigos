@@ -218,7 +218,10 @@ export class Scenarios {
       const ref: ObjectRef = { type: item.type, id: item.id };
       if (item.properties === null) { if (item.base_revision !== null) await graph.remove(ref, Number(item.base_revision)); }
       else if (item.base_revision === null) await graph.create(ref, item.properties);
-      else await graph.edit(ref, Number(item.base_revision), item.properties);
+      else {
+        const fields=Object.fromEntries([...new Set([...Object.keys(item.base_properties),...Object.keys(item.properties)])].map(field=>[field,item.properties[field]]));
+        await graph.edit(ref, Number(item.base_revision), fields);
+      }
     }
     for (const item of changes.links) if (!item.removed) await graph.link(edge(item));
     await this.db.query(`UPDATE ${this.db.schema}.scenarios SET state='merged',revision=revision+1 WHERE owner=$1 AND id=$2`, [owner, id], client);

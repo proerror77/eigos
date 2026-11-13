@@ -105,6 +105,7 @@ test('declarative struct edits, scoped scenario merge, unlink and deletion use a
     document.actionTypes.push({apiName:'EditDetails',description:'Edit one struct field',parameters:{type:'object',properties:{route:object,revision:{type:'integer'},x:{type:'number'}},required:['route','revision','x'],additionalProperties:false},objectParameters:{route:'Route'},submissionCriteria:[],rules:[{op:'editStruct',object:{parameter:'route'},expectedRevision:{parameter:'revision'},property:'details',fields:{x:{parameter:'x'}}}],result:{type:'Route',id:{parameter:'route',path:['id']}}});
     document.actionTypes.push({apiName:'MergeRoutes',description:'Merge reviewed route changes',parameters:{type:'object',properties:{scenarioId:{type:'string'},revision:{type:'integer'},route:object},required:['scenarioId','revision','route'],additionalProperties:false},objectParameters:{},submissionCriteria:[],rules:[{op:'applyScenario',scenario:{parameter:'scenarioId'},expectedRevision:{parameter:'revision'},objectTypes:['Route'],linkTypes:[]}],result:{type:'Route',id:{parameter:'route',path:['id']}}});
     document.actionTypes.push({apiName:'DeleteRoute',description:'Delete a route',parameters:{type:'object',properties:{route:object,revision:{type:'integer'}},required:['route','revision'],additionalProperties:false},objectParameters:{route:'Route'},submissionCriteria:[],rules:[{op:'deleteObject',object:{parameter:'route'},expectedRevision:{parameter:'revision'}}],result:{type:'Route',id:{parameter:'route',path:['id']}}});
+    document.actionTypes.push({apiName:'UnlinkRequest',description:'Remove the request route relation',parameters:{type:'object',properties:{route:object,request:object},required:['route','request'],additionalProperties:false},objectParameters:{route:'Route',request:'RideRequest'},submissionCriteria:[],rules:[{op:'removeLink',link:'RequestRoute',from:{type:'RideRequest',id:{parameter:'request',path:['id']}},to:{type:'Route',id:{parameter:'route',path:['id']}}}],result:{type:'Route',id:{parameter:'route',path:['id']}}});
     const model=await f.metadata.publish(document,f.capabilities,f.publisher);
     await setGrants(f.db,principal.owner,memberGrants(model));const access=await Access.load(f.db,principal),graph=new Objects(f.db,model,access),route={type:'Route',id:'rules'};
     await graph.create(route,{id:route.id,name:'Rules',details:{x:1,y:2}});
@@ -114,10 +115,18 @@ test('declarative struct edits, scoped scenario merge, unlink and deletion use a
     const inspected=await f.scenarios.inspect(access,model,scenario.id);
     await f.capabilities.actions.apply(access,model,'MergeRoutes',{route,scenarioId:scenario.id,revision:inspected.revision},'merge-rules');
     assert.deepEqual((await graph.read(route)).properties.details,{x:3,y:2});
+    const request={type:'RideRequest',id:'unlink-request'};
+    await graph.create(request,{id:request.id,name:'Unlink',status:'requested',requestedAt:new Date().toISOString()});
+    await graph.link({type:'RequestRoute',from:request,to:route});
+    await f.capabilities.actions.apply(access,model,'UnlinkRequest',{route,request},'unlink-request');
+    assert.equal((await graph.follow(request,'route')).length,0);
+    await f.capabilities.actions.undo(access,model,'unlink-request','restore-link');
+    assert.equal((await graph.follow(request,'route')).length,1);
     await f.capabilities.actions.apply(access,model,'DeleteRoute',{route,revision:2},'delete-rules');
     await assert.rejects(graph.read(route),/unavailable/);
     await f.capabilities.actions.undo(access,model,'delete-rules','restore-rules');
     assert.deepEqual((await graph.read(route)).properties.details,{x:3,y:2});
+    assert.equal((await graph.follow(request,'route')).length,1);
   }finally{await f.close();}
 });
 
