@@ -7,8 +7,90 @@ import {Applications} from '../packages/runtime/applications.js';
 import {Objects} from '../packages/runtime/objects.js';
 import {setGrants,memberGrants,Access} from '../packages/runtime/access.js';
 import {OntologyClient} from '../packages/sdk/client.js';
+import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
 
 const modelFile=Buffer.from('solid test\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid test\n');
+
+test('workbench renders relationship conflicts and passes the selected Scenario to semantic reads', async () => {
+  const buttons = new Map<string, () => Promise<void>>();
+  const controls: { value: string; placeholder?: string }[] = [];
+  const tables: { headers: string[]; rows: unknown[][]; click?: (index: number) => Promise<void> }[] = [];
+  const requests: { path: string; input: Record<string, unknown> }[] = [];
+  const node = () => ({ append() {}, replaceChildren() {} });
+  const scenarioId = 'scenario-ui-fixture';
+  const context = {
+    document: { querySelector: node, querySelectorAll: () => [] },
+    sessionStorage: { getItem: () => null },
+    window: { addEventListener() {} },
+    uiElement: (_tag: string, attributes: Record<string, unknown> = {}) => {
+      const control = { ...node(), value: '', ...attributes };
+      controls.push(control);
+      return control;
+    },
+    uiSelect: (_options: unknown, value: string) => {
+      const control = { ...node(), value };
+      controls.push(control);
+      return control;
+    },
+    uiButton: (label: string, action: () => Promise<void>) => { buttons.set(label, action); return node(); },
+    uiTable: (headers: string[], rows: unknown[][], click?: (index: number) => Promise<void>) => {
+      tables.push({ headers, rows, click });
+      return node();
+    },
+    uiNode: node,
+    uiRequest: async (path: string, input: Record<string, unknown>) => {
+      requests.push({ path, input: { ...input } });
+      if (path.startsWith('/ontology/scenarios?')) return { items: [{ id: scenarioId, name: 'Proposal' }] };
+      if (path.startsWith('/ontology/scenarios/')) return {
+        name: 'Proposal', revision: 2, objects: [],
+        links: [
+          { type: 'RequestRoute', from: { id: 'request' }, to: { id: 'route' }, removed: false, conflict: true },
+          { type: 'RequestRoute', from: { id: 'resolved' }, to: { id: 'route' }, removed: true, conflict: false },
+        ],
+      };
+      return { items: [] };
+    },
+  };
+  const source = await readFile(new URL('../apps/workbench/app.js', import.meta.url), 'utf8');
+  const workbench = runInNewContext(source + `
+    element = uiElement;
+    select = uiSelect;
+    button = uiButton;
+    table = uiTable;
+    surface = heading = field = empty = modal = uiNode;
+    request = uiRequest;
+    ({ state, renderScenarios, renderObjects, semanticDialog });
+  `, context);
+  workbench.state.model = {
+    objectTypes: [{ apiName: 'Route', displayName: 'Route', primaryKey: 'id', titleProperty: 'name',
+      properties: { id: { schema: { type: 'string' } }, name: { schema: { type: 'string' } } } }],
+    functionTypes: [{ apiName: 'Embed', version: '1', returns: { type: 'array', items: { type: 'number' } } }],
+  };
+  workbench.state.scenario = scenarioId;
+  await workbench.renderScenarios();
+  await tables[0]!.click!(0);
+  const links = tables.find(table => table.headers[0] === '关系')!;
+  assert.equal(links.headers[4], '冲突');
+  assert.equal(links.rows[0]![4], '需要处理');
+  assert.equal(links.rows[1]![4], '无');
+
+  await workbench.renderObjects();
+  controls.find(control => control.value === 'text')!.value = 'semantic';
+  controls.find(control => control.placeholder === '语义索引名称')!.value = 'RouteMeaning';
+  controls.find(control => control.placeholder === '搜索对象名称或属性值')!.value = 'rail';
+  await buttons.get('查询')!();
+  assert.deepEqual(requests.at(-1), {
+    path: '/ontology/services/semantic_search',
+    input: { name: 'RouteMeaning', text: 'rail', scenarioId, _ontology: 'Eigos' },
+  });
+  workbench.semanticDialog('Route');
+  await buttons.get('检查索引')!();
+  assert.equal(requests.at(-1)!.input.scenarioId, scenarioId);
+  workbench.state.scenario = null;
+  await buttons.get('查询')!();
+  assert.equal(Object.hasOwn(requests.at(-1)!.input, 'scenarioId'), false);
+});
 
 test('workbench serves guarded assets and normal HTTP model, media and SDK scenario operations',async()=>{
   const f=await fixture(),token='workbench-test-token-'.repeat(3);
