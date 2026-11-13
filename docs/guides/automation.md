@@ -69,3 +69,37 @@ Action 的对象写入和执行记录使用现有原子事务。Workflow 在 Act
 ## 验证
 
 `tests/22-automation.test.ts` 覆盖并发领取、重复提交、Action 已提交但进度未记录时的恢复、取消提交隔离、取消时补记执行记录、原始 scopes、关系变化触发、错误扫描停用、输出引用权限和发布版本保护。测试使用隔离数据库和合成 Action。
+
+## 从酒店行程任务学习与复用
+
+在 Grok 或其他 PA 中，可以用 `submit_task` 提交自然语言目标，并设置
+`learnHotelWorkflow: true`。Agent 从当前已发布的 Ontology 选择操作。
+学习范围是 RollingGo 酒店、滴滴驾车路线、PA 日历与当天的一段上海出行。
+成功工具调用记录保存在原任务的 workflow_trace 中，PA 暂停、进程重启和续跑共用这份记录。
+任务必须实际读到所选酒店和路线，并生成通过校验的持久 Scenario，
+才会得到待批准的行程。PA 仍使用原任务的忙闲请求回传日历。
+
+任务结果中的 `hotelWorkflow` 给出待审的 Scenario、修订号和证据摘要。
+在工作台的任务详情审核后，点击「批准本次模拟执行」。也可由具有
+`tasks:read`、`ontology:write` 和计划批准权限的操作员通过
+`POST /tasks/:id/hotel-simulation-approval` 提交 `scenarioId`、`revision`、
+`snapshot` 和 `decision: "approve-simulation"`。接口会重新校验原身份、
+方案版本、日历有效期、报价和路线，再原子地保存模拟回执和学习到的 Workflow。
+模拟根据出发时间和当前路线估计到达时间，并记录距计划结束的余量。
+回执标记为 `synthetic`、`executed: false`、`bookable: false`。
+Scenario 保持可审核状态，批准模拟与正式合并是独立操作。
+
+Grok 可用 `list_learned_hotel_workflows` 查找当前账号的已保存行程。
+用 `submit_task` 提交 `replayHotelWorkflow: { workflowId, checkIn }` 复用。
+复用按新日期重新查询同一家酒店、路线和日历，生成新 Scenario 和审批请求。
+原日期、报价、行程对象、Scenario 及审批均不会被带入下一次运行。
+若酒店身份、路线端点或发布定义无法核实，复用会停止。
+学习到的酒店 Workflow 使用任务入口运行，普通 Action Workflow 和对象规则
+继续使用各自原有的接口。
+
+学习到的正文保存实际成功的工具顺序，并把对象引用映射到前序步骤的返回值。
+酒店选择按原生酒店 ID 从新结果中定位，路线地点则重新读取并核对原地点身份。
+入住日期和计划窗口作为可变参数保存。出行开始时间来自新一轮可用时段，
+结束时间由学到的活动时长计算，随后重新检查路线是否装得进该时段。
+正文保留原任务的成功证据，学习失败的步骤、未返回权威结果的任务或旧审批
+都不会成为下一次执行的依据。

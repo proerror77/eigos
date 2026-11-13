@@ -139,6 +139,7 @@ export class Database {
       CREATE TABLE IF NOT EXISTS ${s}.scheduled_actions (id text NOT NULL,owner text NOT NULL,body jsonb NOT NULL,scopes jsonb NOT NULL,run_at timestamptz NOT NULL,deadline timestamptz NOT NULL,
         state text NOT NULL DEFAULT 'scheduled',task_id uuid UNIQUE REFERENCES ${s}.tasks(id),error text,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner,id));
       CREATE INDEX IF NOT EXISTS scheduled_actions_due ON ${s}.scheduled_actions(run_at) WHERE state='scheduled';`);
+    await this.query(`ALTER TABLE ${s}.tasks ADD COLUMN IF NOT EXISTS workflow_trace jsonb NOT NULL DEFAULT '[]'`);
     await this.query(`ALTER TABLE ${s}.scheduled_actions ADD COLUMN IF NOT EXISTS continue_at timestamptz`);
     await this.query(`ALTER TABLE ${s}.external_operations ADD COLUMN IF NOT EXISTS requirements jsonb NOT NULL DEFAULT '[]'`);
 

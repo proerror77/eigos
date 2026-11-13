@@ -13,6 +13,7 @@ import { Functions } from './functions.js';
 import { Sources } from './sources.js';
 import { Tasks, type Task } from './tasks.js';
 import { Clarification } from './clarification.js';
+import { checkHotelWorkflowAction, checkHotelWorkflowTool, HotelWorkflows, replayHotelWorkflow, type HotelWorkflowTrace } from './hotel-workflows.js';
 export { Clarification } from './clarification.js';
 export interface AgentTool { description: string; schema: z.ZodType; invoke(input: unknown): Promise<unknown> }
 export interface AgentDriver {
@@ -51,6 +52,47 @@ export class OntologyAgent {
     const objects = new Objects(this.db, model, access), executionContext = { task, tasks: this.tasks }, context = { principal, objects, signal, taskId: task.id, execution: executionContext };
     const steps: { tool: string; input: unknown; startedAt: string; durationMs: number; outcome: string; resultDigest?: string }[] = [];
     const scenarios = new Scenarios(this.db);
+    const workflows = new HotelWorkflows(this.db, this.metadata, this.capabilities.functions);
+    const replay = task.input.replayHotelWorkflow;
+    const learning = task.input.learnHotelWorkflow === true;
+    const capture = learning || Boolean(replay);
+    const trace: HotelWorkflowTrace = { events: [], actions: [], locations: [], reads: [] };
+    const captureEvent = async (name: string, input: unknown, output: unknown) => {
+      const event = { tool: name, input, output };
+      if (JSON.stringify(event).length > 250000 || trace.events.length >= 80) {
+        throw new Error('Workflow trace exceeds the supported learning bound');
+      }
+      await this.db.transaction(async client => {
+        await this.tasks.current(task, client, true);
+        await this.db.query(`UPDATE ${this.db.schema}.tasks SET workflow_trace=workflow_trace||$2::jsonb WHERE id=$1`,
+          [task.id, JSON.stringify([event])], client);
+      });
+      trace.events.push(event);
+    };
+    if (capture) {
+      const saved = (await this.db.query(`SELECT workflow_trace FROM ${this.db.schema}.tasks WHERE id=$1 AND owner=$2`,
+        [task.id, task.owner])).rows[0]?.workflow_trace;
+      for (const event of z.array(z.object({ tool: z.string(), input: z.unknown(), output: z.unknown() })).max(80).parse(saved ?? [])) {
+        trace.events.push(event);
+        if (event.tool === 'apply_action') {
+          const input = actionCall.parse(event.input), target = input.interface;
+          const selected = target ? target.object
+            ? model.resolveAction(target.object, target.type, target.action, input.input)
+            : model.resolveTypeAction(target.implementation!, target.type, target.action, input.input)
+            : { action: input.action!, input: input.input };
+          trace.actions.push({ ...selected, scenarioId: input.scenarioId, output: objectRefSchema.parse(event.output) });
+        } else if (event.tool === 'evaluate_function') {
+          const read = functionCall.parse(event.input);
+          if (read.function === 'readDrivingEstimate') trace.reads.push({ function: read.function, output: event.output });
+        } else if (event.tool === 'refresh_sources') {
+          const reads = z.object({ sources: z.array(z.object({ source: z.string(), input: argumentsSchema })) }).parse(event.input).sources;
+          const outputs = z.array(z.unknown()).parse(event.output);
+          for (const [index, read] of reads.entries()) if (read.source === 'DidiPlaces') {
+            trace.locations.push({ input: read.input, output: outputs[index] });
+          }
+        }
+      }
+    }
     const view = (id?: string) => id ? scenarios.view(access,model,id) : Promise.resolve(model);
     const functionContext = async (id?: string) => ({ ...context, objects: new Objects(this.db,await view(id),access) });
     const guard = async (client: import('./database.js').Sql) => { signal.throwIfAborted(); await this.tasks.current(task,client,true); };
@@ -67,7 +109,9 @@ export class OntologyAgent {
         steps.push(step); const begin = performance.now();
         try {
           await access.refresh(); await this.tasks.current(task);
+          if (capture) checkHotelWorkflowTool(name, input);
           const output = await execute(input);
+          if (capture) await captureEvent(name, input, output);
           step.outcome = 'completed'; step.resultDigest = digest(output);
           return output;
         } catch (error) {
@@ -111,15 +155,26 @@ export class OntologyAgent {
       async ({ links,scenarioId }) => { const graph=new Objects(this.db,await view(scenarioId),access); return Promise.all(links.map(link=>graph.follow(link.object,link.link,link.as))); });
     add('refresh_sources', 'Refresh named Ontology data sources using their published Function parameters. The server maps real responses into objects and links. Supply view with the desired Interface/Object Type and the published Link from SourceReceipt to return those properties in the same call. Independent reads run together.',
       z.strictObject({ sources: z.array(z.strictObject({ source: z.string(), input: argumentsSchema, view: z.strictObject({ type: z.string(), link: z.string() }).optional() })).min(1).max(20) }),
-      async ({ sources }) => Promise.all(sources.map(source => this.capabilities.sources.refresh(model, source.source, source.input, access, task, this.tasks, signal, source.view))));
+      async ({ sources }) => Promise.all(sources.map(async source => {
+        const output = await this.capabilities.sources.refresh(model, source.source, source.input, access, task, this.tasks, signal, source.view);
+        if (capture && source.source === 'DidiPlaces') trace.locations.push({ input: source.input, output });
+        return output;
+      })));
     add('evaluate_function', 'Evaluate a published read or computation Function. To populate source-backed objects use its data source refresh instead.', functionCall,
-      async ({ function: name, input,scenarioId }) => this.capabilities.functions.invoke(await view(scenarioId), name, input, await functionContext(scenarioId)));
+      async ({ function: name, input,scenarioId }) => {
+        const output = await this.capabilities.functions.invoke(await view(scenarioId), name, input, await functionContext(scenarioId));
+        if (capture && name === 'readDrivingEstimate') trace.reads.push({ function: name, output });
+        return output;
+      });
     const apply = async (input: z.infer<typeof actionCall>) => {
       const target = input.interface;
       if (target) { access.definition(model, 'interface', target.type); access.definition(model, 'object', target.implementation ?? target.object!.type); }
       const selected = target ? target.object ? model.resolveAction(target.object, target.type, target.action, input.input)
         : model.resolveTypeAction(target.implementation!, target.type, target.action, input.input) : { action: input.action!, input: input.input };
-      return this.capabilities.actions.apply(access, await view(input.scenarioId), selected.action, selected.input, digest([task.id, input.scenarioId, selected]), guard, executionContext, signal);
+      if (capture) checkHotelWorkflowAction(selected.action, model, input.scenarioId);
+      const output = await this.capabilities.actions.apply(access, await view(input.scenarioId), selected.action, selected.input, digest([task.id, input.scenarioId, selected]), guard, executionContext, signal);
+      if (capture) trace.actions.push({ ...selected, scenarioId: input.scenarioId, output });
+      return output;
     };
     add('apply_action', 'Apply a published Action or mapped Interface Action. Use an implementing Object Type for creation capabilities; existing-object actions can bind an object reference. The runtime enforces the published parameters and submission criteria.', actionCall, apply);
     add('complete_with_action', 'Execute a complete business capability through its Interface Action, then return its result using the selected published read Function. The Action handles its deterministic work. Bind its returned object reference to read.resultParameter; no further model round trip is needed. Use this when the capability fulfils the user request.',
@@ -155,11 +210,18 @@ export class OntologyAgent {
       'For replanning an existing SchedulePlan, create a scenario first, call its live PrepareSchedulePlan Action with input.plan and input.scenarioId, then read and edit that same scenario. The source fetch happens through the original PA task while changed plan fields stay staged.',
       'For calendar planning, obtain calendar availability through the published planning capability. It requests authorized data from the original PA and resumes this same task. Never invent busy/free time. Compare alternatives using scenarioId on existing queries, Object Sets, Functions and Actions; validate and return the selected scenario plan. The PA applies a reviewed merge explicitly. A saved scenario or internal schedule is not an external calendar booking.',
       'Luma reads and participant registration use the original PA-connected Luma account when no server API connection is configured. A pa-request pauses this exact task until its authenticated PA replies. Preserve its request ID and source identity. A proposed registration, authorization, scheduled check, created order and independently observed fulfillment are different states; report the actual state and evidence.',
+      ...(learning ? ['For this hotel itinerary, use the Ontology tools to produce a validated SchedulePlan in a persisted Scenario. Retrieve the selected hotel for the requested date, resolve both places through the location source, read the authoritative driving estimate, and link the hotel and one travel activity. Complete with the authoritative plan result. The server derives a reusable workflow and requests separate approval before saving it or simulating execution.'] : []),
       JSON.stringify({ taskId: task.id, requestedAt: task.created_at.toISOString(), userRequest: task.input, ontology: catalogue(model, access) }),
     ].join('\n');
-    const execution = this.driver.run(prompt, tools, signal);
+    const recipe = replay ? await workflows.load(model, principal.owner, replay.workflowId) : undefined;
+    const execution = replay && recipe
+      ? replayHotelWorkflow(tools, recipe, replay.checkIn)
+      : this.driver.run(prompt, tools, signal);
     try {
-      const result = await Promise.race([completed, execution.then(() => { throw new Error('Agent ended without returning a Function result or requesting clarification'); })]);
+      const output = await Promise.race([completed, execution.then(() => { throw new Error('Agent ended without returning a Function result or requesting clarification'); })]);
+      const result = capture
+        ? await workflows.prepare(model, access, trace, output, signal, replay && recipe ? { id: replay.workflowId, recipe, checkIn: replay.checkIn } : undefined)
+        : output;
       return new TaskResult({ ...(result && typeof result === 'object' && !Array.isArray(result) ? result : { value: result }), elapsedMs: Date.now() - task.created_at.getTime(),
         execution: { model: this.driver.model, release: model.release, durationMs: Math.round(performance.now() - started), sqlStatements: this.db.queries - before, steps } }, await access.finalDataRequirements());
     } finally { stopped.abort(); await execution.catch(() => {}); }

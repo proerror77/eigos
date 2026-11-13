@@ -113,7 +113,7 @@ export class Automation {
       await this.active(model, client);
       const result = input.id
         ? await this.db.query(
-            `UPDATE ${this.db.schema}.workflows SET name=$3,body=$4,revision=revision+1 WHERE id=$1 AND owner=$2 AND revision=$5 AND ontology=$6 RETURNING revision`,
+            `UPDATE ${this.db.schema}.workflows SET name=$3,body=$4,revision=revision+1 WHERE id=$1 AND owner=$2 AND revision=$5 AND ontology=$6 AND body->>'kind' IS NULL RETURNING revision`,
             [id, access.principal.owner, input.name, input, input.revision, model.document.id],
             client,
           )
@@ -138,7 +138,7 @@ export class Automation {
       await this.active(model, client);
       const workflow = (
         await this.db.query(
-          `SELECT body FROM ${this.db.schema}.workflows WHERE id=$1 AND owner=$2 AND ontology=$3`,
+          `SELECT body FROM ${this.db.schema}.workflows WHERE id=$1 AND owner=$2 AND ontology=$3 AND body->>'kind' IS NULL`,
           [input.workflow, access.principal.owner, model.document.id],
           client,
         )
@@ -237,6 +237,7 @@ export class Automation {
       } else
         items.push({
           ...row.body,
+          name: row.name,
           id: row.id,
           revision: row.revision,
           enabled: row.enabled,
@@ -255,7 +256,7 @@ export class Automation {
       await this.active(model, client);
       const workflow = (
         await this.db.query(
-          `SELECT body,revision FROM ${this.db.schema}.workflows WHERE id=$1 AND owner=$2 AND ontology=$3`,
+          `SELECT body,revision FROM ${this.db.schema}.workflows WHERE id=$1 AND owner=$2 AND ontology=$3 AND body->>'kind' IS NULL`,
           [input.workflow, access.principal.owner, model.document.id],
           client,
         )
