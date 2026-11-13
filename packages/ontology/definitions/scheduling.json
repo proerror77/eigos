@@ -290,7 +290,8 @@
                 "end": "end",
                 "timeZone": "timeZone",
                 "durationMinutes": "durationMinutes",
-                "plan": "plan"
+                "plan": "plan",
+                "scenarioId": "scenarioId"
               }
             }
           }
@@ -421,6 +422,10 @@
                   "id"
                 ],
                 "additionalProperties": false
+              },
+              "scenarioId": {
+                "type": "string",
+                "format": "uuid"
               }
             },
             "required": [
@@ -576,6 +581,10 @@
               "id"
             ],
             "additionalProperties": false
+          },
+          "scenarioId": {
+            "type": "string",
+            "format": "uuid"
           }
         },
         "required": [
@@ -1605,6 +1614,10 @@
               "id"
             ],
             "additionalProperties": false
+          },
+          "scenarioId": {
+            "type": "string",
+            "format": "uuid"
           }
         },
         "required": [

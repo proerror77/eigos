@@ -8,9 +8,63 @@ import { PublishedOntology } from './metadata.js';
 import { Objects } from './objects.js';
 import { checkScenario, lockEdits, objectLinks } from './scenario-store.js';
 
-export const createScenarioSchema = z.strictObject({ requestId: z.string().min(1).max(128), name: z.string().min(1).max(200) });
+export const createScenarioSchema = z.strictObject({
+  requestId: z.string().min(1).max(128), name: z.string().min(1).max(200),
+  kind: z.enum(['persisted','temporary']).default('persisted'), sessionId: z.uuid().optional(),
+  description: z.string().max(2000).default(''), ttlSeconds: z.number().int().min(1).max(31*86400).optional(),
+}).refine(input=>input.kind==='temporary'?Boolean(input.sessionId):!input.sessionId,'Temporary scenarios require a session');
+export async function initializeScenarioLifecycle(db: Database) {
+  await db.query(`CREATE TABLE IF NOT EXISTS ${db.schema}.scenario_sessions(
+    id uuid PRIMARY KEY,owner text NOT NULL,expires_at timestamptz NOT NULL,closed_at timestamptz);
+    ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'persisted';
+    ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS description text NOT NULL DEFAULT '';
+    ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS readers jsonb NOT NULL DEFAULT '[]';
+    ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS session_id uuid REFERENCES ${db.schema}.scenario_sessions(id);
+    ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS creation_digest text;`);
+}
 export class Scenarios {
   constructor(private readonly db: Database) {}
+  async openSession(access: Access, ttlSeconds=3600) {
+    z.number().int().min(1).max(86400).parse(ttlSeconds);
+    const id=randomUUID();
+    const row=(await this.db.query(`INSERT INTO ${this.db.schema}.scenario_sessions(id,owner,expires_at) VALUES($1,$2,now()+$3*interval '1 second') RETURNING id,expires_at`,[id,access.principal.owner,ttlSeconds])).rows[0]!;
+    return {id:String(row.id),expiresAt:row.expires_at as Date};
+  }
+  async closeSession(access: Access, sessionId: string) {
+    z.uuid().parse(sessionId);
+    await this.db.query(`UPDATE ${this.db.schema}.scenario_sessions SET closed_at=coalesce(closed_at,now()) WHERE id=$1 AND owner=$2`,[sessionId,access.principal.owner]);
+    await this.cleanup(sessionId,access.principal.owner);
+    return {sessionId,closed:true};
+  }
+  async cleanup(sessionId?: string, owner?: string) {
+    return this.db.transaction(async client=>{
+      const rows=(await this.db.query(`SELECT s.id FROM ${this.db.schema}.scenarios s
+        LEFT JOIN ${this.db.schema}.scenario_sessions session ON session.id=s.session_id
+        WHERE (s.expires_at<=now() OR session.closed_at IS NOT NULL OR session.expires_at<=now())
+        AND ($1::uuid IS NULL OR s.session_id=$1) AND ($2::text IS NULL OR s.owner=$2)
+        ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 500`,[sessionId??null,owner??null],client)).rows;
+      const ids=rows.map(row=>row.id);
+      for(const table of ['scenario_actions','scenario_links','scenario_objects','scenarios']){
+        await this.db.query(`DELETE FROM ${this.db.schema}.${table} WHERE ${table==='scenarios'?'id':'scenario_id'}=ANY($1::uuid[])`,[ids],client);
+      }
+      await this.db.query(`DELETE FROM ${this.db.schema}.scenario_sessions session WHERE (closed_at IS NOT NULL OR expires_at<=now())
+        AND NOT EXISTS(SELECT 1 FROM ${this.db.schema}.scenarios s WHERE s.session_id=session.id)`,[],client);
+      return {deleted:ids.length,more:ids.length===500};
+    });
+  }
+  async share(access: Access, model: PublishedOntology, id: string, revision: number, readers: string[]) {
+    z.uuid().parse(id);z.number().int().positive().parse(revision);
+    const shared=z.array(z.string().min(1).max(200)).max(100).parse(readers);
+    return this.db.transaction(async client=>{
+      await access.refresh(client);await lockEdits(this.db,model,access.principal.owner,client);
+      access.read(model,'OntologyScenario');
+      const row=(await this.db.query(`UPDATE ${this.db.schema}.scenarios SET readers=$4,revision=revision+1
+        WHERE id=$1 AND owner=$2 AND revision=$3 AND release=$5 AND kind='persisted' AND state='open' AND expires_at>now()
+        RETURNING id,revision`,[id,access.principal.owner,revision,JSON.stringify([...new Set(shared)]),model.release],client)).rows[0];
+      if(!row)throw new Conflict('Scenario is unavailable or its revision changed');
+      return {id:String(row.id),revision:Number(row.revision),readers:[...new Set(shared)]};
+    });
+  }
   async list(access: Access, model: PublishedOntology, cursor?: string) {
     if(cursor)z.uuid().parse(cursor);
     access.require(model.document.id, 'view_definition', model.document.id);
@@ -23,9 +77,18 @@ export class Scenarios {
     return this.db.transaction(async client => {
       await beforeCommit?.(client);
       await lockEdits(this.db, model, owner, client);
-      await this.db.query(`INSERT INTO ${this.db.schema}.scenarios(id,owner,request_id,name,release) VALUES($1,$2,$3,$4,$5) ON CONFLICT(owner,request_id) DO NOTHING`, [randomUUID(), owner, input.requestId, input.name, model.release], client);
-      const row = (await this.db.query(`SELECT id,name,release,revision,state,expires_at FROM ${this.db.schema}.scenarios WHERE owner=$1 AND request_id=$2`, [owner, input.requestId], client)).rows[0]!;
-      if (row.name !== input.name || row.release !== model.release) throw new Conflict('Scenario request ID already has different input');
+      let sessionExpires:Date|null=null;
+      if(input.sessionId){
+        const session=(await this.db.query(`SELECT expires_at FROM ${this.db.schema}.scenario_sessions WHERE id=$1 AND owner=$2 AND closed_at IS NULL AND expires_at>now() FOR UPDATE`,[input.sessionId,owner],client)).rows[0];
+        if(!session)throw new Conflict('Scenario session is closed or unavailable');
+        sessionExpires=session.expires_at;
+      }
+      const creation=digest({...input,release:model.release});
+      await this.db.query(`INSERT INTO ${this.db.schema}.scenarios(id,owner,request_id,name,release,kind,description,session_id,expires_at,creation_digest)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,LEAST(now()+$9*interval '1 second',$10::timestamptz),$11) ON CONFLICT(owner,request_id) DO NOTHING`,
+        [randomUUID(),owner,input.requestId,input.name,model.release,input.kind,input.description,input.sessionId??null,input.ttlSeconds??31*86400,sessionExpires,creation],client);
+      const row = (await this.db.query(`SELECT id,name,release,revision,state,expires_at,kind,description,creation_digest FROM ${this.db.schema}.scenarios WHERE owner=$1 AND request_id=$2`, [owner, input.requestId], client)).rows[0]!;
+      if (row.creation_digest?row.creation_digest!==creation:row.name !== input.name || row.release !== model.release) throw new Conflict('Scenario request ID already has different input');
       await access.refresh(client); await beforeCommit?.(client); return row;
     });
   }
