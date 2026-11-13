@@ -145,7 +145,9 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       return { plan: input.plan, slots, timeZone: state.plan.properties.timeZone, resources:state.calendars.map(c=>c.resource.ref), calendarEvidence:state.calendars.map(c=>({resource:c.resource.ref,sourceVersion:c.snapshot.properties.sourceVersion,observedAt:c.snapshot.properties.observedAt,expiresAt:c.snapshot.properties.expiresAt,evidence:c.snapshot.properties.evidence})),evaluatedAt:new Date().toISOString(),externalCalendarUpdated:false };
     }],
     ['editScheduleActivity', async (raw, context) => {
-      const input = activityInputSchema.parse(raw), ref = { type:'ScheduledActivity',id:digest([input.plan.id,input.id]) };
+      const input = activityInputSchema.parse(raw), ref = input.activity??{ type:'ScheduledActivity',id:digest([input.plan.id,input.id]) };
+      if(ref.type!=='ScheduledActivity')throw new Conflict('Expected a ScheduledActivity reference');
+      if(input.activity&&!input.revision)throw new Conflict('Editing an activity reference requires its current revision');
       interval(input.start,input.end);
       if (context.execution && !context.objects.model.scenario) throw new Conflict('The Agent must propose activity edits in a scenario for PA review');
       if (!context.edit) throw new Conflict('Activity edits require an Action');

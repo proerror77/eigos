@@ -15,7 +15,7 @@ export const calendarResponseSchema = z.discriminatedUnion('status', [
 ]);
 export type CalendarResponse = z.infer<typeof calendarResponseSchema>;
 export const activityInputSchema = z.strictObject({ plan: objectRefSchema, id: z.string().min(1).max(128), name: z.string().min(1).max(200),
-  start: timestamp, end: timestamp, revision: z.number().int().positive().optional(), predecessors: z.array(objectRefSchema).max(20).default([]) });
+  start: timestamp, end: timestamp, activity:objectRefSchema.optional(), revision: z.number().int().positive().optional(), predecessors: z.array(objectRefSchema).max(20).default([]) });
 export const removeActivitySchema = z.strictObject({ activity: objectRefSchema, revision: z.number().int().positive() });
 export const planRefSchema = z.strictObject({ plan: objectRefSchema });
 export const searchSlotsSchema = planRefSchema.extend({ limit: z.number().int().min(1).max(20).default(5),

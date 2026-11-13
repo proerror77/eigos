@@ -186,6 +186,24 @@ test('past proposed slots are reported and rejected by final merge',async()=>{
   }finally{await f.close();}
 });
 
+test('returned activity references support rescheduling without the original creation identifier',async()=>{
+  const f=await lifecycleFixture();try{
+    const first=await planTask(f,planningInput(),'reference-edit');
+    const view=await f.scenarios.view(f.access,f.model,first.scenarioId),graph=new Objects(f.db,view,f.access);
+    const activity=(await graph.follow(first.plan.ref,'activities'))[0]!;
+    const start=new Date(Date.parse(String(activity.properties.start))+3600000).toISOString(),end=new Date(Date.parse(String(activity.properties.end))+3600000).toISOString();
+    const input={plan:first.plan.ref,id:activity.ref.id,activity:activity.ref,revision:activity.revision,name:'Moved by reference',start,end};
+    const updated=await f.capabilities.actions.apply(f.access,view,'SaveScheduleActivity',input,'move-reference');
+    assert.deepEqual(updated,activity.ref);
+    assert.equal((await graph.read(activity.ref)).properties.start,start);
+    assert.equal((await graph.follow(first.plan.ref,'activities')).length,1);
+    await assert.rejects(f.capabilities.actions.apply(f.access,view,'SaveScheduleActivity',{...input,revision:undefined},'missing-revision'),/requires its current revision/);
+    await assert.rejects(f.capabilities.actions.apply(f.access,view,'SaveScheduleActivity',{...input,activity:{type:'Route',id:activity.ref.id}},'wrong-type'),/ScheduledActivity/);
+    const other=await planTask(f,planningInput(),'different-plan');
+    await assert.rejects(f.capabilities.actions.apply(f.access,view,'SaveScheduleActivity',{...input,plan:other.plan.ref,revision:activity.revision+1},'wrong-plan'),/does not belong/);
+  }finally{await f.close();}
+});
+
 test('typed scenario SDK scopes HTTP calls and propagates service errors',async()=>{
   const calls:{url:string;body:any;token:string|null}[]=[];
   const fetcher:typeof fetch=async(url,init)=>{
