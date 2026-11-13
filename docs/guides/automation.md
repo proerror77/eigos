@@ -20,7 +20,7 @@ Workflow 保存一组已发布 Action 的执行顺序。对象规则定期查询
 }
 ```
 
-`literal` 传递显式值，`property` 读取原始触发对象的可见属性或嵌套属性，`object: true` 传递该对象引用。每一步首次执行时重新读取对象并绑定参数，随后使用 Action 的参数契约规范化，包括默认值。
+`literal` 传递显式值，`property` 读取原始触发对象的可见属性或嵌套属性，`object: true` 传递该对象引用。`step: "Create record"` 引用之前具名步骤返回的对象，因此创建 Action 的结果可以成为后续修改或关联 Action 的输入。保存定义时拒绝不存在、向前或自身引用。运行时从已提交的 Action 与持久步骤记录读取引用，并重新检查结果对象当前可读性。每一步首次执行时重新读取对象并绑定参数，随后使用 Action 的参数契约规范化，包括默认值。
 
 `run` 接收 `{workflow, object, requestId}`。服务检查原始对象可读和步骤 Action 可执行，并固定 Workflow 正文、发布版本及原始 scopes。相同请求和相同 Workflow 内容可重试；同一 requestId 绑定不同内容会被拒绝。
 
@@ -28,7 +28,7 @@ Workflow 保存一组已发布 Action 的执行顺序。对象规则定期查询
 
 ## 执行恢复
 
-每步在调用 Action 前将规范化参数、授权依赖和稳定 requestId 保存到 `workflow_steps`。即使 Action 改变了触发对象，恢复时仍使用已保存参数。
+步骤结果绑定在首次求值后固定为准确 ObjectRef，重试继续使用该引用；尚未执行的 Action 会重新检查该对象当前权限。每步在调用 Action 前将规范化参数、授权依赖和稳定 requestId 保存到 `workflow_steps`。即使 Action 改变了触发对象，恢复时仍使用已保存参数。
 
 Action 的对象写入和执行记录使用现有原子事务。Workflow 在 Action 提交后记录步骤完成。进程在两者之间中断时，恢复会核对 Action 执行记录的摘要并补记完成，随后继续下一步。Action 事务中的提交回调同时更新该步骤的数据授权依赖。
 

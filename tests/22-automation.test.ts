@@ -13,6 +13,7 @@ async function setup() {
   const f=await fixture();await initializeActionUndo(f.db);await initializeScenarioLifecycle(f.db);await initializeAutomation(f.db);
   const document=structuredClone(f.model.document);
   document.actionTypes.push({apiName:'CopyRoute',description:'Copy an authorized route name into a new Route',parameters:{type:'object',properties:{id:{type:'string'},name:{type:'string'},tag:{type:'string',default:'copied'}},required:['id','name'],additionalProperties:false},objectParameters:{},submissionCriteria:[],rules:[{op:'createObject',object:{type:'Route',id:{parameter:'id'}},properties:{id:{parameter:'id'},name:{parameter:'name'}}}],result:{type:'Route',id:{parameter:'id'}}});
+  document.actionTypes.push({apiName:'RenameRoute',description:'Rename the selected route',parameters:{type:'object',properties:{route:{type:'object',properties:{type:{type:'string'},id:{type:'string'}},required:['type','id'],additionalProperties:false},revision:{type:'integer'},name:{type:'string'}},required:['route','revision','name'],additionalProperties:false},objectParameters:{route:'Route'},submissionCriteria:[],rules:[{op:'editObject',object:{parameter:'route'},expectedRevision:{parameter:'revision'},properties:{name:{parameter:'name'}}}],result:{type:'Route',id:{parameter:'route',path:['id']}}});
   const model=await f.metadata.publish(document,f.capabilities,f.publisher);await setGrants(f.db,principal.owner,memberGrants(model));
   const access=await Access.load(f.db,principal),objects=new Objects(f.db,model,access),actions=new Actions(f.db,f.capabilities.functions),automation=new Automation(f.db,f.metadata,actions);
   const source={type:'Route',id:'source'};await objects.create(source,{id:source.id,name:'original'});
@@ -149,5 +150,61 @@ test('cancellation reconciles an Action committed before its workflow checkpoint
     const row=(await f.db.query(`SELECT state,step,results FROM ${f.db.schema}.workflow_runs WHERE id=$1`,[run.id])).rows[0]!;
     assert.equal(row.state,'canceled');assert.equal(row.step,1);assert.equal(row.results.length,1);
     assert.equal((await automation.list(await Access.load(f.db,principal),f.model,'workflow_runs')).items.length,1);
+  }finally{await f.close();}
+});
+
+
+test('a workflow can operate on a prior created object and preserve that binding after a committed-step retry',async()=>{
+  const f=await setup();try{
+    const workflow=await f.automation.workflow(f.access,f.model,{name:'Create then rename',steps:[...f.steps,{name:'Rename',action:'RenameRoute',input:{route:{step:'Copy'},revision:{literal:1},name:{literal:'Updated copy'}}}]});
+    class CrashAfterSecondCommit extends Actions {
+      crashed=false;
+      override async apply(...args:Parameters<Actions['apply']>){
+        const result=await super.apply(...args);
+        if(!this.crashed&&args[4].endsWith(':1')){this.crashed=true;throw new Error('Synthetic failure after chained commit');}
+        return result;
+      }
+    }
+    const automation=new Automation(f.db,f.metadata,new CrashAfterSecondCommit(f.db,f.capabilities.functions));
+    const run=await automation.run(f.access,f.model,{workflow:workflow.id,object:f.source,requestId:'chained'});
+    await automation.runOne();
+    assert.equal((await f.objects.read({type:'Route',id:'original'})).properties.name,'Updated copy');
+    assert.equal((await f.objects.read(f.source)).properties.name,'original');
+    const frozen=(await f.db.query(`SELECT input FROM ${f.db.schema}.workflow_steps WHERE run_id=$1 AND position=1`,[run.id])).rows[0]!.input;
+    assert.deepEqual(frozen.route,{type:'Route',id:'original'});
+    await f.objects.edit(f.source,1,{name:'New trigger name'});
+    await automation.retry(await Access.load(f.db,principal),f.model,run.id);await automation.runOne();
+    const row=(await f.db.query(`SELECT state,step FROM ${f.db.schema}.workflow_runs WHERE id=$1`,[run.id])).rows[0]!;
+    assert.equal(row.state,'completed');assert.equal(row.step,2);
+    assert.equal((await f.db.query(`SELECT count(*)::int count FROM ${f.db.schema}.actions WHERE request_id=$1`,['workflow:'+run.id+':1'])).rows[0]!.count,1);
+  }finally{await f.close();}
+});
+
+test('workflow step bindings reject missing, forward and self references at definition time',async()=>{
+  const f=await setup();try{
+    for(const reference of ['Missing','First','Later']){
+      await assert.rejects(f.automation.workflow(f.access,f.model,{name:'Invalid binding',steps:[{name:'First',action:'RenameRoute',input:{route:{step:reference},revision:{literal:1},name:{literal:'No'}}},{name:'Later',action:'CopyRoute',input:{id:{literal:'unused'},name:{literal:'Unused'}}}]}),/prior named step/);
+    }
+  }finally{await f.close();}
+});
+
+test('revoked prior-step result visibility blocks a later Action even when the trigger remains readable',async()=>{
+  const f=await setup();try{
+    const workflow=await f.automation.workflow(f.access,f.model,{name:'Protected chain',steps:[...f.steps,{name:'Rename',action:'RenameRoute',input:{route:{step:'Copy'},revision:{literal:1},name:{literal:'Must not be applied'}}}]});
+    class RevokeAfterFirstCommit extends Actions {
+      override async apply(...args:Parameters<Actions['apply']>){
+        const result=await super.apply(...args);
+        if(args[4].endsWith(':0'))await f.db.query(`INSERT INTO ${f.db.schema}.object_policies VALUES('Eigos','Route',$1)`,[objectPolicySchema.parse({read:{all:[{op:'equals',property:'id',value:'source'}]}})]);
+        return result;
+      }
+    }
+    const automation=new Automation(f.db,f.metadata,new RevokeAfterFirstCommit(f.db,f.capabilities.functions));
+    const run=await automation.run(f.access,f.model,{workflow:workflow.id,object:f.source,requestId:'protected-chain'});
+    await automation.runOne();
+    await automation.retry(await Access.load(f.db,principal),f.model,run.id);await automation.runOne();
+    const row=(await f.db.query(`SELECT state,step FROM ${f.db.schema}.workflow_runs WHERE id=$1`,[run.id])).rows[0]!;
+    assert.equal(row.state,'failed');assert.equal(row.step,1);
+    assert.equal((await f.db.query(`SELECT count(*)::int count FROM ${f.db.schema}.actions WHERE request_id=$1`,['workflow:'+run.id+':1'])).rows[0]!.count,0);
+    assert.equal((await new Objects(f.db,f.model,await Access.load(f.db,principal)).read(f.source)).properties.name,'original');
   }finally{await f.close();}
 });

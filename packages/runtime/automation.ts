@@ -13,6 +13,7 @@ const binding = z.union([
   z.strictObject({ literal: z.unknown() }),
   z.strictObject({ property: z.string().min(1).max(500) }),
   z.strictObject({ object: z.literal(true) }),
+  z.strictObject({ step: z.string().min(1).max(80) }),
 ]);
 const step = z.strictObject({
   name: z.string().min(1).max(80),
@@ -25,6 +26,22 @@ export const workflowSchema = z.strictObject({
   name: z.string().min(1).max(200),
   description: z.string().max(2000).default(''),
   steps: z.array(step).min(1).max(20),
+}).superRefine((workflow, context) => {
+  const previous = new Set<string>();
+  workflow.steps.forEach((item, index) => {
+    if (previous.has(item.name)) {
+      context.addIssue({ code: 'custom', message: 'Workflow step names must be unique', path: ['steps', index, 'name'] });
+    }
+    for (const [parameter, binding] of Object.entries(item.input)) {
+      if ('step' in binding && !previous.has(binding.step)) {
+        context.addIssue({
+          code: 'custom', message: 'Step bindings must reference a prior named step',
+          path: ['steps', index, 'input', parameter],
+        });
+      }
+    }
+    previous.add(item.name);
+  });
 });
 export const ruleSchema = z.strictObject({
   id: z.uuid().optional(),
@@ -423,6 +440,7 @@ export class Automation {
         const frozen = await this.db.transaction(async (client) => {
           await guard(client);
           await this.active(model, client);
+          await access.refresh(client);
           const prior = (
             await this.db.query(
               `SELECT * FROM ${this.db.schema}.workflow_steps WHERE run_id=$1 AND position=$2`,
@@ -431,14 +449,37 @@ export class Automation {
             )
           ).rows[0];
           if (prior) return prior;
-          const object = await new Objects(this.db, model, access, client).read(
-            objectRefSchema.parse(row.object_ref),
-          );
+          const graph = new Objects(this.db, model, access, client);
+          const object = await graph.read(objectRefSchema.parse(row.object_ref));
           this.authorize(access, model, [item]);
+          const previousResults = new Map<string, ObjectRef>();
+          for (const binding of Object.values(item.input)) {
+            if (!('step' in binding) || previousResults.has(binding.step)) continue;
+            const previousPosition = steps.findIndex(candidate => candidate.name === binding.step);
+            if (previousPosition < 0 || previousPosition >= position) {
+              throw new Conflict('Step binding must reference a prior step');
+            }
+            const receipt = (await this.db.query(
+              `SELECT s.action,s.input,s.result,s.request_id,a.digest,a.result AS committed_result FROM ${this.db.schema}.workflow_steps s
+               JOIN ${this.db.schema}.actions a ON a.owner=$3 AND a.request_id=s.request_id
+               WHERE s.run_id=$1 AND s.position=$2 AND s.result IS NOT NULL AND s.completed_at IS NOT NULL`,
+              [row.id, previousPosition, row.owner], client,
+            )).rows[0];
+            if (!receipt || receipt.digest !== digest({ release: model.release, action: receipt.action, input: receipt.input })) {
+              throw new Conflict('Prior workflow step has no committed result');
+            }
+            if (digest(receipt.result) !== digest(receipt.committed_result)) {
+              throw new Conflict('Prior workflow step result differs from its Action receipt');
+            }
+            const reference = objectRefSchema.parse(receipt.committed_result);
+            await graph.read(reference);
+            previousResults.set(binding.step, reference);
+          }
           const input = Object.fromEntries(
             Object.entries(item.input).map(([key, binding]) => {
               if ('literal' in binding) return [key, binding.literal];
               if ('object' in binding) return [key, object.ref];
+              if ('step' in binding) return [key, previousResults.get(binding.step)!];
               let value: unknown = object.properties;
               if (binding.property === '$revision') return [key, object.revision];
               for (const field of binding.property.split('.'))
@@ -488,8 +529,20 @@ export class Automation {
         } else {
           if (!(await access.canReturn(frozen.requirements as Requirement[])))
             throw new PermissionDenied('Workflow input permissions changed');
+          const boundResults = Object.entries(item.input)
+            .filter(([, binding]) => 'step' in binding)
+            .map(([parameter]) => objectRefSchema.parse(frozen.input[parameter]));
+          for (const reference of boundResults) await new Objects(this.db, model, access).read(reference);
+          let checkedResults = false;
           const commitGuard = async (client: Sql) => {
             await guard(client);
+            // Authorize before edits under the write lock; a valid Action may subsequently delete its input.
+            if (!checkedResults && boundResults.length) {
+              const graph = new Objects(this.db, model, access, client);
+              await graph.lockWrites();
+              for (const reference of boundResults) await graph.read(reference);
+              checkedResults = true;
+            }
             await this.db.query(
               `UPDATE ${this.db.schema}.workflow_steps SET requirements=$3 WHERE run_id=$1 AND position=$2`,
               [row.id, position, JSON.stringify(access.dataRequirements())],
