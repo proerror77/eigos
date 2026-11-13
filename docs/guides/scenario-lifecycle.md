@@ -20,6 +20,8 @@ Scenario 的对象和关系差量由已有 Query、Function、Action 运行层�
 
 `applyScenario` Action 规则声明允许合并的 Object Types 和 Link Types，以及 scenarioId 与 revision 的参数映射。运行时检查方案版本、所有修改的基线、当前权限、关系基数和允许的类型范围，再在 Action 事务内提交。
 
+正式数据并发新增互斥的单值关系时，方案查询显示拟议关系，正式查询继续显示正式关系。方案检查和工作台的关系差量表标出冲突，合并会拒绝提交，直至方案显式解决冲突或正式关系发生兼容变化。
+
 声明式 Action 还支持 `deleteObject`、`removeLink` 和 `editStruct`。删除与 Struct 编辑要求对象的当前 revision。Struct 编辑合并指定字段，并通过对象属性 Schema 重新校验整个值。关系删除检查已发布的端点类型和当前实例权限。
 
 ## 内部排程重规划

@@ -66,6 +66,103 @@ test('expired/discarded scenarios and external source Functions cannot write',as
  }finally{await f.close();}
 });
 
+test('a proposed single-valued Link shadows a competing live Link while inspection and merge still detect the conflict', async () => {
+  const f = await fixture();
+  try {
+    const live = new Objects(f.db, f.model, f.access), scenarios = new Scenarios(f.db);
+    const request = { type: 'RideRequest', id: 'conflicting-request' };
+    const unrelated = { type: 'RideRequest', id: 'unrelated-request' };
+    const candidate = { type: 'Route', id: 'proposed-route' };
+    const current = { type: 'Route', id: 'live-route' };
+    for (const route of [candidate, current]) await live.create(route, { id: route.id, name: route.id });
+    for (const ref of [request, unrelated]) {
+      await live.create(ref, { id: ref.id, name: ref.id, status: 'requested', requestedAt: new Date().toISOString() });
+    }
+    const scenario = await scenarios.create(f.access, f.model, { requestId: 'link-conflict', name: 'Alternate route' });
+    const view = await scenarios.view(f.access, f.model, scenario.id);
+    const proposed = new Objects(f.db, view, f.access);
+    const proposedLink = { type: 'RequestRoute', from: request, to: candidate };
+    const liveLink = { ...proposedLink, to: current };
+    await proposed.link(proposedLink);
+    await live.link(liveLink);
+    await live.link({ ...liveLink, from: unrelated });
+
+    assert.deepEqual((await proposed.follow(request, 'route')).map(item => item.ref), [candidate]);
+    const page = await proposed.query({ type: 'Route', from: { object: request, link: 'route' }, limit: 1 });
+    assert.deepEqual(page.items.map(item => item.ref), [candidate]);
+    assert.equal(page.cursor, undefined);
+    assert.deepEqual((await proposed.follow(current, 'requests')).map(item => item.ref), [unrelated]);
+    assert.deepEqual((await live.follow(request, 'route')).map(item => item.ref), [current]);
+
+    const diff = await scenarios.inspect(f.access, f.model, scenario.id);
+    assert.deepEqual(diff.links, [{ ...proposedLink, removed: false, conflict: true }]);
+    const merge = (revision: number) => f.db.transaction(client =>
+      scenarios.mergeInto(new Objects(f.db, f.model, f.access, client), scenario.id, revision, {
+        objects: [], links: ['RequestRoute'],
+      }),
+    );
+    await assert.rejects(merge(diff.revision), /cardinality/);
+    assert.deepEqual((await live.follow(request, 'route')).map(item => item.ref), [current]);
+
+    await proposed.unlink(liveLink);
+    const resolved = await scenarios.inspect(f.access, f.model, scenario.id);
+    assert(resolved.links.every(link => !link.conflict));
+    await merge(resolved.revision);
+    assert.deepEqual((await live.follow(request, 'route')).map(item => item.ref), [candidate]);
+    assert.deepEqual((await live.follow(current, 'requests')).map(item => item.ref), [unrelated]);
+  } finally { await f.close(); }
+});
+
+test('a proposed Link also shadows a competitor when only the reverse direction is single-valued', async () => {
+  const f = await fixture();
+  try {
+    const definition = structuredClone(f.model.document);
+    const link = definition.linkTypes.find(link => link.apiName === 'RequestRoute')!;
+    link.from.cardinality = 'many';
+    link.to.cardinality = 'one';
+    const model = await f.metadata.publish(definition, f.capabilities, f.publisher);
+    const live = new Objects(f.db, model, f.access), scenarios = new Scenarios(f.db);
+    const route = { type: 'Route', id: 'shared-destination' };
+    const candidate = { type: 'RideRequest', id: 'proposed-request' };
+    const current = { type: 'RideRequest', id: 'live-request' };
+    await live.create(route, { id: route.id, name: route.id });
+    for (const ref of [candidate, current]) {
+      await live.create(ref, { id: ref.id, name: ref.id, status: 'requested', requestedAt: new Date().toISOString() });
+    }
+    const scenario = await scenarios.create(f.access, model, { requestId: 'reverse-conflict', name: 'Alternate request' });
+    const view = new Objects(f.db, await scenarios.view(f.access, model, scenario.id), f.access);
+    await view.link({ type: link.apiName, from: candidate, to: route });
+    await live.link({ type: link.apiName, from: current, to: route });
+
+    assert.deepEqual((await view.follow(route, 'requests')).map(item => item.ref), [candidate]);
+    assert.deepEqual((await view.follow(current, 'route')).map(item => item.ref), []);
+    assert.deepEqual((await live.follow(route, 'requests')).map(item => item.ref), [current]);
+    assert.equal((await scenarios.inspect(f.access, model, scenario.id)).links[0]?.conflict, true);
+  } finally { await f.close(); }
+});
+
+test('an unchanged Scenario Link leaves a later live reassignment visible', async () => {
+  const f = await fixture();
+  try {
+    const live = new Objects(f.db, f.model, f.access), scenarios = new Scenarios(f.db);
+    const request = { type: 'RideRequest', id: 'unchanged-request' };
+    const original = { type: 'Route', id: 'original-route' };
+    const replacement = { type: 'Route', id: 'replacement-route' };
+    for (const ref of [original, replacement]) await live.create(ref, { id: ref.id, name: ref.id });
+    await live.create(request, { id: request.id, name: request.id, status: 'requested', requestedAt: new Date().toISOString() });
+    const edge = { type: 'RequestRoute', from: request, to: original };
+    await live.link(edge);
+    const scenario = await scenarios.create(f.access, f.model, { requestId: 'unchanged-link', name: 'Unchanged route' });
+    const view = new Objects(f.db, await scenarios.view(f.access, f.model, scenario.id), f.access);
+    await view.link(edge);
+    await live.unlink(edge);
+    await live.link({ ...edge, to: replacement });
+
+    assert.deepEqual((await view.follow(request, 'route')).map(item => item.ref), [replacement]);
+    assert.deepEqual((await scenarios.inspect(f.access, f.model, scenario.id)).links, []);
+  } finally { await f.close(); }
+});
+
 test('deleting an object cannot silently delete relationships added after the proposal',async()=>{
  const f=await fixture();try{
   const live=new Objects(f.db,f.model,f.access),s=new Scenarios(f.db);await live.create(ref,{id:ref.id,name:'route'});

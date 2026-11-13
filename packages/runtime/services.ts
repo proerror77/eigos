@@ -375,17 +375,17 @@ export function ontologyServices(
   );
   register(
     'semantic_search',
-    'Search authorized objects by meaning.',
-    semanticSearchSchema,
+    'Search authorized objects by meaning in the live Ontology or a Scenario.',
+    semanticSearchSchema.extend({ scenarioId: z.uuid().optional() }),
     false,
-    async (a, input) => semantic.search(a, await active(), input),
+    async (a, { scenarioId, ...input }) => semantic.search(a, await view(a, scenarioId), input),
   );
   register(
     'semantic_status',
-    'Read semantic index coverage and model binding.',
-    semanticStatusSchema,
+    'Read semantic index coverage and model binding in the live Ontology or a Scenario.',
+    semanticStatusSchema.extend({ scenarioId: z.uuid().optional() }),
     false,
-    async (a, input) => semantic.status(a, await active(), input.name),
+    async (a, { scenarioId, name }) => semantic.status(a, await view(a, scenarioId), name),
   );
   register(
     'export_package',
