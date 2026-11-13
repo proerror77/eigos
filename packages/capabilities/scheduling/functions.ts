@@ -76,6 +76,9 @@ export async function validate(objects: Reader, plan: ObjectRef, sourceTrip?:Obj
     }
   }
   if(objects.model.objects.has('EventTrip'))for(const trip of await objects.follow(plan,'trips')){
+    // Completed dispatch/cancellation is historical. Its remaining activities
+    // still participate in the resource and dependency checks above.
+    if(trip.properties.state==='dispatched'||trip.properties.state==='canceled')continue;
     // Execution rechecks the selected trip's external facts. Other reviewed
     // activities still participate in all resource/time conflict checks above.
     if(sourceTrip&&!same(trip.ref,sourceTrip))continue;

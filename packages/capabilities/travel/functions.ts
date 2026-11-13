@@ -833,5 +833,64 @@ export function travelFunctions(
         : null,
     };
   });
+  handlers.set('refreshEventRegistration', async (raw, context) => {
+    const { registration: ref } = registrationRef.parse(raw),
+      execution = context.execution;
+    if (!context.edit || !context.operationId || !execution || context.objects.model.scenario)
+      throw new Conflict('Refresh the original registration through a PA task');
+    const registration = await context.objects.read(ref),
+      p = registration.properties,
+      event = await one(context.objects, ref, 'event');
+    if (
+      ref.type !== 'EventRegistration' ||
+      typeof p.registrationId !== 'string' ||
+      typeof p.participantRef !== 'string' ||
+      ['proposed', 'authorized'].includes(String(p.state))
+    )
+      throw new Conflict('A submitted original registration identity is required');
+    const response = registrationReply.parse(
+      await new PARequests(execution.tasks).request(
+        execution.task,
+        context.operationId,
+        'luma.participant.status',
+        {
+          eventId: p.eventId,
+          registrationId: p.registrationId,
+          participantRef: p.participantRef,
+          ticketId: p.ticketId,
+          instruction:
+            'Read this exact existing participant registration independently. Do not register again, change guests, authorize payment or replace the original registration.',
+        },
+        json(registrationReply),
+      ),
+    );
+    if (!('registrationId' in response)) throw new Conflict(`Original registration status is ${response.status}`);
+    if (
+      response.eventId !== p.eventId ||
+      response.registrationId !== p.registrationId ||
+      response.participantRef !== p.participantRef ||
+      response.ticketId !== p.ticketId ||
+      ms(response.observedAt) > Date.now() + 5000 ||
+      ms(response.observedAt) < Date.now() - 300000
+    )
+      throw new Conflict('Original registration reply identity or freshness mismatch');
+    if (
+      event.properties.evidence === 'pa_reported' &&
+      event.properties.bindingId !== `pa-${digest([context.principal.owner, response.accountRef])}`
+    )
+      throw new Conflict('Registration status used a different Luma account');
+    return context.edit(ref, async (graph) => {
+      const current = await graph.read(ref);
+      if (current.revision !== registration.revision)
+        throw new Conflict('Registration changed during its status refresh');
+      await graph.edit(ref, current.revision, {
+        state: response.status,
+        observedAt: response.observedAt,
+        proofDigest: response.proofDigest,
+        evidence: 'pa_reported',
+        independentRead: true,
+      });
+    });
+  });
   return handlers;
 }

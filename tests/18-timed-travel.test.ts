@@ -190,6 +190,51 @@ test('an early check persists a continuation rather than calling a car early', a
     await p.f.close();
   }
 });
+
+test('terminal trips retain their activity constraints without requiring fresh historical source evidence', async () => {
+  for (const state of ['canceled', 'dispatched'] as const) {
+    const p = await prepare();
+    try {
+      if (state === 'canceled') await p.apply('CancelEventTrip', { trip: p.trip });
+      else {
+        p.provider.flags.start = new Date(Date.now() + p.f.provider.flags.durationSeconds * 1000).toISOString();
+        const execution = await wake(p);
+        await replyCalendar(p, execution.taskId);
+        await p.f.worker.runOne();
+        assert.equal((await p.f.tasks.get(principal, execution.taskId)).state, 'completed');
+      }
+      for (const link of ['event', 'travel']) {
+        const source = (await p.graph.follow(p.trip, link))[0]!;
+        await p.graph.edit(source.ref, source.revision, { expiresAt: new Date(Date.now() - 60000).toISOString() });
+      }
+      const calendar = await p.graph.read(p.p.availability);
+      const { status: _status, ...facts } = p.p.answer();
+      await p.graph.edit(calendar.ref, calendar.revision, facts);
+      const end = Date.parse(p.p.input.end),
+        args = {
+          plan: p.p.plan,
+          id: 'later',
+          name: 'Later activity',
+          start: new Date(end - 1800000).toISOString(),
+          end: new Date(end - 900000).toISOString(),
+        };
+      const added = await p.apply('SaveScheduleActivity', args, 'later-activity');
+      assert.equal((await p.graph.read(added)).properties.name, 'Later activity');
+      const occupied = (await p.graph.follow(p.trip, 'activities'))[0]!;
+      await assert.rejects(
+        p.apply(
+          'SaveScheduleActivity',
+          { ...args, id: 'conflict', start: occupied.properties.start, end: occupied.properties.end },
+          'conflicting-activity',
+        ),
+        /constraints/,
+      );
+      assert.equal((await p.graph.read(p.trip)).properties.state, state);
+    } finally {
+      await p.f.close();
+    }
+  }
+});
 test('lost order replies preserve the operation and never trigger an automatic second create', async () => {
   const p = await prepare();
   try {

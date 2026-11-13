@@ -102,6 +102,12 @@ const functions = [
     'Ask the original PA to execute or read back the authorized participant registration.',
   ],
   [
+    'refreshEventRegistration',
+    registrationRef,
+    'Read the original participant registration again, including pending approval or waitlist transitions. Never submit another registration.',
+    'Luma',
+  ],
+  [
     'refreshDidiRideOrder',
     tripRef,
     'Independently read the original provider order; no unscoped account-order query.',

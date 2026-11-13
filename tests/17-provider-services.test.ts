@@ -7,6 +7,8 @@ import { PARequests } from '../packages/runtime/pa.js';
 import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
 import type { AgentDriver, AgentTool } from '../packages/runtime/agent.js';
 import { digest } from '../packages/core/identity.js';
+import { OntologyAgent } from '../packages/runtime/agent.js';
+import { Worker } from '../apps/worker/worker.js';
 
 test('provider observations project typed Interfaces and keep partial pages, unknown inventory and provenance', async () => {
   const provider = serviceProvider(),
@@ -205,5 +207,84 @@ test('Grok PA Luma reads resume the original task and retain PA-reported evidenc
     assert.equal((await f.db.query(`SELECT count(*)::int AS n FROM ${f.db.schema}.pa_requests`)).rows[0]!.n, 1);
   } finally {
     await f.close();
+  }
+});
+
+test('pending and waitlisted registrations refresh the original identity without another booking', async () => {
+  for (const state of ['pending_approval', 'waitlisted']) {
+    const provider = serviceProvider(),
+      f = await fixture(undefined, provider.resolve);
+    let worker: Worker | undefined;
+    try {
+      const graph = new Objects(f.db, f.model, f.access),
+        search = await f.capabilities.actions.apply(f.access, f.model, 'SearchLumaEvents', {}, 'event');
+      const event = (await graph.follow(search, 'results', 'ServiceSearchResult'))[0]!,
+        registration = { type: 'EventRegistration', id: 'original-registration' };
+      await graph.create(registration, {
+        id: registration.id,
+        name: 'Existing synthetic registration',
+        eventId: 'evt-fixture',
+        ticketId: 'free-ticket',
+        state,
+        expiresAt: new Date(Date.now() - 60000).toISOString(),
+        scheduleId: null,
+        sourceTaskId: null,
+        registrationId: 'original-provider-registration',
+        participantRef: 'original-participant',
+        evidence: 'pa_reported',
+        observedAt: new Date(Date.now() - 3600000).toISOString(),
+        proofDigest: digest('prior'),
+        independentRead: true,
+      });
+      await graph.link({ type: 'RegistrationEvent', from: registration, to: event.ref });
+      const driver: AgentDriver = {
+        model: 'synthetic-status-refresh',
+        async run(_prompt, tools) {
+          const result = (await tools
+            .get('apply_action')!
+            .invoke({ action: 'RefreshEventRegistration', input: { registration } })) as { id?: string };
+          if (result?.id)
+            await tools
+              .get('complete_with_function')!
+              .invoke({ function: 'readEventRegistration', input: { registration } });
+        },
+      };
+      worker = new Worker(f.tasks, new OntologyAgent(f.db, f.metadata, f.tasks, f.capabilities, driver));
+      const task = await f.tasks.submit(principal, {
+        requestId: 'refresh-original',
+        message: 'Refresh this existing participant registration only',
+      });
+      await worker.runOne();
+      const waiting = await f.tasks.get(principal, task.id),
+        request = waiting.result as { requestId: string; capability: string };
+      assert.equal(waiting.state, 'input-required');
+      assert.equal(request.capability, 'luma.participant.status');
+      await new PARequests(f.tasks).respond(principal, task.id, {
+        requestId: request.requestId,
+        response: {
+          status: 'confirmed',
+          eventId: 'evt-fixture',
+          ticketId: 'free-ticket',
+          registrationId: 'original-provider-registration',
+          participantRef: 'original-participant',
+          accountRef: 'synthetic-account',
+          amountMinor: '0',
+          independentRead: true,
+          observedAt: new Date().toISOString(),
+          proofDigest: digest('fresh-status'),
+        },
+      });
+      await worker.runOne();
+      assert.equal((await f.tasks.get(principal, task.id)).state, 'completed');
+      const current = await graph.read(registration);
+      assert.equal(current.properties.state, 'confirmed');
+      assert.equal(current.properties.registrationId, 'original-provider-registration');
+      assert.equal((await graph.query({ type: 'EventRegistration' })).items.length, 1);
+      assert.equal((await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.scheduled_actions`)).rows[0]!.n, 0);
+      assert.equal(f.provider.flags.orderCreates, 0);
+    } finally {
+      worker?.stop();
+      await f.close();
+    }
   }
 });
