@@ -91,3 +91,18 @@ test('migration excludes derived values, maps primary keys and refuses lifecycle
     await assert.rejects(f.migrations.copy(f.access,{...f.input,requestId:'lifecycle',types:{OntologyScenario:'ImportedItem'},links:{}}),/lifecycle objects/);
   }finally{await f.close();}
 });
+
+test('independent copied objects retain their own markings without inheriting unrelated batch markings',async()=>{
+  const f=await setup();try{
+    const sourceBody=structuredClone(f.source.document),targetBody=structuredClone(f.target.document);
+    for(const body of [sourceBody,targetBody])for(const type of body.objectTypes)type.properties.marks={description:'Security markings',schema:{type:'array',items:{type:'string'}},required:false};
+    const source=await f.metadata.publish(sourceBody,bindings,f.publisher),target=await f.metadata.publish(targetBody,bindings,f.publisher);
+    for(const [ontology,type] of [['Eigos','Item'],['Eigos','Group'],['Consumer','ImportedItem'],['Consumer','ImportedGroup']])await f.db.query(`INSERT INTO ${f.db.schema}.object_policies(ontology,type,policy) VALUES($1,$2,$3)`,[ontology,type,{properties:{},markingsProperty:'marks'}]);
+    for(const name of ['alpha','beta'])await f.db.query(`INSERT INTO ${f.db.schema}.security_memberships(subject,kind,name) VALUES($1,'marking',$2)`,[principal.owner,name]);
+    for(const [type,id,mark] of [['Item','a','alpha'],['Group','g','beta']] as const)await new Objects(f.db,source,await Access.load(f.db,principal)).edit({type,id},1,{marks:[mark]});
+    await f.migrations.copy(await Access.load(f.db,principal),f.input);
+    const graph=new Objects(f.db,target,await Access.load(f.db,principal));
+    assert.deepEqual((await graph.read({type:'ImportedItem',id:'a'})).properties.marks,['alpha']);
+    assert.deepEqual((await graph.read({type:'ImportedGroup',id:'g'})).properties.marks,['beta']);
+  }finally{await f.close();}
+});

@@ -112,7 +112,14 @@ export class OntologyDataMigrations {
         return {original:{type:String(row.type),from,to},target:{type:input.links[row.type]!,from:{...from,type:input.types[from.type]!},to:{...to,type:input.types[to.type]!}}};
       });
       const destination=graphs.get(input.targetOntology)!;
-      for(const item of prepared)await destination.create(item.ref,item.properties);
+      for(const item of prepared) {
+        // Each copied object depends on its own source values. Preserve that object's markings
+        // without combining unrelated classifications from other rows in the same atomic batch.
+        const objectAccess=await Access.load(this.db,access.principal,client);
+        objectAccess.readRow(source,item.source.type,item.source.properties);
+        await new Objects(this.db,target,objectAccess,client).create(item.ref,item.properties);
+        if(!await objectAccess.canReturn(objectAccess.dataRequirements(),client))throw new Error('Copied object permissions changed');
+      }
       await destination.linkBatch(edges.map(edge=>edge.target));
       const id=randomUUID();
       const receipt=(await this.db.query(`INSERT INTO ${this.db.schema}.ontology_data_migrations(id,owner,request_id,input_digest,input,source_ontology,target_ontology,source_release,target_release,object_count,link_count)
