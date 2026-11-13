@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { digest } from '../../core/delegation.js';
+import { digest } from '../../core/identity.js';
 import { didiDataSchema, type DidiData, type DidiTool } from './contracts.js';
 
 /** Only a literal decimal amount is exact enough to convert to minor units.

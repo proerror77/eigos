@@ -1,2 +1,0 @@
-export const FUNCTION_CONTRACT_CLOSEOUT_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '35', digest: '9f1329453e3350de67c26d8988340e3a82632cb8b6b756ee2f8a43ae3c58ca43' });
-export const FUNCTION_CONTRACT_CLOSEOUT_DOCUMENT_DIGEST = '8a685943899fb722e1c37e0a5453c16f27cf7025e7315bb5edde25ad7c349551';

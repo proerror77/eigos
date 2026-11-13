@@ -1,308 +1,42 @@
-import {ownerIdentitySchema} from '../security/contracts.js';
-import { isAbsolute, resolve } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { isAbsolute } from 'node:path';
 import { z } from 'zod';
-import { publicGeoQuerySchema } from '../capabilities/paotui-contracts.js';
-import { shopifyMerchantsSchema } from '../capabilities/shopify/contracts.js';
-import { readRuntimeAuthority, type RuntimeAuthority } from './runtime-authority.js';
-import { readDidiMemberConnection, didiSourceOwner } from './didi-source.js';
+import { DidiMcpConnector } from '../capabilities/didi/connector.js';
+import { didiBindingSchema } from '../capabilities/didi/contracts.js';
+import type { SourceResolver } from '../capabilities/didi/functions.js';
+import { digest } from './identity.js';
 
-const merchantList = (name: string) => z.string().max(16384).transform((value, ctx) => {
-  try { return shopifyMerchantsSchema.parse(JSON.parse(value)); }
-  catch { ctx.addIssue({ code: 'custom', message: `${name} must be a JSON array of at most 8 strict, unique merchant identities` }); return z.NEVER; }
-});
-
-const publicGeoQueries = z.string().max(16384).transform((value, ctx) => {
-  let input: unknown;
-  try { input = JSON.parse(value); }
-  catch {
-    ctx.addIssue({ code: 'custom', message: 'EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES must contain a valid JSON array' });
-    return z.NEVER;
-  }
-  const parsed = z.array(publicGeoQuerySchema).max(16).safeParse(input);
-  if (!parsed.success) {
-    ctx.addIssue({ code: 'custom', message: 'EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES must contain at most 16 strict public city/keyword queries' });
-    return z.NEVER;
-  }
-  return parsed.data;
-});
-
-const networkMembers = z.string().max(4096).default('[]').transform((value, ctx) => {
-  try { return z.array(z.uuid()).max(50).refine(ids => new Set(ids).size === ids.length).parse(JSON.parse(value)); }
-  catch { ctx.addIssue({ code: 'custom', message: 'EIGOS_NETWORK_MEMBER_IDS must be a unique JSON array of at most 50 member UUIDs' }); return z.NEVER; }
-});
-
-const schema = z.object({
-  EIGOS_INVITE_BETA: z.enum(['false', 'true']).default('false'),
-  EIGOS_NETWORK_ENABLED: z.enum(['false', 'true']).default('false'),
-  EIGOS_NETWORK_MEMBER_IDS: networkMembers,
-  EIGOS_NETWORK_OPERATOR_MEMBER_IDS: networkMembers,
-  EIGOS_NETWORK_MAX_RESPONDERS: z.coerce.number().int().min(1).max(10).default(3),
-  EIGOS_NETWORK_MAX_CLARIFICATION_ROUNDS: z.coerce.number().int().min(1).max(10).default(2),
-  EIGOS_RELEASE_DIGEST: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  EIGOS_AUTHORITY_FILE: z.string().optional(),
-  EIGOS_STORAGE_BACKEND: z.enum(['sqlite','postgres']).default('sqlite'),
-  EIGOS_POSTGRES_BINDING_FILE: z.string().optional(),
-  EIGOS_SEMANTIC_MODEL_DIR: z.string().refine(isAbsolute).optional(),
-  EIGOS_SEMANTIC_SCHEMA: z.string().regex(/^eigos_semantic(?:_[a-z0-9]{1,32})?$/).optional(),
-  EIGOS_SEMANTIC_READER_USER: z.string().regex(/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,199}$/).optional(),
-  EIGOS_POSTGRES_VECTOR_FEATURE_FILE: z.string().optional(),
-  EIGOS_TASK_RELAY_FILE: z.string().optional(),
-  EIGOS_DIDI_RELAY_AGENT_ID: z.string().regex(/^agent_[A-Za-z0-9_-]{43}$/).optional(),
-  EIGOS_COORDINATOR: z.literal('codex').default('codex'),
-  EIGOS_CSV_INPUT_DIR: z.string().optional(),
-  EIGOS_CSV_PILOT: z.enum(['false', 'true']).optional(),
-  EIGOS_PAOTUI_ORDERS_ENABLED: z.literal('false').default('false'),
-  EIGOS_PAOTUI_SKILL_DIR: z.string().optional(),
-  EIGOS_PAOTUI_MEMBER_CONNECTION_FILE: z.string().optional(),
-  EIGOS_MEMBER_SOURCE_KEY_FILE: z.string().optional(),
-  EIGOS_MEMBER_SOURCE_TAILNET_ORIGIN: z.url().optional(),
-  EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES: publicGeoQueries.optional(),
-  EIGOS_SHOPIFY_CATALOG_MERCHANTS: merchantList('EIGOS_SHOPIFY_CATALOG_MERCHANTS').optional(),
-  EIGOS_SHOPIFY_AUDIT_DIR: z.string().optional(),
-  EIGOS_ALIPAY_CONNECTION_FILE: z.string().optional(),
-  EIGOS_WECHATPAY_CONNECTION_FILE: z.string().optional(),
-  EIGOS_UNIONPAY_CONNECTION_FILE: z.string().optional(),
-  EIGOS_TAOBAO_CONNECTION_FILE: z.string().optional(),
-  EIGOS_ROLLINGGO_KEY_FILE: z.string().optional(),
-  EIGOS_ROLLINGGO_KEY_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  EIGOS_DIDI_KEY_FILE: z.string().optional(),
-  EIGOS_DIDI_MEMBER_CONNECTION_FILE: z.string().optional(),
-  EIGOS_DIDI_KEY_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  EIGOS_DIDI_BINDING_ID: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/).optional(),
-  EIGOS_DIDI_ENVIRONMENT: z.enum(['production', 'mock']).default('production'),
-  EIGOS_DIDI_AUDIT_DIR: z.string().optional(),
-  EIGOS_DIDI_ORDERS_ENABLED: z.enum(['false', 'mock']).default('false'),
-  EIGOS_SHOPIFY_CHECKOUT_MERCHANTS: merchantList('EIGOS_SHOPIFY_CHECKOUT_MERCHANTS').optional(),
-  EIGOS_SHOPIFY_CHECKOUT_AUDIT_DIR: z.string().optional(),
-  EIGOS_DIDI_ORDER_TEST_ENABLED: z.enum(['true', 'false']).optional(),
-  EIGOS_ONTOLOGY_AUDIT_PATH: z.string().optional(),
-  EIGOS_ACTION_SANDBOX: z.enum(['false', 'true']).default('false'),
-  EIGOS_SANDBOX_PROVIDER_URL: z.url().optional(),
-  EIGOS_SANDBOX_TOKEN_FILE: z.string().optional(),
-  EIGOS_COMMERCE_SANDBOX_URL: z.url().optional(),
-  EIGOS_COMMERCE_SANDBOX_TOKEN_FILE: z.string().optional(),
-  EIGOS_COMMERCE_SANDBOX_AUDIT_DIR: z.string().optional(),
-  EIGOS_FREE_BOOKING_BRIDGE_URL: z.url().optional(),
-  EIGOS_FREE_BOOKING_TOKEN_FILE: z.string().optional(),
-  EIGOS_FREE_BOOKING_BINDING_ID: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/).optional(),
-  EIGOS_FREE_BOOKING_ATTENDEE_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL: z.url().optional(),
-  EIGOS_SHOPIFY_PAYMENT_SANDBOX_TOKEN_FILE: z.string().optional(),
-  EIGOS_BOOKING_SANDBOX_URL: z.url().optional(),
-  EIGOS_BOOKING_SANDBOX_TOKEN_FILE: z.string().optional(),
-  EIGOS_STRIPE_TEST_ENABLED: z.enum(['false', 'true']).default('false'),
-  EIGOS_STRIPE_TEST_SECRET_KEY_FILE: z.string().optional(),
-  EIGOS_STRIPE_TEST_ACCOUNT_ID: z.string().regex(/^acct_[A-Za-z0-9]{1,100}$/).optional(),
-  EIGOS_STRIPE_TEST_MERCHANT_ID: z.string().trim().min(1).max(200).optional(),
-  // Connection reservation only: no credentials, MCP client or executable capability.
-  EIGOS_STRIPE_TREASURY_ENABLED: z.literal('false', { error: 'Stripe Treasury is reserved and disabled; account authorization and execution are not implemented' }).default('false'),
-  EIGOS_STRIPE_TREASURY_MCP_URL: z.literal('https://mcp.stripe.com', { error: 'Stripe Treasury reservation requires the official MCP endpoint' }).default('https://mcp.stripe.com'),
-  EIGOS_TASK_MAX_MS: z.coerce.number().int().min(1000).max(604800000).optional(),
-  HOST: z.string().default('127.0.0.1'),
-  PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+export const configSchema = z.object({
+  DATABASE_URL: z.string().min(1), EIGOS_PG_SCHEMA: z.string().default('eigos'),
+  HOST: z.string().default('127.0.0.1'), PORT: z.coerce.number().int().default(3000),
   PUBLIC_URL: z.url().default('http://127.0.0.1:3000'),
-  DATABASE_PATH: z.string().default('./data/eigos.sqlite'),
-  EIGOS_AUTH_MODE: z.enum(['jwt', 'development']).default('jwt'),
-  EIGOS_SECURITY_MODE: z.enum(['legacy', 'foundation']).default('legacy'),
-  EIGOS_PERSONAL_SOURCE_OWNER: ownerIdentitySchema.optional(),
-  EIGOS_DEV_TOKEN: z.string().optional(),
-  OAUTH_ISSUER: z.url().optional(),
-  OAUTH_JWKS_URL: z.url().optional(),
-  OAUTH_AUDIENCE: z.url().optional(),
-  OAUTH_LEGACY_AUDIENCE: z.url().optional(),
-  OAUTH_TENANT_CLAIM: z.string().trim().min(1).max(400).optional(),
-  OIDC_CLIENT_ID: z.string().min(1).optional(),
-  OIDC_CLIENT_SECRET: z.string().min(1).optional(),
-  OIDC_AGENT_CLIENT_ID: z.string().min(1).optional(),
-  OIDC_MCP_CLIENT_ID: z.string().min(1).optional(),
-  MEMBERSHIP_DATABASE_PATH: z.string().optional(),
-  EIGOS_MEMBERSHIP_APPROVAL: z.enum(['self-service', 'manual', 'invite-only']).default('self-service'),
-  ALLOWED_ORIGINS: z.string().default(''),
-  EIGOS_EXECUTOR: z.enum(['disabled', 'codex', 'harness']).default('disabled'),
-  EIGOS_HARNESS_BIN: z.string().min(1).optional(),
-  EIGOS_HARNESS_CREDENTIAL_FILE: z.string().min(1).optional(),
-  EIGOS_HARNESS_CREDENTIAL_KIND: z.enum(['codex-oauth', 'api-key']).optional(),
-  EIGOS_HARNESS_MODEL: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/).optional(),
-  EIGOS_HARNESS_REASONING_EFFORT: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
-  EIGOS_HARNESS_MAX_TOKENS: z.coerce.number().int().min(128).max(32768).optional(),
-  EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS: z.coerce.number().int().min(1000).max(90000).default(45000),
-  EIGOS_MESSAGING_ENABLED: z.enum(['false', 'true']).default('false'),
-  EIGOS_MESSAGING_NODE_DIR: z.string().optional(),
-  EIGOS_CODEX_BIN: z.string().default('codex'),
-  EIGOS_CODEX_MODEL: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/).default('gpt-6-luna'),
-  EIGOS_CODEX_REASONING_EFFORT: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('medium'),
-  EIGOS_CODEX_SERVICE_TIER: z.enum(['priority', 'default']).default('priority'),
-  EIGOS_EXECUTOR_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300000).default(120000),
-  EIGOS_AUDIT_PATH: z.string().optional(),
+  EIGOS_AUTH_MODE: z.enum(['jwt', 'development']).default('jwt'), EIGOS_DEV_TOKEN: z.string().min(32).optional(),
+  OAUTH_ISSUER: z.url().optional(), OAUTH_AUDIENCE: z.string().optional(), OAUTH_JWKS_URL: z.url().optional(),
+  EIGOS_DIDI_CONNECTION_FILE: z.string().optional(),
 });
-// Older in-process SQLite callers may omit the backend and Harness boot bound.
-// Parsed host configuration supplies both defaults; the executor also retains
-// its bounded boot default for callers constructing their existing Config.
-export type Config = Omit<z.infer<typeof schema>,'EIGOS_STORAGE_BACKEND'|'EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS'> & { EIGOS_STORAGE_BACKEND?:'sqlite'|'postgres'; EIGOS_HARNESS_INITIALIZE_TIMEOUT_MS?:number; authority?: RuntimeAuthority };
-
-export function allowsBoundPersonalSource(config: Config, nodeEnv: string | undefined): boolean {
-  return config.EIGOS_SECURITY_MODE === 'foundation' && config.EIGOS_AUTH_MODE === 'jwt'
-    && ownerIdentitySchema.safeParse(config.EIGOS_PERSONAL_SOURCE_OWNER).success
-    && ['127.0.0.1', 'localhost', '::1'].includes(config.HOST)
-    && new URL(config.PUBLIC_URL).protocol === 'https:' && (nodeEnv !== 'production' || !!config.authority);
+export type Config = z.infer<typeof configSchema>;
+export function readConfig(env = process.env): Config {
+  const config = configSchema.parse(env);
+  if (config.EIGOS_AUTH_MODE === 'development') {
+    if (!config.EIGOS_DEV_TOKEN || env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost'].includes(config.HOST)) throw new Error('Development authentication requires an explicit loopback token');
+  } else if (!config.OAUTH_ISSUER || !config.OAUTH_AUDIENCE || !config.OAUTH_JWKS_URL) throw new Error('Configure JWT issuer, audience and verification keys');
+  return config;
 }
-
-function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config {
-  const parsed = schema.parse(env);
-  const c: Config = parsed.EIGOS_AUTHORITY_FILE ? { ...parsed, authority: readRuntimeAuthority(parsed.EIGOS_AUTHORITY_FILE) } : parsed;
-  if(c.EIGOS_STORAGE_BACKEND==='postgres'&&(!c.EIGOS_POSTGRES_BINDING_FILE||!isAbsolute(c.EIGOS_POSTGRES_BINDING_FILE)||!c.authority||c.EIGOS_AUTH_MODE!=='jwt'||c.EIGOS_SECURITY_MODE!=='foundation'))throw new Error('PostgreSQL startup requires an absolute private binding and the existing foundation JWT authority');
-  if(c.EIGOS_SEMANTIC_MODEL_DIR&&c.EIGOS_STORAGE_BACKEND!=='postgres')throw new Error('Semantic discovery requires PostgreSQL backend selection');
-  if(c.EIGOS_STORAGE_BACKEND==='sqlite'&&c.EIGOS_POSTGRES_BINDING_FILE)throw new Error('A PostgreSQL binding requires explicit PostgreSQL backend selection');
-  if(c.EIGOS_POSTGRES_VECTOR_FEATURE_FILE&&(c.EIGOS_STORAGE_BACKEND!=='postgres'||!isAbsolute(c.EIGOS_POSTGRES_VECTOR_FEATURE_FILE)))throw new Error('Task vectors require PostgreSQL and an absolute private reviewed feature manifest');
-  if (role === 'worker' && c.EIGOS_EXECUTOR === 'harness' && (!c.EIGOS_HARNESS_CREDENTIAL_FILE || !isAbsolute(c.EIGOS_HARNESS_CREDENTIAL_FILE)))
-    throw new Error('Harness Worker requires an absolute private credential file');
-  if (c.EIGOS_TASK_RELAY_FILE && (!c.authority || !isAbsolute(c.EIGOS_TASK_RELAY_FILE))) throw new Error('Task Relay requires the existing primary authority and an absolute private configuration file');
-  if (c.EIGOS_MESSAGING_ENABLED === 'true' && (!c.authority || !c.EIGOS_TASK_RELAY_FILE || c.EIGOS_STORAGE_BACKEND!=='postgres'&&(!c.EIGOS_MESSAGING_NODE_DIR||!isAbsolute(c.EIGOS_MESSAGING_NODE_DIR)) || c.EIGOS_MESSAGING_NODE_DIR&&!isAbsolute(c.EIGOS_MESSAGING_NODE_DIR)))
-    throw new Error(c.EIGOS_STORAGE_BACKEND==='postgres'?'Messaging requires the existing primary Relay and reviewed PostgreSQL node migration binding':'Messaging requires the existing primary Relay and an absolute private node directory');
-  if (c.EIGOS_DIDI_RELAY_AGENT_ID && (!c.EIGOS_TASK_RELAY_FILE || !c.authority || c.EIGOS_DIDI_ENVIRONMENT !== 'production')) throw new Error('Relay source reads require the primary task relay and production read-only DiDi configuration');
-  if (c.authority) {
-    const primary = c.authority.ingresses.find(value => value.origin === c.authority!.canonicalOrigin)!;
-    if (c.EIGOS_SECURITY_MODE !== 'foundation' || c.EIGOS_AUTH_MODE !== 'jwt' || c.HOST !== '127.0.0.1'
-      || c.PUBLIC_URL !== c.authority.canonicalOrigin || resolve(c.DATABASE_PATH) !== resolve(c.authority.databasePath)
-      || role === 'gateway' && (c.OAUTH_ISSUER !== c.authority.issuer || c.OAUTH_AUDIENCE !== primary.audience
-        || (c.OAUTH_TENANT_CLAIM ?? 'tenant_id') !== primary.tenantClaim
-        || c.OIDC_AGENT_CLIENT_ID !== primary.agentClientId || !c.MEMBERSHIP_DATABASE_PATH || resolve(c.MEMBERSHIP_DATABASE_PATH) !== resolve(c.authority.membershipDatabasePath))
-      || c.MEMBERSHIP_DATABASE_PATH && resolve(c.MEMBERSHIP_DATABASE_PATH) !== resolve(c.authority.membershipDatabasePath)
-      || c.EIGOS_INVITE_BETA === 'true' || c.EIGOS_DEV_TOKEN || c.EIGOS_NETWORK_ENABLED === 'true')
-      throw new Error('Primary runtime requires its exact shared authority, foundation JWT and canonical ingress; admission is configured separately');
-  }
-  if (role === 'gateway' && c.EIGOS_SECURITY_MODE === 'foundation' && (c.EIGOS_AUTH_MODE !== 'jwt' || !c.OIDC_AGENT_CLIENT_ID)) throw new Error('Security foundation requires JWT and an explicit registered Agent client');
-  if (role === 'gateway' && c.EIGOS_SECURITY_MODE === 'foundation' && c.DATABASE_PATH === ':memory:') throw new Error('Security foundation requires a persistent task database');
-  if (c.EIGOS_CSV_PILOT === 'true' && (env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(c.PUBLIC_URL).hostname))) throw new Error('CSV simulation requires non-production loopback');
-  if (c.EIGOS_CSV_INPUT_DIR && (c.EIGOS_CSV_PILOT !== 'true' || c.EIGOS_AUTH_MODE !== 'development' || !isAbsolute(c.EIGOS_CSV_INPUT_DIR))) throw new Error('Local CSV import requires an absolute directory and loopback development pilot');
-  if (c.EIGOS_NETWORK_OPERATOR_MEMBER_IDS.some(id => !c.EIGOS_NETWORK_MEMBER_IDS.includes(id))) throw new Error('Network operators must be explicitly enrolled members');
-  const publicUrl = new URL(c.PUBLIC_URL);
-  const memberSource = allowsBoundPersonalSource(c, env.NODE_ENV);
-  if(c.EIGOS_PERSONAL_SOURCE_OWNER && !memberSource)throw new Error('Personal source owner requires isolated foundation JWT with a loopback listener and HTTPS origin');
-  if (c.EIGOS_DIDI_MEMBER_CONNECTION_FILE && (!isAbsolute(c.EIGOS_DIDI_MEMBER_CONNECTION_FILE) || !c.authority && c.EIGOS_INVITE_BETA !== 'true'
-    || c.EIGOS_AUTH_MODE !== 'jwt' || publicUrl.protocol !== 'https:' || c.HOST !== '127.0.0.1'
-    || !isAbsolute(c.DATABASE_PATH) || !c.MEMBERSHIP_DATABASE_PATH || !isAbsolute(c.MEMBERSHIP_DATABASE_PATH)
-    || !c.authority && (c.EIGOS_DIDI_KEY_FILE || c.EIGOS_DIDI_KEY_SHA256 || c.EIGOS_DIDI_BINDING_ID || c.EIGOS_DIDI_AUDIT_DIR || c.EIGOS_DIDI_ORDER_TEST_ENABLED === 'true')
-    || c.EIGOS_DIDI_ENVIRONMENT !== 'production' || c.EIGOS_DIDI_ORDERS_ENABLED !== 'false')) throw new Error('Member DiDi requires an explicit private connection in HTTPS/JWT, persistent stores and estimate-only production access');
-  if (c.authority && c.EIGOS_DIDI_MEMBER_CONNECTION_FILE) {
-    const connection = readDidiMemberConnection(c.EIGOS_DIDI_MEMBER_CONNECTION_FILE);
-    if (!c.EIGOS_PERSONAL_SOURCE_OWNER || didiSourceOwner(connection) !== c.EIGOS_PERSONAL_SOURCE_OWNER
-      || !c.EIGOS_DIDI_KEY_FILE || resolve(connection.binding.keyFile) !== resolve(c.EIGOS_DIDI_KEY_FILE)
-      || connection.binding.keySha256 !== c.EIGOS_DIDI_KEY_SHA256 || connection.binding.environment !== c.EIGOS_DIDI_ENVIRONMENT)
-      throw new Error('Primary DiDi routes require one verified owner and the exact same pinned credential; ambiguous accounts are refused');
-  }
-  if (c.EIGOS_DIDI_ORDERS_ENABLED === 'mock' && (!c.EIGOS_DIDI_KEY_FILE || c.EIGOS_DIDI_ENVIRONMENT !== 'mock' || !c.EIGOS_DIDI_AUDIT_DIR || c.EIGOS_ACTION_SANDBOX !== 'true')) throw new Error('DiDi orders require explicit official mock configuration, durable audit and sandbox action authorization');
-  if (!!c.EIGOS_ROLLINGGO_KEY_FILE !== !!c.EIGOS_ROLLINGGO_KEY_SHA256 || c.EIGOS_ROLLINGGO_KEY_FILE && (!isAbsolute(c.EIGOS_ROLLINGGO_KEY_FILE) || !c.EIGOS_PERSONAL_SOURCE_OWNER)) throw new Error('RollingGo requires an absolute private key file, pinned fingerprint and explicit source owner');
-  if (!!c.EIGOS_DIDI_KEY_FILE !== !!c.EIGOS_DIDI_BINDING_ID) throw new Error('DiDi requires a private key file and an explicit account binding ID');
-  if (!!c.EIGOS_DIDI_KEY_FILE !== !!c.EIGOS_DIDI_KEY_SHA256) throw new Error('DiDi requires a pinned credential fingerprint; rotate with a new binding');
-  if (c.EIGOS_DIDI_KEY_FILE && (!isAbsolute(c.EIGOS_DIDI_KEY_FILE) || !memberSource && (c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(publicUrl.hostname)))) throw new Error('Personal DiDi is restricted to explicitly configured non-production loopback development');
-  if (c.EIGOS_DIDI_ORDER_TEST_ENABLED === 'true' && (!c.EIGOS_DIDI_KEY_FILE || c.EIGOS_DIDI_ENVIRONMENT !== 'production')) throw new Error('Order testing requires the existing production read-only map binding; order writes remain Mock only');
-  if (c.EIGOS_DIDI_AUDIT_DIR && (!c.EIGOS_DIDI_KEY_FILE || !isAbsolute(c.EIGOS_DIDI_AUDIT_DIR))) throw new Error('DiDi audit requires an enabled binding and an absolute private directory');
-  if (c.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length && (!memberSource && (c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(publicUrl.hostname)))) throw new Error('Shopify anonymous catalog requires explicitly configured local development');
-  if (c.EIGOS_SHOPIFY_AUDIT_DIR && (!c.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length || !isAbsolute(c.EIGOS_SHOPIFY_AUDIT_DIR))) throw new Error('Shopify audit requires enabled catalog and an absolute private directory');
-  if (c.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length && (c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production' || c.EIGOS_INVITE_BETA === 'true'
-    || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(publicUrl.hostname)
-    || !isAbsolute(c.DATABASE_PATH) || !c.EIGOS_SHOPIFY_CHECKOUT_AUDIT_DIR || !isAbsolute(c.EIGOS_SHOPIFY_CHECKOUT_AUDIT_DIR))) throw new Error('Unpaid Shopify checkout requires explicit private loopback development, a persistent absolute database and private source audit directory');
-  if (c.EIGOS_SHOPIFY_CHECKOUT_AUDIT_DIR && (!c.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length || !isAbsolute(c.EIGOS_SHOPIFY_CHECKOUT_AUDIT_DIR))) throw new Error('Shopify checkout audit requires enabled private checkout preparation');
-  if (publicUrl.pathname !== '/' || publicUrl.search || publicUrl.hash || publicUrl.username || publicUrl.password) {
-    throw new Error('PUBLIC_URL must be an origin without a path, credentials, query or fragment');
-  }
-  c.PUBLIC_URL = publicUrl.origin;
-  if (c.EIGOS_INVITE_BETA === 'true') {
-    if (c.EIGOS_AUTH_MODE !== 'jwt' || publicUrl.protocol !== 'https:' || c.OAUTH_AUDIENCE !== publicUrl.href
-      || c.EIGOS_MEMBERSHIP_APPROVAL !== 'invite-only' || !c.OIDC_CLIENT_ID || !c.OIDC_AGENT_CLIENT_ID || !c.OIDC_MCP_CLIENT_ID
-      || !isAbsolute(c.DATABASE_PATH) || !c.MEMBERSHIP_DATABASE_PATH || !isAbsolute(c.MEMBERSHIP_DATABASE_PATH)
-      || c.EIGOS_EXECUTOR === 'disabled') throw new Error('Invite beta requires HTTPS/JWT, its exact audience, invite-only membership, registered clients, persistent absolute database paths and the document executor');
-    if (c.EIGOS_DEV_TOKEN || c.EIGOS_NETWORK_ENABLED === 'true' || c.EIGOS_PAOTUI_SKILL_DIR || c.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE
-      || c.EIGOS_MEMBER_SOURCE_KEY_FILE || c.EIGOS_MEMBER_SOURCE_TAILNET_ORIGIN || c.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES?.length
-      || c.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length || c.EIGOS_SHOPIFY_AUDIT_DIR || c.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length || c.EIGOS_SHOPIFY_CHECKOUT_AUDIT_DIR || c.EIGOS_CSV_INPUT_DIR || c.EIGOS_CSV_PILOT === 'true'
-      || c.EIGOS_ACTION_SANDBOX === 'true' || c.EIGOS_SANDBOX_PROVIDER_URL || c.EIGOS_SANDBOX_TOKEN_FILE
-      || c.EIGOS_COMMERCE_SANDBOX_URL || c.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE || c.EIGOS_BOOKING_SANDBOX_URL || c.EIGOS_BOOKING_SANDBOX_TOKEN_FILE || c.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL || c.EIGOS_SHOPIFY_PAYMENT_SANDBOX_TOKEN_FILE
-      || c.EIGOS_STRIPE_TEST_ENABLED === 'true' || c.EIGOS_STRIPE_TEST_SECRET_KEY_FILE) throw new Error('Invite beta exposes document tasks only; private sources, development credentials, network publication and transaction fixtures cannot be enabled');
-  }
-  if (c.OAUTH_LEGACY_AUDIENCE && (c.EIGOS_INVITE_BETA !== 'true' || c.OAUTH_LEGACY_AUDIENCE !== c.PUBLIC_URL || c.OAUTH_AUDIENCE !== publicUrl.href)) throw new Error('Legacy OAuth audience must be the exact prior origin of this canonical invite-beta resource');
-  if (c.EIGOS_NETWORK_ENABLED === 'true' && (c.EIGOS_AUTH_MODE !== 'jwt' || !c.OIDC_CLIENT_ID || !c.OIDC_AGENT_CLIENT_ID || !c.EIGOS_NETWORK_MEMBER_IDS.length || c.DATABASE_PATH === ':memory:')) throw new Error('Network pilot requires persistent JWT membership, browser/agent clients and explicit enrolled member IDs');
-  if (c.OIDC_CLIENT_ID && c.EIGOS_AUTH_MODE !== 'jwt') throw new Error('Member login requires JWT/OIDC configuration');
-  if (c.OIDC_CLIENT_SECRET && !c.OIDC_CLIENT_ID) throw new Error('OIDC_CLIENT_SECRET requires OIDC_CLIENT_ID');
-  if (c.OIDC_AGENT_CLIENT_ID && c.EIGOS_AUTH_MODE !== 'jwt') throw new Error('Agent onboarding requires JWT mode');
-  if (role === 'gateway' && c.EIGOS_AUTH_MODE === 'jwt' && c.MEMBERSHIP_DATABASE_PATH === ':memory:') throw new Error('JWT membership requires a persistent database');
-  if (c.MEMBERSHIP_DATABASE_PATH && c.MEMBERSHIP_DATABASE_PATH !== ':memory:' && resolve(c.MEMBERSHIP_DATABASE_PATH) === resolve(c.DATABASE_PATH)) throw new Error('Membership and task databases require separate files');
-  if (c.EIGOS_AUTH_MODE === 'development') {
-    if (!['127.0.0.1', 'localhost', '::1'].includes(c.HOST) ||
-        !['127.0.0.1', 'localhost', '[::1]'].includes(publicUrl.hostname) ||
-        env.NODE_ENV === 'production') throw new Error('Development credentials are restricted to loopback and non-production');
-    if (role === 'gateway' && (!c.EIGOS_DEV_TOKEN || c.EIGOS_DEV_TOKEN.length < 32)) throw new Error('Development token must contain at least 32 characters; run npm run setup:dev');
-  } else if (role === 'gateway') {
-    if (!c.OAUTH_ISSUER || !c.OAUTH_JWKS_URL || !c.OAUTH_AUDIENCE) throw new Error('JWT mode requires OAUTH_ISSUER, OAUTH_JWKS_URL and OAUTH_AUDIENCE');
-    for (const value of [c.PUBLIC_URL, c.OAUTH_ISSUER, c.OAUTH_JWKS_URL, c.OAUTH_AUDIENCE]) {
-      if (new URL(value).protocol !== 'https:') throw new Error('JWT mode requires HTTPS public, issuer, JWKS and audience URLs');
-    }
-  }
-  for (const origin of c.ALLOWED_ORIGINS.split(',').filter(Boolean)) {
-    if (new URL(origin).origin !== origin) throw new Error('ALLOWED_ORIGINS must contain exact origins, without trailing slashes');
-  }
-  assertPersonalSourceConfig(c, env.NODE_ENV);
-  if (c.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES?.length && (!c.EIGOS_PAOTUI_SKILL_DIR || !memberSource && (c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production'
-    || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(publicUrl.hostname)))) {
-    throw new Error('Public-location discovery requires configured personal Paotui in non-production loopback development');
-  }
-  if (c.EIGOS_ONTOLOGY_AUDIT_PATH && (!c.EIGOS_PAOTUI_SKILL_DIR || !isAbsolute(c.EIGOS_ONTOLOGY_AUDIT_PATH))) throw new Error('Ontology audit requires configured Paotui and an absolute private path');
-  if (c.EIGOS_ACTION_SANDBOX === 'true' && (c.EIGOS_COORDINATOR !== 'codex' || !memberSource && (c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production'))) throw new Error('Action sandbox requires the local ontology backend');
-  if (!!c.EIGOS_SANDBOX_PROVIDER_URL !== !!c.EIGOS_SANDBOX_TOKEN_FILE) throw new Error('Sandbox provider requires both endpoint and private token file');
-  if (c.EIGOS_SANDBOX_PROVIDER_URL) {
-    const target = new URL(c.EIGOS_SANDBOX_PROVIDER_URL);
-    if (c.EIGOS_ACTION_SANDBOX !== 'true' || target.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(target.hostname) || target.pathname !== '/' || target.search || target.hash || target.username || target.password || !isAbsolute(c.EIGOS_SANDBOX_TOKEN_FILE!)) throw new Error('Sandbox provider must be an explicit loopback origin with an absolute credential file');
-  }
-  if (!!c.EIGOS_COMMERCE_SANDBOX_URL !== !!c.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE) throw new Error('Commerce sandbox requires both endpoint and private token file');
-  if (c.EIGOS_COMMERCE_SANDBOX_URL) {
-    const target = new URL(c.EIGOS_COMMERCE_SANDBOX_URL);
-    if (c.EIGOS_ACTION_SANDBOX !== 'true' || target.protocol !== 'http:' || target.hostname !== '127.0.0.1' || !target.port || target.pathname !== '/' || target.search || target.hash || target.username || target.password || !isAbsolute(c.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE!)) throw new Error('Commerce sandbox must use the explicit local sandbox environment and 127.0.0.1 source');
-  }
-  if (c.EIGOS_COMMERCE_SANDBOX_AUDIT_DIR && (!c.EIGOS_COMMERCE_SANDBOX_URL || !isAbsolute(c.EIGOS_COMMERCE_SANDBOX_AUDIT_DIR))) throw new Error('Commerce audit requires an enabled sandbox and an absolute private directory');
-  const stripeConfigured = !!(c.EIGOS_STRIPE_TEST_SECRET_KEY_FILE || c.EIGOS_STRIPE_TEST_ACCOUNT_ID || c.EIGOS_STRIPE_TEST_MERCHANT_ID);
-  if (c.EIGOS_STRIPE_TEST_ENABLED === 'true' || stripeConfigured) throw new Error('Merchant-side Stripe payment is not an EIGOS runtime capability; use PA-owned booking payment handoff');
-  if (!!c.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL !== !!c.EIGOS_SHOPIFY_PAYMENT_SANDBOX_TOKEN_FILE) throw new Error('Shopify test payment source requires its endpoint and source token file');
-  if (c.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL) {
-    const u = new URL(c.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL);
-    if (c.EIGOS_AUTH_MODE !== 'development' || c.EIGOS_ACTION_SANDBOX !== 'true' || env.NODE_ENV === 'production' || u.protocol !== 'http:' || u.hostname !== '127.0.0.1' || !u.port || u.pathname !== '/' || u.search || u.hash || u.username || u.password || !isAbsolute(c.EIGOS_SHOPIFY_PAYMENT_SANDBOX_TOKEN_FILE!)) throw new Error('Shopify PA payment requires explicit isolated loopback test configuration');
-  }
-  if (!!c.EIGOS_BOOKING_SANDBOX_URL !== !!c.EIGOS_BOOKING_SANDBOX_TOKEN_FILE) throw new Error('Booking sandbox requires its endpoint and private source token file');
-  if (c.EIGOS_BOOKING_SANDBOX_URL) {
-    const u = new URL(c.EIGOS_BOOKING_SANDBOX_URL);
-    if (!memberSource && (c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production') || c.EIGOS_ACTION_SANDBOX !== 'true' || u.protocol !== 'http:' || u.hostname !== '127.0.0.1' || !u.port || u.pathname !== '/' || u.search || u.hash || u.username || u.password || !isAbsolute(c.EIGOS_BOOKING_SANDBOX_TOKEN_FILE!)) throw new Error('Booking source requires explicit local sandbox configuration');
-  }
-  const participantFields = [c.EIGOS_FREE_BOOKING_BRIDGE_URL, c.EIGOS_FREE_BOOKING_TOKEN_FILE, c.EIGOS_FREE_BOOKING_BINDING_ID, c.EIGOS_FREE_BOOKING_ATTENDEE_SHA256];
-  if (participantFields.some(Boolean) && !participantFields.every(Boolean)) throw new Error('Free participant booking requires the bridge, private token path and pinned account binding');
-  if (c.EIGOS_FREE_BOOKING_BRIDGE_URL) {
-    const u = new URL(c.EIGOS_FREE_BOOKING_BRIDGE_URL);
-    if (!memberSource && (c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production') || u.protocol !== 'http:' || u.hostname !== '127.0.0.1' || !u.port || u.pathname !== '/' || u.search || u.hash || u.username || u.password || !isAbsolute(c.EIGOS_FREE_BOOKING_TOKEN_FILE!)) throw new Error('Participant browser is restricted to explicit non-production loopback and a private account binding');
-  }
-  return c;
+const connectionSchema = z.strictObject({ owner: z.string().min(1), active: z.boolean(), binding: didiBindingSchema });
+export function configuredSource(path?: string): SourceResolver {
+  const cache = new Map<string, DidiMcpConnector>();
+  const read = async () => {
+    if (!path || !isAbsolute(path)) throw new Error('Configure an absolute DiDi connection file');
+    return connectionSchema.parse(JSON.parse(await readFile(path, 'utf8')));
+  };
+  return async owner => {
+    const connection = await read(), hash = digest(connection);
+    if (!connection.active || connection.owner !== owner) throw new Error('DiDi source is unavailable for this owner');
+    let connector = cache.get(hash);
+    if (!connector) { cache.clear(); connector = new DidiMcpConnector(connection.binding); cache.set(hash, connector); }
+    return { bindingId: connection.binding.bindingId, connector, async assertCurrent() {
+      if (digest(await read()) !== hash) throw new Error('DiDi source configuration changed');
+      await connector!.verifyCredential();
+    } };
+  };
 }
-
-/** Both owned-source modes remain explicit, non-production and loopback-only. */
-export function assertPersonalSourceConfig(c: Config, nodeEnv = process.env.NODE_ENV) {
-  const commerceFiles = [c.EIGOS_ALIPAY_CONNECTION_FILE, c.EIGOS_WECHATPAY_CONNECTION_FILE, c.EIGOS_UNIONPAY_CONNECTION_FILE, c.EIGOS_TAOBAO_CONNECTION_FILE].filter((value): value is string => !!value);
-  if (commerceFiles.length && (!c.EIGOS_PERSONAL_SOURCE_OWNER || commerceFiles.some(file => !isAbsolute(file)) || c.EIGOS_INVITE_BETA === 'true' || !allowsBoundPersonalSource(c, nodeEnv)))
-    throw new Error('Payment/commerce reads require absolute private connection files, an explicit source owner and the bound Foundation authority');
-  if (c.EIGOS_PERSONAL_SOURCE_OWNER && (c.EIGOS_MEMBER_SOURCE_KEY_FILE || c.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE || !c.authority && c.EIGOS_DIDI_MEMBER_CONNECTION_FILE)) throw new Error('Personal owner and member-managed sources require separate explicit bindings');
-  const privateOrigin = c.EIGOS_MEMBER_SOURCE_TAILNET_ORIGIN;
-  if (privateOrigin && (!c.EIGOS_MEMBER_SOURCE_KEY_FILE || new URL(privateOrigin).origin !== privateOrigin || new URL(privateOrigin).protocol !== 'https:' || !new URL(privateOrigin).hostname.endsWith('.ts.net') || privateOrigin !== c.PUBLIC_URL)) throw new Error('Member source private origin must exactly match an explicit HTTPS Tailscale origin');
-  if (c.EIGOS_MEMBER_SOURCE_KEY_FILE) {
-    if (!isAbsolute(c.EIGOS_MEMBER_SOURCE_KEY_FILE) || !c.EIGOS_PAOTUI_SKILL_DIR || !isAbsolute(c.EIGOS_PAOTUI_SKILL_DIR) || c.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE
-      || c.EIGOS_AUTH_MODE !== 'jwt' || c.EIGOS_NETWORK_ENABLED !== 'true' || !c.EIGOS_NETWORK_MEMBER_IDS.length || c.DATABASE_PATH === ':memory:'
-      || nodeEnv === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || (!privateOrigin && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(c.PUBLIC_URL).hostname))
-      || new URL(c.PUBLIC_URL).protocol !== 'https:' || c.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES?.length) throw new Error('Member-supplied sources require isolated loopback HTTPS/JWT network configuration and a private encryption key; shared credentials are forbidden');
-  } else if (c.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE) {
-    if (!isAbsolute(c.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE) || !c.EIGOS_PAOTUI_SKILL_DIR || !isAbsolute(c.EIGOS_PAOTUI_SKILL_DIR)
-      || c.EIGOS_AUTH_MODE !== 'jwt' || c.EIGOS_NETWORK_ENABLED !== 'true' || !c.EIGOS_NETWORK_MEMBER_IDS.length || c.DATABASE_PATH === ':memory:'
-      || nodeEnv === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(c.PUBLIC_URL).hostname)
-      || c.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES?.length) throw new Error('Member source requires explicit loopback JWT network configuration, a persistent database and private connection metadata');
-  } else if (c.EIGOS_PAOTUI_SKILL_DIR && !allowsBoundPersonalSource(c,nodeEnv) && (c.EIGOS_AUTH_MODE !== 'development' || nodeEnv === 'production'
-    || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(c.PUBLIC_URL).hostname))) {
-    throw new Error('Personal Paotui credentials are restricted to local development unless an explicit loopback member source connection is configured');
-  }
-}
-
-export function readConfig(env: NodeJS.ProcessEnv = process.env): Config { return parseConfig(env, 'gateway'); }
-export function readWorkerConfig(env: NodeJS.ProcessEnv = process.env): Config { return parseConfig(env, 'worker'); }

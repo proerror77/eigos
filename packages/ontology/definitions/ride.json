@@ -1,0 +1,1529 @@
+{
+  "id": "Eigos",
+  "version": "1",
+  "objectTypes": [
+    {
+      "apiName": "Place",
+      "displayName": "Place",
+      "description": "A source-identified physical place",
+      "primaryKey": "id",
+      "titleProperty": "name",
+      "properties": {
+        "id": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Stable object identity",
+          "required": true
+        },
+        "name": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Display name",
+          "required": true
+        },
+        "city": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Provider city",
+          "required": true
+        },
+        "address": {
+          "schema": {
+            "type": "string"
+          },
+          "description": "Full source address",
+          "required": true
+        },
+        "coordinates": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "lat": {
+                "type": "number",
+                "minimum": -90,
+                "maximum": 90
+              },
+              "lng": {
+                "type": "number",
+                "minimum": -180,
+                "maximum": 180
+              }
+            },
+            "required": [
+              "lat",
+              "lng"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Provider coordinates",
+          "required": true
+        },
+        "coordinateSystem": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Source coordinate reference system",
+          "required": true
+        },
+        "sourceBinding": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Provider account binding",
+          "required": true
+        },
+        "observedAt": {
+          "schema": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": "Time of source observation",
+          "required": true
+        }
+      },
+      "interfaces": {
+        "Location": {
+          "properties": {
+            "name": "name",
+            "city": "city",
+            "address": "address",
+            "coordinates": "coordinates",
+            "coordinateSystem": "coordinateSystem"
+          },
+          "links": {},
+          "actions": {}
+        }
+      }
+    },
+    {
+      "apiName": "Route",
+      "displayName": "Route",
+      "description": "A directed route between two selected places",
+      "primaryKey": "id",
+      "titleProperty": "name",
+      "properties": {
+        "id": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Stable object identity",
+          "required": true
+        },
+        "name": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Display name",
+          "required": true
+        }
+      },
+      "interfaces": {
+        "RideEstimatable": {
+          "properties": {
+            "name": "name"
+          },
+          "links": {
+            "origin": "origin",
+            "destination": "destination"
+          },
+          "actions": {
+            "requestEstimate": {
+              "action": "RequestRideEstimate",
+              "parameters": {
+                "requestId": "requestId",
+                "route": "route",
+                "requestedAt": "requestedAt"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "apiName": "RideRequest",
+      "displayName": "RideRequest",
+      "description": "The user decision to request a read-only ride estimate",
+      "primaryKey": "id",
+      "titleProperty": "name",
+      "properties": {
+        "id": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Stable object identity",
+          "required": true
+        },
+        "name": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Display name",
+          "required": true
+        },
+        "status": {
+          "schema": {
+            "type": "string",
+            "enum": [
+              "requested",
+              "quoted"
+            ]
+          },
+          "description": "Inquiry status",
+          "required": true
+        },
+        "requestedAt": {
+          "schema": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": "Request time",
+          "required": true
+        }
+      },
+      "interfaces": {}
+    },
+    {
+      "apiName": "RideEstimate",
+      "displayName": "RideEstimate",
+      "description": "One provider estimate for a route and vehicle category",
+      "primaryKey": "id",
+      "titleProperty": "name",
+      "properties": {
+        "id": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Stable object identity",
+          "required": true
+        },
+        "name": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Display name",
+          "required": true
+        },
+        "estimatedAmount": {
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "Exact displayed estimate in CNY major units, otherwise null",
+          "required": true
+        },
+        "currency": {
+          "schema": {
+            "const": "CNY",
+            "type": "string"
+          },
+          "description": "Estimate currency",
+          "required": true
+        },
+        "priceText": {
+          "schema": {
+            "type": "string"
+          },
+          "description": "Original source price",
+          "required": true
+        },
+        "expiresAt": {
+          "schema": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": "Refresh deadline",
+          "required": true
+        },
+        "observedAt": {
+          "schema": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": "Provider read time",
+          "required": true
+        },
+        "productCategory": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Source vehicle category",
+          "required": true
+        },
+        "feesComplete": {
+          "schema": {
+            "type": "string",
+            "const": "unknown"
+          },
+          "description": "Provider did not verify full fees",
+          "required": true
+        }
+      },
+      "interfaces": {
+        "PriceEstimate": {
+          "properties": {
+            "amount": "estimatedAmount",
+            "currency": "currency",
+            "priceText": "priceText",
+            "expiresAt": "expiresAt",
+            "name": "name"
+          },
+          "links": {
+            "request": "request",
+            "source": "source"
+          },
+          "actions": {}
+        }
+      }
+    },
+    {
+      "apiName": "SourceReceipt",
+      "displayName": "SourceReceipt",
+      "description": "One provider read and its provenance",
+      "primaryKey": "id",
+      "titleProperty": "name",
+      "properties": {
+        "id": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Stable object identity",
+          "required": true
+        },
+        "name": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Display name",
+          "required": true
+        },
+        "bindingId": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Exact source account",
+          "required": true
+        },
+        "tool": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Provider read operation",
+          "required": true
+        },
+        "observedAt": {
+          "schema": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": "Provider response time",
+          "required": true
+        },
+        "evidence": {
+          "schema": {
+            "type": "string",
+            "enum": [
+              "live_readonly",
+              "provider_mock",
+              "fixture"
+            ]
+          },
+          "description": "Origin of the observation",
+          "required": true
+        },
+        "contentDigest": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Digest of validated source content",
+          "required": true
+        }
+      },
+      "interfaces": {}
+    }
+  ],
+  "interfaceTypes": [
+    {
+      "apiName": "Location",
+      "description": "Location",
+      "properties": {
+        "name": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Place name",
+          "required": true
+        },
+        "city": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Provider city",
+          "required": true
+        },
+        "address": {
+          "schema": {
+            "type": "string"
+          },
+          "description": "Full source address",
+          "required": true
+        },
+        "coordinates": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "lat": {
+                "type": "number",
+                "minimum": -90,
+                "maximum": 90
+              },
+              "lng": {
+                "type": "number",
+                "minimum": -180,
+                "maximum": 180
+              }
+            },
+            "required": [
+              "lat",
+              "lng"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Provider coordinates",
+          "required": true
+        },
+        "coordinateSystem": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Source coordinate reference system",
+          "required": true
+        }
+      },
+      "optionalProperties": [],
+      "links": {},
+      "actions": {}
+    },
+    {
+      "apiName": "RideEstimatable",
+      "description": "RideEstimatable",
+      "properties": {
+        "name": {
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Route name",
+          "required": true
+        }
+      },
+      "optionalProperties": [],
+      "links": {
+        "origin": {
+          "target": "Location",
+          "cardinality": "one",
+          "required": true
+        },
+        "destination": {
+          "target": "Location",
+          "cardinality": "one",
+          "required": true
+        }
+      },
+      "actions": {
+        "requestEstimate": {
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "requestId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "route": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "type",
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              "requestedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "required": [
+              "requestId",
+              "route",
+              "requestedAt"
+            ],
+            "additionalProperties": false
+          },
+          "objectParameters": {
+            "route": "RideEstimatable"
+          },
+          "required": true
+        }
+      }
+    },
+    {
+      "apiName": "PriceEstimate",
+      "description": "PriceEstimate",
+      "properties": {
+        "amount": {
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "Exact displayed estimate in CNY major units, otherwise null",
+          "required": true
+        },
+        "currency": {
+          "schema": {
+            "const": "CNY",
+            "type": "string"
+          },
+          "description": "Estimate currency",
+          "required": true
+        },
+        "priceText": {
+          "schema": {
+            "type": "string"
+          },
+          "description": "Original source price",
+          "required": true
+        },
+        "expiresAt": {
+          "schema": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": "Refresh deadline",
+          "required": true
+        },
+        "name": {
+          "description": "Provider service category name",
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "required": true
+        }
+      },
+      "optionalProperties": [],
+      "links": {
+        "request": {
+          "target": "RideRequest",
+          "cardinality": "one",
+          "required": true
+        },
+        "source": {
+          "target": "SourceReceipt",
+          "cardinality": "one",
+          "required": true
+        }
+      },
+      "actions": {}
+    }
+  ],
+  "linkTypes": [
+    {
+      "apiName": "RouteOrigin",
+      "description": "Route.origin links to Place",
+      "from": {
+        "type": "Route",
+        "name": "origin",
+        "cardinality": "one"
+      },
+      "to": {
+        "type": "Place",
+        "name": "departingRoutes",
+        "cardinality": "many"
+      }
+    },
+    {
+      "apiName": "RouteDestination",
+      "description": "Route.destination links to Place",
+      "from": {
+        "type": "Route",
+        "name": "destination",
+        "cardinality": "one"
+      },
+      "to": {
+        "type": "Place",
+        "name": "arrivingRoutes",
+        "cardinality": "many"
+      }
+    },
+    {
+      "apiName": "RequestRoute",
+      "description": "RideRequest.route links to Route",
+      "from": {
+        "type": "RideRequest",
+        "name": "route",
+        "cardinality": "one"
+      },
+      "to": {
+        "type": "Route",
+        "name": "requests",
+        "cardinality": "many"
+      }
+    },
+    {
+      "apiName": "EstimateRequest",
+      "description": "RideEstimate.request links to RideRequest",
+      "from": {
+        "type": "RideEstimate",
+        "name": "request",
+        "cardinality": "one"
+      },
+      "to": {
+        "type": "RideRequest",
+        "name": "estimates",
+        "cardinality": "many"
+      }
+    },
+    {
+      "apiName": "EstimateSource",
+      "description": "RideEstimate.source links to SourceReceipt",
+      "from": {
+        "type": "RideEstimate",
+        "name": "source",
+        "cardinality": "one"
+      },
+      "to": {
+        "type": "SourceReceipt",
+        "name": "estimates",
+        "cardinality": "many"
+      }
+    },
+    {
+      "apiName": "PlaceSource",
+      "description": "Place.sources links to SourceReceipt",
+      "from": {
+        "type": "Place",
+        "name": "sources",
+        "cardinality": "many"
+      },
+      "to": {
+        "type": "SourceReceipt",
+        "name": "places",
+        "cardinality": "many"
+      }
+    }
+  ],
+  "functionTypes": [
+    {
+      "apiName": "searchPlaces",
+      "description": "Search the provider for the given name and city",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string",
+            "minLength": 1
+          },
+          "keywords": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "city",
+          "keywords"
+        ],
+        "additionalProperties": false
+      },
+      "returns": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "data": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "places"
+                  },
+                  "places": {
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "address": {
+                          "type": "string",
+                          "maxLength": 1000
+                        },
+                        "addressAll": {
+                          "type": "string",
+                          "maxLength": 1500
+                        },
+                        "city": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "lng": {
+                          "type": "number",
+                          "minimum": -180,
+                          "maximum": 180
+                        },
+                        "lat": {
+                          "type": "number",
+                          "minimum": -90,
+                          "maximum": 90
+                        },
+                        "coordinateSystem": {
+                          "type": "string",
+                          "const": "provider_unspecified"
+                        },
+                        "identityKind": {
+                          "type": "string",
+                          "const": "local_snapshot_digest"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "address",
+                        "addressAll",
+                        "city",
+                        "lng",
+                        "lat",
+                        "coordinateSystem",
+                        "identityKind"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "kind",
+                  "places"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "estimate"
+                  },
+                  "items": {
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "productName": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "productCategory": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "priceText": {
+                          "type": "string",
+                          "maxLength": 500
+                        },
+                        "priceKind": {
+                          "type": "string",
+                          "const": "estimate"
+                        },
+                        "estimatedMoney": {
+                          "type": "object",
+                          "properties": {
+                            "minor": {
+                              "type": "string",
+                              "pattern": "^(0|[1-9]\\d{0,17})$"
+                            },
+                            "currency": {
+                              "type": "string",
+                              "const": "CNY"
+                            }
+                          },
+                          "required": [
+                            "minor",
+                            "currency"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "feesComplete": {
+                          "type": "string",
+                          "const": "unknown"
+                        }
+                      },
+                      "required": [
+                        "productName",
+                        "productCategory",
+                        "priceText",
+                        "priceKind",
+                        "feesComplete"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "kind",
+                  "items"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "receipt": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "bindingId": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9_-]{1,80}$"
+              },
+              "environment": {
+                "type": "string",
+                "enum": [
+                  "production",
+                  "mock"
+                ]
+              },
+              "endpoint": {
+                "type": "string",
+                "enum": [
+                  "https://mcp.didichuxing.com/mcp-servers",
+                  "https://mcp.didichuxing.com/mcp-servers-sandbox"
+                ]
+              },
+              "tool": {
+                "type": "string",
+                "enum": [
+                  "maps_textsearch",
+                  "taxi_estimate"
+                ]
+              },
+              "inputDigest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "resultDigest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "responseSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "toolSchemaDigest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "startedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "receivedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              }
+            },
+            "required": [
+              "id",
+              "bindingId",
+              "environment",
+              "endpoint",
+              "tool",
+              "inputDigest",
+              "resultDigest",
+              "responseSha256",
+              "toolSchemaDigest",
+              "startedAt",
+              "receivedAt"
+            ],
+            "additionalProperties": false
+          },
+          "evidence": {
+            "type": "string",
+            "enum": [
+              "live_readonly",
+              "provider_mock",
+              "fixture"
+            ]
+          }
+        },
+        "required": [
+          "data",
+          "receipt",
+          "evidence"
+        ],
+        "additionalProperties": false
+      },
+      "source": "Didi"
+    },
+    {
+      "apiName": "estimateRoute",
+      "description": "Read a provider estimate using the route origin and destination",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "route": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "route"
+        ],
+        "additionalProperties": false
+      },
+      "returns": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "data": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "places"
+                  },
+                  "places": {
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "address": {
+                          "type": "string",
+                          "maxLength": 1000
+                        },
+                        "addressAll": {
+                          "type": "string",
+                          "maxLength": 1500
+                        },
+                        "city": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "lng": {
+                          "type": "number",
+                          "minimum": -180,
+                          "maximum": 180
+                        },
+                        "lat": {
+                          "type": "number",
+                          "minimum": -90,
+                          "maximum": 90
+                        },
+                        "coordinateSystem": {
+                          "type": "string",
+                          "const": "provider_unspecified"
+                        },
+                        "identityKind": {
+                          "type": "string",
+                          "const": "local_snapshot_digest"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "address",
+                        "addressAll",
+                        "city",
+                        "lng",
+                        "lat",
+                        "coordinateSystem",
+                        "identityKind"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "kind",
+                  "places"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "estimate"
+                  },
+                  "items": {
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "productName": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "productCategory": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "priceText": {
+                          "type": "string",
+                          "maxLength": 500
+                        },
+                        "priceKind": {
+                          "type": "string",
+                          "const": "estimate"
+                        },
+                        "estimatedMoney": {
+                          "type": "object",
+                          "properties": {
+                            "minor": {
+                              "type": "string",
+                              "pattern": "^(0|[1-9]\\d{0,17})$"
+                            },
+                            "currency": {
+                              "type": "string",
+                              "const": "CNY"
+                            }
+                          },
+                          "required": [
+                            "minor",
+                            "currency"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "feesComplete": {
+                          "type": "string",
+                          "const": "unknown"
+                        }
+                      },
+                      "required": [
+                        "productName",
+                        "productCategory",
+                        "priceText",
+                        "priceKind",
+                        "feesComplete"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "kind",
+                  "items"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "receipt": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "bindingId": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9_-]{1,80}$"
+              },
+              "environment": {
+                "type": "string",
+                "enum": [
+                  "production",
+                  "mock"
+                ]
+              },
+              "endpoint": {
+                "type": "string",
+                "enum": [
+                  "https://mcp.didichuxing.com/mcp-servers",
+                  "https://mcp.didichuxing.com/mcp-servers-sandbox"
+                ]
+              },
+              "tool": {
+                "type": "string",
+                "enum": [
+                  "maps_textsearch",
+                  "taxi_estimate"
+                ]
+              },
+              "inputDigest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "resultDigest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "responseSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "toolSchemaDigest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "startedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "receivedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              }
+            },
+            "required": [
+              "id",
+              "bindingId",
+              "environment",
+              "endpoint",
+              "tool",
+              "inputDigest",
+              "resultDigest",
+              "responseSha256",
+              "toolSchemaDigest",
+              "startedAt",
+              "receivedAt"
+            ],
+            "additionalProperties": false
+          },
+          "evidence": {
+            "type": "string",
+            "enum": [
+              "live_readonly",
+              "provider_mock",
+              "fixture"
+            ]
+          }
+        },
+        "required": [
+          "data",
+          "receipt",
+          "evidence"
+        ],
+        "additionalProperties": false
+      },
+      "source": "Didi"
+    },
+    {
+      "apiName": "routeReady",
+      "description": "Require two current, source-backed endpoints",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "route": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "route"
+        ],
+        "additionalProperties": false
+      },
+      "returns": {
+        "type": "boolean"
+      }
+    },
+    {
+      "apiName": "readRideEstimates",
+      "description": "Read and validate current estimates and their sources",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "request"
+        ],
+        "additionalProperties": false
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          "estimates": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "properties": {
+                "ref": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id"
+                  ],
+                  "additionalProperties": false
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "properties": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "currency": {
+                      "const": "CNY",
+                      "type": "string"
+                    },
+                    "priceText": {
+                      "type": "string"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "amount",
+                    "currency",
+                    "priceText",
+                    "expiresAt",
+                    "name"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "ref",
+                "revision",
+                "properties"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "live_readonly",
+                "provider_mock",
+                "fixture"
+              ]
+            },
+            "minItems": 1
+          },
+          "accepted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "request",
+          "estimates",
+          "evidence",
+          "accepted"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "actionTypes": [
+    {
+      "apiName": "RequestRideEstimate",
+      "description": "Record the user decision to request prices for a selected route",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "route": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          "requestedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "requestId",
+          "route",
+          "requestedAt"
+        ],
+        "additionalProperties": false
+      },
+      "objectParameters": {
+        "route": "RideEstimatable"
+      },
+      "submissionCriteria": [
+        {
+          "function": "routeReady",
+          "arguments": {
+            "route": {
+              "parameter": "route"
+            }
+          }
+        }
+      ],
+      "rules": [
+        {
+          "op": "createObject",
+          "object": {
+            "type": "RideRequest",
+            "id": {
+              "parameter": "requestId"
+            }
+          },
+          "properties": {
+            "id": {
+              "parameter": "requestId"
+            },
+            "name": {
+              "literal": "Ride estimate request"
+            },
+            "status": {
+              "literal": "requested"
+            },
+            "requestedAt": {
+              "parameter": "requestedAt"
+            }
+          }
+        },
+        {
+          "op": "addLink",
+          "link": "RequestRoute",
+          "from": {
+            "type": "RideRequest",
+            "id": {
+              "parameter": "requestId"
+            }
+          },
+          "to": {
+            "type": "Route",
+            "id": {
+              "parameter": "route",
+              "path": [
+                "id"
+              ]
+            }
+          }
+        }
+      ],
+      "result": {
+        "type": "RideRequest",
+        "id": {
+          "parameter": "requestId"
+        }
+      }
+    }
+  ],
+  "dataSources": [
+    {
+      "apiName": "DidiPlaces",
+      "objectType": "Place",
+      "function": "searchPlaces",
+      "properties": {
+        "id": "id",
+        "name": "name",
+        "city": "city",
+        "address": "address",
+        "coordinates": "coordinates",
+        "coordinateSystem": "coordinateSystem",
+        "sourceBinding": "sourceBinding",
+        "observedAt": "observedAt"
+      }
+    },
+    {
+      "apiName": "DidiEstimates",
+      "objectType": "RideEstimate",
+      "function": "estimateRoute",
+      "properties": {
+        "id": "id",
+        "name": "name",
+        "estimatedAmount": "estimatedAmount",
+        "currency": "currency",
+        "priceText": "priceText",
+        "observedAt": "observedAt",
+        "expiresAt": "expiresAt",
+        "productCategory": "productCategory",
+        "feesComplete": "feesComplete"
+      }
+    }
+  ]
+}
