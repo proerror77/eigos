@@ -85,7 +85,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       if (ms(range.end)-ms(range.start) > 31*86400000 || ms(range.end) <= Date.now()) throw new Conflict('Use a future planning window of at most 31 days');
       if (!context.execution || !context.operationId || !context.edit) throw new Conflict('Request calendar information through the original PA task');
       const response = calendarResponseSchema.parse(await new PARequests(context.execution.tasks).request(context.execution.task, context.operationId, 'calendar.freebusy',
-        { start: input.start, end: input.end, timeZone: input.timeZone, fields: ['busy', 'windows'], purpose: input.title }, jsonSchema(calendarResponseSchema)));
+        { start: input.start, end: input.end, timeZone: input.timeZone, fields: ['busy', 'windows'], purpose: input.title }, jsonSchema(calendarResponseSchema), { start:new Date(ms(input.start)).toISOString(),end:new Date(ms(input.end)).toISOString(),timeZone:input.timeZone }));
       if (response.status !== 'available') throw new Conflict(`PA calendar response is ${response.status}`);
       const now = Date.now();
       if (ms(response.start) !== ms(input.start) || ms(response.end) !== ms(input.end) || response.timeZone !== input.timeZone || ms(response.observedAt)>now+5000 || ms(response.observedAt)<now-300000 || ms(response.expiresAt)<=now || ms(response.expiresAt)>ms(response.observedAt)+300000) throw new Conflict('PA calendar response has a stale or mismatched range');

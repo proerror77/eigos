@@ -143,3 +143,18 @@ test('separate plans retain independent calendar coverage on the same resource',
   assert.equal((await context.objects.query({type:'CalendarAvailability'})).items.length,2);
  }finally{await f.close();}
 });
+
+test('a model changing the plan title after PA response still resumes the same calendar request',async()=>{
+ class ChangingTitleAgent extends PlanningFixtureAgent {
+  private attempt=0;
+  override async run(prompt:string,tools:Parameters<PlanningFixtureAgent['run']>[1]){
+   const lines=prompt.split('\n'),task=JSON.parse(lines.at(-1)!),message=JSON.parse(task.userRequest.message);
+   message.planning.title='Plan title '+(++this.attempt);task.userRequest.message=JSON.stringify(message);lines[lines.length-1]=JSON.stringify(task);
+   return super.run(lines.join('\n'),tools);
+  }
+ }
+ const f=await fixture(new ChangingTitleAgent());try{
+  const p=await proposed(f);assert.equal(p.result.validation.valid,true);
+  assert.equal((await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.pa_requests WHERE task_id=$1`,[p.task.id])).rows[0]!.n,1);
+ }finally{await f.close();}
+});
