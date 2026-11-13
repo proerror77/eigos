@@ -11,11 +11,20 @@ export function remapResources(input: OntologyDocument, ontology: string, names:
   const rename = (kind: ResourceKind, name: string) => ontologyName.parse(names[kind]?.[name] ?? name);
   const reference = (name: string) => input.interfaceTypes.some(type => type.apiName === name) ? rename('interface',name) : rename('object',name);
   const schema = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(schema);
-    if (!value || typeof value !== 'object') return value;
-    const result = Object.fromEntries(Object.entries(value).map(([key,item])=>[key,schema(item)]));
-    if (result.valueType && typeof result.valueType === 'object') {
-      const ref=result.valueType as {name:string};ref.name=rename('valueType',ref.name);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const result = structuredClone(value) as Record<string,any>;
+    if (result.valueType) result.valueType.name=rename('valueType',result.valueType.name);
+    for(const field of ['properties','patternProperties','$defs','definitions','dependentSchemas']) {
+      if(result[field])result[field]=Object.fromEntries(Object.entries(result[field]).map(([key,child])=>[key,schema(child)]));
+    }
+    for(const field of ['allOf','anyOf','oneOf','prefixItems'])if(Array.isArray(result[field]))result[field]=result[field].map(schema);
+    for(const field of ['items','additionalProperties','contains','not','if','then','else','propertyNames'])if(result[field]&&typeof result[field]==='object')result[field]=schema(result[field]);
+    // Typed ObjectRef schemas carry a resource name in their type discriminator.
+    if(result.properties?.id&&result.properties?.type) {
+      const discriminator=result.properties.type;
+      const known=(name:unknown)=>typeof name==='string'&&(input.objectTypes.some(type=>type.apiName===name)||input.interfaceTypes.some(type=>type.apiName===name));
+      if(known(discriminator.const))discriminator.const=reference(discriminator.const);
+      if(Array.isArray(discriminator.enum))discriminator.enum=discriminator.enum.map((name:unknown)=>known(name)?reference(String(name)):name);
     }
     return result;
   };
@@ -65,7 +74,7 @@ export function remapResources(input: OntologyDocument, ontology: string, names:
   for(const source of document.dataSources){source.apiName=rename('datasource',source.apiName);source.objectType=rename('object',source.objectType);source.function=rename('function',source.function);}
   for(const shared of document.sharedProperties??[]){shared.apiName=rename('sharedProperty',shared.apiName);property(shared);}
   for(const value of document.valueTypes??[]){value.apiName=rename('valueType',value.apiName);value.schema=schema(value.schema) as Record<string,unknown>;}
-  for(const struct of document.structTypes??[]){struct.apiName=rename('struct',struct.apiName);struct.fields=schema(struct.fields) as typeof struct.fields;}
+  for(const struct of document.structTypes??[]){struct.apiName=rename('struct',struct.apiName);struct.fields=Object.fromEntries(Object.entries(struct.fields).map(([name,field])=>[name,schema(field)])) as typeof struct.fields;}
   for(const group of document.typeGroups??[]){group.apiName=rename('group',group.apiName);group.objectTypes=group.objectTypes.map(name=>rename('object',name));}
   delete document.imports;
   return ontologySchema.parse(document);

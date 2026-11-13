@@ -146,7 +146,9 @@ export class OntologyPackages {
     const input=migrateDefinitionsSchema.parse(raw);
     if(input.ontology===input.targetOntology)throw new Conflict('Definition migration requires distinct Ontologies');
     const packet=await this.export(access,{ontology:input.ontology,resources:input.resources});
-    for(const entry of resourceIndex(packet.document).values())if(!input.mapping[entry.ref.kind]?.[entry.ref.name])throw new Conflict('Migration needs an explicit target name for every dependency');
+    const selected=resourceIndex(packet.document);
+    for(const entry of selected.values())if(!input.mapping[entry.ref.kind]?.[entry.ref.name])throw new Conflict('Migration needs an explicit target name for every dependency');
+    for(const [kind,names] of Object.entries(input.mapping))for(const name of Object.keys(names))if(![...selected.values()].some(entry=>entry.ref.kind===kind&&entry.ref.name===name))throw new Conflict('Migration map names an unknown source resource');
     const target=await this.metadata.active(input.targetOntology),body=structuredClone(target.document);
     this.append(body,remapResources(packet.document,body.id,input.mapping));
     new Ontology(body);
