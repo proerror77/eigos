@@ -5,15 +5,16 @@ import { readFileSync } from 'node:fs';
 import type { OntologyDocument } from './schema.js';
 import { servicesDefinition as services } from './services.js';
 import { travelDefinition as travel } from './travel.js';
+import { paymentsDefinition as payments } from './payments.js';
 
 const ride = JSON.parse(readFileSync(new URL('./definitions/ride.json', import.meta.url), 'utf8')) as OntologyDocument;
 const scheduling = JSON.parse(readFileSync(new URL('./definitions/scheduling.json', import.meta.url), 'utf8')) as OntologyDocument;
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '7',
-  objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes,...applications.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes],
-  linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes,...applications.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes,...applications.functionTypes,localEmbeddingDefinition],
-  actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes,...applications.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
+  id: ride.id, version: '8',
+  objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...payments.objectTypes,...applications.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
+  linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...payments.linkTypes,...applications.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...payments.functionTypes,...applications.functionTypes,localEmbeddingDefinition],
+  actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes, ...payments.actionTypes,...applications.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
 };
 
 
@@ -33,6 +34,7 @@ businessDefinition.typeGroups=[
   {apiName:'Scheduling',displayName:'排程',description:'Resources, calendar availability and schedule plans',objectTypes:scheduling.objectTypes.map(type=>type.apiName)},
   {apiName:'Services',displayName:'服务',description:'Provider-neutral service offerings',objectTypes:services.objectTypes.map(type=>type.apiName)},
   {apiName:'TimedTravel',displayName:'定时出行',description:'Authorized event and travel planning',objectTypes:travel.objectTypes.map(type=>type.apiName)},
+  {apiName:'Payments',displayName:'付款',description:'Merchant order handoff and independently read payment status',objectTypes:payments.objectTypes.map(type=>type.apiName)},
   {apiName:'Models',displayName:'三维模型',description:'Model assets and annotations',objectTypes:applications.objectTypes.map(type=>type.apiName)},
   {apiName:'Scenarios',displayName:'方案',description:'Persisted scenario metadata',objectTypes:['OntologyScenario']},
 ];
@@ -40,6 +42,7 @@ for(const group of businessDefinition.typeGroups)for(const name of group.objectT
 
 for(const fn of businessDefinition.functionTypes){
   if(fn.apiName==='embedTextLocal'){fn.dependencies={};continue;}
+  if(payments.functionTypes.includes(fn))continue;
   if(ride.functionTypes.some(item=>item.apiName===fn.apiName)){
     fn.dependencies={objectTypes:ride.objectTypes.map(type=>type.apiName),interfaceTypes:ride.interfaceTypes.map(type=>type.apiName),linkTypes:ride.linkTypes.map(link=>link.apiName),dataSources:ride.dataSources.map(source=>source.apiName),functions:ride.functionTypes.filter(item=>item.apiName!==fn.apiName).map(item=>item.apiName)};
   }else if([scheduling,services,travel].some(domain=>domain.functionTypes.some(item=>item.apiName===fn.apiName))){

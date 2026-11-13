@@ -10,6 +10,7 @@ export interface FunctionContext {
   principal: Principal; objects: Pick<Objects, 'model' | 'access' | 'read' | 'query' | 'follow' | 'matchesSource'>; signal: AbortSignal; taskId?: string;
   execution?: { task: Task; tasks: Tasks };
   operationId?: string;
+  directAction?: boolean;
   assertCurrent?: (client?: Sql) => Promise<void>;
   edit?: (result: ObjectRef, write: (objects: Objects) => Promise<void>) => ObjectRef;
 }
