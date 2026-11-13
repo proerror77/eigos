@@ -30,7 +30,7 @@ export function catalogue(model: Ontology) {
   return { release: model.digest, interfaces: model.document.interfaceTypes, links: model.document.linkTypes,
     objects: model.document.objectTypes.map(({ apiName, description, interfaces }) => ({ apiName, description, interfaces })),
     functions: model.document.functionTypes.map(({ apiName, description, parameters }) => ({ apiName, description, parameters })),
-    actions: model.document.actionTypes.map(({ apiName, description, parameters, objectParameters, submissionCriteria }) => ({ apiName, description, parameters, objectParameters, submissionCriteria })),
+    actions: model.document.actionTypes.map(({ apiName, description, parameters, objectParameters, submissionCriteria, result }) => ({ apiName, description, parameters, objectParameters, submissionCriteria, result })),
     dataSources: model.document.dataSources };
 }
 
@@ -79,9 +79,9 @@ export class OntologyAgent {
     add('follow_links', 'Navigate published object or Interface Link names from returned object references.',
       z.strictObject({ links: z.array(z.strictObject({ object: objectRefSchema, link: z.string(), as: z.string().optional() })).min(1).max(20) }),
       async ({ links }) => Promise.all(links.map((link: { object: z.infer<typeof objectRefSchema>; link: string; as?: string }) => objects.follow(link.object, link.link, link.as))));
-    add('refresh_sources', 'Refresh named Ontology data sources using their published Function parameters. The server calls the source Function and maps its real result into objects and links. Returns receipt and object references; query their Interface for properties. Independent reads run together.',
-      z.strictObject({ sources: z.array(z.strictObject({ source: z.string(), input: argumentsSchema })).min(1).max(20) }),
-      async ({ sources }) => Promise.all(sources.map((source: { source: string; input: Record<string, unknown> }) => this.capabilities.sources.refresh(model, source.source, source.input, principal, task, this.tasks, signal))));
+    add('refresh_sources', 'Refresh named Ontology data sources using their published Function parameters. The server maps real responses into objects and links. Supply view with the desired Interface/Object Type and the published Link from SourceReceipt to return those properties in the same call. Independent reads run together.',
+      z.strictObject({ sources: z.array(z.strictObject({ source: z.string(), input: argumentsSchema, view: z.strictObject({ type: z.string(), link: z.string() }).optional() })).min(1).max(20) }),
+      async ({ sources }) => Promise.all(sources.map(source => this.capabilities.sources.refresh(model, source.source, source.input, principal, task, this.tasks, signal, source.view))));
     add('evaluate_function', 'Evaluate a published read or computation Function. To populate source-backed objects use its data source refresh instead.', functionCall,
       async ({ function: name, input }) => this.capabilities.functions.invoke(model, name, input, context));
     add('apply_action', 'Apply a published Action or mapped Interface Action. Its parameters, submission criteria and atomic edits are enforced by the Ontology runtime.', actionCall,

@@ -4,14 +4,15 @@ import { Objects } from '../packages/runtime/objects.js';
 import { fixture, principal } from './fixture.js';
 import { Ontology } from '../packages/ontology/model.js';
 
-test('Action submission criteria reject an incomplete route and roll back all edits', async () => {
+test('Action submission criteria reject unproven locations without creating a route or inquiry', async () => {
   const f = await fixture();
   try {
-    const objects = new Objects(f.db, f.model, principal.owner), route = { type: 'Route', id: 'incomplete' };
-    await objects.create(route, { id: route.id, name: 'incomplete route' });
-    const action = f.model.resolveAction(route, 'RideEstimatable', 'requestEstimate', { requestId: 'request', route, requestedAt: new Date().toISOString() });
+    const objects = new Objects(f.db, f.model, principal.owner), place = { type: 'Place', id: 'unproven' };
+    await objects.create(place, { id: place.id, name: 'unproven', city: '上海市', address: 'unproven', coordinates: { lat: 31.2, lng: 121.5 }, coordinateSystem: 'provider', sourceBinding: 'synthetic', observedAt: new Date().toISOString() });
+    const action = f.model.resolveAction(place, 'Location', 'requestEstimate', { requestId: 'request', name: 'unproven route', origin: place, destination: place, requestedAt: new Date().toISOString() });
     await assert.rejects(f.capabilities.actions.apply(principal, f.model, action.action, action.input, 'request'));
     assert.equal((await objects.query({ type: 'RideRequest' })).items.length, 0);
+    assert.equal((await objects.query({ type: 'RideEstimatable' })).items.length, 0);
     await assert.rejects(f.capabilities.actions.apply({ ...principal, scopes: [] }, f.model, action.action, action.input, 'request'), /Permission/);
   } finally { await f.close(); }
 });

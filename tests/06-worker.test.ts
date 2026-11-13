@@ -26,7 +26,7 @@ test('recorded Agent decisions execute Interface, Links, Functions and Actions a
     const objects = new Objects(f.db, f.model, principal.owner);
     const routes = await objects.query({ type: 'RideEstimatable' }); assert.equal(routes.items.length, 1);
     assert.equal((await objects.follow(routes.items[0]!.ref, 'origin', 'RideEstimatable'))[0]!.properties.name, route.origin);
-    assert.equal(Number((await f.db.query(`SELECT count(*) FROM ${f.db.schema}.actions`)).rows[0]!.count), 2);
+    assert.equal(Number((await f.db.query(`SELECT count(*) FROM ${f.db.schema}.actions`)).rows[0]!.count), 1);
     assert.equal(await f.worker.runOne(), false);
     t.diagnostic(JSON.stringify({ elapsedMs: result.elapsedMs, sqlStatements: f.db.queries - before, providerCalls: f.provider.calls.length }));
   } finally { await f.close(); }

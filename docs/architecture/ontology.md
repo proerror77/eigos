@@ -76,12 +76,12 @@ flowchart LR
 
 当前业务能力如下；这些是可供模型组合的操作。
 
-- `DidiPlaces` 数据源运行 `searchPlaces`，按发布的字段映射批量写入 Place 与来源 Link。模型通过 `Location` 查询属性并选择地点，歧义时暂停原任务。
-- `CreateRideRoute` Action 把所选地点连接为路线。`RideEstimatable.requestEstimate` 映射到 `RequestRideEstimate`，按提交条件创建询价请求。
+- `DidiPlaces` 数据源运行 `searchPlaces`，按发布的字段映射批量写入 Place 与来源 Link。模型指定 `Location` Interface 及 `places` Link，在刷新返回中查询属性并选择地点，歧义时暂停原任务。
+- `Location.requestEstimate` 映射到 `RequestRideEstimate`，在一个事务中把所选地点连接为路线，并创建询价请求。提交条件检查两端来源，失败时两种对象及所有关系一起回滚。
 - `DidiEstimates` 数据源运行 `estimateRoute`，沿请求和路线的 Links 取得坐标，调用真实 `taxi_estimate`，映射报价与来源对象。
 - `readRideEstimates` Function 查询请求关联的 `PriceEstimate`，检查来源与时效，返回路线、价格与验收结果。
 
-`refresh_sources` 负责来源读取和入库，模型不能提供入库价格。普通 Function 求值不写入对象，业务编辑由 Action 执行。`complete_with_function` 重新执行模型选择的结果 Function，把服务端返回值直接交回原任务，省去一次模型改写报价的往返。没有在调度器中写死结果 Function 名称。工具失败可以由模型根据回值纠正，取消或租约失效仍阻止后续提交。
+`refresh_sources` 负责来源读取和入库，模型可指定返回的 Interface 视图及来源 Link，避免为不含属性的引用再做一次模型往返。模型不能提供入库价格。普通 Function 求值不写入对象，业务编辑由 Action 执行。`complete_with_function` 重新执行模型选择的结果 Function，把服务端返回值直接交回原任务，省去一次模型改写报价的往返。没有在调度器中写死结果 Function 名称。工具失败可以由模型根据回值纠正，取消或租约失效仍阻止后续提交。
 
 对象集查询示例。
 
