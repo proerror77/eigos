@@ -13,6 +13,6 @@ export async function ingest(objects: Objects, model: Ontology, sourceName: stri
     const ref = { type: type.apiName, id: String(fields[type.primaryKey]) };
     return { ref, properties: fields };
   });
-  await objects.ingestBatch(batch);
+  await objects.ingestBatch(batch,sourceName);
   return batch.map(item => item.ref);
 }

@@ -1,15 +1,27 @@
+import { initializeObjectSets } from './object-sets.js';
+import { initializeGovernance } from './governance.js';
+import { initializeEffects } from './effects.js';
+import { initializeIndexing } from './indexing.js';
+import { initializeEditHistory } from './edit-history.js';
+import { initializeMaterializations } from './materializations.js';
 import pg, { type PoolClient, type QueryResultRow } from 'pg';
+import { initializeSecurity } from './security.js';
 import { implementationDigest } from './implementation.js';
 
 export type Sql = Pick<pg.Pool, 'query'> | Pick<PoolClient, 'query'>;
 export class Database {
   readonly pool: pg.Pool;
   readonly schema: string;
+  readonly queryPool?: pg.Pool;
   queries = 0;
-  constructor(connectionString: string, schema = 'eigos', readonly runtimeId = implementationDigest()) {
+  constructor(connectionString: string, schema = 'eigos', readonly runtimeId = implementationDigest(), queryConnectionString?: string) {
     if (!/^eigos(?:_[a-z0-9]+)*$/.test(schema)) throw new Error('Invalid schema');
     this.schema = `"${schema}"`;
     this.pool = new pg.Pool({ connectionString, max: 8, connectionTimeoutMillis: 5000, statement_timeout: 10000 });
+    if (queryConnectionString) {
+      this.queryPool = new pg.Pool({connectionString:queryConnectionString,max:8,connectionTimeoutMillis:1000,statement_timeout:10000,options:'-c default_transaction_read_only=on'});
+      this.queryPool.on('error',()=>{});
+    }
     this.pool.on('error', error => process.stderr.write(`PostgreSQL connection error: ${error.name}\n`));
   }
   async query<T extends QueryResultRow = QueryResultRow>(text: string, values: unknown[] = [], client: Sql = this.pool) {
@@ -29,13 +41,48 @@ export class Database {
       throw error;
     } finally { client.release(); }
   }
-  close() { return this.pool.end(); }
+  private async readTransaction<T extends QueryResultRow>(pool: pg.Pool, text: string, values: unknown[], authority?: {id:string;position:string}) {
+    const connection = await pool.connect();
+    try {
+      await connection.query('BEGIN READ ONLY');
+      if (authority) {
+        const replica=(await connection.query(`SELECT id,NOT pg_is_in_recovery() OR pg_last_wal_replay_lsn()>=$1::pg_lsn AS current FROM ${this.schema}.storage_identity`,[authority.position])).rows[0];
+        if (replica?.id !== authority.id || !replica.current) {
+          await connection.query('ROLLBACK');
+          return undefined;
+        }
+      }
+      const result=await this.query<T>(text,values,connection);
+      await connection.query('COMMIT');
+      return result;
+    } catch(error) {
+      await connection.query('ROLLBACK').catch(()=>{});
+      throw error;
+    } finally { connection.release(); }
+  }
+  async readQuery<T extends QueryResultRow = QueryResultRow>(text: string, values: unknown[] = [], client: Sql = this.pool) {
+    if (!this.queryPool || client !== this.pool) return this.query<T>(text,values,client);
+    const primary=(await this.query<{id:string;position:string}>(`SELECT id,pg_current_wal_lsn()::text AS position FROM ${this.schema}.storage_identity`)).rows[0];
+    if (!primary) throw new Error('Storage identity is unavailable');
+    try {
+      const result=await this.readTransaction<T>(this.queryPool,text,values,primary);
+      if(result)return result;
+    } catch(error) {
+      if ((error as {code?:string}).code==='25006') throw error;
+      // A pooler may ignore startup options. Both paths use explicit read-only transactions.
+    }
+    return (await this.readTransaction<T>(this.pool,text,values))!;
+  }
+  async close() { await this.queryPool?.end(); await this.pool.end(); }
   async initialize() {
     const s = this.schema;
     await this.query(`CREATE SCHEMA IF NOT EXISTS ${s};
+      CREATE TABLE IF NOT EXISTS ${s}.storage_identity(singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton),id uuid NOT NULL DEFAULT gen_random_uuid());
+      INSERT INTO ${s}.storage_identity(singleton) VALUES(true) ON CONFLICT DO NOTHING;
       CREATE TABLE IF NOT EXISTS ${s}.releases (digest text PRIMARY KEY, body jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
       CREATE TABLE IF NOT EXISTS ${s}.ontology (id text PRIMARY KEY, release text NOT NULL REFERENCES ${s}.releases(digest));
       ALTER TABLE ${s}.releases ADD COLUMN IF NOT EXISTS definition_digest text;
+      ALTER TABLE ${s}.releases ADD COLUMN IF NOT EXISTS transform_id uuid;
       ALTER TABLE ${s}.releases ADD COLUMN IF NOT EXISTS projection text;
       ALTER TABLE ${s}.releases ADD COLUMN IF NOT EXISTS runtime_id text;
       ALTER TABLE ${s}.releases ADD COLUMN IF NOT EXISTS bindings jsonb;
@@ -81,10 +128,18 @@ export class Database {
         request_key text NOT NULL, request jsonb NOT NULL, response jsonb, response_digest text, created_at timestamptz NOT NULL DEFAULT now(),
         UNIQUE(task_id,request_key));
       CREATE TABLE IF NOT EXISTS ${s}.external_operations (owner text NOT NULL,operation_key text NOT NULL,scope_digest text NOT NULL,state text NOT NULL,result jsonb,
-        created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner,operation_key));
+        requirements jsonb NOT NULL DEFAULT '[]',created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner,operation_key));
       CREATE TABLE IF NOT EXISTS ${s}.scheduled_actions (id text NOT NULL,owner text NOT NULL,body jsonb NOT NULL,scopes jsonb NOT NULL,run_at timestamptz NOT NULL,deadline timestamptz NOT NULL,
         state text NOT NULL DEFAULT 'scheduled',task_id uuid UNIQUE REFERENCES ${s}.tasks(id),error text,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner,id));
       CREATE INDEX IF NOT EXISTS scheduled_actions_due ON ${s}.scheduled_actions(run_at) WHERE state='scheduled';`);
     await this.query(`ALTER TABLE ${s}.scheduled_actions ADD COLUMN IF NOT EXISTS continue_at timestamptz`);
+    await this.query(`ALTER TABLE ${s}.external_operations ADD COLUMN IF NOT EXISTS requirements jsonb NOT NULL DEFAULT '[]'`);
+    await initializeSecurity(this);
+    await initializeObjectSets(this);
+    await initializeGovernance(this);
+    await initializeEffects(this);
+    await initializeEditHistory(this);
+    await initializeIndexing(this);
+    await initializeMaterializations(this);
   }
 }

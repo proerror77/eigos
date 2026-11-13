@@ -23,7 +23,8 @@ export class PARequests {
         AND ($2::timestamptz IS NULL OR (r.created_at,r.id)>($2::timestamptz,$3::uuid)) ORDER BY r.created_at,r.id LIMIT $4`,[principal.owner,after?.created_at??null,after?.id??null,input.limit+1])).rows;
     const page=rows.slice(0,input.limit);
     await access.refresh();
-    const items=page.filter(row=>Array.isArray(row.result_permissions)&&access.canReturn(row.result_permissions)).map(row=>({taskId:row.task_id,sourceTaskId:row.source_task_id??null,scheduleId:row.schedule_id??null,request:row.result}));
+    const items=[];
+    for(const row of page)if(Array.isArray(row.result_permissions)&&await access.canReturn(row.result_permissions))items.push({taskId:row.task_id,sourceTaskId:row.source_task_id??null,scheduleId:row.schedule_id??null,request:row.result});
     return {items,cursor:rows.length>input.limit?page.at(-1)!.id:undefined};
   }
   async request(task: Task, operation: string, capability: string, input: Record<string, unknown>, responseSchema: Record<string, unknown>, dataScope?: Record<string, unknown>) {

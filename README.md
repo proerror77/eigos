@@ -131,3 +131,7 @@ Agent 可通过 `SchedulablePlan.prepare` 向用户 PA 请求指定范围的完�
 Luma 活动、RollingGo 酒店和 Shopify 商品实现各自的 Interface，并通过 `ServiceOffering` 与 `SchedulePlan` 关联。活动出行先比较并合并 Scenario，再由 PA 批准确切的报名或叫车权限。定时检查和外部操作记录保存在同一个 PostgreSQL schema；重启、超时或未知订单结果不会触发重复发单。
 
 Luma 默认沿用原 PA 已连接的 MCP。未来执行需要 PA 持续处理 `list_pa_requests`；只有一个已登录但离线的聊天会话不足以保证无人值守。连接配置、调用契约、价格边界和当前验收范围见 [服务接口与定时出行](docs/guides/service-planning.md)。
+
+## Ontology 运行服务
+
+对象集、发布提案、来源索引、编辑历史、物化、策略和独立进程的入口见 [Ontology 运行服务](docs/guides/ontology-services.md)。构建后用 `npm run start:indexer` 运行来源消费与已配置的 Action 副作用。可用 `QUERY_DATABASE_URL` 配置只读查询节点，`EIGOS_EXTENSION_MODULE` 注册受信任的 Function 版本与副作用处理函数。

@@ -8,7 +8,7 @@ import { PARequests } from '../packages/runtime/pa.js';
 import { ScheduledActions } from '../packages/runtime/scheduled-actions.js';
 import { ExternalOperations } from '../packages/runtime/external-operations.js';
 import { digest } from '../packages/core/identity.js';
-import { memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
 import { Worker } from '../apps/worker/worker.js';
 import { ScheduledActionRunner } from '../packages/runtime/scheduled-actions.js';
 
@@ -348,6 +348,39 @@ test('external operation uniqueness survives concurrent invocations and differen
       /different input/,
     );
     assert.equal(calls, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test('recovering a provider receipt rechecks its original data permissions and status does not expose the receipt', async () => {
+  const f = await fixture();
+  try {
+    const operations = new ExternalOperations(f.db),
+      graph = new Objects(f.db, f.model, f.access),
+      scope = { trip: 'original' };
+    f.access.source(f.model, 'Didi');
+    await operations.run(
+      principal.owner,
+      'protected-operation',
+      scope,
+      async () => {},
+      async () => ({ orderId: 'private-provider-order' }),
+      graph,
+    );
+    const status = await operations.inspect(principal.owner, 'protected-operation');
+    assert.equal(status!.state, 'confirmed');
+    assert.equal('result' in status!, false);
+    await setGrants(
+      f.db,
+      principal.owner,
+      memberGrants(f.model).filter((g) => g.resource !== 'Eigos/source/Didi'),
+    );
+    const revoked = new Objects(f.db, f.model, await Access.load(f.db, principal));
+    await assert.rejects(
+      operations.recover(principal.owner, 'protected-operation', scope, revoked),
+      /permissions changed/,
+    );
   } finally {
     await f.close();
   }

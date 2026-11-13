@@ -127,7 +127,7 @@ export function configuredServices(path?: string): ServiceResolver {
               priceKind: 'reference',
             })),
           };
-        } else {
+        } else if (provider === 'Shopify') {
           const q = productSearchInput.parse(input);
           let secret: { clientId: string; clientSecret: string };
           try {
@@ -164,7 +164,7 @@ export function configuredServices(path?: string): ServiceResolver {
                 })),
             ),
           };
-        }
+        } else throw new Error('Service connector implementation is unavailable');
         await assertCurrent();
         const observedAt = new Date().toISOString();
         return serviceObservation.parse({

@@ -6,6 +6,7 @@ import { objectRefSchema, type ObjectRef, type Value } from '../ontology/schema.
 import { Database, type Sql } from './database.js';
 import { Objects } from './objects.js';
 import { Functions, type FunctionContext } from './functions.js';
+import { Effects } from './effects.js';
 
 const evaluate = (expression: Value, input: Record<string, unknown>): unknown => {
   if ('literal' in expression) return expression.literal;
@@ -14,13 +15,17 @@ const evaluate = (expression: Value, input: Record<string, unknown>): unknown =>
   return value;
 };
 export class Actions {
-  constructor(private readonly db: Database, private readonly functions: Functions) {}
+  constructor(private readonly db: Database, private readonly functions: Functions, private readonly effects?: Effects) {}
   async apply(access: Access, model: PublishedOntology, actionName: string, raw: Record<string, unknown>, requestId: string, beforeCommit?: (client: Sql) => Promise<void>, execution?: FunctionContext['execution'], signal = AbortSignal.timeout(120000)) {
     const principal = access.principal;
     await access.refresh(); access.action(model, actionName);
     if (model.runtimeId !== this.db.runtimeId) throw new Conflict('Historical Actions are read-only');
     if ((await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [model.document.id])).rows[0]?.release !== model.release) throw new Conflict('Historical and prepared Actions are read-only');
     const action = model.action(actionName), input = validator(action.parameters).parse(raw) as Record<string, unknown>;
+    if (action.effects?.length && !model.scenario) {
+      if (!this.effects) throw new Error('Action effects require a configured dispatcher');
+      this.effects.check(action.effects.map(effect => effect.handler));
+    }
     const fingerprint = digest({ release: model.release, action: actionName, input });
     const journal = model.scenario ? 'scenario_actions' : 'actions';
     const priorResult = (client: Sql = this.db.pool) => this.db.query(`SELECT digest,result FROM ${this.db.schema}.${journal} WHERE owner=$1 AND request_id=$2${model.scenario ? ' AND scenario_id=$3' : ''}`, [principal.owner, requestId, ...(model.scenario ? [model.scenario] : [])], client);
@@ -60,6 +65,9 @@ export class Actions {
       const result = write ? objectRefSchema.parse(await write(objects)) : ref(action.result!);
       if (model.scenario) await this.db.query(`INSERT INTO ${this.db.schema}.scenario_actions(scenario_id,owner,request_id,digest,action,result,requirements) VALUES($1,$2,$3,$4,$5,$6,$7)`, [model.scenario, principal.owner, requestId, fingerprint, actionName, result, JSON.stringify(access.requirements())], client);
       else await this.db.query(`INSERT INTO ${this.db.schema}.actions(owner,request_id,digest,action,release,result) VALUES($1,$2,$3,$4,$5,$6)`, [principal.owner, requestId, fingerprint, actionName, model.release, result], client);
+      if (action.effects?.length && !model.scenario) await this.effects!.enqueue(client, access, model, actionName, requestId, action.effects.map(effect => ({
+        name: effect.name, handler: effect.handler, payload: Object.fromEntries(Object.entries(effect.payload).map(([name, value]) => [name, evaluate(value, input)])),
+      })));
       signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client);
       return result;
     });

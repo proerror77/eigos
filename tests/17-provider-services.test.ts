@@ -88,7 +88,7 @@ test('canonical service identity survives refresh and rejects old or conflicting
     provider.flags.start = new Date(Date.parse(provider.flags.start) + 600000).toISOString();
     await assert.rejects(
       f.capabilities.actions.apply(f.access, f.model, 'SearchLumaEvents', {}, 'conflicting'),
-      /older or conflicting/,
+      /older|conflicting/,
     );
     assert.equal((await graph.read(before.ref)).revision, before.revision);
     provider.flags.observedAt = new Date(Date.parse(String(before.properties.observedAt)) + 1000).toISOString();
@@ -112,8 +112,45 @@ test('canonical service identity survives refresh and rejects old or conflicting
     provider.flags.observedAt = String(before.properties.observedAt);
     await assert.rejects(
       f.capabilities.actions.apply(f.access, f.model, 'SearchLumaEvents', {}, 'older'),
-      /older or conflicting/,
+      /older|conflicting/,
     );
+  } finally {
+    await f.close();
+  }
+});
+
+test('refresh retains local notes but cannot certify overridden provider facts', async () => {
+  const provider = serviceProvider(),
+    f = await fixture(undefined, provider.resolve);
+  try {
+    await f.capabilities.actions.apply(f.access, f.model, 'SearchLumaEvents', {}, 'original');
+    const definition = structuredClone(f.model.document);
+    definition.objectTypes.find((type) => type.apiName === 'LumaEvent')!.properties.localNote = {
+      description: 'Human annotation',
+      schema: { type: 'string' },
+      required: false,
+    };
+    const model = await f.metadata.publish(definition, f.capabilities, f.publisher),
+      graph = new Objects(f.db, model, f.access);
+    const event = (await graph.query({ type: 'AttendableEvent' })).items[0]!;
+    await graph.edit(event.ref, event.revision, { localNote: 'Keep this human note' });
+    await f.capabilities.actions.apply(f.access, model, 'SearchLumaEvents', {}, 'refresh-note');
+    const current = await graph.read(event.ref);
+    assert.equal(current.properties.localNote, 'Keep this human note');
+    const editedStart = new Date(Date.parse(String(current.properties.start)) + 600000).toISOString();
+    await graph.edit(event.ref, current.revision, { start: editedStart });
+    const context = { principal, objects: graph, signal: AbortSignal.timeout(5000) };
+    await assert.rejects(
+      f.capabilities.functions.invoke(model, 'readServiceOffering', { service: event.ref }, context),
+      /locally overridden/,
+    );
+    await assert.rejects(
+      f.capabilities.actions.apply(f.access, model, 'SearchLumaEvents', {}, 'refresh-override'),
+      /overridden/,
+    );
+    const after = await graph.read(event.ref);
+    assert.equal(after.properties.localNote, 'Keep this human note');
+    assert.equal(after.properties.start, editedStart);
   } finally {
     await f.close();
   }

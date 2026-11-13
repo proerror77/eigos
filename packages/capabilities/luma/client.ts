@@ -24,10 +24,13 @@ export class LumaReadClient {
     private readonly fetcher: typeof fetch = fetch,
   ) {}
   async read(raw: unknown, signal: AbortSignal) {
-    try { return await this.request(raw,signal); }
-    catch { throw new Error('Luma source unavailable; verify account authorization and the response contract'); }
+    try {
+      return await this.request(raw, signal);
+    } catch {
+      throw new Error('Luma source unavailable; verify account authorization and the response contract');
+    }
   }
-  private async request(raw:unknown,signal:AbortSignal){
+  private async request(raw: unknown, signal: AbortSignal) {
     const input = eventSearchInput.parse(raw),
       url = new URL(input.eventId ? '/v1/events/get' : '/v1/calendars/events/list', 'https://public-api.luma.com');
     if (input.query || input.location)

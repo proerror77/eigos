@@ -4,6 +4,8 @@ import { fork, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createServer } from 'node:net';
+import { memberGrants, setGrants } from '../../packages/runtime/access.js';
+import { principal } from '../fixture.js';
 import { fixture, route } from '../fixture.js';
 import { planningInput, calendarAnswer } from '../planning-fixture.js';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
@@ -17,12 +19,14 @@ async function stop(child: ChildProcess) {
 }
 test('separate Gateway and Worker complete inquiries and PA calendar scenarios on the original PostgreSQL tasks', async t => {
   const f = await fixture(), token = 'process-test-token-'.repeat(3);
+  await setGrants(f.db,principal.owner,[...memberGrants(f.model),{resource:'Eigos/datasource/DidiPlaces',permission:'ingest_source'}]);
   const portServer = createServer().listen(0, '127.0.0.1'); await once(portServer, 'listening');
   const address = portServer.address(); assert(address && typeof address !== 'string'); const port = address.port;
   await new Promise<void>(resolve => portServer.close(() => resolve()));
   const env = { ...process.env, DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_PG_SCHEMA: f.schema, EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token, PUBLIC_URL: `http://127.0.0.1:${port}`, PORT: String(port) };
   const gateway = fork(new URL('../../apps/gateway/main.js', import.meta.url), [], { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   const worker = fork(new URL('./worker.js', import.meta.url), [], { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+  const indexer=fork(new URL('../../apps/indexer/main.js',import.meta.url),[],{env,stdio:['ignore','pipe','pipe','ipc']});
   const url = env.PUBLIC_URL, headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
   try {
     const deadline = Date.now() + 15000;
@@ -51,6 +55,14 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
         const response=await client.callTool({name,arguments:args});assert(!response.isError,JSON.stringify(response));
         return JSON.parse((response.content as {text:string}[])[0]!.text);
       };
+      const observedAt=new Date().toISOString();
+      const indexed=await call('ontology_submit_index',{source:'DidiPlaces',stream:'process-stream',offset:1,mode:'stream',observedAt,
+        rows:[{id:'process-indexed-place',name:'Indexed place',city:'上海',address:'上海',coordinates:{lat:31.2,lng:121.5},coordinateSystem:'GCJ-02',sourceBinding:'synthetic',observedAt}]});
+      const indexDeadline=Date.now()+15000;
+      let indexStatus=await call('ontology_index_status',{id:indexed.id});
+      while(indexStatus.state==='pending'&&Date.now()<indexDeadline){await delay(25);indexStatus=await call('ontology_index_status',{id:indexed.id});}
+      assert.equal(indexStatus.state,'applied',JSON.stringify(indexStatus));
+      assert.equal((await call('query_ontology',{query:{type:'Place',where:{id:'process-indexed-place'}}})).items.length,1);
       const planning=planningInput(),created=await call('submit_task',{requestId:'e2e-calendar',message:JSON.stringify({planning})});
       const poll=async(taskId=created.id)=>{
         const until=Date.now()+15000;
@@ -90,6 +102,6 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
       assert.equal((await call('query_ontology',{query:{type:'RideOrder'}})).items.length,0);
       t.diagnostic(JSON.stringify({lumaTask:luma.id,scheduledRegistrationTask:request.taskId,PA:'synthetic Grok/Luma responses',externalMutations:0}));
     } finally {await client.close();}
-    t.diagnostic(JSON.stringify({ messageToQuoteMs: quoteElapsed, source: 'synthetic MCP responses', database: 'PostgreSQL', processes: ['Gateway', 'Worker'] }));
-  } finally { await Promise.all([stop(gateway), stop(worker)]); await f.close(); }
+    t.diagnostic(JSON.stringify({ messageToQuoteMs: quoteElapsed, source: 'synthetic MCP responses', database: 'PostgreSQL', processes: ['Gateway', 'Worker', 'Indexer'] }));
+  } finally { await Promise.all([stop(gateway), stop(worker),stop(indexer)]); await f.close(); }
 });

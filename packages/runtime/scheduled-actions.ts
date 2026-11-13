@@ -28,7 +28,7 @@ const actionContract = (model: PublishedOntology, name: string) => {
     action,
     functions: [action.function, ...action.submissionCriteria.map((c) => c.function)]
       .filter((n): n is string => !!n)
-      .map((n) => model.functions.get(n)),
+      .map((n) => ({ definition: model.functions.get(n), binding: model.bindings.functions[n] })),
   });
 };
 /** Future business work does not pin an old runtime for days. Admission checks

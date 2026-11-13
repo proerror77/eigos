@@ -68,7 +68,7 @@ export async function fixture(driver: AgentDriver = new FixtureAgent(),services?
   await setGrants(db, principal.owner, memberGrants(new Ontology(document)));
   const access = await Access.load(db, principal);
   const source = async (owner: string) => { if (owner !== principal.owner) throw new Error('Wrong source owner'); return p.source; };
-  const capabilities = createCapabilities(db, source,services), model = await metadata.publish(document, capabilities, publisher), agent = new OntologyAgent(db, metadata, tasks, capabilities, driver), worker = new Worker(tasks, agent,new ScheduledActions(db,metadata),new ScheduledActionRunner(db,metadata,tasks,capabilities.actions));
+  const capabilities = createCapabilities(db, source,{},services), model = await metadata.publish(document, capabilities, publisher), agent = new OntologyAgent(db, metadata, tasks, capabilities, driver), worker = new Worker(tasks, agent,new ScheduledActions(db,metadata),new ScheduledActionRunner(db,metadata,tasks,capabilities.actions));
   return { db, schema, model, metadata, tasks, capabilities, access, publisher, agent, worker, source, provider: p,
     submit: () => tasks.submit(principal, { requestId: randomUUID(), message: '从中企云翠森林到前滩太古里，只询价', route }),
     async close() { worker.stop(); await db.query(`DROP SCHEMA ${db.schema} CASCADE`); await db.close(); await p.close(); },

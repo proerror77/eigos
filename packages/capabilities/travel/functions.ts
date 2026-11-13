@@ -345,7 +345,11 @@ export function travelFunctions(
     const previous = await graph.follow(trip, 'order');
     if (previous.length && (!same(previous[0]!.ref, ref) || previous.length !== 1))
       throw new Conflict('Trip already has a different provider order');
-    await graph.ingestBatch([{ ref, properties: { id: ref.id, name: 'Original ride order', ...order, bindingId } }]);
+    await graph.ingestBatch(
+      [{ ref, properties: { id: ref.id, name: 'Original ride order', ...order, bindingId } }],
+      'DidiRideOrders',
+      order.observedAt,
+    );
     await graph.link({ type: 'TripOrder', from: trip, to: ref });
     const current = await graph.read(trip);
     if (current.properties.state !== 'canceled')
@@ -362,9 +366,21 @@ export function travelFunctions(
       throw new Conflict('No original ride operation');
     if (trip.properties.sourceAuthority !== (source.authorityId ?? digest(source.bindingId)))
       throw new Conflict('Original ride source authority is unavailable');
-    const original = rideOrderSchema.parse(
-      await effects.recover(context.principal.owner, String(trip.properties.scheduleId), effectScope(trip)),
-    );
+    const stored = await context.objects.follow(ref, 'order');
+    if (stored.length > 1 || stored.some((item) => item.properties.bindingId !== source.bindingId))
+      throw new Conflict('Original ride identity is ambiguous');
+    const original = stored.length
+      ? { orderId: String(stored[0]!.properties.orderId) }
+      : rideOrderSchema.parse(
+          await effects.recover(
+            context.principal.owner,
+            String(trip.properties.scheduleId),
+            effectScope(trip),
+            context.objects,
+          ),
+        );
+    if (stored.length && typeof stored[0]!.properties.orderId !== 'string')
+      throw new Conflict('Original provider order identity is unavailable');
     const result = rideOrderSchema.parse(await source.orders.query(original.orderId, context.signal));
     await source.assertCurrent();
     if (result.orderId !== original.orderId || !result.independentRead)
@@ -393,7 +409,7 @@ export function travelFunctions(
     if (trip.properties.sourceAuthority !== (source.authorityId ?? digest(source.bindingId)))
       throw new Conflict('Ride source authority changed; review the original plan');
     const scope = effectScope(trip),
-      recovered = await effects.recover<RideOrder>(context.principal.owner, call.scheduleId, scope);
+      recovered = await effects.recover<RideOrder>(context.principal.owner, call.scheduleId, scope, context.objects);
     if (recovered)
       return context.edit(ref, async (graph) => {
         await projectOrder(graph, ref, rideOrderSchema.parse(recovered), source.bindingId);
@@ -665,6 +681,7 @@ export function travelFunctions(
           await guard();
         },
         () => source.orders!.create(quote, context.signal, guard),
+        context.objects,
       ),
     );
     return context.edit(ref, async (graph) => {

@@ -17,6 +17,11 @@ import {
 } from './service-contracts.js';
 
 /** Business interfaces are shared; these are the concrete source implementations. */
+const searchContracts = {
+  EventSearch: eventSearchInput,
+  HotelSearch: hotelSearchInput,
+  ProductSearch: productSearchInput,
+};
 export const serviceCatalog = [
   {
     provider: 'Luma',
@@ -55,11 +60,6 @@ export const serviceCatalog = [
     facts: productFacts,
   },
 ] as const;
-export const serviceTypes = {
-  Luma: 'LumaEvent',
-  RollingGo: 'RollingGoHotelOffer',
-  Shopify: 'ShopifyProductOffer',
-} as const;
 const properties = (shape: Record<string, z.ZodType>) =>
   Object.fromEntries(
     Object.entries(shape).map(([name, schema]) => [
@@ -165,13 +165,13 @@ export const servicesDefinition: OntologyDocument = {
       links: { results: { target: 'ServiceOffering', cardinality: 'many', required: true } },
       actions: {},
     },
-    ...serviceCatalog.map((service) => ({
-      apiName: service.searchInterface,
+    ...Object.entries(searchContracts).map(([apiName, parameters]) => ({
+      apiName,
       description: `Business search contract; choose an authorized implementing source, independently of its MCP transport.`,
       properties: properties({ name: z.string() }),
       optionalProperties: [],
       links: {},
-      actions: { search: { parameters: json(service.parameters), objectParameters: {}, required: true } },
+      actions: { search: { parameters: json(parameters), objectParameters: {}, required: true } },
     })),
   ],
   linkTypes: serviceCatalog.flatMap((service) => [

@@ -39,8 +39,17 @@ export async function currentService(objects: FunctionContext['objects'], ref: O
   if (!objects.model.implements(ref.type, 'ServiceOffering')) throw new Conflict('A ServiceOffering is required');
   const item = await objects.read(ref),
     p = item.properties;
+  if (
+    ['nativeId', 'bindingId', 'provider', 'observedAt', 'expiresAt', 'evidence'].some(
+      (field) => typeof p[field] !== 'string',
+    )
+  )
+    throw new Conflict('Required service provenance is unavailable');
   objects.access.source(objects.model, String(p.provider));
   const source = await objects.follow(ref, 'source', 'ServiceOffering');
+  const mapping = [...objects.model.sources.values()].filter((item) => item.objectType === ref.type);
+  if (mapping.length !== 1 || !(await objects.matchesSource(ref, mapping[0]!.apiName)))
+    throw new Conflict('Service source fields are missing or locally overridden');
   if (expectedSource && (source.length !== 1 || digest(source[0]!.ref) !== digest(expectedSource)))
     throw new Conflict('Search page was superseded; read the current service or refresh this query');
   if (
@@ -279,20 +288,17 @@ export function serviceProjections(resolve: ServiceResolver): ReadonlyMap<string
               throw error;
             });
             if (previous) {
-              if (!Number.isFinite(ms(previous.properties.observedAt)))
-                throw new Conflict('Source observation time is unavailable');
-              if (
-                ms(previous.properties.observedAt) > observed ||
-                (ms(previous.properties.observedAt) === observed &&
-                  digest(previous.properties) !== digest(item.properties))
-              )
-                throw new Conflict('An older or conflicting source observation cannot overwrite this service');
               for (const old of await graph.follow(item.ref, 'source', 'ServiceOffering'))
                 if (digest(old.ref) !== digest(receipt))
                   await graph.unlink({ type: `${item.ref.type}Source`, from: item.ref, to: old.ref });
             }
           }
-          await graph.ingestBatch(batch);
+          await graph.ingestBatch(batch, service.source, observedAt);
+          for (const item of batch) {
+            const current = await graph.read(item.ref);
+            if (current.properties.observedAt !== observedAt || !(await graph.matchesSource(item.ref, service.source)))
+              throw new Conflict('Source observation is older, conflicting or locally overridden');
+          }
           await graph.linkBatch(refs.map((ref) => ({ type: `${ref.type}Source`, from: ref, to: receipt })));
           await graph.linkBatch(refs.map((ref) => ({ type: `${ref.type}SearchResult`, from: receipt, to: ref })));
           return { receipt, objects: refs };
