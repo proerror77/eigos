@@ -95,3 +95,19 @@ test('result completion and deleted dependencies fail closed and Scenario depend
     await assert.rejects(f.tasks.finish(task!, 'completed', output, undefined, requirements), /permissions changed/);
   } finally { await f.close(); }
 });
+
+test('derived object writes retain markings of objects read by the Action context',async()=>{
+  const f=await fixture();try{
+    const body=structuredClone(f.model.document);
+    body.objectTypes.find(type=>type.apiName==='Route')!.properties.marks={description:'Data security labels',schema:{type:'array',items:{type:'string'}},required:true};
+    const model=await f.metadata.publish(body,f.capabilities,f.publisher);
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies VALUES('Eigos','Route',$1)`,[objectPolicySchema.parse({markingsProperty:'marks'})]);
+    await f.db.query(`INSERT INTO ${f.db.schema}.security_memberships VALUES($1,'marking','private')`,[principal.owner]);
+    const access=await Access.load(f.db,principal),graph=new Objects(f.db,model,access);
+    await graph.create({type:'Route',id:'marked'},{id:'marked',name:'Protected',marks:['private']});
+    await graph.read({type:'Route',id:'marked'});
+    await assert.rejects(graph.create({type:'Route',id:'public'},{id:'public',name:'Derived',marks:[]}),/retain/);
+    await graph.create({type:'Route',id:'derived'},{id:'derived',name:'Derived',marks:['private']});
+    assert.deepEqual((await graph.read({type:'Route',id:'derived'})).properties.marks,['private']);
+  }finally{await f.close();}
+});

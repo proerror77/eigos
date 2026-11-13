@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Conflict, digest } from '../core/identity.js';
 import type { LinkData, ObjectRef } from '../ontology/schema.js';
-import { Access, type Requirement } from './access.js';
+import { Access, PermissionDenied, type Requirement } from './access.js';
 import { Database, type Sql } from './database.js';
 import { PublishedOntology } from './metadata.js';
 import { Objects } from './objects.js';
@@ -101,7 +101,10 @@ export class Scenarios {
     const changes = await this.changes(owner, id, client);
     if (changes.objects.some(item => !scope.objects.includes(item.type)) || changes.links.some(item => !scope.links.includes(item.type))) throw new Conflict('Scenario contains edits outside this merge Action scope');
     const actions = (await this.db.query(`SELECT requirements FROM ${this.db.schema}.scenario_actions WHERE owner=$1 AND scenario_id=$2`, [owner, id], client)).rows;
-    for (const action of actions) for (const requirement of action.requirements as Requirement[]) access.require(requirement.ontology, requirement.permission, requirement.resource);
+    for (const action of actions) {
+      if (!await access.canReturn(action.requirements,client)) throw new PermissionDenied('Permission changed for scenario inputs');
+      for (const requirement of action.requirements as Requirement[]) access.require(requirement.ontology, requirement.permission, requirement.resource);
+    }
     for (const item of changes.objects) {
       const live = (await this.db.query(`SELECT revision,properties FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`, [model.projection, owner, item.type, item.id], client)).rows[0];
       if ((String(live?.revision ?? '') !== String(item.base_revision ?? '') || digest(live?.properties ?? null)!==digest(item.base_properties))) throw new Conflict('Scenario object conflicts with current data');

@@ -1,7 +1,7 @@
 import { copyEditState } from './edit-history.js';
 import { randomUUID } from 'node:crypto';
 import { digest, Conflict } from '../core/identity.js';
-import { Ontology } from '../ontology/model.js';
+import { Ontology, validator } from '../ontology/model.js';
 import type { ObjectRef } from '../ontology/schema.js';
 import { Database, type Sql } from './database.js';
 import { Access } from './access.js';
@@ -25,6 +25,20 @@ export class Metadata {
       (SELECT md5(coalesce(string_agg(md5(row(owner,type,id,overrides,deleted,created)::text),'' ORDER BY owner,type,id),'')) FROM ${this.db.schema}.object_edits WHERE projection=$1) AS edits,
       (SELECT md5(coalesce(string_agg(row(ontology,type,policy)::text,'' ORDER BY ontology,type),'')) FROM ${this.db.schema}.edit_policies) AS policies`,[projection],client)).rows[0];
     return digest({row,edits});
+  }
+  private async validateEditState(model: PublishedOntology | Ontology, projection: string, client: Sql) {
+    const sources = (await this.db.query(`SELECT type,properties FROM ${this.db.schema}.source_values WHERE projection=$1 AND properties IS NOT NULL`,[projection],client)).rows;
+    const overrides = (await this.db.query(`SELECT type,overrides FROM ${this.db.schema}.object_edits WHERE projection=$1`,[projection],client)).rows;
+    const validate = (type: string, values: Record<string,unknown>) => {
+      const definition = model.object(type);
+      for (const [name,value] of Object.entries(values)) {
+        if (!definition.properties[name]) continue;
+        try { validator(definition.properties[name].schema).parse(value); }
+        catch { throw new Conflict('Candidate edit or source state needs migration for '+type+'.'+name); }
+      }
+    };
+    for (const row of sources) validate(row.type,row.properties);
+    for (const row of overrides) validate(row.type,Object.fromEntries(Object.entries(row.overrides as Record<string,{value:unknown}>).map(([name,edit])=>[name,edit.value])));
   }
   async prepare(input: unknown, bindings: Bindings, access: Access, transform?: ProjectionTransform, permissionTarget?: string): Promise<PublishedOntology> {
     const model = new Ontology(input);
@@ -53,7 +67,10 @@ export class Metadata {
         for (let offset = 0; offset < mapped.length; offset += 500) await this.db.query(`INSERT INTO ${this.db.schema}.links(projection,owner,type,from_type,from_id,to_type,to_id,single_from,single_to)
           SELECT $1,owner,type,from_type,from_id,to_type,to_id,single_from,single_to FROM jsonb_to_recordset($2::jsonb) AS r(owner text,type text,from_type text,from_id text,to_type text,to_id text,single_from boolean,single_to boolean)`, [projection, JSON.stringify(mapped.slice(offset, offset + 500))], client);
       }
-      if (current) await copyEditState(this.db,current.projection,projection,client,[...model.objects.keys()]);
+      if (current) {
+        await copyEditState(this.db,current.projection,projection,client,[...model.objects.keys()]);
+        await this.validateEditState(model,projection,client);
+      }
       await access.refresh(client);
       await this.db.query(`INSERT INTO ${this.db.schema}.releases(digest,body,definition_digest,projection,runtime_id,bindings,state,prepared_from,source_fingerprint,projection_fingerprint)
         VALUES($1,$2,$3,$4,$5,$6,'prepared',$7,$8,$9)`, [release, model.document, model.digest, projection, this.db.runtimeId, manifest, current?.digest ?? null, fingerprint, await this.fingerprint(projection, client)], client);
@@ -129,6 +146,7 @@ export class Metadata {
           AS r(owner text,type text,from_type text,from_id text,to_type text,to_id text,single_from boolean,single_to boolean)`,[candidate.projection,JSON.stringify(mapped)],client);
       }
       await copyEditState(this.db,live.projection,candidate.projection,client,types);
+      await this.validateEditState(candidate,candidate.projection,client);
       await access.refresh(client);
       await this.db.query(`UPDATE ${this.db.schema}.releases SET source_fingerprint=$2,projection_fingerprint=$3 WHERE digest=$1`,[release,await this.fingerprint(live.projection,client),await this.fingerprint(candidate.projection,client)],client);
       return {release,projection:candidate.projection,objectsUpdated:updated,linksAdded:edges.length};

@@ -22,7 +22,7 @@ test('row and cell policies use memberships consistently in reads, filters and s
     await assert.rejects(visible.edit({type:'Route',id:'allowed'},1,{name:'finance'}),/hidden/);
     const requirements=access.dataRequirements();
     await f.db.query(`DELETE FROM ${f.db.schema}.security_memberships WHERE subject=$1`,[principal.owner]);
-    assert.equal((await Access.load(f.db,principal)).canReturn(requirements),false);
+    assert.equal(await (await Access.load(f.db,principal)).canReturn(requirements),false);
   } finally { await f.close(); }
 });
 

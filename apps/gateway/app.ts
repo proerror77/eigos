@@ -65,13 +65,15 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   const query = async (p: Principal, raw: unknown) => {
     requireScope(p, 'ontology:read'); const input = queryInput.parse(raw);
     const access = await Access.load(db, p), result = await new Objects(db, await modelFor(p, input.taskId, input.scenarioId), access).query(input.query);
-    await access.refresh(); return result;
+    if(!await access.canReturn(access.dataRequirements()))throw new Error('Result permissions changed');
+    return result;
   };
   const evaluate = async (p: Principal, raw: unknown) => {
     requireScope(p, 'ontology:read');
     const input = functionInput.parse(raw), model = await modelFor(p, input.taskId, input.scenarioId), access = await Access.load(db, p);
     const result = await capabilities.functions.invoke(model, input.function, input.input, { principal: p, objects: new Objects(db, model, access), signal: AbortSignal.timeout(30000) });
-    await access.refresh(); return result;
+    if(!await access.canReturn(access.dataRequirements()))throw new Error('Result permissions changed');
+    return result;
   };
   const apply = async (p: Principal, raw: unknown) => {
     requireScope(p, 'ontology:write');

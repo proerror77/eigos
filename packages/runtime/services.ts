@@ -23,7 +23,9 @@ export function ontologyServices(db: Database, metadata: Metadata, bindings: Bin
   const register=<S extends z.ZodType>(name:string,description:string,schema:S,write:boolean,run:(access:Access,input:z.output<S>)=>Promise<unknown>)=>{
     services.set(name,{schema,description,invoke:async(principal,raw)=>{
       requireScope(principal,write?'ontology:write':'ontology:read');
-      return run(await Access.load(db,principal),schema.parse(raw));
+      const access=await Access.load(db,principal),result=await run(access,schema.parse(raw));
+      if (!write && !await access.canReturn(access.dataRequirements())) throw new Error('Result permissions changed');
+      return result;
     }});
   };
   const view=async(access:Access,scenarioId?:string)=>{
@@ -39,6 +41,7 @@ export function ontologyServices(db: Database, metadata: Metadata, bindings: Bin
   register('submit_index','Submit an authorized source transaction with ordered offset.',indexingInputSchema,true,async(a,input)=>indexing.submit(a,await metadata.active(),input));
   register('index_status','Read durable source indexing progress.',idSchema,false,async(a,input)=>indexing.inspect(a,await metadata.active(),input.id));
   register('retry_index','Retry a failed source transaction with its original identity.',idSchema,true,async(a,input)=>indexing.retry(a,await metadata.active(),input.id));
+  register('cancel_index','Cancel an owned source transaction and skip its ordered offset.',idSchema,true,async(a,input)=>indexing.cancel(a,await metadata.active(),input.id));
   register('materialize','Capture resolved objects and links in an atomic authorized dataset.',materializationInputSchema,true,async(a,input)=>materializations.capture(a,await metadata.active(),input));
   register('read_materialization','Read a captured dataset after current object and property authorization.',idSchema.extend({cursor:z.string().optional()}),false,async(a,input)=>materializations.read(a,await metadata.active(),input.id,input.cursor));
   register('materialized_links','Read authorized relationships from a materialization.',idSchema.extend({after:z.number().int().min(0).optional()}),false,async(a,input)=>materializations.links(a,await metadata.active(),input.id,input.after));

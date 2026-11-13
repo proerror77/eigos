@@ -139,3 +139,19 @@ test('direct candidate catch-up cannot retain an approval of older data and hand
     await assert.rejects(f.governance.merge(f.publisher,reviewInput(approved)),/exact approved/);
   }finally{await f.close();}
 });
+
+test('publication fingerprints include source state hidden by a user edit',async()=>{
+  const f=await setup();try{
+    const graph=new Objects(f.db,f.model,f.access),ref={type:'Route',id:'hidden-source'};
+    await graph.ingestBatch([{ref,properties:{id:ref.id,name:'source'}}],'Feed','2026-01-01T00:00:00Z');
+    await graph.edit(ref,1,{name:'manual'});
+    const candidate=await f.metadata.prepare(f.model.document,f.capabilities,f.publisher);
+    await graph.ingestBatch([{ref,properties:{id:ref.id,name:'updated source'}}],'Feed','2026-02-01T00:00:00Z');
+    assert.equal((await graph.read(ref)).properties.name,'manual');
+    await assert.rejects(f.metadata.activate(candidate.release,f.capabilities,f.publisher),/Source data changed/);
+    await f.metadata.catchUp(candidate.release,f.capabilities,f.publisher);
+    await f.metadata.activate(candidate.release,f.capabilities,f.publisher);
+    const stored=(await f.db.query(`SELECT properties FROM ${f.db.schema}.source_values WHERE projection=$1 AND type='Route' AND id=$2 AND source='Feed'`,[candidate.projection,ref.id])).rows[0]!;
+    assert.equal(stored.properties.name,'updated source');
+  }finally{await f.close();}
+});
