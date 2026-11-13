@@ -190,7 +190,24 @@ function atPath(output: unknown, path: Array<string | number>) {
   return value;
 }
 
-function compileSteps(events: HotelWorkflowTrace['events'], checkIn: string) {
+function dateText(text: string, day: string) {
+  const [year, month, date] = day.split('-').map(Number);
+  return text
+    .replaceAll(day, '{{checkIn}}')
+    .replaceAll(year + '年' + month + '月' + date + '日', '{{year}}年{{month}}月{{day}}日')
+    .replaceAll(month + '月' + date + '日', '{{month}}月{{day}}日');
+}
+
+function renderDateText(text: string, day: string) {
+  const [year, month, date] = day.split('-').map(Number);
+  return text
+    .replaceAll('{{checkIn}}', day)
+    .replaceAll('{{year}}', String(year))
+    .replaceAll('{{month}}', String(month))
+    .replaceAll('{{day}}', String(date));
+}
+
+function compileSteps(events: HotelWorkflowTrace['events'], checkIn: string, title: string) {
   const relevant = events.filter((event) => replayStepSchema.shape.tool.safeParse(event.tool).success);
   const steps: z.infer<typeof replayStepSchema>[] = [];
   const prior: Array<{ step: number; path: Array<string | number>; value: unknown }> = [];
@@ -249,7 +266,8 @@ function compileSteps(events: HotelWorkflowTrace['events'], checkIn: string) {
       if (/^\d{4}-\d{2}-\d{2}T/.test(value)) {
         return valueSchema.parse({ kind: 'dateTime', offsetMinutes: (Date.parse(value) - midnight(checkIn)) / minute });
       }
-      if (value.includes(checkIn)) return { kind: 'datedText', template: value.replaceAll(checkIn, '{{checkIn}}') };
+      const template = dateText(value, checkIn);
+      if (template !== value) return { kind: 'datedText', template };
     }
     if (Array.isArray(value)) return { kind: 'array', items: value.map(bind) };
     if (value && typeof value === 'object') {
@@ -283,6 +301,7 @@ function compileSteps(events: HotelWorkflowTrace['events'], checkIn: string) {
       }
       const input = valueSchema.parse(binding.entries.input);
       if (input.kind !== 'record') throw new Conflict('Expected activity input bindings');
+      input.entries.name = { kind: 'datedText', template: dateText(title, checkIn) };
       input.entries.start = { kind: 'slotTime', step: slot.step, offsetMinutes: 0 };
       input.entries.end = {
         kind: 'slotTime',
@@ -319,9 +338,14 @@ function compile(
     (item) => item.scenarioId === result.scenarioId && digest(item.output) === digest(result.activities[0]?.ref),
   );
   const search = findAction('SearchRollingGoHotels', (item) => item.output.id === sourcePageId);
-  const driving = trace.reads
-    .filter((item) => item.function === 'readDrivingEstimate')
-    .map((item) => routeSchema.parse(item.output));
+  const driving = [
+    ...new Map(
+      trace.reads
+        .filter((item) => item.function === 'readDrivingEstimate')
+        .map((item) => routeSchema.parse(item.output))
+        .map((item) => [item.travel.ref.id, item]),
+    ).values(),
+  ];
   if (
     !plan ||
     !selection ||
@@ -377,8 +401,8 @@ function compile(
       startOffset: (Date.parse(input.start) - midnight(checkIn)) / minute,
       endOffset: (Date.parse(input.end) - midnight(checkIn)) / minute,
     },
-    title: input.title.replaceAll(checkIn, '{{checkIn}}'),
-    steps: compileSteps(trace.events, checkIn),
+    title: dateText(input.title, checkIn),
+    steps: compileSteps(trace.events, checkIn, input.title),
   });
 }
 
@@ -390,7 +414,7 @@ export async function replayHotelWorkflow(tools: ReadonlyMap<string, AgentTool>,
     const value = valueSchema.parse(raw);
     if (value.kind === 'literal') return value.value;
     if (value.kind === 'checkIn') return checkIn;
-    if (value.kind === 'datedText') return value.template.replaceAll('{{checkIn}}', checkIn);
+    if (value.kind === 'datedText') return renderDateText(value.template, checkIn);
     if (value.kind === 'dateTime') return new Date(midnight(checkIn) + value.offsetMinutes * minute).toISOString();
     if (value.kind === 'array') return value.items.map(resolve);
     if (value.kind === 'record')
@@ -507,7 +531,13 @@ export class HotelWorkflows {
         step.scenarioId === result.scenarioId &&
         step.output.id === result.plan.ref.id,
     );
-    const reads = trace.reads.filter((step) => step.function === 'readDrivingEstimate');
+    const reads = [
+      ...new Map(
+        trace.reads
+          .filter((step) => step.function === 'readDrivingEstimate')
+          .map((step) => [routeSchema.parse(step.output).travel.ref.id, step]),
+      ).values(),
+    ];
     if (selections.length !== 1 || reads.length !== 1)
       throw new Conflict('Review requires one hotel and one verified driving route');
     const hotel = objectRefSchema.parse(selections[0]!.input.service);

@@ -57,6 +57,42 @@ export class OntologyAgent {
     const learning = task.input.learnHotelWorkflow === true;
     const capture = learning || Boolean(replay);
     const trace: HotelWorkflowTrace = { events: [], actions: [], locations: [], reads: [] };
+    const captureEvent = async (name: string, input: unknown, output: unknown) => {
+      const event = { tool: name, input, output };
+      if (JSON.stringify(event).length > 250000 || trace.events.length >= 80) {
+        throw new Error('Workflow trace exceeds the supported learning bound');
+      }
+      await this.db.transaction(async client => {
+        await this.tasks.current(task, client, true);
+        await this.db.query(`UPDATE ${this.db.schema}.tasks SET workflow_trace=workflow_trace||$2::jsonb WHERE id=$1`,
+          [task.id, JSON.stringify([event])], client);
+      });
+      trace.events.push(event);
+    };
+    if (capture) {
+      const saved = (await this.db.query(`SELECT workflow_trace FROM ${this.db.schema}.tasks WHERE id=$1 AND owner=$2`,
+        [task.id, task.owner])).rows[0]?.workflow_trace;
+      for (const event of z.array(z.object({ tool: z.string(), input: z.unknown(), output: z.unknown() })).max(80).parse(saved ?? [])) {
+        trace.events.push(event);
+        if (event.tool === 'apply_action') {
+          const input = actionCall.parse(event.input), target = input.interface;
+          const selected = target ? target.object
+            ? model.resolveAction(target.object, target.type, target.action, input.input)
+            : model.resolveTypeAction(target.implementation!, target.type, target.action, input.input)
+            : { action: input.action!, input: input.input };
+          trace.actions.push({ ...selected, scenarioId: input.scenarioId, output: objectRefSchema.parse(event.output) });
+        } else if (event.tool === 'evaluate_function') {
+          const read = functionCall.parse(event.input);
+          if (read.function === 'readDrivingEstimate') trace.reads.push({ function: read.function, output: event.output });
+        } else if (event.tool === 'refresh_sources') {
+          const reads = z.object({ sources: z.array(z.object({ source: z.string(), input: argumentsSchema })) }).parse(event.input).sources;
+          const outputs = z.array(z.unknown()).parse(event.output);
+          for (const [index, read] of reads.entries()) if (read.source === 'DidiPlaces') {
+            trace.locations.push({ input: read.input, output: outputs[index] });
+          }
+        }
+      }
+    }
     const view = (id?: string) => id ? scenarios.view(access,model,id) : Promise.resolve(model);
     const functionContext = async (id?: string) => ({ ...context, objects: new Objects(this.db,await view(id),access) });
     const guard = async (client: import('./database.js').Sql) => { signal.throwIfAborted(); await this.tasks.current(task,client,true); };
@@ -75,7 +111,7 @@ export class OntologyAgent {
           await access.refresh(); await this.tasks.current(task);
           if (capture) checkHotelWorkflowTool(name, input);
           const output = await execute(input);
-          if (capture) trace.events.push({ tool: name, input, output });
+          if (capture) await captureEvent(name, input, output);
           step.outcome = 'completed'; step.resultDigest = digest(output);
           return output;
         } catch (error) {

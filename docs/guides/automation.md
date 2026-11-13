@@ -75,6 +75,7 @@ Action 的对象写入和执行记录使用现有原子事务。Workflow 在 Act
 在 Grok 或其他 PA 中，可以用 `submit_task` 提交自然语言目标，并设置
 `learnHotelWorkflow: true`。Agent 从当前已发布的 Ontology 选择操作。
 学习范围是 RollingGo 酒店、滴滴驾车路线、PA 日历与当天的一段上海出行。
+成功工具调用记录保存在原任务的 workflow_trace 中，PA 暂停、进程重启和续跑共用这份记录。
 任务必须实际读到所选酒店和路线，并生成通过校验的持久 Scenario，
 才会得到待批准的行程。PA 仍使用原任务的忙闲请求回传日历。
 

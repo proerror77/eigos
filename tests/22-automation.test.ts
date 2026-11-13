@@ -336,7 +336,7 @@ test('a validated hotel task learns only after approval and replays with fresh i
   const requested = day(3), replayDate = day(5), thirdDate = day(7);
   const originKeyword = 'Shanghai Hongqiao railway station';
   const destinationKeyword = 'Synthetic hotel';
-  const title = 'Hongqiao to the selected hotel';
+  const title = requested + ' Hongqiao to the selected hotel';
   const goal = 'Plan my transfer from Hongqiao station to the same Shanghai hotel on ' + requested + ', one adult for one night.';
   let modelInvocations = 0;
   const driver: AgentDriver = {
@@ -350,11 +350,6 @@ test('a validated hotel task learns only after approval and replays with fresh i
       await assert.rejects(call('refresh_sources', { sources: [{ source: 'DidiEstimates', input: {} }] }));
       const apply = (type: string, implementation: string, action: string, input: Record<string, unknown>) =>
         call('apply_action', { interface: { type, implementation, action }, input });
-      const prepared = await apply('SchedulablePlan', 'SchedulePlan', 'prepare', {
-        title, start: requested + 'T14:00:00+08:00', end: requested + 'T19:00:00+08:00',
-        timeZone: 'Asia/Shanghai', durationMinutes: 75,
-      }) as ObjectRef & { waitingForPA?: boolean };
-      if (prepared.waitingForPA) return;
       const page = await apply('HotelSearch', 'RollingGoHotelSearch', 'search', {
         place: '上海', checkIn: requested, adults: 1, nights: 1, currency: 'CNY', limit: 3,
       }) as ObjectRef;
@@ -362,6 +357,11 @@ test('a validated hotel task learns only after approval and replays with fresh i
         type: 'HotelOffer', from: { object: page, link: 'results', as: 'ServiceSearchResult' }, where: { nativeId: 'hotel-1' },
       }] }) as Array<{ items: Array<{ ref: ObjectRef }> }>;
       const hotel = selection!.items[0]!.ref;
+      const prepared = await apply('SchedulablePlan', 'SchedulePlan', 'prepare', {
+        title, start: requested + 'T14:00:00+08:00', end: requested + 'T19:00:00+08:00',
+        timeZone: 'Asia/Shanghai', durationMinutes: 75,
+      }) as ObjectRef & { waitingForPA?: boolean };
+      if (prepared.waitingForPA) return;
       const [origin, destination] = await call('refresh_sources', { sources: [originKeyword, destinationKeyword].map(keywords =>
         ({ source: 'DidiPlaces', input: { city: '上海', keywords }, view: { type: 'Location', link: 'places' } })),
       }) as Array<{ objects: ObjectRef[] }>;
@@ -444,6 +444,7 @@ test('a validated hotel task learns only after approval and replays with fresh i
     assert.equal(replayResult.hotelWorkflow.receipt, undefined);
     assert.equal(replayResult.hotelWorkflow.checkIn, replayDate);
     assert.ok(replayResult.plan.properties.start.startsWith(replayDate));
+    assert.ok((replay.result as { plan: { properties: { name: string } } }).plan.properties.name.startsWith(replayDate));
     assert.notEqual(replayResult.hotelWorkflow.hotel.id, approved.hotel.id);
     assert.notEqual(replayResult.hotelWorkflow.travel.id, approved.travel.id);
     assert.equal(modelInvocations, agentRuns);
