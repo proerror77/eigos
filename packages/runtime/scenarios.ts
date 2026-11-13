@@ -7,6 +7,7 @@ import { Database, type Sql } from './database.js';
 import { PublishedOntology } from './metadata.js';
 import { Objects } from './objects.js';
 import { checkScenario, lockEdits, objectLinks } from './scenario-store.js';
+import { scenarioMetadataRead } from './scenario-metadata.js';
 
 export const createScenarioSchema = z.strictObject({
   requestId: z.string().min(1).max(128), name: z.string().min(1).max(200),
@@ -57,7 +58,7 @@ export class Scenarios {
     const shared=z.array(z.string().min(1).max(200)).max(100).parse(readers);
     return this.db.transaction(async client=>{
       await access.refresh(client);await lockEdits(this.db,model,access.principal.owner,client);
-      access.read(model,'OntologyScenario');
+      await scenarioMetadataRead(new Objects(this.db,model,access,client),{type:'OntologyScenario',id});
       const row=(await this.db.query(`UPDATE ${this.db.schema}.scenarios SET readers=$4,revision=revision+1
         WHERE id=$1 AND owner=$2 AND revision=$3 AND release=$5 AND kind='persisted' AND state='open' AND expires_at>now()
         RETURNING id,revision`,[id,access.principal.owner,revision,JSON.stringify([...new Set(shared)]),model.release],client)).rows[0];
@@ -68,7 +69,11 @@ export class Scenarios {
   async list(access: Access, model: PublishedOntology, cursor?: string) {
     if(cursor)z.uuid().parse(cursor);
     access.require(model.document.id, 'view_definition', model.document.id);
-    const rows=(await this.db.query(`SELECT id,name,revision,state,expires_at FROM ${this.db.schema}.scenarios WHERE owner=$1 AND release=$2 AND state='open' AND expires_at>now() AND ($3::uuid IS NULL OR id>$3) ORDER BY id LIMIT 101`, [access.principal.owner, model.release,cursor??null])).rows;
+    const rows=(await this.db.query(`SELECT s.id,s.name,s.revision,s.state,s.expires_at FROM ${this.db.schema}.scenarios s
+      LEFT JOIN ${this.db.schema}.scenario_sessions session ON session.id=s.session_id
+      WHERE s.owner=$1 AND s.release=$2 AND s.state='open' AND s.expires_at>now()
+      AND (s.session_id IS NULL OR (session.closed_at IS NULL AND session.expires_at>now()))
+      AND ($3::uuid IS NULL OR s.id>$3) ORDER BY s.id LIMIT 101`, [access.principal.owner, model.release,cursor??null])).rows;
     return {items:rows.slice(0,100),cursor:rows.length>100?String(rows[99]!.id):undefined};
   }
   async create(access: Access, model: PublishedOntology, raw: unknown, beforeCommit?: (client: Sql) => Promise<void>) {
