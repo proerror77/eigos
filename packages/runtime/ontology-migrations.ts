@@ -111,6 +111,7 @@ export class OntologyDataMigrations {
         if(!sourceRefs.has(key(from))||!sourceRefs.has(key(to)))throw new Conflict('Include both endpoints of every selected relationship');
         return {original:{type:String(row.type),from,to},target:{type:input.links[row.type]!,from:{...from,type:input.types[from.type]!},to:{...to,type:input.types[to.type]!}}};
       });
+      if(new Set(edges.map(edge=>digest(edge.target))).size!==edges.length)throw new Conflict('Several source relationships map to one target identity');
       const destination=graphs.get(input.targetOntology)!;
       for(const item of prepared) {
         // Each copied object depends on its own source values. Preserve that object's markings
@@ -119,6 +120,7 @@ export class OntologyDataMigrations {
         objectAccess.readRow(source,item.source.type,item.source.properties);
         await new Objects(this.db,target,objectAccess,client).create(item.ref,item.properties);
         if(!await objectAccess.canReturn(objectAccess.dataRequirements(),client))throw new Error('Copied object permissions changed');
+        for(const requirement of objectAccess.requirements())access.require(requirement.ontology,requirement.permission,requirement.resource);
       }
       await destination.linkBatch(edges.map(edge=>edge.target));
       const id=randomUUID();

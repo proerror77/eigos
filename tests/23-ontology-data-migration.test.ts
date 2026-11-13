@@ -106,3 +106,14 @@ test('independent copied objects retain their own markings without inheriting un
     assert.deepEqual((await graph.read({type:'ImportedGroup',id:'g'})).properties.marks,['beta']);
   }finally{await f.close();}
 });
+
+test('distinct source links cannot silently collapse into one target relation',async()=>{
+  const f=await setup();try{
+    const body=structuredClone(f.source.document);
+    body.linkTypes.push({...body.linkTypes[0]!,apiName:'OtherMembership',from:{type:'Item',name:'otherGroup',cardinality:'one'},to:{type:'Group',name:'otherItems',cardinality:'many'}});
+    const source=await f.metadata.publish(body,bindings,f.publisher);
+    await new Objects(f.db,source,await Access.load(f.db,principal)).link({type:'OtherMembership',from:{type:'Item',id:'a'},to:{type:'Group',id:'g'}});
+    await assert.rejects(f.migrations.copy(await Access.load(f.db,principal),{...f.input,links:{Membership:'ImportedMembership',OtherMembership:'ImportedMembership'}}),/relationships map to one/);
+    assert.equal((await f.destination.query({type:'ImportedItem'})).items.length,0);
+  }finally{await f.close();}
+});
