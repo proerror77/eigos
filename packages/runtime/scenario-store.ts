@@ -20,7 +20,7 @@ export async function checkScenario(db: Database, model: PublishedOntology, owne
   if (row.release !== model.release || row.state !== 'open' || !row.current) throw new Conflict('Scenario is closed, expired or belongs to another publication');
 }
 
-/** A scenario is a delta over current objects, never a historical data snapshot. */
+/** Changed links shadow competing live single-valued links in the view. Merge checks the live links separately. */
 export function viewTables(db: Database, model: PublishedOntology, owner: string, values: unknown[]) {
   if (!model.scenario) return { prefix: '', objects: `${db.schema}.objects`, links: `${db.schema}.links` };
   values.push(model.scenario, model.projection, owner);
@@ -30,12 +30,23 @@ export function viewTables(db: Database, model: PublishedOntology, owner: string
       AND NOT EXISTS(SELECT 1 FROM ${db.schema}.scenario_objects d WHERE d.scenario_id=${scenario} AND d.owner=o.owner AND d.type=o.type AND d.id=o.id)
     UNION ALL SELECT ${projection}::text AS projection,d.owner,d.type,d.id,d.revision,d.properties FROM ${db.schema}.scenario_objects d
       WHERE d.scenario_id=${scenario} AND d.owner=${actor} AND d.properties IS NOT NULL
+  ), link_deltas AS (
+    SELECT d.* FROM ${db.schema}.scenario_links d
+    WHERE d.scenario_id=${scenario} AND d.owner=${actor} AND (NOT d.removed) IS DISTINCT FROM d.base_present
   ), view_links AS (
     SELECT l.projection,l.owner,l.type,l.from_type,l.from_id,l.to_type,l.to_id,l.single_from,l.single_to FROM ${db.schema}.links l WHERE l.projection=${projection} AND l.owner=${actor}
-      AND NOT EXISTS(SELECT 1 FROM ${db.schema}.scenario_links d WHERE d.scenario_id=${scenario} AND d.owner=l.owner AND d.type=l.type
-        AND d.from_type=l.from_type AND d.from_id=l.from_id AND d.to_type=l.to_type AND d.to_id=l.to_id)
+      AND NOT EXISTS(
+        SELECT 1 FROM link_deltas d
+        WHERE d.type=l.type AND (
+          (d.from_type,d.from_id,d.to_type,d.to_id)=(l.from_type,l.from_id,l.to_type,l.to_id)
+          OR (NOT d.removed AND (
+            (l.single_from AND (d.from_type,d.from_id)=(l.from_type,l.from_id))
+            OR (l.single_to AND (d.to_type,d.to_id)=(l.to_type,l.to_id))
+          ))
+        )
+      )
     UNION ALL SELECT ${projection}::text AS projection,d.owner,d.type,d.from_type,d.from_id,d.to_type,d.to_id,d.single_from,d.single_to
-      FROM ${db.schema}.scenario_links d WHERE d.scenario_id=${scenario} AND d.owner=${actor} AND NOT d.removed
+      FROM link_deltas d WHERE NOT d.removed
   ) ` };
 }
 

@@ -113,7 +113,7 @@ export function schemaSubset(supplied: Schema, accepted: Schema): boolean {
     )
       return false;
   }
-  if (allowedTypes.includes('object') || accepted.properties) {
+  if (allowedTypes.includes('object') || accepted.properties || accepted.required || accepted.additionalProperties !== undefined) {
     const offered = object(supplied.properties),
       wanted = object(accepted.properties);
     const required = new Set(Array.isArray(supplied.required) ? supplied.required : []);

@@ -95,3 +95,46 @@ test('stale data, missing bindings and unfinished tasks cannot replace the live 
     assert.equal((await f.metadata.active()).release, replacement.release);
   } finally { await f.close(); }
 });
+
+test('publication rejects invalid derived paths, cardinalities, types and cycles before activation', async () => {
+  const f = await fixture();
+  try {
+    const ref = { type: 'Route', id: 'existing-derived' };
+    const graph = new Objects(f.db, f.model, f.access);
+    await graph.create(ref, { id: ref.id, name: 'Original route' });
+    const body = structuredClone(f.model.document);
+    body.version = 'derived-validation';
+    const route = body.objectTypes.find(type => type.apiName === 'Route')!;
+    const ride = body.objectTypes.find(type => type.apiName === 'RideRequest')!;
+    const property = (derived: NonNullable<typeof route.properties[string]['derived']>, type = 'number') =>
+      ({ description: 'Derived fixture', schema: { type }, required: false, derived });
+
+    route.properties.invalid = property({ op: 'linked', path: [{ link: 'missingLink' }], aggregate: 'count' });
+    await assert.rejects(f.metadata.prepare(body, f.capabilities, f.publisher), /Invalid derived property Route.invalid.*Unknown relationship/);
+    route.properties.invalid = property({ op: 'linked', path: [{ link: 'origin' }], aggregate: 'select', property: 'coordinates.latt' });
+    await assert.rejects(f.metadata.prepare(body, f.capabilities, f.publisher), /Unknown property Place.coordinates.latt/);
+    route.properties.invalid = property({ op: 'linked', path: [{ link: 'origin' }], aggregate: 'sum', property: 'name' });
+    await assert.rejects(f.metadata.prepare(body, f.capabilities, f.publisher), /Numeric expression requires numeric properties/);
+    route.properties.invalid = property({ op: 'linked', path: [{ link: 'origin' }], aggregate: 'count' }, 'string');
+    await assert.rejects(f.metadata.prepare(body, f.capabilities, f.publisher), /incompatible with its declared value type/);
+    route.properties.invalid = { ...property({ op: 'literal', value: -1 }), schema: { type: 'number', minimum: 0 } };
+    await assert.rejects(f.metadata.prepare(body, f.capabilities, f.publisher), /Literal violates its declared value constraints/);
+    delete route.properties.invalid;
+    ride.properties.invalid = property({ op: 'linked', path: [{ link: 'estimates' }], aggregate: 'select', property: 'estimatedAmount' });
+    await assert.rejects(f.metadata.prepare(body, f.capabilities, f.publisher), /Linked select requires a to-one path/);
+    delete ride.properties.invalid;
+
+    route.properties.loop = property({ op: 'linked', path: [{ link: 'origin' }], aggregate: 'select', property: 'loop' });
+    const place = body.objectTypes.find(type => type.apiName === 'Place')!;
+    place.properties.loop = property({ op: 'linked', path: [{ link: 'departingRoutes' }], aggregate: 'sum', property: 'loop' });
+    await assert.rejects(f.metadata.prepare(body, f.capabilities, f.publisher), /Dependency cycle/);
+    assert.equal((await f.metadata.active()).release, f.model.release);
+    assert.equal((await graph.query({ type: 'Route', select: ['name'] })).items[0]!.properties.name, 'Original route');
+
+    delete place.properties.loop;
+    delete route.properties.loop;
+    route.properties.originLatitude = property({ op: 'linked', path: [{ link: 'origin', as: 'RideEstimatable' }], aggregate: 'select', property: 'coordinates.lat' });
+    const release = await f.metadata.publish(body, f.capabilities, f.publisher);
+    assert.equal((await new Objects(f.db, release, f.access).read(ref)).properties.originLatitude, null);
+  } finally { await f.close(); }
+});

@@ -118,3 +118,81 @@ test('saved set mutations enforce retries, revisions, ownership and acyclic refe
     await assert.rejects(f.sets.evaluate(f.access, f.model, { set: { op: 'saved', id: b.id } }), /unavailable/);
   } finally { await f.close(); }
 });
+
+test('publication checks dynamic set dependencies at preparation and again at activation', async () => {
+  const f = await setup();
+  try {
+    const ref = { type: 'Route', id: 'versioned' };
+    await f.objects.create(ref, { id: ref.id, name: 'Route' });
+    const oldBody = structuredClone(f.model.document);
+    oldBody.version = 'sets-with-legacy-filter';
+    oldBody.objectTypes.find(type => type.apiName === 'Route')!.properties.region =
+      { description: 'Filter used by saved sets', schema: { type: 'string' }, required: false };
+    const old = await f.metadata.publish(oldBody, f.capabilities, f.publisher);
+    const oldGraph = new Objects(f.db, old, f.access);
+    await oldGraph.edit(ref, 1, { region: 'east' });
+    const next = structuredClone(oldBody);
+    next.version = 'sets-without-legacy-filter';
+    delete next.objectTypes.find(type => type.apiName === 'Route')!.properties.region;
+    const candidate = await f.metadata.prepare(next, f.capabilities, f.publisher);
+
+    const expression: SetExpression = { op: 'query', query: { type: 'Route', where: { region: 'east' } } };
+    const fixed = await f.sets.save(f.access, old, { requestId: 'fixed-v1', name: 'Fixed', mode: 'static', set: expression });
+    const dynamic = await f.sets.save(f.access, old, { requestId: 'dynamic-v1', name: 'Dynamic', mode: 'dynamic', set: expression });
+    const saved = (id: string) => ({ op: 'saved', id });
+    const composed = await f.sets.save(f.access, old, { requestId: 'composed-v1', name: 'Composed', mode: 'dynamic', set: saved(dynamic.id) });
+    await assert.rejects(f.metadata.prepare(next, f.capabilities, f.publisher), /break 2 saved dynamic object set.*Route.region/);
+    await assert.rejects(f.metadata.activate(candidate.release, f.capabilities, f.publisher), /break 2 saved dynamic object set/);
+    assert.equal((await f.metadata.active()).release, old.release);
+    assert.equal((await f.sets.evaluate(f.access, old, { set: saved(composed.id) })).total, 1);
+
+    const changedType = structuredClone(oldBody);
+    changedType.objectTypes.find(type => type.apiName === 'Route')!.properties.region!.schema = { type: 'number' };
+    await assert.rejects(f.metadata.prepare(changedType, f.capabilities, f.publisher), /Property type changed: Route.region/);
+    await f.sets.save(f.access, old, { id: dynamic.id, revision: 1, requestId: 'update-filter', name: 'Dynamic', mode: 'dynamic', set: routes });
+    await f.metadata.activate(candidate.release, f.capabilities, f.publisher);
+    assert.equal((await f.sets.evaluate(f.access, candidate, { set: saved(fixed.id) })).total, 1);
+    assert.equal((await f.sets.evaluate(f.access, candidate, { set: saved(composed.id) })).total, 1);
+    await assert.rejects(f.sets.save(f.access, old, { requestId: 'late-old-save', name: 'Old', mode: 'dynamic', set: expression }), /publication changed/);
+  } finally { await f.close(); }
+});
+
+test('an Object Set save waiting on publication cannot commit against the retired release', async () => {
+  const f = await setup();
+  let releasePublication = () => {};
+  let publication: Promise<unknown> | undefined;
+  let save: Promise<unknown> | undefined;
+  try {
+    const body = structuredClone(f.model.document);
+    body.version = 'concurrent-set-publication';
+    const candidate = await f.metadata.prepare(body, f.capabilities, f.publisher);
+    let activated = () => {};
+    const activationReady = new Promise<void>(resolve => { activated = resolve; });
+    const finish = new Promise<void>(resolve => { releasePublication = resolve; });
+    publication = f.db.transaction(async client => {
+      await f.metadata.activate(candidate.release, f.capabilities, f.publisher, client);
+      activated();
+      await finish;
+    });
+    await Promise.race([activationReady, publication]);
+    save = assert.rejects(f.sets.save(f.access, f.model, {
+      requestId: 'waiting-old-release', name: 'Concurrent set', mode: 'dynamic', set: routes,
+    }), /publication changed/);
+    let waiting = false;
+    for (let attempt = 0; attempt < 100 && !waiting; attempt++) {
+      const locks = await f.db.query('SELECT 1 FROM pg_locks WHERE relation=$1::regclass AND mode=$2 AND NOT granted',
+        [f.db.schema + '.object_sets', 'RowExclusiveLock']);
+      waiting = locks.rows.length > 0;
+      if (!waiting) await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert(waiting, 'the save must wait for the candidate publication lock');
+    releasePublication();
+    await publication;
+    await save;
+    assert.equal((await f.sets.list(f.access, candidate)).items.length, 0);
+  } finally {
+    releasePublication();
+    await Promise.allSettled([publication, save]);
+    await f.close();
+  }
+});

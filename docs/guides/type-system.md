@@ -17,7 +17,7 @@
 
 ## Struct 与元数据
 
-`structTypes` 定义标量 `fields`、必填字段 `required` 和可选 `mainField`。属性通过 `struct.type` 引用。`struct.array` 为 true 时可配置 `reducer`，操作为 `first`、`last`、`min`、`max`，后两者还需要比较字段 `field`。`propertyDisplay` 先选择 Struct 值，再读取主字段和应用格式。原始属性仍保留完整结构。
+`structTypes` 定义标量 `fields`、必填字段 `required` 和可选 `mainField`。属性通过 `struct.type` 引用。`struct.array` 为 true 时可配置 `reducer`，操作为 `first`、`last`、`min`、`max`，后两者还需要比较字段 `field`。`propertyDisplay` 先选择 Struct 值，再读取主字段和应用格式。原始属性仍保留完整结构。查询、排序、投影、分组和集合指标会按编译后的契约校验字段路径。已声明但缺失或被权限遮罩的字段按空值处理。
 
 `format.kind` 支持 `number`、`date`、`currency`、`percent` 和 `text`，可指定 locale、currency 和小数位。对象及相关定义支持 `typeClasses`、`renderHints` 和 `status`。状态为 `experimental`、`active` 或 `deprecated`。`typeGroups` 提供具名对象分组，对象可通过 `groups` 关联分组。所有分组引用都会校验。
 
@@ -27,9 +27,9 @@ Interface 使用 `extends` 指定父接口名称数组。多重继承支持共�
 
 对象属性必须满足 Interface 属性约束。具体 Action 必须接受 Interface 所允许的参数输入，不能增加未映射的必填参数、将可选输入收紧为必填输入，或缩小允许的值域。复杂 JSON Schema 约束无法证明兼容时，发布会明确失败。参数映射和运行时输入校验继续生效。
 
-新发布检查组合条件的同级约束、`oneOf` 的互斥性、额外属性以及数值的开闭区间。已有发布快照保留早期运行时接受的基本类型契约与原始摘要，保证升级后仍可读取历史对象；新候选始终执行当前完整校验，旧 Function 实现不能借此在新运行版本中执行。
+新发布检查映射后完整 Action 参数对象，包括跨字段组合条件及其同级约束、`oneOf` 的互斥性、额外属性以及数值的开闭区间。已有发布快照保留早期运行时接受的基本类型契约与原始摘要，保证升级后仍可读取历史对象；新候选始终执行当前完整校验，旧 Function 实现不能借此在新运行版本中执行。
 
-派生属性在 `derived` 中声明查询时计算表达式。它们不存入对象，无法成为主键、标题或必填存储字段，写入时会被拒绝。表达式支持属性、字面量、算术及 Link 路径聚合，计算入口由查询服务提供。
+派生属性在 `derived` 中声明查询时计算表达式。它们不存入对象，无法成为主键、标题或必填存储字段，写入时会被拒绝。表达式支持属性、字面量、算术及 Link 路径聚合，计算入口由查询服务提供。发布前检查字段、Link 路径、结果类型和依赖循环。直接选取关联值要求路径的每一跳最多返回一个对象，多值路径需要聚合。 [Palantir 派生属性参考](https://www.palantir.com/docs/foundry/ontology/derived-properties-reference)
 
 ## 打包、共享导入与定义迁移
 

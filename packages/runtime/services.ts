@@ -36,8 +36,8 @@ import { Scenarios } from './scenarios.js';
 import { Objects } from './objects.js';
 import {
   ObjectSets,
-  evaluateSetSchema,
-  aggregateSetSchema,
+  evaluateSetViewSchema,
+  aggregateSetViewSchema,
   saveSetSchema,
   listSetsSchema,
 } from './object-sets.js';
@@ -112,14 +112,14 @@ export function ontologyServices(
   register(
     'evaluate_set',
     'Evaluate a composed or saved object set with current permissions.',
-    evaluateSetSchema.extend({ scenarioId: z.uuid().optional() }),
+    evaluateSetViewSchema,
     false,
     async (a, { scenarioId, ...input }) => sets.evaluate(a, await view(a, scenarioId), input),
   );
   register(
     'aggregate_set',
     'Group and aggregate a complete authorized object set.',
-    aggregateSetSchema.extend({ scenarioId: z.uuid().optional() }),
+    aggregateSetViewSchema,
     false,
     async (a, { scenarioId, ...input }) => sets.aggregate(a, await view(a, scenarioId), input),
   );
@@ -375,17 +375,17 @@ export function ontologyServices(
   );
   register(
     'semantic_search',
-    'Search authorized objects by meaning.',
-    semanticSearchSchema,
+    'Search authorized objects by meaning in the live Ontology or a Scenario.',
+    semanticSearchSchema.extend({ scenarioId: z.uuid().optional() }),
     false,
-    async (a, input) => semantic.search(a, await active(), input),
+    async (a, { scenarioId, ...input }) => semantic.search(a, await view(a, scenarioId), input),
   );
   register(
     'semantic_status',
-    'Read semantic index coverage and model binding.',
-    semanticStatusSchema,
+    'Read semantic index coverage and model binding in the live Ontology or a Scenario.',
+    semanticStatusSchema.extend({ scenarioId: z.uuid().optional() }),
     false,
-    async (a, input) => semantic.status(a, await active(), input.name),
+    async (a, { scenarioId, name }) => semantic.status(a, await view(a, scenarioId), name),
   );
   register(
     'export_package',

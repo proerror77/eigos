@@ -475,7 +475,10 @@ async function renderObjects() {
     let page;
     if (mode.value === 'semantic') {
       if (!semanticName.value) throw new Error('请输入已配置的语义索引名称');
-      const found = await service('semantic_search', { name: semanticName.value, text: search.value });
+      const found = await service('semantic_search', {
+        name: semanticName.value, text: search.value,
+        ...(state.scenario ? { scenarioId: state.scenario } : {}),
+      });
       page = { items: found.items ?? found.results ?? [] };
       page.items = page.items.map((item) => ({...(item.object ?? item),semanticScore:item.score}));
       if(page.items.some(item=>item.ref.type!==type))throw new Error('语义索引与当前选择的对象类型不同');
@@ -631,6 +634,7 @@ async function renderObjects() {
                         ? { op: 'count' }
                         : { op: metric.value, property: property.value },
                   },
+                  ...(state.scenario ? { scenarioId: state.scenario } : {}),
                 });
                 modal(
                   '聚合结果',
@@ -1276,7 +1280,10 @@ function semanticDialog(type) {
           notice('已处理 ' + result.indexed + ' 个对象');
         }),
         button('检查索引', async () => {
-          const status = await service('semantic_status', { name: name.value });
+          const status = await service('semantic_status', {
+            name: name.value,
+            ...(state.scenario ? { scenarioId: state.scenario } : {}),
+          });
           modal('索引状态', element('pre', { class: 'code' }, JSON.stringify(status, null, 2)));
         }),
       ),
@@ -1401,8 +1408,14 @@ async function renderScenarios() {
     if (diff.links.length)
       model.append(
         table(
-          ['关系', '起点', '终点', '变更'],
-          diff.links.map((link) => [link.type, link.from.id, link.to.id, link.removed ? '移除' : '添加']),
+          ['关系', '起点', '终点', '变更', '冲突'],
+          diff.links.map((link) => [
+            link.type,
+            link.from.id,
+            link.to.id,
+            link.removed ? '移除' : '添加',
+            link.conflict ? '需要处理' : '无',
+          ]),
         ),
       );
     model.append(
