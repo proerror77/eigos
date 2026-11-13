@@ -37,7 +37,10 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE));
   const scenarios = new Scenarios(db), pa = new PARequests(tasks);
   const principals = new WeakMap<Request, Principal>();
-  app.disable('x-powered-by'); app.use(express.json({ limit: '256kb' }));
+  app.disable('x-powered-by');
+  // Published domain definitions can exceed the ordinary task/query body bound.
+  app.use(['/mcp','/ontology/services'],express.json({limit:'2mb'}));
+  app.use(express.json({ limit: '256kb' }));
   app.use((req, res, next) => {
     if (req.headers.origin && req.headers.origin !== config.PUBLIC_URL) { res.status(403).json({ error: 'Origin is not permitted' }); return; }
     if (req.hostname !== new URL(config.PUBLIC_URL).hostname) { res.status(403).json({ error: 'Host is not configured' }); return; }

@@ -35,7 +35,7 @@ export class Ontology {
   readonly sources: ReadonlyMap<string, OntologyDocument['dataSources'][number]>;
   private readonly objectValidators = new Map<string, z.ZodType>();
 
-  constructor(input: unknown) {
+  constructor(input: unknown, options: { published?: boolean } = {}) {
     this.document = ontologySchema.parse(input);
     this.digest = digest(this.document);
     this.resourceDocument = expandImports(this.document);
@@ -46,6 +46,10 @@ export class Ontology {
     this.functions = unique(this.resolvedDocument.functionTypes);
     this.actions = unique(this.resolvedDocument.actionTypes);
     this.sources = unique(this.resolvedDocument.dataSources);
+    // Publication performs the current inclusion proof. Stored snapshots retain the
+    // basic-type contract accepted by earlier runtimes without rewriting their identity.
+    const compatible = (supplied: Record<string, unknown>, accepted: Record<string, unknown>) =>
+      schemaSubset(supplied, accepted) || options.published === true && digest(supplied.type ?? null) === digest(accepted.type ?? null);
     for (const type of this.objects.values()) {
       if (this.interfaces.has(type.apiName)) throw new Error('Object and interface names must be distinct');
       for (const key of [type.primaryKey, type.titleProperty]) {
@@ -66,7 +70,7 @@ export class Ontology {
       for (const [alias, property] of Object.entries(contract.properties)) {
         const local = mapping.properties[alias];
         if (!local && contract.optionalProperties.includes(alias)) continue;
-        if (!local || !type.properties[local] || !schemaSubset(type.properties[local]!.schema, property.schema)) throw new Error(`Invalid property mapping ${type.apiName}.${alias}`);
+        if (!local || !type.properties[local] || !compatible(type.properties[local]!.schema, property.schema)) throw new Error(`Invalid property mapping ${type.apiName}.${alias}`);
         if (property.derived && !type.properties[local]!.derived) throw new Error('Derived Interface properties require a derived implementation');
       }
       if (Object.keys(mapping.properties).some(name => !contract.properties[name])) throw new Error('Unknown interface property');
@@ -89,7 +93,7 @@ export class Ontology {
         if (new Set(targets).size !== targets.length) throw new Error('An action parameter can satisfy one interface parameter');
         for (const parameter of expectedRequired) if (!local.parameters[parameter]) throw new Error('Incompatible action parameters');
         for (const [parameter,target] of Object.entries(local.parameters)) {
-          if (!expected[parameter] || !actual[target] || !schemaSubset(expected[parameter],actual[target])) throw new Error('Incompatible action parameter constraints');
+          if (!expected[parameter] || !actual[target] || !compatible(expected[parameter],actual[target])) throw new Error('Incompatible action parameter constraints');
           if (actualRequired.has(target) && !expectedRequired.has(parameter) && !Object.hasOwn(actual[target],'default')) throw new Error('Optional Interface input cannot satisfy a required Action input');
           const objectType=constraint.objectParameters[parameter],targetType=action.objectParameters[target];
           if (objectType && (!targetType || !this.concreteTypes(objectType).every(type=>this.implements(type,targetType)))) throw new Error('Incompatible Action object parameter type');

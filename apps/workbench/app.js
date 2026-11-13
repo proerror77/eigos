@@ -2008,7 +2008,7 @@ async function renderSchedule() {
           '确认当前方案',
           async () => {
             if (!state.scenario) throw new Error('请先创建或选择排程方案');
-            const diff = await request('/ontology/scenarios/' + state.scenario);
+            const diff = await request('/ontology/scenarios/' + state.scenario + '?ontology=' + encodeURIComponent(state.ontology));
             await applyAction(
               'CommitSchedulePlan',
               { plan: chosen.ref, scenarioId: state.scenario, revision: diff.revision },

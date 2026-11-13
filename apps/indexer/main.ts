@@ -8,12 +8,13 @@ import { Scenarios } from '../../packages/runtime/scenarios.js';
 import { Automation } from '../../packages/runtime/automation.js';
 import { createCapabilities } from '../../packages/capabilities/index.js';
 import { configuredSource } from '../../packages/core/config.js';
+import { configuredServices } from '../../packages/capabilities/services/sources.js';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
 const db = new Database(process.env.DATABASE_URL, process.env.EIGOS_PG_SCHEMA);
 const extensions = await loadExtensions(process.env.EIGOS_EXTENSION_MODULE);
 const metadata = new Metadata(db);
-const capabilities = createCapabilities(db, configuredSource(process.env.EIGOS_DIDI_CONNECTION_FILE), extensions);
+const capabilities = createCapabilities(db, configuredSource(process.env.EIGOS_DIDI_CONNECTION_FILE), extensions, configuredServices(process.env.EIGOS_SERVICE_CONNECTION_FILE));
 const indexing = new Indexing(db, metadata);
 const effects = new Effects(db, extensions.effects ?? new Map());
 const automation = new Automation(db, metadata, capabilities.actions);

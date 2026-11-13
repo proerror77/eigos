@@ -75,3 +75,22 @@ test('media bytes and registration are isolated by Ontology after source access 
     assert.deepEqual((await app.download(await Access.load(f.db,principal),other,asset.id)).bytes,modelFile);
   }finally{await f.close();}
 });
+
+test('content-addressed registrations survive publication and can be recreated after compensation',async()=>{
+  const f=await fixture();try{
+    const app=new Applications(f.db),metadata={name:'Reusable triangle',format:'stl',units:'m'};
+    const ref=await app.upload(f.access,f.model,f.capabilities.actions,modelFile,metadata);
+    const original=(await f.db.query(`SELECT request_id FROM ${f.db.schema}.actions WHERE owner=$1 AND action='RegisterGeometry' AND result->>'id'=$2`,[principal.owner,ref.id])).rows[0]!.request_id as string;
+    await f.capabilities.actions.undo(f.access,f.model,original,'undo-upload');
+    await assert.rejects(app.download(f.access,f.model,ref.id),/unavailable/);
+    assert.deepEqual(await app.upload(await Access.load(f.db,principal),f.model,f.capabilities.actions,modelFile,metadata),ref);
+    assert.deepEqual((await app.download(await Access.load(f.db,principal),f.model,ref.id)).bytes,modelFile);
+    assert.deepEqual(await app.upload(await Access.load(f.db,principal),f.model,f.capabilities.actions,modelFile,metadata),ref);
+    assert.equal((await new Objects(f.db,f.model,await Access.load(f.db,principal)).query({type:'GeometryAsset'})).items.length,1);
+    const body=structuredClone(f.model.document);body.version='next-upload-publication';
+    const model=await f.metadata.publish(body,f.capabilities,f.publisher);
+    assert.notEqual(model.release,f.model.release);
+    assert.deepEqual(await app.upload(await Access.load(f.db,principal),model,f.capabilities.actions,modelFile,metadata),ref);
+    assert.deepEqual((await app.download(await Access.load(f.db,principal),model,ref.id)).bytes,modelFile);
+  }finally{await f.close();}
+});

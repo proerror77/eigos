@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Conflict, NotFound } from '../core/identity.js';
 import { objectRefSchema, type ObjectRef } from '../ontology/schema.js';
@@ -234,7 +234,9 @@ export class Applications {
         byteLength: bytes.length,
         units: input.units,
       },
-      'geometry:' + model.document.id + ':' + hash,
+      // The blob/object identity deduplicates content. Each upload is a new registration attempt,
+      // so another publication or a prior compensation cannot reuse a retired Action receipt.
+      'geometry:' + randomUUID(),
     );
   }
   async download(access: Access, model: PublishedOntology, id: string) {

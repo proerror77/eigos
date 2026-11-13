@@ -10,7 +10,7 @@ import { Access } from './access.js';
 export interface BindingManifest { functions: Record<string, string>; sources: Record<string, string> }
 export interface Bindings { describe(model: Ontology): BindingManifest }
 export class PublishedOntology extends Ontology {
-  constructor(body: unknown, readonly release: string, readonly projection: string, readonly runtimeId: string, readonly bindings: BindingManifest, readonly scenario?: string) { super(body); }
+  constructor(body: unknown, readonly release: string, readonly projection: string, readonly runtimeId: string, readonly bindings: BindingManifest, readonly scenario?: string) { super(body,{published:true}); }
 }
 export type ProjectionTransform = (ref: ObjectRef, properties: Record<string, unknown>) => Record<string, unknown>;
 
@@ -54,7 +54,7 @@ export class Metadata {
       if(current){
         const history=(await this.db.query(`SELECT body FROM ${this.db.schema}.releases WHERE body->>'id'=$1 AND state IN ('active','retired')`,[model.document.id],client)).rows;
         for(const record of history){
-          const previous=new Ontology(record.body);
+          const previous=new Ontology(record.body,{published:true});
           for(const value of model.resourceDocument.valueTypes??[]){const old=previous.resourceDocument.valueTypes?.find(item=>item.apiName===value.apiName&&item.version===value.version);if(old&&digest(old.schema)!==digest(value.schema))throw new Conflict('Value Type constraints require a new version');}
         }
       }
