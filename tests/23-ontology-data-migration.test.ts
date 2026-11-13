@@ -117,3 +117,67 @@ test('distinct source links cannot silently collapse into one target relation',a
     assert.equal((await f.destination.query({type:'ImportedItem'})).items.length,0);
   }finally{await f.close();}
 });
+
+async function geometrySetup(){
+  const f=await fixture();await initializeOntologyDataMigrations(f.db);
+  await f.db.query(`CREATE TABLE IF NOT EXISTS ${f.db.schema}.geometry_blobs(ontology text NOT NULL,owner text NOT NULL,digest text NOT NULL,format text NOT NULL,bytes bytea NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(ontology,owner,digest))`);
+  await setGrants(f.db,'deployment',[{resource:'Eigos',permission:'manage_definition'},{resource:'Consumer',permission:'manage_definition'}]);await f.publisher.refresh();
+  const geometry={...type('GeometryAsset'),properties:{id:property(),name:property(),format:property(),contentHash:property(),byteLength:{description:'File size',schema:{type:'integer',minimum:1},required:true},units:property()}};
+  const sourceBody={id:'Eigos',version:'geometry-source',objectTypes:[geometry,{...geometry,apiName:'GeometryAlias'}],interfaceTypes:[],linkTypes:[],functionTypes:[],actionTypes:[],dataSources:[]};
+  const source=await f.metadata.publish(sourceBody,bindings,f.publisher),target=await f.metadata.publish({...sourceBody,id:'Consumer',objectTypes:[geometry]},bindings,f.publisher);
+  await setGrants(f.db,principal.owner,[...memberGrants(source),...memberGrants(target)]);
+  await f.db.query(`INSERT INTO ${f.db.schema}.resource_grants VALUES($1,'Consumer/object/GeometryAsset','migrate_objects')`,[principal.owner]);
+  const bytes=Buffer.from('v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n');
+  const {createHash}=await import('node:crypto');const hash=createHash('sha256').update(bytes).digest('hex');
+  const properties={id:hash,name:'Visible geometry',format:'obj',contentHash:hash,byteLength:bytes.length,units:'metres'};
+  const access=await Access.load(f.db,principal),graph=new Objects(f.db,source,access);
+  await graph.create({type:'GeometryAsset',id:hash},properties);
+  await f.db.query(`INSERT INTO ${f.db.schema}.geometry_blobs VALUES('Eigos',$1,$2,'obj',$3,now())`,[principal.owner,hash,bytes]);
+  return {...f,source,target,bytes,hash,properties,access,graph,migrations:new OntologyDataMigrations(f.db,f.metadata),input:{sourceOntology:'Eigos',targetOntology:'Consumer',requestId:'geometry-copy',types:{GeometryAsset:'GeometryAsset'},links:{}}};
+}
+
+test('geometry migration copies verified content and its object into the target namespace atomically',async()=>{
+  const f=await geometrySetup();try{
+    const receipt=await f.migrations.copy(f.access,f.input);
+    const object=await new Objects(f.db,f.target,f.access).read({type:'GeometryAsset',id:f.hash});
+    const blob=(await f.db.query(`SELECT bytes,format FROM ${f.db.schema}.geometry_blobs WHERE ontology='Consumer' AND owner=$1 AND digest=$2`,[principal.owner,object.properties.contentHash])).rows[0]!;
+    assert(blob.bytes.equals(f.bytes));assert.equal(blob.format,'obj');assert.equal(receipt.objects,1);
+    assert.equal((await f.db.query(`SELECT count(*)::int count FROM ${f.db.schema}.geometry_blobs WHERE digest=$1`,[f.hash])).rows[0]!.count,2);
+    assert.deepEqual(await f.migrations.copy(f.access,f.input),receipt);
+  }finally{await f.close();}
+});
+
+test('geometry migration rejects inconsistent source content and target content collisions',async()=>{
+  const f=await geometrySetup();try{
+    await f.db.query(`UPDATE ${f.db.schema}.geometry_blobs SET bytes=$1 WHERE ontology='Eigos'`,[Buffer.from('corrupted bytes')]);
+    await assert.rejects(f.migrations.copy(f.access,f.input),/Source geometry content differs/);
+    assert.equal((await f.db.query(`SELECT count(*)::int count FROM ${f.db.schema}.objects WHERE projection=$1`,[f.target.projection])).rows[0]!.count,0);
+    await f.db.query(`UPDATE ${f.db.schema}.geometry_blobs SET bytes=$1 WHERE ontology='Eigos'`,[f.bytes]);
+    await f.db.query(`INSERT INTO ${f.db.schema}.geometry_blobs VALUES('Consumer',$1,$2,'stl',$3,now())`,[principal.owner,f.hash,f.bytes]);
+    await assert.rejects(f.migrations.copy(f.access,f.input),/Target geometry content identity/);
+    assert.equal((await f.db.query(`SELECT count(*)::int count FROM ${f.db.schema}.ontology_data_migrations`)).rows[0]!.count,0);
+    assert.equal((await f.db.query(`SELECT format FROM ${f.db.schema}.geometry_blobs WHERE ontology='Consumer'`)).rows[0]!.format,'stl');
+    await f.db.query(`UPDATE ${f.db.schema}.geometry_blobs SET format='obj' WHERE ontology='Consumer'`);
+    assert.equal((await f.migrations.copy(f.access,f.input)).objects,1);
+  }finally{await f.close();}
+});
+
+test('a hash-only unrelated object cannot copy an unreadable source geometry blob',async()=>{
+  const f=await geometrySetup();try{
+    await f.graph.create({type:'GeometryAlias',id:f.hash},f.properties);
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies(ontology,type,policy) VALUES('Eigos','GeometryAsset',$1)`,[{read:{all:[{op:'equals',property:'name',value:'Allowed geometry'}],any:[]},properties:{}}]);
+    await assert.rejects(f.migrations.copy(await Access.load(f.db,principal),f.input),/policy denied/);
+    await assert.rejects(f.migrations.copy(await Access.load(f.db,principal),{...f.input,types:{GeometryAlias:'GeometryAsset'}}),/GeometryAsset types at both/);
+    assert.equal((await f.db.query(`SELECT count(*)::int count FROM ${f.db.schema}.geometry_blobs WHERE ontology='Consumer'`)).rows[0]!.count,0);
+    assert.equal((await f.db.query(`SELECT count(*)::int count FROM ${f.db.schema}.objects WHERE projection=$1`,[f.target.projection])).rows[0]!.count,0);
+  }finally{await f.close();}
+});
+
+test('a target object policy failure rolls back media content written earlier in the copy transaction',async()=>{
+  const f=await geometrySetup();try{
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies(ontology,type,policy) VALUES('Consumer','GeometryAsset',$1)`,[{read:{all:[{op:'equals',property:'name',value:'Allowed geometry'}],any:[]},properties:{}}]);
+    await assert.rejects(f.migrations.copy(await Access.load(f.db,principal),f.input),/policy denied/);
+    assert.equal((await f.db.query(`SELECT count(*)::int count FROM ${f.db.schema}.geometry_blobs WHERE ontology='Consumer'`)).rows[0]!.count,0);
+    assert.equal((await f.db.query(`SELECT count(*)::int count FROM ${f.db.schema}.ontology_data_migrations`)).rows[0]!.count,0);
+  }finally{await f.close();}
+});

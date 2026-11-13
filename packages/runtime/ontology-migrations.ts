@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Conflict, NotFound, digest } from '../core/identity.js';
 import { objectRefSchema, ontologyName, type ObjectRef } from '../ontology/schema.js';
@@ -52,6 +52,20 @@ const summary = (row:Record<string,any>) => ({id:String(row.id),requestId:String
 
 export class OntologyDataMigrations {
   constructor(private readonly db:Database,private readonly metadata:Metadata){}
+  private async copyGeometry(access:Access,source:PublishedOntology,target:PublishedOntology,original:SourceRow,ref:ObjectRef,properties:Record<string,unknown>,client:Sql) {
+    if(original.type!=='GeometryAsset'&&ref.type!=='GeometryAsset')return;
+    if(original.type!=='GeometryAsset'||ref.type!=='GeometryAsset')throw new Conflict('Managed geometry copies require GeometryAsset types at both endpoints');
+    const media=z.object({contentHash:z.string().regex(/^[a-f0-9]{64}$/),format:z.enum(['glb','gltf','obj','stl','ply']),byteLength:z.number().int().positive().max(20*1024*1024)}).parse(original.properties);
+    if(original.id!==media.contentHash||ref.id!==media.contentHash||properties.contentHash!==media.contentHash||properties.format!==media.format||properties.byteLength!==media.byteLength)throw new Conflict('Geometry identity must match its original content metadata');
+    // The source object and every stored property were authorized before reaching this point.
+    // A matching digest on an unrelated object never grants access to a managed media blob.
+    const blob=(await this.db.query(`SELECT format,bytes FROM ${this.db.schema}.geometry_blobs WHERE ontology=$1 AND owner=$2 AND digest=$3 FOR SHARE`,[source.document.id,access.principal.owner,media.contentHash],client)).rows[0];
+    if(!blob)throw new NotFound('Source geometry content is unavailable');
+    if(!Buffer.isBuffer(blob.bytes)||blob.format!==media.format||blob.bytes.length!==media.byteLength||createHash('sha256').update(blob.bytes).digest('hex')!==media.contentHash)throw new Conflict('Source geometry content differs from its object metadata');
+    await this.db.query(`INSERT INTO ${this.db.schema}.geometry_blobs(ontology,owner,digest,format,bytes) VALUES($1,$2,$3,$4,$5) ON CONFLICT(ontology,owner,digest) DO NOTHING`,[target.document.id,access.principal.owner,media.contentHash,blob.format,blob.bytes],client);
+    const copied=(await this.db.query(`SELECT format,bytes FROM ${this.db.schema}.geometry_blobs WHERE ontology=$1 AND owner=$2 AND digest=$3 FOR SHARE`,[target.document.id,access.principal.owner,media.contentHash],client)).rows[0];
+    if(!copied||copied.format!==blob.format||!Buffer.isBuffer(copied.bytes)||!copied.bytes.equals(blob.bytes))throw new Conflict('Target geometry content identity already contains different data');
+  }
   async copy(access:Access,raw:unknown) {
     const input=migrateOntologyDataSchema.parse(raw);
     if(input.sourceOntology===input.targetOntology)throw new Conflict('Data migration requires two distinct Ontologies');
@@ -118,6 +132,7 @@ export class OntologyDataMigrations {
         // without combining unrelated classifications from other rows in the same atomic batch.
         const objectAccess=await Access.load(this.db,access.principal,client);
         objectAccess.readRow(source,item.source.type,item.source.properties);
+        await this.copyGeometry(objectAccess,source,target,item.source,item.ref,item.properties,client);
         await new Objects(this.db,target,objectAccess,client).create(item.ref,item.properties);
         if(!await objectAccess.canReturn(objectAccess.dataRequirements(),client))throw new Error('Copied object permissions changed');
         for(const requirement of objectAccess.requirements())access.require(requirement.ontology,requirement.permission,requirement.resource);
