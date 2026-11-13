@@ -7,14 +7,17 @@ import { Sources, type SourceProjection } from '../../runtime/sources.js';
 import { rideFunctions, sourceResultSchema, type SourceResolver } from './functions.js';
 import { prepareRideInquiry, resolveRideLocations } from './inquiry.js';
 import type { Ontology } from '../../ontology/model.js';
+import type { OntologyDocument } from '../../ontology/schema.js';
+import type { FunctionHandler } from '../../runtime/functions.js';
 
 /** DiDi's source normalization and Object Data Funnel. It does not choose an operation. */
-export function rideCapabilities(db: Database, resolve: SourceResolver) {
+export function rideCapabilities(db: Database, resolve: SourceResolver, additional: ReadonlyMap<string, FunctionHandler> = new Map(), definitions?: OntologyDocument['functionTypes']) {
   let sources: Sources;
   const functions = rideFunctions(resolve, new Map([
+    ...additional,
     ['resolveRideLocations', resolveRideLocations],
     ['prepareRideInquiry', prepareRideInquiry(() => sources, () => functions)],
-  ]));
+  ]), definitions);
   const projection: SourceProjection = {
     async assertCurrent(owner) { await (await resolve(owner)).assertCurrent(); },
     async apply(graph, source, input, raw) {

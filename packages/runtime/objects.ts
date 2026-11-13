@@ -4,6 +4,7 @@ import { PublishedOntology } from './metadata.js';
 import { Access } from './access.js';
 import { objectRefSchema, type ObjectData, type ObjectRef, type LinkData } from '../ontology/schema.js';
 import { Database, type Sql } from './database.js';
+import { checkScenario, lockEdits, viewTables, stageObject, stageLink } from './scenario-store.js';
 
 export const querySchema = z.strictObject({
   type: z.string(), where: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).default({}),
@@ -15,11 +16,11 @@ export class Objects {
   constructor(readonly db: Database, readonly model: PublishedOntology, readonly access: Access, readonly client: Sql = db.pool) {}
   get owner() { return this.access.principal.owner; }
   private writeReady?: Promise<void>;
+  async lockWrites() { await this.prepareWrite(); }
   private prepareWrite() {
     return this.writeReady ??= (async () => {
-      await this.db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', ['publication:' + this.model.document.id], this.client);
-      const current = await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [this.model.document.id], this.client);
-      if (current.rows[0]?.release !== this.model.release) throw new Conflict('Historical and prepared projections are read-only');
+      await lockEdits(this.db, this.model, this.owner, this.client);
+      await checkScenario(this.db, this.model, this.owner, this.client, true);
     })();
   }
   private writeType(type: string) {
@@ -39,7 +40,9 @@ export class Objects {
   }
   private async stored(input: ObjectRef): Promise<ObjectData> {
     const ref = objectRefSchema.parse(input);
-    const rows = await this.db.query(`SELECT type,id,revision,properties FROM ${this.db.schema}.objects WHERE owner=$1 AND type=$2 AND id=$3 AND projection=$4`, [this.owner, ref.type, ref.id, this.model.projection], this.client);
+    await checkScenario(this.db, this.model, this.owner, this.client);
+    const values: unknown[] = [this.owner, ref.type, ref.id, this.model.projection], tables = viewTables(this.db, this.model, this.owner, values);
+    const rows = await this.db.query(`${tables.prefix}SELECT type,id,revision,properties FROM ${tables.objects} WHERE owner=$1 AND type=$2 AND id=$3 AND projection=$4`, values, this.client);
     if (!rows.rows[0]) throw new NotFound('Object is unavailable');
     return this.row(rows.rows[0]);
   }
@@ -48,6 +51,7 @@ export class Objects {
     return this.visible(await this.stored(input));
   }
   async query(input: Query) {
+    await checkScenario(this.db, this.model, this.owner, this.client);
     const args = querySchema.parse(input);
     this.access.definition(this.model, this.model.interfaces.has(args.type) ? 'interface' : 'object', args.type);
     const navigation = args.from ? this.model.navigation(args.from.object.type, args.from.link, args.from.as) : undefined;
@@ -65,7 +69,7 @@ export class Objects {
       const nav = navigation!;
       const source = nav.forward ? 'from' : 'to', target = nav.forward ? 'to' : 'from';
       values.push(nav.link, args.from.object.type, args.from.object.id);
-      clauses.push(`EXISTS(SELECT 1 FROM ${this.db.schema}.links l WHERE l.projection=o.projection AND l.owner=o.owner AND l.type=$3 AND l.${source}_type=$4 AND l.${source}_id=$5 AND l.${target}_type=o.type AND l.${target}_id=o.id)`);
+      clauses.push(`EXISTS(SELECT 1 FROM ${this.model.scenario ? 'view_links' : this.db.schema + '.links'} l WHERE l.projection=o.projection AND l.owner=o.owner AND l.type=$3 AND l.${source}_type=$4 AND l.${source}_id=$5 AND l.${target}_type=o.type AND l.${target}_id=o.id)`);
     }
     for (const [field, value] of Object.entries(args.where)) {
       const cases: string[] = [];
@@ -77,7 +81,7 @@ export class Objects {
       values.push(JSON.stringify(value));
       clauses.push(`COALESCE((CASE ${cases.join(' ')} END),'null'::jsonb)=$${values.length}::jsonb`);
     }
-    const queryDigest = digest({ ...args, cursor: undefined, owner: this.owner, release: this.model.release });
+    const queryDigest = digest({ ...args, cursor: undefined, owner: this.owner, release: this.model.release, scenario: this.model.scenario });
     if (args.cursor) {
       const cursor = z.strictObject({ query: z.literal(queryDigest), type: z.string(), id: z.string() }).parse(JSON.parse(Buffer.from(args.cursor, 'base64url').toString()));
       values.push(cursor.type, cursor.id);
@@ -85,7 +89,8 @@ export class Objects {
     }
     values.push(this.model.projection); clauses.push(`projection=$${values.length}`);
     values.push(args.limit + 1);
-    const result = await this.db.query(`SELECT type,id,revision,properties FROM ${this.db.schema}.objects o WHERE ${clauses.join(' AND ')} ORDER BY type COLLATE "C",id COLLATE "C" LIMIT $${values.length}`, values, this.client);
+    const limitParameter = values.length, tables = viewTables(this.db, this.model, this.owner, values);
+    const result = await this.db.query(`${tables.prefix}SELECT type,id,revision,properties FROM ${tables.objects} o WHERE ${clauses.join(' AND ')} ORDER BY type COLLATE "C",id COLLATE "C" LIMIT $${limitParameter}`, values, this.client);
     const records = result.rows.slice(0, args.limit).map(row => this.row(row));
     const fields = args.select ?? Object.keys(this.model.interfaces.get(args.type)?.properties ?? this.model.object(args.type).properties);
     const items = records.map(object => ({ ...object, properties: Object.fromEntries(fields.flatMap(field => {
@@ -100,9 +105,11 @@ export class Objects {
     const nav = this.model.navigation(ref.type, link, view);
     this.access.read(this.model, ref.type); this.access.read(this.model, nav.target); this.access.definition(this.model, 'link', nav.link);
     const from = nav.forward ? 'from' : 'to', to = nav.forward ? 'to' : 'from';
-    const result = await this.db.query(`SELECT o.type,o.id,o.revision,o.properties FROM ${this.db.schema}.links l
-      JOIN ${this.db.schema}.objects o ON o.projection=l.projection AND o.owner=l.owner AND o.type=l.${to}_type AND o.id=l.${to}_id
-      WHERE l.owner=$1 AND l.type=$2 AND l.${from}_type=$3 AND l.${from}_id=$4 AND l.projection=$5 ORDER BY o.id COLLATE "C" LIMIT 101`, [this.owner, nav.link, ref.type, ref.id, this.model.projection], this.client);
+    await checkScenario(this.db, this.model, this.owner, this.client);
+    const values: unknown[] = [this.owner, nav.link, ref.type, ref.id, this.model.projection], tables = viewTables(this.db, this.model, this.owner, values);
+    const result = await this.db.query(`${tables.prefix}SELECT o.type,o.id,o.revision,o.properties FROM ${tables.links} l
+      JOIN ${tables.objects} o ON o.projection=l.projection AND o.owner=l.owner AND o.type=l.${to}_type AND o.id=l.${to}_id
+      WHERE l.owner=$1 AND l.type=$2 AND l.${from}_type=$3 AND l.${from}_id=$4 AND l.projection=$5 ORDER BY o.id COLLATE "C" LIMIT 101`, values, this.client);
     if (result.rows.length > 100) throw new Error('Relationship exceeds the complete read limit');
     return result.rows.map(row => this.visible(this.row(row)));
   }
@@ -110,6 +117,11 @@ export class Objects {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).create(ref, input));
     this.writeType(ref.type); await this.prepareWrite();
     const properties = this.model.parseObject(ref, input);
+    if (this.model.scenario) {
+      const old = await this.stored(ref).catch(error => { if (error instanceof NotFound) return undefined; throw error; });
+      if (old) { if (digest(old.properties) !== digest(properties)) throw new Conflict('Object identity already contains different data'); return; }
+      await stageObject(this.db, this.model, this.owner, ref, 1, properties, this.client); return;
+    }
     const result = await this.db.query(`INSERT INTO ${this.db.schema}.objects(owner,type,id,properties,projection) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING id`, [this.owner, ref.type, ref.id, properties, this.model.projection], this.client);
     if (!result.rowCount) {
       if (digest((await this.stored(ref)).properties) !== digest(properties)) throw new Conflict('Object identity already contains different data');
@@ -120,6 +132,7 @@ export class Objects {
     for (const item of input) this.writeType(item.ref.type);
     await this.prepareWrite();
     if (!input.length) return;
+    if (this.model.scenario) throw new Conflict('Source ingestion is unavailable inside a scenario');
     const unique = new Map<string, { type: string; id: string; properties: Record<string, unknown> }>();
     for (const item of input) {
       const row = { ...item.ref, properties: this.model.parseObject(item.ref, item.properties) }, key = JSON.stringify(item.ref);
@@ -136,6 +149,8 @@ export class Objects {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).edit(ref, revision, fields));
     this.writeType(ref.type); await this.prepareWrite();
     const old = await this.stored(ref), properties = this.model.parseObject(ref, { ...old.properties, ...fields });
+    if (old.revision !== revision) throw new Conflict('Object revision changed');
+    if (this.model.scenario) { await stageObject(this.db, this.model, this.owner, ref, revision + 1, properties, this.client); return; }
     const result = await this.db.query(`UPDATE ${this.db.schema}.objects SET properties=$4,revision=revision+1 WHERE owner=$1 AND type=$2 AND id=$3 AND revision=$5 AND projection=$6`, [this.owner, ref.type, ref.id, properties, revision, this.model.projection], this.client);
     if (!result.rowCount) throw new Conflict('Object revision changed');
   }
@@ -152,9 +167,42 @@ export class Objects {
       if (!definition || edge.from.type !== definition.from.type || edge.to.type !== definition.to.type) throw new Error('Invalid link endpoints');
       return { type: edge.type, from_type: edge.from.type, from_id: edge.from.id, to_type: edge.to.type, to_id: edge.to.id, single_from: definition.from.cardinality === 'one', single_to: definition.to.cardinality === 'one' };
     });
+    if (this.model.scenario) {
+      for (const edge of edges) {
+        await this.stored(edge.from); await this.stored(edge.to);
+        const definition = this.model.links.get(edge.type)!;
+        const from = await this.follow(edge.from, definition.from.name), to = await this.follow(edge.to, definition.to.name);
+        if (definition.from.cardinality === 'one' && from.some(item => digest(item.ref) !== digest(edge.to)) || definition.to.cardinality === 'one' && to.some(item => digest(item.ref) !== digest(edge.from))) throw new Conflict('Link cardinality exceeded');
+        await stageLink(this.db, this.model, this.owner, edge, false, this.client);
+      }
+      return;
+    }
     await this.db.query(`INSERT INTO ${this.db.schema}.links(owner,type,from_type,from_id,to_type,to_id,single_from,single_to,projection)
       SELECT $1,type,from_type,from_id,to_type,to_id,single_from,single_to,$3 FROM jsonb_to_recordset($2::jsonb)
       AS input(type text,from_type text,from_id text,to_type text,to_id text,single_from boolean,single_to boolean)
       ON CONFLICT(projection,owner,type,from_type,from_id,to_type,to_id) DO NOTHING`, [this.owner, JSON.stringify(rows), this.model.projection], this.client);
   }
+  async unlink(edge: LinkData): Promise<void> {
+    if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).unlink(edge));
+    await this.prepareWrite(); this.access.definition(this.model, 'link', edge.type);
+    this.writeType(edge.from.type); this.writeType(edge.to.type);
+    const definition = this.model.links.get(edge.type);
+    if (!definition || definition.from.type !== edge.from.type || definition.to.type !== edge.to.type) throw new Error('Invalid link endpoints');
+    if (this.model.scenario) return stageLink(this.db, this.model, this.owner, edge, true, this.client);
+    await this.db.query(`DELETE FROM ${this.db.schema}.links WHERE projection=$1 AND owner=$2 AND type=$3 AND from_type=$4 AND from_id=$5 AND to_type=$6 AND to_id=$7`, [this.model.projection, this.owner, edge.type, edge.from.type, edge.from.id, edge.to.type, edge.to.id], this.client);
+  }
+  async remove(ref: ObjectRef, revision: number): Promise<void> {
+    if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).remove(ref, revision));
+    await this.prepareWrite(); this.writeType(ref.type);
+    const old = await this.stored(ref); if (old.revision !== revision) throw new Conflict('Object revision changed');
+    for (const link of this.model.links.values()) {
+      for (const side of ['from', 'to'] as const) if (link[side].type === ref.type) {
+        const others = await this.follow(ref, link[side].name);
+        for (const other of others) await this.unlink({ type: link.apiName, from: side === 'from' ? ref : other.ref, to: side === 'to' ? ref : other.ref });
+      }
+    }
+    if (this.model.scenario) return stageObject(this.db, this.model, this.owner, ref, revision + 1, null, this.client);
+    await this.db.query(`DELETE FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND revision=$5`, [this.model.projection, this.owner, ref.type, ref.id, revision], this.client);
+  }
+
 }

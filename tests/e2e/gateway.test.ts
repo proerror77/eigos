@@ -5,6 +5,8 @@ import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createServer } from 'node:net';
 import { fixture, route } from '../fixture.js';
+import { planningInput, calendarAnswer } from '../planning-fixture.js';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 
 async function stop(child: ChildProcess) {
   if (child.exitCode !== null) return;
@@ -13,7 +15,7 @@ async function stop(child: ChildProcess) {
   const timer = setTimeout(() => child.kill('SIGKILL'), 5000);
   try { await ended; } finally { clearTimeout(timer); }
 }
-test('separate Gateway and Worker receive a message and return the original quote through PostgreSQL', async t => {
+test('separate Gateway and Worker complete inquiries and PA calendar scenarios on the original PostgreSQL tasks', async t => {
   const f = await fixture(), token = 'process-test-token-'.repeat(3);
   const portServer = createServer().listen(0, '127.0.0.1'); await once(portServer, 'listening');
   const address = portServer.address(); assert(address && typeof address !== 'string'); const port = address.port;
@@ -41,6 +43,34 @@ test('separate Gateway and Worker receive a message and return the original quot
     assert(performance.now() - started < 20000);
     const again = await (await fetch(url + '/tasks', { method: 'POST', headers, body: JSON.stringify(input) })).json() as typeof task;
     assert.equal(again.id, task.id);
-    t.diagnostic(JSON.stringify({ messageToQuoteMs: Math.round(performance.now() - started), source: 'synthetic MCP responses', database: 'PostgreSQL', processes: ['Gateway', 'Worker'] }));
+    const quoteElapsed=Math.round(performance.now()-started);
+    const client=new Client({name:'synthetic-calendar-pa',version:'1'});
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL(url+'/mcp'),{requestInit:{headers}}));
+      const call=async(name:string,args:Record<string,unknown>)=>{
+        const response=await client.callTool({name,arguments:args});assert(!response.isError,JSON.stringify(response));
+        return JSON.parse((response.content as {text:string}[])[0]!.text);
+      };
+      const planning=planningInput(),created=await call('submit_task',{requestId:'e2e-calendar',message:JSON.stringify({planning})});
+      const poll=async()=>{
+        const until=Date.now()+15000;
+        for(;;){const current=await call('get_task',{taskId:created.id});if(!['working','submitted'].includes(current.state))return current;
+          if(Date.now()>until)throw new Error('Calendar task did not reach its next state');await delay(25);}
+      };
+      const waiting=await poll();assert.equal(waiting.state,'input-required');assert.equal(waiting.result.capability,'calendar.freebusy');
+      const answer={requestId:waiting.result.requestId,response:calendarAnswer(planning)};
+      const resumed=await fetch(url+'/a2a',{method:'POST',headers:{...headers,'A2A-Version':'1.0'},body:JSON.stringify({jsonrpc:'2.0',id:2,method:'SendMessage',params:{message:{messageId:'calendar-response',taskId:created.id,role:'ROLE_USER',parts:[{data:{paResponse:answer},mediaType:'application/json'}]}}})});
+      const response=await resumed.json() as {result?:{task?:{id:string};id?:string};error?:unknown};assert(!response.error,JSON.stringify(response));
+      const completed=await poll();assert.equal(completed.id,created.id);assert.equal(completed.state,'completed',JSON.stringify(completed));
+      assert.equal(completed.result.validation.valid,true);assert.equal(completed.result.activities.length,1);assert.equal(completed.result.externalCalendarUpdated,false);
+      const scenarioId=completed.result.scenarioId;
+      const live=await call('query_ontology',{query:{type:'ScheduledActivity'}});assert.equal(live.items.length,0);
+      const scenario=await call('query_ontology',{scenarioId,query:{type:'ScheduledActivity'}});assert.equal(scenario.items.length,1);
+      const diff=await call('inspect_scenario',{scenarioId});
+      await call('apply_ontology_action',{requestId:'e2e-explicit-merge',action:'CommitSchedulePlan',input:{plan:completed.result.plan.ref,scenarioId,revision:diff.revision}});
+      assert.equal((await call('query_ontology',{query:{type:'ScheduledActivity'}})).items.length,1);
+      t.diagnostic(JSON.stringify({calendarTask:created.id,PA:'synthetic free/busy',submission:'MCP',continuation:'A2A',scenarioMerge:'explicit MCP Action',externalCalendarUpdated:false}));
+    } finally {await client.close();}
+    t.diagnostic(JSON.stringify({ messageToQuoteMs: quoteElapsed, source: 'synthetic MCP responses', database: 'PostgreSQL', processes: ['Gateway', 'Worker'] }));
   } finally { await Promise.all([stop(gateway), stop(worker)]); await f.close(); }
 });

@@ -13,9 +13,9 @@ test('five schema kinds resolve properties, directional links and action paramet
   assert.equal(model.resolveTypeAction('RideRequest', 'RideInquiry', 'estimate', { city: '上海市', origin: 'a', destination: 'b' }).action, 'EstimateRide');
 });
 test('missing mappings and ambiguous link names fail at publication', () => {
-  const missing = structuredClone(document); delete missing.objectTypes[0].interfaces.Location.properties.city;
+  const missing = structuredClone(document); delete missing.objectTypes[0]!.interfaces.Location!.properties.city;
   assert.throws(() => new Ontology(missing), /mapping/);
-  const duplicate = structuredClone(document); duplicate.linkTypes.push({ ...duplicate.linkTypes[0], apiName: 'Duplicate' });
+  const duplicate = structuredClone(document); duplicate.linkTypes.push({ ...duplicate.linkTypes[0]!, apiName: 'Duplicate' });
   assert.throws(() => new Ontology(duplicate), /Ambiguous/);
 });
 

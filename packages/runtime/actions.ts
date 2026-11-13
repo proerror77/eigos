@@ -22,16 +22,20 @@ export class Actions {
     if ((await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [model.document.id])).rows[0]?.release !== model.release) throw new Conflict('Historical and prepared Actions are read-only');
     const action = model.action(actionName), input = validator(action.parameters).parse(raw) as Record<string, unknown>;
     const fingerprint = digest({ release: model.release, action: actionName, input });
+    const journal = model.scenario ? 'scenario_actions' : 'actions';
+    const priorResult = (client: Sql = this.db.pool) => this.db.query(`SELECT digest,result FROM ${this.db.schema}.${journal} WHERE owner=$1 AND request_id=$2${model.scenario ? ' AND scenario_id=$3' : ''}`, [principal.owner, requestId, ...(model.scenario ? [model.scenario] : [])], client);
     const commit = (write?: (objects: Objects) => Promise<ObjectRef>) => this.db.transaction(async client => {
       // The request key serializes only duplicate submissions of this action.
-      await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify([principal.owner, requestId])], client);
-      const previous = await this.db.query(`SELECT digest,result FROM ${this.db.schema}.actions WHERE owner=$1 AND request_id=$2`, [principal.owner, requestId], client);
+      await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify([principal.owner, model.scenario ?? 'main', requestId])], client);
+      await beforeCommit?.(client);
+      const objects = new Objects(this.db, model, access, client);
+      await objects.lockWrites();
+      const previous = await priorResult(client);
       if (previous.rows[0]) {
         if (previous.rows[0].digest !== fingerprint) throw new Conflict('Request ID already used with different action input');
         signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client);
         return objectRefSchema.parse(previous.rows[0].result);
       }
-      const objects = new Objects(this.db, model, access, client);
       for (const [name, type] of Object.entries(action.objectParameters)) {
         const ref = objectRefSchema.parse(input[name]);
         if (!model.implements(ref.type, type)) throw new Error('Action input type does not satisfy its contract');
@@ -54,12 +58,13 @@ export class Actions {
         }
       }
       const result = write ? objectRefSchema.parse(await write(objects)) : ref(action.result!);
-      await this.db.query(`INSERT INTO ${this.db.schema}.actions(owner,request_id,digest,action,release,result) VALUES($1,$2,$3,$4,$5,$6)`, [principal.owner, requestId, fingerprint, actionName, model.release, result], client);
+      if (model.scenario) await this.db.query(`INSERT INTO ${this.db.schema}.scenario_actions(scenario_id,owner,request_id,digest,action,result,requirements) VALUES($1,$2,$3,$4,$5,$6,$7)`, [model.scenario, principal.owner, requestId, fingerprint, actionName, result, JSON.stringify(access.requirements())], client);
+      else await this.db.query(`INSERT INTO ${this.db.schema}.actions(owner,request_id,digest,action,release,result) VALUES($1,$2,$3,$4,$5,$6)`, [principal.owner, requestId, fingerprint, actionName, model.release, result], client);
       signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client);
       return result;
     });
     if (!action.function) return commit();
-    const prior = await this.db.query(`SELECT digest,result FROM ${this.db.schema}.actions WHERE owner=$1 AND request_id=$2`, [principal.owner, requestId]);
+    const prior = await priorResult();
     if (prior.rows[0]) {
       if (prior.rows[0].digest !== fingerprint) throw new Conflict('Request ID already used with different action input');
       return commit();

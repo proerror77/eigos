@@ -1,6 +1,6 @@
 # EIGOS
 
-EIGOS 通过共享 PostgreSQL 本体提供对象集查询、Function 和 Action。Gateway 接收 MCP、A2A 与 HTTP 请求，Worker 中的模型 Agent 根据任务锁定的 Ontology 自行选择查询、来源读取、Function 与 Action。第一条业务链查询滴滴路线估价。
+EIGOS 通过共享 PostgreSQL 本体提供对象集查询、Function 和 Action。Gateway 接收 MCP、A2A 与 HTTP 请求，Worker 中的模型 Agent 根据任务锁定的 Ontology 自行选择查询、来源读取、Function 与 Action。业务链支持滴滴路线估价，以及向用户 PA 请求日历忙闲信息后生成排程方案。
 
 架构、Schema 和实际支持范围见 [Ontology 架构](docs/architecture/ontology.md)。
 
@@ -92,7 +92,7 @@ npm run test:e2e:run
 
 测试自动创建临时 PostgreSQL 容器，结束后移除。CI 使用独立 PostgreSQL 服务。工程回归使用明确标注的录制 Agent 决策与合成供应商响应，真实模型和真实供应商的端到端计时通过生产入口另行执行。`accepted=true` 要求链路来源为 `live_readonly`。
 
-这一版替换了测试期 SQLite 运行链、历史内核构造链和重复授权投影。旧源码可从 Git 提交 `6eeaf93` 恢复。当前交付的业务领域为滴滴询价，旧的支付、预订、跨 Agent 通信与其他供应商执行流程退出本版运行入口。
+这一版替换了测试期 SQLite 运行链、历史内核构造链和重复授权投影。旧源码可从 Git 提交 `6eeaf93` 恢复。当前交付的业务领域为滴滴询价和 PA 日历支持的内部排程。旧的支付、预订与其他供应商执行流程退出本版运行入口；日历通过原任务中的结构化 PA 请求／回传接入。
 
 
 ## 发布和权限
@@ -117,3 +117,11 @@ npm run test:e2e:run
 ```
 
 省略 properties 保持当前属性限制；提供该数组则完整替换限制。`access:grant-member` 只授予指定账号当前定义中的业务能力，未来新能力不会自动获得执行授权。受限属性权限需明确配置。这里实现 owner 范围的对象策略和属性可见性，没有额外的通用条件规则语言。
+
+## Scenario 与日历排程
+
+Agent 可通过 `SchedulablePlan.prepare` 向用户 PA 请求指定范围的完整忙闲信息。缺少日历时原任务返回 `input-required`；PA 用 `respond_to_task`（或 A2A 原任务续接）回传后，Worker 继续相同任务。日历凭据留在 PA。
+
+`create_scenario`、`list_scenarios`、`inspect_scenario`、`discard_scenario` 管理隔离方案；现有查询、Function 与 Action 接受 `scenarioId`。排程 Functions 搜索可行时段、检查资源冲突及活动依赖。Agent 保存候选方案，PA 明确选择后用 `CommitSchedulePlan` 合并；外部日历不会被写入。
+
+完整协议、数据格式、权限升级和当前支持范围见 [Scenario 与 PA 日历排程](docs/guides/scenarios-scheduling.md)。

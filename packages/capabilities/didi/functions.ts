@@ -31,7 +31,7 @@ async function locationsReady(context: FunctionContext, places: ObjectData[]) {
   }
   return true;
 }
-export function rideFunctions(resolveSource: SourceResolver, additional: ReadonlyMap<string, FunctionHandler> = new Map()) {
+export function rideFunctions(resolveSource: SourceResolver, additional: ReadonlyMap<string, FunctionHandler> = new Map(), definitions?: OntologyDocument['functionTypes']) {
   const read = async (context: FunctionContext, tool: 'maps_textsearch' | 'taxi_estimate', input: Record<string, string>): Promise<SourceResult> => {
     const source = await resolveSource(context.principal.owner);
     await source.assertCurrent();
@@ -85,5 +85,5 @@ export function rideFunctions(resolveSource: SourceResolver, additional: Readonl
       return { request, estimates, evidence: [...evidence], accepted: evidence.size === 1 && evidence.has('live_readonly'), route: { origin: origin.properties, destination: destination.properties } };
     }],
     ...additional,
-  ]), (JSON.parse(readFileSync(new URL('../../ontology/definitions/ride.json', import.meta.url), 'utf8')) as OntologyDocument).functionTypes);
+  ]), definitions ?? (JSON.parse(readFileSync(new URL('../../ontology/definitions/ride.json', import.meta.url), 'utf8')) as OntologyDocument).functionTypes);
 }
