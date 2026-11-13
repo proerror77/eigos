@@ -4,6 +4,7 @@ import { fixture, principal } from './fixture.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { Scenarios } from '../packages/runtime/scenarios.js';
 import { Access } from '../packages/runtime/access.js';
+import { calendarAnswer } from './planning-fixture.js';
 
 const ref={type:'Route',id:'shared-route'};
 test('scenario edits are isolated, queryable through Interfaces, and keep seeing untouched live updates',async()=>{
@@ -116,27 +117,24 @@ test('a proposed single-valued Link shadows a competing live Link while inspecti
 test('a proposed Link also shadows a competitor when only the reverse direction is single-valued', async () => {
   const f = await fixture();
   try {
-    const definition = structuredClone(f.model.document);
-    const link = definition.linkTypes.find(link => link.apiName === 'RequestRoute')!;
-    link.from.cardinality = 'many';
-    link.to.cardinality = 'one';
-    const model = await f.metadata.publish(definition, f.capabilities, f.publisher);
+    const model = f.model;
     const live = new Objects(f.db, model, f.access), scenarios = new Scenarios(f.db);
-    const route = { type: 'Route', id: 'shared-destination' };
-    const candidate = { type: 'RideRequest', id: 'proposed-request' };
-    const current = { type: 'RideRequest', id: 'live-request' };
-    await live.create(route, { id: route.id, name: route.id });
+    const availability = { type: 'CalendarAvailability', id: 'shared-availability' };
+    const candidate = { type: 'ScheduleResource', id: 'proposed-resource' };
+    const current = { type: 'ScheduleResource', id: 'live-resource' };
+    const { status: _status, ...calendar } = calendarAnswer();
+    await live.create(availability, { id: availability.id, name: availability.id, ...calendar });
     for (const ref of [candidate, current]) {
-      await live.create(ref, { id: ref.id, name: ref.id, status: 'requested', requestedAt: new Date().toISOString() });
+      await live.create(ref, { id: ref.id, name: ref.id });
     }
     const scenario = await scenarios.create(f.access, model, { requestId: 'reverse-conflict', name: 'Alternate request' });
     const view = new Objects(f.db, await scenarios.view(f.access, model, scenario.id), f.access);
-    await view.link({ type: link.apiName, from: candidate, to: route });
-    await live.link({ type: link.apiName, from: current, to: route });
+    await view.link({ type: 'ResourceAvailability', from: candidate, to: availability });
+    await live.link({ type: 'ResourceAvailability', from: current, to: availability });
 
-    assert.deepEqual((await view.follow(route, 'requests')).map(item => item.ref), [candidate]);
-    assert.deepEqual((await view.follow(current, 'route')).map(item => item.ref), []);
-    assert.deepEqual((await live.follow(route, 'requests')).map(item => item.ref), [current]);
+    assert.deepEqual((await view.follow(availability, 'resource')).map(item => item.ref), [candidate]);
+    assert.deepEqual((await view.follow(current, 'availability')).map(item => item.ref), []);
+    assert.deepEqual((await live.follow(availability, 'resource')).map(item => item.ref), [current]);
     assert.equal((await scenarios.inspect(f.access, model, scenario.id)).links[0]?.conflict, true);
   } finally { await f.close(); }
 });
