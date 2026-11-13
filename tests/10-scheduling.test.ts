@@ -104,7 +104,7 @@ test('the restricted database role completes PA handoff and merge without metada
  let limited:import('../packages/runtime/database.js').Database|undefined;
  try{
   await f.db.query(`CREATE ROLE "${role}"; GRANT USAGE ON SCHEMA ${f.db.schema} TO "${role}";
-    GRANT SELECT ON ${f.db.schema}.ontology,${f.db.schema}.releases,${f.db.schema}.resource_grants,${f.db.schema}.property_security TO "${role}";
+    GRANT SELECT ON ${f.db.schema}.ontology,${f.db.schema}.releases,${f.db.schema}.resource_grants,${f.db.schema}.property_security,${f.db.schema}.object_policies,${f.db.schema}.security_memberships TO "${role}";
     GRANT SELECT,INSERT,UPDATE,DELETE ON ${f.db.schema}.objects,${f.db.schema}.links TO "${role}";
     GRANT SELECT,INSERT,UPDATE ON ${f.db.schema}.tasks,${f.db.schema}.source_calls,${f.db.schema}.scenarios,${f.db.schema}.scenario_objects,${f.db.schema}.scenario_links,${f.db.schema}.pa_requests TO "${role}";
     GRANT SELECT,INSERT ON ${f.db.schema}.actions,${f.db.schema}.scenario_actions TO "${role}";`);

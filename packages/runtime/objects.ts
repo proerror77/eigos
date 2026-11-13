@@ -30,8 +30,15 @@ export class Objects {
       if (provider) this.access.source(this.model, provider);
     }
   }
+  maskSnapshot(ref: ObjectRef, properties: Record<string, unknown>): Record<string, unknown> | null {
+    this.access.read(this.model,ref.type);
+    if (!this.access.rowAllowed(this.model,ref.type,properties)) return null;
+    this.access.readRow(this.model,ref.type,properties);
+    return Object.fromEntries(Object.entries(properties).map(([field,value])=>[field,this.access.cell(this.model,ref.type,field,properties)?value:null]));
+  }
   private visible(object: ObjectData): ObjectData {
-    return { ...object, properties: Object.fromEntries(Object.entries(object.properties).map(([field, value]) => [field, this.access.property(this.model, object.ref.type, field) ? value : null])) };
+    this.access.readRow(this.model,object.ref.type,object.properties);
+    return { ...object, properties: this.maskSnapshot(object.ref,object.properties)! };
   }
   private row(row: Record<string, unknown>): ObjectData {
     const ref = { type: String(row.type), id: String(row.id) };
@@ -42,7 +49,7 @@ export class Objects {
     const ref = objectRefSchema.parse(input);
     await checkScenario(this.db, this.model, this.owner, this.client);
     const values: unknown[] = [this.owner, ref.type, ref.id, this.model.projection], tables = viewTables(this.db, this.model, this.owner, values);
-    const rows = await this.db.query(`${tables.prefix}SELECT type,id,revision,properties FROM ${tables.objects} WHERE owner=$1 AND type=$2 AND id=$3 AND projection=$4`, values, this.client);
+    const rows = await this.db.readQuery(`${tables.prefix}SELECT type,id,revision,properties FROM ${tables.objects} WHERE owner=$1 AND type=$2 AND id=$3 AND projection=$4`, values, this.client);
     if (!rows.rows[0]) throw new NotFound('Object is unavailable');
     return this.row(rows.rows[0]);
   }
@@ -57,7 +64,7 @@ export class Objects {
     const navigation = args.from ? this.model.navigation(args.from.object.type, args.from.link, args.from.as) : undefined;
     if (args.from && navigation) {
       if (args.from.as) this.access.definition(this.model, 'interface', args.from.as);
-      this.access.read(this.model, args.from.object.type); this.access.read(this.model, navigation.target);
+      await this.read(args.from.object); this.access.read(this.model, navigation.target);
       this.access.definition(this.model, 'link', navigation.link);
     }
     const types = this.model.concreteTypes(args.type).filter(type => (!navigation || type === navigation.target) && this.access.canRead(this.model, type));
@@ -75,8 +82,10 @@ export class Objects {
       const cases: string[] = [];
       for (const type of types) {
         const local = this.model.propertyName(type, args.type, field);
-        values.push(type, local && this.access.property(this.model, type, local) ? local : null);
-        cases.push(`WHEN type=$${values.length - 1} THEN properties->$${values.length}::text`);
+        values.push(type); const typeParameter = values.length;
+        const allowed = local ? this.access.cellSql(this.model,type,local,values) : 'FALSE';
+        values.push(local ?? null);
+        cases.push(`WHEN type=$${typeParameter} AND ${allowed} THEN properties->$${values.length}::text`);
       }
       values.push(JSON.stringify(value));
       clauses.push(`COALESCE((CASE ${cases.join(' ')} END),'null'::jsonb)=$${values.length}::jsonb`);
@@ -87,29 +96,36 @@ export class Objects {
       values.push(cursor.type, cursor.id);
       clauses.push(`(type COLLATE "C",id COLLATE "C")>($${values.length - 1},$${values.length})`);
     }
+    const policyCases = types.map(type => {
+      values.push(type); const parameter = values.length;
+      return `(type=$${parameter} AND ${this.access.rowSql(this.model,type,values)})`;
+    });
+    clauses.push('('+policyCases.join(' OR ')+')');
     values.push(this.model.projection); clauses.push(`projection=$${values.length}`);
     values.push(args.limit + 1);
     const limitParameter = values.length, tables = viewTables(this.db, this.model, this.owner, values);
-    const result = await this.db.query(`${tables.prefix}SELECT type,id,revision,properties FROM ${tables.objects} o WHERE ${clauses.join(' AND ')} ORDER BY type COLLATE "C",id COLLATE "C" LIMIT $${limitParameter}`, values, this.client);
+    const result = await this.db.readQuery(`${tables.prefix}SELECT type,id,revision,properties FROM ${tables.objects} o WHERE ${clauses.join(' AND ')} ORDER BY type COLLATE "C",id COLLATE "C" LIMIT $${limitParameter}`, values, this.client);
     const records = result.rows.slice(0, args.limit).map(row => this.row(row));
     const fields = args.select ?? Object.keys(this.model.interfaces.get(args.type)?.properties ?? this.model.object(args.type).properties);
-    const items = records.map(object => ({ ...object, properties: Object.fromEntries(fields.flatMap(field => {
+    const items = records.map(object => { this.access.readRow(this.model,object.ref.type,object.properties); return { ...object, properties: Object.fromEntries(fields.flatMap(field => {
       const local = this.model.propertyName(object.ref.type, args.type, field);
-      return local === undefined ? [] : [[field, this.access.property(this.model, object.ref.type, local) ? object.properties[local] : null]];
-    })) }));
+      return local === undefined ? [] : [[field, this.access.cell(this.model, object.ref.type, local, object.properties) ? object.properties[local] : null]];
+    })) }; });
     const last = records.at(-1)?.ref;
     return { items, cursor: result.rows.length > args.limit && last ? Buffer.from(JSON.stringify({ query: queryDigest, ...last })).toString('base64url') : undefined };
   }
   async follow(ref: ObjectRef, link: string, view = ref.type): Promise<ObjectData[]> {
     if (view !== ref.type) this.access.definition(this.model, 'interface', view);
     const nav = this.model.navigation(ref.type, link, view);
-    this.access.read(this.model, ref.type); this.access.read(this.model, nav.target); this.access.definition(this.model, 'link', nav.link);
+    await this.read(ref); this.access.read(this.model, nav.target); this.access.definition(this.model, 'link', nav.link);
     const from = nav.forward ? 'from' : 'to', to = nav.forward ? 'to' : 'from';
     await checkScenario(this.db, this.model, this.owner, this.client);
-    const values: unknown[] = [this.owner, nav.link, ref.type, ref.id, this.model.projection], tables = viewTables(this.db, this.model, this.owner, values);
-    const result = await this.db.query(`${tables.prefix}SELECT o.type,o.id,o.revision,o.properties FROM ${tables.links} l
+    const values: unknown[] = [this.owner, nav.link, ref.type, ref.id, this.model.projection];
+    const policy = this.access.rowSql(this.model,nav.target,values,'o.properties');
+    const tables = viewTables(this.db, this.model, this.owner, values);
+    const result = await this.db.readQuery(`${tables.prefix}SELECT o.type,o.id,o.revision,o.properties FROM ${tables.links} l
       JOIN ${tables.objects} o ON o.projection=l.projection AND o.owner=l.owner AND o.type=l.${to}_type AND o.id=l.${to}_id
-      WHERE l.owner=$1 AND l.type=$2 AND l.${from}_type=$3 AND l.${from}_id=$4 AND l.projection=$5 ORDER BY o.id COLLATE "C" LIMIT 101`, values, this.client);
+      WHERE l.owner=$1 AND l.type=$2 AND l.${from}_type=$3 AND l.${from}_id=$4 AND l.projection=$5 AND ${policy} ORDER BY o.id COLLATE "C" LIMIT 101`, values, this.client);
     if (result.rows.length > 100) throw new Error('Relationship exceeds the complete read limit');
     return result.rows.map(row => this.visible(this.row(row)));
   }
@@ -117,6 +133,7 @@ export class Objects {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).create(ref, input));
     this.writeType(ref.type); await this.prepareWrite();
     const properties = this.model.parseObject(ref, input);
+    this.access.writeRow(this.model,ref.type,properties);
     if (this.model.scenario) {
       const old = await this.stored(ref).catch(error => { if (error instanceof NotFound) return undefined; throw error; });
       if (old) { if (digest(old.properties) !== digest(properties)) throw new Conflict('Object identity already contains different data'); return; }
@@ -149,6 +166,9 @@ export class Objects {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).edit(ref, revision, fields));
     this.writeType(ref.type); await this.prepareWrite();
     const old = await this.stored(ref), properties = this.model.parseObject(ref, { ...old.properties, ...fields });
+    this.access.readRow(this.model,ref.type,old.properties);
+    for (const field of Object.keys(fields)) if (!this.access.cell(this.model,ref.type,field,old.properties)) throw new Error('Cannot edit a hidden property');
+    this.access.writeRow(this.model,ref.type,properties);
     if (old.revision !== revision) throw new Conflict('Object revision changed');
     if (this.model.scenario) { await stageObject(this.db, this.model, this.owner, ref, revision + 1, properties, this.client); return; }
     const result = await this.db.query(`UPDATE ${this.db.schema}.objects SET properties=$4,revision=revision+1 WHERE owner=$1 AND type=$2 AND id=$3 AND revision=$5 AND projection=$6`, [this.owner, ref.type, ref.id, properties, revision, this.model.projection], this.client);
@@ -161,6 +181,7 @@ export class Objects {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).linkBatch(edges));
     await this.prepareWrite();
     if (!edges.length) return;
+    for (const edge of edges) { await this.read(edge.from); await this.read(edge.to); }
     const rows = edges.map(edge => {
       this.access.definition(this.model, 'link', edge.type); this.writeType(edge.from.type); this.writeType(edge.to.type);
       const definition = this.model.links.get(edge.type);
@@ -185,6 +206,7 @@ export class Objects {
   async unlink(edge: LinkData): Promise<void> {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).unlink(edge));
     await this.prepareWrite(); this.access.definition(this.model, 'link', edge.type);
+    await this.read(edge.from); await this.read(edge.to);
     this.writeType(edge.from.type); this.writeType(edge.to.type);
     const definition = this.model.links.get(edge.type);
     if (!definition || definition.from.type !== edge.from.type || definition.to.type !== edge.to.type) throw new Error('Invalid link endpoints');
@@ -194,7 +216,10 @@ export class Objects {
   async remove(ref: ObjectRef, revision: number): Promise<void> {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).remove(ref, revision));
     await this.prepareWrite(); this.writeType(ref.type);
-    const old = await this.stored(ref); if (old.revision !== revision) throw new Conflict('Object revision changed');
+    const old = await this.stored(ref);
+    this.access.readRow(this.model,ref.type,old.properties);
+    for (const field of Object.keys(old.properties)) if (!this.access.cell(this.model,ref.type,field,old.properties)) throw new Error('Cannot delete an object with hidden properties');
+    if (old.revision !== revision) throw new Conflict('Object revision changed');
     for (const link of this.model.links.values()) {
       for (const side of ['from', 'to'] as const) if (link[side].type === ref.type) {
         const others = await this.follow(ref, link[side].name);

@@ -7,7 +7,7 @@ import type { SourceResolver } from '../capabilities/didi/functions.js';
 import { digest } from './identity.js';
 
 export const configSchema = z.object({
-  DATABASE_URL: z.string().min(1), EIGOS_PG_SCHEMA: z.string().default('eigos'),
+  DATABASE_URL: z.string().min(1), QUERY_DATABASE_URL: z.string().min(1).optional(), EIGOS_PG_SCHEMA: z.string().default('eigos'),
   HOST: z.string().default('127.0.0.1'), PORT: z.coerce.number().int().default(3000),
   PUBLIC_URL: z.url().default('http://127.0.0.1:3000'),
   EIGOS_AUTH_MODE: z.enum(['jwt', 'development']).default('jwt'), EIGOS_DEV_TOKEN: z.string().min(32).optional(),

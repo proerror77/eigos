@@ -40,3 +40,4 @@ __pycache__/
 /docs/research/
 /docs/design/
 /docs/*-20??-??-??.*
+.worktrees
