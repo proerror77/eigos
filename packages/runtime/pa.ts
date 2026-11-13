@@ -10,8 +10,10 @@ export const paResponseSchema = z.strictObject({ requestId: z.uuid(), response: 
 /** The authenticated original PA supplies requested context; the model cannot impersonate it. */
 export class PARequests {
   constructor(private readonly tasks: Tasks) {}
-  async request(task: Task, operation: string, capability: string, input: Record<string, unknown>, responseSchema: Record<string, unknown>) {
-    const { db } = this.tasks, request = { capability, input, responseSchema }, key = digest({ operation, request });
+  async request(task: Task, operation: string, capability: string, input: Record<string, unknown>, responseSchema: Record<string, unknown>, dataScope?: Record<string, unknown>) {
+    const { db } = this.tasks, request = { capability, input, responseSchema };
+    // Data identity is independent of a model's wording or Action request ID.
+    const key = digest(dataScope ? { capability, dataScope, responseSchema } : { operation, request });
     const row = await db.transaction(async client => {
       await this.tasks.current(task, client, true);
       await db.query(`INSERT INTO ${db.schema}.pa_requests(id,task_id,owner,request_key,request) VALUES($1,$2,$3,$4,$5) ON CONFLICT(task_id,request_key) DO NOTHING`, [randomUUID(), task.id, task.owner, key, request], client);
