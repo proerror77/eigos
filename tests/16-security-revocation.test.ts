@@ -111,3 +111,17 @@ test('derived object writes retain markings of objects read by the Action contex
     assert.deepEqual((await graph.read({type:'Route',id:'derived'})).properties.marks,['private']);
   }finally{await f.close();}
 });
+
+test('cached output authorization follows current objects after a publication changes',async()=>{
+  const f=await fixture();try{
+    await new Objects(f.db,f.model,f.access).create(plan,properties);
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies VALUES('Eigos','SchedulePlan',$1)`,[fieldPolicy]);
+    const access=await Access.load(f.db,principal);
+    await new Objects(f.db,f.model,access).read(plan);
+    const requirements=access.dataRequirements();
+    const body=structuredClone(f.model.document);body.version='new-security-view';
+    const current=await f.metadata.publish(body,f.capabilities,f.publisher);
+    await new Objects(f.db,current,await Access.load(f.db,principal)).edit(plan,1,{durationMinutes:60});
+    assert.equal(await (await Access.load(f.db,principal)).canReturn(requirements),false);
+  }finally{await f.close();}
+});

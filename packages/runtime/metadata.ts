@@ -16,14 +16,14 @@ export type ProjectionTransform = (ref: ObjectRef, properties: Record<string, un
 export class Metadata {
   private readonly models = new Map<string, PublishedOntology>();
   constructor(private readonly db: Database) {}
-  async fingerprint(projection: string, client: Sql = this.db.pool): Promise<string> {
+  async fingerprint(projection: string, client: Sql = this.db.pool, ontology?: string): Promise<string> {
     const row = (await this.db.query(`SELECT
       (SELECT md5(coalesce(string_agg(md5(row(owner,type,id,revision,properties)::text),'' ORDER BY owner,type,id),'')) FROM ${this.db.schema}.objects WHERE projection=$1) AS objects,
       (SELECT md5(coalesce(string_agg(md5(row(owner,type,from_type,from_id,to_type,to_id,single_from,single_to)::text),'' ORDER BY owner,type,from_type,from_id,to_type,to_id),'')) FROM ${this.db.schema}.links WHERE projection=$1) AS links`, [projection], client)).rows[0]!;
     const edits = (await this.db.query(`SELECT
       (SELECT md5(coalesce(string_agg(md5(row(owner,type,id,source,properties,observed_at)::text),'' ORDER BY owner,type,id,source),'')) FROM ${this.db.schema}.source_values WHERE projection=$1) AS sources,
       (SELECT md5(coalesce(string_agg(md5(row(owner,type,id,overrides,deleted,created)::text),'' ORDER BY owner,type,id),'')) FROM ${this.db.schema}.object_edits WHERE projection=$1) AS edits,
-      (SELECT md5(coalesce(string_agg(row(ontology,type,policy)::text,'' ORDER BY ontology,type),'')) FROM ${this.db.schema}.edit_policies) AS policies`,[projection],client)).rows[0];
+      (SELECT md5(coalesce(string_agg(row(ontology,type,policy)::text,'' ORDER BY ontology,type),'')) FROM ${this.db.schema}.edit_policies WHERE ontology=$2) AS policies`,[projection,ontology??null],client)).rows[0];
     return digest({row,edits});
   }
   private async validateEditState(model: PublishedOntology | Ontology, projection: string, client: Sql) {
@@ -49,7 +49,7 @@ export class Metadata {
       await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', [], client);
       const current = (await this.db.query(`SELECT r.digest,r.projection FROM ${this.db.schema}.ontology o JOIN ${this.db.schema}.releases r ON r.digest=o.release WHERE o.id=$1`, [model.document.id], client)).rows[0];
       if (current && !current.projection) throw new Conflict('Upgrade the existing data before preparing a release');
-      const fingerprint = current ? await this.fingerprint(current.projection, client) : null;
+      const fingerprint = current ? await this.fingerprint(current.projection, client, model.document.id) : null;
       if (current) {
         const rows = await this.db.query(`SELECT owner,type,id,revision,properties FROM ${this.db.schema}.objects WHERE projection=$1 ORDER BY owner,type,id`, [current.projection], client);
         const projected = rows.rows.filter(row => model.objects.has(row.type)).map(row => {
@@ -91,7 +91,7 @@ export class Metadata {
       if (running.rowCount) throw new Conflict('Complete or cancel unfinished tasks before changing their publication');
       const indexing = await this.db.query(`SELECT 1 FROM ${this.db.schema}.index_transactions WHERE ontology=$1 AND state IN ('pending','failed') LIMIT 1`,[model.document.id],client);
       if (indexing.rowCount) throw new Conflict('Resolve pending or failed source transactions before activation');
-      if (current && await this.fingerprint((await this.get(current)).projection, client) !== prepared.source_fingerprint) throw new Conflict('Source data changed; rebuild the candidate projection');
+      if (current && await this.fingerprint((await this.get(current)).projection, client, model.document.id) !== prepared.source_fingerprint) throw new Conflict('Source data changed; rebuild the candidate projection');
       if (await this.fingerprint(model.projection, client) !== prepared.projection_fingerprint) throw new Conflict('Prepared projection changed');
       await access.refresh(client);
       if (current) await this.db.query(`UPDATE ${this.db.schema}.releases SET state='retired' WHERE digest=$1`, [current], client);
@@ -148,7 +148,7 @@ export class Metadata {
       await copyEditState(this.db,live.projection,candidate.projection,client,types);
       await this.validateEditState(candidate,candidate.projection,client);
       await access.refresh(client);
-      await this.db.query(`UPDATE ${this.db.schema}.releases SET source_fingerprint=$2,projection_fingerprint=$3 WHERE digest=$1`,[release,await this.fingerprint(live.projection,client),await this.fingerprint(candidate.projection,client)],client);
+      await this.db.query(`UPDATE ${this.db.schema}.releases SET source_fingerprint=$2,projection_fingerprint=$3 WHERE digest=$1`,[release,await this.fingerprint(live.projection,client,candidate.document.id),await this.fingerprint(candidate.projection,client)],client);
       return {release,projection:candidate.projection,objectsUpdated:updated,linksAdded:edges.length};
     };
     return transaction ? synchronize(transaction) : this.db.transaction(synchronize);

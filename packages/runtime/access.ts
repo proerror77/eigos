@@ -97,12 +97,14 @@ export class Access {
     const dependencies = requirements.filter((requirement): requirement is Requirement & { row: RowRequirement } => Boolean(requirement.row));
     if (!dependencies.length) return true;
     const rows = await this.db.query(`SELECT input.ordinal,CASE WHEN delta.scenario_id IS NULL THEN object.properties ELSE delta.properties END AS properties,
-      input.scenario IS NULL OR (scenario.id IS NOT NULL AND scenario.state='open' AND scenario.expires_at>now()) AS current
-      FROM jsonb_to_recordset($2::jsonb) AS input(ordinal integer,projection text,type text,id text,scenario uuid)
-      LEFT JOIN ${this.db.schema}.objects object ON object.projection=input.projection AND object.owner=$1 AND object.type=input.type AND object.id=input.id
+      input.scenario IS NULL OR (scenario.id IS NOT NULL AND scenario.state='open' AND scenario.release=active.release AND scenario.expires_at>now()) AS current
+      FROM jsonb_to_recordset($2::jsonb) AS input(ordinal integer,ontology text,projection text,type text,id text,scenario uuid)
+      LEFT JOIN ${this.db.schema}.ontology active ON active.id=input.ontology
+      LEFT JOIN ${this.db.schema}.releases current_release ON current_release.digest=active.release
+      LEFT JOIN ${this.db.schema}.objects object ON object.projection=CASE WHEN input.scenario IS NULL THEN current_release.projection ELSE input.projection END AND object.owner=$1 AND object.type=input.type AND object.id=input.id
       LEFT JOIN ${this.db.schema}.scenarios scenario ON scenario.id=input.scenario AND scenario.owner=$1
       LEFT JOIN ${this.db.schema}.scenario_objects delta ON delta.scenario_id=input.scenario AND delta.owner=$1 AND delta.type=input.type AND delta.id=input.id`,
-      [this.principal.owner, JSON.stringify(dependencies.map((requirement, ordinal) => ({ ordinal, ...requirement.row })))], client);
+      [this.principal.owner, JSON.stringify(dependencies.map((requirement, ordinal) => ({ ordinal, ontology:requirement.ontology, ...requirement.row })))], client);
     return rows.rows.length === dependencies.length && rows.rows.every(row => {
       const requirement = dependencies[Number(row.ordinal)]!;
       if (!row.current || !row.properties) return false;

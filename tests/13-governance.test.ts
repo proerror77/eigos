@@ -4,6 +4,7 @@ import { fixture, principal } from './fixture.js';
 import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
 import { Governance, initializeGovernance } from '../packages/runtime/governance.js';
 import { Effects, initializeEffects } from '../packages/runtime/effects.js';
+import { createCapabilities } from '../packages/capabilities/index.js';
 import { Actions } from '../packages/runtime/actions.js';
 import { Functions } from '../packages/runtime/functions.js';
 import { Objects } from '../packages/runtime/objects.js';
@@ -96,10 +97,13 @@ test('Action effects commit atomically, dispatch once on retry, and recheck auth
     const body=structuredClone(f.model.document);
     const action:OntologyDocument['actionTypes'][number]={apiName:'CreateRouteWithEffect',description:'Create route and queue a named notification',parameters:{type:'object',properties:{id:{type:'string'},name:{type:'string'}},required:['id','name'],additionalProperties:false},objectParameters:{},submissionCriteria:[],rules:[{op:'createObject',object:{type:'Route',id:{parameter:'id'}},properties:{id:{parameter:'id'},name:{parameter:'name'}}}],result:{type:'Route',id:{parameter:'id'}},effects:[{name:'Created',handler:'Record',payload:{id:{parameter:'id'}}}]};
     body.actionTypes.push(action);
-    const model=await f.metadata.publish(body,f.capabilities,f.publisher);
-    await setGrants(f.db,principal.owner,memberGrants(model));await f.access.refresh();
     const delivered=new Set<string>(), calls:string[]=[];
-    const effects=new Effects(f.db,new Map([['Record',async(_payload,context)=>{calls.push(context.idempotencyKey);delivered.add(context.idempotencyKey);}]]));
+    const handlers=new Map<string,import('../packages/runtime/effects.js').EffectHandler>([['Record',async(_payload,context)=>{calls.push(context.idempotencyKey);delivered.add(context.idempotencyKey);}]]);
+    await assert.rejects(f.metadata.prepare(body,f.capabilities,f.publisher),/handler is unavailable/);
+    const capabilities=createCapabilities(f.db,f.source,{effects:handlers});
+    const model=await f.metadata.publish(body,capabilities,f.publisher);
+    await setGrants(f.db,principal.owner,memberGrants(model));await f.access.refresh();
+    const effects=new Effects(f.db,handlers);
     const actions=new Actions(f.db,f.capabilities.functions,effects);
     let guards=0;
     await assert.rejects(actions.apply(f.access,model,action.apiName,{id:'rollback',name:'Rollback'},'rollback',async()=>{if(++guards===2)throw Error('cancel');}));
@@ -153,5 +157,17 @@ test('publication fingerprints include source state hidden by a user edit',async
     await f.metadata.activate(candidate.release,f.capabilities,f.publisher);
     const stored=(await f.db.query(`SELECT properties FROM ${f.db.schema}.source_values WHERE projection=$1 AND type='Route' AND id=$2 AND source='Feed'`,[candidate.projection,ref.id])).rows[0]!;
     assert.equal(stored.properties.name,'updated source');
+  }finally{await f.close();}
+});
+
+test('candidate catch-up can incorporate changed edit policies without corrupting projection integrity',async()=>{
+  const f=await setup();try{
+    const {setConflictPolicy}=await import('../packages/runtime/edit-history.js');
+    const candidate=await f.metadata.prepare(f.model.document,f.capabilities,f.publisher);
+    await setConflictPolicy(f.db,f.publisher,f.model,'Route','latest_value');
+    await assert.rejects(f.metadata.activate(candidate.release,f.capabilities,f.publisher),/Source data changed/);
+    await f.metadata.catchUp(candidate.release,f.capabilities,f.publisher);
+    await f.metadata.activate(candidate.release,f.capabilities,f.publisher);
+    assert.equal((await f.metadata.active()).release,candidate.release);
   }finally{await f.close();}
 });
