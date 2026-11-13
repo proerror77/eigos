@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { randomUUID } from 'node:crypto';
+import type { AgentDriver } from '../packages/runtime/agent.js';
+import { PARequests } from '../packages/runtime/pa.js';
+import { publicTask, type Task } from '../packages/runtime/tasks.js';
+import { HotelWorkflows } from '../packages/runtime/hotel-workflows.js';
+import { calendarAnswer, planningInput } from './planning-fixture.js';
+import { serviceProvider } from './service-fixture.js';
 import { fixture, principal } from './fixture.js';
 import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
 import { Actions } from '../packages/runtime/actions.js';
@@ -320,4 +327,153 @@ test('revoked prior-step result visibility blocks a later Action even when the t
     assert.equal((await f.db.query(`SELECT count(*)::int count FROM ${f.db.schema}.actions WHERE request_id=$1`,['workflow:'+run.id+':1'])).rows[0]!.count,0);
     assert.equal((await new Objects(f.db,f.model,await Access.load(f.db,principal)).read(f.source)).properties.name,'original');
   }finally{await f.close();}
+});
+
+test('a validated hotel task learns only after approval and replays with fresh inputs and a separate approval', async () => {
+  const service = serviceProvider();
+  const start = Date.now();
+  const day = (n: number) => new Date(start + n * 86400000).toISOString().slice(0, 10);
+  const requested = day(3), replayDate = day(5), thirdDate = day(7);
+  const originKeyword = 'Shanghai Hongqiao railway station';
+  const destinationKeyword = 'Synthetic hotel';
+  const title = 'Hongqiao to the selected hotel';
+  const goal = 'Plan my transfer from Hongqiao station to the same Shanghai hotel on ' + requested + ', one adult for one night.';
+  let modelInvocations = 0;
+  const driver: AgentDriver = {
+    model: 'recorded-ontology-agent-decisions',
+    async run(prompt, tools) {
+      modelInvocations++;
+      const { userRequest } = JSON.parse(prompt.split('\n').at(-1)!);
+      assert.equal(userRequest.message, goal);
+      const call = (name: string, input: unknown) => tools.get(name)!.invoke(input);
+      await assert.rejects(call('apply_action', { action: 'ExecuteEventTrip', input: {} }), /only permits/);
+      await assert.rejects(call('refresh_sources', { sources: [{ source: 'DidiEstimates', input: {} }] }));
+      const apply = (type: string, implementation: string, action: string, input: Record<string, unknown>) =>
+        call('apply_action', { interface: { type, implementation, action }, input });
+      const prepared = await apply('SchedulablePlan', 'SchedulePlan', 'prepare', {
+        title, start: requested + 'T14:00:00+08:00', end: requested + 'T19:00:00+08:00',
+        timeZone: 'Asia/Shanghai', durationMinutes: 75,
+      }) as ObjectRef & { waitingForPA?: boolean };
+      if (prepared.waitingForPA) return;
+      const page = await apply('HotelSearch', 'RollingGoHotelSearch', 'search', {
+        place: '上海', checkIn: requested, adults: 1, nights: 1, currency: 'CNY', limit: 3,
+      }) as ObjectRef;
+      const [selection] = await call('query_ontology', { queries: [{
+        type: 'HotelOffer', from: { object: page, link: 'results', as: 'ServiceSearchResult' }, where: { nativeId: 'hotel-1' },
+      }] }) as Array<{ items: Array<{ ref: ObjectRef }> }>;
+      const hotel = selection!.items[0]!.ref;
+      const [origin, destination] = await call('refresh_sources', { sources: [originKeyword, destinationKeyword].map(keywords =>
+        ({ source: 'DidiPlaces', input: { city: '上海', keywords }, view: { type: 'Location', link: 'places' } })),
+      }) as Array<{ objects: ObjectRef[] }>;
+      const travel = await apply('DrivingEstimate', 'DidiDrivingEstimate', 'observe', {
+        origin: origin!.objects[0], destination: destination!.objects[0],
+      });
+      await call('evaluate_function', { function: 'readDrivingEstimate', input: { travel } });
+      const { id: scenarioId } = await call('create_scenario', { requestId: 'hotel-proposal', name: title }) as { id: string };
+      await call('apply_action', { scenarioId, interface: { type: 'HotelOffer', action: 'select', object: hotel },
+        input: { service: hotel, plan: prepared } });
+      const { slots } = await call('evaluate_function', {
+        scenarioId, function: 'findScheduleSlots', input: { plan: prepared, limit: 1 },
+      }) as { slots: Array<{ start: string; end: string }> };
+      await call('apply_action', { scenarioId, action: 'SaveScheduleActivity',
+        input: { plan: prepared, id: 'transfer', name: 'Hotel transfer', ...slots[0] } });
+      await call('complete_with_function', { scenarioId, function: 'readSchedulePlan', input: { plan: prepared } });
+    },
+  };
+  const f = await fixture(driver, service.resolve);
+  f.provider.flags.related = false;
+  try {
+    const hotelWorkflows = new HotelWorkflows(f.db, f.metadata, f.capabilities.functions);
+    const pa = new PARequests(f.tasks);
+    const approvedBody = (task: Task) => {
+      const review = (publicTask(task).result as { hotelWorkflow: { scenarioId: string; revision: number; snapshot: string } }).hotelWorkflow;
+      assert.ok(!Object.hasOwn(review, 'recipe'));
+      return { taskId: task.id, scenarioId: review.scenarioId, revision: review.revision,
+        snapshot: review.snapshot, decision: 'approve-simulation' };
+    };
+    const prepare = async (message: string, input: Record<string, unknown>) => {
+      const task = await f.tasks.submit(principal, { requestId: randomUUID(), message, ...input });
+      await f.worker.runOne();
+      const waiting = await f.tasks.get(principal, task.id);
+      assert.equal(waiting.state, 'input-required', waiting.error ?? '');
+      const ask = waiting.result as { requestId: string; capability: string; input: ReturnType<typeof planningInput> };
+      assert.equal(ask.capability, 'calendar.freebusy');
+      const response = calendarAnswer(ask.input);
+      await pa.respond(principal, task.id, { requestId: ask.requestId, response });
+      await f.worker.runOne();
+      const reviewed = await f.tasks.get(principal, task.id);
+      assert.equal(reviewed.state, 'completed', reviewed.error ?? '');
+      return reviewed;
+    };
+
+    const learned = await prepare(goal, { learnHotelWorkflow: true });
+    const first = approvedBody(learned);
+    assert.equal((await hotelWorkflows.list(principal)).items.length, 0);
+    await assert.rejects(hotelWorkflows.approve(principal, { ...first, revision: first.revision + 1 }), /reviewed Scenario/);
+    await assert.rejects(hotelWorkflows.approve(principal, { ...first, snapshot: '0'.repeat(64) }), /reviewed Scenario/);
+    await assert.rejects(hotelWorkflows.approve({ ...principal, scopes: ['tasks:read', 'tasks:write'] }, first), /ontology:write/);
+    await assert.rejects(hotelWorkflows.approve({ ...principal, owner: 'different-owner' }, first), /no hotel itinerary/);
+    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(g => g.resource !== 'Eigos/action/CommitSchedulePlan'));
+    await assert.rejects(hotelWorkflows.approve(principal, first), /Permission required: apply_action/);
+    await setGrants(f.db, principal.owner, memberGrants(f.model));
+    const [approved, concurrent] = await Promise.all([
+      hotelWorkflows.approve(principal, first), hotelWorkflows.approve(principal, first),
+    ]);
+    assert.deepEqual(concurrent, approved);
+    assert.equal(approved.status, 'simulated');
+    assert.equal(approved.receipt?.mode, 'synthetic');
+    assert.equal(approved.receipt?.executed, false);
+    assert.equal(approved.receipt?.bookable, false);
+    assert.ok(approved.workflowId);
+    assert.deepEqual(await hotelWorkflows.approve(principal, first), approved);
+    const stored = (await f.db.query(`SELECT body FROM ${f.db.schema}.workflows WHERE id=$1`, [approved.workflowId])).rows[0]!.body;
+    assert.ok(!JSON.stringify(stored).includes(requested));
+    assert.ok(!JSON.stringify(stored).includes(first.scenarioId));
+    assert.ok(!JSON.stringify(stored).includes(approved.hotel.id));
+    assert.ok(!JSON.stringify(stored).includes(approved.travel.id));
+
+    const calls = service.flags.calls.length, reads = f.provider.calls.length, agentRuns = modelInvocations;
+    const replay = await prepare('Reuse my saved hotel itinerary on ' + replayDate, {
+      replayHotelWorkflow: { workflowId: approved.workflowId, checkIn: replayDate },
+    });
+    const second = approvedBody(replay);
+    const replayResult = replay.result as { hotelWorkflow: typeof approved; plan: { properties: { start: string } } };
+    assert.notEqual(second.scenarioId, first.scenarioId);
+    assert.equal(replayResult.hotelWorkflow.workflowId, approved.workflowId);
+    assert.equal(replayResult.hotelWorkflow.status, 'awaiting_approval');
+    assert.equal(replayResult.hotelWorkflow.receipt, undefined);
+    assert.equal(replayResult.hotelWorkflow.checkIn, replayDate);
+    assert.ok(replayResult.plan.properties.start.startsWith(replayDate));
+    assert.notEqual(replayResult.hotelWorkflow.hotel.id, approved.hotel.id);
+    assert.notEqual(replayResult.hotelWorkflow.travel.id, approved.travel.id);
+    assert.equal(modelInvocations, agentRuns);
+    assert.deepEqual(service.flags.calls.slice(calls), ['RollingGo']);
+    assert.deepEqual(f.provider.calls.slice(reads).sort(), ['maps_direction_driving', 'maps_textsearch', 'maps_textsearch']);
+    await assert.rejects(hotelWorkflows.approve(principal, { ...first, taskId: replay.id }), /reviewed Scenario/);
+    const repeated = await hotelWorkflows.approve(principal, second);
+    assert.equal(repeated.workflowId, approved.workflowId);
+    assert.equal(repeated.status, 'simulated');
+    assert.equal((await hotelWorkflows.list(principal)).items.length, 1);
+    const automation = new Automation(f.db, f.metadata, f.capabilities.actions);
+    await assert.rejects(automation.run(f.access, f.model, { workflow: approved.workflowId,
+      object: approved.plan, requestId: 'wrong-automation-runner' }), /Workflow is unavailable/);
+    await assert.rejects(automation.workflow(f.access, f.model, { id: approved.workflowId, revision: 1,
+      name: 'Attempt overwrite', steps: [{ name: 'One', action: 'SearchRollingGoHotels', input: {} }],
+    }), /changed or is unavailable/);
+
+    const changed = await prepare('Another rehearsal', { replayHotelWorkflow: { workflowId: approved.workflowId, checkIn: thirdDate } });
+    const change = approvedBody(changed);
+    service.flags.active = false;
+    try { await assert.rejects(hotelWorkflows.approve(principal, change), /revoked/); }
+    finally { service.flags.active = true; }
+    await new Scenarios(f.db).discard(f.access, f.model, change.scenarioId, change.revision);
+    await assert.rejects(hotelWorkflows.approve(principal, change), /closed|changed/);
+    const safe = (await f.db.query(`SELECT
+      (SELECT count(*)::int FROM ${f.db.schema}.external_operations) external_operations,
+      (SELECT count(*)::int FROM ${f.db.schema}.scheduled_actions) scheduled_actions,
+      (SELECT count(*)::int FROM ${f.db.schema}.action_effects) action_effects,
+      (SELECT count(*)::int FROM ${f.db.schema}.objects WHERE type='ScheduledActivity') live_activities`)).rows[0];
+    assert.deepEqual(safe, { external_operations: 0, scheduled_actions: 0, action_effects: 0, live_activities: 0 });
+    assert.equal(f.provider.flags.orderCreates, 0);
+  } finally { await f.close(); }
 });

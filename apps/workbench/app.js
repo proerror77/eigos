@@ -2139,6 +2139,7 @@ async function renderRules() {
       ),
     );
   };
+  const actionWorkflows = workflows.items.filter((item) => Array.isArray(item.steps) && item.kind !== 'learned-hotel-itinerary');
   $('#main').replaceChildren(
     heading(
       '规则与监测',
@@ -2147,7 +2148,7 @@ async function renderRules() {
       button(
         '创建规则',
         () => {
-          if (!workflows.items.length) throw new Error('请先创建一个流程');
+          if (!actionWorkflows.length) throw new Error('请先创建一个可由规则触发的流程');
           const name = element('input', { placeholder: '规则名称' }),
             type = select(
               state.model.objectTypes.map((type) => type.apiName),
@@ -2156,8 +2157,8 @@ async function renderRules() {
             property = element('input', { placeholder: '属性名' }),
             value = element('input', { placeholder: '匹配值' }),
             workflow = select(
-              workflows.items.map((item) => [item.id, item.name]),
-              workflows.items[0].id,
+              actionWorkflows.map((item) => [item.id, item.name]),
+              actionWorkflows[0].id,
             );
           modal(
             '创建监测规则',
@@ -2203,8 +2204,24 @@ async function renderRules() {
               ['名称', '步骤', ''],
               workflows.items.map((workflow) => [
                 workflow.name,
-                workflow.steps.map((step) => step.action).join(' → '),
+                workflow.kind === 'learned-hotel-itinerary' ? '酒店行程 · 每次模拟前审批' : workflow.steps.map((step) => step.action).join(' → '),
                 button('运行', () => {
+                  if (workflow.kind === 'learned-hotel-itinerary') {
+                    const checkIn = element('input', { type: 'date', required: true });
+                    modal('复用酒店行程', element('div', {},
+                      field('入住日期', checkIn),
+                      button('生成待审核方案', async () => {
+                        if (!checkIn.value) throw new Error('请选择入住日期');
+                        await request('/tasks', {
+                          requestId: crypto.randomUUID(), message: '复用酒店行程',
+                          replayHotelWorkflow: { workflowId: workflow.id, checkIn: checkIn.value },
+                        });
+                        $('#editor').close();
+                        navigate('processes');
+                      }, 'primary'),
+                    ));
+                    return;
+                  }
                   const form = jsonSchemaForm({
                     properties: { type: { type: 'string' }, id: { type: 'string' } },
                     required: ['type', 'id'],
@@ -2242,6 +2259,31 @@ async function renderProcesses() {
   const [tasks, workflows] = await Promise.all([service('tasks'), service('workflow_runs')]);
   const inspect = (task) => {
     const body = element('div', {}, element('p', {}, task.state + (task.error ? ' · ' + task.error : '')));
+    const review = task.result?.hotelWorkflow;
+    if (review?.status === 'awaiting_approval') {
+      const hotel = task.result.hotel.properties;
+      const route = task.result.route.travel.properties;
+      const activity = task.result.activities[0].properties;
+      const format = (time) => new Date(time).toLocaleString('zh-CN', { timeZone: task.result.plan.properties.timeZone });
+      body.append(
+        element('h3', {}, '审核酒店行程'),
+        element('p', {}, hotel.name + ' · ' + review.checkIn + ' · ' + hotel.currency + ' ' + (hotel.amount ?? '参考价不可用')),
+        element('p', {}, task.result.route.origin.properties.name + ' → ' + task.result.route.destination.properties.name),
+        element('p', {}, format(activity.start) + ' — ' + format(activity.end) + ' · 车程约 ' + Math.ceil(route.durationSeconds / 60) + ' 分钟'),
+        element('p', {}, '方案第 ' + review.revision + ' 版 · ' +
+          (task.result.validation.calendarEvidence.some((item) => item.evidence === 'synthetic') ? '测试日历' : 'PA 日历')),
+        button('批准本次模拟执行', async () => {
+          await request('/tasks/' + task.id + '/hotel-simulation-approval', {
+            scenarioId: review.scenarioId, revision: review.revision, snapshot: review.snapshot, decision: 'approve-simulation',
+          });
+          $('#editor').close();
+          await renderProcesses();
+        }, 'primary'),
+      );
+    } else if (review?.status === 'simulated') {
+      body.append(element('p', {}, '模拟完成 · 已保存可复用流程 ' + review.workflowId));
+    }
+
     if (task.state === 'input-required' && task.result?.kind === 'pa-request') {
       const requestData = task.result;
       if (requestData.capability === 'calendar.freebusy') {

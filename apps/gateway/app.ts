@@ -18,6 +18,7 @@ import { Metadata } from '../../packages/runtime/metadata.js';
 import { Objects, querySchema } from '../../packages/runtime/objects.js';
 import { Scenarios, createScenarioSchema } from '../../packages/runtime/scenarios.js';
 import { PARequests, paResponseSchema,paInboxSchema } from '../../packages/runtime/pa.js';
+import { HotelWorkflows, hotelApprovalSchema } from '../../packages/runtime/hotel-workflows.js';
 import { Tasks, submitSchema, publicTask, placeSelectionSchema } from '../../packages/runtime/tasks.js';
 import { createCapabilities } from '../../packages/capabilities/index.js';
 import { configuredServices } from '../../packages/capabilities/services/sources.js';
@@ -36,6 +37,7 @@ const actionInput = z.strictObject({ ontology:z.string().optional(), scenarioId:
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {}) {
   const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE));
   const scenarios = new Scenarios(db), pa = new PARequests(tasks);
+  const hotelWorkflows = new HotelWorkflows(db, metadata, capabilities.functions);
   const principals = new WeakMap<Request, Principal>();
   app.disable('x-powered-by');
   // Published domain definitions can exceed the ordinary task/query body bound.
@@ -119,6 +121,9 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   app.get('/pa/requests',async(req,res)=>res.json(await pa.pending(principal(req),{...(typeof req.query.cursor==='string'?{cursor:req.query.cursor}:{}),...(typeof req.query.limit==='string'?{limit:Number(req.query.limit)}:{})})));
   app.get('/identity', (req, res) => res.json(principal(req)));
   app.post('/tasks', async (req, res) => res.json(publicTask(await tasks.submit(principal(req), req.body))));
+  app.post('/tasks/:id/hotel-simulation-approval', async (req, res) => {
+    res.json(await hotelWorkflows.approve(principal(req), { ...req.body, taskId: req.params.id }));
+  });
   app.get('/tasks/:id', async (req, res) => res.json(publicTask(await tasks.get(principal(req), String(req.params.id)))));
   app.post('/tasks/:id/cancel', async (req, res) => res.json(publicTask(await tasks.cancel(principal(req), String(req.params.id)))));
   app.post('/tasks/:id/places', async (req, res) => res.json(publicTask(await tasks.selectPlaces(principal(req), String(req.params.id), req.body))));
@@ -133,7 +138,11 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       catch (error) { return { isError: true, content: [{ type: 'text' as const, text: error instanceof Error ? error.message : 'Request failed' }] }; }
     };
     for(const [name,service] of services) server.registerTool('ontology_'+name,{description:service.description,inputSchema:(service.schema as z.ZodObject).safeExtend({_ontology:z.string().optional()})},input=>response(()=>{const {_ontology,...args}=input;const selected=_ontology?ontologyServices(db,metadata,capabilities,capabilities.functions,new Effects(db,extensions.effects??new Map()),capabilities.actions,z.string().parse(_ontology)):services;return selected.get(name)!.invoke(p,args);}));
-    server.registerTool('submit_task', { description: 'Submit an inquiry or calendar-backed planning request. PA information requests resume on the original task.', inputSchema: submitSchema }, input => response(async () => publicTask(await tasks.submit(p, input))));
+    server.registerTool('submit_task', { description: 'Submit a natural-language goal. Set learnHotelWorkflow when asked to learn and save a hotel itinerary, or replayHotelWorkflow with a saved ID and new date when asked to reuse one. Forward the goal without proposing tool steps. PA information requests resume on the original task.', inputSchema: submitSchema }, input => response(async () => publicTask(await tasks.submit(p, input))));
+    server.registerTool('list_learned_hotel_workflows', {
+      description: 'Find previously saved hotel itinerary workflows for the signed-in owner. To reuse, submit a task with the workflow ID and the new check-in date. Every proposal needs separate approval in EIGOS.',
+      inputSchema: z.strictObject({}),
+    }, () => response(() => hotelWorkflows.list(p)));
     server.registerTool('get_task', { description: 'Read your original task, result or PA information request.', inputSchema: z.strictObject({ taskId: z.uuid() }) }, input => response(async () => publicTask(await tasks.get(p, input.taskId))));
     server.registerTool('select_task_places', { description: 'Select source-returned endpoints for a task waiting for clarification.', inputSchema: z.strictObject({ taskId: z.uuid(), places: placeSelectionSchema }) }, input => response(async () => publicTask(await tasks.selectPlaces(p, input.taskId, input.places))));
     server.registerTool('respond_to_task', { description:'Supply the authenticated PA response to the original task information request. Use the responseSchema returned with that request.',inputSchema:z.strictObject({taskId:z.uuid(),...paResponseSchema.shape}) }, input=>response(async()=>publicTask(await pa.respond(p,input.taskId,{requestId:input.requestId,response:input.response}))));

@@ -8,19 +8,23 @@ import { objectRefSchema } from '../ontology/schema.js';
 import { Access, type Requirement } from './access.js';
 import type { ScheduledCall } from './scheduled-actions.js';
 import { Clarification } from './clarification.js';
+import { publicHotelTaskResult, workflowReplaySchema } from './hotel-workflows.js';
 
 export const routeInputSchema = z.strictObject({ city: z.string().min(1).max(100), origin: z.string().min(1).max(500), destination: z.string().min(1).max(500), serviceClass: z.string().min(1).max(100).optional() });
 export type RouteInput = z.infer<typeof routeInputSchema>;
 export const placeSelectionSchema = z.strictObject({ origin: objectRefSchema, destination: objectRefSchema });
-export const submitSchema = z.strictObject({ requestId: z.string().min(1).max(128), message: z.string().min(1).max(4000), route: routeInputSchema.optional() });
+export const submitSchema = z.strictObject({ requestId: z.string().min(1).max(128), message: z.string().min(1).max(4000), route: routeInputSchema.optional(),
+  learnHotelWorkflow: z.literal(true).optional(), replayHotelWorkflow: workflowReplaySchema.optional(),
+});
 const storedInputSchema = submitSchema.extend({ places: placeSelectionSchema.optional() });
 export interface Task { id: string; owner: string; request_id: string; input: z.infer<typeof storedInputSchema> & {scheduledAction?:ScheduledCall}; release: string; scopes: string[]; state: string; token: string | null; result: unknown; result_permissions?: Requirement[] | null; error: string | null; created_at: Date; updated_at: Date; execution_step?:number }
-export const publicTask = (task: Task) => ({ id: task.id, state: task.state, result: task.result, error: task.error, createdAt: task.created_at, updatedAt: task.updated_at });
+export const publicTask = (task: Task) => ({ id: task.id, state: task.state, result: publicHotelTaskResult(task.result), error: task.error, createdAt: task.created_at, updatedAt: task.updated_at });
 export class Tasks {
   constructor(readonly db: Database, private readonly metadata: Metadata) {}
   async submit(principal: Principal, raw: unknown): Promise<Task> {
     requireScope(principal, 'tasks:write');
     const input = submitSchema.parse(raw);
+    if (input.learnHotelWorkflow && input.replayHotelWorkflow) throw new Conflict('Choose learning or replay for this task');
     const fingerprint = digest(input);
     const task = await this.db.transaction(async client => {
       const model = await this.metadata.active('Eigos', client, true);
