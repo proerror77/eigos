@@ -55,6 +55,17 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
         const response=await client.callTool({name,arguments:args});assert(!response.isError,JSON.stringify(response));
         return JSON.parse((response.content as {text:string}[])[0]!.text);
       };
+      const definition = await call('ontology_raw_definition', {});
+      assert(definition.sharedProperties.some((item: {apiName:string}) => item.apiName === 'BusinessName'));
+      assert(definition.valueTypes.some((item: {apiName:string}) => item.apiName === 'Timestamp'));
+      assert(definition.structTypes.some((item: {apiName:string}) => item.apiName === 'Coordinates'));
+      const requests = await call('query_ontology', {query:{type:'RideRequest',filter:{op:'eq',property:'estimateCount',value:2}}});
+      assert.equal(requests.items.length, 1);
+      assert.equal(requests.items[0].properties.estimateCount, 2);
+      const summary = await call('ontology_aggregate_set', {set:{op:'query',query:{type:'RideRequest'}},metrics:{estimates:{op:'sum',property:'estimateCount'}}});
+      assert.equal(summary.items[0].metrics.estimates, 2);
+      const saved = await call('ontology_save_set', {requestId:'e2e-completed-inquiries',name:'Completed inquiries',mode:'dynamic',set:{op:'query',query:{type:'RideRequest',filter:{op:'gte',property:'estimateCount',value:1}}}});
+      assert.equal((await call('ontology_evaluate_set', {set:{op:'saved',id:saved.id}})).items[0].ref.id, requests.items[0].ref.id);
       const observedAt=new Date().toISOString();
       const indexed=await call('ontology_submit_index',{source:'DidiPlaces',stream:'process-stream',offset:1,mode:'stream',observedAt,
         rows:[{id:'process-indexed-place',name:'Indexed place',city:'上海',address:'上海',coordinates:{lat:31.2,lng:121.5},coordinateSystem:'GCJ-02',sourceBinding:'synthetic',observedAt}]});
@@ -63,6 +74,7 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
       while(indexStatus.state==='pending'&&Date.now()<indexDeadline){await delay(25);indexStatus=await call('ontology_index_status',{id:indexed.id});}
       assert.equal(indexStatus.state,'applied',JSON.stringify(indexStatus));
       assert.equal((await call('query_ontology',{query:{type:'Place',where:{id:'process-indexed-place'}}})).items.length,1);
+      assert((await call('query_ontology',{query:{type:'Location',filter:{op:'gt',property:'coordinates.lat',value:31}}})).items.length > 0);
       const planning=planningInput(),created=await call('submit_task',{requestId:'e2e-calendar',message:JSON.stringify({planning})});
       const poll=async()=>{
         const until=Date.now()+15000;
@@ -76,11 +88,16 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
       const completed=await poll();assert.equal(completed.id,created.id);assert.equal(completed.state,'completed',JSON.stringify(completed));
       assert.equal(completed.result.validation.valid,true);assert.equal(completed.result.activities.length,1);assert.equal(completed.result.externalCalendarUpdated,false);
       const scenarioId=completed.result.scenarioId;
+      const scenarioMetadata = await call('query_ontology', {query:{type:'OntologyScenario',where:{id:scenarioId}}});
+      assert.equal(scenarioMetadata.items[0].properties.state, 'open');
       const live=await call('query_ontology',{query:{type:'ScheduledActivity'}});assert.equal(live.items.length,0);
       const scenario=await call('query_ontology',{scenarioId,query:{type:'ScheduledActivity'}});assert.equal(scenario.items.length,1);
       const diff=await call('inspect_scenario',{scenarioId});
       await call('apply_ontology_action',{requestId:'e2e-explicit-merge',action:'CommitSchedulePlan',input:{plan:completed.result.plan.ref,scenarioId,revision:diff.revision}});
       assert.equal((await call('query_ontology',{query:{type:'ScheduledActivity'}})).items.length,1);
+      assert.equal((await call('query_ontology',{query:{type:'OntologyScenario',where:{id:scenarioId}}})).items[0].properties.state, 'merged');
+      const readback = await call('evaluate_ontology', {function:'readSchedulePlan',input:{plan:completed.result.plan.ref}});
+      assert.equal(readback.activities.length, 1); assert.equal(readback.validation.valid, true);
       t.diagnostic(JSON.stringify({calendarTask:created.id,PA:'synthetic free/busy',submission:'MCP',continuation:'A2A',scenarioMerge:'explicit MCP Action',externalCalendarUpdated:false}));
     } finally {await client.close();}
     t.diagnostic(JSON.stringify({ messageToQuoteMs: quoteElapsed, source: 'synthetic MCP responses', database: 'PostgreSQL', processes: ['Gateway', 'Worker', 'Indexer'] }));

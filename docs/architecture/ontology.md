@@ -2,7 +2,7 @@
 
 语义层描述领域中的对象、属性、接口、关系、可调用逻辑与业务操作。运行层保存对象，执行查询、来源接入、Functions 和 Actions。两层通过发布的 JSON 定义连接。设计依据是 Palantir 官方的领域建模、复用、扩展和组合原则。[Building principles](https://www.palantir.com/docs/foundry/ontology/ontology-best-practices)
 
-## 五类 Schema
+## 核心资源
 
 | 类型 | 定义内容 | 当前运行入口 |
 | --- | --- | --- |
@@ -11,6 +11,9 @@
 | Interface | 属性、关系约束、Action 参数约束及具体类型的映射 | 对象集查询、关系导航、`resolveAction` |
 | Link Type | 两侧对象、两侧名称、基数 | PostgreSQL 关系表及 `Objects.follow` |
 | Action Type | 参数、对象参数类型、提交条件、对象与关系编辑规则 | `Actions.apply` 的单次事务 |
+| Function | 参数、返回值、依赖及可选版本 | 已发布实现绑定与 `Functions.invoke` |
+| Shared Property / Value Type / Struct | 具名共享属性、固定版本的值约束、字段结构 | 定义编译、来源及 Action 输入校验 |
+| Type Group / Metadata | 资源分组、生命周期、显示格式与提示 | 定义发现与对象视图 |
 
 Interface 通过实现映射引用具体 Object Type 的属性、关系与 Action 参数。查询由本体查询服务执行，Function 可以组合查询和计算。Action 表达用户或 Agent 提交的变更。[Interface 实现](https://www.palantir.com/docs/foundry/interfaces/implement-interface)、[Action 参数约束](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints)
 
@@ -83,7 +86,7 @@ flowchart LR
 3. `estimateLocations` 用来源坐标取得真实价格。外部请求全部发生在业务编辑事务之外。
 4. Action 在一次事务内创建路线、询价请求、报价及关联 Links。Function 通过 Action 的编辑上下文提交，直接求值 edit Function 会被拒绝。失败的业务编辑整体回滚；已接收的来源事实保持独立。
 
-这些是 Function-backed Action 的实现职责。通用 Action 运行层负责参数、提交条件、事务及幂等记录，没有新增工作流规则语言。[Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview)
+这些是 Function-backed Action 的实现职责。通用 Action 运行层负责参数、提交条件、事务及幂等记录；Workflow 可以串联已发布 Action，复用相同契约和权限检查。[Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview)
 
 Agent 可在一次 `complete_with_action` 调用中选择 Interface Action 与结果 Function，并指定把 Action 返回的对象引用绑定到哪个函数参数。运行层执行 Action 后调用 `readRideEstimates`，后者按 `PriceEstimate` 和 source Links 检查当前来源、有效期和报价，再直接返回真实结果。验收在读取时重新执行，重复 Action 不会使旧的验收标志跳过检查。Agent 不需要在来源读取、对象创建或验收之间继续往返。
 
@@ -112,9 +115,11 @@ Worker 使用 PostgreSQL 通知唤醒，行锁领取单个任务，并在执行�
 
 ## 当前支持范围
 
-对象查询支持类型或 Interface、等值筛选、字段选择和游标。关系支持双向导航与一对多基数。Action 支持声明式对象与关系编辑，以及 Function-backed Action 的原子提交。Function 具有独立参数与返回契约，已接入外部来源读取和对象计算。
+对象查询支持类型或继承的 Interface、嵌套属性、文本与范围条件、组合筛选、排序和游标。派生属性可沿 Link 计算，并参与筛选及聚合；关系支持双向导航与基数约束。Action 支持声明式创建、修订检查编辑、Struct 字段编辑、删除、解除关系和受限范围的 Scenario 合并，以及 Function-backed Action 的原子提交。Function 具有独立参数与返回契约，已接入外部来源读取和对象计算。
 
-第一条实现的领域用例是滴滴估价。模型解释自然语言并使用发布的业务能力，PA 也可提供结构化参数。通用调度器的跨定义行为有工程回归，真实业务验收范围仍是本次滴滴路线。完整 Foundry 产品的界面、其他业务领域的真实验收、属性 reducer、媒体类型、跨组织共享和通用删除规则尚未在本版实现。
+可复用类型、固定版本共享导入、定义迁移、实例复制、实体归一、查询与 Scenario 使用相同发布身份和权限入口。滴滴估价和 PA 日历支持的内部排程使用这些资源；本地进程验收验证完整调用链，使用明确标注的合成供应商与日历数据。新增能力的工程验收不等于已经进入生产业务。逐项覆盖和边界见 [模型验证](../guides/ontology-model-validation.md)。
+
+当前实现保留 owner 数据分区。共享对象集或 Scenario 元数据不自动分享底层业务实例。跨本体实例迁移执行显式映射的原子复制，保留来源；资源包不携带 Function 可执行代码。语义检索使用有界的精确余弦计算，物理只读副本及额外业务供应商需要部署方配置。可选浏览器应用不等同于 Foundry 全套产品。
 
 验收使用实际业务问题从入口走到结果，并记录耗时、路径和歧义。合成回归保持可重复，真实 MCP 验收另存私有记录。[官方验证方法](https://www.palantir.com/docs/foundry/ontology/ontology-design-validation)
 

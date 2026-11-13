@@ -25,6 +25,7 @@ import { verifier, type VerifyToken } from './auth.js';
 import { A2A, AgentUser, agentCard } from './a2a.js';
 
 const queryInput = z.strictObject({ ontology:z.string().optional(), taskId: z.uuid().optional(), scenarioId: z.uuid().optional(), query: querySchema });
+const scenarioCreateInput = createScenarioSchema.safeExtend({ ontology: z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(80).optional() });
 const functionInput = z.strictObject({ ontology:z.string().optional(), taskId: z.uuid().optional(), scenarioId: z.uuid().optional(), function: z.string(), input: z.record(z.string(), z.unknown()) });
 const actionInput = z.strictObject({ ontology:z.string().optional(), scenarioId: z.uuid().optional(), requestId: z.string().min(1).max(128), action: z.string().optional(),
   interface: z.strictObject({ object: objectRefSchema.optional(), implementation: z.string().optional(), type: z.string(), action: z.string() })
@@ -90,7 +91,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       : model.resolveTypeAction(target.implementation!, target.type, target.action, input.input) : { action: input.action!, input: input.input };
     return capabilities.actions.apply(access, model, selected.action, selected.input, input.requestId);
   };
-  const scenarioCreate = async (p: Principal, raw: unknown) => { requireScope(p,'ontology:write'); const {ontology,...input}=z.record(z.string(),z.unknown()).parse(raw);return scenarios.create(await Access.load(db,p),await metadata.active(typeof ontology==='string'?ontology:'Eigos'),input); };
+  const scenarioCreate = async (p: Principal, raw: unknown) => { requireScope(p,'ontology:write'); const {ontology,...input}=scenarioCreateInput.parse(raw);return scenarios.create(await Access.load(db,p),await metadata.active(ontology),input); };
   const scenarioRead = async (p: Principal, id: string,ontology='Eigos') => { requireScope(p,'ontology:read'); return scenarios.inspect(await Access.load(db,p),await metadata.active(ontology),id); };
   const scenarioList = async (p: Principal,cursor?:string,ontology='Eigos') => { requireScope(p,'ontology:read'); return scenarios.list(await Access.load(db,p),await metadata.active(ontology),cursor); };
   const scenarioDiscard = async (p: Principal, id: string, revision: number,ontology='Eigos') => { requireScope(p,'ontology:write'); return scenarios.discard(await Access.load(db,p),await metadata.active(ontology),id,revision); };
@@ -131,10 +132,10 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     server.registerTool('get_task', { description: 'Read your original task, result or PA information request.', inputSchema: z.strictObject({ taskId: z.uuid() }) }, input => response(async () => publicTask(await tasks.get(p, input.taskId))));
     server.registerTool('select_task_places', { description: 'Select source-returned endpoints for a task waiting for clarification.', inputSchema: z.strictObject({ taskId: z.uuid(), places: placeSelectionSchema }) }, input => response(async () => publicTask(await tasks.selectPlaces(p, input.taskId, input.places))));
     server.registerTool('respond_to_task', { description:'Supply the authenticated PA response to the original task information request. Use the responseSchema returned with that request.',inputSchema:z.strictObject({taskId:z.uuid(),...paResponseSchema.shape}) }, input=>response(async()=>publicTask(await pa.respond(p,input.taskId,{requestId:input.requestId,response:input.response}))));
-    server.registerTool('create_scenario', { description:'Create an isolated what-if view over current Ontology data.',inputSchema:createScenarioSchema }, input=>response(()=>scenarioCreate(p,input)));
-    server.registerTool('list_scenarios', { description:'List your open scenarios; follow cursor for the next page.',inputSchema:z.strictObject({cursor:z.uuid().optional()}) }, input=>response(()=>scenarioList(p,input.cursor)));
-    server.registerTool('inspect_scenario', { description:'Read a scenario revision, proposed object/link changes and object conflicts.',inputSchema:z.strictObject({scenarioId:z.uuid()}) }, input=>response(()=>scenarioRead(p,input.scenarioId)));
-    server.registerTool('discard_scenario', { description:'Discard the exact reviewed scenario revision.',inputSchema:z.strictObject({scenarioId:z.uuid(),revision:z.number().int().positive()}) }, input=>response(()=>scenarioDiscard(p,input.scenarioId,input.revision)));
+    server.registerTool('create_scenario', { description:'Create an isolated what-if view over the selected Ontology.',inputSchema:scenarioCreateInput }, input=>response(()=>scenarioCreate(p,input)));
+    server.registerTool('list_scenarios', { description:'List your open scenarios in the selected Ontology; follow cursor for the next page.',inputSchema:z.strictObject({ontology:z.string().optional(),cursor:z.uuid().optional()}) }, input=>response(()=>scenarioList(p,input.cursor,input.ontology)));
+    server.registerTool('inspect_scenario', { description:'Read a scenario revision, proposed object/link changes and object conflicts in the selected Ontology.',inputSchema:z.strictObject({ontology:z.string().optional(),scenarioId:z.uuid()}) }, input=>response(()=>scenarioRead(p,input.scenarioId,input.ontology)));
+    server.registerTool('discard_scenario', { description:'Discard the exact reviewed scenario revision in the selected Ontology.',inputSchema:z.strictObject({ontology:z.string().optional(),scenarioId:z.uuid(),revision:z.number().int().positive()}) }, input=>response(()=>scenarioDiscard(p,input.scenarioId,input.revision,input.ontology)));
     server.registerTool('query_ontology', { description: 'Query object sets using an Object Type or Interface and its property and link names.', inputSchema: queryInput }, input => response(() => query(p, input)));
     server.registerTool('evaluate_ontology', { description: 'Invoke a published Function.', inputSchema: functionInput }, input => response(() => evaluate(p, input)));
     server.registerTool('apply_ontology_action', { description: 'Submit a published Action through its declared parameters and submission criteria.', inputSchema: actionInput }, input => response(() => apply(p, input)));

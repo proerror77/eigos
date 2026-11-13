@@ -74,19 +74,21 @@
 
 ## 语义索引
 
-语义检索由已发布的版本化 Function 生成嵌入向量。部署方注册的 Function 接收 `{text: string}` 并返回固定维度的有限 `number[]`。运行服务校验发布绑定、模型版本、维度和非零范数。模型接入和凭据使用现有受信任 Function 扩展机制。
+语义检索由已发布的版本化 Function 生成嵌入向量。Function 接收 `{text: string}` 并返回固定维度的有限 `number[]`。运行服务校验发布绑定、模型版本、维度和非零范数。自定义模型使用现有受信任 Function 扩展机制。
 
-管理员通过 `SemanticSearch.configure` 定义索引。以下配置引用环境中已注册和发布的 `EmbedText` 版本。
+管理员通过 `SemanticSearch.configure` 定义索引。内置 `embedTextLocal` 使用固定版本的多语言 MiniLM，返回 384 维向量。
 
 ```json
 {
   "name": "RouteDescriptions",
   "type": "Route",
   "property": "name",
-  "embeddingFunction": "EmbedText",
-  "dimensions": 1536
+  "embeddingFunction": "embedTextLocal",
+  "dimensions": 384
 }
 ```
+
+`npm run embeddings:warm` 将 `Xenova/paraphrase-multilingual-MiniLM-L12-v2` 的固定 revision `2c4055b12046f11709e9df2c122e59ffbdc2f900` 下载到 `EIGOS_EMBEDDING_CACHE`，默认 `~/.cache/eigos/embeddings`。首次调用也会下载；生产可以在运行前预热同一缓存。推理使用 CPU 和 q8 权重，文本留在运行进程。输入最多 4,000 字符，长文本分段后平均并归一化；队列最多容纳 16 次调用。下载失败、模型不可用或队列已满会返回明确错误，不生成替代向量。
 
 索引配置在一个发布内不可变。更换模型、属性或维度需要新的索引名称或发布。存储层保存模型版本、Function 绑定、对象 revision、文本摘要和规范化向量。
 
@@ -100,4 +102,4 @@
 
 ## 验证
 
-`tests/18-search.test.ts` 覆盖完整分页后的过滤排序、嵌套字段、隐藏字段、正则超时、关联聚合、算术、Scenario、只读派生属性以及从发布 Function 到语义排名的调用链。嵌入测试使用明确命名的合成 Function 夹具验证运行契约，部署时由配置的真实嵌入 Function 提供向量。
+`tests/18-search.test.ts` 覆盖完整分页后的过滤排序、嵌套字段、隐藏字段、正则超时、关联聚合、算术、Scenario、只读派生属性以及从发布 Function 到语义排名的调用链。CI 使用明确命名的合成嵌入 Function，保持离线可重复。内置真实模型已另外验证中文机场与咖啡语义检索，该结果不代表大规模检索质量评测。

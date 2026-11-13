@@ -1,3 +1,4 @@
+import {localEmbeddingDefinition} from './embedding-definition.js';
 import {applicationDefinition as applications} from './applications.js';
 import {scenarioObjectType} from './scenario-definition.js';
 import { readFileSync } from 'node:fs';
@@ -9,7 +10,7 @@ const scheduling = JSON.parse(readFileSync(new URL('./definitions/scheduling.jso
 export const businessDefinition: OntologyDocument = {
   id: ride.id, version: '6',
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes,...applications.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes],
-  linkTypes: [...ride.linkTypes, ...scheduling.linkTypes,...applications.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes,...applications.functionTypes],
+  linkTypes: [...ride.linkTypes, ...scheduling.linkTypes,...applications.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes,...applications.functionTypes,localEmbeddingDefinition],
   actionTypes: [...ride.actionTypes, ...scheduling.actionTypes,...applications.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources],
 };
 
@@ -34,6 +35,7 @@ businessDefinition.typeGroups=[
 for(const group of businessDefinition.typeGroups)for(const name of group.objectTypes){const type=businessDefinition.objectTypes.find(type=>type.apiName===name)!;type.groups=[group.apiName];type.status='active';}
 
 for(const fn of businessDefinition.functionTypes){
+  if(fn.apiName==='embedTextLocal'){fn.dependencies={};continue;}
   if(ride.functionTypes.some(item=>item.apiName===fn.apiName)){
     fn.dependencies={objectTypes:ride.objectTypes.map(type=>type.apiName),interfaceTypes:ride.interfaceTypes.map(type=>type.apiName),linkTypes:ride.linkTypes.map(link=>link.apiName),dataSources:ride.dataSources.map(source=>source.apiName),functions:ride.functionTypes.filter(item=>item.apiName!==fn.apiName).map(item=>item.apiName)};
   }else if(scheduling.functionTypes.some(item=>item.apiName===fn.apiName)){

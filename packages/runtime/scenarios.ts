@@ -88,7 +88,7 @@ export class Scenarios {
       WHERE s.owner=$1 AND s.release=$2 AND s.state='open' AND s.expires_at>now()
       AND (s.session_id IS NULL OR (session.closed_at IS NULL AND session.expires_at>now()))
       AND ($3::uuid IS NULL OR s.id>$3) ORDER BY s.id LIMIT 101`, [access.principal.owner, model.release,cursor??null])).rows;
-    return {items:rows.slice(0,100),cursor:rows.length>100?String(rows[99]!.id):undefined};
+    return {items:rows.slice(0,100).map(row=>({id:String(row.id),name:String(row.name),revision:Number(row.revision),state:String(row.state),expiresAt:row.expires_at as Date,expires_at:row.expires_at as Date})),cursor:rows.length>100?String(rows[99]!.id):undefined};
   }
   async create(access: Access, model: PublishedOntology, raw: unknown, beforeCommit?: (client: Sql) => Promise<void>) {
     const input = createScenarioSchema.parse(raw), owner = access.principal.owner;
@@ -109,7 +109,8 @@ export class Scenarios {
       const row = (await this.db.query(`SELECT id,name,release,revision,state,expires_at,kind,description,creation_digest FROM ${this.db.schema}.scenarios WHERE owner=$1 AND request_id=$2`, [owner, input.requestId], client)).rows[0]!;
       if (row.creation_digest?row.creation_digest!==creation:row.name !== input.name || row.release !== model.release) throw new Conflict('Scenario request ID already has different input');
       await syncScenarioMetadata(this.db,model,String(row.id),client);
-      await access.refresh(client); await beforeCommit?.(client); return row;
+      await access.refresh(client); await beforeCommit?.(client);
+      return {id:String(row.id),name:String(row.name),release:String(row.release),revision:Number(row.revision),state:String(row.state),expiresAt:row.expires_at as Date,expires_at:row.expires_at as Date,kind:String(row.kind),description:String(row.description)};
     });
   }
   async view(access: Access, model: PublishedOntology, id: string, client: Sql = this.db.pool) {
@@ -182,7 +183,8 @@ export class Scenarios {
       const result = await this.db.query(`UPDATE ${this.db.schema}.scenarios SET state='discarded',revision=revision+1 WHERE id=$1 AND owner=$2 AND revision=$3 RETURNING id,state,revision`, [id, owner, z.number().int().positive().parse(revision)], client);
       if (!result.rowCount) throw new Conflict('Scenario revision changed');
       await syncScenarioMetadata(this.db,model,id,client);
-      await access.refresh(client); await beforeCommit?.(client); return result.rows[0];
+      await access.refresh(client); await beforeCommit?.(client);
+      const row=result.rows[0]!;return {id:String(row.id),state:String(row.state),revision:Number(row.revision)};
     });
   }
   /** Called only from a published merge Action, inside its atomic edit transaction. */

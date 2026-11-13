@@ -1,6 +1,6 @@
 FROM node:22.22.3-bookworm-slim AS build
 WORKDIR /app
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json .npmrc ./
 RUN npm ci --no-audit --no-fund
 COPY tsconfig.json ./
 COPY apps ./apps

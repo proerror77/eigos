@@ -1,21 +1,69 @@
 <!doctype html>
 <html lang="zh-CN">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>EIGOS · Ontology 工作台</title>
-<link rel="stylesheet" href="/workbench/workbench.css">
-<script type="importmap">{"imports":{"three":"/workbench/vendor/three/build/three.module.js","three/addons/":"/workbench/vendor/three/examples/jsm/"}}</script>
-<script type="module" src="/workbench/app.js"></script>
-</head>
-<body>
-<header class="topbar"><a class="wordmark" href="/workbench/">EIGOS</a><span class="separator"></span><span>Ontology 工作台</span><span class="spacer"></span><span id="connection" role="status">未连接</span><button id="connect">连接账户</button><button id="logout" hidden>退出</button></header>
-<div class="workspace">
-<aside class="sidebar"><nav aria-label="工作区">
-<button data-page="objects" class="active">对象探索</button><button data-page="model">本体建模</button><button data-page="scenarios">方案比较</button><button data-page="graph">关系与模拟</button><button data-page="schedule">排程</button><button data-page="rules">规则与监测</button><button data-page="processes">流程运行</button><button data-page="map">地图</button><button data-page="geometry">三维模型</button>
-</nav><div class="sidebar-bottom"><label for="ontology-name">本体</label><input id="ontology-name" value="Eigos" autocomplete="off"><button id="reload">刷新定义</button><small id="definition-status">连接后加载已授权的定义</small></div></aside>
-<main id="main" tabindex="-1"><section class="welcome"><h1>业务中的对象、关系和操作</h1><p>连接账户后，查看真实对象，比较方案，并提交经过验证的变更。</p><button id="welcome-connect" class="primary">连接账户</button></section></main>
-</div>
-<dialog id="login"><form method="dialog"><header><h2>连接账户</h2><button aria-label="关闭">×</button></header></form><div id="login-options"></div><p id="login-status" role="status"></p></dialog>
-<dialog id="editor"><form method="dialog"><header><h2 id="editor-title"></h2><button aria-label="关闭">×</button></header></form><div id="editor-content"></div></dialog>
-<div id="notice" role="status" hidden></div>
-</body></html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>EIGOS · Ontology 工作台</title>
+    <link rel="stylesheet" href="/workbench/workbench.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/workbench/vendor/three/build/three.module.js",
+          "three/addons/": "/workbench/vendor/three/examples/jsm/"
+        }
+      }
+    </script>
+    <script type="module" src="/workbench/app.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="wordmark" href="/workbench/">EIGOS</a><span class="separator"></span
+      ><span>Ontology 工作台</span><span class="spacer"></span
+      ><span id="connection" role="status">未连接</span><button id="connect">连接账户</button
+      ><button id="logout" hidden>退出</button>
+    </header>
+    <div class="workspace">
+      <aside class="sidebar">
+        <nav aria-label="工作区">
+          <button data-page="objects" class="active">对象探索</button
+          ><button data-page="model">本体建模</button><button data-page="scenarios">方案比较</button
+          ><button data-page="graph">关系与模拟</button><button data-page="schedule">排程</button
+          ><button data-page="rules">规则与监测</button><button data-page="processes">流程运行</button
+          ><button data-page="map">地图</button><button data-page="geometry">三维模型</button>
+        </nav>
+        <div class="sidebar-bottom">
+          <label for="ontology-name">本体</label
+          ><input id="ontology-name" value="Eigos" autocomplete="off" /><button id="reload">刷新定义</button
+          ><small id="definition-status">连接后加载已授权的定义</small>
+        </div>
+      </aside>
+      <main id="main" tabindex="-1">
+        <section class="welcome">
+          <h1>业务中的对象、关系和操作</h1>
+          <p>连接账户后，查看真实对象，比较方案，并提交经过验证的变更。</p>
+          <button id="welcome-connect" class="primary">连接账户</button>
+        </section>
+      </main>
+    </div>
+    <dialog id="login">
+      <form method="dialog">
+        <header>
+          <h2>连接账户</h2>
+          <button aria-label="关闭">×</button>
+        </header>
+      </form>
+      <div id="login-options"></div>
+      <p id="login-status" role="status"></p>
+    </dialog>
+    <dialog id="editor">
+      <form method="dialog">
+        <header>
+          <h2 id="editor-title"></h2>
+          <button aria-label="关闭">×</button>
+        </header>
+      </form>
+      <div id="editor-content"></div>
+    </dialog>
+    <div id="notice" role="status" hidden></div>
+  </body>
+</html>

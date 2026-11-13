@@ -148,7 +148,7 @@ export class OntologyAgent {
     try {
       const result = await Promise.race([completed, execution.then(() => { throw new Error('Agent ended without returning a Function result or requesting clarification'); })]);
       return new TaskResult({ ...(result && typeof result === 'object' && !Array.isArray(result) ? result : { value: result }), elapsedMs: Date.now() - task.created_at.getTime(),
-        execution: { model: this.driver.model, release: model.release, durationMs: Math.round(performance.now() - started), sqlStatements: this.db.queries - before, steps } }, access.dataRequirements());
+        execution: { model: this.driver.model, release: model.release, durationMs: Math.round(performance.now() - started), sqlStatements: this.db.queries - before, steps } }, await access.finalDataRequirements());
     } finally { stopped.abort(); await execution.catch(() => {}); }
   }
 }
