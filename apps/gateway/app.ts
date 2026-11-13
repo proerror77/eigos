@@ -31,7 +31,10 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     if (req.hostname !== new URL(config.PUBLIC_URL).hostname) { res.status(403).json({ error: 'Host is not configured' }); return; }
     next();
   });
-  app.get('/health', async (_req, res) => { await metadata.active(); res.json({ status: 'ok', backend: 'postgres' }); });
+  app.get('/health', async (_req, res) => {
+    const model = await metadata.active();
+    res.json({ status: 'ok', backend: 'postgres', sourceCommit: config.EIGOS_SOURCE_COMMIT, ontologyRelease: model.digest });
+  });
   const card = agentCard(config.PUBLIC_URL);
   app.get('/.well-known/agent-card.json', (_req, res) => res.json(AgentCard.toJSON(card)));
   app.get('/.well-known/oauth-protected-resource', (_req, res) => res.json({ resource: config.PUBLIC_URL, authorization_servers: config.OAUTH_ISSUER ? [config.OAUTH_ISSUER] : [], bearer_methods_supported: ['header'] }));

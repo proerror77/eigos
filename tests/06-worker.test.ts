@@ -54,3 +54,14 @@ test('revocation during the real connector callback cannot produce an accepted i
     assert.equal((await new Objects(f.db, f.model, principal.owner).query({ type: 'PriceEstimate' })).items.length, 0);
   } finally { await f.close(); }
 });
+
+test('task-only PA permission executes the inquiry through the source-bound Worker', async () => {
+  const f = await fixture();
+  try {
+    const caller = { owner: principal.owner, scopes: ['tasks:read', 'tasks:write'] };
+    const task = await f.tasks.submit(caller, { requestId: 'task-permission', message: '上海只询价', route });
+    await f.worker.runOne();
+    assert.equal((await f.tasks.get(caller, task.id)).state, 'completed');
+    await assert.rejects(f.workflow.actions.apply(caller, f.model, 'RequestRideEstimate', {}, 'direct-write'), /Permission/);
+  } finally { await f.close(); }
+});
