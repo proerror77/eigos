@@ -13,12 +13,13 @@ export const semanticConfigureSchema=z.strictObject({name:indexName,type:z.strin
 export const semanticIndexSchema=z.strictObject({name:indexName,objects:z.array(objectRefSchema).min(1).max(100)});
 export const semanticSearchSchema=z.strictObject({name:indexName,text:z.string().min(1).max(32000),limit:z.number().int().min(1).max(100).default(10)});
 export const semanticStatusSchema=z.strictObject({name:indexName});
-type Configuration=z.output<typeof semanticConfigureSchema>&{release:string;binding:string};
+type Configuration=z.output<typeof semanticConfigureSchema>&{release:string;binding:string;modelVersion:string};
 export async function initializeSemantic(db:Database) {
   await db.query(`CREATE TABLE IF NOT EXISTS ${db.schema}.semantic_indexes (
     ontology text NOT NULL,release text NOT NULL REFERENCES ${db.schema}.releases(digest),name text NOT NULL,
-    type text NOT NULL,property text NOT NULL,embedding_function text NOT NULL,binding text NOT NULL,dimensions integer NOT NULL,
+    type text NOT NULL,property text NOT NULL,embedding_function text NOT NULL,embedding_version text NOT NULL,binding text NOT NULL,dimensions integer NOT NULL,
     PRIMARY KEY(ontology,release,name));
+    ALTER TABLE ${db.schema}.semantic_indexes ADD COLUMN IF NOT EXISTS embedding_version text;
     CREATE TABLE IF NOT EXISTS ${db.schema}.semantic_vectors (
       ontology text NOT NULL,release text NOT NULL,name text NOT NULL,owner text NOT NULL,type text NOT NULL,id text NOT NULL,
       revision bigint NOT NULL,text_digest text NOT NULL,binding text NOT NULL,dimensions integer NOT NULL,vector jsonb NOT NULL,
@@ -46,19 +47,19 @@ export class SemanticSearch {
     }
     if(valueSchema.type!=='string'&&!(Array.isArray(valueSchema.type)&&valueSchema.type.includes('string')))throw new Conflict('Embedding property schema must contain text');
     const definition=model.functions.get(input.embeddingFunction);
-    if(!definition||definition.edits||!model.bindings.functions[input.embeddingFunction])throw new Conflict('Register and publish a read-only embedding Function first');
+    if(!definition||!definition.version||definition.edits||!model.bindings.functions[input.embeddingFunction])throw new Conflict('Register and publish a versioned read-only embedding Function first');
     const parameters=definition.parameters.properties as Record<string,{type?:string}>|undefined;
     if(parameters?.text?.type!=='string'||definition.returns.type!=='array'||(definition.returns.items as {type?:string}|undefined)?.type!=='number')throw new Conflict('Embedding Function must accept text:string and return number[]');
     const binding=model.bindings.functions[input.embeddingFunction]!;
     return this.db.transaction(async client=>{
       await new Objects(this.db,model,access,client).lockWrites();
       const existing=(await this.db.query(`SELECT * FROM ${this.db.schema}.semantic_indexes WHERE ontology=$1 AND release=$2 AND name=$3`,[model.document.id,model.release,input.name],client)).rows[0];
-      if(existing&&(existing.type!==input.type||existing.property!==input.property||existing.embedding_function!==input.embeddingFunction||existing.dimensions!==input.dimensions||existing.binding!==binding))throw new Conflict('A semantic index configuration is immutable; use another name or publication');
-      await this.db.query(`INSERT INTO ${this.db.schema}.semantic_indexes(ontology,release,name,type,property,embedding_function,binding,dimensions)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`,[model.document.id,model.release,input.name,input.type,input.property,input.embeddingFunction,binding,input.dimensions],client);
-      const configured=(await this.db.query(`SELECT type,property,embedding_function,dimensions,binding FROM ${this.db.schema}.semantic_indexes WHERE ontology=$1 AND release=$2 AND name=$3`,[model.document.id,model.release,input.name],client)).rows[0]!;
-      if(configured.type!==input.type||configured.property!==input.property||configured.embedding_function!==input.embeddingFunction||Number(configured.dimensions)!==input.dimensions||configured.binding!==binding)throw new Conflict('Concurrent semantic configuration differs');
-      await access.refresh(client);return {...input,release:model.release,binding};
+      if(existing&&(existing.type!==input.type||existing.property!==input.property||existing.embedding_function!==input.embeddingFunction||existing.dimensions!==input.dimensions||existing.binding!==binding||existing.embedding_version!==definition.version))throw new Conflict('A semantic index configuration is immutable; use another name or publication');
+      await this.db.query(`INSERT INTO ${this.db.schema}.semantic_indexes(ontology,release,name,type,property,embedding_function,binding,dimensions,embedding_version)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,[model.document.id,model.release,input.name,input.type,input.property,input.embeddingFunction,binding,input.dimensions,definition.version],client);
+      const configured=(await this.db.query(`SELECT type,property,embedding_function,embedding_version,dimensions,binding FROM ${this.db.schema}.semantic_indexes WHERE ontology=$1 AND release=$2 AND name=$3`,[model.document.id,model.release,input.name],client)).rows[0]!;
+      if(configured.type!==input.type||configured.property!==input.property||configured.embedding_function!==input.embeddingFunction||Number(configured.dimensions)!==input.dimensions||configured.binding!==binding||configured.embedding_version!==definition.version)throw new Conflict('Concurrent semantic configuration differs');
+      await access.refresh(client);return {...input,release:model.release,binding,modelVersion:definition.version};
     });
   }
   private async configuration(access:Access,model:PublishedOntology,name:string):Promise<Configuration> {
@@ -66,8 +67,8 @@ export class SemanticSearch {
     const row=(await this.db.query(`SELECT * FROM ${this.db.schema}.semantic_indexes WHERE ontology=$1 AND release=$2 AND name=$3`,[model.document.id,model.release,name])).rows[0];
     if(!row)throw new NotFound('Semantic index is unavailable for this publication');
     access.read(model,row.type);access.function(model,row.embedding_function);
-    if(row.binding!==model.bindings.functions[row.embedding_function])throw new Conflict('Semantic index model binding changed');
-    return {name,type:row.type,property:row.property,embeddingFunction:row.embedding_function,dimensions:Number(row.dimensions),release:row.release,binding:row.binding};
+    if(row.binding!==model.bindings.functions[row.embedding_function]||row.embedding_version!==model.functions.get(row.embedding_function)?.version)throw new Conflict('Semantic index model binding changed');
+    return {name,type:row.type,property:row.property,embeddingFunction:row.embedding_function,dimensions:Number(row.dimensions),release:row.release,binding:row.binding,modelVersion:row.embedding_version};
   }
   private async embed(access:Access,model:PublishedOntology,configuration:Configuration,text:string) {
     const result=await this.functions.invoke(model,configuration.embeddingFunction,{text},{principal:access.principal,objects:new Objects(this.db,model,access),signal:AbortSignal.timeout(30000)});
@@ -96,7 +97,7 @@ export class SemanticSearch {
       });
       indexed++;
     }
-    return {name:input.name,indexed,release:model.release,dimensions:configuration.dimensions,binding:configuration.binding};
+    return {name:input.name,indexed,release:model.release,dimensions:configuration.dimensions,binding:configuration.binding,modelVersion:configuration.modelVersion};
   }
   private async candidates(access:Access,model:PublishedOntology,configuration:Configuration) {
     return this.db.transaction(async client=>{
@@ -123,7 +124,7 @@ export class SemanticSearch {
     const items=candidates.map(({object,vector})=>({object,score:vector.reduce((sum,value,index)=>sum+value*query[index]!,0)}))
       .sort((left,right)=>right.score-left.score||Buffer.compare(Buffer.from(digest(left.object.ref)),Buffer.from(digest(right.object.ref)))).slice(0,input.limit);
     if(!await access.canReturn(access.dataRequirements()))throw new Conflict('Semantic result permissions changed');
-    return {name:input.name,items,dimensions:configuration.dimensions,binding:configuration.binding,search:'exact_cosine'};
+    return {name:input.name,items,dimensions:configuration.dimensions,binding:configuration.binding,modelVersion:configuration.modelVersion,search:'exact_cosine'};
   }
   async status(access:Access,model:PublishedOntology,name:string) {
     const configuration=await this.configuration(access,model,name),candidates=await this.candidates(access,model,configuration);

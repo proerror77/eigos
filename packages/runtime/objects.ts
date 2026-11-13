@@ -73,6 +73,14 @@ export class Objects {
     return this.access.cell(this.model,ref.type,field,object.properties);
   }
   async read(input: ObjectRef): Promise<ObjectData> {
+    if(this.client===this.db.pool&&Object.values(this.model.object(input.type).properties).some(property=>property.derived)) {
+      const result=await this.db.transaction(async client=>{
+        await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',[],client);
+        return new Objects(this.db,this.model,this.access,client).read(input);
+      });
+      if(!await this.access.canReturn(this.access.dataRequirements()))throw new Conflict('Derived result permissions changed');
+      return result;
+    }
     return new DerivedProperties(this).enrich(await this.readStored(input));
   }
   async query(input: Query):Promise<{items:ObjectData[];cursor?:string}> {
@@ -184,6 +192,14 @@ export class Objects {
   async follow(ref: ObjectRef, link: string, view = ref.type): Promise<ObjectData[]> {
     if (view !== ref.type) this.access.definition(this.model, 'interface', view);
     const nav = this.model.navigation(ref.type, link, view);
+    if(this.client===this.db.pool&&[ref.type,nav.target].some(type=>Object.values(this.model.object(type).properties).some(property=>property.derived))) {
+      const result=await this.db.transaction(async client=>{
+        await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',[],client);
+        return new Objects(this.db,this.model,this.access,client).follow(ref,link,view);
+      });
+      if(!await this.access.canReturn(this.access.dataRequirements()))throw new Conflict('Derived result permissions changed');
+      return result;
+    }
     await this.read(ref); this.access.read(this.model, nav.target); this.access.definition(this.model, 'link', nav.link);
     const from = nav.forward ? 'from' : 'to', to = nav.forward ? 'to' : 'from';
     await checkScenario(this.db, this.model, this.owner, this.client);

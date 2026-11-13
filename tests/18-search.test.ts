@@ -43,6 +43,9 @@ test('linked and arithmetic properties compute from authorized current data and 
     const define=(name:string,derived:DerivedExpression)=>{resource.properties[name]={description:name,schema:{type:'number'},required:false,derived};};
     define('activityCount',{op:'linked',path:[{link:'activities'}],aggregate:'count'});
     define('totalMinutes',{op:'linked',path:[{link:'activities'}],aggregate:'sum',property:'minutes'});
+    define('minimumMinutes',{op:'linked',path:[{link:'activities'}],aggregate:'min',property:'minutes'});
+    define('maximumMinutes',{op:'linked',path:[{link:'activities'}],aggregate:'max',property:'minutes'});
+    define('averageMinutes',{op:'linked',path:[{link:'activities'}],aggregate:'avg',property:'minutes'});
     define('doubleMinutes',{op:'multiply',left:{op:'property',property:'totalMinutes'},right:{op:'literal',value:2}});
     const model=await f.metadata.publish(document,f.capabilities,f.publisher),access=await Access.load(f.db,principal),graph=new Objects(f.db,model,access);
     const resourceRef={type:'ScheduleResource',id:'calendar'};await graph.create(resourceRef,{id:resourceRef.id,name:'Calendar'});
@@ -50,7 +53,7 @@ test('linked and arithmetic properties compute from authorized current data and 
       const ref={type:'ScheduledActivity',id};await graph.create(ref,{id,name:id,start:'2026-11-20T01:00:00Z',end:'2026-11-20T02:00:00Z',minutes});
       await graph.link({type:'ActivityResource',from:ref,to:resourceRef});
     }
-    const value=await graph.read(resourceRef);assert.equal(value.properties.activityCount,2);assert.equal(value.properties.totalMinutes,90);assert.equal(value.properties.doubleMinutes,180);
+    const value=await graph.read(resourceRef);assert.equal(value.properties.activityCount,2);assert.equal(value.properties.totalMinutes,90);assert.equal(value.properties.doubleMinutes,180);assert.equal(value.properties.minimumMinutes,30);assert.equal(value.properties.maximumMinutes,60);assert.equal(value.properties.averageMinutes,45);
     assert.equal((await graph.query({type:'ScheduleResource',filter:{op:'gt',property:'doubleMinutes',value:100},orderBy:[{property:'totalMinutes',direction:'desc'}]})).items.length,1);
     const aggregate=await new ObjectSets(f.db).aggregate(access,model,{set:{op:'query',query:{type:'ScheduleResource'}},metrics:{total:{op:'sum',property:'totalMinutes'}}});
     assert.equal(aggregate.items[0]!.metrics.total,90);
@@ -78,7 +81,7 @@ test('semantic search invokes the published embedding Function and filters permi
     await graph.create({type:'Route',id:'secret'},{id:'secret',name:'train station'});await graph.create({type:'Route',id:'public'},{id:'public',name:'road trip'});
     await semantic.index(access,model,{name:'Routes',objects:[{type:'Route',id:'secret'},{type:'Route',id:'public'}]});
     const first=await semantic.search(access,model,{name:'Routes',text:'rail',limit:1});assert.equal(first.items[0]!.object.ref.id,'secret');
-    assert.deepEqual(calls,['train station','road trip','rail']);
+    assert.deepEqual(calls,['train station','road trip','rail']);assert.equal(first.modelVersion,'fixture-v1');
     await f.db.query(`INSERT INTO ${f.db.schema}.object_policies VALUES('Eigos','Route',$1)`,[objectPolicySchema.parse({properties:{name:{all:[{op:'equals',property:'id',value:'public'}]}}})]);
     const reader=await Access.load(f.db,principal),filtered=await semantic.search(reader,model,{name:'Routes',text:'rail',limit:1});assert.equal(filtered.items[0]!.object.ref.id,'public');
     await new Objects(f.db,model,reader).edit({type:'Route',id:'public'},1,{name:'rail terminal'});
@@ -88,5 +91,18 @@ test('semantic search invokes the published embedding Function and filters permi
     await new Objects(f.db,model,await Access.load(f.db,principal)).remove({type:'Route',id:'public'},2);
     assert.equal((await semantic.search(await Access.load(f.db,principal),model,{name:'Routes',text:'rail'})).items.length,0);
     await assert.rejects(semantic.configure(f.publisher,model,{name:'Routes',type:'Route',property:'name',embeddingFunction:'EmbedText',dimensions:3}),/immutable/);
+  }finally{await f.close();}
+});
+
+
+test('regular expressions have a deadline and cannot block unrelated event loop work',async()=>{
+  const f=await fixture();try{
+    const graph=new Objects(f.db,f.model,f.access);
+    await graph.create({type:'Route',id:'regex'},{id:'regex',name:'a'.repeat(4000)+'!'});
+    let heartbeats=0;const timer=setInterval(()=>heartbeats++,20);
+    try{await assert.rejects(graph.query({type:'Route',filter:{op:'regex',property:'name',value:'(a+)+$'}}),/deadline/);}
+    finally{clearInterval(timer);}
+    assert(heartbeats>5);
+    await assert.rejects(graph.query({type:'Route',filter:{op:'regex',property:'name',value:'['}}),/Invalid regular/);
   }finally{await f.close();}
 });
