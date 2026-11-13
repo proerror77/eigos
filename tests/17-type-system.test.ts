@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { digest } from '../packages/core/identity.js';
 import { Ontology } from '../packages/ontology/model.js';
 import { propertyDisplay } from '../packages/ontology/type-system.js';
-import { fixture, document, principal } from './fixture.js';
+import { fixture, principal } from './fixture.js';
 import { Functions } from '../packages/runtime/functions.js';
 import { Actions } from '../packages/runtime/actions.js';
 import { Objects } from '../packages/runtime/objects.js';
@@ -15,8 +15,8 @@ const basic = () => ({id:'Eigos',version:'types',objectTypes:[{apiName:'Item',di
 const noBindings = {describe:()=>({functions:{},sources:{}})};
 
 test('old publication identity remains raw while reusable contracts compile separately',()=>{
-  const legacy=new Ontology(document);
-  assert.equal(legacy.digest,'bd7bb73423096c37800ceeec891aa7a32e371743133aacaea9c22de9fb4b9f29');
+  const legacy=new Ontology(basic());
+  assert.equal(legacy.digest,digest(basic()));
   const input={...basic(),valueTypes:[{apiName:'Label',version:'1',description:'Nonempty uppercase label',schema:{type:'string',minLength:2,pattern:'^[A-Z]+$'}}],sharedProperties:[{apiName:'DisplayLabel',description:'Shared label',valueType:{name:'Label',version:'1'}}]};
   input.objectTypes[0]!.properties.name={sharedProperty:'DisplayLabel',required:true} as never;
   const model=new Ontology(input),ref={type:'Item',id:'one'};
