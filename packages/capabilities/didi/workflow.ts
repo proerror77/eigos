@@ -1,4 +1,4 @@
-import { digest, type Principal } from '../../core/identity.js';
+import { digest, requireScope, type Principal } from '../../core/identity.js';
 import type { ObjectData, ObjectRef } from '../../ontology/schema.js';
 import { Database } from '../../runtime/database.js';
 import { Metadata } from '../../runtime/metadata.js';
@@ -29,7 +29,12 @@ export class RideWorkflow {
   }
   async run(task: Task, signal: AbortSignal) {
     const route = task.input.route ?? routeFromMessage(task.input.message);
-    const model = await this.metadata.get(task.release), principal: Principal = { owner: task.owner, scopes: task.scopes };
+    requireScope({ owner: task.owner, scopes: task.scopes }, 'tasks:write');
+    await (await this.source(task.owner)).assertCurrent();
+    const model = await this.metadata.get(task.release);
+    // The Worker executes the accepted inquiry as its service identity. Source
+    // access still requires the active account binding for this task's owner.
+    const principal: Principal = { owner: task.owner, scopes: ['ontology:read', 'ontology:write', 'sources:Didi:read'] };
     const objects = new Objects(this.db, model, task.owner), context = { objects, principal, signal, taskId: task.id };
     const read = async (role: 'origin' | 'destination') => sourceResultSchema.parse(await this.tasks.source(task, role, { city: route.city, keywords: route[role] },
       async () => { await this.tasks.current(task); return this.functions.invoke(model, 'searchPlaces', { city: route.city, keywords: route[role] }, context); }));

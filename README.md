@@ -26,6 +26,8 @@ Gateway 和 Worker 使用相同的 `DATABASE_URL`、`EIGOS_PG_SCHEMA`。构建�
 
 JWT 身份由现有身份提供方验证，owner 由 issuer、tenant 和 subject 计算。`GET /identity` 返回当前 owner 与 scopes。本地开发使用 `.env` 中的随机令牌，owner 为 `local-developer`。
 
+`OAUTH_TENANT_CLAIM` 可配置身份提供方的租户字段。PA 使用任务权限提交询价，Worker 在该任务 owner 的有效来源绑定内执行本体操作。直接调用本体 API 仍使用令牌中的对应权限。来源连接可带 `expiresAt`，运行时按其截止时间检查。
+
 ## 滴滴来源
 
 `EIGOS_DIDI_CONNECTION_FILE` 指向私有 JSON 文件。

@@ -35,3 +35,13 @@ test('JWT identity, audience and expiry are verified before owner queries', asyn
   await assert.rejects(verify(await sign('another-audience', '1m')));
   await assert.rejects(verify(await sign('eigos', '-1m')));
 });
+
+test('production issuer tenant claims resolve the same owner without a fallback identity', async () => {
+  const keys = await generateKeyPair('ES256'), publicKey = await exportJWK(keys.publicKey);
+  const jwks = createLocalJWKSet({ keys: [{ ...publicKey, kid: 'test' }] }), claim = 'https://eigos.example/claims/tenant_id';
+  const token = await new SignJWT({ [claim]: 'personal', scope: 'tasks:read tasks:write' }).setProtectedHeader({ alg: 'ES256', kid: 'test' })
+    .setIssuer('https://issuer.example').setAudience('eigos').setSubject('owner').setIssuedAt().setExpirationTime('1m').sign(keys.privateKey);
+  const actor = await jwtVerifier('https://issuer.example', 'eigos', jwks, claim)(token);
+  assert.deepEqual(actor.scopes, ['tasks:read', 'tasks:write']);
+  await assert.rejects(jwtVerifier('https://issuer.example', 'eigos', jwks)(token));
+});

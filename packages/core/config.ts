@@ -12,6 +12,8 @@ export const configSchema = z.object({
   PUBLIC_URL: z.url().default('http://127.0.0.1:3000'),
   EIGOS_AUTH_MODE: z.enum(['jwt', 'development']).default('jwt'), EIGOS_DEV_TOKEN: z.string().min(32).optional(),
   OAUTH_ISSUER: z.url().optional(), OAUTH_AUDIENCE: z.string().optional(), OAUTH_JWKS_URL: z.url().optional(),
+  OAUTH_TENANT_CLAIM: z.string().min(1).default('tenant_id'),
+  EIGOS_SOURCE_COMMIT: z.string().regex(/^[a-f0-9]{40}$/).optional(),
   EIGOS_DIDI_CONNECTION_FILE: z.string().optional(),
 });
 export type Config = z.infer<typeof configSchema>;
@@ -22,7 +24,7 @@ export function readConfig(env = process.env): Config {
   } else if (!config.OAUTH_ISSUER || !config.OAUTH_AUDIENCE || !config.OAUTH_JWKS_URL) throw new Error('Configure JWT issuer, audience and verification keys');
   return config;
 }
-const connectionSchema = z.strictObject({ owner: z.string().min(1), active: z.boolean(), binding: didiBindingSchema });
+const connectionSchema = z.strictObject({ owner: z.string().min(1), active: z.boolean(), expiresAt: z.iso.datetime().nullable().optional(), binding: didiBindingSchema });
 export function configuredSource(path?: string): SourceResolver {
   const cache = new Map<string, DidiMcpConnector>();
   const read = async () => {
@@ -31,11 +33,11 @@ export function configuredSource(path?: string): SourceResolver {
   };
   return async owner => {
     const connection = await read(), hash = digest(connection);
-    if (!connection.active || connection.owner !== owner) throw new Error('DiDi source is unavailable for this owner');
+    if (!connection.active || connection.owner !== owner || connection.expiresAt && Date.parse(connection.expiresAt) <= Date.now()) throw new Error('DiDi source is unavailable for this owner');
     let connector = cache.get(hash);
     if (!connector) { cache.clear(); connector = new DidiMcpConnector(connection.binding); cache.set(hash, connector); }
     return { bindingId: connection.binding.bindingId, connector, async assertCurrent() {
-      if (digest(await read()) !== hash) throw new Error('DiDi source configuration changed');
+      if (digest(await read()) !== hash || connection.expiresAt && Date.parse(connection.expiresAt) <= Date.now()) throw new Error('DiDi source configuration changed or expired');
       await connector!.verifyCredential();
     } };
   };
