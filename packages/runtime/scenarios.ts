@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { Conflict, digest } from '../core/identity.js';
+import { Conflict, NotFound, digest } from '../core/identity.js';
 import type { LinkData, ObjectRef } from '../ontology/schema.js';
 import { Access, PermissionDenied, type Requirement } from './access.js';
 import { Database, type Sql } from './database.js';
@@ -57,8 +57,19 @@ export class Scenarios {
         const live = (await this.db.query(`SELECT revision,properties FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`, [model.projection, owner, item.type, item.id], client)).rows[0];
         objects.push({ ref: { type: item.type, id: item.id }, before: mask(item.base_properties), after: mask(item.properties), conflict: (String(live?.revision ?? '') !== String(item.base_revision ?? '') || digest(live?.properties ?? null)!==digest(item.base_properties)) || item.properties===null && digest(await objectLinks(this.db,model,owner,{type:item.type,id:item.id},client))!==digest(item.base_links) });
       }
+      const proposed = new Objects(this.db,view,access,client), live = new Objects(this.db,model,access,client);
+      const requireEndpoint = async (ref: ObjectRef) => {
+        try { await proposed.read(ref); }
+        catch (error) {
+          if (!(error instanceof NotFound)) throw error;
+          // A removed endpoint is absent from the proposed view; its live instance still governs access.
+          await live.read(ref);
+        }
+      };
       const links = await Promise.all(changes.links.map(async item => {
-        access.read(model, item.from_type); access.read(model, item.to_type); access.definition(model, 'link', item.type);
+        await requireEndpoint({type:item.from_type,id:item.from_id});
+        await requireEndpoint({type:item.to_type,id:item.to_id});
+        access.definition(model, 'link', item.type);
         const present=(await this.db.query(`SELECT 1 FROM ${this.db.schema}.links WHERE projection=$1 AND owner=$2 AND type=$3 AND from_type=$4 AND from_id=$5 AND to_type=$6 AND to_id=$7`,[model.projection,owner,item.type,item.from_type,item.from_id,item.to_type,item.to_id],client)).rowCount!>0;
         return { type: item.type, from: { type: item.from_type, id: item.from_id }, to: { type: item.to_type, id: item.to_id }, removed: item.removed,conflict:present!==item.base_present || await this.cardinalityConflict(model,owner,item,client) };
       }));
@@ -101,8 +112,23 @@ export class Scenarios {
     const changes = await this.changes(owner, id, client);
     if (changes.objects.some(item => !scope.objects.includes(item.type)) || changes.links.some(item => !scope.links.includes(item.type))) throw new Conflict('Scenario contains edits outside this merge Action scope');
     const actions = (await this.db.query(`SELECT requirements FROM ${this.db.schema}.scenario_actions WHERE owner=$1 AND scenario_id=$2`, [owner, id], client)).rows;
+    const deleted = (await this.db.query(`SELECT type,id,base_revision FROM ${this.db.schema}.scenario_objects WHERE owner=$1 AND scenario_id=$2 AND properties IS NULL`, [owner,id],client)).rows;
+    const deletions = new Map(deleted.map(item => [digest({type:item.type,id:item.id}),item]));
     for (const action of actions) {
-      if (!await access.canReturn(action.requirements,client)) throw new PermissionDenied('Permission changed for scenario inputs');
+      const requirements = (action.requirements as Requirement[]).map(requirement => {
+        const dependency = requirement.row;
+        const deletion = dependency?.scenario === id ? deletions.get(digest({type:dependency.type,id:dependency.id})) : undefined;
+        if (!dependency || !deletion) return requirement;
+        if (deletion.base_revision !== null) {
+          // Authorize a staged deletion against the surviving live input, before its atomic removal.
+          const { scenario: _scenario, ...row } = dependency;
+          return { ...requirement, row };
+        }
+        // Created-then-deleted objects have no surviving input. Grants and the recorded policy context still apply.
+        const { row: _row, ...permissions } = requirement;
+        return permissions;
+      });
+      if (!await access.canReturn(requirements,client)) throw new PermissionDenied('Permission changed for scenario inputs');
       for (const requirement of action.requirements as Requirement[]) access.require(requirement.ontology, requirement.permission, requirement.resource);
     }
     for (const item of changes.objects) {

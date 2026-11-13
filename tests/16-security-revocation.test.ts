@@ -125,3 +125,62 @@ test('cached output authorization follows current objects after a publication ch
     assert.equal(await (await Access.load(f.db,principal)).canReturn(requirements),false);
   }finally{await f.close();}
 });
+
+test('policed activity deletions merge against live inputs and deleted cached outputs stay hidden', async () => {
+  const { PlanningFixtureAgent, planningInput, calendarAnswer } = await import('./planning-fixture.js');
+  const { PARequests } = await import('../packages/runtime/pa.js');
+  const f = await fixture(new PlanningFixtureAgent());
+  try {
+    const input = planningInput(), task = await f.tasks.submit(principal, { requestId: 'deletion-setup', message: JSON.stringify({ planning: input }) });
+    await f.worker.runOne();
+    const pending = await f.tasks.get(principal, task.id);
+    await new PARequests(f.tasks).respond(principal, task.id, { requestId: (pending.result as {requestId:string}).requestId, response: calendarAnswer(input) });
+    await f.worker.runOne();
+    const done = await f.tasks.get(principal, task.id);
+    assert.equal(done.state, 'completed');
+    const output = done.result as { plan:{ref:{type:string;id:string}}; scenarioId:string; activities:{ref:{type:string;id:string}}[] };
+    const scenarios = new Scenarios(f.db), first = await scenarios.inspect(f.access, f.model, output.scenarioId);
+    await f.capabilities.actions.apply(f.access, f.model, 'CommitSchedulePlan', { plan:output.plan.ref, scenarioId:first.id, revision:first.revision }, 'first-merge');
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies VALUES('Eigos','ScheduledActivity',$1)`, [objectPolicySchema.parse({})]);
+    const access = await Access.load(f.db, principal), scene = await scenarios.create(access, f.model, { requestId:'remove-activity', name:'Remove activity' });
+    const view = await scenarios.view(access, f.model, scene.id);
+    const activity = output.activities[0]!.ref;
+    await new Objects(f.db, view, access).read(activity);
+    const cacheRequirements = access.dataRequirements();
+    await f.capabilities.actions.apply(access, view, 'RemoveScheduleActivity', { activity, revision:1 }, 'stage-removal');
+    const diff = await scenarios.inspect(access, f.model, scene.id);
+    assert.equal(await (await Access.load(f.db, principal)).canReturn(cacheRequirements), false);
+    await f.capabilities.actions.apply(await Access.load(f.db, principal), f.model, 'CommitSchedulePlan', { plan:output.plan.ref, scenarioId:scene.id, revision:diff.revision }, 'commit-removal');
+    await assert.rejects(new Objects(f.db, f.model, await Access.load(f.db, principal)).read(activity), /unavailable/);
+    assert.equal(await (await Access.load(f.db, principal)).canReturn(cacheRequirements), false);
+    const transientAccess = await Access.load(f.db, principal);
+    const transient = await scenarios.create(transientAccess, f.model, { requestId:'transient', name:'Create then remove' });
+    const transientView = await scenarios.view(transientAccess, f.model, transient.id);
+    const temporaryActivity = await f.capabilities.actions.apply(transientAccess, transientView, 'SaveScheduleActivity', {
+      plan:output.plan.ref, id:'temporary', name:'Temporary activity', start:input.start, end:new Date(Date.parse(input.start)+1800000).toISOString(),
+    }, 'create-temporary');
+    await f.capabilities.actions.apply(transientAccess, transientView, 'RemoveScheduleActivity', { activity:temporaryActivity, revision:1 }, 'remove-temporary');
+    const transientDiff = await scenarios.inspect(transientAccess, f.model, transient.id);
+    assert.equal(transientDiff.objects.length, 0); assert.equal(transientDiff.links.length, 0);
+    await f.capabilities.actions.apply(await Access.load(f.db, principal), f.model, 'CommitSchedulePlan', {
+      plan:output.plan.ref, scenarioId:transient.id, revision:transientDiff.revision,
+    }, 'commit-empty-alternative');
+  } finally { await f.close(); }
+});
+
+test('Scenario Link diffs require each endpoint row to remain visible', async () => {
+  const f = await fixture();
+  try {
+    const live = new Objects(f.db, f.model, f.access), route = { type:'Route', id:'secret-route' }, request = { type:'RideRequest', id:'public-request' };
+    await live.create(route, { id:route.id, name:'Secret route' });
+    await live.create(request, { id:request.id, name:'Public request', status:'requested', requestedAt:new Date().toISOString() });
+    const scenarios = new Scenarios(f.db), scene = await scenarios.create(f.access, f.model, { requestId:'hidden-link', name:'Link proposal' });
+    const view = await scenarios.view(f.access, f.model, scene.id);
+    await new Objects(f.db, view, f.access).link({ type:'RequestRoute', from:request, to:route });
+    assert.equal((await scenarios.inspect(f.access, f.model, scene.id)).links.length, 1);
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies VALUES('Eigos','Route',$1)`, [objectPolicySchema.parse({ read:{ all:[{ op:'equals', property:'name', value:'Allowed route' }] } })]);
+    const access = await Access.load(f.db, principal);
+    await assert.rejects(new Objects(f.db, view, access).read(route), /policy/);
+    await assert.rejects(scenarios.inspect(access, f.model, scene.id), /policy/);
+  } finally { await f.close(); }
+});
