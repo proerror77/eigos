@@ -1,0 +1,129 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { fixture, principal } from './fixture.js';
+import { Access, memberGrants, setGrants, type Permission } from '../packages/runtime/access.js';
+import { Objects } from '../packages/runtime/objects.js';
+import { Indexing, initializeIndexing } from '../packages/runtime/indexing.js';
+import { EditHistory, initializeEditHistory, setConflictPolicy } from '../packages/runtime/edit-history.js';
+import { Materializations, initializeMaterializations } from '../packages/runtime/materializations.js';
+
+async function indexedFixture() {
+  const f=await fixture();
+  await initializeEditHistory(f.db);await initializeIndexing(f.db);await initializeMaterializations(f.db);
+  const grants=[...memberGrants(f.model),{resource:'Eigos/datasource/DidiPlaces',permission:'ingest_source' as Permission}];
+  await setGrants(f.db,principal.owner,grants);
+  return {...f,access:await Access.load(f.db,principal),grants,indexing:new Indexing(f.db,f.metadata)};
+}
+const origin=new Date(Date.now()-60000).toISOString();
+const later=new Date(Date.now()+60000).toISOString();
+function sourceRow(id:string,name:string,observedAt=origin) {
+  return {id,name,city:'上海',address:'上海',coordinates:{lat:31.2,lng:121.5},coordinateSystem:'GCJ-02',sourceBinding:'synthetic',observedAt};
+}
+const transaction=(offset:number,rows:Record<string,unknown>[],observedAt=origin)=>({source:'DidiPlaces',stream:'synthetic-stream',offset,mode:'stream',observedAt,rows});
+
+test('index transactions enforce source grants, ordered offsets and exact retries',async()=>{
+  const f=await indexedFixture();try{
+    const input=transaction(1,[sourceRow('a','original')]);
+    const second=await f.indexing.submit(f.access,f.model,transaction(2,[sourceRow('b','second')]));
+    assert.equal(await f.indexing.runOne(),false);
+    const first=await f.indexing.submit(f.access,f.model,input);
+    assert.equal((await f.indexing.submit(f.access,f.model,input)).id,first.id);
+    await assert.rejects(f.indexing.submit(f.access,f.model,transaction(1,[sourceRow('a','different')])),/another transaction/);
+    assert.equal(await f.indexing.runOne(),true);assert.equal(await f.indexing.runOne(),true);assert.equal(await f.indexing.runOne(),false);
+    assert.equal((await f.indexing.inspect(f.access,f.model,second.id)).applied_offset,'2');
+    const graph=new Objects(f.db,f.model,f.access);assert.equal((await graph.query({type:'Place'})).items.length,2);
+    await setGrants(f.db,principal.owner,memberGrants(f.model));
+    await assert.rejects(f.indexing.submit(await Access.load(f.db,principal),f.model,transaction(3,[])),/Permission/);
+  }finally{await f.close();}
+});
+
+test('failed indexing rolls back its objects and offset and resumes after permissions are restored',async()=>{
+  const f=await indexedFixture();try{
+    const job=await f.indexing.submit(f.access,f.model,transaction(1,[sourceRow('a','original')]));
+    await setGrants(f.db,principal.owner,memberGrants(f.model));
+    assert.equal(await f.indexing.runOne(),true);
+    assert.equal((await f.db.query(`SELECT state FROM ${f.db.schema}.index_transactions WHERE id=$1`,[job.id])).rows[0]!.state,'failed');
+    assert.equal((await new Objects(f.db,f.model,await Access.load(f.db,principal)).query({type:'Place'})).items.length,0);
+    await setGrants(f.db,principal.owner,f.grants);const restored=await Access.load(f.db,principal);
+    await f.indexing.retry(restored,f.model,job.id);assert.equal(await f.indexing.runOne(),true);
+    const state=await f.indexing.inspect(restored,f.model,job.id);assert.equal(state.state,'applied');assert.equal(state.attempts,2);
+  }finally{await f.close();}
+});
+
+test('an invalid later row rolls back earlier changes and concurrent workers apply an offset once',async()=>{
+  const f=await indexedFixture();try{
+    await f.indexing.submit(f.access,f.model,transaction(1,[sourceRow('b','Original')]));
+    await Promise.all([f.indexing.runOne(),new Indexing(f.db,f.metadata).runOne()]);
+    const second=await f.indexing.submit(f.access,f.model,transaction(2,[sourceRow('a','Must roll back'),sourceRow('b','Conflicting same timestamp')]));
+    await f.indexing.runOne();
+    const state=await f.indexing.inspect(f.access,f.model,second.id);
+    assert.equal(state.state,'failed');assert.equal(state.applied_offset,'1');
+    const graph=new Objects(f.db,f.model,f.access);
+    await assert.rejects(graph.read({type:'Place',id:'a'}),/unavailable/);
+    assert.equal((await graph.read({type:'Place',id:'b'})).revision,1);
+    assert.equal((await graph.read({type:'Place',id:'b'})).properties.name,'Original');
+  }finally{await f.close();}
+});
+
+test('source updates preserve edited fields, latest policy can replace them, and user deletion survives source refresh',async()=>{
+  const f=await indexedFixture();try{
+    const graph=new Objects(f.db,f.model,f.access),ref={type:'Place',id:'a'};
+    await f.indexing.submit(f.access,f.model,transaction(1,[sourceRow('a','original')]));await f.indexing.runOne();
+    let current=await graph.read(ref);await graph.edit(ref,current.revision,{name:'User name'});
+    await f.indexing.submit(f.access,f.model,transaction(2,[sourceRow('a','Source update',later)],later));await f.indexing.runOne();
+    assert.equal((await graph.read(ref)).properties.name,'User name');
+    await setConflictPolicy(f.db,f.publisher,f.model,'Place','latest_value');
+    await f.indexing.submit(f.access,f.model,transaction(3,[sourceRow('a','Source update',later)],later));await f.indexing.runOne();
+    assert.equal((await graph.read(ref)).properties.name,'Source update');
+    current=await graph.read(ref);await graph.remove(ref,current.revision);
+    await f.indexing.submit(f.access,f.model,transaction(4,[sourceRow('a','Source update',later)],later));await f.indexing.runOne();
+    await assert.rejects(graph.read(ref),/unavailable/);
+    await graph.create(ref,sourceRow('a','Explicit recreation',later));
+    assert.equal((await graph.read(ref)).properties.name,'Explicit recreation');
+  }finally{await f.close();}
+});
+
+test('source deletion removes its object without creating a permanent user tombstone',async()=>{
+  const f=await indexedFixture();try{
+    const graph=new Objects(f.db,f.model,f.access),ref={type:'Place',id:'a'};
+    await f.indexing.submit(f.access,f.model,transaction(1,[sourceRow('a','original')]));await f.indexing.runOne();
+    await f.indexing.submit(f.access,f.model,{...transaction(2,[],later),deleted:['a']});await f.indexing.runOne();
+    await assert.rejects(graph.read(ref),/unavailable/);
+    const newest=new Date(Date.parse(later)+1000).toISOString();
+    await f.indexing.submit(f.access,f.model,transaction(3,[sourceRow('a','reappeared',newest)],newest));await f.indexing.runOne();
+    assert.equal((await graph.read(ref)).properties.name,'reappeared');
+  }finally{await f.close();}
+});
+
+test('materializations preserve captured values and links while history and exports recheck current property access',async()=>{
+  const f=await indexedFixture();try{
+    const graph=new Objects(f.db,f.model,f.access),ref={type:'Route',id:'route'},request={type:'RideRequest',id:'request'};
+    await graph.create(ref,{id:ref.id,name:'Before'});
+    await graph.create(request,{id:request.id,name:'Request',status:'requested',requestedAt:new Date().toISOString()});
+    await graph.link({type:'RequestRoute',from:request,to:ref});
+    const materializations=new Materializations(f.db),snapshot=await materializations.capture(f.access,f.model,{requestId:'snapshot',name:'Snapshot',types:['Route','RideRequest']});
+    await graph.edit(ref,1,{name:'After'});
+    const stored=await materializations.read(f.access,f.model,snapshot.id);
+    assert.equal(stored.items.find(o=>o.ref.type==='Route')!.properties.name,'Before');
+    assert.equal((await materializations.links(f.access,f.model,snapshot.id)).items.length,1);
+    const history=await new EditHistory(f.db).read(graph,ref);
+    assert.equal(history.items.at(-1)!.before!.name,'Before');assert.equal(history.items.at(-1)!.after!.name,'After');
+    await f.db.query(`INSERT INTO ${f.db.schema}.property_security VALUES('Eigos','Route','name')`);
+    const access=await Access.load(f.db,principal);
+    assert.equal((await materializations.read(access,f.model,snapshot.id)).items.find(o=>o.ref.type==='Route')!.properties.name,null);
+    assert.equal((await new EditHistory(f.db).read(new Objects(f.db,f.model,access),ref)).items.at(-1)!.before!.name,null);
+  }finally{await f.close();}
+});
+
+test('materialization rechecks historical row policy even when the live row is visible',async()=>{
+  const f=await indexedFixture();try{
+    const graph=new Objects(f.db,f.model,f.access),ref={type:'Route',id:'classified'};
+    await graph.create(ref,{id:ref.id,name:'Previous classification'});
+    const materializations=new Materializations(f.db),snapshot=await materializations.capture(f.access,f.model,{requestId:'classification',name:'Classification',types:['Route']});
+    await graph.edit(ref,1,{name:'Public'});
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies(ontology,type,policy) VALUES('Eigos','Route',$1)`,[{read:{all:[{op:'equals',property:'name',value:'Public'}],any:[]},properties:{}}]);
+    const access=await Access.load(f.db,principal);
+    assert.equal((await new Objects(f.db,f.model,access).read(ref)).properties.name,'Public');
+    assert.equal((await materializations.read(access,f.model,snapshot.id)).items.length,0);
+  }finally{await f.close();}
+});

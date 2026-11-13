@@ -85,7 +85,7 @@ export class Indexing {
       WHERE t.owner=$1 AND t.ontology=$2 AND t.id=$3`,[access.principal.owner,model.document.id,id])).rows[0];
     if (!row) throw new NotFound('Index transaction is unavailable');
     authorize(access,model,row.source); await access.refresh();
-    return {...row,provenance:'authenticated_producer'};
+    return {id:String(row.id),source:String(row.source),stream:String(row.stream),offset:String(row.offset),mode:String(row.mode),state:String(row.state),attempts:Number(row.attempts),error:row.error as string|null,submittedAt:row.submitted_at as Date,appliedAt:row.applied_at as Date|null,release:String(row.release),digest:String(row.digest),applied_offset:String(row.applied_offset),provenance:'authenticated_producer'};
   }
   async retry(access: Access, model: PublishedOntology, id: string) {
     await this.inspect(access,model,id);
@@ -119,7 +119,7 @@ export class Indexing {
         await graph.lockWrites();
         // Objects resolves source values with user edits and journals changes in this transaction.
         const batch=mapRows(model,input);
-        await (graph.ingestBatch as (rows: typeof batch, source: string, observedAt: string)=>Promise<void>)(batch,input.source,input.observedAt);
+        await graph.ingestBatch(batch,input.source,input.observedAt);
         await access.refresh(client);
         await this.db.query(`UPDATE ${this.db.schema}.index_streams SET applied_offset=$5,updated_at=now() WHERE owner=$1 AND ontology=$2 AND source=$3 AND stream=$4`,[row.owner,row.ontology,row.source,row.stream,input.offset],client);
         await this.db.query(`UPDATE ${this.db.schema}.index_transactions SET state='applied',attempts=attempts+1,error=NULL,applied_at=now() WHERE id=$1`,[row.id],client);

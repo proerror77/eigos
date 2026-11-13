@@ -49,16 +49,26 @@ export class Materializations {
           for(const object of page.items){
             if(included.size>=10000)throw new Conflict('Materialization exceeds 10000 objects; narrow the selected types');
             included.add(referenceKey(object.ref));
-            await this.db.query(`INSERT INTO ${this.db.schema}.materialized_objects(materialization_id,type,id,revision,properties) VALUES($1,$2,$3,$4,$5)`,[id,object.ref.type,object.ref.id,object.revision,object.properties],client);
           }
+          // Retain original policy fields even when hidden. Exports evaluate the complete historical row.
+          await this.db.query(`INSERT INTO ${this.db.schema}.materialized_objects(materialization_id,type,id,revision,properties)
+            SELECT $1,o.type,o.id,o.revision,o.properties FROM ${this.db.schema}.objects o
+            JOIN jsonb_to_recordset($4::jsonb) AS selected(type text,id text) ON selected.type=o.type AND selected.id=o.id
+            WHERE o.projection=$2 AND o.owner=$3`,[id,model.projection,access.principal.owner,JSON.stringify(page.items.map(item=>item.ref))],client);
           cursor=page.cursor;
         }while(cursor);
       }
-      const links=(await this.db.query(`SELECT type,from_type,from_id,to_type,to_id FROM ${this.db.schema}.links WHERE projection=$1 AND owner=$2 AND from_type=ANY($3::text[]) AND to_type=ANY($3::text[])`,[model.projection,access.principal.owner,types],client)).rows;
+      const links=(await this.db.query(`SELECT type,from_type,from_id,to_type,to_id FROM ${this.db.schema}.links WHERE projection=$1 AND owner=$2 AND from_type=ANY($3::text[]) AND to_type=ANY($3::text[]) LIMIT 100001`,[model.projection,access.principal.owner,types],client)).rows;
+      if(links.length>100000)throw new Conflict('Materialization exceeds 100000 relationships; narrow the selected types');
+      const allowedLinks=[];
       for(const link of links){
         if(!included.has(referenceKey({type:link.from_type,id:link.from_id}))||!included.has(referenceKey({type:link.to_type,id:link.to_id})))continue;
         access.definition(model,'link',link.type);
-        await this.db.query(`INSERT INTO ${this.db.schema}.materialized_links(materialization_id,type,from_type,from_id,to_type,to_id) VALUES($1,$2,$3,$4,$5,$6)`,[id,link.type,link.from_type,link.from_id,link.to_type,link.to_id],client);
+        allowedLinks.push(link);
+      }
+      for(let start=0;start<allowedLinks.length;start+=1000){
+        await this.db.query(`INSERT INTO ${this.db.schema}.materialized_links(materialization_id,type,from_type,from_id,to_type,to_id)
+          SELECT $1,type,from_type,from_id,to_type,to_id FROM jsonb_to_recordset($2::jsonb) AS input(type text,from_type text,from_id text,to_type text,to_id text)`,[id,JSON.stringify(allowedLinks.slice(start,start+1000))],client);
       }
       await access.refresh(client);
       return {id};
@@ -79,7 +89,8 @@ export class Materializations {
     for(const row of rows.slice(0,100)){
       const ref={type:String(row.type),id:String(row.id)};
       try{await graph.read(ref);}catch(error){if(error instanceof NotFound)continue;throw error;}
-      const properties=Object.fromEntries(Object.entries(row.properties).map(([field,value])=>[field,access.property(model,ref.type,field)?value:null]));
+      const properties=graph.maskSnapshot(ref,row.properties);
+      if(!properties)continue;
       items.push({ref,revision:Number(row.revision),properties});
     }
     await access.refresh();
@@ -89,12 +100,17 @@ export class Materializations {
   async links(access:Access,model:PublishedOntology,id:string,after=0) {
     z.uuid().parse(id);z.number().int().min(0).parse(after);
     await this.read(access,model,id);
-    const rows=(await this.db.query(`SELECT type,from_type,from_id,to_type,to_id FROM ${this.db.schema}.materialized_links WHERE materialization_id=$1 ORDER BY type,from_type,from_id,to_type,to_id OFFSET $2 LIMIT 101`,[id,after])).rows;
+    const rows=(await this.db.query(`SELECT l.type,l.from_type,l.from_id,l.to_type,l.to_id,f.properties AS from_properties,t.properties AS to_properties
+      FROM ${this.db.schema}.materialized_links l
+      JOIN ${this.db.schema}.materialized_objects f ON f.materialization_id=l.materialization_id AND f.type=l.from_type AND f.id=l.from_id
+      JOIN ${this.db.schema}.materialized_objects t ON t.materialization_id=l.materialization_id AND t.type=l.to_type AND t.id=l.to_id
+      WHERE l.materialization_id=$1 ORDER BY l.type,l.from_type,l.from_id,l.to_type,l.to_id OFFSET $2 LIMIT 101`,[id,after])).rows;
     const graph=new Objects(this.db,model,access),items=[];
     for(const row of rows.slice(0,100)){
       access.definition(model,'link',row.type);
       const from={type:row.from_type as string,id:row.from_id as string},to={type:row.to_type as string,id:row.to_id as string};
       try{await graph.read(from);await graph.read(to);}catch(error){if(error instanceof NotFound)continue;throw error;}
+      if(!graph.maskSnapshot(from,row.from_properties)||!graph.maskSnapshot(to,row.to_properties))continue;
       items.push({type:String(row.type),from,to});
     }
     await access.refresh();

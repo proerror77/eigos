@@ -96,6 +96,7 @@ export async function resolveSourceEdit(graph: Objects, ref: ObjectRef, incoming
   const prior = (await graph.db.query(`SELECT properties,observed_at FROM ${graph.db.schema}.source_values WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND source=$5`,[...key(graph,ref),source],graph.client)).rows[0];
   if (prior && new Date(prior.observed_at).getTime() > Date.parse(observed)) return before;
   if (prior && new Date(prior.observed_at).getTime() === Date.parse(observed) && digest(prior.properties) !== digest(incoming)) throw new Conflict('One source timestamp contains conflicting object data');
+  await graph.db.query(`DELETE FROM ${graph.db.schema}.source_values WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND source='__legacy__'`,key(graph,ref),graph.client);
   await graph.db.query(`INSERT INTO ${graph.db.schema}.source_values(projection,owner,type,id,source,properties,observed_at)
     VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(projection,owner,type,id,source) DO UPDATE SET properties=excluded.properties,observed_at=excluded.observed_at`,[...key(graph,ref),source,incoming,observed],graph.client);
   const edits = await state(graph,ref);
@@ -107,13 +108,16 @@ export async function resolveSourceEdit(graph: Objects, ref: ObjectRef, incoming
       if (row.properties === null) continue;
       resolved ??= {};
       for (const [field, value] of Object.entries(row.properties)) {
+        if(!graph.model.object(ref.type).properties[field])continue;
         resolved[field] = value;
-        times.set(field,new Date(row.observed_at).getTime());
+        const timestamp=new Date(row.observed_at).getTime();
+        times.set(field,Number.isFinite(timestamp)?timestamp:-Infinity);
       }
     }
     if (edits.created) resolved ??= {};
     const policy = (await graph.db.query(`SELECT policy FROM ${graph.db.schema}.edit_policies WHERE ontology=$1 AND type=$2`,[graph.model.document.id,ref.type],graph.client)).rows[0]?.policy ?? 'user_wins';
     if (resolved) for (const [field, edit] of Object.entries(edits.overrides)) {
+      if(!graph.model.object(ref.type).properties[field])continue;
       if (policy === 'user_wins' || !times.has(field) || Date.parse(edit.at) > times.get(field)!) resolved[field] = edit.value;
     }
   }
@@ -128,9 +132,10 @@ export class EditHistory {
     z.string().regex(/^\d+$/).parse(after); z.number().int().min(1).max(100).parse(limit);
     // Current object visibility governs historical data too. Deleted instances cannot be loaded through this endpoint.
     await graph.read(ref);
-    const rows = (await this.db.query(`SELECT sequence::text,operation,source,before_values,after_values,actor,happened_at,release
-      FROM ${this.db.schema}.edit_history WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND sequence>$5::bigint ORDER BY sequence LIMIT $6`,[...key(graph,ref),after,limit+1],graph.client)).rows;
-    const mask = (properties: Properties | null) => properties && Object.fromEntries(Object.entries(properties).map(([field,value]) => [field,graph.access.property(graph.model,ref.type,field) ? value : null]));
+    const rows = (await this.db.query(`SELECT h.sequence::text,h.operation,h.source,h.before_values,h.after_values,h.actor,h.happened_at,h.release
+      FROM ${this.db.schema}.edit_history h JOIN ${this.db.schema}.releases r ON r.digest=h.release
+      WHERE r.body->>'id'=$1 AND h.owner=$2 AND h.type=$3 AND h.id=$4 AND h.sequence>$5::bigint ORDER BY h.sequence LIMIT $6`,[graph.model.document.id,graph.owner,ref.type,ref.id,after,limit+1],graph.client)).rows;
+    const mask = (properties: Properties | null) => properties && graph.maskSnapshot(ref,properties);
     const items = rows.slice(0,limit).map(row => ({ sequence: row.sequence, operation: row.operation, source: row.source, before: mask(row.before_values), after: mask(row.after_values), actor: row.actor, at: row.happened_at, release: row.release }));
     await graph.access.refresh(graph.client);
     return { items, cursor: rows.length > limit ? items.at(-1)!.sequence : undefined };
@@ -138,9 +143,11 @@ export class EditHistory {
 }
 
 /** A replacement publication carries conflict baselines and overlays forward with the resolved objects. */
-export async function copyEditState(db: Database, from: string, to: string, client: Sql) {
+export async function copyEditState(db: Database, from: string, to: string, client: Sql, types?: readonly string[]) {
+  if(from===to)throw new Conflict('A replacement projection must differ from its source');
   for (const table of ['source_values','object_edits'] as const) {
     const columns = table === 'source_values' ? 'owner,type,id,source,properties,observed_at' : 'owner,type,id,overrides,deleted,created';
-    await db.query(`INSERT INTO ${db.schema}.${table}(projection,${columns}) SELECT $2,${columns} FROM ${db.schema}.${table} WHERE projection=$1 ON CONFLICT DO NOTHING`,[from,to],client);
+    await db.query(`DELETE FROM ${db.schema}.${table} WHERE projection=$1`,[to],client);
+    await db.query(`INSERT INTO ${db.schema}.${table}(projection,${columns}) SELECT $2,${columns} FROM ${db.schema}.${table} WHERE projection=$1 AND ($3::text[] IS NULL OR type=ANY($3::text[]))`,[from,to,types??null],client);
   }
 }
