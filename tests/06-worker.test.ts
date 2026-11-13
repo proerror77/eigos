@@ -160,11 +160,11 @@ test('the production database role can execute an inquiry without publication up
     const { Database } = await import('../packages/runtime/database.js');
     const { Metadata } = await import('../packages/runtime/metadata.js');
     const { Tasks } = await import('../packages/runtime/tasks.js');
-    const { rideCapabilities } = await import('../packages/capabilities/didi/pipeline.js');
+    const { createCapabilities } = await import('../packages/capabilities/index.js');
     const { FixtureAgent } = await import('./agent-driver.js');
     const url = new URL(process.env.EIGOS_TEST_DATABASE_URL!); url.searchParams.set('options', '-c role=' + role);
     limited = new Database(url.toString(), f.schema);
-    const metadata = new Metadata(limited), tasks = new Tasks(limited, metadata), capabilities = rideCapabilities(limited, f.source);
+    const metadata = new Metadata(limited), tasks = new Tasks(limited, metadata), capabilities = createCapabilities(limited, f.source);
     const worker = new Worker(tasks, new OntologyAgent(limited, metadata, tasks, capabilities, new FixtureAgent()));
     await assert.rejects(limited.query(`UPDATE ${limited.schema}.ontology SET release=release`), /permission denied/);
     const task = await tasks.submit(principal, { requestId: 'production-role', message: '只询价', route });

@@ -62,6 +62,7 @@ export class Access {
   function(model: Ontology, name: string) { this.definition(model, 'function', name); this.require(model.document.id, 'execute_function', resource(model.document.id, 'function', name)); }
   source(model: Ontology, name: string) { this.require(model.document.id, 'read_source', resource(model.document.id, 'source', name), true); }
   dataRequirements(): Requirement[] { return [...this.data.values()]; }
+  requirements(): Requirement[] { return [...this.required.values()]; }
   canReturn(requirements: Requirement[]): boolean {
     return requirements.every(r => this.allows(r) && (r.permission !== 'view_objects' || this.allows({ ...r, permission: 'view_definition' })));
   }

@@ -11,23 +11,26 @@ import { Access } from '../../packages/runtime/access.js';
 import { Database } from '../../packages/runtime/database.js';
 import { Metadata } from '../../packages/runtime/metadata.js';
 import { Objects, querySchema } from '../../packages/runtime/objects.js';
+import { Scenarios, createScenarioSchema } from '../../packages/runtime/scenarios.js';
+import { PARequests, paResponseSchema } from '../../packages/runtime/pa.js';
 import { Tasks, submitSchema, publicTask, placeSelectionSchema } from '../../packages/runtime/tasks.js';
-import { rideCapabilities } from '../../packages/capabilities/didi/pipeline.js';
+import { createCapabilities } from '../../packages/capabilities/index.js';
 import type { SourceResolver } from '../../packages/capabilities/didi/functions.js';
 import { verifier, type VerifyToken } from './auth.js';
 import { A2A, AgentUser, agentCard } from './a2a.js';
 
-const queryInput = z.strictObject({ taskId: z.uuid().optional(), query: querySchema });
-const functionInput = z.strictObject({ taskId: z.uuid().optional(), function: z.string(), input: z.record(z.string(), z.unknown()) });
-const actionInput = z.strictObject({ requestId: z.string().min(1).max(128), action: z.string().optional(),
+const queryInput = z.strictObject({ taskId: z.uuid().optional(), scenarioId: z.uuid().optional(), query: querySchema });
+const functionInput = z.strictObject({ taskId: z.uuid().optional(), scenarioId: z.uuid().optional(), function: z.string(), input: z.record(z.string(), z.unknown()) });
+const actionInput = z.strictObject({ scenarioId: z.uuid().optional(), requestId: z.string().min(1).max(128), action: z.string().optional(),
   interface: z.strictObject({ object: objectRefSchema.optional(), implementation: z.string().optional(), type: z.string(), action: z.string() })
     .refine(value => !!value.object !== !!value.implementation, 'Select an object or implementing Object Type').optional(), input: z.record(z.string(), z.unknown()) })
   .refine(value => !!value.action !== !!value.interface, 'Select an Action or an Interface Action');
 
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config)) {
-  const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = rideCapabilities(db, source);
+  const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source);
+  const scenarios = new Scenarios(db), pa = new PARequests(tasks);
   const principals = new WeakMap<Request, Principal>();
-  app.disable('x-powered-by'); app.use(express.json({ limit: '64kb' }));
+  app.disable('x-powered-by'); app.use(express.json({ limit: '256kb' }));
   app.use((req, res, next) => {
     if (req.headers.origin && req.headers.origin !== config.PUBLIC_URL) { res.status(403).json({ error: 'Origin is not permitted' }); return; }
     if (req.hostname !== new URL(config.PUBLIC_URL).hostname) { res.status(403).json({ error: 'Host is not configured' }); return; }
@@ -46,27 +49,39 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     catch { res.setHeader('WWW-Authenticate', 'Bearer'); res.status(401).json({ error: 'Authentication required' }); }
   });
   const principal = (req: Request) => principals.get(req)!;
-  const modelFor = async (p: Principal, taskId?: string) => taskId ? metadata.get((await tasks.get(p, taskId)).release) : metadata.active();
+  const modelFor = async (p: Principal, taskId?: string, scenarioId?: string, access?: Access) => {
+    const model = await (taskId ? metadata.get((await tasks.get(p, taskId)).release) : metadata.active());
+    return scenarioId ? scenarios.view(access ?? await Access.load(db,p),model,scenarioId) : model;
+  };
   const query = async (p: Principal, raw: unknown) => {
     requireScope(p, 'ontology:read'); const input = queryInput.parse(raw);
-    const access = await Access.load(db, p), result = await new Objects(db, await modelFor(p, input.taskId), access).query(input.query);
+    const access = await Access.load(db, p), result = await new Objects(db, await modelFor(p, input.taskId, input.scenarioId), access).query(input.query);
     await access.refresh(); return result;
   };
   const evaluate = async (p: Principal, raw: unknown) => {
     requireScope(p, 'ontology:read');
-    const input = functionInput.parse(raw), model = await modelFor(p, input.taskId), access = await Access.load(db, p);
+    const input = functionInput.parse(raw), model = await modelFor(p, input.taskId, input.scenarioId), access = await Access.load(db, p);
     const result = await capabilities.functions.invoke(model, input.function, input.input, { principal: p, objects: new Objects(db, model, access), signal: AbortSignal.timeout(30000) });
     await access.refresh(); return result;
   };
   const apply = async (p: Principal, raw: unknown) => {
     requireScope(p, 'ontology:write');
-    const input = actionInput.parse(raw), model = await metadata.active(), access = await Access.load(db, p);
+    const input = actionInput.parse(raw), access = await Access.load(db, p), model = await modelFor(p,undefined,input.scenarioId,access);
     const target = input.interface;
     if (target) { access.definition(model, 'interface', target.type); access.definition(model, 'object', target.implementation ?? target.object!.type); }
     const selected = target ? target.object ? model.resolveAction(target.object, target.type, target.action, input.input)
       : model.resolveTypeAction(target.implementation!, target.type, target.action, input.input) : { action: input.action!, input: input.input };
     return capabilities.actions.apply(access, model, selected.action, selected.input, input.requestId);
   };
+  const scenarioCreate = async (p: Principal, raw: unknown) => { requireScope(p,'ontology:write'); return scenarios.create(await Access.load(db,p),await metadata.active(),raw); };
+  const scenarioRead = async (p: Principal, id: string) => { requireScope(p,'ontology:read'); return scenarios.inspect(await Access.load(db,p),await metadata.active(),id); };
+  const scenarioList = async (p: Principal,cursor?:string) => { requireScope(p,'ontology:read'); return scenarios.list(await Access.load(db,p),await metadata.active(),cursor); };
+  const scenarioDiscard = async (p: Principal, id: string, revision: number) => { requireScope(p,'ontology:write'); return scenarios.discard(await Access.load(db,p),await metadata.active(),id,revision); };
+  app.post('/ontology/scenarios', async (req,res)=>res.json(await scenarioCreate(principal(req),req.body)));
+  app.get('/ontology/scenarios', async (req,res)=>res.json(await scenarioList(principal(req),typeof req.query.cursor==='string'?req.query.cursor:undefined)));
+  app.get('/ontology/scenarios/:id', async (req,res)=>res.json(await scenarioRead(principal(req),String(req.params.id))));
+  app.post('/ontology/scenarios/:id/discard', async (req,res)=>res.json(await scenarioDiscard(principal(req),String(req.params.id),req.body.revision)));
+  app.post('/tasks/:id/pa-response', async (req,res)=>res.json(publicTask(await pa.respond(principal(req),String(req.params.id),req.body))));
   app.get('/identity', (req, res) => res.json(principal(req)));
   app.post('/tasks', async (req, res) => res.json(publicTask(await tasks.submit(principal(req), req.body))));
   app.get('/tasks/:id', async (req, res) => res.json(publicTask(await tasks.get(principal(req), String(req.params.id)))));
@@ -82,9 +97,14 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       try { const result = await operation(); return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] }; }
       catch (error) { return { isError: true, content: [{ type: 'text' as const, text: error instanceof Error ? error.message : 'Request failed' }] }; }
     };
-    server.registerTool('submit_task', { description: 'Submit a read-only ride estimate request.', inputSchema: submitSchema }, input => response(async () => publicTask(await tasks.submit(p, input))));
-    server.registerTool('get_task', { description: 'Read your original task and quote.', inputSchema: z.strictObject({ taskId: z.uuid() }) }, input => response(async () => publicTask(await tasks.get(p, input.taskId))));
+    server.registerTool('submit_task', { description: 'Submit an inquiry or calendar-backed planning request. PA information requests resume on the original task.', inputSchema: submitSchema }, input => response(async () => publicTask(await tasks.submit(p, input))));
+    server.registerTool('get_task', { description: 'Read your original task, result or PA information request.', inputSchema: z.strictObject({ taskId: z.uuid() }) }, input => response(async () => publicTask(await tasks.get(p, input.taskId))));
     server.registerTool('select_task_places', { description: 'Select source-returned endpoints for a task waiting for clarification.', inputSchema: z.strictObject({ taskId: z.uuid(), places: placeSelectionSchema }) }, input => response(async () => publicTask(await tasks.selectPlaces(p, input.taskId, input.places))));
+    server.registerTool('respond_to_task', { description:'Supply the authenticated PA response to the original task information request. Use the responseSchema returned with that request.',inputSchema:z.strictObject({taskId:z.uuid(),...paResponseSchema.shape}) }, input=>response(async()=>publicTask(await pa.respond(p,input.taskId,{requestId:input.requestId,response:input.response}))));
+    server.registerTool('create_scenario', { description:'Create an isolated what-if view over current Ontology data.',inputSchema:createScenarioSchema }, input=>response(()=>scenarioCreate(p,input)));
+    server.registerTool('list_scenarios', { description:'List your open scenarios; follow cursor for the next page.',inputSchema:z.strictObject({cursor:z.uuid().optional()}) }, input=>response(()=>scenarioList(p,input.cursor)));
+    server.registerTool('inspect_scenario', { description:'Read a scenario revision, proposed object/link changes and object conflicts.',inputSchema:z.strictObject({scenarioId:z.uuid()}) }, input=>response(()=>scenarioRead(p,input.scenarioId)));
+    server.registerTool('discard_scenario', { description:'Discard the exact reviewed scenario revision.',inputSchema:z.strictObject({scenarioId:z.uuid(),revision:z.number().int().positive()}) }, input=>response(()=>scenarioDiscard(p,input.scenarioId,input.revision)));
     server.registerTool('query_ontology', { description: 'Query object sets using an Object Type or Interface and its property and link names.', inputSchema: queryInput }, input => response(() => query(p, input)));
     server.registerTool('evaluate_ontology', { description: 'Invoke a published Function.', inputSchema: functionInput }, input => response(() => evaluate(p, input)));
     server.registerTool('apply_ontology_action', { description: 'Submit a published Action through its declared parameters and submission criteria.', inputSchema: actionInput }, input => response(() => apply(p, input)));

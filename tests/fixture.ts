@@ -2,14 +2,14 @@ import { randomUUID, createHash } from 'node:crypto';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import { Database } from '../packages/runtime/database.js';
 import { Access, setGrants, memberGrants } from '../packages/runtime/access.js';
+import { businessDefinition } from '../packages/ontology/definition.js';
 import { Ontology } from '../packages/ontology/model.js';
 import { Metadata } from '../packages/runtime/metadata.js';
 import { Tasks } from '../packages/runtime/tasks.js';
-import { rideCapabilities } from '../packages/capabilities/didi/pipeline.js';
+import { createCapabilities } from '../packages/capabilities/index.js';
 import { OntologyAgent, type AgentDriver } from '../packages/runtime/agent.js';
 import { FixtureAgent } from './agent-driver.js';
 import { Worker } from '../apps/worker/worker.js';
@@ -18,7 +18,7 @@ import { DidiMcpConnector } from '../packages/capabilities/didi/connector.js';
 import { didiToolInputs } from '../packages/capabilities/didi/contracts.js';
 import type { DidiSource } from '../packages/capabilities/didi/functions.js';
 
-export const document = JSON.parse(readFileSync(new URL('../packages/ontology/definitions/ride.json', import.meta.url), 'utf8'));
+export const document = businessDefinition;
 export const route = { city: '上海市', origin: '中企云翠森林', destination: '前滩太古里' };
 export const principal = developmentPrincipal;
 export async function provider() {
@@ -63,7 +63,7 @@ export async function fixture(driver: AgentDriver = new FixtureAgent()) {
   await setGrants(db, principal.owner, memberGrants(new Ontology(document)));
   const access = await Access.load(db, principal);
   const source = async (owner: string) => { if (owner !== principal.owner) throw new Error('Wrong source owner'); return p.source; };
-  const capabilities = rideCapabilities(db, source), model = await metadata.publish(document, capabilities, publisher), agent = new OntologyAgent(db, metadata, tasks, capabilities, driver), worker = new Worker(tasks, agent);
+  const capabilities = createCapabilities(db, source), model = await metadata.publish(document, capabilities, publisher), agent = new OntologyAgent(db, metadata, tasks, capabilities, driver), worker = new Worker(tasks, agent);
   return { db, schema, model, metadata, tasks, capabilities, access, publisher, agent, worker, source, provider: p,
     submit: () => tasks.submit(principal, { requestId: randomUUID(), message: '从中企云翠森林到前滩太古里，只询价', route }),
     async close() { worker.stop(); await db.query(`DROP SCHEMA ${db.schema} CASCADE`); await db.close(); await p.close(); },

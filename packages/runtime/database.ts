@@ -61,5 +61,22 @@ export class Database {
       ALTER TABLE ${s}.tasks ADD COLUMN IF NOT EXISTS result_permissions jsonb;
       CREATE INDEX IF NOT EXISTS tasks_queue ON ${s}.tasks(state,created_at);
       CREATE TABLE IF NOT EXISTS ${s}.source_calls (task_id uuid NOT NULL REFERENCES ${s}.tasks(id), name text NOT NULL, state text NOT NULL, input_digest text NOT NULL, result jsonb, PRIMARY KEY(task_id,name));`);
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS ${s}.scenarios (id uuid PRIMARY KEY, owner text NOT NULL, request_id text NOT NULL, name text NOT NULL,
+        release text NOT NULL REFERENCES ${s}.releases(digest), revision bigint NOT NULL DEFAULT 1, state text NOT NULL DEFAULT 'open',
+        created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL DEFAULT now()+interval '31 days', UNIQUE(owner,request_id));
+      CREATE TABLE IF NOT EXISTS ${s}.scenario_objects (scenario_id uuid NOT NULL REFERENCES ${s}.scenarios(id), owner text NOT NULL,
+        type text NOT NULL, id text NOT NULL, base_revision bigint, base_properties jsonb, base_links jsonb NOT NULL, revision bigint NOT NULL, properties jsonb,
+        PRIMARY KEY(scenario_id,owner,type,id));
+      CREATE TABLE IF NOT EXISTS ${s}.scenario_links (scenario_id uuid NOT NULL REFERENCES ${s}.scenarios(id), owner text NOT NULL,
+        type text NOT NULL, from_type text NOT NULL, from_id text NOT NULL, to_type text NOT NULL, to_id text NOT NULL,
+        single_from boolean NOT NULL, single_to boolean NOT NULL, base_present boolean NOT NULL, removed boolean NOT NULL,
+        PRIMARY KEY(scenario_id,owner,type,from_type,from_id,to_type,to_id));
+      CREATE TABLE IF NOT EXISTS ${s}.scenario_actions (scenario_id uuid NOT NULL REFERENCES ${s}.scenarios(id), owner text NOT NULL,
+        request_id text NOT NULL, digest text NOT NULL, action text NOT NULL, result jsonb NOT NULL, requirements jsonb NOT NULL,
+        PRIMARY KEY(scenario_id,owner,request_id));
+      CREATE TABLE IF NOT EXISTS ${s}.pa_requests (id uuid PRIMARY KEY, task_id uuid NOT NULL REFERENCES ${s}.tasks(id), owner text NOT NULL,
+        request_key text NOT NULL, request jsonb NOT NULL, response jsonb, response_digest text, created_at timestamptz NOT NULL DEFAULT now(),
+        UNIQUE(task_id,request_key));`);
   }
 }

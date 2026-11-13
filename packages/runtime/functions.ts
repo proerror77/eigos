@@ -31,6 +31,7 @@ export class Functions {
     if (model.runtimeId !== access.runtimeId || model.bindings.functions[name] !== this.contracts.get(name)) throw new Error('Historical Function implementation is unavailable in this runtime');
     const definition = model.functions.get(name), handler = this.handlers.get(name);
     if (!definition || !handler) throw new Error(`Function is unavailable: ${name}`);
+    if (model.scenario && definition.source) throw new Error('Read external sources before opening a scenario; scenario Functions only use Ontology data');
     if (definition.edits && !context.edit) throw new Error('Ontology edit Functions must be invoked through an Action');
     if (definition.source) { await access.refresh(); access.source(model, definition.source); }
     context.signal.throwIfAborted();
