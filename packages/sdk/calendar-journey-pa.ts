@@ -33,6 +33,26 @@ export class CalendarJourneyPA {
     }
     return this.ontology.request(`tasks/${taskId}/pa-response`, { requestId: request.requestId, response: answer }, signal);
   }
+
+  async answerPendingFor(selection: z.infer<typeof journeyCalendarRequest>, signal = AbortSignal.timeout(30000)) {
+    const inbox = z.object({
+      items: z.array(z.object({ taskId: z.uuid(), request: z.unknown() })), cursor: z.uuid().optional(),
+    });
+    const seen = new Set<string>();
+    let page = 'pa/requests?limit=50';
+    for (;;) {
+      const contents = inbox.parse(await this.ontology.request(page, undefined, signal));
+      const match = contents.items.find(item => {
+        const parsed = pendingRequest.safeParse(item.request);
+        return parsed.success && digest(parsed.data.input) === digest(selection);
+      });
+      if (match) return this.answer(match.taskId, signal);
+      if (!contents.cursor) return;
+      if (seen.has(contents.cursor) || seen.size >= 100) throw new Conflict('PA inbox cursor did not advance');
+      seen.add(contents.cursor);
+      page = 'pa/requests?limit=50&cursor=' + contents.cursor;
+    }
+  }
 }
 
 const googleEvent = z.object({
