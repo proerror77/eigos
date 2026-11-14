@@ -37,7 +37,7 @@ test('remote EIGOS processes a due journey while a model task is busy and delive
     const at = (minutes: number) => new Date(Date.now() + minutes * 60000).toISOString();
     const input = { origin: {calendarId:'selected',eventId:'origin'}, destination: {calendarId:'selected',eventId:'destination'},
       mode:'driving', monitorUntil: at(120) };
-    let cancelled = false, tokenCalls = 0, eventReads = 0, lost = false;
+    let cancelled = false, destinationIn = 60, tokenCalls = 0, eventReads = 0, lost = false;
     const posted: { headers: Headers; body: Record<string, any> }[] = [];
     const capabilities = createCapabilities(f.db, f.source, {}, undefined, undefined, {
       amap: await testConnection(folder), amapFetch: fakeAmap([], {durationSeconds:1500, condition:'晴'}),
@@ -55,7 +55,7 @@ test('remote EIGOS processes a due journey while a model task is busy and delive
         const id = url.pathname.split('/').at(-1);
         assert(id === 'origin' || id === 'destination');
         if (id === 'destination' && cancelled) return Response.json({id,status:'cancelled'});
-        const start = id === 'origin' ? -60 : 60;
+        const start = id === 'origin' ? -60 : destinationIn;
         return Response.json({ id, etag:'source-revision',status:'confirmed',summary:'Private title must not be sent',
           location: id === 'origin' ? '上海出发地点' : '上海到达地点',
           start:{dateTime:at(start)},end:{dateTime:at(start+20)} });
@@ -79,43 +79,74 @@ test('remote EIGOS processes a due journey while a model task is busy and delive
     const ref = await apply('StartCalendarJourney', input, 'bounded-journey');
 
     const effectStatus = async () => (await f.db.query('SELECT id,state,payload FROM ' + f.schema + '.action_effects ORDER BY created_at')).rows;
-    await eventually(async () => (await effectStatus()).length === 1);
+    const checked = (step: number) => eventually(async () => (await f.db.query(
+      "SELECT 1 FROM " + f.schema + ".tasks WHERE input ? 'scheduledAction' AND execution_step=$1 AND state='submitted'",[step])).rowCount === 1);
+    const makeDue = async () => {
+      const recheck = await f.db.query("UPDATE " + f.schema + ".tasks SET available_at=now()-interval '1 second' WHERE input ? 'scheduledAction' AND state='submitted'");
+      assert.equal(recheck.rowCount,1);
+    };
+    await checked(1);
     assert.equal((await f.tasks.get(principal, firstInteractive.id)).state,'working');
     assert.equal((await f.db.query('SELECT 1 FROM ' + f.schema + '.pa_requests')).rowCount,0);
     assert.equal(tokenCalls,1);
     assert.equal(eventReads,2);
+    assert.equal((await effectStatus()).length,0);
     assert.equal(posted.length,0);
 
+    destinationIn = 37;
+    await makeDue();
+    await eventually(async () => (await effectStatus()).length === 1);
     const saved = (await effectStatus())[0]!;
     assert.equal(saved.payload.object.type,'CalendarJourney');
     await capabilities.effects.runOne();
     assert.equal(posted.length,1);
     assert.deepEqual(posted[0]!.body.object,ref);
-    assert.equal(posted[0]!.body.version,1);
+    assert.equal(posted[0]!.body.version,2);
     assert.equal(posted[0]!.body.operation,'update');
+    assert.match(posted[0]!.body.text,/该准备出发/);
     assert.equal(posted[0]!.headers.get('Idempotency-Key'),saved.id);
     assert(!JSON.stringify(posted[0]!.body).includes('Private title'));
     assert(!JSON.stringify(posted[0]!.body).includes('@'));
     assert.equal((await effectStatus())[0]!.state,'completed');
+    const receipt = (await f.db.query('SELECT state,result FROM ' + f.schema + '.external_operations WHERE operation_key=$1',[saved.id])).rows[0]!;
+    assert.equal(receipt.state,'confirmed');
+    assert.equal(receipt.result.runId,'8e690fdf-c2c8-4ff4-b930-a889c63c181a');
+    assert(Number.isFinite(Date.parse(receipt.result.acceptedAt)));
 
-    // Pull the existing continuation forward in the isolated database to exercise provider cancellation.
-    cancelled = true;
-    await eventually(async () => (await f.db.query("SELECT 1 FROM " + f.schema + ".tasks WHERE input ? 'scheduledAction' AND execution_step=1")).rowCount === 1);
-    const recheck = await f.db.query("UPDATE " + f.schema + ".tasks SET available_at=now()-interval '1 second' WHERE input ? 'scheduledAction' AND state='submitted'");
-    assert.equal(recheck.rowCount,1);
+    // A later appointment returns the timer to EIGOS and withdraws the former due notice.
+    destinationIn = 60;
+    await checked(2);
+    await makeDue();
     await eventually(async () => (await effectStatus()).length === 2);
-    lost = true;
     await capabilities.effects.runOne();
     assert.equal(posted[1]!.body.operation,'withdraw');
-    assert.equal(posted[1]!.body.version,2);
+    assert.equal(posted[1]!.body.version,3);
     assert.equal(posted[1]!.body.calendar.reminder,null);
-    const failed = (await effectStatus())[1]!;
+
+    // Cancel after a new update was queued, before the PA received it.
+    destinationIn = 37;
+    await checked(3);
+    await makeDue();
+    await eventually(async () => (await effectStatus()).length === 3);
+    cancelled = true;
+    await checked(4);
+    await makeDue();
+    await eventually(async () => (await effectStatus()).length === 4);
+    await capabilities.effects.runOne();
+    assert.equal(posted.length,2);
+    assert.equal((await effectStatus())[2]!.state,'canceled');
+    lost = true;
+    await capabilities.effects.runOne();
+    assert.equal(posted[2]!.body.operation,'withdraw');
+    assert.equal(posted[2]!.body.version,5);
+    assert.equal(posted[2]!.body.calendar.reminder,null);
+    const failed = (await effectStatus())[3]!;
     assert.equal(failed.state,'failed');
     await capabilities.effects.retry(await access(),failed.id);
     await capabilities.effects.runOne();
-    assert.equal(posted.length,2);
-    assert.equal((await effectStatus())[1]!.state,'failed');
-    assert.equal(eventReads,4);
+    assert.equal(posted.length,3);
+    assert.equal((await effectStatus())[3]!.state,'failed');
+    assert.equal(eventReads,10);
     finish();
     await eventually(async () => (await f.tasks.get(principal, firstInteractive.id)).state === 'completed');
   } finally {

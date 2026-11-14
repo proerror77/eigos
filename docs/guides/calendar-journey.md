@@ -15,9 +15,9 @@ PA 选择一场出发前的活动和下一场活动，明确授权监测范围�
 
 ## PA 投递提醒
 
-在 EIGOS 常驻运行模式中，Worker 使用已保存的对象引用定时检查，计算出发时间并提交提醒版本。Action 与通知任务在同一事务提交。Indexer 用现有 Action Effects 队列读取当前版本，把变更和撤回推给配置的 PA。PA 根据自己的通知能力投递给用户。PA 可用现有 `tasks:read` 从 Ontology MCP 回读自己的状态，访问仍经过 Function、来源和对象权限检查。参考 [Palantir 时间条件](https://www.palantir.com/docs/foundry/automate/condition-time) 和 [Notification effects](https://www.palantir.com/docs/foundry/automate/effect-notification)。
+在 EIGOS 常驻运行模式中，Worker 使用已保存的对象引用定时检查，计算出发时间并提交提醒版本。未来的出发时间继续由 EIGOS 管理。到点或出现冲突时，Action 与通知任务在同一事务提交。Indexer 用现有 Action Effects 队列读取当前版本，把已生成的提醒和撤回推给配置的 PA。PA 根据自己的通知能力投递给用户。PA 可用现有 `tasks:read` 从 Ontology MCP 回读自己的状态，访问仍经过 Function、来源和对象权限检查。参考 [Palantir 时间条件](https://www.palantir.com/docs/foundry/automate/condition-time) 和 [Notification effects](https://www.palantir.com/docs/foundry/automate/effect-notification)。
 
-单租户部署可配置 `EIGOS_TRAVEL_PA_CONNECTION_FILE`，使用运行用户拥有的 0600 JSON 文件，字段为 `owner`、Grok Bot 官方 webhook `endpoint` 和凭证绝对路径 `keyFile`。PA 的 webhook 例行任务只接收事件触发，使用 `object`、`version`、`operation` 去重、更新和撤回，按服务端已经计算的状态投递。Webhook 回执表示 PA 受理。送达验收在原 PA 会话与其通知渠道回读。回执未知时保留原操作，禁止自动重复投递。[Grok Bot webhook](https://docs.x.ai/grok-bot/skills-routines-and-automations)
+单租户部署可配置 `EIGOS_TRAVEL_PA_CONNECTION_FILE`，使用运行用户拥有的 0600 JSON 文件，字段为 `owner`、Grok Bot 官方 webhook `endpoint` 和凭证绝对路径 `keyFile`。PA 的 webhook 例行任务只接收事件触发，按 `object` 保存已处理的最高 `version`，忽略旧版本与重复事件。按 `operation` 更新或撤回同一对象的提醒，使用 EIGOS 提供的 `text`。Webhook 回执表示 PA 受理。送达验收在原 PA 会话与其通知渠道回读。回执未知时保留原操作，禁止自动重复投递。[Grok Bot webhook](https://docs.x.ai/grok-bot/skills-routines-and-automations)
 
 若该用户单独向 EIGOS 部署授权 Google 日历只读来源，可配置 `EIGOS_JOURNEY_CALENDAR_CONNECTION_FILE`。私有 JSON 包含 `owner`、允许读取的 `calendarIds`、`clientId`、`clientSecret` 和该部署专用的 `refreshToken`。仅使用 `calendar.events.readonly` 并按选定活动 ID 读取。未配置时，原 PA 仍可用现有待办回传日历数据。[Google Calendar Events.get](https://developers.google.com/workspace/calendar/api/v3/reference/events/get)
 

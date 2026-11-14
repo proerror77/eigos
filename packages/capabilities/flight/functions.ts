@@ -82,7 +82,7 @@ export function flightFunctions(db: Database, functions: () => Functions, resolv
         const fields = {
           settings, scheduleId, sourceAuthority: authority, checks: 0, state: 'pending', reason: 'waiting',
           checkedAt: null, nextCheckAt: runAt, status: null, observedAt: null, knownGate: null, knownTerminal: null,
-          alert: null, alertVersion: previous?.alertVersion ?? 0,
+          alert: null, alertVersion: (previous?.alertVersion ?? 0) + (previous?.alert ? 1 : 0),
         };
         if (read) await graph.edit(watch, read.row.revision, fields);
         else await graph.create(watch, { ...fields, id: watch.id, name: `${settings.flightNumber} ${settings.origin}–${settings.destination}` });
@@ -102,7 +102,10 @@ export function flightFunctions(db: Database, functions: () => Functions, resolv
         throw error;
       });
       if (!source || source.authorityId !== previous.sourceAuthority) return edit(watch, async graph => {
-        await graph.edit(watch, row.revision, { state: 'ended', reason: 'source_changed', alert: null, nextCheckAt: null });
+        await graph.edit(watch, row.revision, {
+          state: 'ended', reason: 'source_changed', nextCheckAt: null,
+          alert: null, alertVersion: previous.alertVersion + (previous.alert ? 1 : 0),
+        });
       });
       const assertCurrent: NonNullable<FunctionContext['assertCurrent']> = async client => {
         await ctx.assertCurrent?.(client);

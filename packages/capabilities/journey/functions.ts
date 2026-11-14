@@ -205,9 +205,10 @@ export function calendarJourneyFunctions(db: Database, getFunctions: () => Funct
           }
         }
         const scheduleId = digest([ref.id, context.operationId]), runAt = iso(Date.now());
+        const reminderVersion = (prior?.journey.reminderVersion ?? 0) + (prior?.journey.reminder ? 1 : 0);
         const fields = {
           ...emptyObservation('pending', 'pending'), settings, scheduleId, mapAuthority, nextCheckAt: runAt, checkedAt: null,
-          validUntil: null, reminderVersion: prior?.journey.reminderVersion ?? 0, reminder: null,
+          validUntil: null, reminderVersion, reminder: null,
         };
         if (prior) await graph.edit(ref, prior.row.revision, fields);
         else await graph.create(ref, { ...fields, name: 'Next calendar stop', id: ref.id });
