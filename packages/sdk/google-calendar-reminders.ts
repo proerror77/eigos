@@ -66,7 +66,7 @@ function flightReminder(result: z.infer<typeof flightWatchRead>, now: number): I
   } };
 }
 
-/** Runs on the PA. Google authorizes calendar writes and delivers the popup to signed-in phones. */
+/** Optional notification channel chosen and run by the PA using its own Google Calendar access. */
 export class GoogleCalendarReminders {
   private readonly base: URL;
   private readonly fetcher: typeof fetch;
