@@ -1,0 +1,65 @@
+import assert from 'node:assert/strict';
+import { createDecipheriv } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test } from 'node:test';
+import { waimaiFunctions } from '../packages/capabilities/meituan/waimai.js';
+import { Access, setGrants } from '../packages/runtime/access.js';
+import { Functions } from '../packages/runtime/functions.js';
+import { Objects } from '../packages/runtime/objects.js';
+import { deliveryFunctions, waimaiArrival, waimaiShops } from '../packages/ontology/delivery.js';
+import { fixture, principal } from './fixture.js';
+
+test('Waimai sends only signed store and arrival reads, preserves zero fees and marks an unspecified arrival as unknown', async () => {
+  const f = await fixture(), directory = await mkdtemp(join(tmpdir(), 'eigos-waimai-connection-'));
+  const config = join(directory, 'connection.json');
+  const key = Buffer.from('fixture-aes-key!');
+  const calls: { path: string; parameters: Record<string, unknown> }[] = [];
+  await writeFile(config, JSON.stringify({ owner: principal.owner, active: true, environment: 'test',
+    version: '1.0', token: 'mock-account', sign: 'mock-signature', aesKey: key.toString('base64url'),
+  }), { mode: 0o600 });
+  const supply: typeof fetch = async (target, init) => {
+    const url = new URL(String(target));
+    assert.equal(url.origin, 'https://sqt-api.test.meituan.com');
+    assert.equal(init?.method, 'POST');
+    const body = init?.body as URLSearchParams;
+    assert.equal(body.get('token'), 'mock-account');
+    const decrypt = createDecipheriv('aes-128-ecb', key, null);
+    const parameters = JSON.parse(Buffer.concat([decrypt.update(Buffer.from(body.get('content')!, 'base64url')), decrypt.final()]).toString());
+    calls.push({ path: url.pathname, parameters });
+    const data = url.pathname === '/waimai/v1/poi/list' ? {
+      current_page_index: 1, have_next_page: 0,
+      openPoiBaseInfoList: [{ wm_poi_id: '129', name: '测试餐厅', shipping_fee: 0, min_price: 15.5,
+        avg_delivery_time: 28, status: 1, extra: 'provider-only' }],
+    } : [{ date: '今天', status: 0, timelist: [
+      { date_type_tip: '立即送达', view_time: '立即送出', unixtime: 0 },
+      { date_type_tip: '指定时间', view_time: '12:30', unixtime: 1794630600 },
+    ] }];
+    return Response.json({ status: 0, data });
+  };
+  const functions = new Functions(waimaiFunctions(config, supply), deliveryFunctions);
+  const coordinates = { latitude: 31.222222, longitude: 121.455555, coordinateSystem: 'gcj02' };
+  const context = { principal, objects: new Objects(f.db, f.model, f.access), signal: AbortSignal.timeout(10000) };
+  try {
+    const store = waimaiShops.parse(await functions.invoke(f.model, 'findMeituanWaimaiShops', { ...coordinates, query: '咖啡' }, context));
+    assert.equal(store.evidence, 'provider_sandbox');
+    assert.deepEqual(store.shops[0], { shopId: '129', name: '测试餐厅', status: 'deliverable',
+      listedDeliveryFeeMinor: 0, averageDeliveryMinutes: 28, minimumOrderMinor: 1550, currency: 'CNY' });
+    const arrivals = waimaiArrival.parse(await functions.invoke(f.model, 'readMeituanWaimaiArrival', { ...coordinates, shopId: '129' }, context));
+    assert.deepEqual(arrivals.dates[0]?.times.map(row => row.at), [null, new Date(1794630600000).toISOString()]);
+    assert.equal(calls[0]?.parameters.longitude, 121455555);
+    assert.equal(calls[0]?.parameters.sign, 'mock-signature');
+    assert.equal(calls[1]?.parameters.wm_poi_id, 129);
+    assert.deepEqual(calls.map(c => c.path), ['/waimai/v1/poi/list', '/waimai/v1/order/arriveTime']);
+    await setGrants(f.db, principal.owner, [{ resource: 'Eigos', permission: 'view_definition' },
+      { resource: 'Eigos/function/findMeituanWaimaiShops', permission: 'execute_function' }]);
+    const revoked = await Access.load(f.db, principal);
+    await assert.rejects(functions.invoke(f.model, 'findMeituanWaimaiShops', coordinates,
+      { ...context, objects: new Objects(f.db, f.model, revoked) }), /read_source/);
+    assert.equal(calls.length, 2);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    await f.close();
+  }
+});
