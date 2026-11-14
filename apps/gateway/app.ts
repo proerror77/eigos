@@ -2,7 +2,6 @@ import {mountWorkbench} from './workbench.js';
 import {Applications} from '../../packages/runtime/applications.js';
 import type { RuntimeExtensions } from '../../packages/runtime/extensions.js';
 import { ontologyServices } from '../../packages/runtime/services.js';
-import { Effects } from '../../packages/runtime/effects.js';
 import express, { type Request } from 'express';
 import { McpServer } from '@modelcontextprotocol/server';
 import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
@@ -32,20 +31,21 @@ const scenarioCreateInput = createScenarioSchema.safeExtend({ ontology: z.string
 
 const paTravelInstructions = [
   'For user-authorized travel reminders, keep the object reference from StartCalendarJourney or StartFlightWatch.',
-  'Use your own PA notification capability and the channel selected by the user. EIGOS supplies state through Ontology.',
-  'Read readCalendarJourney or readFlightWatch via evaluate_ontology with the original reference.',
-  'Answer calendar.journey.read through list_pa_requests and respond_to_task using the original taskId and requestId.',
-  'Use the object reference and reminderVersion or alertVersion to replace or deduplicate notices. Re-read before delivery.',
+  'Use your own PA notification capability and the channel selected by the user. EIGOS owns travel scheduling and computes notices.',
+  'When EIGOS sends a travel_reminder event, use its authoritative reference, version, and operation. Keep only the newest version and withdraw pending notices on withdraw.',
+  'Use readCalendarJourney or readFlightWatch via evaluate_ontology for independent readback with the original typed reference.',
+  'If EIGOS requests calendar.journey.read, respond to the original taskId and requestId with only the required source fields.',
   'Withdraw pending notifications when the current reminder or alert is null. Discard expired calendar timing using validUntil.',
   'Report notification delivery only after your PA channel confirms it.',
 ].join(' ');
 
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {},
-  providerFetch: { variFlightFetch?: typeof fetch } = {}) {
+  providerFetch: { variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch } = {}) {
   const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE), configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
     paotui: config.EIGOS_PAOTUI_CONNECTION_FILE, waimai: config.EIGOS_WAIMAI_CONNECTION_FILE,
     amap: config.EIGOS_AMAP_CONNECTION_FILE, variFlight: config.EIGOS_VARIFLIGHT_CONNECTION_FILE,
-    fr24: config.EIGOS_FR24_CONNECTION_FILE, fr24Entrypoint: config.EIGOS_FR24_MCP_ENTRYPOINT, ...providerFetch,
+    fr24: config.EIGOS_FR24_CONNECTION_FILE, fr24Entrypoint: config.EIGOS_FR24_MCP_ENTRYPOINT,
+    calendar: config.EIGOS_JOURNEY_CALENDAR_CONNECTION_FILE, travelPA: config.EIGOS_TRAVEL_PA_CONNECTION_FILE, ...providerFetch,
   });
   const scenarios = new Scenarios(db), pa = new PARequests(tasks);
   const hotelWorkflows = new HotelWorkflows(db, metadata, capabilities.functions);
@@ -73,11 +73,11 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     catch { res.setHeader('WWW-Authenticate', 'Bearer'); res.status(401).json({ error: 'Authentication required' }); }
   });
   const principal = (req: Request) => principals.get(req)!;
-  const services=ontologyServices(db,metadata,capabilities,capabilities.functions,new Effects(db,extensions.effects??new Map()),capabilities.actions);
+  const services=ontologyServices(db,metadata,capabilities,capabilities.functions,capabilities.effects,capabilities.actions);
   app.post('/ontology/services/:operation',async(req,res)=>{
     const {_ontology,...input}=z.record(z.string(),z.unknown()).parse(req.body);
     const name=_ontology===undefined?'Eigos':z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(80).parse(_ontology);
-    const selected=name==='Eigos'?services:ontologyServices(db,metadata,capabilities,capabilities.functions,new Effects(db,extensions.effects??new Map()),capabilities.actions,name);
+    const selected=name==='Eigos'?services:ontologyServices(db,metadata,capabilities,capabilities.functions,capabilities.effects,capabilities.actions,name);
     const service=selected.get(String(req.params.operation));
     if(!service)throw new NotFound('Ontology service is unavailable');
     res.json(await service.invoke(principal(req),input));
@@ -150,7 +150,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       try { const result = await operation(); return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] }; }
       catch (error) { return { isError: true, content: [{ type: 'text' as const, text: error instanceof Error ? error.message : 'Request failed' }] }; }
     };
-    for(const [name,service] of services) server.registerTool('ontology_'+name,{description:service.description,inputSchema:(service.schema as z.ZodObject).safeExtend({_ontology:z.string().optional()})},input=>response(()=>{const {_ontology,...args}=input;const selected=_ontology?ontologyServices(db,metadata,capabilities,capabilities.functions,new Effects(db,extensions.effects??new Map()),capabilities.actions,z.string().parse(_ontology)):services;return selected.get(name)!.invoke(p,args);}));
+    for(const [name,service] of services) server.registerTool('ontology_'+name,{description:service.description,inputSchema:(service.schema as z.ZodObject).safeExtend({_ontology:z.string().optional()})},input=>response(()=>{const {_ontology,...args}=input;const selected=_ontology?ontologyServices(db,metadata,capabilities,capabilities.functions,capabilities.effects,capabilities.actions,z.string().parse(_ontology)):services;return selected.get(name)!.invoke(p,args);}));
     server.registerTool('submit_task', { description: 'Submit a natural-language goal. Set learnHotelWorkflow when asked to learn and save a hotel itinerary, or replayHotelWorkflow with a saved ID and new date when asked to reuse one. Forward the goal without proposing tool steps. PA information requests resume on the original task.', inputSchema: submitSchema }, input => response(async () => publicTask(await tasks.submit(p, input))));
     server.registerTool('list_learned_hotel_workflows', {
       description: 'Find previously saved hotel itinerary workflows for the signed-in owner. To reuse, submit a task with the workflow ID and the new check-in date. Every proposal needs separate approval in EIGOS.',

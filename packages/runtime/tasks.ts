@@ -63,8 +63,10 @@ export class Tasks {
       return result.rows[0] as Task;
     });
   }
-  async claim(): Promise<Task | undefined> {
-    const result = await this.db.query(`WITH next AS(SELECT id FROM ${this.db.schema}.tasks WHERE (state='submitted' AND available_at<=now()) OR(state='working' AND lease_until<now()) ORDER BY available_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1)
+  async claim(lane?: 'scheduled' | 'interactive'): Promise<Task | undefined> {
+    const kind = lane === 'scheduled' ? " AND input ? 'scheduledAction'" :
+      lane === 'interactive' ? " AND NOT (input ? 'scheduledAction')" : '';
+    const result = await this.db.query(`WITH next AS(SELECT id FROM ${this.db.schema}.tasks WHERE ((state='submitted' AND available_at<=now()) OR(state='working' AND lease_until<now()))${kind} ORDER BY available_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1)
       UPDATE ${this.db.schema}.tasks t SET state='working',token=$1,lease_until=now()+interval '30 seconds',updated_at=now() FROM next WHERE t.id=next.id RETURNING t.*`, [randomUUID()]);
     return result.rows[0] as Task | undefined;
   }

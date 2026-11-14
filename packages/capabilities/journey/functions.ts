@@ -13,6 +13,7 @@ import type { FunctionContext, FunctionHandler, Functions } from '../../runtime/
 import { PARequests } from '../../runtime/pa.js';
 import { ScheduledActions } from '../../runtime/scheduled-actions.js';
 import type { AmapResolver } from '../amap/client.js';
+import type { JourneyCalendarSource } from './calendar-source.js';
 
 type Journey = z.infer<typeof calendarJourney>;
 type UsableWeather = z.infer<typeof weatherResult>;
@@ -113,7 +114,8 @@ function reminderFor(observation: Observation, previous: Journey) {
   };
 }
 
-export function calendarJourneyFunctions(db: Database, getFunctions: () => Functions, resolveAmap: AmapResolver): ReadonlyMap<string, FunctionHandler> {
+export function calendarJourneyFunctions(db: Database, getFunctions: () => Functions, resolveAmap: AmapResolver,
+  calendarSource?: JourneyCalendarSource): ReadonlyMap<string, FunctionHandler> {
   const schedules = new ScheduledActions(db);
 
   const observe = async (journey: Journey, execution: NonNullable<FunctionContext['execution']>,
@@ -123,7 +125,8 @@ export function calendarJourneyFunctions(db: Database, getFunctions: () => Funct
     if ((await resolveAmap(context)).authorityId !== journey.mapAuthority)
       return emptyObservation('ended', 'source_changed');
     const selection = { origin: settings.origin, destination: settings.destination };
-    const calendar = journeyCalendarReply.parse(await new PARequests(tasks).request(task,
+    const serverRead = calendarSource && await calendarSource(task.owner, selection, context.signal);
+    const calendar = serverRead ?? journeyCalendarReply.parse(await new PARequests(tasks).request(task,
       `${call.scheduleId}:${task.execution_step ?? 0}`, journeyCalendarCapability, selection, json(journeyCalendarReply)));
     if (calendar.status === 'denied') return emptyObservation('ended', 'calendar_denied', calendar);
     if (calendar.status === 'unavailable') return emptyObservation('unavailable', 'calendar_unavailable', calendar);

@@ -7,11 +7,11 @@ import { DeferredExecution } from '../../packages/runtime/scheduled-actions.js';
 
 export class Worker {
   private readonly controller = new AbortController();
-  private wake?: () => void;
+  private readonly waiting = new Set<() => void>();
   constructor(private readonly tasks: Tasks, private readonly agent: { run(task: Task, signal: AbortSignal): Promise<unknown> }, private readonly schedules?: {promoteOne():Promise<boolean>}, private readonly scheduledRunner?: {run(task:Task,signal:AbortSignal):Promise<unknown>}) {}
-  async runOne(): Promise<boolean> {
-    await this.schedules?.promoteOne();
-    const task = await this.tasks.claim();
+  async runOne(lane?: 'scheduled' | 'interactive'): Promise<boolean> {
+    if (lane !== 'interactive') await this.schedules?.promoteOne();
+    const task = await this.tasks.claim(lane);
     if (!task) return false;
     await this.execute(task);
     return true;
@@ -38,15 +38,31 @@ export class Worker {
   }
   async run() {
     const listener = await this.tasks.db.pool.connect();
-    listener.on('notification', () => this.wake?.());
+    listener.on('notification', () => this.wake());
     listener.on('error', () => this.controller.abort());
     await listener.query('LISTEN eigos_tasks');
     try {
-      while (!this.controller.signal.aborted) {
-        if (await this.runOne()) continue;
-        await Promise.race([new Promise<void>(resolve => { this.wake = resolve; }), delay(5000, undefined, { signal: this.controller.signal }).catch(() => {})]);
-      }
+      if (this.schedules && this.scheduledRunner) {
+        // A slow interactive model run cannot hold the one scheduled execution slot.
+        const processes = [this.loop('scheduled'), this.loop('interactive')];
+        try { await Promise.all(processes); }
+        finally { this.stop(); await Promise.allSettled(processes); }
+      } else await this.loop();
     } finally { await listener.query('UNLISTEN eigos_tasks').catch(() => {}); listener.release(); }
   }
-  stop() { this.controller.abort(); this.wake?.(); }
+  private async loop(lane?: 'scheduled' | 'interactive') {
+    while (!this.controller.signal.aborted) {
+      let resolve!: () => void;
+      const signal = new Promise<void>(wake => { resolve = wake; });
+      this.waiting.add(resolve);
+      const timer = new AbortController();
+      try {
+        if (await this.runOne(lane)) continue;
+        await Promise.race([signal, delay(lane === 'scheduled' ? 1000 : 5000, undefined,
+          { signal: AbortSignal.any([this.controller.signal, timer.signal]) }).catch(() => {})]);
+      } finally { this.waiting.delete(resolve); timer.abort(); }
+    }
+  }
+  private wake() { for (const resolve of this.waiting) resolve(); }
+  stop() { this.controller.abort(); this.wake(); }
 }

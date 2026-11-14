@@ -17,6 +17,7 @@ const tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, con
     paotui: config.EIGOS_PAOTUI_CONNECTION_FILE, waimai: config.EIGOS_WAIMAI_CONNECTION_FILE,
     amap: config.EIGOS_AMAP_CONNECTION_FILE, variFlight: config.EIGOS_VARIFLIGHT_CONNECTION_FILE,
     fr24: config.EIGOS_FR24_CONNECTION_FILE, fr24Entrypoint: config.EIGOS_FR24_MCP_ENTRYPOINT,
+    calendar: config.EIGOS_JOURNEY_CALENDAR_CONNECTION_FILE, travelPA: config.EIGOS_TRAVEL_PA_CONNECTION_FILE,
   });
 metadata.checkBindings(await metadata.active(), capabilities);
 const driver = new HarnessAgent({ binary: config.EIGOS_HARNESS_BIN, credentialFile: config.EIGOS_HARNESS_CREDENTIAL_FILE, model: config.EIGOS_HARNESS_MODEL, reasoningEffort: config.EIGOS_HARNESS_REASONING_EFFORT });
