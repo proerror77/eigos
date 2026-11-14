@@ -12,7 +12,7 @@ Agent 通过 EIGOS 的 Ontology MCP 调用 `evaluate_ontology` 与 `readFlightSt
 
 单次查询直接返回结果。用户明确要求跟踪时，`StartFlightWatch` 为指定机场对和当地出发日期建立一条 `FlightWatch`。现有 `ScheduledActions` 定期调用同一查询 Function，使用 `readFlightWatch` 读状态和最新提醒版本，`CancelFlightWatch` 停止跟踪并撤回待处理的提醒。提醒变化包含航班状态、预计时间变化至少 5 分钟、已有登机口或出发航站楼改变。首次读到一条已延误或已取消的航班也可产生提醒。过程状态走现有 `ProcessLog`。参考 [Ontology MCP](https://www.palantir.com/docs/foundry/ontology-mcp/getting-started) 和 [Automate](https://www.palantir.com/docs/foundry/automate/overview)。
 
-飞常准按次计费。跟踪每约 15 分钟复查，默认最多 8 次（按公示单价最多 ¥4），也可显式选 2 至 24 次。到达、取消、返航、备降、授权窗口结束或检查额度用尽后停止。提醒版本可供原 PA 消费，手机是否收到需要在对应通知渠道回读。飞常准提供的预计时间可能再次变化。
+飞常准按次计费。跟踪每约 15 分钟复查，默认最多 8 次（按公示单价最多 ¥4），也可显式选 2 至 24 次。到达、取消、返航、备降、授权窗口结束或检查额度用尽后停止。原 PA 使用跟踪引用和 `alertVersion` 识别变更并去重，由 PA 的通知渠道确认送达。停止跟踪后，`alert: null` 表示撤回待投递提醒。飞常准提供的预计时间可能再次变化。参见 [PA 投递提醒](calendar-journey.md#pa-投递提醒)。
 
 ## 飞机实时位置
 

@@ -32,7 +32,16 @@ async function setup() {
     DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token,
     EIGOS_AMAP_CONNECTION_FILE: amap,
   });
-  const server = createApp(config, f.db, f.source).app.listen(0, '127.0.0.1');
+  const paToken = 'original-pa-eigos-journey-'.repeat(3), otherToken = 'other-fixture-eigos-journey-'.repeat(3);
+  const taskScoped = { owner: principal.owner, scopes: ['tasks:read', 'tasks:write'] };
+  const other = { ...taskScoped, owner: 'other-pa' };
+  await setGrants(f.db, other.owner, memberGrants(f.model));
+  const server = createApp(config, f.db, f.source, async requested => {
+    if (requested === token) return principal;
+    if (requested === paToken) return taskScoped;
+    if (requested === otherToken) return other;
+    throw new Error('Invalid test token');
+  }).app.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const addr = server.address();
   assert(addr && typeof addr !== 'string');
@@ -40,8 +49,16 @@ async function setup() {
   const mcp = new Client({ name: 'calendar-journey-pa', version: '1' });
   const headers = { Authorization: 'Bearer ' + token };
   await mcp.connect(new StreamableHTTPClientTransport(new URL(baseUrl + '/mcp'), { requestInit: { headers } }));
-  const call = async (name: string, args: Record<string, unknown>) => {
-    const r = await mcp.callTool({ name, arguments: args });
+  const connectPA = async (name: string, credential: string) => {
+    const client = new Client({ name, version: '1' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(baseUrl + '/mcp'), {
+      requestInit: { headers: { Authorization: 'Bearer ' + credential } },
+    }));
+    return client;
+  };
+  const originalPA = await connectPA('original-calendar-pa', paToken), otherPA = await connectPA('other-calendar-pa', otherToken);
+  const call = async (name: string, args: Record<string, unknown>, client = mcp) => {
+    const r = await client.callTool({ name, arguments: args });
     const block = r.content[0] as {text: string};
     if (r.isError) throw new Error(block.text);
     return JSON.parse(block.text);
@@ -71,7 +88,7 @@ async function setup() {
       status: 'confirmed', etag: String(eventStart), start: { dateTime: at(eventStart) }, end: { dateTime: at(origin ? 10 : eventStart + 30) },
     });
   });
-  const pa = new CalendarJourneyPA(new OntologyClient({ baseUrl, token }), async (selection, signal) => {
+  const pa = new CalendarJourneyPA(new OntologyClient({ baseUrl, token: paToken }), async (selection, signal) => {
     const contents = await readCalendar(selection, signal);
     return contents.status === 'available' ? { ...contents, evidence: 'synthetic' } : contents;
   });
@@ -83,8 +100,9 @@ async function setup() {
     },
     startJourney: (requestId = 'calendar-trip') => call('apply_ontology_action',
       {action: 'StartCalendarJourney', requestId, input}) as Promise<ObjectRef>,
-    read: async (journey: ObjectRef) => journeyReadResult.parse(
-      await call('evaluate_ontology', {function: 'readCalendarJourney', input: {journey}})),
+    mcp, originalPA, otherPA,
+    read: async (journey: ObjectRef, client = originalPA) => journeyReadResult.parse(
+      await call('evaluate_ontology', { function: 'readCalendarJourney', input: { journey } }, client)),
     async pending() {
       assert(await worker.runOne());
       const { items } = await call('list_pa_requests', {});
@@ -102,6 +120,8 @@ async function setup() {
     async close() {
       worker.stop();
       await mcp.close();
+      await originalPA.close();
+      await otherPA.close();
       server.closeAllConnections();
       await new Promise<void>(resolve => server.close(() => resolve()));
       await rm(directory, { recursive: true, force: true });
@@ -115,6 +135,15 @@ test('the same PA task advances, replaces, or withdraws its calendar reminder an
   try {
     const ref = await f.startJourney(), duplicate = await f.startJourney('calendar-trip-again');
     assert.deepEqual(duplicate, ref);
+    assert.match(f.originalPA.getInstructions() ?? '', /own PA notification capability/);
+    await assert.rejects(f.read(ref, f.otherPA), /Object is unavailable/);
+    await assert.rejects(f.call('evaluate_ontology', { function: 'readWeather', input: { city: '上海' } }, f.originalPA), /ontology:read/);
+    await assert.rejects(f.call('evaluate_ontology', {
+      function: 'readCalendarJourney', scenarioId: 'a0d858ec-a1c8-43f4-8e56-78d8b0724c9e', input: { journey: ref },
+    }, f.originalPA), /ontology:read/);
+    await assert.rejects(f.call('apply_ontology_action', {
+      action: 'CancelCalendarJourney', requestId: 'read-only-pa', input: { journey: ref },
+    }, f.originalPA), /ontology:write/);
     assert.equal((await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.scheduled_actions`)).rows[0]?.n, 1);
     const task = await f.pending();
     assert.equal(f.calls.length, 0);

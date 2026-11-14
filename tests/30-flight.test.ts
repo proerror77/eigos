@@ -50,23 +50,30 @@ test('MCP looks up the supplier flight directly, and the original scheduled Acti
       "'dst_timezone': '28800', 'FlightStateNum': " + code + ", 'FillFlightInfo': None}], 'timestamp': '" + stamp + "'}";
     return result({ content: [{ type: 'text', text }] });
   };
-  const token = 'flight-onto-eigos-test-'.repeat(3);
+  const token = 'flight-onto-eigos-test-'.repeat(3), paToken = 'original-flight-pa-'.repeat(3);
   const cfg = readConfig({ DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token,
     EIGOS_VARIFLIGHT_CONNECTION_FILE: config });
-  const gateway = createApp(cfg, f.db, f.source, undefined, {}, { variFlightFetch: provider });
+  const gateway = createApp(cfg, f.db, f.source, async requested => {
+    if (requested === token) return principal;
+    if (requested === paToken) return { owner: principal.owner, scopes: ['tasks:read', 'tasks:write'] };
+    throw new Error('Invalid test token');
+  }, {}, { variFlightFetch: provider });
   const capabilities = createCapabilities(f.db, f.source, {}, undefined, undefined, { variFlight: config, variFlightFetch: provider });
   const schedules = new ScheduledActions(f.db);
   const worker = new Worker(f.tasks, f.agent, schedules, new ScheduledActionRunner(f.db, f.metadata, f.tasks, capabilities.actions));
   const server = gateway.app.listen(0, '127.0.0.1');
   const mcp = new Client({ name: 'eigos-flight-test', version: '1' });
+  const originalPA = new Client({ name: 'original-flight-pa', version: '1' });
   await once(server, 'listening');
   try {
     const addr = server.address();
     assert(addr && typeof addr !== 'string');
     await mcp.connect(new StreamableHTTPClientTransport(new URL('http://127.0.0.1:' + addr.port + '/mcp'),
       { requestInit: { headers: { Authorization: 'Bearer ' + token } } }));
-    const call = async (name: string, args: Record<string, unknown>) => {
-      const out = await mcp.callTool({ name, arguments: args });
+    await originalPA.connect(new StreamableHTTPClientTransport(new URL('http://127.0.0.1:' + addr.port + '/mcp'),
+      { requestInit: { headers: { Authorization: 'Bearer ' + paToken } } }));
+    const call = async (name: string, args: Record<string, unknown>, client = mcp) => {
+      const out = await client.callTool({ name, arguments: args });
       const value = (out.content[0] as { text: string }).text;
       if (out.isError) throw new Error(value);
       return JSON.parse(value);
@@ -89,7 +96,10 @@ test('MCP looks up the supplier flight directly, and the original scheduled Acti
     const settings = { ...flight, monitorUntil: new Date(Date.now() + 37 * 60000).toISOString(), maxChecks: 5 };
     const watch = await apply('StartFlightWatch', 'flight-watch-1', settings);
     assert.deepEqual(await apply('StartFlightWatch', 'flight-watch-duplicate', settings), watch);
-    const snapshot = async () => flightWatchRead.parse(await evaluate('readFlightWatch', { watch }));
+    const snapshot = async () => flightWatchRead.parse(await call('evaluate_ontology', {
+      function: 'readFlightWatch', input: { watch },
+    }, originalPA));
+    await assert.rejects(call('evaluate_ontology', { function: 'readFlightStatus', input: flight }, originalPA), /ontology:read/);
     assert.equal((await snapshot()).state, 'pending');
     assert(await worker.runOne());
     const base = await snapshot();
@@ -125,6 +135,7 @@ test('MCP looks up the supplier flight directly, and the original scheduled Acti
   } finally {
     worker.stop();
     await mcp.close();
+    await originalPA.close();
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
     await rm(dir, { recursive: true, force: true });
