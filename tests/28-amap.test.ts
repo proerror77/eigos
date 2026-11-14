@@ -23,7 +23,7 @@ test('Ontology exposes read-only Amap and weather together and enforces owner an
   try {
     const config = await testConnection(directory);
     const calls: Recorded[] = [];
-    const functions = new Functions(amapFunctions(configuredAmap(config, fakeAmap(calls))), mapFunctions);
+    const functions = new Functions(amapFunctions(configuredAmap(config, fakeAmap(calls, { remoteShape: true }))), mapFunctions);
     const ctx = { principal, objects: new Objects(f.db, f.model, f.access), signal: AbortSignal.timeout(15000) };
     const invoke = (name: string, input: Record<string, unknown>) => functions.invoke(f.model, name, input, ctx);
     assert(f.model.resolvedDocument.functionTypes.some(fn => fn.apiName === 'readWeather' && fn.source === 'Amap'));
@@ -45,6 +45,11 @@ test('Ontology exposes read-only Amap and weather together and enforces owner an
       mode: 'walking', origin: { address: '地标' }, destination: { latitude: 31.2, longitude: 121.51, coordinateSystem: 'gcj02' },
     }) as { routes: unknown[] };
     assert.deepEqual(route.routes, [{ distanceMeters: 900, durationSeconds: 650 }]);
+    const drive = await invoke('estimateMapRoute', {
+      mode: 'driving', origin: { address: '地标' }, destination: { address: '上海市长宁区虹桥路2550号' },
+    }) as { routes: unknown[] };
+    assert.deepEqual(drive.routes, [{ distanceMeters: 3000, durationSeconds: 1500 }]);
+    assert.equal(calls.at(-1)?.input.destination, '121.348165,31.193918');
 
     const task = await f.tasks.submit(principal, { requestId: 'nearby-weather', message: '我这里现在多少度？' });
     const first = (await f.tasks.claim())!;

@@ -1,3 +1,5 @@
+import { flightFunctions } from './flight/functions.js';
+import { configuredVariFlight } from './flight/variflight.js';
 import { calendarJourneyFunctions } from './journey/functions.js';
 import { configuredAmap } from './amap/client.js';
 import { amapFunctions } from './amap/functions.js';
@@ -27,7 +29,7 @@ export function createCapabilities(
   extensions: RuntimeExtensions = {},
   services: ServiceResolver = unavailableServices,
   stripe: StripeSandboxResolver = configuredStripeSandbox(),
-  connections: { paotui?: string; waimai?: string; amap?: string; amapFetch?: typeof fetch } = {},
+  connections: { paotui?: string; waimai?: string; amap?: string; amapFetch?: typeof fetch; variFlight?: string; variFlightFetch?: typeof fetch } = {},
 ) {
   let sources: Sources;
   const amap = configuredAmap(connections.amap, connections.amapFetch);
@@ -38,6 +40,7 @@ export function createCapabilities(
     ...serviceFunctions(services, () => sources),
     ...travelFunctions(db, source, services, () => sources),
     ...calendarJourneyFunctions(db, getFunctions, amap),
+    ...flightFunctions(db, getFunctions, configuredVariFlight(connections.variFlight, connections.variFlightFetch)),
     ...stripePaymentFunctions(db, stripe),
     ...paotuiFunctions(connections.paotui),
     ...waimaiFunctions(connections.waimai, fetch, connections.amap ? amap : undefined),
