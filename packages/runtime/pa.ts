@@ -4,7 +4,7 @@ import { Conflict, NotFound, digest, requireScope, type Principal } from '../cor
 import { validator } from '../ontology/model.js';
 import { Clarification } from './clarification.js';
 import { Tasks, type Task } from './tasks.js';
-import { Access } from './access.js';
+import { Access, type Requirement } from './access.js';
 
 export const paResponseSchema = z.strictObject({ requestId: z.uuid(), response: z.record(z.string(), z.unknown()) });
 export const paInboxSchema=z.strictObject({cursor:z.uuid().optional(),limit:z.number().int().min(1).max(50).default(20)});
@@ -58,6 +58,9 @@ export class PARequests {
         return;
       }
       if (task.state !== 'input-required' || task.result?.kind !== 'pa-request' || task.result?.requestId !== input.requestId) throw new Conflict('The original task is not waiting for this PA response');
+      const permissions = task.result_permissions as Requirement[] | null;
+      if (!permissions || !await (await Access.load(db, principal, client)).canReturn(permissions, client))
+        throw new Conflict('The original PA request is no longer authorized');
       await db.query(`UPDATE ${db.schema}.pa_requests SET response=$2,response_digest=$3 WHERE id=$1`, [input.requestId, response, fingerprint], client);
       await db.query(`UPDATE ${db.schema}.tasks SET state='submitted',result=NULL,error=NULL,updated_at=now() WHERE id=$1`, [taskId], client);
       await db.query("SELECT pg_notify('eigos_tasks','ready')", [], client);

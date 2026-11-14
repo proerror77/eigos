@@ -34,7 +34,8 @@ function bounded(response: Response) {
 }
 
 export class AmapClient {
-  constructor(private readonly key: string, private readonly fetcher: typeof fetch, private readonly guard: () => Promise<void>) {}
+  constructor(private readonly key: string, private readonly fetcher: typeof fetch, private readonly guard: () => Promise<void>,
+    readonly authorityId?: string) {}
 
   async mcp(name: Tool, args: Record<string, string>, outer: AbortSignal): Promise<unknown> {
     if (!toolNames.includes(name)) throw new Conflict('This Amap MCP tool is outside the published read contract');
@@ -121,9 +122,10 @@ export function configuredAmap(path?: string, fetcher: typeof fetch = fetch) {
     const { key, binding } = await read();
     return new AmapClient(key, fetcher, async () => {
       ctx.signal.throwIfAborted();
+      await ctx.assertCurrent?.();
       await access.refresh();
       if ((await read()).binding !== binding) throw new Conflict('高德来源权限已变化。');
-    });
+    }, binding);
   };
 }
 

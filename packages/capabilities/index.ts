@@ -1,3 +1,4 @@
+import { calendarJourneyFunctions } from './journey/functions.js';
 import { configuredAmap } from './amap/client.js';
 import { amapFunctions } from './amap/functions.js';
 import { resolveTaskLocation } from './location.js';
@@ -26,15 +27,17 @@ export function createCapabilities(
   extensions: RuntimeExtensions = {},
   services: ServiceResolver = unavailableServices,
   stripe: StripeSandboxResolver = configuredStripeSandbox(),
-  connections: { paotui?: string; waimai?: string; amap?: string } = {},
+  connections: { paotui?: string; waimai?: string; amap?: string; amapFetch?: typeof fetch } = {},
 ) {
   let sources: Sources;
-  const amap = configuredAmap(connections.amap);
+  const amap = configuredAmap(connections.amap, connections.amapFetch);
+  const getFunctions = () => capabilities.functions;
   const handlers = new Map([
     ...schedulingFunctions(db),
     ...applicationFunctions(db),
     ...serviceFunctions(services, () => sources),
     ...travelFunctions(db, source, services, () => sources),
+    ...calendarJourneyFunctions(db, getFunctions, amap),
     ...stripePaymentFunctions(db, stripe),
     ...paotuiFunctions(connections.paotui),
     ...waimaiFunctions(connections.waimai, fetch, connections.amap ? amap : undefined),
