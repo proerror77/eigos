@@ -11,6 +11,7 @@ import { initializeEffects } from './effects.js';
 import { initializeIndexing } from './indexing.js';
 import { initializeEditHistory } from './edit-history.js';
 import { initializeMaterializations } from './materializations.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import pg, { type PoolClient, type QueryResultRow } from 'pg';
 import { initializeSecurity } from './security.js';
 import { implementationDigest } from './implementation.js';
@@ -21,6 +22,7 @@ export class Database {
   readonly schema: string;
   readonly queryPool?: pg.Pool;
   queries = 0;
+  private readonly queryCount = new AsyncLocalStorage<{ count: number }>();
   constructor(connectionString: string, schema = 'eigos', readonly runtimeId = implementationDigest(), queryConnectionString?: string) {
     if (!/^eigos(?:_[a-z0-9]+)*$/.test(schema)) throw new Error('Invalid schema');
     this.schema = `"${schema}"`;
@@ -33,7 +35,13 @@ export class Database {
   }
   async query<T extends QueryResultRow = QueryResultRow>(text: string, values: unknown[] = [], client: Sql = this.pool) {
     this.queries++;
+    const measured = this.queryCount.getStore();
+    if (measured) measured.count++;
     return client.query<T>(text, values);
+  }
+  measureQueries<T>(operation: (count: () => number) => Promise<T>) {
+    const measured = { count: 0 };
+    return this.queryCount.run(measured, () => operation(() => measured.count));
   }
   async transaction<T>(action: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
@@ -115,8 +123,20 @@ export class Database {
       ALTER TABLE ${s}.tasks ADD COLUMN IF NOT EXISTS result_permissions jsonb;
       ALTER TABLE ${s}.tasks ADD COLUMN IF NOT EXISTS available_at timestamptz NOT NULL DEFAULT now();
       ALTER TABLE ${s}.tasks ADD COLUMN IF NOT EXISTS execution_step integer NOT NULL DEFAULT 0;
+      ALTER TABLE ${s}.tasks ADD COLUMN IF NOT EXISTS conversation_id text;
+      ALTER TABLE ${s}.tasks ADD COLUMN IF NOT EXISTS conversation_batch bigint;
+      ALTER TABLE ${s}.tasks ADD COLUMN IF NOT EXISTS message_count integer NOT NULL DEFAULT 1;
       CREATE INDEX IF NOT EXISTS tasks_queue ON ${s}.tasks(state,created_at);
-      CREATE TABLE IF NOT EXISTS ${s}.source_calls (task_id uuid NOT NULL REFERENCES ${s}.tasks(id), name text NOT NULL, state text NOT NULL, input_digest text NOT NULL, result jsonb, PRIMARY KEY(task_id,name));`);
+      CREATE UNIQUE INDEX IF NOT EXISTS tasks_conversation_batch ON ${s}.tasks(owner,conversation_id,conversation_batch) WHERE conversation_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS tasks_conversation_pending ON ${s}.tasks(owner,conversation_id,conversation_batch)
+        WHERE conversation_id IS NOT NULL AND state IN('submitted','working','input-required');
+      CREATE INDEX IF NOT EXISTS tasks_conversation_available ON ${s}.tasks(available_at) WHERE conversation_id IS NOT NULL AND state='submitted';
+      CREATE TABLE IF NOT EXISTS ${s}.task_inbox_events (
+        owner text NOT NULL, request_id text NOT NULL, input_digest text NOT NULL, message text NOT NULL,
+        task_id uuid NOT NULL REFERENCES ${s}.tasks(id), position integer NOT NULL,
+        received_at timestamptz NOT NULL DEFAULT clock_timestamp(), PRIMARY KEY(owner,request_id), UNIQUE(task_id,position));
+      CREATE TABLE IF NOT EXISTS ${s}.source_calls (task_id uuid NOT NULL REFERENCES ${s}.tasks(id), name text NOT NULL, state text NOT NULL, input_digest text NOT NULL, result jsonb, PRIMARY KEY(task_id,name));
+      ALTER TABLE ${s}.source_calls ADD COLUMN IF NOT EXISTS lease_token uuid;`);
     await this.query(`
       CREATE TABLE IF NOT EXISTS ${s}.scenarios (id uuid PRIMARY KEY, owner text NOT NULL, request_id text NOT NULL, name text NOT NULL,
         release text NOT NULL REFERENCES ${s}.releases(digest), revision bigint NOT NULL DEFAULT 1, state text NOT NULL DEFAULT 'open',

@@ -32,7 +32,7 @@ export class Sources {
     await projection.assertCurrent(principal.owner);
     const invoke = () => this.functions.invoke(model, mapping.function, input, { principal, objects: new Objects(this.db, model, access), signal, taskId: task?.id,...(task&&tasks?{execution:{task,tasks}}:{}) });
     // An explicit place selection starts fresh source reads for the resumed task.
-    const result = task && tasks ? await tasks.source(task, digest({ source: name, input, places: task.input.places,step:task.execution_step??0 }), input, invoke) : await invoke();
+    const result = task && tasks ? await tasks.readSource(task, digest({ source: name, input, places: task.input.places,step:task.execution_step??0 }), input, invoke) : await invoke();
     signal.throwIfAborted();
     return result;
   }
