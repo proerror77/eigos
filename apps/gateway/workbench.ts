@@ -39,6 +39,7 @@ export function mountWorkbench(app: express.Express, config: Config) {
       'Content-Security-Policy',
       `default-src 'self'; script-src 'self' 'sha256-${createHash('sha256').update(importMap).digest('base64')}'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`,
     );
+    res.setHeader('Permissions-Policy', 'geolocation=(self)');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     next();

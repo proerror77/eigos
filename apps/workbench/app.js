@@ -2271,7 +2271,8 @@ async function renderRules() {
 async function renderProcesses() {
   const [tasks, workflows] = await Promise.all([service('tasks'), service('workflow_runs')]);
   const inspect = (task) => {
-    const body = element('div', {}, element('p', {}, task.state + (task.error ? ' · ' + task.error : '')));
+    const locationRequest = task.state === 'input-required' && task.result?.kind === 'pa-request' && task.result.capability === 'location.resolve';
+    const body = element('div', {}, !locationRequest && element('p', {}, task.state + (task.error ? ' · ' + task.error : '')));
     const review = task.result?.hotelWorkflow;
     if (review?.status === 'awaiting_approval') {
       const hotel = task.result.hotel.properties;
@@ -2299,7 +2300,53 @@ async function renderProcesses() {
 
     if (task.state === 'input-required' && task.result?.kind === 'pa-request') {
       const requestData = task.result;
-      if (requestData.capability === 'calendar.freebusy') {
+      if (locationRequest) {
+        const { selection, use, coordinateSystem } = requestData.input;
+        const share = async (response) => {
+          await request('/tasks/' + task.id + '/pa-response', { requestId: requestData.requestId, response });
+          $('#editor').close();
+          await renderProcesses();
+        };
+        const serviceName = ({
+          waimai_delivery: '美团外卖', luckin_pickup: '瑞幸', nearby_search: '高德周边搜索',
+          map_route: '高德路线查询', weather: '高德天气',
+        })[use];
+        const submitPlace = async (form, requiredPlace) => {
+          const { place = requiredPlace, ...point } = form.read();
+          await share({
+            status: 'available', location: { source: selection.source === 'current' ? 'specified' : selection.source,
+              place, coordinateSystem, ...point },
+          });
+        };
+        body.append(
+          element('h3', {}, '本次查询位置'),
+          element('p', {}, (serviceName || '本次服务') + '会使用你此次提供的位置。'),
+          use === 'waimai_delivery' && requestData.input.coordinateProvider === 'Amap'
+            ? element('p', {}, '高德地图将转换设备坐标供美团外卖使用。') : null,
+        );
+        if (selection.source === 'current' && (coordinateSystem === 'wgs84' || requestData.input.acceptDeviceWgs84)) {
+          body.append(button('共享本机当前位置', async () => {
+            const { currentTaskLocation } = await import('./task-location.js');
+            await share(await currentTaskLocation(navigator.geolocation, requestData.input));
+          }, 'primary'));
+        }
+        const coordinateLabel = coordinateSystem === 'gcj02' ? '高德坐标（GCJ-02）' : '设备坐标（WGS84）';
+        const placeForm = jsonSchemaForm({
+          properties: {
+            ...(selection.source === 'current' ? { place: { type: 'string', title: '地点名称' } } : {}),
+            latitude: { type: 'number', title: '纬度', minimum: -90, maximum: 90 },
+            longitude: { type: 'number', title: '经度', minimum: -180, maximum: 180 },
+          },
+          required: ['latitude', 'longitude', ...(selection.source === 'current' ? ['place'] : [])],
+        });
+        body.append(element('details', { class: 'section' },
+          element('summary', {}, selection.source === 'current' ? '改用指定地点' : '为「' + selection.place + '」提供' + coordinateLabel),
+          element('p', {}, '填写' + coordinateLabel + '。'),
+          placeForm.node,
+          button('使用此地点', async () => submitPlace(placeForm, selection.place)),
+        ));
+        body.append(button('暂不提供', async () => share({ status: 'declined' })));
+      } else if (requestData.capability === 'calendar.freebusy') {
         const busyRows = [],
           ranges = element('div', { class: 'list' }),
           complete = element('input', { type: 'checkbox' });
@@ -2387,7 +2434,7 @@ async function renderProcesses() {
           task.result.execution.steps.map((step) => [step.tool, step.outcome, step.durationMs + ' ms']),
         ),
       );
-    if (task.result)
+    if (task.result && !locationRequest)
       body.append(
         element(
           'details',
