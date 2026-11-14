@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import { Database } from '../../packages/runtime/database.js';
 import { Metadata } from '../../packages/runtime/metadata.js';
 import { Tasks } from '../../packages/runtime/tasks.js';
@@ -18,7 +19,13 @@ const driver: AgentDriver={model:'fixture-process-decisions',async run(prompt,to
  }
  return message.startsWith('{"planning":')?new PlanningFixtureAgent().run(prompt,tools):new FixtureAgent().run(prompt,tools,signal);
 }};
-const source = await provider(),capabilities=createCapabilities(db,async()=>source.source), worker = new Worker(tasks, new OntologyAgent(db, metadata, tasks, capabilities, driver),new ScheduledActions(db,metadata),new ScheduledActionRunner(db,metadata,tasks,capabilities.actions));
+const source = await provider();
+if (process.argv.includes('--interrupt-source-read')) source.flags.before = async () => {
+  if (source.calls.at(-1) !== 'taxi_estimate') return;
+  process.send?.('source-read-started');
+  await delay(120000);
+};
+const capabilities=createCapabilities(db,async()=>source.source), worker = new Worker(tasks, new OntologyAgent(db, metadata, tasks, capabilities, driver),new ScheduledActions(db,metadata),new ScheduledActionRunner(db,metadata,tasks,capabilities.actions));
 process.on('SIGTERM', () => worker.stop());
 process.send?.('ready');
 try { await worker.run(); } finally { await source.close(); await db.close(); }

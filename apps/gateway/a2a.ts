@@ -11,7 +11,7 @@ export class AgentUser implements User {
   get userName() { return this.principal.owner; }
 }
 const states: Record<string, string> = { submitted: 'TASK_STATE_SUBMITTED', working: 'TASK_STATE_WORKING', completed: 'TASK_STATE_COMPLETED', failed: 'TASK_STATE_FAILED', canceled: 'TASK_STATE_CANCELED', 'input-required': 'TASK_STATE_INPUT_REQUIRED' };
-const taskView = (task: Task) => A2ATask.fromJSON({ id: task.id, contextId: task.id, status: { state: states[task.state], timestamp: task.updated_at.toISOString() },
+const taskView = (task: Task) => A2ATask.fromJSON({ id: task.id, contextId: task.conversation_id ?? task.id, status: { state: states[task.state], timestamp: task.updated_at.toISOString() },
   artifacts: task.result ? [{ artifactId: task.id, name: 'Task result', parts: [{ data: task.result, mediaType: 'application/json' }] }] : [], metadata: { error: task.error } });
 export function agentCard(url: string) {
   return AgentCard.fromJSON({ name: 'EIGOS', description: 'Source-backed inquiries and calendar-backed scenario scheduling through Ontology queries, functions and actions.', version: '0.2.0',
@@ -35,10 +35,11 @@ export class A2A implements A2ARequestHandler {
     const data = dataPart?.$case === 'data' ? dataPart.value as Record<string, unknown> : undefined;
     if (message.taskId) {
       if (!data?.paResponse) throw new RequestMalformedError('Continuation requires the PA response for the original task');
-      return taskView(await new PARequests(this.tasks).respond(this.principal(context),message.taskId,data.paResponse));
+      return taskView(await new PARequests(this.tasks).respond(this.principal(context),message.taskId,data.paResponse,message.contextId || undefined));
     }
     if (data?.paResponse) throw new RequestMalformedError('PA response requires the original taskId');
-    const task = await this.tasks.submit(this.principal(context), { requestId: message.messageId, message: text || data?.message, route: data?.route });
+    const task = await this.tasks.submit(this.principal(context), { requestId: message.messageId, message: text || data?.message, route: data?.route,
+      conversationId: message.contextId || undefined }, { assignConversation: true });
     return taskView(task);
   }
   async getTask(params: GetTaskRequest, context: ServerCallContext) { return taskView(await this.tasks.get(this.principal(context), params.id)); }
