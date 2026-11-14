@@ -11,6 +11,7 @@ import { Actions } from '../packages/runtime/actions.js';
 import { Sources } from '../packages/runtime/sources.js';
 import { Scenarios } from '../packages/runtime/scenarios.js';
 import { Worker } from '../apps/worker/worker.js';
+import { harnessFixture } from './harness-fixture.js';
 
 test('one Agent capability choice completes the inquiry despite related entrance candidates', async t => {
   const f = await fixture();
@@ -31,9 +32,26 @@ test('one Agent capability choice completes the inquiry despite related entrance
     const routes = await objects.query({ type: 'RideEstimatable' }); assert.equal(routes.items.length, 1);
     assert.equal((await objects.follow(routes.items[0]!.ref, 'origin', 'RideEstimatable'))[0]!.properties.name, route.origin);
     assert.equal(Number((await f.db.query(`SELECT count(*) FROM ${f.db.schema}.actions`)).rows[0]!.count), 1);
+    const planning = (await f.db.query(`SELECT
+      (SELECT count(*)::int FROM ${f.db.schema}.scenarios) AS scenarios,
+      (SELECT count(*)::int FROM ${f.db.schema}.workflows) AS workflows,
+      (SELECT count(*)::int FROM ${f.db.schema}.objects WHERE type='SchedulePlan') AS plans`)).rows[0];
+    assert.deepEqual(planning, { scenarios: 0, workflows: 0, plans: 0 });
     assert.equal(await f.worker.runOne(), false);
     t.diagnostic(JSON.stringify({ elapsedMs: result.elapsedMs, sqlStatements: f.db.queries - before, providerCalls: f.provider.calls.length }));
   } finally { await f.close(); }
+});
+
+test('the production Harness discovers the Ontology and executes a simple capability through MCP',async()=>{
+  const harness=await harnessFixture(),f=await fixture(harness.driver);
+  try{
+    const task=await f.submit();await f.worker.runOne();const done=await f.tasks.get(principal,task.id);
+    assert.equal(done.state,'completed',done.error??undefined);
+    const result=done.result as {execution:{steps:{tool:string}[]}};
+    assert.deepEqual(result.execution.steps.map(step=>step.tool),['describe_ontology','complete_with_action']);
+    assert.equal((await new Objects(f.db,f.model,f.access).query({type:'SchedulePlan'})).items.length,0);
+    assert.equal((await new Scenarios(f.db).list(f.access,f.model)).items.length,0);
+  }finally{await f.close();await harness.close();}
 });
 
 test('the same Agent runtime discovers and completes a different published Function without a ride recipe', async () => {

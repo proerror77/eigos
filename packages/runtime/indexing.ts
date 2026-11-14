@@ -143,7 +143,7 @@ export class Indexing {
         }
         const model=await this.metadata.get(row.release,client), access=await Access.load(this.db,{owner:row.owner,scopes:row.scopes},client);
         const input=indexingInputSchema.parse(row.input); authorize(access,model,input.source);
-        const graph=new Objects(this.db,model,access,client);
+        const graph=new Objects(this.db,model,access,client,{requestId:String(row.id)});
         await graph.lockWrites();
         // Objects resolves source values with user edits and journals changes in this transaction.
         const batch=mapRows(model,input);

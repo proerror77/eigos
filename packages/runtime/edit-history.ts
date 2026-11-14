@@ -28,6 +28,10 @@ export async function initializeEditHistory(db: Database) {
       owner text NOT NULL, type text NOT NULL, id text NOT NULL, operation text NOT NULL,
       source text, before_values jsonb, after_values jsonb, actor text NOT NULL,
       happened_at timestamptz NOT NULL DEFAULT clock_timestamp());
+    ALTER TABLE ${db.schema}.edit_history ADD COLUMN IF NOT EXISTS action text;
+    ALTER TABLE ${db.schema}.edit_history ADD COLUMN IF NOT EXISTS request_id text;
+    ALTER TABLE ${db.schema}.edit_history ADD COLUMN IF NOT EXISTS task_id text;
+    ALTER TABLE ${db.schema}.edit_history ADD COLUMN IF NOT EXISTS observed_at timestamptz;
     CREATE INDEX IF NOT EXISTS edit_history_object ON ${db.schema}.edit_history(owner,type,id,sequence);`);
 }
 
@@ -60,10 +64,11 @@ async function saveState(graph: Objects, ref: ObjectRef, value: EditState) {
     VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(projection,owner,type,id) DO UPDATE
     SET overrides=excluded.overrides,deleted=excluded.deleted,created=excluded.created`,[...key(graph,ref),value.overrides,value.deleted,value.created],graph.client);
 }
-async function append(graph: Objects, ref: ObjectRef, operation: string, before: Properties | null, after: Properties | null, source: string | null) {
+async function append(graph: Objects, ref: ObjectRef, operation: string, before: Properties | null, after: Properties | null, source: string | null, observedAt?: string) {
   if (operation === 'source' && digest(before) === digest(after)) return;
-  await graph.db.query(`INSERT INTO ${graph.db.schema}.edit_history(projection,owner,type,id,release,operation,source,before_values,after_values,actor)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[...key(graph,ref),graph.model.release,operation,source,before,after,graph.access.principal.owner],graph.client);
+  await graph.db.query(`INSERT INTO ${graph.db.schema}.edit_history(projection,owner,type,id,release,operation,source,before_values,after_values,actor,action,request_id,task_id,observed_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,[...key(graph,ref),graph.model.release,operation,source,before,after,graph.access.principal.owner,
+    graph.change?.action??null,graph.change?.requestId??null,graph.change?.taskId??null,observedAt??null],graph.client);
 }
 
 /** Called after the live mutation, in the same transaction. Scenario deltas are journaled when merged. */
@@ -135,7 +140,7 @@ export async function resolveSourceEdit(graph: Objects, ref: ObjectRef, incoming
     }
   }
   if (resolved) resolved = graph.model.parseObject(ref,resolved);
-  await append(graph,ref,'source',before,resolved,source);
+  await append(graph,ref,'source',before,resolved,source,observed);
   return resolved;
 }
 
@@ -145,11 +150,12 @@ export class EditHistory {
     z.string().regex(/^\d+$/).parse(after); z.number().int().min(1).max(100).parse(limit);
     // Current object visibility governs historical data too. Deleted instances cannot be loaded through this endpoint.
     await graph.read(ref);
-    const rows = (await this.db.query(`SELECT h.sequence::text,h.operation,h.source,h.before_values,h.after_values,h.actor,h.happened_at,h.release
+    const rows = (await this.db.query(`SELECT h.sequence::text,h.operation,h.source,h.before_values,h.after_values,h.actor,h.happened_at,h.release,h.action,h.request_id,h.task_id,h.observed_at
       FROM ${this.db.schema}.edit_history h JOIN ${this.db.schema}.releases r ON r.digest=h.release
       WHERE r.body->>'id'=$1 AND h.owner=$2 AND h.type=$3 AND h.id=$4 AND h.sequence>$5::bigint ORDER BY h.sequence LIMIT $6`,[graph.model.document.id,graph.owner,ref.type,ref.id,after,limit+1],graph.client)).rows;
     const mask = (properties: Properties | null) => properties && graph.maskSnapshot(ref,properties);
-    const items = rows.slice(0,limit).map(row => ({ sequence: row.sequence, operation: row.operation, source: row.source, before: mask(row.before_values), after: mask(row.after_values), actor: row.actor, at: row.happened_at, release: row.release }));
+    const items = rows.slice(0,limit).map(row => ({ sequence: row.sequence, operation: row.operation, source: row.source, before: mask(row.before_values), after: mask(row.after_values), actor: row.actor, at: row.happened_at, release: row.release,
+      action: row.action, requestId: row.request_id, taskId: row.task_id, observedAt: row.observed_at }));
     await graph.access.refresh(graph.client);
     return { items, cursor: rows.length > limit ? items.at(-1)!.sequence : undefined };
   }

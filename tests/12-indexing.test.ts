@@ -7,6 +7,9 @@ import { Indexing, initializeIndexing } from '../packages/runtime/indexing.js';
 import { EditHistory, initializeEditHistory, setConflictPolicy } from '../packages/runtime/edit-history.js';
 import { Materializations, initializeMaterializations } from '../packages/runtime/materializations.js';
 import { upgradePublicationStorage } from '../packages/runtime/upgrade.js';
+import { addProcessLogs } from '../packages/ontology/process-definition.js';
+import { ObjectSets } from '../packages/runtime/object-sets.js';
+import { remapResources } from '../packages/ontology/resource-mapping.js';
 
 async function indexedFixture() {
   const f=await fixture();
@@ -21,6 +24,136 @@ function sourceRow(id:string,name:string,observedAt=origin) {
   return {id,name,city:'上海',address:'上海',coordinates:{lat:31.2,lng:121.5},coordinateSystem:'GCJ-02',sourceBinding:'synthetic',observedAt};
 }
 const transaction=(offset:number,rows:Record<string,unknown>[],observedAt=origin)=>({source:'DidiPlaces',stream:'synthetic-stream',offset,mode:'stream',observedAt,rows});
+
+async function processFixture() {
+  const f=await fixture(),document=structuredClone(f.model.document),text={type:'string'},reference={type:'object',properties:{type:text,id:text},required:['type','id'],additionalProperties:false};
+  const fields={id:{description:'Identity',schema:text,required:true},name:{description:'Case name',schema:text,required:true},state:{description:'Business state',schema:{type:'string',enum:['open','closed']},required:true}};
+  document.objectTypes.push({apiName:'ProcessCase',displayName:'Case',description:'Synthetic process',primaryKey:'id',titleProperty:'name',interfaces:{},properties:fields});
+  addProcessLogs(document,[{type:'ProcessCase',property:'state'}]);
+  const parameters={type:'object',properties:{item:reference,revision:{type:'integer'},state:fields.state.schema},required:['item','revision','state'],additionalProperties:false};
+  const edit={op:'editObject' as const,object:{parameter:'item'},expectedRevision:{parameter:'revision'},properties:{state:{parameter:'state'}}};
+  document.actionTypes.push({apiName:'ChangeCase',description:'Change the case state',parameters,objectParameters:{item:'ProcessCase'},submissionCriteria:[],rules:[edit],result:{type:'ProcessCase',id:{parameter:'item',path:['id']}}},
+    {apiName:'FailCase',description:'Rollback a state change',parameters,objectParameters:{item:'ProcessCase'},submissionCriteria:[],rules:[edit,edit],result:{type:'ProcessCase',id:{parameter:'item',path:['id']}}});
+  const model=await f.metadata.publish(document,f.capabilities,f.publisher),grants=memberGrants(model);
+  await setGrants(f.db,principal.owner,grants);
+  return {...f,model,grants,graph:new Objects(f.db,model,await Access.load(f.db,principal))};
+}
+
+test('native process logs reuse committed history, Action identity, object queries and links',async()=>{
+  const f=await processFixture();try{
+    const ref={type:'ProcessCase',id:'case'};await f.graph.create(ref,{id:ref.id,name:'Visible',state:'open'});
+    await assert.rejects(f.capabilities.actions.apply(await Access.load(f.db,principal),f.model,'FailCase',{item:ref,revision:1,state:'closed'},'rolled-back'),/revision/);
+    assert.equal((await f.graph.follow(ref,'stateLogs')).length,1);
+    const args={item:ref,revision:1,state:'closed'};
+    await f.capabilities.actions.apply(await Access.load(f.db,principal),f.model,'ChangeCase',args,'original-change');
+    await f.capabilities.actions.apply(await Access.load(f.db,principal),f.model,'ChangeCase',args,'original-change');
+    const logs=await f.graph.follow(ref,'stateLogs');assert.equal(logs.length,2);
+    assert.equal(logs[1]!.properties.action,'ChangeCase');assert.equal(logs[1]!.properties.requestId,'original-change');
+    assert.equal(logs[1]!.properties.oldState,'open');assert.equal(logs[1]!.properties.newState,'closed');
+    assert.deepEqual((await f.graph.follow(logs[1]!.ref,'process'))[0]!.ref,ref);
+    assert.deepEqual(await f.graph.read(logs[1]!.ref),logs[1]);
+    const first=await f.graph.query({type:'ProcessLog',limit:1});assert(first.cursor);
+    assert.equal((await f.graph.query({type:'ProcessLog',limit:1,cursor:first.cursor})).items.length,1);
+    const totals=await new ObjectSets(f.db).aggregate(await Access.load(f.db,principal),f.model,{set:{op:'query',query:{type:'ProcessLog'}},metrics:{count:{op:'count'}}});
+    assert.equal(totals.items[0]!.metrics.count,2);
+    const snapshots=new Materializations(f.db),snapshot=await snapshots.capture(await Access.load(f.db,principal),f.model,{requestId:'process-snapshot',name:'Process history',types:['ProcessCase','ProcessCaseStateLog']});
+    assert.equal((await snapshots.read(await Access.load(f.db,principal),f.model,snapshot.id)).items.length,3);
+    assert.equal((await snapshots.links(await Access.load(f.db,principal),f.model,snapshot.id)).items.length,2);
+    await assert.rejects(f.graph.edit(logs[1]!.ref,1,{newState:'open'}),/read-only/);
+    await assert.rejects(f.graph.create(logs[1]!.ref,logs[1]!.properties),/read-only/);
+    await assert.rejects(f.graph.ingestBatch([{ref:logs[1]!.ref,properties:logs[1]!.properties}]),/read-only/);
+    await f.graph.remove(ref,2);
+    assert.equal((await new Objects(f.db,f.model,await Access.load(f.db,principal)).query({type:'ProcessLog'})).items.length,0);
+    assert.equal((await snapshots.read(await Access.load(f.db,principal),f.model,snapshot.id)).items.length,0);
+  }finally{await f.close();}
+});
+
+test('source process transitions preserve observation time and ignore duplicate or stale observations',async()=>{
+  const f=await processFixture();try{
+    const task=await f.tasks.submit(principal,{requestId:'source-observation',message:'Read source process state'});
+    const graph=new Objects(f.db,f.model,await Access.load(f.db,principal),undefined,{taskId:task.id});
+    const ref={type:'ProcessCase',id:'source'},before=new Date(Date.now()-2000).toISOString(),after=new Date(Date.now()-1000).toISOString();
+    await graph.ingestBatch([{ref,properties:{id:ref.id,name:'Source case',state:'open'}}],'CaseSource',before);
+    const update=[{ref,properties:{id:ref.id,name:'Source case',state:'closed'}}];
+    await graph.ingestBatch(update,'CaseSource',after);await graph.ingestBatch(update,'CaseSource',after);
+    await graph.ingestBatch([{ref,properties:{id:ref.id,name:'Stale',state:'open'}}],'CaseSource',before);
+    const logs=await f.graph.follow(ref,'stateLogs');assert.equal(logs.length,2);
+    assert.equal(logs[1]!.properties.source,'CaseSource');assert.equal(logs[1]!.properties.action,null);
+    assert.equal(logs[1]!.properties.taskId,task.id);
+    assert.equal(Date.parse(String(logs[1]!.properties.timestamp)),Date.parse(after));
+  }finally{await f.close();}
+});
+
+test('process logs inherit current and historical business-state visibility, including cached results',async()=>{
+  const f=await processFixture();try{
+    const ref={type:'ProcessCase',id:'private'};
+    for(const [index,[name,state]] of [['Hidden','open'],['Visible','closed'],['Visible','open']].entries())
+      await f.graph.ingestBatch([{ref,properties:{id:ref.id,name,state}}],'CaseSource',new Date(Date.now()-3000+index*1000).toISOString());
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies(ontology,type,policy) VALUES('Eigos','ProcessCase',$1)`,[{read:{all:[{op:'equals',property:'name',value:'Visible'}],any:[]},properties:{}}]);
+    const access=await Access.load(f.db,principal),graph=new Objects(f.db,f.model,access);
+    const visible=await graph.query({type:'ProcessLog'});assert.equal(visible.items.length,1);
+    assert.equal(visible.items[0]!.properties.oldState,'closed');assert.equal(visible.items[0]!.properties.newState,'open');
+    assert.equal((await graph.query({type:'ProcessLog',where:{newState:'closed'}})).items.length,0);
+    const requirements=access.dataRequirements();assert(await access.canReturn(requirements));
+    await f.db.query(`UPDATE ${f.db.schema}.objects SET properties=jsonb_set(properties,'{name}','"Hidden"') WHERE projection=$1 AND type='ProcessCase' AND id=$2`,[f.model.projection,ref.id]);
+    assert.equal(await access.canReturn(requirements),false);
+    const hidden=new Objects(f.db,f.model,await Access.load(f.db,principal));assert.equal((await hidden.query({type:'ProcessLog'})).items.length,0);
+    await assert.rejects(hidden.read(visible.items[0]!.ref),/unavailable/);
+    await setGrants(f.db,principal.owner,f.grants.filter(grant=>!(grant.resource==='Eigos/object/ProcessCase'&&grant.permission==='view_objects')));
+    assert.equal((await new Objects(f.db,f.model,await Access.load(f.db,principal)).query({type:'ProcessLog'})).items.length,0);
+    await setGrants(f.db,'another',f.grants);
+    assert.equal((await new Objects(f.db,f.model,await Access.load(f.db,{...principal,owner:'another'})).query({type:'ProcessLog'})).items.length,0);
+  }finally{await f.close();}
+});
+
+test('process history follows publication ancestry without copying logs or exposing later releases',async()=>{
+  const f=await processFixture();try{
+    const ref={type:'ProcessCase',id:'published'};await f.graph.create(ref,{id:ref.id,name:'Published',state:'open'});
+    const body=structuredClone(f.model.document);body.version='next-process';
+    const next=await f.metadata.publish(body,f.capabilities,f.publisher),access=await Access.load(f.db,principal),graph=new Objects(f.db,next,access);
+    assert.equal((await graph.follow(ref,'stateLogs')).length,1);
+    await f.capabilities.actions.apply(access,next,'ChangeCase',{item:ref,revision:1,state:'closed'},'next-release');
+    assert.equal((await graph.follow(ref,'stateLogs')).length,2);
+    assert.equal((await f.graph.follow(ref,'stateLogs')).length,1);
+    assert.equal((await f.db.query(`SELECT count(*)::int AS count FROM ${f.db.schema}.objects WHERE type='ProcessCaseStateLog'`)).rows[0]!.count,0);
+  }finally{await f.close();}
+});
+
+test('hidden state cells cannot be inferred through process log filters or direct reads',async()=>{
+  const f=await processFixture();try{
+    const ref={type:'ProcessCase',id:'cell'};await f.graph.create(ref,{id:ref.id,name:'Visible',state:'open'});
+    const log=(await f.graph.follow(ref,'stateLogs'))[0]!;
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies(ontology,type,policy) VALUES('Eigos','ProcessCase',$1)`,[{properties:{state:{all:[{op:'equals',property:'name',value:'Allowed'}],any:[]}}}]);
+    const graph=new Objects(f.db,f.model,await Access.load(f.db,principal));
+    assert.equal((await graph.query({type:'ProcessLog',where:{newState:'open'}})).items.length,0);
+    await assert.rejects(graph.read(log.ref),/unavailable/);
+  }finally{await f.close();}
+});
+
+test('existing history gains nullable causal columns through the ordinary database upgrade',async()=>{
+  const f=await processFixture();try{
+    const ref={type:'ProcessCase',id:'legacy'};await f.graph.create(ref,{id:ref.id,name:'Legacy',state:'open'});
+    await f.db.query(`ALTER TABLE ${f.db.schema}.edit_history DROP COLUMN action,DROP COLUMN request_id,DROP COLUMN task_id,DROP COLUMN observed_at`);
+    await upgradePublicationStorage(f.db);
+    const logs=await f.graph.follow(ref,'stateLogs');assert.equal(logs.length,1);
+    assert.equal(logs[0]!.properties.action,null);assert.equal(logs[0]!.properties.requestId,null);
+  }finally{await f.close();}
+});
+
+test('process definitions and native relationships survive resource remapping',async()=>{
+  const f=await processFixture();try{
+    const body=remapResources(f.model.document,'Renamed',{
+      object:{ProcessCase:'RenamedCase',ProcessCaseStateLog:'RenamedLog'},link:{ProcessCaseStateLogProcess:'RenamedHistory'},
+    });
+    await setGrants(f.db,'deployment',[{resource:'Eigos',permission:'manage_definition'},{resource:'Renamed',permission:'manage_definition'}]);
+    const model=await f.metadata.publish(body,f.capabilities,await Access.load(f.db,{owner:'deployment',scopes:[]}));
+    await setGrants(f.db,principal.owner,memberGrants(model));
+    const graph=new Objects(f.db,model,await Access.load(f.db,principal)),ref={type:'RenamedCase',id:'mapped'};
+    await graph.create(ref,{id:ref.id,name:'Mapped',state:'open'});
+    const log=(await graph.follow(ref,'stateLogs'))[0]!;assert.equal(log.ref.type,'RenamedLog');
+    assert.deepEqual((await graph.follow(log.ref,'process'))[0]!.ref,ref);
+  }finally{await f.close();}
+});
 
 test('upgrade preserves source observation ordering before the first refresh or deletion',async()=>{
   const f=await indexedFixture();try{

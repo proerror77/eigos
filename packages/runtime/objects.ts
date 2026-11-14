@@ -7,6 +7,7 @@ import { Conflict, NotFound, digest } from '../core/identity.js';
 import { PublishedOntology } from './metadata.js';
 import { Access } from './access.js';
 import { objectRefSchema, type ObjectData, type ObjectRef, type LinkData } from '../ontology/schema.js';
+import { processLogTarget } from '../ontology/process-definition.js';
 import { Database, type Sql } from './database.js';
 import { checkScenario, lockEdits, viewTables, stageObject, stageLink } from './scenario-store.js';
 
@@ -22,7 +23,8 @@ export function queryFields(query: Pick<z.output<typeof querySchema>, 'where' | 
     ...(query.orderBy ?? []).map(item => item.property), ...(query.select ?? [])])];
 }
 export class Objects {
-  constructor(readonly db: Database, readonly model: PublishedOntology, readonly access: Access, readonly client: Sql = db.pool) {}
+  constructor(readonly db: Database, readonly model: PublishedOntology, readonly access: Access, readonly client: Sql = db.pool,
+    readonly change?: { action?: string; requestId?: string; taskId?: string }) {}
   get owner() { return this.access.principal.owner; }
   private writeReady?: Promise<void>;
   async lockWrites() { await this.prepareWrite(); }
@@ -36,6 +38,7 @@ export class Objects {
     if(Object.keys(properties).some(field=>this.model.object(ref.type).properties[field]?.derived))throw new Conflict('Derived properties are read-only');
   }
   private writeType(type: string, endpoint=false) {
+    if (processLogTarget(this.model,type)) throw new Conflict('Process logs and their relationships are read-only');
     if(type===scenarioMetadataType&&!endpoint)throw new Conflict('Edit Scenario metadata through its lifecycle API');
     this.access.definition(this.model, 'object', type);
     for (const source of this.model.sources.values()) if (source.objectType === type) {
@@ -61,15 +64,32 @@ export class Objects {
   private async stored(input: ObjectRef): Promise<ObjectData> {
     const ref = objectRefSchema.parse(input);
     await checkScenario(this.db, this.model, this.owner, this.client);
-    const values: unknown[] = [this.owner, ref.type, ref.id, this.model.projection], tables = viewTables(this.db, this.model, this.owner, values);
-    const rows = await this.db.readQuery(`${tables.prefix}SELECT type,id,revision,properties FROM ${tables.objects} WHERE owner=$1 AND type=$2 AND id=$3 AND projection=$4`, values, this.client);
+    const values: unknown[] = [this.owner, ref.type, ref.id, this.model.projection];
+    const policy = processLogTarget(this.model,ref.type) ? this.access.rowSql(this.model,ref.type,values,'o.properties') : 'TRUE';
+    const tables = viewTables(this.db, this.model, this.owner, values,[ref.type]);
+    const rows = await this.db.readQuery(`${tables.prefix}SELECT type,id,revision,properties FROM ${tables.objects} o WHERE owner=$1 AND type=$2 AND id=$3 AND projection=$4 AND ${policy}`, values, this.client);
     if (!rows.rows[0]) throw new NotFound('Object is unavailable');
     return this.row(rows.rows[0]);
   }
   async readStored(input: ObjectRef): Promise<ObjectData> {
     if(input.type===scenarioMetadataType)return scenarioMetadataRead(this,input);
     this.access.read(this.model, input.type);
-    return this.visible(await this.stored(input));
+    const object = await this.stored(input);
+    await this.processLogReads([object]);
+    return this.visible(object);
+  }
+  private async processLogReads(objects: ObjectData[]) {
+    const seen = new Set<string>();
+    for (const object of objects) {
+      const target = processLogTarget(this.model,object.ref.type);
+      if (!target) continue;
+      const ref = { type: target.objectType, id: String(object.properties.processId) }, key = JSON.stringify([ref,target.property]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const parent = await this.stored(ref);
+      this.access.readRow(this.model,ref.type,parent.properties,true);
+      if (!this.access.cell(this.model,ref.type,target.property,parent.properties)) throw new NotFound('Process state is unavailable');
+    }
   }
   /** Source fields must match their baseline; unrelated local notes may remain. */
   async matchesSource(ref:ObjectRef,sourceName:string):Promise<boolean>{
@@ -190,14 +210,15 @@ export class Objects {
     }
     const policyCases = types.map(type => {
       values.push(type); const parameter = values.length;
-      return `(type=$${parameter} AND ${this.access.rowSql(this.model,type,values)})`;
+      return `(type=$${parameter} AND ${this.access.rowSql(this.model,type,values,'o.properties')})`;
     });
     clauses.push('('+policyCases.join(' OR ')+')');
     values.push(this.model.projection); clauses.push(`projection=$${values.length}`);
     values.push(args.limit + 1);
-    const limitParameter = values.length, tables = viewTables(this.db, this.model, this.owner, values);
+    const limitParameter = values.length, tables = viewTables(this.db, this.model, this.owner, values,[...types,...(args.from?[args.from.object.type]:[])]);
     const result = await this.db.readQuery(`${tables.prefix}SELECT type,id,revision,properties FROM ${tables.objects} o WHERE ${clauses.join(' AND ')} ORDER BY type COLLATE "C",id COLLATE "C" LIMIT $${limitParameter}`, values, this.client);
     const records = result.rows.slice(0, args.limit).map(row => this.row(row));
+    await this.processLogReads(records);
     const fields = args.select ?? Object.keys(this.model.interfaces.get(args.type)?.properties ?? this.model.object(args.type).properties).filter(field=>types.some(type=>{const local=this.model.propertyName(type,args.type,field);return local&&!this.model.object(type).properties[local]?.derived;}));
     const items = records.map(object => { this.access.readRow(this.model,object.ref.type,object.properties); return { ...object, properties: Object.fromEntries(fields.flatMap(field => {
       const local = this.model.propertyName(object.ref.type, args.type, field);
@@ -223,11 +244,12 @@ export class Objects {
     await checkScenario(this.db, this.model, this.owner, this.client);
     const values: unknown[] = [this.owner, nav.link, ref.type, ref.id, this.model.projection];
     const policy = this.access.rowSql(this.model,nav.target,values,'o.properties');
-    const tables = viewTables(this.db, this.model, this.owner, values);
+    const tables = viewTables(this.db, this.model, this.owner, values,[ref.type,nav.target]);
     const result = await this.db.readQuery(`${tables.prefix}SELECT o.type,o.id,o.revision,o.properties FROM ${tables.links} l
       JOIN ${tables.objects} o ON o.projection=l.projection AND o.owner=l.owner AND o.type=l.${to}_type AND o.id=l.${to}_id
       WHERE l.owner=$1 AND l.type=$2 AND l.${from}_type=$3 AND l.${from}_id=$4 AND l.projection=$5 AND ${policy} ORDER BY o.id COLLATE "C" LIMIT 101`, values, this.client);
     if (result.rows.length > 100) throw new Error('Relationship exceeds the complete read limit');
+    await this.processLogReads(result.rows.map(row=>this.row(row)));
     if(nav.target===scenarioMetadataType){
       const items:ObjectData[]=[];
       for(const row of result.rows)try{items.push(await scenarioMetadataRead(this,{type:scenarioMetadataType,id:String(row.id)}));}catch(error){if(!(error instanceof NotFound))throw error;}
@@ -237,7 +259,7 @@ export class Objects {
     return Promise.all(result.rows.map(row=>evaluator.enrich(this.visible(this.row(row)))));
   }
   async create(ref: ObjectRef, input: Record<string, unknown>): Promise<void> {
-    if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).create(ref, input));
+    if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).create(ref, input));
     this.writeType(ref.type); await this.prepareWrite();
     this.assertStoredFields(ref,input);
     const properties = this.model.parseObject(ref, input);
@@ -253,7 +275,7 @@ export class Objects {
     } else await recordObjectEdit(this,ref,null,properties,properties,'create');
   }
   async ingestBatch(input: readonly { ref: ObjectRef; properties: Record<string,unknown> | null }[], source = 'default', observedAt?: string): Promise<void> {
-    if (this.client === this.db.pool) return this.db.transaction(client=>new Objects(this.db,this.model,this.access,client).ingestBatch(input,source,observedAt));
+    if (this.client === this.db.pool) return this.db.transaction(client=>new Objects(this.db,this.model,this.access,client,this.change).ingestBatch(input,source,observedAt));
     await this.prepareWrite();
     if (this.model.scenario) throw new Conflict('Source ingestion is unavailable inside a scenario');
     const unique = new Map<string,{ref:ObjectRef;properties:Record<string,unknown>|null}>();
@@ -283,7 +305,7 @@ export class Objects {
     }
   }
   async edit(ref: ObjectRef, revision: number, fields: Record<string, unknown>): Promise<void> {
-    if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).edit(ref, revision, fields));
+    if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).edit(ref, revision, fields));
     this.writeType(ref.type); await this.prepareWrite();
     this.assertStoredFields(ref,fields);
     const old = await this.stored(ref), properties = this.model.parseObject(ref, { ...old.properties, ...fields });
@@ -300,7 +322,7 @@ export class Objects {
     return this.linkBatch([edge]);
   }
   async linkBatch(edges: readonly LinkData[]): Promise<void> {
-    if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).linkBatch(edges));
+    if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).linkBatch(edges));
     await this.prepareWrite();
     if (!edges.length) return;
     for (const edge of edges) { await this.read(edge.from); await this.read(edge.to); }
@@ -326,7 +348,7 @@ export class Objects {
       ON CONFLICT(projection,owner,type,from_type,from_id,to_type,to_id) DO NOTHING`, [this.owner, JSON.stringify(rows), this.model.projection], this.client);
   }
   async unlink(edge: LinkData): Promise<void> {
-    if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).unlink(edge));
+    if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).unlink(edge));
     await this.prepareWrite(); this.access.definition(this.model, 'link', edge.type);
     await this.read(edge.from); await this.read(edge.to);
     this.writeType(edge.from.type,true); this.writeType(edge.to.type,true);
@@ -336,13 +358,14 @@ export class Objects {
     await this.db.query(`DELETE FROM ${this.db.schema}.links WHERE projection=$1 AND owner=$2 AND type=$3 AND from_type=$4 AND from_id=$5 AND to_type=$6 AND to_id=$7`, [this.model.projection, this.owner, edge.type, edge.from.type, edge.from.id, edge.to.type, edge.to.id], this.client);
   }
   async remove(ref: ObjectRef, revision: number): Promise<void> {
-    if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client).remove(ref, revision));
+    if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).remove(ref, revision));
     await this.prepareWrite(); this.writeType(ref.type);
     const old = await this.stored(ref);
     this.access.readRow(this.model,ref.type,old.properties);
     for (const field of Object.keys(old.properties)) if (!this.access.cell(this.model,ref.type,field,old.properties)) throw new Error('Cannot delete an object with hidden properties');
     if (old.revision !== revision) throw new Conflict('Object revision changed');
     for (const link of this.model.links.values()) {
+      if (processLogTarget(this.model,link.from.type) || processLogTarget(this.model,link.to.type)) continue;
       for (const side of ['from', 'to'] as const) if (link[side].type === ref.type) {
         const others = await this.follow(ref, link[side].name);
         for (const other of others) await this.unlink({ type: link.apiName, from: side === 'from' ? ref : other.ref, to: side === 'to' ? ref : other.ref });

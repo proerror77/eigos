@@ -1,5 +1,6 @@
 import { digest, Conflict } from '../core/identity.js';
 import { validator } from '../ontology/model.js';
+import type { ActionCall } from '../ontology/invocation.js';
 import { PublishedOntology } from './metadata.js';
 import { Access } from './access.js';
 import { objectRefSchema, type ObjectRef, type Value } from '../ontology/schema.js';
@@ -18,6 +19,15 @@ const evaluate = (expression: Value, input: Record<string, unknown>): unknown =>
 };
 export class Actions {
   constructor(private readonly db: Database, private readonly functions: Functions, private readonly effects?: Effects) {}
+  resolve(access: Access, model: PublishedOntology, call: ActionCall) {
+    const target = call.interface;
+    if (!target) return { action: call.action!, input: call.input };
+    access.definition(model, 'interface', target.type);
+    access.definition(model, 'object', target.implementation ?? target.object!.type);
+    return target.object
+      ? model.resolveAction(target.object, target.type, target.action, call.input)
+      : model.resolveTypeAction(target.implementation!, target.type, target.action, call.input);
+  }
   async apply(access: Access, model: PublishedOntology, actionName: string, raw: Record<string, unknown>, requestId: string, beforeCommit?: (client: Sql) => Promise<void>, execution?: FunctionContext['execution'], signal = AbortSignal.timeout(120000)) {
     const principal = access.principal;
     await access.refresh(); access.action(model, actionName);
@@ -35,7 +45,8 @@ export class Actions {
       // The request key serializes only duplicate submissions of this action.
       await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify([principal.owner, model.scenario ?? 'main', requestId])], client);
       await beforeCommit?.(client);
-      const objects = model.scenario ? new Objects(this.db, model, access, client) : new JournalObjects(this.db,model,access,client);
+      const change = { action: actionName, requestId, taskId: execution?.task.id };
+      const objects = model.scenario ? new Objects(this.db, model, access, client,change) : new JournalObjects(this.db,model,access,client,change);
       await objects.lockWrites();
       const previous = await priorResult(client);
       if (previous.rows[0]) {
@@ -111,7 +122,7 @@ export class Actions {
     return this.db.transaction(async client=>{
       await access.refresh(client);
       await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[JSON.stringify([access.principal.owner,'main',requestId])],client);
-      const graph=new Objects(this.db,model,access,client);await graph.lockWrites();
+      const graph=new Objects(this.db,model,access,client,{requestId});await graph.lockWrites();
       const original=(await this.db.query(`SELECT * FROM ${this.db.schema}.action_changes WHERE owner=$1 AND request_id=$2 FOR UPDATE`,[access.principal.owner,originalRequestId],client)).rows[0];
       if(!original)throw new Conflict('The original Action has no reversible edit journal');
       if(original.release!==model.release)throw new Conflict('Undo requires the original publication');

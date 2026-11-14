@@ -1,6 +1,7 @@
 import {localEmbeddingDefinition} from './embedding-definition.js';
 import {applicationDefinition as applications} from './applications.js';
 import {scenarioObjectType} from './scenario-definition.js';
+import { addProcessLogs } from './process-definition.js';
 import { readFileSync } from 'node:fs';
 import type { OntologyDocument } from './schema.js';
 import { servicesDefinition as services } from './services.js';
@@ -11,7 +12,7 @@ const ride = JSON.parse(readFileSync(new URL('./definitions/ride.json', import.m
 const scheduling = JSON.parse(readFileSync(new URL('./definitions/scheduling.json', import.meta.url), 'utf8')) as OntologyDocument;
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '8',
+  id: ride.id, version: '9',
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...payments.objectTypes,...applications.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...payments.linkTypes,...applications.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...payments.functionTypes,...applications.functionTypes,localEmbeddingDefinition],
   actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes, ...payments.actionTypes,...applications.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
@@ -53,3 +54,12 @@ for(const fn of businessDefinition.functionTypes){
   }
 }
 businessDefinition.objectTypes.find(type=>type.apiName==='LumaEvent')!.interfaces.AttendableEvent={properties:Object.fromEntries(['name','start','end','timeZone','status','locationPrecision','registrationOpen','approvalRequired'].map(name=>[name,name])),links:{registrations:'registrations',trips:'trips'},actions:{register:{action:'PrepareEventRegistration',parameters:{event:'event',ticketId:'ticketId',sourceTaskId:'sourceTaskId'}}}};
+
+businessDefinition.objectTypes.find(type => type.apiName === 'SchedulePlan')!.properties.state = {
+  description: 'Internal plan review state; confirmation does not write an external calendar',
+  schema: { type: 'string', enum: ['prepared', 'confirmed'] }, required: false,
+};
+addProcessLogs(businessDefinition, [
+  { type: 'EventRegistration', property: 'state' }, { type: 'EventTrip', property: 'state' },
+  { type: 'StripeLinkPaymentRequest', property: 'status' }, { type: 'SchedulePlan', property: 'state' },
+]);

@@ -11,7 +11,7 @@ import { AgentCard } from '@a2a-js/sdk';
 import { z } from 'zod';
 import { Conflict, NotFound, requireScope, type Principal } from '../../packages/core/identity.js';
 import type { Config } from '../../packages/core/config.js';
-import { objectRefSchema } from '../../packages/ontology/schema.js';
+import { actionRequestSchema as actionInput, functionRequestSchema as functionInput } from '../../packages/ontology/invocation.js';
 import { Access } from '../../packages/runtime/access.js';
 import { Database } from '../../packages/runtime/database.js';
 import { Metadata } from '../../packages/runtime/metadata.js';
@@ -29,11 +29,6 @@ import { A2A, AgentUser, agentCard } from './a2a.js';
 
 const queryInput = z.strictObject({ ontology:z.string().optional(), taskId: z.uuid().optional(), scenarioId: z.uuid().optional(), query: querySchema });
 const scenarioCreateInput = createScenarioSchema.safeExtend({ ontology: z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(80).optional() });
-const functionInput = z.strictObject({ ontology:z.string().optional(), taskId: z.uuid().optional(), scenarioId: z.uuid().optional(), function: z.string(), input: z.record(z.string(), z.unknown()) });
-const actionInput = z.strictObject({ ontology:z.string().optional(), scenarioId: z.uuid().optional(), requestId: z.string().min(1).max(128), action: z.string().optional(),
-  interface: z.strictObject({ object: objectRefSchema.optional(), implementation: z.string().optional(), type: z.string(), action: z.string() })
-    .refine(value => !!value.object !== !!value.implementation, 'Select an object or implementing Object Type').optional(), input: z.record(z.string(), z.unknown()) })
-  .refine(value => !!value.action !== !!value.interface, 'Select an Action or an Interface Action');
 
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {}) {
   const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE), configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE));
@@ -92,10 +87,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   const apply = async (p: Principal, raw: unknown) => {
     requireScope(p, 'ontology:write');
     const input = actionInput.parse(raw), access = await Access.load(db, p), model = await modelFor(p,undefined,input.scenarioId,access,input.ontology);
-    const target = input.interface;
-    if (target) { access.definition(model, 'interface', target.type); access.definition(model, 'object', target.implementation ?? target.object!.type); }
-    const selected = target ? target.object ? model.resolveAction(target.object, target.type, target.action, input.input)
-      : model.resolveTypeAction(target.implementation!, target.type, target.action, input.input) : { action: input.action!, input: input.input };
+    const selected = capabilities.actions.resolve(access, model, input);
     return capabilities.actions.apply(access, model, selected.action, selected.input, input.requestId);
   };
   const scenarioCreate = async (p: Principal, raw: unknown) => { requireScope(p,'ontology:write'); const {ontology,...input}=scenarioCreateInput.parse(raw);return scenarios.create(await Access.load(db,p),await metadata.active(ontology),input); };

@@ -5,6 +5,7 @@ import { actionParametersCompatible } from './action-compatibility.js';
 import { schemaSubset } from './schema-compatibility.js';
 import { validateDerivedProperties } from './derived-validation.js';
 import { fieldSchema, propertyPathSchema } from './property-path.js';
+import { processLogTarget } from './process-definition.js';
 import { digest } from '../core/identity.js';
 import { ontologySchema, type OntologyDocument, type ObjectRef } from './schema.js';
 
@@ -143,6 +144,7 @@ export class Ontology {
         if(!(resources[kind as keyof typeof resources] as ReadonlyMap<string,unknown>).has(name))throw new Error(`Unknown Function dependency ${fn.apiName}: ${kind}/${name}`);
       }
     }
+    for (const type of this.objects.keys()) processLogTarget(this,type);
   }
   object(name: string) { return required(this.objects, name); }
   action(name: string) { return required(this.actions, name); }
