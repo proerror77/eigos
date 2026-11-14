@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { waimaiFunctions } from '../packages/capabilities/meituan/waimai.js';
+import { AmapClient } from '../packages/capabilities/amap/client.js';
 import { Access, setGrants } from '../packages/runtime/access.js';
 import { Functions } from '../packages/runtime/functions.js';
 import { Objects } from '../packages/runtime/objects.js';
@@ -39,7 +40,15 @@ test('Waimai sends only signed store and arrival reads, preserves zero fees and 
     ] }];
     return Response.json({ status: 0, data });
   };
-  const functions = new Functions(waimaiFunctions(config, supply), deliveryFunctions);
+  const conversions: string[] = [];
+  const amap = new AmapClient('map-fixture-web-key', async (target) => {
+    const url = new URL(String(target));
+    assert.equal(url.origin + url.pathname, 'https://restapi.amap.com/v3/assistant/coordinate/convert');
+    assert.equal(url.searchParams.get('coordsys'), 'gps');
+    conversions.push(url.searchParams.get('locations')!);
+    return Response.json({ status: '1', locations: '121.455555,31.222222' });
+  }, async () => {});
+  const functions = new Functions(waimaiFunctions(config, supply, async () => amap), deliveryFunctions);
   const coordinates = { latitude: 31.222222, longitude: 121.455555, coordinateSystem: 'gcj02' };
   const context = { principal, objects: new Objects(f.db, f.model, f.access), signal: AbortSignal.timeout(10000) };
   try {
@@ -81,13 +90,39 @@ test('Waimai sends only signed store and arrival reads, preserves zero fees and 
       assert(!JSON.stringify(page).includes(String(coordinates.longitude)));
       await functions.invoke(f.model, 'readMeituanWaimaiArrival', { shopId: '129', locationRequestId: page.locationRequestId! }, taskContext);
     });
-    assert.deepEqual(calls.map(call => call.parameters.longitude), Array(4).fill(121455555));
+    const nearby = await f.tasks.submit(principal, { requestId: 'waimai-device', message: '查我附近的外卖' });
+    const first = await f.tasks.claim();
+    assert.equal(first?.id, nearby.id);
+    const pendingDevice = await functions.invoke(f.model, 'findMeituanWaimaiShops', {},
+      { ...context, execution: { task: first!, tasks: f.tasks } }).catch((error: unknown) => {
+        assert(error && typeof error === 'object' && 'choices' in error);
+        return error.choices as { requestId: string; input: Record<string, unknown> };
+      }) as { requestId: string; input: Record<string, unknown> };
+    assert.equal(pendingDevice.input.acceptDeviceWgs84, true);
+    assert.equal(pendingDevice.input.coordinateProvider, 'Amap');
+    assert.equal(calls.length, 4);
+    await f.tasks.finish(first!, 'input-required', pendingDevice);
+    await new PARequests(f.tasks).respond(principal, nearby.id, {
+      requestId: pendingDevice.requestId, response: { status: 'available', location: {
+        source: 'device', latitude: 31.221, longitude: 121.45, coordinateSystem: 'wgs84',
+        observedAt: new Date().toISOString(), accuracyMeters: 18,
+      } },
+    });
+    const resumed = await f.tasks.claim();
+    assert.equal(resumed?.id, nearby.id);
+    const resumedContext = { ...context, execution: { task: resumed!, tasks: f.tasks } };
+    const shops = waimaiShops.parse(await functions.invoke(f.model, 'findMeituanWaimaiShops', {}, resumedContext));
+    assert.equal(shops.locationRequestId, pendingDevice.requestId);
+    await functions.invoke(f.model, 'readMeituanWaimaiArrival',
+      { shopId: '129', locationRequestId: shops.locationRequestId! }, resumedContext);
+    assert.deepEqual(conversions, ['121.45,31.221', '121.45,31.221']);
+    assert.deepEqual(calls.map(call => call.parameters.longitude), Array(6).fill(121455555));
     await setGrants(f.db, principal.owner, [{ resource: 'Eigos', permission: 'view_definition' },
       { resource: 'Eigos/function/findMeituanWaimaiShops', permission: 'execute_function' }]);
     const revoked = await Access.load(f.db, principal);
     await assert.rejects(functions.invoke(f.model, 'findMeituanWaimaiShops', coordinates,
       { ...context, objects: new Objects(f.db, f.model, revoked) }), /read_source/);
-    assert.equal(calls.length, 4);
+    assert.equal(calls.length, 6);
   } finally {
     await rm(directory, { recursive: true, force: true });
     await f.close();

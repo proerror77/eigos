@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { Conflict, digest } from '../../core/identity.js';
 import { waimaiArrival, waimaiArrivalInput, waimaiShops, waimaiShopsInput } from '../../ontology/delivery.js';
 import { locationForService } from '../location.js';
+import { toAmapPoint } from '../amap/functions.js';
+import type { AmapResolver } from '../amap/client.js';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import { readPrivateSourceFile, yuanToFen } from '../../core/private-source.js';
 
@@ -36,7 +38,13 @@ const location = (input: { latitude: number; longitude: number }) => ({
   latitude: Math.round(input.latitude * 1e6), longitude: Math.round(input.longitude * 1e6),
 });
 
-export function waimaiFunctions(filepath?: string, fetcher: typeof fetch = fetch): ReadonlyMap<string, FunctionHandler> {
+export function waimaiFunctions(filepath?: string, fetcher: typeof fetch = fetch, amap?: AmapResolver): ReadonlyMap<string, FunctionHandler> {
+  const resolveDeliveryLocation = (ctx: FunctionContext, input: Parameters<typeof locationForService>[1]) => {
+    const canConvert = amap && ctx.objects.access.allows({ ontology: ctx.objects.model.document.id,
+      permission: 'read_source', resource: ctx.objects.model.document.id + '/source/Amap' });
+    return locationForService(ctx, input, 'waimai_delivery', 'gcj02', canConvert
+      ? async (point, signal) => toAmapPoint(await amap(ctx), point, signal) : undefined);
+  };
   const invoke = async (route: keyof typeof routes, input: Record<string, unknown>, ctx: FunctionContext) => {
     if (!filepath) throw new Conflict('Meituan Enterprise Waimai access is not configured for this owner');
     const readConfig = async () => configuration.parse(JSON.parse(await readPrivateSourceFile(filepath)));
@@ -70,7 +78,7 @@ export function waimaiFunctions(filepath?: string, fetcher: typeof fetch = fetch
       const input = waimaiShopsInput.parse(raw);
       const located = 'latitude' in input
         ? { position: input, requestId: undefined }
-        : await locationForService(context, input, 'waimai_delivery', 'gcj02');
+        : await resolveDeliveryLocation(context, input);
       const { data, ...receipt } = await invoke('shops', { ...location(located.position), keyword: input.query, page_index: input.page ?? 1 }, context);
       const page = shopPage.parse(data);
       if (page.current_page_index !== (input.page ?? 1)) throw new Conflict('Meituan Waimai returned a different page');
@@ -86,7 +94,7 @@ export function waimaiFunctions(filepath?: string, fetcher: typeof fetch = fetch
     ['readMeituanWaimaiArrival', async (raw, context) => {
       const input = waimaiArrivalInput.parse(raw), id = Number(input.shopId);
       if (!Number.isSafeInteger(id)) throw new Conflict('Meituan Waimai shop ID exceeds the supported numeric range');
-      const point = 'latitude' in input ? input : (await locationForService(context, input, 'waimai_delivery', 'gcj02')).position;
+      const point = 'latitude' in input ? input : (await resolveDeliveryLocation(context, input)).position;
       const { data, ...receipt } = await invoke('arrival', { ...location(point), wm_poi_id: id }, context);
       return waimaiArrival.parse({ ...receipt, shopId: input.shopId, dates: arrivalRows.parse(data).map(row => ({
         dateLabel: row.date, open: row.status === 0,

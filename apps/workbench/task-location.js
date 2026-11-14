@@ -1,6 +1,6 @@
 export async function currentTaskLocation(geolocation, request, now = Date.now) {
-  // Browser Geolocation supplies WGS84. Keep delivery on a verified GCJ-02 point.
-  if (request.coordinateSystem !== 'wgs84') {
+  // Browser coordinates remain WGS84 even when the requested provider uses GCJ-02.
+  if (request.coordinateSystem !== 'wgs84' && !request.acceptDeviceWgs84) {
     throw new Error('此查询需要高德坐标。请在个人助手中选择地图位置，或指定收餐地址。');
   }
   if (!geolocation) throw new Error('此浏览器无法定位。请从手机打开工作台，或提供地址。');

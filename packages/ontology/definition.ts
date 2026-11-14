@@ -1,3 +1,4 @@
+import { mapFunctions } from './maps.js';
 import { locationFunctions, taskLocationValueType } from './location.js';
 import { luckinDefinition as luckin } from './luckin.js';
 import { deliveryFunctions } from './delivery.js';
@@ -15,9 +16,9 @@ const ride = JSON.parse(readFileSync(new URL('./definitions/ride.json', import.m
 const scheduling = JSON.parse(readFileSync(new URL('./definitions/scheduling.json', import.meta.url), 'utf8')) as OntologyDocument;
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '11',
+  id: ride.id, version: '12',
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
-  linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...payments.linkTypes,...applications.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...luckin.functionTypes,...applications.functionTypes,localEmbeddingDefinition],
+  linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...payments.linkTypes,...applications.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,localEmbeddingDefinition],
   actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes, ...payments.actionTypes,...luckin.actionTypes,...applications.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
 };
 
@@ -46,7 +47,7 @@ for(const group of businessDefinition.typeGroups)for(const name of group.objectT
 
 for(const fn of businessDefinition.functionTypes){
   if(fn.apiName==='embedTextLocal'){fn.dependencies={};continue;}
-  if(payments.functionTypes.includes(fn) || deliveryFunctions.includes(fn) || locationFunctions.includes(fn) || luckin.functionTypes.includes(fn))continue;
+  if(payments.functionTypes.includes(fn) || deliveryFunctions.includes(fn) || locationFunctions.includes(fn) || mapFunctions.includes(fn) || luckin.functionTypes.includes(fn))continue;
   if(ride.functionTypes.some(item=>item.apiName===fn.apiName)){
     fn.dependencies={objectTypes:ride.objectTypes.map(type=>type.apiName),interfaceTypes:ride.interfaceTypes.map(type=>type.apiName),linkTypes:ride.linkTypes.map(link=>link.apiName),dataSources:ride.dataSources.map(source=>source.apiName),functions:ride.functionTypes.filter(item=>item.apiName!==fn.apiName).map(item=>item.apiName)};
   }else if([scheduling,services,travel].some(domain=>domain.functionTypes.some(item=>item.apiName===fn.apiName))){

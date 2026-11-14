@@ -6,7 +6,7 @@ Agent 从已发布的 EIGOS Ontology 发现可用 Function 和 Action。已授�
 
 瑞幸门店和美团外卖共用 Ontology 的 `TaskLocation`。已知地点由调用方直接给坐标，或在同一任务中请求 PA 解析。用户指定地址用 `location.source = specified`，行程已经选定的地点用 `planned`，附近查询直接调用供应商 Function 并省略地点。需要位置时，原任务会等待 `location.resolve`，通过现有 `respond_to_task` 回传，随即继续供应商查询。
 
-PA 可以用操作系统定位权限，或在 EIGOS 工作台的待处理任务里点「共享本机当前位置」。请用随身设备打开工作台。当前工作台按需读取一次浏览器 WGS84 坐标，使用采集时间和精度。瑞幸当前门店查询支持这一路径。外卖需要高德 GCJ-02 坐标，由有对应地图能力的 PA 提供，或在工作台输入已确认的收餐地点和高德坐标。坐标系错误、定位过期或精度不足时，提示指定地址。参考 [W3C 设备定位规范](https://www.w3.org/TR/geolocation/)和[高德坐标转换](https://lbs.amap.com/api/webservice/guide/api/convert)。
+PA 可以用操作系统定位权限，或在 EIGOS 工作台的待处理任务里点「共享本机当前位置」。请用随身设备打开工作台。当前工作台按需读取一次浏览器 WGS84 坐标，使用采集时间和精度。瑞幸当前门店查询支持这一路径。配置并授权高德来源后，外卖也能接收浏览器定位，再通过高德 Web 服务转换为 GCJ-02。PA 可直接回传高德坐标，也可在工作台输入已确认的收餐地点和高德坐标。见[地图与天气](maps-and-weather.md)。坐标系错误、定位过期或精度不足时，提示指定地址。参考 [W3C 设备定位规范](https://www.w3.org/TR/geolocation/)和[高德坐标转换](https://lbs.amap.com/api/webservice/guide/api/convert)。
 
 位置回传只供同一任务、owner 和已授权的服务使用。设备位置最多使用 2 分钟，瑞幸要求误差不超过 300 米，外卖不超过 100 米。指定和计划地点的回复在该位置请求发出后 5 分钟内可用于查询。员工或会员需要 `PALocation` 来源读取和 `resolveTaskLocation` Function 权限。坐标保留在原 PA 请求与来源调用参数中供该任务重试和检查，Ontology 给 Agent 的位置引用只返回来源、时间与精度等元数据。验收环境没有配置外卖真实账号或手机地图来源。
 
@@ -18,7 +18,7 @@ Gateway 和 Worker 的 `EIGOS_PAOTUI_CONNECTION_FILE` 可以指向一个专用�
 
 ## 美团外卖
 
-`findMeituanWaimaiShops` 接受明确的高德坐标及可选菜品或商家关键词，读取商家是否可配送、列表运费、起送额和平均配送分钟数。对选中商家，`readMeituanWaimaiArrival` 用同一个地点引用或别处已确认的同一坐标读取官方送达时段。供应商给的时间戳为零时保留其文字和空时间，不从平均时长推算一个送达承诺。商家列表费用为预估，结算页可以不同。参考[美团企业版外卖 API](https://h5.dianping.com/app/bep-docs/sky-doc/canyinopenapi/waimai_api.html)和[美团外卖配送费说明](https://rules-center.meituan.com/m/detail/guize/222?activeRule=1)。
+`findMeituanWaimaiShops` 接受明确的高德坐标及可选菜品或商家关键词，读取商家是否可配送、列表运费、起送额和平均配送分钟数。对选中商家，`readMeituanWaimaiArrival` 用同一个地点引用或同一坐标读取官方送达时段。供应商给的时间戳为零时保留其文字和空时间，不从平均时长推算一个送达承诺。商家列表费用为预估，结算页可以不同。参考[美团企业版外卖 API](https://h5.dianping.com/app/bep-docs/sky-doc/canyinopenapi/waimai_api.html)和[美团外卖配送费说明](https://rules-center.meituan.com/m/detail/guize/222?activeRule=1)。
 
 使用美团发放的企业渠道测试账号。Gateway 和 Worker 的 `EIGOS_WAIMAI_CONNECTION_FILE` 指向对应执行用户所有的 `0600` 文件，字段为 `owner`、`active`、`environment`、`token`、`sign`、`aesKey` 和供应商分配的 `version`。生产与测试结果分别标记。授予 `MeituanWaimai` 来源读取权限和对应的两个 Function 权限。当前只用商家列表、预计送达查询接口。
 

@@ -1,3 +1,5 @@
+import { configuredAmap } from './amap/client.js';
+import { amapFunctions } from './amap/functions.js';
 import { resolveTaskLocation } from './location.js';
 import { luckinFunctions } from './luckin/functions.js';
 import { paotuiFunctions } from './meituan/paotui.js';
@@ -24,17 +26,19 @@ export function createCapabilities(
   extensions: RuntimeExtensions = {},
   services: ServiceResolver = unavailableServices,
   stripe: StripeSandboxResolver = configuredStripeSandbox(),
-  delivery: { paotui?: string; waimai?: string } = {},
+  connections: { paotui?: string; waimai?: string; amap?: string } = {},
 ) {
   let sources: Sources;
+  const amap = configuredAmap(connections.amap);
   const handlers = new Map([
     ...schedulingFunctions(db),
     ...applicationFunctions(db),
     ...serviceFunctions(services, () => sources),
     ...travelFunctions(db, source, services, () => sources),
     ...stripePaymentFunctions(db, stripe),
-    ...paotuiFunctions(delivery.paotui),
-    ...waimaiFunctions(delivery.waimai),
+    ...paotuiFunctions(connections.paotui),
+    ...waimaiFunctions(connections.waimai, fetch, connections.amap ? amap : undefined),
+    ...amapFunctions(amap),
     ...luckinFunctions(),
     ['resolveTaskLocation', resolveTaskLocation],
   ]);

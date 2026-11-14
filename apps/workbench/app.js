@@ -2307,7 +2307,10 @@ async function renderProcesses() {
           $('#editor').close();
           await renderProcesses();
         };
-        const serviceName = use === 'waimai_delivery' ? '美团外卖' : '瑞幸';
+        const serviceName = ({
+          waimai_delivery: '美团外卖', luckin_pickup: '瑞幸', nearby_search: '高德周边搜索',
+          map_route: '高德路线查询', weather: '高德天气',
+        })[use];
         const submitPlace = async (form, requiredPlace) => {
           const { place = requiredPlace, ...point } = form.read();
           await share({
@@ -2317,9 +2320,11 @@ async function renderProcesses() {
         };
         body.append(
           element('h3', {}, '本次查询位置'),
-          element('p', {}, serviceName + '会使用你此次提供的位置。'),
+          element('p', {}, (serviceName || '本次服务') + '会使用你此次提供的位置。'),
+          use === 'waimai_delivery' && requestData.input.coordinateProvider === 'Amap'
+            ? element('p', {}, '高德地图将转换设备坐标供美团外卖使用。') : null,
         );
-        if (selection.source === 'current' && coordinateSystem === 'wgs84') {
+        if (selection.source === 'current' && (coordinateSystem === 'wgs84' || requestData.input.acceptDeviceWgs84)) {
           body.append(button('共享本机当前位置', async () => {
             const { currentTaskLocation } = await import('./task-location.js');
             await share(await currentTaskLocation(navigator.geolocation, requestData.input));

@@ -33,6 +33,7 @@ const scenarioCreateInput = createScenarioSchema.safeExtend({ ontology: z.string
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {}) {
   const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE), configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
     paotui: config.EIGOS_PAOTUI_CONNECTION_FILE, waimai: config.EIGOS_WAIMAI_CONNECTION_FILE,
+    amap: config.EIGOS_AMAP_CONNECTION_FILE,
   });
   const scenarios = new Scenarios(db), pa = new PARequests(tasks);
   const hotelWorkflows = new HotelWorkflows(db, metadata, capabilities.functions);
