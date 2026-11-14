@@ -19,7 +19,7 @@ async function eventually(predicate: () => Promise<boolean>) {
   assert.fail('Server worker did not process the queued action');
 }
 
-test('remote EIGOS processes a due journey while a model task is busy and delivers only its current typed notice', async () => {
+test('remote EIGOS processes a due journey while both interactive model slots are busy and delivers only its current typed notice', async () => {
   const f = await fixture(), folder = await mkdtemp(join(tmpdir(), 'eigos-travel-pa-'));
   let finish!: () => void, markStarted!: () => void;
   const interactive = new Promise<void>(resolve => { finish = resolve; });
@@ -69,11 +69,18 @@ test('remote EIGOS processes a due journey while a model task is busy and delive
     });
     const schedules = new ScheduledActions(f.db, f.metadata);
     const runner = new ScheduledActionRunner(f.db, f.metadata, f.tasks, capabilities.actions);
-    worker = new Worker(f.tasks, { run: async () => { markStarted(); await interactive; return { done: true }; } }, schedules, runner);
+    let activeModelRuns = 0;
+    worker = new Worker(f.tasks, { async run() {
+      activeModelRuns++;
+      if (activeModelRuns === 2) markStarted();
+      await interactive;
+      return { done: true };
+    } }, schedules, runner);
     const access = () => Access.load(f.db, principal);
     const apply = async (action: string, args: Record<string, unknown>, id: string) =>
       capabilities.actions.apply(await access(), f.model, action, args, id);
-    const firstInteractive = await f.tasks.submit(principal,{requestId:'interactive',message:'Interactive model task'});
+    const interactiveTasks = await Promise.all(['one','two'].map(requestId =>
+      f.tasks.submit(principal,{requestId,message:'Interactive model task'})));
     running = worker.run();
     await Promise.race([started, delay(5000, undefined, {ref:false}).then(() => assert.fail('Interactive worker did not start'))]);
     const ref = await apply('StartCalendarJourney', input, 'bounded-journey');
@@ -86,7 +93,8 @@ test('remote EIGOS processes a due journey while a model task is busy and delive
       assert.equal(recheck.rowCount,1);
     };
     await checked(1);
-    assert.equal((await f.tasks.get(principal, firstInteractive.id)).state,'working');
+    const interactiveStates = async () => Promise.all(interactiveTasks.map(async task => (await f.tasks.get(principal, task.id)).state));
+    assert.deepEqual(await interactiveStates(),['working','working']);
     assert.equal((await f.db.query('SELECT 1 FROM ' + f.schema + '.pa_requests')).rowCount,0);
     assert.equal(tokenCalls,1);
     assert.equal(eventReads,2);
@@ -148,7 +156,7 @@ test('remote EIGOS processes a due journey while a model task is busy and delive
     assert.equal((await effectStatus())[3]!.state,'failed');
     assert.equal(eventReads,10);
     finish();
-    await eventually(async () => (await f.tasks.get(principal, firstInteractive.id)).state === 'completed');
+    await eventually(async () => (await interactiveStates()).every(state => state === 'completed'));
   } finally {
     finish();
     worker?.stop();
