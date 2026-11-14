@@ -31,6 +31,11 @@ test('one Agent capability choice completes the inquiry despite related entrance
     const routes = await objects.query({ type: 'RideEstimatable' }); assert.equal(routes.items.length, 1);
     assert.equal((await objects.follow(routes.items[0]!.ref, 'origin', 'RideEstimatable'))[0]!.properties.name, route.origin);
     assert.equal(Number((await f.db.query(`SELECT count(*) FROM ${f.db.schema}.actions`)).rows[0]!.count), 1);
+    const planning = (await f.db.query(`SELECT
+      (SELECT count(*)::int FROM ${f.db.schema}.scenarios) AS scenarios,
+      (SELECT count(*)::int FROM ${f.db.schema}.workflows) AS workflows,
+      (SELECT count(*)::int FROM ${f.db.schema}.objects WHERE type='SchedulePlan') AS plans`)).rows[0];
+    assert.deepEqual(planning, { scenarios: 0, workflows: 0, plans: 0 });
     assert.equal(await f.worker.runOne(), false);
     t.diagnostic(JSON.stringify({ elapsedMs: result.elapsedMs, sqlStatements: f.db.queries - before, providerCalls: f.provider.calls.length }));
   } finally { await f.close(); }

@@ -1,5 +1,8 @@
 import type { ObjectData, ObjectRef, OntologyDocument } from '../ontology/schema.js';
+import type { ActionInput } from '../ontology/invocation.js';
 import type { Query } from '../runtime/objects.js';
+
+export type { ActionInput } from '../ontology/invocation.js';
 
 export class OntologyHttpError extends Error {
   constructor(
@@ -48,12 +51,6 @@ export interface ScenarioInput {
   kind?: 'persisted' | 'temporary';
   sessionId?: string;
 }
-export interface ActionInput {
-  requestId: string;
-  action: string;
-  input: Record<string, unknown>;
-}
-
 /** Authenticated HTTP client. Credentials are supplied by the host and remain in its control. */
 export class OntologyClient {
   private readonly base: URL;

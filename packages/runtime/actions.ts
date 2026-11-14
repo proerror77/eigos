@@ -1,5 +1,6 @@
 import { digest, Conflict } from '../core/identity.js';
 import { validator } from '../ontology/model.js';
+import type { ActionCall } from '../ontology/invocation.js';
 import { PublishedOntology } from './metadata.js';
 import { Access } from './access.js';
 import { objectRefSchema, type ObjectRef, type Value } from '../ontology/schema.js';
@@ -18,6 +19,15 @@ const evaluate = (expression: Value, input: Record<string, unknown>): unknown =>
 };
 export class Actions {
   constructor(private readonly db: Database, private readonly functions: Functions, private readonly effects?: Effects) {}
+  resolve(access: Access, model: PublishedOntology, call: ActionCall) {
+    const target = call.interface;
+    if (!target) return { action: call.action!, input: call.input };
+    access.definition(model, 'interface', target.type);
+    access.definition(model, 'object', target.implementation ?? target.object!.type);
+    return target.object
+      ? model.resolveAction(target.object, target.type, target.action, call.input)
+      : model.resolveTypeAction(target.implementation!, target.type, target.action, call.input);
+  }
   async apply(access: Access, model: PublishedOntology, actionName: string, raw: Record<string, unknown>, requestId: string, beforeCommit?: (client: Sql) => Promise<void>, execution?: FunctionContext['execution'], signal = AbortSignal.timeout(120000)) {
     const principal = access.principal;
     await access.refresh(); access.action(model, actionName);

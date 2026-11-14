@@ -17,6 +17,10 @@
 
 Interface 通过实现映射引用具体 Object Type 的属性、关系与 Action 参数。查询由本体查询服务执行，Function 可以组合查询和计算。Action 表达用户或 Agent 提交的变更。[Interface 实现](https://www.palantir.com/docs/foundry/interfaces/implement-interface)、[Action 参数约束](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints)
 
+`packages/ontology/invocation.ts` 定义已有 Function、具体 Action 与 Interface Action 的共用调用契约。Agent、HTTP/MCP 和 SDK 使用相同参数形状；协议入口仅补充本体、任务或请求身份。Interface 能力由现有 `Actions.resolve` 按发布映射解析，随后仍由 `Actions.apply` 检查具体操作的权限、提交条件、版本和幂等记录。Interface 本身不执行操作，契约解析不增加模型规划回合。[官方接口动作语义](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints)
+
+单项能力能完成目标时，直接执行 Function 或 Action 并读取结果；Task 的等待与恢复不要求创建 SchedulePlan、Scenario 或 Workflow。跨服务依赖由 Agent 或已发布逻辑协调，时间与资源取舍使用排程，拟议编辑的比较或审阅才使用 Scenario。Scenario 复用同一调用契约与业务逻辑；过程状态及历史由现有业务对象和编辑记录提供给后续 Machinery 视图，不建立第二个操作入口。[Action 跨应用复用](https://www.palantir.com/docs/foundry/action-types/overview)、[Scenario 执行上下文](https://www.palantir.com/docs/foundry/ontology/overview-ontology-scenario)
+
 关系带有日期、角色或状态等业务信息时，用独立对象保存这些信息，并通过 Link 连接两端。来源时间和证据类型保存在 `SourceReceipt` 及实现 `ServiceSearchResult` 的供应商结果对象中。[Object-backed links](https://www.palantir.com/docs/foundry/object-link-types/create-link-type)
 
 ## 模块边界

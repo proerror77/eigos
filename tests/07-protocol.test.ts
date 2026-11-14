@@ -64,6 +64,18 @@ test('MCP publishes a model proposal and executes isolated, revision-checked sce
     document.actionTypes.push({ apiName: 'CreateRoute', description: 'Create an acceptance route', parameters: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } }, required: ['id', 'name'], additionalProperties: false }, objectParameters: {}, submissionCriteria: [], rules: [{ op: 'createObject', object: { type: 'Route', id: { parameter: 'id' } }, properties: { id: { parameter: 'id' }, name: { parameter: 'name' } } }], result: { type: 'Route', id: { parameter: 'id' } } });
     document.actionTypes.push({ apiName: 'RenameRoute', description: 'Rename an acceptance route', parameters: { type: 'object', properties: { route: reference, revision: { type: 'integer' }, name: { type: 'string' } }, required: ['route', 'revision', 'name'], additionalProperties: false }, objectParameters: { route: 'Route' }, submissionCriteria: [], rules: [{ op: 'editObject', object: { parameter: 'route' }, expectedRevision: { parameter: 'revision' }, properties: { name: { parameter: 'name' } } }], result: { type: 'Route', id: { parameter: 'route', path: ['id'] } } });
     document.actionTypes.push({ apiName: 'MergeRoute', description: 'Merge a reviewed acceptance route', parameters: { type: 'object', properties: { route: reference, scenarioId: { type: 'string' }, revision: { type: 'integer' } }, required: ['route', 'scenarioId', 'revision'], additionalProperties: false }, objectParameters: { route: 'Route' }, submissionCriteria: [], rules: [{ op: 'applyScenario', scenario: { parameter: 'scenarioId' }, expectedRevision: { parameter: 'revision' }, objectTypes: ['Route'], linkTypes: [] }], result: { type: 'Route', id: { parameter: 'route', path: ['id'] } } });
+    const create = document.actionTypes.find(action => action.apiName === 'CreateRoute')!;
+    const rename = document.actionTypes.find(action => action.apiName === 'RenameRoute')!;
+    document.interfaceTypes.push({ apiName: 'EditableRoute', description: 'Routes with shared create and rename capabilities',
+      properties: {}, optionalProperties: [], links: {}, actions: {
+        create: { parameters: create.parameters, objectParameters: {}, required: true },
+        rename: { parameters: rename.parameters, objectParameters: { route: 'EditableRoute' }, required: true },
+      } });
+    document.objectTypes.find(type => type.apiName === 'Route')!.interfaces.EditableRoute = {
+      properties: {}, links: {}, actions: {
+        create: { action: 'CreateRoute', parameters: { id: 'id', name: 'name' } },
+        rename: { action: 'RenameRoute', parameters: { route: 'route', revision: 'revision', name: 'name' } },
+      } };
     await setGrants(f.db, principal.owner, [...memberGrants(f.model), ...memberGrants(new Ontology(document)), { resource: ontology, permission: 'manage_definition' }]);
     await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`), { requestInit: { headers: { Authorization: 'Bearer ' + token } } }));
     const call = async (name: string, args: Record<string, unknown>) => {
@@ -80,17 +92,34 @@ test('MCP publishes a model proposal and executes isolated, revision-checked sce
     assert.equal(active.release, prepared.release);
     assert.equal((await f.metadata.active()).release, f.model.release);
     assert((await call('describe_ontology', { ontology })).actionTypes.some((item: { apiName: string }) => item.apiName === 'RenameRoute'));
-    const ref = await call('apply_ontology_action', { ontology, requestId: 'create-route', action: 'CreateRoute', input: { id: 'selected-route', name: 'Before' } });
+    const sdk = new OntologyClient({ baseUrl: `http://127.0.0.1:${address.port}`, token, ontology });
+    const creation = { implementation: 'Route', type: 'EditableRoute', action: 'create' };
+    const ref = await sdk.apply({ requestId: 'create-route', interface: creation, input: { id: 'selected-route', name: 'Before' } });
+    assert.deepEqual(await call('apply_ontology_action', { ontology, requestId: 'create-route', action: 'CreateRoute', input: { id: 'selected-route', name: 'Before' } }), ref);
+    for (const target of [
+      {}, { action: 'CreateRoute', interface: creation },
+      { interface: { ...creation, object: ref } },
+      { interface: { type: 'EditableRoute', action: 'create' } },
+    ]) {
+      const invalid = await client.callTool({ name: 'apply_ontology_action', arguments: {
+        ontology, requestId: 'invalid-target', input: { id: 'invalid-route', name: 'Invalid' }, ...target,
+      } });
+      assert(invalid.isError, JSON.stringify(invalid));
+    }
     const scene = await call('create_scenario', { ontology, requestId: 'model-scenario', name: 'Proposed route' });
     assert.equal(scene.release, active.release);
     assert.equal(typeof scene.revision, 'number'); assert(Number.isFinite(Date.parse(scene.expiresAt)));
     const listed = (await call('list_scenarios', { ontology })).items[0];
     assert.equal(listed.id, scene.id); assert.equal(listed.revision, scene.revision); assert.equal(listed.expiresAt, scene.expiresAt);
-    const sdk = new OntologyClient({ baseUrl: `http://127.0.0.1:${address.port}`, token, ontology });
     assert.equal((await sdk.listScenarios()).items[0]!.expiresAt, scene.expiresAt);
     assert.deepEqual((await call('list_scenarios', {})).items, []);
     assert((await client.callTool({ name: 'inspect_scenario', arguments: { scenarioId: scene.id } })).isError);
-    await call('apply_ontology_action', { ontology, scenarioId: scene.id, requestId: 'rename-route', action: 'RenameRoute', input: { route: ref, revision: 1, name: 'After' } });
+    await sdk.scenario(scene.id).apply({ requestId: 'rename-route',
+      interface: { object: ref, type: 'EditableRoute', action: 'rename' }, input: { route: ref, revision: 1, name: 'After' } });
+    assert.deepEqual(await call('apply_ontology_action', { ontology, scenarioId: scene.id, requestId: 'rename-route', action: 'RenameRoute', input: { route: ref, revision: 1, name: 'After' } }), ref);
+    await assert.rejects(sdk.scenario(scene.id).apply({ requestId: 'wrong-interface-object',
+      interface: { object: { type: 'Route', id: 'another-route' }, type: 'EditableRoute', action: 'rename' },
+      input: { route: ref, revision: 1, name: 'Unbound' } }), /bind the selected object/);
     const query = { type: 'Route', where: { id: ref.id } };
     assert.equal((await call('query_ontology', { ontology, query })).items[0].properties.name, 'Before');
     assert.equal((await call('query_ontology', { ontology, scenarioId: scene.id, query })).items[0].properties.name, 'After');
@@ -106,5 +135,14 @@ test('MCP publishes a model proposal and executes isolated, revision-checked sce
     const discarded = await call('create_scenario', { ontology, requestId: 'discard-model-scenario', name: 'Discarded alternative' });
     await call('discard_scenario', { ontology, scenarioId: discarded.id, revision: discarded.revision });
     assert.deepEqual((await call('list_scenarios', { ontology })).items, []);
+    await setGrants(f.db, principal.owner, [...memberGrants(f.model), ...memberGrants(active)
+      .filter(grant => !(grant.resource === ontology && grant.permission === 'view_definition')),
+      { resource: `${ontology}/object/Route`, permission: 'view_definition' },
+      { resource: `${ontology}/action/CreateRoute`, permission: 'view_definition' }]);
+    await assert.rejects(sdk.apply({ requestId: 'revoked-interface', interface: creation,
+      input: { id: 'revoked-route', name: 'Revoked' } }), /Permission/);
+    assert.deepEqual((await sdk.query({ type: 'Route', where: { id: 'revoked-route' } })).items, []);
+    assert.deepEqual(await sdk.apply({ requestId: 'concrete-still-authorized', action: 'CreateRoute',
+      input: { id: 'direct-route', name: 'Direct' } }), { type: 'Route', id: 'direct-route' });
   } finally { await client.close(); await new Promise<void>(resolve => server.close(() => resolve())); await f.close(); }
 });
