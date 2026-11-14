@@ -21,7 +21,9 @@ export async function testConnection(directory: string) {
   return config;
 }
 export type Recorded = { name: string; input: Record<string, unknown> };
-export function fakeAmap(calls: Recorded[], state: { durationSeconds?: number; condition?: string; beforeRoute?: () => Promise<void> } = {}): typeof fetch {
+export function fakeAmap(calls: Recorded[], state: {
+  durationSeconds?: number; condition?: string; beforeRoute?: () => Promise<void>; remoteShape?: boolean;
+} = {}): typeof fetch {
   return async (target, options) => {
     const url = new URL(String(target));
     assert.equal(url.searchParams.get('key'), key);
@@ -53,7 +55,13 @@ export function fakeAmap(calls: Recorded[], state: { durationSeconds?: number; c
     calls.push({ name, input });
     const matches = input.address === '未知地点' ? ['未知', '市'] : ['兴趣点'];
     if (name === 'maps_direction_walking' || name === 'maps_direction_driving') await state.beforeRoute?.();
-    const data = {
+    const data = state.remoteShape && name === 'maps_geo' && input.address === '上海市长宁区虹桥路2550号'
+      ? { results: [
+        { location: '121.348165,31.193918', level: '门址', adcode: '310105', city: '上海市', street: '虹桥路', number: '2550号' },
+        { location: '121.355438,31.189464', level: '门牌号', adcode: '310105', city: '上海市', street: '虹桥路', number: [] },
+      ] } : state.remoteShape && name === 'maps_direction_driving'
+      ? { paths: [{ distance: '3000', duration: String(state.durationSeconds ?? 1500) }] }
+      : {
       maps_geo: { return: matches.map(level => ({ location: '121.5,31.2', level, adcode: '310115', city: '上海市' })) },
       maps_regeocode: { provice: '上海市', city: [], district: '浦东新区' },
       maps_text_search: { pois: [{ id: 'B0EXAMPLE', name: '咖啡店', address: [], photos: { url: 'private-data' } }] },
