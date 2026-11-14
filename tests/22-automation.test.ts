@@ -19,6 +19,11 @@ import { createCapabilities } from '../packages/capabilities/index.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import { Ontology } from '../packages/ontology/model.js';
 import { processLogTarget } from '../packages/ontology/process-definition.js';
+import { calendarJourneyDefinition } from '../packages/ontology/calendar-journey.js';
+import { deliveryFunctions } from '../packages/ontology/delivery.js';
+import { locationFunctions, taskLocationValueType } from '../packages/ontology/location.js';
+import { luckinDefinition } from '../packages/ontology/luckin.js';
+import { mapFunctions } from '../packages/ontology/maps.js';
 
 async function setup() {
   const f=await fixture();await initializeActionUndo(f.db);await initializeScenarioLifecycle(f.db);await initializeAutomation(f.db);
@@ -331,10 +336,27 @@ test('revoked prior-step result visibility blocks a later Action even when the t
   }finally{await f.close();}
 });
 
-test('a hotel workflow saved under v8 replays under v9 with fresh inputs and a separate approval', async () => {
-  const v8Definition = structuredClone(document);
+test('a hotel workflow saved under v8 replays in v9 and the current release with fresh inputs and separate approval', async () => {
+  // Reconstruct the historical documents on the same runtime and check both published identities.
+  const addedTypes = new Set([...calendarJourneyDefinition.objectTypes, ...luckinDefinition.objectTypes].map(type => type.apiName));
   const model = new Ontology(document);
   const logs = document.objectTypes.flatMap(type => processLogTarget(model, type.apiName) ?? []);
+  const addedLogs = logs.filter(log => addedTypes.has(log.objectType));
+  const addedActions = new Set([...calendarJourneyDefinition.actionTypes, ...luckinDefinition.actionTypes].map(action => action.apiName));
+  const addedFunctions = new Set([
+    ...calendarJourneyDefinition.functionTypes, ...luckinDefinition.functionTypes, ...deliveryFunctions, ...locationFunctions, ...mapFunctions,
+  ].map(fn => fn.apiName));
+  const v9Definition = structuredClone(document);
+  v9Definition.version = '9';
+  v9Definition.objectTypes = v9Definition.objectTypes.filter(type => !addedTypes.has(type.apiName) && !addedLogs.some(log => log.type === type.apiName));
+  v9Definition.linkTypes = v9Definition.linkTypes.filter(type => !addedLogs.some(log => log.link === type.apiName));
+  v9Definition.actionTypes = v9Definition.actionTypes.filter(action => !addedActions.has(action.apiName));
+  v9Definition.functionTypes = v9Definition.functionTypes.filter(fn => !addedFunctions.has(fn.apiName));
+  v9Definition.valueTypes = v9Definition.valueTypes?.filter(type => type.apiName !== taskLocationValueType.apiName);
+  for (const group of v9Definition.typeGroups ?? []) group.objectTypes = group.objectTypes.filter(type => !addedTypes.has(type));
+  assert.equal(new Ontology(v9Definition).digest, 'ab7a4e8a4c6d6c0e56eaef294ae849911f78da535e9cef2fb213bdfaa39c4d8a');
+
+  const v8Definition = structuredClone(v9Definition);
   v8Definition.version = '8';
   v8Definition.objectTypes = v8Definition.objectTypes.filter(type => !logs.some(log => log.type === type.apiName));
   v8Definition.interfaceTypes = v8Definition.interfaceTypes.filter(type => type.apiName !== 'ProcessLog');
@@ -345,7 +367,7 @@ test('a hotel workflow saved under v8 replays under v9 with fresh inputs and a s
   const service = serviceProvider();
   const start = Date.now();
   const day = (n: number) => new Date(start + n * 86400000).toISOString().slice(0, 10);
-  const requested = day(3), replayDate = day(5), thirdDate = day(7);
+  const requested = day(3), replayDate = day(5), currentDate = day(7), thirdDate = day(11);
   const originKeyword = 'Shanghai Hongqiao railway station';
   const destinationKeyword = 'Synthetic hotel';
   const title = requested + ' Hongqiao to the selected hotel';
@@ -445,11 +467,9 @@ test('a hotel workflow saved under v8 replays under v9 with fresh inputs and a s
     assert.ok(!JSON.stringify(stored).includes(approved.travel.id));
     assert.equal(stored.definition, f.model.digest);
 
-    const currentModel = await f.metadata.publish(document, f.capabilities, f.publisher);
-    assert.equal(currentModel.document.version, '9');
-    assert.notEqual(currentModel.digest, f.model.digest);
-    await setGrants(f.db, principal.owner, memberGrants(currentModel));
-    const currentAccess = await Access.load(f.db, principal);
+    const v9 = await f.metadata.publish(v9Definition, f.capabilities, f.publisher);
+    assert.notEqual(v9.digest, f.model.digest);
+    await setGrants(f.db, principal.owner, memberGrants(v9));
     assert.deepEqual((await hotelWorkflows.list(principal)).items.map(item => item.id), [approved.workflowId]);
     const calls = service.flags.calls.length, reads = f.provider.calls.length, agentRuns = modelInvocations;
     const replay = await prepare('Reuse my saved hotel itinerary on ' + replayDate, {
@@ -473,6 +493,17 @@ test('a hotel workflow saved under v8 replays under v9 with fresh inputs and a s
     const repeated = await hotelWorkflows.approve(principal, second);
     assert.equal(repeated.workflowId, approved.workflowId);
     assert.equal(repeated.status, 'simulated');
+    const currentModel = await f.metadata.publish(document, f.capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, memberGrants(currentModel));
+    const currentAccess = await Access.load(f.db, principal);
+    assert.deepEqual((await hotelWorkflows.list(principal)).items.map(item => item.id), [approved.workflowId]);
+    const currentReplay = await prepare('Replay the v8 workflow on the current publication', {
+      replayHotelWorkflow: { workflowId: approved.workflowId, checkIn: currentDate },
+    });
+    assert.equal(currentReplay.release, currentModel.release);
+    assert.notEqual(approvedBody(currentReplay).scenarioId, second.scenarioId);
+    assert.equal((await hotelWorkflows.approve(principal, approvedBody(currentReplay))).workflowId, approved.workflowId);
+    assert.equal(modelInvocations, agentRuns);
     assert.equal((await hotelWorkflows.list(principal)).items.length, 1);
     const persisted = (await f.db.query(`SELECT body FROM ${f.db.schema}.workflows WHERE id=$1`, [approved.workflowId])).rows[0]!.body;
     assert.deepEqual(persisted, stored);
@@ -526,7 +557,7 @@ test('a hotel workflow saved under v8 replays under v9 with fresh inputs and a s
     await f.metadata.publish(incompatible, f.capabilities, f.publisher);
     assert.deepEqual((await hotelWorkflows.list(principal)).items, []);
     const blocked = await f.tasks.submit(principal, { requestId: randomUUID(), message: 'Replay after a breaking contract change',
-      replayHotelWorkflow: { workflowId: approved.workflowId, checkIn: day(11) } });
+      replayHotelWorkflow: { workflowId: approved.workflowId, checkIn: day(13) } });
     const sourceCalls = service.flags.calls.length + f.provider.calls.length;
     await f.worker.runOne();
     const failed = await f.tasks.get(principal, blocked.id);

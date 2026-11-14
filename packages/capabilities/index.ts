@@ -1,3 +1,10 @@
+import { calendarJourneyFunctions } from './journey/functions.js';
+import { configuredAmap } from './amap/client.js';
+import { amapFunctions } from './amap/functions.js';
+import { resolveTaskLocation } from './location.js';
+import { luckinFunctions } from './luckin/functions.js';
+import { paotuiFunctions } from './meituan/paotui.js';
+import { waimaiFunctions } from './meituan/waimai.js';
 import {localEmbeddingVersion} from '../runtime/local-embeddings.js';
 import {Ontology} from '../ontology/model.js';
 import {applicationFunctions} from '../runtime/applications.js';
@@ -14,12 +21,32 @@ import { travelFunctions } from './travel/functions.js';
 import { stripePaymentFunctions } from './payments/functions.js';
 import { configuredStripeSandbox, type StripeSandboxResolver } from './payments/stripe-sandbox.js';
 
-export function createCapabilities(db: Database, source: SourceResolver, extensions: RuntimeExtensions = {}, services: ServiceResolver = unavailableServices, stripe: StripeSandboxResolver = configuredStripeSandbox()) {
+export function createCapabilities(
+  db: Database,
+  source: SourceResolver,
+  extensions: RuntimeExtensions = {},
+  services: ServiceResolver = unavailableServices,
+  stripe: StripeSandboxResolver = configuredStripeSandbox(),
+  connections: { paotui?: string; waimai?: string; amap?: string; amapFetch?: typeof fetch } = {},
+) {
   let sources: Sources;
-  const capabilities = rideCapabilities(db, source,
-    new Map([...schedulingFunctions(db), ...applicationFunctions(db), ...serviceFunctions(services, () => sources), ...travelFunctions(db, source, services, () => sources), ...stripePaymentFunctions(db, stripe)]),
-    new Ontology(businessDefinition).resolvedDocument.functionTypes,
-    {...extensions, functions: [localEmbeddingVersion, ...(extensions.functions ?? [])]}, serviceProjections(services));
+  const amap = configuredAmap(connections.amap, connections.amapFetch);
+  const getFunctions = () => capabilities.functions;
+  const handlers = new Map([
+    ...schedulingFunctions(db),
+    ...applicationFunctions(db),
+    ...serviceFunctions(services, () => sources),
+    ...travelFunctions(db, source, services, () => sources),
+    ...calendarJourneyFunctions(db, getFunctions, amap),
+    ...stripePaymentFunctions(db, stripe),
+    ...paotuiFunctions(connections.paotui),
+    ...waimaiFunctions(connections.waimai, fetch, connections.amap ? amap : undefined),
+    ...amapFunctions(amap),
+    ...luckinFunctions(),
+    ['resolveTaskLocation', resolveTaskLocation],
+  ]);
+  const capabilities = rideCapabilities(db, source, handlers, new Ontology(businessDefinition).resolvedDocument.functionTypes,
+    { ...extensions, functions: [localEmbeddingVersion, ...(extensions.functions ?? [])] }, serviceProjections(services));
   sources = capabilities.sources;
   return capabilities;
 }

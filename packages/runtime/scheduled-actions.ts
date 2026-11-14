@@ -198,11 +198,12 @@ export class ScheduledActions {
       graph.client,
     );
   }
-  async inspect(principal: Principal, id: string) {
+  async inspect(principal: Principal, id: string, client: Sql = this.db.pool) {
     const row = (
       await this.db.query(
         `SELECT s.id,s.state,s.run_at,s.deadline,s.task_id,coalesce(s.error,t.error) AS error,s.body,t.state AS task_state FROM ${this.db.schema}.scheduled_actions s LEFT JOIN ${this.db.schema}.tasks t ON t.id=s.task_id AND t.owner=s.owner WHERE s.owner=$1 AND s.id=$2`,
         [principal.owner, id],
+        client,
       )
     ).rows[0];
     if (!row) throw new Conflict('Scheduled operation unavailable');
