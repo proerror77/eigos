@@ -175,6 +175,7 @@ test('the production database role can execute an inquiry without publication up
     await f.db.query(`GRANT USAGE ON SCHEMA ${f.db.schema} TO "${role}";
       GRANT SELECT ON ${f.db.schema}.ontology,${f.db.schema}.releases,${f.db.schema}.resource_grants,${f.db.schema}.property_security,${f.db.schema}.object_policies,${f.db.schema}.security_memberships,${f.db.schema}.edit_policies,${f.db.schema}.ontology_resource_projects,${f.db.schema}.entity_bindings,${f.db.schema}.entity_binding_history TO "${role}";
       GRANT SELECT,INSERT,UPDATE ON ${f.db.schema}.objects,${f.db.schema}.tasks,${f.db.schema}.source_calls TO "${role}";
+      GRANT SELECT,INSERT ON ${f.db.schema}.task_inbox_events TO "${role}";
       GRANT SELECT,INSERT,UPDATE,DELETE ON ${f.db.schema}.source_values,${f.db.schema}.object_edits TO "${role}";
       GRANT SELECT,INSERT ON ${f.db.schema}.edit_history TO "${role}";
       GRANT SELECT,INSERT,UPDATE ON ${f.db.schema}.action_changes,${f.db.schema}.action_undo_requests,${f.db.schema}.scenario_sessions TO "${role}";
@@ -190,7 +191,8 @@ test('the production database role can execute an inquiry without publication up
     const metadata = new Metadata(limited), tasks = new Tasks(limited, metadata), capabilities = createCapabilities(limited, f.source);
     const worker = new Worker(tasks, new OntologyAgent(limited, metadata, tasks, capabilities, new FixtureAgent()));
     await assert.rejects(limited.query(`UPDATE ${limited.schema}.ontology SET release=release`), /permission denied/);
-    const task = await tasks.submit(principal, { requestId: 'production-role', message: '只询价', route });
+    const task = await tasks.submit(principal, { requestId: 'production-role', conversationId: 'production-role-chat', message: '只询价', route });
+    await f.db.query(`UPDATE ${f.db.schema}.tasks SET available_at=now() WHERE id=$1`, [task.id]);
     await worker.runOne();
     assert.equal((await tasks.get(principal, task.id)).state, 'completed');
     assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);

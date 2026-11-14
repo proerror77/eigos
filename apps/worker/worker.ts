@@ -1,15 +1,17 @@
 import { TaskResult,PermissionDenied } from '../../packages/runtime/access.js';
 import { Conflict } from '../../packages/core/identity.js';
-import { setTimeout as delay } from 'node:timers/promises';
 import { Clarification } from '../../packages/runtime/agent.js';
 import { Tasks, type Task } from '../../packages/runtime/tasks.js';
 import { DeferredExecution } from '../../packages/runtime/scheduled-actions.js';
 
+type TaskLane = 'scheduled' | 'interactive';
+
 export class Worker {
   private readonly controller = new AbortController();
-  private readonly waiting = new Set<() => void>();
+  private readonly waiters = new Set<() => void>();
+  private notifications = 0;
   constructor(private readonly tasks: Tasks, private readonly agent: { run(task: Task, signal: AbortSignal): Promise<unknown> }, private readonly schedules?: {promoteOne():Promise<boolean>}, private readonly scheduledRunner?: {run(task:Task,signal:AbortSignal):Promise<unknown>}) {}
-  async runOne(lane?: 'scheduled' | 'interactive'): Promise<boolean> {
+  async runOne(lane?: TaskLane): Promise<boolean> {
     if (lane !== 'interactive') await this.schedules?.promoteOne();
     const task = await this.tasks.claim(lane);
     if (!task) return false;
@@ -39,30 +41,38 @@ export class Worker {
   async run() {
     const listener = await this.tasks.db.pool.connect();
     listener.on('notification', () => this.wake());
-    listener.on('error', () => this.controller.abort());
-    await listener.query('LISTEN eigos_tasks');
+    listener.on('error', () => this.stop());
+    const consumers: Promise<void>[] = [];
     try {
+      await listener.query('LISTEN eigos_tasks');
       if (this.schedules && this.scheduledRunner) {
-        // A slow interactive model run cannot hold the one scheduled execution slot.
-        const processes = [this.loop('scheduled'), this.loop('interactive')];
-        try { await Promise.all(processes); }
-        finally { this.stop(); await Promise.allSettled(processes); }
-      } else await this.loop();
-    } finally { await listener.query('UNLISTEN eigos_tasks').catch(() => {}); listener.release(); }
-  }
-  private async loop(lane?: 'scheduled' | 'interactive') {
-    while (!this.controller.signal.aborted) {
-      let resolve!: () => void;
-      const signal = new Promise<void>(wake => { resolve = wake; });
-      this.waiting.add(resolve);
-      const timer = new AbortController();
-      try {
-        if (await this.runOne(lane)) continue;
-        await Promise.race([signal, delay(lane === 'scheduled' ? 1000 : 5000, undefined,
-          { signal: AbortSignal.any([this.controller.signal, timer.signal]) }).catch(() => {})]);
-      } finally { this.waiting.delete(resolve); timer.abort(); }
+        // Provider-backed scheduled Actions have a slot even when both model runs are busy.
+        consumers.push(this.consume('scheduled'), this.consume('interactive'), this.consume('interactive'));
+      } else consumers.push(this.consume(), this.consume());
+      await Promise.all(consumers);
+    } finally {
+      this.stop();
+      await Promise.allSettled(consumers);
+      await listener.query('UNLISTEN eigos_tasks').catch(() => {});
+      listener.release();
     }
   }
-  private wake() { for (const resolve of this.waiting) resolve(); }
+  private async consume(lane?: TaskLane) {
+    while (!this.controller.signal.aborted) {
+      const seen = this.notifications;
+      if (await this.runOne(lane)) continue;
+      const delay = lane === 'scheduled' ? 1000 : await this.tasks.nextInboxDelay();
+      if (seen !== this.notifications || this.controller.signal.aborted) continue;
+      await new Promise<void>(resolve => {
+        const wake = () => { clearTimeout(timer); this.waiters.delete(wake); resolve(); };
+        const timer = setTimeout(wake, delay);
+        this.waiters.add(wake);
+      });
+    }
+  }
+  private wake() {
+    this.notifications++;
+    for (const waiter of this.waiters) waiter();
+  }
   stop() { this.controller.abort(); this.wake(); }
 }
