@@ -191,6 +191,15 @@ export class Metadata {
     if (!result.rows[0]) throw new Error('Publish the ontology before starting the runtime');
     return this.get(String(result.rows[0].release), client);
   }
+  async findAncestor(model: PublishedOntology, definition: string, client?: Sql) {
+    const {rows} = await this.db.query<{digest:string}>(`WITH RECURSIVE ancestors AS (
+      SELECT digest,prepared_from,definition_digest FROM ${this.db.schema}.releases WHERE digest=$1
+      UNION ALL
+      SELECT r.digest,r.prepared_from,r.definition_digest FROM ${this.db.schema}.releases r
+      JOIN ancestors a ON r.digest=a.prepared_from WHERE a.definition_digest<>$2
+    ) SELECT digest FROM ancestors WHERE definition_digest=$2`, [model.release,definition],client);
+    if (rows[0]) return this.get(rows[0].digest,client);
+  }
   async get(release: string, client?: Sql): Promise<PublishedOntology> {
     const cached = this.models.get(release); if (cached) return cached;
     const row = (await this.db.query(`SELECT * FROM ${this.db.schema}.releases WHERE digest=$1`, [release], client)).rows[0];

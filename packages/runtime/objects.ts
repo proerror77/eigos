@@ -184,12 +184,6 @@ export class Objects {
     if (!types.length) return { items: [], cursor: undefined };
     const values: unknown[] = [this.owner, types];
     const clauses = ['owner=$1', 'type=ANY($2::text[])'];
-    if (args.from) {
-      const nav = navigation!;
-      const source = nav.forward ? 'from' : 'to', target = nav.forward ? 'to' : 'from';
-      values.push(nav.link, args.from.object.type, args.from.object.id);
-      clauses.push(`EXISTS(SELECT 1 FROM ${this.model.scenario ? 'view_links' : this.db.schema + '.links'} l WHERE l.projection=o.projection AND l.owner=o.owner AND l.type=$3 AND l.${source}_type=$4 AND l.${source}_id=$5 AND l.${target}_type=o.type AND l.${target}_id=o.id)`);
-    }
     for (const [field, value] of Object.entries(args.where)) {
       const cases: string[] = [];
       for (const type of types) {
@@ -216,6 +210,14 @@ export class Objects {
     values.push(this.model.projection); clauses.push(`projection=$${values.length}`);
     values.push(args.limit + 1);
     const limitParameter = values.length, tables = viewTables(this.db, this.model, this.owner, values,[...types,...(args.from?[args.from.object.type]:[])]);
+    if (args.from && navigation) {
+      const source = navigation.forward ? 'from' : 'to', target = navigation.forward ? 'to' : 'from';
+      const first = values.length + 1;
+      values.push(navigation.link, args.from.object.type, args.from.object.id);
+      clauses.push(`EXISTS(SELECT 1 FROM ${tables.links} l WHERE l.projection=o.projection AND l.owner=o.owner
+        AND l.type=$${first} AND l.${source}_type=$${first + 1} AND l.${source}_id=$${first + 2}
+        AND l.${target}_type=o.type AND l.${target}_id=o.id)`);
+    }
     const result = await this.db.readQuery(`${tables.prefix}SELECT type,id,revision,properties FROM ${tables.objects} o WHERE ${clauses.join(' AND ')} ORDER BY type COLLATE "C",id COLLATE "C" LIMIT $${limitParameter}`, values, this.client);
     const records = result.rows.slice(0, args.limit).map(row => this.row(row));
     await this.processLogReads(records);

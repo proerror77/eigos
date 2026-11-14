@@ -7,7 +7,7 @@ import { publicTask, type Task } from '../packages/runtime/tasks.js';
 import { HotelWorkflows } from '../packages/runtime/hotel-workflows.js';
 import { calendarAnswer, planningInput } from './planning-fixture.js';
 import { serviceProvider } from './service-fixture.js';
-import { fixture, principal } from './fixture.js';
+import { document, fixture, principal } from './fixture.js';
 import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
 import { Actions } from '../packages/runtime/actions.js';
 import { initializeActionUndo } from '../packages/runtime/action-journal.js';
@@ -17,6 +17,8 @@ import { Objects } from '../packages/runtime/objects.js';
 import { objectPolicySchema } from '../packages/runtime/security.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
+import { Ontology } from '../packages/ontology/model.js';
+import { processLogTarget } from '../packages/ontology/process-definition.js';
 
 async function setup() {
   const f=await fixture();await initializeActionUndo(f.db);await initializeScenarioLifecycle(f.db);await initializeAutomation(f.db);
@@ -329,7 +331,17 @@ test('revoked prior-step result visibility blocks a later Action even when the t
   }finally{await f.close();}
 });
 
-test('a validated hotel task learns only after approval and replays with fresh inputs and a separate approval', async () => {
+test('a hotel workflow saved under v8 replays under v9 with fresh inputs and a separate approval', async () => {
+  const v8Definition = structuredClone(document);
+  const model = new Ontology(document);
+  const logs = document.objectTypes.flatMap(type => processLogTarget(model, type.apiName) ?? []);
+  v8Definition.version = '8';
+  v8Definition.objectTypes = v8Definition.objectTypes.filter(type => !logs.some(log => log.type === type.apiName));
+  v8Definition.interfaceTypes = v8Definition.interfaceTypes.filter(type => type.apiName !== 'ProcessLog');
+  v8Definition.linkTypes = v8Definition.linkTypes.filter(type => !logs.some(log => log.link === type.apiName));
+  delete v8Definition.objectTypes.find(type => type.apiName === 'SchedulePlan')!.properties.state;
+  // This is the definition published at 6609009, before the v9 process logs.
+  assert.equal(new Ontology(v8Definition).digest, '2773fecccb1e5731b25494b33346e726c85f3906fb4067b40c9b8623d6a35c92');
   const service = serviceProvider();
   const start = Date.now();
   const day = (n: number) => new Date(start + n * 86400000).toISOString().slice(0, 10);
@@ -380,7 +392,7 @@ test('a validated hotel task learns only after approval and replays with fresh i
       await call('complete_with_function', { scenarioId, function: 'readSchedulePlan', input: { plan: prepared } });
     },
   };
-  const f = await fixture(driver, service.resolve);
+  const f = await fixture(driver, service.resolve, undefined, v8Definition);
   f.provider.flags.related = false;
   try {
     const hotelWorkflows = new HotelWorkflows(f.db, f.metadata, f.capabilities.functions);
@@ -431,7 +443,14 @@ test('a validated hotel task learns only after approval and replays with fresh i
     assert.ok(!JSON.stringify(stored).includes(first.scenarioId));
     assert.ok(!JSON.stringify(stored).includes(approved.hotel.id));
     assert.ok(!JSON.stringify(stored).includes(approved.travel.id));
+    assert.equal(stored.definition, f.model.digest);
 
+    const currentModel = await f.metadata.publish(document, f.capabilities, f.publisher);
+    assert.equal(currentModel.document.version, '9');
+    assert.notEqual(currentModel.digest, f.model.digest);
+    await setGrants(f.db, principal.owner, memberGrants(currentModel));
+    const currentAccess = await Access.load(f.db, principal);
+    assert.deepEqual((await hotelWorkflows.list(principal)).items.map(item => item.id), [approved.workflowId]);
     const calls = service.flags.calls.length, reads = f.provider.calls.length, agentRuns = modelInvocations;
     const replay = await prepare('Reuse my saved hotel itinerary on ' + replayDate, {
       replayHotelWorkflow: { workflowId: approved.workflowId, checkIn: replayDate },
@@ -455,12 +474,14 @@ test('a validated hotel task learns only after approval and replays with fresh i
     assert.equal(repeated.workflowId, approved.workflowId);
     assert.equal(repeated.status, 'simulated');
     assert.equal((await hotelWorkflows.list(principal)).items.length, 1);
+    const persisted = (await f.db.query(`SELECT body FROM ${f.db.schema}.workflows WHERE id=$1`, [approved.workflowId])).rows[0]!.body;
+    assert.deepEqual(persisted, stored);
     const automation = new Automation(f.db, f.metadata, f.capabilities.actions);
-    const names = await automation.list(f.access, f.model, 'workflows');
+    const names = await automation.list(currentAccess, currentModel, 'workflows');
     assert.deepEqual(names.items.map((item) => (item as { name: string }).name), ['酒店行程 · Synthetic hotel']);
-    await assert.rejects(automation.run(f.access, f.model, { workflow: approved.workflowId,
+    await assert.rejects(automation.run(currentAccess, currentModel, { workflow: approved.workflowId,
       object: approved.plan, requestId: 'wrong-automation-runner' }), /Workflow is unavailable/);
-    await assert.rejects(automation.workflow(f.access, f.model, { id: approved.workflowId, revision: 1,
+    await assert.rejects(automation.workflow(currentAccess, currentModel, { id: approved.workflowId, revision: 1,
       name: 'Attempt overwrite', steps: [{ name: 'One', action: 'SearchRollingGoHotels', input: {} }],
     }), /changed or is unavailable/);
 
@@ -495,8 +516,23 @@ test('a validated hotel task learns only after approval and replays with fresh i
     service.flags.active = false;
     try { await assert.rejects(hotelWorkflows.approve(principal, change), /revoked/); }
     finally { service.flags.active = true; }
-    await new Scenarios(f.db).discard(f.access, f.model, change.scenarioId, change.revision);
+    await new Scenarios(f.db).discard(currentAccess, currentModel, change.scenarioId, change.revision);
     await assert.rejects(hotelWorkflows.approve(principal, change), /closed|changed/);
+
+    const incompatible = structuredClone(document);
+    incompatible.version = 'incompatible-replay';
+    const step = incompatible.actionTypes.find(action => action.apiName === 'SaveScheduleActivity')!;
+    step.parameters = {...step.parameters, maxProperties: 1};
+    await f.metadata.publish(incompatible, f.capabilities, f.publisher);
+    assert.deepEqual((await hotelWorkflows.list(principal)).items, []);
+    const blocked = await f.tasks.submit(principal, { requestId: randomUUID(), message: 'Replay after a breaking contract change',
+      replayHotelWorkflow: { workflowId: approved.workflowId, checkIn: day(11) } });
+    const sourceCalls = service.flags.calls.length + f.provider.calls.length;
+    await f.worker.runOne();
+    const failed = await f.tasks.get(principal, blocked.id);
+    assert.equal(failed.state, 'failed');
+    assert.match(failed.error ?? '', /Ontology.*changed/);
+    assert.equal(service.flags.calls.length + f.provider.calls.length, sourceCalls);
     const safe = (await f.db.query(`SELECT
       (SELECT count(*)::int FROM ${f.db.schema}.external_operations) external_operations,
       (SELECT count(*)::int FROM ${f.db.schema}.scheduled_actions) scheduled_actions,

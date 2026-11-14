@@ -92,7 +92,8 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
       assert.equal(scenarioMetadata.items[0].properties.state, 'open');
       const live=await call('query_ontology',{query:{type:'ScheduledActivity'}});assert.equal(live.items.length,0);
       const scenario=await call('query_ontology',{scenarioId,query:{type:'ScheduledActivity'}});assert.equal(scenario.items.length,1);
-      const proposedLogs=await call('query_ontology',{scenarioId,query:{type:'SchedulePlanStateLog',where:{processId:completed.result.plan.ref.id}}});
+      const logQuery={type:'ProcessLog',from:{object:completed.result.plan.ref,link:'stateLogs'}};
+      const proposedLogs=await call('query_ontology',{scenarioId,query:logQuery});
       assert.equal(proposedLogs.items.length,1);assert.equal(proposedLogs.items[0].properties.newState,'prepared');
       const diff=await call('inspect_scenario',{scenarioId});
       await call('apply_ontology_action',{requestId:'e2e-explicit-merge',action:'CommitSchedulePlan',input:{plan:completed.result.plan.ref,scenarioId,revision:diff.revision}});
@@ -103,6 +104,9 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
       const planLogs=await call('ontology_follow_links',{object:completed.result.plan.ref,link:'stateLogs'});
       assert.equal(planLogs.length,2);assert.equal(planLogs[1].properties.newState,'confirmed');
       assert.equal(planLogs[1].properties.requestId,'e2e-explicit-merge');
+      const history=await fetch(url+'/ontology/query',{method:'POST',headers,body:JSON.stringify({query:logQuery})});
+      assert.equal(history.status,200);
+      assert.deepEqual((await history.json() as {items:unknown[]}).items,planLogs);
       t.diagnostic(JSON.stringify({calendarTask:created.id,PA:'synthetic free/busy',submission:'MCP',continuation:'A2A',scenarioMerge:'explicit MCP Action',externalCalendarUpdated:false}));
       const luma=await call('submit_task',{requestId:'e2e-luma',message:'luma discovery'}),lumaWait=await poll(luma.id);
       assert.equal(lumaWait.state,'input-required');assert.equal(lumaWait.result.capability,'luma.events.read');
