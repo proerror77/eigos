@@ -34,7 +34,8 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   providerFetch: { variFlightFetch?: typeof fetch } = {}) {
   const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE), configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
     paotui: config.EIGOS_PAOTUI_CONNECTION_FILE, waimai: config.EIGOS_WAIMAI_CONNECTION_FILE,
-    amap: config.EIGOS_AMAP_CONNECTION_FILE, variFlight: config.EIGOS_VARIFLIGHT_CONNECTION_FILE, ...providerFetch,
+    amap: config.EIGOS_AMAP_CONNECTION_FILE, variFlight: config.EIGOS_VARIFLIGHT_CONNECTION_FILE,
+    fr24: config.EIGOS_FR24_CONNECTION_FILE, fr24Entrypoint: config.EIGOS_FR24_MCP_ENTRYPOINT, ...providerFetch,
   });
   const scenarios = new Scenarios(db), pa = new PARequests(tasks);
   const hotelWorkflows = new HotelWorkflows(db, metadata, capabilities.functions);
