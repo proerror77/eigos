@@ -28,15 +28,18 @@ export class PARequests {
     return {items,cursor:rows.length>input.limit?page.at(-1)!.id:undefined};
   }
   async request(task: Task, operation: string, capability: string, input: Record<string, unknown>, responseSchema: Record<string, unknown>, dataScope?: Record<string, unknown>) {
+    return (await this.requestWithId(task, operation, capability, input, responseSchema, dataScope)).response;
+  }
+  async requestWithId(task: Task, operation: string, capability: string, input: Record<string, unknown>, responseSchema: Record<string, unknown>, dataScope?: Record<string, unknown>) {
     const { db } = this.tasks, request = { capability, input, responseSchema };
     // Data identity is independent of a model's wording or Action request ID.
     const key = digest(dataScope ? { capability, dataScope, responseSchema } : { operation, request });
     const row = await db.transaction(async client => {
       await this.tasks.current(task, client, true);
       await db.query(`INSERT INTO ${db.schema}.pa_requests(id,task_id,owner,request_key,request) VALUES($1,$2,$3,$4,$5) ON CONFLICT(task_id,request_key) DO NOTHING`, [randomUUID(), task.id, task.owner, key, request], client);
-      return (await db.query(`SELECT id,response FROM ${db.schema}.pa_requests WHERE task_id=$1 AND request_key=$2 AND owner=$3`, [task.id, key, task.owner], client)).rows[0]!;
+      return (await db.query(`SELECT id,response,created_at FROM ${db.schema}.pa_requests WHERE task_id=$1 AND request_key=$2 AND owner=$3`, [task.id, key, task.owner], client)).rows[0]!;
     });
-    if (row.response !== null) return validator(responseSchema).parse(row.response);
+    if (row.response !== null) return { requestId: String(row.id), requestedAt: row.created_at as Date, response: validator(responseSchema).parse(row.response) };
     throw new Clarification('Please ask the user’s PA to provide the requested authorized information.', {
       kind: 'pa-request', taskId: task.id, requestId: row.id, ...request,
     });

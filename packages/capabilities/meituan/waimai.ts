@@ -2,6 +2,7 @@ import { createCipheriv } from 'node:crypto';
 import { z } from 'zod';
 import { Conflict, digest } from '../../core/identity.js';
 import { waimaiArrival, waimaiArrivalInput, waimaiShops, waimaiShopsInput } from '../../ontology/delivery.js';
+import { locationForService } from '../location.js';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import { readPrivateSourceFile, yuanToFen } from '../../core/private-source.js';
 
@@ -65,11 +66,16 @@ export function waimaiFunctions(filepath?: string, fetcher: typeof fetch = fetch
   };
   return new Map<string, FunctionHandler>([
     ['findMeituanWaimaiShops', async (raw, context) => {
+      if (!filepath) throw new Conflict('Meituan Enterprise Waimai access is not configured for this owner');
       const input = waimaiShopsInput.parse(raw);
-      const { data, ...receipt } = await invoke('shops', { ...location(input), keyword: input.query, page_index: input.page ?? 1 }, context);
+      const located = 'latitude' in input
+        ? { position: input, requestId: undefined }
+        : await locationForService(context, input, 'waimai_delivery', 'gcj02');
+      const { data, ...receipt } = await invoke('shops', { ...location(located.position), keyword: input.query, page_index: input.page ?? 1 }, context);
       const page = shopPage.parse(data);
       if (page.current_page_index !== (input.page ?? 1)) throw new Conflict('Meituan Waimai returned a different page');
       return waimaiShops.parse({ ...receipt, page: page.current_page_index, hasNextPage: Boolean(page.have_next_page),
+        ...(located.requestId ? { locationRequestId: located.requestId } : {}),
         shops: page.openPoiBaseInfoList.map(s => ({
           shopId: String(s.wm_poi_id), name: s.name, ...(s.address ? { address: s.address } : {}),
           status: shopStatuses.get(s.status) ?? 'unknown',
@@ -80,7 +86,8 @@ export function waimaiFunctions(filepath?: string, fetcher: typeof fetch = fetch
     ['readMeituanWaimaiArrival', async (raw, context) => {
       const input = waimaiArrivalInput.parse(raw), id = Number(input.shopId);
       if (!Number.isSafeInteger(id)) throw new Conflict('Meituan Waimai shop ID exceeds the supported numeric range');
-      const { data, ...receipt } = await invoke('arrival', { ...location(input), wm_poi_id: id }, context);
+      const point = 'latitude' in input ? input : (await locationForService(context, input, 'waimai_delivery', 'gcj02')).position;
+      const { data, ...receipt } = await invoke('arrival', { ...location(point), wm_poi_id: id }, context);
       return waimaiArrival.parse({ ...receipt, shopId: input.shopId, dates: arrivalRows.parse(data).map(row => ({
         dateLabel: row.date, open: row.status === 0,
         times: (row.timelist ?? []).map(slot => ({ label: slot.view_time,

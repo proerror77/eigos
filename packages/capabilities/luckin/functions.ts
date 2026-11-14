@@ -1,12 +1,13 @@
 import type { z } from 'zod';
 import { Conflict, digest } from '../../core/identity.js';
 import {
-  luckinCreateCapability, luckinPreviewCapability, luckinReads, luckinReply, pickupConfirmation, pickupCreated, pickupInput,
+  luckinCreateCapability, luckinPreviewCapability, luckinReads, luckinReply, luckinShopSearch, pickupConfirmation, pickupCreated, pickupInput,
   pickupOrder, pickupOrderType, pickupQuote, pickupRefInput,
 } from '../../ontology/luckin.js';
 import { json } from '../../ontology/service-contracts.js';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import { PARequests } from '../../runtime/pa.js';
+import { locationForService } from '../location.js';
 
 async function request(ctx: FunctionContext, capability: string, input: Record<string, unknown>, schema: z.ZodType) {
   const execution = ctx.execution;
@@ -43,6 +44,13 @@ export function luckinFunctions(): ReadonlyMap<string, FunctionHandler> {
       return observation;
     });
   }
+  handlers.set('findLuckinShops', async (raw, ctx) => {
+    const input = luckinShopSearch.parse(raw);
+    const point = 'latitude' in input ? input : (await locationForService(ctx, input, 'luckin_pickup', 'wgs84')).position;
+    const { latitude, longitude } = point;
+    return request(ctx, luckinReads.findLuckinShops.capability,
+      { latitude, longitude, ...(input.shopName ? { shopName: input.shopName } : {}) }, luckinReads.findLuckinShops.result);
+  });
   handlers.set('previewLuckinPickup', async (raw, ctx) => {
     const { stage, taskId } = requireEdit(ctx), input = pickupInput.parse(raw);
     if (new Set(input.items.map(item => `${item.productId}:${item.sku}`)).size !== input.items.length)

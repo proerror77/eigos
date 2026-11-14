@@ -1,11 +1,11 @@
 import { z } from 'zod';
 import { json, time } from './service-contracts.js';
+import { coordinates, requestLocationForService, serviceLocation } from './location.js';
 import type { OntologyDocument } from './schema.js';
 
 const addressId = z.string().trim().regex(/^[1-9][0-9]{0,20}$/);
 const label = z.string().trim().min(1).max(300);
 const minor = z.number().int().nonnegative().safe();
-const coordinates = { latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) };
 export const paotuiInput = z.strictObject({
   senderAddressId: addressId, recipientAddressId: addressId, goodsName: z.string().trim().min(1).max(100),
   category: z.enum(['文件', '快递', '餐饮']), weightKg: z.number().positive().max(50),
@@ -19,14 +19,20 @@ export const paotuiQuote = z.strictObject({
   evidence: z.literal('live_readonly'), observedAt: time,
 });
 
-export const waimaiShopsInput = z.strictObject({
-  ...coordinates, coordinateSystem: z.literal('gcj02'), query: z.string().trim().min(1).max(100).optional(),
+const waimaiPoint = z.strictObject({ ...coordinates, coordinateSystem: z.literal('gcj02') });
+const waimaiSearch = {
+  query: z.string().trim().min(1).max(100).optional(),
   page: z.number().int().min(1).max(100).optional(),
-});
+};
+export const waimaiShopsInput = z.union([
+  waimaiPoint.extend(waimaiSearch),
+  serviceLocation.extend(waimaiSearch),
+  requestLocationForService.extend(waimaiSearch),
+]);
 const shopId = z.string().regex(/^[1-9][0-9]{0,19}$/);
 export const waimaiShops = z.strictObject({
   provider: z.literal('MeituanWaimai'), evidence: z.enum(['live_readonly', 'provider_sandbox']), observedAt: time,
-  hasNextPage: z.boolean(), page: z.number().int().positive(),
+  hasNextPage: z.boolean(), page: z.number().int().positive(), locationRequestId: z.uuid().optional(),
   shops: z.array(z.strictObject({
     shopId, name: label, address: label.optional(),
     status: z.enum(['deliverable', 'busy', 'closed', 'unknown']),
@@ -34,9 +40,10 @@ export const waimaiShops = z.strictObject({
     minimumOrderMinor: minor, currency: z.literal('CNY'),
   })).max(20),
 });
-export const waimaiArrivalInput = z.strictObject({
-  ...coordinates, coordinateSystem: z.literal('gcj02'), shopId,
-});
+export const waimaiArrivalInput = z.union([
+  waimaiPoint.extend({ shopId }),
+  serviceLocation.extend({ shopId }),
+]);
 export const waimaiArrival = z.strictObject({
   provider: z.literal('MeituanWaimai'), shopId, observedAt: time, evidence: waimaiShops.shape.evidence,
   dates: z.array(z.strictObject({
@@ -53,9 +60,9 @@ export const deliveryFunctions: OntologyDocument['functionTypes'] = [
     returns: json(paotuiQuote), dependencies: {},
     description: 'Get the current Meituan Paotui fee and estimated delivery time for a parcel between two selected saved addresses in the same city. Complete this read directly using the result Function.' },
   { apiName: 'findMeituanWaimaiShops', source: 'MeituanWaimai', parameters: json(waimaiShopsInput),
-    returns: json(waimaiShops), dependencies: {},
-    description: 'Read nearby Meituan Enterprise Waimai merchants for a user-provided GCJ-02 delivery location. Returns listed delivery fees and average delivery minutes, before checkout.' },
+    returns: json(waimaiShops), dependencies: { functions: ['resolveTaskLocation'] },
+    description: 'Read nearby Meituan Enterprise Waimai merchants with listed delivery fees and average delivery minutes. Pass the actual GCJ-02 point or a task location reference when available. For the current delivery location omit coordinates, or pass location source specified or planned with the exact address.' },
   { apiName: 'readMeituanWaimaiArrival', source: 'MeituanWaimai', parameters: json(waimaiArrivalInput),
-    returns: json(waimaiArrival), dependencies: {},
-    description: 'Read the provider’s available estimated delivery times for the selected Meituan Waimai shop and the same GCJ-02 delivery location.' },
+    returns: json(waimaiArrival), dependencies: { functions: ['resolveTaskLocation'] },
+    description: 'Read estimated delivery times for the selected Meituan Waimai shop. Reuse locationRequestId from the shop search, or pass the same explicit GCJ-02 point.' },
 ];

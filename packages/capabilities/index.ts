@@ -1,3 +1,4 @@
+import { resolveTaskLocation } from './location.js';
 import { luckinFunctions } from './luckin/functions.js';
 import { paotuiFunctions } from './meituan/paotui.js';
 import { waimaiFunctions } from './meituan/waimai.js';
@@ -35,6 +36,7 @@ export function createCapabilities(
     ...paotuiFunctions(delivery.paotui),
     ...waimaiFunctions(delivery.waimai),
     ...luckinFunctions(),
+    ['resolveTaskLocation', resolveTaskLocation],
   ]);
   const capabilities = rideCapabilities(db, source, handlers, new Ontology(businessDefinition).resolvedDocument.functionTypes,
     { ...extensions, functions: [localEmbeddingVersion, ...(extensions.functions ?? [])] }, serviceProjections(services));

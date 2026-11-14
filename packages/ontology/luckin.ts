@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { json, time } from './service-contracts.js';
+import { coordinates, requestLocationForService, serviceLocation } from './location.js';
 import { objectRefSchema, type OntologyDocument } from './schema.js';
 
 const id = z.number().int().positive().safe();
@@ -9,7 +10,6 @@ export const luckinSource = 'Luckin';
 export const pickupOrderType = 'LuckinPickupOrder';
 export const proofHash = z.string().regex(/^[a-f0-9]{64}$/);
 export const luckinOrderId = z.string().regex(/^[0-9]{1,30}$/);
-const coordinates = { latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) };
 export const luckinShop = z.strictObject({
   shopId: id, name: text, address: text, ...coordinates,
   opensAt: text.optional(), closesAt: text.optional(),
@@ -48,10 +48,16 @@ export const luckinReply = (data: z.ZodType) => z.discriminatedUnion('status', [
   luckinEvidence.extend({ status: z.literal('available'), data }),
   z.strictObject({ status: z.enum(['not_connected', 'unavailable', 'declined', 'changed', 'unknown']) }),
 ]);
+export const luckinShopPoint = z.strictObject({ ...coordinates, shopName: text.optional() });
+export const luckinShopSearch = z.union([
+  luckinShopPoint,
+  serviceLocation.extend({ shopName: text.optional() }),
+  requestLocationForService.extend({ shopName: text.optional() }),
+]);
 export const luckinReads = {
   findLuckinShops: {
-    capability: 'luckin.shops.read', input: z.strictObject({ ...coordinates, shopName: text.optional() }),
-    result: z.array(luckinShop).max(30), description: 'Find nearby Luckin pickup stores from a supplied location. Return store IDs, exact addresses and opening hours. Ask which shop to use and use verified coordinates.',
+    capability: 'luckin.shops.read', input: luckinShopSearch,
+    result: z.array(luckinShop).max(30), description: 'Find nearby Luckin pickup stores. Pass user-provided coordinates or a task location reference when available. Omit coordinates to use the current location, or pass location source specified or planned with the exact place. Returns store IDs, addresses and hours.',
   },
   searchLuckinProducts: {
     capability: 'luckin.products.search', input: z.strictObject({ shopId: id, query: text }),
@@ -97,7 +103,8 @@ export const luckinDefinition: Pick<OntologyDocument, 'objectTypes' | 'functionT
   functionTypes: [
     ...Object.entries(luckinReads).map(([apiName, operation]) => ({
       apiName, source: luckinSource, parameters: json(operation.input),
-      returns: json(luckinEvidence.extend({ data: operation.result })), dependencies: {}, description: operation.description,
+      returns: json(luckinEvidence.extend({ data: operation.result })),
+      dependencies: apiName === 'findLuckinShops' ? { functions: ['resolveTaskLocation'] } : {}, description: operation.description,
     })),
     ...definitions.map(operation => ({ apiName: operation.fn, source: luckinSource, edits: true,
       parameters: operation.parameters, returns: json(objectRefSchema), dependencies: { objectTypes: [pickupOrderType] },

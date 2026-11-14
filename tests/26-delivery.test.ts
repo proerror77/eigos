@@ -10,6 +10,7 @@ import { Functions } from '../packages/runtime/functions.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { deliveryFunctions, waimaiArrival, waimaiShops } from '../packages/ontology/delivery.js';
 import { fixture, principal } from './fixture.js';
+import { PARequests } from '../packages/runtime/pa.js';
 
 test('Waimai sends only signed store and arrival reads, preserves zero fees and marks an unspecified arrival as unknown', async () => {
   const f = await fixture(), directory = await mkdtemp(join(tmpdir(), 'eigos-waimai-connection-'));
@@ -52,12 +53,41 @@ test('Waimai sends only signed store and arrival reads, preserves zero fees and 
     assert.equal(calls[0]?.parameters.sign, 'mock-signature');
     assert.equal(calls[1]?.parameters.wm_poi_id, 129);
     assert.deepEqual(calls.map(c => c.path), ['/waimai/v1/poi/list', '/waimai/v1/order/arriveTime']);
+    const task = await f.tasks.submit(principal, { requestId: 'waimai-hotel', message: '查酒店附近外卖' });
+    const working = (await f.tasks.claim())!;
+    assert.equal(working.id, task.id);
+    const locationInput = { query: '咖啡', location: { source: 'planned', place: '酒店' } };
+    const execution = { ...context, execution: { task: working, tasks: f.tasks } };
+    const pending = await functions.invoke(f.model, 'findMeituanWaimaiShops', locationInput, execution)
+      .catch((error: unknown) => {
+        assert(error && typeof error === 'object' && 'choices' in error);
+        return error.choices as { kind: string; requestId: string; input: unknown };
+      }) as { kind: string; requestId: string; input: unknown };
+    assert.equal(pending.kind, 'pa-request');
+    assert.deepEqual(pending.input, {
+      use: 'waimai_delivery', selection: locationInput.location, coordinateSystem: 'gcj02',
+      maxAgeMs: 120000, maxAccuracyMeters: 100,
+    });
+    assert.equal(calls.length, 2);
+    await f.tasks.finish(working, 'input-required', pending);
+    await new PARequests(f.tasks).respond(principal, task.id, {
+      requestId: pending.requestId, response: { status: 'available', location: { ...coordinates, ...locationInput.location } },
+    });
+    await f.tasks.claim().then(async resumed => {
+      assert.equal(resumed?.id, task.id);
+      const taskContext = { ...context, execution: { task: resumed!, tasks: f.tasks } };
+      const page = waimaiShops.parse(await functions.invoke(f.model, 'findMeituanWaimaiShops', locationInput, taskContext));
+      assert.equal(page.locationRequestId, pending.requestId);
+      assert(!JSON.stringify(page).includes(String(coordinates.longitude)));
+      await functions.invoke(f.model, 'readMeituanWaimaiArrival', { shopId: '129', locationRequestId: page.locationRequestId! }, taskContext);
+    });
+    assert.deepEqual(calls.map(call => call.parameters.longitude), Array(4).fill(121455555));
     await setGrants(f.db, principal.owner, [{ resource: 'Eigos', permission: 'view_definition' },
       { resource: 'Eigos/function/findMeituanWaimaiShops', permission: 'execute_function' }]);
     const revoked = await Access.load(f.db, principal);
     await assert.rejects(functions.invoke(f.model, 'findMeituanWaimaiShops', coordinates,
       { ...context, objects: new Objects(f.db, f.model, revoked) }), /read_source/);
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 4);
   } finally {
     await rm(directory, { recursive: true, force: true });
     await f.close();

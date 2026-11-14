@@ -3,7 +3,7 @@ import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import { Conflict, digest } from '../core/identity.js';
 import {
-  luckinCreateCapability, luckinEvidence, luckinPreviewCapability, luckinReads, pickupConfirmation,
+  luckinCreateCapability, luckinEvidence, luckinPreviewCapability, luckinReads, luckinShopPoint, pickupConfirmation,
   pickupCreated, pickupInput, pickupOrderType, pickupQuote,
 } from '../ontology/luckin.js';
 import { readPrivateSourceFile } from '../core/private-source.js';
@@ -65,7 +65,7 @@ export class LuckinPA {
     const read = async () => {
       switch (request.capability) {
         case luckinReads.findLuckinShops.capability:
-          return provider.shops(luckinReads.findLuckinShops.input.parse(request.input), signal);
+          return provider.shops(luckinShopPoint.parse(request.input), signal);
         case luckinReads.searchLuckinProducts.capability:
           return provider.search(luckinReads.searchLuckinProducts.input.parse(request.input), signal);
         case luckinReads.readLuckinProduct.capability:

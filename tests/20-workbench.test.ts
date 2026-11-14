@@ -102,6 +102,8 @@ test('workbench serves guarded assets and normal HTTP model, media and SDK scena
   try{
     const html=await fetch(base+'/workbench/');assert.equal(html.status,200);assert((await html.text()).includes('Ontology 工作台'));assert(html.headers.get('content-security-policy')?.includes("object-src 'none'"));
     assert.equal((await fetch(base+'/workbench/app.js')).status,200);
+    assert.equal(html.headers.get('permissions-policy'),'geolocation=(self)');
+    assert.equal((await fetch(base+'/workbench/task-location.js')).status,200);
     assert.equal((await fetch(base+'/ontology/media',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:modelFile})).status,401);
     const uploaded=await fetch(base+'/ontology/media',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/octet-stream','X-Asset-Name':'Triangle','X-Asset-Format':'stl'},body:modelFile});
     assert.equal(uploaded.status,200);const ref=await uploaded.json() as {type:string;id:string};
