@@ -8,10 +8,14 @@ import { fixture, principal, route } from './fixture.js';
 
 const message = (requestId: string, conversationId = 'chat') => ({ requestId, conversationId, message: requestId });
 
-test('inbox retains individually deduplicated deliveries in one original task', async () => {
+test('inbox still batches and deduplicates messages received after the previous 750 ms window', async () => {
   const f = await fixture();
   try {
     const first = await f.tasks.submit(principal, message('first'));
+    const window = await f.db.query(`SELECT EXTRACT(EPOCH FROM (available_at-created_at))::float8 AS seconds
+      FROM ${f.db.schema}.tasks WHERE id=$1`, [first.id]);
+    assert(window.rows[0]!.seconds >= 2);
+    await delay(850);
     const [second, redelivery] = await Promise.all([
       f.tasks.submit(principal, message('second')), f.tasks.submit(principal, message('second')),
     ]);

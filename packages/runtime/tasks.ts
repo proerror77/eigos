@@ -20,7 +20,7 @@ export const submitSchema = z.strictObject({ requestId: z.string().min(1).max(12
 const storedInputSchema = submitSchema.extend({ places: placeSelectionSchema.optional() });
 export interface Task { id: string; owner: string; request_id: string; input: z.infer<typeof storedInputSchema> & {scheduledAction?:ScheduledCall}; release: string; scopes: string[]; state: string; token: string | null; result: unknown; result_permissions?: Requirement[] | null; error: string | null; created_at: Date; updated_at: Date; execution_step?:number; conversation_id?: string | null }
 type InboxTask = Task & { conversation_batch: string; message_count: number; collecting: boolean };
-const batchWindowMs = 750;
+const batchWindowMs = 2000;
 const maxBatchMessages = 16;
 const maxBatchLength = 16000;
 const headOfConversation = (table: string) => `NOT EXISTS (
