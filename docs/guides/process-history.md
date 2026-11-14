@@ -29,7 +29,7 @@ Gateway MCP 通过现有 `query_ontology` 查询：
 }
 ```
 
-也可按具体日志类型和 `processId` 筛选，或通过现有 Object Set 聚合、保存集合及物化读取。继续读取 cursor，不能把第一页当完整历史。关系导航仍遵守既有完整读取上限。
+HTTP、MCP 和 Object Set 的关系查询使用同一对象与 Link 视图，包含过程日志的只读投影。也可按具体日志类型和 `processId` 筛选，或使用现有 Object Set 聚合、保存集合及物化读取。关系查询可以用 cursor 继续分页，直接跟随 Link 仍遵守既有完整读取上限。
 
 Worker 中的模型通过任务专用 `eigos_ontology` MCP 使用相同查询；其 `query_ontology` 工具使用 `queries` 批次封装。`describe_ontology` 能发现日志类型，`follow_links` 导航同一发布关系。模型不读取数据库文件或直连供应商来替代这些能力。
 

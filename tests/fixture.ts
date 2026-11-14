@@ -58,7 +58,7 @@ export async function provider() {
   source.orders={environment:'mock',supportedCurrencies:['CNY'],async assertAvailable(){if(!flags.orderEnabled)throw new Error('DIDI_ORDER_EXECUTION_DISABLED');},async quote(_input,category){return {traceId:'PRIVATE_ORDER_TOKEN',amountMinor:flags.amountMinor,currency:'CNY',category};},async create(_quote,_signal,guard){await guard();flags.orderCreates++;if(flags.loseOrderReply)throw new Error('Synthetic lost reply');return {orderId:'synthetic-original-order',status:'Created by fixture',state:'created',independentRead:false,evidence:'synthetic',observedAt:new Date().toISOString(),contentDigest:digest('created')};},async query(orderId){flags.orderQueries++;return {orderId,status:'Independent fixture status',state:'reported',independentRead:true,evidence:'synthetic',observedAt:new Date().toISOString(),contentDigest:digest('queried')};},async cancel(){throw new Error('No synthetic cancellation requested');}};
   return { source, calls, inputs, flags, close: () => rm(directory, { recursive: true, force: true }) };
 }
-export async function fixture(driver: AgentDriver = new FixtureAgent(),services?:ServiceResolver,stripe?:StripeSandboxResolver) {
+export async function fixture(driver: AgentDriver = new FixtureAgent(),services?:ServiceResolver,stripe?:StripeSandboxResolver,definition=document) {
   const url = process.env.EIGOS_TEST_DATABASE_URL;
   if (!url || new URL(url).hostname !== '127.0.0.1' || new URL(url).password !== 'synthetic-only') throw new Error('Use npm test to provision the isolated test database');
   const schema = 'eigos_test_' + randomUUID().replaceAll('-', ''), db = new Database(url, schema);
@@ -66,10 +66,10 @@ export async function fixture(driver: AgentDriver = new FixtureAgent(),services?
   const metadata = new Metadata(db), tasks = new Tasks(db, metadata), p = await provider();
   await setGrants(db, 'deployment', [{ resource: 'Eigos', permission: 'manage_definition' }]);
   const publisher = await Access.load(db, { owner: 'deployment', scopes: [] });
-  await setGrants(db, principal.owner, memberGrants(new Ontology(document)));
+  await setGrants(db, principal.owner, memberGrants(new Ontology(definition)));
   const access = await Access.load(db, principal);
   const source = async (owner: string) => { if (owner !== principal.owner) throw new Error('Wrong source owner'); return p.source; };
-  const capabilities = createCapabilities(db, source,{},services,stripe), model = await metadata.publish(document, capabilities, publisher), agent = new OntologyAgent(db, metadata, tasks, capabilities, driver), worker = new Worker(tasks, agent,new ScheduledActions(db,metadata),new ScheduledActionRunner(db,metadata,tasks,capabilities.actions));
+  const capabilities = createCapabilities(db, source,{},services,stripe), model = await metadata.publish(definition, capabilities, publisher), agent = new OntologyAgent(db, metadata, tasks, capabilities, driver), worker = new Worker(tasks, agent,new ScheduledActions(db,metadata),new ScheduledActionRunner(db,metadata,tasks,capabilities.actions));
   return { db, schema, model, metadata, tasks, capabilities, access, publisher, agent, worker, source, provider: p,
     submit: () => tasks.submit(principal, { requestId: randomUUID(), message: '从中企云翠森林到前滩太古里，只询价', route }),
     async close() { worker.stop(); await db.query(`DROP SCHEMA ${db.schema} CASCADE`); await db.close(); await p.close(); },

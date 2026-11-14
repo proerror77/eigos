@@ -52,9 +52,16 @@ test('native process logs reuse committed history, Action identity, object queri
     assert.equal(logs[1]!.properties.oldState,'open');assert.equal(logs[1]!.properties.newState,'closed');
     assert.deepEqual((await f.graph.follow(logs[1]!.ref,'process'))[0]!.ref,ref);
     assert.deepEqual(await f.graph.read(logs[1]!.ref),logs[1]);
-    const first=await f.graph.query({type:'ProcessLog',limit:1});assert(first.cursor);
-    assert.equal((await f.graph.query({type:'ProcessLog',limit:1,cursor:first.cursor})).items.length,1);
-    const totals=await new ObjectSets(f.db).aggregate(await Access.load(f.db,principal),f.model,{set:{op:'query',query:{type:'ProcessLog'}},metrics:{count:{op:'count'}}});
+    const linkedQuery={type:'ProcessLog',from:{object:ref,link:'stateLogs'},limit:1};
+    const first=await f.graph.query(linkedQuery);assert(first.cursor);
+    assert.deepEqual(first.items,[logs[0]]);
+    const second=await f.graph.query({...linkedQuery,cursor:first.cursor});
+    assert.deepEqual(second,{items:[logs[1]],cursor:undefined});
+    const parent=await f.graph.query({type:ref.type,from:{object:logs[1]!.ref,link:'process'}});
+    assert.deepEqual(parent.items.map(item=>item.ref),[ref]);
+    const totals=await new ObjectSets(f.db).aggregate(await Access.load(f.db,principal),f.model,{
+      set:{op:'traverse',set:{op:'refs',objects:[ref]},path:[{link:'stateLogs'}]},metrics:{count:{op:'count'}},
+    });
     assert.equal(totals.items[0]!.metrics.count,2);
     const snapshots=new Materializations(f.db),snapshot=await snapshots.capture(await Access.load(f.db,principal),f.model,{requestId:'process-snapshot',name:'Process history',types:['ProcessCase','ProcessCaseStateLog']});
     assert.equal((await snapshots.read(await Access.load(f.db,principal),f.model,snapshot.id)).items.length,3);
@@ -92,12 +99,15 @@ test('process logs inherit current and historical business-state visibility, inc
     await f.db.query(`INSERT INTO ${f.db.schema}.object_policies(ontology,type,policy) VALUES('Eigos','ProcessCase',$1)`,[{read:{all:[{op:'equals',property:'name',value:'Visible'}],any:[]},properties:{}}]);
     const access=await Access.load(f.db,principal),graph=new Objects(f.db,f.model,access);
     const visible=await graph.query({type:'ProcessLog'});assert.equal(visible.items.length,1);
+    const linked={type:'ProcessLog',from:{object:ref,link:'stateLogs'}};
+    assert.deepEqual((await graph.query(linked)).items,visible.items);
     assert.equal(visible.items[0]!.properties.oldState,'closed');assert.equal(visible.items[0]!.properties.newState,'open');
     assert.equal((await graph.query({type:'ProcessLog',where:{newState:'closed'}})).items.length,0);
     const requirements=access.dataRequirements();assert(await access.canReturn(requirements));
     await f.db.query(`UPDATE ${f.db.schema}.objects SET properties=jsonb_set(properties,'{name}','"Hidden"') WHERE projection=$1 AND type='ProcessCase' AND id=$2`,[f.model.projection,ref.id]);
     assert.equal(await access.canReturn(requirements),false);
     const hidden=new Objects(f.db,f.model,await Access.load(f.db,principal));assert.equal((await hidden.query({type:'ProcessLog'})).items.length,0);
+    await assert.rejects(hidden.query(linked),/Object policy denied access/);
     await assert.rejects(hidden.read(visible.items[0]!.ref),/unavailable/);
     await setGrants(f.db,principal.owner,f.grants.filter(grant=>!(grant.resource==='Eigos/object/ProcessCase'&&grant.permission==='view_objects')));
     assert.equal((await new Objects(f.db,f.model,await Access.load(f.db,principal)).query({type:'ProcessLog'})).items.length,0);
@@ -126,6 +136,7 @@ test('hidden state cells cannot be inferred through process log filters or direc
     await f.db.query(`INSERT INTO ${f.db.schema}.object_policies(ontology,type,policy) VALUES('Eigos','ProcessCase',$1)`,[{properties:{state:{all:[{op:'equals',property:'name',value:'Allowed'}],any:[]}}}]);
     const graph=new Objects(f.db,f.model,await Access.load(f.db,principal));
     assert.equal((await graph.query({type:'ProcessLog',where:{newState:'open'}})).items.length,0);
+    assert.equal((await graph.query({type:'ProcessLog',from:{object:ref,link:'stateLogs'}})).items.length,0);
     await assert.rejects(graph.read(log.ref),/unavailable/);
   }finally{await f.close();}
 });

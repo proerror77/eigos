@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { Conflict, NotFound, digest, requireScope, type Principal } from '../core/identity.js';
-import { objectRefSchema, type ObjectRef } from '../ontology/schema.js';
+import { objectRefSchema, type FunctionDependencies, type ObjectRef } from '../ontology/schema.js';
 import { hotelSearchInput } from '../ontology/service-contracts.js';
 import { activityInputSchema, planInputSchema, planResultSchema } from '../capabilities/scheduling/contracts.js';
 import { Access, type Requirement } from './access.js';
@@ -11,6 +11,7 @@ import type { Metadata, PublishedOntology } from './metadata.js';
 import { Objects } from './objects.js';
 import { Scenarios } from './scenarios.js';
 import { lockEdits } from './scenario-store.js';
+import { checkWorkflowDependencies } from './workflow-compatibility.js';
 
 const objects = z.object({
   ref: objectRefSchema,
@@ -93,6 +94,7 @@ const recipeSchema = z.strictObject({
   steps: z.array(replayStepSchema).min(6).max(40),
 });
 type Recipe = z.infer<typeof recipeSchema>;
+type SavedWorkflow = {id: string; name: string; body: unknown};
 const reviewSchema = z.strictObject({
   kind: z.literal('hotel-itinerary-simulation'),
   status: z.enum(['awaiting_approval', 'simulated']),
@@ -126,13 +128,7 @@ export const hotelApprovalSchema = z.strictObject({
   decision: z.literal('approve-simulation'),
 });
 
-const actionBindings = {
-  PrepareSchedulePlan: { type: 'SchedulablePlan', action: 'prepare', implementation: 'SchedulePlan' },
-  SearchRollingGoHotels: { type: 'HotelSearch', action: 'search', implementation: 'RollingGoHotelSearch' },
-  ObserveDidiDrivingTime: { type: 'DrivingEstimate', action: 'observe', implementation: 'DidiDrivingEstimate' },
-  AttachPlanService: { type: 'HotelOffer', action: 'select' },
-};
-const safeActions = new Set([...Object.keys(actionBindings), 'SaveScheduleActivity']);
+const safeActions = new Set(['PrepareSchedulePlan', 'SearchRollingGoHotels', 'ObserveDidiDrivingTime', 'AttachPlanService', 'SaveScheduleActivity']);
 const safeFunctions = new Set([
   'findScheduleSlots',
   'validateSchedule',
@@ -142,6 +138,71 @@ const safeFunctions = new Set([
   'evaluateServiceOffering',
   'readDrivingEstimate',
 ]);
+
+function checkHotelWorkflowDefinition(recipe: Recipe, previous: PublishedOntology, current: PublishedOntology) {
+  const roots = {
+    actions: [...safeActions, 'CommitSchedulePlan'],
+    functions: ['readSchedulePlan', 'readServiceOffering', 'readDrivingEstimate'],
+    dataSources: ['DidiPlaces'],
+    objectTypes: ['OntologyScenario'], interfaceTypes: [] as string[], linkTypes: [] as string[],
+  } satisfies FunctionDependencies;
+  const navigationNames = new Set<string>();
+  let dynamicNavigation = false;
+  const entries = (value: unknown) => {
+    const binding = valueSchema.parse(value);
+    return binding.kind === 'record' ? binding.entries : {};
+  };
+  const text = (value: unknown) => {
+    const binding = valueSchema.optional().parse(value);
+    return binding?.kind === 'literal' && typeof binding.value === 'string' ? binding.value : undefined;
+  };
+  function collectNavigation(binding: ReplayValue) {
+    if (binding.kind === 'literal' && typeof binding.value === 'string') navigationNames.add(binding.value);
+    if (binding.kind === 'objectResult') navigationNames.add(binding.type);
+    if (binding.kind === 'record') for (const item of Object.values(binding.entries)) collectNavigation(valueSchema.parse(item));
+    if (binding.kind === 'array') for (const item of binding.items) collectNavigation(valueSchema.parse(item));
+  }
+  for (const step of recipe.steps) {
+    const input = entries(step.input);
+    if (step.tool === 'evaluate_function' || step.tool === 'complete_with_function' || step.tool === 'complete_with_action') {
+      const name = text((step.tool === 'complete_with_action' ? entries(input.read) : input).function);
+      roots.functions.push(...(name ? [name] : safeFunctions));
+    }
+    if (step.tool === 'apply_action' || step.tool === 'complete_with_action') {
+      const call = step.tool === 'complete_with_action' ? entries(input.action) : input;
+      if (call.interface) {
+        const name = text(entries(call.interface).type);
+        roots.interfaceTypes.push(...(name ? [name] : previous.interfaces.keys()));
+      }
+    }
+    if (!['query_ontology', 'follow_links', 'refresh_sources'].includes(step.tool)) continue;
+    const batch = input[step.tool === 'query_ontology' ? 'queries' : step.tool === 'follow_links' ? 'links' : 'sources'];
+    // Result-bound read arguments may refer to any existing resource, including a Link alias.
+    const bound = valueSchema.parse(batch);
+    collectNavigation(bound);
+    dynamicNavigation ||= bound.kind !== 'array' || bound.items.some(item => {
+      const fields = entries(item);
+      const read = fields.view ? entries(fields.view) : fields;
+      const navigation = read.from ? entries(read.from) : read;
+      const keys = [read.type, navigation.link, navigation.as].filter(value => value !== undefined);
+      return valueSchema.parse(item).kind !== 'record' || keys.some(value=>!text(value));
+    });
+  }
+  for (const type of previous.objects.keys()) if (dynamicNavigation || navigationNames.has(type)) roots.objectTypes.push(type);
+  for (const type of previous.interfaces.keys()) if (dynamicNavigation || navigationNames.has(type)) {
+    roots.interfaceTypes.push(type);
+    for (const object of previous.concreteTypes(type)) {
+      const mapping = previous.object(object).interfaces[type]!;
+      for (const [alias, link] of Object.entries(mapping.links)) if (navigationNames.has(alias)) navigationNames.add(link);
+    }
+  }
+  for (const edge of previous.links.values()) if (dynamicNavigation || navigationNames.has(edge.from.name) || navigationNames.has(edge.to.name)) {
+    roots.linkTypes.push(edge.apiName);
+    roots.objectTypes.push(edge.from.type, edge.to.type);
+  }
+  checkWorkflowDependencies(previous, current, roots);
+}
+
 export function checkHotelWorkflowTool(tool: string, input: unknown) {
   if (tool === 'evaluate_function' || tool === 'complete_with_function' || tool === 'complete_with_action') {
     const read = z
@@ -457,6 +518,15 @@ export class HotelWorkflows {
     private readonly functions: Functions,
   ) {}
 
+  private checkReplayDefinition(recipe: Recipe, model: PublishedOntology, previous: PublishedOntology | undefined) {
+    if (!previous) throw new Conflict('Saved workflow Ontology definition is unavailable');
+    try { checkHotelWorkflowDefinition(recipe, previous, model); }
+    catch (error) {
+      if (error instanceof z.ZodError) throw new Conflict('Saved workflow input bindings are unavailable');
+      throw error;
+    }
+  }
+
   async load(model: PublishedOntology, owner: string, id: string, client?: Sql) {
     const row = (
       await this.db.query(
@@ -467,7 +537,9 @@ export class HotelWorkflows {
     ).rows[0];
     if (!row) throw new NotFound('Learned workflow is unavailable');
     const recipe = recipeSchema.parse(row.body);
-    if (recipe.definition !== model.digest) throw new Conflict('Ontology changed; learn this workflow again');
+    if (recipe.definition !== model.digest) {
+      this.checkReplayDefinition(recipe, model, await this.metadata.findAncestor(model, recipe.definition, client));
+    }
     return recipe;
   }
 
@@ -673,13 +745,31 @@ export class HotelWorkflows {
     const access = await Access.load(this.db, principal);
     access.require(model.document.id, 'view_definition', model.document.id);
     access.source(model, 'RollingGo');
-    const { rows } = await this.db.query(
-      `SELECT id,name FROM ${this.db.schema}.workflows
-      WHERE owner=$1 AND ontology=$2 AND body->>'kind'='learned-hotel-itinerary' AND body->>'definition'=$3
-      ORDER BY id LIMIT 100`,
-      [principal.owner, model.document.id, model.digest],
-    );
-    return { items: rows };
+    const items: {id: string; name: string}[] = [];
+    const ancestors = new Map<string, PublishedOntology | undefined>();
+    let cursor: string | null = null;
+    while (items.length < 100) {
+      const { rows }: {rows: SavedWorkflow[]} = await this.db.query<SavedWorkflow>(
+        `SELECT id,name,body FROM ${this.db.schema}.workflows WHERE owner=$1 AND ontology=$2
+        AND body->>'kind'='learned-hotel-itinerary' AND ($3::uuid IS NULL OR id>$3::uuid) ORDER BY id LIMIT 100`,
+        [principal.owner, model.document.id, cursor],
+      );
+      for (const {id,name,body} of rows) {
+        const recipe = recipeSchema.safeParse(body);
+        if (!recipe.success) continue;
+        const {definition} = recipe.data;
+        if (definition !== model.digest) {
+          if (!ancestors.has(definition)) ancestors.set(definition, await this.metadata.findAncestor(model, definition));
+          try { this.checkReplayDefinition(recipe.data, model, ancestors.get(definition)); }
+          catch (error) { if (error instanceof Conflict) continue; throw error; }
+        }
+        items.push({id,name});
+        if (items.length === 100) break;
+      }
+      if (rows.length < 100) break;
+      cursor = rows.at(-1)!.id;
+    }
+    return { items };
   }
 }
 
