@@ -45,7 +45,8 @@ export class Actions {
       // The request key serializes only duplicate submissions of this action.
       await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify([principal.owner, model.scenario ?? 'main', requestId])], client);
       await beforeCommit?.(client);
-      const objects = model.scenario ? new Objects(this.db, model, access, client) : new JournalObjects(this.db,model,access,client);
+      const change = { action: actionName, requestId, taskId: execution?.task.id };
+      const objects = model.scenario ? new Objects(this.db, model, access, client,change) : new JournalObjects(this.db,model,access,client,change);
       await objects.lockWrites();
       const previous = await priorResult(client);
       if (previous.rows[0]) {
@@ -121,7 +122,7 @@ export class Actions {
     return this.db.transaction(async client=>{
       await access.refresh(client);
       await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[JSON.stringify([access.principal.owner,'main',requestId])],client);
-      const graph=new Objects(this.db,model,access,client);await graph.lockWrites();
+      const graph=new Objects(this.db,model,access,client,{requestId});await graph.lockWrites();
       const original=(await this.db.query(`SELECT * FROM ${this.db.schema}.action_changes WHERE owner=$1 AND request_id=$2 FOR UPDATE`,[access.principal.owner,originalRequestId],client)).rows[0];
       if(!original)throw new Conflict('The original Action has no reversible edit journal');
       if(original.release!==model.release)throw new Conflict('Undo requires the original publication');

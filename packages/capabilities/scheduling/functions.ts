@@ -139,7 +139,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
           if(digest(old.properties)!==digest(properties))await graph.edit(availability,old.revision,properties);
         } else await graph.create(availability,properties);
         const fields = { id: plan.id, name: input.title, start: input.start, end: input.end, timeZone: input.timeZone, durationMinutes: input.durationMinutes };
-        if (input.plan) { const current = await graph.read(plan); await graph.edit(plan,current.revision,fields); } else await graph.create(plan,fields);
+        if (input.plan) { const current = await graph.read(plan); await graph.edit(plan,current.revision,fields); } else await graph.create(plan,{...fields,...(graph.model.object('SchedulePlan').properties.state?{state:'prepared'}:{})});
         await graph.linkBatch([{ type:'ResourceAvailability',from:resource,to:availability },{ type:'PlanResource',from:plan,to:resource },{ type:'PlanAvailability',from:plan,to:availability }]);
         if(input.scenarioId)await db.query(`INSERT INTO ${db.schema}.scenario_actions(scenario_id,owner,request_id,digest,action,result,requirements)
           VALUES($1,$2,$3,$4,'PrepareSchedulePlan',$5,$6)`,[input.scenarioId,graph.owner,context.operationId,digest({input,response}),plan,JSON.stringify(graph.access.requirements())],graph.client);
@@ -237,6 +237,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
         }});
         const result=await validate(graph,input.plan);
         if (!result.valid) throw new Conflict('Current calendar or schedule constraints reject this scenario');
+        if(graph.model.object('SchedulePlan').properties.state){const plan=await graph.read(input.plan);if(plan.properties.state!=='confirmed')await graph.edit(input.plan,plan.revision,{state:'confirmed'});}
       });
     }],
   ]);

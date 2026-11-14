@@ -3,6 +3,7 @@ import { OntologyDataMigrations } from './ontology-migrations.js';
 export { migrateOntologyDataSchema, readDataMigrationSchema } from './ontology-migrations.js';
 import { Conflict, digest } from '../core/identity.js';
 import { Ontology } from '../ontology/model.js';
+import { processLogTarget } from '../ontology/process-definition.js';
 import { ontologyName, ontologySchema, type OntologyDocument } from '../ontology/schema.js';
 import {
   remapResources,
@@ -118,6 +119,8 @@ function dependencies(model: Ontology, ref: Resource, value: Record<string, any>
     schema(definition.schema);
   };
   if (ref.kind === 'object') {
+    const log=processLogTarget(model,ref.name);
+    if(log){add('object',log.objectType);add('link',log.link);}
     Object.values(value.properties).forEach((item) => property(item as Record<string, any>));
     // Shared properties may supply the expression, whose Link names resolve on this concrete type.
     for (const definition of Object.values(model.object(ref.name).properties)) {

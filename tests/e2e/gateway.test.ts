@@ -92,12 +92,17 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
       assert.equal(scenarioMetadata.items[0].properties.state, 'open');
       const live=await call('query_ontology',{query:{type:'ScheduledActivity'}});assert.equal(live.items.length,0);
       const scenario=await call('query_ontology',{scenarioId,query:{type:'ScheduledActivity'}});assert.equal(scenario.items.length,1);
+      const proposedLogs=await call('query_ontology',{scenarioId,query:{type:'SchedulePlanStateLog',where:{processId:completed.result.plan.ref.id}}});
+      assert.equal(proposedLogs.items.length,1);assert.equal(proposedLogs.items[0].properties.newState,'prepared');
       const diff=await call('inspect_scenario',{scenarioId});
       await call('apply_ontology_action',{requestId:'e2e-explicit-merge',action:'CommitSchedulePlan',input:{plan:completed.result.plan.ref,scenarioId,revision:diff.revision}});
       assert.equal((await call('query_ontology',{query:{type:'ScheduledActivity'}})).items.length,1);
       assert.equal((await call('query_ontology',{query:{type:'OntologyScenario',where:{id:scenarioId}}})).items[0].properties.state, 'merged');
       const readback = await call('evaluate_ontology', {function:'readSchedulePlan',input:{plan:completed.result.plan.ref}});
       assert.equal(readback.activities.length, 1); assert.equal(readback.validation.valid, true);
+      const planLogs=await call('ontology_follow_links',{object:completed.result.plan.ref,link:'stateLogs'});
+      assert.equal(planLogs.length,2);assert.equal(planLogs[1].properties.newState,'confirmed');
+      assert.equal(planLogs[1].properties.requestId,'e2e-explicit-merge');
       t.diagnostic(JSON.stringify({calendarTask:created.id,PA:'synthetic free/busy',submission:'MCP',continuation:'A2A',scenarioMerge:'explicit MCP Action',externalCalendarUpdated:false}));
       const luma=await call('submit_task',{requestId:'e2e-luma',message:'luma discovery'}),lumaWait=await poll(luma.id);
       assert.equal(lumaWait.state,'input-required');assert.equal(lumaWait.result.capability,'luma.events.read');
@@ -116,6 +121,9 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
       assert.equal((await poll(request.taskId)).state,'completed');
       const registered=(await call('evaluate_ontology',{function:'readEventRegistration',input:{registration}})).registration;
       assert.equal(registered.properties.state,'confirmed');assert.equal(registered.properties.evidence,'pa_reported');assert.equal((await call('get_task',{taskId:luma.id})).state,'completed');
+      const registrationLogs=await call('query_ontology',{query:{type:'EventRegistrationStateLog',where:{processId:registration.id}}});
+      assert.deepEqual(registrationLogs.items.map((item:{properties:{newState:string}})=>item.properties.newState),['proposed','authorized','confirmed']);
+      assert.equal(registrationLogs.items[2].properties.action,'ExecuteEventRegistration');assert.equal(registrationLogs.items[2].properties.taskId,request.taskId);
       assert.equal((await call('query_ontology',{query:{type:'RideOrder'}})).items.length,0);
       t.diagnostic(JSON.stringify({lumaTask:luma.id,scheduledRegistrationTask:request.taskId,PA:'synthetic Grok/Luma responses',externalMutations:0}));
     } finally {await client.close();}

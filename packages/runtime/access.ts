@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { digest, type Principal } from '../core/identity.js';
 import type { Ontology } from '../ontology/model.js';
+import { processLogTarget } from '../ontology/process-definition.js';
 import { Database, type Sql } from './database.js';
 import { markingsOf, permits, policySql, type ObjectPolicy, type SecurityContext } from './security.js';
 
@@ -106,9 +107,11 @@ export class Access {
     const r: Requirement = { ontology: model.document.id, permission: 'view_objects', resource: resource(model.document.id,'object',type), security: this.securityDigest };
     this.required.set('security:'+r.resource,r); this.data.set('security:'+r.resource,r);
   }
-  private trackRow(model: Ontology, type: string, properties: Record<string, unknown>, field?: string) {
+  private trackRow(model: Ontology, type: string, properties: Record<string, unknown>, field?: string, force = false) {
+    // Virtual, immutable log rows inherit a recorded dependency on their business object.
+    if (processLogTarget(model,type)) return;
     const publication = model as Ontology & { projection?: string; scenario?: string };
-    if (!this.policies.has(model.document.id+'/'+type) && !publication.scenario && type!=='OntologyScenario') return;
+    if (!force && !this.policies.has(model.document.id+'/'+type) && !publication.scenario && type!=='OntologyScenario') return;
     const id = properties[model.object(type).primaryKey];
     if (!publication.projection || typeof id !== 'string') throw new PermissionDenied('A published object identity is required for policy evaluation');
     const key = 'row:' + digest([model.document.id, publication.projection, publication.scenario, type, id]);
@@ -150,10 +153,10 @@ export class Access {
     const policy = this.policies.get(model.document.id+'/'+type);
     return permits(policy?.read,properties,this.security) && markingsOf(policy,properties).every(m=>this.security.markings.includes(m));
   }
-  readRow(model: Ontology, type: string, properties: Record<string,unknown>) {
+  readRow(model: Ontology, type: string, properties: Record<string,unknown>, track = false) {
     this.read(model,type);
     if (!this.rowAllowed(model,type,properties)) throw new PermissionDenied('Object policy denied access');
-    this.trackRow(model, type, properties);
+    this.trackRow(model, type, properties, undefined, track);
     for (const marking of markingsOf(this.policies.get(model.document.id+'/'+type),properties)) this.readMarkings.add(marking);
   }
   sourceRow(model: Ontology, type: string, properties: Record<string,unknown>) {
@@ -174,6 +177,22 @@ export class Access {
       values.push(policy.markingsProperty); const field = `${column}->$${values.length}::text`;
       values.push(JSON.stringify(this.security.markings));
       clauses.push(`COALESCE(NULLIF(${field},'null'::jsonb),'[]'::jsonb) <@ $${values.length}::jsonb`);
+    }
+    const log = processLogTarget(model,type);
+    if (log) {
+      if (!this.canRead(model,log.objectType)) return 'FALSE';
+      this.read(model,log.objectType);
+      const publication = model as Ontology & { projection: string; scenario?: string };
+      const bind = (value: unknown) => { values.push(value); return '$'+values.length; };
+      const parentType=bind(log.objectType), owner=bind(this.principal.owner), projection=bind(publication.projection);
+      const allowed = (snapshot: string) => `(${this.rowSql(model,log.objectType,values,snapshot)} AND ${this.cellSql(model,log.objectType,log.property,values,snapshot)})`;
+      clauses.push(`EXISTS(SELECT 1 FROM ${publication.scenario?'view_objects':this.db.schema+'.objects'} process
+        JOIN ${this.db.schema}.edit_history history ON history.owner=process.owner AND history.type=process.type AND history.id=process.id
+        WHERE process.owner=${owner} AND process.projection=${projection} AND process.type=${parentType}
+          AND process.id=${column}->>'processId' AND history.sequence::text=${column}->>'sequence'
+          AND history.release=${column}->>'release' AND ${allowed('process.properties')}
+          AND (history.before_values IS NULL OR ${allowed('history.before_values')})
+          AND (history.after_values IS NULL OR ${allowed('history.after_values')}))`);
     }
     return '('+clauses.join(' AND ')+')';
   }

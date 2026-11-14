@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Conflict, NotFound, digest } from '../core/identity.js';
 import { objectRefSchema, ontologyName, type ObjectRef } from '../ontology/schema.js';
+import { processLogTarget } from '../ontology/process-definition.js';
 import { Access, type Permission } from './access.js';
 import type { Database, Sql } from './database.js';
 import { Metadata, type PublishedOntology } from './metadata.js';
@@ -51,6 +52,8 @@ function authorize(access: Access, source: PublishedOntology, target: PublishedO
     target.object(to);
     if (reserved(source, from) || reserved(target, to))
       throw new Conflict('Scenario lifecycle objects cannot be copied between Ontologies');
+    if (processLogTarget(source,from) || processLogTarget(target,to))
+      throw new Conflict('Process logs are read-only history projections; migrate their business objects instead');
     access.read(source, from);
     access.read(target, to);
     access.require(target.document.id, 'migrate_objects' as Permission, `${target.document.id}/object/${to}`);

@@ -6,6 +6,7 @@ import {PARequests} from '../packages/runtime/pa.js';
 import {Objects} from '../packages/runtime/objects.js';
 import {Scenarios} from '../packages/runtime/scenarios.js';
 import {Access,setGrants,memberGrants} from '../packages/runtime/access.js';
+import {harnessFixture} from './harness-fixture.js';
 
 async function pending(f:Awaited<ReturnType<typeof fixture>>) {
  const input=planningInput(),task=await f.tasks.submit(principal,{requestId:'planning',message:JSON.stringify({planning:input})});
@@ -22,15 +23,29 @@ async function proposed(f:Awaited<ReturnType<typeof fixture>>) {
  return {...p,result};
 }
 test('PA calendar requests resume the same task and produce feasible isolated scenarios',async()=>{
- const f=await fixture(new PlanningFixtureAgent());try{
+ const harness=await harnessFixture(),f=await fixture(harness.driver);try{
   const p=await proposed(f);assert.equal(p.result.validation.valid,true);assert.equal(p.result.validation.calendarEvidence[0]!.evidence,'synthetic');assert.equal(p.result.externalCalendarUpdated,false);
   assert.equal(Date.parse(p.result.activities[0]!.properties.start),Date.parse(p.input.start)+3600000);
   assert.equal((await new Objects(f.db,f.model,f.access).query({type:'ScheduledActivity'})).items.length,0);
   assert.equal(f.provider.calls.length,0);
+  const graph=new Objects(f.db,f.model,f.access);
+  const before=await graph.query({type:'SchedulePlanStateLog',where:{processId:p.result.plan.ref.id}});
+  assert.equal(before.items.length,1);assert.equal(before.items[0]!.properties.newState,'prepared');
+  assert.equal(before.items[0]!.properties.action,'PrepareSchedulePlan');assert.equal(before.items[0]!.properties.taskId,p.task.id);
+  const view=await new Scenarios(f.db).view(f.access,f.model,p.result.scenarioId);
+  assert.equal((await new Objects(f.db,view,f.access).query({type:'SchedulePlanStateLog'})).items.length,1);
   const diff=await new Scenarios(f.db).inspect(f.access,f.model,p.result.scenarioId);
   await f.capabilities.actions.apply(f.access,f.model,'CommitSchedulePlan',{plan:p.result.plan.ref,scenarioId:p.result.scenarioId,revision:Number(diff.revision)},'approved-merge');
   assert.equal((await new Objects(f.db,f.model,f.access).query({type:'ScheduledActivity'})).items.length,1);
- }finally{await f.close();}
+  const logs=await graph.follow(p.result.plan.ref,'stateLogs');
+  assert.equal(logs.length,2);assert.equal(logs[1]!.properties.oldState,'prepared');assert.equal(logs[1]!.properties.newState,'confirmed');
+  assert.equal(logs[1]!.properties.action,'CommitSchedulePlan');assert.equal(logs[1]!.properties.requestId,'approved-merge');
+  assert.deepEqual((await graph.follow(logs[1]!.ref,'process'))[0]!.ref,p.result.plan.ref);
+  const confirmed=await graph.query({type:'ProcessLog',where:{newState:'confirmed'}});
+  assert.equal(confirmed.items.length,1);
+  await f.capabilities.actions.apply(f.access,f.model,'CommitSchedulePlan',{plan:p.result.plan.ref,scenarioId:p.result.scenarioId,revision:Number(diff.revision)},'approved-merge');
+  assert.equal((await graph.follow(p.result.plan.ref,'stateLogs')).length,2);
+ }finally{await f.close();await harness.close();}
 });
 
 test('PA response ownership, exact retry and cancellation are enforced',async()=>{

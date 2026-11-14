@@ -6,6 +6,7 @@ import type { Database } from './database.js';
 import type { Access } from './access.js';
 import type { PublishedOntology } from './metadata.js';
 import { Objects } from './objects.js';
+import { viewTables } from './scenario-store.js';
 
 export const materializationInputSchema=z.strictObject({requestId:z.string().min(1).max(128),name:z.string().min(1).max(200),types:z.array(z.string().min(1)).min(1).max(100)});
 export async function initializeMaterializations(db: Database) {
@@ -51,14 +52,17 @@ export class Materializations {
             included.add(referenceKey(object.ref));
           }
           // Retain original policy fields even when hidden. Exports evaluate the complete historical row.
-          await this.db.query(`INSERT INTO ${this.db.schema}.materialized_objects(materialization_id,type,id,revision,properties)
-            SELECT $1,o.type,o.id,o.revision,o.properties FROM ${this.db.schema}.objects o
+          const args:unknown[]=[id,model.projection,access.principal.owner,JSON.stringify(page.items.map(item=>item.ref))];
+          const tables=viewTables(this.db,model,access.principal.owner,args,[type]);
+          await this.db.query(`${tables.prefix}INSERT INTO ${this.db.schema}.materialized_objects(materialization_id,type,id,revision,properties)
+            SELECT $1,o.type,o.id,o.revision,o.properties FROM ${tables.objects} o
             JOIN jsonb_to_recordset($4::jsonb) AS selected(type text,id text) ON selected.type=o.type AND selected.id=o.id
-            WHERE o.projection=$2 AND o.owner=$3`,[id,model.projection,access.principal.owner,JSON.stringify(page.items.map(item=>item.ref))],client);
+            WHERE o.projection=$2 AND o.owner=$3`,args,client);
           cursor=page.cursor;
         }while(cursor);
       }
-      const links=(await this.db.query(`SELECT type,from_type,from_id,to_type,to_id FROM ${this.db.schema}.links WHERE projection=$1 AND owner=$2 AND from_type=ANY($3::text[]) AND to_type=ANY($3::text[]) LIMIT 100001`,[model.projection,access.principal.owner,types],client)).rows;
+      const args:unknown[]=[model.projection,access.principal.owner,types],tables=viewTables(this.db,model,access.principal.owner,args,types);
+      const links=(await this.db.query(`${tables.prefix}SELECT type,from_type,from_id,to_type,to_id FROM ${tables.links} WHERE projection=$1 AND owner=$2 AND from_type=ANY($3::text[]) AND to_type=ANY($3::text[]) LIMIT 100001`,args,client)).rows;
       if(links.length>100000)throw new Conflict('Materialization exceeds 100000 relationships; narrow the selected types');
       const allowedLinks=[];
       for(const link of links){

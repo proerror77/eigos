@@ -3,6 +3,7 @@ import type { ObjectRef, LinkData } from '../ontology/schema.js';
 import { Database, type Sql } from './database.js';
 import type { PublishedOntology } from './metadata.js';
 import { syncScenarioMetadata } from './scenario-metadata.js';
+import { processLogTables } from './process-logs.js';
 
 /** Shared by live and scenario edits, including source ingestion and scenario merge. */
 export async function lockEdits(db: Database, model: PublishedOntology, owner: string, client: Sql) {
@@ -21,11 +22,11 @@ export async function checkScenario(db: Database, model: PublishedOntology, owne
 }
 
 /** Changed links shadow competing live single-valued links in the view. Merge checks the live links separately. */
-export function viewTables(db: Database, model: PublishedOntology, owner: string, values: unknown[]) {
-  if (!model.scenario) return { prefix: '', objects: `${db.schema}.objects`, links: `${db.schema}.links` };
+export function viewTables(db: Database, model: PublishedOntology, owner: string, values: unknown[], types: readonly string[] = []) {
+  if (!model.scenario) return processLogTables(db,model,owner,values,{ prefix: '', objects: `${db.schema}.objects`, links: `${db.schema}.links` },types);
   values.push(model.scenario, model.projection, owner);
   const scenario = '$' + (values.length - 2), projection = '$' + (values.length - 1), actor = '$' + values.length;
-  return { objects: 'view_objects', links: 'view_links', prefix: `WITH view_objects AS (
+  return processLogTables(db,model,owner,values,{ objects: 'view_objects', links: 'view_links', prefix: `WITH view_objects AS (
     SELECT o.projection,o.owner,o.type,o.id,o.revision,o.properties FROM ${db.schema}.objects o WHERE o.projection=${projection} AND o.owner=${actor}
       AND NOT EXISTS(SELECT 1 FROM ${db.schema}.scenario_objects d WHERE d.scenario_id=${scenario} AND d.owner=o.owner AND d.type=o.type AND d.id=o.id)
     UNION ALL SELECT ${projection}::text AS projection,d.owner,d.type,d.id,d.revision,d.properties FROM ${db.schema}.scenario_objects d
@@ -47,7 +48,7 @@ export function viewTables(db: Database, model: PublishedOntology, owner: string
       )
     UNION ALL SELECT ${projection}::text AS projection,d.owner,d.type,d.from_type,d.from_id,d.to_type,d.to_id,d.single_from,d.single_to
       FROM link_deltas d WHERE NOT d.removed
-  ) ` };
+  ) ` },types);
 }
 
 export async function stageObject(db: Database, model: PublishedOntology, owner: string, ref: ObjectRef, revision: number, properties: Record<string, unknown> | null, client: Sql) {
