@@ -80,6 +80,14 @@ HTTP 示例请求体如下，通过 `POST /tasks` 提交，使用 Bearer 身份�
 
 `route` 可由 PA 提供，也可只发送自然语言消息，由模型理解需求并选择本体能力。完整场所名称在来源中唯一匹配时直接询价，不要求选择入口。同名或没有完整匹配时，原任务返回 `input-required` 和真实候选对象。向 `/tasks/:id/places` 提交候选的 origin、destination ObjectRef 后继续原任务。执行完成后从 `/tasks/:id` 读取价格及来源。
 
+### 会话事件收件箱
+
+HTTP `POST /tasks` 和 MCP `submit_task` 可指定 `conversationId`。A2A `SendMessage` 使用 `contextId`，首次省略时由服务分配，后续消息复用该值。PA 给每条消息分配稳定的 `requestId`（A2A 使用 `messageId`），重投保留原标识和原内容。相同身份下重复投递返回原任务，复用标识发送不同内容会被拒绝。收到同一任务 ID 的提交只需轮询一次结果。
+
+首条消息开启 750 毫秒的合批窗口。相同会话、权限和任务选项的消息按收件顺序合并，最多 16 条、合计 16,000 字符。窗口关闭或达到上限后，后续消息进入下一批。每个会话只有最早的未结束任务可领取，等待 PA 输入时保留顺序，回复通过原任务的现有续接接口提交。每个 Worker 有两个执行槽，不同会话可并行。HTTP/MCP 省略会话标识时直接提交独立任务。
+
+消息记录和对应任务在同一 PostgreSQL 事务写入。Worker 中断后使用原任务 ID 重新领取，已完成的来源读取可复用，中断的只读请求可在新租约下重试。外部写入继续使用既有 Action 授权和操作记录。升级使用 `db:upgrade`，需要为 Gateway 数据库角色授予 `task_inbox_events` 的 `SELECT`、`INSERT` 权限，Gateway 和 Worker 沿用 `tasks` 原有权限。参考 Palantir 的 [事件串行](https://www.palantir.com/docs/foundry/automate/condition-settings)、[至少一次执行](https://www.palantir.com/docs/foundry/automate/effect-settings)和 [分区键与去重键](https://www.palantir.com/docs/foundry/building-pipelines/streaming-keys)。EIGOS 用会话作为串行范围，队列和领取由同一个 PostgreSQL schema 管理。
+
 `POST /ontology/query` 按 Object Type 或 Interface 查询。`POST /ontology/functions` 调用发布的 Function，`POST /ontology/actions` 应用发布的 Action。创建类 Interface Action 使用 `interface: { type: "RideInquiry", implementation: "RideRequest", action: "estimate" }`；实例操作仍可使用 `object` 引用。接口细节和示例见 [架构说明](docs/architecture/ontology.md)。
 
 ## 验证

@@ -44,12 +44,13 @@ export class PARequests {
       kind: 'pa-request', taskId: task.id, requestId: row.id, ...request,
     });
   }
-  async respond(principal: Principal, taskId: string, raw: unknown) {
+  async respond(principal: Principal, taskId: string, raw: unknown, conversationId?: string) {
     requireScope(principal, 'tasks:write'); requireScope(principal, 'tasks:read'); z.uuid().parse(taskId);
     const input = paResponseSchema.parse(raw), { db } = this.tasks;
     await db.transaction(async client => {
       const task = (await db.query(`SELECT * FROM ${db.schema}.tasks WHERE owner=$1 AND id=$2 FOR UPDATE`, [principal.owner, taskId], client)).rows[0];
       if (!task) throw new NotFound('Task is unavailable');
+      if (conversationId !== undefined && conversationId !== (task.conversation_id ?? taskId)) throw new Conflict('Conversation does not match the original task');
       const row = (await db.query(`SELECT * FROM ${db.schema}.pa_requests WHERE owner=$1 AND task_id=$2 AND id=$3 FOR UPDATE`, [principal.owner, taskId, input.requestId], client)).rows[0];
       if (!row) throw new NotFound('PA request is unavailable');
       const response = validator(row.request.responseSchema).parse(input.response), fingerprint = digest(response);

@@ -37,7 +37,10 @@ export function catalogue(model: Ontology, access?: Access) {
 export class OntologyAgent {
   constructor(private readonly db: Database, private readonly metadata: Metadata, private readonly tasks: Tasks,
     private readonly capabilities: Capabilities, private readonly driver: AgentDriver) {}
-  async run(task: Task, outerSignal: AbortSignal) {
+  run(task: Task, outerSignal: AbortSignal) {
+    return this.db.measureQueries(queryCount => this.execute(task, outerSignal, queryCount));
+  }
+  private async execute(task: Task, outerSignal: AbortSignal, queryCount: () => number) {
     requireScope({ owner: task.owner, scopes: task.scopes }, 'tasks:write');
     const model = await this.metadata.get(task.release), stopped = new AbortController();
     const signal = AbortSignal.any([outerSignal, stopped.signal, AbortSignal.timeout(120000)]);
@@ -88,7 +91,7 @@ export class OntologyAgent {
     const view = (id?: string) => id ? scenarios.view(access,model,id) : Promise.resolve(model);
     const functionContext = async (id?: string) => ({ ...context, objects: new Objects(this.db,await view(id),access) });
     const guard = async (client: import('./database.js').Sql) => { signal.throwIfAborted(); await this.tasks.current(task,client,true); };
-    const before = this.db.queries, started = performance.now();
+    const started = performance.now();
     let complete: (result: unknown) => void, reject: (error: unknown) => void;
     const completed = new Promise<unknown>((yes, no) => { complete = yes; reject = no; });
     let closing = false, final: { result: unknown } | { clarification: Clarification } | undefined;
@@ -217,7 +220,7 @@ export class OntologyAgent {
         ? await workflows.prepare(model, access, trace, output, signal, replay && recipe ? { id: replay.workflowId, recipe, checkIn: replay.checkIn } : undefined)
         : output;
       return new TaskResult({ ...(result && typeof result === 'object' && !Array.isArray(result) ? result : { value: result }), elapsedMs: Date.now() - task.created_at.getTime(),
-        execution: { model: this.driver.model, release: model.release, durationMs: Math.round(performance.now() - started), sqlStatements: this.db.queries - before, steps } }, await access.finalDataRequirements());
+        execution: { model: this.driver.model, release: model.release, durationMs: Math.round(performance.now() - started), sqlStatements: queryCount(), steps } }, await access.finalDataRequirements());
     } finally { stopped.abort(); await execution.catch(() => {}); }
   }
 }
