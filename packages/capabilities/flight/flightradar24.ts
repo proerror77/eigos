@@ -6,10 +6,10 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { z } from 'zod';
 import { Conflict, digest } from '../../core/identity.js';
 import { readPrivateSourceFile } from '../../core/private-source.js';
-import { flightNumberKey, searchFlight } from '../../ontology/flight.js';
-import { flightPositionInput, flightPositionResult, flightPositionSource } from '../../ontology/flight-position.js';
+import { flightNumberKey, flightPositionSource, searchFlight } from '../../ontology/flight.js';
+import { flightPositionInput, flightPositionResult } from '../../ontology/flight-position.js';
 import { time } from '../../ontology/service-contracts.js';
-import type { FunctionHandler } from '../../runtime/functions.js';
+import type { FunctionContext } from '../../runtime/functions.js';
 
 const tool = 'get_live_flights_positions_full';
 const serverVersion = '1.0.2';
@@ -39,13 +39,12 @@ async function serverEntrypoint(path: string | undefined) {
   return { resolved, directory };
 }
 
-export function flightradar24Functions(path?: string, entrypoint?: string): ReadonlyMap<string, FunctionHandler> {
-  return new Map<string, FunctionHandler>([['readLiveFlightPosition', async (raw, ctx) => {
+export function configuredFlightradar24(path?: string, entrypoint?: string) {
+  return async (ctx: FunctionContext) => {
     const { access, model } = ctx.objects;
-    const input = flightPositionInput.parse(raw);
-    const wantedFlight = flightNumberKey(input.flightNumber);
-    const credentials = async () => {
+    const credentials = async (signal = ctx.signal) => {
       ctx.signal.throwIfAborted();
+      signal.throwIfAborted();
       await ctx.assertCurrent?.();
       await access.refresh();
       access.source(model, flightPositionSource);
@@ -61,49 +60,57 @@ export function flightradar24Functions(path?: string, entrypoint?: string): Read
       } catch { throw new Conflict('此账号尚未配置有效的 Flightradar24 连接。'); }
     };
     const { key, identity } = await credentials();
-    const client = new Client({ name: 'eigos-fr24', version: '1' });
-    // The provider uses stderr for HTTP errors. Do not forward its request logs or secrets.
-    client.onerror = () => {};
-    let transport: StdioClientTransport | undefined;
-    const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(12000)]);
-    try {
-      const server = await serverEntrypoint(entrypoint);
-      transport = new StdioClientTransport({ command: process.execPath, args: [server.resolved], cwd: server.directory,
-        env: { FR24_API_KEY: key }, stderr: 'ignore', maxBufferSize: 512 * 1024 });
-      await client.connect(transport, { signal, timeout: 5000 });
-      if (client.getServerVersion()?.version !== serverVersion) throw new Error('Unexpected Flightradar24 server version');
-      if ((await credentials()).identity !== identity) throw new Error('Flightradar24 authorization changed');
-      const result = await client.callTool({ name: tool, arguments: { flights: wantedFlight, limit: 8 } }, { signal, timeout: 7000 });
-      const [message] = result.content;
-      if (result.isError || result.content.length !== 1 || message?.type !== 'text' || message.text.includes(key))
-        throw new Error('Unexpected Flightradar24 response');
-      const prefix = /^Found \d+ flights \(full details\):\r?\n/;
-      if (!prefix.test(message.text)) throw new Error('Invalid Flightradar24 result structure');
-      const rows = z.array(sourceRow).max(8).parse(JSON.parse(message.text.replace(prefix, '')));
-      const now = Date.now(), positions = [];
-      for (const row of rows) {
-        const number = searchFlight.shape.flightNumber.safeParse(row.flight);
-        const origin = asIata(row.orig_iata), destination = asIata(row.dest_iata);
-        const timestamp = Date.parse(row.timestamp);
-        if (!number.success || flightNumberKey(number.data) !== wantedFlight ||
-            input.origin && origin !== input.origin || input.destination && destination !== input.destination ||
-            timestamp < now - 5 * 60000 || timestamp > now + 60000) continue;
-        positions.push({
-          trackingId: row.fr24_id, flightNumber: number.data, origin, destination,
-          callsign: row.callsign || null, observedAt: row.timestamp,
-          latitude: row.lat, longitude: row.lon, coordinateSystem: 'wgs84',
-          altitudeFeet: row.alt ?? null, groundSpeedKnots: row.gspeed ?? null,
-          estimatedArrivalAt: time.safeParse(row.eta).data ?? null, signalSource: row.source || null,
-        });
-      }
-      if ((await credentials()).identity !== identity) throw new Error('Flightradar24 authorization changed');
-      return flightPositionResult.parse({ provider: flightPositionSource, fetchedAt: new Date(now).toISOString(), positions });
-    } catch {
-      ctx.signal.throwIfAborted();
-      throw new Conflict('Flightradar24 未返回可验证的位置，请检查官方 MCP、来源授权和订阅。');
-    } finally {
-      await client.close().catch(() => {});
-      await transport?.close().catch(() => {});
-    }
-  }]]);
+    const server = await serverEntrypoint(entrypoint).catch(() => {
+      throw new Conflict('此环境尚未配置有效的 Flightradar24 官方 MCP。');
+    });
+    return {
+      authorityId: identity,
+      async read(input: z.infer<typeof flightPositionInput>) {
+        const wantedFlight = flightNumberKey(input.flightNumber);
+        const client = new Client({ name: 'eigos-fr24', version: '1' });
+        // The provider uses stderr for HTTP errors, which may contain request data.
+        client.onerror = () => {};
+        const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(12000)]);
+        const transport = new StdioClientTransport({ command: process.execPath, args: [server.resolved], cwd: server.directory,
+          env: { FR24_API_KEY: key }, stderr: 'ignore', maxBufferSize: 512 * 1024 });
+        try {
+          await client.connect(transport, { signal, timeout: 5000 });
+          if (client.getServerVersion()?.version !== serverVersion) throw new Error('Unexpected Flightradar24 server version');
+          if ((await credentials(signal)).identity !== identity) throw new Error('Flightradar24 authorization changed');
+          const result = await client.callTool({ name: tool, arguments: { flights: wantedFlight, limit: 8 } }, { signal, timeout: 7000 });
+          const [message] = result.content;
+          if (result.isError || result.content.length !== 1 || message?.type !== 'text' || message.text.includes(key))
+            throw new Error('Unexpected Flightradar24 response');
+          const prefix = /^Found \d+ flights \(full details\):\r?\n/;
+          if (!prefix.test(message.text)) throw new Error('Invalid Flightradar24 result structure');
+          const rows = z.array(sourceRow).max(8).parse(JSON.parse(message.text.replace(prefix, '')));
+          const now = Date.now(), positions = [];
+          for (const row of rows) {
+            const number = searchFlight.shape.flightNumber.safeParse(row.flight);
+            const origin = asIata(row.orig_iata), destination = asIata(row.dest_iata);
+            const timestamp = Date.parse(row.timestamp);
+            if (!number.success || flightNumberKey(number.data) !== wantedFlight ||
+                input.origin && origin !== input.origin || input.destination && destination !== input.destination ||
+                timestamp < now - 5 * 60000 || timestamp > now + 60000) continue;
+            positions.push({
+              trackingId: row.fr24_id, flightNumber: number.data, origin, destination,
+              callsign: row.callsign || null, observedAt: row.timestamp,
+              latitude: row.lat, longitude: row.lon, coordinateSystem: 'wgs84',
+              altitudeFeet: row.alt ?? null, groundSpeedKnots: row.gspeed ?? null,
+              estimatedArrivalAt: time.safeParse(row.eta).data ?? null, signalSource: row.source || null,
+            });
+          }
+          if ((await credentials(signal)).identity !== identity) throw new Error('Flightradar24 authorization changed');
+          return flightPositionResult.parse({ provider: flightPositionSource, fetchedAt: new Date(now).toISOString(), positions });
+        } catch {
+          ctx.signal.throwIfAborted();
+          throw new Conflict('Flightradar24 未返回可验证的位置，请检查官方 MCP、来源授权和订阅。');
+        } finally {
+          await client.close().catch(() => {});
+          await transport.close().catch(() => {});
+        }
+      },
+    };
+  };
 }
+export type FlightPositionResolver = ReturnType<typeof configuredFlightradar24>;
