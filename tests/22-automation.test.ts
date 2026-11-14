@@ -22,6 +22,7 @@ import { processLogTarget } from '../packages/ontology/process-definition.js';
 import { calendarJourneyDefinition } from '../packages/ontology/calendar-journey.js';
 import { deliveryFunctions } from '../packages/ontology/delivery.js';
 import { flightDefinition } from '../packages/ontology/flight.js';
+import { flightPositionFunction } from '../packages/ontology/flight-position.js';
 import { locationFunctions, taskLocationValueType } from '../packages/ontology/location.js';
 import { luckinDefinition } from '../packages/ontology/luckin.js';
 import { mapFunctions } from '../packages/ontology/maps.js';
@@ -346,7 +347,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const addedLogs = logs.filter(log => addedTypes.has(log.objectType));
   const addedActions = new Set(laterDomains.flatMap(domain => domain.actionTypes.map(action => action.apiName)));
   const addedFunctions = new Set([
-    ...laterDomains.flatMap(domain => domain.functionTypes), ...deliveryFunctions, ...locationFunctions, ...mapFunctions,
+    ...laterDomains.flatMap(domain => domain.functionTypes), ...deliveryFunctions, ...locationFunctions, ...mapFunctions, flightPositionFunction,
   ].map(fn => fn.apiName));
   const v9Definition = structuredClone(document);
   v9Definition.version = '9';
