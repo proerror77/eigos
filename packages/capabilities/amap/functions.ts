@@ -58,6 +58,7 @@ type Point = z.infer<typeof mapPoint>;
 type Address = z.infer<typeof mapAddress>;
 type Selection = z.infer<typeof locationSelection>;
 type PositionInput = Point | { locationRequestId: string } | { location?: Selection };
+const geocodeRow = z.record(z.string(), z.unknown());
 
 export async function toAmapPoint(client: AmapClient, point: Point, signal: AbortSignal) {
   if (point.coordinateSystem === 'gcj02') return gcjPoint.parse(point);
@@ -67,20 +68,29 @@ export async function toAmapPoint(client: AmapClient, point: Point, signal: Abor
   return parsePoint(response.locations);
 }
 
-async function geocode(client: AmapClient, input: Address, signal: AbortSignal) {
+async function geocodeRows(client: AmapClient, input: Address, signal: AbortSignal) {
   const payload = source.parse(await client.mcp('maps_geo', {
     address: input.address, ...(input.city ? { city: input.city } : {}),
   }, signal));
-  const items = z.array(z.record(z.string(), z.unknown())).max(20).parse(payload.return ?? payload.geocodes);
-  return geocodeResult.parse({ ...fetchTime(), candidates: items.map(record => ({
+  return z.array(geocodeRow).max(20).parse(payload.results ?? payload.return ?? payload.geocodes);
+}
+
+function geocodeCandidate(record: z.infer<typeof geocodeRow>) {
+  return {
     ...administrativeArea(record), level: asText(record.level), address: asText(record.formatted_address),
     point: parsePoint(record.location),
-  })) });
+  };
 }
 
 async function uniquePlace(client: AmapClient, input: Address, signal: AbortSignal, needsPoint: boolean) {
-  const { candidates } = await geocode(client, input, signal);
-  const [first, ...other] = candidates;
+  const rows = await geocodeRows(client, input, signal);
+  const query = normalizedName(input.address);
+  const exact = rows.filter(row => {
+    const full = asText(row.formatted_address), street = asText(row.street), number = asText(row.number);
+    return (full && normalizedName(full) === query) ||
+      (street && number && query.endsWith(normalizedName(street + number)));
+  });
+  const [first, ...other] = (exact.length ? exact : rows).map(geocodeCandidate);
   const precise = first?.level && normalizedName(first.level);
   const actualCity = first?.city ?? first?.province;
   const wrongCity = input.city && /\p{Script=Han}/u.test(input.city) && actualCity && areaName(actualCity) !== areaName(input.city);
@@ -168,7 +178,10 @@ async function weather(client: AmapClient, input: z.infer<typeof weatherInput>, 
 
 export function amapFunctions(resolve: AmapResolver): ReadonlyMap<string, FunctionHandler> {
   const handlers = new Map<string, FunctionHandler>([
-    ['geocodeAddress', async (raw, ctx) => geocode(await resolve(ctx), mapAddress.parse(raw), ctx.signal)],
+    ['geocodeAddress', async (raw, ctx) => {
+      const items = await geocodeRows(await resolve(ctx), mapAddress.parse(raw), ctx.signal);
+      return geocodeResult.parse({ ...fetchTime(), candidates: items.map(geocodeCandidate) });
+    }],
     ['reverseGeocode', async (raw, ctx) => {
       const client = await resolve(ctx);
       const point = await toAmapPoint(client, mapPoint.parse(raw), ctx.signal);
@@ -212,7 +225,7 @@ export function amapFunctions(resolve: AmapResolver): ReadonlyMap<string, Functi
       const result = source.parse(await client.mcp(input.mode === 'walking' ? 'maps_direction_walking' : 'maps_direction_driving', {
         origin: pointText(origin), destination: pointText(destination),
       }, ctx.signal));
-      const { paths } = z.object({ paths: z.array(z.object({ distance: decimal, duration: decimal })).min(1).max(50) }).parse(result.route);
+      const { paths } = z.object({ paths: z.array(z.object({ distance: decimal, duration: decimal })).min(1).max(50) }).parse(result.route ?? result);
       return mapRouteResult.parse({ ...fetchTime(), mode: input.mode, routes: paths.slice(0, 5).map(path => ({
         distanceMeters: Math.round(path.distance), durationSeconds: Math.round(path.duration),
       })) });
