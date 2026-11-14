@@ -21,6 +21,7 @@ import { Ontology } from '../packages/ontology/model.js';
 import { processLogTarget } from '../packages/ontology/process-definition.js';
 import { calendarJourneyDefinition } from '../packages/ontology/calendar-journey.js';
 import { deliveryFunctions } from '../packages/ontology/delivery.js';
+import { flightDefinition } from '../packages/ontology/flight.js';
 import { locationFunctions, taskLocationValueType } from '../packages/ontology/location.js';
 import { luckinDefinition } from '../packages/ontology/luckin.js';
 import { mapFunctions } from '../packages/ontology/maps.js';
@@ -338,13 +339,14 @@ test('revoked prior-step result visibility blocks a later Action even when the t
 
 test('a hotel workflow saved under v8 replays in v9 and the current release with fresh inputs and separate approval', async () => {
   // Reconstruct the historical documents on the same runtime and check both published identities.
-  const addedTypes = new Set([...calendarJourneyDefinition.objectTypes, ...luckinDefinition.objectTypes].map(type => type.apiName));
+  const laterDomains = [calendarJourneyDefinition, flightDefinition, luckinDefinition];
+  const addedTypes = new Set(laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)));
   const model = new Ontology(document);
   const logs = document.objectTypes.flatMap(type => processLogTarget(model, type.apiName) ?? []);
   const addedLogs = logs.filter(log => addedTypes.has(log.objectType));
-  const addedActions = new Set([...calendarJourneyDefinition.actionTypes, ...luckinDefinition.actionTypes].map(action => action.apiName));
+  const addedActions = new Set(laterDomains.flatMap(domain => domain.actionTypes.map(action => action.apiName)));
   const addedFunctions = new Set([
-    ...calendarJourneyDefinition.functionTypes, ...luckinDefinition.functionTypes, ...deliveryFunctions, ...locationFunctions, ...mapFunctions,
+    ...laterDomains.flatMap(domain => domain.functionTypes), ...deliveryFunctions, ...locationFunctions, ...mapFunctions,
   ].map(fn => fn.apiName));
   const v9Definition = structuredClone(document);
   v9Definition.version = '9';
