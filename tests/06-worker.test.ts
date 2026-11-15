@@ -268,7 +268,7 @@ test('missing city pauses the original Action before source reads and resumes af
     assert.equal(done.state, 'completed', done.error ?? undefined);
     assert.equal((done.result as {request: {id: string}}).request.id, paused.input.placeContinuation!.requestId);
     assert.equal(modelCalls, 1);
-    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate', 'maps_direction_driving']);
     assert(f.provider.inputs.slice(0, 2).every(input => input.city === '上海市'));
   } finally { await f.close(); }
 });

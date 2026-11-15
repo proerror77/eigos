@@ -22,7 +22,7 @@ export function rideCapabilities(db: Database, resolve: SourceResolver, addition
     ...additional,
     ['resolveRideLocations', resolveRideLocations],
     ['prepareRideInquiry', prepare],
-    ['prepareRideInquiryWithPlaceClues', prepare],
+    ['prepareRideInquiryWithPlaceClues', prepareRideInquiry(() => sources, () => functions, resolve, true)],
   ]), definitions, extensions.functions);
   const projection: SourceProjection = {
     async assertCurrent(owner) { await (await resolve(owner)).assertCurrent(); },

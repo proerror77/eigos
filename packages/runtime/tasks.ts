@@ -12,7 +12,7 @@ import type { Functions } from './functions.js';
 import { Objects } from './objects.js';
 import type { ScheduledCall } from './scheduled-actions.js';
 import type { CognitiveContext } from './cognitive-workflow.js';
-import { Clarification, amapPlaceAmendmentSchema, cityInputSchema, mapPlaceCorrectionsSchema, taskInputAnswerSchema, placeAmendmentSchema, placeAmendmentsSchema, placeChoicesSchema, placeContinuationSchema, placeSelectionSchema, unresolvedMapPlace, type PlaceContinuation } from './clarification.js';
+import { Clarification, amapPlaceAmendmentSchema, cityInputSchema, mapPlaceCorrectionsSchema, rideEndpointSchema, taskInputAnswerSchema, placeAmendmentSchema, placeAmendmentsSchema, placeChoicesSchema, placeContinuationSchema, placeSelectionSchema, unresolvedMapPlace, type PlaceContinuation } from './clarification.js';
 import { recordActionConfirmation } from './action-confirmation.js';
 export { placeAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema, taskPlaceAmendmentSchema } from './clarification.js';
 import { publicHotelTaskResult, workflowReplaySchema } from './hotel-workflows.js';
@@ -29,6 +29,8 @@ const storedInputSchema = submitSchema.extend({
   placeAmendments: placeAmendmentsSchema.optional(),
   mapPlaceCorrections: mapPlaceCorrectionsSchema.optional(),
   rideCity: cityInputSchema.optional(),
+  rideOrigin: rideEndpointSchema.optional(),
+  rideDestination: rideEndpointSchema.optional(),
   placeContinuation: placeContinuationSchema.optional(),
 });
 export interface Task { id: string; owner: string; request_id: string; input: z.infer<typeof storedInputSchema> & {scheduledAction?:ScheduledCall}; release: string; scopes: string[]; state: string; token: string | null; result: unknown; result_permissions?: Requirement[] | null; error: string | null; created_at: Date; updated_at: Date; execution_step?:number; conversation_id?: string | null; cognitive_context?: CognitiveContext | null }
@@ -228,12 +230,15 @@ export class Tasks {
   answerInput(principal: Principal, id: string, input: unknown): Promise<Task> {
     const answer = taskInputAnswerSchema.parse(input);
     return this.continueTaskInput(principal, id, task => {
-      const waiting = z.object({ kind: z.enum(['city', 'retry-source']) }).safeParse(task.result);
+      const waiting = z.object({ kind: z.enum(['city', 'origin', 'destination', 'retry-source']) }).safeParse(task.result);
       if (!waiting.success || waiting.data.kind !== answer.kind ||
           task.input.placeContinuation?.waitingFor !== answer.kind) {
         throw new Conflict('The original Action is not waiting for this input');
       }
-      return answer.kind === 'city' ? { ...task.input, rideCity: answer.city } : task.input;
+      if (answer.kind === 'city') return { ...task.input, rideCity: answer.city };
+      if (answer.kind === 'origin') return { ...task.input, rideOrigin: answer.place };
+      if (answer.kind === 'destination') return { ...task.input, rideDestination: answer.place };
+      return task.input;
     });
   }
   private placeChoices(task: Task) {

@@ -14,7 +14,7 @@ import { JournalObjects, compensate, type ObjectChange, type LinkChange } from '
 
 import { actionEffects, changeDigest, evaluate } from './action-values.js';
 import { validateCognitive } from './cognitive-workflow.js';
-import { Clarification, CityConfirmationRequired, PlaceConfirmationRequired, SourceRetryRequired, placeContinuationSchema } from './clarification.js';
+import { ActionPARequestRequired, Clarification, CityConfirmationRequired, PlaceConfirmationRequired, RideEndpointRequired, SourceRetryRequired, placeContinuationSchema } from './clarification.js';
 import { assertActionConfirmed } from './action-confirmation.js';
 
 type TaskExecution = NonNullable<FunctionContext['execution']>;
@@ -209,12 +209,17 @@ export class Actions {
       if (error instanceof CityConfirmationRequired) {
         throw new Clarification(error.message, error.choices, error.permissions, { ...original, waitingFor: 'city' });
       }
+      if (error instanceof RideEndpointRequired || error instanceof ActionPARequestRequired) {
+        throw new Clarification(error.message, error.choices, error.permissions,
+          { ...original, waitingFor: error instanceof RideEndpointRequired ? error.side : 'pa-request' });
+      }
       if (error instanceof SourceRetryRequired) {
         throw new Clarification(error.message, error.choices, error.permissions,
           { ...original, waitingFor: 'retry-source', receipts: error.receipts });
       }
       if (error instanceof PlaceConfirmationRequired) {
-        throw new Clarification(error.message, error.choices, error.permissions, { ...original, receipts: error.receipts });
+        throw new Clarification(error.message, error.choices, error.permissions,
+          { ...original, receipts: error.receipts, pickup: error.pickup });
       }
       throw error;
     }
@@ -231,8 +236,10 @@ export class Actions {
     const { task, tasks } = execution;
     await tasks.current(task);
     const pending = placeContinuationSchema.parse(task.input.placeContinuation);
-    const missingInput = pending.waitingFor === 'city' ? !task.input.rideCity
-      : pending.waitingFor !== 'retry-source' && !task.input.places;
+    const missingInput = pending.waitingFor === 'city' && !task.input.rideCity ||
+      pending.waitingFor === 'origin' && !task.input.rideOrigin ||
+      pending.waitingFor === 'destination' && !task.input.rideDestination ||
+      !pending.waitingFor && !task.input.places;
     if (missingInput) {
       throw new Conflict('Original Action is waiting for input');
     }

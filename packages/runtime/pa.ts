@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Conflict, NotFound, digest, requireScope, type Principal } from '../core/identity.js';
 import { validator } from '../ontology/model.js';
-import { Clarification } from './clarification.js';
+import { PARequestRequired } from './clarification.js';
+import { recordActionConfirmation } from './action-confirmation.js';
+import { Metadata } from './metadata.js';
 import { Tasks, type Task } from './tasks.js';
 import { Access, type Requirement } from './access.js';
 import { observePAResponse } from './decision-evidence.js';
@@ -50,7 +52,7 @@ export class PARequests {
       observePAResponse(db, task, String(row.id), digest(row.response));
       return { requestId: String(row.id), requestedAt: row.created_at as Date, response };
     }
-    throw new Clarification('Please ask the user’s PA to provide the requested authorized information.', {
+    throw new PARequestRequired('Please ask the user’s PA to provide the requested authorized information.', {
       kind: 'pa-request', taskId: task.id, requestId: row.id, ...request,
     });
   }
@@ -70,8 +72,14 @@ export class PARequests {
       }
       if (task.state !== 'input-required' || task.result?.kind !== 'pa-request' || task.result?.requestId !== input.requestId) throw new Conflict('The original task is not waiting for this PA response');
       const permissions = task.result_permissions as Requirement[] | null;
-      if (!permissions || !await (await Access.load(db, principal, client)).canReturn(permissions, client))
+      const access = await Access.load(db, principal, client);
+      if (!permissions || !await access.canReturn(permissions, client))
         throw new Conflict('The original PA request is no longer authorized');
+      const continuation = (task as Task).input.placeContinuation;
+      if (continuation?.waitingFor === 'pa-request') {
+        const model = await new Metadata(db).get(task.release, client);
+        await recordActionConfirmation(db, model, access, task as Task, client, continuation, 'confirmed');
+      }
       await db.query(`UPDATE ${db.schema}.pa_requests SET response=$2,response_digest=$3 WHERE id=$1`, [input.requestId, response, fingerprint], client);
       await db.query(`UPDATE ${db.schema}.tasks SET state='submitted',result=NULL,error=NULL,updated_at=now() WHERE id=$1`, [taskId], client);
       await db.query("SELECT pg_notify('eigos_tasks','ready')", [], client);

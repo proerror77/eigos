@@ -42,6 +42,32 @@ export function rideFunctions(resolveSource: SourceResolver, additional: Readonl
     if (result.receipt.bindingId !== source.bindingId || result.receipt.inputDigest !== digest(input) || result.receipt.resultDigest !== digest(result.data) || result.receipt.tool !== tool) throw new Error('Source receipt does not match the invoked function');
     return sourceResultSchema.parse({ ...result, evidence: source.connector.evidenceKind });
   };
+  const readEstimates = (includeRouteEvidence: boolean): FunctionHandler => async (input, context) => {
+    const request = objectRefSchema.parse(input.request);
+    const binding = await resolveSource(context.principal.owner); await binding.assertCurrent();
+    const root = await context.objects.read(request);
+    const quotes = await context.objects.query({ type: 'PriceEstimate', from: { object: request, link: 'estimates' } });
+    if (quotes.cursor || !quotes.items.length || root.properties.status !== 'quoted') throw new Error('Estimate result is incomplete');
+    const evidence = new Set<string>();
+    for (const quote of quotes.items) {
+      if (Date.parse(String(quote.properties.expiresAt)) <= Date.now()) throw new Error('Estimate expired');
+      const source = await context.objects.follow(quote.ref, 'source', 'PriceEstimate');
+      if (source.length !== 1 || source[0]!.properties.bindingId !== binding.bindingId || !isCurrentDidiObservation(source[0]!.properties.observedAt)) throw new Error('Quote lacks current source evidence');
+      evidence.add(String(source[0]!.properties.evidence));
+    }
+    const routes = await context.objects.follow(request, 'route');
+    if (routes.length !== 1) throw new Error('Quote has no single route');
+    const [origin, destination] = await endpoints(context, routes[0]!.ref);
+    const serviceClass = input.serviceClass ?? root.properties.serviceClass;
+    const estimates = quotes.items.filter(item => !serviceClass || item.properties.name === serviceClass);
+    if (!estimates.length) throw new Error('No estimate for the selected service class');
+    await binding.assertCurrent();
+    const { pickup, drivingEstimate } = includeRouteEvidence ? routes[0]!.properties : {};
+    const currentDrive = drivingEstimate && Date.parse(String((drivingEstimate as Record<string, unknown>).expiresAt)) > Date.now();
+    return { request, estimates, evidence: [...evidence], accepted: evidence.size === 1 && evidence.has('live_readonly'),
+      route: { origin: origin.properties, destination: destination.properties, ...(pickup ? { pickup } : {}),
+        ...(drivingEstimate !== undefined ? { drivingEstimate: currentDrive ? drivingEstimate : null } : {}) } };
+  };
   return new Functions(new Map<string, FunctionHandler>([
     ['searchPlaces', async (input, context) => read(context, 'maps_textsearch', { city: String(input.city), keywords: String(input.keywords) })],
     ['estimateRoute', async (input, context) => {
@@ -63,28 +89,8 @@ export function rideFunctions(resolveSource: SourceResolver, additional: Readonl
       return read(context, 'taxi_estimate', { from_lng: String(from.lng), from_lat: String(from.lat), from_name: String(origin!.properties.name), to_lng: String(to.lng), to_lat: String(to.lat), to_name: String(destination!.properties.name) });
     }],
     ['locationsReady', async (input, context) => locationsReady(context, await Promise.all([input.origin, input.destination].map(ref => context.objects.read(objectRefSchema.parse(ref)))))],
-    ['readRideEstimates', async (input, context) => {
-      const request = objectRefSchema.parse(input.request);
-      const binding = await resolveSource(context.principal.owner); await binding.assertCurrent();
-      const root = await context.objects.read(request);
-      const quotes = await context.objects.query({ type: 'PriceEstimate', from: { object: request, link: 'estimates' } });
-      if (quotes.cursor || !quotes.items.length || root.properties.status !== 'quoted') throw new Error('Estimate result is incomplete');
-      const evidence = new Set<string>();
-      for (const quote of quotes.items) {
-        if (Date.parse(String(quote.properties.expiresAt)) <= Date.now()) throw new Error('Estimate expired');
-        const source = await context.objects.follow(quote.ref, 'source', 'PriceEstimate');
-        if (source.length !== 1 || source[0]!.properties.bindingId !== binding.bindingId || !isCurrentDidiObservation(source[0]!.properties.observedAt)) throw new Error('Quote lacks current source evidence');
-        evidence.add(String(source[0]!.properties.evidence));
-      }
-      const routes = await context.objects.follow(request, 'route');
-      if (routes.length !== 1) throw new Error('Quote has no single route');
-      const [origin, destination] = await endpoints(context, routes[0]!.ref);
-      const serviceClass = input.serviceClass ?? root.properties.serviceClass;
-      const estimates = quotes.items.filter(item => !serviceClass || item.properties.name === serviceClass);
-      if (!estimates.length) throw new Error('No estimate for the selected service class');
-      await binding.assertCurrent();
-      return { request, estimates, evidence: [...evidence], accepted: evidence.size === 1 && evidence.has('live_readonly'), route: { origin: origin.properties, destination: destination.properties } };
-    }],
+    ['readRideEstimates', readEstimates(false)],
+    ['readInteractiveRideEstimate', readEstimates(true)],
     ...additional,
   ]), definitions ?? (JSON.parse(readFileSync(new URL('../../ontology/definitions/ride.json', import.meta.url), 'utf8')) as OntologyDocument).functionTypes, versions);
 }

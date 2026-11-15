@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { actionResultReadSchema } from '../ontology/invocation.js';
-import { placeDetailInput } from '../ontology/maps.js';
+import { pickupCoordinateEvidence, placeDetailInput } from '../ontology/maps.js';
 import { objectRefSchema } from '../ontology/schema.js';
 import type { Requirement } from './access.js';
 
@@ -43,8 +43,11 @@ export const placeAmendmentsSchema = z.strictObject({
   destination: placeClueSchema.optional(),
 });
 export const cityInputSchema = z.string().trim().min(2).max(100);
+export const rideEndpointSchema = z.string().trim().min(1).max(500);
 export const taskInputAnswerSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('city'), city: cityInputSchema }),
+  z.strictObject({ kind: z.literal('origin'), place: rideEndpointSchema }),
+  z.strictObject({ kind: z.literal('destination'), place: rideEndpointSchema }),
   z.strictObject({ kind: z.literal('retry-source') }),
 ]);
 export const placeChoicesSchema = z.object({
@@ -56,10 +59,11 @@ export const placeContinuationSchema = z.strictObject({
   action: z.string().min(1),
   input: z.record(z.string(), z.unknown()),
   read: actionResultReadSchema,
-  waitingFor: z.enum(['city', 'retry-source']).optional(),
+  waitingFor: z.enum(['city', 'origin', 'destination', 'pa-request', 'retry-source']).optional(),
   receipts: placeSelectionSchema.optional(),
-}).refine(input => input.waitingFor === 'city' ? !input.receipts :
-  input.waitingFor === 'retry-source' || Boolean(input.receipts));
+  pickup: pickupCoordinateEvidence.optional(),
+}).refine(input => !input.waitingFor ? Boolean(input.receipts) :
+  input.waitingFor === 'retry-source' || !input.receipts);
 export type PlaceSelection = z.infer<typeof placeSelectionSchema>;
 export type PlaceContinuation = z.infer<typeof placeContinuationSchema>;
 
@@ -72,7 +76,8 @@ export class Clarification extends Error {
 
 /** Raised by an edit Function before staging a write when the sources do not establish a confirmed endpoint. */
 export class PlaceConfirmationRequired extends Clarification {
-  constructor(message: string, choices: unknown, readonly receipts: PlaceSelection) { super(message, choices); }
+  constructor(message: string, choices: unknown, readonly receipts: PlaceSelection,
+    readonly pickup?: z.infer<typeof pickupCoordinateEvidence>) { super(message, choices); }
 }
 
 /** The selected Action lacks a city, so no supplier lookup has been authorized yet. */
@@ -80,6 +85,14 @@ export class CityConfirmationRequired extends Clarification {
   constructor() { super('请提供这段行程所在的城市。', { kind: 'city' }); }
 }
 
+export class RideEndpointRequired extends Clarification {
+  constructor(readonly side: 'origin' | 'destination', message: string) {
+    super(message, { kind: side });
+  }
+}
+
+export class PARequestRequired extends Clarification {}
+export class ActionPARequestRequired extends PARequestRequired {}
 
 export class SourceRetryRequired extends Clarification {
   constructor(stage: 'places' | 'estimate', readonly receipts?: PlaceSelection) {

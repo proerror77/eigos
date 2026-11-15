@@ -1,9 +1,12 @@
-import { NotFound, SourceReadFailure } from '../../core/identity.js';
+import { Conflict, NotFound, SourceReadFailure } from '../../core/identity.js';
 import { objectRefSchema, type ObjectData, type ObjectRef } from '../../ontology/schema.js';
-import { CityConfirmationRequired, Clarification, PlaceConfirmationRequired, SourceRetryRequired } from '../../runtime/clarification.js';
+import { ActionPARequestRequired, CityConfirmationRequired, Clarification, PARequestRequired, PlaceConfirmationRequired, RideEndpointRequired, SourceRetryRequired } from '../../runtime/clarification.js';
+import { ridePickupResult } from '../../ontology/maps.js';
 import type { Functions, FunctionContext, FunctionHandler } from '../../runtime/functions.js';
+import { PermissionDenied } from '../../runtime/access.js';
 import type { Sources } from '../../runtime/sources.js';
 import { isCurrentDidiObservation, type SourceResolver } from './functions.js';
+import { readDidiDriving } from './driving.js';
 
 type Resolution = { status: 'resolved'; origin: ObjectRef; destination: ObjectRef }
   | { status: 'input-required'; origin: ObjectData[]; destination: ObjectData[] };
@@ -42,6 +45,9 @@ type Endpoint = 'origin' | 'destination';
 type LandmarkReceipts = Partial<Record<Endpoint, { name: string; receipt: ObjectRef }>>;
 
 const cityKey = (city: unknown) => matchName(String(city ?? '')).replace(/市$/u, '');
+const municipalityPrefixes = new Set(['11', '12', '31', '50']);
+const pickupEvidenceFrom = ({ provider, fetchedAt, inputCoordinateSystem, coordinateSystem, conversion }:
+  ReturnType<typeof ridePickupResult.parse>) => ({ provider, fetchedAt, inputCoordinateSystem, coordinateSystem, conversion });
 const siteName = (name: unknown, city: unknown) => {
   const label = matchName(String(name ?? '')), prefix = cityKey(city);
   return prefix && label.startsWith(prefix) ? label.slice(prefix.length).replace(/^市/u, '') : label;
@@ -73,7 +79,7 @@ function embeddedVenue(place: ObjectData, venues: ObjectData[], city: string | u
 }
 
 async function resolvePlaces(
-  input: Record<string, unknown>, context: FunctionContext, landmarks: LandmarkReceipts = {}, city?: string,
+  input: Record<string, unknown>, context: FunctionContext, landmarks: LandmarkReceipts = {}, city?: string, pickupAddress?: string,
 ): Promise<Resolution> {
   const resumed = resumedPlaceInput(context);
   const selection = input.selection as { origin: ObjectRef; destination: ObjectRef } | undefined;
@@ -96,6 +102,9 @@ async function resolvePlaces(
     const allowBuildingExpansion = !hint && !amendment && !choice;
     const matches = candidates.items.filter(item => {
       if (choice) return item.ref.type === choice.type && item.ref.id === choice.id;
+      if (role === 'origin' && pickupAddress && !amendment)
+        return cityKey(item.properties.city) === cityKey(city) &&
+          (addressMatches(item, pickupAddress) || matchName(String(item.properties.name)) === matchName(pickupAddress));
       if (amendment?.address && !addressMatches(item, amendment.address)) return false;
       if (hint) {
         const label = siteName(item.properties.name, city);
@@ -143,14 +152,48 @@ async function reusablePlace(
 }
 
 /** Implementation of the published edit Function backing the RideInquiry Action. */
-export function prepareRideInquiry(getSources: () => Sources, getFunctions: () => Functions, resolveSource: SourceResolver): FunctionHandler {
+export function prepareRideInquiry(getSources: () => Sources, getFunctions: () => Functions, resolveSource: SourceResolver,
+  interactivePickup = false): FunctionHandler {
   return async (input, context) => {
     if (!context.edit || !context.operationId) throw new Error('Ride inquiry requires an Action edit context');
     const model = context.objects.model, sources = getSources(), functions = getFunctions(), execution = context.execution;
     const selection = execution?.task.input.places;
     const resumed = resumedPlaceInput(context);
-    const city = String(resumed?.rideCity ?? input.city ?? '').trim();
+    let city = String(resumed?.rideCity ?? input.city ?? '').trim();
+    let originName = String(resumed?.rideOrigin ?? input.origin ?? '').trim();
+    const destinationName = String(resumed?.rideDestination ?? input.destination ?? '').trim();
+    if (interactivePickup && !destinationName)
+      throw new RideEndpointRequired('destination', '你要去哪里？请提供目的地名称或地址。');
+    let pickup: ReturnType<typeof ridePickupResult.parse> | undefined;
+    if (interactivePickup && !originName && !resumed?.placeAmendments?.origin) {
+      if (selection?.origin) {
+        const selected = await context.objects.read(selection.origin);
+        originName = String(selected.properties.name);
+        city ||= String(selected.properties.city);
+      } else if (typeof input.originLandmark === 'string' && input.originLandmark.trim()) {
+        originName = input.originLandmark.trim();
+        input = { ...input, originLandmark: undefined };
+      } else {
+        if (!execution) throw new Clarification('请通过原 PA 任务请求当前手机定位，或提供明确的上车点。');
+        try {
+          pickup = ridePickupResult.parse(await functions.invoke(model, 'resolveRidePickup', {}, context));
+        } catch (error) {
+          if (error instanceof PARequestRequired) throw new ActionPARequestRequired(error.message, error.choices, error.permissions);
+          if (error instanceof Clarification || error instanceof Conflict || error instanceof PermissionDenied)
+            throw new RideEndpointRequired('origin', '无法使用这次手机定位，请提供明确的上车点或地址。');
+          throw error;
+        }
+        const pickupCity = pickup.city ?? (municipalityPrefixes.has(pickup.adcode?.slice(0, 2) ?? '') ? pickup.province : undefined);
+        if (city && pickupCity && cityKey(city) !== cityKey(pickupCity))
+          throw new RideEndpointRequired('origin', '手机定位与指定城市不一致，请确认上车点。');
+        city ||= pickupCity ?? '';
+        originName = pickup.address;
+      }
+    }
     if (!city) throw new CityConfirmationRequired();
+    const endpoints = { origin: originName, destination: destinationName };
+    const pickupEvidence = pickup ? pickupEvidenceFrom(pickup) :
+      selection?.origin && !resumed?.placeAmendments?.origin ? resumed?.placeContinuation?.pickup : undefined;
     const saved = resumed?.placeContinuation?.receipts;
     let currentBinding: string | undefined;
     if (saved) {
@@ -172,7 +215,7 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
       const receipt = saved?.[role], place = selection?.[role];
       if (receipt && place && currentBinding && await reusablePlace(context, receipt, place, currentBinding)) return receipt;
       const amendment = resumed?.placeAmendments?.[role];
-      const keywords = amendment?.name ?? amendment?.address ?? String(input[role]);
+      const keywords = amendment?.name ?? amendment?.address ?? endpoints[role];
       return lookup(keywords);
     };
     const findLandmark = async (role: Endpoint) => {
@@ -195,14 +238,14 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
         await Promise.allSettled(pendingReads);
         return sourceFailed(error, 'places');
       });
-    const resolveInput = { origin: input.origin, destination: input.destination, originReceipt, destinationReceipt,
+    const resolveInput = { ...endpoints, originReceipt, destinationReceipt,
       ...(selection?.origin && selection.destination ? { selection } : {}) };
     // Landmark receipts are internal inputs to this Action, obtained from the same
     // source; the existing published read Function retains its original contract.
     let resolution: Resolution;
-    if (originLandmark || destinationLandmark) {
+    if (originLandmark || destinationLandmark || pickup) {
       context.objects.access.function(model, 'resolveRideLocations');
-      resolution = await resolvePlaces(resolveInput, context, { origin: originLandmark, destination: destinationLandmark }, city);
+      resolution = await resolvePlaces(resolveInput, context, { origin: originLandmark, destination: destinationLandmark }, city, pickup?.address);
     } else {
       resolution = await functions.invoke(model, 'resolveRideLocations', resolveInput, context) as Resolution;
     }
@@ -213,7 +256,7 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
       const kind = needsAddress.length ? 'place-address-required' : 'place-selection';
       throw new PlaceConfirmationRequired(
         needsAddress.length ? '未找到该地点，请补充更完整的地址。' : '请选择或确认候选地点的正式名称和地址。',
-        { kind, origin, destination, needsAddress }, receipts);
+        { kind, origin, destination, needsAddress, ...(pickupEvidence ? { pickup: pickupEvidence } : {}) }, receipts, pickupEvidence);
     }
     const request = { type: 'RideRequest', id: context.operationId }, route = { type: 'Route', id: context.operationId };
     const quoteInput = { requestId: request.id, origin: resolution.origin, destination: resolution.destination };
@@ -221,8 +264,15 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
     const quote = await sources.read(model, 'DidiEstimates', quoteInput, context.objects.access,
       execution?.task, execution?.tasks, context.signal).catch(error => sourceFailed(error, 'estimate', receipts));
     const [origin, destination] = await Promise.all([context.objects.read(resolution.origin), context.objects.read(resolution.destination)]);
+    const drivingEstimate = interactivePickup && model.objects.get('Route')?.properties.drivingEstimate
+      ? await readDidiDriving(resolveSource, origin, destination, context).catch(error => {
+        if (!(error instanceof SourceReadFailure)) throw error;
+        context.signal.throwIfAborted();
+        return null;
+      }) : undefined;
     return context.edit(request, async graph => {
-      await graph.create(route, { id: route.id, name: `${origin.properties.name} → ${destination.properties.name}` });
+      await graph.create(route, { id: route.id, name: `${origin.properties.name} → ${destination.properties.name}`,
+        ...(drivingEstimate !== undefined ? { drivingEstimate } : {}), ...(pickupEvidence ? { pickup: pickupEvidence } : {}) });
       await graph.create(request, { id: request.id, name: 'Ride estimate request', status: 'requested',
         requestedAt: execution?.task.created_at.toISOString() ?? new Date().toISOString(), ...(input.serviceClass ? { serviceClass: input.serviceClass } : {}) });
       await graph.linkBatch([{ type: 'RouteOrigin', from: route, to: origin.ref }, { type: 'RouteDestination', from: route, to: destination.ref }, { type: 'RequestRoute', from: request, to: route }]);
