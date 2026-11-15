@@ -15,7 +15,8 @@ let url = process.env.EIGOS_TEST_DATABASE_URL, container;
 try {
   if (!url) {
     container = 'eigos-test-' + randomUUID();
-    execFileSync('docker', ['run', '--detach', '--rm', '--name', container, '--publish', '127.0.0.1::5432', '--env', 'POSTGRES_PASSWORD=synthetic-only', 'postgres:17'], { stdio: 'ignore' });
+    const image = process.env.EIGOS_TEST_PGVECTOR === 'true' ? 'pgvector/pgvector:0.8.7-pg17' : 'postgres:17';
+    execFileSync('docker', ['run', '--detach', '--rm', '--name', container, '--publish', '127.0.0.1::5432', '--env', 'POSTGRES_PASSWORD=synthetic-only', image], { stdio: 'ignore' });
     const address = execFileSync('docker', ['port', container, '5432/tcp'], { encoding: 'utf8' }).trim();
     url = `postgres://postgres:synthetic-only@${address}/postgres`;
   }

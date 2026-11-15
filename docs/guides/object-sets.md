@@ -6,7 +6,7 @@ Object Sets 将本体查询、对象引用和关系导航组合为可复用集�
 
 | `op` | 字段 | 语义 |
 | --- | --- | --- |
-| `query` | `query` | 完整读取类型或 Interface 查询的所有分页，支持已有等值条件与关系起点 |
+| `query` | `query` | 从类型或 Interface 选择成员，支持 `where`、嵌套 `filter` 条件和关系起点 |
 | `refs` | `objects` | 用 `{type,id}` 引用组成静态集合，去重并隐藏缺失或无权读取的实例 |
 | `union` | `sets` | 合并多个集合，按对象身份去重 |
 | `intersection` | `sets` | 保留所有子集合都有的对象 |
@@ -26,7 +26,7 @@ Object Sets 将本体查询、对象引用和关系导航组合为可复用集�
 
 `evaluate(access, model, {set, view?, limit?, cursor?})` 返回 `items`、`total` 和可选 `cursor`。`view` 可将结果投影为共同 Interface。输出按对象身份稳定排序，每页最多 100 条。游标绑定调用者、发布、Scenario、表达式及可见对象内容，数据或可见性变化后，继续旧游标会失败，调用者应重新查询。
 
-一次求值在 PostgreSQL repeatable-read 事务中完成。每个中间集合最多 10,000 个对象，表达式最多 16 层组合，整个求值最多 25,000 次表达式或读取操作。超出时整体失败。完整集合确定后才生成分页结果，`total` 始终对应这次完整求值。普通存储对象的关系按每跳、每起点类型批量查询，按目标身份去重，并检查两端的权限。虚拟日志、Scenario 元数据与需要计算派生属性的目标沿用有界的逐起点分页。
+一次求值在 PostgreSQL repeatable-read 事务中完成。具体类型的存储字段筛选可接上最多八跳 Link，由 PostgreSQL 检查各跳的对象和关系权限、去重目标，只读回最后一跳。这也适用于 Scenario 的对象和 Link 覆盖层。输出的完整成员集合最多 10,000 项。其他表达式走有界求值，每个中间集合最多 10,000 个对象，最多 16 层组合和 25,000 次表达式或读取操作。虚拟日志、Scenario 元数据与需要计算派生属性的关系目标沿用逐起点分页。
 
 ## 聚合
 
@@ -44,13 +44,13 @@ Object Sets 将本体查询、对象引用和关系导航组合为可复用集�
 }
 ```
 
-输出为 `{count, items: [{group, metrics}]}`。分组和指标读取经过权限遮罩的值。隐藏属性作为 `null` 参与分组，并从数值计算中排除。数值字符串需要在本体中显式建模或转换后再聚合，溢出会导致请求失败。正式 Ontology 的具体类型查询可将存储属性的分组和指标交给 PostgreSQL，即使匹配超过 10,000 个对象。输出仍限制 10,000 个分组。依赖逐行权限的指标、Scenario 和组合表达式沿用原有有界求值，以记录所需的行权限依赖。这个分工对应 [Foundry Object Set 的筛选、Search Around 与聚合](https://www.palantir.com/docs/foundry/functions/api-object-sets/)。
+输出为 `{count, items: [{group, metrics}]}`。分组和指标使用经过权限遮罩的值。隐藏属性以 `null` 参与分组并从数值计算中排除。数值字符串需要在本体中显式转换，溢出会导致请求失败。正式视图和 Scenario 均可将具体类型的存储属性筛选、Link 遍历、分组和指标下推到 PostgreSQL，支持直接表达式和已保存的动态集合。匹配超过 10,000 个对象时仍可聚合，分组上限为 10,000。依赖逐行权限、派生属性、正则或集合交并差的表达式走有界求值，保留逐行授权和原有查询语义。 [Foundry Object Set 的筛选、Search Around 与聚合](https://www.palantir.com/docs/foundry/functions/api-object-sets/)
 
 ## 保存与分享
 
 `save(access, model, input)` 接收 `requestId`、`name`、`mode`、`set` 和可选 `readers`。首次创建生成 UUID。相同 `requestId` 和相同输入可安全重试，改变输入的重复请求会被拒绝。
 
-- `dynamic` 保存表达式，每次使用时根据当前数据重新求值。
+- `dynamic` 保存表达式，每次使用时根据当前数据重新求值。可下推的表达式保存时只校验定义和访问权限。
 - `static` 在保存事务内确定对象引用，后来新出现的对象不会自动加入；引用对象的属性仍按读取时的当前值与权限返回。
 - 修改已有集合需提交 `id` 与当前 `revision`。更新会增加 revision。删除同样校验 revision。
 - `readers` 是明确获准使用该集合的身份列表。只有创建者可以修改、删除和调整列表。
@@ -68,7 +68,7 @@ Object Sets 将本体查询、对象引用和关系导航组合为可复用集�
 
 ## 验证
 
-`tests/11-object-sets.test.ts` 使用隔离的 PostgreSQL，覆盖超过一页的完整集合、多跳关系、Scenario 视图、分组与数值指标、属性遮罩、静态和动态成员变化、跨 owner 分享、撤销共享、并发创建重试、版本冲突和引用循环。
+`tests/11-object-sets.test.ts` 在隔离 PostgreSQL 中以 10,005 个匹配订单验证已保存表达式、Scenario 的对象与 Link 变更、两跳目标去重、分组计数和求和。另覆盖属性和跨 owner 隔离、Scenario 丢弃与合并后的结果授权、共享撤销、版本冲突和引用循环。
 
 ## 定义变更
 

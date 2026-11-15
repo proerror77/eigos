@@ -23,6 +23,7 @@
     "start:gateway": "node --env-file-if-exists=.env dist/apps/gateway/main.js",
     "start:worker": "node --env-file-if-exists=.env dist/apps/worker/main.js",
     "db:upgrade": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts upgrade",
+    "db:enable-pgvector": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts enable-pgvector",
     "db:enable-owner-isolation": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts enable-owner-isolation",
     "ontology:prepare": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts prepare",
     "ontology:activate": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts activate",

@@ -35,6 +35,12 @@ Worker 中的模型通过任务专用 `eigos_ontology` MCP 使用相同查询；
 
 `ontology_process_status` 或 `POST /ontology/services/process_status` 接受 `{type,object}`。其中 `type` 是具体日志类型，`object` 是对应业务对象引用。返回当前可见状态、最近一条可见转换的引用、观测时间、记录时间和按记录时间算出的停留秒数。最近的真实转换缺失或不可见时，时间和停留秒数为空。业务对象中每个独立状态属性可以各自发布过程日志和规则。状态转换监控和超时 Workflow 见 [过程规则](automation.md#过程规则)。
 
+## 状态值的数据库约束
+
+每个发布投影冻结其 Machinery 状态属性、可选值及必填性。数据库根据正式对象的投影和 Scenario 的所属发布绑定约束。`objects` 和 `scenario_objects` 使用同一个行内 PostgreSQL `CHECK` 检查状态值。约束同时覆盖方案的原始基线和拟议属性，删除差量使用 SQL NULL。可选状态可以缺省，显式的状态值必须是枚举中的字符串。
+
+运行 `npm run db:upgrade` 为现有发布和已跟踪对象绑定契约，并验证已有数据。常驻角色继续使用现有对象写权限及发布读取权限。候选复制使用候选契约，历史投影和旧方案继续使用其原契约。后续发布随原有事务保存新的契约，复用已有约束和触发器。[PostgreSQL CHECK 约束](https://www.postgresql.org/docs/17/ddl-constraints.html#DDL-CONSTRAINTS-CHECK-CONSTRAINTS)
+
 ## 日志来源与因果
 
 日志实例是已有 `edit_history` 的只读查询投影，不建立新的日志数据库、复制对象或等待后台日志任务。普通业务查询不展开该投影。当前发布只读取自身与祖先发布的历史，旧发布不会读到后续版本新增的转换。
