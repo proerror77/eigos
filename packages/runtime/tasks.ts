@@ -11,6 +11,7 @@ import { appendTrace } from './execution-trace.js';
 import type { Functions } from './functions.js';
 import { Objects } from './objects.js';
 import type { ScheduledCall } from './scheduled-actions.js';
+import type { CognitiveContext } from './cognitive-workflow.js';
 import { Clarification, amapPlaceAmendmentSchema, cityInputSchema, mapPlaceCorrectionsSchema, taskInputAnswerSchema, placeAmendmentSchema, placeAmendmentsSchema, placeChoicesSchema, placeContinuationSchema, placeSelectionSchema, unresolvedMapPlace, type PlaceContinuation } from './clarification.js';
 import { recordActionConfirmation } from './action-confirmation.js';
 export { placeAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema, taskPlaceAmendmentSchema } from './clarification.js';
@@ -30,7 +31,7 @@ const storedInputSchema = submitSchema.extend({
   rideCity: cityInputSchema.optional(),
   placeContinuation: placeContinuationSchema.optional(),
 });
-export interface Task { id: string; owner: string; request_id: string; input: z.infer<typeof storedInputSchema> & {scheduledAction?:ScheduledCall}; release: string; scopes: string[]; state: string; token: string | null; result: unknown; result_permissions?: Requirement[] | null; error: string | null; created_at: Date; updated_at: Date; execution_step?:number; conversation_id?: string | null }
+export interface Task { id: string; owner: string; request_id: string; input: z.infer<typeof storedInputSchema> & {scheduledAction?:ScheduledCall}; release: string; scopes: string[]; state: string; token: string | null; result: unknown; result_permissions?: Requirement[] | null; error: string | null; created_at: Date; updated_at: Date; execution_step?:number; conversation_id?: string | null; cognitive_context?: CognitiveContext | null }
 type InboxTask = Task & { conversation_batch: string; message_count: number; collecting: boolean };
 const batchWindowMs = 2000;
 const maxBatchMessages = 16;

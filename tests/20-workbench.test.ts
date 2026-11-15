@@ -17,7 +17,7 @@ test('workbench renders relationship conflicts, scoped searches and both rule ki
   const controls: { value: string; placeholder?: string }[] = [];
   const tables: { headers: string[]; rows: unknown[][]; click?: (index: number) => Promise<void> }[] = [];
   const requests: { path: string; input: Record<string, unknown> }[] = [];
-  const node = () => ({ append() {}, replaceChildren() {} });
+  const node = () => ({ append() {}, replaceChildren() {}, close() {} });
   const scenarioId = 'scenario-ui-fixture';
   const processRule = { id: 'process-rule-fixture', revision: 2, name: 'Late trip', enabled: true,
     process: { type: 'EventTripStateLog', to: 'authorized', dwellSeconds: 7200 }, workflow: 'workflow-fixture' };
@@ -51,6 +51,15 @@ test('workbench renders relationship conflicts, scoped searches and both rule ki
           { type: 'RequestRoute', from: { id: 'resolved' }, to: { id: 'route' }, removed: true, conflict: false },
         ],
       };
+      if (path === '/ontology/services/pending_scenario_reviews') return {
+        items: [{ id: scenarioId, name: 'Hotel replan', revision: 3, approved: false, conflicts: false }],
+      };
+      if (path === '/ontology/services/inspect_scenario_review') return {
+        id: scenarioId, name: 'Hotel replan', revision: 3, snapshot: 'review-snapshot', objects: [{
+          ref: { type: 'SchedulePlan', id: 'plan' }, editedFields: ['state'],
+          before: { state: 'prepared' }, after: { state: 'confirmed' },
+        }], links: [], evidence: [],
+      };
       if (path === '/ontology/services/rules') return {
         items: [{id:'object-rule-fixture', name:'Open trip', query:{type:'EventTrip'}, enabled:false}, processRule],
       };
@@ -65,7 +74,7 @@ test('workbench renders relationship conflicts, scoped searches and both rule ki
     table = uiTable;
     surface = heading = field = empty = modal = uiNode;
     request = uiRequest;
-    ({ state, renderScenarios, renderObjects, semanticDialog, renderRules });
+    ({ state, renderScenarios, renderObjects, semanticDialog, renderRules, renderProcesses });
   `, context);
   workbench.state.model = {
     objectTypes: [{ apiName: 'Route', displayName: 'Route', primaryKey: 'id', titleProperty: 'name',
@@ -103,6 +112,13 @@ test('workbench renders relationship conflicts, scoped searches and both rule ki
   await buttons.get('停用')!();
   assert.deepEqual(requests.find(item => item.path === '/ontology/services/save_rule')?.input,
     { ...processRule, enabled:false, _ontology:'Eigos' });
+
+  await workbench.renderProcesses();
+  await tables.find(table => table.headers[0] === '方案')!.click!(0);
+  assert.equal(tables.find(table => table.headers[1] === '字段')?.rows[0]?.[3], 'confirmed');
+  await buttons.get('批准此版本')!();
+  assert.deepEqual(requests.find(item => item.path === '/ontology/services/approve_scenario_review')?.input,
+    { id: scenarioId, revision: 3, snapshot: 'review-snapshot', _ontology: 'Eigos' });
 });
 
 test('workbench serves guarded assets and normal HTTP model, media and SDK scenario operations',async()=>{

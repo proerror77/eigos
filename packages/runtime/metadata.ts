@@ -111,7 +111,7 @@ export class Metadata {
       if (running.rowCount) throw new Conflict('Complete or cancel unfinished tasks before changing their publication');
       const indexing = await this.db.query(`SELECT 1 FROM ${this.db.schema}.index_transactions WHERE ontology=$1 AND state IN ('pending','failed') LIMIT 1`,[model.document.id],client);
       if (indexing.rowCount) throw new Conflict('Resolve pending or failed source transactions before activation');
-      const workflows=await this.db.query(`SELECT 1 FROM ${this.db.schema}.workflow_runs WHERE ontology=$1 AND state IN ('pending','working','failed') LIMIT 1`,[model.document.id],client);
+      const workflows=await this.db.query(`SELECT 1 FROM ${this.db.schema}.workflow_runs WHERE ontology=$1 AND state IN ('pending','working','failed','waiting-proposal','waiting-approval') LIMIT 1`,[model.document.id],client);
       if(workflows.rowCount)throw new Conflict('Complete or cancel unfinished workflows before changing their publication');
       if (current) {
         const live = await this.get(current, client);

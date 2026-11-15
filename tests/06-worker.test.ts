@@ -158,6 +158,48 @@ test('one confirmation resumes the original Action using current supplier receip
   } finally { await f.close(); await harness.close(); }
 });
 
+test('an exact short building name cannot hide a formal building candidate from the same receipt', async () => {
+  const harness = await harnessFixture(), f = await fixture(harness.driver);
+  try {
+    f.provider.flags.placeAddress = name => name === '上海中心' ? '徐汇区陕西南路188弄16号' : name;
+    f.provider.flags.placeAlternatives = (name, place) => name === '上海中心' ? [
+      { ...place, display_name: '上海中心大厦', address_all: '浦东新区银城中路501号',
+        location: { lat: 31.235, lng: 121.505 } },
+      { ...place, display_name: '上海中心大厦停车场', address_all: '浦东新区银城中路501号',
+        location: { lat: 31.234, lng: 121.505 } },
+      { ...place, display_name: '上海之巅观光厅(上海中心大厦店)', address_all: '浦东新区银城中路501号',
+        location: { lat: 31.235, lng: 121.506 } },
+    ] : [];
+    const initial = await f.tasks.submit(principal, {
+      requestId: 'shanghai-center-quote', message: '从中企云翠森林到上海中心，只查实时价格。',
+      route: { ...route, destination: '上海中心' },
+    });
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, initial.id);
+    assert.equal(paused.state, 'input-required');
+    const result = paused.result as {kind: string; origin: {ref: ObjectRef}[];
+      destination: {ref: ObjectRef; properties: {name: string; address: string}}[]};
+    assert.equal(result.kind, 'place-selection');
+    const expected = [
+      {name: '上海中心', address: '徐汇区陕西南路188弄16号'},
+      {name: '上海中心大厦', address: '浦东新区银城中路501号'},
+    ];
+    assert.deepEqual(result.destination.map(v => ({name:v.properties.name,address:v.properties.address}))
+      .sort((a,b) => a.name.length-b.name.length), expected);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch','maps_textsearch']);
+    const selected = result.destination.find(v => v.properties.name==='上海中心大厦')!;
+    const resumed = await f.tasks.selectPlaces(principal, initial.id, {origin:result.origin[0]!.ref,destination:selected.ref});
+    assert.equal(resumed.id,initial.id);
+    await f.worker.runOne();
+    const done = await f.tasks.get(principal, initial.id);
+    assert.equal(done.state,'completed',done.error ?? undefined);
+    const quote = done.result as {request: ObjectRef; route: {destination:{name:string;address:string}}};
+    assert.equal(quote.request.id,paused.input.placeContinuation!.requestId);
+    assert.equal(quote.route.destination.address,selected.properties.address);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch','maps_textsearch','taxi_estimate']);
+  } finally { await f.close(); await harness.close(); }
+});
+
 test('a corrected address continues the original Action and refreshes only the amended endpoint', async () => {
   const harness = await harnessFixture(), f = await fixture(harness.driver);
   try {
