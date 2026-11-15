@@ -11,6 +11,12 @@ type Resolution = { status: 'resolved'; origin: ObjectRef; destination: ObjectRe
 // Normalize presentation only. Street numbers, entrances and distinct names remain distinct.
 const matchName = (value: string) => value.normalize('NFKC').replace(/[\s·・]/gu, '').toLowerCase();
 
+const buildingEndings = ['大厦', '大楼'];
+function expandedBuildingName(short: string, official: string) {
+  return short.length >= 3 && !buildingEndings.some(ending => short.endsWith(ending)) &&
+    buildingEndings.some(ending => official === short + ending);
+}
+
 function resumedPlaceInput(context: FunctionContext) {
   const task = context.execution?.task;
   if (task && context.operationId && task.input.placeContinuation?.requestId === context.operationId) return task.input;
@@ -87,6 +93,7 @@ async function resolvePlaces(
     const rawName = amendment?.name ?? String(input[role]);
     const name = amendment?.address && !amendment.name && !hint ? '' : matchName(rawName);
     const abbreviation = hint ? siteName(rawName, city) : '';
+    const allowBuildingExpansion = !hint && !amendment && !choice;
     const matches = candidates.items.filter(item => {
       if (choice) return item.ref.type === choice.type && item.ref.id === choice.id;
       if (amendment?.address && !addressMatches(item, amendment.address)) return false;
@@ -97,14 +104,18 @@ async function resolvePlaces(
         return Boolean(abbreviation && related && anchors.length === 1 &&
           cityKey(item.properties.city) === cityKey(city) && withinLandmark(item, anchors[0]!));
       }
-      return name ? matchName(String(item.properties.name)) === name : Boolean(amendment?.address);
+      if (!name) return Boolean(amendment?.address);
+      const label = matchName(String(item.properties.name));
+      return label === name || (allowBuildingExpansion && expandedBuildingName(name, label));
     });
     const venues = hint && !choice && !amendment?.name
       ? matches.filter(place => !embeddedVenue(place, matches, city)) : matches;
-    // A landmark recommends an address. Wait for explicit selection
-    // before quoting a result that depends on the landmark.
-    if (venues.length === 1 && (!hint || choice)) {
-      return { selected: venues[0]!.ref, candidates: venues };
+    if (venues.length === 1) {
+      const venue = venues[0]!;
+      const expanded = allowBuildingExpansion && expandedBuildingName(name, matchName(String(venue.properties.name)));
+      // An abbreviated name or landmark recommends a venue, but only an
+      // explicit selection authorizes the quote for that recommendation.
+      if ((!hint || choice) && !expanded) return { selected: venue.ref, candidates: venues };
     }
     return { candidates: venues.length || (!choice && (hint || amendment?.address)) ? venues : candidates.items };
   };

@@ -4,6 +4,7 @@ import { Database, type Sql } from './database.js';
 import type { PublishedOntology } from './metadata.js';
 import { syncScenarioMetadata } from './scenario-metadata.js';
 import { processLogTables } from './process-logs.js';
+import { persistActionEvidence } from './decision-evidence.js';
 import type { Objects } from './objects.js';
 
 export type ScenarioMutation =
@@ -112,4 +113,5 @@ export async function recordScenarioAction(
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
     [model.scenario, owner, requestId, fingerprint, action, result, JSON.stringify(graph.access.requirements()), input,
       change.executor?.kind ?? null, change.executor?.id ?? null, change.taskId ?? null, revision, JSON.stringify(change.scenarioEdits)], client);
+  await persistActionEvidence(graph);
 }

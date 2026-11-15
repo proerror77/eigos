@@ -12,15 +12,11 @@ import { Scenarios } from './scenarios.js';
 import { recordScenarioAction, type ScenarioMutation } from './scenario-store.js';
 import { JournalObjects, compensate, type ObjectChange, type LinkChange } from './action-journal.js';
 
+import { actionEffects, changeDigest, evaluate } from './action-values.js';
+import { validateCognitive } from './cognitive-workflow.js';
 import { Clarification, CityConfirmationRequired, PlaceConfirmationRequired, SourceRetryRequired, placeContinuationSchema } from './clarification.js';
 import { assertActionConfirmed } from './action-confirmation.js';
 
-const evaluate = (expression: Value, input: Record<string, unknown>): unknown => {
-  if ('literal' in expression) return expression.literal;
-  let value: unknown = input[expression.parameter];
-  for (const field of expression.path ?? []) value = value && typeof value === 'object' ? Reflect.get(value, field) : undefined;
-  return value;
-};
 type TaskExecution = NonNullable<FunctionContext['execution']>;
 
 export type CommittedEffects = (model: PublishedOntology, owner: string, changes: readonly ObjectChange[]) => Promise<ActionEffect[]>;
@@ -84,7 +80,10 @@ export class Actions {
       // The request key serializes only duplicate submissions of this action.
       await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify([principal.owner, model.scenario ?? 'main', requestId])], client);
       await beforeCommit?.(client);
-      const change = { action: actionName, requestId, taskId: execution?.task.id, executor: actor,
+      const change: NonNullable<Objects['change']> = {
+        action: actionName, requestId, inputDigest: fingerprint, taskId: execution?.task.id, executor: actor,
+        validateWorkflow: (objects, validation, object) =>
+          validateCognitive(this.functions, { objects, principal: access.principal, signal }, validation, object),
         scenarioEdits: model.scenario ? [] as ScenarioMutation[] : undefined };
       const objects = model.scenario ? new Objects(this.db, model, access, client,change) : new JournalObjects(this.db,model,access,client,change);
       await objects.lockWrites();
@@ -120,14 +119,17 @@ export class Actions {
       const pendingEffects = [...declaredEffects];
       if(objects instanceof JournalObjects){
         const changes=await objects.changes();
+        if (change.reviewedChangeDigest && change.reviewedChangeDigest !== changeDigest(
+          changes.objects.map(({ ref, before, after }) => ({ ref, before: before?.properties ?? null, after: after?.properties ?? null })),
+          changes.links.map(({ edge, after }) => ({ edge, removed: !after })),
+        )) throw new Conflict('The committed changes differ from the reviewed Scenario delta');
         await this.db.query(`INSERT INTO ${this.db.schema}.action_changes(owner,request_id,release,action,result,objects,links) VALUES($1,$2,$3,$4,$5,$6,$7)`,[principal.owner,requestId,model.release,actionName,result,JSON.stringify(changes.objects),JSON.stringify(changes.links)],client);
         if(this.committedEffects) pendingEffects.push(...await this.committedEffects(model, principal.owner, changes.objects));
       }
       if (!model.scenario) {
-        for (const effect of action.effects ?? []) pendingEffects.push({
-          name: effect.name, handler: effect.handler,
-          payload: Object.fromEntries(Object.entries(effect.payload).map(([name, value]) => [name, evaluate(value, input)])),
-        });
+        if (change.reviewedChangeDigest && pendingEffects.length)
+          throw new Conflict('Workflow merge cannot dispatch effects outside the reviewed declaration');
+        pendingEffects.push(...actionEffects(model, actionName, input));
         if (pendingEffects.length) {
           if (!this.effects) throw new Error('Action effects require a configured dispatcher');
           await this.effects.enqueue(client, access, model, actionName, requestId, pendingEffects);
