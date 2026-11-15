@@ -7,9 +7,9 @@ import { Metadata } from './metadata.js';
 import { classificationSchema } from '../ontology/classification.js';
 import { Access, type Requirement } from './access.js';
 import type { ScheduledCall } from './scheduled-actions.js';
-import { Clarification, placeChoicesSchema, placeContinuationSchema, placeSelectionSchema, type PlaceContinuation } from './clarification.js';
+import { Clarification, placeAmendmentSchema, placeAmendmentsSchema, placeChoicesSchema, placeContinuationSchema, placeSelectionSchema, type PlaceContinuation } from './clarification.js';
 import { recordActionConfirmation } from './action-confirmation.js';
-export { placeSelectionSchema } from './clarification.js';
+export { placeAmendmentSchema, placeSelectionSchema } from './clarification.js';
 import { publicHotelTaskResult, workflowReplaySchema } from './hotel-workflows.js';
 
 export const routeInputSchema = z.strictObject({ city: z.string().min(1).max(100), origin: z.string().min(1).max(500), destination: z.string().min(1).max(500), serviceClass: z.string().min(1).max(100).optional() });
@@ -20,7 +20,8 @@ export const submitSchema = z.strictObject({ requestId: z.string().min(1).max(12
   conversationId: z.string().min(1).max(128).regex(/^[^\u0000-\u001f\u007f]+$/u).optional(),
 });
 const storedInputSchema = submitSchema.extend({
-  places: placeSelectionSchema.optional(),
+  places: placeSelectionSchema.partial().optional(),
+  placeAmendments: placeAmendmentsSchema.optional(),
   placeContinuation: placeContinuationSchema.optional(),
 });
 export interface Task { id: string; owner: string; request_id: string; input: z.infer<typeof storedInputSchema> & {scheduledAction?:ScheduledCall}; release: string; scopes: string[]; state: string; token: string | null; result: unknown; result_permissions?: Requirement[] | null; error: string | null; created_at: Date; updated_at: Date; execution_step?:number; conversation_id?: string | null }
@@ -116,32 +117,59 @@ export class Tasks {
     });
     return this.visible(principal, task);
   }
-  async selectPlaces(principal: Principal, id: string, input: unknown): Promise<Task> {
-    requireScope(principal, 'tasks:write'); z.uuid().parse(id);
+  selectPlaces(principal: Principal, id: string, input: unknown): Promise<Task> {
     const places = placeSelectionSchema.parse(input);
+    return this.continuePlaceTask(principal, id, (task, choices) => {
+      for (const side of ['origin', 'destination'] as const) {
+        if (!choices[side].some(({ ref }) => ref.type === places[side].type && ref.id === places[side].id)) {
+          throw new Conflict('Select places from the original task’s current candidates');
+        }
+      }
+      return { ...task.input, places };
+    });
+  }
+  amendPlace(principal: Principal, id: string, input: unknown): Promise<Task> {
+    const { side, keep, ...amendment } = placeAmendmentSchema.parse(input);
+    return this.continuePlaceTask(principal, id, (task, choices) => {
+      if (!task.input.placeContinuation) throw new Conflict('There is no original Action waiting for an address');
+      const other = side === 'origin' ? 'destination' : 'origin';
+      const selected = keep
+        ? choices[other].find(({ ref }) => ref.type === keep.type && ref.id === keep.id)?.ref
+        : choices[other].length === 1 ? choices[other][0]!.ref : undefined;
+      if (!selected) throw new Conflict('Identify the unchanged endpoint from the original task’s current candidates');
+      return {
+        ...task.input,
+        places: { [other]: selected },
+        placeAmendments: { ...task.input.placeAmendments, [side]: amendment },
+      };
+    });
+  }
+  private async continuePlaceTask(
+    principal: Principal, id: string,
+    update: (task: Task, choices: z.output<typeof placeChoicesSchema>) => Task['input'],
+  ): Promise<Task> {
+    requireScope(principal, 'tasks:write'); z.uuid().parse(id);
     return this.db.transaction(async client => {
       const table = `${this.db.schema}.tasks`;
       const task = (await this.db.query<Task>(`SELECT * FROM ${table} WHERE owner=$1 AND id=$2 AND state='input-required' FOR UPDATE`,
         [principal.owner, id], client)).rows[0];
       if (!task) throw new Conflict('The task is not waiting for place selection');
       const choices = placeChoicesSchema.safeParse(task.result);
-      if (!choices.success || !(['origin', 'destination'] as const).every(side =>
-        choices.data[side].some(candidate => candidate.ref.type === places[side].type && candidate.ref.id === places[side].id))) {
-        throw new Conflict('Select places from the original task’s current candidates');
-      }
+      if (!choices.success) throw new Conflict('The original task has no place candidates');
       const caller = await Access.load(this.db, principal, client);
       if (!task.result_permissions || !await caller.canReturn(task.result_permissions, client)) {
         throw new Conflict('Place candidate permissions changed');
       }
+      const nextInput = update(task, choices.data);
       const continuation = task.input.placeContinuation;
       if (continuation) {
         const model = await this.metadata.get(task.release, client);
         await recordActionConfirmation(this.db, model, caller, task, client, continuation, 'confirmed');
       }
-      const result = await this.db.query<Task>(`UPDATE ${table} SET input=jsonb_set(input,'{places}',$2::jsonb),
+      const result = await this.db.query<Task>(`UPDATE ${table} SET input=$2::jsonb,
         state='submitted',error=NULL,result=NULL,result_permissions=NULL,execution_step=execution_step+1,
         available_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1 RETURNING *`,
-        [task.id, JSON.stringify(places)], client);
+        [task.id, JSON.stringify(nextInput)], client);
       await this.db.query("SELECT pg_notify('eigos_tasks','ready')", [], client);
       return result.rows[0]!;
     });

@@ -157,6 +157,48 @@ test('one confirmation resumes the original Action using current supplier receip
   } finally { await f.close(); await harness.close(); }
 });
 
+test('a corrected address continues the original Action and refreshes only the amended endpoint', async () => {
+  const harness = await harnessFixture(), f = await fixture(harness.driver);
+  try {
+    f.provider.flags.placeName = name => name === route.destination ? '旧候选目的地' : name;
+    f.provider.flags.placeAddress = name => name === '科投大厦' ? '徐汇区建国西路285号科投大厦' : '浦东新区' + name;
+    const submitted = await f.submit();
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, submitted.id);
+    assert.equal(paused.state, 'input-required');
+    const pending = paused.input.placeContinuation!;
+    const misplaced = (paused.result as { destination: { ref: { type: string; id: string } }[] }).destination[0]!.ref;
+    const amend = (address: string) => ({ side: 'destination', name: '科投大厦', address });
+    await assert.rejects(f.tasks.amendPlace(principal, submitted.id, { ...amend('建国西路285号'), keep: misplaced }),
+      /unchanged endpoint/);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch']);
+
+    await f.tasks.amendPlace(principal, submitted.id, amend('建国西路286号'));
+    await f.worker.runOne();
+    assert.equal((await f.tasks.get(principal, submitted.id)).state, 'input-required');
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'maps_textsearch']);
+
+    const resumed = await f.tasks.amendPlace(principal, submitted.id, amend('上海市徐汇区建国西路285号'));
+    assert.equal(resumed.id, submitted.id);
+    await f.worker.runOne();
+    const task = await f.tasks.get(principal, submitted.id);
+    assert.equal(task.state, 'completed', task.error ?? undefined);
+    const result = task.result as { request: { id: string }; route: { destination: { name: string } }; execution: { mode: string } };
+    assert.equal(result.request.id, pending.requestId);
+    assert.equal(result.execution.mode, 'action-continuation');
+    assert.equal(result.route.destination.name, '科投大厦');
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    const inquiries = f.provider.inputs.filter(input => input.keywords).map(input => input.keywords);
+    assert.equal(inquiries.filter(keyword => keyword === route.origin).length, 1);
+    assert.equal(inquiries.filter(keyword => keyword === '科投大厦').length, 2);
+    const rows = (await f.db.query(`SELECT request_id, action FROM ${f.db.schema}.actions WHERE task_id=$1`, [task.id])).rows;
+    assert.deepEqual(rows, [{ request_id: pending.requestId, action: 'EstimateRide' }]);
+    const started = await f.db.query(`SELECT 1 FROM ${f.db.schema}.execution_trace
+      WHERE task_id=$1 AND event->>'kind'='model' AND event->>'state'='started'`, [task.id]);
+    assert.equal(started.rowCount, 1);
+  } finally { await f.close(); await harness.close(); }
+});
+
 test('an expired saved place receipt is refreshed without asking the model to choose again', async () => {
   const f = await fixture();
   try {

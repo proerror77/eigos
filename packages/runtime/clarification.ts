@@ -4,6 +4,18 @@ import { objectRefSchema } from '../ontology/schema.js';
 import type { Requirement } from './access.js';
 
 export const placeSelectionSchema = z.strictObject({ origin: objectRefSchema, destination: objectRefSchema });
+export const placeAddressSchema = z.strictObject({
+  address: z.string().trim().min(5).max(300),
+  name: z.string().trim().min(1).max(200).optional(),
+});
+export const placeAmendmentSchema = placeAddressSchema.extend({
+  side: z.enum(['origin', 'destination']),
+  keep: objectRefSchema.optional(),
+});
+export const placeAmendmentsSchema = z.strictObject({
+  origin: placeAddressSchema.optional(),
+  destination: placeAddressSchema.optional(),
+});
 export const placeChoicesSchema = z.object({
   origin: z.array(z.object({ ref: objectRefSchema })),
   destination: z.array(z.object({ ref: objectRefSchema })),

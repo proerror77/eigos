@@ -18,7 +18,7 @@ import { Objects, querySchema } from '../../packages/runtime/objects.js';
 import { Scenarios, createScenarioSchema } from '../../packages/runtime/scenarios.js';
 import { PARequests, paResponseSchema,paInboxSchema } from '../../packages/runtime/pa.js';
 import { HotelWorkflows, hotelApprovalSchema } from '../../packages/runtime/hotel-workflows.js';
-import { Tasks, submitSchema, publicTask, placeSelectionSchema } from '../../packages/runtime/tasks.js';
+import { Tasks, submitSchema, publicTask, placeAmendmentSchema, placeSelectionSchema } from '../../packages/runtime/tasks.js';
 import { createCapabilities } from '../../packages/capabilities/index.js';
 import { configuredServices } from '../../packages/capabilities/services/sources.js';
 import { configuredStripeSandbox } from '../../packages/capabilities/payments/stripe-sandbox.js';
@@ -145,6 +145,8 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   app.get('/tasks/:id', async (req, res) => res.json(publicTask(await tasks.get(principal(req), String(req.params.id)))));
   app.post('/tasks/:id/cancel', async (req, res) => res.json(publicTask(await tasks.cancel(principal(req), String(req.params.id)))));
   app.post('/tasks/:id/places', async (req, res) => res.json(publicTask(await tasks.selectPlaces(principal(req), String(req.params.id), req.body))));
+  app.post('/tasks/:id/place-amendment', async (req, res) =>
+    res.json(publicTask(await tasks.amendPlace(principal(req), String(req.params.id), req.body))));
   app.get('/ontology',async(req,res)=>{const p=principal(req);requireScope(p,'ontology:read');const ontology=typeof req.query.ontology==='string'?req.query.ontology:'Eigos';res.json((await Access.load(db,p)).describe(await metadata.active(ontology)));});
   app.post('/ontology/query', async (req, res) => res.json(await query(principal(req), req.body)));
   app.post('/ontology/functions', async (req, res) => res.json(await evaluate(principal(req), req.body)));
@@ -163,6 +165,10 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     }, () => response(() => hotelWorkflows.list(p)));
     server.registerTool('get_task', { description: 'Read your original task, result or PA information request.', inputSchema: z.strictObject({ taskId: z.uuid() }) }, input => response(async () => publicTask(await tasks.get(p, input.taskId))));
     server.registerTool('select_task_places', { description: 'Select source-returned endpoints for a task waiting for clarification.', inputSchema: z.strictObject({ taskId: z.uuid(), places: placeSelectionSchema }) }, input => response(async () => publicTask(await tasks.selectPlaces(p, input.taskId, input.places))));
+    server.registerTool('amend_task_place', {
+      description: 'Continue the original Action with a corrected address for one endpoint. Pass keep from the current candidates if the unchanged side has multiple matches.',
+      inputSchema: z.strictObject({ taskId: z.uuid(), amendment: placeAmendmentSchema }),
+    }, input => response(async () => publicTask(await tasks.amendPlace(p, input.taskId, input.amendment))));
     server.registerTool('respond_to_task', { description:'Supply the authenticated PA response to the original task information request. Use the responseSchema returned with that request.',inputSchema:z.strictObject({taskId:z.uuid(),...paResponseSchema.shape}) }, input=>response(async()=>publicTask(await pa.respond(p,input.taskId,{requestId:input.requestId,response:input.response}))));
     server.registerTool('list_pa_requests',{description:'Read your pending PA requests, including scheduled calendar journey checks, event and ride executions. Preserve returned taskId and requestId when replying. Follow cursor for subsequent pages.',inputSchema:paInboxSchema},input=>response(()=>pa.pending(p,input)));
     server.registerTool('create_scenario', { description:'Create an isolated what-if view over the selected Ontology.',inputSchema:scenarioCreateInput }, input=>response(()=>scenarioCreate(p,input)));

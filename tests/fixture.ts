@@ -29,7 +29,7 @@ export async function provider() {
   const directory = await mkdtemp(join(tmpdir(), 'eigos-provider-')), key = 'synthetic-didi-key';
   const keyFile = join(directory, 'key'); await writeFile(keyFile, key, { mode: 0o600 });
   const calls: string[] = [], inputs: Record<string, unknown>[] = [];
-  const flags = { active: true, ambiguous: false, related: true, placeName: (name: string) => name, durationSeconds:300, amountMinor:'7305',orderEnabled:true, loseOrderReply:false, orderCreates:0, orderQueries:0, before: undefined as (() => Promise<void>) | undefined };
+  const flags = { active: true, ambiguous: false, related: true, placeName: (name: string) => name, placeAddress: (name: string) => name + '上海市浦东新区', durationSeconds:300, amountMinor:'7305',orderEnabled:true, loseOrderReply:false, orderCreates:0, orderQueries:0, before: undefined as (() => Promise<void>) | undefined };
   const fetcher: typeof fetch = async (_url, init) => {
     if (init?.method === 'GET') return new Response(null, { status: 405 });
     if (init?.method === 'DELETE') return new Response(null, { status: 200 });
@@ -42,7 +42,7 @@ export async function provider() {
       const name = request.params.name, args = request.params.arguments;
       calls.push(name); inputs.push(args); await flags.before?.();
       if (name === 'maps_textsearch') {
-        const place = { display_name: flags.placeName(args.keywords), address: '浦东新区', address_all: args.keywords + '上海市浦东新区', city: args.city, location: { lat: 31.2, lng: args.keywords === route.origin ? 121.5 : 121.48 } };
+        const place = { display_name: flags.placeName(args.keywords), address: '浦东新区', address_all: flags.placeAddress(args.keywords), city: args.city, location: { lat: 31.2, lng: args.keywords === route.origin ? 121.5 : 121.48 } };
         const places = [place];
         if (flags.related) places.push({ ...place, display_name: args.keywords + '东门', location: { lat: 31.21, lng: 121.51 } });
         if (flags.ambiguous) places.push({ ...place, location: { lat: 31.3, lng: 121.6 } });
