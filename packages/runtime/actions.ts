@@ -13,7 +13,7 @@ import { recordScenarioAction, type ScenarioMutation } from './scenario-store.js
 import { JournalObjects, compensate, type ObjectChange, type LinkChange } from './action-journal.js';
 
 import { Clarification, PlaceConfirmationRequired, placeContinuationSchema } from './clarification.js';
-import { actionConfirmationRef } from './action-confirmation.js';
+import { assertActionConfirmed } from './action-confirmation.js';
 
 const evaluate = (expression: Value, input: Record<string, unknown>): unknown => {
   if ('literal' in expression) return expression.literal;
@@ -220,11 +220,7 @@ export class Actions {
     await tasks.current(task);
     const pending = placeContinuationSchema.parse(task.input.placeContinuation);
     if (!task.input.places) throw new Conflict('Original Action is waiting for input');
-    const process = await new Objects(this.db, model, access).read(actionConfirmationRef(pending.requestId));
-    if (process.properties.taskId !== task.id || process.properties.state !== 'confirmed' ||
-        process.properties.name !== pending.action) {
-      throw new Conflict('Original Action confirmation is unavailable');
-    }
+    await assertActionConfirmed(this.db, model, task, pending);
     return this.complete(access, model, { action: pending.action, input: pending.input },
       pending.requestId, pending.read, execution, signal, { allowPause: true });
   }

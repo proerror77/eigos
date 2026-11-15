@@ -132,9 +132,14 @@ test('one confirmation resumes the original Action using current supplier receip
     const places = { origin: candidates.origin[0]!.ref, destination: candidates.destination[0]!.ref };
     await assert.rejects(f.tasks.selectPlaces(principal, task.id, { ...places, origin: places.destination }), /current candidates/);
     assert.equal((await graph.read(process)).properties.state, 'awaiting-input');
+    // Existing operators need no new grant to drive the same authorized Action.
+    const grants = memberGrants(f.model);
+    await setGrants(f.db, principal.owner, grants.filter(grant => !grant.resource.includes('/ActionConfirmation')));
+    const unprivileged = new Objects(f.db, f.model, await Access.load(f.db, principal));
+    await assert.rejects(unprivileged.read(process), /Permission/);
     assert.equal((await f.tasks.selectPlaces(principal, task.id, places)).id, task.id);
-    assert.equal((await graph.read(process)).properties.state, 'confirmed');
     await f.worker.runOne();
+    await setGrants(f.db, principal.owner, grants);
     const completed = await f.tasks.get(principal, task.id);
     assert.equal(completed.state, 'completed', completed.error ?? undefined);
     const result = completed.result as { request: { id: string }; execution: { mode: string }; evidence: string[] };

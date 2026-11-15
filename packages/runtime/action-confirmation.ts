@@ -18,42 +18,48 @@ const allowedFrom: Record<State, readonly State[]> = {
   canceled: ['awaiting-input', 'confirmed'],
 };
 
-/** Use the published process object and its existing edit history, under the task's transition lock. */
+/** The runtime owns this lifecycle row. Reading its published projection still requires an object grant. */
 export async function recordActionConfirmation(
   db: Database, model: PublishedOntology, access: Access, task: Task, client: Sql,
   continuation: PlaceContinuation, state: State,
 ) {
+  if (access.principal.owner !== task.owner || model.release !== task.release || model.scenario) {
+    throw new Conflict('Action confirmation belongs to a different task owner or publication');
+  }
   const ref = actionConfirmationRef(continuation.requestId);
   const graph = new Objects(db, model, access, client, {
     requestId: continuation.requestId, taskId: task.id,
     ...(state === 'awaiting-input' || state === 'completed' ? { action: continuation.action } : {}),
     executor: { kind: 'system', id: 'ontology-action-confirmation' },
   });
+  const key = [model.projection, task.owner, ref.type, ref.id];
+  await graph.lockWrites();
   if (!task.input.placeContinuation) {
     if (state !== 'awaiting-input') throw new Conflict('Action confirmation has not been requested');
-    await graph.create(ref, { id: ref.id, name: continuation.action, taskId: task.id, state });
+    const properties = model.parseObject(ref, { id: ref.id, name: continuation.action, taskId: task.id, state });
+    await db.query(`INSERT INTO ${db.schema}.objects(projection,owner,type,id,properties) VALUES($1,$2,$3,$4,$5)`,
+      [...key, properties], client);
+    await recordObjectEdit(graph, ref, null, properties, properties, 'create');
     return;
   }
   if (task.input.placeContinuation.requestId !== continuation.requestId) throw new Conflict('Original Action changed');
-  if (state === 'failed' || state === 'canceled') {
-    // The task engine must be able to close its own process even when its
-    // business grants are revoked. Keep this update scoped to its original row.
-    await graph.lockWrites();
-    const key = [model.projection, task.owner, ref.type, ref.id, task.id, allowedFrom[state]];
-    const row = (await db.query<{ properties: Record<string, unknown> }>(
-      `SELECT properties FROM ${db.schema}.objects
-        WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND properties->>'taskId'=$5
-          AND properties->>'state'=ANY($6::text[]) FOR UPDATE`, key, client)).rows[0];
-    if (!row) throw new Conflict('Action confirmation cannot be closed');
-    const next = model.parseObject(ref, { ...row.properties, state });
-    await db.query(`UPDATE ${db.schema}.objects SET properties=$5,revision=revision+1
-      WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`, [...key.slice(0, 4), next], client);
-    await recordObjectEdit(graph, ref, row.properties, next, { state });
-    return;
-  }
-  const current = await graph.read(ref);
-  if (current.properties.taskId !== task.id || !allowedFrom[state].some(prior => prior === current.properties.state)) {
-    throw new Conflict('Action confirmation state changed');
-  }
-  await graph.edit(ref, current.revision, { state });
+  const row = (await db.query<{ properties: Record<string, unknown> }>(
+    `SELECT properties FROM ${db.schema}.objects
+      WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND properties->>'taskId'=$5
+        AND properties->>'state'=ANY($6::text[]) AND properties->>'name'=$7 FOR UPDATE`,
+    [...key, task.id, allowedFrom[state], continuation.action], client)).rows[0];
+  if (!row) throw new Conflict('Action confirmation state changed');
+  const next = model.parseObject(ref, { ...row.properties, state });
+  await db.query(`UPDATE ${db.schema}.objects SET properties=$5,revision=revision+1
+    WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`, [...key, next], client);
+  await recordObjectEdit(graph, ref, row.properties, next, { state });
+}
+
+export async function assertActionConfirmed(db: Database, model: PublishedOntology, task: Task, continuation: PlaceContinuation) {
+  const ref = actionConfirmationRef(continuation.requestId);
+  const proof = await db.query(`SELECT 1 FROM ${db.schema}.objects
+    WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND properties->>'taskId'=$5
+      AND properties->>'state'='confirmed' AND properties->>'name'=$6`,
+    [model.projection, task.owner, ref.type, ref.id, task.id, continuation.action]);
+  if (!proof.rowCount) throw new Conflict('Original Action confirmation is unavailable');
 }
