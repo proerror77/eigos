@@ -21,6 +21,14 @@ export const geocodeResult = z.strictObject({
   })).max(20),
 });
 export const reverseGeocodeResult = z.strictObject({ ...source, ...area, address: label.optional() });
+export const ridePickupResult = z.strictObject({
+  ...source, ...area, address: label,
+  inputCoordinateSystem: coordinateSystem, coordinateSystem: z.literal('gcj02'),
+  conversion: z.enum(['converted_by_amap', 'already_gcj02']),
+});
+export const pickupCoordinateEvidence = ridePickupResult.pick({
+  provider: true, fetchedAt: true, inputCoordinateSystem: true, coordinateSystem: true, conversion: true,
+});
 
 const place = z.strictObject({ id: poiId, name: label, address: label.optional(), ...area, point: gcjPoint.optional() });
 export const mapPlaceResult = z.strictObject({ ...source, places: z.array(place).max(20) });
@@ -76,6 +84,9 @@ export const weatherResult = z.discriminatedUnion('kind', [
 
 const locationDependencies = { functions: ['resolveTaskLocation'] };
 export const mapFunctions: OntologyDocument['functionTypes'] = [
+  { apiName: 'resolveRidePickup', parameters: json(z.strictObject({})), returns: json(ridePickupResult),
+    dependencies: locationDependencies,
+    description: 'Read a pickup address from the original PA’s current device location after checking or converting it to GCJ-02. The RideInquiryWithPlaceClues estimate Action calls this when origin is omitted.' },
   { apiName: 'geocodeAddress', parameters: json(mapAddress), returns: json(geocodeResult), dependencies: {},
     description: 'Find Amap coordinate candidates for a specified address or landmark and optional city. Retain ambiguity and use the appropriate spatial precision for the task.' },
   { apiName: 'reverseGeocode', parameters: json(mapPoint), returns: json(reverseGeocodeResult), dependencies: {},

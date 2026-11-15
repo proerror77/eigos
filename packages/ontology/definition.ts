@@ -2,7 +2,8 @@ import { calendarJourneyDefinition as journey, journeyType } from './calendar-jo
 import { documentDefinition as documents } from './documents.js';
 import { flightPositionFunction } from './flight-position.js';
 import { flightDefinition as flight, flightWatchType } from './flight.js';
-import { mapFunctions } from './maps.js';
+import { z } from 'zod';
+import { mapFunctions, pickupCoordinateEvidence } from './maps.js';
 import { locationFunctions, taskLocationValueType } from './location.js';
 import { luckinDefinition as luckin } from './luckin.js';
 import { deliveryFunctions } from './delivery.js';
@@ -33,7 +34,7 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '26',
+  id: ride.id, version: '27',
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
   actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes, ...journey.actionTypes, ...flight.actionTypes, ...payments.actionTypes,...luckin.actionTypes,...applications.actionTypes,...documents.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
@@ -99,22 +100,42 @@ businessDefinition.objectTypes.find(type=>type.apiName==='LumaEvent')!.interface
 
 // Keep the existing published contract for historical workflows and callers with complete inputs.
 const completeRideFunction = businessDefinition.functionTypes.find(fn => fn.apiName === 'prepareRideInquiry')!;
+const drivingEstimate = jsonSchema(z.strictObject({
+  distanceMeters: z.number().int().nonnegative(), durationSeconds: z.number().int().positive(),
+  bindingId: z.string(), authorityId: z.string(), receiptDigest: z.string(),
+  observedAt: z.iso.datetime(), expiresAt: z.iso.datetime(),
+  evidence: z.enum(['live_readonly', 'provider_mock', 'synthetic']),
+}).nullable());
+const routeEvidence = {
+  pickup: jsonSchema(pickupCoordinateEvidence),
+  drivingEstimate,
+};
+const routeType = businessDefinition.objectTypes.find(type => type.apiName === 'Route')!;
+for (const [name, schema] of Object.entries(routeEvidence)) {
+  routeType.properties[name] = { description: name === 'pickup' ? 'PA pickup coordinate system and conversion evidence'
+    : 'DiDi driving estimate, or null when the source did not provide one', schema, required: false };
+}
+const rideResult = businessDefinition.functionTypes.find(fn => fn.apiName === 'readRideEstimates')!.returns;
+const resultRoute = (rideResult.properties as Record<string, {properties: Record<string, unknown>}>).route!;
+Object.assign(resultRoute.properties, routeEvidence);
 const landmark = { type: 'string', minLength: 3, maxLength: 200, description: 'Named nearby landmark supplied by the user' };
 const quoteParameters = {
   ...completeRideFunction.parameters,
   properties: { ...completeRideFunction.parameters.properties as Record<string, unknown>,
     originLandmark: landmark, destinationLandmark: landmark },
-  required: ['origin', 'destination'],
+  required: [],
 };
 const prepareWithClues = {
   ...completeRideFunction, apiName: 'prepareRideInquiryWithPlaceClues', parameters: quoteParameters,
-  description: 'Prepare a ride estimate using the given venues and optional named landmarks. If the city is absent, ask for it on the original Action before querying any source.',
+  dependencies: { ...completeRideFunction.dependencies,
+    functions: [...completeRideFunction.dependencies!.functions!, 'resolveRidePickup'] },
+  description: 'Prepare a ride estimate using an explicit pickup or the original PA’s current phone location. Prompt for a missing destination on the original task.',
 };
 businessDefinition.functionTypes.push(prepareWithClues);
 const completeQuote = businessDefinition.actionTypes.find(action => action.apiName === 'EstimateRide')!;
 const quoteWithClues = {
   ...completeQuote, apiName: 'EstimateRideWithPlaceClues', parameters: quoteParameters, function: prepareWithClues.apiName,
-  description: 'Quote-only ride inquiry with a missing city or nearby landmark. Pass a city only when established by the user; otherwise the original Action waits for it. Supply named landmarks separately. No order or payment.',
+  description: 'Check the driving route and fare. Use a named pickup if the user supplied one. Omit origin to request current device location from the original PA and verify GCJ-02. If the user did not specify a destination, omit it and let the Action ask. Supply named landmarks separately.',
 };
 businessDefinition.actionTypes.push(quoteWithClues);
 const completeInquiry = businessDefinition.interfaceTypes.find(type => type.apiName === 'RideInquiry')!;

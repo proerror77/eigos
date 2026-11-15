@@ -83,7 +83,11 @@ export function rideFunctions(resolveSource: SourceResolver, additional: Readonl
       const estimates = quotes.items.filter(item => !serviceClass || item.properties.name === serviceClass);
       if (!estimates.length) throw new Error('No estimate for the selected service class');
       await binding.assertCurrent();
-      return { request, estimates, evidence: [...evidence], accepted: evidence.size === 1 && evidence.has('live_readonly'), route: { origin: origin.properties, destination: destination.properties } };
+      const { pickup, drivingEstimate } = routes[0]!.properties;
+      const currentDrive = drivingEstimate && Date.parse(String((drivingEstimate as Record<string, unknown>).expiresAt)) > Date.now();
+      return { request, estimates, evidence: [...evidence], accepted: evidence.size === 1 && evidence.has('live_readonly'),
+        route: { origin: origin.properties, destination: destination.properties, ...(pickup ? { pickup } : {}),
+          ...(drivingEstimate !== undefined ? { drivingEstimate: currentDrive ? drivingEstimate : null } : {}) } };
     }],
     ...additional,
   ]), definitions ?? (JSON.parse(readFileSync(new URL('../../ontology/definitions/ride.json', import.meta.url), 'utf8')) as OntologyDocument).functionTypes, versions);

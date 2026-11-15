@@ -187,7 +187,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     server.registerTool('get_task', { description: 'Read your original task, result or PA information request.', inputSchema: z.strictObject({ taskId: z.uuid() }) }, input => response(async () => publicTask(await tasks.get(p, input.taskId))));
     server.registerTool('select_task_places', { description: 'Confirm endpoints from the original task’s current candidates. Present their formal names and addresses to the user. A PA may select a previously confirmed address; if uncertain it must ask the user.', inputSchema: z.strictObject({ taskId: z.uuid(), places: placeSelectionSchema }) }, input => response(async () => publicTask(await tasks.selectPlaces(p, input.taskId, input.places))));
     server.registerTool('supply_task_input', {
-      description: 'Supply the requested city or retry a failed read on the original Action. Retry only when the task explicitly returns retry-source.',
+      description: 'Supply the city, pickup or destination requested by the original Action. Retry only when the task explicitly returns retry-source.',
       inputSchema: z.strictObject({ taskId: z.uuid(), answer: taskInputAnswerSchema }),
     }, input => response(async () => publicTask(await tasks.answerInput(p, input.taskId, input.answer))));
     server.registerTool('amend_task_place', {

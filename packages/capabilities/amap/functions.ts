@@ -3,7 +3,7 @@ import { Conflict } from '../../core/identity.js';
 import { locationPlace, type locationSelection, type locationUse } from '../../ontology/location.js';
 import {
   adcode, gcjPoint, geocodeResult, mapAddress, mapPlaceResult, mapPoint, mapRouteInput, mapRouteResult,
-  mapSearch, nearbySearch, placeDetailInput, placeDetailResult, reverseGeocodeResult, weatherInput, weatherResult,
+  mapSearch, nearbySearch, placeDetailInput, placeDetailResult, reverseGeocodeResult, ridePickupResult, weatherInput, weatherResult,
 } from '../../ontology/maps.js';
 import { Clarification, unresolvedMapPlace } from '../../runtime/clarification.js';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
@@ -67,6 +67,15 @@ export async function toAmapPoint(client: AmapClient, point: Point, signal: Abor
     coordsys: 'gps', locations: pointText(point),
   }, signal);
   return parsePoint(response.locations);
+}
+
+function reverseGeocodedAddress(raw: unknown) {
+  const result = source.parse(raw);
+  const regeo = result.regeocode ? source.parse(result.regeocode) : result;
+  const region = regeo.addressComponent ? source.parse(regeo.addressComponent) : regeo;
+  const area = administrativeArea(region);
+  if (!area.city && !area.district && !area.province && !area.adcode) throw new Conflict('高德未返回该坐标的行政区。');
+  return { ...fetchTime(), ...area, address: asText(regeo.formatted_address) };
 }
 
 async function geocodeRows(client: AmapClient, input: Address, signal: AbortSignal) {
@@ -197,6 +206,22 @@ async function weather(client: AmapClient, input: z.infer<typeof weatherInput>, 
 
 export function amapFunctions(resolve: AmapResolver): ReadonlyMap<string, FunctionHandler> {
   const handlers = new Map<string, FunctionHandler>([
+    ['resolveRidePickup', async (_raw, ctx) => {
+      const client = await resolve(ctx);
+      const { position, inputCoordinateSystem, expiresAt } = await locationForService(ctx, {}, 'ride_pickup', 'gcj02',
+        (point, signal) => toAmapPoint(client, point, signal));
+      const point = gcjPoint.parse({ latitude: position.latitude, longitude: position.longitude,
+        coordinateSystem: position.coordinateSystem });
+      const location = reverseGeocodedAddress(await client.web('/v3/geocode/regeo', {
+        location: pointText(point), extensions: 'base',
+      }, ctx.signal));
+      if (!location.address || Date.parse(expiresAt) <= Date.now())
+        throw new Clarification('无法确认本次定位的上车地址，请提供上车点名称或地址。');
+      return ridePickupResult.parse({
+        ...location, inputCoordinateSystem, coordinateSystem: point.coordinateSystem,
+        conversion: inputCoordinateSystem === 'wgs84' ? 'converted_by_amap' : 'already_gcj02',
+      });
+    }],
     ['geocodeAddress', async (raw, ctx) => {
       const items = await geocodeRows(await resolve(ctx), mapAddress.parse(raw), ctx.signal);
       return geocodeResult.parse({ ...fetchTime(), candidates: items.map(geocodeCandidate) });
@@ -204,12 +229,9 @@ export function amapFunctions(resolve: AmapResolver): ReadonlyMap<string, Functi
     ['reverseGeocode', async (raw, ctx) => {
       const client = await resolve(ctx);
       const point = await toAmapPoint(client, mapPoint.parse(raw), ctx.signal);
-      const result = source.parse(await client.mcp('maps_regeocode', { location: pointText(point) }, ctx.signal));
-      const regeo = result.regeocode ? source.parse(result.regeocode) : result;
-      const region = regeo.addressComponent ? source.parse(regeo.addressComponent) : regeo;
-      const area = administrativeArea(region);
-      if (!area.city && !area.district && !area.province && !area.adcode) throw new Conflict('高德未返回该坐标的行政区。');
-      return reverseGeocodeResult.parse({ ...fetchTime(), ...area, address: asText(regeo.formatted_address) });
+      return reverseGeocodeResult.parse(reverseGeocodedAddress(await client.mcp('maps_regeocode', {
+        location: pointText(point),
+      }, ctx.signal)));
     }],
     ['searchMapPlaces', async (raw, ctx) => {
       const client = await resolve(ctx), { query: keywords, city } = mapSearch.parse(raw);

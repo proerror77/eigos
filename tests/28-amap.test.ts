@@ -15,10 +15,92 @@ import { unresolvedMapPlace } from '../packages/runtime/clarification.js';
 import { ExecutionTrace } from '../packages/runtime/execution-trace.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { PARequests } from '../packages/runtime/pa.js';
-import { mapFunctions } from '../packages/ontology/maps.js';
-import { document, fixture, principal } from './fixture.js';
+import { mapFunctions, pickupCoordinateEvidence } from '../packages/ontology/maps.js';
+import { document, fixture, principal, route } from './fixture.js';
 
 import { fakeAmap, testConnection, type Recorded } from './amap-fixture.js';
+
+test('the original ride Action obtains missing endpoints and uses GCJ-02 before quoting a phone pickup', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eigos-ride-pickup-'));
+  const calls: Recorded[] = [];
+  const config = await testConnection(directory);
+  let input: Record<string, unknown> = {};
+  let modelCalls = 0;
+  const f = await fixture({
+    model: 'fixture-ride-pickup',
+    async run(_prompt, tools) {
+      modelCalls++;
+      await tools.get('complete_with_action')!.invoke({
+        action: { interface: { type: 'RideInquiryWithPlaceClues', implementation: 'RideRequest', action: 'estimate' }, input },
+        read: { function: 'readRideEstimates', resultParameter: 'request' },
+      });
+    },
+  }, undefined, undefined, undefined, { amap: config, amapFetch: fakeAmap(calls) });
+  try {
+    f.provider.flags.related = false;
+    const pa = new PARequests(f.tasks);
+    for (const system of ['wgs84', 'gcj02'] as const) {
+      input = system === 'wgs84' ? {} : { destination: route.destination };
+      const original = await f.tasks.submit(principal, { requestId: 'pickup-' + system, message: '帮我叫台车' });
+      const initialDidi = f.provider.calls.length;
+      const initialAmap = calls.length;
+      await f.worker.runOne();
+      let pending = await f.tasks.get(principal, original.id);
+      if (system === 'wgs84') {
+        assert.deepEqual(pending.result, { kind: 'destination' });
+        await f.tasks.answerInput(principal, original.id, { kind: 'destination', place: route.destination });
+        await f.worker.runOne();
+        pending = await f.tasks.get(principal, original.id);
+      }
+      assert.equal(pending.state, 'input-required');
+      assert.equal(pending.input.placeContinuation?.waitingFor, 'pa-request');
+      const actionId = pending.input.placeContinuation.requestId;
+      const request = pending.result as { requestId: string; capability: string; input: Record<string, unknown> };
+      assert.equal(request.capability, 'location.resolve');
+      assert.equal(request.input.use, 'ride_pickup');
+      assert.equal(request.input.coordinateSystem, 'gcj02');
+      const point = { source: 'device', latitude: 31.201, longitude: 121.495,
+        observedAt: new Date().toISOString(), accuracyMeters: 25 };
+      await assert.rejects(pa.respond(principal, original.id, { requestId: request.requestId, response: {
+        status: 'available', location: point,
+      } }));
+      assert.equal(calls.length, initialAmap);
+      assert.equal(f.provider.calls.length, initialDidi);
+      await pa.respond(principal, original.id, { requestId: request.requestId, response: {
+        status: 'available', location: { ...point, coordinateSystem: system },
+      } });
+      await f.worker.runOne();
+      const finished = await f.tasks.get(principal, original.id);
+      assert.equal(finished.state, 'completed', JSON.stringify(finished));
+      const result = finished.result as {request: {id: string}; route: {origin: {name: string}; pickup: unknown;
+        drivingEstimate: {durationSeconds: number; distanceMeters: number}}};
+      const pickup = pickupCoordinateEvidence.parse(result.route.pickup);
+      assert.equal(result.request.id, actionId);
+      assert.equal(result.route.origin.name, '上海市浦东新区示例路1号');
+      assert.equal(result.route.drivingEstimate.durationSeconds, 300);
+      assert.equal(result.route.drivingEstimate.distanceMeters, 1951);
+      assert.equal(pickup.inputCoordinateSystem, system);
+      assert.equal(pickup.coordinateSystem, 'gcj02');
+      assert.equal(pickup.conversion, system === 'wgs84' ? 'converted_by_amap' : 'already_gcj02');
+      assert.deepEqual(calls.slice(initialAmap).map(call => call.name), system === 'wgs84'
+        ? ['/v3/assistant/coordinate/convert', '/v3/geocode/regeo'] : ['/v3/geocode/regeo']);
+      assert.equal(calls.at(-1)?.input.location, system === 'wgs84' ? '121.499,31.205' : '121.495,31.201');
+      assert.deepEqual(f.provider.calls.slice(initialDidi),
+        ['maps_textsearch', 'maps_textsearch', 'taxi_estimate', 'maps_direction_driving']);
+    }
+    const initialAmap = calls.length;
+    input = route;
+    const direct = await f.tasks.submit(principal, { requestId: 'named-pickup', message: '从指定上车点叫车' });
+    await f.worker.runOne();
+    assert.equal((await f.tasks.get(principal, direct.id)).state, 'completed');
+    assert.equal(calls.length, initialAmap);
+    assert.equal((await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.pa_requests WHERE task_id=$1`, [direct.id])).rows[0]?.n, 0);
+    assert.equal(modelCalls, 3);
+  } finally {
+    await f.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('Ontology exposes read-only Amap and weather together and enforces owner and location authorization', async () => {
   const f = await fixture(), directory = await mkdtemp(join(tmpdir(), 'eigos-amap-'));

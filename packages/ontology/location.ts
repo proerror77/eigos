@@ -7,7 +7,7 @@ export const coordinates = {
   longitude: z.number().min(-180).max(180),
 };
 export const coordinateSystem = z.enum(['wgs84', 'gcj02']);
-export const locationUse = z.enum(['luckin_pickup', 'waimai_delivery', 'nearby_search', 'map_route', 'weather']);
+export const locationUse = z.enum(['luckin_pickup', 'waimai_delivery', 'nearby_search', 'map_route', 'weather', 'ride_pickup']);
 export const locationPlace = z.string().trim().min(1).max(240);
 export const locationSelection = z.discriminatedUnion('source', [
   z.strictObject({ source: z.literal('current') }),

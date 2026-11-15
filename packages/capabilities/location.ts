@@ -8,7 +8,7 @@ import { Clarification } from '../runtime/clarification.js';
 import type { FunctionContext, FunctionHandler } from '../runtime/functions.js';
 import { PARequests } from '../runtime/pa.js';
 
-const preferredAccuracy = { luckin_pickup: 300, waimai_delivery: 100, nearby_search: 300, map_route: 100, weather: 1000 };
+const preferredAccuracy = { luckin_pickup: 300, waimai_delivery: 100, nearby_search: 300, map_route: 100, weather: 1000, ride_pickup: 50 };
 const maxAgeMs = 120000;
 const locationPermissionMs = 300000;
 function locationParameters(request: z.infer<typeof locationRequest>, response: unknown, requestedAt: Date) {
@@ -95,10 +95,11 @@ export async function locationForService(
     return { ...locationParameters(request, row.response, row.created_at), requestId: input.locationRequestId };
   })();
   const { position } = located;
-  if (position.coordinateSystem === coordinateSystem) return located;
+  const result = { ...located, inputCoordinateSystem: position.coordinateSystem };
+  if (position.coordinateSystem === coordinateSystem) return result;
   if (position.coordinateSystem !== 'wgs84' || coordinateSystem !== 'gcj02' || position.source !== 'device' || !toGcj02)
     throw new Clarification('请提供适用于该服务的地图位置。');
   const converted = await toGcj02({ latitude: position.latitude, longitude: position.longitude, coordinateSystem: 'wgs84' }, ctx.signal);
   if (Date.parse(located.expiresAt) <= Date.now()) throw new Clarification('定位已过期，请提供本次查询的地址。');
-  return { ...located, position: taskLocation.parse({ ...position, ...converted }) };
+  return { ...result, position: taskLocation.parse({ ...position, ...converted }) };
 }

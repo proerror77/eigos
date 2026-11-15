@@ -2358,6 +2358,17 @@ async function renderProcesses(reviewPage = 1) {
   const inspect = (task) => {
     const locationRequest = task.state === 'input-required' && task.result?.kind === 'pa-request' && task.result.capability === 'location.resolve';
     const body = element('div', {}, !locationRequest && element('p', {}, task.state + (task.error ? ' · ' + task.error : '')));
+    if (task.state === 'input-required' && ['city', 'origin', 'destination'].includes(task.result?.kind)) {
+      const kind = task.result.kind;
+      const title = ({ city: '城市', origin: '上车点', destination: '目的地' })[kind];
+      const field = kind === 'city' ? 'city' : 'place';
+      const form = jsonSchemaForm({ properties: { [field]: { type: 'string', title } }, required: [field] });
+      body.append(form.node, button('确认' + title, async () => {
+        await request('/tasks/' + task.id + '/input', { answer: { kind, ...form.read() } });
+        $('#editor').close();
+        await renderProcesses();
+      }, 'primary'));
+    }
     const review = task.result?.hotelWorkflow;
     if (review?.status === 'awaiting_approval') {
       const hotel = task.result.hotel.properties;
@@ -2394,7 +2405,7 @@ async function renderProcesses(reviewPage = 1) {
         };
         const serviceName = ({
           waimai_delivery: '美团外卖', luckin_pickup: '瑞幸', nearby_search: '高德周边搜索',
-          map_route: '高德路线查询', weather: '高德天气',
+          map_route: '高德路线查询', weather: '高德天气', ride_pickup: '叫车上车点查询',
         })[use];
         const submitPlace = async (form, requiredPlace) => {
           const { place = requiredPlace, ...point } = form.read();
@@ -2408,6 +2419,7 @@ async function renderProcesses(reviewPage = 1) {
           element('p', {}, (serviceName || '本次服务') + '会使用你此次提供的位置。'),
           use === 'waimai_delivery' && requestData.input.coordinateProvider === 'Amap'
             ? element('p', {}, '高德地图将转换设备坐标供美团外卖使用。') : null,
+          use === 'ride_pickup' && element('p', {}, '高德地图将把设备坐标转换为 GCJ-02，供你核对上车地址。'),
         );
         if (selection.source === 'current' && (coordinateSystem === 'wgs84' || requestData.input.acceptDeviceWgs84)) {
           body.append(button('共享本机当前位置', async () => {
