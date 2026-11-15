@@ -98,6 +98,8 @@ flowchart LR
 
 Agent 可在一次 `complete_with_action` 调用中选择 Interface Action 与结果 Function，并指定把 Action 返回的对象引用绑定到哪个函数参数。运行层执行 Action 后调用 `readRideEstimates`，后者按 `PriceEstimate` 和 source Links 检查当前来源、有效期和报价，再直接返回真实结果。验收在读取时重新执行，重复 Action 不会使旧的验收标志跳过检查。Agent 不需要在来源读取、对象创建或验收之间继续往返。
 
+外部 MCP 也发布 `complete_with_action`。调用者提供 `requestId`、Interface Action 和结果 Function 的参数绑定。Gateway 和 Worker 共用执行逻辑，Gateway 按调用者身份检查 Ontology 读写权限，并在输出前复核数据权限。使用相同请求 ID 重试时复用已提交的 Action，重新读取并核验结果。这里沿用 [Interface Action](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints) 和 [Function-backed Action](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) 的约束。组合响应由 EIGOS MCP 提供，Action 提交和结果读取各自保留原有权限及事务边界。
+
 普通 Function 仅获得对象读取接口；edit Function 的写入上下文由 Action 提供。来源价格由连接器和字段映射生成，模型不能提供入库价格。取消或租约失效阻止后续提交。
 
 对象集查询示例。

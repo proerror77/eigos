@@ -8,7 +8,7 @@ import { documentChunkType, documentType } from '../ontology/documents.js';
 import { ModelEgress, ModelEgressDenied } from './model-egress.js';
 import { PublishedOntology } from './metadata.js';
 import { objectRefSchema, type ObjectData, type ObjectRef } from '../ontology/schema.js';
-import { actionCallSchema as actionCall, functionCallSchema as functionCall, interfaceActionCallSchema } from '../ontology/invocation.js';
+import { actionCallSchema as actionCall, functionCallSchema as functionCall, completeWithActionSchema } from '../ontology/invocation.js';
 import type { Ontology } from '../ontology/model.js';
 import { Database } from './database.js';
 import { Metadata, type Bindings } from './metadata.js';
@@ -303,11 +303,12 @@ export class OntologyAgent {
     };
     add('apply_action', 'Apply a published Action or mapped Interface Action. Use an implementing Object Type for creation capabilities; existing-object actions can bind an object reference. The runtime enforces the published parameters and submission criteria.', actionCall, apply);
     add('complete_with_action', 'Execute a complete business capability through its Interface Action, then return its result using the selected published read Function. The Action handles its deterministic work. Bind its returned object reference to read.resultParameter; no further model round trip is needed. Use this when the capability fulfils the user request.',
-      z.strictObject({ action: interfaceActionCallSchema, read: z.strictObject({ function: z.string(), resultParameter: z.string(), input: argumentsSchema.optional() }) }),
+      completeWithActionSchema,
       async ({ action, read }) => {
         try {
-          const reference = await apply(action);
-          const result = await this.capabilities.functions.invoke(await view(action.scenarioId), read.function, { ...read.input, [read.resultParameter]: reference }, await functionContext(action.scenarioId));
+          const result = await this.capabilities.functions.completeWithAction(
+            read, () => functionContext(action.scenarioId), () => apply(action),
+          );
           signal.throwIfAborted(); await this.tasks.current(task); return completedResult(result);
         } catch (error) {
           if (!(error instanceof Clarification)) throw error;

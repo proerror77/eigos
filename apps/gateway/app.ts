@@ -10,7 +10,7 @@ import { AgentCard } from '@a2a-js/sdk';
 import { z } from 'zod';
 import { Conflict, NotFound, requireScope, type Principal } from '../../packages/core/identity.js';
 import type { Config } from '../../packages/core/config.js';
-import { actionRequestSchema as actionInput, functionRequestSchema as functionInput } from '../../packages/ontology/invocation.js';
+import { actionRequestSchema as actionInput, functionRequestSchema as functionInput, completeWithActionRequestSchema } from '../../packages/ontology/invocation.js';
 import { Access } from '../../packages/runtime/access.js';
 import { Database } from '../../packages/runtime/database.js';
 import { Metadata } from '../../packages/runtime/metadata.js';
@@ -115,6 +115,23 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const selected = capabilities.actions.resolve(access, model, input);
     return capabilities.actions.apply(access, model, selected.action, selected.input, input.requestId);
   };
+  const completeWithAction = async (p: Principal, input: z.infer<typeof completeWithActionRequestSchema>) => {
+    requireScope(p, 'ontology:read');
+    requireScope(p, 'ontology:write');
+    const access = await Access.load(db, p);
+    const model = await metadata.active(input.ontology);
+    const selected = capabilities.actions.resolve(access, model, input.action);
+    const scenarioId = input.action.scenarioId;
+    const view = () => scenarioId ? scenarios.view(access, model, scenarioId) : Promise.resolve(model);
+    const signal = AbortSignal.timeout(30000);
+    const result = await capabilities.functions.completeWithAction(
+      input.read,
+      async () => ({ principal: p, objects: new Objects(db, await view(), access), signal }),
+      async () => capabilities.actions.apply(access, await view(), selected.action, selected.input, input.requestId, undefined, undefined, signal),
+    );
+    if (!await access.canReturn(access.dataRequirements())) throw new Error('Result permissions changed');
+    return result;
+  };
   const scenarioCreate = async (p: Principal, raw: unknown) => { requireScope(p,'ontology:write'); const {ontology,...input}=scenarioCreateInput.parse(raw);return scenarios.create(await Access.load(db,p),await metadata.active(ontology),input); };
   const scenarioRead = async (p: Principal, id: string,ontology='Eigos') => { requireScope(p,'ontology:read'); return scenarios.inspect(await Access.load(db,p),await metadata.active(ontology),id); };
   const scenarioList = async (p: Principal,cursor?:string,ontology='Eigos') => { requireScope(p,'ontology:read'); return scenarios.list(await Access.load(db,p),await metadata.active(ontology),cursor); };
@@ -172,6 +189,10 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     server.registerTool('query_ontology', { description: 'Query object sets using an Object Type or Interface and its property and link names.', inputSchema: queryInput }, input => response(() => query(p, input)));
     server.registerTool('evaluate_ontology', { description: 'Invoke a published Function. A PA managing travel reminders reads readCalendarJourney or readFlightWatch with the original object reference.', inputSchema: functionInput }, input => response(() => evaluate(p, input)));
     server.registerTool('apply_ontology_action', { description: 'Submit a published Action through its declared parameters and submission criteria.', inputSchema: actionInput }, input => response(() => apply(p, input)));
+    server.registerTool('complete_with_action', {
+      description: 'Execute a published Interface Action and return its result through a published read Function in one call. Bind the committed reference to read.resultParameter. Use the same requestId to retry; the result is read afresh.',
+      inputSchema: completeWithActionRequestSchema,
+    }, input => response(() => completeWithAction(p, input)));
     server.registerTool('describe_ontology', { description: 'Read published types, properties, interfaces, links, functions and actions.', inputSchema: z.strictObject({ontology:z.string().optional()}) }, input => response(async () => { requireScope(p, 'ontology:read'); return (await Access.load(db, p)).describe(await metadata.active(input.ontology)); }));
     const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     await server.connect(transport);

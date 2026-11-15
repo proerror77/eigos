@@ -57,6 +57,27 @@ export class Functions {
       return [fn.apiName, entry.binding];
     }));
   }
+  /** Execute a governed Action and bind its committed reference to a published read. */
+  async completeWithAction(
+    read: { function: string; resultParameter: string; input?: Record<string, unknown> },
+    loadContext: () => Promise<FunctionContext>,
+    apply: () => Promise<unknown>,
+  ) {
+    const before = await loadContext();
+    const { model, access } = before.objects;
+    access.function(model, read.function);
+    const definition = model.functions.get(read.function);
+    if (!definition || definition.edits) throw new Error('Action result requires a published read Function');
+    if (!Object.hasOwn(definition.parameters.properties ?? {}, read.resultParameter)) {
+      throw new Error('Action result parameter is not declared by the read Function');
+    }
+    if (definition.source) access.source(model, definition.source);
+    const reference = await apply();
+    const context = await loadContext();
+    return this.invoke(context.objects.model, read.function, {
+      ...read.input, [read.resultParameter]: reference,
+    }, context);
+  }
   async invoke(model: PublishedOntology, name: string, input: Record<string, unknown>, context: FunctionContext) {
     const access = context.objects.access;
     access.function(model, name);

@@ -19,6 +19,20 @@ export const actionCallSchema = z.strictObject({
   action: z.string().optional(), interface: interfaceActionTargetSchema.optional(),
 }).refine(value => !!value.action !== !!value.interface, 'Select an Action or an Interface Action');
 
+export const completeWithActionSchema = z.strictObject({
+  action: interfaceActionCallSchema,
+  read: z.strictObject({
+    function: z.string().min(1),
+    resultParameter: z.string().min(1),
+    input: argumentsSchema.optional(),
+  }),
+});
+
+export const completeWithActionRequestSchema = completeWithActionSchema.safeExtend({
+  ontology: z.string().optional(),
+  requestId: z.string().min(1).max(128),
+});
+
 export const functionCallSchema = z.strictObject({
   ...call, function: z.string(),
 });
