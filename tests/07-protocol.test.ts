@@ -52,7 +52,8 @@ test('MCP completes a published Interface Action and verifies its result in one 
     }));
     const invoke = (args: typeof input) => client.callTool({ name: 'complete_with_action', arguments: args });
     const grants = memberGrants(f.model);
-    await setGrants(f.db, principal.owner, grants.filter(grant => !grant.resource.endsWith('/readRideEstimates')));
+    const withoutResult = grants.filter(grant => !grant.resource.endsWith('/readRideEstimates'));
+    await setGrants(f.db, principal.owner, withoutResult);
     assert((await invoke(input)).isError);
     await setGrants(f.db, principal.owner, grants);
     assert((await invoke({ ...input, read: { ...input.read, resultParameter: 'invalid' } })).isError);
@@ -68,6 +69,23 @@ test('MCP completes a published Interface Action and verifies its result in one 
     const retry = await invoke(input);
     assert.deepEqual(retry.content, first.content);
     assert.equal(f.provider.calls.length, 3);
+    const assertCurrent = f.provider.source.assertCurrent;
+    f.provider.source.assertCurrent = async () => {
+      f.provider.source.assertCurrent = assertCurrent;
+      await setGrants(f.db, principal.owner, withoutResult);
+    };
+    const revoked = await invoke(input);
+    assert(revoked.isError);
+    assert.match((revoked.content as { text: string }[])[0]!.text, /Result permissions changed/);
+    assert.equal(f.provider.calls.length, 3);
+    await setGrants(f.db, principal.owner, grants);
+    f.provider.flags.ambiguous = true;
+    const ambiguous = await invoke({ ...input, requestId: 'ambiguous-quote' });
+    assert(ambiguous.isError);
+    assert.match((ambiguous.content as { text: string }[])[0]!.text, /候选地点/);
+    assert.equal(f.provider.calls.filter(call => call === 'taxi_estimate').length, 1);
+    assert.deepEqual((await f.db.query(`SELECT request_id FROM ${f.db.schema}.actions`)).rows,
+      [{ request_id: input.requestId }]);
     assert.deepEqual((await f.db.query(`SELECT count(*)::int AS count FROM ${f.db.schema}.tasks`)).rows, [{ count: 0 }]);
   } finally {
     await client.close();

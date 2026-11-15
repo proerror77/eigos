@@ -27,6 +27,7 @@ import { flightPositionFunction } from '../packages/ontology/flight-position.js'
 import { locationFunctions, taskLocationValueType } from '../packages/ontology/location.js';
 import { luckinDefinition } from '../packages/ontology/luckin.js';
 import { mapFunctions } from '../packages/ontology/maps.js';
+import { rideWatchDefinition, rideWatchType } from '../packages/ontology/ride-watch.js';
 
 async function setup() {
   const f=await fixture();await initializeActionUndo(f.db);await initializeScenarioLifecycle(f.db);await initializeAutomation(f.db);
@@ -445,21 +446,35 @@ test('revoked prior-step result visibility blocks a later Action even when the t
 test('a hotel workflow saved under v8 replays in v9 and the current release with fresh inputs and separate approval', async () => {
   // Reconstruct the historical documents on the same runtime and check both published identities.
   const laterDomains = [calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition];
-  const addedTypes = new Set(laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)));
+  const addedTypes = new Set([
+    ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType,
+  ]);
   const model = new Ontology(document);
   const logs = document.objectTypes.flatMap(type => processLogTarget(model, type.apiName) ?? []);
   const addedLogs = logs.filter(log => addedTypes.has(log.objectType));
   const addedActions = new Set(laterDomains.flatMap(domain => domain.actionTypes.map(action => action.apiName)));
+  addedActions.add('StageDiningActivity');
   const addedFunctions = new Set([
     ...laterDomains.flatMap(domain => domain.functionTypes), ...deliveryFunctions, ...locationFunctions, ...mapFunctions, flightPositionFunction,
   ].map(fn => fn.apiName));
+  for (const name of ['stageDiningActivity', 'searchRestaurantNotes', 'readWeatherHistory', 'readDiningAvailability']) addedFunctions.add(name);
+  addedActions.add('EstimateRideWithPlaceClues');
+  for (const action of rideWatchDefinition.actionTypes) addedActions.add(action.apiName);
+  for (const fn of rideWatchDefinition.functionTypes) addedFunctions.add(fn.apiName);
+  addedFunctions.add('prepareRideInquiryWithPlaceClues');
   const v9Definition = structuredClone(document);
   v9Definition.version = '9';
+  v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type => type.apiName !== 'RideInquiryWithPlaceClues');
+  delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;
   v9Definition.objectTypes = v9Definition.objectTypes.filter(type => !addedTypes.has(type.apiName) && !addedLogs.some(log => log.type === type.apiName));
+  delete v9Definition.objectTypes.find(type => type.apiName === 'ScheduledActivity')!.properties.dining;
   v9Definition.linkTypes = v9Definition.linkTypes.filter(type =>
-    !addedLogs.some(log => log.link === type.apiName) && !documentDefinition.linkTypes.some(link => link.apiName === type.apiName));
+    !addedLogs.some(log => log.link === type.apiName) && !documentDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    !rideWatchDefinition.linkTypes.some(link => link.apiName === type.apiName));
   v9Definition.actionTypes = v9Definition.actionTypes.filter(action => !addedActions.has(action.apiName));
   v9Definition.functionTypes = v9Definition.functionTypes.filter(fn => !addedFunctions.has(fn.apiName));
+  v9Definition.functionTypes.find(fn => fn.apiName === 'resolveRideLocations')!.description =
+    'Resolve each venue by querying exact Location.name within its source receipt. One exact match resolves even when other entrances or nearby shops were returned. Multiple exact matches or no exact match require clarification. Explicit selections must belong to the corresponding source response.';
   v9Definition.valueTypes = v9Definition.valueTypes?.filter(type => type.apiName !== taskLocationValueType.apiName);
   v9Definition.typeGroups = v9Definition.typeGroups?.filter(group => group.apiName !== 'Documents');
   for (const group of v9Definition.typeGroups ?? []) group.objectTypes = group.objectTypes.filter(type => !addedTypes.has(type));

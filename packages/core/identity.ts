@@ -23,3 +23,4 @@ export function requireScope(principal: Principal, scope: string): void {
 
 export class Conflict extends Error {}
 export class NotFound extends Error {}
+export class SourceReadFailure extends Error {}

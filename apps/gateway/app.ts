@@ -18,7 +18,7 @@ import { Objects, querySchema } from '../../packages/runtime/objects.js';
 import { Scenarios, createScenarioSchema } from '../../packages/runtime/scenarios.js';
 import { PARequests, paResponseSchema,paInboxSchema } from '../../packages/runtime/pa.js';
 import { HotelWorkflows, hotelApprovalSchema } from '../../packages/runtime/hotel-workflows.js';
-import { Tasks, submitSchema, publicTask, placeSelectionSchema } from '../../packages/runtime/tasks.js';
+import { Tasks, submitSchema, publicTask, taskPlaceAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema } from '../../packages/runtime/tasks.js';
 import { createCapabilities } from '../../packages/capabilities/index.js';
 import { configuredServices } from '../../packages/capabilities/services/sources.js';
 import { configuredStripeSandbox } from '../../packages/capabilities/payments/stripe-sandbox.js';
@@ -33,17 +33,17 @@ const paTravelInstructions = [
   'For user-authorized travel reminders, keep the object reference from StartCalendarJourney or StartFlightWatch.',
   'Use your own PA notification capability and the channel selected by the user. EIGOS owns travel scheduling and computes notices.',
   'When EIGOS sends a travel_reminder event, use its authoritative reference, version, and operation. Keep only the newest version and withdraw pending notices on withdraw.',
-  'Use readCalendarJourney or readFlightWatch via evaluate_ontology for independent readback with the original typed reference.',
+  'Use readCalendarJourney, readFlightWatch or readDidiRideWatch via evaluate_ontology for independent readback with the original typed reference.',
   'If EIGOS requests calendar.journey.read, respond to the original taskId and requestId with only the required source fields.',
   'Withdraw pending notifications when the current reminder or alert is null. Discard expired calendar timing using validUntil.',
   'Report notification delivery only after your PA channel confirms it.',
 ].join(' ');
 
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {},
-  providerFetch: { variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch } = {}) {
+  providerFetch: { amapFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch } = {}) {
   const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE), configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
     paotui: config.EIGOS_PAOTUI_CONNECTION_FILE, waimai: config.EIGOS_WAIMAI_CONNECTION_FILE,
-    amap: config.EIGOS_AMAP_CONNECTION_FILE, variFlight: config.EIGOS_VARIFLIGHT_CONNECTION_FILE,
+    amap: config.EIGOS_AMAP_CONNECTION_FILE, xiaohongshu: config.EIGOS_XIAOHONGSHU_CONNECTION_FILE, variFlight: config.EIGOS_VARIFLIGHT_CONNECTION_FILE,
     fr24: config.EIGOS_FR24_CONNECTION_FILE, fr24Entrypoint: config.EIGOS_FR24_MCP_ENTRYPOINT,
     calendar: config.EIGOS_JOURNEY_CALENDAR_CONNECTION_FILE, travelPA: config.EIGOS_TRAVEL_PA_CONNECTION_FILE, ...providerFetch,
   });
@@ -99,7 +99,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   };
   const evaluate = async (p: Principal, raw: unknown) => {
     const input = functionInput.parse(raw);
-    const liveTravelReminder = (input.function === 'readCalendarJourney' || input.function === 'readFlightWatch') &&
+    const liveTravelReminder = (input.function === 'readCalendarJourney' || input.function === 'readFlightWatch' || input.function === 'readDidiRideWatch') &&
       !input.taskId && !input.scenarioId && (input.ontology === undefined || input.ontology === 'Eigos');
     // Existing PA clients carry task scopes. These two reads still use the published Function,
     // source, object, and row permissions of the authenticated owner.
@@ -118,18 +118,12 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   const completeWithAction = async (p: Principal, input: z.infer<typeof completeWithActionRequestSchema>) => {
     requireScope(p, 'ontology:read');
     requireScope(p, 'ontology:write');
-    const access = await Access.load(db, p);
-    const model = await metadata.active(input.ontology);
+    const access = await Access.load(db, p), model = await modelFor(p, undefined, input.action.scenarioId, access, input.ontology);
     const selected = capabilities.actions.resolve(access, model, input.action);
-    const scenarioId = input.action.scenarioId;
-    const view = () => scenarioId ? scenarios.view(access, model, scenarioId) : Promise.resolve(model);
-    const signal = AbortSignal.timeout(30000);
-    const result = await capabilities.functions.completeWithAction(
-      input.read,
-      async () => ({ principal: p, objects: new Objects(db, await view(), access), signal }),
-      async () => capabilities.actions.apply(access, await view(), selected.action, selected.input, input.requestId, undefined, undefined, signal),
+    const result = await capabilities.actions.complete(
+      access, model, selected, input.requestId, input.read, undefined, AbortSignal.timeout(30000),
     );
-    if (!await access.canReturn(access.dataRequirements())) throw new Error('Result permissions changed');
+    if (!await access.canReturn(access.requirements())) throw new Error('Result permissions changed');
     return result;
   };
   const scenarioCreate = async (p: Principal, raw: unknown) => { requireScope(p,'ontology:write'); const {ontology,...input}=scenarioCreateInput.parse(raw);return scenarios.create(await Access.load(db,p),await metadata.active(ontology),input); };
@@ -162,6 +156,14 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   app.get('/tasks/:id', async (req, res) => res.json(publicTask(await tasks.get(principal(req), String(req.params.id)))));
   app.post('/tasks/:id/cancel', async (req, res) => res.json(publicTask(await tasks.cancel(principal(req), String(req.params.id)))));
   app.post('/tasks/:id/places', async (req, res) => res.json(publicTask(await tasks.selectPlaces(principal(req), String(req.params.id), req.body))));
+  app.post('/tasks/:id/input', async (req, res) =>
+    res.json(publicTask(await tasks.answerInput(principal(req), String(req.params.id), req.body))));
+  const amendPlace = (p: Principal, id: string, raw: unknown) => {
+    const input = taskPlaceAmendmentSchema.parse(raw);
+    return 'source' in input ? tasks.amendMapPlace(p, id, input, capabilities.functions) : tasks.amendPlace(p, id, input);
+  };
+  app.post('/tasks/:id/place-amendment', async (req, res) =>
+    res.json(publicTask(await amendPlace(principal(req), String(req.params.id), req.body))));
   app.get('/ontology',async(req,res)=>{const p=principal(req);requireScope(p,'ontology:read');const ontology=typeof req.query.ontology==='string'?req.query.ontology:'Eigos';res.json((await Access.load(db,p)).describe(await metadata.active(ontology)));});
   app.post('/ontology/query', async (req, res) => res.json(await query(principal(req), req.body)));
   app.post('/ontology/functions', async (req, res) => res.json(await evaluate(principal(req), req.body)));
@@ -179,7 +181,15 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       inputSchema: z.strictObject({}),
     }, () => response(() => hotelWorkflows.list(p)));
     server.registerTool('get_task', { description: 'Read your original task, result or PA information request.', inputSchema: z.strictObject({ taskId: z.uuid() }) }, input => response(async () => publicTask(await tasks.get(p, input.taskId))));
-    server.registerTool('select_task_places', { description: 'Select source-returned endpoints for a task waiting for clarification.', inputSchema: z.strictObject({ taskId: z.uuid(), places: placeSelectionSchema }) }, input => response(async () => publicTask(await tasks.selectPlaces(p, input.taskId, input.places))));
+    server.registerTool('select_task_places', { description: 'Confirm endpoints from the original task’s current candidates. Present their formal names and addresses to the user. A PA may select a previously confirmed address; if uncertain it must ask the user.', inputSchema: z.strictObject({ taskId: z.uuid(), places: placeSelectionSchema }) }, input => response(async () => publicTask(await tasks.selectPlaces(p, input.taskId, input.places))));
+    server.registerTool('supply_task_input', {
+      description: 'Supply the requested city or retry a failed read on the original Action. Retry only when the task explicitly returns retry-source.',
+      inputSchema: z.strictObject({ taskId: z.uuid(), answer: taskInputAnswerSchema }),
+    }, input => response(async () => publicTask(await tasks.answerInput(p, input.taskId, input.answer))));
+    server.registerTool('amend_task_place', {
+      description: 'Continue the original task with a user-confirmed endpoint. For ride Actions use an address or landmark and pass keep if the unchanged side has multiple candidates. For an older Amap clarification use the confirmed Amap place ID, a fresh request ID and the original task updatedAt. Restore a canceled task only with specific user authorization.',
+      inputSchema: z.strictObject({ taskId: z.uuid(), amendment: taskPlaceAmendmentSchema }),
+    }, input => response(async () => publicTask(await amendPlace(p, input.taskId, input.amendment))));
     server.registerTool('respond_to_task', { description:'Supply the authenticated PA response to the original task information request. Use the responseSchema returned with that request.',inputSchema:z.strictObject({taskId:z.uuid(),...paResponseSchema.shape}) }, input=>response(async()=>publicTask(await pa.respond(p,input.taskId,{requestId:input.requestId,response:input.response}))));
     server.registerTool('list_pa_requests',{description:'Read your pending PA requests, including scheduled calendar journey checks, event and ride executions. Preserve returned taskId and requestId when replying. Follow cursor for subsequent pages.',inputSchema:paInboxSchema},input=>response(()=>pa.pending(p,input)));
     server.registerTool('create_scenario', { description:'Create an isolated what-if view over the selected Ontology.',inputSchema:scenarioCreateInput }, input=>response(()=>scenarioCreate(p,input)));
@@ -187,10 +197,10 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     server.registerTool('inspect_scenario', { description:'Read a scenario revision, proposed object/link changes and object conflicts in the selected Ontology.',inputSchema:z.strictObject({ontology:z.string().optional(),scenarioId:z.uuid()}) }, input=>response(()=>scenarioRead(p,input.scenarioId,input.ontology)));
     server.registerTool('discard_scenario', { description:'Discard the exact reviewed scenario revision in the selected Ontology.',inputSchema:z.strictObject({ontology:z.string().optional(),scenarioId:z.uuid(),revision:z.number().int().positive()}) }, input=>response(()=>scenarioDiscard(p,input.scenarioId,input.revision,input.ontology)));
     server.registerTool('query_ontology', { description: 'Query object sets using an Object Type or Interface and its property and link names.', inputSchema: queryInput }, input => response(() => query(p, input)));
-    server.registerTool('evaluate_ontology', { description: 'Invoke a published Function. A PA managing travel reminders reads readCalendarJourney or readFlightWatch with the original object reference.', inputSchema: functionInput }, input => response(() => evaluate(p, input)));
+    server.registerTool('evaluate_ontology', { description: 'Invoke a published Function. A PA managing travel reminders reads readCalendarJourney, readFlightWatch or readDidiRideWatch with the original object reference.', inputSchema: functionInput }, input => response(() => evaluate(p, input)));
     server.registerTool('apply_ontology_action', { description: 'Submit a published Action through its declared parameters and submission criteria.', inputSchema: actionInput }, input => response(() => apply(p, input)));
     server.registerTool('complete_with_action', {
-      description: 'Execute a published Interface Action and return its result through a published read Function in one call. Bind the committed reference to read.resultParameter. Use the same requestId to retry; the result is read afresh.',
+      description: 'Execute a published Interface Action and return its result through a published read Function. Bind the committed reference to read.resultParameter. Retry with the same requestId to read the result afresh. Use submit_task for requests that require clarification.',
       inputSchema: completeWithActionRequestSchema,
     }, input => response(() => completeWithAction(p, input)));
     server.registerTool('describe_ontology', { description: 'Read published types, properties, interfaces, links, functions and actions.', inputSchema: z.strictObject({ontology:z.string().optional()}) }, input => response(async () => { requireScope(p, 'ontology:read'); return (await Access.load(db, p)).describe(await metadata.active(input.ontology)); }));

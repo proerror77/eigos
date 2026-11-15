@@ -17,10 +17,12 @@ import type { FunctionHandler } from '../../runtime/functions.js';
 export function rideCapabilities(db: Database, resolve: SourceResolver, additional: ReadonlyMap<string, FunctionHandler> = new Map(), definitions?: OntologyDocument['functionTypes'], extensions: RuntimeExtensions = {}, additionalSources: ReadonlyMap<string, SourceProjection> = new Map(), committedEffects?: CommittedEffects) {
   let sources: Sources;
   const effects=new Effects(db,extensions.effects??new Map());
+  const prepare = prepareRideInquiry(() => sources, () => functions, resolve);
   const functions = rideFunctions(resolve, new Map([
     ...additional,
     ['resolveRideLocations', resolveRideLocations],
-    ['prepareRideInquiry', prepareRideInquiry(() => sources, () => functions)],
+    ['prepareRideInquiry', prepare],
+    ['prepareRideInquiryWithPlaceClues', prepare],
   ]), definitions, extensions.functions);
   const projection: SourceProjection = {
     async assertCurrent(owner) { await (await resolve(owner)).assertCurrent(); },

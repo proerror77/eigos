@@ -1,68 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { open, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-import { createRemoteJWKSet, jwtVerify } from 'jose';
-
-const directory = join(homedir(), '.local/share/eigos/primary-ontology-operator');
-const read = async name => JSON.parse(await readFile(join(directory, name), 'utf8'));
-
-async function credential() {
-  const profile = await read('profile.json');
-  const endpoint = new URL('/mcp', profile.baseUrl);
-  if (endpoint.origin !== 'https://eigos.mandonothing.com') throw new Error('Unexpected EIGOS endpoint');
-  const lockPath = join(directory, 'credentials.lock');
-  const lock = await open(lockPath, 'wx', 0o600);
-  try {
-    const saved = await read('credentials.json');
-    if (!['issuer', 'clientId', 'subject', 'tenant'].every(key => saved[key] === profile[key])) {
-      throw new Error('Saved OAuth credential belongs to a different Agent profile');
-    }
-    if (saved.expiresAt > Date.now() + 60000) return { endpoint, token: saved.access_token, refreshed: false };
-    if (!saved.refresh_token) throw new Error('The Agent profile needs an OAuth login');
-    const response = await fetch(new URL('oauth/token', profile.issuer), {
-      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15000),
-      body: new URLSearchParams({
-        grant_type: 'refresh_token', client_id: profile.clientId, refresh_token: saved.refresh_token,
-      }),
-    });
-    if (!response.ok) throw new Error(`OAuth renewal failed (HTTP ${response.status})`);
-    const tokens = await response.json();
-    const { payload } = await jwtVerify(
-      tokens.access_token, createRemoteJWKSet(new URL('.well-known/jwks.json', profile.issuer)),
-      { issuer: profile.issuer, audience: profile.audience, algorithms: ['RS256', 'ES256', 'EdDSA'], requiredClaims: ['exp'] },
-    );
-    if (payload.sub !== profile.subject || payload[profile.tenantClaim] !== profile.tenant ||
-        (payload.azp ?? payload.client_id) !== profile.clientId) {
-      throw new Error('OAuth renewal returned a different Agent identity');
-    }
-    const path = join(directory, 'credentials.json');
-    const candidate = path + '.' + randomUUID();
-    try {
-      await writeFile(candidate, JSON.stringify({
-        ...saved, access_token: tokens.access_token, refresh_token: tokens.refresh_token ?? saved.refresh_token,
-        expiresAt: payload.exp * 1000,
-      }) + '\n', { mode: 0o600, flag: 'wx' });
-      await rename(candidate, path);
-    } finally {
-      await unlink(candidate).catch(error => { if (error.code !== 'ENOENT') throw error; });
-    }
-    return { endpoint, token: tokens.access_token, refreshed: true };
-  } finally {
-    await lock.close();
-    await unlink(lockPath);
-  }
-}
+import { loadOperatorCredential } from './ontology-operator-credential.mjs';
 
 async function main() {
   const [city, origin, destination, requestId = randomUUID()] = process.argv.slice(2);
   if (!city || !origin || !destination) throw new Error('Usage: ontology-agent.mjs CITY ORIGIN DESTINATION [REQUEST_ID]');
   const startedAt = new Date().toISOString(), started = performance.now();
-  const auth = await credential(), authorized = performance.now();
+  const auth = await loadOperatorCredential(), authorized = performance.now();
   const client = new Client({ name: 'codex-production-ontology-agent', version: '1' });
   try {
-    await client.connect(new StreamableHTTPClientTransport(auth.endpoint, {
+    await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', auth.base), {
       requestInit: { headers: { Authorization: 'Bearer ' + auth.token }, redirect: 'error' },
       reconnectionOptions: { maxRetries: 0 },
     }), { timeout: 10000 });
@@ -100,7 +47,7 @@ async function main() {
 main().catch(error => {
   // Transport errors can contain request details; do not print arbitrary exceptions.
   const message = error instanceof Error ? error.message : '';
-  console.error(/^(Usage:|EIGOS did not|OAuth renewal|Unexpected EIGOS|Saved OAuth|The Agent profile|请确认)/.test(message)
+  console.error(/^(Usage:|EIGOS did not|OAuth |Unexpected operator|The operator |请选择|未找到|请提供|滴滴查询)/.test(message)
     ? message : 'EIGOS Agent call failed. Check the authorized local profile, connection and tool availability.');
   process.exitCode = 1;
 });
