@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { actionResultReadSchema } from '../ontology/invocation.js';
+import { placeDetailInput } from '../ontology/maps.js';
 import { objectRefSchema } from '../ontology/schema.js';
 import type { Requirement } from './access.js';
 
@@ -16,6 +17,27 @@ export const placeAmendmentSchema = z.strictObject({
   side: z.enum(['origin', 'destination']),
   keep: objectRefSchema.optional(),
 }).refine(hasPlaceClue, 'Provide an address or landmark');
+export const unresolvedMapPlace = '高德未能唯一匹配所需精度的地点，请补充城市或完整地址。';
+export const amapPlaceAmendmentSchema = z.strictObject({
+  source: z.literal('Amap'),
+  side: z.enum(['origin', 'destination']),
+  placeId: placeDetailInput.shape.id,
+  requestId: z.uuid(),
+  expectedUpdatedAt: z.iso.datetime({ offset: true }),
+  restoreCanceled: z.literal(true).optional(),
+});
+export const taskPlaceAmendmentSchema = z.union([amapPlaceAmendmentSchema, placeAmendmentSchema]);
+const mapPlaceCorrectionSchema = z.strictObject({
+  requestId: z.uuid(),
+  fingerprint: z.string(),
+  placeId: placeDetailInput.shape.id,
+  name: z.string(),
+  city: z.string().optional(),
+});
+export const mapPlaceCorrectionsSchema = z.strictObject({
+  origin: mapPlaceCorrectionSchema.optional(),
+  destination: mapPlaceCorrectionSchema.optional(),
+});
 export const placeAmendmentsSchema = z.strictObject({
   origin: placeClueSchema.optional(),
   destination: placeClueSchema.optional(),

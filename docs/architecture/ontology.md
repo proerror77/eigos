@@ -108,6 +108,8 @@ Agent 可在一次 `complete_with_action` 调用中选择 Interface Action 与�
 
 有候选时，调用者将完整名称和地址展示给用户，再用 `select_task_places` 写回其选择。PA 只有在用户已明确过该地址时才代选；不确定就向用户确认。查询成功但没有合格候选时返回 `place-address-required`，用 `amend_task_place` 补地址；供应商读取失败时返回 `retry-source`，可通过 `supply_task_input` 重试原调用。两类状态均由当前调用方处理，此询价 Action 不会自动触发 PA。
 
+高德命名地点无法精确解析时，当前 Worker 用原 Task 的 `location.resolve` 接收 PA 校准的地点。早期版本留下纯文字澄清时，任务所有者可沿用 `amend_task_place` 或 `POST /tasks/:id/place-amendment` 提交 `{source:"Amap",side,placeId,requestId,expectedUpdatedAt}`，其中 `expectedUpdatedAt` 来自该 Task 的最新读回。恢复已取消的旧澄清需用户明确授权并提交 `restoreCanceled:true`。服务通过已发布的 `readMapPlace` 核验 POI，要求任务仍停在对应澄清且没有已执行的业务变更，再用原 Task ID 接续当前发布。原提交、既有 PA 回执和跨版本追踪保留。过期的有效日历回执会在原 Task 发起新的忙闲核对。地点更正与后续 Scenario 审批分别校验。[查询 Function](https://www.palantir.com/docs/foundry/functions/query-functions) · [Action 提交条件](https://www.palantir.com/docs/foundry/action-types/submission-criteria)
+
 Machinery 使用已发布对象的枚举状态和原有编辑历史；Action Engine 负责执行和继续原调用。对应 Palantir 的 [状态、Action 和过程日志](https://www.palantir.com/docs/foundry/machinery/core-concepts) 与 [Function 支持的 Action](https://www.palantir.com/docs/foundry/action-types/function-actions-overview)。EIGOS 复用现有任务和发布数据存储保存恢复参数，未增加第二套 Workflow 执行器。
 
 普通 Function 仅获得对象读取接口；edit Function 的写入上下文由 Action 提供。来源价格由连接器和字段映射生成，模型不能提供入库价格。取消或租约失效阻止后续提交。

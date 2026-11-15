@@ -353,6 +353,10 @@ export class OntologyAgent {
     try {
       if (!initialDecision.allowed) throw new ModelEgressDenied();
       const initial = await access.measureEgress(async () => {
+        if (task.input.mapPlaceCorrections) {
+          access.function(model, 'readMapPlace');
+          access.source(model, 'Amap');
+        }
         await boundaryReads(task.input);
         return catalogue(model, access);
       }, initialDecision.clearance);
@@ -368,7 +372,9 @@ export class OntologyAgent {
         policyDigest: initialDecision.policyDigest, code: 'egress_policy_denied' });
       throw error;
     }
-    const { classification: _classification, ...userRequest } = task.input;
+    const { classification: _classification, mapPlaceCorrections, ...userRequest } = task.input;
+    const confirmedMapPlaces = mapPlaceCorrections && Object.fromEntries(Object.entries(mapPlaceCorrections)
+      .flatMap(([side, place]) => place ? [[side, { placeId: place.placeId, name: place.name, city: place.city }]] : []));
     const prompt = [
       'You are EIGOS. Fulfil the user request by discovering the published Ontology below and using its tools. Choose the operations and their order yourself. There is no hidden workflow.',
       'Query through Interface properties and Link names when an applicable Interface is defined. Ontology Actions own business edits; source refresh owns source ingestion; Functions read and compute. Use parallel batches for independent reads.',
@@ -379,13 +385,15 @@ export class OntologyAgent {
       'For location-dependent service searches, use the user-selected address, named place, or itinerary location when given. Pass location source specified for a user-selected place or planned for an itinerary location if it still needs resolving. Use current only when the goal depends on where the user is now. An authorized PA location resumes the same task. Keep using the selected delivery location for arrival estimates. Preserve coordinate systems and never infer precise location from EIGOS IP, the server, or an old home address. When a device location is unavailable, ask for a specific address or place.',
       'For an existing calendar journey, use readCalendarJourney for its current reminder. Starting or stopping monitoring requires the PA to explicitly submit the corresponding Action with the selected event IDs. Keep simple route and weather lookups direct.',
       'Use the Amap Ontology Functions for map and weather queries. A place or city specified for this request takes priority over the current device location. For weather, use current for live conditions and forecast for a date such as tomorrow. A daily forecast should not be reported as an hourly or current observation.',
+      ...(confirmedMapPlaces ? ['The authenticated caller confirmed an updated Amap endpoint in confirmedMapPlaces. Use readMapPlace with its exact placeId, then use the returned point for that endpoint on every leg. Use the current execution date for planning and retain the original goal.'] : []),
       'For Luckin, use the published read Functions directly for shop, menu and order status inquiries. For an explicitly requested pickup order, have the PA confirm store and exact SKUs and quantities. Apply PreviewLuckinPickup on the original task and continue with SubmitLuckinPickup on the same task. The owner PA presents the exact preview and obtains the confirmation and supplier receipt. Never infer consent, create a second order on a missed reply or claim payment from an unpaid order.',
       'For replanning an existing SchedulePlan, create a scenario first, call its live PrepareSchedulePlan Action with input.plan and input.scenarioId, then read and edit that same scenario. The source fetch happens through the original PA task while changed plan fields stay staged.',
       'For calendar planning, obtain calendar availability through the published planning capability. It requests authorized data from the original PA and resumes this same task. Never invent busy/free time. Compare alternatives using scenarioId on existing queries, Object Sets, Functions and Actions; validate and return the selected scenario plan. The PA applies a reviewed merge explicitly. A saved scenario or internal schedule is not an external calendar booking.',
       ...(model.functions.has('readDiningAvailability') ? ['For a dining day trip, use published restaurant notes for discovery and independently verify the exact dish and meal window with readDiningAvailability. Read Amap forecasts and both driving legs and request historical weather when relevant. Check that the whole trip fits the original PA calendar, then stage the meal with its PA evidence request ID in the Scenario. Do not reserve a restaurant or pay while planning.'] : []),
       'Luma reads and participant registration use the original PA-connected Luma account when no server API connection is configured. A pa-request pauses this exact task until its authenticated PA replies. Preserve its request ID and source identity. A proposed registration, authorization, scheduled check, created order and independently observed fulfillment are different states; report the actual state and evidence.',
       ...(learning ? ['For this hotel itinerary, use the Ontology tools to produce a validated SchedulePlan in a persisted Scenario. Retrieve the selected hotel for the requested date, resolve both places through the location source, read the authoritative driving estimate, and link the hotel and one travel activity. Complete with the authoritative plan result. The server derives a reusable workflow and requests separate approval before saving it or simulating execution.'] : []),
-      JSON.stringify({ taskId: task.id, requestedAt: task.created_at.toISOString(), userRequest, ontology: visibleCatalogue }),
+      JSON.stringify({ taskId: task.id, requestedAt: task.created_at.toISOString(), userRequest, confirmedMapPlaces,
+        ...(confirmedMapPlaces ? { executionAt: new Date().toISOString() } : {}), ontology: visibleCatalogue }),
     ].join('\n');
     const recipe = replay ? await workflows.load(model, principal.owner, replay.workflowId) : undefined;
     await recordModelTrace({ kind: 'model', state: 'started', model: this.driver.model, attempt });
