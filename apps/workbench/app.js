@@ -2066,6 +2066,7 @@ async function renderRules() {
   );
   const makeWorkflow = () => {
     const name = element('input', { placeholder: '流程名称' }),
+      proposal = element('textarea', { spellcheck: false, rows: 7 }),
       steps = [],
       list = element('div', { class: 'list' });
     const addStep = () => {
@@ -2129,7 +2130,13 @@ async function renderRules() {
       };
       action.onchange = draw;
       draw();
-      list.append(surface(element('div', { class: 'detail' }, field('操作', action), fields)));
+      const card = surface(element('div', { class: 'detail' },
+        field('操作', action), fields, button('移除此步骤', () => {
+          steps.splice(steps.indexOf(item), 1);
+          card.remove();
+        }),
+      ));
+      list.append(card);
     };
     addStep();
     modal(
@@ -2140,11 +2147,17 @@ async function renderRules() {
         field('名称', name),
         list,
         button('添加步骤', addStep),
+        element('details', {},
+          element('summary', {}, 'Scenario 认知提案'),
+          field('提案配置 JSON', proposal,
+            '填写 name、goal、actions、functions、validation、mergeAction、mergeObjectParameter 和 reviewers。留空时只执行上面的 Action 步骤。'),
+        ),
         button(
           '保存流程',
           async () => {
             await service('save_workflow', {
               name: name.value,
+              ...(proposal.value.trim() ? { proposal: JSON.parse(proposal.value) } : {}),
               steps: steps.map((item, index) => ({
                 name: 'Step' + (index + 1),
                 action: item.action.value,
@@ -2306,8 +2319,42 @@ async function renderRules() {
     ),
   );
 }
-async function renderProcesses() {
-  const [tasks, workflows] = await Promise.all([service('tasks'), service('workflow_runs')]);
+async function renderProcesses(reviewPage = 1) {
+  if (typeof reviewPage !== 'number') reviewPage = 1;
+  const [tasks, workflows, reviews] = await Promise.all([
+    service('tasks'), service('workflow_runs'), service('pending_scenario_reviews', { page: reviewPage }),
+  ]);
+  const inspectReview = async (item) => {
+    const review = await service('inspect_scenario_review', { id: item.id });
+    const ref = ({ type, id }) => type + ' · ' + id;
+    const changes = review.objects.flatMap((object) =>
+      object.editedFields.map((field) => [
+        ref(object.ref), field, stringify(object.before?.[field]), stringify(object.after?.[field]),
+      ]),
+    );
+    const blocked = review.evidenceChanged
+      ? '决策证据已变化。需要重新生成提案。'
+      : review.conflicts ? '方案存在冲突。需要处理冲突后重新审阅。' : '';
+    modal(review.name, element('div', {},
+      element('p', {}, '方案第 ' + review.revision + ' 版'),
+      blocked && element('p', {}, blocked),
+      review.evidenceVersion && element('p', {}, '决策版本 ' + review.evidenceVersion.slice(0, 12)),
+      changes.length > 0 && table(['对象', '字段', '原值', '拟议值'], changes),
+      review.links.length > 0 && table(['关系', '起点', '终点', '变更'],
+        review.links.map((link) => [link.type, ref(link.from), ref(link.to), link.removed ? '移除' : '新增'])),
+      !review.evidenceChanged && (review.evidence?.length ?? 0) > 0 && table(['证据对象', '修订号'],
+        review.evidence.map((entry) => [ref(entry.ref), entry.revision])),
+      review.commit && element('div', { class: 'section' },
+        element('h3', {}, '合并 Action 与外发内容'),
+        element('pre', { class: 'code' }, JSON.stringify(review.commit, null, 2)),
+      ),
+      !review.conflicts && button('批准此版本', async () => {
+        await service('approve_scenario_review', { id: review.id, revision: review.revision, snapshot: review.snapshot });
+        $('#editor').close();
+        await renderProcesses(reviewPage);
+      }, 'primary'),
+    ));
+  };
   const inspect = (task) => {
     const locationRequest = task.state === 'input-required' && task.result?.kind === 'pa-request' && task.result.capability === 'location.resolve';
     const body = element('div', {}, !locationRequest && element('p', {}, task.state + (task.error ? ' · ' + task.error : '')));
@@ -2485,6 +2532,16 @@ async function renderProcesses() {
   };
   $('#main').replaceChildren(
     heading('流程运行', '追踪原始任务、PA 信息回传及规则触发的执行步骤。', button('刷新', renderProcesses)),
+    element('div', { class: 'section' },
+      element('h2', {}, '受邀审阅'),
+      surface(reviews.items.length
+        ? table(['方案', '版本', '状态'], reviews.items.map((review) => [
+            review.name, review.revision, review.approved ? '已批准' : review.conflicts ? '需处理冲突' : '待审阅',
+          ]), (index) => inspectReview(reviews.items[index]))
+        : empty('这一页没有可审阅的方案。')),
+      reviewPage > 1 && button('上一页', () => renderProcesses(reviewPage - 1)),
+      reviews.nextPage && button('下一页', () => renderProcesses(reviews.nextPage)),
+    ),
     surface(
       tasks.items.length
         ? table(
@@ -2511,17 +2568,28 @@ async function renderProcesses() {
                 run.state,
                 run.step + ' / ' + run.stepCount,
                 run.error ?? '',
-                run.state === 'failed'
-                  ? button('重试剩余步骤', async () => {
-                      await service('retry_workflow', { id: run.id });
-                      await renderProcesses();
-                    })
-                  : ['pending', 'working'].includes(run.state)
-                    ? button('停止后续步骤', async () => {
-                        await service('cancel_workflow', { id: run.id });
-                        await renderProcesses();
+                element('div', {},
+                  run.state === 'waiting-approval' && run.proposal && run.object &&
+                    button('提交已批准方案', async () => {
+                      const scenarioId = run.proposal.scenarioId;
+                      const proposal = await request('/ontology/scenarios/' + encodeURIComponent(scenarioId) +
+                        '?ontology=' + encodeURIComponent(state.ontology));
+                      await applyAction(run.proposal.mergeAction, {
+                        [run.proposal.mergeObjectParameter]: run.object, scenarioId, revision: proposal.revision,
+                      }, null);
+                      await renderProcesses(reviewPage);
+                    }),
+                  run.state === 'failed' && !run.proposal
+                    ? button('重试剩余步骤', async () => {
+                        await service('retry_workflow', { id: run.id });
+                        await renderProcesses(reviewPage);
                       })
-                    : '',
+                    : ['pending', 'working', 'waiting-proposal', 'waiting-approval', 'failed'].includes(run.state)
+                      && button('停止后续步骤', async () => {
+                        await service('cancel_workflow', { id: run.id });
+                        await renderProcesses(reviewPage);
+                      }),
+                ),
               ]),
             )
           : empty('没有流程执行记录。'),

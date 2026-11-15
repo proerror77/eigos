@@ -99,8 +99,9 @@ export function readDiningMiniProgramScreen(xml: string, configuration: AndroidD
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(label)) continue;
     let current: Node | undefined = node, selectable = false;
     while (current && current !== root && current.attributes.enabled === 'true') {
-      if (current.attributes.clickable === 'true' && !/已满|约满|不可订/.test(current.attributes['content-desc'] ?? ''))
-        selectable = true;
+      const { text, 'content-desc': description, clickable } = current.attributes;
+      if (/已满|约满|不可订/.test(`${text ?? ''} ${description ?? ''}`)) break;
+      if (clickable === 'true') selectable = true;
       current = current.parent;
     }
     if (current === root && selectable) times.add(label);
