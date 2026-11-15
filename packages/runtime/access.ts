@@ -14,7 +14,8 @@ export type Permission = z.infer<typeof permissionSchema>;
 export const grantSchema = z.strictObject({ resource: z.string().min(1).max(300), permission: permissionSchema });
 export type Grant = z.infer<typeof grantSchema>;
 export interface RowRequirement { projection: string; type: string; id: string; fields: string[]; scenario?: string }
-export type Requirement = Grant & { ontology: string; security?: string; row?: RowRequirement };
+type ScenarioRequirement = { id: string; release: string; merged?: true };
+export type Requirement = Grant & { ontology: string; security?: string; row?: RowRequirement; scenario?: ScenarioRequirement };
 export class TaskResult {
   constructor(readonly value: unknown, readonly permissions: Requirement[]) {}
 }
@@ -142,8 +143,8 @@ export class Access {
     if (!this.allows(requirement)) throw new PermissionDenied(`Permission required: ${permission}`);
     const key = `${permission}:${target}`; this.required.set(key, requirement); if (data) this.recordData(key, requirement);
   }
-  definition(model: Ontology, kind: string, name: string) {
-    this.require(model.document.id, 'view_definition', resource(model.document.id, kind, name));
+  definition(model: Ontology, kind: string, name: string, data = false) {
+    this.require(model.document.id, 'view_definition', resource(model.document.id, kind, name), data);
     if (kind === 'link') this.useModelData(model.links.get(name)?.classification);
   }
   canDefine(model: Ontology, kind: string, name: string) { return this.allows({ ontology: model.document.id, permission: 'view_definition', resource: resource(model.document.id, kind, name) }); }
@@ -313,10 +314,23 @@ export class Access {
   action(model: Ontology, name: string) { this.useModelData(model.actions.get(name)?.classification); this.definition(model, 'action', name); this.require(model.document.id, 'apply_action', resource(model.document.id, 'action', name)); }
   function(model: Ontology, name: string) { this.useModelData(model.functions.get(name)?.classification); this.definition(model, 'function', name); this.require(model.document.id, 'execute_function', resource(model.document.id, 'function', name)); }
   source(model: Ontology, name: string) { this.require(model.document.id, 'read_source', resource(model.document.id, 'source', name), true); }
+  recordScenarioRead(model: Ontology, id: string, release: string) {
+    const ontology = model.document.id;
+    this.require(ontology, 'view_definition', ontology);
+    this.recordData('scenario:' + digest([ontology, id, release]), {
+      ontology, resource: ontology, permission: 'view_definition', scenario: { id, release },
+    });
+  }
   dataRequirements(): Requirement[] { return structuredClone([...this.data.values()]); }
   requirements(): Requirement[] { return structuredClone([...new Map([...this.required.values(), ...this.data.values()].map(item => [digest(item), item])).values()]); }
   /** Return a copy of the dependencies, preserving deleted inputs and all permission evidence. */
   private async requirementsAfterMerges(requirements: Requirement[], client?: Sql): Promise<Requirement[]> {
+    const mergedViews = await this.scenarioViews(requirements, client, true);
+    if (mergedViews.rows.length) requirements = [...requirements];
+    for (const { ordinal } of mergedViews.rows) {
+      const requirement = requirements[ordinal]!;
+      requirements[ordinal] = { ...requirement, scenario: { ...requirement.scenario!, merged: true } };
+    }
     const pending=requirements.flatMap((requirement,ordinal)=>requirement.row?.scenario?[{ordinal,ontology:requirement.ontology,...requirement.row}]:[]);
     if(!pending.length)return requirements;
     const merged=await this.db.query(`SELECT input.ordinal,live.projection
@@ -357,7 +371,24 @@ export class Access {
       // Older cached results have no policy evidence. Require a recorded policy context before reusing them.
       return evidencedResources.has(requirement.resource);
     });
-    return grantsAllowed && await this.rowsAllowed(requirements, client);
+    if (!grantsAllowed || !await this.rowsAllowed(requirements, client)) return false;
+    const views = await this.scenarioViews(requirements, client);
+    return views.rows.length === views.expected;
+  }
+  private async scenarioViews(requirements: Requirement[], client?: Sql, checkMerged = false) {
+    const views = requirements.flatMap((requirement, ordinal) => requirement.scenario
+      ? [{ ordinal, ontology: requirement.ontology, ...requirement.scenario, state: checkMerged || requirement.scenario.merged ? 'merged' : 'open' }]
+      : []);
+    if (!views.length) return { expected: 0, rows: [] };
+    const available = await this.db.query<{ ordinal: number }>(`
+      SELECT input.ordinal FROM jsonb_to_recordset($2::jsonb) AS input(ordinal integer, id uuid, release text, ontology text, state text)
+      JOIN ${this.db.schema}.ontology current ON current.id=input.ontology AND current.release=input.release
+      JOIN ${this.db.schema}.scenarios scenario ON scenario.id=input.id AND scenario.owner=$1 AND scenario.release=input.release
+      LEFT JOIN ${this.db.schema}.scenario_sessions session ON session.id=scenario.session_id AND session.owner=scenario.owner
+      WHERE scenario.state=input.state AND (input.state='merged' OR (scenario.expires_at>now()
+        AND (scenario.session_id IS NULL OR (session.closed_at IS NULL AND session.expires_at>now()))))`,
+      [this.principal.owner, JSON.stringify(views)], client);
+    return { expected: views.length, rows: available.rows };
   }
   describe(model: Ontology, executable = false) {
     const document = structuredClone(model.resolvedDocument);

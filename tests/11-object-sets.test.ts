@@ -230,3 +230,122 @@ test('stored scalar filters and aggregations run before application candidate li
     });
   } finally { await f.close(); }
 });
+
+test('saved high-risk order sets aggregate and follow two deduplicated links in the Scenario overlay', async () => {
+  const f = await setup();
+  try {
+    const body = structuredClone(f.model.document);
+    const text = { description: 'Fixture text', schema: { type: 'string' }, required: true };
+    const number = { description: 'Fixture number', schema: { type: 'number' }, required: true };
+    const order = 'FixtureOrder', courier = 'FixtureCourier', depot = 'FixtureDepot';
+    for (const [apiName, fields] of [
+      [order, { region: text, risk: text, delayDays: number, exposure: number }],
+      [courier, {}],
+      [depot, { region: text, capacity: number }],
+    ] as const) {
+      body.objectTypes.push({ apiName, displayName: apiName, description: 'Synthetic order planning data',
+        primaryKey: 'id', titleProperty: 'id', properties: { id: text, ...fields }, interfaces: {} });
+    }
+    body.linkTypes.push(
+      { apiName: 'OrderCourier', description: 'Assigned courier', from: { type: order, name: 'courier', cardinality: 'one' },
+        to: { type: courier, name: 'orders', cardinality: 'many' } },
+      { apiName: 'CourierDepot', description: 'Current depot', from: { type: courier, name: 'depot', cardinality: 'one' },
+        to: { type: depot, name: 'couriers', cardinality: 'many' } },
+    );
+    const model = await f.metadata.publish(body, f.capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, memberGrants(model));
+    const access = await Access.load(f.db, principal), graph = new Objects(f.db, model, access);
+    await f.db.query(`INSERT INTO ${f.db.schema}.objects(projection,owner,type,id,properties)
+      SELECT $1,$2,$3,'order-'||i,jsonb_build_object('id','order-'||i,
+        'region',CASE WHEN i=10006 THEN 'west' ELSE 'east' END,
+        'risk',CASE WHEN i=10007 THEN 'low' ELSE 'high' END,'delayDays',4,'exposure',10)
+      FROM generate_series(1,10007) i
+      UNION ALL SELECT $1,'another-owner',$3,'foreign',
+        '{"id":"foreign","region":"east","risk":"high","delayDays":20,"exposure":1000}'::jsonb`,
+      [model.projection, principal.owner, order]);
+    for (const id of ['courier-0', 'courier-1', 'courier-2']) await graph.create({ type: courier, id }, { id });
+    const west = { type: depot, id: 'depot-west' }, east = { type: depot, id: 'depot-east' };
+    await graph.create(west, { id: west.id, region: 'west', capacity: 20 });
+    await graph.create(east, { id: east.id, region: 'east', capacity: 30 });
+    for (const id of ['courier-0', 'courier-1', 'courier-2']) await graph.link({ type: 'CourierDepot', from: { type: courier, id }, to: west });
+    await f.db.query(`INSERT INTO ${f.db.schema}.links(projection,owner,type,from_type,from_id,to_type,to_id,single_from,single_to)
+      SELECT $1,$2,'OrderCourier',$3,'order-'||i,$4,'courier-'||(i%3),true,false
+      FROM generate_series(1,10007) i`, [model.projection, principal.owner, order, courier]);
+
+    const forSelection: SetExpression = { op: 'query', query: { type: order, filter: { op: 'all', predicates: [
+      { op: 'eq', property: 'region', value: 'east' },
+      { op: 'eq', property: 'risk', value: 'high' },
+      { op: 'gt', property: 'delayDays', value: 3 },
+    ] } } };
+    const registered = await f.sets.save(access, model, {
+      requestId: 'overdue-east-orders', name: 'High risk overdue orders', mode: 'dynamic', set: forSelection,
+    });
+    const set = { op: 'saved', id: registered.id };
+    const metrics = { orders: { op: 'count' }, exposure: { op: 'sum', property: 'exposure' } };
+    const args = { set, groupBy: ['region'], metrics };
+    assert.deepEqual(await f.sets.aggregate(access, model, args), {
+      count: 10005, items: [{ group: { region: 'east' }, metrics: { orders: 10005, exposure: 100050 } }],
+    });
+    const depots = { set: { op: 'traverse', set, path: [{ link: 'courier' }, { link: 'depot' }] },
+      groupBy: ['region'], metrics: { depots: { op: 'count' }, capacity: { op: 'sum', property: 'capacity' } } };
+    const savedTraversal = await f.sets.save(access, model, {
+      requestId: 'affected-depots', name: 'Affected depots', mode: 'dynamic', set: depots.set,
+    });
+    assert.deepEqual(await f.sets.aggregate(access, model, depots), {
+      count: 1, items: [{ group: { region: 'west' }, metrics: { depots: 1, capacity: 20 } }],
+    });
+
+    const scenarios = new Scenarios(f.db), scene = await scenarios.create(access, model, { requestId: 'overdue-proposal', name: 'Reroute' });
+    const view = await scenarios.view(access, model, scene.id), proposal = new Objects(f.db, view, access);
+    await proposal.edit({ type: order, id: 'order-1' }, 1, { delayDays: 1 });
+    await proposal.remove({ type: order, id: 'order-2' }, 1);
+    const extra = { type: order, id: 'proposed-order' };
+    await proposal.create(extra, { id: extra.id, region: 'east', risk: 'high', delayDays: 5, exposure: 75 });
+    const proposedCourier = { type: courier, id: 'proposed-courier' };
+    await proposal.create(proposedCourier, { id: proposedCourier.id });
+    await proposal.link({ type: 'OrderCourier', from: extra, to: proposedCourier });
+    await proposal.link({ type: 'CourierDepot', from: proposedCourier, to: east });
+    const moved = { type: courier, id: 'courier-2' };
+    await proposal.unlink({ type: 'CourierDepot', from: moved, to: west });
+    await proposal.link({ type: 'CourierDepot', from: moved, to: east });
+    const reader = await Access.load(f.db, principal);
+    assert.deepEqual(await f.sets.aggregate(reader, view, args), {
+      count: 10004, items: [{ group: { region: 'east' }, metrics: { orders: 10004, exposure: 100105 } }],
+    });
+    assert.deepEqual(await f.sets.aggregate(reader, view, depots), {
+      count: 2, items: [
+        { group: { region: 'east' }, metrics: { depots: 1, capacity: 30 } },
+        { group: { region: 'west' }, metrics: { depots: 1, capacity: 20 } },
+      ],
+    });
+    const navigation = await f.sets.evaluate(reader, view, { set: { op: 'saved', id: savedTraversal.id }, limit: 1 });
+    assert.equal(navigation.total, 2);
+    assert.deepEqual(navigation.items.map(object => object.ref), [east]);
+    assert(await reader.canReturn(reader.dataRequirements()));
+    const membership = reader.dataRequirements();
+    assert(membership.some(requirement => requirement.scenario?.id === scene.id));
+    const inspected = await scenarios.inspect(access, model, scene.id);
+    await scenarios.discard(access, model, scene.id, inspected.revision);
+    assert.equal(await reader.canReturn(membership), false);
+
+    const reviewed = await scenarios.create(access, model, { requestId: 'reviewed-depot', name: 'Reviewed depot change' });
+    const reviewedView = await scenarios.view(access, model, reviewed.id);
+    await new Objects(f.db, reviewedView, access).edit(west, 1, { capacity: 25 });
+    const reviewer = await Access.load(f.db, principal);
+    assert.deepEqual(await f.sets.aggregate(reviewer, reviewedView, depots), {
+      count: 1, items: [{ group: { region: 'west' }, metrics: { depots: 1, capacity: 25 } }],
+    });
+    const review = await scenarios.inspect(access, model, reviewed.id);
+    await f.db.transaction(client => scenarios.mergeInto(new Objects(f.db, model, access, client), reviewed.id, review.revision,
+      { objects: [depot], links: [] }));
+    assert.equal(await reviewer.canReturn(reviewer.dataRequirements()), false);
+    const merged = await reviewer.finalDataRequirements();
+    assert(merged.some(requirement => requirement.scenario?.id === reviewed.id && requirement.scenario.merged));
+    assert(await reviewer.canReturn(merged));
+    await f.db.query(`INSERT INTO ${f.db.schema}.property_security VALUES ('Eigos', $1, 'capacity')`, [depot]);
+    assert.equal(await reviewer.canReturn(merged), false);
+    assert.deepEqual(await f.sets.aggregate(await Access.load(f.db, principal), model, depots), {
+      count: 1, items: [{ group: { region: 'west' }, metrics: { depots: 1, capacity: null } }],
+    });
+  } finally { await f.close(); }
+});

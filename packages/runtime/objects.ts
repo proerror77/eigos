@@ -218,7 +218,7 @@ export class Objects {
         return !local || !this.model.object(type).properties[local]?.derived;
       }));
   }
-  private async storedSelection(args: z.output<typeof querySchema>) {
+  private async storedSelection(args: z.output<typeof querySchema>, inlineView = false) {
     await checkScenario(this.db, this.model, this.owner, this.client);
     this.access.definition(this.model, this.model.interfaces.has(args.type) ? 'interface' : 'object', args.type);
     const viewLabel = this.model.interfaces.get(args.type)?.classification;
@@ -238,7 +238,7 @@ export class Objects {
     if (!types.length) return undefined;
     const values: unknown[] = [this.owner, types, this.model.projection];
     const bind = (value: unknown) => { values.push(value); return '$' + values.length; };
-    const tables = viewTables(this.db, this.model, this.owner, values, [...types, ...(args.from ? [args.from.object.type] : [])]);
+    const tables = viewTables(this.db, this.model, this.owner, values, [...types, ...(args.from ? [args.from.object.type] : [])], inlineView);
     const policies = types.map(type => {
       this.access.read(this.model, type);
       return `(o.type=${bind(type)} AND ${this.access.rowSql(this.model, type, values, 'o.properties')})`;
@@ -250,8 +250,14 @@ export class Objects {
         AND l.type=${bind(navigation.link)} AND l.${source}_type=${bind(args.from.object.type)} AND l.${source}_id=${bind(args.from.object.id)}
         AND l.${target}_type=o.type AND l.${target}_id=o.id)`);
     }
+    const property = this.storedFields(types, values, args.type);
+    for (const [field, value] of Object.entries(args.where)) clauses.push(`${property(field)}=${bind(JSON.stringify(value))}::jsonb`);
+    return { values, bind, clauses, property, tables, types };
+  }
+  private storedFields(types: string[], values: unknown[], defaultView: string) {
     const fields = new Map<string, string>();
-    const property = (path: string, view = args.type) => {
+    const bind = (value: unknown) => { values.push(value); return '$' + values.length; };
+    return (path: string, view = defaultView) => {
       const key = JSON.stringify([view, path]), cached = fields.get(key);
       if (cached) return cached;
       const [root, ...nested] = path.split('.');
@@ -266,8 +272,6 @@ export class Objects {
       fields.set(key, expression);
       return expression;
     };
-    for (const [field, value] of Object.entries(args.where)) clauses.push(`${property(field)}=${bind(JSON.stringify(value))}::jsonb`);
-    return { values, bind, clauses, property, tables, types };
   }
   private async scalarCandidates(args: z.output<typeof querySchema>) {
     const types = this.model.concreteTypes(args.type);
@@ -312,38 +316,118 @@ export class Objects {
     const last = records.at(-1)?.ref;
     return { items, cursor: result.rows.length > args.limit && last ? Buffer.from(JSON.stringify({ query: queryDigest, ...last })).toString('base64url') : undefined };
   }
-  /** Aggregation can skip individual reads when visibility is independent of row values. */
-  async aggregateStored(input: Query, view: string | undefined, groupBy: string[], metrics: Record<string, Metric>, groupLimit: number) {
-    const args = querySchema.parse(input), type = args.type, projection = view ?? type;
-    if (this.model.scenario || args.orderBy || !this.model.objects.has(type) || this.access.hasObjectPolicy(this.model, type)
-      || !this.model.implements(type, projection) || !supportsStoredPredicate(args.filter)) return undefined;
-    this.access.definition(this.model, 'object', type);
+  /** Compile membership when this read needs no per-row authorization evidence. */
+  async storedSetSelection(input: Query, path: readonly { link: string; as?: string }[]) {
+    const args = querySchema.parse(input), start = args.type;
+    const eligible = (type: string) => this.model.objects.has(type) && this.access.canRead(this.model, type)
+      && type !== scenarioMetadataType && !processLogTarget(this.model, type) && !this.access.hasObjectPolicy(this.model, type);
+    if (args.orderBy || !eligible(start) || !supportsStoredPredicate(args.filter)) return undefined;
+    let type = start;
+    const hops = [];
+    for (const step of path) {
+      let navigation;
+      try { navigation = this.model.navigation(type, step.link, step.as); }
+      catch { return undefined; } // Preserve the interpreter's handling of empty or invalid frontiers.
+      if (!eligible(navigation.target)
+        || !this.access.canDefine(this.model, 'link', navigation.link)
+        || !this.access.canSeeModelData(this.model.links.get(navigation.link)?.classification)
+        || step.as && !this.access.canDefine(this.model, 'interface', step.as)) return undefined;
+      hops.push({ navigation, as: step.as });
+      type = navigation.target;
+    }
+    const fields = queryFields(args);
+    if (!this.mayUseStoredFields(start, [start], fields)) return undefined;
+    for (const field of fields) this.model.propertyPath(start, field);
+    const selection = await this.storedSelection(args, hops.length > 0);
+    if (!selection) return undefined;
+    const { values, bind, clauses, tables } = selection;
+    if (this.access.canSeeModelData(this.model.document.classification)) {
+      this.access.observeClassification(this.model.document.classification);
+    }
+    if (args.filter) clauses.push(storedPredicate(args.filter, selection.property, bind));
+    let prefix = tables.prefix;
+    let relation = tables.objects;
+    let filter = 'WHERE ' + clauses.join(' AND ');
+    if (hops.length) {
+      const columns = 'o.type,o.id,o.revision,o.properties';
+      relation = 'object_set_seed';
+      const steps = [`${relation} AS (SELECT o.id FROM ${tables.objects} o ${filter})`];
+      let sourceType = start;
+      for (const [index, { navigation: nav, as }] of hops.entries()) {
+        if (as) this.access.definition(this.model, 'interface', as, true);
+        this.access.definition(this.model, 'link', nav.link, true);
+        this.access.read(this.model, nav.target);
+        const source = bind(sourceType), target = bind(nav.target), relationship = bind(nav.link);
+        const policy = this.access.rowSql(this.model, nav.target, values, 'o.properties');
+        const from = nav.forward ? 'from' : 'to', to = nav.forward ? 'to' : 'from';
+        const name = 'object_set_hop_' + index, keys = 'object_set_targets_' + index;
+        // Reduce to distinct target identities before the next hop so fan-in never multiplies the frontier.
+        steps.push(`${keys} AS MATERIALIZED (
+          SELECT DISTINCT l.${to}_id AS id FROM ${tables.links} l JOIN ${relation} frontier ON frontier.id=l.${from}_id
+          WHERE l.owner=$1 AND l.projection=$3 AND l.type=${relationship} AND l.${from}_type=${source} AND l.${to}_type=${target}
+        )`, `${name} AS (
+          SELECT ${columns} FROM ${tables.objects} o JOIN ${keys} target ON target.id=o.id
+          WHERE o.owner=$1 AND o.projection=$3 AND o.type=${target} AND ${policy}
+        )`);
+        relation = name;
+        sourceType = nav.target;
+      }
+      prefix = (prefix ? prefix.trimEnd() + ', ' : 'WITH ') + steps.join(', ') + ' ';
+      filter = '';
+    }
+    const property = hops.length ? this.storedFields([type], values, type) : selection.property;
+    return { type, prefix, relation, filter, values, bind, property };
+  }
+  private recordSetRead() {
+    if (this.model.scenario) this.access.recordScenarioRead(this.model, this.model.scenario, this.model.release);
+  }
+  private async readSetQuery(statement: string, values: unknown[], traversal: boolean) {
+    if (traversal) {
+      // Fresh projections can drastically underestimate frontier size. Prefer set joins within this Object Set transaction.
+      await this.db.query('SET LOCAL enable_nestloop=off', [], this.client);
+    }
+    return this.db.readQuery(statement, values, this.client);
+  }
+  async readStoredSet(input: Query, path: readonly { link: string; as?: string }[], limit: number) {
+    const selection = await this.storedSetSelection(input, path);
+    if (!selection || Object.values(this.model.object(selection.type).properties).some(property => property.derived)) return undefined;
+    const { prefix, relation, filter, values, bind } = selection;
+    const result = await this.readSetQuery(`${prefix}SELECT o.type,o.id,o.revision,o.properties FROM ${relation} o
+      ${filter} LIMIT ${bind(limit + 1)}`, values, path.length > 0);
+    if (result.rows.length > limit) throw new Conflict('Object set exceeds the complete evaluation limit');
+    this.recordSetRead();
+    return result.rows.map(row => this.visible(this.row(row)));
+  }
+  /** Keep eligible set membership and reduction inside PostgreSQL. */
+  async aggregateStored(input: Query, view: string | undefined, groupBy: string[], metrics: Record<string, Metric>, groupLimit: number,
+    path: readonly { link: string; as?: string }[]) {
+    const selection = await this.storedSetSelection(input, path);
+    if (!selection) return undefined;
+    const { type, prefix, relation, filter, values, bind, property } = selection;
+    const outputView = view ?? type;
+    if (!this.model.implements(type, outputView)) return undefined;
     const metricEntries = Object.entries(metrics);
     const groupFields = [...groupBy, ...metricEntries.flatMap(([, metric]) => metric.property ? [metric.property] : [])];
-    if (!this.mayUseStoredFields(type, [type], queryFields(args)) || !this.mayUseStoredFields(projection, [type], groupFields)) return undefined;
-    for (const field of queryFields(args)) this.model.propertyPath(type, field);
-    for (const field of groupFields) this.model.propertyPath(projection, field);
-    if (metricEntries.some(([, metric]) => metric.op !== 'count' && !isNumeric(this.model.propertyPath(projection, metric.property)))) return undefined;
-
-    const selection = await this.storedSelection(args);
-    if (!selection) return undefined;
-    const { values, bind, clauses, property, tables } = selection;
-    if (args.filter) clauses.push(storedPredicate(args.filter, property, bind));
-    const groups = groupBy.map((field, index) => `NULLIF(${property(field, projection)},'null'::jsonb) AS g${index}`);
+    if (!this.mayUseStoredFields(outputView, [type], groupFields)) return undefined;
+    for (const field of groupFields) this.model.propertyPath(outputView, field);
+    if (metricEntries.some(([, metric]) => metric.op !== 'count' && !isNumeric(this.model.propertyPath(outputView, metric.property)))) return undefined;
+    const groups = groupBy.map((field, index) => `NULLIF(${property(field, outputView)},'null'::jsonb) AS g${index}`);
     const aggregates = metricEntries.map(([, metric], index) => {
-      const field = metric.property ? `NULLIF(${property(metric.property, projection)},'null'::jsonb)` : '*';
+      const field = metric.property ? `NULLIF(${property(metric.property, outputView)},'null'::jsonb)` : '*';
       const operand = metric.op === 'count' ? field : `(${field})::double precision`;
       return `${metric.op.toUpperCase()}(${operand}) AS m${index}`;
     });
     const group = groups.length ? 'GROUP BY ' + groupBy.map((_, index) => 'g' + index).join(', ') : '';
-    const rows = await this.db.readQuery(`${tables.prefix}SELECT COUNT(*) AS count,${[...groups, ...aggregates].join(', ')}
-      FROM ${tables.objects} o WHERE ${clauses.join(' AND ')} ${group}
-      ORDER BY MIN(to_json(o.id)::text COLLATE "C") LIMIT ${bind(groupLimit + 1)}`, values, this.client)
+    const statement = `${prefix}SELECT COUNT(*) AS count,${[...groups, ...aggregates].join(', ')}
+      FROM ${relation} o ${filter} ${group}
+      ORDER BY MIN(to_json(o.id)::text COLLATE "C") LIMIT ${bind(groupLimit + 1)}`;
+    const rows = await this.readSetQuery(statement, values, path.length > 0)
       .catch(error => {
         if (error?.code === '22003') throw new Conflict('Numeric aggregation overflow');
         throw error;
       });
     if (rows.rows.length > groupLimit) throw new Conflict('Object set exceeds the aggregate group limit');
+    this.recordSetRead();
     return {
       count: rows.rows.reduce((total, row) => total + Number(row.count), 0),
       items: rows.rows.map(row => ({

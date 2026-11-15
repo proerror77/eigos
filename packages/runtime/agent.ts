@@ -301,7 +301,7 @@ export class OntologyAgent {
         return output;
       })));
     const semanticSearch = new SemanticSearch(this.db, this.capabilities.functions);
-    add('semantic_search', 'Search a configured Ontology semantic index using the selected view.', semanticSearchViewSchema,
+    add('semantic_search', 'Search a semantic index in the selected view. For document chunks, use from to select a business object and its published document link.', semanticSearchViewSchema,
       async ({ scenarioId, ...input }) => semanticSearch.search(access, await view(scenarioId), input));
     add('evaluate_function', 'Evaluate a published read or computation Function. To populate source-backed objects use its data source refresh instead.', functionCall,
       async ({ function: name, input,scenarioId }) => {

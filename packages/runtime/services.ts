@@ -384,7 +384,7 @@ export function ontologyServices(
   );
   register(
     'semantic_search',
-    'Search authorized objects by meaning in the live Ontology or a Scenario.',
+    'Search authorized objects by meaning in the live Ontology or a Scenario. Pass from for documents linked to a business object.',
     semanticSearchSchema.extend({ scenarioId: z.uuid().optional() }),
     false,
     async (a, { scenarioId, ...input }) => semantic.search(a, await view(a, scenarioId), input),

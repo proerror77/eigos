@@ -10,6 +10,8 @@ import { upgradePublicationStorage } from '../packages/runtime/upgrade.js';
 import { addProcessLogs } from '../packages/ontology/process-definition.js';
 import { ObjectSets } from '../packages/runtime/object-sets.js';
 import { remapResources } from '../packages/ontology/resource-mapping.js';
+import { Database } from '../packages/runtime/database.js';
+import { Scenarios } from '../packages/runtime/scenarios.js';
 
 async function indexedFixture() {
   const f=await fixture();
@@ -27,9 +29,14 @@ const transaction=(offset:number,rows:Record<string,unknown>[],observedAt=origin
 
 async function processFixture() {
   const f=await fixture(),document=structuredClone(f.model.document),text={type:'string'},reference={type:'object',properties:{type:text,id:text},required:['type','id'],additionalProperties:false};
-  const fields={id:{description:'Identity',schema:text,required:true},name:{description:'Case name',schema:text,required:true},state:{description:'Business state',schema:{type:'string',enum:['open','closed']},required:true}};
+  const fields={
+    id:{description:'Identity',schema:text,required:true},
+    name:{description:'Case name',schema:text,required:true},
+    state:{description:'Business state',schema:{type:'string',enum:['open','closed']},required:true},
+    phase:{description:'Optional parallel phase',schema:{type:'string',enum:['assigned','verified']},required:false},
+  };
   document.objectTypes.push({apiName:'ProcessCase',displayName:'Case',description:'Synthetic process',primaryKey:'id',titleProperty:'name',interfaces:{},properties:fields});
-  addProcessLogs(document,[{type:'ProcessCase',property:'state'}]);
+  addProcessLogs(document,[{type:'ProcessCase',property:'state'},{type:'ProcessCase',property:'phase'}]);
   const parameters={type:'object',properties:{item:reference,revision:{type:'integer'},state:fields.state.schema},required:['item','revision','state'],additionalProperties:false};
   const edit={op:'editObject' as const,object:{parameter:'item'},expectedRevision:{parameter:'revision'},properties:{state:{parameter:'state'}}};
   document.actionTypes.push({apiName:'ChangeCase',description:'Change the case state',parameters,objectParameters:{item:'ProcessCase'},submissionCriteria:[],rules:[edit],result:{type:'ProcessCase',id:{parameter:'item',path:['id']}}},
@@ -149,6 +156,95 @@ test('existing history gains nullable causal columns through the ordinary databa
     const logs=await f.graph.follow(ref,'stateLogs');assert.equal(logs.length,1);
     assert.equal(logs[0]!.properties.action,null);assert.equal(logs[0]!.properties.requestId,null);
   }finally{await f.close();}
+});
+
+test('PostgreSQL checks the published Machinery states on objects and drafts across upgrade and release changes', async () => {
+  const f = await processFixture(), schema = f.db.schema;
+  const role = 'eigos_state_' + f.schema.slice(-20);
+  const violation = { code: '23514', constraint: 'machinery_state_valid' };
+  let limited: Database | undefined;
+  try {
+    const ref = { type:'ProcessCase', id:'state-check' };
+    const properties = { id:ref.id, name:'Database state check', state:'open' };
+    await f.graph.create(ref, properties);
+    const scenarios = new Scenarios(f.db);
+    const access = await Access.load(f.db, principal);
+    const draft = await scenarios.create(access, f.model, {requestId:'machine-state-draft', name:'Legacy draft'});
+    const proposed = new Objects(f.db, await scenarios.view(access, f.model, draft.id), access);
+    await proposed.edit(ref, 1, {state:'closed'});
+
+    // Remove the state storage additions to exercise the actual upgrade on existing valid rows.
+    await f.db.query(`DROP TRIGGER keep_machinery_contract ON ${schema}.releases;
+      DROP TRIGGER keep_machinery_contract ON ${schema}.scenarios;
+      DROP TRIGGER bind_machinery_states ON ${schema}.objects;
+      DROP TRIGGER bind_machinery_states ON ${schema}.scenario_objects;
+      ALTER TABLE ${schema}.objects DROP CONSTRAINT machinery_state_valid,DROP COLUMN machinery_state_contract;
+      ALTER TABLE ${schema}.scenario_objects DROP CONSTRAINT machinery_state_valid,DROP COLUMN machinery_state_contract;
+      ALTER TABLE ${schema}.releases DROP COLUMN machinery_states;`);
+    await upgradePublicationStorage(f.db);
+    await upgradePublicationStorage(f.db);
+    assert.equal((await f.graph.read(ref)).properties.state, 'open');
+    assert.equal((await proposed.read(ref)).properties.state, 'closed');
+
+    await f.db.query(`CREATE ROLE "${role}";
+      GRANT USAGE ON SCHEMA ${schema} TO "${role}";
+      GRANT SELECT ON ${schema}.releases,${schema}.scenarios TO "${role}";
+      GRANT UPDATE ON ${schema}.scenarios TO "${role}";
+      GRANT SELECT,INSERT,UPDATE ON ${schema}.objects,${schema}.scenario_objects TO "${role}";`);
+    const url = new URL(process.env.EIGOS_TEST_DATABASE_URL!);
+    url.searchParams.set('options','-c role='+role);
+    const db = limited = new Database(url.toString(), f.schema);
+    const write = (projection: string, values: Record<string,unknown>) =>
+      db.query(`UPDATE ${schema}.objects SET properties=$4 WHERE projection=$1 AND owner=$2 AND type='ProcessCase' AND id=$3`,
+        [projection,principal.owner,ref.id,values]);
+
+    await assert.rejects(write(f.model.projection,{...properties,state:'not-published'}), violation);
+    await assert.rejects(write(f.model.projection,{...properties,state:null}), violation);
+    await assert.rejects(write(f.model.projection,{id:ref.id,name:properties.name}), violation);
+    await assert.rejects(write(f.model.projection,{...properties,phase:1}), violation);
+    assert.equal((await write(f.model.projection,{...properties,phase:'assigned'})).rowCount, 1);
+    assert.equal((await write(f.model.projection,properties)).rowCount, 1);
+    await assert.rejects(db.query(`UPDATE ${schema}.objects SET properties=$2,machinery_state_contract='{}'
+      WHERE projection=$1 AND type='ProcessCase'`, [f.model.projection,{...properties,state:'forged'}]), violation);
+    await assert.rejects(db.query(`UPDATE ${schema}.scenario_objects SET properties=$2 WHERE scenario_id=$1`,
+      [draft.id,{...properties,phase:'unknown'}]), violation);
+    await assert.rejects(db.query(`UPDATE ${schema}.scenario_objects SET base_properties=$2 WHERE scenario_id=$1`,
+      [draft.id,{...properties,state:'unknown'}]), violation);
+    await assert.rejects(f.db.query(`UPDATE ${schema}.releases SET machinery_states='{}' WHERE digest=$1`,
+      [f.model.release]), {code:'23514',message:'Published Machinery state contract is immutable'});
+
+    const body = structuredClone(f.model.document);
+    body.version = 'machine-state-next';
+    body.objectTypes.find(type=>type.apiName==='ProcessCase')!.properties.state!.schema.enum = ['open','closed','reopened'];
+    const candidate = await f.metadata.prepare(body, f.capabilities, f.publisher);
+    assert.equal((await write(candidate.projection,{...properties,state:'reopened'})).rowCount, 1);
+    await assert.rejects(write(candidate.projection,{...properties,state:'unknown'}), violation);
+    await write(candidate.projection,properties);
+    const next = await f.metadata.activate(candidate.release, f.capabilities, f.publisher);
+    assert.equal((await write(next.projection,{...properties,state:'reopened'})).rowCount, 1);
+    await assert.rejects(write(f.model.projection,{...properties,state:'reopened'}), violation);
+    await assert.rejects(db.query(`UPDATE ${schema}.scenario_objects SET properties=$2 WHERE scenario_id=$1`,
+      [draft.id,{...properties,state:'reopened'}]), violation);
+    await assert.rejects(db.query(`UPDATE ${schema}.scenarios SET release=$2 WHERE id=$1`,
+      [draft.id,next.release]), {code:'23514',message:'Scenario owner and publication are immutable'});
+    const nextDraft = await scenarios.create(access,next,{requestId:'machine-state-draft-next',name:'Current draft'});
+    const insertDraft = (id: string, state: string) => db.query(
+      `INSERT INTO ${schema}.scenario_objects(scenario_id,owner,type,id,base_links,revision,properties)
+        VALUES($1,$2,'ProcessCase','new','[]',1,$3)`, [id,principal.owner,{id:'new',name:'Draft',state}]);
+    await assert.rejects(insertDraft(draft.id,'reopened'), violation);
+    assert.equal((await insertDraft(nextDraft.id,'reopened')).rowCount, 1);
+    assert.equal((await db.query(`UPDATE ${schema}.scenario_objects SET properties=NULL WHERE scenario_id=$1`, [nextDraft.id])).rowCount, 1);
+    const constraints = await db.query(`SELECT convalidated FROM pg_constraint
+      WHERE conname='machinery_state_valid' AND conrelid IN($1::regclass,$2::regclass)`,
+      [schema+'.objects',schema+'.scenario_objects']);
+    assert.deepEqual(constraints.rows, [{convalidated:true},{convalidated:true}]);
+  } finally {
+    await limited?.close();
+    await f.db.query(`DROP OWNED BY "${role}"; DROP ROLE "${role}"`).catch(error => {
+      if ((error as {code:string}).code !== '42704') throw error;
+    });
+    await f.close();
+  }
 });
 
 test('process definitions and native relationships survive resource remapping',async()=>{
@@ -278,15 +374,18 @@ test('source updates preserve edited fields, latest policy can replace them, and
     const graph=new Objects(f.db,f.model,f.access),ref={type:'Place',id:'a'};
     await f.indexing.submit(f.access,f.model,transaction(1,[sourceRow('a','original')]));await f.indexing.runOne();
     let current=await graph.read(ref);await graph.edit(ref,current.revision,{name:'User name'});
-    await f.indexing.submit(f.access,f.model,transaction(2,[sourceRow('a','Source update',later)],later));await f.indexing.runOne();
+    const editedAt=(await f.db.query(`SELECT overrides->'name'->>'at' AS at FROM ${f.db.schema}.object_edits
+      WHERE projection=$1 AND owner=$2 AND type='Place' AND id=$3`,[f.model.projection,principal.owner,ref.id])).rows[0]!.at;
+    const fresh=new Date(Date.parse(editedAt)+1000).toISOString();
+    await f.indexing.submit(f.access,f.model,transaction(2,[sourceRow('a','Source update',fresh)],fresh));await f.indexing.runOne();
     assert.equal((await graph.read(ref)).properties.name,'User name');
     await setConflictPolicy(f.db,f.publisher,f.model,'Place','latest_value');
-    await f.indexing.submit(f.access,f.model,transaction(3,[sourceRow('a','Source update',later)],later));await f.indexing.runOne();
+    await f.indexing.submit(f.access,f.model,transaction(3,[sourceRow('a','Source update',fresh)],fresh));await f.indexing.runOne();
     assert.equal((await graph.read(ref)).properties.name,'Source update');
     current=await graph.read(ref);await graph.remove(ref,current.revision);
-    await f.indexing.submit(f.access,f.model,transaction(4,[sourceRow('a','Source update',later)],later));await f.indexing.runOne();
+    await f.indexing.submit(f.access,f.model,transaction(4,[sourceRow('a','Source update',fresh)],fresh));await f.indexing.runOne();
     await assert.rejects(graph.read(ref),/unavailable/);
-    await graph.create(ref,sourceRow('a','Explicit recreation',later));
+    await graph.create(ref,sourceRow('a','Explicit recreation',fresh));
     assert.equal((await graph.read(ref)).properties.name,'Explicit recreation');
   }finally{await f.close();}
 });

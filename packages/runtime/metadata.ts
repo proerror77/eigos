@@ -7,6 +7,7 @@ import { Ontology, validator } from '../ontology/model.js';
 import type { ObjectRef } from '../ontology/schema.js';
 import { Database, type Sql } from './database.js';
 import { Access } from './access.js';
+import { machineryStateContract } from './machinery-state.js';
 
 export interface BindingManifest { functions: Record<string, string>; sources: Record<string, string> }
 export interface Bindings { describe(model: Ontology): BindingManifest }
@@ -62,6 +63,10 @@ export class Metadata {
       if (current?.projection) await checkSavedObjectSets(this.db, client, await this.get(current.digest, client), model);
       if (current && !current.projection) throw new Conflict('Upgrade the existing data before preparing a release');
       const fingerprint = current ? await this.fingerprint(current.projection, client, model.document.id) : null;
+      // Bind the candidate contract before copying rows. Readers see the complete release only at commit.
+      await this.db.query(`INSERT INTO ${this.db.schema}.releases(digest,body,definition_digest,projection,runtime_id,bindings,state,prepared_from,source_fingerprint,transform_id,machinery_states)
+        VALUES($1,$2,$3,$4,$5,$6,'prepared',$7,$8,$9,$10)`, [release, model.document, model.digest, projection, this.db.runtimeId, manifest,
+        current?.digest ?? null, fingerprint, transformId, machineryStateContract(model)], client);
       if (current) {
         const rows = await this.db.query(`SELECT owner,type,id,revision,properties FROM ${this.db.schema}.objects WHERE projection=$1 ORDER BY owner,type,id`, [current.projection], client);
         const projected = rows.rows.filter(row => model.objects.has(row.type)&&row.type!=='OntologyScenario').map(row => {
@@ -85,8 +90,8 @@ export class Metadata {
         await this.validateEditState(model,projection,client);
       }
       await access.refresh(client);
-      await this.db.query(`INSERT INTO ${this.db.schema}.releases(digest,body,definition_digest,projection,runtime_id,bindings,state,prepared_from,source_fingerprint,projection_fingerprint,transform_id)
-        VALUES($1,$2,$3,$4,$5,$6,'prepared',$7,$8,$9,$10)`, [release, model.document, model.digest, projection, this.db.runtimeId, manifest, current?.digest ?? null, fingerprint, await this.fingerprint(projection, client), transformId], client);
+      await this.db.query(`UPDATE ${this.db.schema}.releases SET projection_fingerprint=$2 WHERE digest=$1`,
+        [release, await this.fingerprint(projection, client)], client);
     });
     if (transformId && transform) this.transforms.set(transformId, transform);
     return this.get(release);
