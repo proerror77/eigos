@@ -4,6 +4,7 @@ import { serviceCatalog } from '../../ontology/services.js';
 import {
   attachServiceInput,
   readServiceInput,
+  readServiceSearchPagesInput,
   serviceObservation,
   lumaPAResponse,
   json,
@@ -106,7 +107,7 @@ export function serviceFunctions(resolve: ServiceResolver, getSources: () => Sou
         });
       }
       await source.assertCurrent();
-      const result = serviceObservation.parse(await source.read(input, context.signal));
+      const result = service.observation.parse(await source.read(input, context.signal));
       await source.assertCurrent();
       if (result.provider !== provider || result.bindingId !== source.bindingId || result.inputDigest !== digest(input))
         throw new Conflict('Source result identity mismatch');
@@ -117,7 +118,7 @@ export function serviceFunctions(resolve: ServiceResolver, getSources: () => Sou
         throw new Conflict('Read services into live Ontology before scenario planning');
       const source = service.source,
         execution = context.execution;
-      const result = serviceObservation.parse(
+      const result = service.observation.parse(
         await getSources().read(
           context.objects.model,
           source,
@@ -145,8 +146,7 @@ export function serviceFunctions(resolve: ServiceResolver, getSources: () => Sou
     );
     return item;
   });
-  handlers.set('readServiceSearch', async (input, context) => {
-    const ref = objectRefSchema.parse(input.search);
+  const readSearch = async (ref: ObjectRef, context: FunctionContext) => {
     if (!context.objects.model.implements(ref.type, 'ServiceSearchResult'))
       throw new Conflict('Expected ServiceSearchResult');
     const search = await context.objects.read(ref),
@@ -163,6 +163,11 @@ export function serviceFunctions(resolve: ServiceResolver, getSources: () => Sou
       cursor: search.properties.cursor,
       evidence: search.properties.evidence,
     };
+  };
+  handlers.set('readServiceSearch', (input, context) => readSearch(objectRefSchema.parse(input.search), context));
+  handlers.set('readServiceSearchPages', async (input, context) => {
+    const { searches } = readServiceSearchPagesInput.parse(input);
+    return { pages: await Promise.all(searches.map(search => readSearch(search, context))) };
   });
   handlers.set('evaluateServiceOffering', async (input, context) => {
     const item = await currentService(context.objects, readServiceInput.parse(input).service),
@@ -189,6 +194,8 @@ export function serviceFunctions(resolve: ServiceResolver, getSources: () => Sou
         'room_inventory_and_rate_terms_not_observed',
         'reservation_connector_not_configured',
       );
+    } else if (context.objects.model.implements(item.ref.type, 'FlightOffer')) {
+      reasons.push('displayed_fare_only', 'seat_inventory_and_fare_terms_not_observed', 'booking_connector_not_configured');
     } else if (context.objects.model.implements(item.ref.type, 'ProductOffer')) {
       planning = p.available === false ? 'unavailable' : p.available === true ? 'available' : 'unknown';
       reasons.push('delivery_time_unknown', 'merchant_checkout_required');
@@ -229,7 +236,7 @@ export function serviceProjections(resolve: ServiceResolver): ReadonlyMap<string
           await (await currentSource(resolve, owner, service.provider))?.assertCurrent();
         },
         async apply(graph, source, input, raw) {
-          const result = serviceObservation.parse(raw),
+          const result = service.observation.parse(raw),
             { items, ...fields } = result;
           const provider = service.provider;
           await assertServiceAuthority(resolve, graph.owner, provider, result.bindingId);

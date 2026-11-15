@@ -21,6 +21,8 @@ import { Ontology } from '../packages/ontology/model.js';
 import { addProcessLogs, processLogTarget } from '../packages/ontology/process-definition.js';
 import { calendarJourneyDefinition } from '../packages/ontology/calendar-journey.js';
 import { deliveryFunctions } from '../packages/ontology/delivery.js';
+import { dianpingResearchFunctions } from '../packages/ontology/dianping.js';
+import { diningReservations } from '../packages/ontology/dining-reservations.js';
 import { documentDefinition } from '../packages/ontology/documents.js';
 import { flightDefinition } from '../packages/ontology/flight.js';
 import { flightPositionFunction } from '../packages/ontology/flight-position.js';
@@ -28,6 +30,8 @@ import { locationFunctions, taskLocationValueType } from '../packages/ontology/l
 import { luckinDefinition } from '../packages/ontology/luckin.js';
 import { mapFunctions } from '../packages/ontology/maps.js';
 import { rideWatchDefinition, rideWatchType } from '../packages/ontology/ride-watch.js';
+import { fliggyServicesDefinition } from '../packages/ontology/services.js';
+import { checkWorkflowDependencies } from '../packages/runtime/workflow-compatibility.js';
 
 async function setup() {
   const f=await fixture();await initializeActionUndo(f.db);await initializeScenarioLifecycle(f.db);await initializeAutomation(f.db);
@@ -445,7 +449,7 @@ test('revoked prior-step result visibility blocks a later Action even when the t
 
 test('a hotel workflow saved under v8 replays in v9 and the current release with fresh inputs and separate approval', async () => {
   // Reconstruct the historical documents on the same runtime and check both published identities.
-  const laterDomains = [calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition];
+  const laterDomains = [calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition, fliggyServicesDefinition, diningReservations];
   const addedTypes = new Set([
     ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType,
   ]);
@@ -455,7 +459,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const addedActions = new Set(laterDomains.flatMap(domain => domain.actionTypes.map(action => action.apiName)));
   addedActions.add('StageDiningActivity');
   const addedFunctions = new Set([
-    ...laterDomains.flatMap(domain => domain.functionTypes), ...deliveryFunctions, ...locationFunctions, ...mapFunctions, flightPositionFunction,
+    ...laterDomains.flatMap(domain => domain.functionTypes), ...deliveryFunctions, ...locationFunctions, ...mapFunctions, ...dianpingResearchFunctions, flightPositionFunction,
   ].map(fn => fn.apiName));
   for (const name of ['stageDiningActivity', 'searchRestaurantNotes', 'readWeatherHistory', 'readDiningAvailability']) addedFunctions.add(name);
   addedActions.add('EstimateRideWithPlaceClues');
@@ -464,13 +468,16 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   addedFunctions.add('prepareRideInquiryWithPlaceClues');
   const v9Definition = structuredClone(document);
   v9Definition.version = '9';
-  v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type => type.apiName !== 'RideInquiryWithPlaceClues');
+  v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type => type.apiName !== 'RideInquiryWithPlaceClues' &&
+    !fliggyServicesDefinition.interfaceTypes.some(item => item.apiName === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;
   v9Definition.objectTypes = v9Definition.objectTypes.filter(type => !addedTypes.has(type.apiName) && !addedLogs.some(log => log.type === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'ScheduledActivity')!.properties.dining;
   v9Definition.linkTypes = v9Definition.linkTypes.filter(type =>
     !addedLogs.some(log => log.link === type.apiName) && !documentDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
-    !rideWatchDefinition.linkTypes.some(link => link.apiName === type.apiName));
+    !rideWatchDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    !fliggyServicesDefinition.linkTypes.some(link => link.apiName === type.apiName));
+  v9Definition.dataSources = v9Definition.dataSources.filter(source => !fliggyServicesDefinition.dataSources.some(item => item.apiName === source.apiName));
   v9Definition.actionTypes = v9Definition.actionTypes.filter(action => !addedActions.has(action.apiName));
   v9Definition.functionTypes = v9Definition.functionTypes.filter(fn => !addedFunctions.has(fn.apiName));
   v9Definition.functionTypes.find(fn => fn.apiName === 'resolveRideLocations')!.description =
@@ -618,6 +625,8 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     assert.equal(repeated.workflowId, approved.workflowId);
     assert.equal(repeated.status, 'simulated');
     const currentModel = await f.metadata.publish(document, f.capabilities, f.publisher);
+    assert.throws(() => checkWorkflowDependencies(v9, currentModel, { interfaceTypes: ['HotelOffer'] }, new Set(['HotelOffer'])),
+      /interfaceTypes\/HotelOffer/);
     await setGrants(f.db, principal.owner, memberGrants(currentModel));
     const currentAccess = await Access.load(f.db, principal);
     assert.deepEqual((await hotelWorkflows.list(principal)).items.map(item => item.id), [approved.workflowId]);

@@ -5,13 +5,15 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { digest } from '../../core/identity.js';
 import {
-  serviceName,
   serviceObservation,
+  fliggyFlightObservation,
+  fliggyHotelObservation,
   type ServiceName,
   type ServiceObservation,
   hotelSearchInput,
   productSearchInput,
 } from '../../ontology/service-contracts.js';
+import { searchFliggy, type FlyAIRead } from '../fliggy/connector.js';
 import { LumaReadClient } from '../luma/client.js';
 import { RollingGoSearchConnector } from '../rollinggo/connector.js';
 import { ShopifyCatalogAccess, ShopifyReadOnlyClient } from '../shopify/read-only.js';
@@ -30,15 +32,21 @@ export const unavailableServices: ServiceResolver = async () => {
   );
 };
 
-const connection = z.strictObject({
+const connectionBase = z.strictObject({
   owner: z.string().min(1),
-  provider: serviceName,
   bindingId: z.string().min(1).max(100),
   active: z.boolean(),
   expiresAt: z.iso.datetime(),
+});
+const credentialFields = {
   credentialFile: z.string().min(1),
   credentialSha256: z.string().regex(/^[a-f0-9]{64}$/),
-});
+};
+const connection = z.union([
+  connectionBase.extend({ provider: z.enum(['Luma', 'RollingGo', 'Shopify']), ...credentialFields }),
+  connectionBase.extend({ provider: z.literal('Fliggy'), mode: z.literal('trial') }),
+  connectionBase.extend({ provider: z.literal('Fliggy'), mode: z.literal('key'), ...credentialFields }),
+]);
 export async function privateFile(path: string) {
   if (!isAbsolute(path)) throw new Error('Service credentials require an absolute private path');
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -59,7 +67,7 @@ export async function privateFile(path: string) {
 }
 /** Configuration grants source access to one owner; it never grants booking or
  * payment authority. Secrets and raw provider responses are not Ontology rows. */
-export function configuredServices(path?: string): ServiceResolver {
+export function configuredServices(path?: string, flyAIRead?: FlyAIRead): ServiceResolver {
   if (!path) return unavailableServices;
   const load = async () =>
     z
@@ -71,9 +79,10 @@ export function configuredServices(path?: string): ServiceResolver {
     if (entries.length === 0)
       throw new ServiceAuthorizationRequired('SERVICE_AUTHORIZATION_REQUIRED: no owner connection');
     if (entries.length !== 1) throw new Error('Ambiguous service connection');
-    const binding = entries[0]!,
-      fingerprint = digest(binding);
+    const binding = entries[0]!, fingerprint = digest(binding);
+    const bindingId = binding.provider === 'Fliggy' ? binding.bindingId + ':' + fingerprint : binding.bindingId;
     const credential = async () => {
+      if (!('credentialFile' in binding)) throw new Error('Service connection has no private credential');
       const text = (await privateFile(binding.credentialFile)).trim();
       if (createHash('sha256').update(text).digest('hex') !== binding.credentialSha256)
         throw new Error('Service credential changed');
@@ -88,18 +97,25 @@ export function configuredServices(path?: string): ServiceResolver {
         digest(now[0]) !== fingerprint
       )
         throw new Error('Service connection expired or was revoked');
-      await credential();
+      if ('credentialFile' in binding) await credential();
     };
     await assertCurrent();
     return {
       provider,
-      bindingId: binding.bindingId,
+      bindingId,
       assertCurrent,
       async read(input, signal) {
         await assertCurrent();
         let result: { items: unknown[]; complete: boolean; cursor: string | null };
-        if (provider === 'Luma') result = await new LumaReadClient(credential).read(input, signal);
-        else if (provider === 'RollingGo') {
+        let resultSchema: z.ZodType<ServiceObservation> = serviceObservation;
+        let accessMode: 'trial' | 'key' | undefined;
+        if (binding.provider === 'Fliggy') {
+          accessMode = binding.mode;
+          const page = await searchFliggy(input, accessMode === 'key' ? await credential() : undefined, signal, flyAIRead);
+          result = { items: page.items, complete: false, cursor: null };
+          resultSchema = page.kind === 'flight' ? fliggyFlightObservation : fliggyHotelObservation;
+        } else if (binding.provider === 'Luma') result = await new LumaReadClient(credential).read(input, signal);
+        else if (binding.provider === 'RollingGo') {
           const q = hotelSearchInput.parse(input);
           const response = await new RollingGoSearchConnector(binding.credentialFile, binding.credentialSha256).search(
             {
@@ -127,7 +143,7 @@ export function configuredServices(path?: string): ServiceResolver {
               priceKind: 'reference',
             })),
           };
-        } else if (provider === 'Shopify') {
+        } else {
           const q = productSearchInput.parse(input);
           let secret: { clientId: string; clientSecret: string };
           try {
@@ -164,15 +180,16 @@ export function configuredServices(path?: string): ServiceResolver {
                 })),
             ),
           };
-        } else throw new Error('Service connector implementation is unavailable');
+        }
         await assertCurrent();
-        const observedAt = new Date().toISOString();
-        return serviceObservation.parse({
+        const observedAt = Date.now();
+        return resultSchema.parse({
           provider,
-          bindingId: binding.bindingId,
-          observedAt,
-          expiresAt: new Date(Date.now() + 300000).toISOString(),
-          evidence: 'live_readonly',
+          bindingId,
+          ...(accessMode ? { accessMode } : {}),
+          observedAt: new Date(observedAt).toISOString(),
+          expiresAt: new Date(Math.min(observedAt + 300000, Date.parse(binding.expiresAt))).toISOString(),
+          evidence: binding.provider === 'Fliggy' && flyAIRead ? 'provider_mock' : 'live_readonly',
           ...result,
           inputDigest: digest(input),
           contentDigest: digest(result),

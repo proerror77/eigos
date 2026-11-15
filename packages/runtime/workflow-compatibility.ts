@@ -9,7 +9,7 @@ const functionContract = ({parameters, returns, source, edits, version}: Ontolog
   ({parameters, returns, source, edits, version});
 
 /** Check the published dependencies of a saved workflow before invoking its first tool. */
-export function checkWorkflowDependencies(previous: PublishedOntology, current: PublishedOntology, roots: FunctionDependencies) {
+export function checkWorkflowDependencies(previous: PublishedOntology, current: PublishedOntology, roots: FunctionDependencies, unscopedInterfaces: ReadonlySet<string>) {
   const seen = new Set<string>();
   const resources = (model: PublishedOntology) => ({
     actions: model.actions, functions: model.functions, dataSources: model.sources,
@@ -39,8 +39,12 @@ export function checkWorkflowDependencies(previous: PublishedOntology, current: 
       if ('actions' in old && 'actions' in next) {
         check(kind, name, digest({links:old.links, actions:old.actions, optional:old.optionalProperties}) ===
           digest({links:next.links, actions:next.actions, optional:next.optionalProperties}));
-        check(kind, name, digest(previous.concreteTypes(name).sort()) === digest(current.concreteTypes(name).sort()));
-        previous.concreteTypes(name).forEach(type=>visit('objectTypes', type));
+        const beforeTypes = previous.concreteTypes(name), afterTypes = new Set(current.concreteTypes(name));
+        // A concrete Link or Action stays scoped to its existing implementation. An unscoped
+        // Interface query can pick a different result when a new implementation is published.
+        check(kind, name, beforeTypes.every(type => afterTypes.has(type)) &&
+          (!unscopedInterfaces.has(name) || beforeTypes.length === afterTypes.size));
+        beforeTypes.forEach(type=>visit('objectTypes', type));
       }
       return;
     }
