@@ -28,6 +28,10 @@ export const journeyCalendarReply = z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('denied') }),
   z.strictObject({ status: z.literal('unavailable') }),
 ]);
+export const journeyCalendarObservation = z.discriminatedUnion('status', [
+  journeyCalendarReply.options[0].extend({ evidence: z.enum(['pa_reported', 'synthetic', 'live_readonly']) }),
+  journeyCalendarReply.options[1], journeyCalendarReply.options[2],
+]);
 export const journeySettings = journeyCalendarRequest.extend({
   monitorUntil: time, mode: z.enum(['driving', 'walking']),
   preparationMinutes: z.number().int().min(0).max(60).default(5),
@@ -56,7 +60,7 @@ const properties = z.strictObject({
   id: z.string(), name: label, settings: journeySettings, scheduleId: z.string(),
   mapAuthority: z.string().regex(/^[a-f0-9]{64}$/), state, reason,
   checkedAt: time.nullable(), validUntil: time.nullable(), nextCheckAt: time.nullable(),
-  calendar: journeyCalendarReply.nullable(), route: mapRouteResult.nullable(), weather: weatherResult.nullable(),
+  calendar: journeyCalendarObservation.nullable(), route: mapRouteResult.nullable(), weather: weatherResult.nullable(),
   timing: journeyTiming.nullable(), reminder: journeyReminder.nullable(), reminderVersion: z.number().int().nonnegative(),
 });
 export const calendarJourney = properties;
@@ -65,7 +69,7 @@ export const journeyReadResult = z.strictObject({
   state: state.or(z.literal('expired')), reason, checkedAt: time.nullable(),
   nextCheckAt: time.nullable(), validUntil: time.nullable(), timing: journeyTiming.nullable(),
   reminder: journeyReminder.omit({ eventKey: true }).nullable(), reminderVersion: z.number().int().nonnegative(),
-  calendarEvidence: z.enum(['pa_reported', 'synthetic']).nullable(),
+  calendarEvidence: z.enum(['pa_reported', 'synthetic', 'live_readonly']).nullable(),
   routeFetchedAt: time.nullable(), weatherCondition: label.nullable(),
   destination: z.strictObject({ name: label, start: time }).nullable(),
 });

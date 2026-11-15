@@ -4,14 +4,16 @@ import { Clarification } from '../../packages/runtime/agent.js';
 import { Tasks, type Task } from '../../packages/runtime/tasks.js';
 import { DeferredExecution } from '../../packages/runtime/scheduled-actions.js';
 
+type TaskLane = 'scheduled' | 'interactive';
+
 export class Worker {
   private readonly controller = new AbortController();
   private readonly waiters = new Set<() => void>();
   private notifications = 0;
   constructor(private readonly tasks: Tasks, private readonly agent: { run(task: Task, signal: AbortSignal): Promise<unknown> }, private readonly schedules?: {promoteOne():Promise<boolean>}, private readonly scheduledRunner?: {run(task:Task,signal:AbortSignal):Promise<unknown>}) {}
-  async runOne(): Promise<boolean> {
-    await this.schedules?.promoteOne();
-    const task = await this.tasks.claim();
+  async runOne(lane?: TaskLane): Promise<boolean> {
+    if (lane !== 'interactive') await this.schedules?.promoteOne();
+    const task = await this.tasks.claim(lane);
     if (!task) return false;
     await this.tasks.db.withOwner(task.owner, () => this.execute(task));
     return true;
@@ -43,7 +45,10 @@ export class Worker {
     const consumers: Promise<void>[] = [];
     try {
       await listener.query('LISTEN eigos_tasks');
-      consumers.push(this.consume(), this.consume());
+      if (this.schedules && this.scheduledRunner) {
+        // Provider-backed scheduled Actions have a slot even when both model runs are busy.
+        consumers.push(this.consume('scheduled'), this.consume('interactive'), this.consume('interactive'));
+      } else consumers.push(this.consume(), this.consume());
       await Promise.all(consumers);
     } finally {
       this.stop();
@@ -52,11 +57,11 @@ export class Worker {
       listener.release();
     }
   }
-  private async consume() {
+  private async consume(lane?: TaskLane) {
     while (!this.controller.signal.aborted) {
       const seen = this.notifications;
-      if (await this.runOne()) continue;
-      const delay = await this.tasks.nextInboxDelay();
+      if (await this.runOne(lane)) continue;
+      const delay = lane === 'scheduled' ? 1000 : await this.tasks.nextInboxDelay();
       if (seen !== this.notifications || this.controller.signal.aborted) continue;
       await new Promise<void>(resolve => {
         const wake = () => { clearTimeout(timer); this.waiters.delete(wake); resolve(); };

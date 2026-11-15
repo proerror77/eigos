@@ -4,7 +4,7 @@ import { Effects } from '../../runtime/effects.js';
 import { digest } from '../../core/identity.js';
 import { objectRefSchema, type ObjectRef } from '../../ontology/schema.js';
 import { Database } from '../../runtime/database.js';
-import { Actions } from '../../runtime/actions.js';
+import { Actions, type CommittedEffects } from '../../runtime/actions.js';
 import { ingest } from '../../runtime/ingestion.js';
 import { Sources, type SourceProjection } from '../../runtime/sources.js';
 import { rideFunctions, sourceResultSchema, type SourceResolver } from './functions.js';
@@ -14,7 +14,7 @@ import type { OntologyDocument } from '../../ontology/schema.js';
 import type { FunctionHandler } from '../../runtime/functions.js';
 
 /** DiDi's source normalization and Object Data Funnel. It does not choose an operation. */
-export function rideCapabilities(db: Database, resolve: SourceResolver, additional: ReadonlyMap<string, FunctionHandler> = new Map(), definitions?: OntologyDocument['functionTypes'], extensions: RuntimeExtensions = {}, additionalSources: ReadonlyMap<string, SourceProjection> = new Map()) {
+export function rideCapabilities(db: Database, resolve: SourceResolver, additional: ReadonlyMap<string, FunctionHandler> = new Map(), definitions?: OntologyDocument['functionTypes'], extensions: RuntimeExtensions = {}, additionalSources: ReadonlyMap<string, SourceProjection> = new Map(), committedEffects?: CommittedEffects) {
   let sources: Sources;
   const effects=new Effects(db,extensions.effects??new Map());
   const functions = rideFunctions(resolve, new Map([
@@ -56,7 +56,7 @@ export function rideCapabilities(db: Database, resolve: SourceResolver, addition
     },
   };
   sources = new Sources(db, functions, new Map([...['DidiPlaces', 'DidiEstimates'].map(name => [name, projection] as const), ...additionalSources]));
-  return { functions, actions: new Actions(db, functions, effects), sources, describe: (model: Ontology) => {
+  return { functions, actions: new Actions(db, functions, effects, committedEffects), effects, sources, describe: (model: Ontology) => {
     effects.check(model.resolvedDocument.actionTypes.flatMap(action=>action.effects?.map(effect=>effect.handler)??[]));
     return {functions:functions.bindings(model),sources:sources.bindings(model)};
   } };

@@ -7,7 +7,7 @@ import { objectRefSchema, type ObjectRef, type Value } from '../ontology/schema.
 import { Database, type Sql } from './database.js';
 import { Objects } from './objects.js';
 import { Functions, type FunctionContext } from './functions.js';
-import { Effects } from './effects.js';
+import { Effects, type ActionEffect } from './effects.js';
 import { Scenarios } from './scenarios.js';
 import { JournalObjects, compensate, type ObjectChange, type LinkChange } from './action-journal.js';
 
@@ -17,8 +17,10 @@ const evaluate = (expression: Value, input: Record<string, unknown>): unknown =>
   for (const field of expression.path ?? []) value = value && typeof value === 'object' ? Reflect.get(value, field) : undefined;
   return value;
 };
+export type CommittedEffects = (model: PublishedOntology, owner: string, changes: readonly ObjectChange[]) => Promise<ActionEffect[]>;
 export class Actions {
-  constructor(private readonly db: Database, private readonly functions: Functions, private readonly effects?: Effects) {}
+  constructor(private readonly db: Database, private readonly functions: Functions, private readonly effects?: Effects,
+    private readonly committedEffects?: CommittedEffects) {}
   private async checkSubmission(objects: Objects, actionName: string, input: Record<string, unknown>, signal: AbortSignal) {
     const { model, access } = objects;
     for (const condition of model.action(actionName).submissionCriteria) {
@@ -100,13 +102,22 @@ export class Actions {
       else await this.db.query(
         `INSERT INTO ${this.db.schema}.actions(owner,request_id,digest,action,release,result,executor_kind,executor_id,task_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [principal.owner, requestId, fingerprint, actionName, model.release, result, actor.kind, actor.id, change.taskId ?? null], client);
+      const pendingEffects: ActionEffect[] = [];
       if(objects instanceof JournalObjects){
         const changes=await objects.changes();
         await this.db.query(`INSERT INTO ${this.db.schema}.action_changes(owner,request_id,release,action,result,objects,links) VALUES($1,$2,$3,$4,$5,$6,$7)`,[principal.owner,requestId,model.release,actionName,result,JSON.stringify(changes.objects),JSON.stringify(changes.links)],client);
+        if(this.committedEffects) pendingEffects.push(...await this.committedEffects(model, principal.owner, changes.objects));
       }
-      if (action.effects?.length && !model.scenario) await this.effects!.enqueue(client, access, model, actionName, requestId, action.effects.map(effect => ({
-        name: effect.name, handler: effect.handler, payload: Object.fromEntries(Object.entries(effect.payload).map(([name, value]) => [name, evaluate(value, input)])),
-      })));
+      if (!model.scenario) {
+        for (const effect of action.effects ?? []) pendingEffects.push({
+          name: effect.name, handler: effect.handler,
+          payload: Object.fromEntries(Object.entries(effect.payload).map(([name, value]) => [name, evaluate(value, input)])),
+        });
+        if (pendingEffects.length) {
+          if (!this.effects) throw new Error('Action effects require a configured dispatcher');
+          await this.effects.enqueue(client, access, model, actionName, requestId, pendingEffects);
+        }
+      }
       signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client);
       return result;
     });

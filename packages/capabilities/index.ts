@@ -4,6 +4,8 @@ import { flightradar24Functions } from './flight/flightradar24.js';
 import { flightFunctions } from './flight/functions.js';
 import { configuredVariFlight } from './flight/variflight.js';
 import { calendarJourneyFunctions } from './journey/functions.js';
+import { configuredJourneyCalendar } from './journey/calendar-source.js';
+import { configuredTravelNotifications } from './pa/travel-notifications.js';
 import { configuredAmap } from './amap/client.js';
 import { amapFunctions } from './amap/functions.js';
 import { resolveTaskLocation } from './location.js';
@@ -32,18 +34,20 @@ export function createCapabilities(
   extensions: RuntimeExtensions = {},
   services: ServiceResolver = unavailableServices,
   stripe: StripeSandboxResolver = configuredStripeSandbox(),
-  connections: { paotui?: string; waimai?: string; amap?: string; amapFetch?: typeof fetch; variFlight?: string; variFlightFetch?: typeof fetch; fr24?: string; fr24Entrypoint?: string } = {},
+  connections: { paotui?: string; waimai?: string; amap?: string; amapFetch?: typeof fetch; variFlight?: string; variFlightFetch?: typeof fetch;
+    fr24?: string; fr24Entrypoint?: string; calendar?: string; calendarFetch?: typeof fetch; travelPA?: string; travelPAFetch?: typeof fetch } = {},
 ) {
   let sources: Sources;
   const amap = configuredAmap(connections.amap, connections.amapFetch);
   const getFunctions = () => capabilities.functions;
+  const notifications = configuredTravelNotifications(db, getFunctions, connections.travelPA, connections.travelPAFetch);
   const handlers = new Map([
     ...schedulingFunctions(db),
     ...applicationFunctions(db),
     [registerDocumentFunction, registerSchedulePlanDocument],
     ...serviceFunctions(services, () => sources),
     ...travelFunctions(db, source, services, () => sources),
-    ...calendarJourneyFunctions(db, getFunctions, amap),
+    ...calendarJourneyFunctions(db, getFunctions, amap, configuredJourneyCalendar(connections.calendar, connections.calendarFetch)),
     ...flightFunctions(db, getFunctions, configuredVariFlight(connections.variFlight, connections.variFlightFetch)),
     ...flightradar24Functions(connections.fr24, connections.fr24Entrypoint),
     ...stripePaymentFunctions(db, stripe),
@@ -54,7 +58,9 @@ export function createCapabilities(
     ['resolveTaskLocation', resolveTaskLocation],
   ]);
   const capabilities = rideCapabilities(db, source, handlers, new Ontology(businessDefinition).resolvedDocument.functionTypes,
-    { ...extensions, functions: [localEmbeddingVersion, ...(extensions.functions ?? [])] }, serviceProjections(services));
+    { functions: [localEmbeddingVersion, ...(extensions.functions ?? [])],
+      effects: new Map([...(extensions.effects ?? []), ...notifications.handlers]) },
+    serviceProjections(services), notifications.committed);
   sources = capabilities.sources;
   return capabilities;
 }
