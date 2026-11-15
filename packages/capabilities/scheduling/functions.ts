@@ -129,7 +129,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       if (input.plan) await context.objects.read(plan);
       return context.edit(plan, async live => {
         const view=input.scenarioId?await new Scenarios(db).view(live.access,live.model,input.scenarioId,live.client):undefined;
-        const graph=view?new Objects(db,view,live.access,live.client):live;
+        const graph=view?new Objects(db,view,live.access,live.client,live.change):live;
         await graph.create(resource,{ id: resource.id, name: 'User calendar' });
         const { status: _status, ...facts } = response;
         const properties = { id: availability.id, name: 'PA calendar availability', ...facts };
@@ -141,8 +141,12 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
         const fields = { id: plan.id, name: input.title, start: input.start, end: input.end, timeZone: input.timeZone, durationMinutes: input.durationMinutes };
         if (input.plan) { const current = await graph.read(plan); await graph.edit(plan,current.revision,fields); } else await graph.create(plan,{...fields,...(graph.model.object('SchedulePlan').properties.state?{state:'prepared'}:{})});
         await graph.linkBatch([{ type:'ResourceAvailability',from:resource,to:availability },{ type:'PlanResource',from:plan,to:resource },{ type:'PlanAvailability',from:plan,to:availability }]);
-        if(input.scenarioId)await db.query(`INSERT INTO ${db.schema}.scenario_actions(scenario_id,owner,request_id,digest,action,result,requirements,input)
-          VALUES($1,$2,$3,$4,'PrepareSchedulePlan',$5,$6,$7)`,[input.scenarioId,graph.owner,context.operationId,digest({input,response}),plan,JSON.stringify(graph.access.requirements()),graph.model.action('PrepareSchedulePlan').submissionCriteria.length ? raw : null],graph.client);
+        if(input.scenarioId)await db.query(`INSERT INTO ${db.schema}.scenario_actions(scenario_id,owner,request_id,digest,action,result,requirements,input,executor_kind,executor_id,task_id)
+          VALUES($1,$2,$3,$4,'PrepareSchedulePlan',$5,$6,$7,$8,$9,$10)`,[
+          input.scenarioId,graph.owner,context.operationId,digest({input,response}),plan,JSON.stringify(graph.access.requirements()),
+          graph.model.action('PrepareSchedulePlan').submissionCriteria.length ? raw : null,
+          live.change?.executor?.kind ?? null,live.change?.executor?.id ?? null,live.change?.taskId ?? null,
+        ],graph.client);
       });
     }],
     ['findScheduleSlots', async (raw, context) => {

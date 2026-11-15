@@ -53,9 +53,14 @@ const baseRule = z.strictObject({
   workflow: z.uuid(),
   enabled: z.boolean().default(false),
 });
-const objectRule = baseRule.extend({ query: querySchema.omit({ cursor: true, limit: true, select: true }) });
+const ruleQuerySchema = querySchema.omit({ cursor: true, limit: true, select: true });
+const objectRule = baseRule.extend({ query: ruleQuerySchema });
 const processRule = baseRule.extend({ process: processRuleSchema });
-export const ruleSchema = z.union([objectRule, processRule]);
+const ruleSchema = z.union([objectRule, processRule]);
+export const saveRuleSchema = baseRule.extend({
+  query: ruleQuerySchema.optional(),
+  process: processRuleSchema.optional(),
+}).refine(rule => Boolean(rule.query) !== Boolean(rule.process), 'Select one object query or process transition condition');
 export const runWorkflowSchema = z.strictObject({
   workflow: z.uuid(),
   object: objectRefSchema,

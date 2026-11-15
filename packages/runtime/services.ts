@@ -7,7 +7,7 @@ import {
   entityHistorySchema,
 } from './entity-resolution.js';
 import { Applications, objectViewSchema, graphSchema, mapSchema } from './applications.js';
-import { Automation, workflowSchema, ruleSchema, runWorkflowSchema } from './automation.js';
+import { Automation, workflowSchema, saveRuleSchema, runWorkflowSchema } from './automation.js';
 import { processStatusSchema } from './process-automation.js';
 import {
   SemanticSearch,
@@ -480,7 +480,7 @@ export function ontologyServices(
   register(
     'save_rule',
     'Configure an object-set rule or a committed process transition rule with an optional dwell time.',
-    ruleSchema,
+    saveRuleSchema,
     true,
     async (a, input) => automation.rule(a, await active(), input),
   );
