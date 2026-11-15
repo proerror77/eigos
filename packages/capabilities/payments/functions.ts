@@ -88,7 +88,7 @@ export function stripePaymentFunctions(db: Database, resolve: StripeSandboxResol
     ['createStripeSandboxOrder', async (raw, context) => {
       stage(context);
       const { orderKey } = createSandboxOrderInput.parse(raw);
-      if (!context.directAction || !context.assertCurrent) throw new Conflict('The PA must explicitly create the sandbox order');
+      if (!context.directAction || !context.assertDispatch) throw new Conflict('The PA must explicitly create the sandbox order');
       context.objects.access.read(context.objects.model, sandboxOrderType);
       const merchant = await connector(context);
       const merchantOrderId = digest(['stripe-sandbox-order', context.principal.owner, orderKey]);
@@ -100,7 +100,7 @@ export function stripePaymentFunctions(db: Database, resolve: StripeSandboxResol
       await merchant.verifyAccount(context.signal);
       const snapshot = await operations.run(
         context.principal.owner, merchantOrderId, { orderKey, authorityId: merchant.authorityId, item: sandboxItem },
-        context.assertCurrent, async () => {
+        context.assertDispatch, async () => {
           const { checkoutUrl: _checkoutUrl, ...receipt } = await merchant.create(merchantOrderId, context.signal);
           return receipt;
         }, context.objects,

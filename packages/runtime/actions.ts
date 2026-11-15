@@ -33,6 +33,16 @@ export class Actions {
       if (allowed !== true) throw new Conflict('Action submission criteria are not satisfied');
     }
   }
+  private async checkInput(objects: Objects, name: string, input: Record<string, unknown>, signal: AbortSignal) {
+    const { model } = objects;
+    signal.throwIfAborted();
+    for (const [parameter, type] of Object.entries(model.action(name).objectParameters)) {
+      const ref = objectRefSchema.parse(input[parameter]);
+      if (!model.implements(ref.type, type)) throw new Error('Action input type does not satisfy its contract');
+      await objects.read(ref);
+    }
+    await this.checkSubmission(objects, name, input, signal);
+  }
   resolve(access: Access, model: PublishedOntology, call: ActionCall) {
     const target = call.interface;
     if (!target) return { action: call.action!, input: call.input };
@@ -57,6 +67,7 @@ export class Actions {
     }
     const fingerprint = digest({ release: model.release, action: actionName, input });
     const validateAction = (live: Objects, name: string, stagedInput: Record<string, unknown>) => this.checkSubmission(live, name, stagedInput, signal);
+    const declaredEffects: ActionEffect[] = [];
     const journal = model.scenario ? 'scenario_actions' : 'actions';
     const priorResult = (client: Sql = this.db.pool) => this.db.query(`SELECT digest,result FROM ${this.db.schema}.${journal} WHERE owner=$1 AND request_id=$2${model.scenario ? ' AND scenario_id=$3' : ''}`, [principal.owner, requestId, ...(model.scenario ? [model.scenario] : [])], client);
     const commit = (write?: (objects: Objects) => Promise<ObjectRef>) => this.db.transaction(async client => {
@@ -72,12 +83,7 @@ export class Actions {
         signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client);
         return objectRefSchema.parse(previous.rows[0].result);
       }
-      for (const [name, type] of Object.entries(action.objectParameters)) {
-        const ref = objectRefSchema.parse(input[name]);
-        if (!model.implements(ref.type, type)) throw new Error('Action input type does not satisfy its contract');
-        await objects.read(ref);
-      }
-      await this.checkSubmission(objects, actionName, input, signal);
+      await this.checkInput(objects, actionName, input, signal);
       const ref = (value: { type: string; id: Value }): ObjectRef => objectRefSchema.parse({ type: value.type, id: evaluate(value.id, input) });
       for (const rule of action.rules ?? []) {
         if (rule.op === 'addLink') await objects.link({ type: rule.link, from: ref(rule.from), to: ref(rule.to) });
@@ -102,7 +108,7 @@ export class Actions {
       else await this.db.query(
         `INSERT INTO ${this.db.schema}.actions(owner,request_id,digest,action,release,result,executor_kind,executor_id,task_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [principal.owner, requestId, fingerprint, actionName, model.release, result, actor.kind, actor.id, change.taskId ?? null], client);
-      const pendingEffects: ActionEffect[] = [];
+      const pendingEffects = [...declaredEffects];
       if(objects instanceof JournalObjects){
         const changes=await objects.changes();
         await this.db.query(`INSERT INTO ${this.db.schema}.action_changes(owner,request_id,release,action,result,objects,links) VALUES($1,$2,$3,$4,$5,$6,$7)`,[principal.owner,requestId,model.release,actionName,result,JSON.stringify(changes.objects),JSON.stringify(changes.links)],client);
@@ -127,12 +133,38 @@ export class Actions {
       if (prior.rows[0].digest !== fingerprint) throw new Conflict('Request ID already used with different action input');
       return commit();
     }
+    // Function preparation can perform authorized source reads. Check business
+    // admission before invoking it, and recheck under the eventual write lock.
+    if (action.submissionCriteria.length || Object.keys(action.objectParameters).length) {
+      await this.db.transaction(async client => {
+        await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', [], client);
+        await access.refresh(client);
+        await this.checkInput(new Objects(this.db, model, access, client), actionName, input, signal);
+      });
+    }
     let staged: { result: ObjectRef; write: (objects: Objects) => Promise<void> } | undefined;
     const result = await this.functions.invoke(model, action.function, input, {
       principal, objects: new Objects(this.db, model, access), signal, operationId: requestId, taskId: execution?.task.id, execution,
       directAction: !beforeCommit && !execution,
       validateScenarioAction: validateAction,
       assertCurrent: async (client = this.db.pool) => { signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client); },
+      assertDispatch: async client => {
+        if (model.scenario) throw new Conflict('External dispatch requires a formal Action');
+        const objects = new Objects(this.db, model, access, client);
+        await beforeCommit?.(client);
+        await objects.lockWrites();
+        await access.refresh(client);
+        await this.checkInput(objects, actionName, input, signal);
+      },
+      deferEffect: effect => {
+        if (model.scenario) throw new Conflict('External effects require a formal Action');
+        if (!this.effects) throw new Conflict('Action effects require a configured dispatcher');
+        if (declaredEffects.length >= 20 || declaredEffects.some(item => item.name === effect.name)) {
+          throw new Conflict('Action effect intents require distinct names and a bounded count');
+        }
+        this.effects.check([effect.handler]);
+        declaredEffects.push(structuredClone(effect));
+      },
       edit: (result, write) => {
         if (staged) throw new Error('An edit Function stages one Action');
         staged = { result: objectRefSchema.parse(result), write }; return staged.result;

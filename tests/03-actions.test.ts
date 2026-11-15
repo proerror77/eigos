@@ -6,6 +6,8 @@ import { fixture, principal, route } from './fixture.js';
 import { Ontology } from '../packages/ontology/model.js';
 import { Functions } from '../packages/runtime/functions.js';
 import { Actions } from '../packages/runtime/actions.js';
+import { createCapabilities } from '../packages/capabilities/index.js';
+import { ExternalOperations } from '../packages/runtime/external-operations.js';
 
 test('edit Functions require an Action and source permissions are checked before provider access', async () => {
   const f = await fixture();
@@ -50,6 +52,83 @@ test('an invalid edit Function return cannot commit its staged writes', async ()
     await setGrants(f.db, principal.owner, memberGrants(model)); await f.access.refresh();
     await assert.rejects(new Actions(f.db, functions).apply(f.access, model, 'BrokenAction', {}, 'invalid-return'));
     await assert.rejects(new Objects(f.db, model, f.access).read(ref));
+  } finally { await f.close(); }
+});
+
+test('function Actions check admission before preparation and dispatch intents only after a committed receipt', async () => {
+  const f = await fixture();
+  try {
+    const input = { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false };
+    const reference = { type: 'object', properties: { type: { type: 'string' }, id: { type: 'string' } }, required: ['type', 'id'], additionalProperties: false };
+    const criterion = {
+      apiName: 'AllowNotice', description: 'Test the current notice permission', version: '1',
+      parameters: { type: 'object', properties: {}, additionalProperties: false }, returns: { type: 'boolean' }, dependencies: {},
+    };
+    const edit = {
+      apiName: 'PrepareNotice', description: 'Stage a route and its notice intent', version: '1',
+      parameters: input, returns: reference, edits: true, dependencies: { objectTypes: ['Route'] },
+    };
+    const document = structuredClone(f.model.document);
+    document.functionTypes.push(criterion, edit);
+    document.actionTypes.push({
+      apiName: 'CommitNotice', description: 'Commit a guarded notice', parameters: input, objectParameters: {},
+      submissionCriteria: [{ function: criterion.apiName, arguments: {} }], function: edit.apiName,
+    });
+    let allowed = false, preparations = 0;
+    const sent: string[] = [];
+    const capabilities = createCapabilities(f.db, f.source, {
+      effects: new Map([['Notify', async (payload) => { sent.push(String(payload.id)); }]]),
+      functions: [
+        { definition: criterion, implementationId: 'allow-notice-v1', handler: async () => allowed },
+        { definition: edit, implementationId: 'prepare-notice-v1', handler: async (args, context) => {
+          preparations++;
+          const ref = { type: 'Route', id: String(args.id) };
+          if (ref.id === 'revoked-before-provider') {
+            // Simulate a condition changing while the Action's preparation was in flight.
+            allowed = false;
+            await new ExternalOperations(f.db).run(context.principal.owner, ref.id, { ref }, context.assertDispatch!, async () => {
+              sent.push('unexpected synchronous send');
+              return { accepted: true };
+            });
+          }
+          context.deferEffect!({ name: 'Notice', handler: 'Notify', payload: { id: ref.id } });
+          return context.edit!(ref, graph => graph.create(ref, { id: ref.id, name: 'Proposed route' }));
+        } },
+      ],
+    });
+    const model = await f.metadata.publish(document, capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, memberGrants(model));
+    const access = await Access.load(f.db, principal), graph = new Objects(f.db, model, access);
+    const apply = (id: string, beforeCommit?: Parameters<Actions['apply']>[5]) =>
+      capabilities.actions.apply(access, model, 'CommitNotice', { id }, id, beforeCommit);
+
+    await assert.rejects(apply('denied'), /submission criteria/);
+    assert.equal(preparations, 0);
+    assert.equal(await capabilities.effects.runOne(), false);
+    allowed = true;
+    await assert.rejects(apply('revoked-before-provider'), /submission criteria/);
+    assert.equal(await new ExternalOperations(f.db).inspect(principal.owner, 'revoked-before-provider'), null);
+    assert.deepEqual(sent, []);
+    allowed = true;
+    let fences = 0;
+    await assert.rejects(apply('rolled-back-notice', async () => {
+      if (++fences === 2) throw new Error('Final claim expired');
+    }), /Final claim expired/);
+    await assert.rejects(graph.read({ type: 'Route', id: 'rolled-back-notice' }), /unavailable/);
+    assert.equal((await capabilities.effects.status(access, 'rolled-back-notice')).length, 0);
+    assert.equal(await capabilities.effects.runOne(), false);
+    assert.deepEqual(sent, []);
+
+    await apply('committed-notice');
+    await apply('committed-notice');
+    const evidence = await f.db.query(`SELECT effect.state FROM ${f.db.schema}.action_effects effect
+      JOIN ${f.db.schema}.actions committed USING(owner,request_id) WHERE effect.request_id='committed-notice'`);
+    assert.deepEqual(evidence.rows, [{ state: 'pending' }]);
+    assert.deepEqual(sent, []);
+    assert.equal(await capabilities.effects.runOne(), true);
+    assert.equal(await capabilities.effects.runOne(), false);
+    assert.deepEqual(sent, ['committed-notice']);
+    assert.equal(preparations, 3);
   } finally { await f.close(); }
 });
 

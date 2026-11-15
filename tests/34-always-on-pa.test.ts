@@ -7,6 +7,8 @@ import { test } from 'node:test';
 import { Worker } from '../apps/worker/worker.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import { Access } from '../packages/runtime/access.js';
+import { Database } from '../packages/runtime/database.js';
+import { assertOwnerIsolation, installOwnerIsolation } from '../packages/runtime/owner-isolation.js';
 import { ScheduledActions, ScheduledActionRunner } from '../packages/runtime/scheduled-actions.js';
 import { fakeAmap, testConnection } from './amap-fixture.js';
 import { fixture, principal } from './fixture.js';
@@ -19,13 +21,15 @@ async function eventually(predicate: () => Promise<boolean>) {
   assert.fail('Server worker did not process the queued action');
 }
 
-test('remote EIGOS processes a due journey while both interactive model slots are busy and delivers only its current typed notice', async () => {
+test('EIGOS processes a due journey while both model slots are busy and a restricted dispatcher only sends its own current notice', async () => {
   const f = await fixture(), folder = await mkdtemp(join(tmpdir(), 'eigos-travel-pa-'));
+  const role = 'eigos_reminder_role_' + f.schema.slice(-28);
   let finish!: () => void, markStarted!: () => void;
   const interactive = new Promise<void>(resolve => { finish = resolve; });
   const started = new Promise<void>(resolve => { markStarted = resolve; });
   let running: Promise<void> | undefined;
   let worker: Worker | undefined;
+  let dispatcher: Database | undefined;
   try {
     const calendar = join(folder, 'calendar.json'), travelPA = join(folder, 'recipient.json'), keyFile = join(folder, 'recipient.key');
     await writeFile(calendar, JSON.stringify({ owner: principal.owner, calendarIds: ['selected'], clientId: 'test-client',
@@ -39,7 +43,7 @@ test('remote EIGOS processes a due journey while both interactive model slots ar
       mode:'driving', monitorUntil: at(120) };
     let cancelled = false, destinationIn = 60, tokenCalls = 0, eventReads = 0, lost = false;
     const posted: { headers: Headers; body: Record<string, any> }[] = [];
-    const capabilities = createCapabilities(f.db, f.source, {}, undefined, undefined, {
+    const connections: NonNullable<Parameters<typeof createCapabilities>[5]> = {
       amap: await testConnection(folder), amapFetch: fakeAmap([], {durationSeconds:1500, condition:'晴'}),
       calendar, calendarFetch: async (target, init) => {
         const url = new URL(String(target));
@@ -66,7 +70,19 @@ test('remote EIGOS processes a due journey while both interactive model slots ar
         if (lost) throw new Error('Network reset after dispatch');
         return Response.json({success:true,runUuid:'8e690fdf-c2c8-4ff4-b930-a889c63c181a'});
       },
-    });
+    };
+    const capabilities = createCapabilities(f.db, f.source, {}, undefined, undefined, connections);
+    await f.db.query(`CREATE ROLE "${role}" LOGIN PASSWORD 'synthetic-only';
+      GRANT USAGE ON SCHEMA ${f.db.schema} TO "${role}";
+      GRANT SELECT ON ALL TABLES IN SCHEMA ${f.db.schema} TO "${role}";
+      GRANT UPDATE ON ${f.db.schema}.action_effects TO "${role}";
+      GRANT INSERT,UPDATE ON ${f.db.schema}.external_operations TO "${role}";`);
+    await installOwnerIsolation(f.db);
+    const dbUrl = new URL(process.env.EIGOS_TEST_DATABASE_URL!);
+    dbUrl.username = role;
+    const restricted = dispatcher = new Database(dbUrl.href, f.schema, f.db.runtimeId, undefined, true);
+    await assertOwnerIsolation(restricted);
+    const delivery = createCapabilities(restricted, f.source, {}, undefined, undefined, connections).effects;
     const schedules = new ScheduledActions(f.db, f.metadata);
     const runner = new ScheduledActionRunner(f.db, f.metadata, f.tasks, capabilities.actions);
     let activeModelRuns = 0;
@@ -106,7 +122,7 @@ test('remote EIGOS processes a due journey while both interactive model slots ar
     await eventually(async () => (await effectStatus()).length === 1);
     const saved = (await effectStatus())[0]!;
     assert.equal(saved.payload.object.type,'CalendarJourney');
-    await capabilities.effects.runOne();
+    await delivery.runOne();
     assert.equal(posted.length,1);
     assert.deepEqual(posted[0]!.body.object,ref);
     assert.equal(posted[0]!.body.version,2);
@@ -126,7 +142,7 @@ test('remote EIGOS processes a due journey while both interactive model slots ar
     await checked(2);
     await makeDue();
     await eventually(async () => (await effectStatus()).length === 2);
-    await capabilities.effects.runOne();
+    await delivery.runOne();
     assert.equal(posted[1]!.body.operation,'withdraw');
     assert.equal(posted[1]!.body.version,3);
     assert.equal(posted[1]!.body.calendar.reminder,null);
@@ -140,27 +156,43 @@ test('remote EIGOS processes a due journey while both interactive model slots ar
     await checked(4);
     await makeDue();
     await eventually(async () => (await effectStatus()).length === 4);
-    await capabilities.effects.runOne();
+    await delivery.runOne();
     assert.equal(posted.length,2);
     assert.equal((await effectStatus())[2]!.state,'canceled');
     lost = true;
-    await capabilities.effects.runOne();
+    await delivery.runOne();
     assert.equal(posted[2]!.body.operation,'withdraw');
     assert.equal(posted[2]!.body.version,5);
     assert.equal(posted[2]!.body.calendar.reminder,null);
     const failed = (await effectStatus())[3]!;
     assert.equal(failed.state,'failed');
     await capabilities.effects.retry(await access(),failed.id);
-    await capabilities.effects.runOne();
+    await delivery.runOne();
     assert.equal(posted.length,3);
     assert.equal((await effectStatus())[3]!.state,'failed');
     assert.equal(eventReads,10);
+
+    const foreignId = 'only-visible-to-another-account';
+    await f.db.query(`INSERT INTO ${f.db.schema}.objects(projection,owner,type,id,revision,properties)
+      SELECT projection,'foreign-account',type,$4,revision,jsonb_set(properties,'{id}',to_jsonb($4::text))
+      FROM ${f.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type='CalendarJourney' AND id=$3`,
+      [f.model.projection, principal.owner, ref.id, foreignId]);
+    await f.db.query(`INSERT INTO ${f.db.schema}.action_effects(id,owner,request_id,release,ontology,action,name,handler,payload,requirements,scopes)
+      SELECT 'synthetic-foreign-reference',owner,request_id,release,ontology,action,'ForeignReference',handler,
+        jsonb_set(payload,'{object,id}',to_jsonb($2::text)), '[]', scopes
+      FROM ${f.db.schema}.action_effects WHERE id=$1`, [saved.id, foreignId]);
+    assert.equal(await delivery.runOne(), true);
+    assert.equal((await effectStatus()).find(effect => effect.id === 'synthetic-foreign-reference')?.state, 'failed');
+    assert.equal(posted.length, 3);
+    assert.equal((await restricted.query(`SELECT 1 FROM ${restricted.schema}.objects`)).rowCount, 0);
     finish();
     await eventually(async () => (await interactiveStates()).every(state => state === 'completed'));
   } finally {
     finish();
     worker?.stop();
     await running;
+    await dispatcher?.close();
+    await f.db.query(`DROP OWNED BY "${role}"; DROP ROLE "${role}";`).catch(() => {});
     await rm(folder,{recursive:true,force:true});
     await f.close();
   }

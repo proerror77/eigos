@@ -5,6 +5,7 @@ import type { Tasks, Task } from './tasks.js';
 import type { ObjectRef, OntologyDocument } from '../ontology/schema.js';
 import type { PublishedOntology } from './metadata.js';
 import type { Sql } from './database.js';
+import type { ActionEffect } from './effects.js';
 
 export interface FunctionContext {
   principal: Principal; objects: Pick<Objects, 'model' | 'access' | 'read' | 'query' | 'follow' | 'matchesSource'>; signal: AbortSignal; taskId?: string;
@@ -13,6 +14,10 @@ export interface FunctionContext {
   directAction?: boolean;
   validateScenarioAction?: (live: Objects, action: string, input: Record<string, unknown>) => Promise<void>;
   assertCurrent?: (client?: Sql) => Promise<void>;
+  /** An existing provider operation must persist its dispatch claim in this transaction. */
+  assertDispatch?: (client: Sql) => Promise<void>;
+  /** Queue a declared effect with the Action's eventual atomic commit. */
+  deferEffect?: (effect: ActionEffect) => void;
   edit?: (result: ObjectRef, write: (objects: Objects) => Promise<void>) => ObjectRef;
 }
 export type FunctionHandler = (input: Record<string, unknown>, context: FunctionContext) => unknown | Promise<unknown>;
@@ -63,7 +68,9 @@ export class Functions {
     if (definition.source) { await access.refresh(); access.source(model, definition.source); }
     context.signal.throwIfAborted();
     const parameters = validator(definition.parameters).parse(input) as Record<string, unknown>;
-    const output = await entry.handler(parameters, definition.edits ? context : { ...context, edit: undefined, validateScenarioAction: undefined });
+    const output = await entry.handler(parameters, definition.edits ? context : {
+      ...context, edit: undefined, validateScenarioAction: undefined, assertDispatch: undefined, deferEffect: undefined,
+    });
     context.signal.throwIfAborted();
     await access.refresh();
     return validator(definition.returns).parse(output);

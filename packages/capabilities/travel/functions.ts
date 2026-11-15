@@ -677,6 +677,8 @@ export function travelFunctions(
         call.scheduleId,
         scope,
         async (client) => {
+          if (!context.assertDispatch) throw new Conflict('Ride dispatch requires a committed Action intent');
+          await context.assertDispatch(client);
           await update(new Objects(db, context.objects.model, context.objects.access, client));
           await guard();
         },
