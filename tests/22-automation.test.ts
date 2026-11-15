@@ -450,12 +450,15 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const logs = document.objectTypes.flatMap(type => processLogTarget(model, type.apiName) ?? []);
   const addedLogs = logs.filter(log => addedTypes.has(log.objectType));
   const addedActions = new Set(laterDomains.flatMap(domain => domain.actionTypes.map(action => action.apiName)));
+  addedActions.add('StageDiningActivity');
   const addedFunctions = new Set([
     ...laterDomains.flatMap(domain => domain.functionTypes), ...deliveryFunctions, ...locationFunctions, ...mapFunctions, flightPositionFunction,
   ].map(fn => fn.apiName));
+  for (const name of ['stageDiningActivity', 'searchRestaurantNotes', 'readWeatherHistory', 'readDiningAvailability']) addedFunctions.add(name);
   const v9Definition = structuredClone(document);
   v9Definition.version = '9';
   v9Definition.objectTypes = v9Definition.objectTypes.filter(type => !addedTypes.has(type.apiName) && !addedLogs.some(log => log.type === type.apiName));
+  delete v9Definition.objectTypes.find(type => type.apiName === 'ScheduledActivity')!.properties.dining;
   v9Definition.linkTypes = v9Definition.linkTypes.filter(type =>
     !addedLogs.some(log => log.link === type.apiName) && !documentDefinition.linkTypes.some(link => link.apiName === type.apiName));
   v9Definition.actionTypes = v9Definition.actionTypes.filter(action => !addedActions.has(action.apiName));
