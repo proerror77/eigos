@@ -3,7 +3,7 @@ import { type ObjectRef } from '../../ontology/schema.js';
 import { diningEvidence, diningSource } from '../../ontology/dining.js';
 import { diningProof } from '../dining/research.js';
 import type { z } from 'zod';
-import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
+import { withScenarioPARead, type FunctionContext, type FunctionHandler } from '../../runtime/functions.js';
 import type { Database } from '../../runtime/database.js';
 import { Scenarios } from '../../runtime/scenarios.js';
 import { PARequests } from '../../runtime/pa.js';
@@ -156,7 +156,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
     });
   };
   return new Map<string, FunctionHandler>([
-    ['prepareSchedulePlan', async (raw, context) => {
+    ['prepareSchedulePlan', withScenarioPARead(async (raw, context) => {
       const input = planInputSchema.parse(raw); zone(input.timeZone);
       if(input.plan&&!input.scenarioId)throw new Conflict('Replanning an existing plan requires a scenarioId');
       if(input.scenarioId&&!input.plan)throw new Conflict('Scenario preparation requires an existing plan');
@@ -209,11 +209,16 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
           if(digest(old.properties)!==digest(properties))await graph.edit(availability,old.revision,properties);
         } else await graph.create(availability,properties);
         const fields = { id: plan.id, name: input.title, start: input.start, end: input.end, timeZone: input.timeZone, durationMinutes: input.durationMinutes };
-        if (input.plan) { const current = await graph.read(plan); await graph.edit(plan,current.revision,fields); } else await graph.create(plan,{...fields,...(graph.model.object('SchedulePlan').properties.state?{state:'prepared'}:{})});
+        if (input.plan) {
+          const current = await graph.read(plan);
+          // The Workflow's reviewed delta must include the final confirmation.
+          const confirm = context.execution?.task.cognitive_context && graph.model.object('SchedulePlan').properties.state;
+          await graph.edit(plan, current.revision, { ...fields, ...(confirm ? { state: 'confirmed' } : {}) });
+        } else await graph.create(plan,{...fields,...(graph.model.object('SchedulePlan').properties.state?{state:'prepared'}:{})});
         await graph.linkBatch([{ type:'ResourceAvailability',from:resource,to:availability },{ type:'PlanResource',from:plan,to:resource },{ type:'PlanAvailability',from:plan,to:availability }]);
         if(view)await recordScenarioAction(graph,'PrepareSchedulePlan',raw,plan,context.operationId!);
       });
-    }],
+    })],
     ['findScheduleSlots', async (raw, context) => {
       const input = searchSlotsSchema.parse(raw), state = await readPlan(context.objects,input.plan);
       if (input.ignoreActivity && !state.activities.some(a => same(a.ref,input.ignoreActivity!))) throw new Conflict('Only an activity in this plan can be excluded for rescheduling');
@@ -257,7 +262,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       if (!context.edit || context.execution) throw new Conflict('The PA must apply the reviewed merge Action explicitly');
       return context.edit(input.plan,async graph=>{
         const serviceLinks=[...graph.model.objects.keys()].filter(type=>graph.model.implements(type,'ServiceOffering')).map(type=>graph.model.navigation(type,'plans','ServiceOffering').link);
-        await new Scenarios(db).mergeInto(graph,input.scenarioId,input.revision,{objects:['ScheduledActivity','SchedulePlan','CalendarAvailability','EventTrip'],links:['ActivityPlan','ActivityResource','ActivityDependency','PlanResource','PlanAvailability','ResourceAvailability','TripPlan','TripEvent','TripTravel','TripActivities',...serviceLinks],validateAction:context.validateScenarioAction,validate:async(view,touched,links)=>{
+        await new Scenarios(db).mergeInto(graph,input.scenarioId,input.revision,{objects:['ScheduledActivity','SchedulePlan','ScheduleResource','CalendarAvailability','EventTrip'],links:['ActivityPlan','ActivityResource','ActivityDependency','PlanResource','PlanAvailability','ResourceAvailability','TripPlan','TripEvent','TripTravel','TripActivities',...serviceLinks],validateAction:context.validateScenarioAction,validate:async(view,touched,links)=>{
           if(links.some(link=>link.to.type==='SchedulePlan'&&!same(link.to,input.plan)))throw new Conflict('Scenario contains service links outside the selected plan');
           for(const item of touched){
             if(view.model.implements(item.ref.type,'ServiceOffering')){await currentService(view,item.ref);continue;}

@@ -47,6 +47,22 @@ export interface ScenarioInspection extends ScenarioInfo {
 export interface ScenarioReview extends Pick<ScenarioInspection, 'id' | 'name' | 'revision' | 'objects' | 'links'> {
   conflicts: boolean;
   snapshot: string;
+  commit?: {
+    action: string;
+    input: Record<string, unknown>;
+    effects: { name: string; handler: string; payload: Record<string, unknown> }[];
+  };
+  evidence?: { ref: ObjectRef; revision: number }[];
+  evidenceVersion?: string;
+  evidenceChanged?: boolean;
+}
+export interface ScenarioReviewItem {
+  id: string;
+  name: string;
+  revision: number;
+  conflicts: boolean;
+  evidenceChanged?: boolean;
+  approved: boolean;
 }
 export interface ScenarioInput {
   requestId: string;
@@ -128,6 +144,9 @@ export class OntologyClient {
       signal,
     );
     return this.scenario(result.id, input.sessionId);
+  }
+  pendingScenarioReviews(page = 1, signal?: AbortSignal) {
+    return this.service<{ items: ScenarioReviewItem[]; nextPage?: number }>('pending_scenario_reviews', { page }, signal);
   }
   scenario(id: string, sessionId?: string) {
     return new ScenarioClient(this, id, sessionId);

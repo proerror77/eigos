@@ -20,7 +20,10 @@ export interface FunctionContext {
   deferEffect?: (effect: ActionEffect) => void;
   edit?: (result: ObjectRef, write: (objects: Objects) => Promise<void>) => ObjectRef;
 }
-export type FunctionHandler = (input: Record<string, unknown>, context: FunctionContext) => unknown | Promise<unknown>;
+export type FunctionHandler = ((input: Record<string, unknown>, context: FunctionContext) => unknown | Promise<unknown>)
+  & { scenarioPARead?: true };
+export const withScenarioPARead = (handler: FunctionHandler): FunctionHandler =>
+  Object.assign(handler, { scenarioPARead: true as const });
 type Definition = OntologyDocument['functionTypes'][number];
 export interface VersionedFunction {
   definition: Definition & { version: string };
@@ -63,7 +66,9 @@ export class Functions {
     const definition = model.functions.get(name), entry = definition && this.registered.get(key(definition));
     if (!definition || !entry) throw new Error(`Function is unavailable: ${name}`);
     if ((!definition.version && model.runtimeId !== access.runtimeId) || model.bindings.functions[name] !== entry.binding || contract(definition) !== entry.contract) throw new Error('Historical Function implementation is unavailable in this runtime');
-    if (model.scenario && definition.source) throw new Error('Read external sources before opening a scenario; scenario Functions only use Ontology data');
+    if (model.scenario && definition.source && !(entry.handler.scenarioPARead && definition.edits && context.edit &&
+      context.execution?.task.cognitive_context?.scenarioId === model.scenario))
+      throw new Error('Read external sources before opening a scenario; scenario Functions only use Ontology data');
     if (definition.edits && !context.edit) throw new Error('Ontology edit Functions must be invoked through an Action');
     if (definition.source) { await access.refresh(); access.source(model, definition.source); }
     context.signal.throwIfAborted();
