@@ -4,6 +4,7 @@ import {initializeSemantic} from './semantic.js';
 import {initializeApplications} from './applications.js';
 import {initializeAutomation} from './automation.js';
 import {initializeScenarioLifecycle} from './scenarios.js';
+import { initializeMachineryStates } from './machinery-state.js';
 import {initializeActionUndo} from './action-journal.js';
 import { initializeObjectSets } from './object-sets.js';
 import { initializeGovernance } from './governance.js';
@@ -205,6 +206,7 @@ export class Database {
     await initializeApplications(this);
     await initializeAutomation(this);
     await initializeScenarioLifecycle(this);
+    await initializeMachineryStates(this);
     await initializeActionUndo(this);
     await initializeSecurity(this);
     await initializeObjectSets(this);

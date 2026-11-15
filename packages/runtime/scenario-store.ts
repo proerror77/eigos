@@ -30,11 +30,12 @@ export async function checkScenario(db: Database, model: PublishedOntology, owne
 }
 
 /** Changed links shadow competing live single-valued links in the view. Merge checks the live links separately. */
-export function viewTables(db: Database, model: PublishedOntology, owner: string, values: unknown[], types: readonly string[] = []) {
+export function viewTables(db: Database, model: PublishedOntology, owner: string, values: unknown[], types: readonly string[] = [], inline = false) {
   if (!model.scenario) return processLogTables(db,model,owner,values,{ prefix: '', objects: `${db.schema}.objects`, links: `${db.schema}.links` },types);
   values.push(model.scenario, model.projection, owner);
   const scenario = '$' + (values.length - 2), projection = '$' + (values.length - 1), actor = '$' + values.length;
-  return processLogTables(db,model,owner,values,{ objects: 'view_objects', links: 'view_links', prefix: `WITH view_objects AS (
+  const inlineView = inline ? 'NOT MATERIALIZED ' : '';
+  return processLogTables(db,model,owner,values,{ objects: 'view_objects', links: 'view_links', prefix: `WITH view_objects AS ${inlineView}(
     SELECT o.projection,o.owner,o.type,o.id,o.revision,o.properties FROM ${db.schema}.objects o WHERE o.projection=${projection} AND o.owner=${actor}
       AND NOT EXISTS(SELECT 1 FROM ${db.schema}.scenario_objects d WHERE d.scenario_id=${scenario} AND d.owner=o.owner AND d.type=o.type AND d.id=o.id)
     UNION ALL SELECT ${projection}::text AS projection,d.owner,d.type,d.id,d.revision,d.properties FROM ${db.schema}.scenario_objects d
@@ -42,7 +43,7 @@ export function viewTables(db: Database, model: PublishedOntology, owner: string
   ), link_deltas AS (
     SELECT d.* FROM ${db.schema}.scenario_links d
     WHERE d.scenario_id=${scenario} AND d.owner=${actor} AND (NOT d.removed) IS DISTINCT FROM d.base_present
-  ), view_links AS (
+  ), view_links AS ${inlineView}(
     SELECT l.projection,l.owner,l.type,l.from_type,l.from_id,l.to_type,l.to_id,l.single_from,l.single_to FROM ${db.schema}.links l WHERE l.projection=${projection} AND l.owner=${actor}
       AND NOT EXISTS(
         SELECT 1 FROM link_deltas d
