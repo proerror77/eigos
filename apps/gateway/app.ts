@@ -123,7 +123,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const result = await capabilities.actions.complete(
       access, model, selected, input.requestId, input.read, undefined, AbortSignal.timeout(30000),
     );
-    if (!await access.canReturn(access.requirements())) throw new Error('Result permissions changed');
+    if (!await access.canReturn(access.dataRequirements())) throw new Error('Result permissions changed');
     return result;
   };
   const scenarioCreate = async (p: Principal, raw: unknown) => { requireScope(p,'ontology:write'); const {ontology,...input}=scenarioCreateInput.parse(raw);return scenarios.create(await Access.load(db,p),await metadata.active(ontology),input); };

@@ -76,7 +76,7 @@ test('MCP completes a published Interface Action and verifies its result in one 
     };
     const revoked = await invoke(input);
     assert(revoked.isError);
-    assert.match((revoked.content as { text: string }[])[0]!.text, /Result permissions changed/);
+    assert.match((revoked.content as { text: string }[])[0]!.text, /Permission changed during execution/);
     assert.equal(f.provider.calls.length, 3);
     await setGrants(f.db, principal.owner, grants);
     f.provider.flags.ambiguous = true;
