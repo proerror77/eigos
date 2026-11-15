@@ -54,6 +54,18 @@ function withinLandmark(place: ObjectData, landmark: ObjectData) {
   return Math.hypot(east, lat - other.lat) * 111_200 <= 800;
 }
 
+function embeddedVenue(place: ObjectData, venues: ObjectData[], city: string | undefined) {
+  const segments = String(place.properties.name).split(/[·・|]/u);
+  if (segments.length < 2) return false;
+  const namedVenue = siteName(segments[segments.length - 1], city);
+  const streetNumber = (item: ObjectData) => siteName(item.properties.address, city).match(/^.+?\d+(?:弄|号)/u)?.[0];
+  const address = streetNumber(place);
+  // A shop may include its parent venue after a separator. Suppress that
+  // incidental match only when the source also names the parent at that address.
+  return Boolean(namedVenue && address && venues.some(other => other !== place &&
+    siteName(other.properties.name, city) === namedVenue && streetNumber(other) === address));
+}
+
 async function resolvePlaces(
   input: Record<string, unknown>, context: FunctionContext, landmarks: LandmarkReceipts = {}, city?: string,
 ): Promise<Resolution> {
@@ -87,8 +99,10 @@ async function resolvePlaces(
       }
       return name ? matchName(String(item.properties.name)) === name : Boolean(amendment?.address);
     });
-    if (matches.length === 1) return { selected: matches[0]!.ref, candidates: matches };
-    return { candidates: matches.length ? matches : candidates.items };
+    const venues = hint && !choice && !amendment?.name
+      ? matches.filter(place => !embeddedVenue(place, matches, city)) : matches;
+    if (venues.length === 1) return { selected: venues[0]!.ref, candidates: venues };
+    return { candidates: venues.length ? venues : candidates.items };
   };
   const [origin, destination] = await Promise.all([find('origin'), find('destination')]);
   return origin.selected && destination.selected ? { status: 'resolved', origin: origin.selected, destination: destination.selected }

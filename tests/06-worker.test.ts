@@ -234,6 +234,11 @@ test('a landmark resolves a shortened venue name against its own supplier eviden
   const f = await fixture();
   try {
     f.provider.flags.placeName = name => name === '太古里' ? '前滩太古里' : name;
+    f.provider.flags.placeAddress = name => name === '太古里' ? '浦东新区东育路500弄前滩太古里' : name;
+    f.provider.flags.placeAlternatives = (name, place) => name === '太古里'
+      ? [{ ...place, display_name: '华为旗舰店·上海前滩太古里', address_all: '浦东新区东育路500弄1号商铺',
+        location: { ...place.location, lat: place.location.lat + 0.001 } }]
+      : [];
     const task = await f.tasks.submit(principal, { requestId: 'landmark-quote', message: '只询价',
       route: { ...route, destination: '太古里' } });
     await f.worker.runOne();
