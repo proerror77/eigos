@@ -15,10 +15,13 @@ import type { Functions } from '../../runtime/functions.js';
 import { Metadata } from '../../runtime/metadata.js';
 import { Objects } from '../../runtime/objects.js';
 
+const travelObjects = [journeyType, flightWatchType, rideWatchType] as const;
 const target = z.strictObject({
   owner: z.string().min(1).max(200),
   endpoint: z.string().trim().regex(/^https:\/\/api2\.cursor\.sh\/automations\/webhook\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i),
   keyFile: z.string().min(1).max(1024).refine(isAbsolute),
+  keyHeader: z.enum(['Authorization', 'X-Automation-Key']).optional(),
+  objectTypes: z.array(z.enum(travelObjects)).min(1).optional(),
 });
 const request = z.strictObject({
   object: objectRefSchema,
@@ -81,7 +84,8 @@ export function configuredTravelNotifications(
     });
     if (connection?.owner !== owner) return [];
     const recipient = digest(connection);
-    return notices.map(notice => ({
+    return notices.filter(notice => !connection.objectTypes ||
+      connection.objectTypes.some(type => type === notice.object.type)).map(notice => ({
       name: 'Travel' + digest(notice), handler: handlerName,
       payload: request.parse({ ...notice, recipient }),
     }));
@@ -90,7 +94,8 @@ export function configuredTravelNotifications(
   const dispatch: EffectHandler = async (raw, { principal, idempotencyKey, signal }) => {
     const job = request.parse(raw), connection = await readTarget(targetPath);
     if (connection.owner !== principal.owner || digest(connection) !== job.recipient) return 'canceled';
-    if (job.object.type !== journeyType && job.object.type !== flightWatchType && job.object.type !== rideWatchType) return 'canceled';
+    if (!travelObjects.some(type => type === job.object.type) ||
+      connection.objectTypes && !connection.objectTypes.some(type => type === job.object.type)) return 'canceled';
 
     const model = await metadata.active(), access = await Access.load(db, principal);
     const objects = new Objects(db, model, access);
@@ -99,11 +104,12 @@ export function configuredTravelNotifications(
     const fn = calendar ? 'readCalendarJourney' : rideWatch ? 'readDidiRideWatch' : 'readFlightWatch';
     const reply = await getFunctions().invoke(model, fn,
       calendar ? { journey: job.object } : { watch: job.object }, context);
-    if (!await access.canReturn(access.dataRequirements()))
-      throw new Conflict('Travel reminder permissions changed');
     const journey = calendar ? journeyReadResult.parse(reply) : null;
     const ride = rideWatch ? rideWatchRead.parse(reply) : null;
     const flight = !calendar && !rideWatch ? flightWatchRead.parse(reply) : null;
+    const sandbox = ride !== null && (await objects.read(ride.order)).properties.evidence === 'provider_mock';
+    if (!await access.canReturn(access.dataRequirements()))
+      throw new Conflict('Travel reminder permissions changed');
     const version = journey?.reminderVersion ?? ride?.arrivalVersion ?? flight!.alertVersion;
     const state = journey?.state ?? ride?.state ?? flight!.state;
     const reminder = journey?.reminder?.state === 'scheduled' ? null : journey?.reminder;
@@ -120,8 +126,10 @@ export function configuredTravelNotifications(
       const car = [ride.driver?.carModel, ride.driver?.carPlate].filter(Boolean).join(' ');
       text = '滴滴司机已到达上车点。' + (car ? '车辆信息：' + car + '。' : '');
     }
+    if (sandbox) text = '【滴滴沙箱】' + text;
     const message = {
       type: 'travel_reminder', operation: job.operation, idempotencyKey,
+      ...(sandbox ? { sandbox: true } : {}),
       object: job.object, version, state, reason: journey?.reason ?? ride?.reason ?? flight!.reason, text,
       calendar: journey ? { reminder: reminder ?? null, validUntil: journey.validUntil,
         departureAt: journey.timing?.departAt ?? null, arrivalBy: journey.timing?.arriveBy ?? null } : null,
@@ -150,13 +158,18 @@ export function configuredTravelNotifications(
     }, async () => {
       const response = await send(connection.endpoint, {
         method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
-        headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+        headers: {
+          ...(connection.keyHeader === 'X-Automation-Key' ? { 'X-Automation-Key': key } : { Authorization: 'Bearer ' + key }),
+          'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey,
+        },
         body: JSON.stringify(message),
       });
       if (response.status !== 200) throw new Conflict('PA webhook did not confirm admission');
       // The documented 200 is admission. Preserve the optional run identity when supplied.
       const acceptedAt = new Date().toISOString();
-      const receipt = z.object({ runUuid: z.uuid().optional() }).safeParse(await response.json().catch(() => null));
+      const receipt = z.object({ success: z.boolean().optional(), runUuid: z.uuid().optional() })
+        .safeParse(await response.json().catch(() => null));
+      if (receipt.data?.success === false) throw new Conflict('PA webhook declined admission');
       return { acceptedAt, runId: receipt.data?.runUuid ?? null };
     }, objects);
   };

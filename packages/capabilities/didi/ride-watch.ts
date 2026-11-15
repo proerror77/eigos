@@ -84,14 +84,16 @@ export function didiRideWatchFunctions(db: Database, resolveSource: SourceResolv
     const row = await ctx.objects.read(order);
     const trips = await ctx.objects.follow(order, 'trips');
     if (trips.length !== 1) throw new Conflict('Original ride authority is unavailable');
-    const source = await resolveSource(ctx.principal.owner);
+    const { bindingId, orderId } = row.properties;
+    if (typeof bindingId !== 'string' || !bindingId || typeof orderId !== 'string' || !orderId)
+      throw new Conflict('Original ride authority is unavailable');
+    const source = await resolveSource(ctx.principal.owner, { bindingId, orderId });
     const authority = source.authorityId ?? digest(source.bindingId);
     await source.assertCurrent();
-    if (row.properties.bindingId !== source.bindingId || trips[0]!.properties.sourceAuthority !== authority ||
-      !source.orders?.observe || typeof row.properties.orderId !== 'string' || !row.properties.orderId) {
+    if (bindingId !== source.bindingId || trips[0]!.properties.sourceAuthority !== authority || !source.orders?.observe) {
       throw new Conflict('Original ride source authority is unavailable');
     }
-    return { source, orders: source.orders, authority, orderId: row.properties.orderId };
+    return { source, orders: source.orders, authority, orderId };
   }
 
   return new Map<string, FunctionHandler>([

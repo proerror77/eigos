@@ -4,6 +4,7 @@ import { digest } from '../../core/identity.js';
 import { didiEndpoint, type DidiBinding } from './contracts.js';
 import { readDidiCredential } from './connector.js';
 import { mapDidiResult } from './mapping.js';
+import { sandboxRideStatus } from './sandbox-status.js';
 import { ridePosition, rideProgress } from '../../ontology/ride-watch.js';
 
 const text = z.string().min(1).max(500);
@@ -60,8 +61,11 @@ export class DidiOperations implements RideOrders {
     private readonly binding: DidiBinding,
     private readonly enabled = false,
     private readonly fetcher: typeof fetch = fetch,
+    private readonly sandboxOrderId?: string,
   ) {
     this.environment = binding.environment;
+    if (sandboxOrderId !== undefined && (this.environment !== 'mock' || enabled))
+      throw new Error('A sandbox watch must use a read-only sandbox connection');
   }
   async assertAvailable() {
     if (!this.enabled) throw new Error('DIDI_ORDER_EXECUTION_DISABLED');
@@ -74,8 +78,10 @@ export class DidiOperations implements RideOrders {
     beforeDispatch?: () => Promise<void>,
   ) {
     if (tool === 'taxi_create_order' || tool === 'taxi_cancel_order') await this.assertAvailable();
-    const args = commandSchemas[tool].parse(input),
-      secret = await readDidiCredential(this.binding),
+    const args = commandSchemas[tool].parse(input);
+    if (this.sandboxOrderId !== undefined && 'order_id' in args && args.order_id !== this.sandboxOrderId)
+      throw new Error('Original sandbox order identity changed');
+    const secret = await readDidiCredential(this.binding),
       url = new URL(didiEndpoint(this.binding.environment));
     url.searchParams.set('key', secret);
     const bounded = AbortSignal.any([signal, AbortSignal.timeout(30000)]);
@@ -230,6 +236,9 @@ export class DidiOperations implements RideOrders {
   }
   async observe(orderId: string, signal: AbortSignal) {
     const raw = await this.call('taxi_query_order', { order_id: orderId }, signal);
+    const receipt = { orderId, observedAt: new Date().toISOString(), contentDigest: digest(raw) };
+    if (raw.structuredContent === undefined && this.sandboxOrderId === orderId)
+      return rideProgress.parse({ ...receipt, ...sandboxRideStatus(raw.content, orderId) });
     const body = z.object({
       orderId: text,
       statusCode: z.union([z.number().int(), z.string().regex(/^\d{1,4}$/)]),
@@ -244,7 +253,7 @@ export class DidiOperations implements RideOrders {
       return Number.isFinite(n) && n >= 0 ? n : null;
     };
     return rideProgress.parse({
-      orderId, statusCode: Number(body.statusCode), observedAt: new Date().toISOString(), contentDigest: digest(raw),
+      ...receipt, statusCode: Number(body.statusCode),
       driver: body.driver ? {
         name: label(body.driver.name), carModel: label(body.driver.carModel), carPlate: label(body.driver.carPlate),
       } : null,

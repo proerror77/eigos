@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import { createHash } from 'node:crypto';
 import { DidiOperations } from '../packages/capabilities/didi/operations.js';
 import { digest } from '../packages/core/identity.js';
+import { configuredSource } from '../packages/core/config.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import { rideWatchRead, rideWatchType } from '../packages/ontology/ride-watch.js';
 import { Objects } from '../packages/runtime/objects.js';
@@ -14,7 +15,7 @@ import { fixture, principal } from './fixture.js';
 const at = (minutes = 0) => new Date(Date.now() + minutes * 60000).toISOString();
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 
-async function originalOrder(f: Fixture) {
+async function originalOrder(f: Fixture, evidence: 'synthetic' | 'provider_mock' = 'synthetic') {
   const graph = new Objects(f.db, f.model, f.access);
   const trip = { type: 'EventTrip', id: 'original-trip' };
   const order = { type: 'DidiRideOrder', id: 'original-order' };
@@ -27,7 +28,7 @@ async function originalOrder(f: Fixture) {
   });
   await graph.create(order, {
     id: order.id, name: 'Test order', orderId: 'provider-test-order', status: 'created', state: 'created',
-    independentRead: false, evidence: 'synthetic', observedAt: at(), contentDigest: 'a'.repeat(64),
+    independentRead: false, evidence, observedAt: at(), contentDigest: 'a'.repeat(64),
     bindingId: f.provider.source.bindingId,
   });
   await graph.link({ type: 'TripOrder', from: trip, to: order });
@@ -53,6 +54,7 @@ test('the DiDi MCP adapter binds status and driver position reads to the exact o
     await writeFile(keyFile, secret, {mode: 0o600});
     const names: string[] = [];
     let returnedId = 'provider-test-order';
+    let sandboxText: string | undefined;
     const providerFetch: typeof fetch = async (_url, init) => {
       if (init?.method === 'GET') return new Response(null, {status:405});
       if (init?.method === 'DELETE') return new Response(null, {status:200});
@@ -73,7 +75,9 @@ test('the DiDi MCP adapter binds status and driver position reads to the exact o
         assert(['taxi_query_order','taxi_get_driver_location'].includes(name));
         assert.deepEqual(request.params.arguments,{order_id:'provider-test-order'});
         names.push(name);
-        result = {structuredContent:name==='taxi_query_order' ? {
+        result = name === 'taxi_query_order' && sandboxText !== undefined
+          ? { content: [{ type: 'text', text: sandboxText }] }
+          : {structuredContent:name==='taxi_query_order' ? {
           orderId:returnedId,statusCode:'2',driver:{name:'Driver',carPlate:'TEST-123',carModel:'Black car',phone:'PRIVATE-NUMBER'},
           map:{distanceKm:'0.5',eta:'3'},
         } : {longitude:121.5,latitude:31.2}};
@@ -92,6 +96,71 @@ test('the DiDi MCP adapter binds status and driver position reads to the exact o
     const point = await client.driverPosition('provider-test-order',AbortSignal.timeout(5000));
     assert.equal(point.coordinateSystem,'provider_unspecified');
     assert.deepEqual(names,['taxi_query_order','taxi_query_order','taxi_get_driver_location']);
+
+    // The sandbox returns these reports as text, without echoing the queried order.
+    const mockBinding = { bindingId:'adapter-sandbox-test', keyFile, environment:'mock' as const,
+      keySha256:createHash('sha256').update(secret).digest('hex') };
+    const pinned = new DidiOperations(mockBinding,false,providerFetch,'provider-test-order');
+    const phases = [
+      [0, '系统正在为您匹配最近的司机...\n提示：您可以随时取消订单'],
+      [1, '系统已为您匹配到司机，正在快马加鞭来接您。\n师傅离上车点还有：2.5 公里，约需8分钟到达。'],
+      [2, '司机已经到达起点附近，请尽快上车。\n• 车型：黑 · 奥迪 · A6\n• 车牌：京TEST2025\n• 电话：PRIVATE-NUMBER'],
+      [4, '行程进行中，请系好安全带\n离终点还有：5.0 公里，约需15分钟到达。'],
+      [5, '✅ 行程已完成！'],
+    ] as const;
+    for (const [statusCode,message] of phases) {
+      sandboxText = message;
+      const progress = await pinned.observe('provider-test-order',AbortSignal.timeout(5000));
+      assert.equal(progress.statusCode,statusCode);
+      assert.equal(progress.orderId,'provider-test-order');
+      if (statusCode===1) {
+        assert.equal(progress.etaMinutes,8);
+        assert.equal(progress.distanceKm,2.5);
+      }
+      if (statusCode===2) assert.deepEqual(progress.driver,{name:null,carModel:'黑 · 奥迪 · A6',carPlate:'京TEST2025'});
+    }
+    const observed = names.length;
+    await assert.rejects(pinned.observe('other-order',AbortSignal.timeout(5000)),/identity changed/);
+    assert.equal(names.length,observed);
+    sandboxText = '✅ 行程已完成！\n订单号：other-order';
+    await assert.rejects(pinned.observe('provider-test-order',AbortSignal.timeout(5000)),/identity changed/);
+    sandboxText = '状态不可用\n✅ 行程已完成！';
+    await assert.rejects(pinned.observe('provider-test-order',AbortSignal.timeout(5000)),/Unrecognized/);
+    sandboxText = '✅ 行程已完成！';
+    await assert.rejects(client.observe('provider-test-order',AbortSignal.timeout(5000)));
+    await assert.rejects(new DidiOperations(mockBinding,false,providerFetch).observe('provider-test-order',AbortSignal.timeout(5000)));
+  } finally { await rm(dir,{recursive:true,force:true}); }
+});
+
+test('only the tracked order can select the separate read-only sandbox binding', async () => {
+  const dir = await mkdtemp(join(tmpdir(),'eigos-didi-sandbox-binding-'));
+  try {
+    const keyFile = join(dir,'key'), primaryFile = join(dir,'primary.json'), sandboxFile = join(dir,'sandbox.json');
+    const key = 'synthetic-provider-test-key';
+    await writeFile(keyFile,key,{mode:0o600});
+    const details = { owner:principal.owner, active:true, ordersEnabled:false, binding:{
+      bindingId:'ordinary',environment:'production',keyFile,keySha256:createHash('sha256').update(key).digest('hex'),
+    } };
+    const sandbox = {...details,binding:{...details.binding,environment:'mock',bindingId:'watch-sandbox'},originalOrderId:'only-original'};
+    await writeFile(primaryFile,JSON.stringify(details),{mode:0o600});
+    await writeFile(sandboxFile,JSON.stringify(sandbox),{mode:0o600});
+    const resolver = configuredSource(primaryFile,sandboxFile);
+    const ordinary = await resolver(principal.owner);
+    const original = {bindingId:'watch-sandbox',orderId:'only-original'};
+    const watch = await resolver(principal.owner,original);
+    assert.equal(ordinary.orders?.environment,'production');
+    assert.equal(watch.orders?.environment,'mock');
+    assert.notEqual(watch.authorityId,ordinary.authorityId);
+    await assert.rejects(watch.orders!.assertAvailable(),/EXECUTION_DISABLED/);
+    await assert.rejects(watch.orders!.observe!('other-order',AbortSignal.timeout(5000)),/identity changed/);
+    await assert.rejects(resolver('different-owner',original),/unavailable/);
+    await assert.rejects(resolver(principal.owner,{...original,bindingId:'wrong-binding'}),/Invalid DiDi sandbox watch binding/);
+    await assert.rejects(resolver(principal.owner,{...original,orderId:'other-order'}),/identity changed/);
+    await writeFile(sandboxFile,JSON.stringify({...sandbox,originalOrderId:'new-order'}),{mode:0o600});
+    await assert.rejects(watch.assertCurrent(),/changed/);
+    await writeFile(sandboxFile,JSON.stringify({...sandbox,ordersEnabled:true}),{mode:0o600});
+    await assert.rejects(resolver(principal.owner,original));
+    assert.equal((await resolver(principal.owner)).orders?.environment,'production');
   } finally { await rm(dir,{recursive:true,force:true}); }
 });
 
@@ -100,14 +169,18 @@ test('the original DiDi order is followed to arrival and completion without post
   const keyFile = join(dir, 'key'), travelPA = join(dir, 'target.json');
   await writeFile(keyFile, 'test-credential-00000000', { mode: 0o600 });
   await writeFile(travelPA, JSON.stringify({ owner: principal.owner, keyFile,
-    endpoint:'https://api2.cursor.sh/automations/webhook/0e5eaab2-4dc9-4a1e-b2e5-74ff95c08c52' }), {mode:0o600});
-  const delivered: {operation:string; text:string; ride:unknown}[] = [];
+    endpoint:'https://api2.cursor.sh/automations/webhook/0e5eaab2-4dc9-4a1e-b2e5-74ff95c08c52',
+    keyHeader:'X-Automation-Key', objectTypes:['DidiRideWatch'] }), {mode:0o600});
+  const delivered: {operation:string; text:string; ride:unknown; sandbox?:boolean}[] = [];
   const f = await fixture(undefined, undefined, undefined, undefined, { travelPA, travelPAFetch: async (_target, init) => {
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get('X-Automation-Key'),'test-credential-00000000');
+    assert.equal(headers.get('Authorization'),null);
     delivered.push(JSON.parse(String(init?.body)));
     return Response.json({runUuid:'8e690fdf-c2c8-4ff4-b930-a889c63c181a'});
   } });
   try {
-    const { graph, order } = await originalOrder(f), seen: string[] = [];
+    const { graph, order } = await originalOrder(f,'provider_mock'), seen: string[] = [];
     let locationReads = 0;
     const codes = [-1, 0, 1, 2, 2, 1, 4, 5];
     f.provider.source.orders!.observe = async orderId => {
@@ -146,7 +219,8 @@ test('the original DiDi order is followed to arrival and completion without post
     assert((await read()).arrival);
     assert(await f.capabilities.effects.runOne());
     assert.equal(delivered.length,1);
-    assert.match(delivered[0]!.text,/已到达.*TEST-123/);
+    assert.equal(delivered[0]!.sandbox,true);
+    assert.match(delivered[0]!.text,/^【滴滴沙箱】.*已到达.*TEST-123/);
     await due(f, watch);
     await due(f, watch);
     assert.equal((await read()).state,'driver_arrived');

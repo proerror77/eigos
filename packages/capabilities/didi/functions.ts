@@ -10,7 +10,7 @@ import { didiDataSchema, didiReceiptSchema } from './contracts.js';
 import type { RideOrders } from './operations.js';
 
 export interface DidiSource { bindingId: string; authorityId?:string; connector: DidiConnector; orders?:RideOrders; assertCurrent(): Promise<void> }
-export type SourceResolver = (owner: string) => Promise<DidiSource>;
+export type SourceResolver = (owner: string, order?: { bindingId: string; orderId: string }) => Promise<DidiSource>;
 export const sourceResultSchema = z.strictObject({ data: didiDataSchema, receipt: didiReceiptSchema, evidence: z.enum(['live_readonly', 'provider_mock', 'fixture']) });
 export type SourceResult = z.infer<typeof sourceResultSchema>;
 export const isCurrentDidiObservation = (time: unknown) => typeof time === 'string' && Number.isFinite(Date.parse(time)) && Date.now() - Date.parse(time) < 300000 && Date.parse(time) <= Date.now() + 5000;
