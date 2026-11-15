@@ -11,6 +11,7 @@
 | `EventRegistration.state` | `EventRegistrationStateLog` | `stateLogs` |
 | `EventTrip.state` | `EventTripStateLog` | `stateLogs` |
 | `StripeLinkPaymentRequest.status` | `StripeLinkPaymentRequestStatusLog` | `statusLogs` |
+| `ActionConfirmation.state` | `ActionConfirmationStateLog` | `stateLogs` |
 | `SchedulePlan.state` | `SchedulePlanStateLog` | `stateLogs` |
 
 `packages/ontology/process-definition.ts` 生成这些普通类型和关系定义。类型的 `machinery-log` 分类标记来源对象类型，`machinery-property` 标记被跟踪属性；定义发布和重命名沿用现有校验与资源映射。它们不声明第二套状态转换规则。日志沿 `process` 关系返回原业务对象。
@@ -65,7 +66,7 @@ Scenario 内的编辑不进入正式 `edit_history`，因此不会变成已发�
 
 候选搜索继续使用 `findScheduleSlots`，约束校验继续使用 `validateSchedule`，编辑与合并继续使用已有 Actions。拟议活动不会提前成为正式活动或日志；冲突、旧修订或撤权导致合并失败时，正式状态和日志一起保持原值。确认后再次调整但未改变状态的字段编辑仍保存在完整编辑历史中，不伪造新的状态转换。
 
-简单询价或单项服务操作继续直接调用能力，不因为存在日志类型而创建 SchedulePlan、Scenario 或保存 Workflow。只读搜索没有业务状态过程时无需建立 Machinery 过程。图形化过程挖掘、优化器和通用跨服务重规划不属于本次日志交付。
+简单询价或单项服务操作继续直接调用能力，不因为存在日志类型而创建 SchedulePlan、Scenario 或保存 Workflow。只读搜索没有业务状态过程时无需建立 Machinery 过程。询价遇到地点歧义时，才为原 Action 创建确认过程；状态与原任务的等待、确认和最终结果同步提交。图形化过程挖掘、优化器和通用跨服务重规划不属于本次日志交付。
 
 ## 升级与验证
 

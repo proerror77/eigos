@@ -1897,7 +1897,7 @@
     },
     {
       "apiName": "resolveRideLocations",
-      "description": "Resolve each venue by querying exact Location.name within its source receipt. One exact match resolves even when other entrances or nearby shops were returned. Multiple exact matches or no exact match require clarification. Explicit selections must belong to the corresponding source response.",
+      "description": "Resolve each venue within its current source receipt. A unique name match after formatting normalization resolves even when alternate entrances or nearby shops are returned. Ambiguity requires explicit selection from the corresponding response.",
       "parameters": {
         "type": "object",
         "properties": {
