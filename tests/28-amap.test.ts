@@ -121,3 +121,48 @@ test('Agent MCP discovers map and weather Functions in the same published model 
     await f.close();
   }
 });
+
+test('an imprecise route endpoint pauses for a scoped location response and resumes the original task', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eigos-amap-route-recovery-'));
+  const calls: Recorded[] = [];
+  const config = await testConnection(directory);
+  const f = await fixture({
+    model: 'fixture-amap-route-recovery',
+    async run(_prompt, tools) {
+      await tools.get('complete_with_function')!.invoke({ function: 'estimateMapRoute', input: {
+        mode: 'driving', origin: { address: '未知地点', city: '上海市' },
+        destination: { latitude: 31.2, longitude: 121.51, coordinateSystem: 'gcj02' },
+      } });
+    },
+  }, undefined, undefined, undefined, { amap: config, amapFetch: fakeAmap(calls) });
+  try {
+    const task = await f.tasks.submit(principal, { requestId: 'route-recovery', message: '从上述指定地标出发自驾' });
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, task.id);
+    assert.equal(paused.state, 'input-required');
+    const request = paused.result as { kind: string; requestId: string; capability: string; input: {
+      use: string; selection: { source: 'specified'; place: string }; coordinateSystem: 'gcj02';
+    } };
+    assert.equal(request.kind, 'pa-request');
+    assert.equal(request.capability, 'location.resolve');
+    assert.equal(request.input.use, 'map_route');
+    assert.deepEqual(request.input.selection, { source: 'specified', place: '上海市 未知地点' });
+    assert.equal(request.input.coordinateSystem, 'gcj02');
+    assert.deepEqual(calls.map(call => call.name), ['maps_geo']);
+
+    await new PARequests(f.tasks).respond(principal, task.id, { requestId: request.requestId, response: {
+      status: 'available', location: {
+        ...request.input.selection, latitude: 31.205, longitude: 121.499, coordinateSystem: 'gcj02',
+      },
+    } });
+    await f.worker.runOne();
+    const done = await f.tasks.get(principal, task.id);
+    assert.equal(done.state, 'completed', done.error ?? undefined);
+    assert.deepEqual((done.result as { routes: unknown[] }).routes, [{ distanceMeters: 3000, durationSeconds: 1500 }]);
+    assert.deepEqual(calls.map(call => call.name), ['maps_geo', 'maps_geo', 'maps_direction_driving']);
+    assert.deepEqual(calls.at(-1)?.input, { origin: '121.499,31.205', destination: '121.51,31.2' });
+  } finally {
+    await f.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { Conflict } from '../../core/identity.js';
-import { type locationSelection, type locationUse } from '../../ontology/location.js';
+import { locationPlace, type locationSelection, type locationUse } from '../../ontology/location.js';
 import {
   adcode, gcjPoint, geocodeResult, mapAddress, mapPlaceResult, mapPoint, mapRouteInput, mapRouteResult,
   mapSearch, nearbySearch, placeDetailInput, placeDetailResult, reverseGeocodeResult, weatherInput, weatherResult,
@@ -57,6 +57,7 @@ function handler(run: FunctionHandler): FunctionHandler {
 type Point = z.infer<typeof mapPoint>;
 type Address = z.infer<typeof mapAddress>;
 type Selection = z.infer<typeof locationSelection>;
+type NamedSelection = Exclude<Selection, { source: 'current' }>;
 type PositionInput = Point | { locationRequestId: string } | { location?: Selection };
 const geocodeRow = z.record(z.string(), z.unknown());
 
@@ -99,10 +100,28 @@ async function uniquePlace(client: AmapClient, input: Address, signal: AbortSign
   return first;
 }
 
+async function namedPoint(client: AmapClient, address: Address, context: FunctionContext,
+  use: z.infer<typeof locationUse>, source: NamedSelection['source']) {
+  try {
+    return (await uniquePlace(client, address, context.signal, true)).point;
+  } catch (error) {
+    if (!(error instanceof Clarification) || !context.execution ||
+        context.execution.task.input.scheduledAction || context.objects.model.scenario) throw error;
+    const name = address.city && !normalizedName(address.address).startsWith(areaName(address.city))
+      ? `${address.city} ${address.address}` : address.address;
+    const place = locationPlace.safeParse(name);
+    if (!place.success) throw new Conflict('高德未能确认地点，请先搜索简称并核对地点详情。');
+    const { position } = await locationForService(context, { location: { source, place: place.data } }, use, 'gcj02');
+    return gcjPoint.parse({
+      latitude: position.latitude, longitude: position.longitude, coordinateSystem: position.coordinateSystem,
+    });
+  }
+}
+
 async function pointFor(client: AmapClient, input: PositionInput, context: FunctionContext, use: z.infer<typeof locationUse>) {
   if ('latitude' in input) return toAmapPoint(client, input, context.signal);
   if ('location' in input && input.location && input.location.source !== 'current') {
-    return (await uniquePlace(client, { address: input.location.place }, context.signal, true)).point;
+    return namedPoint(client, { address: input.location.place }, context, use, input.location.source);
   }
   const located = await locationForService(context, input, use, 'gcj02',
     (point, signal) => toAmapPoint(client, point, signal));
@@ -217,7 +236,7 @@ export function amapFunctions(resolve: AmapResolver): ReadonlyMap<string, Functi
     ['estimateMapRoute', async (raw, ctx) => {
       const client = await resolve(ctx), input = mapRouteInput.parse(raw);
       const end = (value: Address | PositionInput) => 'address' in value
-        ? uniquePlace(client, value, ctx.signal, true).then(item => item.point)
+        ? namedPoint(client, value, ctx, 'map_route', 'specified')
         : pointFor(client, value, ctx, 'map_route');
       // Resolve a missing origin with the PA before doing an external destination read.
       const origin = await end(input.origin ?? {});
