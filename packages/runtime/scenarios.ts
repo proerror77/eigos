@@ -290,7 +290,7 @@ export class Scenarios {
       const steps = row.journal_steps ? await this.steps(row.owner, row.id, client) : [];
       if (row.workflow_run_id) {
         const run = (await this.db.query(
-          `SELECT run.body->'proposal' AS proposal,run.object_ref,task.cognitive_context FROM ${this.db.schema}.workflow_runs run
+          `SELECT run.body->'proposal' AS proposal,run.object_ref,task.cognitive_context,task.result_permissions FROM ${this.db.schema}.workflow_runs run
             JOIN ${this.db.schema}.tasks task ON task.id=run.proposal_task AND task.owner=run.owner
             WHERE run.id=$1 AND run.owner=$2 AND run.proposal_scenario=$3 AND run.state='waiting-approval'`,
           [row.workflow_run_id, row.owner, row.id], client,
@@ -303,11 +303,19 @@ export class Scenarios {
         evidenceVersion = cognitiveContextSchema.parse(run.cognitive_context).evidenceVersion;
         evidenceChanged = await decisionVersion(this.db, model, row.owner, client) !== evidenceVersion;
         for (const access of [author, approver]) access.definition(model, 'action', commit.action);
+        const draftRows = (await this.db.query<{ type: string; id: string }>(
+          `SELECT type,id FROM ${this.db.schema}.scenario_objects WHERE owner=$1 AND scenario_id=$2`,
+          [row.owner, row.id], client,
+        )).rows;
+        const draftKeys = new Set(draftRows.map(digest));
         const refs = new Map<string, ObjectRef>();
-        for (const step of steps) for (const { row: dependency } of step.requirements) {
-          if (!dependency || dependency.projection !== model.projection) continue;
+        const requirements: Requirement[] = [
+          ...steps.flatMap(step => step.requirements), ...(run.result_permissions ?? []),
+        ];
+        for (const { row: dependency } of requirements) {
+          if (!dependency || dependency.projection !== model.projection || dependency.type === 'OntologyScenario') continue;
           const ref = { type: dependency.type, id: dependency.id }, key = digest(ref);
-          if (!staged.has(key)) refs.set(key, ref);
+          if (!draftKeys.has(key)) refs.set(key, ref);
         }
         for (const ref of [...refs.values()].sort((a, b) => a.type.localeCompare(b.type) || a.id.localeCompare(b.id))) {
           const data = await current(ref);

@@ -847,6 +847,7 @@ async function exerciseReviewedHotelWorkflow(changeEvidence: boolean) {
     const reviewedPayload = { plan, approvedRevision: review.revision };
     assert.deepEqual(review.commit?.effects, [{ name: 'ConfirmedReplan', handler: 'SyntheticHotelReplan', payload: reviewedPayload }]);
     assert.ok(review.evidence?.some(item => item.ref.id === hotel.id));
+    assert.ok(review.evidence?.some(item => item.ref.id === validationInput.id));
     const merge = () => actions.apply(f.access, f.model, 'CommitSchedulePlan', {
       plan, scenarioId, revision: review.revision,
     }, 'commit-hotel-replan');
