@@ -23,6 +23,7 @@ async function readReceipt(page: Page, terms: DiningTerms, reference: string, ve
     date: element.getAttribute('data-date'),
     time: element.getAttribute('data-time'),
     partySize: Number(element.getAttribute('data-party-size')),
+    ...(element.hasAttribute('data-branch') ? { branch: element.getAttribute('data-branch') } : {}),
   }));
   const receipt = diningBookingReceipt.parse({
     ...details, verifiedBy, observedAt: new Date().toISOString(), evidence: 'synthetic',

@@ -3,21 +3,21 @@ import { createServer, type ServerResponse } from 'node:http';
 import { diningReservationTerms, diningBookingReceipt } from '../packages/ontology/dining-reservations.js';
 import type { DiningTerms } from '../packages/capabilities/dining/sandbox.js';
 
-const form = '<form data-eigos-dining="synthetic" action="/reserve" method="post">' +
-  ['restaurant', 'city', 'date', 'partySize', 'time', 'reference'].map(name => `<input name="${name}">`).join('') +
-  '<button type="submit">Submit test reservation</button></form>';
+const form = (branch: boolean) => '<form data-eigos-dining="synthetic" action="/reserve" method="post">' +
+  ['restaurant', 'city', 'date', 'partySize', 'time', 'reference', ...(branch ? ['branch'] : [])]
+    .map(name => `<input name="${name}">`).join('') + '<button type="submit">Submit test reservation</button></form>';
 const escape = (value: unknown) => String(value).replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;');
 const html = (res: ServerResponse, status: number, body: string) =>
   res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' }).end('<!doctype html>' + body);
 type Order = DiningTerms & { reference: string; bookingId: string };
 
-export async function startDiningTestMerchant() {
+export async function startDiningTestMerchant(branch = false) {
   const orders: Order[] = [], lookups: string[] = [];
   const flags = { formUnavailable: false, loseReply: true, hideOrder: false, mismatched: false };
   let submissions = 0, lostReplies = 0;
   const server = createServer(async (req, res) => {
     if (req.method === 'GET' && req.url === '/reserve') return flags.formUnavailable
-      ? html(res, 503, 'The test form is unavailable') : html(res, 200, form);
+      ? html(res, 503, 'The test form is unavailable') : html(res, 200, form(branch));
     if (req.method === 'POST' && req.url === '/reserve') {
       submissions++;
       let body = '';
@@ -29,6 +29,7 @@ export async function startDiningTestMerchant() {
       const parsed = diningReservationTerms.safeParse({
         restaurant: decoded.restaurant, city: decoded.city, date: decoded.date, time: decoded.time,
         partySize: Number(decoded.partySize),
+        ...(branch ? { branch: decoded.branch } : {}),
       });
       const reference = diningBookingReceipt.shape.reference.safeParse(decoded.reference);
       if (!parsed.success || !reference.success) return html(res, 400, 'Invalid test request');
@@ -61,5 +62,6 @@ function receipt(order: Order) {
   return `<main data-eigos-dining-receipt="synthetic" data-booking-id="${escape(order.bookingId)}"` +
     ` data-reference="${escape(order.reference)}" data-restaurant="${escape(order.restaurant)}"` +
     ` data-city="${escape(order.city)}" data-date="${escape(order.date)}" data-time="${escape(order.time)}"` +
+    (order.branch ? ` data-branch="${escape(order.branch)}"` : '') +
     ` data-party-size="${order.partySize}">Test reservation confirmed</main>`;
 }

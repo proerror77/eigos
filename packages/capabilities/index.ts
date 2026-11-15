@@ -39,7 +39,7 @@ export function createCapabilities(
   stripe: StripeSandboxResolver = configuredStripeSandbox(),
   connections: { paotui?: string; waimai?: string; amap?: string; amapFetch?: typeof fetch; variFlight?: string; variFlightFetch?: typeof fetch;
     fr24?: string; fr24Entrypoint?: string; calendar?: string; calendarFetch?: typeof fetch; travelPA?: string; travelPAFetch?: typeof fetch;
-    xiaohongshu?: string; xiaohongshuFetch?: typeof fetch; diningWeb?: string } = {},
+    xiaohongshu?: string; xiaohongshuFetch?: typeof fetch; diningWeb?: string; diningMiniProgram?: string } = {},
 ) {
   let sources: Sources;
   const amap = configuredAmap(connections.amap, connections.amapFetch);
@@ -48,7 +48,7 @@ export function createCapabilities(
   const handlers = new Map([
     ...schedulingFunctions(db),
     ...diningResearch(connections.xiaohongshu, connections.xiaohongshuFetch),
-    ...diningReservationFunctions(db, connections.diningWeb),
+    ...diningReservationFunctions(db, connections.diningWeb, connections.diningMiniProgram),
     ...applicationFunctions(db),
     [registerDocumentFunction, registerSchedulePlanDocument],
     ...serviceFunctions(services, () => sources),
