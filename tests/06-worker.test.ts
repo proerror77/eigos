@@ -171,6 +171,27 @@ test('an expired saved place receipt is refreshed without asking the model to ch
   } finally { await f.close(); }
 });
 
+test('revoking all access after place confirmation closes the process without a supplier quote', async () => {
+  const f = await fixture();
+  try {
+    f.provider.flags.ambiguous = true;
+    const task = await f.submit();
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, task.id);
+    assert.equal(paused.state, 'input-required');
+    const candidates = paused.result as Record<'origin' | 'destination', { ref: { type: string; id: string } }[]>;
+    await f.tasks.selectPlaces(principal, task.id, { origin: candidates.origin[0]!.ref, destination: candidates.destination[0]!.ref });
+    await setGrants(f.db, principal.owner, []);
+    await f.worker.runOne();
+    assert.equal((await f.tasks.get(principal, task.id)).state, 'failed');
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch']);
+    await setGrants(f.db, principal.owner, memberGrants(f.model));
+    const graph = new Objects(f.db, f.model, await Access.load(f.db, principal));
+    const process = { type: 'ActionConfirmation', id: paused.input.placeContinuation!.requestId };
+    assert.equal((await graph.read(process)).properties.state, 'failed');
+  } finally { await f.close(); }
+});
+
 test('revocation during the real connector callback cannot produce an accepted inquiry', async () => {
   const f = await fixture();
   try {
