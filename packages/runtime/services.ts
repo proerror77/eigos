@@ -7,7 +7,8 @@ import {
   entityHistorySchema,
 } from './entity-resolution.js';
 import { Applications, objectViewSchema, graphSchema, mapSchema } from './applications.js';
-import { Automation, workflowSchema, ruleSchema, runWorkflowSchema } from './automation.js';
+import { Automation, workflowSchema, saveRuleSchema, runWorkflowSchema } from './automation.js';
+import { processStatusSchema } from './process-automation.js';
 import {
   SemanticSearch,
   semanticConfigureSchema,
@@ -44,6 +45,7 @@ import {
 import { Indexing, indexingInputSchema } from './indexing.js';
 import { Materializations, materializationInputSchema } from './materializations.js';
 import { EditHistory, conflictPolicySchema, setConflictPolicy } from './edit-history.js';
+import { ExecutionTrace, executionTraceSchema } from './execution-trace.js';
 import {
   Governance,
   projectSchema,
@@ -203,6 +205,13 @@ export function ontologyServices(
     false,
     async (a, input) =>
       new EditHistory(db).read(new Objects(db, await active(), a), input.object, input.after, input.limit),
+  );
+  register(
+    'execution_trace',
+    'Read causal identities and states for an owned task or committed Action.',
+    executionTraceSchema,
+    false,
+    (a, input) => new ExecutionTrace(db, metadata).read(a, ontologyId, input),
   );
   register(
     'edit_policy',
@@ -440,6 +449,35 @@ export function ontologyServices(
     true,
     async (a, input) => actions.undo(a, await active(), input.originalRequestId, input.requestId),
   );
+  const scenarioRevision = idSchema.extend({ revision: z.number().int().positive() });
+  register(
+    'rebase_scenario',
+    'Rebase an owned proposal over compatible live object changes and issue a new revision.',
+    scenarioRevision,
+    true,
+    async (a, input) => new Scenarios(db).rebase(a, await active(), input.id, input.revision),
+  );
+  register(
+    'invite_scenario_reviewers',
+    'Require an invited separate identity to approve the exact owned proposal revision before merge.',
+    scenarioRevision.extend({ reviewers: z.array(z.string().min(1).max(200)).max(100) }),
+    true,
+    async (a, input) => new Scenarios(db).inviteReviewers(a, await active(), input.id, input.revision, input.reviewers),
+  );
+  register(
+    'inspect_scenario_review',
+    'Read the proposed edits as an invited reviewer under current object and property permissions.',
+    idSchema,
+    false,
+    async (a, input) => new Scenarios(db).inspectReview(a, await active(), input.id),
+  );
+  register(
+    'approve_scenario_review',
+    'Approve the revision and snapshot returned by the invited reviewer inspection.',
+    scenarioRevision.extend({ snapshot: z.string().regex(/^[a-f0-9]{64}$/) }),
+    true,
+    async (a, input) => new Scenarios(db).approveReview(a, await active(), input.id, input.revision, input.snapshot),
+  );
   register(
     'save_workflow',
     'Save an authorized sequence of Actions.',
@@ -449,8 +487,8 @@ export function ontologyServices(
   );
   register(
     'save_rule',
-    'Configure a rule and explicitly enable transition-triggered execution.',
-    ruleSchema,
+    'Configure an object-set rule or a committed process transition rule with an optional dwell time.',
+    saveRuleSchema,
     true,
     async (a, input) => automation.rule(a, await active(), input),
   );
@@ -459,6 +497,13 @@ export function ontologyServices(
   );
   register('rules', 'List rules and monitoring state.', z.strictObject({}), false, async (a) =>
     automation.list(a, await active(), 'object_rules'),
+  );
+  register(
+    'process_status',
+    'Read the current process state, its most recent visible transition and how long the state has been recorded.',
+    processStatusSchema,
+    false,
+    async (a, input) => automation.processStatus(a, await active(), input),
   );
   register('workflow_runs', 'List workflow execution progress.', z.strictObject({}), false, async (a) =>
     automation.list(a, await active(), 'workflow_runs'),

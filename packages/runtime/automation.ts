@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { QueryResultRow } from 'pg';
 import { z } from 'zod';
 import { Conflict, NotFound, digest, requireScope } from '../core/identity.js';
 import { validator } from '../ontology/model.js';
@@ -8,6 +9,8 @@ import { Database, type Sql } from './database.js';
 import { Metadata, type PublishedOntology } from './metadata.js';
 import type { Actions } from './actions.js';
 import { Objects, querySchema } from './objects.js';
+import { matchingTransition, processRuleSchema, processStatusSchema, processTarget, processTriggerSchema, readProcessStatus } from './process-automation.js';
+import { readProcessTransitions } from './process-logs.js';
 
 const binding = z.union([
   z.strictObject({ literal: z.unknown() }),
@@ -43,14 +46,21 @@ export const workflowSchema = z.strictObject({
     previous.add(item.name);
   });
 });
-export const ruleSchema = z.strictObject({
+const baseRule = z.strictObject({
   id: z.uuid().optional(),
   revision: z.number().int().min(0).default(0),
   name: z.string().min(1).max(200),
-  query: querySchema.omit({ cursor: true, limit: true, select: true }),
   workflow: z.uuid(),
   enabled: z.boolean().default(false),
 });
+const ruleQuerySchema = querySchema.omit({ cursor: true, limit: true, select: true });
+const objectRule = baseRule.extend({ query: ruleQuerySchema });
+const processRule = baseRule.extend({ process: processRuleSchema });
+const ruleSchema = z.union([objectRule, processRule]);
+export const saveRuleSchema = baseRule.extend({
+  query: ruleQuerySchema.optional(),
+  process: processRuleSchema.optional(),
+}).refine(rule => Boolean(rule.query) !== Boolean(rule.process), 'Select one object query or process transition condition');
 export const runWorkflowSchema = z.strictObject({
   workflow: z.uuid(),
   object: objectRefSchema,
@@ -61,25 +71,31 @@ export async function initializeAutomation(db: Database) {
   await db.query(`CREATE TABLE IF NOT EXISTS ${db.schema}.workflows(id uuid PRIMARY KEY,owner text NOT NULL,ontology text NOT NULL,name text NOT NULL,body jsonb NOT NULL,revision integer NOT NULL);
     CREATE TABLE IF NOT EXISTS ${db.schema}.object_rules(id uuid PRIMARY KEY,owner text NOT NULL,ontology text NOT NULL,name text NOT NULL,body jsonb NOT NULL,revision integer NOT NULL,enabled boolean NOT NULL DEFAULT false,last_scan timestamptz,error text);
     ALTER TABLE ${db.schema}.object_rules ADD COLUMN IF NOT EXISTS scopes jsonb;
+    ALTER TABLE ${db.schema}.object_rules ADD COLUMN IF NOT EXISTS process_cursor bigint;
     UPDATE ${db.schema}.object_rules SET enabled=false,error='Re-save the rule to record its original authorization scopes' WHERE scopes IS NULL AND enabled;
     CREATE TABLE IF NOT EXISTS ${db.schema}.rule_matches(rule_id uuid NOT NULL REFERENCES ${db.schema}.object_rules(id),type text NOT NULL,id text NOT NULL,matched boolean NOT NULL,revision bigint NOT NULL,PRIMARY KEY(rule_id,type,id));
     ALTER TABLE ${db.schema}.rule_matches ADD COLUMN IF NOT EXISTS generation bigint NOT NULL DEFAULT 0;
     CREATE TABLE IF NOT EXISTS ${db.schema}.workflow_runs(id uuid PRIMARY KEY,owner text NOT NULL,ontology text NOT NULL,release text NOT NULL REFERENCES ${db.schema}.releases(digest),request_id text NOT NULL,digest text NOT NULL,workflow_id uuid NOT NULL REFERENCES ${db.schema}.workflows(id),body jsonb NOT NULL,object_ref jsonb NOT NULL,scopes jsonb NOT NULL,step integer NOT NULL DEFAULT 0,state text NOT NULL DEFAULT 'pending',error text,token uuid,lease_until timestamptz,results jsonb NOT NULL DEFAULT '[]',created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),UNIQUE(owner,request_id));
+    ALTER TABLE ${db.schema}.workflow_runs ADD COLUMN IF NOT EXISTS available_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE ${db.schema}.workflow_runs ADD COLUMN IF NOT EXISTS process_trigger jsonb;
     CREATE TABLE IF NOT EXISTS ${db.schema}.workflow_steps(run_id uuid NOT NULL REFERENCES ${db.schema}.workflow_runs(id),position integer NOT NULL,
       action text NOT NULL,input jsonb NOT NULL,requirements jsonb NOT NULL,request_id text NOT NULL,result jsonb,completed_at timestamptz,
       PRIMARY KEY(run_id,position));
     ALTER TABLE ${db.schema}.workflow_steps ADD COLUMN IF NOT EXISTS read_markings jsonb;
-    CREATE INDEX IF NOT EXISTS workflow_runs_queue ON ${db.schema}.workflow_runs(state,created_at);`);
+    CREATE INDEX IF NOT EXISTS workflow_runs_queue ON ${db.schema}.workflow_runs(state,created_at);
+    CREATE INDEX IF NOT EXISTS workflow_runs_due ON ${db.schema}.workflow_runs(available_at) WHERE state='pending';`);
 }
 const failureMessage =
   'Workflow execution failed; check current permissions, publication and Action input before retrying';
 class MissingFrozenSecurityContext extends Conflict {}
+class ProcessTriggerInactive extends Conflict {}
 const missingSecurityContextMessage =
   'Frozen input security context is unavailable; submit a new workflow run';
 const revisionMatches = (id: string | undefined, revision: number) => {
   if (id ? revision < 1 : revision !== 0)
     throw new Conflict('Updates require the current revision; creates use revision zero');
 };
+type ProcessTrigger = z.output<typeof processTriggerSchema>;
 export class Automation {
   constructor(
     private readonly db: Database,
@@ -135,6 +151,10 @@ export class Automation {
     access.require(model.document.id, 'view_definition', model.document.id);
     const id = input.id ?? randomUUID();
     return this.db.transaction(async (client) => {
+      if (input.id && !(await this.db.query(
+        `SELECT 1 FROM ${this.db.schema}.object_rules WHERE id=$1 AND owner=$2 AND revision=$3 AND ontology=$4 FOR UPDATE`,
+        [id, access.principal.owner, input.revision, model.document.id], client)).rowCount)
+        throw new Conflict('Rule changed or is unavailable');
       await this.active(model, client);
       const workflow = (
         await this.db.query(
@@ -145,10 +165,13 @@ export class Automation {
       ).rows[0];
       if (!workflow) throw new NotFound('Workflow is unavailable');
       this.authorize(access, model, workflowSchema.parse(workflow.body).steps);
-      for (const type of model.concreteTypes(input.query.type)) access.read(model, type);
+      const graph = new Objects(this.db, model, access, client);
+      const target = 'process' in input ? processTarget(graph, input.process) : undefined;
+      if ('query' in input)
+        for (const type of model.concreteTypes(input.query.type)) access.read(model, type);
       const result = input.id
         ? await this.db.query(
-            `UPDATE ${this.db.schema}.object_rules SET name=$3,body=$4,enabled=$5,revision=revision+1,error=NULL,scopes=$8,last_scan=NULL WHERE id=$1 AND owner=$2 AND revision=$6 AND ontology=$7 RETURNING revision`,
+            `UPDATE ${this.db.schema}.object_rules SET name=$3,body=$4,enabled=$5,revision=revision+1,error=NULL,scopes=$8,last_scan=NULL,process_cursor=NULL WHERE id=$1 AND owner=$2 AND revision=$6 AND ontology=$7 RETURNING revision`,
             [
               id,
               access.principal.owner,
@@ -177,8 +200,26 @@ export class Automation {
       if (!result.rowCount) throw new Conflict('Rule changed or is unavailable');
       if (input.id)
         await this.db.query(`DELETE FROM ${this.db.schema}.rule_matches WHERE rule_id=$1`, [id], client);
+      if (target) {
+        await this.db.setOwner(client, graph.owner);
+        await graph.lockWrites();
+        const [latest] = await readProcessTransitions(this.db, model, graph.owner, target, client, {});
+        await this.db.query(`UPDATE ${this.db.schema}.object_rules SET process_cursor=$2 WHERE id=$1`,
+          [id, latest?.sequence ?? '0'], client);
+      }
       await access.refresh(client);
       return { ...input, id, revision: Number(result.rows[0]!.revision) };
+    });
+  }
+  async processStatus(access: Access, model: PublishedOntology, raw: unknown) {
+    requireScope(access.principal, 'ontology:read');
+    const input = processStatusSchema.parse(raw);
+    return this.db.transaction(async (client) => {
+      await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', [], client);
+      await this.db.setOwner(client, access.principal.owner);
+      await this.active(model, client);
+      await access.refresh(client);
+      return readProcessStatus(new Objects(this.db, model, access, client), input);
     });
   }
   async list(access: Access, model: PublishedOntology, kind: 'workflows' | 'object_rules' | 'workflow_runs') {
@@ -204,8 +245,11 @@ export class Automation {
         throw error;
       }
     };
-    for (const row of rows.slice(0, 100)) {
+    for (const row of rows) {
       if (kind === 'workflow_runs') {
+        const trigger = row.process_trigger && processTriggerSchema.parse(row.process_trigger);
+        if (trigger && (!model.objects.has(trigger.process.type) ||
+            !await matchingTransition(graph, trigger.process, trigger.sequence))) continue;
         const object = await visible(row.object_ref),
           results = [];
         const receipts = (
@@ -246,7 +290,7 @@ export class Automation {
         });
     }
     await access.refresh();
-    return { items, hasMore: rows.length > 100 };
+    return { items: items.slice(0, 100), hasMore: items.length > 100 };
   }
   async run(access: Access, model: PublishedOntology, raw: unknown) {
     requireScope(access.principal, 'ontology:write');
@@ -299,16 +343,23 @@ export class Automation {
     });
   }
   async scanOne(): Promise<boolean> {
+    const object = await this.scanRule(false);
+    const process = await this.scanRule(true);
+    return object || process;
+  }
+  private async scanRule(process: boolean): Promise<boolean> {
     return this.db.transaction(async (client) => {
-      await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', [], client);
+      if (!process) await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', [], client);
       const rule = (
         await this.db.query(
-          `SELECT * FROM ${this.db.schema}.object_rules WHERE enabled AND (last_scan IS NULL OR last_scan<now()-interval '30 seconds') ORDER BY last_scan NULLS FIRST FOR UPDATE SKIP LOCKED LIMIT 1`,
-          [],
+          `SELECT * FROM ${this.db.schema}.object_rules WHERE enabled AND (process_cursor IS NOT NULL)=$1
+            AND (last_scan IS NULL OR last_scan<=now()-$2*interval '1 second') ORDER BY last_scan NULLS FIRST FOR UPDATE SKIP LOCKED LIMIT 1`,
+          [process, process ? 1 : 30],
           client,
         )
       ).rows[0];
       if (!rule) return false;
+      await this.db.setOwner(client, String(rule.owner));
       await this.db.query(
         `UPDATE ${this.db.schema}.object_rules SET last_scan=now() WHERE id=$1`,
         [rule.id],
@@ -324,75 +375,28 @@ export class Automation {
         const input = ruleSchema.parse(rule.body),
           workflow = (
             await this.db.query(
-              `SELECT * FROM ${this.db.schema}.workflows WHERE id=$1 AND owner=$2 AND ontology=$3`,
+              `SELECT * FROM ${this.db.schema}.workflows WHERE id=$1 AND owner=$2 AND ontology=$3 AND body->>'kind' IS NULL`,
               [input.workflow, rule.owner, rule.ontology],
               client,
             )
           ).rows[0];
         if (!workflow) throw new NotFound('Rule workflow is unavailable');
-        this.authorize(access, model, workflowSchema.parse(workflow.body).steps);
-        for (const type of model.concreteTypes(input.query.type)) access.read(model, type);
-        const graph = new Objects(this.db, model, access, client),
-          matched = new Map<string, { ref: ObjectRef; revision: number }>();
-        let cursor: string | undefined;
-        do {
-          const page = await graph.query({ ...input.query, limit: 100, cursor });
-          cursor = page.cursor;
-          for (const item of page.items) {
-            matched.set(digest(item.ref), item);
-            if (matched.size > 10000) throw new Conflict('Rule matches more than 10000 objects');
-          }
-        } while (cursor);
-        const previous = (
-          await this.db.query(
-            `SELECT * FROM ${this.db.schema}.rule_matches WHERE rule_id=$1`,
-            [rule.id],
-            client,
-          )
-        ).rows;
-        const prior = new Map(previous.map((item) => [digest({ type: item.type, id: item.id }), item]));
-        for (const [key, item] of matched) {
-          const before = prior.get(key),
-            entered = !before?.matched,
-            generation = Number(before?.generation ?? 0) + (entered ? 1 : 0);
-          if (entered) {
-            const requestId = 'rule:' + digest([rule.id, rule.revision, item.ref, generation]);
-            await this.db.query(
-              `INSERT INTO ${this.db.schema}.workflow_runs(id,owner,ontology,release,request_id,digest,workflow_id,body,object_ref,scopes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(owner,request_id) DO NOTHING`,
-              [
-                randomUUID(),
-                rule.owner,
-                rule.ontology,
-                model.release,
-                requestId,
-                digest([rule.id, rule.revision, item.ref, generation]),
-                input.workflow,
-                workflow.body,
-                item.ref,
-                JSON.stringify(scopes),
-              ],
-              client,
-            );
-          }
-          await this.db.query(
-            `INSERT INTO ${this.db.schema}.rule_matches(rule_id,type,id,matched,revision,generation) VALUES($1,$2,$3,true,$4,$5) ON CONFLICT(rule_id,type,id) DO UPDATE SET matched=true,revision=excluded.revision,generation=excluded.generation`,
-            [rule.id, item.ref.type, item.ref.id, item.revision, generation],
-            client,
-          );
+        const body = workflowSchema.parse(workflow.body);
+        this.authorize(access, model, body.steps);
+        const graph = new Objects(this.db, model, access, client);
+        if ('process' in input) {
+          await this.scanProcess(graph, String(rule.id), Number(rule.revision), String(rule.process_cursor), input, body);
+        } else {
+          await this.scanMatches(graph, String(rule.id), Number(rule.revision), input, body);
         }
-        for (const [key, item] of prior)
-          if (!matched.has(key))
-            await this.db.query(
-              `UPDATE ${this.db.schema}.rule_matches SET matched=false WHERE rule_id=$1 AND type=$2 AND id=$3`,
-              [rule.id, item.type, item.id],
-              client,
-            );
         await access.refresh(client);
         await this.db.query('RELEASE SAVEPOINT rule_scan', [], client);
-      } catch {
+      } catch (error) {
         await this.db.query('ROLLBACK TO SAVEPOINT rule_scan', [], client);
+        const code = (error as {code?: string})?.code;
+        if (process && (code === '55P03' || code === '40001' || code === '40P01')) return true;
         await this.db.query(
-          `UPDATE ${this.db.schema}.object_rules SET enabled=false,error='Rule scan failed; review permissions, publication and query before enabling it again' WHERE id=$1`,
+          `UPDATE ${this.db.schema}.object_rules SET enabled=false,error='Rule scan failed; review permissions, publication and trigger before enabling it again' WHERE id=$1`,
           [rule.id],
           client,
         );
@@ -400,13 +404,121 @@ export class Automation {
       return true;
     });
   }
+  private async scanMatches(graph: Objects, ruleId: string, revision: number,
+    input: z.output<typeof objectRule>, body: z.output<typeof workflowSchema>) {
+    const { access, client, model, owner } = graph;
+    for (const type of model.concreteTypes(input.query.type)) access.read(model, type);
+    const matched = new Map<string, { ref: ObjectRef; revision: number }>();
+    let cursor: string | undefined;
+    do {
+      const page = await graph.query({ ...input.query, limit: 100, cursor });
+      cursor = page.cursor;
+      for (const item of page.items) {
+        matched.set(digest(item.ref), item);
+        if (matched.size > 10000) throw new Conflict('Rule matches more than 10000 objects');
+      }
+    } while (cursor);
+    const previous = (
+      await this.db.query(
+        `SELECT * FROM ${this.db.schema}.rule_matches WHERE rule_id=$1`,
+        [ruleId],
+        client,
+      )
+    ).rows;
+    const prior = new Map(previous.map((item) => [digest({ type: item.type, id: item.id }), item]));
+    for (const [key, item] of matched) {
+      const before = prior.get(key),
+        entered = !before?.matched,
+        generation = Number(before?.generation ?? 0) + (entered ? 1 : 0);
+      if (entered) {
+        const fingerprint = digest([ruleId, revision, item.ref, generation]);
+        const requestId = 'rule:' + fingerprint;
+        await this.db.query(
+          `INSERT INTO ${this.db.schema}.workflow_runs(id,owner,ontology,release,request_id,digest,workflow_id,body,object_ref,scopes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(owner,request_id) DO NOTHING`,
+          [
+            randomUUID(),
+            owner,
+            model.document.id,
+            model.release,
+            requestId,
+            fingerprint,
+            input.workflow,
+            body,
+            item.ref,
+            JSON.stringify(access.principal.scopes),
+          ],
+          client,
+        );
+      }
+      await this.db.query(
+        `INSERT INTO ${this.db.schema}.rule_matches(rule_id,type,id,matched,revision,generation) VALUES($1,$2,$3,true,$4,$5) ON CONFLICT(rule_id,type,id) DO UPDATE SET matched=true,revision=excluded.revision,generation=excluded.generation`,
+        [ruleId, item.ref.type, item.ref.id, item.revision, generation],
+        client,
+      );
+    }
+    for (const [key, item] of prior)
+      if (!matched.has(key))
+        await this.db.query(
+          `UPDATE ${this.db.schema}.rule_matches SET matched=false WHERE rule_id=$1 AND type=$2 AND id=$3`,
+          [ruleId, item.type, item.id],
+          client,
+        );
+  }
+  private async scanProcess(graph: Objects, ruleId: string, revision: number, cursor: string,
+    input: z.output<typeof processRule>, body: z.output<typeof workflowSchema>) {
+    const { access, client, model, owner } = graph;
+    const target = processTarget(graph, input.process);
+    // A writer cannot allocate a journal sequence for this owner/release until the checkpoint commits.
+    await graph.lockWrites();
+    const page = await readProcessTransitions(this.db, model, owner, target, client, { after: cursor, limit: 100 });
+    for (const item of page) {
+      if (!await matchingTransition(graph, input.process, item.sequence)) continue;
+      const trigger: ProcessTrigger = { ruleId, revision, sequence: item.sequence, process: input.process };
+      const fingerprint = digest(trigger);
+      const object = { type: target.objectType, id: item.objectId };
+      const availableAt = new Date(item.recordedAt.getTime() + (input.process.dwellSeconds ?? 0) * 1000);
+      await this.db.query(
+        `INSERT INTO ${this.db.schema}.workflow_runs(id,owner,ontology,release,request_id,digest,workflow_id,body,object_ref,scopes,available_at,process_trigger)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(owner,request_id) DO NOTHING`,
+        [randomUUID(), owner, model.document.id, model.release, 'process-rule:' + fingerprint, fingerprint, input.workflow,
+          body, object, JSON.stringify(access.principal.scopes), availableAt, trigger], client);
+    }
+    if (page.length) await this.db.query(`UPDATE ${this.db.schema}.object_rules SET process_cursor=$2 WHERE id=$1`,
+      [ruleId, page.at(-1)!.sequence], client);
+  }
+  private async verifyProcessTrigger(graph: Objects, object: ObjectRef, trigger: ProcessTrigger, firstStep: boolean) {
+    const { access, client, model, owner } = graph;
+    await this.db.setOwner(client, owner);
+    const current = await this.db.query(
+      `SELECT 1 FROM ${this.db.schema}.object_rules WHERE id=$1 AND owner=$2 AND ontology=$3 AND revision=$4 AND enabled FOR SHARE`,
+      [trigger.ruleId, owner, model.document.id, trigger.revision], client);
+    if (!current.rowCount) throw new ProcessTriggerInactive('Process rule changed or was disabled');
+    const target = processTarget(graph, trigger.process);
+    // Acquire the rule lock before the owner write lock, as in scanProcess and rule updates.
+    await graph.lockWrites();
+    const log = await matchingTransition(graph, trigger.process, trigger.sequence);
+    if (!log || target.objectType !== object.type || log.properties.processId !== object.id)
+      throw new PermissionDenied('The triggering process transition is unavailable');
+    if (firstStep && trigger.process.dwellSeconds) {
+      const [latest] = await readProcessTransitions(this.db, model, owner, target, client, { latestFor: object.id });
+      const current = await graph.read(object);
+      if (latest?.sequence !== trigger.sequence || current.properties[target.property] !== trigger.process.to)
+        throw new ProcessTriggerInactive('A later transition ended the state before the workflow could start');
+    }
+    // A trigger can depend on a historically marked state even after the live object has been cleared.
+    const history = (await this.db.query(
+      `SELECT before_values,after_values FROM ${this.db.schema}.edit_history WHERE owner=$1 AND sequence=$2 AND type=$3 AND id=$4`,
+      [owner, trigger.sequence, object.type, object.id], client)).rows[0]!;
+    for (const snapshot of [history.before_values, history.after_values])
+      if (snapshot) access.readRow(model, object.type, snapshot);
+  }
   async runOne(signal = AbortSignal.timeout(120000)): Promise<boolean> {
     signal.throwIfAborted();
     const token = randomUUID();
     const row = await this.db.transaction(async (client) => {
       const found = (
         await this.db.query(
-          `SELECT * FROM ${this.db.schema}.workflow_runs WHERE state='pending' OR(state='working' AND lease_until<now()) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1`,
+          `SELECT * FROM ${this.db.schema}.workflow_runs WHERE (state='pending' AND available_at<=now()) OR(state='working' AND lease_until<now()) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1`,
           [],
           client,
         )
@@ -420,6 +532,10 @@ export class Automation {
       return found;
     });
     if (!row) return false;
+    await this.db.withOwner(String(row.owner), () => this.executeRun(row, token, signal));
+    return true;
+  }
+  private async executeRun(row: QueryResultRow, token: string, signal: AbortSignal) {
     const executionSignal = AbortSignal.any([signal, AbortSignal.timeout(120000)]);
     const guard = async (client: Sql) => {
       executionSignal.throwIfAborted();
@@ -439,6 +555,8 @@ export class Automation {
         access = await Access.load(this.db, { owner: row.owner, scopes: row.scopes });
       requireScope(access.principal, 'ontology:write');
       const steps = workflowSchema.parse(row.body).steps;
+      const trigger = row.process_trigger ? processTriggerSchema.parse(row.process_trigger) : undefined;
+      const triggeringObject = objectRefSchema.parse(row.object_ref);
       for (let position = Number(row.step); position < steps.length; position++) {
         const item = steps[position]!,
           requestId = 'workflow:' + row.id + ':' + position;
@@ -455,7 +573,7 @@ export class Automation {
           ).rows[0];
           if (prior) return prior;
           const graph = new Objects(this.db, model, access, client);
-          const object = await graph.read(objectRefSchema.parse(row.object_ref));
+          const object = await graph.read(triggeringObject);
           this.authorize(access, model, [item]);
           const previousResults = new Map<string, ObjectRef>();
           for (const binding of Object.values(item.input)) {
@@ -538,20 +656,29 @@ export class Automation {
           }
           const markings = z.array(z.string()).parse(frozen.read_markings);
           await access.restoreReads(frozen.requirements as Requirement[], markings);
+          if (trigger) await this.db.transaction(async client => {
+            await guard(client);
+            await this.verifyProcessTrigger(new Objects(this.db, model, access, client), triggeringObject, trigger, position === 0);
+          });
           const boundResults = Object.entries(item.input)
             .filter(([, binding]) => 'step' in binding)
             .map(([parameter]) => objectRefSchema.parse(frozen.input[parameter]));
           for (const reference of boundResults) await new Objects(this.db, model, access).read(reference);
           let checkedInputs = false;
-          const commitGuard = async (client: Sql) => {
+          let checkedTransaction: string | undefined;
+          const checkCommit = async (client: Sql) => {
             await guard(client);
+            const transaction = trigger ? String((await this.db.query(
+              'SELECT pg_current_xact_id()::text AS id', [], client)).rows[0]!.id) : undefined;
             // Authorize before edits under the write lock; a valid Action may subsequently delete its input.
-            if (!checkedInputs) {
+            if (!checkedInputs || checkedTransaction !== transaction) {
               const graph = new Objects(this.db, model, access, client);
-              await graph.lockWrites();
+              if (trigger) await this.verifyProcessTrigger(graph, triggeringObject, trigger, position === 0);
+              else await graph.lockWrites();
               await access.restoreReads(frozen.requirements as Requirement[], markings, client);
               for (const reference of boundResults) await graph.read(reference);
               checkedInputs = true;
+              checkedTransaction = transaction;
             }
             await this.db.query(
               `UPDATE ${this.db.schema}.workflow_steps SET requirements=$3,read_markings=$4 WHERE run_id=$1 AND position=$2`,
@@ -564,6 +691,8 @@ export class Automation {
               client,
             );
           };
+          const commitGuard = (client: Sql) =>
+            trigger && client === this.db.pool ? this.db.transaction(checkCommit) : checkCommit(client);
           result = await this.actions.apply(
             access,
             model,
@@ -573,6 +702,7 @@ export class Automation {
             commitGuard,
             undefined,
             executionSignal,
+            { kind: 'workflow', id: String(row.id) },
           );
         }
         await this.db.transaction(async (client) => {
@@ -601,11 +731,11 @@ export class Automation {
       });
     } catch (error) {
       await this.db.query(
-        `UPDATE ${this.db.schema}.workflow_runs SET state='failed',error=$3,token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1 AND token=$2 AND state='working'`,
-        [row.id, token, error instanceof MissingFrozenSecurityContext ? missingSecurityContextMessage : failureMessage],
+        `UPDATE ${this.db.schema}.workflow_runs SET state=$3,error=$4,token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1 AND token=$2 AND state='working'`,
+        [row.id, token, error instanceof ProcessTriggerInactive ? 'canceled' : 'failed',
+          error instanceof ProcessTriggerInactive || error instanceof MissingFrozenSecurityContext ? error.message : failureMessage],
       );
     }
-    return true;
   }
   async retry(access: Access, model: PublishedOntology, id: string) {
     requireScope(access.principal, 'ontology:write');

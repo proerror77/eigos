@@ -1,3 +1,5 @@
+import { documentChunkType, documentType } from '../ontology/documents.js';
+import { isProtected } from '../ontology/classification.js';
 import { z } from 'zod';
 import { Conflict, digest, NotFound } from '../core/identity.js';
 import { objectRefSchema, type ObjectData } from '../ontology/schema.js';
@@ -28,6 +30,7 @@ export const semanticSearchSchema = z.strictObject({
   text: z.string().min(1).max(32000),
   limit: z.number().int().min(1).max(100).default(10),
 });
+export const semanticSearchViewSchema = semanticSearchSchema.extend({ scenarioId: z.uuid().optional() });
 export const semanticStatusSchema = z.strictObject({ name: indexName });
 type Configuration = z.output<typeof semanticConfigureSchema> & {
   release: string;
@@ -45,6 +48,14 @@ export async function initializeSemantic(db: Database) {
       revision bigint NOT NULL,text_digest text NOT NULL,binding text NOT NULL,dimensions integer NOT NULL,vector jsonb NOT NULL,
       indexed_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(ontology,release,name,owner,type,id),
       FOREIGN KEY(ontology,release,name) REFERENCES ${db.schema}.semantic_indexes(ontology,release,name));`);
+}
+function chunkCitation(object: ObjectData) {
+  const { documentId, index, startOffset, endOffset, page, paragraph } = object.properties;
+  if (typeof documentId !== 'string' || typeof index !== 'number' || typeof startOffset !== 'number' || typeof endOffset !== 'number') return undefined;
+  return {
+    version: { type: documentType, id: documentId }, chunk: object.ref, index, startOffset, endOffset,
+    ...(typeof page === 'number' ? { page } : {}), ...(typeof paragraph === 'number' ? { paragraph } : {}),
+  };
 }
 const normalized = (raw: unknown, dimensions: number): number[] => {
   const vector = z.array(z.number().finite()).length(dimensions).parse(raw),
@@ -203,7 +214,10 @@ export class SemanticSearch {
     for (const ref of refs) {
       if (ref.type !== configuration.type) throw new Conflict('Object type differs from the semantic index');
       const graph = new Objects(this.db, model, access),
-        object = await graph.readStored(ref);
+        scoped = await access.measureEgress(() => graph.readStored(ref)),
+        object = scoped.result;
+      if (isProtected(scoped.classification) && configuration.embeddingFunction !== 'embedTextLocal')
+        throw new Conflict('Protected embedding input requires the local embedding Function');
       const text = nestedValue(object.properties, configuration.property);
       if (typeof text !== 'string' || !text.length || text.length > 32000)
         throw new Conflict('Embedding input must be an authorized string of 1 to 32000 characters');
@@ -301,10 +315,14 @@ export class SemanticSearch {
     const query = await this.embed(access, model, configuration, input.text),
       candidates = await this.candidates(access, model, configuration);
     const items = candidates
-      .map(({ object, vector }) => ({
-        object,
-        score: vector.reduce((sum, value, index) => sum + value * query[index]!, 0),
-      }))
+      .flatMap(({ object, vector }) => {
+        const citation = object.ref.type === documentChunkType ? chunkCitation(object) : undefined;
+        if (object.ref.type === documentChunkType && !citation) return [];
+        return [{
+          object, ...(citation ? { citation } : {}),
+          score: vector.reduce((sum, value, index) => sum + value * query[index]!, 0),
+        }];
+      })
       .sort(
         (left, right) =>
           right.score - left.score ||

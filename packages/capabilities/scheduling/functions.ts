@@ -5,6 +5,7 @@ import type { Database } from '../../runtime/database.js';
 import { Scenarios } from '../../runtime/scenarios.js';
 import { PARequests } from '../../runtime/pa.js';
 import { Objects } from '../../runtime/objects.js';
+import { recordScenarioAction } from '../../runtime/scenario-store.js';
 import { currentService } from '../services/functions.js';
 import { activityInputSchema, calendarResponseSchema, commitPlanSchema, jsonSchema, planInputSchema, planRefSchema, removeActivitySchema, searchSlotsSchema } from './contracts.js';
 
@@ -128,8 +129,10 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       if (plan.type !== 'SchedulePlan') throw new Conflict('Expected a SchedulePlan');
       if (input.plan) await context.objects.read(plan);
       return context.edit(plan, async live => {
-        const view=input.scenarioId?await new Scenarios(db).view(live.access,live.model,input.scenarioId,live.client):undefined;
-        const graph=view?new Objects(db,view,live.access,live.client):live;
+        if (input.scenarioId && live.model.scenario && input.scenarioId !== live.model.scenario)
+          throw new Conflict('Calendar preparation must stay within the selected scenario');
+        const view=input.scenarioId&&!live.model.scenario?await new Scenarios(db).view(live.access,live.model,input.scenarioId,live.client):undefined;
+        const graph=view?new Objects(db,view,live.access,live.client,{...live.change,scenarioEdits:[]}):live;
         await graph.create(resource,{ id: resource.id, name: 'User calendar' });
         const { status: _status, ...facts } = response;
         const properties = { id: availability.id, name: 'PA calendar availability', ...facts };
@@ -141,8 +144,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
         const fields = { id: plan.id, name: input.title, start: input.start, end: input.end, timeZone: input.timeZone, durationMinutes: input.durationMinutes };
         if (input.plan) { const current = await graph.read(plan); await graph.edit(plan,current.revision,fields); } else await graph.create(plan,{...fields,...(graph.model.object('SchedulePlan').properties.state?{state:'prepared'}:{})});
         await graph.linkBatch([{ type:'ResourceAvailability',from:resource,to:availability },{ type:'PlanResource',from:plan,to:resource },{ type:'PlanAvailability',from:plan,to:availability }]);
-        if(input.scenarioId)await db.query(`INSERT INTO ${db.schema}.scenario_actions(scenario_id,owner,request_id,digest,action,result,requirements)
-          VALUES($1,$2,$3,$4,'PrepareSchedulePlan',$5,$6)`,[input.scenarioId,graph.owner,context.operationId,digest({input,response}),plan,JSON.stringify(graph.access.requirements())],graph.client);
+        if(view)await recordScenarioAction(graph,'PrepareSchedulePlan',raw,plan,context.operationId!);
       });
     }],
     ['findScheduleSlots', async (raw, context) => {
@@ -214,7 +216,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       if (!context.edit || context.execution) throw new Conflict('The PA must apply the reviewed merge Action explicitly');
       return context.edit(input.plan,async graph=>{
         const serviceLinks=[...graph.model.objects.keys()].filter(type=>graph.model.implements(type,'ServiceOffering')).map(type=>graph.model.navigation(type,'plans','ServiceOffering').link);
-        await new Scenarios(db).mergeInto(graph,input.scenarioId,input.revision,{objects:['ScheduledActivity','SchedulePlan','CalendarAvailability','EventTrip'],links:['ActivityPlan','ActivityResource','ActivityDependency','PlanResource','PlanAvailability','ResourceAvailability','TripPlan','TripEvent','TripTravel','TripActivities',...serviceLinks],validate:async(view,touched,links)=>{
+        await new Scenarios(db).mergeInto(graph,input.scenarioId,input.revision,{objects:['ScheduledActivity','SchedulePlan','CalendarAvailability','EventTrip'],links:['ActivityPlan','ActivityResource','ActivityDependency','PlanResource','PlanAvailability','ResourceAvailability','TripPlan','TripEvent','TripTravel','TripActivities',...serviceLinks],validateAction:context.validateScenarioAction,validate:async(view,touched,links)=>{
           if(links.some(link=>link.to.type==='SchedulePlan'&&!same(link.to,input.plan)))throw new Conflict('Scenario contains service links outside the selected plan');
           for(const item of touched){
             if(view.model.implements(item.ref.type,'ServiceOffering')){await currentService(view,item.ref);continue;}

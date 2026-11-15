@@ -9,6 +9,7 @@ import express from 'express';
 import { McpServer } from '@modelcontextprotocol/server';
 import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
 import type { z } from 'zod';
+import { harnessProvider, ModelEgressDenied } from './model-egress.js';
 import type { AgentDriver, AgentTool } from './agent.js';
 
 export interface HarnessConfig { binary: string; credentialFile: string; model: string; reasoningEffort: string }
@@ -29,6 +30,7 @@ async function accessToken(path: string) {
 /** One task owns one Harness session and one authenticated loopback Ontology tool surface. */
 export class HarnessAgent implements AgentDriver {
   readonly model: string;
+  readonly provider = harnessProvider;
   constructor(private readonly config: HarnessConfig) { this.model = config.model; }
   async run(prompt: string, tools: ReadonlyMap<string, AgentTool>, signal: AbortSignal) {
     signal.throwIfAborted();
@@ -40,7 +42,7 @@ export class HarnessAgent implements AgentDriver {
       const server = new McpServer({ name: 'eigos_ontology', version: '1.0' }); servers.add(server);
       for (const [name, tool] of tools) server.registerTool(name, { description: tool.description, inputSchema: tool.schema as z.ZodObject }, async input => {
         try { return { content: [{ type: 'text' as const, text: JSON.stringify(await tool.invoke(input)) }] }; }
-        catch (error) { return { isError: true, content: [{ type: 'text' as const, text: error instanceof Error ? error.message : 'Tool failed' }] }; }
+        catch (error) { return { isError: true, content: [{ type: 'text' as const, text: error instanceof ModelEgressDenied ? 'Data is unavailable to the selected model' : 'Model tool operation failed' }] }; }
       });
       const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
       try { await server.connect(transport); res.on('close', () => { servers.delete(server); void server.close(); }); await transport.handleRequest(req, res, req.body); }
@@ -54,7 +56,7 @@ export class HarnessAgent implements AgentDriver {
       { id: 'system-prompt', config: { includeHarnessIdentity: false, includeRuntimeContext: false, personaPrefix: 'You are EIGOS. Use the supplied Ontology tools to fulfil the task.' } },
       { id: 'sandbox-policy', config: { mode: 'read-only' } },
       { insert: [
-        { id: 'eigos-model', name: '@deepseek-ai/dsh-llm-pi-ai', config: { providers: { 'openai-codex': {
+        { id: 'eigos-model', name: '@deepseek-ai/dsh-llm-pi-ai', config: { providers: { [this.provider]: {
           apiKeyEnv: 'EIGOS_MODEL_ACCESS', retryPolicy: { mode: 'normal', maxRetries: 0 }, models: [{ id: this.model, contextWindow: 128000, maxTokens: 4096 }],
         } } } },
         { id: 'eigos-ontology', name: '@deepseek-ai/dsh-mcp-client', config: { transport: 'streamable-http', serverName: 'eigos_ontology',
@@ -96,7 +98,7 @@ export class HarnessAgent implements AgentDriver {
         const id = ++sequence; pending.set(id, { resolve, reject });
         child!.stdin!.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
       });
-      const initialized = await request('initialize', { cwd: directory, provider: 'openai-codex', model: this.model, reasoningEffort: this.config.reasoningEffort, maxTokens: 4096 });
+      const initialized = await request('initialize', { cwd: directory, provider: this.provider, model: this.model, reasoningEffort: this.config.reasoningEffort, maxTokens: 4096 });
       if (initialized?.serverInfo?.name !== 'deepseek-harness-sdk-runtime') throw new Error('Unexpected model runtime');
       await request('session/prompt', { sessionId, contentBlocks: [{ type: 'text', text: prompt }] });
       await request('session/wait', { sessionId });

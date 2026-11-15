@@ -22,6 +22,14 @@ Gateway 通过 HTTP `POST /ontology/services/<operation>` 和 MCP `ontology_<ope
 
 SQL 过滤、Interface 属性映射、关系导航、聚合、历史读取和物化读取应用同一策略。编辑现有对象需要读取实例，修改隐藏字段与删除包含隐藏字段的对象会失败。Action 读取带安全标记的数据后，写出的对象必须保留这些标记。任务缓存与副作用投递会重新检查读取依赖，包含控制可见性的对象数据。
 
+Action 凭据和编辑历史分别保留数据所属身份与执行者。认证协议调用使用已验证令牌的 OAuth 客户端身份（若提供），Agent、定时任务、Workflow 和 Indexer 使用运行时确定的身份。任务 ID 和请求 ID 可关联两份记录。旧记录缺失的执行者字段保持空值。
+
+### PostgreSQL owner 隔离
+
+多租户环境可在升级 schema 后由表所有者执行 `npm run db:enable-owner-isolation`，并为 Gateway、Worker 和 Indexer 设置 `EIGOS_ENFORCE_OWNER_RLS=true`。运行与查询角色需拥有职责所需的表权限，并使用普通、非表所有者且无 `BYPASSRLS` 的角色。服务启动时验证角色和策略。发布、数据迁移和策略安装继续由独立管理角色执行。
+
+受保护范围包含正式对象和 Link、来源和编辑状态、编辑历史、Scenario 差量和审批、Action 与回滚凭据，以及物化快照、语义向量、三维文件和实体绑定。网关使用已认证 owner，后台执行进程领取任务后使用该任务的原 owner。每次访问在事务中设定 owner，同一连接随后可安全复用。隔离测试以普通角色直接访问表，验证缺少 owner 时数据不可读，在一个 owner 的事务中不能访问另一个 owner 的业务记录。调度队列由具备相应职责的受信任服务领取，队列授权仍按服务分配。事务 owner 由受信任的服务代码设置，数据库凭据应保留在服务内。[PostgreSQL 行级安全](https://www.postgresql.org/docs/current/ddl-rowsecurity.html)
+
 ## 数据与进程
 
 ```mermaid
@@ -54,12 +62,13 @@ Gateway 可配置 `QUERY_DATABASE_URL` 使用独立只读连接池，包括已�
 | Gateway/Worker 读取 | 既有定义和对象表，以及 `object_policies`、`security_memberships`、`ontology_resource_projects`、`edit_policies` 的 SELECT |
 | 对象编辑 | `source_values`、`object_edits` 的 SELECT/INSERT/UPDATE/DELETE，`edit_history` 的 SELECT/INSERT 和序列 USAGE，业务对象与关系的相应编辑权限 |
 | 对象集 | `object_sets` 的 SELECT/INSERT/UPDATE/DELETE |
+| 方案审阅 | `scenario_approvals` 的 SELECT/INSERT |
 | 索引生产与消费 | `index_streams`、`index_transactions` 的 SELECT/INSERT/UPDATE，加对象编辑权限 |
 | 物化 | `materializations`、`materialized_objects`、`materialized_links` 的 SELECT/INSERT |
-| 副作用 | `action_effects` 的 SELECT/INSERT/UPDATE |
+| 副作用 | `action_effects` 的 SELECT/INSERT/UPDATE，以及核对提交凭据所需的 `actions` SELECT |
 | 发布管理 | 治理与发布表的编辑权限，以及候选对象、关系和来源/编辑状态复制权限 |
 | 查询连接 | 对象、关系、`storage_identity` 的 SELECT，连接强制只读 |
 
-默认对象集完整计算和单次物化上限均为 10000 个对象，物化最多 100000 条关系，单次来源事务最多 1000 个写入和 1000 个删除。超限明确失败。来源生产者负责提供连续 offset 和批次删除列表。支持的策略表达式、索引批次与只读查询节点配置均由本页和各模块指南定义。
+应用层对象集完整计算和单次物化上限为 10000 个对象，符合下推条件的聚合在 PostgreSQL 计算。物化最多 100000 条关系，单次来源事务最多 1000 个写入和 1000 个删除。超限明确失败。来源生产者负责提供连续 offset 和批次删除列表。
 
 详见 [对象集](object-sets.md)、[索引与编辑物化](indexing.md)、[发布治理与 Function 版本](governance.md)。

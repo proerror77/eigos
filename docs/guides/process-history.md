@@ -33,6 +33,8 @@ HTTP、MCP 和 Object Set 的关系查询使用同一对象与 Link 视图，包
 
 Worker 中的模型通过任务专用 `eigos_ontology` MCP 使用相同查询；其 `query_ontology` 工具使用 `queries` 批次封装。`describe_ontology` 能发现日志类型，`follow_links` 导航同一发布关系。模型不读取数据库文件或直连供应商来替代这些能力。
 
+`ontology_process_status` 或 `POST /ontology/services/process_status` 接受 `{type,object}`。其中 `type` 是具体日志类型，`object` 是对应业务对象引用。返回当前可见状态、最近一条可见转换的引用、观测时间、记录时间和按记录时间算出的停留秒数。最近的真实转换缺失或不可见时，时间和停留秒数为空。业务对象中每个独立状态属性可以各自发布过程日志和规则。状态转换监控和超时 Workflow 见 [过程规则](automation.md#过程规则)。
+
 ## 日志来源与因果
 
 日志实例是已有 `edit_history` 的只读查询投影，不建立新的日志数据库、复制对象或等待后台日志任务。普通业务查询不展开该投影。当前发布只读取自身与祖先发布的历史，旧发布不会读到后续版本新增的转换。

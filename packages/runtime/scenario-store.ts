@@ -1,9 +1,17 @@
-import { Conflict, NotFound } from '../core/identity.js';
+import { Conflict, NotFound, digest } from '../core/identity.js';
 import type { ObjectRef, LinkData } from '../ontology/schema.js';
 import { Database, type Sql } from './database.js';
 import type { PublishedOntology } from './metadata.js';
 import { syncScenarioMetadata } from './scenario-metadata.js';
 import { processLogTables } from './process-logs.js';
+import type { Objects } from './objects.js';
+
+export type ScenarioMutation =
+  | { op: 'create' | 'edit'; ref: ObjectRef; fields: string[]; values: Record<string, unknown> }
+  | { op: 'delete'; ref: ObjectRef }
+  | { op: 'link' | 'unlink'; edge: LinkData };
+
+type ObjectCapture = { op: 'create' | 'edit' | 'delete'; journal?: ScenarioMutation[] };
 
 /** Shared by live and scenario edits, including source ingestion and scenario merge. */
 export async function lockEdits(db: Database, model: PublishedOntology, owner: string, client: Sql) {
@@ -51,28 +59,56 @@ export function viewTables(db: Database, model: PublishedOntology, owner: string
   ) ` },types);
 }
 
-export async function stageObject(db: Database, model: PublishedOntology, owner: string, ref: ObjectRef, revision: number, properties: Record<string, unknown> | null, client: Sql) {
+export async function stageObject(db: Database, model: PublishedOntology, owner: string, ref: ObjectRef, revision: number, properties: Record<string, unknown> | null, client: Sql, editedFields: readonly string[] = [], capture?: ObjectCapture) {
   const original = (await db.query(`SELECT revision,properties FROM ${db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`, [model.projection, owner, ref.type, ref.id], client)).rows[0];
   const links = await objectLinks(db,model,owner,ref,client);
-  await db.query(`INSERT INTO ${db.schema}.scenario_objects(scenario_id,owner,type,id,base_revision,base_properties,base_links,revision,properties)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(scenario_id,owner,type,id) DO UPDATE SET revision=excluded.revision,properties=excluded.properties`,
-  [model.scenario, owner, ref.type, ref.id, original?.revision ?? null, original?.properties ?? null, JSON.stringify(links), revision, properties], client);
+  await db.query(`INSERT INTO ${db.schema}.scenario_objects AS staged(scenario_id,owner,type,id,base_revision,base_properties,base_links,revision,properties,edited_fields)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(scenario_id,owner,type,id) DO UPDATE
+    SET revision=excluded.revision,properties=excluded.properties,
+      edited_fields=(SELECT coalesce(jsonb_agg(DISTINCT field),'[]') FROM jsonb_array_elements(coalesce(staged.edited_fields,'[]') || excluded.edited_fields) field)`,
+  [model.scenario, owner, ref.type, ref.id, original?.revision ?? null, original?.properties ?? null, JSON.stringify(links), revision, properties, JSON.stringify(editedFields)], client);
+  if (capture?.journal) {
+    if (capture.op === 'delete') capture.journal.push({ op: 'delete', ref: { ...ref } });
+    else capture.journal.push({
+      op: capture.op, ref: { ...ref }, fields: [...editedFields],
+      values: structuredClone(Object.fromEntries(editedFields.map(field => [field, properties![field]]))),
+    });
+  }
   await bumpScenario(db, model, owner, client);
 }
 export async function objectLinks(db: Database, model: PublishedOntology, owner: string, ref: ObjectRef, client: Sql) {
   return (await db.query(`SELECT type,from_type,from_id,to_type,to_id FROM ${db.schema}.links WHERE projection=$1 AND owner=$2 AND ((from_type=$3 AND from_id=$4) OR (to_type=$3 AND to_id=$4)) ORDER BY type,from_type,from_id,to_type,to_id`, [model.projection,owner,ref.type,ref.id],client)).rows;
 }
 
-export async function stageLink(db: Database, model: PublishedOntology, owner: string, edge: LinkData, removed: boolean, client: Sql) {
+export async function stageLink(db: Database, model: PublishedOntology, owner: string, edge: LinkData, removed: boolean, client: Sql, journal?: ScenarioMutation[]) {
   const definition = model.links.get(edge.type)!;
   const args = [model.projection, owner, edge.type, edge.from.type, edge.from.id, edge.to.type, edge.to.id];
   const present = (await db.query(`SELECT 1 FROM ${db.schema}.links WHERE projection=$1 AND owner=$2 AND type=$3 AND from_type=$4 AND from_id=$5 AND to_type=$6 AND to_id=$7`, args, client)).rowCount! > 0;
   await db.query(`INSERT INTO ${db.schema}.scenario_links(scenario_id,owner,type,from_type,from_id,to_type,to_id,single_from,single_to,base_present,removed)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(scenario_id,owner,type,from_type,from_id,to_type,to_id) DO UPDATE SET removed=excluded.removed`,
   [model.scenario, ...args.slice(1), definition.from.cardinality === 'one', definition.to.cardinality === 'one', present, removed], client);
+  journal?.push({ op: removed ? 'unlink' : 'link', edge: structuredClone(edge) });
   await bumpScenario(db, model, owner, client);
 }
-export async function bumpScenario(db: Database, model: PublishedOntology, owner: string, client: Sql) {
-  await db.query(`UPDATE ${db.schema}.scenarios SET revision=revision+1 WHERE id=$1 AND owner=$2`, [model.scenario, owner], client);
+export async function bumpScenario(db: Database, model: PublishedOntology, owner: string, client: Sql, recordedStep = false) {
+  const { rows } = await db.query<{revision: string}>(`UPDATE ${db.schema}.scenarios SET revision=revision+1,journal_steps=journal_steps+$3 WHERE id=$1 AND owner=$2 RETURNING revision`, [model.scenario, owner, Number(recordedStep)], client);
+  if (!rows[0]) throw new NotFound('Scenario is unavailable');
   await syncScenarioMetadata(db,model,model.scenario!,client);
+  return rows[0].revision;
+}
+
+export async function recordScenarioAction(
+  graph: Objects, action: string, input: Record<string, unknown>, result: ObjectRef, requestId: string,
+) {
+  const { db, model, owner, client, change } = graph;
+  if (!model.scenario || client === db.pool || !change?.scenarioEdits)
+    throw new Conflict('Scenario Action needs its transactional edit journal');
+  await graph.lockWrites();
+  const revision = await bumpScenario(db, model, owner, client, true);
+  const fingerprint = digest({ release: model.release, action, input });
+  await db.query(`INSERT INTO ${db.schema}.scenario_actions(
+      scenario_id,owner,request_id,digest,action,result,requirements,input,executor_kind,executor_id,task_id,step_revision,edits)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+    [model.scenario, owner, requestId, fingerprint, action, result, JSON.stringify(graph.access.requirements()), input,
+      change.executor?.kind ?? null, change.executor?.id ?? null, change.taskId ?? null, revision, JSON.stringify(change.scenarioEdits)], client);
 }

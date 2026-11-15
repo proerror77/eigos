@@ -196,3 +196,37 @@ test('an Object Set save waiting on publication cannot commit against the retire
     await f.close();
   }
 });
+
+test('stored scalar filters and aggregations run before application candidate limits', async () => {
+  const f = await setup();
+  try {
+    const projection = f.model.projection;
+    await f.db.query(`INSERT INTO ${f.db.schema}.objects(projection, owner, type, id, properties)
+      SELECT $1, $2, 'SchedulePlan', 'plan-' || i,
+        jsonb_build_object('id', 'plan-' || i, 'name', 'Plan', 'durationMinutes', i, 'timeZone', 'UTC',
+          'start', '2026-11-20T01:00:00Z', 'end', '2026-11-20T03:00:00Z')
+      FROM generate_series(1, 10005) i`, [projection, principal.owner]);
+    const filter = { op: 'gt', property: 'durationMinutes', value: 10000 } as const;
+    const query = { type: 'SchedulePlan', filter, orderBy: [{ property: 'durationMinutes', direction: 'desc' as const }], limit: 3 };
+    const first = await f.objects.query(query);
+    assert.deepEqual(first.items.map(item => item.properties.durationMinutes), [10005, 10004, 10003]);
+    assert.ok(first.cursor);
+    const second = await f.objects.query({ ...query, cursor: first.cursor });
+    assert.deepEqual(second.items.map(item => item.properties.durationMinutes), [10002, 10001]);
+
+    const set = { op: 'query', query: { type: 'SchedulePlan' } };
+    const metrics = { count: { op: 'count' }, values: { op: 'count', property: 'durationMinutes' },
+      sum: { op: 'sum', property: 'durationMinutes' } };
+    assert.deepEqual(await f.sets.aggregate(f.access, f.model, { set, groupBy: ['timeZone'], metrics }), {
+      count: 10005, items: [{ group: { timeZone: 'UTC' }, metrics: { count: 10005, values: 10005, sum: 50055015 } }],
+    });
+    assert.deepEqual((await f.sets.evaluate(f.access, f.model, { set: { ...set, query: { ...set.query, filter } } })).total, 5);
+
+    await f.db.query(`INSERT INTO ${f.db.schema}.property_security VALUES ('Eigos', 'SchedulePlan', 'durationMinutes')`);
+    const restricted = await Access.load(f.db, principal);
+    assert.deepEqual((await new Objects(f.db, f.model, restricted).query(query)).items, []);
+    assert.deepEqual(await f.sets.aggregate(restricted, f.model, { set, groupBy: ['durationMinutes'], metrics }), {
+      count: 10005, items: [{ group: { durationMinutes: null }, metrics: { count: 10005, values: 0, sum: null } }],
+    });
+  } finally { await f.close(); }
+});

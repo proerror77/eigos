@@ -39,9 +39,14 @@ export interface ScenarioInspection extends ScenarioInfo {
     ref: ObjectRef;
     before: Record<string, unknown> | null;
     after: Record<string, unknown> | null;
+    editedFields?: string[];
     conflict: boolean;
   }[];
   links: { type: string; from: ObjectRef; to: ObjectRef; removed: boolean; conflict: boolean }[];
+}
+export interface ScenarioReview extends Pick<ScenarioInspection, 'id' | 'name' | 'revision' | 'objects' | 'links'> {
+  conflicts: boolean;
+  snapshot: string;
 }
 export interface ScenarioInput {
   requestId: string;
@@ -207,6 +212,22 @@ export class ScenarioClient {
       'share_scenario',
       { id: this.id, revision, readers },
       signal,
+    );
+  }
+  rebase(revision: number, signal?: AbortSignal) {
+    return this.client.service<{ id: string; revision: number }>('rebase_scenario', { id: this.id, revision }, signal);
+  }
+  inviteReviewers(revision: number, reviewers: string[], signal?: AbortSignal) {
+    return this.client.service<{ id: string; revision: number; reviewers: string[] }>(
+      'invite_scenario_reviewers', { id: this.id, revision, reviewers }, signal,
+    );
+  }
+  inspectReview(signal?: AbortSignal) {
+    return this.client.service<ScenarioReview>('inspect_scenario_review', { id: this.id }, signal);
+  }
+  approveReview(revision: number, snapshot: string, signal?: AbortSignal) {
+    return this.client.service<{ id: string; revision: number; reviewer: string; approved: true }>(
+      'approve_scenario_review', { id: this.id, revision, snapshot }, signal,
     );
   }
   /** Merge Actions conventionally bind scenarioId and the explicitly reviewed revision. */

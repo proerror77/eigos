@@ -20,6 +20,11 @@ test('MCP and A2A share the same authenticated PostgreSQL task and ontology', as
   try {
     assert.equal((await fetch(url + '/ontology')).status, 401);
     await client.connect(new StreamableHTTPClientTransport(new URL(url + '/mcp'), { requestInit: { headers: { Authorization: 'Bearer ' + token } } }));
+    const listed = await client.listTools();
+    const rule = listed.tools.find(tool => tool.name === 'ontology_save_rule');
+    assert.ok(rule?.inputSchema.properties?.query);
+    assert.ok(rule?.inputSchema.properties?.process);
+    assert.ok(listed.tools.some(tool => tool.name === 'ontology_inspect_scenario_review'));
     const result = await client.callTool({ name: 'submit_task', arguments: { requestId: 'protocol', message: '只询价', route } });
     const content = result.content as { text: string }[]; const task = JSON.parse(content[0]!.text);
     await f.worker.runOne();

@@ -280,6 +280,7 @@ export class ScheduledActionRunner {
           guard,
           { task, tasks: this.tasks },
           signal,
+          { kind: 'scheduled', id: call.scheduleId },
         ),
       );
     } catch (error) {

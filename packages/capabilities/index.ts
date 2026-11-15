@@ -1,3 +1,5 @@
+import { registerDocumentFunction } from '../ontology/documents.js';
+import { registerSchedulePlanDocument } from './documents.js';
 import { flightradar24Functions } from './flight/flightradar24.js';
 import { flightFunctions } from './flight/functions.js';
 import { configuredVariFlight } from './flight/variflight.js';
@@ -42,6 +44,7 @@ export function createCapabilities(
   const handlers = new Map([
     ...schedulingFunctions(db),
     ...applicationFunctions(db),
+    [registerDocumentFunction, registerSchedulePlanDocument],
     ...serviceFunctions(services, () => sources),
     ...travelFunctions(db, source, services, () => sources),
     ...calendarJourneyFunctions(db, getFunctions, amap, configuredJourneyCalendar(connections.calendar, connections.calendarFetch)),
