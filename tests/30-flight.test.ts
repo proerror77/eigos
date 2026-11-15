@@ -95,7 +95,11 @@ test('MCP looks up the supplier flight directly, and the original scheduled Acti
       call('apply_ontology_action', { action, requestId, input });
     const settings = { ...flight, monitorUntil: new Date(Date.now() + 37 * 60000).toISOString(), maxChecks: 5 };
     const watch = await apply('StartFlightWatch', 'flight-watch-1', settings);
-    assert.deepEqual(await apply('StartFlightWatch', 'flight-watch-duplicate', settings), watch);
+    assert.deepEqual(await apply('StartFlightWatch', 'flight-watch-duplicate', { ...settings, sources: ['VariFlight'] }), watch);
+    // Use the exact contract and row shape of a watch scheduled under v15.
+    const { rows: [originalSchedule] } = await f.db.query('SELECT body FROM ' + f.db.schema + '.scheduled_actions');
+    assert.equal(originalSchedule!.body.contract, '3b91a38a59075923040a3fed8566437618c417293a73a1989adb7b1ff9c2b286');
+    await f.db.query("UPDATE " + f.db.schema + ".objects SET properties=properties-'liveTracking' WHERE id=$1", [watch.id]);
     const snapshot = async () => flightWatchRead.parse(await call('evaluate_ontology', {
       function: 'readFlightWatch', input: { watch },
     }, originalPA));

@@ -129,6 +129,24 @@ Machinery 使用已发布对象的枚举状态和原有编辑历史；Action Eng
 
 请求、任务调度和技术调用分别保存在专用运行表。地点和路线具有业务身份，费用估计是一次来源观察，来源凭据保存在运行配置中。标准化过程保留供应商坐标系声明及价格范围。[结构指导](https://www.palantir.com/docs/foundry/ontology/ontology-structural-guidance)
 
+## 网页订位试点
+
+`readDiningWebAvailability` 接收餐厅、城市、当地日期和人数。从指定餐厅官网跟随订位链接，核对 SevenRooms 页面上的门店、日期和人数，从页面主结果区提取可选时段。连接配置只保存官网起点。浏览器使用独立会话，只向官网和订位页面发出读取请求。
+
+配置通过 `EIGOS_DINING_WEB_CONNECTION_FILE` 加载，由执行进程读取权限为 `0600` 的独立 JSON 文件。文件字段为 `owner`、`restaurant`、`city`、`timeZone` 和 `officialPage`。运行网页能力与订位回归测试需要 Google Chrome。隔离测试可额外配置 `sandboxOrigin`，值为带显式端口的 `http://127.0.0.1` 商家测试服务。
+
+`PrepareDiningTestReservation`、`SubmitDiningTestReservation` 和 `RefreshDiningTestReservation` 通过 Action 记录同一 `DiningReservation`。测试商家收到提交前，`ExternalOperations` 先保存操作标识。回执丢失时，按该标识查商家原单，核对请求条件和商家单号后写回。结果暂时不可见或不匹配时，保留 `unknown`，后续操作继续查询同一标识。网页提交受限于已配置的本机测试商家，回执标为 `synthetic`。 [Palantir Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) · [外部写回](https://www.palantir.com/docs/foundry/action-types/webhooks) · [Machinery 状态](https://www.palantir.com/docs/foundry/machinery/core-concepts)
+
+### 微信小程序订位
+
+`readDiningMiniProgramAvailability` 按门店、当地日期和人数请求原 PA。PA 在已登录的 Android 微信小程序中识别配置的查询控件，核对页面上的小程序名称、分店、日期和人数后返回可选时间。页面明确显示无空位时才返回空列表。设备和微信会话留在 PA，EIGOS 收到结构化的 `pa_reported` 结果。 [Android UI Automator](https://developer.android.com/training/testing/other-components/ui-automator)
+
+服务端 `EIGOS_DINING_MINIPROGRAM_CONNECTION_FILE` 指向权限为 `0600` 的 JSON，字段为 `owner`、`restaurant`、`city`、`branch`、`miniProgram`。`miniProgram` 包含 `name`、`publisher` 和 `timeZone`。在原 PA 主机设置 `EIGOS_PA_URL`、`EIGOS_PA_TOKEN` 和 `EIGOS_DINING_MINIPROGRAM_PA_FILE` 后，对等待的任务运行 `node --import tsx scripts/dining-miniprogram-pa.ts TASK_ID`。PA 配置的 `android` 包含 `adb` 绝对路径、`serial`、`androidUser`、相同的 `miniProgram`，以及现场核对的 `screen` 选择器（`identity`、`branch`、`date`、`guests`、`slots`、可选 `noSlots`）。可选的 `readSteps` 用 `from`、`tap`、`to` 限定每次查询页面切换。
+
+如果 Android 无法返回可用的控件信息，Mac 上的 PA 可以用 `swiftc scripts/dining-miniprogram-vision.swift -o /absolute/private/dining-miniprogram-vision` 构建屏幕读取程序。将 `android.screen` 配置换成 `android.vision`，指定 `executable`、`programLabel`、`branchPrefix` 和 `bookingLabel`。在真机打开已选择城市、日期及人数的订座结果页。PA 核对前台小程序、查询摘要及该门店的「立即预订」标记，只返回页面可见的时段。截图在本机内存中处理。
+
+`PrepareDiningMiniProgramTestReservation` 创建同一个 `DiningReservation` 类型。测试须额外匹配服务端的 `testId` 和 PA 配置的 `sandbox.id`，PA 只向 `sandbox.origin` 指定的本机隔离商家提交。Action 把外部操作标识与待处理的 PA 请求一起保存。PA 在提交前使用 `sandbox.privateDirectory` 保存一次派发记录，重启后继续原请求的结果查询。订单状态由独立查询回执确认。套件 10 用模拟的 Android 屏幕和本机商家验证这些路径。 [Palantir Action 提交条件](https://www.palantir.com/docs/foundry/action-types/submission-criteria) · [外部写回](https://www.palantir.com/docs/foundry/action-types/webhooks)
+
 ## 执行与数据访问
 
 Gateway 校验 JWT 的签名、issuer、audience、有效期和 scopes。对象、关系、任务及 Action 记录都按当前 owner 查询。来源绑定限定 owner，并在调用与入库时检查是否仍有效。

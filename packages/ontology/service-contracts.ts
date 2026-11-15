@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { objectRefSchema } from './schema.js';
 
-export const serviceName = z.enum(['Luma', 'RollingGo', 'Shopify']);
+export const serviceName = z.enum(['Luma', 'RollingGo', 'Shopify', 'Fliggy']);
 export type ServiceName = z.infer<typeof serviceName>;
 export const time = z.iso.datetime({ offset: true });
 export const shortText = z.string().min(1).max(500);
@@ -35,6 +35,32 @@ export const hotelFacts = commonOffer.extend({
   amount: z.number().finite().nonnegative().nullable(),
   currency: z.string().regex(/^[A-Z]{3}$/),
   priceKind: z.literal('reference'),
+});
+export const fliggyHotelFacts = hotelFacts.extend({
+  priceDisplay: shortText.nullable(),
+  occupancyVerified: z.literal(false),
+});
+const flightSegment = z.strictObject({
+  flightNumber: shortText,
+  carrier: shortText.optional(),
+  cabin: shortText.optional(),
+  departureAirport: shortText,
+  departureAirportName: shortText.optional(),
+  departureTerminal: shortText.optional(),
+  departureLocal: shortText,
+  arrivalAirport: shortText,
+  arrivalAirportName: shortText.optional(),
+  arrivalTerminal: shortText.optional(),
+  arrivalLocal: shortText,
+});
+export const flightFacts = commonOffer.extend({
+  journeys: z.array(z.strictObject({
+    kind: shortText,
+    durationMinutes: z.number().int().nonnegative().safe().optional(),
+    segments: z.array(flightSegment).min(1).max(10),
+  })).min(1).max(2),
+  priceDisplay: shortText.nullable(),
+  adultFareDisplay: shortText.nullable(),
 });
 export const productFacts = commonOffer.extend({
   productId: shortText,
@@ -88,6 +114,14 @@ export const hotelSearchInput = z.strictObject({
     .default('CNY'),
   limit: z.number().int().min(1).max(10).default(5),
 });
+export const flightSearchInput = z.strictObject({
+  origin: shortText,
+  destination: shortText,
+  departureDate: z.iso.date(),
+  returnDate: z.iso.date().optional(),
+  directOnly: z.boolean().optional(),
+  limit: z.number().int().min(1).max(10).default(5),
+});
 const observation = z.object({
   bindingId: shortText,
   provider: serviceName,
@@ -105,7 +139,12 @@ export const serviceObservation = z.discriminatedUnion('provider', [
   observation.extend({ provider: z.literal('RollingGo'), items: z.array(hotelFacts).max(10) }),
   observation.extend({ provider: z.literal('Shopify'), items: z.array(productFacts).max(100) }),
 ]);
-export type ServiceObservation = z.infer<typeof serviceObservation>;
+export const fliggyAccessMode = z.enum(['trial', 'key']);
+const fliggyObservation = observation.extend({ provider: z.literal('Fliggy'), accessMode: fliggyAccessMode });
+export const fliggyHotelObservation = fliggyObservation.extend({ items: z.array(fliggyHotelFacts).max(10) });
+export const fliggyFlightObservation = fliggyObservation.extend({ items: z.array(flightFacts).max(10) });
+export type ServiceObservation = z.infer<typeof serviceObservation | typeof fliggyHotelObservation | typeof fliggyFlightObservation>;
 export const attachServiceInput = z.strictObject({ plan: objectRefSchema, service: objectRefSchema });
 export const readServiceInput = z.strictObject({ service: objectRefSchema });
+export const readServiceSearchPagesInput = z.strictObject({ searches: z.array(objectRefSchema).min(1).max(5) });
 export const json = (schema: z.ZodType) => z.toJSONSchema(schema) as Record<string, unknown>;
