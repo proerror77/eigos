@@ -34,6 +34,66 @@ test('MCP and A2A share the same authenticated PostgreSQL task and ontology', as
   } finally { await client.close(); await new Promise<void>(resolve => server.close(() => resolve())); await f.close(); }
 });
 
+test('MCP completes a published Interface Action and verifies its result in one call', async () => {
+  const f = await fixture(), token = 'direct-inquiry-token-'.repeat(3);
+  const config = readConfig({ DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token });
+  const server = createApp(config, f.db, f.source).app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address(); assert(address && typeof address !== 'string');
+  const client = new Client({ name: 'direct-inquiry-agent', version: '1' });
+  const input = {
+    requestId: 'direct-quote',
+    action: { interface: { type: 'RideInquiry', implementation: 'RideRequest', action: 'estimate' }, input: route },
+    read: { function: 'readRideEstimates', resultParameter: 'request' },
+  };
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`), {
+      requestInit: { headers: { Authorization: 'Bearer ' + token } },
+    }));
+    const invoke = (args: typeof input) => client.callTool({ name: 'complete_with_action', arguments: args });
+    const grants = memberGrants(f.model);
+    const withoutResult = grants.filter(grant => !grant.resource.endsWith('/readRideEstimates'));
+    await setGrants(f.db, principal.owner, withoutResult);
+    assert((await invoke(input)).isError);
+    await setGrants(f.db, principal.owner, grants);
+    assert((await invoke({ ...input, read: { ...input.read, resultParameter: 'invalid' } })).isError);
+    assert.equal(f.provider.calls.length, 0);
+    const first = await invoke(input);
+    assert(!first.isError, JSON.stringify(first));
+    const quote = JSON.parse((first.content as { text: string }[])[0]!.text);
+    assert.deepEqual(quote.request, { type: 'RideRequest', id: input.requestId });
+    assert.equal(quote.accepted, false);
+    assert.deepEqual(quote.evidence, ['fixture']);
+    assert.equal(quote.estimates.length, 2);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    const retry = await invoke(input);
+    assert.deepEqual(retry.content, first.content);
+    assert.equal(f.provider.calls.length, 3);
+    const assertCurrent = f.provider.source.assertCurrent;
+    f.provider.source.assertCurrent = async () => {
+      f.provider.source.assertCurrent = assertCurrent;
+      await setGrants(f.db, principal.owner, withoutResult);
+    };
+    const revoked = await invoke(input);
+    assert(revoked.isError);
+    assert.match((revoked.content as { text: string }[])[0]!.text, /Permission changed during execution/);
+    assert.equal(f.provider.calls.length, 3);
+    await setGrants(f.db, principal.owner, grants);
+    f.provider.flags.ambiguous = true;
+    const ambiguous = await invoke({ ...input, requestId: 'ambiguous-quote' });
+    assert(ambiguous.isError);
+    assert.match((ambiguous.content as { text: string }[])[0]!.text, /候选地点/);
+    assert.equal(f.provider.calls.filter(call => call === 'taxi_estimate').length, 1);
+    assert.deepEqual((await f.db.query(`SELECT request_id FROM ${f.db.schema}.actions`)).rows,
+      [{ request_id: input.requestId }]);
+    assert.deepEqual((await f.db.query(`SELECT count(*)::int AS count FROM ${f.db.schema}.tasks`)).rows, [{ count: 0 }]);
+  } finally {
+    await client.close();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await f.close();
+  }
+});
+
 test('JWT identity, audience and expiry are verified before owner queries', async () => {
   const keys = await generateKeyPair('ES256'), publicKey = await exportJWK(keys.publicKey);
   const verify = jwtVerifier('https://issuer.example', 'eigos', createLocalJWKSet({ keys: [{ ...publicKey, kid: 'test' }] }));

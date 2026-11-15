@@ -62,6 +62,8 @@ Key 文件由运行用户拥有，权限为 `0600`。查询连接器调用滴滴
 
 MCP 位于 `/mcp`，提供 `describe_ontology`、`query_ontology`、`evaluate_ontology`、`apply_ontology_action`、`submit_task`、`get_task`、`select_task_places`，以及 PA 的 `list_pa_requests`、`respond_to_task` 和 Scenario 生命周期工具。
 
+对于无需补充信息的请求，外部 Agent 可用 `complete_with_action` 在一次 MCP 工具调用中运行 Interface Action 并通过发布的 Function 返回结果。上海滴滴实时询价的本机入口为 `node scripts/ontology-agent.mjs 上海市 '中企·云萃森林257弄' 前滩太古里`。入口复用已授权的本机 Ontology 操作员 OAuth 配置，按需续期，并只调用询价组合。
+
 已有 OAuth 操作员可用 `node scripts/ontology-worker-client.mjs submit "从起点到目的地，只查实时价格"` 将原话提交给 Worker。`read TASK_ID` 读取原任务；只有任务返回地点候选时，用 `confirm TASK_ID PLACES_JSON` 提交原候选中的起终点 ObjectRef。如果地点不在原候选中，使用 MCP 的 `amend_task_place` 提交一个端点的地址或地标，仍沿原任务继续。遇到 Action 请求城市时，用 `supply_task_input` 提交 `{taskId,answer:{kind:"city",city}}`。客户端使用本机已有的操作员身份，快到期时续期。入口使用已认证的任务 HTTP 接口，Worker Agent 仍通过任务专用 MCP 选择已发布能力。
 
 A2A Agent Card 位于 `/.well-known/agent-card.json`，JSON-RPC 位于 `/a2a`，使用 A2A 1.0 的 `SendMessage`、`GetTask`、`CancelTask`。两个协议共用任务与本体服务。

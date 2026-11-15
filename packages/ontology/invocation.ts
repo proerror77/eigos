@@ -30,6 +30,11 @@ export const completeWithActionSchema = z.strictObject({
 });
 export type ActionResultRead = z.infer<typeof actionResultReadSchema>;
 
+export const completeWithActionRequestSchema = completeWithActionSchema.safeExtend({
+  ontology: z.string().optional(),
+  requestId: z.string().min(1).max(128),
+});
+
 export const functionCallSchema = z.strictObject({
   ...call, function: z.string(),
 });
