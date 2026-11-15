@@ -90,13 +90,27 @@ flowchart LR
 `EstimateRide` 使用 `prepareRideInquiry` edit Function。函数完成以下确定性工作：
 
 1. 并行读取 `DidiPlaces`，来源投影按发布映射写入地点事实及来源 Link。
-2. `resolveRideLocations` 通过 `Location.name` 和各自的来源 Link 查询完整名称匹配。唯一匹配直接使用；入口、商铺等不同名称不会造成歧义。同名或没有匹配时返回真实候选及 ObjectRef。用户明确选择后复核其属于对应来源结果，并刷新来源读取。
+2. `resolveRideLocations` 沿各自的来源 Link 读取候选，按规范化的 `Location.name` 匹配。规范化仅处理 Unicode 形式、空白和间隔点等显示差异，保留门牌号和不同地名。唯一匹配直接使用；同名或没有匹配时返回真实候选及 ObjectRef。
 3. `estimateLocations` 用来源坐标取得真实价格。外部请求全部发生在业务编辑事务之外。
 4. Action 在一次事务内创建路线、询价请求、报价及关联 Links。Function 通过 Action 的编辑上下文提交，直接求值 edit Function 会被拒绝。失败的业务编辑整体回滚；已接收的来源事实保持独立。
 
 这些是 Function-backed Action 的实现职责。通用 Action 运行层负责参数、提交条件、事务及幂等记录；Workflow 可以串联已发布 Action，复用相同契约和权限检查。[Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview)
 
 Agent 可在一次 `complete_with_action` 调用中选择 Interface Action 与结果 Function，并指定把 Action 返回的对象引用绑定到哪个函数参数。运行层执行 Action 后调用 `readRideEstimates`，后者按 `PriceEstimate` 和 source Links 检查当前来源、有效期和报价，再直接返回真实结果。验收在读取时重新执行，重复 Action 不会使旧的验收标志跳过检查。Agent 不需要在来源读取、对象创建或验收之间继续往返。
+
+如果 Action 在准备阶段返回地点候选，Action Engine 保存已选 Action、参数、结果 Function 和来源回执，绑定原任务、发布版本和请求 ID。Machinery 通过 `ActionConfirmation.state` 及 `stateLogs` 显示等待、确认、完成或终止。确认由原任务入口接受，只接受对应侧候选内的 ObjectRef。Worker 唤醒原执行后直接进入 Action Engine，沿用原请求 ID、租约、权限检查和提交事务。仍属当前来源绑定且新鲜的地点回执可以复用；变旧或变化的那一侧重新读取。唯一匹配的询价直接完成，无需确认过程对象。
+
+如果正确地点不在原候选里，原任务调用者可用 `amend_task_place`（HTTP `POST /tasks/:id/place-amendment`）提交 `{side,address,name?,keep?}`。有多个候选的一端若保持不变，用 `keep` 指定当前候选中的 ObjectRef。Action Engine 把地址作为原调用的续接输入，验证现有授权和供应商回执，仅重新查被修正或回执过期的地点。地址和可选楼名必须能唯一对应本次来源结果，才继续询价。仍有歧义时保持原请求 ID 并再次等待确认。这里沿用 [Action 提交条件](https://www.palantir.com/docs/foundry/action-types/submission-criteria) 和 Machinery 的状态模型，未增加新执行器。
+
+需要补城市或有地标线索时，Worker 可从同一 `RideRequest` 发现 `RideInquiryWithPlaceClues.estimate`。它复用现有准备、执行和报价核验，保留原 `RideInquiry` 的必填参数契约供旧客户端与历史 Workflow 使用。缺城市时在任何供应商调用前持久化原 Action；调用者通过 `supply_task_input`（HTTP `POST /tasks/:id/input`）只填充请求的城市。不接受用这条入口更改已完整的请求。
+
+地标可在首次调用时作为独立参数提供，也可用 `amend_task_place` 给原任务补 `landmark`。Action 从同一绑定获取地标与地点的回执，当地标唯一、地点名称匹配或是明确简称、同城市且位于地标 800 米范围内时筛出推荐地点。依靠地标解析的简称即使只剩一个候选，也返回正式名称和地址，收到当前候选的明确选择后才询价。当候选商铺的名字带有同一门牌下已独立返回的场馆全名时，简称匹配保留场馆。不会在多个合格场馆中按距离强选，也不会写入历史别名。既有权限、原任务身份、Machinery 状态和报价来源核验继续适用。[状态和 Action 的对应关系](https://www.palantir.com/docs/foundry/machinery/core-concepts)
+
+有候选时，调用者将完整名称和地址展示给用户，再用 `select_task_places` 写回其选择。PA 只有在用户已明确过该地址时才代选；不确定就向用户确认。查询成功但没有合格候选时返回 `place-address-required`，用 `amend_task_place` 补地址；供应商读取失败时返回 `retry-source`，可通过 `supply_task_input` 重试原调用。两类状态均由当前调用方处理，此询价 Action 不会自动触发 PA。
+
+高德命名地点无法精确解析时，当前 Worker 用原 Task 的 `location.resolve` 接收 PA 校准的地点。早期版本留下纯文字澄清时，任务所有者可沿用 `amend_task_place` 或 `POST /tasks/:id/place-amendment` 提交 `{source:"Amap",side,placeId,requestId,expectedUpdatedAt}`，其中 `expectedUpdatedAt` 来自该 Task 的最新读回。恢复已取消的旧澄清需用户明确授权并提交 `restoreCanceled:true`。服务通过已发布的 `readMapPlace` 核验 POI，要求任务仍停在对应澄清且没有已执行的业务变更，再用原 Task ID 接续当前发布。原提交、既有 PA 回执和跨版本追踪保留。过期的有效日历回执会在原 Task 发起新的忙闲核对。地点更正与后续 Scenario 审批分别校验。[查询 Function](https://www.palantir.com/docs/foundry/functions/query-functions) · [Action 提交条件](https://www.palantir.com/docs/foundry/action-types/submission-criteria)
+
+Machinery 使用已发布对象的枚举状态和原有编辑历史；Action Engine 负责执行和继续原调用。对应 Palantir 的 [状态、Action 和过程日志](https://www.palantir.com/docs/foundry/machinery/core-concepts) 与 [Function 支持的 Action](https://www.palantir.com/docs/foundry/action-types/function-actions-overview)。EIGOS 复用现有任务和发布数据存储保存恢复参数，未增加第二套 Workflow 执行器。
 
 普通 Function 仅获得对象读取接口；edit Function 的写入上下文由 Action 提供。来源价格由连接器和字段映射生成，模型不能提供入库价格。取消或租约失效阻止后续提交。
 

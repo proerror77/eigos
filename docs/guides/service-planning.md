@@ -2,6 +2,22 @@
 
 本体负责服务身份、对象关系、业务条件和授权范围；Worker 负责持久化到时执行。活动报名、行程合并、叫车授权、订单创建和独立回查分别保留状态，不以“任务完成”代替供应商履约。
 
+## 自驾用餐计划
+
+用同一个 PA Task 提交目的地、想吃的菜和已知的出发点。Agent 可调用 `searchRestaurantNotes` 发现小红书候选，使用 `readWeather` 查高德短期预报，用 `readWeatherHistory` 向原 PA 请求历史天气。历史回传区分站点观测与再分析，并报告日期覆盖是否完整。通过高德查询去程和返程，用既有 `PrepareSchedulePlan` 请求原 PA 的授权日历忙闲并校验整个行程。
+
+小红书笔记用于发现候选。针对选中的餐厅、菜品和用餐时段，`readDiningAvailability` 向原 PA 请求带来源与有效期的店方供应信息。只有原任务的当前回执可以用于 `StageDiningActivity`。用 Scenario 提案保存去程、用餐和返程。PA 审阅后提交原有 `CommitSchedulePlan`，提交事务复核餐厅回执与日历条件，再通过 `readSchedulePlan` 读回内部安排。过期回执会阻止保存。该链路的外部调用均是查询。
+
+### Worker 来源连接
+
+配置 `EIGOS_XIAOHONGSHU_CONNECTION_FILE` 时，Gateway 和 Worker 使用运行身份拥有的私有 JSON 文件。给目标 owner 授予 `Xiaohongshu`、`PAWeatherHistory` 和 `PADiningAvailability` 所需的来源和 Function 权限。连接绑定同一 owner、启用状态和过期时间。非 loopback 连接必须使用 HTTPS 和私有 `tokenFile`。小红书 MCP 连接仅调用 `search_feeds`，输出公开笔记标题及规范链接。同一 Task 续接 PA 回传时复用查询结果，并重新检查连接权限。
+
+```json
+{"owner":"VERIFIED_OWNER","active":true,"expiresAt":"FUTURE_ISO_TIMESTAMP","endpoint":"http://127.0.0.1:18060/mcp"}
+```
+
+未配置 Worker 直连接口时，通过原 Task 的 `xiaohongshu.notes.search` 请求已授权 PA 执行同样的只读搜索。连接器在 Grok 或 Cursor 中显示为本机专用时，需要 Worker 可达的受控端点或由具备该能力的 PA 回传。该路径复用既有的 PA 请求和 Scenario 审阅。[外部查询 Function](https://www.palantir.com/docs/foundry/data-connection/external-functions) · [Ontology Scenario](https://www.palantir.com/docs/foundry/ontology/overview-ontology-scenario)
+
 ## 已实现的接口
 
 Interface 按业务语义命名，供应商名称放在具体 Object Type、来源和实现 Action 上。新增供应商实现同一业务契约，并提供自己的连接器、Link 映射与执行条件；不能只因协议同为 MCP 就假定语义、授权或副作用相同。
@@ -28,6 +44,8 @@ Interface 按业务语义命名，供应商名称放在具体 Object Type、来�
 活动、酒店方案和商品变体按供应商、账号绑定、原生身份及必要的报价条件确定对象身份；刷新不会为同一活动另造一个身份。旧版本或同一时间的冲突事实被拒绝。原结果页的成员关系保留；若对象已有更新来源，读取旧页会明确提示已被替代，不会返回空数组或把新价格当成原页价格。
 
 来源字段还会与运行层保留的 `source_values` 基线核对。人工备注等非来源字段可以保留；人工改动的活动时间、地点或价格不会因一次刷新就被认证成供应商事实。
+
+已有滴滴原订单后的状态轮询、按需司机位置和接驾提醒见 [滴滴原订单追踪](didi-ride-followup.md)。
 
 ## 一条活动出行计划
 

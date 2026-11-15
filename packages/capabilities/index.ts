@@ -1,5 +1,6 @@
 import { registerDocumentFunction } from '../ontology/documents.js';
 import { registerSchedulePlanDocument } from './documents.js';
+import { diningResearch } from './dining/research.js';
 import { flightradar24Functions } from './flight/flightradar24.js';
 import { flightFunctions } from './flight/functions.js';
 import { configuredVariFlight } from './flight/variflight.js';
@@ -19,6 +20,7 @@ import type { RuntimeExtensions } from '../runtime/extensions.js';
 import type { Database } from '../runtime/database.js';
 import { businessDefinition } from '../ontology/definition.js';
 import type { SourceResolver } from './didi/functions.js';
+import { didiRideWatchFunctions } from './didi/ride-watch.js';
 import { rideCapabilities } from './didi/pipeline.js';
 import { schedulingFunctions } from './scheduling/functions.js';
 import { serviceFunctions, serviceProjections } from './services/functions.js';
@@ -35,7 +37,8 @@ export function createCapabilities(
   services: ServiceResolver = unavailableServices,
   stripe: StripeSandboxResolver = configuredStripeSandbox(),
   connections: { paotui?: string; waimai?: string; amap?: string; amapFetch?: typeof fetch; variFlight?: string; variFlightFetch?: typeof fetch;
-    fr24?: string; fr24Entrypoint?: string; calendar?: string; calendarFetch?: typeof fetch; travelPA?: string; travelPAFetch?: typeof fetch } = {},
+    fr24?: string; fr24Entrypoint?: string; calendar?: string; calendarFetch?: typeof fetch; travelPA?: string; travelPAFetch?: typeof fetch;
+    xiaohongshu?: string; xiaohongshuFetch?: typeof fetch } = {},
 ) {
   let sources: Sources;
   const amap = configuredAmap(connections.amap, connections.amapFetch);
@@ -43,10 +46,12 @@ export function createCapabilities(
   const notifications = configuredTravelNotifications(db, getFunctions, connections.travelPA, connections.travelPAFetch);
   const handlers = new Map([
     ...schedulingFunctions(db),
+    ...diningResearch(connections.xiaohongshu, connections.xiaohongshuFetch),
     ...applicationFunctions(db),
     [registerDocumentFunction, registerSchedulePlanDocument],
     ...serviceFunctions(services, () => sources),
     ...travelFunctions(db, source, services, () => sources),
+    ...didiRideWatchFunctions(db, source),
     ...calendarJourneyFunctions(db, getFunctions, amap, configuredJourneyCalendar(connections.calendar, connections.calendarFetch)),
     ...flightFunctions(db, getFunctions, configuredVariFlight(connections.variFlight, connections.variFlightFetch)),
     ...flightradar24Functions(connections.fr24, connections.fr24Entrypoint),

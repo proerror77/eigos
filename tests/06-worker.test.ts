@@ -1,5 +1,6 @@
 import { Access, setGrants, memberGrants } from '../packages/runtime/access.js';
 import { Ontology } from '../packages/ontology/model.js';
+import type { ObjectRef } from '../packages/ontology/schema.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { z } from 'zod';
@@ -17,9 +18,12 @@ import { setModelClearance } from '../packages/runtime/model-egress.js';
 import { Worker } from '../apps/worker/worker.js';
 import { harnessFixture } from './harness-fixture.js';
 
-test('one Agent capability choice completes the inquiry despite related entrance candidates', async t => {
+test('one Agent capability choice resolves unique supplier names despite different formatting and nearby entrances', async t => {
   const f = await fixture();
   try {
+    const graph = new Objects(f.db, f.model, f.access);
+    assert.equal((await graph.query({ type: 'Location' })).items.length, 0);
+    f.provider.flags.placeName = name => name === route.origin ? '中企·云翠森林' : name;
     const task = await f.submit(), before = f.db.queries;
     assert(await f.worker.runOne());
     const done = await f.tasks.get(principal, task.id);
@@ -34,7 +38,7 @@ test('one Agent capability choice completes the inquiry despite related entrance
     assert(!JSON.stringify(done.result).includes('PRIVATE_ORDER_TOKEN'));
     const objects = new Objects(f.db, f.model, f.access);
     const routes = await objects.query({ type: 'RideEstimatable' }); assert.equal(routes.items.length, 1);
-    assert.equal((await objects.follow(routes.items[0]!.ref, 'origin', 'RideEstimatable'))[0]!.properties.name, route.origin);
+    assert.equal((await objects.follow(routes.items[0]!.ref, 'origin', 'RideEstimatable'))[0]!.properties.name, '中企·云翠森林');
     assert.deepEqual((await f.db.query(`SELECT owner,executor_kind,executor_id,task_id FROM ${f.db.schema}.actions`)).rows, [{
       owner: principal.owner, executor_kind: 'agent', executor_id: 'eigos-ontology:fixture-tool-decisions', task_id: task.id,
     }]);
@@ -57,6 +61,7 @@ test('the production Harness discovers the Ontology and executes a simple capabi
     assert.deepEqual(result.execution.steps.map(step=>step.tool),['describe_ontology','complete_with_action']);
     assert.equal((await new Objects(f.db,f.model,f.access).query({type:'SchedulePlan'})).items.length,0);
     assert.equal((await new Scenarios(f.db).list(f.access,f.model)).items.length,0);
+    assert.equal((await new Objects(f.db,f.model,f.access).query({type:'ActionConfirmation'})).items.length,0);
   }finally{await f.close();await harness.close();}
 });
 
@@ -107,23 +112,248 @@ test('canceling a model-driven source read prevents its late projection and furt
     assert.equal((await new Objects(f.db, f.model, f.access).query({ type: 'RideEstimatable' })).items.length, 0);
   } finally { await f.close(); }
 });
-test('ambiguous places ask for the original address before requesting a quote', async () => {
+test('one confirmation resumes the original Action using current supplier receipts without another model run', async () => {
+  const harness = await harnessFixture(), f = await fixture(harness.driver);
+  const graph = new Objects(f.db, f.model, f.access);
+  try {
+    assert.equal((await graph.query({ type: 'Location' })).items.length, 0);
+    f.provider.flags.ambiguous = true;
+    const task = await f.submit();
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, task.id);
+    assert.equal(paused.state, 'input-required');
+    assert.equal(f.provider.calls.length, 2);
+    const pending = paused.input.placeContinuation!;
+    assert.equal(pending.action, 'EstimateRide');
+    const process = { type: 'ActionConfirmation', id: pending.requestId };
+    assert.equal((await graph.read(process)).properties.state, 'awaiting-input');
+    assert.equal((await graph.query({ type: 'PriceEstimate' })).items.length, 0);
+    const candidates = paused.result as Record<'origin' | 'destination', { ref: { type: string; id: string } }[]>;
+    assert.equal(candidates.origin.length, 2);
+    const places = { origin: candidates.origin[0]!.ref, destination: candidates.destination[0]!.ref };
+    await assert.rejects(f.tasks.selectPlaces(principal, task.id, { ...places, origin: places.destination }), /current candidates/);
+    assert.equal((await graph.read(process)).properties.state, 'awaiting-input');
+    // Existing operators need no new grant to drive the same authorized Action.
+    const grants = memberGrants(f.model);
+    await setGrants(f.db, principal.owner, grants.filter(grant => !grant.resource.includes('/ActionConfirmation')));
+    const unprivileged = new Objects(f.db, f.model, await Access.load(f.db, principal));
+    await assert.rejects(unprivileged.read(process), /Permission/);
+    assert.equal((await f.tasks.selectPlaces(principal, task.id, places)).id, task.id);
+    await f.worker.runOne();
+    await setGrants(f.db, principal.owner, grants);
+    const completed = await f.tasks.get(principal, task.id);
+    assert.equal(completed.state, 'completed', completed.error ?? undefined);
+    const result = completed.result as { request: { id: string }; execution: { mode: string }; evidence: string[] };
+    assert.equal(result.request.id, pending.requestId);
+    assert.equal(result.execution.mode, 'action-continuation');
+    assert.deepEqual(result.evidence, ['fixture']);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    const states = await graph.follow(process, 'stateLogs');
+    assert.deepEqual(states.sort((a, b) => Number(a.properties.sequence) - Number(b.properties.sequence))
+      .map(row => row.properties.newState), ['awaiting-input', 'confirmed', 'completed']);
+    assert.equal((await f.db.query(`SELECT count(*)::int AS count FROM ${f.db.schema}.execution_trace
+      WHERE task_id=$1 AND event->>'kind'='model' AND event->>'state'='started'`, [task.id])).rows[0]!.count, 1);
+    assert.equal((await f.db.query(`SELECT count(*)::int AS count FROM ${f.db.schema}.pa_requests WHERE task_id=$1`, [task.id])).rows[0]!.count, 0);
+    assert.equal(f.provider.flags.orderCreates, 0);
+  } finally { await f.close(); await harness.close(); }
+});
+
+test('a corrected address continues the original Action and refreshes only the amended endpoint', async () => {
+  const harness = await harnessFixture(), f = await fixture(harness.driver);
+  try {
+    f.provider.flags.placeName = name => name === route.destination ? '旧候选目的地' : name;
+    f.provider.flags.placeAddress = name => name === '科投大厦' ? '徐汇区建国西路285号科投大厦' : '浦东新区' + name;
+    const submitted = await f.submit();
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, submitted.id);
+    assert.equal(paused.state, 'input-required');
+    const pending = paused.input.placeContinuation!;
+    const misplaced = (paused.result as { destination: { ref: { type: string; id: string } }[] }).destination[0]!.ref;
+    const amend = (address: string) => ({ side: 'destination', name: '科投大厦', address });
+    await assert.rejects(f.tasks.amendPlace(principal, submitted.id, { ...amend('建国西路285号'), keep: misplaced }),
+      /unchanged endpoint/);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch']);
+
+    await f.tasks.amendPlace(principal, submitted.id, amend('建国西路286号'));
+    await f.worker.runOne();
+    assert.equal((await f.tasks.get(principal, submitted.id)).state, 'input-required');
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'maps_textsearch']);
+
+    const resumed = await f.tasks.amendPlace(principal, submitted.id, amend('上海市徐汇区建国西路285号'));
+    assert.equal(resumed.id, submitted.id);
+    await f.worker.runOne();
+    const task = await f.tasks.get(principal, submitted.id);
+    assert.equal(task.state, 'completed', task.error ?? undefined);
+    const result = task.result as { request: { id: string }; route: { destination: { name: string } }; execution: { mode: string } };
+    assert.equal(result.request.id, pending.requestId);
+    assert.equal(result.execution.mode, 'action-continuation');
+    assert.equal(result.route.destination.name, '科投大厦');
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    const inquiries = f.provider.inputs.filter(input => input.keywords).map(input => input.keywords);
+    assert.equal(inquiries.filter(keyword => keyword === route.origin).length, 1);
+    assert.equal(inquiries.filter(keyword => keyword === '科投大厦').length, 2);
+    const rows = (await f.db.query(`SELECT request_id, action FROM ${f.db.schema}.actions WHERE task_id=$1`, [task.id])).rows;
+    assert.deepEqual(rows, [{ request_id: pending.requestId, action: 'EstimateRide' }]);
+    const started = await f.db.query(`SELECT 1 FROM ${f.db.schema}.execution_trace
+      WHERE task_id=$1 AND event->>'kind'='model' AND event->>'state'='started'`, [task.id]);
+    assert.equal(started.rowCount, 1);
+  } finally { await f.close(); await harness.close(); }
+});
+
+test('missing city pauses the original Action before source reads and resumes after the owner supplies it', async () => {
+  let modelCalls = 0;
+  const f = await fixture({ model: 'city-input-test', async run(_prompt, tools) {
+    modelCalls++;
+    await tools.get('complete_with_action')!.invoke({
+      action: { interface: { type: 'RideInquiryWithPlaceClues', implementation: 'RideRequest', action: 'estimate' },
+        input: { origin: route.origin, destination: route.destination } },
+      read: { function: 'readRideEstimates', resultParameter: 'request' },
+    });
+  } });
+  try {
+    const { id } = await f.tasks.submit(principal, { requestId: 'city-quote', message: 'Estimate my ride without a city.' });
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, id);
+    assert.equal(paused.state, 'input-required');
+    assert.deepEqual(paused.result, { kind: 'city' });
+    assert.equal(paused.input.placeContinuation!.waitingFor, 'city');
+    assert.equal(f.provider.calls.length, 0);
+    await assert.rejects(f.tasks.answerInput({ ...principal, owner: 'some-other-owner' }, id, { kind: 'city', city: '上海市' }), /not waiting/);
+    const answer = await f.tasks.answerInput(principal, id, { kind: 'city', city: '上海市' });
+    assert.equal(answer.id, id);
+    await f.worker.runOne();
+    const done = await f.tasks.get(principal, id);
+    assert.equal(done.state, 'completed', done.error ?? undefined);
+    assert.equal((done.result as {request: {id: string}}).request.id, paused.input.placeContinuation!.requestId);
+    assert.equal(modelCalls, 1);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    assert(f.provider.inputs.slice(0, 2).every(input => input.city === '上海市'));
+  } finally { await f.close(); }
+});
+
+test('a landmark returns a single named address and waits for confirmation on the original Action', async () => {
+  const f = await fixture();
+  try {
+    f.provider.flags.placeName = name => name === '太古里' ? '前滩太古里' : name;
+    f.provider.flags.placeAddress = name => name === '太古里' ? '浦东新区东育路500弄前滩太古里' : name;
+    f.provider.flags.placeAlternatives = (name, place) => name === '太古里'
+      ? [{ ...place, display_name: '华为旗舰店·上海前滩太古里', address_all: '浦东新区东育路500弄1号商铺',
+        location: { ...place.location, lat: place.location.lat + 0.001 } }]
+      : [];
+    const task = await f.tasks.submit(principal, { requestId: 'landmark-quote', message: '只询价',
+      route: { ...route, destination: '太古里' } });
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, task.id);
+    assert.equal(paused.state, 'input-required');
+    const continued = await f.tasks.amendPlace(principal, task.id, { side: 'destination', landmark: '东方体育中心' });
+    assert.equal(continued.id, task.id);
+    await f.worker.runOne();
+    const suggested = await f.tasks.get(principal, task.id);
+    assert.equal(suggested.state, 'input-required');
+    const choices = suggested.result as {kind: string; origin: {ref: ObjectRef}[];
+      destination: {ref: ObjectRef; properties: {name: string; address: string}}[]};
+    assert.equal(choices.kind, 'place-selection');
+    assert.equal(choices.destination.length, 1);
+    assert.equal(choices.destination[0]!.properties.name, '前滩太古里');
+    assert.equal(choices.destination[0]!.properties.address, '浦东新区东育路500弄前滩太古里');
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'maps_textsearch', 'maps_textsearch']);
+    assert.equal(suggested.input.placeContinuation!.requestId, paused.input.placeContinuation!.requestId);
+    await f.tasks.selectPlaces(principal, task.id, {origin: choices.origin[0]!.ref, destination: choices.destination[0]!.ref});
+    await f.worker.runOne();
+    const done = await f.tasks.get(principal, task.id);
+    assert.equal(done.state, 'completed', done.error ?? undefined);
+    const quote = done.result as {request: {id: string}; route: {destination: {name: string}}};
+    assert.equal(quote.request.id, paused.input.placeContinuation!.requestId);
+    assert.equal(quote.route.destination.name, '前滩太古里');
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    const keywords = f.provider.inputs.map(item => item.keywords).filter(Boolean);
+    assert.equal(keywords.filter(name => name === route.origin).length, 1);
+    assert(keywords.includes('东方体育中心'));
+  } finally { await f.close(); }
+});
+
+test('empty source candidates request more address information on the original task', async () => {
+  const f = await fixture();
+  try {
+    f.provider.flags.emptyPlaces = name => name === route.destination;
+    f.provider.flags.related = false;
+    const task = await f.submit();
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, task.id);
+    assert.equal(paused.state, 'input-required');
+    const input = paused.result as {kind: string; needsAddress: string[]; destination: unknown[]};
+    assert.deepEqual([input.kind, input.needsAddress, input.destination], ['place-address-required', ['destination'], []]);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch']);
+    await f.tasks.amendPlace(principal, task.id, {side:'destination', address:'建国西路285号'});
+    await f.worker.runOne();
+    const done = await f.tasks.get(principal, task.id);
+    assert.equal(done.state,'completed',done.error ?? undefined);
+    assert.equal((done.result as { request: ObjectRef }).request.id, paused.input.placeContinuation!.requestId);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch','maps_textsearch','maps_textsearch','taxi_estimate']);
+  } finally { await f.close(); }
+});
+
+test('supplier failure pauses for a distinct read retry, rather than requesting a different address', async () => {
+  const f = await fixture();
+  try {
+    f.provider.flags.failPlaceSearch = true;
+    const task = await f.submit();
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, task.id);
+    assert.equal(paused.state, 'input-required');
+    assert.deepEqual(paused.result, { kind: 'retry-source', source: 'DiDi', stage: 'places' });
+    await assert.rejects(f.tasks.amendPlace(principal, task.id, {side:'destination', address:'建国西路285号'}), /no place candidates/);
+    assert.deepEqual((await f.db.query(`SELECT state FROM ${f.db.schema}.source_calls WHERE task_id=$1 ORDER BY name`,[task.id])).rows,
+      [{state:'failed'}, {state:'failed'}]);
+    f.provider.flags.failPlaceSearch = false;
+    await f.tasks.answerInput(principal, task.id, {kind:'retry-source'});
+    await f.worker.runOne();
+    const done = await f.tasks.get(principal, task.id);
+    assert.equal(done.state,'completed',done.error ?? undefined);
+    assert.equal((done.result as { request: ObjectRef }).request.id, paused.input.placeContinuation!.requestId);
+    const started = (await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.execution_trace
+      WHERE task_id=$1 AND event->>'kind'='model' AND event->>'state'='started'`, [task.id])).rows[0]!.n;
+    assert.equal(started, 1);
+  } finally { await f.close(); }
+});
+
+test('an expired saved place receipt is refreshed without asking the model to choose again', async () => {
   const f = await fixture();
   try {
     f.provider.flags.ambiguous = true;
-    const task = await f.submit(); await f.worker.runOne();
-    assert.equal((await f.tasks.get(principal, task.id)).state, 'input-required');
-    assert.equal(f.provider.calls.length, 2);
-    const rows = await f.db.query(`SELECT name,result FROM ${f.db.schema}.source_calls WHERE task_id=$1`, [task.id]);
-    const choose = (name: string) => {
-      const expected = name === 'origin' ? route.origin : route.destination;
-      const result = rows.rows.find(row => row.result.data.places[0].name === expected)!.result;
-      return { type: 'Place', id: digest([result.receipt.bindingId, result.data.places[0].id]) };
-    };
-    await f.tasks.selectPlaces(principal, task.id, { origin: choose('origin'), destination: choose('destination') });
+    const task = await f.submit();
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, task.id);
+    assert.equal(paused.state, 'input-required');
+    const pending = paused.input.placeContinuation!;
+    const candidates = paused.result as Record<'origin' | 'destination', { ref: { type: string; id: string } }[]>;
+    await f.db.query(`UPDATE ${f.db.schema}.objects SET properties=jsonb_set(properties,'{observedAt}',to_jsonb($2::text))
+      WHERE type='SourceReceipt' AND id=$1`, [pending.receipts!.origin.id, new Date(Date.now()-310000).toISOString()]);
+    await f.tasks.selectPlaces(principal, task.id, { origin: candidates.origin[0]!.ref, destination: candidates.destination[0]!.ref });
     await f.worker.runOne();
     assert.equal((await f.tasks.get(principal, task.id)).state, 'completed');
-    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+  } finally { await f.close(); }
+});
+
+test('revoking all access after place confirmation closes the process without a supplier quote', async () => {
+  const f = await fixture();
+  try {
+    f.provider.flags.ambiguous = true;
+    const task = await f.submit();
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, task.id);
+    assert.equal(paused.state, 'input-required');
+    const candidates = paused.result as Record<'origin' | 'destination', { ref: { type: string; id: string } }[]>;
+    await f.tasks.selectPlaces(principal, task.id, { origin: candidates.origin[0]!.ref, destination: candidates.destination[0]!.ref });
+    await setGrants(f.db, principal.owner, []);
+    await f.worker.runOne();
+    assert.equal((await f.tasks.get(principal, task.id)).state, 'failed');
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch']);
+    await setGrants(f.db, principal.owner, memberGrants(f.model));
+    const graph = new Objects(f.db, f.model, await Access.load(f.db, principal));
+    const process = { type: 'ActionConfirmation', id: paused.input.placeContinuation!.requestId };
+    assert.equal((await graph.read(process)).properties.state, 'failed');
   } finally { await f.close(); }
 });
 

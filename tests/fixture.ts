@@ -26,11 +26,21 @@ import { digest } from '../packages/core/identity.js';
 export const document = businessDefinition;
 export const route = { city: '上海市', origin: '中企云翠森林', destination: '前滩太古里' };
 export const principal = developmentPrincipal;
+type FixturePlace = { display_name: string; address: string; address_all: string; city: string;
+  location: { lat: number; lng: number } };
 export async function provider() {
   const directory = await mkdtemp(join(tmpdir(), 'eigos-provider-')), key = 'synthetic-didi-key';
   const keyFile = join(directory, 'key'); await writeFile(keyFile, key, { mode: 0o600 });
   const calls: string[] = [], inputs: Record<string, unknown>[] = [];
-  const flags = { active: true, ambiguous: false, related: true, durationSeconds:300, amountMinor:'7305',orderEnabled:true, loseOrderReply:false, orderCreates:0, orderQueries:0, before: undefined as (() => Promise<void>) | undefined };
+  const flags = {
+    active: true, ambiguous: false, related: true,
+    failPlaceSearch: false, emptyPlaces: (_name: string) => false,
+    placeName: (name: string) => name,
+    placeAddress: (name: string) => name + '上海市浦东新区',
+    placeAlternatives: undefined as ((name: string, place: FixturePlace) => FixturePlace[]) | undefined,
+    durationSeconds:300, amountMinor:'7305', orderEnabled:true, loseOrderReply:false, orderCreates:0, orderQueries:0,
+    before: undefined as (() => Promise<void>) | undefined,
+  };
   const fetcher: typeof fetch = async (_url, init) => {
     if (init?.method === 'GET') return new Response(null, { status: 405 });
     if (init?.method === 'DELETE') return new Response(null, { status: 200 });
@@ -43,11 +53,13 @@ export async function provider() {
       const name = request.params.name, args = request.params.arguments;
       calls.push(name); inputs.push(args); await flags.before?.();
       if (name === 'maps_textsearch') {
-        const place = { display_name: args.keywords, address: '浦东新区', address_all: args.keywords + '上海市浦东新区', city: args.city, location: { lat: 31.2, lng: args.keywords === route.origin ? 121.5 : 121.48 } };
+        if (flags.failPlaceSearch) return new Response(null, { status: 503 });
+        const place = { display_name: flags.placeName(args.keywords), address: '浦东新区', address_all: flags.placeAddress(args.keywords), city: args.city, location: { lat: 31.2, lng: args.keywords === route.origin ? 121.5 : 121.48 } };
         const places = [place];
         if (flags.related) places.push({ ...place, display_name: args.keywords + '东门', location: { lat: 31.21, lng: 121.51 } });
+        places.push(...(flags.placeAlternatives?.(args.keywords, place) ?? []));
         if (flags.ambiguous) places.push({ ...place, location: { lat: 31.3, lng: 121.6 } });
-        result = { content: [{ type: 'text', text: JSON.stringify(places) }] };
+        result = { content: [{ type: 'text', text: JSON.stringify(flags.emptyPlaces(args.keywords) ? [] : places) }] };
       } else if (name === 'taxi_estimate') result = { structuredContent: { traceId: 'PRIVATE_ORDER_TOKEN', items: [{ productName: '快车', productCategory: 'fast', priceText: '73.05' }, { productName: '专车', productCategory: 'premium', priceText: '100-120元' }] } };
       else if(name==='maps_direction_driving')result={structuredContent:{status:'success',duration:{value:flags.durationSeconds},distance:{value:1951}}};
       else throw new Error('Unexpected provider tool');
@@ -59,7 +71,8 @@ export async function provider() {
   source.orders={environment:'mock',supportedCurrencies:['CNY'],async assertAvailable(){if(!flags.orderEnabled)throw new Error('DIDI_ORDER_EXECUTION_DISABLED');},async quote(_input,category){return {traceId:'PRIVATE_ORDER_TOKEN',amountMinor:flags.amountMinor,currency:'CNY',category};},async create(_quote,_signal,guard){await guard();flags.orderCreates++;if(flags.loseOrderReply)throw new Error('Synthetic lost reply');return {orderId:'synthetic-original-order',status:'Created by fixture',state:'created',independentRead:false,evidence:'synthetic',observedAt:new Date().toISOString(),contentDigest:digest('created')};},async query(orderId){flags.orderQueries++;return {orderId,status:'Independent fixture status',state:'reported',independentRead:true,evidence:'synthetic',observedAt:new Date().toISOString(),contentDigest:digest('queried')};},async cancel(){throw new Error('No synthetic cancellation requested');}};
   return { source, calls, inputs, flags, close: () => rm(directory, { recursive: true, force: true }) };
 }
-export async function fixture(driver: AgentDriver = new FixtureAgent(),services?:ServiceResolver,stripe?:StripeSandboxResolver,definition=document,extensions:RuntimeExtensions={}) {
+export async function fixture(driver: AgentDriver = new FixtureAgent(),services?:ServiceResolver,stripe?:StripeSandboxResolver,definition=document,
+  connections?: Parameters<typeof createCapabilities>[5], extensions: RuntimeExtensions = {}) {
   const url = process.env.EIGOS_TEST_DATABASE_URL;
   if (!url || new URL(url).hostname !== '127.0.0.1' || new URL(url).password !== 'synthetic-only') throw new Error('Use npm test to provision the isolated test database');
   const schema = 'eigos_test_' + randomUUID().replaceAll('-', ''), db = new Database(url, schema);
@@ -70,7 +83,7 @@ export async function fixture(driver: AgentDriver = new FixtureAgent(),services?
   await setGrants(db, principal.owner, memberGrants(new Ontology(definition)));
   const access = await Access.load(db, principal);
   const source = async (owner: string) => { if (owner !== principal.owner) throw new Error('Wrong source owner'); return p.source; };
-  const capabilities = createCapabilities(db, source,extensions,services,stripe), model = await metadata.publish(definition, capabilities, publisher), agent = new OntologyAgent(db, metadata, tasks, capabilities, driver), worker = new Worker(tasks, agent,new ScheduledActions(db,metadata),new ScheduledActionRunner(db,metadata,tasks,capabilities.actions));
+  const capabilities = createCapabilities(db, source, extensions, services, stripe, connections), model = await metadata.publish(definition, capabilities, publisher), agent = new OntologyAgent(db, metadata, tasks, capabilities, driver), worker = new Worker(tasks, agent,new ScheduledActions(db,metadata),new ScheduledActionRunner(db,metadata,tasks,capabilities.actions));
   return { db, schema, model, metadata, tasks, capabilities, access, publisher, agent, worker, source, provider: p,
     submit: () => tasks.submit(principal, { requestId: randomUUID(), message: '从中企云翠森林到前滩太古里，只询价', route }),
     async close() { worker.stop(); await db.query(`DROP SCHEMA ${db.schema} CASCADE`); await db.close(); await p.close(); },

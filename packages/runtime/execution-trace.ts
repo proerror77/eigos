@@ -21,6 +21,8 @@ const events = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('workflow'), runId: z.uuid(), state: z.enum(['waiting-approval', 'expired', 'failed']) }),
   z.strictObject({ kind: z.literal('approval'), revision, snapshot: sha256, reviewer: ownerId.optional() }),
   z.strictObject({ kind: z.literal('merge'), revision, approvalSnapshot: sha256.optional() }),
+  z.strictObject({ kind: z.literal('map-place-correction'), side: z.enum(['origin', 'destination']),
+    previousRelease: sha256, previousState: z.enum(['input-required', 'canceled']) }),
 ]);
 export type TraceEvent = z.infer<typeof events>;
 
@@ -106,10 +108,10 @@ export class ExecutionTrace {
         UNION ALL SELECT scenario_id FROM ${schema}.scenario_actions WHERE owner=$1 AND task_id=$3
       ) related ORDER BY scenario_id LIMIT 100`, [owner, root.release, root.taskId, input.requestId ?? null])).rows.map(row => row.scenario_id);
       const rows = (await db.query<TraceRow>(`SELECT sequence::text,release,projection,task_id,scenario_id,request_id,occurred_at,event,requirements
-        FROM ${schema}.execution_trace WHERE owner=$1 AND release=$2 AND sequence>$6::bigint
-          AND (task_id=$3 OR request_id=$4 OR scenario_id=ANY($5::uuid[]))
+        FROM ${schema}.execution_trace WHERE owner=$1 AND sequence>$6::bigint
+          AND (($8::boolean AND task_id=$3) OR (release=$2 AND (task_id=$3 OR request_id=$4 OR scenario_id=ANY($5::uuid[]))))
         ORDER BY sequence::bigint LIMIT $7`,
-        [owner, root.release, root.taskId, input.requestId ?? null, scenarios, input.after, input.limit + 1])).rows;
+        [owner, root.release, root.taskId, input.requestId ?? null, scenarios, input.after, input.limit + 1, Boolean(input.taskId)])).rows;
       const model = await this.metadata.active(ontology);
       const visibleActions = await this.actions(access, ontology, root, input.requestId ?? null, scenarios);
       const actionIds = visibleActions.map(row => row.request_id);

@@ -10,10 +10,10 @@ import { didiDataSchema, didiReceiptSchema } from './contracts.js';
 import type { RideOrders } from './operations.js';
 
 export interface DidiSource { bindingId: string; authorityId?:string; connector: DidiConnector; orders?:RideOrders; assertCurrent(): Promise<void> }
-export type SourceResolver = (owner: string) => Promise<DidiSource>;
+export type SourceResolver = (owner: string, order?: { bindingId: string; orderId: string }) => Promise<DidiSource>;
 export const sourceResultSchema = z.strictObject({ data: didiDataSchema, receipt: didiReceiptSchema, evidence: z.enum(['live_readonly', 'provider_mock', 'fixture']) });
 export type SourceResult = z.infer<typeof sourceResultSchema>;
-const fresh = (time: unknown) => typeof time === 'string' && Number.isFinite(Date.parse(time)) && Date.now() - Date.parse(time) < 300000 && Date.parse(time) <= Date.now() + 5000;
+export const isCurrentDidiObservation = (time: unknown) => typeof time === 'string' && Number.isFinite(Date.parse(time)) && Date.now() - Date.parse(time) < 300000 && Date.parse(time) <= Date.now() + 5000;
 
 async function endpoints(context: FunctionContext, route: unknown): Promise<[ObjectData, ObjectData]> {
   const ref = objectRefSchema.parse(route);
@@ -26,7 +26,7 @@ async function endpoints(context: FunctionContext, route: unknown): Promise<[Obj
 }
 async function locationsReady(context: FunctionContext, places: ObjectData[]) {
   for (const place of places) {
-    if (!fresh(place.properties.observedAt)) return false;
+    if (!isCurrentDidiObservation(place.properties.observedAt)) return false;
     const sources = await context.objects.follow(place.ref, 'sources');
     if (!sources.some(source => source.properties.bindingId === place.properties.sourceBinding && source.properties.observedAt === place.properties.observedAt)) return false;
   }
@@ -49,7 +49,7 @@ export function rideFunctions(resolveSource: SourceResolver, additional: Readonl
       const routes = await context.objects.follow(request, 'route');
       if (routes.length !== 1) throw new Error('Estimate requires a request linked to one route');
       const [origin, destination] = await endpoints(context, routes[0]!.ref), source = await resolveSource(context.principal.owner);
-      for (const place of [origin, destination]) if (place.properties.sourceBinding !== source.bindingId || !fresh(place.properties.observedAt)) throw new Error('Route requires current places from this source account');
+      for (const place of [origin, destination]) if (place.properties.sourceBinding !== source.bindingId || !isCurrentDidiObservation(place.properties.observedAt)) throw new Error('Route requires current places from this source account');
       const from = origin.properties.coordinates as { lat: number; lng: number }, to = destination.properties.coordinates as { lat: number; lng: number };
       return read(context, 'taxi_estimate', { from_lng: String(from.lng), from_lat: String(from.lat), from_name: String(origin.properties.name), to_lng: String(to.lng), to_lat: String(to.lat), to_name: String(destination.properties.name) });
     }],
@@ -57,7 +57,7 @@ export function rideFunctions(resolveSource: SourceResolver, additional: Readonl
       const [origin, destination] = await Promise.all([input.origin, input.destination].map(ref => context.objects.read(objectRefSchema.parse(ref))));
       const source = await resolveSource(context.principal.owner);
       for (const place of [origin!, destination!]) {
-        if (!context.objects.model.implements(place.ref.type, 'Location') || place.properties.sourceBinding !== source.bindingId || !fresh(place.properties.observedAt)) throw new Error('Estimate requires current source Location objects');
+        if (!context.objects.model.implements(place.ref.type, 'Location') || place.properties.sourceBinding !== source.bindingId || !isCurrentDidiObservation(place.properties.observedAt)) throw new Error('Estimate requires current source Location objects');
       }
       const from = origin!.properties.coordinates as { lat: number; lng: number }, to = destination!.properties.coordinates as { lat: number; lng: number };
       return read(context, 'taxi_estimate', { from_lng: String(from.lng), from_lat: String(from.lat), from_name: String(origin!.properties.name), to_lng: String(to.lng), to_lat: String(to.lat), to_name: String(destination!.properties.name) });
@@ -73,7 +73,7 @@ export function rideFunctions(resolveSource: SourceResolver, additional: Readonl
       for (const quote of quotes.items) {
         if (Date.parse(String(quote.properties.expiresAt)) <= Date.now()) throw new Error('Estimate expired');
         const source = await context.objects.follow(quote.ref, 'source', 'PriceEstimate');
-        if (source.length !== 1 || source[0]!.properties.bindingId !== binding.bindingId || !fresh(source[0]!.properties.observedAt)) throw new Error('Quote lacks current source evidence');
+        if (source.length !== 1 || source[0]!.properties.bindingId !== binding.bindingId || !isCurrentDidiObservation(source[0]!.properties.observedAt)) throw new Error('Quote lacks current source evidence');
         evidence.add(String(source[0]!.properties.evidence));
       }
       const routes = await context.objects.follow(request, 'route');
