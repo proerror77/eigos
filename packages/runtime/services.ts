@@ -465,6 +465,13 @@ export function ontologyServices(
     async (a, input) => new Scenarios(db).inviteReviewers(a, await active(), input.id, input.revision, input.reviewers),
   );
   register(
+    'pending_scenario_reviews',
+    'List Scenario reviews invited to the authenticated account and currently visible to it.',
+    z.strictObject({ page: z.number().int().min(1).max(1000).default(1) }),
+    false,
+    async (a, { page }) => new Scenarios(db).pendingReviews(a, await active(), page),
+  );
+  register(
     'inspect_scenario_review',
     'Read the proposed edits as an invited reviewer under current object and property permissions.',
     idSchema,
@@ -480,7 +487,7 @@ export function ontologyServices(
   );
   register(
     'save_workflow',
-    'Save an authorized sequence of Actions.',
+    'Save an authorized sequence of Actions with an optional reviewed Scenario proposal.',
     workflowSchema,
     true,
     async (a, input) => automation.workflow(a, await active(), input),
