@@ -22,15 +22,18 @@
 
 Interface 按业务语义命名，供应商名称放在具体 Object Type、来源和实现 Action 上。新增供应商实现同一业务契约，并提供自己的连接器、Link 映射与执行条件；不能只因协议同为 MCP 就假定语义、授权或副作用相同。
 
-酒店与机票是不同业务域。后续飞猪、携程等可分别实现 `HotelSearch` / `HotelOffer` 与机票契约；`FlightSearch` / `FlightOffer` 尚未发布，也没有可用机票实现。既有滴滴 `Location`、`RideEstimatable`、`RideInquiry` 及已发布对象名称保留兼容性，新的具体实现使用供应商前缀。
+酒店通过 `HotelSearch` / `HotelOffer` 选择 RollingGo 或飞猪。机票通过 `FlightSearch` / `FlightOffer` 查询飞猪航班。两个业务域均可独立查询，结果按供应商保留。
 
 | Interface / Object | Action 或 Function | 来源与范围 |
 | --- | --- | --- |
 | `EventSearch` / `LumaEventSearch` | `search` → `SearchLumaEvents` | 默认向原 PA 请求其已连接的 Luma MCP；也支持显式配置的 Luma API |
 | `HotelSearch` / `RollingGoHotelSearch` | `search` → `SearchRollingGoHotels` | RollingGo 酒店搜索，参考价，供应商有效期未知 |
+| `HotelSearch` / `FliggyHotelSearch` | `readFliggyHotels` 或 `search` → `SearchFliggyHotels` | 飞猪指定地点及日期的酒店候选，展示价和跳转链接 |
+| `FlightSearch` / `FliggyFlightSearch` | `readFliggyFlights` 或 `search` → `SearchFliggyFlights` | 飞猪单程、往返及直达航班候选，保留航段、当地时间和展示价 |
 | `ProductSearch` / `ShopifyProductSearch` | `search` → `SearchShopifyProducts` | Shopify Global Catalog 的精确商家与变体身份 |
 | `ServiceOffering` | `readServiceOffering`、`evaluateServiceOffering` | 共享来源、有效期和可用性检查；未知值保持未知 |
-| `HotelOffer` / `RollingGoHotelOffer`、`ProductOffer` / `ShopifyProductOffer` | `select` → `AttachPlanService` | 按 Interface 的 Link 映射挂到 `SchedulePlan`，不依赖某家具体类型名称 |
+| `ServiceSearchResult` | `readServiceSearch`、`readServiceSearchPages` | 读取单个或多个查询页，保留每个来源的身份、时效与完整性 |
+| `HotelOffer`、`FlightOffer`、`ProductOffer` | `select` → `AttachPlanService` | 按 Interface 的 Link 映射挂到 `SchedulePlan` |
 | `AttendableEvent` / `LumaEvent` | `register` → `PrepareEventRegistration` | 准备指定票种的参与者报名，返回 `proposed` |
 | `EventRegistration` | `AuthorizeEventRegistration`、`ExecuteEventRegistration` | PA 明确授权后，经原 PA 的 Luma 账号执行零费用报名及独立回查 |
 | `EventRegistration` | `RefreshEventRegistration` | 只读回查原报名，允许候补或待审批状态更新；不创建新的报名尝试 |
@@ -44,6 +47,14 @@ Interface 按业务语义命名，供应商名称放在具体 Object Type、来�
 活动、酒店方案和商品变体按供应商、账号绑定、原生身份及必要的报价条件确定对象身份；刷新不会为同一活动另造一个身份。旧版本或同一时间的冲突事实被拒绝。原结果页的成员关系保留；若对象已有更新来源，读取旧页会明确提示已被替代，不会返回空数组或把新价格当成原页价格。
 
 来源字段还会与运行层保留的 `source_values` 基线核对。人工备注等非来源字段可以保留；人工改动的活动时间、地点或价格不会因一次刷新就被认证成供应商事实。
+
+### 飞猪机票与酒店
+
+单独查询可经 `evaluate_ontology` 调用 `readFliggyFlights` 或 `readFliggyHotels`。机票传 `origin`、`destination`、`departureDate`，按需加 `returnDate`、`directOnly`。酒店沿用 `place`、`checkIn`、`nights`、`adults` 和 CNY。两者默认返回最多 5 项，可用 `limit` 请求最多 10 项。搜索页是有界样本。
+
+同一任务查机酒或比较酒店供应商时，执行已授权的搜索 Action，再用 `readServiceSearchPages` 读取它们返回的页引用。飞猪酒店的入住人数是查询方输入，供应商返回的酒店卡片保留 `occupancyVerified=false`。酒店 `amount` 保留为未知，`priceDisplay` 保留供应商给出的起价或脱敏价。航班标注当地时间，保留展示票价及成人票价字段，实际库存、税费、乘客总价和退改条件由飞猪确认。
+
+连接方式参考 [FlyAI 官方 CLI](https://flyai.open.fliggy.com/docs/quickstart)。来源及只读 Function 的建模参考 [Palantir External Functions](https://www.palantir.com/docs/foundry/data-connection/external-functions)。保留结果的 Action 只编辑 EIGOS 的结果页和候选对象，按 [Ontology MCP](https://www.palantir.com/docs/foundry/ontology-mcp) 公开。飞猪跳转链接供用户自行核价、选择和确认。
 
 已有滴滴原订单后的状态轮询、按需司机位置和接驾提醒见 [滴滴原订单追踪](didi-ride-followup.md)。
 
@@ -122,6 +133,8 @@ PA 返回的 Luma 结果标记为 `pa_reported`，包括稳定账号引用与证
 ```
 
 RollingGo 凭据是原 API Key 文件。Shopify 凭据文件是 `{ "clientId": "...", "clientSecret": "..." }`，只在 Shopify 的固定端点交换短期 token；既支持字符串也支持数组形式的 scope 元数据。可选 Luma API 凭据是 API Key，只做事件/日历读取；它没有本版所需的完整参与者操作。未配置 Luma API 时自动走 PA。显式禁用、过期或有冲突的 API 配置会报错，不绕过撤权切换账号。
+
+飞猪用同一连接数组新增一条 `provider: "Fliggy"` 绑定。运营方可显式选择 `mode: "trial"` 体验查询，保留 `owner`、`bindingId`、`active`、`expiresAt`，省略凭据字段。正式 `mode: "key"` 使用 FlyAI API Key，并设置 `credentialFile`、`credentialSha256`。连接文件由 Gateway 和 Worker 共同读取。为符合资格的 owner 授予对应的 Function、Action 和 `Eigos/source/Fliggy` 访问权限。结果页记录访问模式，连接配置改变后旧结果需要刷新。
 
 滴滴原连接文件新增可选 `ordersEnabled`，默认 `false`。启用连接器不等于用户授权；具体行程仍必须通过 `AuthorizeEventTrip`。查询连接器与订单连接器分开，订单 trace ID 由服务端在发单前新估价取得，不接受模型或 PA 提供的 trace ID。账号/凭据授权摘要改变后旧行程不能继续发单。
 
