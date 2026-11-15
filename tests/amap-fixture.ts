@@ -23,6 +23,7 @@ export async function testConnection(directory: string) {
 export type Recorded = { name: string; input: Record<string, unknown> };
 export function fakeAmap(calls: Recorded[], state: {
   durationSeconds?: number; condition?: string; beforeRoute?: () => Promise<void>; remoteShape?: boolean;
+  forecasts?: typeof forecasts; forecastCity?: string;
 } = {}): typeof fetch {
   return async (target, options) => {
     const url = new URL(String(target));
@@ -69,7 +70,7 @@ export function fakeAmap(calls: Recorded[], state: {
       maps_around_search: { pois: [{ id: 'B0EXAMPLE', name: '咖啡店' }] },
       maps_direction_walking: { route: { paths: [{ distance: '900', duration: String(state.durationSeconds ?? 650) }] } },
       maps_direction_driving: { route: { paths: [{ distance: '3000', duration: String(state.durationSeconds ?? 1500) }] } },
-      maps_weather: { city: input.city === '310115' ? '浦东新区' : '上海市', forecasts },
+      maps_weather: { city: state.forecastCity ?? (input.city === '310115' ? '浦东新区' : '上海市'), forecasts: state.forecasts ?? forecasts },
     }[name as string];
     assert(data, 'Unexpected supplier tool');
     return mcpBody(packet, { content: [{ type: 'text', text: JSON.stringify(data) }] });
