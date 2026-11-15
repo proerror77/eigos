@@ -1,5 +1,6 @@
 import type { CognitiveStep } from './cognitive-workflow.js';
 import { scenarioMetadataRead, scenarioMetadataQuery, scenarioMetadataType } from './scenario-metadata.js';
+import { observeDecisionRead, observedObject, observedObjects, observedPage } from './decision-evidence.js';
 import { DerivedProperties } from './derived.js';
 import { compareValues, matchesPredicate, nestedValue, orderSchema, predicateFields, predicateSchema, regexMatches, propertyPathSchema } from './query-filter.js';
 import { recordObjectEdit, resolveSourceEdit } from './edit-history.js';
@@ -79,6 +80,10 @@ export class Objects {
     return this.row(rows.rows[0]);
   }
   async readStored(input: ObjectRef): Promise<ObjectData> {
+    return observeDecisionRead(this, { kind: 'stored', ref: objectRefSchema.parse(input) },
+      () => this.loadStored(input), observedObject);
+  }
+  private async loadStored(input: ObjectRef): Promise<ObjectData> {
     if(input.type===scenarioMetadataType)return scenarioMetadataRead(this,input);
     this.access.read(this.model, input.type);
     const object = await this.stored(input);
@@ -111,14 +116,24 @@ export class Objects {
     }
   }
   /** Source fields must match their baseline; unrelated local notes may remain. */
-  async matchesSource(ref:ObjectRef,sourceName:string):Promise<boolean>{
+  async matchesSource(ref: ObjectRef, sourceName: string): Promise<boolean> {
+    return (await observeDecisionRead(this, { kind: 'source', ref, source: sourceName },
+      () => this.sourceMatch(ref, sourceName))).matches;
+  }
+  private async sourceMatch(ref:ObjectRef,sourceName:string) {
     const mapping=this.model.sources.get(sourceName),provider=mapping&&this.model.functions.get(mapping.function)?.source;
     if(!mapping||mapping.objectType!==ref.type||!provider)throw new Error('Source certification requires a matching datasource');
     this.access.source(this.model,provider);
     const object=await this.stored(ref);this.access.readRow(this.model,ref.type,object.properties);
-    const baseline=(await this.db.readQuery(`SELECT properties FROM ${this.db.schema}.source_values WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND source=$5`,[this.model.projection,this.owner,ref.type,ref.id,sourceName],this.client)).rows[0]?.properties as Record<string,unknown>|undefined;
-    if(!baseline)return false;
-    return Object.entries(baseline).every(([field,value])=>Object.hasOwn(object.properties,field)&&this.access.cell(this.model,ref.type,field,object.properties)&&digest(object.properties[field])===digest(value));
+    const baseline = (await this.db.readQuery<{ properties: Record<string, unknown>; observed_at: string }>(
+      `SELECT properties,observed_at::text FROM ${this.db.schema}.source_values
+        WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND source=$5`,
+      [this.model.projection, this.owner, ref.type, ref.id, sourceName], this.client,
+    )).rows[0];
+    const matches = Boolean(baseline && Object.entries(baseline.properties).every(([field, value]) =>
+      Object.hasOwn(object.properties, field) && this.access.cell(this.model, ref.type, field, object.properties)
+      && digest(object.properties[field]) === digest(value)));
+    return { matches, version: baseline, revision: object.revision };
   }
   async propertyVisible(ref:ObjectRef,field:string):Promise<boolean> {
     const object=await this.stored(ref);
@@ -126,6 +141,9 @@ export class Objects {
     return this.access.cell(this.model,ref.type,field,object.properties);
   }
   async read(input: ObjectRef): Promise<ObjectData> {
+    return observeDecisionRead(this, { kind: 'object', ref: objectRefSchema.parse(input) }, () => this.readObject(input), observedObject);
+  }
+  private async readObject(input: ObjectRef): Promise<ObjectData> {
     if(this.client===this.db.pool&&Object.values(this.model.object(input.type).properties).some(property=>property.derived)) {
       const access=await this.access.fork();
       const result=await this.db.transaction(async client=>{
@@ -137,8 +155,11 @@ export class Objects {
     }
     return new DerivedProperties(this).enrich(await this.readStored(input));
   }
-  async query(input: Query):Promise<{items:ObjectData[];cursor?:string}> {
-    const args=querySchema.parse(input);
+  async query(input: Query): Promise<{ items: ObjectData[]; cursor?: string }> {
+    const args = querySchema.parse(input);
+    return observeDecisionRead(this, { kind: 'query', input: args }, () => this.queryObjects(args), observedPage);
+  }
+  private async queryObjects(args: z.output<typeof querySchema>): Promise<{ items: ObjectData[]; cursor?: string }> {
     const fields = queryFields(args);
     this.access.definition(this.model, this.model.interfaces.has(args.type) ? 'interface' : 'object', args.type);
     const viewLabel = this.model.interfaces.get(args.type)?.classification;
@@ -472,6 +493,10 @@ export class Objects {
     return records.map(record => this.visible(record));
   }
   async follow(ref: ObjectRef, link: string, view = ref.type): Promise<ObjectData[]> {
+    return observeDecisionRead(this, { kind: 'follow', ref, link, as: view },
+      () => this.followObjects(ref, link, view), observedObjects);
+  }
+  private async followObjects(ref: ObjectRef, link: string, view: string): Promise<ObjectData[]> {
     if (view !== ref.type) this.access.definition(this.model, 'interface', view);
     const nav = this.model.navigation(ref.type, link, view);
     if(this.client===this.db.pool&&[ref.type,nav.target].some(type=>Object.values(this.model.object(type).properties).some(property=>property.derived))) {

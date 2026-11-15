@@ -27,7 +27,7 @@ export const cognitiveContextSchema = cognitiveStepSchema.omit({ reviewers: true
   scenarioId: z.uuid(),
   object: objectRefSchema,
   revision: z.number().int().positive(),
-  evidenceVersion: z.string().regex(/^[a-f0-9]{64}$/),
+  evidenceVersion: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 });
 export type CognitiveStep = z.output<typeof cognitiveStepSchema>;
 export type CognitiveContext = z.output<typeof cognitiveContextSchema>;
@@ -75,9 +75,7 @@ export async function validateCognitive(functions: Functions, context: FunctionC
     throw new Conflict('Workflow proposal failed its published validation');
 }
 
-/** Version the whole owned live input view, including absence and Link membership.
- * A cognitive task can wait across model calls and PA responses. No live data transaction spans that wait.
- */
+/** Keep the original version check for proposals already created with an owner-wide snapshot. */
 export async function decisionVersion(db: Database, model: PublishedOntology, owner: string, client: Sql = db.pool) {
   const { rows: [version] } = await db.readQuery(`SELECT
     (SELECT md5(coalesce(string_agg(md5(row(type,id,revision,properties,xmin)::text),'' ORDER BY type,id),'')) FROM ${db.schema}.objects WHERE projection=$1 AND owner=$2 AND type<>'OntologyScenario') AS objects,

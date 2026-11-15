@@ -5,7 +5,9 @@ import { objectRefSchema, type LinkData, type ObjectRef } from '../ontology/sche
 import { Access, PermissionDenied, type Requirement } from './access.js';
 import { Database, type Sql } from './database.js';
 import { PublishedOntology } from './metadata.js';
-import { Objects } from './objects.js';
+import { Objects, querySchema } from './objects.js';
+import { ObjectSets } from './object-sets.js';
+import { decisionEvidenceSchema, replayRead, type DecisionObservation } from './decision-evidence.js';
 import { bumpScenario, checkScenario, lockEdits, objectLinks, type ScenarioMutation } from './scenario-store.js';
 import { scenarioMetadataRead, syncScenarioMetadata, removeScenarioMetadata } from './scenario-metadata.js';
 import { appendTrace } from './execution-trace.js';
@@ -24,6 +26,13 @@ type ScenarioStep = {
   requirements: Requirement[]; step_revision: string | null; edits: ScenarioMutation[] | null;
 };
 type ValidateAction = (prefix: Objects, action: string, input: Properties) => Promise<void>;
+type DecisionCheckpoint = (prefix: Objects, step: number, offset: number) => Promise<void>;
+
+function recordedDecisionEvidence(raw: unknown) {
+  const result = decisionEvidenceSchema.safeParse(raw);
+  if (!result.success) throw new Conflict('Workflow decision evidence is unavailable; start a new proposal');
+  return result.data;
+}
 const fieldValue = (values: Properties, field: string) => digest({ value: values[field] });
 function editedFields(item: ScenarioObjectEdit): string[] {
   const before = item.base_properties ?? {}, after = item.properties ?? {};
@@ -238,7 +247,7 @@ export class Scenarios {
     if (!row) throw new NotFound('Scenario review is unavailable');
     return row;
   }
-  private async reviewDiff(model: PublishedOntology, row: ReviewableScenario, reviewer: string, client: Sql) {
+  private async reviewDiff(model: PublishedOntology, row: ReviewableScenario, reviewer: string, client: Sql, verifyEvidence = true) {
     return this.db.withTransactionOwner(client, row.owner, async () => {
       const author = await Access.load(this.db, { owner: row.owner, scopes: [] }, client);
       const approver = await Access.load(this.db, { owner: reviewer, scopes: [] }, client);
@@ -290,7 +299,8 @@ export class Scenarios {
       const steps = row.journal_steps ? await this.steps(row.owner, row.id, client) : [];
       if (row.workflow_run_id) {
         const run = (await this.db.query(
-          `SELECT run.body->'proposal' AS proposal,run.object_ref,task.cognitive_context,task.result_permissions FROM ${this.db.schema}.workflow_runs run
+          `SELECT run.body->'proposal' AS proposal,run.object_ref,task.id AS task_id,task.scopes,
+            task.cognitive_context,task.cognitive_evidence,task.result_permissions FROM ${this.db.schema}.workflow_runs run
             JOIN ${this.db.schema}.tasks task ON task.id=run.proposal_task AND task.owner=run.owner
             WHERE run.id=$1 AND run.owner=$2 AND run.proposal_scenario=$3 AND run.state='waiting-approval'`,
           [row.workflow_run_id, row.owner, row.id], client,
@@ -300,28 +310,57 @@ export class Scenarios {
         if (!data) throw new NotFound('Workflow input is unavailable');
         check(object.type, data.properties);
         commit = workflowMerge(model, cognitiveStepSchema.parse(run.proposal), object, row.id, revision);
-        evidenceVersion = cognitiveContextSchema.parse(run.cognitive_context).evidenceVersion;
-        evidenceChanged = await decisionVersion(this.db, model, row.owner, client) !== evidenceVersion;
+        const context = cognitiveContextSchema.parse(run.cognitive_context);
+        const observations = context.evidenceVersion ? undefined : recordedDecisionEvidence(run.cognitive_evidence);
+        evidenceVersion = context.evidenceVersion ?? digest({ release: model.release, scenarioId: row.id, observations });
+        if (verifyEvidence) {
+          if (observations) {
+            const evidenceAccess = await Access.load(this.db, { owner: row.owner, scopes: run.scopes }, client);
+            const view = await this.view(evidenceAccess, model, row.id, client);
+            const checkpoint = this.decisionCheckpoint(model, row.id, run.task_id, observations, evidenceAccess);
+            await this.lockDecisionSets(model, row.owner, observations, client);
+            try {
+              await this.withReplay(view, row, evidenceAccess, client, async prefix => {
+                await this.replayJournal(prefix, steps, checkpoint.check);
+              });
+              checkpoint.assertComplete();
+            } catch (error) {
+              if (!(error instanceof Conflict || error instanceof NotFound || error instanceof PermissionDenied)) throw error;
+              evidenceChanged = true;
+            }
+          } else evidenceChanged = await decisionVersion(this.db, model, row.owner, client) !== evidenceVersion;
+        }
         for (const access of [author, approver]) access.definition(model, 'action', commit.action);
         const draftRows = (await this.db.query<{ type: string; id: string }>(
           `SELECT type,id FROM ${this.db.schema}.scenario_objects WHERE owner=$1 AND scenario_id=$2`,
           [row.owner, row.id], client,
         )).rows;
         const draftKeys = new Set(draftRows.map(digest));
-        const refs = new Map<string, ObjectRef>();
-        const requirements: Requirement[] = [
-          ...steps.flatMap(step => step.requirements), ...(run.result_permissions ?? []),
-        ];
-        for (const { row: dependency } of requirements) {
-          if (!dependency || dependency.projection !== model.projection || dependency.type === 'OntologyScenario') continue;
-          const ref = { type: dependency.type, id: dependency.id }, key = digest(ref);
-          if (!draftKeys.has(key)) refs.set(key, ref);
+        const refs = new Map<string, { ref: ObjectRef; revision?: number }>();
+        if (observations) {
+          for (const item of observations) for (const fact of item.refs) {
+            const key = digest(fact.ref);
+            if (fact.ref.type !== 'OntologyScenario' && !draftKeys.has(key) && !refs.has(key)) refs.set(key, fact);
+          }
+        } else {
+          const requirements: Requirement[] = [
+            ...steps.flatMap(step => step.requirements), ...(run.result_permissions ?? []),
+          ];
+          for (const { row: dependency } of requirements) {
+            if (!dependency || dependency.projection !== model.projection || dependency.type === 'OntologyScenario') continue;
+            const ref = { type: dependency.type, id: dependency.id }, key = digest(ref);
+            if (!draftKeys.has(key)) refs.set(key, { ref });
+          }
         }
-        for (const ref of [...refs.values()].sort((a, b) => a.type.localeCompare(b.type) || a.id.localeCompare(b.id))) {
+        for (const { ref, revision } of [...refs.values()].sort((a, b) =>
+          a.ref.type.localeCompare(b.ref.type) || a.ref.id.localeCompare(b.ref.id))) {
           const data = await current(ref);
-          if (!data) throw new NotFound('Workflow evidence is unavailable');
+          if (!data) {
+            evidenceChanged = true;
+            continue;
+          }
           check(ref.type, data.properties);
-          evidence.push({ ref, revision: Number(data.revision) });
+          evidence.push({ ref, revision: revision ?? Number(data.revision) });
         }
         await author.refresh(client);
         await approver.refresh(client);
@@ -417,7 +456,7 @@ export class Scenarios {
   }
   private async validateSteps(graph: Objects, view: PublishedOntology, row: ReviewableScenario, steps: ScenarioStep[],
     reviewed: Awaited<ReturnType<Scenarios['changes']>>, validateFinal: (candidate: Objects) => Promise<void>,
-    validateAction?: ValidateAction) {
+    validateAction?: ValidateAction, checkpoint?: DecisionCheckpoint) {
     if (steps.filter(step => step.step_revision !== null).length !== row.journal_steps ||
         steps.some(step => (step.step_revision === null) !== (step.edits === null))) {
       throw new Conflict('Scenario needs a new proposal with a complete Action journal');
@@ -435,38 +474,107 @@ export class Scenarios {
     if (steps.length !== row.journal_steps)
       throw new Conflict('Scenario needs a new proposal with a complete Action journal');
 
-    const { owner, client, model, access } = graph;
+    const { client, access } = graph;
+    const replayAccess = await Access.load(this.db, access.principal, client);
+    await this.withReplay(view, row, replayAccess, client, async prefix => {
+      await this.replayJournal(prefix, steps, checkpoint, async (step) => {
+        const action = graph.model.action(step.action);
+        if (validateAction) await validateAction(prefix, step.action, step.input!);
+        else if (action.submissionCriteria.length || Object.keys(action.objectParameters).length)
+          throw new Conflict('Scenario needs a merge Action that can revalidate its submissions');
+      });
+      if (this.footprint(await this.changes(graph.owner, row.id, client)) !== this.footprint(reviewed))
+        throw new Conflict('Scenario replay differs from the reviewed field or relationship edits; rebase or propose and review again');
+      await validateFinal(prefix);
+      access.adoptReads(replayAccess);
+    });
+  }
+
+  private async withReplay(view: PublishedOntology, row: ReviewableScenario, access: Access, client: Sql,
+    replay: (prefix: Objects) => Promise<void>) {
+    const owner = row.owner;
     await this.db.query('SAVEPOINT scenario_replay', [], client);
     try {
       // Park the original rows inside the savepoint so replay can use the authored Scenario identity.
       // The parking row is expired and disappears on rollback. Existing runtime roles need no DELETE grant.
       const parking = randomUUID();
       await this.db.query(`INSERT INTO ${this.db.schema}.scenarios(id,owner,request_id,name,release,kind,state,expires_at)
-        VALUES($1,$2,$3,'Scenario replay storage',$4,'temporary','discarded',now())`, [parking, owner, 'replay:' + parking, model.release], client);
+        VALUES($1,$2,$3,'Scenario replay storage',$4,'temporary','discarded',now())`, [parking, owner, 'replay:' + parking, view.release], client);
       for (const table of ['scenario_links', 'scenario_objects']) {
         await this.db.query(`UPDATE ${this.db.schema}.${table} SET scenario_id=$3 WHERE owner=$1 AND scenario_id=$2`, [owner, row.id, parking], client);
       }
-      const replayAccess = await Access.load(this.db, access.principal, client);
-      const prefix = new Objects(this.db, view, replayAccess, client);
-      for (const step of steps) {
-        if (!step.input || !Array.isArray(step.edits) ||
-            step.digest !== digest({ release: model.release, action: step.action, input: step.input }))
-          throw new Conflict('Scenario has unavailable Action submission evidence');
-        const action = model.action(step.action);
-        if (validateAction) await validateAction(prefix, step.action, step.input);
-        else if (action.submissionCriteria.length || Object.keys(action.objectParameters).length)
-          throw new Conflict('Scenario needs a merge Action that can revalidate its submissions');
-        for (const edit of step.edits) await this.applyProposedEdit(prefix, edit);
-      }
-      if (this.footprint(await this.changes(owner, row.id, client)) !== this.footprint(reviewed))
-        throw new Conflict('Scenario replay differs from the reviewed field or relationship edits; rebase or propose and review again');
-      await validateFinal(prefix);
-      access.adoptReads(replayAccess);
+      await replay(new Objects(this.db, view, access, client));
     } finally {
       await this.db.query('ROLLBACK TO SAVEPOINT scenario_replay', [], client);
       await this.db.query('RELEASE SAVEPOINT scenario_replay', [], client);
     }
   }
+
+  private async replayJournal(prefix: Objects, steps: ScenarioStep[], checkpoint?: DecisionCheckpoint,
+    beforeStep?: (step: ScenarioStep) => Promise<void>) {
+    for (const [index, step] of steps.entries()) {
+      if (step.step_revision === null || !step.input || !Array.isArray(step.edits) ||
+          step.digest !== digest({ release: prefix.model.release, action: step.action, input: step.input }))
+        throw new Conflict('Scenario has unavailable Action submission evidence');
+      await beforeStep?.(step);
+      await checkpoint?.(prefix, index, 0);
+      for (const [offset, edit] of step.edits.entries()) {
+        await this.applyProposedEdit(prefix, edit);
+        await checkpoint?.(prefix, index, offset + 1);
+      }
+    }
+    await checkpoint?.(prefix, steps.length, 0);
+  }
+
+  private async lockDecisionSets(model: PublishedOntology, owner: string, observations: DecisionObservation[], client: Sql) {
+    const ids = [...new Set(observations.flatMap(item => item.savedSets ?? []))];
+    if (!ids.length) return;
+    // Retain locks on the actual saved definitions after rolling back the replay savepoint.
+    await this.db.query(`SELECT id FROM ${this.db.schema}.object_sets
+      WHERE ontology=$1 AND id=ANY($2::uuid[]) AND (owner=$3 OR readers ? $3) ORDER BY id FOR SHARE`,
+      [model.document.id, ids, owner], client);
+  }
+
+  private decisionCheckpoint(model: PublishedOntology, scenarioId: string, taskId: string,
+    observations: DecisionObservation[], access: Access) {
+    const pending = new Map<string, DecisionObservation[]>();
+    for (const observation of observations) {
+      const key = observation.step + ':' + observation.offset;
+      const group = pending.get(key);
+      if (group) group.push(observation);
+      else pending.set(key, [observation]);
+    }
+    const check: DecisionCheckpoint = async (prefix, step, offset) => {
+      const key = step + ':' + offset;
+      for (const observation of pending.get(key) ?? []) {
+        const read = observation.read;
+        if (read.kind === 'pa') {
+          const response = (await this.db.query(`SELECT response FROM ${this.db.schema}.pa_requests
+            WHERE id=$1 AND owner=$2 AND task_id=$3`, [read.requestId, access.principal.owner, taskId], prefix.client)).rows[0]?.response;
+          if (response == null || digest(response) !== observation.fingerprint)
+            throw new Conflict('Workflow decision evidence changed; start a new proposal');
+          continue;
+        }
+        const graph = new Objects(this.db, observation.view === 'live' ? model : prefix.model, access, prefix.client);
+        await replayRead(graph, { scenarioId }, observation, () => {
+          switch (read.kind) {
+            case 'object': return graph.read(read.ref);
+            case 'stored': return graph.readStored(read.ref);
+            case 'query': return graph.query(querySchema.parse(read.input));
+            case 'follow': return graph.follow(read.ref, read.link, read.as);
+            case 'source': return graph.matchesSource(read.ref, read.source);
+            case 'set': return new ObjectSets(this.db, read.maximum).evaluate(graph.access, graph.model, read.input, graph.client);
+            case 'aggregate': return new ObjectSets(this.db, read.maximum).aggregate(graph.access, graph.model, read.input, graph.client);
+          }
+        });
+      }
+      pending.delete(key);
+    };
+    return { check, assertComplete() {
+      if (pending.size) throw new Conflict('Workflow evidence refers to an unavailable Scenario checkpoint');
+    } };
+  }
+
   async inspect(access: Access, model: PublishedOntology, id: string) {
     const owner = access.principal.owner, view = await this.view(access, model, id);
     return this.db.transaction(async client => {
@@ -604,9 +712,11 @@ export class Scenarios {
     if (Number(row.revision) !== revision) throw new Conflict('Scenario changed after review');
     let proposalTask: string | undefined;
     let validateWorkflow: ((candidate: Objects) => Promise<void>) | undefined;
+    let evidenceCheck: ReturnType<Scenarios['decisionCheckpoint']> | undefined;
     if (row.workflow_run_id) {
-      const run = (await this.db.query<{ proposal_task: string; result_permissions: Requirement[] | null; proposal: unknown; object_ref: unknown; cognitive_context: unknown }>(
-        `SELECT run.proposal_task,task.result_permissions,task.cognitive_context,run.body->'proposal' AS proposal,run.object_ref FROM ${this.db.schema}.workflow_runs run
+      const run = (await this.db.query<{ proposal_task: string; result_permissions: Requirement[] | null; proposal: unknown; object_ref: unknown; cognitive_context: unknown;
+        cognitive_evidence: unknown; scopes: string[] }>(
+        `SELECT run.proposal_task,task.result_permissions,task.cognitive_context,task.cognitive_evidence,task.scopes,run.body->'proposal' AS proposal,run.object_ref FROM ${this.db.schema}.workflow_runs run
           JOIN ${this.db.schema}.tasks task ON task.id=run.proposal_task AND task.owner=run.owner AND task.state='completed'
           WHERE run.id=$1 AND run.owner=$2 AND run.proposal_scenario=$3 AND run.state='waiting-approval'
             AND run.body->'proposal'->>'mergeAction'=$4 AND run.proposal_deadline>clock_timestamp() FOR UPDATE OF run`,
@@ -614,7 +724,13 @@ export class Scenarios {
       )).rows[0];
       if (!run) throw new Conflict('Workflow proposal is no longer waiting for approval or requires a different merge Action');
       const { evidenceVersion } = cognitiveContextSchema.parse(run.cognitive_context);
-      await requireDecisionVersion(this.db, model, owner, evidenceVersion, client);
+      if (evidenceVersion) await requireDecisionVersion(this.db, model, owner, evidenceVersion, client);
+      else {
+        const observations = recordedDecisionEvidence(run.cognitive_evidence);
+        const author = await Access.load(this.db, { owner, scopes: run.scopes }, client);
+        await this.lockDecisionSets(model, owner, observations, client);
+        evidenceCheck = this.decisionCheckpoint(model, id, run.proposal_task, observations, author);
+      }
       if (!run.result_permissions || !await access.canReturn(run.result_permissions, client))
         throw new PermissionDenied('Workflow proposal no longer has access to its evidence');
       const proposal = cognitiveStepSchema.parse(run.proposal), object = objectRefSchema.parse(run.object_ref);
@@ -635,7 +751,7 @@ export class Scenarios {
       )).rows;
       for (const approval of approvals) {
         try {
-          const review = await this.reviewDiff(model, row, approval.reviewer, client);
+          const review = await this.reviewDiff(model, row, approval.reviewer, client, !evidenceCheck);
           if (!review.conflicts && approval.snapshot === review.snapshot) {
             approvalSnapshot = approval.snapshot;
             if (proposalTask && graph.change) {
@@ -705,9 +821,10 @@ export class Scenarios {
     for (const item of changes.links) if (await this.linkConflict(model, owner, item, client))
       throw new Conflict('Scenario link conflicts with current data or cardinality; rebase or propose and review again');
     await this.validateSteps(graph, view, row, actions, changes, async candidate => {
+      evidenceCheck?.assertComplete();
       await validateWorkflow?.(candidate);
       await scope.validate?.(candidate, [...touched.values()], changes.links.map(edge));
-    }, scope.validateAction);
+    }, scope.validateAction, evidenceCheck?.check);
     for (const item of changes.links) {
       if (item.removed) await graph.unlink(edge(item));
     }

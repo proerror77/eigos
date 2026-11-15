@@ -5,6 +5,7 @@ import { validator } from '../ontology/model.js';
 import { Clarification } from './clarification.js';
 import { Tasks, type Task } from './tasks.js';
 import { Access, type Requirement } from './access.js';
+import { observePAResponse } from './decision-evidence.js';
 
 export const paResponseSchema = z.strictObject({ requestId: z.uuid(), response: z.record(z.string(), z.unknown()) });
 export const paInboxSchema=z.strictObject({cursor:z.uuid().optional(),limit:z.number().int().min(1).max(50).default(20)});
@@ -41,7 +42,11 @@ export class PARequests {
       await db.query(`INSERT INTO ${db.schema}.pa_requests(id,task_id,owner,request_key,request) VALUES($1,$2,$3,$4,$5) ON CONFLICT(task_id,request_key) DO NOTHING`, [randomUUID(), task.id, task.owner, key, request], client);
       return (await db.query(`SELECT id,response,created_at FROM ${db.schema}.pa_requests WHERE task_id=$1 AND request_key=$2 AND owner=$3`, [task.id, key, task.owner], client)).rows[0]!;
     });
-    if (row.response !== null) return { requestId: String(row.id), requestedAt: row.created_at as Date, response: validator(responseSchema).parse(row.response) };
+    if (row.response !== null) {
+      const response = validator(responseSchema).parse(row.response);
+      observePAResponse(db, task, String(row.id), digest(row.response));
+      return { requestId: String(row.id), requestedAt: row.created_at as Date, response };
+    }
     throw new Clarification('Please ask the user’s PA to provide the requested authorized information.', {
       kind: 'pa-request', taskId: task.id, requestId: row.id, ...request,
     });

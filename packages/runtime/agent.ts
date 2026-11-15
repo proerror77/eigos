@@ -21,6 +21,8 @@ import { SemanticSearch, semanticSearchViewSchema } from './semantic.js';
 import { Sources } from './sources.js';
 import { Tasks, type Task } from './tasks.js';
 import { Clarification } from './clarification.js';
+import { advanceDecisionReadStep, captureProposalReads } from './decision-evidence.js';
+import type { Classification } from '../ontology/classification.js';
 import { cognitiveContextSchema, requireDecisionVersion, validateCognitive } from './cognitive-workflow.js';
 import { checkHotelWorkflowAction, checkHotelWorkflowTool, HotelWorkflows, replayHotelWorkflow, type HotelWorkflowTrace } from './hotel-workflows.js';
 export { Clarification } from './clarification.js';
@@ -154,12 +156,16 @@ export class OntologyAgent {
       return documents;
     };
     const functionContext = async (id?: string) => ({ ...context, objects: new Objects(this.db,await view(id),access) });
-    const checkEvidence = (client?: import('./database.js').Sql) =>
-      cognitive && requireDecisionVersion(this.db, model, task.owner, cognitive.evidenceVersion, client);
+    const checkLegacyEvidence = (client?: import('./database.js').Sql) =>
+      cognitive?.evidenceVersion && requireDecisionVersion(this.db, model, task.owner, cognitive.evidenceVersion, client);
+    const captureEvidence = <T>(clearance: Classification | undefined, execute: () => Promise<T>) =>
+      cognitive && !cognitive.evidenceVersion
+        ? captureProposalReads(this.db, task, cognitive.scenarioId, clearance, execute)
+        : execute();
     const guard = async (client: import('./database.js').Sql) => {
       signal.throwIfAborted();
       await this.tasks.current(task, client, true);
-      await checkEvidence(client);
+      await checkLegacyEvidence(client);
     };
     const started = performance.now();
     let complete: (result: unknown) => void, reject: (error: unknown) => void;
@@ -188,11 +194,11 @@ export class OntologyAgent {
           )).rowCount) throw new Conflict('Workflow tool budget exhausted or execution lease ended');
           await access.refresh();
           await this.tasks.current(task);
-          await checkEvidence();
+          await checkLegacyEvidence();
           const check = await egress.decide(disclosed);
           proof = check.policyDigest;
           if (!check.allowed) throw new ModelEgressDenied();
-          const scoped = await access.measureEgress(async () => {
+          const scoped = await captureEvidence(check.clearance, () => access.measureEgress(async () => {
             if (capture) checkHotelWorkflowTool(name, input);
             const scenarioId = cognitive?.scenarioId ??
               (input && typeof input === 'object' && 'scenarioId' in input && typeof input.scenarioId === 'string' ? input.scenarioId : undefined);
@@ -206,8 +212,8 @@ export class OntologyAgent {
               : output;
             const documents = await boundaryReads(payload, scenarioId);
             return { output, documents };
-          }, check.clearance);
-          await checkEvidence();
+          }, check.clearance));
+          await checkLegacyEvidence();
           const classification = combineClassification(disclosed, scoped.classification);
           const decision = await egress.decide(classification);
           proof = decision.policyDigest;
@@ -324,6 +330,7 @@ export class OntologyAgent {
       if (cognitive && !cognitive.actions.includes(selected.action)) throw new Conflict('Action is outside the workflow capability list');
       if (capture) checkHotelWorkflowAction(selected.action, model, input.scenarioId);
       const output = await this.capabilities.actions.apply(access, await view(input.scenarioId), selected.action, selected.input, digest([task.id, input.scenarioId, selected]), guard, executionContext, signal);
+      await advanceDecisionReadStep();
       if (capture) trace.actions.push({ ...selected, scenarioId: input.scenarioId, output });
       return output;
     };
@@ -369,8 +376,8 @@ export class OntologyAgent {
     let initialRequirements: Requirement[];
     try {
       if (!initialDecision.allowed) throw new ModelEgressDenied();
-      await checkEvidence();
-      const initial = await access.measureEgress(async () => {
+      await checkLegacyEvidence();
+      const initial = await captureEvidence(initialDecision.clearance, () => access.measureEgress(async () => {
         await boundaryReads(task.input);
         if (cognitive) {
           const input = await objects.read(cognitive.object);
@@ -382,7 +389,7 @@ export class OntologyAgent {
           actions: published.actions.filter(action => cognitive.actions.includes(action.apiName)),
           functions: published.functions.filter(fn => cognitive.functions.includes(fn.apiName)),
         } : published;
-      }, initialDecision.clearance);
+      }, initialDecision.clearance));
       disclosed = combineClassification(disclosed, initial.classification);
       if (!(await egress.decide(disclosed)).allowed || !await access.canDisclose(initial.requirements)
         || capture && isProtected(disclosed)) throw new ModelEgressDenied();

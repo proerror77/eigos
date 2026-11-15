@@ -11,7 +11,7 @@ import type { Actions } from './actions.js';
 import { Objects, querySchema } from './objects.js';
 import { matchingTransition, processRuleSchema, processStatusSchema, processTarget, processTriggerSchema, readProcessStatus } from './process-automation.js';
 import { readProcessTransitions } from './process-logs.js';
-import { authorizeCognitive, cognitiveContextSchema, cognitiveResultSchema, cognitiveStepSchema, decisionVersion, workflowMerge, type CognitiveStep } from './cognitive-workflow.js';
+import { authorizeCognitive, cognitiveContextSchema, cognitiveResultSchema, cognitiveStepSchema, workflowMerge, type CognitiveStep } from './cognitive-workflow.js';
 import { Scenarios } from './scenarios.js';
 import { appendTrace } from './execution-trace.js';
 
@@ -88,6 +88,7 @@ export async function initializeAutomation(db: Database) {
     ALTER TABLE ${db.schema}.workflow_runs ADD COLUMN IF NOT EXISTS proposal_scenario uuid;
     ALTER TABLE ${db.schema}.workflow_runs ADD COLUMN IF NOT EXISTS proposal_deadline timestamptz;
     ALTER TABLE ${db.schema}.tasks ADD COLUMN IF NOT EXISTS cognitive_context jsonb;
+    ALTER TABLE ${db.schema}.tasks ADD COLUMN IF NOT EXISTS cognitive_evidence jsonb;
     ALTER TABLE ${db.schema}.tasks ADD COLUMN IF NOT EXISTS cognitive_tool_calls integer NOT NULL DEFAULT 0;
     CREATE TABLE IF NOT EXISTS ${db.schema}.workflow_steps(run_id uuid NOT NULL REFERENCES ${db.schema}.workflow_runs(id),position integer NOT NULL,
       action text NOT NULL,input jsonb NOT NULL,requirements jsonb NOT NULL,request_id text NOT NULL,result jsonb,completed_at timestamptz,
@@ -804,14 +805,13 @@ export class Automation {
         }, undefined, { client, runId: row.id, reviewers });
         workflowMerge(model, proposal, object, scenario.id, scenario.revision);
         const input = await graph.read(object);
-        const evidenceVersion = await decisionVersion(this.db, model, owner, client);
         const context = cognitiveContextSchema.parse({
-          ...manifest, runId: row.id, scenarioId: scenario.id, object, revision: input.revision, evidenceVersion,
+          ...manifest, runId: row.id, scenarioId: scenario.id, object, revision: input.revision,
         });
         const taskInput = { requestId, message: proposal.goal };
         await this.db.query(
-          `INSERT INTO ${this.db.schema}.tasks(id,owner,request_id,input_digest,input,release,scopes,cognitive_context)
-            VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+          `INSERT INTO ${this.db.schema}.tasks(id,owner,request_id,input_digest,input,release,scopes,cognitive_context,cognitive_evidence)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,'[]'::jsonb)`,
           [taskId, owner, requestId, digest(taskInput), taskInput, model.release, JSON.stringify(access.principal.scopes), context], client,
         );
         await this.db.query(

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { canonical, Conflict, digest, NotFound } from '../core/identity.js';
 import { propertyPathSchema } from '../ontology/property-path.js';
 import { objectRefSchema, type ObjectData, type ObjectRef } from '../ontology/schema.js';
+import { observeDecisionRead, observeReadInput, observedPage } from './decision-evidence.js';
 import { Access, PermissionDenied } from './access.js';
 import { Database, type Sql } from './database.js';
 import { PublishedOntology } from './metadata.js';
@@ -96,9 +97,13 @@ export class ObjectSets {
   }
   private async saved(access: Access, model: PublishedOntology, id: string, client: Sql): Promise<SavedRow> {
     access.require(model.document.id, 'view_definition', model.document.id);
-    const result = await this.db.query(`SELECT * FROM ${this.db.schema}.object_sets WHERE id=$1 AND ontology=$2 AND (owner=$3 OR readers ? $3)`, [z.uuid().parse(id), model.document.id, access.principal.owner], client);
-    if (!result.rows[0]) throw new NotFound('Object set is unavailable');
-    return result.rows[0] as SavedRow;
+    const result = await this.db.query<SavedRow>(`SELECT * FROM ${this.db.schema}.object_sets
+      WHERE id=$1 AND ontology=$2 AND (owner=$3 OR readers ? $3)`,
+      [z.uuid().parse(id), model.document.id, access.principal.owner], client);
+    const row = result.rows[0];
+    if (!row) throw new NotFound('Object set is unavailable');
+    observeReadInput({ savedSet: row.id, revision: Number(row.revision), inputDigest: row.input_digest, predicate: row.expression }, row.id);
+    return row;
   }
   private metadata(row: SavedRow, owner: string) {
     return { id: row.id, name: row.name, mode: row.mode, revision: Number(row.revision), owned: row.owner === owner,
@@ -238,9 +243,13 @@ export class ObjectSets {
     }
     return undefined;
   }
-  async evaluate(access: Access, model: PublishedOntology, raw: unknown) {
+  async evaluate(access: Access, model: PublishedOntology, raw: unknown, client?: Sql) {
     const input = evaluateSetSchema.parse(raw);
-    return this.snapshot(access, async client => {
+    return observeDecisionRead({ db: this.db, access, model }, { kind: 'set', input, maximum: this.maximumObjects },
+      () => this.evaluateSet(access, model, input, client), observedPage);
+  }
+  private async evaluateSet(access: Access, model: PublishedOntology, input: z.output<typeof evaluateSetSchema>, existing?: Sql) {
+    const evaluate = async (client: Sql) => {
       if (input.view) access.definition(model, model.interfaces.has(input.view) ? 'interface' : 'object', input.view);
       const viewLabel = input.view ? (model.interfaces.get(input.view) ?? model.objects.get(input.view))?.classification : undefined;
       const allowedView = access.canSeeModelData(viewLabel);
@@ -255,14 +264,20 @@ export class ObjectSets {
       const all = allowedView ? (native ? sorted(native) : await this.resolve(access, model, input.set, client))
         .map(object => this.project(access, model, object, input.view)) : [];
       const identity = digest({ owner: access.principal.owner, release: model.release, scenario: model.scenario, set: input.set, view: input.view, objects: all });
+      observeReadInput({ setMembership: identity });
       const offset = input.cursor ? z.strictObject({ identity: z.literal(identity), offset: z.number().int().nonnegative().max(all.length) }).parse(JSON.parse(Buffer.from(input.cursor, 'base64url').toString())).offset : 0;
       const end = offset + input.limit;
       return { items: all.slice(offset, end), total: all.length, cursor: end < all.length ? Buffer.from(JSON.stringify({ identity, offset: end })).toString('base64url') : undefined };
-    });
+    };
+    return existing ? evaluate(existing) : this.snapshot(access, evaluate);
   }
-  async aggregate(access: Access, model: PublishedOntology, raw: unknown) {
+  async aggregate(access: Access, model: PublishedOntology, raw: unknown, client?: Sql) {
     const input = aggregateSetSchema.parse(raw);
-    return this.snapshot(access, async client => {
+    return observeDecisionRead({ db: this.db, access, model }, { kind: 'aggregate', input, maximum: this.maximumObjects },
+      () => this.aggregateSet(access, model, input, client));
+  }
+  private async aggregateSet(access: Access, model: PublishedOntology, input: z.output<typeof aggregateSetSchema>, existing?: Sql) {
+    const aggregate = async (client: Sql) => {
       if (input.view) access.definition(model, model.interfaces.has(input.view) ? 'interface' : 'object', input.view);
       const viewLabel = input.view ? (model.interfaces.get(input.view) ?? model.objects.get(input.view))?.classification : undefined;
       const allowedView = access.canSeeModelData(viewLabel);
@@ -307,7 +322,8 @@ export class ObjectSets {
         return { group: group.keys, metrics };
       });
       return { count: all.length, items };
-    });
+    };
+    return existing ? aggregate(existing) : this.snapshot(access, aggregate);
   }
   async save(access: Access, model: PublishedOntology, raw: unknown) {
     const input = saveSetSchema.parse(raw), owner = access.principal.owner;

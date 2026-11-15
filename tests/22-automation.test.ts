@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { createApp } from '../apps/gateway/app.js';
 import { readConfig } from '../packages/core/config.js';
+import { digest } from '../packages/core/identity.js';
 import { OntologyClient } from '../packages/sdk/client.js';
 import type { AgentDriver } from '../packages/runtime/agent.js';
 import { PARequests } from '../packages/runtime/pa.js';
@@ -16,9 +17,11 @@ import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
 import { Actions } from '../packages/runtime/actions.js';
 import { initializeActionUndo } from '../packages/runtime/action-journal.js';
 import { Scenarios, initializeScenarioLifecycle } from '../packages/runtime/scenarios.js';
+import { decisionEvidenceSchema } from '../packages/runtime/decision-evidence.js';
 import { ExecutionTrace } from '../packages/runtime/execution-trace.js';
 import { Automation, initializeAutomation } from '../packages/runtime/automation.js';
 import { Objects } from '../packages/runtime/objects.js';
+import { ObjectSets } from '../packages/runtime/object-sets.js';
 import { objectPolicySchema } from '../packages/runtime/security.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
@@ -688,7 +691,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   } finally { await f.close(); }
 });
 
-async function exerciseReviewedHotelWorkflow(outcome: 'commit' | 'changed-evidence' | 'revoked-at-expiry' | 'revoked-on-reclaim') {
+async function exerciseReviewedHotelWorkflow(outcome: 'commit' | 'changed-evidence' | 'conflicting-activity' | 'predicate-match' | 'revoked-at-expiry' | 'revoked-on-reclaim') {
   const hotelSource = serviceProvider();
   const initial = planningInput();
   const start = new Date(Date.now() + 3 * 86400000);
@@ -764,12 +767,31 @@ async function exerciseReviewedHotelWorkflow(outcome: 'commit' | 'changed-eviden
     const { title: name, ...dates } = initial;
     await graph.create(plan, { id: plan.id, name, ...dates, state: 'prepared' });
     const before = await graph.read(plan);
+    const resource = { type: 'ScheduleResource', id: digest([principal.owner, 'personal-calendar']) };
+    await graph.create(resource, { id: resource.id, name: 'User calendar' });
+    const conflictsQuery = {
+      type: 'ScheduledActivity', from: { object: resource, link: 'activities' },
+      filter: { op: 'all' as const, predicates: [
+        { op: 'lt' as const, property: 'start', value: target.end },
+        { op: 'gt' as const, property: 'end', value: target.start },
+      ] },
+    };
     const validationInput = { type: 'Route', id: 'only-read-by-final-validator' };
     await graph.create(validationInput, { id: validationInput.id, name: 'Approved evidence' });
     const invoke = f.capabilities.functions.invoke.bind(f.capabilities.functions);
     let addUnexpectedEdit = false;
     f.capabilities.functions.invoke = async (model, name, input, context) => {
-      if (name === 'validateSchedule' && model.scenario) await context.objects.read(validationInput);
+      if (name === 'findScheduleSlots' && model.scenario) {
+        assert.deepEqual((await context.objects.query(conflictsQuery)).items, []);
+        const sets = new ObjectSets(f.db);
+        assert.equal((await sets.evaluate(context.objects.access, model, {
+          set: { op: 'query', query: conflictsQuery },
+        })).total, 0);
+      }
+      if (name === 'validateSchedule' && model.scenario) {
+        await context.objects.read(validationInput);
+        await context.objects.query({ type: 'Route', where: { name: 'Hotel route closure' } });
+      }
       if (name === 'commitSchedulePlan' && addUnexpectedEdit && context.edit) {
         const edit = context.edit;
         return invoke(model, name, input, { ...context, edit: (ref, write) =>
@@ -877,6 +899,21 @@ async function exerciseReviewedHotelWorkflow(outcome: 'commit' | 'changed-eviden
     assert.deepEqual(review.commit?.effects, [{ name: 'ConfirmedReplan', handler: 'SyntheticHotelReplan', payload: reviewedPayload }]);
     assert.ok(review.evidence?.some(item => item.ref.id === hotel.id));
     assert.ok(review.evidence?.some(item => item.ref.id === validationInput.id));
+    const { cognitive_evidence: rawEvidence } = (await f.db.query(
+      `SELECT cognitive_evidence FROM ${f.db.schema}.tasks WHERE owner=$1 AND id=$2`, [principal.owner, taskId],
+    )).rows[0]!;
+    const observations = decisionEvidenceSchema.parse(rawEvidence);
+    const empty = observations.find(item => item.read.kind === 'query' && item.read.input.type === 'ScheduledActivity');
+    assert.ok(empty && empty.read.kind === 'query');
+    assert.deepEqual(empty.read.input.filter, conflictsQuery.filter);
+    assert.equal(empty.fingerprint, digest({ value: { items: [] } }));
+    const emptySet = observations.find(item => item.read.kind === 'set');
+    assert.ok(emptySet && emptySet.read.kind === 'set');
+    assert.deepEqual(emptySet.refs, []);
+    assert.match(emptySet.fingerprint, /^[a-f0-9]{64}$/);
+    assert.ok(observations.some(item => item.read.kind === 'follow' && item.read.link === 'activities' && item.refs.length === 0));
+    assert.ok(observations.some(item => item.read.kind === 'pa'));
+    assert.ok(observations.some(item => item.read.kind === 'source' && item.read.ref.id === hotel.id));
     const merge = () => actions.apply(f.access, f.model, 'CommitSchedulePlan', {
       plan, scenarioId, revision: review.revision,
     }, 'commit-hotel-replan');
@@ -891,9 +928,22 @@ async function exerciseReviewedHotelWorkflow(outcome: 'commit' | 'changed-eviden
     await setGrants(f.db, reviewer.owner, []);
     await assert.rejects(merge(), /requires approval/);
     await setGrants(f.db, reviewer.owner, memberGrants(f.model));
-    if (outcome === 'changed-evidence') {
-      const evidence = await graph.read(validationInput);
-      await graph.edit(validationInput, evidence.revision, { name: 'Different decision evidence' });
+    if (outcome === 'changed-evidence' || outcome === 'conflicting-activity' || outcome === 'predicate-match') {
+      if (outcome === 'changed-evidence') {
+        const evidence = await graph.read(validationInput);
+        await graph.edit(validationInput, evidence.revision, { name: 'Different decision evidence' });
+      } else if (outcome === 'predicate-match') {
+        await graph.create({ type: 'Route', id: 'new-predicate-match' }, { id: 'new-predicate-match', name: 'Hotel route closure' });
+      } else {
+        const activity = review.objects.find(item => item.ref.type === 'ScheduledActivity')!.after!;
+        const blocker = { type: 'ScheduledActivity', id: 'concurrent-reservation' };
+        await f.db.transaction(async client => {
+          const writer = new Objects(f.db, f.model, f.access, client);
+          await writer.create(blocker, { id: blocker.id, name: 'Concurrent reservation', start: activity.start, end: activity.end });
+          await writer.link({ type: 'ActivityResource', from: blocker, to: resource });
+        });
+        assert.equal((await graph.read(resource)).revision, review.evidence?.find(item => item.ref.id === resource.id)?.revision ?? 1);
+      }
       const stale = await scenarios.inspectReview(reviewerAccess, f.model, scenarioId);
       assert.equal(stale.evidenceVersion, review.evidenceVersion);
       assert.equal(stale.evidenceChanged, true);
@@ -908,6 +958,12 @@ async function exerciseReviewedHotelWorkflow(outcome: 'commit' | 'changed-eviden
       assert.equal(f.provider.flags.orderCreates, 0);
       return;
     }
+
+    const unrelated = { type: 'Route', id: 'unrelated-route-after-approval' };
+    await graph.create(unrelated, { id: unrelated.id, name: 'Unrelated route' });
+    const afterUnrelatedWrite = await reviewerClient.scenario(scenarioId).inspectReview();
+    assert.equal(afterUnrelatedWrite.evidenceChanged, false);
+    assert.equal(afterUnrelatedWrite.snapshot, review.snapshot);
 
     addUnexpectedEdit = true;
     await assert.rejects(merge(), /differ from the reviewed Scenario delta/);
@@ -953,11 +1009,17 @@ async function exerciseReviewedHotelWorkflow(outcome: 'commit' | 'changed-eviden
   }
 }
 
-test('hotel replanning binds the committed delta and synthetic Outbox to the independent PA review', () =>
+test('hotel replanning preserves the independent review and synthetic Outbox after an unrelated Route is added', () =>
   exerciseReviewedHotelWorkflow('commit'));
 
 test('hotel replanning rejects drift in final-validator evidence and allows activation after closing the run', () =>
   exerciseReviewedHotelWorkflow('changed-evidence'));
+
+test('hotel replanning rejects a new activity on the same resource in the previously empty window', () =>
+  exerciseReviewedHotelWorkflow('conflicting-activity'));
+
+test('hotel replanning rejects a new match in a validator-only predicate that returned no objects', () =>
+  exerciseReviewedHotelWorkflow('predicate-match'));
 
 
 test('hotel replanning expires and cancels the original PA task even after the merge grant is revoked', () =>
