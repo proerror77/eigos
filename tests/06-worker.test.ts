@@ -1,5 +1,6 @@
 import { Access, setGrants, memberGrants } from '../packages/runtime/access.js';
 import { Ontology } from '../packages/ontology/model.js';
+import type { ObjectRef } from '../packages/ontology/schema.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { z } from 'zod';
@@ -230,7 +231,7 @@ test('missing city pauses the original Action before source reads and resumes af
   } finally { await f.close(); }
 });
 
-test('a landmark resolves a shortened venue name against its own supplier evidence on the original Action', async () => {
+test('a landmark returns a single named address and waits for confirmation on the original Action', async () => {
   const f = await fixture();
   try {
     f.provider.flags.placeName = name => name === '太古里' ? '前滩太古里' : name;
@@ -247,6 +248,18 @@ test('a landmark resolves a shortened venue name against its own supplier eviden
     const continued = await f.tasks.amendPlace(principal, task.id, { side: 'destination', landmark: '东方体育中心' });
     assert.equal(continued.id, task.id);
     await f.worker.runOne();
+    const suggested = await f.tasks.get(principal, task.id);
+    assert.equal(suggested.state, 'input-required');
+    const choices = suggested.result as {kind: string; origin: {ref: ObjectRef}[];
+      destination: {ref: ObjectRef; properties: {name: string; address: string}}[]};
+    assert.equal(choices.kind, 'place-selection');
+    assert.equal(choices.destination.length, 1);
+    assert.equal(choices.destination[0]!.properties.name, '前滩太古里');
+    assert.equal(choices.destination[0]!.properties.address, '浦东新区东育路500弄前滩太古里');
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'maps_textsearch', 'maps_textsearch']);
+    assert.equal(suggested.input.placeContinuation!.requestId, paused.input.placeContinuation!.requestId);
+    await f.tasks.selectPlaces(principal, task.id, {origin: choices.origin[0]!.ref, destination: choices.destination[0]!.ref});
+    await f.worker.runOne();
     const done = await f.tasks.get(principal, task.id);
     assert.equal(done.state, 'completed', done.error ?? undefined);
     const quote = done.result as {request: {id: string}; route: {destination: {name: string}}};
@@ -256,6 +269,51 @@ test('a landmark resolves a shortened venue name against its own supplier eviden
     const keywords = f.provider.inputs.map(item => item.keywords).filter(Boolean);
     assert.equal(keywords.filter(name => name === route.origin).length, 1);
     assert(keywords.includes('东方体育中心'));
+  } finally { await f.close(); }
+});
+
+test('empty source candidates request more address information on the original task', async () => {
+  const f = await fixture();
+  try {
+    f.provider.flags.emptyPlaces = name => name === route.destination;
+    f.provider.flags.related = false;
+    const task = await f.submit();
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, task.id);
+    assert.equal(paused.state, 'input-required');
+    const input = paused.result as {kind: string; needsAddress: string[]; destination: unknown[]};
+    assert.deepEqual([input.kind, input.needsAddress, input.destination], ['place-address-required', ['destination'], []]);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch']);
+    await f.tasks.amendPlace(principal, task.id, {side:'destination', address:'建国西路285号'});
+    await f.worker.runOne();
+    const done = await f.tasks.get(principal, task.id);
+    assert.equal(done.state,'completed',done.error ?? undefined);
+    assert.equal((done.result as { request: ObjectRef }).request.id, paused.input.placeContinuation!.requestId);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch','maps_textsearch','maps_textsearch','taxi_estimate']);
+  } finally { await f.close(); }
+});
+
+test('supplier failure pauses for a distinct read retry, rather than requesting a different address', async () => {
+  const f = await fixture();
+  try {
+    f.provider.flags.failPlaceSearch = true;
+    const task = await f.submit();
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, task.id);
+    assert.equal(paused.state, 'input-required');
+    assert.deepEqual(paused.result, { kind: 'retry-source', source: 'DiDi', stage: 'places' });
+    await assert.rejects(f.tasks.amendPlace(principal, task.id, {side:'destination', address:'建国西路285号'}), /no place candidates/);
+    assert.deepEqual((await f.db.query(`SELECT state FROM ${f.db.schema}.source_calls WHERE task_id=$1 ORDER BY name`,[task.id])).rows,
+      [{state:'failed'}, {state:'failed'}]);
+    f.provider.flags.failPlaceSearch = false;
+    await f.tasks.answerInput(principal, task.id, {kind:'retry-source'});
+    await f.worker.runOne();
+    const done = await f.tasks.get(principal, task.id);
+    assert.equal(done.state,'completed',done.error ?? undefined);
+    assert.equal((done.result as { request: ObjectRef }).request.id, paused.input.placeContinuation!.requestId);
+    const started = (await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.execution_trace
+      WHERE task_id=$1 AND event->>'kind'='model' AND event->>'state'='started'`, [task.id])).rows[0]!.n;
+    assert.equal(started, 1);
   } finally { await f.close(); }
 });
 

@@ -21,7 +21,10 @@ export const placeAmendmentsSchema = z.strictObject({
   destination: placeClueSchema.optional(),
 });
 export const cityInputSchema = z.string().trim().min(2).max(100);
-export const taskInputAnswerSchema = z.strictObject({ kind: z.literal('city'), city: cityInputSchema });
+export const taskInputAnswerSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('city'), city: cityInputSchema }),
+  z.strictObject({ kind: z.literal('retry-source') }),
+]);
 export const placeChoicesSchema = z.object({
   origin: z.array(z.object({ ref: objectRefSchema })),
   destination: z.array(z.object({ ref: objectRefSchema })),
@@ -31,9 +34,10 @@ export const placeContinuationSchema = z.strictObject({
   action: z.string().min(1),
   input: z.record(z.string(), z.unknown()),
   read: actionResultReadSchema,
-  waitingFor: z.literal('city').optional(),
+  waitingFor: z.enum(['city', 'retry-source']).optional(),
   receipts: placeSelectionSchema.optional(),
-}).refine(input => input.waitingFor === 'city' ? !input.receipts : Boolean(input.receipts));
+}).refine(input => input.waitingFor === 'city' ? !input.receipts :
+  input.waitingFor === 'retry-source' || Boolean(input.receipts));
 export type PlaceSelection = z.infer<typeof placeSelectionSchema>;
 export type PlaceContinuation = z.infer<typeof placeContinuationSchema>;
 
@@ -44,7 +48,7 @@ export class Clarification extends Error {
   ) { super(message); }
 }
 
-/** Raised by an edit Function before staging a write when its live source has multiple possible locations. */
+/** Raised by an edit Function before staging a write when the sources do not establish a confirmed endpoint. */
 export class PlaceConfirmationRequired extends Clarification {
   constructor(message: string, choices: unknown, readonly receipts: PlaceSelection) { super(message, choices); }
 }
@@ -52,4 +56,11 @@ export class PlaceConfirmationRequired extends Clarification {
 /** The selected Action lacks a city, so no supplier lookup has been authorized yet. */
 export class CityConfirmationRequired extends Clarification {
   constructor() { super('请提供这段行程所在的城市。', { kind: 'city' }); }
+}
+
+
+export class SourceRetryRequired extends Clarification {
+  constructor(stage: 'places' | 'estimate', readonly receipts?: PlaceSelection) {
+    super('滴滴查询失败，可以重试原任务。', { kind: 'retry-source', source: 'DiDi', stage });
+  }
 }

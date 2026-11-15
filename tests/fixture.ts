@@ -33,6 +33,7 @@ export async function provider() {
   const calls: string[] = [], inputs: Record<string, unknown>[] = [];
   const flags = {
     active: true, ambiguous: false, related: true,
+    failPlaceSearch: false, emptyPlaces: (_name: string) => false,
     placeName: (name: string) => name,
     placeAddress: (name: string) => name + '上海市浦东新区',
     placeAlternatives: undefined as ((name: string, place: FixturePlace) => FixturePlace[]) | undefined,
@@ -51,12 +52,13 @@ export async function provider() {
       const name = request.params.name, args = request.params.arguments;
       calls.push(name); inputs.push(args); await flags.before?.();
       if (name === 'maps_textsearch') {
+        if (flags.failPlaceSearch) return new Response(null, { status: 503 });
         const place = { display_name: flags.placeName(args.keywords), address: '浦东新区', address_all: flags.placeAddress(args.keywords), city: args.city, location: { lat: 31.2, lng: args.keywords === route.origin ? 121.5 : 121.48 } };
         const places = [place];
         if (flags.related) places.push({ ...place, display_name: args.keywords + '东门', location: { lat: 31.21, lng: 121.51 } });
         places.push(...(flags.placeAlternatives?.(args.keywords, place) ?? []));
         if (flags.ambiguous) places.push({ ...place, location: { lat: 31.3, lng: 121.6 } });
-        result = { content: [{ type: 'text', text: JSON.stringify(places) }] };
+        result = { content: [{ type: 'text', text: JSON.stringify(flags.emptyPlaces(args.keywords) ? [] : places) }] };
       } else if (name === 'taxi_estimate') result = { structuredContent: { traceId: 'PRIVATE_ORDER_TOKEN', items: [{ productName: '快车', productCategory: 'fast', priceText: '73.05' }, { productName: '专车', productCategory: 'premium', priceText: '100-120元' }] } };
       else if(name==='maps_direction_driving')result={structuredContent:{status:'success',duration:{value:flags.durationSeconds},distance:{value:1951}}};
       else throw new Error('Unexpected provider tool');

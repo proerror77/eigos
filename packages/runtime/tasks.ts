@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { Conflict, NotFound, digest, requireScope, type Principal } from '../core/identity.js';
+import { Conflict, NotFound, SourceReadFailure, digest, requireScope, type Principal } from '../core/identity.js';
 import type { Sql } from './database.js';
 import { Database } from './database.js';
 import { Metadata } from './metadata.js';
@@ -139,10 +139,12 @@ export class Tasks {
       const selected = keep
         ? choices[other].find(({ ref }) => ref.type === keep.type && ref.id === keep.id)?.ref
         : choices[other].length === 1 ? choices[other][0]!.ref : undefined;
-      if (!selected) throw new Conflict('Identify the unchanged endpoint from the original task’s current candidates');
+      if (!selected && (keep || choices[other].length)) {
+        throw new Conflict('Identify the unchanged endpoint from the original task’s current candidates');
+      }
       return {
         ...task.input,
-        places: { [other]: selected },
+        places: selected ? { [other]: selected } : {},
         placeAmendments: { ...task.input.placeAmendments, [side]: amendment },
       };
     });
@@ -150,11 +152,12 @@ export class Tasks {
   answerInput(principal: Principal, id: string, input: unknown): Promise<Task> {
     const answer = taskInputAnswerSchema.parse(input);
     return this.continueTaskInput(principal, id, task => {
-      const missing = z.object({ kind: z.literal('city') }).safeParse(task.result);
-      if (!missing.success || task.input.placeContinuation?.waitingFor !== answer.kind) {
-        throw new Conflict('The original Action is not waiting for a city');
+      const waiting = z.object({ kind: z.enum(['city', 'retry-source']) }).safeParse(task.result);
+      if (!waiting.success || waiting.data.kind !== answer.kind ||
+          task.input.placeContinuation?.waitingFor !== answer.kind) {
+        throw new Conflict('The original Action is not waiting for this input');
       }
-      return { ...task.input, rideCity: answer.city };
+      return answer.kind === 'city' ? { ...task.input, rideCity: answer.city } : task.input;
     });
   }
   private placeChoices(task: Task) {
@@ -253,6 +256,7 @@ export class Tasks {
         if (row.rows[0].input_digest !== fingerprint) throw new Conflict('Original source call has different input');
         if(row.rows[0].state==='completed')return { result: row.rows[0].result as T };
         const previous = row.rows[0];
+        if (previous.state === 'failed') throw new SourceReadFailure('The original supplier read failed');
         // An interrupted read may be repeated by a new lease. External mutations use their own operation journal.
         const interrupted = previous.state === 'running' && previous.lease_token && previous.lease_token !== task.token;
         if (previous.state !== 'waiting_pa' && !interrupted) throw new Conflict('Original source call has an unresolved result');
@@ -264,13 +268,17 @@ export class Tasks {
     });
     if (prior) return prior.result;
     let result:T;
-    try{result=await invoke();}catch(error){
-      // An authenticated PA request suspends a read before data is available.
-      // Its durable pa_requests row owns continuation; it is not an unknown
-      // provider mutation or a completed/empty source read.
-      if (error instanceof Clarification) await this.db.transaction(async client => {
+    try { result = await invoke(); }
+    catch (error) {
+      // PA reads and supplier failures are distinct. An explicit source retry
+      // advances the execution step and gets a fresh read journal key.
+      const state = error instanceof Clarification ? 'waiting_pa'
+        : error instanceof SourceReadFailure ? 'failed' : undefined;
+      if (state) await this.db.transaction(async client => {
         await this.current(task, client, true);
-        await this.db.query(`UPDATE ${this.db.schema}.source_calls SET state='waiting_pa' WHERE task_id=$1 AND name=$2 AND state='running' AND lease_token=$3`, [task.id, name, task.token], client);
+        await this.db.query(`UPDATE ${this.db.schema}.source_calls SET state=$4
+          WHERE task_id=$1 AND name=$2 AND state='running' AND lease_token=$3`,
+          [task.id, name, task.token, state], client);
       });
       throw error;
     }

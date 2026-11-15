@@ -1,6 +1,6 @@
-import { NotFound } from '../../core/identity.js';
+import { NotFound, SourceReadFailure } from '../../core/identity.js';
 import { objectRefSchema, type ObjectData, type ObjectRef } from '../../ontology/schema.js';
-import { CityConfirmationRequired, Clarification, PlaceConfirmationRequired } from '../../runtime/clarification.js';
+import { CityConfirmationRequired, Clarification, PlaceConfirmationRequired, SourceRetryRequired } from '../../runtime/clarification.js';
 import type { Functions, FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import type { Sources } from '../../runtime/sources.js';
 import { isCurrentDidiObservation, type SourceResolver } from './functions.js';
@@ -101,8 +101,12 @@ async function resolvePlaces(
     });
     const venues = hint && !choice && !amendment?.name
       ? matches.filter(place => !embeddedVenue(place, matches, city)) : matches;
-    if (venues.length === 1) return { selected: venues[0]!.ref, candidates: venues };
-    return { candidates: venues.length ? venues : candidates.items };
+    // A landmark recommends an address. Wait for explicit selection
+    // before quoting a result that depends on the landmark.
+    if (venues.length === 1 && (!hint || choice)) {
+      return { selected: venues[0]!.ref, candidates: venues };
+    }
+    return { candidates: venues.length || (!choice && (hint || amendment?.address)) ? venues : candidates.items };
   };
   const [origin, destination] = await Promise.all([find('origin'), find('destination')]);
   return origin.selected && destination.selected ? { status: 'resolved', origin: origin.selected, destination: destination.selected }
@@ -166,9 +170,20 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
       const name = clue ? clue.landmark : input[role + 'Landmark'];
       if (typeof name === 'string' && name.trim()) return { name, receipt: await lookup(name.trim()) };
     };
-    const [originReceipt, destinationReceipt, originLandmark, destinationLandmark] = await Promise.all([
-      findPlaces('origin'), findPlaces('destination'), findLandmark('origin'), findLandmark('destination'),
-    ]);
+    const sourceFailed = async (error: unknown, stage: 'places' | 'estimate', receipts = saved): Promise<never> => {
+      if (!(error instanceof SourceReadFailure)) throw error;
+      context.signal.throwIfAborted();
+      await context.objects.access.refresh();
+      throw new SourceRetryRequired(stage, receipts);
+    };
+    const pendingReads = [findPlaces('origin'), findPlaces('destination'),
+      findLandmark('origin'), findLandmark('destination')] as const;
+    const [originReceipt, destinationReceipt, originLandmark, destinationLandmark] =
+      await Promise.all(pendingReads).catch(async error => {
+        // Finish other scoped reads before persisting the paused state.
+        await Promise.allSettled(pendingReads);
+        return sourceFailed(error, 'places');
+      });
     const resolveInput = { origin: input.origin, destination: input.destination, originReceipt, destinationReceipt,
       ...(selection?.origin && selection.destination ? { selection } : {}) };
     // Landmark receipts are internal inputs to this Action, obtained from the same
@@ -180,15 +195,20 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
     } else {
       resolution = await functions.invoke(model, 'resolveRideLocations', resolveInput, context) as Resolution;
     }
+    const receipts = { origin: originReceipt, destination: destinationReceipt };
     if (resolution.status !== 'resolved') {
-      throw new PlaceConfirmationRequired('请确认未能唯一匹配的场所名称或完整地址。',
-        { origin: resolution.origin, destination: resolution.destination },
-        { origin: originReceipt, destination: destinationReceipt });
+      const { origin, destination } = resolution;
+      const needsAddress = (['origin', 'destination'] as const).filter(side => !resolution[side].length);
+      const kind = needsAddress.length ? 'place-address-required' : 'place-selection';
+      throw new PlaceConfirmationRequired(
+        needsAddress.length ? '未找到该地点，请补充更完整的地址。' : '请选择或确认候选地点的正式名称和地址。',
+        { kind, origin, destination, needsAddress }, receipts);
     }
     const request = { type: 'RideRequest', id: context.operationId }, route = { type: 'Route', id: context.operationId };
     const quoteInput = { requestId: request.id, origin: resolution.origin, destination: resolution.destination };
     // All provider I/O finishes before opening the business edit transaction.
-    const quote = await sources.read(model, 'DidiEstimates', quoteInput, context.objects.access, execution?.task, execution?.tasks, context.signal);
+    const quote = await sources.read(model, 'DidiEstimates', quoteInput, context.objects.access,
+      execution?.task, execution?.tasks, context.signal).catch(error => sourceFailed(error, 'estimate', receipts));
     const [origin, destination] = await Promise.all([context.objects.read(resolution.origin), context.objects.read(resolution.destination)]);
     return context.edit(request, async graph => {
       await graph.create(route, { id: route.id, name: `${origin.properties.name} → ${destination.properties.name}` });
