@@ -99,16 +99,7 @@ export class ExternalOperations {
     if (previous !== undefined) return previous;
     await this.db.transaction(async (client) => {
       await guard(client);
-      const claimed = await this.db.query(
-        `INSERT INTO ${this.db.schema}.external_operations(owner,operation_key,scope_digest,state,requirements,request_id,task_id)
-          VALUES($1,$2,$3,'dispatched',$4,$5,$6) ON CONFLICT DO NOTHING RETURNING operation_key`,
-        [owner, key, digest(scope), JSON.stringify(reader?.access.dataRequirements() ?? []), origin?.requestId ?? null, origin?.taskId ?? null],
-        client,
-      );
-      if (!claimed.rowCount)
-        throw new UnknownExternalOperation(
-          'Original external operation already exists; inspect it without resubmitting',
-        );
+      await this.claimDispatch(client, owner, key, scope, reader, origin);
     });
     try {
       const result = await invoke();
@@ -135,5 +126,19 @@ export class ExternalOperations {
         { cause: error },
       );
     }
+  }
+  /** Claim an external operation in the same transaction that makes it dispatchable. */
+  async claimDispatch(
+    client: Sql, owner: string, key: string, scope: unknown,
+    reader?: Reader, origin?: { requestId?: string; taskId?: string },
+  ) {
+    const claimed = await this.db.query(
+      `INSERT INTO ${this.db.schema}.external_operations(owner,operation_key,scope_digest,state,requirements,request_id,task_id)
+        VALUES($1,$2,$3,'dispatched',$4,$5,$6) ON CONFLICT DO NOTHING RETURNING operation_key`,
+      [owner, key, digest(scope), JSON.stringify(reader?.access.dataRequirements() ?? []), origin?.requestId ?? null, origin?.taskId ?? null],
+      client,
+    );
+    if (!claimed.rowCount)
+      throw new UnknownExternalOperation('Original external operation already exists; inspect it without resubmitting');
   }
 }
