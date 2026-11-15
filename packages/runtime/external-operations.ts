@@ -19,7 +19,7 @@ export class ExternalOperations {
     ).rows[0];
     return row ? { state: row.state, createdAt: row.created_at, updatedAt: row.updated_at } : null;
   }
-  async recover<T>(owner: string, key: string, scope: unknown, reader?: Reader): Promise<T | undefined> {
+  private async original(owner: string, key: string, scope: unknown, reader?: Reader) {
     const row = (
       await this.db.query(`SELECT * FROM ${this.db.schema}.external_operations WHERE owner=$1 AND operation_key=$2`, [
         owner,
@@ -50,11 +50,41 @@ export class ExternalOperations {
       );
       for (const ref of rows.values()) await reader.read(ref);
     }
+    return row;
+  }
+  async recover<T>(owner: string, key: string, scope: unknown, reader?: Reader): Promise<T | undefined> {
+    const row = await this.original(owner, key, scope, reader);
+    if (!row) return;
     if (row.state !== 'confirmed')
       throw new UnknownExternalOperation(
         'The original external operation may have been dispatched; reconcile it before any further submission',
       );
     return row.result as T;
+  }
+  /** Promote an existing dispatch only with independent evidence for the original request. */
+  async reconcile<T>(
+    owner: string,
+    key: string,
+    scope: unknown,
+    guard: (client: Sql) => Promise<void>,
+    readback: () => Promise<T | undefined>,
+    reader?: Reader,
+  ): Promise<T | undefined> {
+    const row = await this.original(owner, key, scope, reader);
+    if (!row) return;
+    if (row.state === 'confirmed') return row.result as T;
+    const result = await readback();
+    if (result === undefined) return;
+    const updated = await this.db.transaction(async client => {
+      await guard(client);
+      return this.db.query(
+        `UPDATE ${this.db.schema}.external_operations SET state='confirmed',result=$3,updated_at=now()
+          WHERE owner=$1 AND operation_key=$2 AND scope_digest=$4 AND state IN ('dispatched','unknown')
+          RETURNING result`,
+        [owner, key, result, digest(scope)], client,
+      );
+    });
+    return updated.rowCount ? result : this.recover<T>(owner, key, scope, reader);
   }
   async run<T>(
     owner: string,
@@ -69,26 +99,21 @@ export class ExternalOperations {
     if (previous !== undefined) return previous;
     await this.db.transaction(async (client) => {
       await guard(client);
-      const claimed = await this.db.query(
-        `INSERT INTO ${this.db.schema}.external_operations(owner,operation_key,scope_digest,state,requirements,request_id,task_id)
-          VALUES($1,$2,$3,'dispatched',$4,$5,$6) ON CONFLICT DO NOTHING RETURNING operation_key`,
-        [owner, key, digest(scope), JSON.stringify(reader?.access.dataRequirements() ?? []), origin?.requestId ?? null, origin?.taskId ?? null],
-        client,
-      );
-      if (!claimed.rowCount)
-        throw new UnknownExternalOperation(
-          'Original external operation already exists; inspect it without resubmitting',
-        );
+      await this.claimDispatch(client, owner, key, scope, reader, origin);
     });
     try {
       const result = await invoke();
       // Preserve provider success even if task cancellation or a later graph
       // commit fails. Recovery can project the same receipt without dispatch.
-      await this.db.query(
-        `UPDATE ${this.db.schema}.external_operations SET state='confirmed',result=$3,updated_at=now() WHERE owner=$1 AND operation_key=$2 AND scope_digest=$4`,
+      const updated = await this.db.query(
+        `UPDATE ${this.db.schema}.external_operations SET state='confirmed',result=$3,updated_at=now()
+          WHERE owner=$1 AND operation_key=$2 AND scope_digest=$4 AND state='dispatched' RETURNING result`,
         [owner, key, result, digest(scope)],
       );
-      return result;
+      if (updated.rowCount) return result;
+      const recovered = await this.recover<T>(owner, key, scope, reader);
+      if (recovered === undefined) throw new UnknownExternalOperation('The original dispatch record is unavailable');
+      return recovered;
     } catch (error) {
       await this.db
         .query(
@@ -101,5 +126,19 @@ export class ExternalOperations {
         { cause: error },
       );
     }
+  }
+  /** Claim an external operation in the same transaction that makes it dispatchable. */
+  async claimDispatch(
+    client: Sql, owner: string, key: string, scope: unknown,
+    reader?: Reader, origin?: { requestId?: string; taskId?: string },
+  ) {
+    const claimed = await this.db.query(
+      `INSERT INTO ${this.db.schema}.external_operations(owner,operation_key,scope_digest,state,requirements,request_id,task_id)
+        VALUES($1,$2,$3,'dispatched',$4,$5,$6) ON CONFLICT DO NOTHING RETURNING operation_key`,
+      [owner, key, digest(scope), JSON.stringify(reader?.access.dataRequirements() ?? []), origin?.requestId ?? null, origin?.taskId ?? null],
+      client,
+    );
+    if (!claimed.rowCount)
+      throw new UnknownExternalOperation('Original external operation already exists; inspect it without resubmitting');
   }
 }

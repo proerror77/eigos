@@ -21,6 +21,8 @@ import { Ontology } from '../packages/ontology/model.js';
 import { addProcessLogs, processLogTarget } from '../packages/ontology/process-definition.js';
 import { calendarJourneyDefinition } from '../packages/ontology/calendar-journey.js';
 import { deliveryFunctions } from '../packages/ontology/delivery.js';
+import { dianpingResearchFunctions } from '../packages/ontology/dianping.js';
+import { diningReservations } from '../packages/ontology/dining-reservations.js';
 import { documentDefinition } from '../packages/ontology/documents.js';
 import { flightDefinition } from '../packages/ontology/flight.js';
 import { flightPositionFunction } from '../packages/ontology/flight-position.js';
@@ -447,7 +449,7 @@ test('revoked prior-step result visibility blocks a later Action even when the t
 
 test('a hotel workflow saved under v8 replays in v9 and the current release with fresh inputs and separate approval', async () => {
   // Reconstruct the historical documents on the same runtime and check both published identities.
-  const laterDomains = [calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition, fliggyServicesDefinition];
+  const laterDomains = [calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition, fliggyServicesDefinition, diningReservations];
   const addedTypes = new Set([
     ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType,
   ]);
@@ -457,7 +459,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const addedActions = new Set(laterDomains.flatMap(domain => domain.actionTypes.map(action => action.apiName)));
   addedActions.add('StageDiningActivity');
   const addedFunctions = new Set([
-    ...laterDomains.flatMap(domain => domain.functionTypes), ...deliveryFunctions, ...locationFunctions, ...mapFunctions, flightPositionFunction,
+    ...laterDomains.flatMap(domain => domain.functionTypes), ...deliveryFunctions, ...locationFunctions, ...mapFunctions, ...dianpingResearchFunctions, flightPositionFunction,
   ].map(fn => fn.apiName));
   for (const name of ['stageDiningActivity', 'searchRestaurantNotes', 'readWeatherHistory', 'readDiningAvailability']) addedFunctions.add(name);
   addedActions.add('EstimateRideWithPlaceClues');
