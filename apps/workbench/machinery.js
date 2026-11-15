@@ -67,6 +67,8 @@ export async function renderMachinery(body, ui) {
     const to = element('input', { type: 'date', value: day(today) });
     const minCases = element('input', { type: 'number', min: 1, value: 1 });
     const coverage = element('input', { type: 'number', min: 1, max: 100, value: 100 });
+    const clocks = [['recordedAt', '记录时间'], ['observedAt', '来源观察时间']];
+    const durationClock = select(clocks, 'recordedAt');
     const includeIdle = element('input', { type: 'checkbox', checked: true });
     const progress = element('div', { 'aria-live': 'polite' });
     const output = element('div', { class: 'section' });
@@ -79,7 +81,7 @@ export async function renderMachinery(body, ui) {
     };
 
     async function render(input = { type: type.value, ...dateRange(),
-      ...(set.value ? { setId: set.value } : {}), includeIdle: includeIdle.checked,
+      ...(set.value ? { setId: set.value } : {}), includeIdle: includeIdle.checked, durationClock: durationClock.value,
       mining: { minCases: Number(minCases.value), coveragePercent: Number(coverage.value) } }, loaded) {
       const id = ++generation;
       progress.textContent = '正在读取过程日志…';
@@ -90,7 +92,7 @@ export async function renderMachinery(body, ui) {
         function detail(item) {
           return (async () => {
             const data = await service('machinery_analysis', {
-              type: input.type, from: input.from, to: result.to, object: item.object,
+              type: input.type, from: input.from, to: result.to, object: item.object, durationClock: result.durationClock,
             });
             const entry = data.cases[0];
             if (!entry) throw new Error('当前查询范围内没有可读的完整记录。');
@@ -103,7 +105,7 @@ export async function renderMachinery(body, ui) {
               processes.items.find(process => process.type === child.process)?.name ?? child.process,
               async () => {
                 document.querySelector('#editor').close();
-                await render({ type: child.process, from: fixed.from, to: fixed.to,
+                await render({ type: child.process, from: fixed.from, to: fixed.to, durationClock: result.durationClock,
                   focus: { parent: item.object, type: input.type, link: child.link } });
               },
             ));
@@ -206,7 +208,8 @@ export async function renderMachinery(body, ui) {
             }, 'primary'),
           ));
         });
-        progress.textContent = result.casesTotal + ' 个流程实例';
+        progress.textContent = result.casesTotal + ' 个流程实例 · 耗时按'
+          + (result.durationClock === 'observedAt' ? '来源观察时间' : '记录时间');
         output.replaceChildren(
           element('div', { class: 'toolbar' },
             (input.filter || input.focus) && button('清除筛选', () => render()),
@@ -241,7 +244,7 @@ export async function renderMachinery(body, ui) {
           review.checkpoint && button('查看上次复盘', async () => {
             const report = await service('machinery_review', { id: review.id });
             await render({ type: review.type, from: report.from, to: report.to, includeIdle: false,
-              mining: { minCases: review.minCases } }, report);
+              mining: { minCases: review.minCases }, durationClock: review.durationClock }, report);
           }),
           button('立即复盘', async () => {
             const report = await service('run_machinery_review', { id: review.id });
@@ -249,7 +252,7 @@ export async function renderMachinery(body, ui) {
             review.error = null;
             showReviews();
             await render({ type: review.type, from: report.from, to: report.to, includeIdle: false,
-              mining: { minCases: review.minCases } }, report);
+              mining: { minCases: review.minCases }, durationClock: review.durationClock }, report);
           }),
           button('编辑', () => editReview(review)),
           review.error && element('span', {}, '上次复盘失败'),
@@ -261,13 +264,15 @@ export async function renderMachinery(body, ui) {
       const process = select(processes.items.map(item => [item.type, item.name]), prior?.type ?? type.value);
       const days = element('input', { type: 'number', min: 1, max: 90, value: prior?.periodDays ?? 7 });
       const minimum = element('input', { type: 'number', min: 1, value: prior?.minCases ?? 2 });
+      const clock = select(clocks, prior?.durationClock ?? 'recordedAt');
       const enabled = element('input', { type: 'checkbox', checked: prior?.enabled ?? false });
       modal('定期复盘', element('div', { class: 'section' }, field('名称', name), field('流程', process),
-        field('间隔天数', days), field('挖掘所需最少实例', minimum), field('启用定期复盘', enabled),
+        field('间隔天数', days), field('耗时依据', clock), field('挖掘所需最少实例', minimum), field('启用定期复盘', enabled),
         button('保存', async () => {
           const result = await service('save_machinery_review', {
             ...(prior ? { id: prior.id, revision: prior.revision } : {}), name: name.value,
-            type: process.value, periodDays: Number(days.value), minCases: Number(minimum.value), enabled: enabled.checked,
+            type: process.value, periodDays: Number(days.value), minCases: Number(minimum.value),
+            durationClock: clock.value, enabled: enabled.checked,
           });
           if (prior) reviews.items.splice(reviews.items.indexOf(prior), 1, result);
           else reviews.items.push(result);
@@ -279,7 +284,7 @@ export async function renderMachinery(body, ui) {
     body.replaceChildren(element('div', { class: 'toolbar' },
       field('流程', type), field('对象集', set), field('起始日期', from), field('结束日期', to),
       field('挖掘所需最少实例', minCases), field('挖掘覆盖率（%）', coverage),
-      field('包含窗口内无转换的实例', includeIdle), button('分析流程', () => render(), 'primary')),
+      field('耗时依据', durationClock), field('包含窗口内无转换的实例', includeIdle), button('分析流程', () => render(), 'primary')),
       reviewPanel, progress, output);
     await render();
   }

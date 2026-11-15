@@ -21,6 +21,7 @@ export const machineryAnalysisSchema = z.strictObject({
   reference: machineryModelSchema.optional(),
   candidate: machineryModelSchema.optional(),
   includeIdle: z.boolean().default(true),
+  durationClock: z.enum(['recordedAt', 'observedAt']).default('recordedAt'),
   mining: z.strictObject({
     minCases: z.number().int().positive().max(20000).default(1),
     coveragePercent: z.number().int().min(1).max(100).default(100),
@@ -136,16 +137,19 @@ async function readEvents(db: Database, client: Sql, access: Access, model: Publ
 }
 
 function trace(target: ProcessLogTarget, history: Event[], from: number, to: number,
-  reference: MachineryModel | undefined): ProcessCase {
+  reference: MachineryModel | undefined, clock: Input['durationClock']): ProcessCase {
   const allowed = new Set(reference?.transitions.map(edge => edgeKey(edge.from, edge.to)));
   const [first] = history;
   const episodes: Episode[] = [], states: string[] = [];
   let partial = Boolean(first!.prior || first!.from !== null);
   let incomplete = !first!.prior && first!.from !== null;
   let current: string | null = null, openAt: number | null = null;
+  const completedDuration = (end: number | null) =>
+    end !== null && openAt !== null && end >= openAt ? end - openAt : null;
   let deviates = false;
   for (const event of history) {
-    const timestamp = Date.parse(event.recordedAt);
+    const clockValue = clock === 'observedAt' ? event.timestamp : event.recordedAt;
+    const timestamp = clockValue === null ? null : Date.parse(clockValue);
     if (!event.prior && reference && !allowed.has(edgeKey(event.from, event.to))) deviates = true;
     if (!event.prior && current !== event.from) {
       // Historical imports or renamed state contracts can leave an unknown interval.
@@ -155,16 +159,16 @@ function trace(target: ProcessLogTarget, history: Event[], from: number, to: num
         if (states.at(-1) !== event.from) states.push(event.from);
         episodes.push({ state: event.from, durationMs: null, open: false, clipped: true });
       }
-    } else if (current !== null && openAt !== null) {
-      const clipped = openAt < from;
-      episodes.push({ state: current, durationMs: timestamp >= openAt ? timestamp - openAt : null, open: false, clipped });
+    } else if (current !== null) {
+      episodes.push({ state: current, durationMs: completedDuration(timestamp),
+        open: false, clipped: openAt !== null && openAt < from });
     }
     current = event.to;
     openAt = timestamp;
     if (current !== null) states.push(current);
   }
-  if (current !== null && openAt !== null) episodes.push({
-    state: current, durationMs: to - openAt, open: true, clipped: openAt < from,
+  if (current !== null) episodes.push({
+    state: current, durationMs: completedDuration(to), open: true, clipped: openAt !== null && openAt < from,
   });
   const events = history.filter(event => !event.prior);
   const conformance = deviates ? 'deviation' : !reference || incomplete || !events.length ? 'unknown' : 'conforming';
@@ -344,19 +348,19 @@ export async function analyzeMachinery(db: Database, access: Access, model: Publ
       group.push(event);
       groups.set(event.caseId, group);
     }
-    const traces = [...groups.values()].map(history => ({ history, item: trace(target, history, from, end, baseline) }))
+    const traces = [...groups.values()].map(history => ({ history, item: trace(target, history, from, end, baseline, input.durationClock) }))
       .filter(({ item }) => matches(item, input.filter));
     const cases = traces.map(({ item }) => item);
     const { offset, limit } = input;
     const summary = summarize(cases, reference);
     const comparison = input.candidate ? {
       baseline: summary.conformance,
-      candidate: summarize(traces.map(({ history }) => trace(target, history, from, end, input.candidate)),
+      candidate: summarize(traces.map(({ history }) => trace(target, history, from, end, input.candidate, input.durationClock)),
         readableModel(access, model, target, input.candidate)).conformance,
       evidence: 'observed-transitions',
     } : undefined;
     return { release: model.release, type: target.type, objectType: target.objectType,
-      from: new Date(from).toISOString(), to: new Date(end).toISOString(), clock: 'recordedAt',
+      from: new Date(from).toISOString(), to: new Date(end).toISOString(), windowClock: 'recordedAt', durationClock: input.durationClock,
       reference, ...summary, mined: mine(summary, baseline, input.mining), comparison,
       casesTotal: cases.length, nextOffset: offset + limit < cases.length ? offset + limit : null,
       cases: cases.slice(offset, offset + limit).map(({ events: history, episodes, ...item }) => ({

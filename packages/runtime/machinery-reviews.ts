@@ -14,6 +14,7 @@ export const machineryReviewSchema = z.strictObject({
   name: z.string().min(1).max(200),
   type: ontologyName,
   periodDays: z.number().int().min(1).max(90).default(7),
+  durationClock: z.enum(['recordedAt', 'observedAt']).default('recordedAt'),
   minCases: z.number().int().min(1).max(20000).default(2),
   enabled: z.boolean().default(false),
 });
@@ -83,7 +84,7 @@ export class MachineryReviews {
     return this.db.withOwner(access.principal.owner, () => analyzeMachinery(this.db, access, model,
       machineryAnalysisSchema.parse({
         type: definition.type, from: checkpoint.from, to: checkpoint.to,
-        mining: { minCases: definition.minCases }, includeIdle: false,
+        mining: { minCases: definition.minCases }, includeIdle: false, durationClock: definition.durationClock,
       })));
   }
 

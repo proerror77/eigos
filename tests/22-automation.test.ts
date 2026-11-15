@@ -382,6 +382,12 @@ test('Machinery reconstructs repeated paths, measures dwell and excludes a case 
     assert.equal(narrow.cases[0]?.partial, true);
     assert.equal(narrow.states.find(row => row.name === 'stalled')?.historical.totalMs, 25 * 60000);
 
+    const lastSequence = logs.items.at(-1)!.properties.sequence;
+    await f.db.query(`UPDATE ${f.db.schema}.edit_history SET observed_at=$1 WHERE sequence=$2`, [iso(-27), lastSequence]);
+    const observed = await inspect({ ...input, durationClock: 'observedAt' });
+    assert.equal(observed.states.find(row => row.name === 'stalled')?.historical.totalMs, 10 * 60000);
+    assert.equal(observed.cases[0]?.timeline?.at(-1)?.requestId, result.cases[0]?.timeline?.at(-1)?.requestId);
+
     const set = await new ObjectSets(f.db).save(await Access.load(f.db, principal), f.model, {
       requestId: 'route-analysis-cohort', name: 'Route analysis cohort', mode: 'static',
       set: { op: 'refs', objects: [f.source] },
