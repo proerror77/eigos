@@ -36,6 +36,12 @@ const slotScreen = `<hierarchy rotation="0">
   <node package="com.tencent.mm" resource-id="slots">
     <node package="com.tencent.mm" text="19:00" enabled="true" clickable="true"/>
     <node package="com.tencent.mm" text="19:15" enabled="false" clickable="true"/>
+    <node package="com.tencent.mm" content-desc="约满" enabled="true">
+      <node package="com.tencent.mm" text="19:30" enabled="true" clickable="true"/>
+    </node>
+    <node package="com.tencent.mm" enabled="true" clickable="true">
+      <node package="com.tencent.mm" text="19:45" content-desc="不可订" enabled="true"/>
+    </node>
   </node>
   <node package="com.android.systemui" text="22:00" enabled="true" clickable="true"/>
 </hierarchy>`;
