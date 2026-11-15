@@ -24,15 +24,21 @@ export class Sources {
   bindings(model: Ontology) {
     return Object.fromEntries(model.resolvedDocument.dataSources.map(source => { this.projection(model, source.apiName); return [source.apiName, digest(source)]; }));
   }
-  async read(model: PublishedOntology, name: string, input: Record<string, unknown>, access: Access, task: Task | undefined, tasks: Tasks | undefined, signal: AbortSignal) {
-    const principal = access.principal; access.definition(model, 'datasource', name);
-    const { mapping, projection } = this.projection(model, name);
-    access.function(model, mapping.function);
-    const provider = model.functions.get(mapping.function)?.source;
+  checkReadAccess(model: PublishedOntology, name: string, access: Access) {
+    access.definition(model, 'datasource', name);
+    const binding = this.projection(model, name);
+    const functionName = binding.mapping.function;
+    access.function(model, functionName);
+    const provider = model.functions.get(functionName)?.source;
     if (provider) access.source(model, provider);
+    return binding;
+  }
+  async read(model: PublishedOntology, name: string, input: Record<string, unknown>, access: Access, task: Task | undefined, tasks: Tasks | undefined, signal: AbortSignal) {
+    const principal = access.principal;
+    const { mapping, projection } = this.checkReadAccess(model, name, access);
     await projection.assertCurrent(principal.owner);
     const invoke = () => this.functions.invoke(model, mapping.function, input, { principal, objects: new Objects(this.db, model, access), signal, taskId: task?.id,...(task&&tasks?{execution:{task,tasks}}:{}) });
-    // An explicit place selection starts fresh source reads for the resumed task.
+    // A new execution step can request a fresh read when a saved observation no longer qualifies.
     const result = task && tasks ? await tasks.readSource(task, digest({ source: name, input, places: task.input.places,step:task.execution_step??0 }), input, invoke) : await invoke();
     signal.throwIfAborted();
     return result;

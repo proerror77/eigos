@@ -5,21 +5,24 @@ import type { Sql } from './database.js';
 import { Database } from './database.js';
 import { Metadata } from './metadata.js';
 import { classificationSchema } from '../ontology/classification.js';
-import { objectRefSchema } from '../ontology/schema.js';
 import { Access, type Requirement } from './access.js';
 import type { ScheduledCall } from './scheduled-actions.js';
-import { Clarification } from './clarification.js';
+import { Clarification, placeChoicesSchema, placeContinuationSchema, placeSelectionSchema, type PlaceContinuation } from './clarification.js';
+import { recordActionConfirmation } from './action-confirmation.js';
+export { placeSelectionSchema } from './clarification.js';
 import { publicHotelTaskResult, workflowReplaySchema } from './hotel-workflows.js';
 
 export const routeInputSchema = z.strictObject({ city: z.string().min(1).max(100), origin: z.string().min(1).max(500), destination: z.string().min(1).max(500), serviceClass: z.string().min(1).max(100).optional() });
 export type RouteInput = z.infer<typeof routeInputSchema>;
-export const placeSelectionSchema = z.strictObject({ origin: objectRefSchema, destination: objectRefSchema });
 export const submitSchema = z.strictObject({ requestId: z.string().min(1).max(128), message: z.string().min(1).max(4000), route: routeInputSchema.optional(),
   classification: classificationSchema.optional(),
   learnHotelWorkflow: z.literal(true).optional(), replayHotelWorkflow: workflowReplaySchema.optional(),
   conversationId: z.string().min(1).max(128).regex(/^[^\u0000-\u001f\u007f]+$/u).optional(),
 });
-const storedInputSchema = submitSchema.extend({ places: placeSelectionSchema.optional() });
+const storedInputSchema = submitSchema.extend({
+  places: placeSelectionSchema.optional(),
+  placeContinuation: placeContinuationSchema.optional(),
+});
 export interface Task { id: string; owner: string; request_id: string; input: z.infer<typeof storedInputSchema> & {scheduledAction?:ScheduledCall}; release: string; scopes: string[]; state: string; token: string | null; result: unknown; result_permissions?: Requirement[] | null; error: string | null; created_at: Date; updated_at: Date; execution_step?:number; conversation_id?: string | null }
 type InboxTask = Task & { conversation_batch: string; message_count: number; collecting: boolean };
 const batchWindowMs = 2000;
@@ -103,6 +106,11 @@ export class Tasks {
       const result = await this.db.query<Task>(`UPDATE ${this.db.schema}.tasks SET state='canceled',token=NULL,lease_until=NULL,updated_at=now() WHERE owner=$1 AND id=$2 AND state IN('submitted','working','input-required') RETURNING *`, [principal.owner, id], client);
       const canceled = result.rows[0];
       if (!canceled) throw new Conflict('Task is unavailable or already terminal');
+      const continuation = canceled.input.placeContinuation;
+      if (continuation) {
+        const model = await this.metadata.get(canceled.release, client);
+        await recordActionConfirmation(this.db, model, await Access.load(this.db, principal, client), canceled, client, continuation, 'canceled');
+      }
       if (canceled.conversation_id) await this.db.query("SELECT pg_notify('eigos_tasks','ready')", [], client);
       return canceled;
     });
@@ -112,11 +120,30 @@ export class Tasks {
     requireScope(principal, 'tasks:write'); z.uuid().parse(id);
     const places = placeSelectionSchema.parse(input);
     return this.db.transaction(async client => {
-      const result = await this.db.query(`UPDATE ${this.db.schema}.tasks SET input=jsonb_set(input,'{places}',$3::jsonb),state='submitted',error=NULL,result=NULL,updated_at=now()
-        WHERE owner=$1 AND id=$2 AND state='input-required' RETURNING *`, [principal.owner, id, JSON.stringify(places)], client);
-      if (!result.rows[0]) throw new Conflict('The task is not waiting for place selection');
+      const table = `${this.db.schema}.tasks`;
+      const task = (await this.db.query<Task>(`SELECT * FROM ${table} WHERE owner=$1 AND id=$2 AND state='input-required' FOR UPDATE`,
+        [principal.owner, id], client)).rows[0];
+      if (!task) throw new Conflict('The task is not waiting for place selection');
+      const choices = placeChoicesSchema.safeParse(task.result);
+      if (!choices.success || !(['origin', 'destination'] as const).every(side =>
+        choices.data[side].some(candidate => candidate.ref.type === places[side].type && candidate.ref.id === places[side].id))) {
+        throw new Conflict('Select places from the original task’s current candidates');
+      }
+      const caller = await Access.load(this.db, principal, client);
+      if (!task.result_permissions || !await caller.canReturn(task.result_permissions, client)) {
+        throw new Conflict('Place candidate permissions changed');
+      }
+      const continuation = task.input.placeContinuation;
+      if (continuation) {
+        const model = await this.metadata.get(task.release, client);
+        await recordActionConfirmation(this.db, model, caller, task, client, continuation, 'confirmed');
+      }
+      const result = await this.db.query<Task>(`UPDATE ${table} SET input=jsonb_set(input,'{places}',$2::jsonb),
+        state='submitted',error=NULL,result=NULL,result_permissions=NULL,execution_step=execution_step+1,
+        available_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1 RETURNING *`,
+        [task.id, JSON.stringify(places)], client);
       await this.db.query("SELECT pg_notify('eigos_tasks','ready')", [], client);
-      return result.rows[0] as Task;
+      return result.rows[0]!;
     });
   }
   async claim(lane?: 'scheduled' | 'interactive'): Promise<Task | undefined> {
@@ -153,11 +180,24 @@ export class Tasks {
       await this.db.query(`UPDATE ${this.db.schema}.scheduled_actions SET continue_at=NULL WHERE owner=$1 AND id=$2 AND task_id=$3`,[task.owner,task.input.scheduledAction!.scheduleId,task.id],client);
     });
   }
-  async finish(task: Task, state: 'completed' | 'failed' | 'input-required', result: unknown, error?: string, permissions: Requirement[] = []) {
+  async finish(task: Task, state: 'completed' | 'failed' | 'input-required', result: unknown,
+    error?: string, permissions: Requirement[] = [], pending?: PlaceContinuation) {
     await this.db.transaction(async client => {
       await this.current(task, client, true);
-      if (result !== null && !await (await Access.load(this.db, { owner: task.owner, scopes: task.scopes }, client)).canReturn(permissions, client)) throw new Conflict('Result permissions changed');
-      await this.db.query(`UPDATE ${this.db.schema}.tasks SET state=$2,result=$3,error=$4,result_permissions=$5,token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1`, [task.id, state, result ?? null, error ?? null, JSON.stringify(permissions)], client);
+      const continuation = pending ?? task.input.placeContinuation;
+      const access = result !== null || continuation
+        ? await Access.load(this.db, { owner: task.owner, scopes: task.scopes }, client) : undefined;
+      if (result !== null && !await access!.canReturn(permissions, client)) throw new Conflict('Result permissions changed');
+      if (continuation && (state !== 'input-required' || pending)) {
+        const model = await this.metadata.get(task.release, client);
+        await recordActionConfirmation(this.db, model, access!, task, client, continuation, state === 'input-required' ? 'awaiting-input' : state);
+      }
+      await this.db.query(`UPDATE ${this.db.schema}.tasks SET state=$2,result=$3,error=$4,result_permissions=$5,token=NULL,
+        lease_until=NULL,updated_at=clock_timestamp(),
+        input=CASE WHEN $6::jsonb IS NULL THEN input-'placeContinuation'
+          ELSE jsonb_set(input,'{placeContinuation}',$6::jsonb) END WHERE id=$1`,
+        [task.id, state, result ?? null, error ?? null, JSON.stringify(permissions),
+          pending ? JSON.stringify(placeContinuationSchema.parse(pending)) : null], client);
       if (task.conversation_id && state !== 'input-required') await this.db.query("SELECT pg_notify('eigos_tasks','ready')", [], client);
     });
   }

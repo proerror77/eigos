@@ -17,9 +17,12 @@ import { setModelClearance } from '../packages/runtime/model-egress.js';
 import { Worker } from '../apps/worker/worker.js';
 import { harnessFixture } from './harness-fixture.js';
 
-test('one Agent capability choice completes the inquiry despite related entrance candidates', async t => {
+test('one Agent capability choice resolves unique supplier names despite different formatting and nearby entrances', async t => {
   const f = await fixture();
   try {
+    const graph = new Objects(f.db, f.model, f.access);
+    assert.equal((await graph.query({ type: 'Location' })).items.length, 0);
+    f.provider.flags.placeName = name => name === route.origin ? '中企·云翠森林' : name;
     const task = await f.submit(), before = f.db.queries;
     assert(await f.worker.runOne());
     const done = await f.tasks.get(principal, task.id);
@@ -34,7 +37,7 @@ test('one Agent capability choice completes the inquiry despite related entrance
     assert(!JSON.stringify(done.result).includes('PRIVATE_ORDER_TOKEN'));
     const objects = new Objects(f.db, f.model, f.access);
     const routes = await objects.query({ type: 'RideEstimatable' }); assert.equal(routes.items.length, 1);
-    assert.equal((await objects.follow(routes.items[0]!.ref, 'origin', 'RideEstimatable'))[0]!.properties.name, route.origin);
+    assert.equal((await objects.follow(routes.items[0]!.ref, 'origin', 'RideEstimatable'))[0]!.properties.name, '中企·云翠森林');
     assert.deepEqual((await f.db.query(`SELECT owner,executor_kind,executor_id,task_id FROM ${f.db.schema}.actions`)).rows, [{
       owner: principal.owner, executor_kind: 'agent', executor_id: 'eigos-ontology:fixture-tool-decisions', task_id: task.id,
     }]);
@@ -57,6 +60,7 @@ test('the production Harness discovers the Ontology and executes a simple capabi
     assert.deepEqual(result.execution.steps.map(step=>step.tool),['describe_ontology','complete_with_action']);
     assert.equal((await new Objects(f.db,f.model,f.access).query({type:'SchedulePlan'})).items.length,0);
     assert.equal((await new Scenarios(f.db).list(f.access,f.model)).items.length,0);
+    assert.equal((await new Objects(f.db,f.model,f.access).query({type:'ActionConfirmation'})).items.length,0);
   }finally{await f.close();await harness.close();}
 });
 
@@ -107,23 +111,89 @@ test('canceling a model-driven source read prevents its late projection and furt
     assert.equal((await new Objects(f.db, f.model, f.access).query({ type: 'RideEstimatable' })).items.length, 0);
   } finally { await f.close(); }
 });
-test('ambiguous places ask for the original address before requesting a quote', async () => {
+test('one confirmation resumes the original Action using current supplier receipts without another model run', async () => {
+  const harness = await harnessFixture(), f = await fixture(harness.driver);
+  const graph = new Objects(f.db, f.model, f.access);
+  try {
+    assert.equal((await graph.query({ type: 'Location' })).items.length, 0);
+    f.provider.flags.ambiguous = true;
+    const task = await f.submit();
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, task.id);
+    assert.equal(paused.state, 'input-required');
+    assert.equal(f.provider.calls.length, 2);
+    const pending = paused.input.placeContinuation!;
+    assert.equal(pending.action, 'EstimateRide');
+    const process = { type: 'ActionConfirmation', id: pending.requestId };
+    assert.equal((await graph.read(process)).properties.state, 'awaiting-input');
+    assert.equal((await graph.query({ type: 'PriceEstimate' })).items.length, 0);
+    const candidates = paused.result as Record<'origin' | 'destination', { ref: { type: string; id: string } }[]>;
+    assert.equal(candidates.origin.length, 2);
+    const places = { origin: candidates.origin[0]!.ref, destination: candidates.destination[0]!.ref };
+    await assert.rejects(f.tasks.selectPlaces(principal, task.id, { ...places, origin: places.destination }), /current candidates/);
+    assert.equal((await graph.read(process)).properties.state, 'awaiting-input');
+    // Existing operators need no new grant to drive the same authorized Action.
+    const grants = memberGrants(f.model);
+    await setGrants(f.db, principal.owner, grants.filter(grant => !grant.resource.includes('/ActionConfirmation')));
+    const unprivileged = new Objects(f.db, f.model, await Access.load(f.db, principal));
+    await assert.rejects(unprivileged.read(process), /Permission/);
+    assert.equal((await f.tasks.selectPlaces(principal, task.id, places)).id, task.id);
+    await f.worker.runOne();
+    await setGrants(f.db, principal.owner, grants);
+    const completed = await f.tasks.get(principal, task.id);
+    assert.equal(completed.state, 'completed', completed.error ?? undefined);
+    const result = completed.result as { request: { id: string }; execution: { mode: string }; evidence: string[] };
+    assert.equal(result.request.id, pending.requestId);
+    assert.equal(result.execution.mode, 'action-continuation');
+    assert.deepEqual(result.evidence, ['fixture']);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    const states = await graph.follow(process, 'stateLogs');
+    assert.deepEqual(states.sort((a, b) => Number(a.properties.sequence) - Number(b.properties.sequence))
+      .map(row => row.properties.newState), ['awaiting-input', 'confirmed', 'completed']);
+    assert.equal((await f.db.query(`SELECT count(*)::int AS count FROM ${f.db.schema}.execution_trace
+      WHERE task_id=$1 AND event->>'kind'='model' AND event->>'state'='started'`, [task.id])).rows[0]!.count, 1);
+    assert.equal((await f.db.query(`SELECT count(*)::int AS count FROM ${f.db.schema}.pa_requests WHERE task_id=$1`, [task.id])).rows[0]!.count, 0);
+    assert.equal(f.provider.flags.orderCreates, 0);
+  } finally { await f.close(); await harness.close(); }
+});
+
+test('an expired saved place receipt is refreshed without asking the model to choose again', async () => {
   const f = await fixture();
   try {
     f.provider.flags.ambiguous = true;
-    const task = await f.submit(); await f.worker.runOne();
-    assert.equal((await f.tasks.get(principal, task.id)).state, 'input-required');
-    assert.equal(f.provider.calls.length, 2);
-    const rows = await f.db.query(`SELECT name,result FROM ${f.db.schema}.source_calls WHERE task_id=$1`, [task.id]);
-    const choose = (name: string) => {
-      const expected = name === 'origin' ? route.origin : route.destination;
-      const result = rows.rows.find(row => row.result.data.places[0].name === expected)!.result;
-      return { type: 'Place', id: digest([result.receipt.bindingId, result.data.places[0].id]) };
-    };
-    await f.tasks.selectPlaces(principal, task.id, { origin: choose('origin'), destination: choose('destination') });
+    const task = await f.submit();
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, task.id);
+    assert.equal(paused.state, 'input-required');
+    const pending = paused.input.placeContinuation!;
+    const candidates = paused.result as Record<'origin' | 'destination', { ref: { type: string; id: string } }[]>;
+    await f.db.query(`UPDATE ${f.db.schema}.objects SET properties=jsonb_set(properties,'{observedAt}',to_jsonb($2::text))
+      WHERE type='SourceReceipt' AND id=$1`, [pending.receipts.origin.id, new Date(Date.now()-310000).toISOString()]);
+    await f.tasks.selectPlaces(principal, task.id, { origin: candidates.origin[0]!.ref, destination: candidates.destination[0]!.ref });
     await f.worker.runOne();
     assert.equal((await f.tasks.get(principal, task.id)).state, 'completed');
-    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+  } finally { await f.close(); }
+});
+
+test('revoking all access after place confirmation closes the process without a supplier quote', async () => {
+  const f = await fixture();
+  try {
+    f.provider.flags.ambiguous = true;
+    const task = await f.submit();
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, task.id);
+    assert.equal(paused.state, 'input-required');
+    const candidates = paused.result as Record<'origin' | 'destination', { ref: { type: string; id: string } }[]>;
+    await f.tasks.selectPlaces(principal, task.id, { origin: candidates.origin[0]!.ref, destination: candidates.destination[0]!.ref });
+    await setGrants(f.db, principal.owner, []);
+    await f.worker.runOne();
+    assert.equal((await f.tasks.get(principal, task.id)).state, 'failed');
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch']);
+    await setGrants(f.db, principal.owner, memberGrants(f.model));
+    const graph = new Objects(f.db, f.model, await Access.load(f.db, principal));
+    const process = { type: 'ActionConfirmation', id: paused.input.placeContinuation!.requestId };
+    assert.equal((await graph.read(process)).properties.state, 'failed');
   } finally { await f.close(); }
 });
 

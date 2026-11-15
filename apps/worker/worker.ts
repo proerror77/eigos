@@ -35,7 +35,9 @@ export class Worker {
       const clarification = error instanceof Clarification;
       if (!clarification) console.error('Inquiry execution failed', error instanceof Error ? error.message : 'Unknown error');
       const safeError=error instanceof Conflict||error instanceof PermissionDenied?error.message:'Execution failed. Check the original operation and configured source before retrying.';
-      await this.tasks.finish(task, clarification ? 'input-required' : 'failed', clarification ? error.choices ?? null : null, clarification ? error.message : safeError, clarification ? error.permissions : []).catch(() => {});
+      await this.tasks.finish(task, clarification ? 'input-required' : 'failed', clarification ? error.choices ?? null : null,
+        clarification ? error.message : safeError, clarification ? error.permissions : [],
+        clarification ? error.continuation : undefined).catch(() => {});
     } finally { clearInterval(timer); await renewing; }
   }
   async run() {

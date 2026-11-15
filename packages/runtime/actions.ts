@@ -1,6 +1,6 @@
 import { digest, Conflict, type ExecutionActor } from '../core/identity.js';
 import { validator } from '../ontology/model.js';
-import type { ActionCall } from '../ontology/invocation.js';
+import type { ActionCall, ActionResultRead } from '../ontology/invocation.js';
 import { PublishedOntology } from './metadata.js';
 import { Access } from './access.js';
 import { objectRefSchema, type ObjectRef, type Value } from '../ontology/schema.js';
@@ -12,12 +12,17 @@ import { Scenarios } from './scenarios.js';
 import { recordScenarioAction, type ScenarioMutation } from './scenario-store.js';
 import { JournalObjects, compensate, type ObjectChange, type LinkChange } from './action-journal.js';
 
+import { Clarification, PlaceConfirmationRequired, placeContinuationSchema } from './clarification.js';
+import { assertActionConfirmed } from './action-confirmation.js';
+
 const evaluate = (expression: Value, input: Record<string, unknown>): unknown => {
   if ('literal' in expression) return expression.literal;
   let value: unknown = input[expression.parameter];
   for (const field of expression.path ?? []) value = value && typeof value === 'object' ? Reflect.get(value, field) : undefined;
   return value;
 };
+type TaskExecution = NonNullable<FunctionContext['execution']>;
+
 export type CommittedEffects = (model: PublishedOntology, owner: string, changes: readonly ObjectChange[]) => Promise<ActionEffect[]>;
 export class Actions {
   constructor(private readonly db: Database, private readonly functions: Functions, private readonly effects?: Effects,
@@ -178,6 +183,48 @@ export class Actions {
     const edits = staged;
     return commit(async objects => { await edits.write(objects); return edits.result; });
   }
+  /** End-to-end invocation selected over MCP. The engine owns completion and any durable pause. */
+  async complete(access: Access, model: PublishedOntology, selected: { action: string; input: Record<string, unknown> },
+    requestId: string, read: ActionResultRead, execution: TaskExecution, signal: AbortSignal,
+    options: { allowPause?: boolean; applied?: (reference: ObjectRef) => void } = {},
+  ) {
+    access.function(model, read.function);
+    const definition = model.functions.get(read.function);
+    if (!definition || definition.edits || !Object.hasOwn(definition.parameters.properties ?? {}, read.resultParameter)) {
+      throw new Conflict('Action completion requires a declared result parameter on a read Function');
+    }
+    if (definition.source) access.source(model, definition.source);
+    const guard = async (client: Sql) => {
+      signal.throwIfAborted();
+      await execution.tasks.current(execution.task, client, true);
+    };
+    let reference: ObjectRef;
+    try {
+      reference = await this.apply(access, model, selected.action, selected.input, requestId, guard, execution, signal);
+    } catch (error) {
+      if (!(error instanceof PlaceConfirmationRequired) || !options.allowPause || model.scenario) throw error;
+      throw new Clarification(error.message, error.choices, error.permissions,
+        { ...selected, requestId, read, receipts: error.receipts });
+    }
+    options.applied?.(reference);
+    const result = await this.functions.invoke(model, read.function, { ...read.input, [read.resultParameter]: reference }, {
+      principal: access.principal, objects: new Objects(this.db, model, access), signal, taskId: execution.task.id, execution,
+    });
+    signal.throwIfAborted();
+    await execution.tasks.current(execution.task);
+    return result;
+  }
+
+  async resume(access: Access, model: PublishedOntology, execution: TaskExecution, signal: AbortSignal) {
+    const { task, tasks } = execution;
+    await tasks.current(task);
+    const pending = placeContinuationSchema.parse(task.input.placeContinuation);
+    if (!task.input.places) throw new Conflict('Original Action is waiting for input');
+    await assertActionConfirmed(this.db, model, task, pending);
+    return this.complete(access, model, { action: pending.action, input: pending.input },
+      pending.requestId, pending.read, execution, signal, { allowPause: true });
+  }
+
   async undo(access:Access,model:PublishedOntology,originalRequestId:string,requestId:string){
     if(model.scenario)throw new Conflict('Undo requires the live ontology');
     if(!originalRequestId||!requestId||originalRequestId===requestId)throw new Conflict('Undo needs a distinct request ID');
