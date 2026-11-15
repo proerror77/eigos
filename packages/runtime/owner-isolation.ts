@@ -5,7 +5,7 @@ import type { Database } from './database.js';
 const protectedTables = [
   'objects', 'links', 'source_values', 'object_edits', 'edit_history',
   'scenario_objects', 'scenario_links', 'scenario_actions', 'scenario_approvals',
-  'actions', 'action_changes', 'action_undo_requests',
+  'actions', 'action_changes', 'action_undo_requests', 'execution_trace',
   'materializations', 'semantic_vectors', 'geometry_blobs', 'entity_bindings', 'entity_binding_history',
 ] as const;
 const capturedTables = ['materialized_objects', 'materialized_links'] as const;

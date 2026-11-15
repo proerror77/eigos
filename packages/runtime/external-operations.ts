@@ -63,14 +63,16 @@ export class ExternalOperations {
     guard: (client: Sql) => Promise<void>,
     invoke: () => Promise<T>,
     reader?: Reader,
+    origin?: { requestId?: string; taskId?: string },
   ): Promise<T> {
     const previous = await this.recover<T>(owner, key, scope, reader);
     if (previous !== undefined) return previous;
     await this.db.transaction(async (client) => {
       await guard(client);
       const claimed = await this.db.query(
-        `INSERT INTO ${this.db.schema}.external_operations(owner,operation_key,scope_digest,state,requirements) VALUES($1,$2,$3,'dispatched',$4) ON CONFLICT DO NOTHING RETURNING operation_key`,
-        [owner, key, digest(scope), JSON.stringify(reader?.access.dataRequirements() ?? [])],
+        `INSERT INTO ${this.db.schema}.external_operations(owner,operation_key,scope_digest,state,requirements,request_id,task_id)
+          VALUES($1,$2,$3,'dispatched',$4,$5,$6) ON CONFLICT DO NOTHING RETURNING operation_key`,
+        [owner, key, digest(scope), JSON.stringify(reader?.access.dataRequirements() ?? []), origin?.requestId ?? null, origin?.taskId ?? null],
         client,
       );
       if (!claimed.rowCount)

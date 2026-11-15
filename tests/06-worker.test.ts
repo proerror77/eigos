@@ -180,6 +180,7 @@ test('the production database role can execute an inquiry without publication up
       GRANT SELECT,INSERT ON ${f.db.schema}.task_inbox_events TO "${role}";
       GRANT SELECT,INSERT,UPDATE,DELETE ON ${f.db.schema}.source_values,${f.db.schema}.object_edits TO "${role}";
       GRANT SELECT,INSERT ON ${f.db.schema}.edit_history TO "${role}";
+      GRANT INSERT ON ${f.db.schema}.execution_trace TO "${role}";
       GRANT SELECT,INSERT,UPDATE ON ${f.db.schema}.action_changes,${f.db.schema}.action_undo_requests,${f.db.schema}.scenario_sessions TO "${role}";
       GRANT USAGE ON ALL SEQUENCES IN SCHEMA ${f.db.schema} TO "${role}";
       GRANT SELECT,INSERT ON ${f.db.schema}.links,${f.db.schema}.actions TO "${role}";`);

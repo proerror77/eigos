@@ -103,7 +103,7 @@ export function stripePaymentFunctions(db: Database, resolve: StripeSandboxResol
         context.assertDispatch, async () => {
           const { checkoutUrl: _checkoutUrl, ...receipt } = await merchant.create(merchantOrderId, context.signal);
           return receipt;
-        }, context.objects,
+        }, context.objects, { requestId: context.operationId, taskId: context.taskId },
       );
       return registerOrder(context, merchant, snapshot);
     }],

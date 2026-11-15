@@ -45,6 +45,7 @@ import {
 import { Indexing, indexingInputSchema } from './indexing.js';
 import { Materializations, materializationInputSchema } from './materializations.js';
 import { EditHistory, conflictPolicySchema, setConflictPolicy } from './edit-history.js';
+import { ExecutionTrace, executionTraceSchema } from './execution-trace.js';
 import {
   Governance,
   projectSchema,
@@ -204,6 +205,13 @@ export function ontologyServices(
     false,
     async (a, input) =>
       new EditHistory(db).read(new Objects(db, await active(), a), input.object, input.after, input.limit),
+  );
+  register(
+    'execution_trace',
+    'Read causal identities and states for an owned task or committed Action.',
+    executionTraceSchema,
+    false,
+    (a, input) => new ExecutionTrace(db, metadata).read(a, ontologyId, input),
   );
   register(
     'edit_policy',

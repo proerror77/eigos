@@ -684,6 +684,7 @@ export function travelFunctions(
         },
         () => source.orders!.create(quote, context.signal, guard),
         context.objects,
+        { requestId: context.operationId, taskId: context.taskId },
       ),
     );
     return context.edit(ref, async (graph) => {
