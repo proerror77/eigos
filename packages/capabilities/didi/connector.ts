@@ -4,11 +4,11 @@ import { isAbsolute, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { z } from 'zod';
-import { digest } from '../../core/identity.js';
+import { digest, SourceReadFailure } from '../../core/identity.js';
 import { didiBindingSchema, didiEndpoint, didiReceiptSchema, didiToolInputs, DIDI_TOOLS, type DidiBinding, type DidiData, type DidiEvidenceKind, type DidiReceipt, type DidiTool } from './contracts.js';
 import { mapDidiResult } from './mapping.js';
 
-export class DidiReadError extends Error {
+export class DidiReadError extends SourceReadFailure {
   constructor(readonly code: string) { super(code === 'RATE_LIMITED' ? 'DiDi read quota is exhausted (RATE_LIMITED); wait for the provider window to reset before a new read. No business operation was sent.' : `DiDi read failed (${code}); check the private connection or choose a new read. No business operation was sent.`); }
 }
 export interface DidiCallContext { requestId: string; requestRevision: number }
