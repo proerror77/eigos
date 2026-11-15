@@ -9,6 +9,7 @@ import { deliveryFunctions } from './delivery.js';
 import {localEmbeddingDefinition} from './embedding-definition.js';
 import {applicationDefinition as applications} from './applications.js';
 import {scenarioObjectType} from './scenario-definition.js';
+import { rideWatchDefinition, rideWatchType } from './ride-watch.js';
 import { addProcessLogs } from './process-definition.js';
 import { readFileSync } from 'node:fs';
 import type { OntologyDocument } from './schema.js';
@@ -30,7 +31,7 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '20',
+  id: ride.id, version: '21',
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
   actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes, ...journey.actionTypes, ...flight.actionTypes, ...payments.actionTypes,...luckin.actionTypes,...applications.actionTypes,...documents.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
@@ -134,7 +135,12 @@ businessDefinition.objectTypes.push({
     }, required: true },
   },
 });
+businessDefinition.objectTypes.push(...rideWatchDefinition.objectTypes);
+businessDefinition.linkTypes.push(...rideWatchDefinition.linkTypes);
+businessDefinition.functionTypes.push(...rideWatchDefinition.functionTypes);
+businessDefinition.actionTypes.push(...rideWatchDefinition.actionTypes);
 addProcessLogs(businessDefinition, [
+  { type: rideWatchType, property: 'state' },
   { type: 'ActionConfirmation', property: 'state' },
   { type: 'EventRegistration', property: 'state' }, { type: 'EventTrip', property: 'state' },
   { type: 'StripeLinkPaymentRequest', property: 'status' }, { type: 'SchedulePlan', property: 'state' }, { type: journeyType, property: 'state' }, { type: flightWatchType, property: 'state' },
