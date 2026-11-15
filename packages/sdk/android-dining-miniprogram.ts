@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { Conflict, digest } from '../core/identity.js';
 import { diningMiniProgramRead, diningMiniProgramTarget } from '../ontology/dining-reservations.js';
 import type { MiniProgramAvailabilityReader } from './dining-miniprogram-pa.js';
+import { diningVisionScreen, readDiningVisionScreen, recognizeDiningScreen } from './android-dining-vision.js';
 
 const selector = z.strictObject({
   id: z.string().max(240).optional(), text: z.string().max(240).optional(), description: z.string().max(240).optional(),
@@ -27,9 +28,11 @@ export const androidDiningMiniProgram = z.strictObject({
   screen: z.strictObject({
     identity: selector, branch: selector, date: selector, guests: selector, slots: selector,
     noSlots: selector.optional(),
-  }),
+  }).optional(),
+  vision: diningVisionScreen.optional(),
   readSteps: z.array(z.strictObject({ from: selector, tap: selector, to: selector })).max(8).default([]),
-});
+}).refine(config => Boolean(config.screen) !== Boolean(config.vision) && (!config.vision || !config.readSteps.length),
+  'Configure one Android reader, with navigation steps for the accessibility reader');
 export type AndroidDiningMiniProgram = z.infer<typeof androidDiningMiniProgram>;
 type Query = z.infer<typeof diningMiniProgramRead>;
 type Node = { attributes: Record<string, string>; parent?: Node };
@@ -76,7 +79,9 @@ const exact = (nodes: Node[], query: Selector, values: Labels) => {
 const text = (node: Node) => normalize(node.attributes.text || node.attributes['content-desc'] || '');
 
 export function readDiningMiniProgramScreen(xml: string, configuration: AndroidDiningMiniProgram, query: Query) {
-  const nodes = parse(xml), values = labels(query, configuration.dateFormat), screen = configuration.screen;
+  const screen = configuration.screen;
+  if (!screen) return;
+  const nodes = parse(xml), values = labels(query, configuration.dateFormat);
   const shows = (field: Selector, expected: string) => {
     const node = exact(nodes, field, values);
     return node && [node.attributes.text, node.attributes['content-desc']].some(value => normalize(value ?? '') === normalize(expected));
@@ -135,6 +140,17 @@ export function androidDiningReader(configuration: AndroidDiningMiniProgram): Mi
       const screen = await foreground();
       if (loginActivity.test(screen)) return { status: 'unavailable', reason: 'login-required' };
       if (!miniProgramActivity.test(screen)) return { status: 'unavailable', reason: 'unsupported-screen' };
+      const observed = (availableTimes: string[] | undefined) => availableTimes === undefined
+        ? { status: 'unavailable' as const, reason: 'unsupported-screen' as const }
+        : { ...query, status: 'observed' as const, evidence: 'pa_reported' as const, availableTimes, observedAt: new Date().toISOString() };
+      if (configuration.vision) {
+        const { stdout: png } = await exec(configuration.adb, [
+          '-s', configuration.serial, 'exec-out', 'screencap', '-p',
+        ], { encoding: 'buffer', signal, timeout: 12000, maxBuffer: 12_000_000 });
+        if (screen !== await foreground()) throw new Conflict('The WeChat mini program changed');
+        const lines = await recognizeDiningScreen(configuration.vision.executable, png, signal);
+        return observed(readDiningVisionScreen(lines, configuration.vision, query, labels(query, 'zh-month-day').$date));
+      }
       const values = labels(query, configuration.dateFormat);
       let xml = await capture();
       for (const step of configuration.readSteps) {
@@ -154,9 +170,7 @@ export function androidDiningReader(configuration: AndroidDiningMiniProgram): Mi
         xml = await capture();
         if (!exact(parse(xml), step.to, values)) throw new Conflict('The query opened an unexpected screen');
       }
-      const availableTimes = readDiningMiniProgramScreen(xml, configuration, query);
-      return availableTimes === undefined ? { status: 'unavailable', reason: 'unsupported-screen' } :
-        { ...query, status: 'observed', evidence: 'pa_reported', availableTimes, observedAt: new Date().toISOString() };
+      return observed(readDiningMiniProgramScreen(xml, configuration, query));
     } catch {
       signal.throwIfAborted();
       return { status: 'unavailable', reason: 'page-unavailable' };

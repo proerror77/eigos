@@ -15,6 +15,7 @@ import {
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { androidDiningMiniProgram, androidDiningReader, readDiningMiniProgramScreen } from '../packages/sdk/android-dining-miniprogram.js';
+import { readDiningVisionScreen } from '../packages/sdk/android-dining-vision.js';
 import { OntologyClient } from '../packages/sdk/client.js';
 import { DiningMiniProgramPA } from '../packages/sdk/dining-miniprogram-pa.js';
 import { fixture, principal } from './fixture.js';
@@ -52,6 +53,22 @@ test('the Android reader requires the exact visible branch, date, and party befo
     '<node package="com.tencent.mm" text="No times available"/>');
   assert.deepEqual(readDiningMiniProgramScreen(full, config, input), []);
   assert.equal(readDiningMiniProgramScreen(full.replace('No times available', 'Loading'), config, input), undefined);
+});
+
+test('the screenshot reader matches booking buttons to the queried branch and exact guest count', () => {
+  const dateLabel = '11月20日';
+  const config = { executable: '/fake/vision', programLabel: '搜索测试门店', branchPrefix: 'Fixture', bookingLabel: '立即预订' };
+  const input = { ...query, city: '测试市', miniProgram, date: '2026-11-20' };
+  const line = (text: string, x: number, y: number) => ({ text, x, y });
+  const lines = [
+    line('测试市｜搜索测试门店', 0.31, 0.08), line(`${dateLabel}星期五｜2人大厅`, 0.28, 0.22),
+    line('Fixture Branch', 0.34, 0.33), line('19:00', 0.18, 0.41), line('立即预订', 0.18, 0.45),
+    line('19:30', 0.41, 0.41), line('约满', 0.41, 0.45),
+    line('Fixture Other Branch', 0.34, 0.52), line('19:45', 0.18, 0.59), line('立即预订', 0.18, 0.63),
+  ];
+  assert.deepEqual(readDiningVisionScreen(lines, config, input, dateLabel), ['19:00']);
+  assert.equal(readDiningVisionScreen(lines, config, { ...input, partySize: 12 }, dateLabel), undefined);
+  assert.equal(readDiningVisionScreen(lines, config, input, '11月21日'), undefined);
 });
 
 test('the original PA reads mini-program availability and recovers one synthetic reservation across a lost reply and replay', async () => {
