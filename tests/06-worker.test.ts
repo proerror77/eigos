@@ -199,6 +199,61 @@ test('a corrected address continues the original Action and refreshes only the a
   } finally { await f.close(); await harness.close(); }
 });
 
+test('missing city pauses the original Action before source reads and resumes after the owner supplies it', async () => {
+  let modelCalls = 0;
+  const f = await fixture({ model: 'city-input-test', async run(_prompt, tools) {
+    modelCalls++;
+    await tools.get('complete_with_action')!.invoke({
+      action: { interface: { type: 'RideInquiryWithPlaceClues', implementation: 'RideRequest', action: 'estimate' },
+        input: { origin: route.origin, destination: route.destination } },
+      read: { function: 'readRideEstimates', resultParameter: 'request' },
+    });
+  } });
+  try {
+    const { id } = await f.tasks.submit(principal, { requestId: 'city-quote', message: 'Estimate my ride without a city.' });
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, id);
+    assert.equal(paused.state, 'input-required');
+    assert.deepEqual(paused.result, { kind: 'city' });
+    assert.equal(paused.input.placeContinuation!.waitingFor, 'city');
+    assert.equal(f.provider.calls.length, 0);
+    await assert.rejects(f.tasks.answerInput({ ...principal, owner: 'some-other-owner' }, id, { kind: 'city', city: '上海市' }), /not waiting/);
+    const answer = await f.tasks.answerInput(principal, id, { kind: 'city', city: '上海市' });
+    assert.equal(answer.id, id);
+    await f.worker.runOne();
+    const done = await f.tasks.get(principal, id);
+    assert.equal(done.state, 'completed', done.error ?? undefined);
+    assert.equal((done.result as {request: {id: string}}).request.id, paused.input.placeContinuation!.requestId);
+    assert.equal(modelCalls, 1);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    assert(f.provider.inputs.slice(0, 2).every(input => input.city === '上海市'));
+  } finally { await f.close(); }
+});
+
+test('a landmark resolves a shortened venue name against its own supplier evidence on the original Action', async () => {
+  const f = await fixture();
+  try {
+    f.provider.flags.placeName = name => name === '太古里' ? '前滩太古里' : name;
+    const task = await f.tasks.submit(principal, { requestId: 'landmark-quote', message: '只询价',
+      route: { ...route, destination: '太古里' } });
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, task.id);
+    assert.equal(paused.state, 'input-required');
+    const continued = await f.tasks.amendPlace(principal, task.id, { side: 'destination', landmark: '东方体育中心' });
+    assert.equal(continued.id, task.id);
+    await f.worker.runOne();
+    const done = await f.tasks.get(principal, task.id);
+    assert.equal(done.state, 'completed', done.error ?? undefined);
+    const quote = done.result as {request: {id: string}; route: {destination: {name: string}}};
+    assert.equal(quote.request.id, paused.input.placeContinuation!.requestId);
+    assert.equal(quote.route.destination.name, '前滩太古里');
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    const keywords = f.provider.inputs.map(item => item.keywords).filter(Boolean);
+    assert.equal(keywords.filter(name => name === route.origin).length, 1);
+    assert(keywords.includes('东方体育中心'));
+  } finally { await f.close(); }
+});
+
 test('an expired saved place receipt is refreshed without asking the model to choose again', async () => {
   const f = await fixture();
   try {
@@ -210,7 +265,7 @@ test('an expired saved place receipt is refreshed without asking the model to ch
     const pending = paused.input.placeContinuation!;
     const candidates = paused.result as Record<'origin' | 'destination', { ref: { type: string; id: string } }[]>;
     await f.db.query(`UPDATE ${f.db.schema}.objects SET properties=jsonb_set(properties,'{observedAt}',to_jsonb($2::text))
-      WHERE type='SourceReceipt' AND id=$1`, [pending.receipts.origin.id, new Date(Date.now()-310000).toISOString()]);
+      WHERE type='SourceReceipt' AND id=$1`, [pending.receipts!.origin.id, new Date(Date.now()-310000).toISOString()]);
     await f.tasks.selectPlaces(principal, task.id, { origin: candidates.origin[0]!.ref, destination: candidates.destination[0]!.ref });
     await f.worker.runOne();
     assert.equal((await f.tasks.get(principal, task.id)).state, 'completed');

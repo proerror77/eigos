@@ -12,7 +12,7 @@ import { Scenarios } from './scenarios.js';
 import { recordScenarioAction, type ScenarioMutation } from './scenario-store.js';
 import { JournalObjects, compensate, type ObjectChange, type LinkChange } from './action-journal.js';
 
-import { Clarification, PlaceConfirmationRequired, placeContinuationSchema } from './clarification.js';
+import { Clarification, CityConfirmationRequired, PlaceConfirmationRequired, placeContinuationSchema } from './clarification.js';
 import { assertActionConfirmed } from './action-confirmation.js';
 
 const evaluate = (expression: Value, input: Record<string, unknown>): unknown => {
@@ -202,9 +202,15 @@ export class Actions {
     try {
       reference = await this.apply(access, model, selected.action, selected.input, requestId, guard, execution, signal);
     } catch (error) {
-      if (!(error instanceof PlaceConfirmationRequired) || !options.allowPause || model.scenario) throw error;
-      throw new Clarification(error.message, error.choices, error.permissions,
-        { ...selected, requestId, read, receipts: error.receipts });
+      if (!options.allowPause || model.scenario) throw error;
+      const original = { ...selected, requestId, read };
+      if (error instanceof CityConfirmationRequired) {
+        throw new Clarification(error.message, error.choices, error.permissions, { ...original, waitingFor: 'city' });
+      }
+      if (error instanceof PlaceConfirmationRequired) {
+        throw new Clarification(error.message, error.choices, error.permissions, { ...original, receipts: error.receipts });
+      }
+      throw error;
     }
     options.applied?.(reference);
     const result = await this.functions.invoke(model, read.function, { ...read.input, [read.resultParameter]: reference }, {
@@ -219,7 +225,9 @@ export class Actions {
     const { task, tasks } = execution;
     await tasks.current(task);
     const pending = placeContinuationSchema.parse(task.input.placeContinuation);
-    if (!task.input.places) throw new Conflict('Original Action is waiting for input');
+    if (pending.waitingFor === 'city' ? !task.input.rideCity : !task.input.places) {
+      throw new Conflict('Original Action is waiting for input');
+    }
     await assertActionConfirmed(this.db, model, task, pending);
     return this.complete(access, model, { action: pending.action, input: pending.input },
       pending.requestId, pending.read, execution, signal, { allowPause: true });

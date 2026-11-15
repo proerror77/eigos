@@ -1,6 +1,6 @@
 import { NotFound } from '../../core/identity.js';
 import { objectRefSchema, type ObjectData, type ObjectRef } from '../../ontology/schema.js';
-import { Clarification, PlaceConfirmationRequired } from '../../runtime/clarification.js';
+import { CityConfirmationRequired, Clarification, PlaceConfirmationRequired } from '../../runtime/clarification.js';
 import type { Functions, FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import type { Sources } from '../../runtime/sources.js';
 import { isCurrentDidiObservation, type SourceResolver } from './functions.js';
@@ -32,20 +32,60 @@ function addressMatches(place: ObjectData, address: string) {
   return match(observed) || match(city + observed);
 }
 
-export const resolveRideLocations: FunctionHandler = async (input, context): Promise<Resolution> => {
+type Endpoint = 'origin' | 'destination';
+type LandmarkReceipts = Partial<Record<Endpoint, { name: string; receipt: ObjectRef }>>;
+
+const cityKey = (city: unknown) => matchName(String(city ?? '')).replace(/市$/u, '');
+const siteName = (name: unknown, city: unknown) => {
+  const label = matchName(String(name ?? '')), prefix = cityKey(city);
+  return prefix && label.startsWith(prefix) ? label.slice(prefix.length).replace(/^市/u, '') : label;
+};
+
+function withinLandmark(place: ObjectData, landmark: ObjectData) {
+  const { coordinates: a, coordinateSystem: system } = place.properties;
+  const { coordinates: b, coordinateSystem: anchorSystem } = landmark.properties;
+  if (!a || !b || !system || system !== anchorSystem) return false;
+  // Both points came from the same bound DiDi place source. Use only a coarse
+  // distance gate within that source; quote coordinates remain unmodified.
+  const { lat, lng } = a as {lat: number; lng: number};
+  const other = b as {lat: number; lng: number};
+  if (![lat, lng, other.lat, other.lng].every(Number.isFinite)) return false;
+  const east = (lng - other.lng) * Math.cos((lat + other.lat) * Math.PI / 360);
+  return Math.hypot(east, lat - other.lat) * 111_200 <= 800;
+}
+
+async function resolvePlaces(
+  input: Record<string, unknown>, context: FunctionContext, landmarks: LandmarkReceipts = {}, city?: string,
+): Promise<Resolution> {
   const resumed = resumedPlaceInput(context);
   const selection = input.selection as { origin: ObjectRef; destination: ObjectRef } | undefined;
-  const find = async (role: 'origin' | 'destination') => {
+  const places = (receipt: ObjectRef) => context.objects.query({
+    type: 'Location', from: { object: receipt, link: 'places' }, limit: 100,
+  });
+  const find = async (role: Endpoint) => {
     const receipt = objectRefSchema.parse(input[role + 'Receipt']);
     const choice = selection?.[role] ?? resumed?.places?.[role];
     const amendment = resumed?.placeAmendments?.[role];
-    const candidates = await context.objects.query({ type: 'Location', from: { object: receipt, link: 'places' }, limit: 100 });
+    const hint = landmarks[role];
+    const [candidates, nearby] = await Promise.all([places(receipt), hint && places(hint.receipt)]);
     if (candidates.cursor) throw new Clarification('地点候选过多，请补充完整地址。');
-    const name = matchName(amendment ? amendment.name ?? '' : String(input[role]));
+    const anchors = !nearby?.cursor && hint ? nearby?.items.filter(item =>
+      cityKey(item.properties.city) === cityKey(city) &&
+      siteName(item.properties.name, city) === siteName(hint.name, city)) ?? [] : [];
+    const rawName = amendment?.name ?? String(input[role]);
+    const name = amendment?.address && !amendment.name && !hint ? '' : matchName(rawName);
+    const abbreviation = hint ? siteName(rawName, city) : '';
     const matches = candidates.items.filter(item => {
       if (choice) return item.ref.type === choice.type && item.ref.id === choice.id;
-      const sameName = name && matchName(String(item.properties.name)) === name;
-      return amendment ? (!amendment.name || sameName) && addressMatches(item, amendment.address) : sameName;
+      if (amendment?.address && !addressMatches(item, amendment.address)) return false;
+      if (hint) {
+        const label = siteName(item.properties.name, city);
+        const related = label === abbreviation ||
+          (abbreviation.length >= 3 && !amendment?.name && label.endsWith(abbreviation));
+        return Boolean(abbreviation && related && anchors.length === 1 &&
+          cityKey(item.properties.city) === cityKey(city) && withinLandmark(item, anchors[0]!));
+      }
+      return name ? matchName(String(item.properties.name)) === name : Boolean(amendment?.address);
     });
     if (matches.length === 1) return { selected: matches[0]!.ref, candidates: matches };
     return { candidates: matches.length ? matches : candidates.items };
@@ -53,7 +93,9 @@ export const resolveRideLocations: FunctionHandler = async (input, context): Pro
   const [origin, destination] = await Promise.all([find('origin'), find('destination')]);
   return origin.selected && destination.selected ? { status: 'resolved', origin: origin.selected, destination: destination.selected }
     : { status: 'input-required', origin: origin.candidates, destination: destination.candidates };
-};
+}
+
+export const resolveRideLocations: FunctionHandler = (input, context) => resolvePlaces(input, context);
 
 /** A confirmed ref can reuse only the task's exact, still current place observation. */
 async function reusablePlace(
@@ -78,6 +120,8 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
     const model = context.objects.model, sources = getSources(), functions = getFunctions(), execution = context.execution;
     const selection = execution?.task.input.places;
     const resumed = resumedPlaceInput(context);
+    const city = String(resumed?.rideCity ?? input.city ?? '').trim();
+    if (!city) throw new CityConfirmationRequired();
     const saved = resumed?.placeContinuation?.receipts;
     let currentBinding: string | undefined;
     if (saved) {
@@ -86,20 +130,42 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
       await source.assertCurrent();
       currentBinding = source.bindingId;
     }
-    const findPlaces = async (role: 'origin' | 'destination') => {
+    const lookups = new Map<string, Promise<ObjectRef>>();
+    const lookup = (keywords: string) => {
+      const existing = lookups.get(keywords);
+      if (existing) return existing;
+      const pending = sources.refresh(model, 'DidiPlaces', { city, keywords },
+        context.objects.access, execution?.task, execution?.tasks, context.signal).then(result => result.receipt);
+      lookups.set(keywords, pending);
+      return pending;
+    };
+    const findPlaces = async (role: Endpoint) => {
       const receipt = saved?.[role], place = selection?.[role];
       if (receipt && place && currentBinding && await reusablePlace(context, receipt, place, currentBinding)) return receipt;
       const amendment = resumed?.placeAmendments?.[role];
-      const keywords = amendment ? amendment.name ?? amendment.address : input[role];
-      const result = await sources.refresh(model, 'DidiPlaces', { city: input.city, keywords },
-        context.objects.access, execution?.task, execution?.tasks, context.signal);
-      return result.receipt;
+      const keywords = amendment?.name ?? amendment?.address ?? String(input[role]);
+      return lookup(keywords);
     };
-    const [originReceipt, destinationReceipt] = await Promise.all([findPlaces('origin'), findPlaces('destination')]);
-    const resolution = await functions.invoke(model, 'resolveRideLocations', {
-      origin: input.origin, destination: input.destination, originReceipt, destinationReceipt,
-      ...(selection?.origin && selection.destination ? { selection } : {}),
-    }, context) as Resolution;
+    const findLandmark = async (role: Endpoint) => {
+      if (selection?.[role]) return;
+      const clue = resumed?.placeAmendments?.[role];
+      const name = clue ? clue.landmark : input[role + 'Landmark'];
+      if (typeof name === 'string' && name.trim()) return { name, receipt: await lookup(name.trim()) };
+    };
+    const [originReceipt, destinationReceipt, originLandmark, destinationLandmark] = await Promise.all([
+      findPlaces('origin'), findPlaces('destination'), findLandmark('origin'), findLandmark('destination'),
+    ]);
+    const resolveInput = { origin: input.origin, destination: input.destination, originReceipt, destinationReceipt,
+      ...(selection?.origin && selection.destination ? { selection } : {}) };
+    // Landmark receipts are internal inputs to this Action, obtained from the same
+    // source; the existing published read Function retains its original contract.
+    let resolution: Resolution;
+    if (originLandmark || destinationLandmark) {
+      context.objects.access.function(model, 'resolveRideLocations');
+      resolution = await resolvePlaces(resolveInput, context, { origin: originLandmark, destination: destinationLandmark }, city);
+    } else {
+      resolution = await functions.invoke(model, 'resolveRideLocations', resolveInput, context) as Resolution;
+    }
     if (resolution.status !== 'resolved') {
       throw new PlaceConfirmationRequired('请确认未能唯一匹配的场所名称或完整地址。',
         { origin: resolution.origin, destination: resolution.destination },

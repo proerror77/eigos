@@ -30,7 +30,7 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '19',
+  id: ride.id, version: '20',
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
   actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes, ...journey.actionTypes, ...flight.actionTypes, ...payments.actionTypes,...luckin.actionTypes,...applications.actionTypes,...documents.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
@@ -84,6 +84,38 @@ for(const fn of businessDefinition.functionTypes){
   }
 }
 businessDefinition.objectTypes.find(type=>type.apiName==='LumaEvent')!.interfaces.AttendableEvent={properties:Object.fromEntries(['name','start','end','timeZone','status','locationPrecision','registrationOpen','approvalRequired'].map(name=>[name,name])),links:{registrations:'registrations',trips:'trips'},actions:{register:{action:'PrepareEventRegistration',parameters:{event:'event',ticketId:'ticketId',sourceTaskId:'sourceTaskId'}}}};
+
+// Keep the existing published contract for historical workflows and callers with complete inputs.
+const completeRideFunction = businessDefinition.functionTypes.find(fn => fn.apiName === 'prepareRideInquiry')!;
+const landmark = { type: 'string', minLength: 3, maxLength: 200, description: 'Named nearby landmark supplied by the user' };
+const quoteParameters = {
+  ...completeRideFunction.parameters,
+  properties: { ...completeRideFunction.parameters.properties as Record<string, unknown>,
+    originLandmark: landmark, destinationLandmark: landmark },
+  required: ['origin', 'destination'],
+};
+const prepareWithClues = {
+  ...completeRideFunction, apiName: 'prepareRideInquiryWithPlaceClues', parameters: quoteParameters,
+  description: 'Prepare a ride estimate using the given venues and optional named landmarks. If the city is absent, ask for it on the original Action before querying any source.',
+};
+businessDefinition.functionTypes.push(prepareWithClues);
+const completeQuote = businessDefinition.actionTypes.find(action => action.apiName === 'EstimateRide')!;
+const quoteWithClues = {
+  ...completeQuote, apiName: 'EstimateRideWithPlaceClues', parameters: quoteParameters, function: prepareWithClues.apiName,
+  description: 'Quote-only ride inquiry with a missing city or nearby landmark. Pass a city only when established by the user; otherwise the original Action waits for it. Supply named landmarks separately. No order or payment.',
+};
+businessDefinition.actionTypes.push(quoteWithClues);
+const completeInquiry = businessDefinition.interfaceTypes.find(type => type.apiName === 'RideInquiry')!;
+const clueInquiry = structuredClone(completeInquiry);
+clueInquiry.apiName = 'RideInquiryWithPlaceClues';
+clueInquiry.description = quoteWithClues.description;
+clueInquiry.actions.estimate!.parameters = quoteParameters;
+businessDefinition.interfaceTypes.push(clueInquiry);
+const inquiryMappings = businessDefinition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces;
+const clueMapping = structuredClone(inquiryMappings.RideInquiry!);
+clueMapping.actions.estimate!.action = quoteWithClues.apiName;
+Object.assign(clueMapping.actions.estimate!.parameters, { originLandmark: 'originLandmark', destinationLandmark: 'destinationLandmark' });
+inquiryMappings[clueInquiry.apiName] = clueMapping;
 
 businessDefinition.objectTypes.find(type => type.apiName === 'SchedulePlan')!.properties.state = {
   description: 'Internal plan review state; confirmation does not write an external calendar',
