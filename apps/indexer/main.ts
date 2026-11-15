@@ -16,7 +16,7 @@ await assertOwnerIsolation(db);
 const extensions = await loadExtensions(process.env.EIGOS_EXTENSION_MODULE);
 const metadata = new Metadata(db);
 const capabilities = createCapabilities(db, configuredSource(process.env.EIGOS_DIDI_CONNECTION_FILE), extensions, configuredServices(process.env.EIGOS_SERVICE_CONNECTION_FILE), undefined, {
-  amap: process.env.EIGOS_AMAP_CONNECTION_FILE, variFlight: process.env.EIGOS_VARIFLIGHT_CONNECTION_FILE,
+  amap: process.env.EIGOS_AMAP_CONNECTION_FILE, xiaohongshu: process.env.EIGOS_XIAOHONGSHU_CONNECTION_FILE, variFlight: process.env.EIGOS_VARIFLIGHT_CONNECTION_FILE,
   travelPA: process.env.EIGOS_TRAVEL_PA_CONNECTION_FILE, calendar: process.env.EIGOS_JOURNEY_CALENDAR_CONNECTION_FILE,
 });
 const indexing = new Indexing(db, metadata);

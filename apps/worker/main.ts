@@ -17,7 +17,7 @@ await assertOwnerIsolation(db);
 if (!config.EIGOS_HARNESS_BIN || !config.EIGOS_HARNESS_CREDENTIAL_FILE) throw new Error('Worker requires its cloud model runtime and credential file');
 const tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, configuredSource(config.EIGOS_DIDI_CONNECTION_FILE),await loadExtensions(config.EIGOS_EXTENSION_MODULE),configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE),configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
     paotui: config.EIGOS_PAOTUI_CONNECTION_FILE, waimai: config.EIGOS_WAIMAI_CONNECTION_FILE,
-    amap: config.EIGOS_AMAP_CONNECTION_FILE, variFlight: config.EIGOS_VARIFLIGHT_CONNECTION_FILE,
+    amap: config.EIGOS_AMAP_CONNECTION_FILE, xiaohongshu: config.EIGOS_XIAOHONGSHU_CONNECTION_FILE, variFlight: config.EIGOS_VARIFLIGHT_CONNECTION_FILE,
     fr24: config.EIGOS_FR24_CONNECTION_FILE, fr24Entrypoint: config.EIGOS_FR24_MCP_ENTRYPOINT,
     calendar: config.EIGOS_JOURNEY_CALENDAR_CONNECTION_FILE, travelPA: config.EIGOS_TRAVEL_PA_CONNECTION_FILE,
   });
