@@ -1,15 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { Conflict, NotFound, digest, requireScope, type Principal } from '../core/identity.js';
+import { Conflict, NotFound, SourceReadFailure, digest, requireScope, type Principal } from '../core/identity.js';
 import type { Sql } from './database.js';
 import { Database } from './database.js';
 import { Metadata } from './metadata.js';
 import { classificationSchema } from '../ontology/classification.js';
 import { Access, type Requirement } from './access.js';
 import type { ScheduledCall } from './scheduled-actions.js';
-import { Clarification, placeChoicesSchema, placeContinuationSchema, placeSelectionSchema, type PlaceContinuation } from './clarification.js';
+import { Clarification, cityInputSchema, taskInputAnswerSchema, placeAmendmentSchema, placeAmendmentsSchema, placeChoicesSchema, placeContinuationSchema, placeSelectionSchema, type PlaceContinuation } from './clarification.js';
 import { recordActionConfirmation } from './action-confirmation.js';
-export { placeSelectionSchema } from './clarification.js';
+export { placeAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema } from './clarification.js';
 import { publicHotelTaskResult, workflowReplaySchema } from './hotel-workflows.js';
 
 export const routeInputSchema = z.strictObject({ city: z.string().min(1).max(100), origin: z.string().min(1).max(500), destination: z.string().min(1).max(500), serviceClass: z.string().min(1).max(100).optional() });
@@ -20,7 +20,9 @@ export const submitSchema = z.strictObject({ requestId: z.string().min(1).max(12
   conversationId: z.string().min(1).max(128).regex(/^[^\u0000-\u001f\u007f]+$/u).optional(),
 });
 const storedInputSchema = submitSchema.extend({
-  places: placeSelectionSchema.optional(),
+  places: placeSelectionSchema.partial().optional(),
+  placeAmendments: placeAmendmentsSchema.optional(),
+  rideCity: cityInputSchema.optional(),
   placeContinuation: placeContinuationSchema.optional(),
 });
 export interface Task { id: string; owner: string; request_id: string; input: z.infer<typeof storedInputSchema> & {scheduledAction?:ScheduledCall}; release: string; scopes: string[]; state: string; token: string | null; result: unknown; result_permissions?: Requirement[] | null; error: string | null; created_at: Date; updated_at: Date; execution_step?:number; conversation_id?: string | null }
@@ -116,32 +118,76 @@ export class Tasks {
     });
     return this.visible(principal, task);
   }
-  async selectPlaces(principal: Principal, id: string, input: unknown): Promise<Task> {
-    requireScope(principal, 'tasks:write'); z.uuid().parse(id);
+  selectPlaces(principal: Principal, id: string, input: unknown): Promise<Task> {
     const places = placeSelectionSchema.parse(input);
+    return this.continueTaskInput(principal, id, task => {
+      const choices = this.placeChoices(task);
+      for (const side of ['origin', 'destination'] as const) {
+        if (!choices[side].some(({ ref }) => ref.type === places[side].type && ref.id === places[side].id)) {
+          throw new Conflict('Select places from the original task’s current candidates');
+        }
+      }
+      return { ...task.input, places };
+    });
+  }
+  amendPlace(principal: Principal, id: string, input: unknown): Promise<Task> {
+    const { side, keep, ...amendment } = placeAmendmentSchema.parse(input);
+    return this.continueTaskInput(principal, id, task => {
+      const choices = this.placeChoices(task);
+      if (!task.input.placeContinuation?.receipts) throw new Conflict('There is no original Action waiting for place details');
+      const other = side === 'origin' ? 'destination' : 'origin';
+      const selected = keep
+        ? choices[other].find(({ ref }) => ref.type === keep.type && ref.id === keep.id)?.ref
+        : choices[other].length === 1 ? choices[other][0]!.ref : undefined;
+      if (!selected && (keep || choices[other].length)) {
+        throw new Conflict('Identify the unchanged endpoint from the original task’s current candidates');
+      }
+      return {
+        ...task.input,
+        places: selected ? { [other]: selected } : {},
+        placeAmendments: { ...task.input.placeAmendments, [side]: amendment },
+      };
+    });
+  }
+  answerInput(principal: Principal, id: string, input: unknown): Promise<Task> {
+    const answer = taskInputAnswerSchema.parse(input);
+    return this.continueTaskInput(principal, id, task => {
+      const waiting = z.object({ kind: z.enum(['city', 'retry-source']) }).safeParse(task.result);
+      if (!waiting.success || waiting.data.kind !== answer.kind ||
+          task.input.placeContinuation?.waitingFor !== answer.kind) {
+        throw new Conflict('The original Action is not waiting for this input');
+      }
+      return answer.kind === 'city' ? { ...task.input, rideCity: answer.city } : task.input;
+    });
+  }
+  private placeChoices(task: Task) {
+    const choices = placeChoicesSchema.safeParse(task.result);
+    if (!choices.success) throw new Conflict('The original task has no place candidates');
+    return choices.data;
+  }
+  private async continueTaskInput(
+    principal: Principal, id: string, update: (task: Task) => Task['input'],
+  ): Promise<Task> {
+    requireScope(principal, 'tasks:write'); z.uuid().parse(id);
     return this.db.transaction(async client => {
       const table = `${this.db.schema}.tasks`;
       const task = (await this.db.query<Task>(`SELECT * FROM ${table} WHERE owner=$1 AND id=$2 AND state='input-required' FOR UPDATE`,
         [principal.owner, id], client)).rows[0];
-      if (!task) throw new Conflict('The task is not waiting for place selection');
-      const choices = placeChoicesSchema.safeParse(task.result);
-      if (!choices.success || !(['origin', 'destination'] as const).every(side =>
-        choices.data[side].some(candidate => candidate.ref.type === places[side].type && candidate.ref.id === places[side].id))) {
-        throw new Conflict('Select places from the original task’s current candidates');
-      }
+      if (!task) throw new Conflict('The task is not waiting for input');
       const caller = await Access.load(this.db, principal, client);
       if (!task.result_permissions || !await caller.canReturn(task.result_permissions, client)) {
-        throw new Conflict('Place candidate permissions changed');
+        throw new Conflict('Task input permissions changed');
       }
+      const nextInput = update(task);
       const continuation = task.input.placeContinuation;
       if (continuation) {
         const model = await this.metadata.get(task.release, client);
         await recordActionConfirmation(this.db, model, caller, task, client, continuation, 'confirmed');
       }
-      const result = await this.db.query<Task>(`UPDATE ${table} SET input=jsonb_set(input,'{places}',$2::jsonb),
+      const result = await this.db.query<Task>(`UPDATE ${table} SET input=$2::jsonb,
         state='submitted',error=NULL,result=NULL,result_permissions=NULL,execution_step=execution_step+1,
         available_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1 RETURNING *`,
-        [task.id, JSON.stringify(places)], client);
+        [task.id, JSON.stringify(nextInput)], client);
       await this.db.query("SELECT pg_notify('eigos_tasks','ready')", [], client);
       return result.rows[0]!;
     });
@@ -210,6 +256,7 @@ export class Tasks {
         if (row.rows[0].input_digest !== fingerprint) throw new Conflict('Original source call has different input');
         if(row.rows[0].state==='completed')return { result: row.rows[0].result as T };
         const previous = row.rows[0];
+        if (previous.state === 'failed') throw new SourceReadFailure('The original supplier read failed');
         // An interrupted read may be repeated by a new lease. External mutations use their own operation journal.
         const interrupted = previous.state === 'running' && previous.lease_token && previous.lease_token !== task.token;
         if (previous.state !== 'waiting_pa' && !interrupted) throw new Conflict('Original source call has an unresolved result');
@@ -221,13 +268,17 @@ export class Tasks {
     });
     if (prior) return prior.result;
     let result:T;
-    try{result=await invoke();}catch(error){
-      // An authenticated PA request suspends a read before data is available.
-      // Its durable pa_requests row owns continuation; it is not an unknown
-      // provider mutation or a completed/empty source read.
-      if (error instanceof Clarification) await this.db.transaction(async client => {
+    try { result = await invoke(); }
+    catch (error) {
+      // PA reads and supplier failures are distinct. An explicit source retry
+      // advances the execution step and gets a fresh read journal key.
+      const state = error instanceof Clarification ? 'waiting_pa'
+        : error instanceof SourceReadFailure ? 'failed' : undefined;
+      if (state) await this.db.transaction(async client => {
         await this.current(task, client, true);
-        await this.db.query(`UPDATE ${this.db.schema}.source_calls SET state='waiting_pa' WHERE task_id=$1 AND name=$2 AND state='running' AND lease_token=$3`, [task.id, name, task.token], client);
+        await this.db.query(`UPDATE ${this.db.schema}.source_calls SET state=$4
+          WHERE task_id=$1 AND name=$2 AND state='running' AND lease_token=$3`,
+          [task.id, name, task.token, state], client);
       });
       throw error;
     }
