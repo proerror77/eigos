@@ -28,7 +28,7 @@ export function queryFields(query: Pick<z.output<typeof querySchema>, 'where' | 
 export class Objects {
   constructor(readonly db: Database, readonly model: PublishedOntology, readonly access: Access, readonly client: Sql = db.pool,
     readonly change?: {
-      action?: string; requestId?: string; taskId?: string; inputDigest?: string; workflowMerge?: true;
+      action?: string; requestId?: string; taskId?: string; inputDigest?: string; reviewedChangeDigest?: string;
       executor?: ExecutionActor; scenarioEdits?: ScenarioMutation[];
       validateWorkflow?: (objects: Objects, validation: CognitiveStep['validation'], object: ObjectRef) => Promise<void>;
     }) {}

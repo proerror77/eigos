@@ -11,7 +11,7 @@ import type { Actions } from './actions.js';
 import { Objects, querySchema } from './objects.js';
 import { matchingTransition, processRuleSchema, processStatusSchema, processTarget, processTriggerSchema, readProcessStatus } from './process-automation.js';
 import { readProcessTransitions } from './process-logs.js';
-import { authorizeCognitive, cognitiveContextSchema, cognitiveResultSchema, cognitiveStepSchema, workflowMerge, type CognitiveStep } from './cognitive-workflow.js';
+import { authorizeCognitive, cognitiveContextSchema, cognitiveResultSchema, cognitiveStepSchema, decisionVersion, workflowMerge, type CognitiveStep } from './cognitive-workflow.js';
 import { Scenarios } from './scenarios.js';
 import { appendTrace } from './execution-trace.js';
 
@@ -289,7 +289,10 @@ export class Automation {
           step: row.step,
           stepCount: row.body.steps.length + Number(Boolean(row.body.proposal)),
           ...(object && row.proposal_task && access.principal.scopes.includes('tasks:read') ? {
-            proposal: { taskId: row.proposal_task, scenarioId: row.proposal_scenario, deadline: row.proposal_deadline },
+            proposal: {
+              taskId: row.proposal_task, scenarioId: row.proposal_scenario, deadline: row.proposal_deadline,
+              mergeAction: row.body.proposal.mergeAction, mergeObjectParameter: row.body.proposal.mergeObjectParameter,
+            },
           } : {}),
           error: row.error,
           results,
@@ -775,7 +778,6 @@ export class Automation {
       const owner = access.principal.owner;
       const graph = new Objects(this.db, model, access, client);
       if (!row.proposal_task) {
-        const input = await graph.read(object);
         if (trigger) await this.verifyProcessTrigger(graph, object, trigger, row.body.steps.length === 0);
         const taskId = randomUUID(), requestId = 'workflow-proposal:' + row.id;
         const { reviewers, timeoutSeconds, mergeAction: _mergeAction, mergeObjectParameter: _mergeObjectParameter, ...manifest } = proposal;
@@ -783,8 +785,10 @@ export class Automation {
           requestId, name: proposal.name, ttlSeconds: timeoutSeconds,
         }, undefined, { client, runId: row.id, reviewers });
         workflowMerge(model, proposal, object, scenario.id, scenario.revision);
+        const input = await graph.read(object);
+        const evidenceVersion = await decisionVersion(this.db, model, owner, client);
         const context = cognitiveContextSchema.parse({
-          ...manifest, runId: row.id, scenarioId: scenario.id, object, revision: input.revision,
+          ...manifest, runId: row.id, scenarioId: scenario.id, object, revision: input.revision, evidenceVersion,
         });
         const taskInput = { requestId, message: proposal.goal };
         await this.db.query(

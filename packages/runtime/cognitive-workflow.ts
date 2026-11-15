@@ -1,9 +1,10 @@
 import { z } from 'zod';
-import { Conflict, requireScope } from '../core/identity.js';
+import { Conflict, digest, requireScope } from '../core/identity.js';
 import { validator } from '../ontology/model.js';
 import { objectRefSchema, type ObjectRef } from '../ontology/schema.js';
 import type { Access } from './access.js';
 import type { PublishedOntology } from './metadata.js';
+import type { Database, Sql } from './database.js';
 import type { Functions, FunctionContext } from './functions.js';
 import { actionEffects } from './action-values.js';
 
@@ -26,6 +27,7 @@ export const cognitiveContextSchema = cognitiveStepSchema.omit({ reviewers: true
   scenarioId: z.uuid(),
   object: objectRefSchema,
   revision: z.number().int().positive(),
+  evidenceVersion: z.string().regex(/^[a-f0-9]{64}$/),
 });
 export type CognitiveStep = z.output<typeof cognitiveStepSchema>;
 export type CognitiveContext = z.output<typeof cognitiveContextSchema>;
@@ -71,4 +73,22 @@ export async function validateCognitive(functions: Functions, context: FunctionC
   const result = await functions.invoke(context.objects.model, validation.function, { [validation.objectParameter]: object }, context);
   if (result !== true && (!result || typeof result !== 'object' || !('valid' in result) || result.valid !== true))
     throw new Conflict('Workflow proposal failed its published validation');
+}
+
+/** Version the whole owned live input view, including absence and Link membership.
+ * A cognitive task can wait across model calls and PA responses. No live data transaction spans that wait.
+ */
+export async function decisionVersion(db: Database, model: PublishedOntology, owner: string, client: Sql = db.pool) {
+  const { rows: [version] } = await db.readQuery(`SELECT
+    (SELECT md5(coalesce(string_agg(md5(row(type,id,revision,properties,xmin)::text),'' ORDER BY type,id),'')) FROM ${db.schema}.objects WHERE projection=$1 AND owner=$2 AND type<>'OntologyScenario') AS objects,
+    (SELECT md5(coalesce(string_agg(md5(row(type,from_type,from_id,to_type,to_id,xmin)::text),'' ORDER BY type,from_type,from_id,to_type,to_id),'')) FROM ${db.schema}.links WHERE projection=$1 AND owner=$2) AS links,
+    (SELECT md5(coalesce(string_agg(md5(row(type,id,source,properties,observed_at,xmin)::text),'' ORDER BY type,id,source),'')) FROM ${db.schema}.source_values WHERE projection=$1 AND owner=$2) AS sources,
+    (SELECT max(sequence)::text FROM ${db.schema}.edit_history WHERE projection=$1 AND owner=$2 AND type<>'OntologyScenario') AS edits`,
+    [model.projection, owner], client);
+  return digest({ release: model.release, version });
+}
+
+export async function requireDecisionVersion(db: Database, model: PublishedOntology, owner: string, version: string, client?: Sql) {
+  if (await decisionVersion(db, model, owner, client) !== version)
+    throw new Conflict('Workflow decision evidence changed; start a new proposal');
 }

@@ -9,7 +9,8 @@ import { Objects } from './objects.js';
 import { bumpScenario, checkScenario, lockEdits, objectLinks, type ScenarioMutation } from './scenario-store.js';
 import { scenarioMetadataRead, syncScenarioMetadata, removeScenarioMetadata } from './scenario-metadata.js';
 import { appendTrace } from './execution-trace.js';
-import { cognitiveStepSchema, workflowMerge } from './cognitive-workflow.js';
+import { changeDigest } from './action-values.js';
+import { cognitiveContextSchema, cognitiveStepSchema, decisionVersion, requireDecisionVersion, workflowMerge } from './cognitive-workflow.js';
 
 type Properties = Record<string, unknown>;
 type ScenarioObjectEdit = {
@@ -159,6 +160,40 @@ export class Scenarios {
       return { id, revision: Number(result.rows[0]!.revision), reviewers: allowed };
     });
   }
+  async pendingReviews(access: Access, model: PublishedOntology, page: number) {
+    const reviewer = access.principal.owner;
+    access.require(model.document.id, 'view_definition', model.document.id);
+    const limit = 20;
+    const candidates = (await this.db.query<{ id: string }>(
+      `SELECT scenario.id FROM ${this.db.schema}.scenarios scenario
+        WHERE scenario.release=$1 AND scenario.reviewers ? $2 AND scenario.kind='persisted'
+          AND scenario.state='open' AND scenario.expires_at>clock_timestamp()
+          AND (scenario.workflow_run_id IS NULL OR EXISTS (
+            SELECT 1 FROM ${this.db.schema}.workflow_runs run
+            WHERE run.id=scenario.workflow_run_id AND run.state='waiting-approval'))
+        ORDER BY scenario.expires_at,scenario.id LIMIT $3 OFFSET $4`,
+      [model.release, reviewer, limit + 1, (page - 1) * limit],
+    )).rows;
+    const items = [];
+    for (const { id } of candidates.slice(0, limit)) {
+      try {
+        const review = await this.db.transaction(async client => {
+          const row = await this.lockReview(access, model, id, client);
+          const { name, revision, conflicts, evidenceChanged, snapshot } = await this.reviewDiff(model, row, reviewer, client);
+          const approval = await this.db.withTransactionOwner(client, row.owner, () => this.db.query(
+            `SELECT 1 FROM ${this.db.schema}.scenario_approvals
+              WHERE owner=$1 AND scenario_id=$2 AND revision=$3 AND reviewer=$4 AND snapshot=$5`,
+            [row.owner, id, revision, reviewer, snapshot], client,
+          ));
+          return { id, name, revision, conflicts, evidenceChanged, approved: !conflicts && Boolean(approval.rowCount) };
+        });
+        items.push(review);
+      } catch (error) {
+        if (!(error instanceof PermissionDenied) && !(error instanceof NotFound)) throw error;
+      }
+    }
+    return { items, ...(candidates.length > limit && page < 1000 ? { nextPage: page + 1 } : {}) };
+  }
   async inspectReview(access: Access, model: PublishedOntology, id: string) {
     return this.db.transaction(async client => {
       const row = await this.lockReview(access, model, id, client);
@@ -249,13 +284,15 @@ export class Scenarios {
       await author.refresh(client);
       await approver.refresh(client);
       const revision = Number(row.revision);
-      let commit;
+      let commit, evidenceVersion: string | undefined;
+      let evidenceChanged = false;
       const evidence: { ref: ObjectRef; revision: number }[] = [];
       const steps = row.journal_steps ? await this.steps(row.owner, row.id, client) : [];
       if (row.workflow_run_id) {
         const run = (await this.db.query(
-          `SELECT body->'proposal' AS proposal,object_ref FROM ${this.db.schema}.workflow_runs
-            WHERE id=$1 AND owner=$2 AND proposal_scenario=$3 AND state='waiting-approval'`,
+          `SELECT run.body->'proposal' AS proposal,run.object_ref,task.cognitive_context FROM ${this.db.schema}.workflow_runs run
+            JOIN ${this.db.schema}.tasks task ON task.id=run.proposal_task AND task.owner=run.owner
+            WHERE run.id=$1 AND run.owner=$2 AND run.proposal_scenario=$3 AND run.state='waiting-approval'`,
           [row.workflow_run_id, row.owner, row.id], client,
         )).rows[0];
         if (!run) throw new NotFound('Scenario review is unavailable');
@@ -263,6 +300,8 @@ export class Scenarios {
         if (!data) throw new NotFound('Workflow input is unavailable');
         check(object.type, data.properties);
         commit = workflowMerge(model, cognitiveStepSchema.parse(run.proposal), object, row.id, revision);
+        evidenceVersion = cognitiveContextSchema.parse(run.cognitive_context).evidenceVersion;
+        evidenceChanged = await decisionVersion(this.db, model, row.owner, client) !== evidenceVersion;
         for (const access of [author, approver]) access.definition(model, 'action', commit.action);
         const refs = new Map<string, ObjectRef>();
         for (const step of steps) for (const { row: dependency } of step.requirements) {
@@ -279,9 +318,9 @@ export class Scenarios {
         await author.refresh(client);
         await approver.refresh(client);
       }
-      const version = { id: row.id, revision, objects, links, ...(commit ? { commit, evidence } : {}) };
+      const version = { id: row.id, revision, objects, links, ...(commit ? { commit, evidence, evidenceVersion, evidenceChanged } : {}) };
       const journal = row.journal_steps ? digest(steps) : undefined;
-      return { ...version, name: row.name, conflicts: [...objects, ...links].some(change => change.conflict),
+      return { ...version, name: row.name, conflicts: evidenceChanged || [...objects, ...links].some(change => change.conflict),
         snapshot: digest({ ...version, release: model.release, reviewer, journal }) };
     });
   }
@@ -558,14 +597,16 @@ export class Scenarios {
     let proposalTask: string | undefined;
     let validateWorkflow: ((candidate: Objects) => Promise<void>) | undefined;
     if (row.workflow_run_id) {
-      const run = (await this.db.query<{ proposal_task: string; result_permissions: Requirement[] | null; proposal: unknown; object_ref: unknown }>(
-        `SELECT run.proposal_task,task.result_permissions,run.body->'proposal' AS proposal,run.object_ref FROM ${this.db.schema}.workflow_runs run
+      const run = (await this.db.query<{ proposal_task: string; result_permissions: Requirement[] | null; proposal: unknown; object_ref: unknown; cognitive_context: unknown }>(
+        `SELECT run.proposal_task,task.result_permissions,task.cognitive_context,run.body->'proposal' AS proposal,run.object_ref FROM ${this.db.schema}.workflow_runs run
           JOIN ${this.db.schema}.tasks task ON task.id=run.proposal_task AND task.owner=run.owner AND task.state='completed'
           WHERE run.id=$1 AND run.owner=$2 AND run.proposal_scenario=$3 AND run.state='waiting-approval'
             AND run.body->'proposal'->>'mergeAction'=$4 AND run.proposal_deadline>clock_timestamp() FOR UPDATE OF run`,
         [row.workflow_run_id, owner, id, graph.change?.action ?? null], client,
       )).rows[0];
       if (!run) throw new Conflict('Workflow proposal is no longer waiting for approval or requires a different merge Action');
+      const { evidenceVersion } = cognitiveContextSchema.parse(run.cognitive_context);
+      await requireDecisionVersion(this.db, model, owner, evidenceVersion, client);
       if (!run.result_permissions || !await access.canReturn(run.result_permissions, client))
         throw new PermissionDenied('Workflow proposal no longer has access to its evidence');
       const proposal = cognitiveStepSchema.parse(run.proposal), object = objectRefSchema.parse(run.object_ref);
@@ -575,7 +616,6 @@ export class Scenarios {
       const validate = graph.change.validateWorkflow;
       if (!validate) throw new Conflict('Workflow merge requires its published proposal validation');
       validateWorkflow = candidate => validate(candidate, proposal.validation, object);
-      graph.change.workflowMerge = true;
       graph.change.taskId = run.proposal_task;
       proposalTask = run.proposal_task;
     }
@@ -588,7 +628,14 @@ export class Scenarios {
       for (const approval of approvals) {
         try {
           const review = await this.reviewDiff(model, row, approval.reviewer, client);
-          if (!review.conflicts && approval.snapshot === review.snapshot) { approvalSnapshot = approval.snapshot; break; }
+          if (!review.conflicts && approval.snapshot === review.snapshot) {
+            approvalSnapshot = approval.snapshot;
+            if (proposalTask && graph.change) {
+              graph.change.reviewedChangeDigest = changeDigest(review.objects,
+                review.links.map(({ type, from, to, removed }) => ({ edge: { type, from, to }, removed })));
+            }
+            break;
+          }
         } catch (error) {
           if (!(error instanceof PermissionDenied) && !(error instanceof NotFound)) throw error;
         }

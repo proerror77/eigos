@@ -142,7 +142,12 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
           if(digest(old.properties)!==digest(properties))await graph.edit(availability,old.revision,properties);
         } else await graph.create(availability,properties);
         const fields = { id: plan.id, name: input.title, start: input.start, end: input.end, timeZone: input.timeZone, durationMinutes: input.durationMinutes };
-        if (input.plan) { const current = await graph.read(plan); await graph.edit(plan,current.revision,fields); } else await graph.create(plan,{...fields,...(graph.model.object('SchedulePlan').properties.state?{state:'prepared'}:{})});
+        if (input.plan) {
+          const current = await graph.read(plan);
+          // The Workflow's reviewed delta must include the final confirmation.
+          const confirm = context.execution?.task.cognitive_context && graph.model.object('SchedulePlan').properties.state;
+          await graph.edit(plan, current.revision, { ...fields, ...(confirm ? { state: 'confirmed' } : {}) });
+        } else await graph.create(plan,{...fields,...(graph.model.object('SchedulePlan').properties.state?{state:'prepared'}:{})});
         await graph.linkBatch([{ type:'ResourceAvailability',from:resource,to:availability },{ type:'PlanResource',from:plan,to:resource },{ type:'PlanAvailability',from:plan,to:availability }]);
         if(view)await recordScenarioAction(graph,'PrepareSchedulePlan',raw,plan,context.operationId!);
       });

@@ -21,7 +21,7 @@ import { SemanticSearch, semanticSearchViewSchema } from './semantic.js';
 import { Sources } from './sources.js';
 import { Tasks, type Task } from './tasks.js';
 import { Clarification } from './clarification.js';
-import { cognitiveContextSchema, validateCognitive } from './cognitive-workflow.js';
+import { cognitiveContextSchema, requireDecisionVersion, validateCognitive } from './cognitive-workflow.js';
 import { checkHotelWorkflowAction, checkHotelWorkflowTool, HotelWorkflows, replayHotelWorkflow, type HotelWorkflowTrace } from './hotel-workflows.js';
 export { Clarification } from './clarification.js';
 export interface AgentTool { description: string; schema: z.ZodType; invoke(input: unknown): Promise<unknown> }
@@ -154,7 +154,13 @@ export class OntologyAgent {
       return documents;
     };
     const functionContext = async (id?: string) => ({ ...context, objects: new Objects(this.db,await view(id),access) });
-    const guard = async (client: import('./database.js').Sql) => { signal.throwIfAborted(); await this.tasks.current(task,client,true); };
+    const checkEvidence = (client?: import('./database.js').Sql) =>
+      cognitive && requireDecisionVersion(this.db, model, task.owner, cognitive.evidenceVersion, client);
+    const guard = async (client: import('./database.js').Sql) => {
+      signal.throwIfAborted();
+      await this.tasks.current(task, client, true);
+      await checkEvidence(client);
+    };
     const started = performance.now();
     let complete: (result: unknown) => void, reject: (error: unknown) => void;
     const completed = new Promise<unknown>((yes, no) => { complete = yes; reject = no; });
@@ -166,6 +172,7 @@ export class OntologyAgent {
       tools.set(name, { description, schema, invoke: async raw => {
         signal.throwIfAborted();
         if (closing) throw new Error('The task response has already been selected');
+        if (cognitiveBusy) throw new Conflict('Wait for the current Workflow tool before calling another');
         const input = schema.parse(raw);
         const step: (typeof steps)[number] = { tool: name, startedAt: new Date().toISOString(), durationMs: 0, outcome: 'running' };
         if (cognitive) cognitiveBusy = true;
@@ -181,6 +188,7 @@ export class OntologyAgent {
           )).rowCount) throw new Conflict('Workflow tool budget exhausted or execution lease ended');
           await access.refresh();
           await this.tasks.current(task);
+          await checkEvidence();
           const check = await egress.decide(disclosed);
           proof = check.policyDigest;
           if (!check.allowed) throw new ModelEgressDenied();
@@ -199,6 +207,7 @@ export class OntologyAgent {
             const documents = await boundaryReads(payload, scenarioId);
             return { output, documents };
           }, check.clearance);
+          await checkEvidence();
           const classification = combineClassification(disclosed, scoped.classification);
           const decision = await egress.decide(classification);
           proof = decision.policyDigest;
@@ -360,6 +369,7 @@ export class OntologyAgent {
     let initialRequirements: Requirement[];
     try {
       if (!initialDecision.allowed) throw new ModelEgressDenied();
+      await checkEvidence();
       const initial = await access.measureEgress(async () => {
         await boundaryReads(task.input);
         if (cognitive) {
