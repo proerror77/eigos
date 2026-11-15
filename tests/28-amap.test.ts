@@ -11,10 +11,12 @@ import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
 import { amapFunctions } from '../packages/capabilities/amap/functions.js';
 import { configuredAmap } from '../packages/capabilities/amap/client.js';
 import { Functions } from '../packages/runtime/functions.js';
+import { unresolvedMapPlace } from '../packages/runtime/clarification.js';
+import { ExecutionTrace } from '../packages/runtime/execution-trace.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { PARequests } from '../packages/runtime/pa.js';
 import { mapFunctions } from '../packages/ontology/maps.js';
-import { fixture, principal } from './fixture.js';
+import { document, fixture, principal } from './fixture.js';
 
 import { fakeAmap, testConnection, type Recorded } from './amap-fixture.js';
 
@@ -162,6 +164,103 @@ test('an imprecise route endpoint pauses for a scoped location response and resu
     assert.deepEqual(calls.map(call => call.name), ['maps_geo', 'maps_geo', 'maps_direction_driving']);
     assert.deepEqual(calls.at(-1)?.input, { origin: '121.499,31.205', destination: '121.51,31.2' });
   } finally {
+    await f.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a verified endpoint correction reopens the original legacy map pause across releases', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eigos-amap-legacy-'));
+  const calls: Recorded[] = [], connection = await testConnection(directory);
+  const providerFetch = { amapFetch: fakeAmap(calls) };
+  const day = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', dateStyle: 'short' }).format(Date.now() - 172800000);
+  const f = await fixture({
+    model: 'fixture-amap-place-amendment',
+    async run(prompt, tools) {
+      const data = JSON.parse(prompt.split('\n').at(-1)!);
+      const read = tools.get('evaluate_function')!, complete = tools.get('complete_with_function')!;
+      const history = await read.invoke({ function: 'readWeatherHistory',
+        input: { city: '上海', startDate: day, endDate: day } }) as { status?: string; days?: unknown[] };
+      if (!history.status) return;
+      assert.deepEqual(history.days, [{ date: day, minC: 8 }]);
+      if (!data.confirmedMapPlaces) {
+        await tools.get('request_clarification')!.invoke({ message: unresolvedMapPlace });
+        return;
+      }
+      assert.equal(data.userRequest.message, '从旧写法对应的地标出发自驾');
+      const ref = data.confirmedMapPlaces.origin;
+      assert.deepEqual(ref, { placeId: 'B0EXAMPLE', name: '咖啡店', city: '上海市' });
+      const found = await read.invoke({ function: 'readMapPlace', input: { id: ref.placeId } }) as { place: { point: unknown } };
+      await complete.invoke({ function: 'estimateMapRoute', input: {
+        mode: 'driving', origin: found.place.point, destination: { latitude: 31.2, longitude: 121.51, coordinateSystem: 'gcj02' },
+      } });
+    },
+  }, undefined, undefined, undefined, { amap: connection, ...providerFetch });
+  const config = readConfig({ DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_AUTH_MODE: 'development',
+    EIGOS_DEV_TOKEN: 'amap-recovery-dev-token-'.repeat(2), EIGOS_AMAP_CONNECTION_FILE: connection });
+  const server = createApp(config, f.db, f.source, async token => token === 'owner' ? principal : { ...principal, owner: 'other' },
+    {}, providerFetch).app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  try {
+    const original = { requestId: 'legacy-map-trip', message: '从旧写法对应的地标出发自驾' };
+    const task = await f.tasks.submit(principal, original);
+    await f.worker.runOne();
+    const weather = await f.tasks.get(principal, task.id);
+    const request = weather.result as { requestId: string };
+    await new PARequests(f.tasks).respond(principal, task.id, { requestId: request.requestId, response: {
+      status: 'available', city: '上海', observedAt: new Date().toISOString(), sourceUrl: 'https://example.org/weather',
+      kind: 'station_observation', evidence: 'synthetic', complete: true, days: [{ date: day, minC: 8 }],
+    } });
+    await f.worker.runOne();
+    const waiting = await f.tasks.get(principal, task.id);
+    assert.equal(waiting.state, 'input-required');
+    assert.equal(waiting.result, null);
+    const canceled = await f.tasks.cancel(principal, task.id);
+    const active = await f.metadata.publish(document, f.capabilities, f.publisher);
+    assert.notEqual(active.release, task.release);
+    const addr = server.address();
+    assert(addr && typeof addr !== 'string');
+    const amendment = { source: 'Amap', side: 'origin', placeId: 'B0EXAMPLE',
+      requestId: '211cfc13-0d98-452e-9d4d-c453d778cf3d', expectedUpdatedAt: canceled.updated_at.toISOString(), restoreCanceled: true };
+    const post = (body: unknown, token = 'owner') => fetch(`http://127.0.0.1:${addr.port}/tasks/${task.id}/place-amendment`, {
+      method: 'POST', headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+    assert.equal((await post(amendment, 'other')).status, 404);
+    assert.equal((await post({ ...amendment, expectedUpdatedAt: task.created_at.toISOString() })).status, 409);
+    assert.equal((await post({ ...amendment, restoreCanceled: undefined })).status, 409);
+    const blocked = await f.tasks.submit(principal, { requestId: 'prior-map-action', message: original.message });
+    const claimed = (await f.tasks.claim())!;
+    assert.equal(claimed.id, blocked.id);
+    await f.tasks.finish(claimed, 'input-required', null, unresolvedMapPlace);
+    const blockedCanceled = await f.tasks.cancel(principal, blocked.id);
+    await f.db.query(`INSERT INTO ${f.db.schema}.actions(owner,request_id,digest,action,release,result,task_id)
+      VALUES($1,'already-applied','fixture','PrepareSchedulePlan',$2,'{}',$3)`, [principal.owner, active.release, blocked.id]);
+    await assert.rejects(f.tasks.amendMapPlace(principal, blocked.id, {
+      ...amendment, expectedUpdatedAt: blockedCanceled.updated_at.toISOString(),
+    }, f.capabilities.functions), /prior business Actions/);
+    assert.equal(calls.length, 0);
+    const response = await post(amendment);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).id, task.id);
+    assert.equal((await post(amendment)).status, 200);
+    assert.equal((await post({ ...amendment, placeId: 'other-place' })).status, 409);
+    assert.deepEqual(calls.map(call => call.name), ['maps_search_detail']);
+    assert.equal((await f.tasks.submit(principal, original)).id, task.id);
+
+    await f.worker.runOne();
+    const done = await f.tasks.get(principal, task.id);
+    assert.equal(done.state, 'completed', done.error ?? undefined);
+    assert.equal(done.release, active.release);
+    assert.deepEqual((done.result as { routes: unknown[] }).routes, [{ distanceMeters: 3000, durationSeconds: 1500 }]);
+    const trace = await new ExecutionTrace(f.db, f.metadata).read(f.access, 'Eigos', { taskId: task.id });
+    assert(trace.events.some(event => event.kind === 'model' && event.release === task.release));
+    const corrections = trace.events.filter(event => event.kind === 'map-place-correction');
+    assert.equal(corrections.length, 1);
+    assert.equal(corrections[0]?.previousRelease, task.release);
+    assert.equal(corrections[0]?.previousState, 'canceled');
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
     await f.close();
     await rm(directory, { recursive: true, force: true });
   }

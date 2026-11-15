@@ -163,13 +163,33 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       const range = interval(input.start,input.end);
       if (ms(range.end)-ms(range.start) > 31*86400000 || ms(range.end) <= Date.now()) throw new Conflict('Use a future planning window of at most 31 days');
       if (!context.execution || !context.operationId || !context.edit) throw new Conflict('Request calendar information through the original PA task');
-      const response = calendarResponseSchema.parse(await new PARequests(context.execution.tasks).request(context.execution.task, context.operationId, 'calendar.freebusy',
-        { start: input.start, end: input.end, timeZone: input.timeZone, fields: ['busy', 'windows'], purpose: input.title }, jsonSchema(calendarResponseSchema), { start:new Date(ms(input.start)).toISOString(),end:new Date(ms(input.end)).toISOString(),timeZone:input.timeZone }));
-      if (response.status !== 'available') throw new Conflict(`PA calendar response is ${response.status}`);
-      if(response.exclusions?.length)throw new Conflict('This planning request did not authorize calendar exclusions');
-      const now = Date.now();
-      if (ms(response.start) !== ms(input.start) || ms(response.end) !== ms(input.end) || response.timeZone !== input.timeZone || ms(response.observedAt)>now+5000 || ms(response.observedAt)<now-300000 || ms(response.expiresAt)<=now || ms(response.expiresAt)>ms(response.observedAt)+300000) throw new Conflict('PA calendar response has a stale or mismatched range');
-      for (const span of [...response.windows,...response.busy]) if (!contained(range,interval(span.start,span.end))) throw new Conflict('PA must clip availability to the requested range');
+      const requests = new PARequests(context.execution.tasks);
+      const scope = { start: new Date(ms(input.start)).toISOString(), end: new Date(ms(input.end)).toISOString(), timeZone: input.timeZone };
+      const request = { start: input.start, end: input.end, timeZone: input.timeZone, fields: ['busy', 'windows'], purpose: input.title };
+      const schema = jsonSchema(calendarResponseSchema);
+      let replaces: string | undefined;
+      let response: z.infer<typeof calendarResponseSchema>;
+      for (;;) {
+        context.signal.throwIfAborted();
+        const receipt = await requests.requestWithId(context.execution.task, context.operationId, 'calendar.freebusy',
+          request, schema, replaces ? { ...scope, replaces } : scope);
+        response = calendarResponseSchema.parse(receipt.response);
+        if (response.status !== 'available') throw new Conflict(`PA calendar response is ${response.status}`);
+        if (response.exclusions?.length) throw new Conflict('This planning request did not authorize calendar exclusions');
+        const now = Date.now(), observed = ms(response.observedAt), expires = ms(response.expiresAt);
+        if (ms(response.start) !== ms(input.start) || ms(response.end) !== ms(input.end) || response.timeZone !== input.timeZone ||
+            observed > now + 5000 || expires <= observed) {
+          throw new Conflict('PA calendar response has a stale or mismatched range');
+        }
+        for (const span of [...response.windows, ...response.busy])
+          if (!contained(range, interval(span.start, span.end))) throw new Conflict('PA must clip availability to the requested range');
+        if (expires > now) {
+          if (expires > observed + 300000) throw new Conflict('PA calendar response has a stale or mismatched range');
+          break;
+        }
+        if (observed < receipt.requestedAt.getTime() - 5000) throw new Conflict('PA calendar response has a stale or mismatched range');
+        replaces = receipt.requestId;
+      }
       const resource = { type: 'ScheduleResource', id: digest([context.principal.owner,'personal-calendar']) };
       const plan = input.plan ?? { type: 'SchedulePlan', id: context.operationId };
       const availability = { type:'CalendarAvailability',id:digest([resource.id,plan.id]) };

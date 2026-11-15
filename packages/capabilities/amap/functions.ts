@@ -5,7 +5,7 @@ import {
   adcode, gcjPoint, geocodeResult, mapAddress, mapPlaceResult, mapPoint, mapRouteInput, mapRouteResult,
   mapSearch, nearbySearch, placeDetailInput, placeDetailResult, reverseGeocodeResult, weatherInput, weatherResult,
 } from '../../ontology/maps.js';
-import { Clarification } from '../../runtime/clarification.js';
+import { Clarification, unresolvedMapPlace } from '../../runtime/clarification.js';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import { locationForService } from '../location.js';
 import { type AmapClient, type AmapResolver } from './client.js';
@@ -96,7 +96,7 @@ async function uniquePlace(client: AmapClient, input: Address, signal: AbortSign
   const actualCity = first?.city ?? first?.province;
   const wrongCity = input.city && /\p{Script=Han}/u.test(input.city) && actualCity && areaName(actualCity) !== areaName(input.city);
   if (!first || other.length || wrongCity || (needsPoint && (!precise || !preciseLevels.has(precise))))
-    throw new Clarification('高德未能唯一匹配所需精度的地点，请补充城市或完整地址。');
+    throw new Clarification(unresolvedMapPlace);
   return first;
 }
 
