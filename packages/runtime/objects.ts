@@ -7,6 +7,7 @@ import { Conflict, NotFound, digest, type ExecutionActor } from '../core/identit
 import { PublishedOntology } from './metadata.js';
 import { Access } from './access.js';
 import { objectRefSchema, type ObjectData, type ObjectRef, type LinkData } from '../ontology/schema.js';
+import { documentChunkType, documentType } from '../ontology/documents.js';
 import { processLogTarget } from '../ontology/process-definition.js';
 import { Database, type Sql } from './database.js';
 import { checkScenario, lockEdits, viewTables, stageObject, stageLink, type ScenarioMutation } from './scenario-store.js';
@@ -66,7 +67,7 @@ export class Objects {
     const ref = objectRefSchema.parse(input);
     await checkScenario(this.db, this.model, this.owner, this.client);
     const values: unknown[] = [this.owner, ref.type, ref.id, this.model.projection];
-    const policy = processLogTarget(this.model,ref.type) ? this.access.rowSql(this.model,ref.type,values,'o.properties') : 'TRUE';
+    const policy = ref.type === documentChunkType || processLogTarget(this.model,ref.type) ? this.access.rowSql(this.model,ref.type,values,'o.properties') : 'TRUE';
     const tables = viewTables(this.db, this.model, this.owner, values,[ref.type]);
     const rows = await this.db.readQuery(`${tables.prefix}SELECT type,id,revision,properties FROM ${tables.objects} o WHERE owner=$1 AND type=$2 AND id=$3 AND projection=$4 AND ${policy}`, values, this.client);
     if (!rows.rows[0]) throw new NotFound('Object is unavailable');
@@ -76,20 +77,32 @@ export class Objects {
     if(input.type===scenarioMetadataType)return scenarioMetadataRead(this,input);
     this.access.read(this.model, input.type);
     const object = await this.stored(input);
-    await this.processLogReads([object]);
+    await this.linkedSecurityReads([object]);
     return this.visible(object);
   }
-  private async processLogReads(objects: ObjectData[]) {
+  private async linkedSecurityReads(objects: ObjectData[]) {
     const seen = new Set<string>();
     for (const object of objects) {
-      const target = processLogTarget(this.model,object.ref.type);
+      const log = processLogTarget(this.model, object.ref.type);
+      const target = log ? { type: log.objectType, id: String(object.properties.processId), field: log.property }
+        : object.ref.type === documentChunkType
+          ? { type: documentType, id: String(object.properties.documentId), field: 'extractedText' }
+          : undefined;
       if (!target) continue;
-      const ref = { type: target.objectType, id: String(object.properties.processId) }, key = JSON.stringify([ref,target.property]);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const parent = await this.stored(ref);
-      this.access.readRow(this.model,ref.type,parent.properties,true);
-      if (!this.access.cell(this.model,ref.type,target.property,parent.properties)) throw new NotFound('Process state is unavailable');
+      const { field, ...ref } = target, key = JSON.stringify(target);
+      if (!seen.has(key)) {
+        seen.add(key);
+        const parent = await this.stored(ref);
+        this.access.readRow(this.model, ref.type, parent.properties, true);
+        if (!this.access.cell(this.model, ref.type, field, parent.properties)) throw new NotFound('Linked data is unavailable');
+      }
+      if (log && this.access.needsEgressRead(this.model, ref.type)) {
+        const history = (await this.db.readQuery(`SELECT before_values,after_values FROM ${this.db.schema}.edit_history
+          WHERE owner=$1 AND sequence=$2 AND release=$3`, [this.owner, object.properties.sequence, object.properties.release], this.client)).rows[0];
+        for (const properties of [history?.before_values, history?.after_values]) {
+          if (properties) this.access.observeRowClassification(this.model, ref.type, properties);
+        }
+      }
     }
   }
   /** Source fields must match their baseline; unrelated local notes may remain. */
@@ -109,7 +122,7 @@ export class Objects {
   }
   async read(input: ObjectRef): Promise<ObjectData> {
     if(this.client===this.db.pool&&Object.values(this.model.object(input.type).properties).some(property=>property.derived)) {
-      const access=await Access.load(this.db,this.access.principal);
+      const access=await this.access.fork();
       const result=await this.db.transaction(async client=>{
         await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',[],client);
         return new Objects(this.db,this.model,access,client).read(input);
@@ -123,12 +136,15 @@ export class Objects {
     const args=querySchema.parse(input);
     const fields = queryFields(args);
     this.access.definition(this.model, this.model.interfaces.has(args.type) ? 'interface' : 'object', args.type);
+    const viewLabel = this.model.interfaces.get(args.type)?.classification;
+    if (!this.access.canSeeModelData(viewLabel)) return { items: [], cursor: undefined };
+    this.access.observeClassification(viewLabel);
     const types = this.model.concreteTypes(args.type);
     for (const field of fields) this.model.propertyPath(args.type, field);
     const derived=types.some(type=>Object.values(this.model.object(type).properties).some(property=>property.derived));
     if(!args.filter&&!args.orderBy&&!derived&&!fields.some(field=>field.includes('.')))return this.queryStored(args);
     if(this.client===this.db.pool) {
-      const access=await Access.load(this.db,this.access.principal);
+      const access=await this.access.fork();
       const result=await this.db.transaction(async client=>{
         await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',[],client);
         return new Objects(this.db,this.model,access,client).query(args);
@@ -142,7 +158,7 @@ export class Objects {
       const enriched = await evaluator.enrich(raw);
       const properties = Object.fromEntries(Object.keys(definitions).map(field => {
         const local = this.model.propertyName(raw.ref.type, args.type, field);
-        return [field, local ? enriched.properties[local] ?? null : null];
+        return [field, local && this.visibleViewField(args.type, field) ? enriched.properties[local] ?? null : null];
       }));
       return { ...enriched, properties };
     };
@@ -182,6 +198,12 @@ export class Objects {
     const items=matching.slice(offset,end).map(object=>args.select?{...object,properties:Object.fromEntries(args.select.map(field=>[field,nestedValue(object.properties,field)]))}:object);
     return {items,cursor:end<matching.length?Buffer.from(JSON.stringify({query:identity,offset:end})).toString('base64url'):undefined};
   }
+  private visibleViewField(view: string, field: string) {
+    const label = this.model.interfaces.get(view)?.properties[field]?.classification;
+    if (!this.access.canSeeModelData(label)) return false;
+    this.access.observeClassification(label);
+    return true;
+  }
   private mayUseStoredFields(view: string, types: string[], fields: string[]) {
     return types.every(type => type !== scenarioMetadataType && !processLogTarget(this.model, type)
       && fields.every(field => {
@@ -194,12 +216,18 @@ export class Objects {
   private async storedSelection(args: z.output<typeof querySchema>) {
     await checkScenario(this.db, this.model, this.owner, this.client);
     this.access.definition(this.model, this.model.interfaces.has(args.type) ? 'interface' : 'object', args.type);
+    const viewLabel = this.model.interfaces.get(args.type)?.classification;
+    if (!this.access.canSeeModelData(viewLabel)) return undefined;
+    this.access.observeClassification(viewLabel);
     const navigation = args.from && this.model.navigation(args.from.object.type, args.from.link, args.from.as);
     if (args.from && navigation) {
       if (args.from.as) this.access.definition(this.model, 'interface', args.from.as);
       await this.readStored(args.from.object);
       this.access.read(this.model, navigation.target);
       this.access.definition(this.model, 'link', navigation.link);
+      const label = this.model.links.get(navigation.link)?.classification;
+      if (!this.access.canSeeModelData(label)) return undefined;
+      this.access.observeClassification(label);
     }
     const types = this.model.concreteTypes(args.type).filter(type => (!navigation || type === navigation.target) && this.access.canRead(this.model, type));
     if (!types.length) return undefined;
@@ -222,6 +250,7 @@ export class Objects {
       const key = JSON.stringify([view, path]), cached = fields.get(key);
       if (cached) return cached;
       const [root, ...nested] = path.split('.');
+      if (!this.visibleViewField(view, root!)) return "'null'::jsonb";
       const cases = types.flatMap(type => {
         const local = this.model.propertyName(type, view, root!);
         if (!local) return [];
@@ -251,7 +280,9 @@ export class Objects {
     const result = await this.db.readQuery(`${tables.prefix}SELECT o.type,o.id,o.revision,o.properties FROM ${tables.objects} o
       WHERE ${clauses.join(' AND ')} ORDER BY ${order.join(', ')} LIMIT 10001`, values, this.client);
     if (result.rows.length > 10000) throw new Conflict('Extended query exceeds 10000 matching objects');
-    return { objects: result.rows.map(row => this.visible(this.row(row))), ordered };
+    const records = result.rows.map(row => this.row(row));
+    await this.linkedSecurityReads(records);
+    return { objects: records.map(record => this.visible(record)), ordered };
   }
   async queryStored(input: Query):Promise<{items:ObjectData[];cursor?:string}> {
     if(input.type===scenarioMetadataType)return scenarioMetadataQuery(this,input);
@@ -267,11 +298,11 @@ export class Objects {
     const result = await this.db.readQuery(`${tables.prefix}SELECT o.type,o.id,o.revision,o.properties FROM ${tables.objects} o
       WHERE ${clauses.join(' AND ')} ORDER BY o.type COLLATE "C",o.id COLLATE "C" LIMIT ${bind(args.limit + 1)}`, values, this.client);
     const records = result.rows.slice(0, args.limit).map(row => this.row(row));
-    await this.processLogReads(records);
+    await this.linkedSecurityReads(records);
     const fields = args.select ?? Object.keys(this.model.interfaces.get(args.type)?.properties ?? this.model.object(args.type).properties).filter(field=>types.some(type=>{const local=this.model.propertyName(type,args.type,field);return local&&!this.model.object(type).properties[local]?.derived;}));
     const items = records.map(object => { this.access.readRow(this.model,object.ref.type,object.properties); return { ...object, properties: Object.fromEntries(fields.flatMap(field => {
       const local = this.model.propertyName(object.ref.type, args.type, field);
-      return local === undefined ? [] : [[field, this.access.cell(this.model, object.ref.type, local, object.properties) ? object.properties[local] : null]];
+      return local === undefined ? [] : [[field, this.visibleViewField(args.type, field) && this.access.cell(this.model, object.ref.type, local, object.properties) ? object.properties[local] : null]];
     })) }; });
     const last = records.at(-1)?.ref;
     return { items, cursor: result.rows.length > args.limit && last ? Buffer.from(JSON.stringify({ query: queryDigest, ...last })).toString('base64url') : undefined };
@@ -329,6 +360,9 @@ export class Objects {
     this.access.read(this.model, sourceType);
     this.access.read(this.model, nav.target);
     this.access.definition(this.model, 'link', nav.link);
+    const label = this.model.links.get(nav.link)?.classification;
+    if (!this.access.canSeeModelData(label)) return [];
+    this.access.observeClassification(label);
     await checkScenario(this.db, this.model, this.owner, this.client);
     const from = nav.forward ? 'from' : 'to', to = nav.forward ? 'to' : 'from';
     const values: unknown[] = [this.owner, this.model.projection, sourceType, ids, nav.link, nav.target, maximum + 1];
@@ -344,13 +378,15 @@ export class Objects {
           AND s.type=$3 AND s.id=ANY($4::text[]) AND ${sourcePolicy}
           AND (l.${to}_type,l.${to}_id)=(o.type,o.id)) LIMIT $7`, values, this.client);
     if (result.rows.length > maximum) throw new Conflict('Object set exceeds the complete evaluation limit');
-    return result.rows.map(row => this.visible(this.row(row)));
+    const records = result.rows.map(row => this.row(row));
+    await this.linkedSecurityReads(records);
+    return records.map(record => this.visible(record));
   }
   async follow(ref: ObjectRef, link: string, view = ref.type): Promise<ObjectData[]> {
     if (view !== ref.type) this.access.definition(this.model, 'interface', view);
     const nav = this.model.navigation(ref.type, link, view);
     if(this.client===this.db.pool&&[ref.type,nav.target].some(type=>Object.values(this.model.object(type).properties).some(property=>property.derived))) {
-      const access=await Access.load(this.db,this.access.principal);
+      const access=await this.access.fork();
       const result=await this.db.transaction(async client=>{
         await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',[],client);
         return new Objects(this.db,this.model,access,client).follow(ref,link,view);
@@ -359,6 +395,9 @@ export class Objects {
       this.access.adoptReads(access);return result;
     }
     await this.read(ref); this.access.read(this.model, nav.target); this.access.definition(this.model, 'link', nav.link);
+    const label = this.model.links.get(nav.link)?.classification;
+    if (!this.access.canSeeModelData(label)) return [];
+    this.access.observeClassification(label);
     const from = nav.forward ? 'from' : 'to', to = nav.forward ? 'to' : 'from';
     await checkScenario(this.db, this.model, this.owner, this.client);
     const values: unknown[] = [this.owner, nav.link, ref.type, ref.id, this.model.projection];
@@ -368,7 +407,7 @@ export class Objects {
       JOIN ${tables.objects} o ON o.projection=l.projection AND o.owner=l.owner AND o.type=l.${to}_type AND o.id=l.${to}_id
       WHERE l.owner=$1 AND l.type=$2 AND l.${from}_type=$3 AND l.${from}_id=$4 AND l.projection=$5 AND ${policy} ORDER BY o.id COLLATE "C" LIMIT 101`, values, this.client);
     if (result.rows.length > 100) throw new Error('Relationship exceeds the complete read limit');
-    await this.processLogReads(result.rows.map(row=>this.row(row)));
+    await this.linkedSecurityReads(result.rows.map(row=>this.row(row)));
     if(nav.target===scenarioMetadataType){
       const items:ObjectData[]=[];
       for(const row of result.rows)try{items.push(await scenarioMetadataRead(this,{type:scenarioMetadataType,id:String(row.id)}));}catch(error){if(!(error instanceof NotFound))throw error;}

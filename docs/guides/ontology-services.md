@@ -65,7 +65,7 @@ Gateway 可配置 `QUERY_DATABASE_URL` 使用独立只读连接池，包括已�
 | 方案审阅 | `scenario_approvals` 的 SELECT/INSERT |
 | 索引生产与消费 | `index_streams`、`index_transactions` 的 SELECT/INSERT/UPDATE，加对象编辑权限 |
 | 物化 | `materializations`、`materialized_objects`、`materialized_links` 的 SELECT/INSERT |
-| 副作用 | `action_effects` 的 SELECT/INSERT/UPDATE |
+| 副作用 | `action_effects` 的 SELECT/INSERT/UPDATE，以及核对提交凭据所需的 `actions` SELECT |
 | 发布管理 | 治理与发布表的编辑权限，以及候选对象、关系和来源/编辑状态复制权限 |
 | 查询连接 | 对象、关系、`storage_identity` 的 SELECT，连接强制只读 |
 

@@ -37,7 +37,7 @@ const scheduleResult = z.object(planResultSchema.shape);
 
 function captureToolCalls(driver: AgentDriver, calls: ToolCall[]): AgentDriver {
   return {
-    model: driver.model,
+    model: driver.model, provider: driver.provider,
     run(prompt, tools, signal) {
       return driver.run(prompt, new Map([...tools].map(([name, tool]) => [name, {
         ...tool,

@@ -35,3 +35,11 @@
 ```
 
 调用者需要 Action、Function 和关联对象的授权来注册版本。普通对象查询遵守 owner、对象及属性权限。沿 Link 查询还检查起点计划的读取权限。配置 `property_security` 可独立限制 `extractedText` 或 `sourceRef`，被遮罩的文本无法用于命中搜索词。
+
+## 片段与引用
+
+每个版本在注册时生成 `OperationalDocumentChunk`，并通过 `chunks` Link 关联。默认每段最多 1,500 个 Unicode 码点，优先在附近的自然断句处换段。调用方可用 `locationRanges` 提供有序且互不重叠的 `startOffset`、`endOffset`、`page` 和 `paragraph`。字符范围从零开始，左闭右开。页码和段号只有来源提供时才写入。
+
+片段继承版本的分类及其原文读取权限。可以通过 `OperationalDocumentChunk.text` 做词法筛选，也可以用现有 `semantic_configure`、`semantic_index` 和 `semantic_search` 构建和使用语义索引。受保护的片段仅可使用本地嵌入 Function。语义结果的 `citation` 包含版本引用、片段引用、序号、字符区间，以及可用的页码和段号。原文、片段或引用权限变化后，旧向量也遵循当前权限过滤。
+
+已存在的版本可以再次提交相同注册输入，以生成稳定片段。页码范围属于版本的一部分。更新原文或定位信息时应注册新版本。

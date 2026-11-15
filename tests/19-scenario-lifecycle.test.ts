@@ -181,8 +181,8 @@ test('Agent completes a generic merge with live permissions and effect delivery 
     const task=await f.tasks.submit(principal,{requestId:'merge-task',message:'Merge the reviewed route proposal and return the live name'});
     await worker.runOne();
     const completed=await f.tasks.get(principal,task.id);assert.equal(completed.state,'completed',JSON.stringify(completed));
-    const result=completed.result as {name:string;execution:{steps:{tool:string;input:unknown}[]}};
-    assert.equal(result.name,'after');assert(result.execution.steps.some(step=>step.tool==='apply_action'&&step.input));
+    const result=completed.result as {name:string;execution:{steps:{tool:string;outcome:string}[]}};
+    assert.equal(result.name,'after');assert(result.execution.steps.some(step=>step.tool==='apply_action'&&step.outcome==='completed'));
     assert(completed.result_permissions!.some(requirement=>requirement.row?.id===route.id));
     assert(completed.result_permissions!.every(requirement=>!requirement.row?.scenario));
     const effects=new Effects(f.db,handlers);await effects.runOne();assert.equal(delivered,1);

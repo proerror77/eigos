@@ -148,6 +148,8 @@ OAuth scopes 控制协议入口。当前身份对应的资源授权控制本体�
 
 多租户配置可为原始业务表启用 PostgreSQL 行级安全，事务继承经过认证或领取的 owner。Action 和编辑历史记录执行者身份，授权继续由本体检查。部署角色与验证方式见 [Ontology 运行服务](../guides/ontology-services.md)。
 
+模型接收权限使用发布定义和受信任部署配置。Harness 在初始上下文及工具结果交给目标模型前检查密级和隔离标签。业务读取、检索排序及模型返回使用当前权限。模型身份和授权结果记录在执行追踪中。[Palantir 模型数据访问控制](https://www.palantir.com/docs/foundry/aip/control-llm-data-access-with-markings)
+
 Action 检查自身应用权限，以及实际访问的对象、关系和来源。源读取权限与对象可见性独立，授予原始来源读取意味着允许读取该来源的原始数据。只读对象接口不能取得编辑上下文；所有业务编辑仍通过 Action 提交。[Action 权限](https://www.palantir.com/docs/foundry/action-types/permissions/)
 
 权限在一次执行上下文中读取并复用，源调用、函数返回及提交前重新检查；没有逐对象开启授权事务。任务结果记录读取依赖，当前授权不再满足时整个缓存结果被隐藏。授权表由数据库管理角色维护，常驻运行角色仅有读取权限。对象内容策略支持标量相等、身份匹配、组成员关系及 all/any 组合，属性策略复用相同表达式。标记数组控制读取及 Action 输出传播。对象数据保持 owner 分区，组和项目授权管理资源定义与分区内可见性。
@@ -178,10 +180,12 @@ Ontology 分支与项目归属提供定义提案、三方 rebase、精确候选�
 
 Object Set Service 支持集合组合、多跳导航、分组聚合，以及静态和动态集合保存。来源事务经过独立 Indexer 按 offset 应用。用户编辑和来源值按类型策略合成，编辑历史与物化数据提供授权后的下游读取。Functions 可选择独立版本，Actions 可声明经过事务 outbox 的具名副作用。
 
-PDF 和 SOP 的已提取文本按不可变文档版本入库，随排程 Link 与对象字段权限查询。对象集的可下推查询复用 PostgreSQL 的权限过滤。 [文档版本](../guides/document-versions.md) · [对象集](../guides/object-sets.md)
+PDF 和 SOP 的已提取文本按不可变文档版本与切片入库，随排程 Link 与对象字段权限查询。切片保留版本引用与提取文本中的准确范围，原件提供页码或段落信息时一并保留。对象集的可下推查询复用 PostgreSQL 的权限过滤。 [文档版本](../guides/document-versions.md) · [对象集](../guides/object-sets.md)
 
 Machinery 过程日志以普通 Object Type 实现共同 `ProcessLog` Interface，通过已发布 Link 关联原业务对象。查询投影复用正式编辑历史，不增加日志存储或执行引擎；Action、请求、原任务与来源观察时间在原事务中关联。Scenario 拟议修改不进入正式历史，排程确认沿原合并 Action 记录内部状态。Agent 通过既有 Ontology MCP 发现和查询这些对象，简单任务保持直接执行。定义、权限、升级和验收边界见 [过程日志](../guides/process-history.md)。
 
 过程规则按正式历史游标拾取状态跃迁，沿用 Workflow 队列和 Action 权限处理即时事件与停留超时。Agent 评估通过相同 MCP 路径执行固定业务用例，按实际工具调用、状态和差量评分。 [自动化](../guides/automation.md) · [Agent 评估](../guides/agent-evaluations.md)
+
+执行追踪使用原任务和 Action 身份关联来源证据、模型授权、方案审阅、编辑历史、outbox 和实际供应商回执。读取追踪时复核权限，业务结果以各原始记录为准。 [EIGOS 执行追踪](../guides/execution-trace.md) · [Palantir 执行追踪](https://www.palantir.com/docs/foundry/aip-observability/trace-view)
 
 Gateway 的只读查询池可连接已有只读副本，通过身份与 WAL 追赶检查保持当前读取。部署可分别扩展 Gateway、任务 Worker 和 Indexer。参数、表授权、边界及运行命令见 [Ontology 运行服务](../guides/ontology-services.md)。

@@ -19,6 +19,7 @@ test('execution trace joins authoritative rows and filters cross-owner or revoke
     const task = await f.submit();
     const taskOrigin = { owner: principal.owner, release: model.release, projection: model.projection, taskId: task.id };
     await appendTrace(db, taskOrigin, { kind: 'model', model: 'fixture-model', state: 'started', attempt: 'first' });
+    await assert.rejects(db.query(`DELETE FROM ${db.schema}.execution_trace WHERE task_id=$1`, [task.id]), /append-only/);
     await f.worker.runOne();
     const result = await f.tasks.get(principal, task.id);
     assert.equal(result.state, 'completed', result.error ?? '');

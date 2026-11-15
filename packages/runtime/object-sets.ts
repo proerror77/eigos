@@ -207,21 +207,27 @@ export class ObjectSets {
     };
     return sorted([...(await visit(set, new Set(rootId ? [rootId] : []))).values()]);
   }
-  private project(model: PublishedOntology, object: ObjectData, view?: string): ObjectData {
+  private project(access: Access, model: PublishedOntology, object: ObjectData, view?: string): ObjectData {
     if (!view || view === object.ref.type) return object;
     if (!model.implements(object.ref.type, view)) throw new Conflict('The requested view is incompatible with an object in this set');
     const properties = model.interfaces.get(view)?.properties;
     if (!properties) throw new Conflict('Use an Object Type or Interface view');
     return { ...object, properties: Object.fromEntries(Object.keys(properties).map(name => {
       const local = model.propertyName(object.ref.type, view, name);
-      return [name, local ? object.properties[local] ?? null : null];
+      const label = properties[name]?.classification;
+      const visible = access.canSeeModelData(label);
+      if (visible) access.observeClassification(label);
+      return [name, local && visible ? object.properties[local] ?? null : null];
     })) };
   }
   async evaluate(access: Access, model: PublishedOntology, raw: unknown) {
     const input = evaluateSetSchema.parse(raw);
     return this.snapshot(access, async client => {
       if (input.view) access.definition(model, model.interfaces.has(input.view) ? 'interface' : 'object', input.view);
-      const all = (await this.resolve(access, model, input.set, client)).map(object => this.project(model, object, input.view));
+      const viewLabel = input.view ? (model.interfaces.get(input.view) ?? model.objects.get(input.view))?.classification : undefined;
+      const allowedView = access.canSeeModelData(viewLabel);
+      if (allowedView) access.observeClassification(viewLabel);
+      const all = allowedView ? (await this.resolve(access, model, input.set, client)).map(object => this.project(access, model, object, input.view)) : [];
       const identity = digest({ owner: access.principal.owner, release: model.release, scenario: model.scenario, set: input.set, view: input.view, objects: all });
       const offset = input.cursor ? z.strictObject({ identity: z.literal(identity), offset: z.number().int().nonnegative().max(all.length) }).parse(JSON.parse(Buffer.from(input.cursor, 'base64url').toString())).offset : 0;
       const end = offset + input.limit;
@@ -232,12 +238,15 @@ export class ObjectSets {
     const input = aggregateSetSchema.parse(raw);
     return this.snapshot(access, async client => {
       if (input.view) access.definition(model, model.interfaces.has(input.view) ? 'interface' : 'object', input.view);
-      if (this.maximumObjects === 10000 && input.set.op === 'query') {
+      const viewLabel = input.view ? (model.interfaces.get(input.view) ?? model.objects.get(input.view))?.classification : undefined;
+      const allowedView = access.canSeeModelData(viewLabel);
+      if (allowedView) access.observeClassification(viewLabel);
+      if (allowedView && this.maximumObjects === 10000 && input.set.op === 'query') {
         const pushed = await new Objects(this.db, model, access, client)
           .aggregateStored(input.set.query, input.view, input.groupBy, input.metrics, this.maximumObjects);
         if (pushed) return pushed;
       }
-      const all = (await this.resolve(access, model, input.set, client)).map(object => this.project(model, object, input.view));
+      const all = allowedView ? (await this.resolve(access, model, input.set, client)).map(object => this.project(access, model, object, input.view)) : [];
       const fields = new Set([...input.groupBy, ...Object.values(input.metrics).flatMap(metric => metric.property ? [metric.property] : [])]);
       const types = new Set(input.view ? [input.view] : all.map(object => object.ref.type));
       if (!types.size && input.set.op === 'query') types.add(input.set.query.type);

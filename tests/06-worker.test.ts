@@ -4,12 +4,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Objects } from '../packages/runtime/objects.js';
 import { digest } from '../packages/core/identity.js';
-import { fixture, principal, route } from './fixture.js';
+import { document, fixture, principal, route } from './fixture.js';
 import { OntologyAgent } from '../packages/runtime/agent.js';
 import { Functions } from '../packages/runtime/functions.js';
 import { Actions } from '../packages/runtime/actions.js';
 import { Sources } from '../packages/runtime/sources.js';
 import { Scenarios } from '../packages/runtime/scenarios.js';
+import { setModelClearance } from '../packages/runtime/model-egress.js';
 import { Worker } from '../apps/worker/worker.js';
 import { harnessFixture } from './harness-fixture.js';
 
@@ -183,7 +184,7 @@ test('the production database role can execute an inquiry without publication up
       GRANT INSERT ON ${f.db.schema}.execution_trace TO "${role}";
       GRANT SELECT,INSERT,UPDATE ON ${f.db.schema}.action_changes,${f.db.schema}.action_undo_requests,${f.db.schema}.scenario_sessions TO "${role}";
       GRANT USAGE ON ALL SEQUENCES IN SCHEMA ${f.db.schema} TO "${role}";
-      GRANT SELECT,INSERT ON ${f.db.schema}.links,${f.db.schema}.actions TO "${role}";`);
+      GRANT SELECT,INSERT ON ${f.db.schema}.links,${f.db.schema}.actions,${f.db.schema}.execution_trace TO "${role}";`);
     const { Database } = await import('../packages/runtime/database.js');
     const { Metadata } = await import('../packages/runtime/metadata.js');
     const { Tasks } = await import('../packages/runtime/tasks.js');
@@ -245,5 +246,122 @@ test('the Agent evaluates, aggregates and completes object sets in the task Scen
       if (completion === 'aggregate') assert.equal(result.count, 1);
       else assert.equal(result.items[0]!.properties.name, 'Proposed');
     }
+  } finally { await f.close(); }
+});
+
+test('the initial model context requires the exact destination and every compartment before invoking the driver', async () => {
+  const clearance = { sensitivity: 'CONFIDENTIAL', compartments: ['FINANCE', 'SUPPLIER_RATE'] } as const;
+  const model = 'fixture-classified-input';
+  let starts = 0;
+  const f = await fixture({ model, provider: 'openai-codex', async run(prompt, tools) {
+    starts++;
+    assert.match(prompt, /private planning detail/);
+    await tools.get('complete_with_object_set')!.invoke({ set: { op: 'refs', objects: [] } });
+  } });
+  try {
+    const submit = (requestId: string) => f.tasks.submit(principal, {
+      requestId, message: 'private planning detail', classification: clearance,
+    });
+    await setModelClearance(f.db, { owner: 'other-owner', provider: 'openai-codex', model, clearance });
+    await setModelClearance(f.db, { owner: principal.owner, provider: 'other-provider', model, clearance });
+    for (const key of ['no-exact-policy', 'missing-compartment']) {
+      const task = await submit(key);
+      await f.worker.runOne();
+      assert.equal((await f.tasks.get(principal, task.id)).state, 'failed');
+      assert.equal(starts, 0);
+      const trace = (await f.db.query(`SELECT event FROM ${f.db.schema}.execution_trace WHERE task_id=$1 ORDER BY sequence`, [task.id])).rows;
+      assert.equal(trace.length, 1);
+      assert.equal(trace[0]!.event.state, 'blocked');
+      await setModelClearance(f.db, { owner: principal.owner, provider: 'openai-codex', model,
+        clearance: { sensitivity: 'CONFIDENTIAL', compartments: ['FINANCE'] } });
+    }
+    await setModelClearance(f.db, { owner: principal.owner, provider: 'openai-codex', model, clearance });
+    const authorized = await submit('authorized-confidential');
+    await f.worker.runOne();
+    const done = await f.tasks.get(principal, authorized.id);
+    assert.equal(done.state, 'completed', done.error ?? undefined);
+    assert.equal(starts, 1);
+    const result = done.result as { execution: { steps: { input?: unknown; resultDigest?: string }[] } };
+    assert(!Object.hasOwn(result.execution.steps[0]!, 'input'));
+    assert(!Object.hasOwn(result.execution.steps[0]!, 'resultDigest'));
+    assert(!JSON.stringify(done.result).includes('private planning detail'));
+  } finally { await f.close(); }
+});
+
+test('the model catalogue and definition tool omit classified types and field metadata', async () => {
+  const definition = structuredClone(document);
+  const classification = { sensitivity: 'CONFIDENTIAL' as const, compartments: ['FINANCE'] };
+  definition.objectTypes.find(type => type.apiName === 'RideRequest')!.classification = classification;
+  definition.objectTypes.find(type => type.apiName === 'Route')!.properties.name!.classification = classification;
+  const f = await fixture({
+    model: 'fixture-model-catalogue', provider: 'openai-codex',
+    async run(prompt, tools) {
+      const description = JSON.parse(prompt.split('\n').at(-1)!).ontology;
+      assert(!description.objects.some((type: { apiName: string }) => type.apiName === 'RideRequest'));
+      const schemas = await tools.get('describe_ontology')!.invoke({ names: ['RideRequest', 'Route'] }) as
+        { apiName: string; properties: Record<string, unknown> }[];
+      assert.deepEqual(schemas.map(record => record.apiName), ['Route']);
+      assert(!Object.hasOwn(schemas[0]!.properties, 'name'));
+      await tools.get('complete_with_object_set')!.invoke({ set: { op: 'refs', objects: [] } });
+    },
+  }, undefined, undefined, definition);
+  try {
+    const task = await f.tasks.submit(principal, { requestId: 'egress-catalogue', message: 'List the available operations' });
+    await f.worker.runOne();
+    const result = await f.tasks.get(principal, task.id);
+    assert.equal(result.state, 'completed', result.error ?? undefined);
+  } finally { await f.close(); }
+});
+
+test('classified chunks are excluded before model filters and forced references, and grants are rechecked after each call', async () => {
+  const model = 'fixture-document-egress';
+  const title = 'protected procurement detail';
+  const clearance = { sensitivity: 'CONFIDENTIAL', compartments: ['FINANCE'] };
+  const useModel = { owner: principal.owner, provider: 'openai-codex', model, clearance };
+  let document: { type: string; id: string }, chunk: { type: string; id: string };
+  let expectVisible = false;
+  const f = await fixture({ model, provider: 'openai-codex', async run(_prompt, tools) {
+    const query = (value: string) => tools.get('query_ontology')!.invoke({ queries: [{
+      type: 'OperationalDocumentChunk', filter: { op: 'contains', property: 'text', value },
+    }] });
+    if (expectVisible) {
+      const visible = JSON.stringify(await query(title));
+      assert(visible.includes(title));
+      assert(visible.includes(chunk.id));
+      await setModelClearance(f.db, { ...useModel, active: false });
+      await assert.rejects(query(title), /^Error: Data is unavailable to the selected model$/);
+      return;
+    }
+    assert.deepEqual(await query(title), await query('no matching text'));
+    await assert.rejects(tools.get('complete_with_object_set')!.invoke({ set: { op: 'refs', objects: [chunk] } }),
+      /^Error: Data is unavailable to the selected model$/);
+    await tools.get('complete_with_object_set')!.invoke({ set: { op: 'refs', objects: [] } });
+  } });
+  try {
+    const plan = { type: 'SchedulePlan', id: 'doc-plan' }, graph = new Objects(f.db, f.model, f.access);
+    await graph.create(plan, { id: plan.id, name: 'Plan', start: '2027-01-01T08:00:00Z', end: '2027-01-01T10:00:00Z', timeZone: 'UTC', durationMinutes: 60 });
+    document = await f.capabilities.actions.apply(f.access, f.model, 'RegisterSchedulePlanDocument', {
+      plan, documentKey: 'budget-document', edition: '1', name: 'Budget', mediaType: 'application/pdf',
+      sourceRef: 'records/budget', contentSha256: 'b'.repeat(64), extractedText: title, classification: clearance,
+    }, 'classified-document');
+    chunk = (await graph.follow(document, 'chunks'))[0]!.ref;
+    // Protect against a chunk row missing its own valid label by reading the real parent classification.
+    await f.db.query(`UPDATE ${f.db.schema}.objects SET properties=properties-'classification'
+      WHERE owner=$1 AND id=$2 AND type=$3`, [principal.owner, chunk.id, chunk.type]);
+    const denied = await f.tasks.submit(principal, { requestId: 'hidden-chunk', message: 'Check document availability' });
+    await f.worker.runOne();
+    const completed = await f.tasks.get(principal, denied.id);
+    assert.equal(completed.state, 'completed', completed.error ?? undefined);
+    assert(!JSON.stringify(completed.result).includes(chunk.id));
+
+    expectVisible = true;
+    await setModelClearance(f.db, useModel);
+    const revoked = await f.tasks.submit(principal, { requestId: 'revoked-chunk', message: 'Check document availability' });
+    await f.worker.runOne();
+    assert.equal((await f.tasks.get(principal, revoked.id)).state, 'failed');
+    const records = (await f.db.query(`SELECT event,requirements FROM ${f.db.schema}.execution_trace
+      WHERE task_id=ANY($1::uuid[]) ORDER BY sequence`, [[denied.id, revoked.id]])).rows;
+    assert(records.filter(row => row.event.kind === 'egress' && row.event.state === 'blocked').length >= 2);
+    for (const secret of [title, document.id, chunk.id, 'FINANCE']) assert(!JSON.stringify(records).includes(secret));
   } finally { await f.close(); }
 });

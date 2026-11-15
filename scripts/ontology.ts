@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { ProjectionTransform } from '../packages/runtime/metadata.js';
+import { modelClearanceSchema, setModelClearance } from '../packages/runtime/model-egress.js';
 import { installOwnerIsolation } from '../packages/runtime/owner-isolation.js';
 
 const command = process.argv[2];
@@ -33,7 +34,7 @@ else {
       const owner = process.argv[3]; if (!owner) throw new Error('Provide the verified member owner');
       await setGrants(db, owner, memberGrants(model));
     } else if (command === 'permissions') {
-      const config = z.strictObject({ subjects: z.array(z.strictObject({ owner: z.string().min(1), grants: z.array(grantSchema) })), properties: z.array(z.strictObject({ ontology: z.string(), type: z.string(), property: z.string() })).optional(), policies: z.array(z.strictObject({ type:z.string(),policy:objectPolicySchema })).optional(), memberships:z.array(z.strictObject({subject:z.string(),groups:z.array(z.string()),markings:z.array(z.string())})).optional() }).parse(JSON.parse(await readFile(process.argv[3]!, 'utf8')));
+      const config = z.strictObject({ subjects: z.array(z.strictObject({ owner: z.string().min(1), grants: z.array(grantSchema) })), properties: z.array(z.strictObject({ ontology: z.string(), type: z.string(), property: z.string() })).optional(), policies: z.array(z.strictObject({ type:z.string(),policy:objectPolicySchema })).optional(), memberships:z.array(z.strictObject({subject:z.string(),groups:z.array(z.string()),markings:z.array(z.string())})).optional(), modelClearances:z.array(modelClearanceSchema).optional() }).parse(JSON.parse(await readFile(process.argv[3]!, 'utf8')));
       for (const property of config.properties ?? []) if (property.ontology !== model.document.id || !model.object(property.type).properties[property.property]) throw new Error('Unknown protected property');
       for (const item of config.policies ?? []) {
         const type = model.object(item.type);
@@ -50,6 +51,7 @@ else {
           await db.query(`DELETE FROM ${db.schema}.security_memberships WHERE subject=$1`,[membership.subject],client);
           for (const [kind,names] of [['group',membership.groups],['marking',membership.markings]] as const) for (const name of names) await db.query(`INSERT INTO ${db.schema}.security_memberships VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,[membership.subject,kind,name],client);
         }
+        for (const clearance of config.modelClearances ?? []) await setModelClearance(db, clearance, client);
         for (const subject of config.subjects) await setGrants(db, subject.owner, subject.grants, client);
         if (config.properties) {
           await db.query(`DELETE FROM ${db.schema}.property_security`, [], client);

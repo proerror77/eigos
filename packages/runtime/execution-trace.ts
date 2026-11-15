@@ -13,7 +13,8 @@ const ownerId = z.string().min(1).max(200);
 const events = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('source'), source: name, callId: sha256.optional(), receipt: objectRefSchema }),
   z.strictObject({ kind: z.literal('document'), ref: objectRefSchema, revision }),
-  z.strictObject({ kind: z.literal('model'), state: z.enum(['started', 'completed', 'paused', 'failed', 'canceled']), model: name, attempt: name.optional() }),
+  z.strictObject({ kind: z.literal('model'), state: z.enum(['started', 'completed', 'paused', 'failed', 'canceled']),
+    model: name, attempt: name.optional(), durationMs: z.number().int().nonnegative().optional() }),
   z.strictObject({ kind: z.literal('egress'), state: z.enum(['allowed', 'blocked']), policyDigest: sha256,
     documentRefs: z.array(objectRefSchema).max(50).optional(), code: z.enum(['access_revoked', 'egress_policy_denied', 'invalid_context']).optional() }),
   z.strictObject({ kind: z.literal('proposal') }),
@@ -45,6 +46,12 @@ export async function initializeExecutionTrace(db: Database) {
   CREATE INDEX IF NOT EXISTS execution_trace_task ON ${db.schema}.execution_trace(owner,task_id,sequence) WHERE task_id IS NOT NULL;
   CREATE INDEX IF NOT EXISTS execution_trace_scenario ON ${db.schema}.execution_trace(owner,scenario_id,sequence) WHERE scenario_id IS NOT NULL;
   CREATE INDEX IF NOT EXISTS execution_trace_action ON ${db.schema}.execution_trace(owner,request_id,sequence) WHERE request_id IS NOT NULL;
+  CREATE OR REPLACE FUNCTION ${db.schema}.reject_execution_trace_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+  BEGIN
+    RAISE EXCEPTION 'Execution trace is append-only';
+  END $$;
+  CREATE OR REPLACE TRIGGER execution_trace_append_only BEFORE UPDATE OR DELETE OR TRUNCATE ON ${db.schema}.execution_trace
+    FOR EACH STATEMENT EXECUTE FUNCTION ${db.schema}.reject_execution_trace_mutation();
   ALTER TABLE ${db.schema}.external_operations ADD COLUMN IF NOT EXISTS request_id text;
   ALTER TABLE ${db.schema}.external_operations ADD COLUMN IF NOT EXISTS task_id uuid;
   CREATE INDEX IF NOT EXISTS external_operations_action ON ${db.schema}.external_operations(owner,request_id) WHERE request_id IS NOT NULL;

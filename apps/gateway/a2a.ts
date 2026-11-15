@@ -38,7 +38,7 @@ export class A2A implements A2ARequestHandler {
       return taskView(await new PARequests(this.tasks).respond(this.principal(context),message.taskId,data.paResponse,message.contextId || undefined));
     }
     if (data?.paResponse) throw new RequestMalformedError('PA response requires the original taskId');
-    const task = await this.tasks.submit(this.principal(context), { requestId: message.messageId, message: text || data?.message, route: data?.route,
+    const task = await this.tasks.submit(this.principal(context), { requestId: message.messageId, message: text || data?.message, route: data?.route, classification: data?.classification,
       conversationId: message.contextId || undefined }, { assignConversation: true });
     return taskView(task);
   }

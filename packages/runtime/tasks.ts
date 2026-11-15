@@ -4,6 +4,7 @@ import { Conflict, NotFound, digest, requireScope, type Principal } from '../cor
 import type { Sql } from './database.js';
 import { Database } from './database.js';
 import { Metadata } from './metadata.js';
+import { classificationSchema } from '../ontology/classification.js';
 import { objectRefSchema } from '../ontology/schema.js';
 import { Access, type Requirement } from './access.js';
 import type { ScheduledCall } from './scheduled-actions.js';
@@ -14,6 +15,7 @@ export const routeInputSchema = z.strictObject({ city: z.string().min(1).max(100
 export type RouteInput = z.infer<typeof routeInputSchema>;
 export const placeSelectionSchema = z.strictObject({ origin: objectRefSchema, destination: objectRefSchema });
 export const submitSchema = z.strictObject({ requestId: z.string().min(1).max(128), message: z.string().min(1).max(4000), route: routeInputSchema.optional(),
+  classification: classificationSchema.optional(),
   learnHotelWorkflow: z.literal(true).optional(), replayHotelWorkflow: workflowReplaySchema.optional(),
   conversationId: z.string().min(1).max(128).regex(/^[^\u0000-\u001f\u007f]+$/u).optional(),
 });
@@ -198,5 +200,5 @@ export class Tasks {
 }
 
 function taskOptions(input: z.infer<typeof submitSchema>) {
-  return { route: input.route, learnHotelWorkflow: input.learnHotelWorkflow, replayHotelWorkflow: input.replayHotelWorkflow };
+  return { route: input.route, classification: input.classification, learnHotelWorkflow: input.learnHotelWorkflow, replayHotelWorkflow: input.replayHotelWorkflow };
 }

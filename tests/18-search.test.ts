@@ -169,3 +169,49 @@ test('registers immutable PDF or SOP editions and queries their content through 
     assert.deepEqual((await protectedGraph.query(query)).items, []);
   } finally { await f.close(); }
 });
+
+test('document chunks preserve Unicode offsets and version citations while inheriting the parent text grant', async () => {
+  const f = await fixture();
+  try {
+    const embedding: VersionedFunction = {
+      definition: { apiName: 'EmbedPassage', description: 'Local synthetic embedding', version: 'test',
+        parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
+        returns: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 } },
+      implementationId: 'synthetic-embed-passage', handler: async input => String(input.text).includes('alarm') ? [1, 0] : [0, 1],
+    };
+    const capabilities = createCapabilities(f.db, f.source, { functions: [embedding] }), definition = structuredClone(f.model.document);
+    definition.functionTypes.push(embedding.definition);
+    const model = await f.metadata.publish(definition, capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, memberGrants(model));
+    const access = await Access.load(f.db, principal), graph = new Objects(f.db, model, access);
+    const plan = { type: 'SchedulePlan', id: 'paged-document-plan' };
+    await graph.create(plan, planFields(plan.id, 30));
+    const prefix = '𠮷' + 'x'.repeat(1499), suffix = 'check alarm';
+    const text = prefix + suffix, locations = [{ page: 2, paragraph: 4, startOffset: 1500, endOffset: 1511 }];
+    const input = { plan, name: 'Page-aware SOP', documentKey: 'page-sop', edition: '2', mediaType: 'application/pdf',
+      sourceRef: 'records/pages.pdf', contentSha256: 'c'.repeat(64), extractedText: text, locationRanges: locations };
+    const version = await capabilities.actions.apply(access, model, 'RegisterSchedulePlanDocument', input, 'paged-document');
+    assert.deepEqual(await capabilities.actions.apply(access, model, 'RegisterSchedulePlanDocument', input, 'repeat-doc'), version);
+    await assert.rejects(capabilities.actions.apply(access, model, 'RegisterSchedulePlanDocument',
+      { ...input, edition: '3', locationRanges: [{ startOffset: 0, endOffset: 999999 }] }, 'invalid-page'), /inside the extracted text/);
+    const chunks = (await graph.follow(version, 'chunks')).sort((a, b) => Number(a.properties.index) - Number(b.properties.index));
+    assert.equal(chunks.length, 2);
+    assert.equal(chunks[0]!.properties.text, prefix);
+    assert.equal(chunks[0]!.properties.page, undefined);
+    assert.deepEqual([chunks[1]!.properties.text, chunks[1]!.properties.startOffset, chunks[1]!.properties.endOffset, chunks[1]!.properties.page],
+      [suffix, 1500, 1511, 2]);
+    const semantic = new SemanticSearch(f.db, capabilities.functions);
+    await semantic.configure(f.publisher, model, { name: 'Passages', type: 'OperationalDocumentChunk', property: 'text', embeddingFunction: 'EmbedPassage', dimensions: 2 });
+    await semantic.index(access, model, { name: 'Passages', objects: chunks.map(item => item.ref) });
+    const result = await semantic.search(access, model, { name: 'Passages', text: 'alarm', limit: 1 });
+    assert.deepEqual(result.items[0]!.citation, { version, chunk: chunks[1]!.ref,
+      index: 1, startOffset: 1500, endOffset: 1511, page: 2, paragraph: 4 });
+
+    await f.db.query(`INSERT INTO ${f.db.schema}.property_security VALUES ('Eigos','OperationalDocumentVersion','extractedText')`);
+    const restricted = await Access.load(f.db, principal), hidden = new Objects(f.db, model, restricted);
+    await assert.rejects(hidden.read(chunks[1]!.ref), /unavailable/);
+    assert.deepEqual(await hidden.follow(version, 'chunks'), []);
+    assert.deepEqual((await hidden.query({ type: 'OperationalDocumentChunk', filter: { op: 'contains', property: 'text', value: 'alarm' } })).items, []);
+    assert.deepEqual((await semantic.search(restricted, model, { name: 'Passages', text: 'alarm' })).items, []);
+  } finally { await f.close(); }
+});
