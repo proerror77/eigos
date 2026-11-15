@@ -8,6 +8,7 @@ import { classificationSchema } from '../ontology/classification.js';
 import { objectRefSchema } from '../ontology/schema.js';
 import { Access, type Requirement } from './access.js';
 import type { ScheduledCall } from './scheduled-actions.js';
+import type { CognitiveContext } from './cognitive-workflow.js';
 import { Clarification } from './clarification.js';
 import { publicHotelTaskResult, workflowReplaySchema } from './hotel-workflows.js';
 
@@ -20,7 +21,7 @@ export const submitSchema = z.strictObject({ requestId: z.string().min(1).max(12
   conversationId: z.string().min(1).max(128).regex(/^[^\u0000-\u001f\u007f]+$/u).optional(),
 });
 const storedInputSchema = submitSchema.extend({ places: placeSelectionSchema.optional() });
-export interface Task { id: string; owner: string; request_id: string; input: z.infer<typeof storedInputSchema> & {scheduledAction?:ScheduledCall}; release: string; scopes: string[]; state: string; token: string | null; result: unknown; result_permissions?: Requirement[] | null; error: string | null; created_at: Date; updated_at: Date; execution_step?:number; conversation_id?: string | null }
+export interface Task { id: string; owner: string; request_id: string; input: z.infer<typeof storedInputSchema> & {scheduledAction?:ScheduledCall}; release: string; scopes: string[]; state: string; token: string | null; result: unknown; result_permissions?: Requirement[] | null; error: string | null; created_at: Date; updated_at: Date; execution_step?:number; conversation_id?: string | null; cognitive_context?: CognitiveContext | null }
 type InboxTask = Task & { conversation_batch: string; message_count: number; collecting: boolean };
 const batchWindowMs = 2000;
 const maxBatchMessages = 16;

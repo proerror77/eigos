@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Conflict, NotFound, digest } from '../core/identity.js';
-import type { LinkData, ObjectRef } from '../ontology/schema.js';
+import { objectRefSchema, type LinkData, type ObjectRef } from '../ontology/schema.js';
 import { Access, PermissionDenied, type Requirement } from './access.js';
 import { Database, type Sql } from './database.js';
 import { PublishedOntology } from './metadata.js';
@@ -9,6 +9,7 @@ import { Objects } from './objects.js';
 import { bumpScenario, checkScenario, lockEdits, objectLinks, type ScenarioMutation } from './scenario-store.js';
 import { scenarioMetadataRead, syncScenarioMetadata, removeScenarioMetadata } from './scenario-metadata.js';
 import { appendTrace } from './execution-trace.js';
+import { cognitiveStepSchema, workflowMerge } from './cognitive-workflow.js';
 
 type Properties = Record<string, unknown>;
 type ScenarioObjectEdit = {
@@ -16,7 +17,7 @@ type ScenarioObjectEdit = {
   base_links: unknown; properties: Properties | null; edited_fields: string[] | null;
 };
 type LiveObject = { revision: string; properties: Properties };
-type ReviewableScenario = { id: string; owner: string; name: string; revision: string; reviewers: string[]; journal_steps: number };
+type ReviewableScenario = { id: string; owner: string; name: string; revision: string; reviewers: string[]; journal_steps: number; workflow_run_id: string | null };
 type ScenarioStep = {
   action: string; request_id: string; digest: string; input: Properties | null;
   requirements: Requirement[]; step_revision: string | null; edits: ScenarioMutation[] | null;
@@ -56,6 +57,7 @@ export async function initializeScenarioLifecycle(db: Database) {
     ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS session_id uuid REFERENCES ${db.schema}.scenario_sessions(id);
     ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS creation_digest text;
     ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS reviewers jsonb NOT NULL DEFAULT '[]';
+    ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS workflow_run_id uuid;
     ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS journal_steps integer NOT NULL DEFAULT 0;
     ALTER TABLE ${db.schema}.scenario_objects ADD COLUMN IF NOT EXISTS edited_fields jsonb;
     ALTER TABLE ${db.schema}.scenario_actions ADD COLUMN IF NOT EXISTS input jsonb;
@@ -150,7 +152,7 @@ export class Scenarios {
       const view = await this.view(access, model, id, client);
       await checkScenario(this.db, view, owner, client, true);
       const result = await this.db.query(`UPDATE ${this.db.schema}.scenarios SET reviewers=$4,revision=revision+1
-        WHERE id=$1 AND owner=$2 AND revision=$3 AND kind='persisted' RETURNING revision`, [id, owner, revision, JSON.stringify(allowed)], client);
+        WHERE id=$1 AND owner=$2 AND revision=$3 AND kind='persisted' AND workflow_run_id IS NULL RETURNING revision`, [id, owner, revision, JSON.stringify(allowed)], client);
       if (!result.rowCount) throw new Conflict('Scenario revision changed or proposal is temporary');
       await syncScenarioMetadata(this.db, model, id, client);
       await access.refresh(client);
@@ -173,7 +175,8 @@ export class Scenarios {
       const reviewer = access.principal.owner;
       const inserted = await this.db.withTransactionOwner(client, row.owner, () => this.db.query(
         `INSERT INTO ${this.db.schema}.scenario_approvals(scenario_id,owner,revision,reviewer,snapshot) VALUES($1,$2,$3,$4,$5)
-        ON CONFLICT(scenario_id,revision,reviewer) DO NOTHING RETURNING reviewer`,
+        ON CONFLICT(scenario_id,revision,reviewer) DO UPDATE SET snapshot=excluded.snapshot,approved_at=clock_timestamp()
+          WHERE scenario_approvals.snapshot IS DISTINCT FROM excluded.snapshot RETURNING reviewer`,
         [id, row.owner, revision, reviewer, snapshot], client,
       ));
       if (inserted.rowCount) await appendTrace(this.db, {
@@ -188,8 +191,11 @@ export class Scenarios {
     await access.refresh(client);
     access.require(model.document.id, 'view_definition', model.document.id);
     const values = [id, model.release, access.principal.owner];
-    const lookup = `SELECT id,owner,name,revision,reviewers,journal_steps FROM ${this.db.schema}.scenarios
-      WHERE id=$1 AND release=$2 AND reviewers ? $3 AND kind='persisted' AND state='open' AND expires_at>clock_timestamp()`;
+    const lookup = `SELECT id,owner,name,revision,reviewers,journal_steps,workflow_run_id FROM ${this.db.schema}.scenarios
+      WHERE id=$1 AND release=$2 AND reviewers ? $3 AND kind='persisted' AND state='open' AND expires_at>clock_timestamp()
+      AND (workflow_run_id IS NULL OR EXISTS (
+        SELECT 1 FROM ${this.db.schema}.workflow_runs run
+        WHERE run.id=workflow_run_id AND run.state='waiting-approval'))`;
     const offered = (await this.db.query<ReviewableScenario>(lookup, values, client)).rows[0];
     if (!offered) throw new NotFound('Scenario review is unavailable');
     await lockEdits(this.db, model, offered.owner, client);
@@ -242,8 +248,39 @@ export class Scenarios {
       }
       await author.refresh(client);
       await approver.refresh(client);
-      const version = { id: row.id, revision: Number(row.revision), objects, links };
-      const journal = row.journal_steps ? digest(await this.steps(row.owner, row.id, client)) : undefined;
+      const revision = Number(row.revision);
+      let commit;
+      const evidence: { ref: ObjectRef; revision: number }[] = [];
+      const steps = row.journal_steps ? await this.steps(row.owner, row.id, client) : [];
+      if (row.workflow_run_id) {
+        const run = (await this.db.query(
+          `SELECT body->'proposal' AS proposal,object_ref FROM ${this.db.schema}.workflow_runs
+            WHERE id=$1 AND owner=$2 AND proposal_scenario=$3 AND state='waiting-approval'`,
+          [row.workflow_run_id, row.owner, row.id], client,
+        )).rows[0];
+        if (!run) throw new NotFound('Scenario review is unavailable');
+        const object = objectRefSchema.parse(run.object_ref), data = await current(object);
+        if (!data) throw new NotFound('Workflow input is unavailable');
+        check(object.type, data.properties);
+        commit = workflowMerge(model, cognitiveStepSchema.parse(run.proposal), object, row.id, revision);
+        for (const access of [author, approver]) access.definition(model, 'action', commit.action);
+        const refs = new Map<string, ObjectRef>();
+        for (const step of steps) for (const { row: dependency } of step.requirements) {
+          if (!dependency || dependency.projection !== model.projection) continue;
+          const ref = { type: dependency.type, id: dependency.id }, key = digest(ref);
+          if (!staged.has(key)) refs.set(key, ref);
+        }
+        for (const ref of [...refs.values()].sort((a, b) => a.type.localeCompare(b.type) || a.id.localeCompare(b.id))) {
+          const data = await current(ref);
+          if (!data) throw new NotFound('Workflow evidence is unavailable');
+          check(ref.type, data.properties);
+          evidence.push({ ref, revision: Number(data.revision) });
+        }
+        await author.refresh(client);
+        await approver.refresh(client);
+      }
+      const version = { id: row.id, revision, objects, links, ...(commit ? { commit, evidence } : {}) };
+      const journal = row.journal_steps ? digest(steps) : undefined;
       return { ...version, name: row.name, conflicts: [...objects, ...links].some(change => change.conflict),
         snapshot: digest({ ...version, release: model.release, reviewer, journal }) };
     });
@@ -258,10 +295,11 @@ export class Scenarios {
       AND ($3::uuid IS NULL OR s.id>$3) ORDER BY s.id LIMIT 101`, [access.principal.owner, model.release,cursor??null])).rows;
     return {items:rows.slice(0,100).map(row=>({id:String(row.id),name:String(row.name),revision:Number(row.revision),state:String(row.state),expiresAt:row.expires_at as Date,expires_at:row.expires_at as Date})),cursor:rows.length>100?String(rows[99]!.id):undefined};
   }
-  async create(access: Access, model: PublishedOntology, raw: unknown, beforeCommit?: (client: Sql) => Promise<void>) {
+  async create(access: Access, model: PublishedOntology, raw: unknown, beforeCommit?: (client: Sql) => Promise<void>,
+    workflow?: { client: Sql; runId: string; reviewers: string[] }) {
     const input = createScenarioSchema.parse(raw), owner = access.principal.owner;
     access.require(model.document.id, 'view_definition', model.document.id);
-    return this.db.transaction(async client => {
+    const create = async (client: Sql) => {
       await beforeCommit?.(client);
       await lockEdits(this.db, model, owner, client);
       let sessionExpires:Date|null=null;
@@ -270,16 +308,17 @@ export class Scenarios {
         if(!session)throw new Conflict('Scenario session is closed or unavailable');
         sessionExpires=session.expires_at;
       }
-      const creation=digest({...input,release:model.release});
-      await this.db.query(`INSERT INTO ${this.db.schema}.scenarios(id,owner,request_id,name,release,kind,description,session_id,expires_at,creation_digest)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,LEAST(now()+$9*interval '1 second',$10::timestamptz),$11) ON CONFLICT(owner,request_id) DO NOTHING`,
-        [randomUUID(),owner,input.requestId,input.name,model.release,input.kind,input.description,input.sessionId??null,input.ttlSeconds??31*86400,sessionExpires,creation],client);
+      const creation=digest({...input,release:model.release,...(workflow ? { workflow: workflow.runId } : {})});
+      await this.db.query(`INSERT INTO ${this.db.schema}.scenarios(id,owner,request_id,name,release,kind,description,session_id,expires_at,creation_digest,workflow_run_id,reviewers)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,LEAST(now()+$9*interval '1 second',$10::timestamptz),$11,$12,$13) ON CONFLICT(owner,request_id) DO NOTHING`,
+        [randomUUID(),owner,input.requestId,input.name,model.release,input.kind,input.description,input.sessionId??null,input.ttlSeconds??31*86400,sessionExpires,creation,workflow?.runId ?? null,JSON.stringify(workflow?.reviewers ?? [])],client);
       const row = (await this.db.query(`SELECT id,name,release,revision,state,expires_at,kind,description,creation_digest FROM ${this.db.schema}.scenarios WHERE owner=$1 AND request_id=$2`, [owner, input.requestId], client)).rows[0]!;
       if (row.creation_digest?row.creation_digest!==creation:row.name !== input.name || row.release !== model.release) throw new Conflict('Scenario request ID already has different input');
       await syncScenarioMetadata(this.db,model,String(row.id),client);
       await access.refresh(client); await beforeCommit?.(client);
       return {id:String(row.id),name:String(row.name),release:String(row.release),revision:Number(row.revision),state:String(row.state),expiresAt:row.expires_at as Date,expires_at:row.expires_at as Date,kind:String(row.kind),description:String(row.description)};
-    });
+    };
+    return workflow ? create(workflow.client) : this.db.transaction(create);
   }
   async view(access: Access, model: PublishedOntology, id: string, client: Sql = this.db.pool) {
     z.uuid().parse(id);
@@ -514,8 +553,32 @@ export class Scenarios {
     const { model, owner, access, client } = graph;
     await graph.lockWrites();
     const view = await this.view(access, model, id, client); await checkScenario(this.db, view, owner, client, true);
-    const row = (await this.db.query<ReviewableScenario>(`SELECT id,owner,name,revision,reviewers,journal_steps FROM ${this.db.schema}.scenarios WHERE owner=$1 AND id=$2`, [owner, id], client)).rows[0]!;
+    const row = (await this.db.query<ReviewableScenario>(`SELECT id,owner,name,revision,reviewers,journal_steps,workflow_run_id FROM ${this.db.schema}.scenarios WHERE owner=$1 AND id=$2`, [owner, id], client)).rows[0]!;
     if (Number(row.revision) !== revision) throw new Conflict('Scenario changed after review');
+    let proposalTask: string | undefined;
+    let validateWorkflow: ((candidate: Objects) => Promise<void>) | undefined;
+    if (row.workflow_run_id) {
+      const run = (await this.db.query<{ proposal_task: string; result_permissions: Requirement[] | null; proposal: unknown; object_ref: unknown }>(
+        `SELECT run.proposal_task,task.result_permissions,run.body->'proposal' AS proposal,run.object_ref FROM ${this.db.schema}.workflow_runs run
+          JOIN ${this.db.schema}.tasks task ON task.id=run.proposal_task AND task.owner=run.owner AND task.state='completed'
+          WHERE run.id=$1 AND run.owner=$2 AND run.proposal_scenario=$3 AND run.state='waiting-approval'
+            AND run.body->'proposal'->>'mergeAction'=$4 AND run.proposal_deadline>clock_timestamp() FOR UPDATE OF run`,
+        [row.workflow_run_id, owner, id, graph.change?.action ?? null], client,
+      )).rows[0];
+      if (!run) throw new Conflict('Workflow proposal is no longer waiting for approval or requires a different merge Action');
+      if (!run.result_permissions || !await access.canReturn(run.result_permissions, client))
+        throw new PermissionDenied('Workflow proposal no longer has access to its evidence');
+      const proposal = cognitiveStepSchema.parse(run.proposal), object = objectRefSchema.parse(run.object_ref);
+      const commit = workflowMerge(model, proposal, object, id, revision);
+      if (graph.change?.inputDigest !== digest({ release: model.release, action: commit.action, input: commit.input }))
+        throw new Conflict('Workflow merge input differs from the reviewed commitment');
+      const validate = graph.change.validateWorkflow;
+      if (!validate) throw new Conflict('Workflow merge requires its published proposal validation');
+      validateWorkflow = candidate => validate(candidate, proposal.validation, object);
+      graph.change.workflowMerge = true;
+      graph.change.taskId = run.proposal_task;
+      proposalTask = run.proposal_task;
+    }
     let approvalSnapshot: string | undefined;
     if (row.reviewers.length) {
       const approvals = (await this.db.query<{ reviewer: string; snapshot: string }>(
@@ -535,6 +598,11 @@ export class Scenarios {
     const changes = await this.changes(owner, id, client);
     if (changes.objects.some(item => !scope.objects.includes(item.type)) || changes.links.some(item => !scope.links.includes(item.type))) throw new Conflict('Scenario contains edits outside this merge Action scope');
     const actions = await this.steps(owner, id, client);
+    if (proposalTask && (actions.length === 0 || (await this.db.query(
+      `SELECT 1 FROM ${this.db.schema}.scenario_actions
+        WHERE owner=$1 AND scenario_id=$2 AND task_id IS DISTINCT FROM $3::uuid LIMIT 1`,
+      [owner, id, proposalTask], client,
+    )).rowCount)) throw new Conflict('Workflow proposal contains edits from outside its cognitive step');
     const currentRevisions = new Map<ScenarioObjectEdit, number>();
     const changedLive = new Set<string>();
     for (const item of changes.objects) {
@@ -581,8 +649,10 @@ export class Scenarios {
     const edge = (item: Record<string, any>): LinkData => ({ type: item.type, from: { type: item.from_type, id: item.from_id }, to: { type: item.to_type, id: item.to_id } });
     for (const item of changes.links) if (await this.linkConflict(model, owner, item, client))
       throw new Conflict('Scenario link conflicts with current data or cardinality; rebase or propose and review again');
-    await this.validateSteps(graph, view, row, actions, changes, async candidate =>
-      scope.validate?.(candidate, [...touched.values()], changes.links.map(edge)), scope.validateAction);
+    await this.validateSteps(graph, view, row, actions, changes, async candidate => {
+      await validateWorkflow?.(candidate);
+      await scope.validate?.(candidate, [...touched.values()], changes.links.map(edge));
+    }, scope.validateAction);
     for (const item of changes.links) {
       if (item.removed) await graph.unlink(edge(item));
     }
@@ -597,10 +667,14 @@ export class Scenarios {
     }
     for (const item of changes.links) if (!item.removed) await graph.link(edge(item));
     await this.db.query(`UPDATE ${this.db.schema}.scenarios SET state='merged',revision=revision+1 WHERE owner=$1 AND id=$2`, [owner, id], client);
+    if (row.workflow_run_id && !(await this.db.query(
+      `UPDATE ${this.db.schema}.workflow_runs SET state='completed',step=step+1,updated_at=now() WHERE id=$1 AND proposal_deadline>clock_timestamp()`,
+      [row.workflow_run_id], client,
+    )).rowCount) throw new Conflict('Workflow proposal expired before commit');
     await syncScenarioMetadata(this.db,model,id,client);
     if (graph.change?.requestId) await appendTrace(this.db, {
       owner, release: model.release, projection: model.projection, scenarioId: id,
-      requestId: graph.change.requestId, taskId: graph.change.taskId,
+      requestId: graph.change.requestId, taskId: proposalTask ?? graph.change.taskId,
     }, { kind: 'merge', revision, approvalSnapshot }, client, await access.finalDataRequirements(client));
   }
 }

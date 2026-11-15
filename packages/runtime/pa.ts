@@ -31,6 +31,8 @@ export class PARequests {
     return (await this.requestWithId(task, operation, capability, input, responseSchema, dataScope)).response;
   }
   async requestWithId(task: Task, operation: string, capability: string, input: Record<string, unknown>, responseSchema: Record<string, unknown>, dataScope?: Record<string, unknown>) {
+    if (task.cognitive_context && capability !== 'calendar.freebusy')
+      throw new Conflict('Workflow proposals may request PA calendar availability only');
     const { db } = this.tasks, request = { capability, input, responseSchema };
     // Data identity is independent of a model's wording or Action request ID.
     const key = digest(dataScope ? { capability, dataScope, responseSchema } : { operation, request });

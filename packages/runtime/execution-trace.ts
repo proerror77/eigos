@@ -18,6 +18,7 @@ const events = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('egress'), state: z.enum(['allowed', 'blocked']), policyDigest: sha256,
     documentRefs: z.array(objectRefSchema).max(50).optional(), code: z.enum(['access_revoked', 'egress_policy_denied', 'invalid_context']).optional() }),
   z.strictObject({ kind: z.literal('proposal') }),
+  z.strictObject({ kind: z.literal('workflow'), runId: z.uuid(), state: z.enum(['waiting-approval', 'expired', 'failed']) }),
   z.strictObject({ kind: z.literal('approval'), revision, snapshot: sha256, reviewer: ownerId.optional() }),
   z.strictObject({ kind: z.literal('merge'), revision, approvalSnapshot: sha256.optional() }),
 ]);

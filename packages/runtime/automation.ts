@@ -11,6 +11,9 @@ import type { Actions } from './actions.js';
 import { Objects, querySchema } from './objects.js';
 import { matchingTransition, processRuleSchema, processStatusSchema, processTarget, processTriggerSchema, readProcessStatus } from './process-automation.js';
 import { readProcessTransitions } from './process-logs.js';
+import { authorizeCognitive, cognitiveContextSchema, cognitiveResultSchema, cognitiveStepSchema, workflowMerge, type CognitiveStep } from './cognitive-workflow.js';
+import { Scenarios } from './scenarios.js';
+import { appendTrace } from './execution-trace.js';
 
 const binding = z.union([
   z.strictObject({ literal: z.unknown() }),
@@ -28,8 +31,11 @@ export const workflowSchema = z.strictObject({
   revision: z.number().int().min(0).default(0),
   name: z.string().min(1).max(200),
   description: z.string().max(2000).default(''),
-  steps: z.array(step).min(1).max(20),
+  steps: z.array(step).max(20),
+  proposal: cognitiveStepSchema.optional(),
 }).superRefine((workflow, context) => {
+  if (!workflow.steps.length && !workflow.proposal)
+    context.addIssue({ code: 'custom', message: 'Workflow requires at least one step', path: ['steps'] });
   const previous = new Set<string>();
   workflow.steps.forEach((item, index) => {
     if (previous.has(item.name)) {
@@ -78,6 +84,11 @@ export async function initializeAutomation(db: Database) {
     CREATE TABLE IF NOT EXISTS ${db.schema}.workflow_runs(id uuid PRIMARY KEY,owner text NOT NULL,ontology text NOT NULL,release text NOT NULL REFERENCES ${db.schema}.releases(digest),request_id text NOT NULL,digest text NOT NULL,workflow_id uuid NOT NULL REFERENCES ${db.schema}.workflows(id),body jsonb NOT NULL,object_ref jsonb NOT NULL,scopes jsonb NOT NULL,step integer NOT NULL DEFAULT 0,state text NOT NULL DEFAULT 'pending',error text,token uuid,lease_until timestamptz,results jsonb NOT NULL DEFAULT '[]',created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),UNIQUE(owner,request_id));
     ALTER TABLE ${db.schema}.workflow_runs ADD COLUMN IF NOT EXISTS available_at timestamptz NOT NULL DEFAULT now();
     ALTER TABLE ${db.schema}.workflow_runs ADD COLUMN IF NOT EXISTS process_trigger jsonb;
+    ALTER TABLE ${db.schema}.workflow_runs ADD COLUMN IF NOT EXISTS proposal_task uuid;
+    ALTER TABLE ${db.schema}.workflow_runs ADD COLUMN IF NOT EXISTS proposal_scenario uuid;
+    ALTER TABLE ${db.schema}.workflow_runs ADD COLUMN IF NOT EXISTS proposal_deadline timestamptz;
+    ALTER TABLE ${db.schema}.tasks ADD COLUMN IF NOT EXISTS cognitive_context jsonb;
+    ALTER TABLE ${db.schema}.tasks ADD COLUMN IF NOT EXISTS cognitive_tool_calls integer NOT NULL DEFAULT 0;
     CREATE TABLE IF NOT EXISTS ${db.schema}.workflow_steps(run_id uuid NOT NULL REFERENCES ${db.schema}.workflow_runs(id),position integer NOT NULL,
       action text NOT NULL,input jsonb NOT NULL,requirements jsonb NOT NULL,request_id text NOT NULL,result jsonb,completed_at timestamptz,
       PRIMARY KEY(run_id,position));
@@ -122,6 +133,7 @@ export class Automation {
     await access.refresh();
     access.require(model.document.id, 'view_definition', model.document.id);
     this.authorize(access, model, input.steps);
+    if (input.proposal) authorizeCognitive(access, model, input.proposal);
     if (new Set(input.steps.map((item) => item.name)).size !== input.steps.length)
       throw new Conflict('Workflow step names must be unique');
     const id = input.id ?? randomUUID();
@@ -164,7 +176,9 @@ export class Automation {
         )
       ).rows[0];
       if (!workflow) throw new NotFound('Workflow is unavailable');
-      this.authorize(access, model, workflowSchema.parse(workflow.body).steps);
+      const definition = workflowSchema.parse(workflow.body);
+      this.authorize(access, model, definition.steps);
+      if (definition.proposal) authorizeCognitive(access, model, definition.proposal);
       const graph = new Objects(this.db, model, access, client);
       const target = 'process' in input ? processTarget(graph, input.process) : undefined;
       if ('query' in input)
@@ -273,7 +287,10 @@ export class Automation {
           object,
           state: row.state,
           step: row.step,
-          stepCount: row.body.steps.length,
+          stepCount: row.body.steps.length + Number(Boolean(row.body.proposal)),
+          ...(object && row.proposal_task && access.principal.scopes.includes('tasks:read') ? {
+            proposal: { taskId: row.proposal_task, scenarioId: row.proposal_scenario, deadline: row.proposal_deadline },
+          } : {}),
           error: row.error,
           results,
           createdAt: row.created_at,
@@ -306,7 +323,9 @@ export class Automation {
         )
       ).rows[0];
       if (!workflow) throw new NotFound('Workflow is unavailable');
-      this.authorize(access, model, workflowSchema.parse(workflow.body).steps);
+      const definition = workflowSchema.parse(workflow.body);
+      this.authorize(access, model, definition.steps);
+      if (definition.proposal) authorizeCognitive(access, model, definition.proposal);
       await new Objects(this.db, model, access, client).read(input.object);
       const fingerprint = digest({
         input,
@@ -518,7 +537,12 @@ export class Automation {
     const row = await this.db.transaction(async (client) => {
       const found = (
         await this.db.query(
-          `SELECT * FROM ${this.db.schema}.workflow_runs WHERE (state='pending' AND available_at<=now()) OR(state='working' AND lease_until<now()) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1`,
+          `SELECT * FROM ${this.db.schema}.workflow_runs WHERE (state='pending' AND available_at<=now()) OR(state='working' AND lease_until<now())
+            OR (state='waiting-proposal' AND EXISTS (
+              SELECT 1 FROM ${this.db.schema}.tasks task WHERE task.id=proposal_task
+              AND task.state IN ('completed','failed','canceled')))
+            OR (state IN ('waiting-proposal','waiting-approval') AND proposal_deadline<=now())
+            ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1`,
           [],
           client,
         )
@@ -554,7 +578,7 @@ export class Automation {
       const model = await this.metadata.get(row.release),
         access = await Access.load(this.db, { owner: row.owner, scopes: row.scopes });
       requireScope(access.principal, 'ontology:write');
-      const steps = workflowSchema.parse(row.body).steps;
+      const { steps, proposal } = workflowSchema.parse(row.body);
       const trigger = row.process_trigger ? processTriggerSchema.parse(row.process_trigger) : undefined;
       const triggeringObject = objectRefSchema.parse(row.object_ref);
       for (let position = Number(row.step); position < steps.length; position++) {
@@ -720,6 +744,10 @@ export class Automation {
           );
         });
       }
+      if (proposal) {
+        await this.runProposal(row, token, model, access, proposal, triggeringObject, trigger, guard);
+        return;
+      }
       await this.db.transaction(async (client) => {
         await guard(client);
         await this.active(model, client);
@@ -737,6 +765,75 @@ export class Automation {
       );
     }
   }
+  private async runProposal(row: QueryResultRow, token: string, model: PublishedOntology, access: Access,
+    proposal: CognitiveStep, object: ObjectRef, trigger: ProcessTrigger | undefined, guard: (client: Sql) => Promise<void>) {
+    await this.db.transaction(async client => {
+      await guard(client);
+      await this.active(model, client);
+      await access.refresh(client);
+      authorizeCognitive(access, model, proposal);
+      const owner = access.principal.owner;
+      const graph = new Objects(this.db, model, access, client);
+      if (!row.proposal_task) {
+        const input = await graph.read(object);
+        if (trigger) await this.verifyProcessTrigger(graph, object, trigger, row.body.steps.length === 0);
+        const taskId = randomUUID(), requestId = 'workflow-proposal:' + row.id;
+        const { reviewers, timeoutSeconds, mergeAction: _mergeAction, mergeObjectParameter: _mergeObjectParameter, ...manifest } = proposal;
+        const scenario = await new Scenarios(this.db).create(access, model, {
+          requestId, name: proposal.name, ttlSeconds: timeoutSeconds,
+        }, undefined, { client, runId: row.id, reviewers });
+        workflowMerge(model, proposal, object, scenario.id, scenario.revision);
+        const context = cognitiveContextSchema.parse({
+          ...manifest, runId: row.id, scenarioId: scenario.id, object, revision: input.revision,
+        });
+        const taskInput = { requestId, message: proposal.goal };
+        await this.db.query(
+          `INSERT INTO ${this.db.schema}.tasks(id,owner,request_id,input_digest,input,release,scopes,cognitive_context)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [taskId, owner, requestId, digest(taskInput), taskInput, model.release, JSON.stringify(access.principal.scopes), context], client,
+        );
+        await this.db.query(
+          `UPDATE ${this.db.schema}.workflow_runs SET state='waiting-proposal',proposal_task=$2,proposal_scenario=$3,
+            proposal_deadline=$4,token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1`,
+          [row.id, taskId, scenario.id, scenario.expiresAt], client,
+        );
+        await appendTrace(this.db, { owner, taskId, scenarioId: scenario.id, release: model.release, projection: model.projection },
+          { kind: 'proposal' }, client, await access.finalDataRequirements(client));
+        await this.db.query("SELECT pg_notify('eigos_tasks','ready')", [], client);
+        return;
+      }
+
+      const status = (await this.db.query(
+        `SELECT task.state,task.result,task.result_permissions,run.proposal_deadline<=clock_timestamp() AS expired,
+            scenario.revision,scenario.state AS scenario_state
+          FROM ${this.db.schema}.workflow_runs run JOIN ${this.db.schema}.tasks task ON task.id=run.proposal_task AND task.owner=run.owner
+          LEFT JOIN ${this.db.schema}.scenarios scenario ON scenario.id=run.proposal_scenario AND scenario.owner=run.owner
+          WHERE run.id=$1 AND run.token=$2`, [row.id, token], client,
+      )).rows[0]!;
+      const result = cognitiveResultSchema.safeParse(status.result?.proposal);
+      const expired = status.expired || !status.scenario_state;
+      const ready = !expired && status.scenario_state === 'open' && status.state === 'completed'
+        && result.success && result.data.scenarioId === row.proposal_scenario && result.data.revision === Number(status.revision)
+        && status.result_permissions && await access.canReturn(status.result_permissions, client);
+      if (expired) await this.cancelProposalTask(client, owner, row.proposal_task);
+      const state = expired ? 'expired' : ready ? 'waiting-approval' : 'failed';
+      await appendTrace(this.db, { owner, taskId: row.proposal_task, release: model.release, projection: model.projection },
+        { kind: 'workflow', runId: row.id, state }, client, await access.finalDataRequirements(client));
+      await this.db.query(
+        `UPDATE ${this.db.schema}.workflow_runs SET state=$3,error=$4,token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1 AND token=$2`,
+        [row.id, token, state,
+          expired ? 'Workflow proposal expired' : ready ? null : 'Workflow proposal did not complete with a valid Scenario'], client,
+      );
+    });
+  }
+
+  private async cancelProposalTask(client: Sql, owner: string, taskId: string) {
+    await this.db.query(
+      `UPDATE ${this.db.schema}.tasks SET state='canceled',token=NULL,lease_until=NULL,updated_at=now()
+        WHERE owner=$1 AND id=$2 AND state IN ('submitted','working','input-required')`,
+      [owner, taskId], client,
+    );
+  }
   async retry(access: Access, model: PublishedOntology, id: string) {
     requireScope(access.principal, 'ontology:write');
     z.uuid().parse(id);
@@ -745,7 +842,7 @@ export class Automation {
       await this.active(model, client);
       const row = (
         await this.db.query(
-          `SELECT * FROM ${this.db.schema}.workflow_runs WHERE id=$1 AND owner=$2 AND ontology=$3 AND state='failed' FOR UPDATE`,
+          `SELECT * FROM ${this.db.schema}.workflow_runs WHERE id=$1 AND owner=$2 AND ontology=$3 AND state='failed' AND proposal_task IS NULL FOR UPDATE`,
           [id, access.principal.owner, model.document.id],
           client,
         )
@@ -777,6 +874,7 @@ export class Automation {
       ).rows[0];
       if (!row) throw new NotFound('Workflow run is unavailable');
       if (row.state === 'completed') throw new Conflict('Completed workflow cannot be canceled');
+      if (row.proposal_task) await this.cancelProposalTask(client, access.principal.owner, row.proposal_task);
       let completed = Number(row.step);
       const results = row.results as { step: string; object: ObjectRef }[];
       const receipts = (

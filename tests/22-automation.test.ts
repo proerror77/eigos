@@ -12,6 +12,7 @@ import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
 import { Actions } from '../packages/runtime/actions.js';
 import { initializeActionUndo } from '../packages/runtime/action-journal.js';
 import { Scenarios, initializeScenarioLifecycle } from '../packages/runtime/scenarios.js';
+import { ExecutionTrace } from '../packages/runtime/execution-trace.js';
 import { Automation, initializeAutomation } from '../packages/runtime/automation.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { objectPolicySchema } from '../packages/runtime/security.js';
@@ -680,5 +681,161 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
       (SELECT count(*)::int FROM ${f.db.schema}.objects WHERE type='ScheduledActivity') live_activities`)).rows[0];
     assert.deepEqual(safe, { external_operations: 0, scheduled_actions: 0, action_effects: 0, live_activities: 0 });
     assert.equal(f.provider.flags.orderCreates, 0);
+  } finally { await f.close(); }
+});
+
+test('a hotel replan Workflow resumes the PA task, reviews its ordered Scenario, and reads back the approved plan', async () => {
+  const hotelSource = serviceProvider();
+  const initial = planningInput();
+  const start = new Date(Date.now() + 3 * 86400000);
+  start.setUTCHours(6, 0, 0, 0);
+  const checkIn = start.toISOString().slice(0, 10);
+  const target = {
+    title: 'Hongqiao to synthetic hotel',
+    start: start.toISOString(),
+    end: new Date(start.getTime() + 4 * 3600000).toISOString(),
+    timeZone: 'Asia/Shanghai',
+    durationMinutes: 45,
+  };
+  let hotel: ObjectRef, modelRuns = 0;
+  const driver: AgentDriver = {
+    model: 'fixture-hotel-replanning',
+    async run(prompt, tools) {
+      modelRuns++;
+      const { object: plan, scenarioId, ontology } = JSON.parse(prompt.split('\n').at(-1)!);
+      assert.deepEqual([...tools.keys()], ['evaluate_function', 'apply_action', 'submit_workflow_proposal']);
+      assert.deepEqual(ontology.dataSources, []);
+      const act = (action: string, input: Record<string, unknown>, scenario: string | null = scenarioId) =>
+        tools.get('apply_action')!.invoke({ ...(scenario ? { scenarioId: scenario } : {}), action, input });
+      await assert.rejects(act('CommitSchedulePlan', { plan, scenarioId, revision: 1 }), /capability list/);
+      await assert.rejects(act('PrepareSchedulePlan', { ...target, plan, scenarioId }, null), /assigned Scenario/);
+      await assert.rejects(tools.get('evaluate_function')!.invoke({
+        function: 'readSchedulePlan', input: { plan }, scenarioId,
+      }), /capability list/);
+      const prepared = await act('PrepareSchedulePlan', { ...target, plan, scenarioId }) as { waitingForPA?: boolean };
+      if (prepared.waitingForPA) return;
+      await act('AttachPlanService', { plan, service: hotel });
+      const { slots } = await tools.get('evaluate_function')!.invoke({
+        scenarioId, function: 'findScheduleSlots', input: { plan, limit: 1 },
+      }) as { slots: { start: string; end: string }[] };
+      assert.equal(slots.length, 1);
+      await act('SaveScheduleActivity', { plan, id: 'hotel-transfer', name: 'Hotel transfer', ...slots[0] });
+      await tools.get('submit_workflow_proposal')!.invoke({});
+    },
+  };
+  const definition = structuredClone(document);
+  const commit = definition.actionTypes.find(action => action.apiName === 'CommitSchedulePlan')!;
+  commit.effects = [{
+    name: 'ConfirmedReplan', handler: 'SyntheticHotelReplan',
+    payload: { plan: { parameter: 'plan' }, approvedRevision: { parameter: 'revision' } },
+  }];
+  const deliveries: unknown[] = [];
+  const f = await fixture(driver, hotelSource.resolve, undefined, definition, {
+    effects: new Map([['SyntheticHotelReplan', async payload => { deliveries.push(payload); }]]),
+  });
+  const reviewer = { ...principal, owner: 'hotel-replan-reviewer' };
+  try {
+    const graph = new Objects(f.db, f.model, f.access), scenarios = new Scenarios(f.db);
+    const { actions, effects } = f.capabilities;
+    const plan = { type: 'SchedulePlan', id: 'existing-itinerary' };
+    const { title: name, ...dates } = initial;
+    await graph.create(plan, { id: plan.id, name, ...dates, state: 'prepared' });
+    const before = await graph.read(plan);
+    const search = await actions.resolve(f.access, f.model, {
+      interface: { type: 'HotelSearch', implementation: 'RollingGoHotelSearch', action: 'search' },
+      input: { place: '上海', checkIn, adults: 1, nights: 1, currency: 'CNY', limit: 3 },
+    });
+    const page = await actions.apply(f.access, f.model, search.action, search.input, 'replan-hotel-read');
+    const found = await graph.query({ type: 'HotelOffer', from: { object: page, link: 'results', as: 'ServiceSearchResult' },
+      where: { nativeId: 'hotel-1' } });
+    hotel = found.items[0]!.ref;
+    await setGrants(f.db, reviewer.owner, memberGrants(f.model));
+    const reviewerAccess = await Access.load(f.db, reviewer);
+    const automation = new Automation(f.db, f.metadata, actions);
+    const workflow = await automation.workflow(f.access, f.model, {
+      name: 'Replan a hotel itinerary', steps: [],
+      proposal: {
+        name: 'Hotel transfer proposal', goal: 'Choose an available time for the hotel transfer.',
+        actions: ['PrepareSchedulePlan', 'AttachPlanService', 'SaveScheduleActivity'],
+        functions: ['findScheduleSlots'], validation: { function: 'validateSchedule', objectParameter: 'plan' },
+        mergeAction: 'CommitSchedulePlan', mergeObjectParameter: 'plan', reviewers: [reviewer.owner],
+      },
+    });
+    const submitted = await automation.run(f.access, f.model, { workflow: workflow.id, object: plan, requestId: 'hotel-replan' });
+    const status = async () => (await automation.list(f.access, f.model, 'workflow_runs')).items.find(item => item.id === submitted.id)!;
+    assert.equal(await automation.runOne(), true);
+    const waiting = await status();
+    assert.equal(waiting.state, 'waiting-proposal');
+    const { taskId, scenarioId } = waiting.proposal!;
+    await assert.rejects(scenarios.inspectReview(reviewerAccess, f.model, scenarioId), /unavailable/);
+    assert.equal(await f.worker.runOne(), true);
+    const paused = await f.tasks.get(principal, taskId);
+    assert.equal(paused.state, 'input-required', paused.error ?? '');
+    const ask = paused.result as { requestId: string; capability: string; input: typeof initial };
+    assert.equal(ask.capability, 'calendar.freebusy');
+    assert.equal(await automation.runOne(), false);
+    await new PARequests(f.tasks).respond(principal, taskId, { requestId: ask.requestId, response: calendarAnswer(ask.input) });
+    assert.equal(await f.worker.runOne(), true);
+    const proposed = await f.tasks.get(principal, taskId);
+    assert.equal(proposed.state, 'completed', proposed.error ?? '');
+    assert.equal(modelRuns, 2);
+    assert.equal(await automation.runOne(), true);
+    assert.equal((await status()).state, 'waiting-approval');
+    assert.deepEqual(await graph.read(plan), before);
+    assert.equal((await graph.follow(plan, 'activities')).length, 0);
+
+    const review = await scenarios.inspectReview(reviewerAccess, f.model, scenarioId);
+    const reviewedPayload = { plan, approvedRevision: review.revision };
+    assert.deepEqual(review.commit?.effects, [{ name: 'ConfirmedReplan', handler: 'SyntheticHotelReplan', payload: reviewedPayload }]);
+    assert.ok(review.evidence?.some(item => item.ref.id === hotel.id));
+    const merge = () => actions.apply(f.access, f.model, 'CommitSchedulePlan', {
+      plan, scenarioId, revision: review.revision,
+    }, 'commit-hotel-replan');
+    assert.equal(await effects.runOne(), false);
+    await assert.rejects(merge(), /requires approval/);
+    await assert.rejects(scenarios.inviteReviewers(f.access, f.model, scenarioId, review.revision, []), /revision changed/);
+    await assert.rejects(scenarios.approveReview(reviewerAccess, f.model, scenarioId, review.revision, '0'.repeat(64)), /review changed/);
+    await scenarios.approveReview(reviewerAccess, f.model, scenarioId, review.revision, review.snapshot);
+    await setGrants(f.db, reviewer.owner, []);
+    await assert.rejects(merge(), /requires approval/);
+    await setGrants(f.db, reviewer.owner, memberGrants(f.model));
+    // A new source object version cannot use approval of the previous evidence.
+    await f.db.query(`UPDATE ${f.db.schema}.objects SET revision=revision+1
+      WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`, [f.model.projection, principal.owner, hotel.type, hotel.id]);
+    assert.equal(await effects.runOne(), false);
+    await assert.rejects(merge(), /requires approval/);
+    const refreshed = await scenarios.inspectReview(reviewerAccess, f.model, scenarioId);
+    assert.notEqual(refreshed.snapshot, review.snapshot);
+    await scenarios.approveReview(reviewerAccess, f.model, scenarioId, refreshed.revision, refreshed.snapshot);
+    await merge();
+    assert.deepEqual(await merge(), plan);
+    assert.equal((await status()).state, 'completed');
+    assert.equal((await graph.read(plan)).properties.name, target.title);
+    assert.equal((await graph.follow(plan, 'activities'))[0]?.properties.name, 'Hotel transfer');
+    assert.equal((await graph.follow(plan, 'availability'))[0]?.properties.evidence, 'synthetic');
+    assert.equal((await f.tasks.get(principal, taskId)).id, taskId);
+    assert.deepEqual(deliveries, []);
+    assert.equal(await effects.runOne(), true);
+    assert.equal(await effects.runOne(), false);
+    assert.deepEqual(deliveries, [reviewedPayload]);
+    const trace = await new ExecutionTrace(f.db, f.metadata).read(await Access.load(f.db, principal), 'Eigos', { taskId });
+    assert.ok(trace.events.some(event => event.kind === 'approval'));
+    assert.ok(trace.events.some(event => event.kind === 'merge' && event.taskId === taskId));
+    assert.ok(trace.effects.some(effect => effect.state === 'completed'));
+    assert.equal(f.provider.flags.orderCreates, 0);
+    const dispatches = await f.db.query(`SELECT
+      (SELECT count(*) FROM ${f.db.schema}.external_operations) AS operations,
+      (SELECT count(*) FROM ${f.db.schema}.action_effects) AS effects`);
+    assert.deepEqual(dispatches.rows[0], { operations: '0', effects: '1' });
+
+    const second = await automation.run(f.access, f.model, { workflow: workflow.id, object: plan, requestId: 'expired-hotel-replan' });
+    await automation.runOne();
+    const secondRun = (await automation.list(f.access, f.model, 'workflow_runs')).items.find(item => item.id === second.id)!;
+    await f.db.query(`UPDATE ${f.db.schema}.workflow_runs SET proposal_deadline=clock_timestamp()-interval '1 second'
+      WHERE id=$1`, [second.id]);
+    assert.equal(await automation.runOne(), true);
+    assert.equal((await f.tasks.get(principal, secondRun.proposal!.taskId)).state, 'canceled');
+    assert.equal((await automation.list(f.access, f.model, 'workflow_runs')).items.find(item => item.id === second.id)!.state, 'expired');
+    await assert.rejects(scenarios.inspectReview(reviewerAccess, f.model, secondRun.proposal!.scenarioId), /unavailable/);
   } finally { await f.close(); }
 });

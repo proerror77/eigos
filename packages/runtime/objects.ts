@@ -1,3 +1,4 @@
+import type { CognitiveStep } from './cognitive-workflow.js';
 import { scenarioMetadataRead, scenarioMetadataQuery, scenarioMetadataType } from './scenario-metadata.js';
 import { DerivedProperties } from './derived.js';
 import { compareValues, matchesPredicate, nestedValue, orderSchema, predicateFields, predicateSchema, regexMatches, propertyPathSchema } from './query-filter.js';
@@ -26,7 +27,11 @@ export function queryFields(query: Pick<z.output<typeof querySchema>, 'where' | 
 }
 export class Objects {
   constructor(readonly db: Database, readonly model: PublishedOntology, readonly access: Access, readonly client: Sql = db.pool,
-    readonly change?: { action?: string; requestId?: string; taskId?: string; executor?: ExecutionActor; scenarioEdits?: ScenarioMutation[] }) {}
+    readonly change?: {
+      action?: string; requestId?: string; taskId?: string; inputDigest?: string; workflowMerge?: true;
+      executor?: ExecutionActor; scenarioEdits?: ScenarioMutation[];
+      validateWorkflow?: (objects: Objects, validation: CognitiveStep['validation'], object: ObjectRef) => Promise<void>;
+    }) {}
   get owner() { return this.access.principal.owner; }
   private writeReady?: Promise<void>;
   async lockWrites() { await this.prepareWrite(); }

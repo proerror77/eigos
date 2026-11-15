@@ -122,3 +122,32 @@ Grok 可用 `list_learned_hotel_workflows` 查找当前账号的已保存行程�
 结束时间由学到的活动时长计算，随后重新检查路线是否装得进该时段。
 正文保留原任务的成功证据，学习失败的步骤、未返回权威结果的任务或旧审批
 都不会成为下一次执行的依据。
+
+## Workflow 认知提案
+
+普通 Workflow 可以在声明式 Action 步骤之后增加一个 `proposal` 节点。节点冻结发布、触发对象及其修订，创建属于该运行的 Scenario 和持久任务。模型只获得该节点声明的 Action 和只读 Function，且所有工具必须使用指定 Scenario。模型外发和回值继续经过现有资料权限及模型外发策略。预算跨 PA 暂停与进程重启累计。准备日历时，已登记的 `PrepareSchedulePlan` 可在该 Scenario 内通过原任务请求 PA 忙闲，写入仍在 Scenario 内。
+
+```json
+{
+  "name": "酒店行程重排",
+  "steps": [],
+  "proposal": {
+    "name": "酒店接驳方案",
+    "goal": "在酒店行程的有效时间窗口内选择可执行的接驳安排",
+    "actions": ["PrepareSchedulePlan", "AttachPlanService", "SaveScheduleActivity"],
+    "functions": ["findScheduleSlots"],
+    "validation": {"function": "validateSchedule", "objectParameter": "plan"},
+    "mergeAction": "CommitSchedulePlan",
+    "mergeObjectParameter": "plan",
+    "reviewers": ["itinerary-reviewer"],
+    "timeoutSeconds": 900,
+    "maxToolCalls": 24
+  }
+}
+```
+
+发起者通过常规 `run_workflow` 传入已存在的触发对象引用。运行列表返回认知任务和 Scenario ID。任务使用现有 PA 请求及响应协议，`waiting-proposal` 不占用 Workflow 执行租约。通过所声明的验证 Function 后，Workflow 进入 `waiting-approval`，指定的其他账号可检查和批准当前差量。然后由有权限的所属账号显式提交已声明的合并 Action。审阅摘要同时绑定合并 Action、规范化参数及声明的外发意图。批准、当前读取权限和顺序差量都在正式合并时复核。完成 Workflow 与 Scenario 合并一起提交。
+
+等待总时限从创建 Scenario 起计算。超时结束 Workflow 并取消尚未完成的认知任务。普通 Action 步骤的重试行为继续适用，认知提案终止后可发起新的 Workflow 运行。该节点用于内部编辑提案。模型只能暂存编辑。合并动作可以派发审批中列出的声明式效果，发单或付款仍需各供应商 Action 的业务授权。
+
+实现沿用 [Palantir 的 Scenario 合并权限](https://www.palantir.com/docs/foundry/ontology/merge-scenario)、[AIP Logic 调用者权限](https://www.palantir.com/docs/foundry/logic/blocks) 和 EIGOS 已有 Action、Task、Scenario 与执行追踪。数据库升级后，Indexer 的角色需要创建和取消认知任务，以及写入 Scenario 元数据和执行追踪。现有任务和 Workflow 记录使用兼容的默认值。
