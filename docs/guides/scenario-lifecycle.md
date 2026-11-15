@@ -18,9 +18,9 @@ Scenario 的对象和关系差量由已有 Query、Function、Action 运行层�
 
 ## 合并与声明式编辑
 
-`applyScenario` Action 规则声明允许合并的 Object Types 和 Link Types，以及 scenarioId 与 revision 的参数映射。运行时检查方案版本、修改基线、当前权限、关系基数和允许的类型范围。带提交条件的拟议 Action 保存规范化输入，合并时使用正式对象在同一事务内复核只读条件。需要针对最终候选状态检查的领域约束由合并 Action 提供，例如日历排程的占用和依赖校验。缺少可复核输入的旧方案需要重新提出。任一检查失败会回滚整次合并。[Palantir 合并动作](https://www.palantir.com/docs/foundry/ontology/merge-scenario)
+`applyScenario` Action 规则声明允许合并的 Object Types 和 Link Types，以及 scenarioId 与 revision 的参数映射。运行时检查方案版本、修改基线、当前权限、关系基数和允许的类型范围。拟议 Action 保存规范化输入、提交顺序和实际产生的字段及 Link 编辑。同一个合并事务按顺序在临时恢复的方案视图里检查每一步，读取当前正式数据和之前步骤形成的变化。合并只调用提交条件及只读校验，并使用已保存的编辑重建候选结果。PA 请求、供应商调用与编辑 Function 的准备过程只发生在拟议阶段。需要检查最终候选状态的约束在重建后复核，例如日历排程的占用和依赖。受约束的旧多步方案缺少完整证据时须重新提出。任一检查失败会回滚整次合并。[Palantir 合并动作](https://www.palantir.com/docs/foundry/ontology/merge-scenario)
 
-方案保存明确编辑过的属性。合并时，来源仍管理未编辑字段，显式清空和显式保留同值维持用户覆盖语义。旧方案根据保留的前后值恢复能够识别的编辑。可调用 `rebase_scenario({id,revision})` 将兼容的正式字段变更纳入方案。变动后的方案获取新修订号并重新审阅。有不同值的同字段修改、冲突的对象增删、冲突的 Link 或新的发布版本均要求重新处理。
+方案保存明确编辑过的属性。合并时，来源仍管理未编辑字段，显式清空和显式保留同值维持用户覆盖语义。完整记录的方案允许未编辑字段独立刷新，前提是重建后的字段与 Link 差异和审阅时完全一致，且提交条件继续通过。已审阅字段的基线变化、对象身份冲突或 Link 差异使合并停止，方案保持开放以便重新提出。旧方案根据保留的前后值恢复能够识别的编辑，继续要求原对象版本。可调用 `rebase_scenario({id,revision})` 将兼容的正式字段变更纳入可见方案。显式变基获得新修订号并重新审阅。
 
 正式数据并发新增互斥的单值关系时，方案查询显示拟议关系，正式查询继续显示正式关系。方案检查和工作台的关系差量表标出冲突，合并会拒绝提交，直至方案显式解决冲突或正式关系发生兼容变化。
 
@@ -30,7 +30,7 @@ Scenario 的对象和关系差量由已有 Query、Function、Action 运行层�
 
 持久方案的创建者可调用 `invite_scenario_reviewers({id,revision,reviewers})` 指定其他已验证身份。元数据共享继续使用 `share_scenario`。设置审阅者后，正式合并需要其中一人批准当前修订。
 
-审阅者使用 `inspect_scenario_review({id})` 读取拟议属性和 Link 的差异。创建者和审阅者都要满足当前对象、行、字段及 Link 权限。审阅者只能通过该接口读取被邀请方案的差量。审阅后调用 `approve_scenario_review({id,revision,snapshot})`。合并仍由数据所属账号通过有权执行的已发布 Action 提交，并复核当前邀请、审阅者权限及准确版本。修改方案、变基或修改审阅者名单后，旧批准无法用于新修订。[Palantir 持久方案审阅](https://www.palantir.com/docs/foundry/ontology/persisted-scenario)
+审阅者使用 `inspect_scenario_review({id})` 读取拟议属性和 Link 的差异。创建者和审阅者都要满足当前对象、行、字段及 Link 权限。审阅者通过该接口读取被邀请方案的差量，提交 `approve_scenario_review({id,revision,snapshot})`。合并由数据所属账号通过有权执行的已发布 Action 提交，并复核当前邀请、审阅者权限及准确版本。快照绑定差异、录入顺序和修订号。修改方案、变基或修改审阅者名单均要求重新批准。[Palantir 持久方案审阅](https://www.palantir.com/docs/foundry/ontology/persisted-scenario)
 
 ## 内部排程重规划
 

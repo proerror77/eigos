@@ -246,6 +246,154 @@ test('generic Scenario merge rechecks staged Action submission criteria against 
   } finally { await f.close(); }
 });
 
+test('Scenario replay uses ordered draft objects and links, rechecks live data and preserves the reviewed rebased delta', async () => {
+  const f = await lifecycleFixture();
+  try {
+    const text = { type: 'string' };
+    const refSchema = { type: 'object', properties: { type: text, id: text }, required: ['type', 'id'], additionalProperties: false };
+    const parameters = (properties: Record<string, unknown>) => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
+    const ref = (type: string, parameter: string) => ({ type, id: { parameter, path: ['id'] } });
+    const routeResult = ref('Route', 'route'), requestResult = ref('RideRequest', 'request');
+    const condition = {
+      apiName: 'CanRenameThroughDraftRequest', description: 'Confirm live and proposed approvals for a route rename', version: '1',
+      parameters: parameters({ route: refSchema, request: refSchema, gate: refSchema }), returns: { type: 'boolean' },
+      dependencies: { objectTypes: ['Route', 'RideRequest'], linkTypes: ['RequestRoute'] },
+    };
+    const finish = {
+      apiName: 'finishDraftPrerequisite', description: 'Close the selected draft request', version: '1',
+      parameters: parameters({ request: refSchema }), returns: refSchema, edits: true,
+      dependencies: { objectTypes: ['RideRequest'] },
+    };
+    const document = structuredClone(f.model.document);
+    document.objectTypes.find(type => type.apiName === 'Route')!.properties.memo =
+      { description: 'Independent route note', schema: text, required: false };
+    document.functionTypes.push(condition, finish);
+    document.actionTypes.push({
+      apiName: 'CreateDraftPrerequisite', description: 'Stage a pending request and link it to its route',
+      parameters: parameters({ route: refSchema, id: text, requestedAt: text }), objectParameters: { route: 'Route' }, submissionCriteria: [],
+      rules: [
+        { op: 'createObject', object: { type: 'RideRequest', id: { parameter: 'id' } },
+          properties: { id: { parameter: 'id' }, name: { literal: 'Draft prerequisite' }, status: { literal: 'requested' }, requestedAt: { parameter: 'requestedAt' } } },
+        { op: 'addLink', link: 'RequestRoute', from: { type: 'RideRequest', id: { parameter: 'id' } }, to: routeResult },
+      ],
+      result: { type: 'RideRequest', id: { parameter: 'id' } },
+    }, {
+      apiName: 'RenameThroughDraftPrerequisite', description: 'Rename a route using its still open draft prerequisite',
+      parameters: parameters({ route: refSchema, request: refSchema, gate: refSchema, revision: { type: 'integer' } }),
+      objectParameters: { route: 'Route', request: 'RideRequest', gate: 'RideRequest' },
+      submissionCriteria: [{ function: condition.apiName, arguments: { route: { parameter: 'route' }, request: { parameter: 'request' }, gate: { parameter: 'gate' } } }],
+      rules: [{ op: 'editObject', object: { parameter: 'route' }, expectedRevision: { parameter: 'revision' }, properties: { name: { literal: 'Reviewed name' } } }],
+      result: routeResult,
+    }, {
+      apiName: 'FinishDraftPrerequisite', description: 'Close the draft request after the rename',
+      parameters: finish.parameters, objectParameters: { request: 'RideRequest' }, submissionCriteria: [], function: finish.apiName,
+    }, {
+      apiName: 'MergeReviewedRoute', description: 'Commit the reviewed route plan',
+      parameters: parameters({ route: refSchema, scenarioId: text, revision: { type: 'integer' } }),
+      objectParameters: { route: 'Route' }, submissionCriteria: [],
+      rules: [{ op: 'applyScenario', scenario: { parameter: 'scenarioId' }, expectedRevision: { parameter: 'revision' }, objectTypes: ['Route','RideRequest'], linkTypes: ['RequestRoute'] }],
+      result: routeResult,
+    });
+    let prepared = 0;
+    const capabilities = createCapabilities(f.db, f.source, {
+      functions: [
+        { definition: condition, implementationId: 'draft-prerequisite-condition-1', handler: async (input, context) => {
+          const request = input.request as ObjectRef, gate = input.gate as ObjectRef, route = input.route as ObjectRef;
+          return (await context.objects.read(request)).properties.status === 'requested' &&
+            (await context.objects.read(gate)).properties.status === 'requested' &&
+            (await context.objects.follow(request, 'route'))[0]?.ref.id === route.id;
+        } },
+        { definition: finish, implementationId: 'finish-draft-prerequisite-1', handler: async (input, context) => {
+          prepared++;
+          const request = input.request as ObjectRef;
+          return context.edit!(request, async graph => {
+            await graph.edit(request, (await graph.read(request)).revision, { status: 'quoted' });
+          });
+        } },
+      ],
+    });
+    const model = await f.metadata.publish(document, capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, memberGrants(model));
+    await setGrants(f.db, 'route-reviewer', memberGrants(model));
+    const access = () => Access.load(f.db, principal);
+    const reviewer = () => Access.load(f.db, { ...principal, owner: 'route-reviewer' });
+    const live = new Objects(f.db, model, await access());
+    const route = { type: 'Route', id: 'prefix-route' }, request = { type: 'RideRequest', id: 'prefix-draft-request' };
+    const gate = { type: 'RideRequest', id: 'prefix-live-gate' }, requestedAt = new Date().toISOString();
+    await live.create(route, { id: route.id, name: 'Original name' });
+    await live.create(gate, { id: gate.id, name: 'Open gate', status: 'requested', requestedAt });
+    const propose = async (request: ObjectRef) => {
+      const scene = await f.scenarios.create(await access(), model, { requestId: request.id, name: 'Ordered proposal' });
+      const view = await f.scenarios.view(await access(), model, scene.id);
+      const apply = (action: string, input: Record<string, unknown>, requestId: string) =>
+        access().then(author => capabilities.actions.apply(author, view, action, input, requestId));
+      await apply('CreateDraftPrerequisite', { route, id: request.id, requestedAt }, 'z-create-prerequisite');
+      await apply('RenameThroughDraftPrerequisite', { route, request, gate, revision: (await live.read(route)).revision }, 'a-rename-via-prerequisite');
+      await apply('FinishDraftPrerequisite', { request }, 'm-finish-prerequisite');
+      return scene;
+    };
+    const scene = await propose(request);
+    assert.equal(prepared, 1);
+    await assert.rejects(live.read(request), /unavailable/);
+    const merge = (id: string, revision: number) => access().then(author => capabilities.actions.apply(author, model, 'MergeReviewedRoute',
+      { route, scenarioId: id, revision }, 'commit-prefix-' + id));
+
+    const inspection = await f.scenarios.inspect(await access(), model, scene.id);
+    const replaceProposalName = (name: string) => f.db.query(
+      `UPDATE ${f.db.schema}.scenario_objects SET properties=jsonb_set(properties,'{name}',to_jsonb($3::text))
+        WHERE scenario_id=$1 AND type='Route' AND id=$2`, [scene.id, route.id, name]);
+    await replaceProposalName('Unjournaled name');
+    await assert.rejects(merge(scene.id, inspection.revision), /replay differs/);
+    assert.equal((await live.read(route)).properties.name, 'Original name');
+    await assert.rejects(live.read(request), /unavailable/);
+    await replaceProposalName('Reviewed name');
+    const firstStep = (await f.db.query(`SELECT edits FROM ${f.db.schema}.scenario_actions
+      WHERE scenario_id=$1 AND request_id='z-create-prerequisite'`, [scene.id])).rows[0]!;
+    const replaceStep = (edits: unknown) => f.db.query(`UPDATE ${f.db.schema}.scenario_actions SET edits=$2
+      WHERE scenario_id=$1 AND request_id='z-create-prerequisite'`, [scene.id, edits === null ? null : JSON.stringify(edits)]);
+    await replaceStep(null);
+    await assert.rejects(merge(scene.id, inspection.revision), /complete Action journal/);
+    await replaceStep(firstStep.edits);
+
+    await live.edit(route, 1, { name: 'Conflicting live name' });
+    assert.equal((await f.scenarios.inspect(await access(), model, scene.id)).conflicts, true);
+    await assert.rejects(merge(scene.id, inspection.revision), /review again/);
+    await live.edit(route, 2, { name: 'Original name' });
+
+    await f.scenarios.inviteReviewers(await access(), model, scene.id, inspection.revision, ['route-reviewer']);
+    const reviewed = await f.scenarios.inspectReview(await reviewer(), model, scene.id);
+    await f.scenarios.approveReview(await reviewer(), model, scene.id, reviewed.revision, reviewed.snapshot);
+    await live.edit(gate, 1, { status: 'quoted' });
+    await assert.rejects(merge(scene.id, reviewed.revision), /submission criteria/);
+    assert.equal((await f.scenarios.inspect(await access(), model, scene.id)).revision, reviewed.revision);
+    await live.edit(gate, 2, { status: 'requested' });
+    await live.edit(route, 3, { memo: 'Unrelated live note' });
+    const compatible = await f.scenarios.inspectReview(await reviewer(), model, scene.id);
+    assert.equal(compatible.conflicts, false);
+    assert.equal(compatible.snapshot, reviewed.snapshot);
+    await merge(scene.id, reviewed.revision);
+    assert.equal(prepared, 1);
+    assert.equal((await live.read(request)).properties.status, 'quoted');
+    assert.equal((await live.follow(request, 'route'))[0]?.ref.id, route.id);
+    assert.deepEqual((await live.read(route)).properties, { id: route.id, name: 'Reviewed name', memo: 'Unrelated live note' });
+
+    const second = await propose({ type: 'RideRequest', id: 'second-draft-request' });
+    const secondInspection = await f.scenarios.inspect(await access(), model, second.id);
+    await f.scenarios.inviteReviewers(await access(), model, second.id, secondInspection.revision, ['route-reviewer']);
+    const oldReview = await f.scenarios.inspectReview(await reviewer(), model, second.id);
+    await f.scenarios.approveReview(await reviewer(), model, second.id, oldReview.revision, oldReview.snapshot);
+    await live.edit(route, (await live.read(route)).revision, { memo: 'Rebased note' });
+    const rebased = await f.scenarios.rebase(await access(), model, second.id, oldReview.revision);
+    await assert.rejects(merge(second.id, oldReview.revision), /changed after review/);
+    await assert.rejects(merge(second.id, rebased.revision), /requires approval/);
+    const current = await f.scenarios.inspectReview(await reviewer(), model, second.id);
+    await f.scenarios.approveReview(await reviewer(), model, second.id, current.revision, current.snapshot);
+    await merge(second.id, current.revision);
+    assert.equal(prepared, 2);
+    assert.equal((await live.read(route)).properties.memo, 'Rebased note');
+  } finally { await f.close(); }
+});
+
 test('Action compensation restores edits once and rejects newer object revisions',async()=>{
   const f=await lifecycleFixture();try{
     const document=structuredClone(f.model.document);

@@ -9,6 +9,7 @@ import { Objects } from './objects.js';
 import { Functions, type FunctionContext } from './functions.js';
 import { Effects, type ActionEffect } from './effects.js';
 import { Scenarios } from './scenarios.js';
+import { recordScenarioAction, type ScenarioMutation } from './scenario-store.js';
 import { JournalObjects, compensate, type ObjectChange, type LinkChange } from './action-journal.js';
 
 const evaluate = (expression: Value, input: Record<string, unknown>): unknown => {
@@ -66,15 +67,20 @@ export class Actions {
       this.effects.check(action.effects.map(effect => effect.handler));
     }
     const fingerprint = digest({ release: model.release, action: actionName, input });
-    const validateAction = (live: Objects, name: string, stagedInput: Record<string, unknown>) => this.checkSubmission(live, name, stagedInput, signal);
     const declaredEffects: ActionEffect[] = [];
+    const validateAction = (prefix: Objects, name: string, stagedInput: Record<string, unknown>) => {
+      const staged = prefix.model.action(name);
+      const parameters = validator(staged.parameters).parse(stagedInput) as Record<string, unknown>;
+      return this.checkInput(prefix, name, parameters, signal);
+    };
     const journal = model.scenario ? 'scenario_actions' : 'actions';
     const priorResult = (client: Sql = this.db.pool) => this.db.query(`SELECT digest,result FROM ${this.db.schema}.${journal} WHERE owner=$1 AND request_id=$2${model.scenario ? ' AND scenario_id=$3' : ''}`, [principal.owner, requestId, ...(model.scenario ? [model.scenario] : [])], client);
     const commit = (write?: (objects: Objects) => Promise<ObjectRef>) => this.db.transaction(async client => {
       // The request key serializes only duplicate submissions of this action.
       await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify([principal.owner, model.scenario ?? 'main', requestId])], client);
       await beforeCommit?.(client);
-      const change = { action: actionName, requestId, taskId: execution?.task.id, executor: actor };
+      const change = { action: actionName, requestId, taskId: execution?.task.id, executor: actor,
+        scenarioEdits: model.scenario ? [] as ScenarioMutation[] : undefined };
       const objects = model.scenario ? new Objects(this.db, model, access, client,change) : new JournalObjects(this.db,model,access,client,change);
       await objects.lockWrites();
       const previous = await priorResult(client);
@@ -102,9 +108,7 @@ export class Actions {
         }
       }
       const result = write ? objectRefSchema.parse(await write(objects)) : ref(action.result!);
-      if (model.scenario) await this.db.query(
-        `INSERT INTO ${this.db.schema}.scenario_actions(scenario_id,owner,request_id,digest,action,result,requirements,input,executor_kind,executor_id,task_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-        [model.scenario, principal.owner, requestId, fingerprint, actionName, result, JSON.stringify(access.requirements()), action.submissionCriteria.length ? input : null, actor.kind, actor.id, change.taskId ?? null], client);
+      if (model.scenario) await recordScenarioAction(objects, actionName, input, result, requestId);
       else await this.db.query(
         `INSERT INTO ${this.db.schema}.actions(owner,request_id,digest,action,release,result,executor_kind,executor_id,task_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [principal.owner, requestId, fingerprint, actionName, model.release, result, actor.kind, actor.id, change.taskId ?? null], client);

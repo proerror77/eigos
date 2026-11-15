@@ -9,7 +9,7 @@ import { Access } from './access.js';
 import { objectRefSchema, type ObjectData, type ObjectRef, type LinkData } from '../ontology/schema.js';
 import { processLogTarget } from '../ontology/process-definition.js';
 import { Database, type Sql } from './database.js';
-import { checkScenario, lockEdits, viewTables, stageObject, stageLink } from './scenario-store.js';
+import { checkScenario, lockEdits, viewTables, stageObject, stageLink, type ScenarioMutation } from './scenario-store.js';
 import { isNumeric, storedPredicate, supportsStoredOrder, supportsStoredPredicate, type Metric } from './stored-query.js';
 
 export const querySchema = z.strictObject({
@@ -25,7 +25,7 @@ export function queryFields(query: Pick<z.output<typeof querySchema>, 'where' | 
 }
 export class Objects {
   constructor(readonly db: Database, readonly model: PublishedOntology, readonly access: Access, readonly client: Sql = db.pool,
-    readonly change?: { action?: string; requestId?: string; taskId?: string; executor?: ExecutionActor }) {}
+    readonly change?: { action?: string; requestId?: string; taskId?: string; executor?: ExecutionActor; scenarioEdits?: ScenarioMutation[] }) {}
   get owner() { return this.access.principal.owner; }
   private writeReady?: Promise<void>;
   async lockWrites() { await this.prepareWrite(); }
@@ -386,7 +386,7 @@ export class Objects {
     if (this.model.scenario) {
       const old = await this.stored(ref).catch(error => { if (error instanceof NotFound) return undefined; throw error; });
       if (old) { if (digest(old.properties) !== digest(properties)) throw new Conflict('Object identity already contains different data'); return; }
-      await stageObject(this.db, this.model, this.owner, ref, 1, properties, this.client, Object.keys(input)); return;
+      await stageObject(this.db, this.model, this.owner, ref, 1, properties, this.client, Object.keys(input), { op: 'create', journal: this.change?.scenarioEdits }); return;
     }
     const result = await this.db.query(`INSERT INTO ${this.db.schema}.objects(owner,type,id,properties,projection) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING id`, [this.owner, ref.type, ref.id, properties, this.model.projection], this.client);
     if (!result.rowCount) {
@@ -432,7 +432,9 @@ export class Objects {
     for (const field of Object.keys(fields)) if (!this.access.cell(this.model,ref.type,field,old.properties)) throw new Error('Cannot edit a hidden property');
     this.access.writeRow(this.model,ref.type,properties);
     if (old.revision !== revision) throw new Conflict('Object revision changed');
-    if (this.model.scenario) { await stageObject(this.db, this.model, this.owner, ref, revision + 1, properties, this.client, Object.keys(fields)); return; }
+    if (this.model.scenario) {
+      await stageObject(this.db, this.model, this.owner, ref, revision + 1, properties, this.client, Object.keys(fields), { op: 'edit', journal: this.change?.scenarioEdits }); return;
+    }
     const result = await this.db.query(`UPDATE ${this.db.schema}.objects SET properties=$4,revision=revision+1 WHERE owner=$1 AND type=$2 AND id=$3 AND revision=$5 AND projection=$6`, [this.owner, ref.type, ref.id, properties, revision, this.model.projection], this.client);
     if (!result.rowCount) throw new Conflict('Object revision changed');
     await recordObjectEdit(this,ref,old.properties,properties,fields,'edit');
@@ -457,7 +459,7 @@ export class Objects {
         const definition = this.model.links.get(edge.type)!;
         const from = await this.follow(edge.from, definition.from.name), to = await this.follow(edge.to, definition.to.name);
         if (definition.from.cardinality === 'one' && from.some(item => digest(item.ref) !== digest(edge.to)) || definition.to.cardinality === 'one' && to.some(item => digest(item.ref) !== digest(edge.from))) throw new Conflict('Link cardinality exceeded');
-        await stageLink(this.db, this.model, this.owner, edge, false, this.client);
+        await stageLink(this.db, this.model, this.owner, edge, false, this.client, this.change?.scenarioEdits);
       }
       return;
     }
@@ -473,7 +475,7 @@ export class Objects {
     this.writeType(edge.from.type,true); this.writeType(edge.to.type,true);
     const definition = this.model.links.get(edge.type);
     if (!definition || definition.from.type !== edge.from.type || definition.to.type !== edge.to.type) throw new Error('Invalid link endpoints');
-    if (this.model.scenario) return stageLink(this.db, this.model, this.owner, edge, true, this.client);
+    if (this.model.scenario) return stageLink(this.db, this.model, this.owner, edge, true, this.client, this.change?.scenarioEdits);
     await this.db.query(`DELETE FROM ${this.db.schema}.links WHERE projection=$1 AND owner=$2 AND type=$3 AND from_type=$4 AND from_id=$5 AND to_type=$6 AND to_id=$7`, [this.model.projection, this.owner, edge.type, edge.from.type, edge.from.id, edge.to.type, edge.to.id], this.client);
   }
   async remove(ref: ObjectRef, revision: number): Promise<void> {
@@ -490,7 +492,7 @@ export class Objects {
         for (const other of others) await this.unlink({ type: link.apiName, from: side === 'from' ? ref : other.ref, to: side === 'to' ? ref : other.ref });
       }
     }
-    if (this.model.scenario) return stageObject(this.db, this.model, this.owner, ref, revision + 1, null, this.client);
+    if (this.model.scenario) return stageObject(this.db, this.model, this.owner, ref, revision + 1, null, this.client, [], { op: 'delete', journal: this.change?.scenarioEdits });
     await this.db.query(`DELETE FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND revision=$5`, [this.model.projection, this.owner, ref.type, ref.id, revision], this.client);
     await recordObjectEdit(this,ref,old.properties,null,undefined,'delete');
   }
