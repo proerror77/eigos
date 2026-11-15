@@ -4,6 +4,7 @@ import { digest } from '../../core/identity.js';
 import { didiEndpoint, type DidiBinding } from './contracts.js';
 import { readDidiCredential } from './connector.js';
 import { mapDidiResult } from './mapping.js';
+import { ridePosition, rideProgress } from '../../ontology/ride-watch.js';
 
 const text = z.string().min(1).max(500);
 const commandSchemas = {
@@ -46,6 +47,8 @@ export interface RideOrders {
     beforeDispatch: () => Promise<void>,
   ): Promise<RideOrder>;
   query(orderId: string, signal: AbortSignal): Promise<RideOrder>;
+  observe?(orderId: string, signal: AbortSignal): Promise<z.infer<typeof rideProgress>>;
+  driverPosition?(orderId: string, signal: AbortSignal): Promise<z.infer<typeof ridePosition>>;
   cancel(orderId: string, reason: string, signal: AbortSignal, beforeDispatch: () => Promise<void>): Promise<RideOrder>;
 }
 /** Mutations have a separate transport and an operator connection switch. They
@@ -224,6 +227,37 @@ export class DidiOperations implements RideOrders {
   }
   async query(orderId: string, signal: AbortSignal) {
     return this.normalize(await this.call('taxi_query_order', { order_id: orderId }, signal), true, orderId);
+  }
+  async observe(orderId: string, signal: AbortSignal) {
+    const raw = await this.call('taxi_query_order', { order_id: orderId }, signal);
+    const body = z.object({
+      orderId: text,
+      statusCode: z.union([z.number().int(), z.string().regex(/^\d{1,4}$/)]),
+      driver: z.record(z.string(), z.unknown()).nullish(),
+      map: z.record(z.string(), z.unknown()).nullish(),
+    }).parse(raw.structuredContent);
+    if (body.orderId !== orderId) throw new Error('Original provider order identity changed');
+    const label = (value: unknown) => typeof value === 'string' && value.trim() ? value.trim().slice(0, 120) : null;
+    const number = (value: unknown) => {
+      const n = typeof value === 'number' ? value :
+        typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value.trim()) ? Number(value) : NaN;
+      return Number.isFinite(n) && n >= 0 ? n : null;
+    };
+    return rideProgress.parse({
+      orderId, statusCode: Number(body.statusCode), observedAt: new Date().toISOString(), contentDigest: digest(raw),
+      driver: body.driver ? {
+        name: label(body.driver.name), carModel: label(body.driver.carModel), carPlate: label(body.driver.carPlate),
+      } : null,
+      distanceKm: number(body.map?.distanceKm), etaMinutes: number(body.map?.eta),
+    });
+  }
+  async driverPosition(orderId: string, signal: AbortSignal) {
+    const raw = await this.call('taxi_get_driver_location', { order_id: orderId }, signal);
+    const { orderId: observedOrder, ...point } = z.object({
+      orderId: text.optional(), longitude: z.number(), latitude: z.number(),
+    }).parse(raw.structuredContent);
+    if (observedOrder && observedOrder !== orderId) throw new Error('Original provider order identity changed');
+    return ridePosition.parse({ ...point, coordinateSystem: 'provider_unspecified', observedAt: new Date().toISOString() });
   }
   async cancel(orderId: string, reason: string, signal: AbortSignal, beforeDispatch: () => Promise<void>) {
     await this.call('taxi_cancel_order', { order_id: orderId, reason }, signal, beforeDispatch);

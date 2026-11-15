@@ -33,7 +33,7 @@ const paTravelInstructions = [
   'For user-authorized travel reminders, keep the object reference from StartCalendarJourney or StartFlightWatch.',
   'Use your own PA notification capability and the channel selected by the user. EIGOS owns travel scheduling and computes notices.',
   'When EIGOS sends a travel_reminder event, use its authoritative reference, version, and operation. Keep only the newest version and withdraw pending notices on withdraw.',
-  'Use readCalendarJourney or readFlightWatch via evaluate_ontology for independent readback with the original typed reference.',
+  'Use readCalendarJourney, readFlightWatch or readDidiRideWatch via evaluate_ontology for independent readback with the original typed reference.',
   'If EIGOS requests calendar.journey.read, respond to the original taskId and requestId with only the required source fields.',
   'Withdraw pending notifications when the current reminder or alert is null. Discard expired calendar timing using validUntil.',
   'Report notification delivery only after your PA channel confirms it.',
@@ -99,7 +99,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   };
   const evaluate = async (p: Principal, raw: unknown) => {
     const input = functionInput.parse(raw);
-    const liveTravelReminder = (input.function === 'readCalendarJourney' || input.function === 'readFlightWatch') &&
+    const liveTravelReminder = (input.function === 'readCalendarJourney' || input.function === 'readFlightWatch' || input.function === 'readDidiRideWatch') &&
       !input.taskId && !input.scenarioId && (input.ontology === undefined || input.ontology === 'Eigos');
     // Existing PA clients carry task scopes. These two reads still use the published Function,
     // source, object, and row permissions of the authenticated owner.
@@ -186,7 +186,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     server.registerTool('inspect_scenario', { description:'Read a scenario revision, proposed object/link changes and object conflicts in the selected Ontology.',inputSchema:z.strictObject({ontology:z.string().optional(),scenarioId:z.uuid()}) }, input=>response(()=>scenarioRead(p,input.scenarioId,input.ontology)));
     server.registerTool('discard_scenario', { description:'Discard the exact reviewed scenario revision in the selected Ontology.',inputSchema:z.strictObject({ontology:z.string().optional(),scenarioId:z.uuid(),revision:z.number().int().positive()}) }, input=>response(()=>scenarioDiscard(p,input.scenarioId,input.revision,input.ontology)));
     server.registerTool('query_ontology', { description: 'Query object sets using an Object Type or Interface and its property and link names.', inputSchema: queryInput }, input => response(() => query(p, input)));
-    server.registerTool('evaluate_ontology', { description: 'Invoke a published Function. A PA managing travel reminders reads readCalendarJourney or readFlightWatch with the original object reference.', inputSchema: functionInput }, input => response(() => evaluate(p, input)));
+    server.registerTool('evaluate_ontology', { description: 'Invoke a published Function. A PA managing travel reminders reads readCalendarJourney, readFlightWatch or readDidiRideWatch with the original object reference.', inputSchema: functionInput }, input => response(() => evaluate(p, input)));
     server.registerTool('apply_ontology_action', { description: 'Submit a published Action through its declared parameters and submission criteria.', inputSchema: actionInput }, input => response(() => apply(p, input)));
     server.registerTool('describe_ontology', { description: 'Read published types, properties, interfaces, links, functions and actions.', inputSchema: z.strictObject({ontology:z.string().optional()}) }, input => response(async () => { requireScope(p, 'ontology:read'); return (await Access.load(db, p)).describe(await metadata.active(input.ontology)); }));
     const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
