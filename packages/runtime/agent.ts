@@ -212,7 +212,9 @@ export class OntologyAgent {
             const scenario = z.object({ id: z.uuid() }).parse(output);
             await appendTrace(this.db, { ...anchor, scenarioId: scenario.id }, { kind: 'proposal' });
           }
-          if (capture) await captureEvent(name, input, output);
+          // Pauses are resumable task results, not successful Action outputs
+          // that can be frozen into a learned workflow.
+          if (capture && (!completion || 'result' in completion.completion)) await captureEvent(name, input, output);
           // Trace storage and workflow capture can wait on PostgreSQL. Check the
           // current model grant again immediately before handing off the reply.
           const delivery = await egress.decide(combineClassification(disclosed, classification));
