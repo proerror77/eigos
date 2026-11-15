@@ -147,6 +147,7 @@ function checkHotelWorkflowDefinition(recipe: Recipe, previous: PublishedOntolog
     objectTypes: ['OntologyScenario'], interfaceTypes: [] as string[], linkTypes: [] as string[],
   } satisfies FunctionDependencies;
   const navigationNames = new Set<string>();
+  const unscopedInterfaces = new Set<string>();
   let dynamicNavigation = false;
   const entries = (value: unknown) => {
     const binding = valueSchema.parse(value);
@@ -184,6 +185,9 @@ function checkHotelWorkflowDefinition(recipe: Recipe, previous: PublishedOntolog
       const fields = entries(item);
       const read = fields.view ? entries(fields.view) : fields;
       const navigation = read.from ? entries(read.from) : read;
+      const type = text(read.type);
+      if (step.tool === 'query_ontology' && !read.from && type && previous.interfaces.has(type))
+        unscopedInterfaces.add(type);
       const keys = [read.type, navigation.link, navigation.as].filter(value => value !== undefined);
       return valueSchema.parse(item).kind !== 'record' || keys.some(value=>!text(value));
     });
@@ -200,7 +204,7 @@ function checkHotelWorkflowDefinition(recipe: Recipe, previous: PublishedOntolog
     roots.linkTypes.push(edge.apiName);
     roots.objectTypes.push(edge.from.type, edge.to.type);
   }
-  checkWorkflowDependencies(previous, current, roots);
+  checkWorkflowDependencies(previous, current, roots, dynamicNavigation ? new Set(previous.interfaces.keys()) : unscopedInterfaces);
 }
 
 export function checkHotelWorkflowTool(tool: string, input: unknown) {

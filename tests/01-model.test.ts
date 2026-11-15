@@ -31,7 +31,7 @@ test('multiple provider types share a business Interface while retaining distinc
   definition.linkTypes.push({apiName:'SyntheticHotelEvidence',description:'Fixture source mapping',from:{type:other.apiName,name:'evidence',cardinality:'one'},to:{type:'RollingGoHotelSearch',name:'syntheticCurrent',cardinality:'many'}},
     {apiName:'SyntheticHotelSelection',description:'Fixture plan mapping',from:{type:other.apiName,name:'selectedPlans',cardinality:'many'},to:{type:'SchedulePlan',name:'syntheticHotels',cardinality:'many'}});
   const model=new Ontology(definition),service={type:other.apiName,id:'hotel'},plan={type:'SchedulePlan',id:'plan'};
-  assert.deepEqual(model.concreteTypes('HotelOffer'),['RollingGoHotelOffer','SyntheticHotelOffer']);
+  assert.deepEqual(new Set(model.concreteTypes('HotelOffer')),new Set(['RollingGoHotelOffer','FliggyHotelOffer','SyntheticHotelOffer']));
   assert.equal(model.navigation(other.apiName,'plans','ServiceOffering').link,'SyntheticHotelSelection');
   assert.deepEqual(model.resolveAction(service,'HotelOffer','select',{service,plan}),{action:'AttachPlanService',input:{service,plan}});
   assert.equal(model.resolveTypeAction('LumaEventSearch','EventSearch','search',{query:'AI'}).action,'SearchLumaEvents');
