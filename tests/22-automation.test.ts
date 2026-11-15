@@ -404,6 +404,25 @@ test('Machinery reconstructs repeated paths, measures dwell and excludes a case 
   } finally { await f.close(); }
 });
 
+test('definition discovery filters Machinery actions and subprocesses under limited resource grants', async () => {
+  const f = await setup();
+  try {
+    const reader = { owner: 'machinery-reader', scopes: ['ontology:read'] };
+    await setGrants(f.db, reader.owner, [
+      ...['EventTripStateLog', 'EventTrip'].flatMap(type => [
+        { resource: 'Eigos/object/' + type, permission: 'view_definition' as const },
+        { resource: 'Eigos/object/' + type, permission: 'view_objects' as const },
+      ]),
+    ]);
+    const access = await Access.load(f.db, reader);
+    const definition = access.describe(f.model);
+    const reference = definition.objectTypes.find(type => type.apiName === 'EventTripStateLog')?.machinery;
+    assert(reference);
+    assert(reference.transitions.every(edge => !edge.action));
+    assert.deepEqual(reference.subprocesses, []);
+  } finally { await f.close(); }
+});
+
 test('periodic Machinery review claims one window and recalculates it after visibility changes', async () => {
   const f = await processSetup();
   try {

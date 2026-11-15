@@ -419,7 +419,26 @@ export class Access {
         source.properties = Object.fromEntries(Object.entries(source.properties).filter(([name]) => Object.hasOwn(fields, name)));
       }
     }
+    const visibleProcessObjects = new Map(document.objectTypes.map(type => [type.apiName, type]));
+    const visibleLinks = new Set(document.linkTypes.map(link => link.apiName));
     for (const type of document.objectTypes) {
+      if (type.machinery) {
+        const process = processLogTarget(model, type.apiName)!;
+        if (!this.canRead(model, process.type) || !this.canRead(model, process.objectType)
+            || !visibleProcessObjects.get(process.objectType)?.properties[process.property]
+            || !this.property(model, process.objectType, process.property)) {
+          delete type.machinery;
+        } else {
+          for (const edge of type.machinery.transitions) {
+            if (edge.action && !actions.has(edge.action)) delete edge.action;
+          }
+          type.machinery.subprocesses = type.machinery.subprocesses?.filter(child => {
+            const target = model.navigation(process.objectType, child.link);
+            return objects.has(child.process) && this.canRead(model, child.process)
+              && this.canRead(model, target.target) && visibleLinks.has(target.link);
+          });
+        }
+      }
       type.interfaces = Object.fromEntries(Object.entries(type.interfaces).filter(([name]) => interfaces.has(name)));
       for (const mapping of Object.values(type.interfaces)) mapping.actions = Object.fromEntries(Object.entries(mapping.actions).filter(([, action]) => actions.has(action.action)));
       if (limited) {

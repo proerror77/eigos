@@ -297,11 +297,6 @@ export async function analyzeMachinery(db: Database, access: Access, model: Publ
     throw new Conflict('Select one object, Object Set or subprocess focus');
   const target = targetFor(model, input.type);
   if (input.object && input.object.type !== target.objectType) throw new Conflict('Object type differs from the process type');
-  for (const specification of [input.reference, input.candidate]) {
-    if (!specification) continue;
-    try { validateMachineryModel(model, target.type, specification); }
-    catch (error) { throw new Conflict(error instanceof Error ? error.message : 'Invalid Machinery model'); }
-  }
   return db.transaction(async client => {
     await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY', [], client);
     await db.setOwner(client, access.principal.owner);
@@ -314,6 +309,15 @@ export async function analyzeMachinery(db: Database, access: Access, model: Publ
     const graph = new Objects(db, model, access, client);
     access.read(model, target.type);
     access.read(model, target.objectType);
+    for (const specification of [input.reference, input.candidate]) {
+      if (!specification) continue;
+      if (specification.transitions.some(({ action }) => action &&
+          (!model.actions.has(action) || !access.canDefine(model, 'action', action)
+            || !access.canSeeModelData(model.actions.get(action)?.classification))))
+        throw new Conflict('The process model references an unavailable Action');
+      try { validateMachineryModel(model, target.type, specification); }
+      catch (error) { throw new Conflict(error instanceof Error ? error.message : 'Invalid Machinery model'); }
+    }
     let ids = input.object ? [input.object.id] : undefined;
     if (input.object) await graph.read(input.object);
     if (input.setId) {
