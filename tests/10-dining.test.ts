@@ -118,7 +118,7 @@ test('a dining day trip uses read-only sources and one PA task through reviewed 
     const active = f = await fixture(driver, undefined, undefined, undefined, { amap, amapFetch, xiaohongshu, xiaohongshuFetch: fakeNotes });
     const task = await active.tasks.submit(principal, { requestId: 'suzhou-dining-fixture', message: '想找天气适合的一天自驾去苏州吃大闸蟹。只准备内部计划。' });
     const pa = new PARequests(active.tasks);
-    const answer = async (capability: string, response: Record<string, unknown>) => {
+    const answer = async (capability: string, reply: () => Record<string, unknown>) => {
       await active.worker.runOne();
       const waiting = await active.tasks.get(principal, task.id);
       assert.equal(waiting.state, 'input-required', JSON.stringify(waiting));
@@ -126,22 +126,26 @@ test('a dining day trip uses read-only sources and one PA task through reviewed 
       const request = waiting.result as { taskId: string; requestId: string; capability: string };
       assert.equal(request.taskId, task.id);
       assert.equal(request.capability, capability);
+      const response = reply();
       await pa.respond(principal, task.id, { requestId: request.requestId, response });
-      return request.requestId;
+      return { requestId: request.requestId, response };
     };
-    await answer('weather.history', {
+    await answer('weather.history', () => ({
       status: 'available', city: '苏州', observedAt: iso(Date.now()), sourceUrl: 'https://example.com/weather',
       evidence: 'synthetic', kind: 'station_observation', complete: false, days: [{ date: observations[0], minC: 6.4 }],
-    });
-    await answer('calendar.freebusy', { ...calendarAnswer(bounds),
+    }));
+    await answer('calendar.freebusy', () => ({ ...calendarAnswer(bounds),
       windows: [{ start: iso(dayStart(day1)), end: iso(dayStart(day1) + 4 * hour) },
         { start: iso(dayStart(day2)), end: iso(dayStart(day2) + 4 * hour) }],
       busy: [{ start: iso(dayStart(day1)), end: iso(dayStart(day1) + 4 * hour) }],
-    });
-    const supply = { status: 'available', observedAt: iso(Date.now()), expiresAt: iso(Date.now() + hour),
-      sourceUrl: 'https://example.com/restaurant/menu', sourceKind: 'restaurant_menu', evidence: 'synthetic' };
-    const staleId = await answer('dining.availability', { ...supply, expiresAt: iso(Date.now() - 1000) });
-    const receiptId = await answer('dining.availability', supply);
+    }));
+    const diningReply = (ttlMs: number) => {
+      const observedAt = Date.now();
+      return { status: 'available', observedAt: iso(observedAt), expiresAt: iso(observedAt + ttlMs),
+        sourceUrl: 'https://example.com/restaurant/menu', sourceKind: 'restaurant_menu', evidence: 'synthetic' };
+    };
+    const { requestId: staleId } = await answer('dining.availability', () => diningReply(-1000));
+    const { requestId: receiptId, response: supply } = await answer('dining.availability', () => diningReply(hour));
     assert.notEqual(receiptId, staleId);
     await active.worker.runOne();
     const proposal = await active.tasks.get(principal, task.id);
