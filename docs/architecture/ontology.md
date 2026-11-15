@@ -127,6 +127,14 @@ Machinery 使用已发布对象的枚举状态和原有编辑历史；Action Eng
 
 请求、任务调度和技术调用分别保存在专用运行表。地点和路线具有业务身份，费用估计是一次来源观察，来源凭据保存在运行配置中。标准化过程保留供应商坐标系声明及价格范围。[结构指导](https://www.palantir.com/docs/foundry/ontology/ontology-structural-guidance)
 
+## 网页订位试点
+
+`readDiningWebAvailability` 接收餐厅、城市、当地日期和人数。从指定餐厅官网跟随订位链接，核对 SevenRooms 页面上的门店、日期和人数，从页面主结果区提取可选时段。连接配置只保存官网起点。浏览器使用独立会话，只向官网和订位页面发出读取请求。
+
+配置通过 `EIGOS_DINING_WEB_CONNECTION_FILE` 加载，由执行进程读取权限为 `0600` 的独立 JSON 文件。文件字段为 `owner`、`restaurant`、`city`、`timeZone` 和 `officialPage`。运行网页能力与订位回归测试需要 Google Chrome。隔离测试可额外配置 `sandboxOrigin`，值为带显式端口的 `http://127.0.0.1` 商家测试服务。
+
+`PrepareDiningTestReservation`、`SubmitDiningTestReservation` 和 `RefreshDiningTestReservation` 通过 Action 记录同一 `DiningReservation`。测试商家收到提交前，`ExternalOperations` 先保存操作标识。回执丢失时，按该标识查商家原单，核对请求条件和商家单号后写回。结果暂时不可见或不匹配时，保留 `unknown`，后续操作继续查询同一标识。网页提交受限于已配置的本机测试商家，回执标为 `synthetic`。 [Palantir Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) · [外部写回](https://www.palantir.com/docs/foundry/action-types/webhooks) · [Machinery 状态](https://www.palantir.com/docs/foundry/machinery/core-concepts)
+
 ## 执行与数据访问
 
 Gateway 校验 JWT 的签名、issuer、audience、有效期和 scopes。对象、关系、任务及 Action 记录都按当前 owner 查询。来源绑定限定 owner，并在调用与入库时检查是否仍有效。
