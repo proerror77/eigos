@@ -12,10 +12,12 @@ const html = (res: ServerResponse, status: number, body: string) =>
 type Order = DiningTerms & { reference: string; bookingId: string };
 
 export async function startDiningTestMerchant() {
-  const orders: Order[] = [], lookups: string[] = [], flags = { loseReply: true, hideOrder: false, mismatched: false };
+  const orders: Order[] = [], lookups: string[] = [];
+  const flags = { formUnavailable: false, loseReply: true, hideOrder: false, mismatched: false };
   let submissions = 0, lostReplies = 0;
   const server = createServer(async (req, res) => {
-    if (req.method === 'GET' && req.url === '/reserve') return html(res, 200, form);
+    if (req.method === 'GET' && req.url === '/reserve') return flags.formUnavailable
+      ? html(res, 503, 'The test form is unavailable') : html(res, 200, form);
     if (req.method === 'POST' && req.url === '/reserve') {
       submissions++;
       let body = '';

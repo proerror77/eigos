@@ -79,13 +79,17 @@ export function diningReservationFunctions(db: Database, path?: string): Readonl
       receipt = await reconcile();
     } else {
       try {
-        receipt = await effects.run(owner, reservation.id, scope, guard, () => sandbox.submit(
-          record.terms, reservation.id, context.signal, async () => {
+        receipt = await effects.recover(owner, reservation.id, scope, original);
+        receipt ??= await sandbox.submit(record.terms, reservation.id, context.signal, send => effects.run(
+          owner, reservation.id, scope, async client => {
+            await guard(client);
+            if (record.terms.date < dayIn(binding.timeZone)) throw new Conflict('The requested date has passed');
+          }, async () => {
             await context.assertCurrent?.();
             await binding.assertCurrent();
-            if (record.terms.date < dayIn(binding.timeZone)) throw new Conflict('The requested date has passed');
-          },
-        ), original, { taskId: context.taskId, requestId: context.operationId });
+            return send();
+          }, original, { taskId: context.taskId, requestId: context.operationId },
+        ));
       } catch (error) {
         if (!(error instanceof UnknownExternalOperation)) throw error;
         receipt = await reconcile();

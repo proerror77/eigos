@@ -64,19 +64,28 @@ export function diningSandbox(raw: string, timeZone: string) {
     });
 
   return {
-    async submit(terms: DiningTerms, reference: string, signal: AbortSignal, beforeSubmit: () => Promise<void>) {
+    async submit(
+      terms: DiningTerms,
+      reference: string,
+      signal: AbortSignal,
+      dispatch: (submitForm: () => Promise<Receipt>) => Promise<Receipt>,
+    ) {
       return browse(reservePath, signal, async (page, admit) => {
-        await page.goto(origin + reservePath, { waitUntil: 'domcontentloaded' });
+        const response = await page.goto(origin + reservePath, { waitUntil: 'domcontentloaded' });
+        if (!response?.ok()) throw new Conflict('The test merchant form is unavailable');
         const form = page.locator('form[data-eigos-dining="synthetic"][method="post"][action="/reserve"]');
         const fields = Object.fromEntries(Object.entries({ ...terms, reference }).map(([key, value]) => [key, String(value)]));
         for (const [name, value] of Object.entries(fields)) {
           await form.locator(`input[name="${name}"]`).fill(value);
         }
-        await beforeSubmit();
-        signal.throwIfAborted();
-        admit(fields);
-        await form.getByRole('button', { name: 'Submit test reservation', exact: true }).click();
-        return readReceipt(page, terms, reference, 'confirmation-page');
+        const button = form.getByRole('button', { name: 'Submit test reservation', exact: true });
+        await button.click({ trial: true });
+        return dispatch(async () => {
+          signal.throwIfAborted();
+          admit(fields);
+          await button.click();
+          return readReceipt(page, terms, reference, 'confirmation-page');
+        });
       });
     },
     async lookup(terms: DiningTerms, reference: string, signal: AbortSignal) {

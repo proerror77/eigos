@@ -21,6 +21,7 @@ import { Ontology } from '../packages/ontology/model.js';
 import { addProcessLogs, processLogTarget } from '../packages/ontology/process-definition.js';
 import { calendarJourneyDefinition } from '../packages/ontology/calendar-journey.js';
 import { deliveryFunctions } from '../packages/ontology/delivery.js';
+import { diningReservations } from '../packages/ontology/dining-reservations.js';
 import { documentDefinition } from '../packages/ontology/documents.js';
 import { flightDefinition } from '../packages/ontology/flight.js';
 import { flightPositionFunction } from '../packages/ontology/flight-position.js';
@@ -445,7 +446,7 @@ test('revoked prior-step result visibility blocks a later Action even when the t
 
 test('a hotel workflow saved under v8 replays in v9 and the current release with fresh inputs and separate approval', async () => {
   // Reconstruct the historical documents on the same runtime and check both published identities.
-  const laterDomains = [calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition];
+  const laterDomains = [calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition, diningReservations];
   const addedTypes = new Set([
     ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType,
   ]);

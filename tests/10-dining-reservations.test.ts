@@ -30,6 +30,13 @@ test('a lost web confirmation reconciles the original test order and never repea
     assert.equal((await read()).state, 'prepared');
     await assert.rejects(apply('RefreshDiningTestReservation', { reservation }, 'before-submit'), /no original submission/);
 
+    merchant.flags.formUnavailable = true;
+    await assert.rejects(apply('SubmitDiningTestReservation', { reservation }, 'first-submit'), /form is unavailable/);
+    assert.equal(merchant.submissions, 0);
+    assert.equal((await read()).state, 'prepared');
+    await assert.rejects(apply('RefreshDiningTestReservation', { reservation }, 'after-unavailable-form'), /no original submission/);
+
+    merchant.flags.formUnavailable = false;
     merchant.flags.hideOrder = true;
     assert.deepEqual(await apply('SubmitDiningTestReservation', { reservation }, 'first-submit'), reservation);
     assert.equal(merchant.submissions, 1);
