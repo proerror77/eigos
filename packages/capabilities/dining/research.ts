@@ -9,10 +9,10 @@ import type { FunctionContext, FunctionHandler } from '../../runtime/functions.j
 import { PARequests } from '../../runtime/pa.js';
 import { configuredNoteSearch } from './xiaohongshu.js';
 
-async function ask(ctx: FunctionContext, capability: string, input: Record<string, unknown>, schema: z.ZodType) {
+async function ask(ctx: FunctionContext, capability: string, input: Record<string, unknown>, schema: z.ZodType, dataScope = input) {
   const execution = ctx.execution;
   if (!execution) throw new Conflict('Request this information through the original PA task');
-  return new PARequests(execution.tasks).requestWithId(execution.task, digest([capability, input]), capability, input, json(schema), input);
+  return new PARequests(execution.tasks).requestWithId(execution.task, digest([capability, input]), capability, input, json(schema), dataScope);
 }
 const day = 86400000;
 const fresh = (observedAt: string, expiresAt: string) => {
@@ -53,13 +53,18 @@ export function diningResearch(path?: string, fetcher?: typeof fetch): ReadonlyM
       const parsed = diningQuery.parse(raw), input = { ...parsed,
         start: new Date(parsed.start).toISOString(), end: new Date(parsed.end).toISOString() };
       if (Date.parse(input.end) <= Date.parse(input.start) || Date.parse(input.start) <= Date.now()) throw new Conflict('Select a future meal window');
-      const response = await ask(ctx, 'dining.availability', input, diningAnswer);
-      const answer = diningAnswer.parse(response.response);
-      if (answer.status !== 'available') return answer;
-      if (!fresh(answer.observedAt, answer.expiresAt) || Date.parse(answer.observedAt) < response.requestedAt.getTime() - 5000) {
-        throw new Conflict('Refresh the dining availability through the original PA');
+      let replaces: string | undefined;
+      for (;;) {
+        ctx.signal.throwIfAborted();
+        const response = await ask(ctx, 'dining.availability', input, diningAnswer, replaces ? { ...input, replaces } : input);
+        const answer = diningAnswer.parse(response.response);
+        if (answer.status !== 'available') return answer;
+        if (fresh(answer.observedAt, answer.expiresAt) && Date.parse(answer.observedAt) >= response.requestedAt.getTime() - 5000) {
+          return { ...input, ...answer, requestId: response.requestId };
+        }
+        // Reissue the exact meal request without replacing its immutable earlier reply.
+        replaces = response.requestId;
       }
-      return { ...input, ...answer, requestId: response.requestId };
     }],
   ]);
 }

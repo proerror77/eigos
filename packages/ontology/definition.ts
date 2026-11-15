@@ -25,12 +25,12 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
   apiName: 'stageDiningActivity', description: 'Stage a meal using the original task’s current dining availability evidence.',
   parameters: jsonSchema(diningActivityInputSchema), returns: jsonSchema(objectRefSchema), edits: true,
   dependencies: { objectTypes: ['SchedulePlan', 'ScheduledActivity', 'CalendarAvailability', 'ScheduleResource'],
-    linkTypes: ['ActivityPlan', 'ActivityResource', 'ActivityDependency', 'PlanResource', 'PlanAvailability'],
+    linkTypes: ['ActivityPlan', 'ActivityResource', 'ActivityDependency', 'PlanResource', 'PlanAvailability', 'ResourceAvailability'],
     functions: ['readDiningAvailability'] },
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '18',
+  id: ride.id, version: '19',
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
   actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes, ...journey.actionTypes, ...flight.actionTypes, ...payments.actionTypes,...luckin.actionTypes,...applications.actionTypes,...documents.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
@@ -89,7 +89,21 @@ businessDefinition.objectTypes.find(type => type.apiName === 'SchedulePlan')!.pr
   description: 'Internal plan review state; confirmation does not write an external calendar',
   schema: { type: 'string', enum: ['prepared', 'confirmed'] }, required: false,
 };
+businessDefinition.objectTypes.push({
+  apiName: 'ActionConfirmation', displayName: 'Action confirmation',
+  description: 'Human input required to continue an original Ontology Action invocation',
+  primaryKey: 'id', titleProperty: 'name', interfaces: {},
+  properties: {
+    id: { description: 'Original Action request ID', schema: { type: 'string' }, required: true },
+    name: { description: 'Action awaiting human input', schema: { type: 'string' }, required: true },
+    taskId: { description: 'Original EIGOS task', schema: { type: 'string', format: 'uuid' }, required: true },
+    state: { description: 'Confirmation process state', schema: {
+      type: 'string', enum: ['awaiting-input', 'confirmed', 'completed', 'canceled', 'failed'],
+    }, required: true },
+  },
+});
 addProcessLogs(businessDefinition, [
+  { type: 'ActionConfirmation', property: 'state' },
   { type: 'EventRegistration', property: 'state' }, { type: 'EventTrip', property: 'state' },
   { type: 'StripeLinkPaymentRequest', property: 'status' }, { type: 'SchedulePlan', property: 'state' }, { type: journeyType, property: 'state' }, { type: flightWatchType, property: 'state' },
 ]);

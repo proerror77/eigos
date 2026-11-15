@@ -140,7 +140,9 @@ test('a dining day trip uses read-only sources and one PA task through reviewed 
     });
     const supply = { status: 'available', observedAt: iso(Date.now()), expiresAt: iso(Date.now() + hour),
       sourceUrl: 'https://example.com/restaurant/menu', sourceKind: 'restaurant_menu', evidence: 'synthetic' };
+    const staleId = await answer('dining.availability', { ...supply, expiresAt: iso(Date.now() - 1000) });
     const receiptId = await answer('dining.availability', supply);
+    assert.notEqual(receiptId, staleId);
     await active.worker.runOne();
     const proposal = await active.tasks.get(principal, task.id);
     assert.equal(proposal.state, 'completed', JSON.stringify(proposal));
