@@ -36,7 +36,7 @@ export async function assertServiceAuthority(
   await source?.assertCurrent();
 }
 
-export async function currentService(objects: FunctionContext['objects'], ref: ObjectRef, expectedSource?: ObjectRef) {
+export async function currentService(objects: FunctionContext['objects'], ref: ObjectRef, expectedSource?: ObjectRef, now = Date.now()) {
   if (!objects.model.implements(ref.type, 'ServiceOffering')) throw new Conflict('A ServiceOffering is required');
   const item = await objects.read(ref),
     p = item.properties;
@@ -59,8 +59,8 @@ export async function currentService(objects: FunctionContext['objects'], ref: O
     source[0]!.properties.observedAt !== p.observedAt ||
     !Number.isFinite(Date.parse(String(p.observedAt))) ||
     !Number.isFinite(Date.parse(String(p.expiresAt))) ||
-    Date.parse(String(p.expiresAt)) <= Date.now() ||
-    Date.parse(String(p.observedAt)) > Date.now() + 5000
+    Date.parse(String(p.expiresAt)) <= now ||
+    Date.parse(String(p.observedAt)) > now + 5000
   )
     throw new Conflict('Service observation is stale or lacks source evidence');
   return item;

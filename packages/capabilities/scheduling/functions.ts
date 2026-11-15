@@ -3,7 +3,7 @@ import { type ObjectRef } from '../../ontology/schema.js';
 import { diningEvidence, diningSource } from '../../ontology/dining.js';
 import { diningProof } from '../dining/research.js';
 import type { z } from 'zod';
-import { withScenarioPARead, type FunctionContext, type FunctionHandler } from '../../runtime/functions.js';
+import { withScenarioEvaluation, withScenarioPARead, type FunctionContext, type FunctionHandler } from '../../runtime/functions.js';
 import type { Database } from '../../runtime/database.js';
 import { Scenarios } from '../../runtime/scenarios.js';
 import { PARequests } from '../../runtime/pa.js';
@@ -42,7 +42,7 @@ const subtract = (windows: Interval[], busy: Interval[]) => busy.reduce((free, b
   return pieces;
 }), windows);
 
-export async function readPlan(objects: Reader, raw: ObjectRef) {
+export async function readPlan(objects: Reader, raw: ObjectRef, now = Date.now()) {
   if (raw.type !== 'SchedulePlan') throw new Conflict('A SchedulePlan reference is required');
   const plan = await objects.read(raw), range = interval(plan.properties.start, plan.properties.end);
   const resources = await objects.follow(raw, 'resources');
@@ -53,7 +53,7 @@ export async function readPlan(objects: Reader, raw: ObjectRef) {
     if (snapshots.length !== 1) throw new Conflict('Calendar availability is missing or ambiguous');
     objects.access.source(objects.model, 'PACalendar');
     const snapshot = snapshots[0]!, p = snapshot.properties;
-    if (p.complete !== true || ms(p.expiresAt) <= Date.now() || ms(p.observedAt) > Date.now()+5000 || !Number.isFinite(ms(p.observedAt)) || !contained(interval(p.start,p.end),range)) throw new Conflict('Calendar availability is incomplete, stale or does not cover the plan');
+    if (p.complete !== true || ms(p.expiresAt) <= now || ms(p.observedAt) > now+5000 || !Number.isFinite(ms(p.observedAt)) || !contained(interval(p.start,p.end),range)) throw new Conflict('Calendar availability is incomplete, stale or does not cover the plan');
     if (!Array.isArray(p.windows) || !Array.isArray(p.busy)) throw new Conflict('Calendar availability is unreadable');
     const assignments = await objects.follow(resource.ref, 'activities');
     return { resource, snapshot, windows: normalize(p.windows as Interval[]), busy: normalize(p.busy as Interval[]), assignments };
@@ -62,12 +62,12 @@ export async function readPlan(objects: Reader, raw: ObjectRef) {
   return { plan, range, calendars, activities };
 }
 
-export async function validate(objects: Reader, plan: ObjectRef, sourceTrip?:ObjectRef, proposedTimes:ReadonlySet<string>=new Set()) {
-  const state = await readPlan(objects, plan), violations: { severity: 'hard'; code: string; activity: ObjectRef; related: ObjectRef[] }[] = [];
+export async function validate(objects: Reader, plan: ObjectRef, sourceTrip?:ObjectRef, proposedTimes:ReadonlySet<string>=new Set(), now = Date.now()) {
+  const state = await readPlan(objects, plan, now), violations: { severity: 'hard'; code: string; activity: ObjectRef; related: ObjectRef[] }[] = [];
   const add = (code: string, activity: ObjectRef, related: ObjectRef[] = []) => violations.push({ severity: 'hard', code, activity, related });
   for (const activity of state.activities) {
     const span = interval(activity.properties.start,activity.properties.end);
-    if(proposedTimes.has(activity.ref.id)&&ms(span.start)<Date.now())add('activity_in_past',activity.ref);
+    if(proposedTimes.has(activity.ref.id)&&ms(span.start)<now)add('activity_in_past',activity.ref);
     if (!contained(state.range,span)) add('outside_plan_window', activity.ref);
     const assigned = await objects.follow(activity.ref,'resources');
     if (assigned.length !== state.calendars.length || state.calendars.some(c => !assigned.some(r => same(r.ref,c.resource.ref)))) add('required_resource_missing',activity.ref);
@@ -93,7 +93,7 @@ export async function validate(objects: Reader, plan: ObjectRef, sourceTrip?:Obj
     await currentService(objects,events[0]!.ref);
     const travel=travels[0]!,event=events[0]!,p=trip.properties;
     if(event.properties.status!=='active')add('event_not_active',trip.ref);
-    if(!Number.isFinite(ms(travel.properties.expiresAt))||!Number.isFinite(ms(travel.properties.observedAt))||ms(travel.properties.expiresAt)<=Date.now()||ms(travel.properties.observedAt)>Date.now()+5000)add('trip_route_stale',trip.ref);
+    if(!Number.isFinite(ms(travel.properties.expiresAt))||!Number.isFinite(ms(travel.properties.observedAt))||ms(travel.properties.expiresAt)<=now||ms(travel.properties.observedAt)>now+5000)add('trip_route_stale',trip.ref);
     if(typeof p.waitMinutes!=='number'||typeof p.entryMinutes!=='number'||typeof travel.properties.durationSeconds!=='number')add('trip_timing_unknown',trip.ref);
     if(p.eventBindingId!==event.properties.bindingId||p.sourceAuthority!==travel.properties.authorityId)add('trip_source_changed',trip.ref);
     const call=ms(event.properties.start)-Number(p.entryMinutes)*60000-Number(travel.properties.durationSeconds)*1000-Number(p.waitMinutes)*60000;
@@ -101,7 +101,7 @@ export async function validate(objects: Reader, plan: ObjectRef, sourceTrip?:Obj
     const expected=[{id:digest([trip.ref.id,'travel']),start:ms(p.callAt),end:ms(p.eventStart)},{id:digest([trip.ref.id,'event']),start:ms(p.eventStart),end:ms(p.eventEnd)}];
     for(const span of expected)if(!activities.some(a=>a.ref.id===span.id&&ms(a.properties.start)===span.start&&ms(a.properties.end)===span.end))add('trip_activity_changed',trip.ref);
   }
-  return { valid: violations.length === 0, evaluatedAt:new Date().toISOString(), violations, calendarEvidence: state.calendars.map(c => ({ resource: c.resource.ref, sourceVersion: c.snapshot.properties.sourceVersion, observedAt: c.snapshot.properties.observedAt, expiresAt: c.snapshot.properties.expiresAt, evidence: c.snapshot.properties.evidence })), externalCalendarUpdated: false };
+  return { valid: violations.length === 0, evaluatedAt:new Date(now).toISOString(), violations, calendarEvidence: state.calendars.map(c => ({ resource: c.resource.ref, sourceVersion: c.snapshot.properties.sourceVersion, observedAt: c.snapshot.properties.observedAt, expiresAt: c.snapshot.properties.expiresAt, evidence: c.snapshot.properties.evidence })), externalCalendarUpdated: false };
 }
 
 export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionHandler> {
@@ -119,7 +119,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
     if (context.execution && !context.objects.model.scenario) throw new Conflict('The Agent must propose activity edits in a scenario for PA review');
     if (!context.edit) throw new Conflict('Activity edits require an Action');
     return context.edit(ref,async graph => {
-      const state = await readPlan(graph,input.plan);
+      const state = await readPlan(graph,input.plan,context.scenarioEvaluation?.evaluatedAt);
       let dining: z.output<typeof diningEvidence> | undefined;
       if (requestId) {
         const task = context.execution?.task;
@@ -155,7 +155,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       if (!graph.model.scenario && !(await validate(graph,input.plan)).valid) throw new Conflict('Schedule constraints are not satisfied');
     });
   };
-  return new Map<string, FunctionHandler>([
+  const handlers = new Map<string, FunctionHandler>([
     ['prepareSchedulePlan', withScenarioPARead(async (raw, context) => {
       const input = planInputSchema.parse(raw); zone(input.timeZone);
       if(input.plan&&!input.scenarioId)throw new Conflict('Replanning an existing plan requires a scenarioId');
@@ -220,7 +220,8 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       });
     })],
     ['findScheduleSlots', async (raw, context) => {
-      const input = searchSlotsSchema.parse(raw), state = await readPlan(context.objects,input.plan);
+      const now = context.scenarioEvaluation?.evaluatedAt ?? Date.now();
+      const input = searchSlotsSchema.parse(raw), state = await readPlan(context.objects,input.plan,now);
       if (input.ignoreActivity && !state.activities.some(a => same(a.ref,input.ignoreActivity!))) throw new Conflict('Only an activity in this plan can be excluded for rescheduling');
       let free = [state.range];
       for (const calendar of state.calendars) {
@@ -235,10 +236,10 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       }
       const duration = Number(state.plan.properties.durationMinutes)*60000, step = input.stepMinutes*60000, slots: { start: string; end: string }[] = [];
       for (const window of free) {
-        for (let start=ms(window.start)+Math.max(0,Math.ceil((Date.now()-ms(window.start))/step))*step;start+duration<=ms(window.end) && slots.length<input.limit;start+=step) slots.push({ start:new Date(start).toISOString(),end:new Date(start+duration).toISOString() });
+        for (let start=ms(window.start)+Math.max(0,Math.ceil((now-ms(window.start))/step))*step;start+duration<=ms(window.end) && slots.length<input.limit;start+=step) slots.push({ start:new Date(start).toISOString(),end:new Date(start+duration).toISOString() });
         if (slots.length===input.limit) break;
       }
-      return { plan: input.plan, slots, timeZone: state.plan.properties.timeZone, resources:state.calendars.map(c=>c.resource.ref), calendarEvidence:state.calendars.map(c=>({resource:c.resource.ref,sourceVersion:c.snapshot.properties.sourceVersion,observedAt:c.snapshot.properties.observedAt,expiresAt:c.snapshot.properties.expiresAt,evidence:c.snapshot.properties.evidence})),evaluatedAt:new Date().toISOString(),externalCalendarUpdated:false };
+      return { plan: input.plan, slots, timeZone: state.plan.properties.timeZone, resources:state.calendars.map(c=>c.resource.ref), calendarEvidence:state.calendars.map(c=>({resource:c.resource.ref,sourceVersion:c.snapshot.properties.sourceVersion,observedAt:c.snapshot.properties.observedAt,expiresAt:c.snapshot.properties.expiresAt,evidence:c.snapshot.properties.evidence})),evaluatedAt:new Date(now).toISOString(),externalCalendarUpdated:false };
     }],
     ['editScheduleActivity', (raw, context) => saveActivity(activityInputSchema.parse(raw), context)],
     ['stageDiningActivity', (raw, context) => {
@@ -252,10 +253,10 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       const plans=await context.objects.follow(input.activity,'plan'); if(plans.length!==1)throw new Conflict('Activity must have one plan');
       return context.edit(plans[0]!.ref,async graph=>{await graph.remove(input.activity,input.revision);});
     }],
-    ['validateSchedule', async (raw,context)=>validate(context.objects,planRefSchema.parse(raw).plan,undefined,await proposedTimes(context.objects))],
+    ['validateSchedule', async (raw,context)=>validate(context.objects,planRefSchema.parse(raw).plan,undefined,await proposedTimes(context.objects),context.scenarioEvaluation?.evaluatedAt)],
     ['readSchedulePlan', async (raw,context)=>{
-      const input=planRefSchema.parse(raw),state=await readPlan(context.objects,input.plan);
-      return { plan:state.plan,activities:state.activities,validation:await validate(context.objects,input.plan,undefined,await proposedTimes(context.objects)),scenarioId:context.objects.model.scenario??null,externalCalendarUpdated:false };
+      const input=planRefSchema.parse(raw),state=await readPlan(context.objects,input.plan,context.scenarioEvaluation?.evaluatedAt);
+      return { plan:state.plan,activities:state.activities,validation:await validate(context.objects,input.plan,undefined,await proposedTimes(context.objects),context.scenarioEvaluation?.evaluatedAt),scenarioId:context.objects.model.scenario??null,externalCalendarUpdated:false };
     }],
     ['commitSchedulePlan',async(raw,context)=>{
       const input=commitPlanSchema.parse(raw);
@@ -301,4 +302,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       });
     }],
   ]);
+  for (const name of ['findScheduleSlots', 'editScheduleActivity', 'removeScheduleActivity', 'validateSchedule', 'readSchedulePlan'])
+    withScenarioEvaluation(handlers.get(name)!);
+  return handlers;
 }

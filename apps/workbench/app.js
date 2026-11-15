@@ -1522,10 +1522,16 @@ async function renderScenarios() {
         )
       : empty('创建一个方案，再在方案中应用对象操作。'),
   );
+  const openEvaluation = async (method) => {
+    const { scenarioEvaluation } = await import('./scenario-evaluation.js');
+    scenarioEvaluation({ element, field, button, modal, table, jsonInput, stringify, service }, list.items)[method]();
+  };
   $('#main').replaceChildren(
     heading(
       '方案比较',
       '查看拟议变更，处理冲突，再通过业务操作确认合并。',
+      list.items.length >= 2 && button('并排比较', () => openEvaluation('compare')),
+      button('离线试跑', () => openEvaluation('trial')),
       button('回到正式数据', () => {
         state.scenario = null;
         notice('已切换到正式数据');

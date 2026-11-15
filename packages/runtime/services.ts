@@ -33,6 +33,7 @@ import { objectRefSchema } from '../ontology/schema.js';
 import { Access } from './access.js';
 import { Database } from './database.js';
 import { Metadata } from './metadata.js';
+import { ScenarioEvaluations, compareScenariosSchema, trialScenariosSchema } from './scenario-evaluation.js';
 import { Scenarios } from './scenarios.js';
 import { Objects } from './objects.js';
 import {
@@ -430,6 +431,24 @@ export function ontologyServices(
     z.strictObject({ sessionId: z.uuid() }),
     true,
     (a, input) => new Scenarios(db).closeSession(a, input.sessionId),
+  );
+  const evaluations = new ScenarioEvaluations(db, actions, functions);
+  register(
+    'compare_scenarios',
+    'Compare exact Scenario revisions and shared metrics against one current Ontology baseline.',
+    compareScenariosSchema,
+    false,
+    async (access, input) => evaluations.compare(access, await active(), input),
+  );
+  register(
+    'trial_scenarios',
+    'Execute published Action variants offline on the same evidence, then roll back every trial.',
+    trialScenariosSchema,
+    true,
+    async (access, input) => {
+      requireScope(access.principal, 'ontology:read');
+      return evaluations.trial(access, await active(), input);
+    },
   );
   register(
     'share_scenario',
