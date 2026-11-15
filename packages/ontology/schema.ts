@@ -44,6 +44,22 @@ export const functionDependenciesSchema = z.strictObject({
 export type FunctionDependencies = z.infer<typeof functionDependenciesSchema>;
 const actionConstraint = z.strictObject({ parameters: jsonSchema, objectParameters: z.record(name, name), required: z.boolean() });
 
+const machineryState = z.string().min(1).max(200);
+export const machineryEdgeSchema = z.strictObject({
+  from: machineryState.nullable(), to: machineryState.nullable(),
+});
+export const machineryModelSchema = z.strictObject({
+  states: z.array(z.strictObject({
+    name: machineryState,
+    terminal: z.boolean().optional(),
+    dwellSeconds: z.number().int().positive().max(365 * 86400).optional(),
+  })).min(1).max(200),
+  transitions: z.array(machineryEdgeSchema.extend({
+    action: name.optional(),
+  })).max(500),
+  subprocesses: z.array(z.strictObject({ link: name, process: name })).max(20).optional(),
+});
+
 export const ontologySchema = z.strictObject({
   id: name, version: z.string().min(1), classification: classificationSchema.optional(),
   sharedProperties:z.array(property.extend({apiName:name})).optional(),
@@ -53,7 +69,7 @@ export const ontologySchema = z.strictObject({
   imports:z.array(z.strictObject({ontology:name,version:z.string().min(1),digest:z.string().regex(/^[a-f0-9]{64}$/),namespace:name,document:z.unknown()})).optional(),
   objectTypes: z.array(z.strictObject({
     apiName: name, displayName: z.string().min(1), description: z.string().min(1),
-    primaryKey: name, titleProperty: name, properties, classificationProperty: name.optional(),...metadata,groups:z.array(name).optional(),
+    primaryKey: name, titleProperty: name, properties, machinery: machineryModelSchema.optional(), classificationProperty: name.optional(),...metadata,groups:z.array(name).optional(),
     interfaces: z.record(name, z.strictObject({
       properties: z.record(name, name), links: z.record(name, name),
       actions: z.record(name, z.strictObject({ action: name, parameters: z.record(name, name) })),
