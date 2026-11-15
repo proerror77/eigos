@@ -22,6 +22,8 @@ export const configSchema = z.object({
   EIGOS_PAOTUI_CONNECTION_FILE: z.string().optional(),
   EIGOS_WAIMAI_CONNECTION_FILE: z.string().optional(),
   EIGOS_AMAP_CONNECTION_FILE: z.string().optional(),
+  EIGOS_JOURNEY_CALENDAR_CONNECTION_FILE: z.string().optional(),
+  EIGOS_TRAVEL_PA_CONNECTION_FILE: z.string().optional(),
   EIGOS_VARIFLIGHT_CONNECTION_FILE: z.string().optional(),
   EIGOS_FR24_CONNECTION_FILE: z.string().optional(), EIGOS_FR24_MCP_ENTRYPOINT: z.string().optional(),
   EIGOS_STRIPE_SANDBOX_CONNECTION_FILE: z.string().optional(),

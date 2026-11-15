@@ -14,6 +14,8 @@ Agent 通过 EIGOS 的 Ontology MCP 调用 `evaluate_ontology` 与 `readFlightSt
 
 飞常准按次计费。跟踪每约 15 分钟复查，默认最多 8 次（按公示单价最多 ¥4），也可显式选 2 至 24 次。到达、取消、返航、备降、授权窗口结束或检查额度用尽后停止。原 PA 使用跟踪引用和 `alertVersion` 识别变更并去重，由 PA 的通知渠道确认送达。停止跟踪后，`alert: null` 表示撤回待投递提醒。飞常准提供的预计时间可能再次变化。参见 [PA 投递提醒](calendar-journey.md#pa-投递提醒)。
 
+若已配置 PA 连接，EIGOS 在已提交的航班提醒版本变化时主动投递。单次查询仍使用 `readFlightStatus` 直接读取。
+
 ## 飞机实时位置
 
 `readLiveFlightPosition` 通过 Flightradar24 官方 MCP 查询已被跟踪的飞机。输入商业航班号，可用起降机场缩小范围。返回 WGS84 坐标、位置时间、高度、地速及供应商提供的到达预估。查询结果缺少匹配飞机时返回空列表。起飞前计划、延误、取消和登机口提醒继续使用飞常准。参考 [Flightradar24 MCP](https://fr24api.flightradar24.com/docs/mcp-server) 和 [API FAQ](https://fr24api.flightradar24.com/docs/faq)。

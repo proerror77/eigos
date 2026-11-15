@@ -16,14 +16,15 @@ export async function initializeEffects(db: Database) {
     CREATE INDEX IF NOT EXISTS action_effects_queue ON ${db.schema}.action_effects(state,available_at);`);
 }
 export interface EffectContext { idempotencyKey: string; principal: Principal; signal: AbortSignal }
-export type EffectHandler = (payload: Record<string, unknown>, context: EffectContext) => Promise<void>;
+export type EffectHandler = (payload: Record<string, unknown>, context: EffectContext) => Promise<void | 'canceled'>;
+export interface ActionEffect { name: string; handler: string; payload: Record<string, unknown> }
 export class Effects {
   constructor(private readonly db: Database, private readonly handlers: ReadonlyMap<string, EffectHandler>) {}
   check(names: readonly string[]) {
     for (const name of names) if (!this.handlers.has(name)) throw new Error(`Action effect handler is unavailable: ${name}`);
   }
-  async enqueue(client: Sql, access: Access, model: PublishedOntology, action: string, requestId: string, effects: { name: string; handler: string; payload: Record<string, unknown> }[]) {
-    if (model.scenario) return;
+  async enqueue(client: Sql, access: Access, model: PublishedOntology, action: string, requestId: string, effects: ActionEffect[]) {
+    if (model.scenario || !effects.length) return;
     this.check(effects.map(effect => effect.handler));
     const requirements=await access.finalRequirements(client);
     for (const effect of effects) {
@@ -79,9 +80,9 @@ export class Effects {
       for (const requirement of row.requirements as Requirement[]) access.require(requirement.ontology, requirement.permission, requirement.resource);
       this.check([row.handler]);
       executionSignal.throwIfAborted();
-      await this.handlers.get(row.handler)!(row.payload, { idempotencyKey: row.id, principal, signal: executionSignal });
+      const outcome = await this.handlers.get(row.handler)!(row.payload, { idempotencyKey: row.id, principal, signal: executionSignal });
       executionSignal.throwIfAborted();
-      await this.db.query(`UPDATE ${this.db.schema}.action_effects SET state='completed',completed_at=now(),lease_until=NULL,token=NULL,error=NULL WHERE id=$1 AND token=$2`, [row.id, token]);
+      await this.db.query(`UPDATE ${this.db.schema}.action_effects SET state=$3,completed_at=now(),lease_until=NULL,token=NULL,error=NULL WHERE id=$1 AND token=$2`, [row.id, token, outcome === 'canceled' ? 'canceled' : 'completed']);
     } catch {
       // A handler can have completed remotely before a local failure. Retries always retain its idempotency key.
       await this.db.query(`UPDATE ${this.db.schema}.action_effects SET state='failed',lease_until=NULL,token=NULL,error='Effect delivery failed; inspect the configured handler before retrying' WHERE id=$1 AND token=$2`, [row.id, token]);
