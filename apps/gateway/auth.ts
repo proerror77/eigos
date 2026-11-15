@@ -11,7 +11,8 @@ export function jwtVerifier(issuer: string, audience: string, keys: JWTVerifyGet
     const { payload } = await jwtVerify(token, keys, { issuer, audience, algorithms: ['RS256', 'ES256', 'EdDSA'], requiredClaims: ['exp', 'iat', 'sub', tenantClaim, 'scope'] });
     const claims = z.object({ sub: z.string().min(1), scope: z.string() }).parse(payload);
     const tenant = z.string().min(1).parse(payload[tenantClaim]);
-    return { owner: digest([issuer, tenant, claims.sub]), scopes: claims.scope.split(/\s+/).filter(Boolean) };
+    const clientId = z.string().min(1).max(200).safeParse(payload.client_id ?? payload.azp);
+    return { owner: digest([issuer, tenant, claims.sub]), scopes: claims.scope.split(/\s+/).filter(Boolean), ...(clientId.success ? { clientId: clientId.data } : {}) };
   };
 }
 export function verifier(config: Config): VerifyToken {

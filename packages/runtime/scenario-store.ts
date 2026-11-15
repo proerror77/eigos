@@ -51,12 +51,14 @@ export function viewTables(db: Database, model: PublishedOntology, owner: string
   ) ` },types);
 }
 
-export async function stageObject(db: Database, model: PublishedOntology, owner: string, ref: ObjectRef, revision: number, properties: Record<string, unknown> | null, client: Sql) {
+export async function stageObject(db: Database, model: PublishedOntology, owner: string, ref: ObjectRef, revision: number, properties: Record<string, unknown> | null, client: Sql, editedFields: readonly string[] = []) {
   const original = (await db.query(`SELECT revision,properties FROM ${db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`, [model.projection, owner, ref.type, ref.id], client)).rows[0];
   const links = await objectLinks(db,model,owner,ref,client);
-  await db.query(`INSERT INTO ${db.schema}.scenario_objects(scenario_id,owner,type,id,base_revision,base_properties,base_links,revision,properties)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(scenario_id,owner,type,id) DO UPDATE SET revision=excluded.revision,properties=excluded.properties`,
-  [model.scenario, owner, ref.type, ref.id, original?.revision ?? null, original?.properties ?? null, JSON.stringify(links), revision, properties], client);
+  await db.query(`INSERT INTO ${db.schema}.scenario_objects AS staged(scenario_id,owner,type,id,base_revision,base_properties,base_links,revision,properties,edited_fields)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(scenario_id,owner,type,id) DO UPDATE
+    SET revision=excluded.revision,properties=excluded.properties,
+      edited_fields=(SELECT coalesce(jsonb_agg(DISTINCT field),'[]') FROM jsonb_array_elements(coalesce(staged.edited_fields,'[]') || excluded.edited_fields) field)`,
+  [model.scenario, owner, ref.type, ref.id, original?.revision ?? null, original?.properties ?? null, JSON.stringify(links), revision, properties, JSON.stringify(editedFields)], client);
   await bumpScenario(db, model, owner, client);
 }
 export async function objectLinks(db: Database, model: PublishedOntology, owner: string, ref: ObjectRef, client: Sql) {

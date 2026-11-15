@@ -1,5 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { Database } from '../../packages/runtime/database.js';
+import { assertOwnerIsolation } from '../../packages/runtime/owner-isolation.js';
 import { Indexing } from '../../packages/runtime/indexing.js';
 import { Effects } from '../../packages/runtime/effects.js';
 import { loadExtensions } from '../../packages/runtime/extensions.js';
@@ -12,6 +13,7 @@ import { configuredServices } from '../../packages/capabilities/services/sources
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
 const db = new Database(process.env.DATABASE_URL, process.env.EIGOS_PG_SCHEMA);
+await assertOwnerIsolation(db);
 const extensions = await loadExtensions(process.env.EIGOS_EXTENSION_MODULE);
 const metadata = new Metadata(db);
 const capabilities = createCapabilities(db, configuredSource(process.env.EIGOS_DIDI_CONNECTION_FILE), extensions, configuredServices(process.env.EIGOS_SERVICE_CONNECTION_FILE));

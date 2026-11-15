@@ -47,7 +47,8 @@ export class OntologyAgent {
     this.metadata.checkBindings(model, this.capabilities);
     const principal = { owner: task.owner, scopes: task.scopes };
     const access = await Access.load(this.db, principal);
-    const objects = new Objects(this.db, model, access), executionContext = { task, tasks: this.tasks }, context = { principal, objects, signal, taskId: task.id, execution: executionContext };
+    const executionContext = { task, tasks: this.tasks, executor: { kind: 'agent' as const, id: 'eigos-ontology:' + this.driver.model } };
+    const objects = new Objects(this.db, model, access), context = { principal, objects, signal, taskId: task.id, execution: executionContext };
     const steps: { tool: string; input: unknown; startedAt: string; durationMs: number; outcome: string; resultDigest?: string }[] = [];
     const scenarios = new Scenarios(this.db);
     const workflows = new HotelWorkflows(this.db, this.metadata, this.capabilities.functions);

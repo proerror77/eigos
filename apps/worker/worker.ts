@@ -13,7 +13,7 @@ export class Worker {
     await this.schedules?.promoteOne();
     const task = await this.tasks.claim();
     if (!task) return false;
-    await this.execute(task);
+    await this.tasks.db.withOwner(task.owner, () => this.execute(task));
     return true;
   }
   private async execute(task: Task) {

@@ -141,9 +141,10 @@ export class Indexing {
           await this.db.query(`UPDATE ${this.db.schema}.index_transactions SET applied_at=now() WHERE id=$1`,[row.id],client);
           return true;
         }
+        await this.db.setOwner(client, String(row.owner));
         const model=await this.metadata.get(row.release,client), access=await Access.load(this.db,{owner:row.owner,scopes:row.scopes},client);
         const input=indexingInputSchema.parse(row.input); authorize(access,model,input.source);
-        const graph=new Objects(this.db,model,access,client,{requestId:String(row.id)});
+        const graph=new Objects(this.db,model,access,client,{requestId:String(row.id),executor:{kind:'indexer',id:'eigos-indexer'}});
         await graph.lockWrites();
         // Objects resolves source values with user edits and journals changes in this transaction.
         const batch=mapRows(model,input);

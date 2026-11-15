@@ -12,13 +12,15 @@ import { runInNewContext } from 'node:vm';
 
 const modelFile=Buffer.from('solid test\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid test\n');
 
-test('workbench renders relationship conflicts and passes the selected Scenario to semantic reads', async () => {
+test('workbench renders relationship conflicts, scoped searches and both rule kinds', async () => {
   const buttons = new Map<string, () => Promise<void>>();
   const controls: { value: string; placeholder?: string }[] = [];
   const tables: { headers: string[]; rows: unknown[][]; click?: (index: number) => Promise<void> }[] = [];
   const requests: { path: string; input: Record<string, unknown> }[] = [];
   const node = () => ({ append() {}, replaceChildren() {} });
   const scenarioId = 'scenario-ui-fixture';
+  const processRule = { id: 'process-rule-fixture', revision: 2, name: 'Late trip', enabled: true,
+    process: { type: 'EventTripStateLog', to: 'authorized', dwellSeconds: 7200 }, workflow: 'workflow-fixture' };
   const context = {
     document: { querySelector: node, querySelectorAll: () => [] },
     sessionStorage: { getItem: () => null },
@@ -49,6 +51,9 @@ test('workbench renders relationship conflicts and passes the selected Scenario 
           { type: 'RequestRoute', from: { id: 'resolved' }, to: { id: 'route' }, removed: true, conflict: false },
         ],
       };
+      if (path === '/ontology/services/rules') return {
+        items: [{id:'object-rule-fixture', name:'Open trip', query:{type:'EventTrip'}, enabled:false}, processRule],
+      };
       return { items: [] };
     },
   };
@@ -60,7 +65,7 @@ test('workbench renders relationship conflicts and passes the selected Scenario 
     table = uiTable;
     surface = heading = field = empty = modal = uiNode;
     request = uiRequest;
-    ({ state, renderScenarios, renderObjects, semanticDialog });
+    ({ state, renderScenarios, renderObjects, semanticDialog, renderRules });
   `, context);
   workbench.state.model = {
     objectTypes: [{ apiName: 'Route', displayName: 'Route', primaryKey: 'id', titleProperty: 'name',
@@ -90,6 +95,14 @@ test('workbench renders relationship conflicts and passes the selected Scenario 
   workbench.state.scenario = null;
   await buttons.get('查询')!();
   assert.equal(Object.hasOwn(requests.at(-1)!.input, 'scenarioId'), false);
+
+  await workbench.renderRules();
+  const rules = tables.find(table => table.headers[0] === '规则')!;
+  assert.equal(rules.rows[0]![1], 'EventTrip');
+  assert.equal(rules.rows[1]![1], 'EventTripStateLog · 任意 → authorized · 7200 秒');
+  await buttons.get('停用')!();
+  assert.deepEqual(requests.find(item => item.path === '/ontology/services/save_rule')?.input,
+    { ...processRule, enabled:false, _ontology:'Eigos' });
 });
 
 test('workbench serves guarded assets and normal HTTP model, media and SDK scenario operations',async()=>{

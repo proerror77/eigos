@@ -75,7 +75,7 @@ export class Effects {
     try {
       const principal = { owner: String(row.owner), scopes: row.scopes as string[] };
       const access = await Access.load(this.db, principal);
-      if (!await access.canReturn(row.requirements)) throw new Error('Effect data permissions changed');
+      if (!await this.db.withOwner(principal.owner, () => access.canReturn(row.requirements))) throw new Error('Effect data permissions changed');
       for (const requirement of row.requirements as Requirement[]) access.require(requirement.ontology, requirement.permission, requirement.resource);
       this.check([row.handler]);
       executionSignal.throwIfAborted();

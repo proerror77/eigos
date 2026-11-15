@@ -191,6 +191,61 @@ test('Agent completes a generic merge with live permissions and effect delivery 
   }finally{worker?.stop();await f.close();}
 });
 
+test('generic Scenario merge rechecks staged Action submission criteria against current related objects', async () => {
+  const f = await lifecycleFixture();
+  try {
+    const text = { type: 'string' };
+    const object = { type: 'object', properties: { type: text, id: text }, required: ['type', 'id'], additionalProperties: false };
+    const parameters = (properties: Record<string, unknown>) => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
+    const condition = {
+      apiName: 'RequestStillOpen', description: 'Confirm that the linked request is still open', version: '1',
+      parameters: parameters({ request: object }), returns: { type: 'boolean' }, dependencies: { objectTypes: ['RideRequest'] },
+    };
+    const document = structuredClone(f.model.document);
+    document.functionTypes.push(condition);
+    const result = { type: 'Route', id: { parameter: 'route', path: ['id'] } };
+    document.actionTypes.push({
+      apiName: 'StageOpenRoute', description: 'Update the route for an open request',
+      parameters: parameters({ route: object, request: object, revision: { type: 'integer' } }),
+      objectParameters: { route: 'Route', request: 'RideRequest' },
+      submissionCriteria: [{ function: condition.apiName, arguments: { request: { parameter: 'request' } } }],
+      rules: [{ op: 'editObject', object: { parameter: 'route' }, expectedRevision: { parameter: 'revision' }, properties: { name: { literal: 'Proposed name' } } }],
+      result,
+    }, {
+      apiName: 'MergeOpenRoute', description: 'Merge reviewed route edits',
+      parameters: parameters({ route: object, scenarioId: text, revision: { type: 'integer' } }),
+      objectParameters: { route: 'Route' }, submissionCriteria: [],
+      rules: [{ op: 'applyScenario', scenario: { parameter: 'scenarioId' }, expectedRevision: { parameter: 'revision' }, objectTypes: ['Route'], linkTypes: [] }],
+      result,
+    });
+    const capabilities = createCapabilities(f.db, f.source, {
+      functions: [{
+        definition: condition, implementationId: 'request-still-open-1',
+        handler: async (input, context) => (await context.objects.read(input.request as ObjectRef)).properties.status === 'requested',
+      }],
+    });
+    const model = await f.metadata.publish(document, capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, memberGrants(model));
+    const access = () => Access.load(f.db, principal);
+    const live = new Objects(f.db, model, await access());
+    const route = { type: 'Route', id: 'route-with-prerequisite' }, request = { type: 'RideRequest', id: 'request-prerequisite' };
+    await live.create(route, { id: route.id, name: 'Before' });
+    await live.create(request, { id: request.id, name: 'Before', status: 'requested', requestedAt: new Date().toISOString() });
+    const scene = await f.scenarios.create(await access(), model, { requestId: 'guarded', name: 'Guarded proposal' });
+    const view = await f.scenarios.view(await access(), model, scene.id);
+    await capabilities.actions.apply(await access(), view, 'StageOpenRoute', { route, request, revision: 1 }, 'stage-open-route');
+    const inspected = await f.scenarios.inspect(await access(), model, scene.id);
+    const merge = async () => capabilities.actions.apply(await access(), model, 'MergeOpenRoute', { route, scenarioId: scene.id, revision: inspected.revision }, 'merge-open-route');
+    await live.edit(request, 1, { status: 'quoted' });
+    await assert.rejects(merge(), /submission criteria/);
+    assert.equal((await live.read(route)).properties.name, 'Before');
+    assert.equal((await f.scenarios.inspect(await access(), model, scene.id)).state, 'open');
+    await live.edit(request, 2, { status: 'requested' });
+    await merge();
+    assert.equal((await live.read(route)).properties.name, 'Proposed name');
+  } finally { await f.close(); }
+});
+
 test('Action compensation restores edits once and rejects newer object revisions',async()=>{
   const f=await lifecycleFixture();try{
     const document=structuredClone(f.model.document);

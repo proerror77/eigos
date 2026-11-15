@@ -3,13 +3,14 @@ import { DerivedProperties } from './derived.js';
 import { compareValues, matchesPredicate, nestedValue, orderSchema, predicateFields, predicateSchema, regexMatches, propertyPathSchema } from './query-filter.js';
 import { recordObjectEdit, resolveSourceEdit } from './edit-history.js';
 import { z } from 'zod';
-import { Conflict, NotFound, digest } from '../core/identity.js';
+import { Conflict, NotFound, digest, type ExecutionActor } from '../core/identity.js';
 import { PublishedOntology } from './metadata.js';
 import { Access } from './access.js';
 import { objectRefSchema, type ObjectData, type ObjectRef, type LinkData } from '../ontology/schema.js';
 import { processLogTarget } from '../ontology/process-definition.js';
 import { Database, type Sql } from './database.js';
 import { checkScenario, lockEdits, viewTables, stageObject, stageLink } from './scenario-store.js';
+import { isNumeric, storedPredicate, supportsStoredOrder, supportsStoredPredicate, type Metric } from './stored-query.js';
 
 export const querySchema = z.strictObject({
   type: z.string(), where: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).default({}),
@@ -24,7 +25,7 @@ export function queryFields(query: Pick<z.output<typeof querySchema>, 'where' | 
 }
 export class Objects {
   constructor(readonly db: Database, readonly model: PublishedOntology, readonly access: Access, readonly client: Sql = db.pool,
-    readonly change?: { action?: string; requestId?: string; taskId?: string }) {}
+    readonly change?: { action?: string; requestId?: string; taskId?: string; executor?: ExecutionActor }) {}
   get owner() { return this.access.principal.owner; }
   private writeReady?: Promise<void>;
   async lockWrites() { await this.prepareWrite(); }
@@ -135,32 +136,45 @@ export class Objects {
       if(!await access.canReturn(access.dataRequirements()))throw new Conflict('Query permissions changed');
       this.access.adoptReads(access);return result;
     }
-    const evaluator=new DerivedProperties(this),all:ObjectData[]=[];
-    let cursor:string|undefined;
-    do {
-      const page=await this.queryStored({type:args.type,from:args.from,limit:100,cursor});
-      for(const item of page.items) {
-        const raw=args.type===item.ref.type?item:await this.readStored(item.ref);
-        const enriched=await evaluator.enrich(raw);
-        const definitions=this.model.interfaces.get(args.type)?.properties??this.model.object(args.type).properties;
-        const properties=Object.fromEntries(Object.keys(definitions).map(field=>{
-          const local=this.model.propertyName(item.ref.type,args.type,field);
-          return [field,local?enriched.properties[local]??null:null];
-        }));
-        all.push({...enriched,properties});
-        if(all.length>10000)throw new Conflict('Extended query exceeds 10000 complete candidate objects');
+    const evaluator = new DerivedProperties(this);
+    const definitions = this.model.interfaces.get(args.type)?.properties ?? this.model.object(args.type).properties;
+    const project = async (raw: ObjectData) => {
+      const enriched = await evaluator.enrich(raw);
+      const properties = Object.fromEntries(Object.keys(definitions).map(field => {
+        const local = this.model.propertyName(raw.ref.type, args.type, field);
+        return [field, local ? enriched.properties[local] ?? null : null];
+      }));
+      return { ...enriched, properties };
+    };
+    const pushed = await this.scalarCandidates(args);
+    let matching: ObjectData[];
+    if (pushed) {
+      matching = [];
+      for (const item of pushed.objects) matching.push(await project(item));
+    } else {
+      const all: ObjectData[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await this.queryStored({ type: args.type, from: args.from, limit: 100, cursor });
+        for (const item of page.items) {
+          all.push(await project(args.type === item.ref.type ? item : await this.readStored(item.ref)));
+          if (all.length > 10000) throw new Conflict('Extended query exceeds 10000 complete candidate objects');
+        }
+        cursor = page.cursor;
+      } while (cursor);
+      const regex = await regexMatches(args.filter, all);
+      matching = all.filter(object => Object.entries(args.where).every(([field, value]) =>
+        digest(nestedValue(object.properties, field)) === digest(value)) &&
+        (!args.filter || matchesPredicate(args.filter, object.properties, regex)));
+    }
+    if (!pushed?.ordered) matching.sort((left, right) => {
+      for (const order of args.orderBy ?? []) {
+        const a = nestedValue(left.properties, order.property);
+        const b = nestedValue(right.properties, order.property);
+        const comparison = compareValues(a, b);
+        if (comparison) return a === null || b === null ? comparison : order.direction === 'desc' ? -comparison : comparison;
       }
-      cursor=page.cursor;
-    }while(cursor);
-    const regex=await regexMatches(args.filter,all);
-    const matching=all.filter(object=>Object.entries(args.where).every(([field,value])=>digest(nestedValue(object.properties,field))===digest(value))&&(!args.filter||matchesPredicate(args.filter,object.properties,regex)));
-    matching.sort((left,right)=>{
-      for(const order of args.orderBy??[]) {
-        const a=nestedValue(left.properties,order.property),b=nestedValue(right.properties,order.property);
-        const comparison=compareValues(a,b);
-        if(comparison)return a===null||b===null?comparison:order.direction==='desc'?-comparison:comparison;
-      }
-      return Buffer.compare(Buffer.from(JSON.stringify(left.ref)),Buffer.from(JSON.stringify(right.ref)));
+      return Buffer.compare(Buffer.from(JSON.stringify(left.ref)), Buffer.from(JSON.stringify(right.ref)));
     });
     const identity=digest({owner:this.owner,release:this.model.release,scenario:this.model.scenario,args:{...args,cursor:undefined,limit:undefined},objects:matching});
     const offset=args.cursor?z.strictObject({query:z.literal(identity),offset:z.number().int().min(0).max(matching.length)}).parse(JSON.parse(Buffer.from(args.cursor,'base64url').toString())).offset:0;
@@ -168,54 +182,90 @@ export class Objects {
     const items=matching.slice(offset,end).map(object=>args.select?{...object,properties:Object.fromEntries(args.select.map(field=>[field,nestedValue(object.properties,field)]))}:object);
     return {items,cursor:end<matching.length?Buffer.from(JSON.stringify({query:identity,offset:end})).toString('base64url'):undefined};
   }
-  async queryStored(input: Query):Promise<{items:ObjectData[];cursor?:string}> {
-    if(input.type===scenarioMetadataType)return scenarioMetadataQuery(this,input);
+  private mayUseStoredFields(view: string, types: string[], fields: string[]) {
+    return types.every(type => type !== scenarioMetadataType && !processLogTarget(this.model, type)
+      && fields.every(field => {
+        const [root, ...nested] = field.split('.');
+        if (nested.some(part => /^0[0-9]+$|^[0-9]{10,}$/.test(part))) return false;
+        const local = this.model.propertyName(type, view, root!);
+        return !local || !this.model.object(type).properties[local]?.derived;
+      }));
+  }
+  private async storedSelection(args: z.output<typeof querySchema>) {
     await checkScenario(this.db, this.model, this.owner, this.client);
-    const args = querySchema.parse(input);
     this.access.definition(this.model, this.model.interfaces.has(args.type) ? 'interface' : 'object', args.type);
-    const navigation = args.from ? this.model.navigation(args.from.object.type, args.from.link, args.from.as) : undefined;
+    const navigation = args.from && this.model.navigation(args.from.object.type, args.from.link, args.from.as);
     if (args.from && navigation) {
       if (args.from.as) this.access.definition(this.model, 'interface', args.from.as);
-      await this.readStored(args.from.object); this.access.read(this.model, navigation.target);
+      await this.readStored(args.from.object);
+      this.access.read(this.model, navigation.target);
       this.access.definition(this.model, 'link', navigation.link);
     }
     const types = this.model.concreteTypes(args.type).filter(type => (!navigation || type === navigation.target) && this.access.canRead(this.model, type));
-    types.forEach(type => this.access.read(this.model, type));
-    if (!types.length) return { items: [], cursor: undefined };
-    const values: unknown[] = [this.owner, types];
-    const clauses = ['owner=$1', 'type=ANY($2::text[])'];
-    if (args.from && navigation) values.push(navigation.link, args.from.object.type, args.from.object.id);
-    for (const [field, value] of Object.entries(args.where)) {
-      const cases: string[] = [];
-      for (const type of types) {
-        const local = this.model.propertyName(type, args.type, field);
-        values.push(type); const typeParameter = values.length;
-        const allowed = local ? this.access.cellSql(this.model,type,local,values) : 'FALSE';
-        values.push(local ?? null);
-        cases.push(`WHEN type=$${typeParameter} AND ${allowed} THEN properties->$${values.length}::text`);
-      }
-      values.push(JSON.stringify(value));
-      clauses.push(`COALESCE((CASE ${cases.join(' ')} END),'null'::jsonb)=$${values.length}::jsonb`);
+    if (!types.length) return undefined;
+    const values: unknown[] = [this.owner, types, this.model.projection];
+    const bind = (value: unknown) => { values.push(value); return '$' + values.length; };
+    const tables = viewTables(this.db, this.model, this.owner, values, [...types, ...(args.from ? [args.from.object.type] : [])]);
+    const policies = types.map(type => {
+      this.access.read(this.model, type);
+      return `(o.type=${bind(type)} AND ${this.access.rowSql(this.model, type, values, 'o.properties')})`;
+    });
+    const clauses = ['o.owner=$1', 'o.type=ANY($2::text[])', 'o.projection=$3', '(' + policies.join(' OR ') + ')'];
+    if (args.from && navigation) {
+      const source = navigation.forward ? 'from' : 'to', target = navigation.forward ? 'to' : 'from';
+      clauses.push(`EXISTS(SELECT 1 FROM ${tables.links} l WHERE l.projection=o.projection AND l.owner=o.owner
+        AND l.type=${bind(navigation.link)} AND l.${source}_type=${bind(args.from.object.type)} AND l.${source}_id=${bind(args.from.object.id)}
+        AND l.${target}_type=o.type AND l.${target}_id=o.id)`);
     }
+    const fields = new Map<string, string>();
+    const property = (path: string, view = args.type) => {
+      const key = JSON.stringify([view, path]), cached = fields.get(key);
+      if (cached) return cached;
+      const [root, ...nested] = path.split('.');
+      const cases = types.flatMap(type => {
+        const local = this.model.propertyName(type, view, root!);
+        if (!local) return [];
+        const kind = bind(type), allowed = this.access.cellSql(this.model, type, local, values, 'o.properties');
+        return [`WHEN o.type=${kind} AND ${allowed} THEN o.properties#>${bind([local, ...nested])}::text[]`];
+      });
+      const expression = cases.length ? `COALESCE((CASE ${cases.join(' ')} END),'null'::jsonb)` : "'null'::jsonb";
+      fields.set(key, expression);
+      return expression;
+    };
+    for (const [field, value] of Object.entries(args.where)) clauses.push(`${property(field)}=${bind(JSON.stringify(value))}::jsonb`);
+    return { values, bind, clauses, property, tables, types };
+  }
+  private async scalarCandidates(args: z.output<typeof querySchema>) {
+    const types = this.model.concreteTypes(args.type);
+    if (!supportsStoredPredicate(args.filter) ||
+      !this.mayUseStoredFields(args.type, types, [...Object.keys(args.where), ...predicateFields(args.filter)])) return undefined;
+    const selection = await this.storedSelection(args);
+    if (!selection) return { objects: [], ordered: true };
+    const { values, bind, clauses, property, tables } = selection;
+    if (args.filter) clauses.push(storedPredicate(args.filter, property, bind));
+    const ordered = !args.orderBy || this.mayUseStoredFields(args.type, types, args.orderBy.map(item => item.property))
+      && args.orderBy.every(item => supportsStoredOrder(this.model.propertyPath(args.type, item.property)));
+    const order = ordered ? (args.orderBy ?? []).map(item =>
+      `NULLIF(${property(item.property)},'null'::jsonb) ${item.direction.toUpperCase()} NULLS LAST`) : [];
+    order.push('to_json(o.type)::text COLLATE "C"', 'to_json(o.id)::text COLLATE "C"');
+    const result = await this.db.readQuery(`${tables.prefix}SELECT o.type,o.id,o.revision,o.properties FROM ${tables.objects} o
+      WHERE ${clauses.join(' AND ')} ORDER BY ${order.join(', ')} LIMIT 10001`, values, this.client);
+    if (result.rows.length > 10000) throw new Conflict('Extended query exceeds 10000 matching objects');
+    return { objects: result.rows.map(row => this.visible(this.row(row))), ordered };
+  }
+  async queryStored(input: Query):Promise<{items:ObjectData[];cursor?:string}> {
+    if(input.type===scenarioMetadataType)return scenarioMetadataQuery(this,input);
+    const args = querySchema.parse(input);
+    const selection = await this.storedSelection(args);
+    if (!selection) return { items: [], cursor: undefined };
+    const { values, bind, clauses, tables, types } = selection;
     const queryDigest = digest({ ...args, cursor: undefined, owner: this.owner, release: this.model.release, scenario: this.model.scenario });
     if (args.cursor) {
       const cursor = z.strictObject({ query: z.literal(queryDigest), type: z.string(), id: z.string() }).parse(JSON.parse(Buffer.from(args.cursor, 'base64url').toString()));
-      values.push(cursor.type, cursor.id);
-      clauses.push(`(type COLLATE "C",id COLLATE "C")>($${values.length - 1},$${values.length})`);
+      clauses.push(`(o.type COLLATE "C",o.id COLLATE "C")>(${bind(cursor.type)},${bind(cursor.id)})`);
     }
-    const policyCases = types.map(type => {
-      values.push(type); const parameter = values.length;
-      return `(type=$${parameter} AND ${this.access.rowSql(this.model,type,values,'o.properties')})`;
-    });
-    clauses.push('('+policyCases.join(' OR ')+')');
-    values.push(this.model.projection); clauses.push(`projection=$${values.length}`);
-    values.push(args.limit + 1);
-    const limitParameter = values.length, tables = viewTables(this.db, this.model, this.owner, values,[...types,...(args.from?[args.from.object.type]:[])]);
-    if (navigation) {
-      const source = navigation.forward ? 'from' : 'to', target = navigation.forward ? 'to' : 'from';
-      clauses.push(`EXISTS(SELECT 1 FROM ${tables.links} l WHERE l.projection=o.projection AND l.owner=o.owner AND l.type=$3 AND l.${source}_type=$4 AND l.${source}_id=$5 AND l.${target}_type=o.type AND l.${target}_id=o.id)`);
-    }
-    const result = await this.db.readQuery(`${tables.prefix}SELECT type,id,revision,properties FROM ${tables.objects} o WHERE ${clauses.join(' AND ')} ORDER BY type COLLATE "C",id COLLATE "C" LIMIT $${limitParameter}`, values, this.client);
+    const result = await this.db.readQuery(`${tables.prefix}SELECT o.type,o.id,o.revision,o.properties FROM ${tables.objects} o
+      WHERE ${clauses.join(' AND ')} ORDER BY o.type COLLATE "C",o.id COLLATE "C" LIMIT ${bind(args.limit + 1)}`, values, this.client);
     const records = result.rows.slice(0, args.limit).map(row => this.row(row));
     await this.processLogReads(records);
     const fields = args.select ?? Object.keys(this.model.interfaces.get(args.type)?.properties ?? this.model.object(args.type).properties).filter(field=>types.some(type=>{const local=this.model.propertyName(type,args.type,field);return local&&!this.model.object(type).properties[local]?.derived;}));
@@ -225,6 +275,76 @@ export class Objects {
     })) }; });
     const last = records.at(-1)?.ref;
     return { items, cursor: result.rows.length > args.limit && last ? Buffer.from(JSON.stringify({ query: queryDigest, ...last })).toString('base64url') : undefined };
+  }
+  /** Aggregation can skip individual reads when visibility is independent of row values. */
+  async aggregateStored(input: Query, view: string | undefined, groupBy: string[], metrics: Record<string, Metric>, groupLimit: number) {
+    const args = querySchema.parse(input), type = args.type, projection = view ?? type;
+    if (this.model.scenario || args.orderBy || !this.model.objects.has(type) || this.access.hasObjectPolicy(this.model, type)
+      || !this.model.implements(type, projection) || !supportsStoredPredicate(args.filter)) return undefined;
+    this.access.definition(this.model, 'object', type);
+    const metricEntries = Object.entries(metrics);
+    const groupFields = [...groupBy, ...metricEntries.flatMap(([, metric]) => metric.property ? [metric.property] : [])];
+    if (!this.mayUseStoredFields(type, [type], queryFields(args)) || !this.mayUseStoredFields(projection, [type], groupFields)) return undefined;
+    for (const field of queryFields(args)) this.model.propertyPath(type, field);
+    for (const field of groupFields) this.model.propertyPath(projection, field);
+    if (metricEntries.some(([, metric]) => metric.op !== 'count' && !isNumeric(this.model.propertyPath(projection, metric.property)))) return undefined;
+
+    const selection = await this.storedSelection(args);
+    if (!selection) return undefined;
+    const { values, bind, clauses, property, tables } = selection;
+    if (args.filter) clauses.push(storedPredicate(args.filter, property, bind));
+    const groups = groupBy.map((field, index) => `NULLIF(${property(field, projection)},'null'::jsonb) AS g${index}`);
+    const aggregates = metricEntries.map(([, metric], index) => {
+      const field = metric.property ? `NULLIF(${property(metric.property, projection)},'null'::jsonb)` : '*';
+      const operand = metric.op === 'count' ? field : `(${field})::double precision`;
+      return `${metric.op.toUpperCase()}(${operand}) AS m${index}`;
+    });
+    const group = groups.length ? 'GROUP BY ' + groupBy.map((_, index) => 'g' + index).join(', ') : '';
+    const rows = await this.db.readQuery(`${tables.prefix}SELECT COUNT(*) AS count,${[...groups, ...aggregates].join(', ')}
+      FROM ${tables.objects} o WHERE ${clauses.join(' AND ')} ${group}
+      ORDER BY MIN(to_json(o.id)::text COLLATE "C") LIMIT ${bind(groupLimit + 1)}`, values, this.client)
+      .catch(error => {
+        if (error?.code === '22003') throw new Conflict('Numeric aggregation overflow');
+        throw error;
+      });
+    if (rows.rows.length > groupLimit) throw new Conflict('Object set exceeds the aggregate group limit');
+    return {
+      count: rows.rows.reduce((total, row) => total + Number(row.count), 0),
+      items: rows.rows.map(row => ({
+        group: Object.fromEntries(groupBy.map((field, index) => [field, row['g' + index]])),
+        metrics: Object.fromEntries(metricEntries.map(([name], index) => {
+          const value = row['m' + index] === null ? null : Number(row['m' + index]);
+          if (value !== null && !Number.isFinite(value)) throw new Conflict('Numeric aggregation overflow');
+          return [name, value];
+        })),
+      })),
+    };
+  }
+  /** Object Set frontiers have already been read within this transaction. Recheck both endpoints in the join. */
+  async followSet(sourceType: string, ids: string[], link: string, as: string | undefined, maximum: number) {
+    const nav = this.model.navigation(sourceType, link, as);
+    if ([sourceType, nav.target].some(type => type === scenarioMetadataType || processLogTarget(this.model, type))
+      || Object.values(this.model.object(nav.target).properties).some(property => property.derived)) return undefined;
+    if (as) this.access.definition(this.model, 'interface', as);
+    this.access.read(this.model, sourceType);
+    this.access.read(this.model, nav.target);
+    this.access.definition(this.model, 'link', nav.link);
+    await checkScenario(this.db, this.model, this.owner, this.client);
+    const from = nav.forward ? 'from' : 'to', to = nav.forward ? 'to' : 'from';
+    const values: unknown[] = [this.owner, this.model.projection, sourceType, ids, nav.link, nav.target, maximum + 1];
+    const tables = viewTables(this.db, this.model, this.owner, values, [sourceType, nav.target]);
+    const sourcePolicy = this.access.rowSql(this.model, sourceType, values, 's.properties');
+    const targetPolicy = this.access.rowSql(this.model, nav.target, values, 'o.properties');
+    const result = await this.db.readQuery(`${tables.prefix}SELECT o.type,o.id,o.revision,o.properties FROM ${tables.objects} o
+      WHERE o.owner=$1 AND o.projection=$2 AND o.type=$6 AND ${targetPolicy}
+      AND EXISTS (
+        SELECT 1 FROM ${tables.links} l JOIN ${tables.objects} s
+          ON s.projection=l.projection AND s.owner=l.owner AND (s.type,s.id)=(l.${from}_type,l.${from}_id)
+        WHERE l.projection=o.projection AND l.owner=o.owner AND l.type=$5
+          AND s.type=$3 AND s.id=ANY($4::text[]) AND ${sourcePolicy}
+          AND (l.${to}_type,l.${to}_id)=(o.type,o.id)) LIMIT $7`, values, this.client);
+    if (result.rows.length > maximum) throw new Conflict('Object set exceeds the complete evaluation limit');
+    return result.rows.map(row => this.visible(this.row(row)));
   }
   async follow(ref: ObjectRef, link: string, view = ref.type): Promise<ObjectData[]> {
     if (view !== ref.type) this.access.definition(this.model, 'interface', view);
@@ -266,7 +386,7 @@ export class Objects {
     if (this.model.scenario) {
       const old = await this.stored(ref).catch(error => { if (error instanceof NotFound) return undefined; throw error; });
       if (old) { if (digest(old.properties) !== digest(properties)) throw new Conflict('Object identity already contains different data'); return; }
-      await stageObject(this.db, this.model, this.owner, ref, 1, properties, this.client); return;
+      await stageObject(this.db, this.model, this.owner, ref, 1, properties, this.client, Object.keys(input)); return;
     }
     const result = await this.db.query(`INSERT INTO ${this.db.schema}.objects(owner,type,id,properties,projection) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING id`, [this.owner, ref.type, ref.id, properties, this.model.projection], this.client);
     if (!result.rowCount) {
@@ -312,7 +432,7 @@ export class Objects {
     for (const field of Object.keys(fields)) if (!this.access.cell(this.model,ref.type,field,old.properties)) throw new Error('Cannot edit a hidden property');
     this.access.writeRow(this.model,ref.type,properties);
     if (old.revision !== revision) throw new Conflict('Object revision changed');
-    if (this.model.scenario) { await stageObject(this.db, this.model, this.owner, ref, revision + 1, properties, this.client); return; }
+    if (this.model.scenario) { await stageObject(this.db, this.model, this.owner, ref, revision + 1, properties, this.client, Object.keys(fields)); return; }
     const result = await this.db.query(`UPDATE ${this.db.schema}.objects SET properties=$4,revision=revision+1 WHERE owner=$1 AND type=$2 AND id=$3 AND revision=$5 AND projection=$6`, [this.owner, ref.type, ref.id, properties, revision, this.model.projection], this.client);
     if (!result.rowCount) throw new Conflict('Object revision changed');
     await recordObjectEdit(this,ref,old.properties,properties,fields,'edit');

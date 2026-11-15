@@ -48,7 +48,10 @@ export class Sources {
     const result = await this.read(model, name, input, access, task, tasks, signal);
     return this.db.transaction(async client => {
       if (task && tasks) await tasks.current(task, client, true);
-      const graph = new Objects(this.db, model, access, client,{taskId:task?.id});
+      const executor = task
+        ? { kind: 'agent' as const, id: 'eigos-ontology-agent' }
+        : { kind: 'client' as const, id: access.principal.clientId ?? access.principal.owner };
+      const graph = new Objects(this.db, model, access, client,{taskId:task?.id,executor});
       const output = await this.project(graph, name, input, result, signal);
       // The caller chooses the published Interface/Object Type and receipt Link.
       // Reading this view in the ingestion transaction avoids a model round trip for opaque IDs.

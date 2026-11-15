@@ -69,7 +69,12 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   mountWorkbench(app,config);
   app.use(async (req, res, next) => {
     const token = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1];
-    try { if (!token) throw new Error(); principals.set(req, await verify(token)); next(); }
+    try {
+      if (!token) throw new Error();
+      const verified = await verify(token);
+      principals.set(req, verified);
+      db.withOwner(verified.owner, next);
+    }
     catch { res.setHeader('WWW-Authenticate', 'Bearer'); res.status(401).json({ error: 'Authentication required' }); }
   });
   const principal = (req: Request) => principals.get(req)!;

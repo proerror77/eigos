@@ -2042,18 +2042,25 @@ async function renderRules() {
   const panel = surface(
     rules.items.length
       ? table(
-          ['规则', '查询类型', '状态', '最近检查', ''],
-          rules.items.map((rule) => [
-            rule.name,
-            rule.query.type,
-            rule.enabled ? '监测中' : '已停用',
-            rule.error || (rule.lastScan ? new Date(rule.lastScan).toLocaleString() : '尚未检查'),
-            button(rule.enabled ? '停用' : '启用', async () => {
-              const { lastScan, error, ...input } = rule;
-              await service('save_rule', { ...input, enabled: !rule.enabled });
-              await renderRules();
-            }),
-          ]),
+          ['规则', '触发条件', '状态', '最近检查', ''],
+          rules.items.map((rule) => {
+            const process = rule.process;
+            const condition = process
+              ? process.type + ' · ' + (process.from === null ? '空' : process.from ?? '任意') +
+                ' → ' + (process.to ?? '任意') + (process.dwellSeconds ? ' · ' + process.dwellSeconds + ' 秒' : '')
+              : rule.query.type;
+            return [
+              rule.name,
+              condition,
+              rule.enabled ? '监测中' : '已停用',
+              rule.error || (rule.lastScan ? new Date(rule.lastScan).toLocaleString() : '尚未检查'),
+              button(rule.enabled ? '停用' : '启用', async () => {
+                const { lastScan, error, ...input } = rule;
+                await service('save_rule', { ...input, enabled: !rule.enabled });
+                await renderRules();
+              }),
+            ];
+          }),
         )
       : empty('创建规则并显式启用后，符合条件的新对象状态会触发流程。'),
   );
@@ -2156,7 +2163,7 @@ async function renderRules() {
   $('#main').replaceChildren(
     heading(
       '规则与监测',
-      '规则在对象进入条件时触发，执行时重新检查原身份的授权。',
+      '监测对象匹配、状态转换或状态停留时间。',
       button('创建流程', makeWorkflow),
       button(
         '创建规则',
@@ -2173,25 +2180,56 @@ async function renderRules() {
               actionWorkflows.map((item) => [item.id, item.name]),
               actionWorkflows[0].id,
             );
+          const processes = state.model.objectTypes.flatMap((log) => {
+            const target = log.typeClasses?.find((item) => item.kind === 'machinery-log')?.name;
+            const property = log.typeClasses?.find((item) => item.kind === 'machinery-property')?.name;
+            const model = state.model.objectTypes.find((item) => item.apiName === target);
+            const states = model?.properties[property]?.schema?.enum;
+            return Array.isArray(states) ? [{ type: log.apiName, states }] : [];
+          });
+          const mode = select([['query', '对象匹配'], ...(processes.length ? [['process', '状态转换']] : [])], 'query');
+          const query = element('div', {}, field('对象类型', type), field('属性', property), field('匹配值', value));
+          const log = select(processes.map((process) => process.type), processes[0]?.type);
+          const from = element('select'), to = element('select');
+          const dwell = element('input', { type: 'number', min: 1, max: 2678400, placeholder: '留空则立即触发' });
+          const process = element('div', { hidden: true },
+            field('过程日志', log), field('原状态', from), field('目标状态', to), field('停留秒数', dwell));
+          log.onchange = () => {
+            const states = processes.find((item) => item.type === log.value)?.states ?? [];
+            const options = states.map((state) => [JSON.stringify(state), state]);
+            from.replaceChildren(...select([['', '任意'], ['null', '空'], ...options], '').children);
+            to.replaceChildren(...select([['', '任意'], ...options], '').children);
+          };
+          log.onchange();
+          mode.onchange = () => {
+            query.hidden = mode.value !== 'query';
+            process.hidden = mode.value !== 'process';
+          };
           modal(
             '创建监测规则',
             element(
               'div',
               {},
               field('名称', name),
-              field('对象类型', type),
-              field('属性', property),
-              field('匹配值', value),
+              field('触发方式', mode),
+              query,
+              process,
               field('触发流程', workflow),
               button(
                 '保存为停用状态',
                 async () => {
                   await service('save_rule', {
                     name: name.value,
-                    query: {
-                      type: type.value,
-                      where: property.value ? { [property.value]: value.value } : {},
-                    },
+                    ...(mode.value === 'process' ? {
+                      process: {
+                        type: log.value,
+                        ...(from.value ? { from: JSON.parse(from.value) } : {}),
+                        ...(to.value ? { to: JSON.parse(to.value) } : {}),
+                        ...(dwell.value ? { dwellSeconds: Number(dwell.value) } : {}),
+                      },
+                    } : {
+                      query: { type: type.value, where: property.value ? { [property.value]: value.value } : {} },
+                    }),
                     workflow: workflow.value,
                     enabled: false,
                   });

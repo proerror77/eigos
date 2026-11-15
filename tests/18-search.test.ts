@@ -134,3 +134,38 @@ test('Struct paths use the declared fields for queries and set aggregation, incl
     assert.deepEqual(result.items, [{ group: { 'coordinates.lng': 121 }, metrics: { latitude: 31 } }]);
   } finally { await f.close(); }
 });
+
+test('registers immutable PDF or SOP editions and queries their content through object and field permissions', async () => {
+  const f = await fixture();
+  try {
+    const graph = new Objects(f.db, f.model, f.access);
+    const plan = { type: 'SchedulePlan', id: 'document-plan' };
+    await graph.create(plan, planFields(plan.id, 30));
+    const input = {
+      plan, documentKey: 'safety-sop', edition: '1', name: 'Safety SOP', mediaType: 'application/pdf',
+      sourceRef: 'records/runbook-1.pdf', contentSha256: 'a'.repeat(64), extractedText: 'Inspect the exit before opening.',
+    };
+    const act = (data: typeof input, key: string) =>
+      f.capabilities.actions.apply(f.access, f.model, 'RegisterSchedulePlanDocument', data, key);
+    const first = await act(input, 'attach-doc-v1');
+    assert.deepEqual(await act(input, 'attach-doc-retry'), first);
+    await assert.rejects(act({ ...input, extractedText: 'An unversioned change' }, 'reuse-doc-v1'), /different data/);
+    const second = await act({ ...input, edition: '2', extractedText: 'Use the east exit and check the alarm.' }, 'attach-doc-v2');
+    assert.notEqual(first.id, second.id);
+    assert.equal((await graph.read(first)).properties.extractedText, input.extractedText);
+
+    const query = { type: 'OperationalDocumentVersion', from: { object: plan, link: 'documents' },
+      filter: { op: 'contains', property: 'extractedText', value: 'check the alarm' } as const };
+    assert.deepEqual((await graph.query(query)).items.map(item => item.ref), [second]);
+    const other = { owner: 'outside-docs', scopes: principal.scopes };
+    await setGrants(f.db, other.owner, memberGrants(f.model));
+    const outside = new Objects(f.db, f.model, await Access.load(f.db, other));
+    await assert.rejects(outside.read(first), /unavailable/);
+    assert.deepEqual((await outside.query({ type: 'OperationalDocumentVersion' })).items, []);
+
+    await f.db.query(`INSERT INTO ${f.db.schema}.property_security VALUES ('Eigos', 'OperationalDocumentVersion', 'extractedText')`);
+    const protectedGraph = new Objects(f.db, f.model, await Access.load(f.db, principal));
+    assert.equal((await protectedGraph.read(second)).properties.extractedText, null);
+    assert.deepEqual((await protectedGraph.query(query)).items, []);
+  } finally { await f.close(); }
+});

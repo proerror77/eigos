@@ -40,6 +40,54 @@ test('scenario merge rejects changed live revisions and rolls back all changes a
  }finally{await f.close();}
 });
 
+test('scenario merge preserves source authority while committing explicit same-value edits', async () => {
+  const f = await fixture();
+  try {
+    const scenarios = new Scenarios(f.db), live = new Objects(f.db, f.model, f.access);
+    const place = { type: 'Place', id: 'source-backed-place' };
+    const observedAt = new Date(Date.now() - 60_000).toISOString();
+    const properties = {
+      id: place.id, name: 'Original name', city: '上海', address: 'Original address',
+      coordinates: { lat: 31.2, lng: 121.5 }, coordinateSystem: 'GCJ-02', sourceBinding: 'synthetic', observedAt,
+    };
+    await live.ingestBatch([{ ref: place, properties }], 'DidiPlaces', observedAt);
+    const scene = await scenarios.create(f.access, f.model, { requestId: 'field-authority', name: 'Edit the name only' });
+    const proposed = new Objects(f.db, await scenarios.view(f.access, f.model, scene.id), f.access);
+    await proposed.edit(place, 1, { name: properties.name });
+    const diff = await scenarios.inspect(f.access, f.model, scene.id);
+    assert.deepEqual(diff.objects[0]?.editedFields, ['name']);
+    await f.db.transaction(client => scenarios.mergeInto(new Objects(f.db, f.model, f.access, client), scene.id, diff.revision, { objects: ['Place'], links: [] }));
+    const later = new Date(Date.now() + 60_000).toISOString();
+    await live.ingestBatch([{ ref: place, properties: { ...properties, name: 'New source name', address: 'New source address', observedAt: later } }], 'DidiPlaces', later);
+    const actual = (await live.read(place)).properties;
+    assert.equal(actual.name, 'Original name');
+    assert.equal(actual.address, 'New source address');
+  } finally { await f.close(); }
+});
+
+test('explicit rebase preserves independent live edits and rejects conflicts on a proposed field', async () => {
+  const f = await fixture();
+  try {
+    const scenarios = new Scenarios(f.db), live = new Objects(f.db, f.model, f.access);
+    const request = { type: 'RideRequest', id: 'rebasable-request' };
+    await live.create(request, { id: request.id, name: 'Before', status: 'requested', requestedAt: new Date().toISOString() });
+    const scene = await scenarios.create(f.access, f.model, { requestId: 'rebase-fields', name: 'Edit request name' });
+    const proposed = new Objects(f.db, await scenarios.view(f.access, f.model, scene.id), f.access);
+    await proposed.edit(request, 1, { name: 'Proposed' });
+    const reviewed = await scenarios.inspect(f.access, f.model, scene.id);
+    await live.edit(request, 1, { status: 'quoted' });
+    const rebased = await scenarios.rebase(f.access, f.model, scene.id, reviewed.revision);
+    assert.equal(rebased.revision, reviewed.revision + 1);
+    const candidate = await proposed.read(request);
+    assert.equal(candidate.properties.status, 'quoted');
+    assert.equal(candidate.properties.name, 'Proposed');
+    await assert.rejects(f.db.transaction(client => scenarios.mergeInto(new Objects(f.db, f.model, f.access, client), scene.id, reviewed.revision, { objects: ['RideRequest'], links: [] })), /changed after review/);
+    await live.edit(request, 2, { name: 'Conflicts' });
+    await assert.rejects(scenarios.rebase(f.access, f.model, scene.id, rebased.revision), /same property/);
+    assert.equal((await proposed.read(request)).properties.name, 'Proposed');
+  } finally { await f.close(); }
+});
+
 test('scenario relationship changes support reassignment and deletion without changing live Links',async()=>{
  const f=await fixture();try{
   const s=new Scenarios(f.db),live=new Objects(f.db,f.model,f.access);await live.create(ref,{id:ref.id,name:'route'});

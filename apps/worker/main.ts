@@ -10,8 +10,10 @@ import { Worker } from './worker.js';
 import { configuredServices } from '../../packages/capabilities/services/sources.js';
 import { configuredStripeSandbox } from '../../packages/capabilities/payments/stripe-sandbox.js';
 import { ScheduledActions, ScheduledActionRunner } from '../../packages/runtime/scheduled-actions.js';
+import { assertOwnerIsolation } from '../../packages/runtime/owner-isolation.js';
 
 const config = readConfig(), db = new Database(config.DATABASE_URL, config.EIGOS_PG_SCHEMA), metadata = new Metadata(db);
+await assertOwnerIsolation(db);
 if (!config.EIGOS_HARNESS_BIN || !config.EIGOS_HARNESS_CREDENTIAL_FILE) throw new Error('Worker requires its cloud model runtime and credential file');
 const tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, configuredSource(config.EIGOS_DIDI_CONNECTION_FILE),await loadExtensions(config.EIGOS_EXTENSION_MODULE),configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE),configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
     paotui: config.EIGOS_PAOTUI_CONNECTION_FILE, waimai: config.EIGOS_WAIMAI_CONNECTION_FILE,

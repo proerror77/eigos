@@ -1,6 +1,6 @@
 # Workflow 与对象规则
 
-Workflow 保存一组已发布 Action 的执行顺序。对象规则定期查询本体，对新进入匹配集合的对象提交 Workflow。执行使用创建请求的身份、原始 OAuth scopes 和当前资源权限。
+Workflow 保存一组已发布 Action 的执行顺序。规则可以定期查询对象集合，也可以逐条处理已提交的过程转换。执行使用创建请求的身份、原始 OAuth scopes 和当前资源权限。
 
 ## 定义与启动
 
@@ -48,6 +48,25 @@ Action 的对象写入和执行记录使用现有原子事务。Workflow 在 Act
 
 查询、权限或定义错误会回滚当次扫描产生的运行和匹配变化，将规则停用，并记录诊断状态。用户修正原因后重新保存并启用规则。扫描错误不会让 Indexer 持续崩溃或无休止重试同一规则。
 
+## 过程规则
+
+`save_rule` 也接受 `process` 条件，例如为连续两小时处于待执行状态的出行流程安排一个 Workflow。
+
+```json
+{
+  "name": "Review a trip awaiting departure",
+  "process": {"type":"EventTripStateLog","to":"authorized","dwellSeconds":7200},
+  "workflow": "WORKFLOW_ID",
+  "enabled": true
+}
+```
+
+`type` 使用已发布的具体 ProcessLog Object Type。`from` 和 `to` 是可选的状态筛选。省略一侧匹配任意状态，`from: null` 匹配从空状态进入已知状态。配置 `dwellSeconds` 时必须指定 `to`。日志与业务对象沿用同一行、字段和密级权限。规则用业务对象作为 Workflow 输入。为异常回退设置一对具体的前后状态即可复用这条路径。
+
+保存规则从当时已提交的转换之后开始。Indexer 以有界批次按历史序号读取，规则修订、转换序号和稳定的运行 ID 一起防止重复执行。更新游标与创建 Workflow 在同一事务内完成，因此扫描之间发生的短暂状态仍会被处理。已提议的 Scenario 修改在合并并写入正式历史后才会触发规则。
+
+有停留时间的规则根据转换记录时间安排现有 Workflow 运行。首个 Action 提交前重新检查原规则、历史权限、当前状态和最新转换。离开再进入会生成新的一轮等待。工作流以业务条件控制正式 Action 的提交，过程条件只决定何时尝试启动。参考 [Palantir 对象集条件](https://www.palantir.com/docs/foundry/automate/condition-objects)。
+
 ## 查看与权限
 
 写操作需要 `ontology:write`，列表需要 `ontology:read`。Workflow 和规则检查本体定义可见性及 Action 资源权限。输入属性经过当前行和属性策略遮罩。
@@ -59,16 +78,16 @@ Action 的对象写入和执行记录使用现有原子事务。Workflow 在 Act
 管理员调用 `initializeAutomation(db)` 建立或升级以下表。
 
 - `workflows` 保存定义。
-- `object_rules` 保存规则、启用状态、原始 scopes 和扫描错误。
+- `object_rules` 保存规则、启用状态、原始 scopes、过程历史游标和扫描错误。
 - `rule_matches` 保存匹配状态和进入代次。
-- `workflow_runs` 保存运行、租约、冻结正文与进度。
+- `workflow_runs` 保存运行、租约、冻结正文、触发转换和最早执行时间。
 - `workflow_steps` 保存逐步参数、授权依赖及执行记录。
 
 业务运行角色需要这些表的 SELECT、INSERT、UPDATE 权限，修改规则还需要 `rule_matches` 的 DELETE。定义编辑与执行使用同一个 PostgreSQL schema。Indexer 通过 `scanOne` 和 `runOne` 驱动后台执行。
 
 ## 验证
 
-`tests/22-automation.test.ts` 覆盖并发领取、重复提交、Action 已提交但进度未记录时的恢复、取消提交隔离、取消时补记执行记录、原始 scopes、关系变化触发、错误扫描停用、输出引用权限和发布版本保护。测试使用隔离数据库和合成 Action。
+`tests/22-automation.test.ts` 覆盖并发领取、重复提交、Action 已提交但进度未记录时的恢复、取消提交隔离、取消时补记执行记录、原始 scopes、关系变化触发、错误扫描停用、输出引用权限和发布版本保护。过程回归验证轮询间内进入和离开、历史游标的重复读取、状态离开后重新计时以及触发权限撤销。测试使用隔离数据库和合成 Action。
 
 ## 从酒店行程任务学习与复用
 

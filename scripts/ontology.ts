@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { ProjectionTransform } from '../packages/runtime/metadata.js';
+import { installOwnerIsolation } from '../packages/runtime/owner-isolation.js';
 
 const command = process.argv[2];
 const document = businessDefinition;
@@ -26,6 +27,8 @@ else {
     if (command === 'initialize' || command === 'upgrade') {
       if (command === 'upgrade') await upgradePublicationStorage(db); else await db.initialize();
       await setGrants(db, publisher.owner, [{ resource: model.document.id, permission: 'manage_definition' }]);
+    } else if (command === 'enable-owner-isolation') {
+      console.log(JSON.stringify(await installOwnerIsolation(db)));
     } else if (command === 'grant-member') {
       const owner = process.argv[3]; if (!owner) throw new Error('Provide the verified member owner');
       await setGrants(db, owner, memberGrants(model));
@@ -65,7 +68,7 @@ else {
       const published = command === 'prepare' ? await metadata.prepare(document, bindings, access, transform)
         : command === 'activate' ? await metadata.activate(process.argv[3]!, bindings, access)
         : command === 'publish' ? await metadata.publish(document, bindings, access, transform) : undefined;
-      if (!published) throw new Error('Use check, initialize, upgrade, permissions, grant-member, prepare, activate or publish');
+      if (!published) throw new Error('Use check, initialize, upgrade, enable-owner-isolation, permissions, grant-member, prepare, activate or publish');
       console.log(JSON.stringify({ release: published.release, definition: published.digest, projection: published.projection, runtime: published.runtimeId }));
     }
   } finally { await db.close(); }

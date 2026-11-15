@@ -153,15 +153,35 @@ export class ObjectSets {
           let current = await visit(node.set, savedIds, depth + 1);
           for (const step of node.path) {
             const next = new Map<string, ObjectData>();
-            for (const object of current.values()) {
-              const navigation = model.navigation(object.ref.type, step.link, step.as);
-              let cursor: string | undefined;
-              do {
-                count();
-                const page = await objects.query({ type: navigation.target, from: { object: object.ref, link: step.link, as: step.as }, limit: 100, cursor });
-                for (const target of page.items) { next.set(refKey(target.ref), target); loaded.set(refKey(target.ref), target); bounded(next); }
-                cursor = page.cursor;
-              } while (cursor);
+            const byType = new Map<string, string[]>();
+            for (const { ref } of current.values()) {
+              const ids = byType.get(ref.type) ?? [];
+              ids.push(ref.id);
+              byType.set(ref.type, ids);
+            }
+            const accept = (target: ObjectData) => {
+              const key = refKey(target.ref);
+              next.set(key, target);
+              loaded.set(key, target);
+              bounded(next);
+            };
+            for (const [type, ids] of byType) {
+              count();
+              const batch = await objects.followSet(type, ids, step.link, step.as, this.maximumObjects);
+              if (batch) {
+                for (const target of batch) accept(target);
+                continue;
+              }
+              const navigation = model.navigation(type, step.link, step.as);
+              for (const id of ids) {
+                let cursor: string | undefined;
+                do {
+                  count();
+                  const page = await objects.query({ type: navigation.target, from: { object: { type, id }, link: step.link, as: step.as }, limit: 100, cursor });
+                  for (const target of page.items) accept(target);
+                  cursor = page.cursor;
+                } while (cursor);
+              }
             }
             current = next;
           }
@@ -212,6 +232,11 @@ export class ObjectSets {
     const input = aggregateSetSchema.parse(raw);
     return this.snapshot(access, async client => {
       if (input.view) access.definition(model, model.interfaces.has(input.view) ? 'interface' : 'object', input.view);
+      if (this.maximumObjects === 10000 && input.set.op === 'query') {
+        const pushed = await new Objects(this.db, model, access, client)
+          .aggregateStored(input.set.query, input.view, input.groupBy, input.metrics, this.maximumObjects);
+        if (pushed) return pushed;
+      }
       const all = (await this.resolve(access, model, input.set, client)).map(object => this.project(model, object, input.view));
       const fields = new Set([...input.groupBy, ...Object.values(input.metrics).flatMap(metric => metric.property ? [metric.property] : [])]);
       const types = new Set(input.view ? [input.view] : all.map(object => object.ref.type));

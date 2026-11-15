@@ -28,7 +28,9 @@ export class Access {
   private required = new Map<string, Requirement>();
   private data = new Map<string, Requirement>();
   readonly principal: Principal;
-  private constructor(private readonly db: Database, principal: Principal) { this.principal = Object.freeze({ owner: principal.owner, scopes: Object.freeze([...principal.scopes]) }); }
+  private constructor(private readonly db: Database, principal: Principal) {
+    this.principal = Object.freeze({ owner: principal.owner, scopes: Object.freeze([...principal.scopes]), clientId: principal.clientId });
+  }
   get runtimeId() { return this.db.runtimeId; }
   static async load(db: Database, principal: Principal, client?: Sql) {
     if (!principal.owner) throw new PermissionDenied('Authenticated owner is required');
@@ -69,6 +71,7 @@ export class Access {
   definition(model: Ontology, kind: string, name: string) { this.require(model.document.id, 'view_definition', resource(model.document.id, kind, name)); }
   canDefine(model: Ontology, kind: string, name: string) { return this.allows({ ontology: model.document.id, permission: 'view_definition', resource: resource(model.document.id, kind, name) }); }
   canRead(model: Ontology, type: string) { return this.canDefine(model, 'object', type) && this.allows({ ontology: model.document.id, permission: 'view_objects', resource: resource(model.document.id, 'object', type) }); }
+  hasObjectPolicy(model: Ontology, type: string) { return this.policies.has(model.document.id + '/' + type); }
   read(model: Ontology, type: string) {
     this.definition(model, 'object', type);
     this.require(model.document.id, 'view_objects', resource(model.document.id, 'object', type), true);
