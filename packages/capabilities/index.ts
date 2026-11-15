@@ -1,6 +1,7 @@
 import { registerDocumentFunction } from '../ontology/documents.js';
 import { registerSchedulePlanDocument } from './documents.js';
 import { diningResearch } from './dining/research.js';
+import { diningReservationFunctions } from './dining/reservations.js';
 import { flightradar24Functions } from './flight/flightradar24.js';
 import { flightFunctions } from './flight/functions.js';
 import { configuredVariFlight } from './flight/variflight.js';
@@ -38,7 +39,7 @@ export function createCapabilities(
   stripe: StripeSandboxResolver = configuredStripeSandbox(),
   connections: { paotui?: string; waimai?: string; amap?: string; amapFetch?: typeof fetch; variFlight?: string; variFlightFetch?: typeof fetch;
     fr24?: string; fr24Entrypoint?: string; calendar?: string; calendarFetch?: typeof fetch; travelPA?: string; travelPAFetch?: typeof fetch;
-    xiaohongshu?: string; xiaohongshuFetch?: typeof fetch } = {},
+    xiaohongshu?: string; xiaohongshuFetch?: typeof fetch; diningWeb?: string; diningMiniProgram?: string } = {},
 ) {
   let sources: Sources;
   const amap = configuredAmap(connections.amap, connections.amapFetch);
@@ -47,6 +48,7 @@ export function createCapabilities(
   const handlers = new Map([
     ...schedulingFunctions(db),
     ...diningResearch(connections.xiaohongshu, connections.xiaohongshuFetch),
+    ...diningReservationFunctions(db, connections.diningWeb, connections.diningMiniProgram),
     ...applicationFunctions(db),
     [registerDocumentFunction, registerSchedulePlanDocument],
     ...serviceFunctions(services, () => sources),
