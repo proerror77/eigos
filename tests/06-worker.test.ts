@@ -2,6 +2,9 @@ import { Access, setGrants, memberGrants } from '../packages/runtime/access.js';
 import { Ontology } from '../packages/ontology/model.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { z } from 'zod';
+import { createCapabilities } from '../packages/capabilities/index.js';
+import { classificationSchema } from '../packages/ontology/classification.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { digest } from '../packages/core/identity.js';
 import { document, fixture, principal, route } from './fixture.js';
@@ -364,4 +367,90 @@ test('classified chunks are excluded before model filters and forced references,
     assert(records.filter(row => row.event.kind === 'egress' && row.event.state === 'blocked').length >= 2);
     for (const secret of [title, document.id, chunk.id, 'FINANCE']) assert(!JSON.stringify(records).includes(secret));
   } finally { await f.close(); }
+});
+
+test('linked derived values retain their classification through grant downgrade and workflow capture', async () => {
+  const f = await fixture();
+  let worker: Worker | undefined;
+  try {
+    const modelName = 'fixture-derived-egress';
+    const clearance = { sensitivity: 'CONFIDENTIAL' as const, compartments: ['FINANCE'] };
+    const destination = { owner: principal.owner, provider: 'openai-codex', model: modelName };
+    const resource = { type: 'ScheduleResource', id: 'derived-egress-resource' };
+    const activity = { type: 'ScheduledActivity', id: 'derived-egress-dependency' };
+    const protectedMinutes = 7319;
+    const definition = structuredClone(document);
+    const activityType = definition.objectTypes.find(type => type.apiName === activity.type)!;
+    activityType.classificationProperty = 'disclosure';
+    activityType.properties.disclosure = { description: 'Fixture row classification', schema: z.toJSONSchema(classificationSchema), required: false };
+    activityType.properties.reviewMinutes = { description: 'Time recorded by the fixture', schema: { type: 'number' }, required: false };
+    definition.objectTypes.find(type => type.apiName === resource.type)!.properties.reviewMinutes = {
+      description: 'Total review time', schema: { type: 'number' }, required: false,
+      derived: { op: 'linked', path: [{ link: 'activities' }], aggregate: 'sum', property: 'reviewMinutes' },
+    };
+    const read = {
+      apiName: 'ReadDerivedReviewMinutes', version: '1', description: 'Read the derived scheduling total',
+      parameters: { type: 'object', properties: { downgrade: { type: 'boolean' } }, required: ['downgrade'], additionalProperties: false },
+      returns: { type: 'number' }, dependencies: { objectTypes: [resource.type, activity.type], linkTypes: ['ActivityResource'] },
+    };
+    definition.functionTypes.push(read);
+    const capabilities = createCapabilities(f.db, f.source, { functions: [{
+      definition: read, implementationId: 'fixture-derived-egress-1',
+      async handler(input, context) {
+        const total = (await context.objects.read(resource)).properties.reviewMinutes;
+        assert.equal(total, protectedMinutes);
+        if (input.downgrade) {
+          await setModelClearance(f.db, { ...destination, clearance: { sensitivity: 'INTERNAL', compartments: [] } });
+        }
+        return total;
+      },
+    }] });
+    const model = await f.metadata.publish(definition, capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, memberGrants(model));
+    const graph = new Objects(f.db, model, await Access.load(f.db, principal));
+    await graph.create(resource, { id: resource.id, name: 'Review calendar' });
+    await graph.create(activity, {
+      id: activity.id, name: 'Review', start: '2027-01-01T08:00:00Z', end: '2027-01-01T09:00:00Z',
+      disclosure: clearance, reviewMinutes: protectedMinutes,
+    });
+    await graph.link({ type: 'ActivityResource', from: activity, to: resource });
+    const agent = new OntologyAgent(f.db, f.metadata, f.tasks, capabilities, {
+      model: modelName, provider: destination.provider,
+      async run(prompt, tools) {
+        const { userRequest } = JSON.parse(prompt.split('\n').at(-1)!);
+        const denied = /^Error: Data is unavailable to the selected model$/;
+        if (userRequest.learnHotelWorkflow) {
+          await assert.rejects(tools.get('query_ontology')!.invoke({
+            queries: [{ type: resource.type, select: ['reviewMinutes'] }],
+          }), denied);
+          await tools.get('request_clarification')!.invoke({ message: 'Use a public schedule instead.' });
+          return;
+        }
+        const downgrade = userRequest.message === 'downgrade';
+        const result = tools.get('evaluate_function')!.invoke({ function: read.apiName, input: { downgrade } });
+        if (downgrade) await assert.rejects(result, denied);
+        else assert.equal(await result, protectedMinutes);
+        await tools.get('complete_with_object_set')!.invoke({ set: { op: 'refs', objects: [] } });
+      },
+    });
+    worker = new Worker(f.tasks, agent);
+    for (const requestId of ['authorized', 'downgrade', 'capture']) {
+      await setModelClearance(f.db, { ...destination, clearance });
+      const task = await f.tasks.submit(principal, {
+        requestId, message: requestId, ...(requestId === 'capture' ? { learnHotelWorkflow: true } : {}),
+      });
+      assert(await worker.runOne());
+      const result = await f.tasks.get(principal, task.id);
+      assert.equal(result.state, requestId === 'capture' ? 'input-required' : 'completed', result.error ?? undefined);
+      if (requestId !== 'authorized') {
+        const events = (await f.db.query(`SELECT event FROM ${f.db.schema}.execution_trace WHERE task_id=$1`, [task.id])).rows;
+        assert(events.some(row => row.event.kind === 'egress' && row.event.state === 'blocked'));
+        assert(!JSON.stringify(result.result).includes(String(protectedMinutes)));
+      }
+      if (requestId === 'capture') {
+        const saved = (await f.db.query(`SELECT workflow_trace FROM ${f.db.schema}.tasks WHERE id=$1`, [task.id])).rows[0]!;
+        assert.deepEqual(saved.workflow_trace, []);
+      }
+    }
+  } finally { worker?.stop(); await f.close(); }
 });

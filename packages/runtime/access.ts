@@ -163,6 +163,7 @@ export class Access {
     for(const [key,value] of other.data)this.recordData(key,structuredClone(value));
     for(const [key,value] of other.required)this.required.set(key,structuredClone(value));
     for(const marking of other.readMarkings)this.readMarkings.add(marking);
+    this.observeClassification(other.observedClassification);
   }
   readMarkingsSnapshot(): string[] {
     return [...this.readMarkings].sort();
