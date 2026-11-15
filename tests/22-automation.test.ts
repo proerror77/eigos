@@ -474,6 +474,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   for (const action of rideWatchDefinition.actionTypes) addedActions.add(action.apiName);
   for (const fn of rideWatchDefinition.functionTypes) addedFunctions.add(fn.apiName);
   addedFunctions.add('prepareRideInquiryWithPlaceClues');
+  addedFunctions.add('readInteractiveRideEstimate');
   const v9Definition = structuredClone(document);
   v9Definition.version = '9';
   v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type => type.apiName !== 'RideInquiryWithPlaceClues' &&
@@ -481,6 +482,9 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;
   v9Definition.objectTypes = v9Definition.objectTypes.filter(type => !addedTypes.has(type.apiName) && !addedLogs.some(log => log.type === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'ScheduledActivity')!.properties.dining;
+  const routeProperties = v9Definition.objectTypes.find(type => type.apiName === 'Route')!.properties;
+  delete routeProperties.pickup;
+  delete routeProperties.drivingEstimate;
   v9Definition.linkTypes = v9Definition.linkTypes.filter(type =>
     !addedLogs.some(log => log.link === type.apiName) && !documentDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !rideWatchDefinition.linkTypes.some(link => link.apiName === type.apiName) &&

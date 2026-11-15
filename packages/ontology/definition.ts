@@ -115,9 +115,12 @@ for (const [name, schema] of Object.entries(routeEvidence)) {
   routeType.properties[name] = { description: name === 'pickup' ? 'PA pickup coordinate system and conversion evidence'
     : 'DiDi driving estimate, or null when the source did not provide one', schema, required: false };
 }
-const rideResult = businessDefinition.functionTypes.find(fn => fn.apiName === 'readRideEstimates')!.returns;
-const resultRoute = (rideResult.properties as Record<string, {properties: Record<string, unknown>}>).route!;
+const interactiveRideResult = structuredClone(businessDefinition.functionTypes.find(fn => fn.apiName === 'readRideEstimates')!);
+interactiveRideResult.apiName = 'readInteractiveRideEstimate';
+interactiveRideResult.description = 'Return the fare, pickup coordinate evidence, and driving estimate of the original interactive RideRequest.';
+const resultRoute = (interactiveRideResult.returns.properties as Record<string, {properties: Record<string, unknown>}>).route!;
 Object.assign(resultRoute.properties, routeEvidence);
+businessDefinition.functionTypes.push(interactiveRideResult);
 const landmark = { type: 'string', minLength: 3, maxLength: 200, description: 'Named nearby landmark supplied by the user' };
 const quoteParameters = {
   ...completeRideFunction.parameters,

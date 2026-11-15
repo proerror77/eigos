@@ -32,7 +32,7 @@ test('the original ride Action obtains missing endpoints and uses GCJ-02 before 
       modelCalls++;
       await tools.get('complete_with_action')!.invoke({
         action: { interface: { type: 'RideInquiryWithPlaceClues', implementation: 'RideRequest', action: 'estimate' }, input },
-        read: { function: 'readRideEstimates', resultParameter: 'request' },
+        read: { function: 'readInteractiveRideEstimate', resultParameter: 'request' },
       });
     },
   }, undefined, undefined, undefined, { amap: config, amapFetch: fakeAmap(calls) });
