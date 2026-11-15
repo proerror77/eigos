@@ -18,6 +18,9 @@ import {
   fliggyFlightObservation,
   readServiceInput,
   readServiceSearchPagesInput,
+  readTravelOfferSearchInput,
+  travelOfferSearchInput,
+  travelOfferSearchOutcomes,
   json,
   time,
   evidence,
@@ -101,6 +104,10 @@ const fliggyServiceCatalog = [
   },
 ] as const;
 export const serviceCatalog = [...coreServiceCatalog, ...fliggyServiceCatalog] as const;
+export const travelOfferSources = serviceCatalog.filter(service =>
+  service.searchInterface === 'HotelSearch' || service.searchInterface === 'FlightSearch',
+);
+export const travelOfferSearchType = 'TravelOfferSearch';
 
 const properties = (shape: Record<string, z.ZodType>) =>
   Object.fromEntries(
@@ -347,6 +354,59 @@ fliggyServicesDefinition.functionTypes.push({
   parameters: json(readServiceSearchPagesInput),
   returns: json(z.strictObject({ pages: z.array(z.record(z.string(), z.unknown())).min(1).max(5) })),
   dependencies: { functions: ['readServiceSearch'] },
+});
+
+const travelOfferLinks: OntologyDocument['linkTypes'] = travelOfferSources.map(service => ({
+  apiName: travelOfferSearchType + service.result,
+  description: 'The exact supplier result page returned for this travel search.',
+  from: { type: travelOfferSearchType, name: service.source, cardinality: 'one' },
+  to: { type: service.result, name: 'travelSearches', cardinality: 'many' },
+}));
+const travelOfferDependencies = {
+  objectTypes: [travelOfferSearchType, ...travelOfferSources.flatMap(service => [service.result, service.object])],
+  linkTypes: [...travelOfferLinks.map(link => link.apiName),
+    ...travelOfferSources.flatMap(service => [service.object + 'Source', service.object + 'SearchResult'])],
+  dataSources: travelOfferSources.map(service => service.source),
+};
+const travelOfferSearch = object(travelOfferSearchType, 'A search for dated flight and hotel offers with one outcome per supplier source.', {
+  id: z.string(), name: z.string(), outcomes: travelOfferSearchOutcomes,
+});
+travelOfferSearch.interfaces.TravelOfferInquiry = {
+  properties: { name: 'name' },
+  links: {},
+  actions: { search: { action: 'SearchTravelOffers', parameters: { hotel: 'hotel', flight: 'flight' } } },
+};
+fliggyServicesDefinition.objectTypes.push(travelOfferSearch);
+fliggyServicesDefinition.interfaceTypes.push(searchInterface('TravelOfferInquiry', travelOfferSearchInput));
+fliggyServicesDefinition.linkTypes.push(...travelOfferLinks);
+fliggyServicesDefinition.functionTypes.push(
+  {
+    apiName: 'searchTravelOffers',
+    description: 'Query the authorized hotel and flight sources concurrently and retain each successful result page.',
+    parameters: json(travelOfferSearchInput),
+    returns: json(objectRefSchema),
+    edits: true,
+    dependencies: { ...travelOfferDependencies, functions: travelOfferSources.map(service => service.read) },
+  },
+  {
+    apiName: 'readTravelOfferSearch',
+    description: 'Read the retained supplier pages plus the outcome of every requested source.',
+    parameters: json(readTravelOfferSearchInput),
+    returns: json(z.strictObject({
+      search: objectRefSchema,
+      outcomes: travelOfferSearchOutcomes,
+      pages: z.array(z.record(z.string(), z.unknown())).max(3),
+    })),
+    dependencies: { ...travelOfferDependencies, functions: ['readServiceSearch'] },
+  },
+);
+fliggyServicesDefinition.actionTypes.push({
+  apiName: 'SearchTravelOffers',
+  description: 'Find flights from Fliggy and compare hotels from RollingGo and Fliggy with concurrent supplier reads. Supply hotel criteria, flight criteria, or both. Preserves separate prices and availability evidence.',
+  parameters: json(travelOfferSearchInput),
+  objectParameters: {},
+  submissionCriteria: [],
+  function: 'searchTravelOffers',
 });
 
 for (const [types, apiName, shape] of [

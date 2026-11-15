@@ -32,6 +32,7 @@ Interface 按业务语义命名，供应商名称放在具体 Object Type、来�
 | `HotelSearch` / `RollingGoHotelSearch` | `search` → `SearchRollingGoHotels` | RollingGo 酒店搜索，参考价，供应商有效期未知 |
 | `HotelSearch` / `FliggyHotelSearch` | `readFliggyHotels` 或 `search` → `SearchFliggyHotels` | 飞猪指定地点及日期的酒店候选，展示价和跳转链接 |
 | `FlightSearch` / `FliggyFlightSearch` | `readFliggyFlights` 或 `search` → `SearchFliggyFlights` | 飞猪单程、往返及直达航班候选，保留航段、当地时间和展示价 |
+| `TravelOfferInquiry` / `TravelOfferSearch` | `search` → `SearchTravelOffers`，`readTravelOfferSearch` | 并行查询两家酒店与飞猪机票，保留每路状态及已成功的搜索页 |
 | `ProductSearch` / `ShopifyProductSearch` | `search` → `SearchShopifyProducts` | Shopify Global Catalog 的精确商家与变体身份 |
 | `ServiceOffering` | `readServiceOffering`、`evaluateServiceOffering` | 共享来源、有效期和可用性检查；未知值保持未知 |
 | `ServiceSearchResult` | `readServiceSearch`、`readServiceSearchPages` | 读取单个或多个查询页，保留每个来源的身份、时效与完整性 |
@@ -54,7 +55,9 @@ Interface 按业务语义命名，供应商名称放在具体 Object Type、来�
 
 单独查询可经 `evaluate_ontology` 调用 `readFliggyFlights` 或 `readFliggyHotels`。机票传 `origin`、`destination`、`departureDate`，按需加 `returnDate`、`directOnly`。酒店沿用 `place`、`checkIn`、`nights`、`adults` 和 CNY。两者默认返回最多 5 项，可用 `limit` 请求最多 10 项。搜索页是有界样本。
 
-同一任务查机酒或比较酒店供应商时，执行已授权的搜索 Action，再用 `readServiceSearchPages` 读取它们返回的页引用。飞猪酒店的入住人数是查询方输入，供应商返回的酒店卡片保留 `occupancyVerified=false`。酒店 `amount` 保留为未知，`priceDisplay` 保留供应商给出的起价或脱敏价。航班标注当地时间，保留展示票价及成人票价字段，实际库存、税费、乘客总价和退改条件由飞猪确认。
+查机酒或比较酒店时，用 `TravelOfferInquiry.search`（实现类型 `TravelOfferSearch`）提交 `hotel`、`flight` 或两者。传入 `hotel` 会并行调用 RollingGo 与飞猪酒店搜索，传入 `flight` 会在同一批启动飞猪机票搜索。用 `complete_with_action` 可直接返回 `readTravelOfferSearch` 的结果。要排程时先完成查询，再用结果页中的候选引用创建 Scenario 或关联计划。已持有单独 Action 返回的页引用时，仍可用 `readServiceSearchPages` 读取。
+
+每个来源独立校验原用户的 Action、Function、来源权限和连接。结果区分已查询（可能为空）、需授权、供应商不可用以及飞猪酒店不支持的币种。一路供应商查询失败时仍保存其他已成功的结果。保留来源身份、访问模式、时效和展示价。飞猪酒店保留 `occupancyVerified=false`，`amount` 为未知，`priceDisplay` 保留起价或脱敏价。航班保留当地时间和展示票价，实际库存、税费、乘客总价和退改条件由飞猪确认。
 
 连接方式参考 [FlyAI 官方 CLI](https://flyai.open.fliggy.com/docs/quickstart)。来源及只读 Function 的建模参考 [Palantir External Functions](https://www.palantir.com/docs/foundry/data-connection/external-functions)。保留结果的 Action 只编辑 EIGOS 的结果页和候选对象，按 [Ontology MCP](https://www.palantir.com/docs/foundry/ontology-mcp) 公开。飞猪跳转链接供用户自行核价、选择和确认。
 
@@ -136,7 +139,7 @@ PA 返回的 Luma 结果标记为 `pa_reported`，包括稳定账号引用与证
 
 RollingGo 凭据是原 API Key 文件。Shopify 凭据文件是 `{ "clientId": "...", "clientSecret": "..." }`，只在 Shopify 的固定端点交换短期 token；既支持字符串也支持数组形式的 scope 元数据。可选 Luma API 凭据是 API Key，只做事件/日历读取；它没有本版所需的完整参与者操作。未配置 Luma API 时自动走 PA。显式禁用、过期或有冲突的 API 配置会报错，不绕过撤权切换账号。
 
-飞猪用同一连接数组新增一条 `provider: "Fliggy"` 绑定。运营方可显式选择 `mode: "trial"` 体验查询，保留 `owner`、`bindingId`、`active`、`expiresAt`，省略凭据字段。正式 `mode: "key"` 使用 FlyAI API Key，并设置 `credentialFile`、`credentialSha256`。连接文件由 Gateway 和 Worker 共同读取。为符合资格的 owner 授予对应的 Function、Action 和 `Eigos/source/Fliggy` 访问权限。结果页记录访问模式，连接配置改变后旧结果需要刷新。
+飞猪用同一连接数组新增一条 `provider: "Fliggy"` 绑定。运营方可显式选择 `mode: "trial"` 体验查询，保留 `owner`、`bindingId`、`active`、`expiresAt`，省略凭据字段。正式 `mode: "key"` 使用 FlyAI API Key，并设置 `credentialFile`、`credentialSha256`。连接文件由 Gateway 和 Worker 共同读取。为符合资格的 owner 授予对应的 Function、Action 和 `Eigos/source/Fliggy` 访问权限。并行查询另需授予 `SearchTravelOffers`、`searchTravelOffers`、`readTravelOfferSearch` 和结果对象权限。结果页记录访问模式，连接配置改变后旧结果需要刷新。验价、下单、支付、出票或确认有房、查单和退改取消属于飞猪另行授权的合作方 API，FlyAI 搜索凭据无法调用。参考[酒店分销](https://open.alitrip.com/docs/doc.htm?articleId=121389&docType=1&treeId=817)和[国内机票京杭 API](https://open.alitrip.com/docs/api_list.htm?cid=20764)。
 
 滴滴原连接文件新增可选 `ordersEnabled`，默认 `false`。启用连接器不等于用户授权；具体行程仍必须通过 `AuthorizeEventTrip`。查询连接器与订单连接器分开，订单 trace ID 由服务端在发单前新估价取得，不接受模型或 PA 提供的 trace ID。账号/凭据授权摘要改变后旧行程不能继续发单。
 
