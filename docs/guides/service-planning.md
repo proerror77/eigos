@@ -45,7 +45,7 @@ Interface 按业务语义命名，供应商名称放在具体 Object Type、来�
 | `RideOrder` / `DidiRideOrder` | `readEventTrip`、`RefreshDidiRideOrder` | 保留原订单 ID；创建回执与独立状态回查分开 |
 | `EventTrip` | `CancelEventTrip` | 停止后续定时执行；已经发出的供应商订单仍须单独处理 |
 
-`readServiceSearch` 返回 `complete`、`cursor` 和证据类型。RollingGo 的 top-N 搜索、Shopify 的有界结果都不能证明“其他结果不存在”。酒店住宿不会自动占用用户整段日历；商品没有交付时间时不能被算作按时到货。酒店预订、商家结账和付款尚未接入这条执行链。
+`readServiceSearch` 返回 `complete`、`cursor` 和证据类型。RollingGo 的 top-N 搜索、Shopify 的有界结果都不能证明“其他结果不存在”。酒店住宿不会自动占用用户整段日历；商品没有交付时间时不能被算作按时到货。选入行程只保存内部计划。预订与付款使用单独授权的飞猪交易 Action。
 
 活动、酒店方案和商品变体按供应商、账号绑定、原生身份及必要的报价条件确定对象身份；刷新不会为同一活动另造一个身份。旧版本或同一时间的冲突事实被拒绝。原结果页的成员关系保留；若对象已有更新来源，读取旧页会明确提示已被替代，不会返回空数组或把新价格当成原页价格。
 
@@ -62,6 +62,28 @@ Interface 按业务语义命名，供应商名称放在具体 Object Type、来�
 连接方式参考 [FlyAI 官方 CLI](https://flyai.open.fliggy.com/docs/quickstart)。来源及只读 Function 的建模参考 [Palantir External Functions](https://www.palantir.com/docs/foundry/data-connection/external-functions)。保留结果的 Action 只编辑 EIGOS 的结果页和候选对象，按 [Ontology MCP](https://www.palantir.com/docs/foundry/ontology-mcp) 公开。飞猪跳转链接供用户自行核价、选择和确认。
 
 已有滴滴原订单后的状态轮询、按需司机位置和接驾提醒见 [滴滴原订单追踪](didi-ride-followup.md)。
+
+## 飞猪合作方机酒交易
+
+机酒搜索继续使用 FlyAI 和 RollingGo 并行查询。进入交易时使用飞猪 TOP 的可交易库存标识。FlyAI 展示价、酒店卡片 ID、航班号和跳转链接无法代替分销商品、政策 ID 或京杭报价 `itemId`。
+
+| 业务 | Ontology 操作 | 供应商能力 |
+| --- | --- | --- |
+| 酒店 | `readFliggyHotelRates` → `PrepareFliggyHotelBooking` → `CreateFliggyHotelBooking` → `ConfirmFliggyHotelPayment` | 酒店通用分销验价、建单、已收买家款后的支付确认 |
+| 酒店 | `RefreshFliggyHotelBooking`、`CancelFliggyHotelBooking` | 按原分销订单号查单及无罚金取消 |
+| 国内机票 | `readFliggyFlightQuotes` → `PrepareFliggyFlightBooking` → `CreateFliggyFlightBooking` → `PayFliggyFlightBooking` | 京杭询价、生单、支付，当前支持一位成人的国内单程直飞标准产品 |
+| 国内机票 | `RefreshFliggyFlightBooking`、`CloseFliggyFlightBooking` | 原订单详情、独立核对付款和票号证据、未支付关单 |
+
+用 `readFliggyHotelBooking` 或 `readFliggyFlightBooking` 呈现已记录的预览与原订单状态。确认由已认证且有对应 Action 权限的 PA 直接调用，提交预览的 `approvalDigest` 和 `amountMinor`。建单前重新验证原标的、日期、金额及条款。供应商响应丢失后通过 `Refresh…` 按原外部订单号回查。已确认的供应商操作沿用原回执。此处支持国内机票未支付关单和通用分销无罚金退订。已出票退改签、国际机票、国际酒店分销、酒店促销及罚金退订需要单独适配各自合同。
+
+配置部署用户拥有的绝对路径 `0600` JSON 文件。两份文件都需要 `owner`、`account`、`appKey`、`appSecret`、`enabled` 和 `expiresAt`。Gateway 与 Worker 用同一连接，为目标 owner 独立授予 `FliggyHotelDistribution` 或 `FliggyFlightJinghang` 的源权限和对应的对象、Function、Action 权限。
+
+- `EIGOS_FLIGGY_HOTEL_CONNECTION_FILE` 另需 `distributor` 和 `hotelProfilesFile`。入住人文件为数组，每条包含 `id`、`expiresAt`、`contact: {name,phone,email?}` 和按房分组的成人姓名数组 `rooms`。用标准酒店 ID 查询合作方房型报价，再提交 `standardHotelId`、`itemId`、`ratePlanId`，配合实际入住离店日期、到店离店时间和人数创建预览。酒店支付确认需要由已核对买家入账的分销商写入 `hotelPaymentsFile`，记录 `orderId`、`outOrderId`、`receiptId`、`amountMinor`、`currency`、`receivedAt`。
+- `EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE` 另需 `session`、`channelName` 和 `flightProfilesFile`。乘机人文件为数组，每条包含 `id`、`expiresAt`、`contact` 和一位成人 `passenger`，两者包含 `name`、`mobile_phone_number`、`mobile_country_code`。乘机人还包含 `birthday`、`credential_type: 0` 和 `credential_no`。京杭交易方还需满足飞猪的聚石塔调用条件。
+
+联系人、证件、建单密钥和票号留在供应商请求边界。Action 只写入业务标的、订单标识和经过核对的状态。测试走签名与 PostgreSQL Action 记录，供应商传输由隔离夹具提供，证据为 `synthetic`。正式供应商履约须独立验证。
+
+建模依据见 [Palantir Actions](https://www.palantir.com/docs/foundry/action-types/overview)、[External Functions](https://www.palantir.com/docs/foundry/data-connection/external-functions)、[飞猪酒店验价](https://open.alitrip.com/docs/api.htm?apiId=65064)、[酒店建单](https://open.alitrip.com/docs/api.htm?apiId=65071)、[酒店支付确认](https://open.alitrip.com/docs/doc.htm?articleId=121390&docType=1&treeId=817)和[国内机票京杭](https://open.alitrip.com/docs/api_list.htm?cid=20764)。
 
 ## 一条活动出行计划
 
@@ -139,7 +161,7 @@ PA 返回的 Luma 结果标记为 `pa_reported`，包括稳定账号引用与证
 
 RollingGo 凭据是原 API Key 文件。Shopify 凭据文件是 `{ "clientId": "...", "clientSecret": "..." }`，只在 Shopify 的固定端点交换短期 token；既支持字符串也支持数组形式的 scope 元数据。可选 Luma API 凭据是 API Key，只做事件/日历读取；它没有本版所需的完整参与者操作。未配置 Luma API 时自动走 PA。显式禁用、过期或有冲突的 API 配置会报错，不绕过撤权切换账号。
 
-飞猪用同一连接数组新增一条 `provider: "Fliggy"` 绑定。运营方可显式选择 `mode: "trial"` 体验查询，保留 `owner`、`bindingId`、`active`、`expiresAt`，省略凭据字段。正式 `mode: "key"` 使用 FlyAI API Key，并设置 `credentialFile`、`credentialSha256`。连接文件由 Gateway 和 Worker 共同读取。为符合资格的 owner 授予对应的 Function、Action 和 `Eigos/source/Fliggy` 访问权限。并行查询另需授予 `SearchTravelOffers`、`searchTravelOffers`、`readTravelOfferSearch` 和结果对象权限。结果页记录访问模式，连接配置改变后旧结果需要刷新。验价、下单、支付、出票或确认有房、查单和退改取消属于飞猪另行授权的合作方 API，FlyAI 搜索凭据无法调用。参考[酒店分销](https://open.alitrip.com/docs/doc.htm?articleId=121389&docType=1&treeId=817)和[国内机票京杭 API](https://open.alitrip.com/docs/api_list.htm?cid=20764)。
+飞猪用同一连接数组新增一条 `provider: "Fliggy"` 绑定。运营方可显式选择 `mode: "trial"` 体验查询，保留 `owner`、`bindingId`、`active`、`expiresAt`，省略凭据字段。正式 `mode: "key"` 使用 FlyAI API Key，并设置 `credentialFile`、`credentialSha256`。连接文件由 Gateway 和 Worker 共同读取。为符合资格的 owner 授予对应的 Function、Action 和 `Eigos/source/Fliggy` 访问权限。并行查询另需授予 `SearchTravelOffers`、`searchTravelOffers`、`readTravelOfferSearch` 和结果对象权限。结果页记录访问模式，连接配置改变后旧结果需要刷新。交易 API 使用独立的 TOP 合作方连接，见「飞猪合作方机酒交易」。
 
 滴滴原连接文件新增可选 `ordersEnabled`，默认 `false`。启用连接器不等于用户授权；具体行程仍必须通过 `AuthorizeEventTrip`。查询连接器与订单连接器分开，订单 trace ID 由服务端在发单前新估价取得，不接受模型或 PA 提供的 trace ID。账号/凭据授权摘要改变后旧行程不能继续发单。
 
