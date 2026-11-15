@@ -152,6 +152,6 @@ Workflow 创建认知任务时固定当前 owner 在该发布的正式对象、�
 
 发布激活检查包括 `waiting-proposal` 和 `waiting-approval`。当前发布继续处理这些运行，直到完成、显式取消或超时后才可切换。
 
-等待总时限从创建 Scenario 起计算。超时结束 Workflow 并取消尚未完成的认知任务。普通 Action 步骤的重试行为继续适用，认知提案终止后可发起新的 Workflow 运行。该节点用于内部编辑提案。模型只能暂存编辑。合并动作可以派发审批中列出的声明式效果，发单或付款仍需各供应商 Action 的业务授权。
+等待总时限从创建 Scenario 起计算。超时检查先于项目发布和执行权限复核。超时以及流程终止时，在同一事务中取消尚未完成的原认知任务。普通 Action 步骤的重试行为继续适用，认知提案终止后可发起新的 Workflow 运行。该节点用于内部编辑提案。模型只能暂存编辑。合并动作可以派发审批中列出的声明式效果，发单或付款仍需各供应商 Action 的业务授权。
 
 实现沿用 [Palantir 的 Scenario 合并权限](https://www.palantir.com/docs/foundry/ontology/merge-scenario)、[AIP Logic 调用者权限](https://www.palantir.com/docs/foundry/logic/blocks) 和 EIGOS 已有 Action、Task、Scenario 与执行追踪。数据库升级后，Indexer 的角色需要创建和取消认知任务，以及写入 Scenario 元数据和执行追踪。现有任务和 Workflow 记录使用兼容的默认值。

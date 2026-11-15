@@ -688,7 +688,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   } finally { await f.close(); }
 });
 
-async function exerciseReviewedHotelWorkflow(changeEvidence: boolean) {
+async function exerciseReviewedHotelWorkflow(outcome: 'commit' | 'changed-evidence' | 'revoked-at-expiry' | 'revoked-on-reclaim') {
   const hotelSource = serviceProvider();
   const initial = planningInput();
   const start = new Date(Date.now() + 3 * 86400000);
@@ -806,7 +806,8 @@ async function exerciseReviewedHotelWorkflow(changeEvidence: boolean) {
       arguments: { workflow: workflow.id, object: plan, requestId: 'hotel-replan' } });
     assert.equal(Boolean(started.isError), false, JSON.stringify(started.content));
     const submitted = JSON.parse((started.content as { text: string }[])[0]!.text) as { id: string };
-    const status = async () => (await automation.list(f.access, f.model, 'workflow_runs')).items.find(item => item.id === submitted.id)!;
+    const status = async () => (await automation.list(await Access.load(f.db, principal), f.model, 'workflow_runs'))
+      .items.find(item => item.id === submitted.id)!;
     assert.equal(await automation.runOne(), true);
     const waiting = await status();
     assert.equal(waiting.state, 'waiting-proposal');
@@ -823,6 +824,34 @@ async function exerciseReviewedHotelWorkflow(changeEvidence: boolean) {
     const ask = paused.result as { requestId: string; capability: string; input: typeof initial };
     assert.equal(ask.capability, 'calendar.freebusy');
     assert.equal(await automation.runOne(), false);
+    if (outcome === 'revoked-at-expiry' || outcome === 'revoked-on-reclaim') {
+      await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant =>
+        grant.resource !== 'Eigos/action/CommitSchedulePlan' || grant.permission !== 'apply_action'));
+      const expired = outcome === 'revoked-at-expiry';
+      if (expired) {
+        await f.db.query(`UPDATE ${f.db.schema}.workflow_runs SET proposal_deadline=clock_timestamp()-interval '1 second'
+          WHERE id=$1`, [submitted.id]);
+      } else {
+        // Simulate reclaiming a dispatcher that stopped after claiming the paused run.
+        await f.db.query(`UPDATE ${f.db.schema}.workflow_runs SET state='working',lease_until=clock_timestamp()-interval '1 second'
+          WHERE id=$1`, [submitted.id]);
+      }
+      assert.equal(await automation.runOne(), true);
+      assert.equal((await status()).state, expired ? 'expired' : 'failed');
+      assert.equal((await f.tasks.get(principal, taskId)).state, 'canceled');
+      assert.deepEqual((await new PARequests(f.tasks).pending(principal)).items, []);
+      await assert.rejects(ownerClient.request('tasks/' + taskId + '/pa-response',
+        { requestId: ask.requestId, response: calendarAnswer(ask.input) }), /not waiting/);
+      assert.equal(await automation.runOne(), false);
+      assert.equal(await effects.runOne(), false);
+      assert.deepEqual(await graph.read(plan), before);
+      assert.equal(f.provider.flags.orderCreates, 0);
+      if (expired) {
+        await f.metadata.activate(prepared.release, f.capabilities, f.publisher);
+        assert.equal((await f.metadata.active()).release, prepared.release);
+      }
+      return;
+    }
     await ownerClient.request('tasks/' + taskId + '/pa-response', { requestId: ask.requestId, response: calendarAnswer(ask.input) });
     assert.equal(await f.worker.runOne(), true);
     const proposed = await f.tasks.get(principal, taskId);
@@ -862,7 +891,7 @@ async function exerciseReviewedHotelWorkflow(changeEvidence: boolean) {
     await setGrants(f.db, reviewer.owner, []);
     await assert.rejects(merge(), /requires approval/);
     await setGrants(f.db, reviewer.owner, memberGrants(f.model));
-    if (changeEvidence) {
+    if (outcome === 'changed-evidence') {
       const evidence = await graph.read(validationInput);
       await graph.edit(validationInput, evidence.revision, { name: 'Different decision evidence' });
       const stale = await scenarios.inspectReview(reviewerAccess, f.model, scenarioId);
@@ -925,7 +954,14 @@ async function exerciseReviewedHotelWorkflow(changeEvidence: boolean) {
 }
 
 test('hotel replanning binds the committed delta and synthetic Outbox to the independent PA review', () =>
-  exerciseReviewedHotelWorkflow(false));
+  exerciseReviewedHotelWorkflow('commit'));
 
 test('hotel replanning rejects drift in final-validator evidence and allows activation after closing the run', () =>
-  exerciseReviewedHotelWorkflow(true));
+  exerciseReviewedHotelWorkflow('changed-evidence'));
+
+
+test('hotel replanning expires and cancels the original PA task even after the merge grant is revoked', () =>
+  exerciseReviewedHotelWorkflow('revoked-at-expiry'));
+
+test('hotel replanning cancels the original PA task when a reclaimed proposal fails authorization', () =>
+  exerciseReviewedHotelWorkflow('revoked-on-reclaim'));

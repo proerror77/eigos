@@ -761,23 +761,41 @@ export class Automation {
         );
       });
     } catch (error) {
-      await this.db.query(
-        `UPDATE ${this.db.schema}.workflow_runs SET state=$3,error=$4,token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1 AND token=$2 AND state='working'`,
-        [row.id, token, error instanceof ProcessTriggerInactive ? 'canceled' : 'failed',
-          error instanceof ProcessTriggerInactive || error instanceof MissingFrozenSecurityContext ? error.message : failureMessage],
-      );
+      await this.db.transaction(async client => {
+        const ended = (await this.db.query<{ owner: string; proposal_task: string | null }>(
+          `UPDATE ${this.db.schema}.workflow_runs SET state=$3,error=$4,token=NULL,lease_until=NULL,updated_at=now()
+            WHERE id=$1 AND token=$2 AND state='working' RETURNING owner,proposal_task`,
+          [row.id, token, error instanceof ProcessTriggerInactive ? 'canceled' : 'failed',
+            error instanceof ProcessTriggerInactive || error instanceof MissingFrozenSecurityContext ? error.message : failureMessage],
+          client,
+        )).rows[0];
+        if (ended?.proposal_task) await this.cancelProposalTask(client, ended.owner, ended.proposal_task);
+      });
     }
   }
   private async runProposal(row: QueryResultRow, token: string, model: PublishedOntology, access: Access,
     proposal: CognitiveStep, object: ObjectRef, trigger: ProcessTrigger | undefined, guard: (client: Sql) => Promise<void>) {
     await this.db.transaction(async client => {
       await guard(client);
+      const status = row.proposal_task ? (await this.db.query(
+        `SELECT task.state,task.result,task.result_permissions,run.proposal_deadline<=clock_timestamp() AS expired,
+            scenario.revision,scenario.state AS scenario_state
+          FROM ${this.db.schema}.workflow_runs run JOIN ${this.db.schema}.tasks task ON task.id=run.proposal_task AND task.owner=run.owner
+          LEFT JOIN ${this.db.schema}.scenarios scenario ON scenario.id=run.proposal_scenario AND scenario.owner=run.owner
+          WHERE run.id=$1 AND run.token=$2`, [row.id, token], client,
+      )).rows[0] : undefined;
+      if (row.proposal_task && !status) throw new Conflict('Workflow proposal task is unavailable');
+      // Closing an expired proposal is lifecycle work. It must survive revoked execution access.
+      if (status && (status.expired || !status.scenario_state)) {
+        await this.finishProposal(client, row, token, model, 'expired');
+        return;
+      }
       await this.active(model, client);
       await access.refresh(client);
       authorizeCognitive(access, model, proposal);
       const owner = access.principal.owner;
       const graph = new Objects(this.db, model, access, client);
-      if (!row.proposal_task) {
+      if (!status) {
         if (trigger) await this.verifyProcessTrigger(graph, object, trigger, row.body.steps.length === 0);
         const taskId = randomUUID(), requestId = 'workflow-proposal:' + row.id;
         const { reviewers, timeoutSeconds, mergeAction: _mergeAction, mergeObjectParameter: _mergeObjectParameter, ...manifest } = proposal;
@@ -807,28 +825,25 @@ export class Automation {
         return;
       }
 
-      const status = (await this.db.query(
-        `SELECT task.state,task.result,task.result_permissions,run.proposal_deadline<=clock_timestamp() AS expired,
-            scenario.revision,scenario.state AS scenario_state
-          FROM ${this.db.schema}.workflow_runs run JOIN ${this.db.schema}.tasks task ON task.id=run.proposal_task AND task.owner=run.owner
-          LEFT JOIN ${this.db.schema}.scenarios scenario ON scenario.id=run.proposal_scenario AND scenario.owner=run.owner
-          WHERE run.id=$1 AND run.token=$2`, [row.id, token], client,
-      )).rows[0]!;
       const result = cognitiveResultSchema.safeParse(status.result?.proposal);
-      const expired = status.expired || !status.scenario_state;
-      const ready = !expired && status.scenario_state === 'open' && status.state === 'completed'
+      const ready = status.scenario_state === 'open' && status.state === 'completed'
         && result.success && result.data.scenarioId === row.proposal_scenario && result.data.revision === Number(status.revision)
         && status.result_permissions && await access.canReturn(status.result_permissions, client);
-      if (expired) await this.cancelProposalTask(client, owner, row.proposal_task);
-      const state = expired ? 'expired' : ready ? 'waiting-approval' : 'failed';
-      await appendTrace(this.db, { owner, taskId: row.proposal_task, release: model.release, projection: model.projection },
-        { kind: 'workflow', runId: row.id, state }, client, await access.finalDataRequirements(client));
-      await this.db.query(
-        `UPDATE ${this.db.schema}.workflow_runs SET state=$3,error=$4,token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1 AND token=$2`,
-        [row.id, token, state,
-          expired ? 'Workflow proposal expired' : ready ? null : 'Workflow proposal did not complete with a valid Scenario'], client,
-      );
+      await this.finishProposal(client, row, token, model, ready ? 'waiting-approval' : 'failed',
+        await access.finalDataRequirements(client));
     });
+  }
+
+  private async finishProposal(client: Sql, row: QueryResultRow, token: string, model: PublishedOntology,
+    state: 'expired' | 'waiting-approval' | 'failed', requirements: Requirement[] = []) {
+    if (state !== 'waiting-approval') await this.cancelProposalTask(client, row.owner, row.proposal_task);
+    await appendTrace(this.db, { owner: row.owner, taskId: row.proposal_task, release: model.release, projection: model.projection },
+      { kind: 'workflow', runId: row.id, state }, client, requirements);
+    await this.db.query(
+      `UPDATE ${this.db.schema}.workflow_runs SET state=$3,error=$4,token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1 AND token=$2`,
+      [row.id, token, state, state === 'expired' ? 'Workflow proposal expired'
+        : state === 'failed' ? 'Workflow proposal did not complete with a valid Scenario' : null], client,
+    );
   }
 
   private async cancelProposalTask(client: Sql, owner: string, taskId: string) {
