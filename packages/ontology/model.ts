@@ -59,6 +59,8 @@ export class Ontology {
       for (const key of [type.primaryKey, type.titleProperty]) {
         if (type.properties[key]?.derived || type.properties[key]?.schema.type !== 'string' || !type.properties[key]?.required) throw new Error(`Missing required string key on ${type.apiName}`);
       }
+      if (type.classificationProperty && (!type.properties[type.classificationProperty]
+          || type.properties[type.classificationProperty]?.derived)) throw new Error(`Missing stored classification property on ${type.apiName}`);
       this.objectValidators.set(type.apiName, z.strictObject(Object.fromEntries(Object.entries(type.properties).filter(([,property])=>!property.derived)
         .map(([name, property]) => [name, property.required ? validator(property.schema) : validator(property.schema).optional()]))));
     }

@@ -18,14 +18,16 @@ import { objectPolicySchema } from '../packages/runtime/security.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import { Ontology } from '../packages/ontology/model.js';
-import { processLogTarget } from '../packages/ontology/process-definition.js';
+import { addProcessLogs, processLogTarget } from '../packages/ontology/process-definition.js';
 import { calendarJourneyDefinition } from '../packages/ontology/calendar-journey.js';
 import { deliveryFunctions } from '../packages/ontology/delivery.js';
+import { documentDefinition } from '../packages/ontology/documents.js';
 import { flightDefinition } from '../packages/ontology/flight.js';
 import { flightPositionFunction } from '../packages/ontology/flight-position.js';
 import { locationFunctions, taskLocationValueType } from '../packages/ontology/location.js';
 import { luckinDefinition } from '../packages/ontology/luckin.js';
 import { mapFunctions } from '../packages/ontology/maps.js';
+import { rideWatchDefinition, rideWatchType } from '../packages/ontology/ride-watch.js';
 
 async function setup() {
   const f=await fixture();await initializeActionUndo(f.db);await initializeScenarioLifecycle(f.db);await initializeAutomation(f.db);
@@ -242,6 +244,109 @@ test('a failing rule scan disables the rule and does not leave partial workflow 
   }finally{await f.close();}
 });
 
+async function processSetup() {
+  const f = await setup();
+  try {
+    const definition = structuredClone(f.model.document);
+    const state = {type:'string', enum:['open','stalled','done']};
+    definition.objectTypes.find(type=>type.apiName==='Route')!.properties.state = {
+      description:'Synthetic route processing state', schema:state, required:false,
+    };
+    addProcessLogs(definition, [{type:'Route', property:'state'}]);
+    const object = {type:'object', properties:{type:{type:'string'},id:{type:'string'}}, required:['type','id'], additionalProperties:false};
+    definition.actionTypes.push({
+      apiName:'ChangeRouteState', description:'Commit a synthetic process transition',
+      parameters:{type:'object',properties:{route:object,revision:{type:'integer'},state},required:['route','revision','state'],additionalProperties:false},
+      objectParameters:{route:'Route'}, submissionCriteria:[],
+      rules:[{op:'editObject',object:{parameter:'route'},expectedRevision:{parameter:'revision'},properties:{state:{parameter:'state'}}}],
+      result:{type:'Route',id:{parameter:'route',path:['id']}},
+    });
+    const model = await f.metadata.publish(definition, f.capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, memberGrants(model));
+    const access = await Access.load(f.db, principal);
+    const graph = new Objects(f.db, model, access);
+    const change = async (state:string) => f.actions.apply(await Access.load(f.db, principal), model, 'ChangeRouteState',
+      {route:f.source, revision:(await graph.read(f.source)).revision, state}, randomUUID());
+    const runs = async () => (await f.db.query(`SELECT id,state,process_trigger,request_id FROM ${f.db.schema}.workflow_runs ORDER BY available_at`)).rows;
+    return {...f, model, access, graph, change, runs};
+  } catch (error) {
+    await f.close();
+    throw error;
+  }
+}
+
+test('process rules deliver each committed matching transition between polls and replay checkpoints without duplicates',async()=>{
+  const f = await processSetup();
+  try {
+    await f.change('open');
+    await f.change('stalled');
+    await f.change('open');
+    const rule = await f.automation.rule(f.access, f.model, {name:'Each stall',workflow:f.workflow.id,
+      process:{type:'RouteStateLog',from:'open',to:'stalled'},enabled:true});
+    const initial = (await f.db.query(`SELECT process_cursor::text FROM ${f.db.schema}.object_rules WHERE id=$1`, [rule.id])).rows[0]!.process_cursor;
+    await f.change('stalled');
+    await f.change('open');
+    await f.change('stalled');
+    await f.change('done');
+    assert.deepEqual((await Promise.all([f.automation.scanOne(),f.automation.scanOne()])).sort(), [false,true]);
+    const first = await f.runs();
+    assert.equal(first.length, 2);
+    assert.notEqual(first[0]!.process_trigger.sequence, first[1]!.process_trigger.sequence);
+    assert(first.every(row=>row.request_id.startsWith('process-rule:')));
+    await f.db.query(`UPDATE ${f.db.schema}.object_rules SET process_cursor=$2,last_scan=NULL WHERE id=$1`, [rule.id,initial]);
+    assert.equal(await f.automation.scanOne(), true);
+    assert.deepEqual(await f.runs(), first);
+    assert.equal(await f.automation.runOne(), true);
+    assert.equal(await f.automation.runOne(), true);
+    assert.deepEqual((await f.runs()).map(row=>row.state), ['completed','completed']);
+    assert.equal(await f.automation.runOne(), false);
+  } finally { await f.close(); }
+});
+
+test('process dwell starts only for the latest uninterrupted state and reports recorded duration', async () => {
+  const f = await processSetup();
+  try {
+    await f.change('open');
+    await f.automation.rule(f.access, f.model, {name:'Long stall',workflow:f.workflow.id,
+      process:{type:'RouteStateLog',to:'stalled',dwellSeconds:3600},enabled:true});
+    await f.change('stalled');
+    await f.change('open');
+    await f.change('stalled');
+    await f.automation.scanOne();
+    const [first, latest] = await f.runs();
+    assert(first && latest);
+    assert.equal(await f.automation.runOne(), false);
+    const status = await f.automation.processStatus(f.access, f.model, {type:'RouteStateLog',object:f.source});
+    assert.equal(status.state, 'stalled');
+    assert.equal(status.transition?.id, latest.process_trigger.sequence.padStart(20, '0'));
+    assert.notEqual(status.recordedDurationSeconds, null);
+    assert(Date.parse(status.asOf) >= Date.parse(status.recordedAt!));
+    await f.db.query(`UPDATE ${f.db.schema}.workflow_runs SET available_at=available_at-interval '2 hours'`);
+    assert.equal(await f.automation.runOne(), true);
+    assert.equal(await f.automation.runOne(), true);
+    assert.deepEqual((await f.runs()).map(row=>row.state), ['canceled','completed']);
+  } finally { await f.close(); }
+});
+
+test('a queued transition is hidden and cannot run after its historical log permission is revoked', async () => {
+  const f = await processSetup();
+  try {
+    await f.change('open');
+    await f.automation.rule(f.access, f.model, {name:'Watch open to done',workflow:f.workflow.id,
+      process:{type:'RouteStateLog',from:'open',to:'done'},enabled:true});
+    await f.change('done');
+    assert.equal(await f.automation.scanOne(), true);
+    const [run] = await f.runs();
+    assert(run);
+    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant=>grant.resource!=='Eigos/object/RouteStateLog' || grant.permission!=='view_objects'));
+    const restricted = await Access.load(f.db, principal);
+    assert.deepEqual(await f.automation.list(restricted, f.model, 'workflow_runs'), {items:[],hasMore:false});
+    assert.equal(await f.automation.runOne(), true);
+    assert.equal((await f.runs())[0]!.state,'failed');
+    await assert.rejects(new Objects(f.db, f.model, restricted).read({type:'Route',id:'original'}), /unavailable/);
+  } finally { await f.close(); }
+});
+
 test('run results redact references whose current instance permissions were revoked',async()=>{
   const f=await setup();try{
     await f.automation.run(f.access,f.model,{workflow:f.workflow.id,object:f.source,requestId:'private-result'});await f.automation.runOne();
@@ -340,22 +445,38 @@ test('revoked prior-step result visibility blocks a later Action even when the t
 
 test('a hotel workflow saved under v8 replays in v9 and the current release with fresh inputs and separate approval', async () => {
   // Reconstruct the historical documents on the same runtime and check both published identities.
-  const laterDomains = [calendarJourneyDefinition, flightDefinition, luckinDefinition];
-  const addedTypes = new Set(laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)));
+  const laterDomains = [calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition];
+  const addedTypes = new Set([
+    ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType,
+  ]);
   const model = new Ontology(document);
   const logs = document.objectTypes.flatMap(type => processLogTarget(model, type.apiName) ?? []);
   const addedLogs = logs.filter(log => addedTypes.has(log.objectType));
   const addedActions = new Set(laterDomains.flatMap(domain => domain.actionTypes.map(action => action.apiName)));
+  addedActions.add('StageDiningActivity');
   const addedFunctions = new Set([
     ...laterDomains.flatMap(domain => domain.functionTypes), ...deliveryFunctions, ...locationFunctions, ...mapFunctions, flightPositionFunction,
   ].map(fn => fn.apiName));
+  for (const name of ['stageDiningActivity', 'searchRestaurantNotes', 'readWeatherHistory', 'readDiningAvailability']) addedFunctions.add(name);
+  addedActions.add('EstimateRideWithPlaceClues');
+  for (const action of rideWatchDefinition.actionTypes) addedActions.add(action.apiName);
+  for (const fn of rideWatchDefinition.functionTypes) addedFunctions.add(fn.apiName);
+  addedFunctions.add('prepareRideInquiryWithPlaceClues');
   const v9Definition = structuredClone(document);
   v9Definition.version = '9';
+  v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type => type.apiName !== 'RideInquiryWithPlaceClues');
+  delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;
   v9Definition.objectTypes = v9Definition.objectTypes.filter(type => !addedTypes.has(type.apiName) && !addedLogs.some(log => log.type === type.apiName));
-  v9Definition.linkTypes = v9Definition.linkTypes.filter(type => !addedLogs.some(log => log.link === type.apiName));
+  delete v9Definition.objectTypes.find(type => type.apiName === 'ScheduledActivity')!.properties.dining;
+  v9Definition.linkTypes = v9Definition.linkTypes.filter(type =>
+    !addedLogs.some(log => log.link === type.apiName) && !documentDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    !rideWatchDefinition.linkTypes.some(link => link.apiName === type.apiName));
   v9Definition.actionTypes = v9Definition.actionTypes.filter(action => !addedActions.has(action.apiName));
   v9Definition.functionTypes = v9Definition.functionTypes.filter(fn => !addedFunctions.has(fn.apiName));
+  v9Definition.functionTypes.find(fn => fn.apiName === 'resolveRideLocations')!.description =
+    'Resolve each venue by querying exact Location.name within its source receipt. One exact match resolves even when other entrances or nearby shops were returned. Multiple exact matches or no exact match require clarification. Explicit selections must belong to the corresponding source response.';
   v9Definition.valueTypes = v9Definition.valueTypes?.filter(type => type.apiName !== taskLocationValueType.apiName);
+  v9Definition.typeGroups = v9Definition.typeGroups?.filter(group => group.apiName !== 'Documents');
   for (const group of v9Definition.typeGroups ?? []) group.objectTypes = group.objectTypes.filter(type => !addedTypes.has(type));
   assert.equal(new Ontology(v9Definition).digest, 'ab7a4e8a4c6d6c0e56eaef294ae849911f78da535e9cef2fb213bdfaa39c4d8a');
 

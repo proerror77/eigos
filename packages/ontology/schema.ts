@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { classificationSchema } from './classification.js';
 
 export const ontologyName = z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(80);
 const name = ontologyName;
@@ -22,6 +23,7 @@ const metadata = {
   typeClasses:z.array(z.strictObject({kind:z.string().regex(/^[A-Za-z][A-Za-z0-9_.-]*$/).max(128),name:z.string().regex(/^[A-Za-z][A-Za-z0-9_.-]*$/).max(128)})).optional(),
   renderHints:z.record(z.string(),z.union([z.string(),z.boolean(),z.number()])).optional(),
   status:z.enum(['experimental','active','deprecated']).optional(),
+  classification:classificationSchema.optional(),
 };
 const structReference = z.strictObject({type:name,mainField:name.optional(),reducer:z.strictObject({op:z.enum(['first','last','min','max']),field:name.optional()}).optional(),array:z.boolean().optional()});
 export const propertySchema = z.strictObject({
@@ -43,7 +45,7 @@ export type FunctionDependencies = z.infer<typeof functionDependenciesSchema>;
 const actionConstraint = z.strictObject({ parameters: jsonSchema, objectParameters: z.record(name, name), required: z.boolean() });
 
 export const ontologySchema = z.strictObject({
-  id: name, version: z.string().min(1),
+  id: name, version: z.string().min(1), classification: classificationSchema.optional(),
   sharedProperties:z.array(property.extend({apiName:name})).optional(),
   valueTypes:z.array(z.strictObject({apiName:name,version:z.string().min(1).max(100),description:z.string().min(1),schema:jsonSchema,...metadata})).optional(),
   structTypes:z.array(z.strictObject({apiName:name,description:z.string().min(1),fields:z.record(name,jsonSchema),required:z.array(name).optional(),mainField:name.optional(),...metadata})).optional(),
@@ -51,7 +53,7 @@ export const ontologySchema = z.strictObject({
   imports:z.array(z.strictObject({ontology:name,version:z.string().min(1),digest:z.string().regex(/^[a-f0-9]{64}$/),namespace:name,document:z.unknown()})).optional(),
   objectTypes: z.array(z.strictObject({
     apiName: name, displayName: z.string().min(1), description: z.string().min(1),
-    primaryKey: name, titleProperty: name, properties,...metadata,groups:z.array(name).optional(),
+    primaryKey: name, titleProperty: name, properties, classificationProperty: name.optional(),...metadata,groups:z.array(name).optional(),
     interfaces: z.record(name, z.strictObject({
       properties: z.record(name, name), links: z.record(name, name),
       actions: z.record(name, z.strictObject({ action: name, parameters: z.record(name, name) })),
@@ -88,7 +90,7 @@ export const ontologySchema = z.strictObject({
     effects: z.array(z.strictObject({ name, handler: name, payload: z.record(name, value) })).max(20).optional(),
   }).refine(action => action.function ? !action.rules && !action.result : !!action.rules && !!action.result, 'Select declarative rules or an edit Function')),
   dataSources: z.array(z.strictObject({
-    apiName: name, objectType: name, function: name,
+    apiName: name, objectType: name, function: name, classification: classificationSchema.optional(),
     properties: z.record(name, z.string().min(1)),
   })),
 });

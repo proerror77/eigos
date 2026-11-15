@@ -90,13 +90,27 @@ flowchart LR
 `EstimateRide` 使用 `prepareRideInquiry` edit Function。函数完成以下确定性工作：
 
 1. 并行读取 `DidiPlaces`，来源投影按发布映射写入地点事实及来源 Link。
-2. `resolveRideLocations` 通过 `Location.name` 和各自的来源 Link 查询完整名称匹配。唯一匹配直接使用；入口、商铺等不同名称不会造成歧义。同名或没有匹配时返回真实候选及 ObjectRef。用户明确选择后复核其属于对应来源结果，并刷新来源读取。
+2. `resolveRideLocations` 沿各自的来源 Link 读取候选，按规范化的 `Location.name` 匹配。规范化仅处理 Unicode 形式、空白和间隔点等显示差异，保留门牌号和不同地名。唯一匹配直接使用；同名或没有匹配时返回真实候选及 ObjectRef。
 3. `estimateLocations` 用来源坐标取得真实价格。外部请求全部发生在业务编辑事务之外。
 4. Action 在一次事务内创建路线、询价请求、报价及关联 Links。Function 通过 Action 的编辑上下文提交，直接求值 edit Function 会被拒绝。失败的业务编辑整体回滚；已接收的来源事实保持独立。
 
 这些是 Function-backed Action 的实现职责。通用 Action 运行层负责参数、提交条件、事务及幂等记录；Workflow 可以串联已发布 Action，复用相同契约和权限检查。[Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview)
 
 Agent 可在一次 `complete_with_action` 调用中选择 Interface Action 与结果 Function，并指定把 Action 返回的对象引用绑定到哪个函数参数。运行层执行 Action 后调用 `readRideEstimates`，后者按 `PriceEstimate` 和 source Links 检查当前来源、有效期和报价，再直接返回真实结果。验收在读取时重新执行，重复 Action 不会使旧的验收标志跳过检查。Agent 不需要在来源读取、对象创建或验收之间继续往返。
+
+如果 Action 在准备阶段返回地点候选，Action Engine 保存已选 Action、参数、结果 Function 和来源回执，绑定原任务、发布版本和请求 ID。Machinery 通过 `ActionConfirmation.state` 及 `stateLogs` 显示等待、确认、完成或终止。确认由原任务入口接受，只接受对应侧候选内的 ObjectRef。Worker 唤醒原执行后直接进入 Action Engine，沿用原请求 ID、租约、权限检查和提交事务。仍属当前来源绑定且新鲜的地点回执可以复用；变旧或变化的那一侧重新读取。唯一匹配的询价直接完成，无需确认过程对象。
+
+如果正确地点不在原候选里，原任务调用者可用 `amend_task_place`（HTTP `POST /tasks/:id/place-amendment`）提交 `{side,address,name?,keep?}`。有多个候选的一端若保持不变，用 `keep` 指定当前候选中的 ObjectRef。Action Engine 把地址作为原调用的续接输入，验证现有授权和供应商回执，仅重新查被修正或回执过期的地点。地址和可选楼名必须能唯一对应本次来源结果，才继续询价。仍有歧义时保持原请求 ID 并再次等待确认。这里沿用 [Action 提交条件](https://www.palantir.com/docs/foundry/action-types/submission-criteria) 和 Machinery 的状态模型，未增加新执行器。
+
+需要补城市或有地标线索时，Worker 可从同一 `RideRequest` 发现 `RideInquiryWithPlaceClues.estimate`。它复用现有准备、执行和报价核验，保留原 `RideInquiry` 的必填参数契约供旧客户端与历史 Workflow 使用。缺城市时在任何供应商调用前持久化原 Action；调用者通过 `supply_task_input`（HTTP `POST /tasks/:id/input`）只填充请求的城市。不接受用这条入口更改已完整的请求。
+
+地标可在首次调用时作为独立参数提供，也可用 `amend_task_place` 给原任务补 `landmark`。Action 从同一绑定获取地标与地点的回执，当地标唯一、地点名称匹配或是明确简称、同城市且位于地标 800 米范围内时筛出推荐地点。依靠地标解析的简称即使只剩一个候选，也返回正式名称和地址，收到当前候选的明确选择后才询价。当候选商铺的名字带有同一门牌下已独立返回的场馆全名时，简称匹配保留场馆。不会在多个合格场馆中按距离强选，也不会写入历史别名。既有权限、原任务身份、Machinery 状态和报价来源核验继续适用。[状态和 Action 的对应关系](https://www.palantir.com/docs/foundry/machinery/core-concepts)
+
+有候选时，调用者将完整名称和地址展示给用户，再用 `select_task_places` 写回其选择。PA 只有在用户已明确过该地址时才代选；不确定就向用户确认。查询成功但没有合格候选时返回 `place-address-required`，用 `amend_task_place` 补地址；供应商读取失败时返回 `retry-source`，可通过 `supply_task_input` 重试原调用。两类状态均由当前调用方处理，此询价 Action 不会自动触发 PA。
+
+高德命名地点无法精确解析时，当前 Worker 用原 Task 的 `location.resolve` 接收 PA 校准的地点。早期版本留下纯文字澄清时，任务所有者可沿用 `amend_task_place` 或 `POST /tasks/:id/place-amendment` 提交 `{source:"Amap",side,placeId,requestId,expectedUpdatedAt}`，其中 `expectedUpdatedAt` 来自该 Task 的最新读回。恢复已取消的旧澄清需用户明确授权并提交 `restoreCanceled:true`。服务通过已发布的 `readMapPlace` 核验 POI，要求任务仍停在对应澄清且没有已执行的业务变更，再用原 Task ID 接续当前发布。原提交、既有 PA 回执和跨版本追踪保留。过期的有效日历回执会在原 Task 发起新的忙闲核对。地点更正与后续 Scenario 审批分别校验。[查询 Function](https://www.palantir.com/docs/foundry/functions/query-functions) · [Action 提交条件](https://www.palantir.com/docs/foundry/action-types/submission-criteria)
+
+Machinery 使用已发布对象的枚举状态和原有编辑历史；Action Engine 负责执行和继续原调用。对应 Palantir 的 [状态、Action 和过程日志](https://www.palantir.com/docs/foundry/machinery/core-concepts) 与 [Function 支持的 Action](https://www.palantir.com/docs/foundry/action-types/function-actions-overview)。EIGOS 复用现有任务和发布数据存储保存恢复参数，未增加第二套 Workflow 执行器。
 
 普通 Function 仅获得对象读取接口；edit Function 的写入上下文由 Action 提供。来源价格由连接器和字段映射生成，模型不能提供入库价格。取消或租约失效阻止后续提交。
 
@@ -146,6 +160,10 @@ OAuth scopes 控制协议入口。当前身份对应的资源授权控制本体�
 
 对象查询保持 owner 行隔离。属性策略在对象读取、Interface 映射和筛选中一致返回 null；知道隐藏值不能通过筛选反推出它。缺少关联目标的读取权限时，关系查询明确拒绝，不能被业务函数解释为“不存在”。定义管理员可查看 Schema，但不会因此读到对象或执行 Action。[对象和属性策略](https://www.palantir.com/docs/foundry/object-permissioning/object-security-policies/)
 
+多租户配置可为原始业务表启用 PostgreSQL 行级安全，事务继承经过认证或领取的 owner。Action 和编辑历史记录执行者身份，授权继续由本体检查。部署角色与验证方式见 [Ontology 运行服务](../guides/ontology-services.md)。
+
+模型接收权限使用发布定义和受信任部署配置。Harness 在初始上下文及工具结果交给目标模型前检查密级和隔离标签。业务读取、检索排序及模型返回使用当前权限。模型身份和授权结果记录在执行追踪中。[Palantir 模型数据访问控制](https://www.palantir.com/docs/foundry/aip/control-llm-data-access-with-markings)
+
 Action 检查自身应用权限，以及实际访问的对象、关系和来源。源读取权限与对象可见性独立，授予原始来源读取意味着允许读取该来源的原始数据。只读对象接口不能取得编辑上下文；所有业务编辑仍通过 Action 提交。[Action 权限](https://www.palantir.com/docs/foundry/action-types/permissions/)
 
 权限在一次执行上下文中读取并复用，源调用、函数返回及提交前重新检查；没有逐对象开启授权事务。任务结果记录读取依赖，当前授权不再满足时整个缓存结果被隐藏。授权表由数据库管理角色维护，常驻运行角色仅有读取权限。对象内容策略支持标量相等、身份匹配、组成员关系及 all/any 组合，属性策略复用相同表达式。标记数组控制读取及 Action 输出传播。对象数据保持 owner 分区，组和项目授权管理资源定义与分区内可见性。
@@ -153,7 +171,7 @@ Action 检查自身应用权限，以及实际访问的对象、关系和来源�
 
 ## Scenario 与 PA 日历
 
-`packages/runtime/scenarios.ts` 管理 owner 隔离的方案生命周期和原子合并，`scenario-store.ts` 将对象／关系差量叠加到当前发布数据上。Query、Function 和 Action 共用 `scenarioId` 上下文；不建立第二个本体发布或任务实例。版本发布候选投影仍只服务发布迁移。
+`packages/runtime/scenarios.ts` 管理 owner 隔离的方案生命周期、跨账号审阅和原子合并，`scenario-store.ts` 将对象／关系差量叠加到当前发布数据上。Query、Function 和 Action 共用 `scenarioId` 上下文。显式 rebase 保留独立变更并更新审阅修订号。跨账号审阅以当前授权后的差量和修订为单位。 [Scenario 生命周期](../guides/scenario-lifecycle.md)
 
 `packages/runtime/pa.ts` 在原任务中记录带响应契约的信息请求，只有原 owner 的 PA 可以回传并继续该任务。`packages/capabilities/scheduling/` 绑定 Calendar 数据校验、候选时间搜索和排程 Actions。日历汇总数据由 PA 提供，Agent 不能把猜测的空闲时间写成来源事实。
 
@@ -176,6 +194,12 @@ Ontology 分支与项目归属提供定义提案、三方 rebase、精确候选�
 
 Object Set Service 支持集合组合、多跳导航、分组聚合，以及静态和动态集合保存。来源事务经过独立 Indexer 按 offset 应用。用户编辑和来源值按类型策略合成，编辑历史与物化数据提供授权后的下游读取。Functions 可选择独立版本，Actions 可声明经过事务 outbox 的具名副作用。
 
+PDF 和 SOP 的已提取文本按不可变文档版本与切片入库，随排程 Link 与对象字段权限查询。切片保留版本引用与提取文本中的准确范围，原件提供页码或段落信息时一并保留。对象集的可下推查询复用 PostgreSQL 的权限过滤。 [文档版本](../guides/document-versions.md) · [对象集](../guides/object-sets.md)
+
 Machinery 过程日志以普通 Object Type 实现共同 `ProcessLog` Interface，通过已发布 Link 关联原业务对象。查询投影复用正式编辑历史，不增加日志存储或执行引擎；Action、请求、原任务与来源观察时间在原事务中关联。Scenario 拟议修改不进入正式历史，排程确认沿原合并 Action 记录内部状态。Agent 通过既有 Ontology MCP 发现和查询这些对象，简单任务保持直接执行。定义、权限、升级和验收边界见 [过程日志](../guides/process-history.md)。
+
+过程规则按正式历史游标拾取状态跃迁，沿用 Workflow 队列和 Action 权限处理即时事件与停留超时。Agent 评估通过相同 MCP 路径执行固定业务用例，按实际工具调用、状态和差量评分。 [自动化](../guides/automation.md) · [Agent 评估](../guides/agent-evaluations.md)
+
+执行追踪使用原任务和 Action 身份关联来源证据、模型授权、方案审阅、编辑历史、outbox 和实际供应商回执。读取追踪时复核权限，业务结果以各原始记录为准。 [EIGOS 执行追踪](../guides/execution-trace.md) · [Palantir 执行追踪](https://www.palantir.com/docs/foundry/aip-observability/trace-view)
 
 Gateway 的只读查询池可连接已有只读副本，通过身份与 WAL 追赶检查保持当前读取。部署可分别扩展 Gateway、任务 Worker 和 Indexer。参数、表授权、边界及运行命令见 [Ontology 运行服务](../guides/ontology-services.md)。

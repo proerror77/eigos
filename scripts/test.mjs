@@ -4,14 +4,19 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import pg from 'pg';
 
-const e2e = process.argv.includes('--e2e'), suite = process.argv.find(arg => arg.startsWith('--suite='))?.split('=')[1];
+const args = process.argv.slice(2);
+const agentEval = args.includes('--agent-eval'), e2e = args.includes('--e2e'), suite = args.find(arg => arg.startsWith('--suite='))?.split('=')[1];
 const files = e2e ? ['dist/tests/e2e/gateway.test.js'] : readdirSync('tests').filter(name => /^\d\d-.+\.test\.ts$/.test(name) && (!suite || name.startsWith(suite.padStart(2, '0') + '-'))).map(name => 'tests/' + name);
-if (!files.length) throw new Error('No test files selected');
+if (!files.length && !agentEval) throw new Error('No test files selected');
+const childArgs = agentEval
+  ? ['--import', 'tsx', 'scripts/evaluate-agent.ts', ...args.filter(arg => arg !== '--agent-eval')]
+  : [...(e2e ? [] : ['--import', 'tsx']), '--test', '--test-concurrency=2', ...files];
 let url = process.env.EIGOS_TEST_DATABASE_URL, container;
 try {
   if (!url) {
     container = 'eigos-test-' + randomUUID();
-    execFileSync('docker', ['run', '--detach', '--rm', '--name', container, '--publish', '127.0.0.1::5432', '--env', 'POSTGRES_PASSWORD=synthetic-only', 'postgres:17'], { stdio: 'ignore' });
+    const image = process.env.EIGOS_TEST_PGVECTOR === 'true' ? 'pgvector/pgvector:0.8.7-pg17' : 'postgres:17';
+    execFileSync('docker', ['run', '--detach', '--rm', '--name', container, '--publish', '127.0.0.1::5432', '--env', 'POSTGRES_PASSWORD=synthetic-only', image], { stdio: 'ignore' });
     const address = execFileSync('docker', ['port', container, '5432/tcp'], { encoding: 'utf8' }).trim();
     url = `postgres://postgres:synthetic-only@${address}/postgres`;
   }
@@ -24,7 +29,7 @@ try {
     catch (error) { await client.end().catch(() => {}); if (Date.now() >= deadline) throw error; await delay(100); }
   }
   process.exitCode = await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [...(e2e ? [] : ['--import', 'tsx']), '--test', '--test-concurrency=2', ...files], { stdio: 'inherit', env: { ...process.env, EIGOS_TEST_DATABASE_URL: url } });
+    const child = spawn(process.execPath, childArgs, { stdio: 'inherit', env: { ...process.env, EIGOS_TEST_DATABASE_URL: url } });
     child.on('error', reject); child.on('exit', code => resolve(code ?? 1));
   });
 } finally { if (container) execFileSync('docker', ['stop', container], { stdio: 'ignore' }); }

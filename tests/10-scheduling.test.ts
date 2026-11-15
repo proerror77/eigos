@@ -68,6 +68,29 @@ test('denied, incomplete and stale calendar data cannot become an empty free cal
  }
 });
 
+test('an expired calendar reply asks the original PA for a fresh snapshot on the same task', async () => {
+  const f = await fixture(new PlanningFixtureAgent());
+  try {
+    const p = await pending(f), pa = new PARequests(f.tasks);
+    const observedAt = new Date(Date.now() - 4200000), expiresAt = new Date(observedAt.getTime() + 3600000);
+    await f.db.query(`UPDATE ${f.db.schema}.pa_requests SET created_at=$2 WHERE id=$1`, [p.request.requestId, observedAt]);
+    await pa.respond(principal, p.task.id, { requestId: p.request.requestId, response: {
+      ...calendarAnswer(p.input), observedAt: observedAt.toISOString(), expiresAt: expiresAt.toISOString(),
+    } });
+    await f.worker.runOne();
+    const awaiting = await f.tasks.get(principal, p.task.id);
+    assert.equal(awaiting.state, 'input-required');
+    const renewal = awaiting.result as { taskId: string; requestId: string; capability: string };
+    assert.equal(renewal.taskId, p.task.id);
+    assert.equal(renewal.capability, 'calendar.freebusy');
+    assert.notEqual(renewal.requestId, p.request.requestId);
+    assert.equal((await new Objects(f.db, f.model, f.access).query({ type: 'SchedulePlan' })).items.length, 0);
+    await pa.respond(principal, p.task.id, { requestId: renewal.requestId, response: calendarAnswer(p.input) });
+    await f.worker.runOne();
+    assert.equal((await f.tasks.get(principal, p.task.id)).state, 'completed');
+  } finally { await f.close(); }
+});
+
 test('merge revalidates live calendar changes and preserves the unmerged proposal',async()=>{
  const f=await fixture(new PlanningFixtureAgent());try{
   const p=await proposed(f),live=new Objects(f.db,f.model,f.access),s=new Scenarios(f.db),diff=await s.inspect(f.access,f.model,p.result.scenarioId);
@@ -122,8 +145,10 @@ test('the restricted database role completes PA handoff and merge without metada
     GRANT SELECT ON ${f.db.schema}.ontology,${f.db.schema}.releases,${f.db.schema}.resource_grants,${f.db.schema}.property_security,${f.db.schema}.object_policies,${f.db.schema}.security_memberships,${f.db.schema}.edit_policies,${f.db.schema}.ontology_resource_projects,${f.db.schema}.entity_bindings,${f.db.schema}.entity_binding_history TO "${role}";
     GRANT SELECT,INSERT,UPDATE,DELETE ON ${f.db.schema}.objects,${f.db.schema}.links TO "${role}";
     GRANT SELECT,INSERT,UPDATE ON ${f.db.schema}.tasks,${f.db.schema}.source_calls,${f.db.schema}.scenarios,${f.db.schema}.scenario_objects,${f.db.schema}.scenario_links,${f.db.schema}.pa_requests TO "${role}";
+    GRANT SELECT,INSERT ON ${f.db.schema}.task_inbox_events TO "${role}";
       GRANT SELECT,INSERT,UPDATE,DELETE ON ${f.db.schema}.source_values,${f.db.schema}.object_edits TO "${role}";
       GRANT SELECT,INSERT ON ${f.db.schema}.edit_history TO "${role}";
+      GRANT INSERT ON ${f.db.schema}.execution_trace TO "${role}";
       GRANT SELECT,INSERT,UPDATE ON ${f.db.schema}.action_changes,${f.db.schema}.action_undo_requests,${f.db.schema}.scenario_sessions TO "${role}";
       GRANT USAGE ON ALL SEQUENCES IN SCHEMA ${f.db.schema} TO "${role}";
       GRANT SELECT,INSERT ON ${f.db.schema}.actions,${f.db.schema}.scenario_actions TO "${role}";`);

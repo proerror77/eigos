@@ -27,7 +27,7 @@ function asObject(row: Record<string, any>): ObjectData {
 }
 
 /** The shared metadata has a local FK target for each explicitly authorized identity. */
-export async function syncScenarioMetadata(db: Database, model: PublishedOntology, id: string, client: Sql) {
+export async function syncScenarioMetadata(db: Database, model: PublishedOntology, id: string, client: Sql, previousReaders: string[] = []) {
   if (!model.objects.has(scenarioMetadataType)) return;
   const row = (
     await db.query(
@@ -40,48 +40,37 @@ export async function syncScenarioMetadata(db: Database, model: PublishedOntolog
   const object = asObject(row),
     properties = model.parseObject(object.ref, object.properties);
   const readers = [...new Set([String(row.owner), ...(row.readers as string[])])].sort();
-  await db.query(
-    `SELECT owner FROM ${db.schema}.objects WHERE projection=$1 AND type=$2 AND id=$3 FOR UPDATE`,
-    [model.projection, scenarioMetadataType, id],
-    client,
-  );
-  await db.query(
-    `DELETE FROM ${db.schema}.links WHERE projection=$1 AND owner<>ALL($4::text[])
-    AND ((from_type=$2 AND from_id=$3) OR (to_type=$2 AND to_id=$3))`,
-    [model.projection, scenarioMetadataType, id, readers],
-    client,
-  );
-  await db.query(
-    `DELETE FROM ${db.schema}.objects WHERE projection=$1 AND type=$2 AND id=$3 AND owner<>ALL($4::text[])`,
-    [model.projection, scenarioMetadataType, id, readers],
-    client,
-  );
-  await db.query(
-    `INSERT INTO ${db.schema}.objects(projection,owner,type,id,revision,properties)
-    SELECT $1,recipient,$2,$3,$4,$5 FROM unnest($6::text[]) recipient
-    ON CONFLICT(projection,owner,type,id) DO UPDATE SET revision=excluded.revision,properties=excluded.properties`,
-    [model.projection, scenarioMetadataType, id, object.revision, properties, readers],
-    client,
-  );
+  const recipients = new Set(readers);
+  for (const recipient of [...new Set([...readers, ...previousReaders])].sort()) {
+    await db.withTransactionOwner(client, recipient, async () => {
+      if (!recipients.has(recipient)) {
+        await db.query(
+          `DELETE FROM ${db.schema}.links WHERE projection=$1 AND owner=$2
+          AND ((from_type=$3 AND from_id=$4) OR (to_type=$3 AND to_id=$4))`,
+          [model.projection, recipient, scenarioMetadataType, id], client,
+        );
+        await db.query(`DELETE FROM ${db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`,
+          [model.projection, recipient, scenarioMetadataType, id], client);
+        return;
+      }
+      await db.query(
+        `INSERT INTO ${db.schema}.objects(projection,owner,type,id,revision,properties) VALUES($1,$2,$3,$4,$5,$6)
+        ON CONFLICT(projection,owner,type,id) DO UPDATE SET revision=excluded.revision,properties=excluded.properties`,
+        [model.projection, recipient, scenarioMetadataType, id, object.revision, properties], client,
+      );
+    });
+  }
 }
 
-export async function removeScenarioMetadata(db: Database, ids: string[], client: Sql) {
-  if (!ids.length) return;
-  await db.query(
-    `SELECT owner FROM ${db.schema}.objects WHERE type=$1 AND id=ANY($2::text[]) FOR UPDATE`,
-    [scenarioMetadataType, ids],
-    client,
-  );
-  await db.query(
-    `DELETE FROM ${db.schema}.links WHERE (from_type=$1 AND from_id=ANY($2::text[])) OR (to_type=$1 AND to_id=ANY($2::text[]))`,
-    [scenarioMetadataType, ids],
-    client,
-  );
-  await db.query(
-    `DELETE FROM ${db.schema}.objects WHERE type=$1 AND id=ANY($2::text[])`,
-    [scenarioMetadataType, ids],
-    client,
-  );
+export async function removeScenarioMetadata(db: Database, owner: string, ids: string[], client: Sql) {
+  await db.withTransactionOwner(client, owner, async () => {
+    await db.query(
+      `DELETE FROM ${db.schema}.links WHERE owner=$1 AND ((from_type=$2 AND from_id=ANY($3::text[])) OR (to_type=$2 AND to_id=ANY($3::text[])))`,
+      [owner, scenarioMetadataType, ids], client,
+    );
+    await db.query(`DELETE FROM ${db.schema}.objects WHERE owner=$1 AND type=$2 AND id=ANY($3::text[])`,
+      [owner, scenarioMetadataType, ids], client);
+  });
 }
 export async function scenarioMetadataRead(graph: Objects, ref: ObjectRef): Promise<ObjectData> {
   z.uuid().parse(ref.id);

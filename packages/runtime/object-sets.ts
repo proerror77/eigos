@@ -153,15 +153,35 @@ export class ObjectSets {
           let current = await visit(node.set, savedIds, depth + 1);
           for (const step of node.path) {
             const next = new Map<string, ObjectData>();
-            for (const object of current.values()) {
-              const navigation = model.navigation(object.ref.type, step.link, step.as);
-              let cursor: string | undefined;
-              do {
-                count();
-                const page = await objects.query({ type: navigation.target, from: { object: object.ref, link: step.link, as: step.as }, limit: 100, cursor });
-                for (const target of page.items) { next.set(refKey(target.ref), target); loaded.set(refKey(target.ref), target); bounded(next); }
-                cursor = page.cursor;
-              } while (cursor);
+            const byType = new Map<string, string[]>();
+            for (const { ref } of current.values()) {
+              const ids = byType.get(ref.type) ?? [];
+              ids.push(ref.id);
+              byType.set(ref.type, ids);
+            }
+            const accept = (target: ObjectData) => {
+              const key = refKey(target.ref);
+              next.set(key, target);
+              loaded.set(key, target);
+              bounded(next);
+            };
+            for (const [type, ids] of byType) {
+              count();
+              const batch = await objects.followSet(type, ids, step.link, step.as, this.maximumObjects);
+              if (batch) {
+                for (const target of batch) accept(target);
+                continue;
+              }
+              const navigation = model.navigation(type, step.link, step.as);
+              for (const id of ids) {
+                let cursor: string | undefined;
+                do {
+                  count();
+                  const page = await objects.query({ type: navigation.target, from: { object: { type, id }, link: step.link, as: step.as }, limit: 100, cursor });
+                  for (const target of page.items) accept(target);
+                  cursor = page.cursor;
+                } while (cursor);
+              }
             }
             current = next;
           }
@@ -187,21 +207,53 @@ export class ObjectSets {
     };
     return sorted([...(await visit(set, new Set(rootId ? [rootId] : []))).values()]);
   }
-  private project(model: PublishedOntology, object: ObjectData, view?: string): ObjectData {
+  private project(access: Access, model: PublishedOntology, object: ObjectData, view?: string): ObjectData {
     if (!view || view === object.ref.type) return object;
     if (!model.implements(object.ref.type, view)) throw new Conflict('The requested view is incompatible with an object in this set');
     const properties = model.interfaces.get(view)?.properties;
     if (!properties) throw new Conflict('Use an Object Type or Interface view');
     return { ...object, properties: Object.fromEntries(Object.keys(properties).map(name => {
       const local = model.propertyName(object.ref.type, view, name);
-      return [name, local ? object.properties[local] ?? null : null];
+      const label = properties[name]?.classification;
+      const visible = access.canSeeModelData(label);
+      if (visible) access.observeClassification(label);
+      return [name, local && visible ? object.properties[local] ?? null : null];
     })) };
+  }
+  private async storedPlan(access: Access, model: PublishedOntology, set: SetExpression, client: Sql, rootId?: string) {
+    const seen = new Set(rootId ? [rootId] : []);
+    let node = set;
+    let path: Extract<SetExpression, { op: 'traverse' }>['path'] = [];
+    for (let depth = 0; depth <= 16; depth++) {
+      if (node.op === 'query') return { query: node.query, path };
+      if (node.op === 'traverse') {
+        if (node.path.length + path.length > 8) return undefined;
+        path = [...node.path, ...path];
+        node = node.set;
+      } else if (node.op === 'saved') {
+        if (seen.has(node.id)) throw new Conflict('Object set references form a cycle');
+        seen.add(node.id);
+        node = setExpressionSchema.parse((await this.saved(access, model, node.id, client)).expression);
+      } else return undefined;
+    }
+    return undefined;
   }
   async evaluate(access: Access, model: PublishedOntology, raw: unknown) {
     const input = evaluateSetSchema.parse(raw);
     return this.snapshot(access, async client => {
       if (input.view) access.definition(model, model.interfaces.has(input.view) ? 'interface' : 'object', input.view);
-      const all = (await this.resolve(access, model, input.set, client)).map(object => this.project(model, object, input.view));
+      const viewLabel = input.view ? (model.interfaces.get(input.view) ?? model.objects.get(input.view))?.classification : undefined;
+      const allowedView = access.canSeeModelData(viewLabel);
+      if (allowedView) access.observeClassification(viewLabel);
+      let native: ObjectData[] | undefined;
+      if (allowedView) {
+        const plan = await this.storedPlan(access, model, input.set, client);
+        if (plan?.path.length) {
+          native = await new Objects(this.db, model, access, client).readStoredSet(plan.query, plan.path, this.maximumObjects);
+        }
+      }
+      const all = allowedView ? (native ? sorted(native) : await this.resolve(access, model, input.set, client))
+        .map(object => this.project(access, model, object, input.view)) : [];
       const identity = digest({ owner: access.principal.owner, release: model.release, scenario: model.scenario, set: input.set, view: input.view, objects: all });
       const offset = input.cursor ? z.strictObject({ identity: z.literal(identity), offset: z.number().int().nonnegative().max(all.length) }).parse(JSON.parse(Buffer.from(input.cursor, 'base64url').toString())).offset : 0;
       const end = offset + input.limit;
@@ -212,7 +264,18 @@ export class ObjectSets {
     const input = aggregateSetSchema.parse(raw);
     return this.snapshot(access, async client => {
       if (input.view) access.definition(model, model.interfaces.has(input.view) ? 'interface' : 'object', input.view);
-      const all = (await this.resolve(access, model, input.set, client)).map(object => this.project(model, object, input.view));
+      const viewLabel = input.view ? (model.interfaces.get(input.view) ?? model.objects.get(input.view))?.classification : undefined;
+      const allowedView = access.canSeeModelData(viewLabel);
+      if (allowedView) access.observeClassification(viewLabel);
+      if (allowedView && this.maximumObjects === 10000) {
+        const plan = await this.storedPlan(access, model, input.set, client);
+        if (plan) {
+          const pushed = await new Objects(this.db, model, access, client)
+            .aggregateStored(plan.query, input.view, input.groupBy, input.metrics, this.maximumObjects, plan.path);
+          if (pushed) return pushed;
+        }
+      }
+      const all = allowedView ? (await this.resolve(access, model, input.set, client)).map(object => this.project(access, model, object, input.view)) : [];
       const fields = new Set([...input.groupBy, ...Object.values(input.metrics).flatMap(metric => metric.property ? [metric.property] : [])]);
       const types = new Set(input.view ? [input.view] : all.map(object => object.ref.type));
       if (!types.size && input.set.op === 'query') types.add(input.set.query.type);
@@ -266,8 +329,12 @@ export class ObjectSets {
           return this.metadata(prior.rows[0] as SavedRow, owner);
         }
       }
-      const objects = await this.resolve(access, model, input.set, client, input.id);
-      const stored: SetExpression = input.mode === 'static' ? { op: 'refs', objects: objects.map(object => object.ref) } : input.set;
+      let stored = input.set;
+      const plan = input.mode === 'dynamic' ? await this.storedPlan(access, model, input.set, client, input.id) : undefined;
+      if (!plan || !await new Objects(this.db, model, access, client).storedSetSelection(plan.query, plan.path)) {
+        const objects = await this.resolve(access, model, input.set, client, input.id);
+        if (input.mode === 'static') stored = { op: 'refs', objects: objects.map(object => object.ref) };
+      }
       const result = input.id
         ? await this.db.query(`UPDATE ${this.db.schema}.object_sets SET name=$3,mode=$4,expression=$5,readers=$6,revision=revision+1,input_digest=$7,updated_at=now() WHERE id=$1 AND owner=$2 AND revision=$8 RETURNING *`, [input.id, owner, input.name, input.mode, JSON.stringify(stored), JSON.stringify([...new Set(input.readers)]), fingerprint, input.revision], client)
         : await this.db.query(`INSERT INTO ${this.db.schema}.object_sets(id,ontology,owner,request_id,name,mode,expression,readers,input_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [randomUUID(), model.document.id, owner, input.requestId, input.name, input.mode, JSON.stringify(stored), JSON.stringify([...new Set(input.readers)]), fingerprint], client);

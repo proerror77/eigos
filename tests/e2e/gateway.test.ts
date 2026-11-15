@@ -4,6 +4,9 @@ import { fork, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createServer } from 'node:net';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { memberGrants, setGrants } from '../../packages/runtime/access.js';
 import { principal } from '../fixture.js';
 import { fixture, route } from '../fixture.js';
@@ -11,7 +14,7 @@ import { planningInput, calendarAnswer } from '../planning-fixture.js';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 
 async function stop(child: ChildProcess) {
-  if (child.exitCode !== null) return;
+  if (child.exitCode !== null || child.signalCode !== null) return;
   child.kill('SIGTERM');
   const ended = once(child, 'exit');
   const timer = setTimeout(() => child.kill('SIGKILL'), 5000);
@@ -133,4 +136,79 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
     } finally {await client.close();}
     t.diagnostic(JSON.stringify({ messageToQuoteMs: quoteElapsed, source: 'synthetic MCP responses', database: 'PostgreSQL', processes: ['Gateway', 'Worker', 'Indexer'] }));
   } finally { await Promise.all([stop(gateway), stop(worker),stop(indexer)]); await f.close(); }
+});
+
+test('a killed Worker is replaced and finishes the same batched task and interrupted provider read', { timeout: 60000 }, async () => {
+  const f = await fixture(), token = 'inbox-process-token-'.repeat(3), scratch = await mkdtemp(join(tmpdir(), 'eigos-inbox-'));
+  const portServer = createServer().listen(0, '127.0.0.1');
+  await once(portServer, 'listening');
+  const address = portServer.address(); assert(address && typeof address !== 'string');
+  await new Promise<void>(resolve => portServer.close(() => resolve()));
+  const url = `http://127.0.0.1:${address.port}`;
+  const env = { ...process.env, TMPDIR: scratch, DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_PG_SCHEMA: f.schema, EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token, PUBLIC_URL: url, PORT: String(address.port) };
+  const options = { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] as ['ignore', 'pipe', 'pipe', 'ipc'] };
+  const gateway = fork(new URL('../../apps/gateway/main.js', import.meta.url), [], options);
+  const interrupted = fork(new URL('./worker.js', import.meta.url), ['--interrupt-source-read'], options);
+  let replacement: ChildProcess | undefined;
+  const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', 'A2A-Version': '1.0' };
+  const waitFor = async <T>(read: () => Promise<T | undefined>, timeout = 8000) => {
+    const deadline = Date.now() + timeout;
+    for (;;) {
+      const value = await read();
+      if (value !== undefined) return value;
+      assert(Date.now() < deadline, 'Timed out waiting for inbox process');
+      await delay(50);
+    }
+  };
+  const send = async (messageId: string, contextId?: string) => {
+    const response = await fetch(url + '/a2a', { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: messageId,
+      method: 'SendMessage', params: { message: { messageId, contextId, role: 'ROLE_USER', parts: [{ text: messageId }] } } }) });
+    const body = await response.json() as { result?: { task?: { id: string; contextId: string }; id?: string; contextId?: string }; error?: unknown };
+    assert(!body.error, JSON.stringify(body));
+    const task = body.result?.task ?? body.result;
+    assert(task?.id && task.contextId, JSON.stringify(body));
+    return { id: task.id, contextId: task.contextId };
+  };
+  let sourceReadStarted = false;
+  interrupted.on('message', message => { if (message === 'source-read-started') sourceReadStarted = true; });
+  try {
+    await waitFor(async () => await fetch(url + '/health').then(response => response.ok).catch(() => false) || undefined);
+    const first = await send('从中企云翠森林到前滩太古里');
+    const second = await send('只询价', first.contextId);
+    assert.deepEqual(second, first);
+    await waitFor(async () => sourceReadStarted || undefined);
+    const before = (await f.db.query(`SELECT token FROM ${f.db.schema}.tasks WHERE id=$1 AND state='working'`, [first.id])).rows[0];
+    assert(before?.token);
+    // Wait until the source read journal is committed, then kill before its response.
+    const read = await waitFor(async () => (await f.db.query(`SELECT name,lease_token FROM ${f.db.schema}.source_calls WHERE task_id=$1 AND state='running'`, [first.id])).rows[0]);
+    assert.equal(read.lease_token, before.token);
+    const exited = once(interrupted, 'exit');
+    interrupted.kill('SIGKILL');
+    assert.deepEqual(await exited, [null, 'SIGKILL']);
+    assert.deepEqual(await send('只询价', first.contextId), first);
+    replacement = fork(new URL('./worker.js', import.meta.url), [], options);
+    await once(replacement, 'message');
+    assert.equal((await f.db.query(`SELECT token FROM ${f.db.schema}.tasks WHERE id=$1 AND lease_until>now()`, [first.id])).rows[0]?.token, before.token);
+    const result = await waitFor(async () => {
+      const task = await f.tasks.get(principal, first.id);
+      if (task.state === 'completed' || task.state === 'failed') return task;
+      return undefined;
+    }, 40000);
+    assert.equal(result.state, 'completed', result.error ?? undefined);
+    assert.equal((result.result as { estimates: unknown[] }).estimates.length, 2);
+    assert.deepEqual(await send('从中企云翠森林到前滩太古里'), first);
+    assert.deepEqual(await send('只询价', first.contextId), first);
+    const rows = (await f.db.query(`SELECT name,state,lease_token FROM ${f.db.schema}.source_calls WHERE task_id=$1`, [first.id])).rows;
+    assert(rows.every(row => row.state === 'completed'));
+    const retried = rows.find(row => row.name === read.name);
+    assert(retried?.lease_token);
+    assert.notEqual(retried.lease_token, before.token);
+    assert.equal((await f.db.query(`SELECT count(*)::int AS count FROM ${f.db.schema}.tasks`)).rows[0]!.count, 1);
+    assert.equal((await f.db.query(`SELECT count(*)::int AS count FROM ${f.db.schema}.task_inbox_events`)).rows[0]!.count, 2);
+    assert.equal((await f.db.query(`SELECT count(*)::int AS count FROM ${f.db.schema}.actions`)).rows[0]!.count, 1);
+  } finally {
+    await Promise.all([stop(gateway), stop(interrupted), replacement && stop(replacement)]);
+    await f.close();
+    await rm(scratch, { recursive: true, force: true });
+  }
 });

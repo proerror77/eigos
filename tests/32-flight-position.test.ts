@@ -204,6 +204,7 @@ test('Ontology MCP queries FR24 and schedules flight watches with either or both
     assert.equal(airOnly.liveTracking?.state, 'tracked');
     assert.equal(airOnly.status, null);
     assert.equal(airOnly.alert, null);
+    assert.equal(airOnly.alertVersion, started.alertVersion + 1);
     assert.equal(variCalls, 3);
     assert.equal(await fr24Calls(), 8);
     assert(airOnly.nextCheckAt);

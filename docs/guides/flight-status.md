@@ -16,6 +16,8 @@ Agent 通过 EIGOS 的 Ontology MCP 调用 `evaluate_ontology` 与 `readFlightSt
 
 提醒来自飞常准的状态、至少 5 分钟的预计时间变化、已有登机口或出发航站楼的变化。首次读到延误或取消也可产生提醒。PA 根据跟踪引用及 `alertVersion` 去重和投递。使用 `CancelFlightWatch` 停止跟踪并撤回待处理提醒。参见 [PA 投递提醒](calendar-journey.md#pa-投递提醒)。
 
+若已配置 PA 连接，EIGOS 在已提交的航班提醒版本变化时主动投递。单次查询仍使用 `readFlightStatus` 直接读取。
+
 ## 飞机实时位置
 
 `readLiveFlightPosition` 通过 Flightradar24 官方 MCP 查询已被跟踪的飞机。输入商业航班号，可用起降机场缩小范围。返回 WGS84 坐标、位置时间、高度、地速及供应商提供的到达预估。例行复查只保存匹配状态和检查时间，坐标与到达预估通过该 Function 即时读取。匹配按航班号和机场对，Flightradar24 的实时位置接口没有计划出发日期。无匹配或多个匹配都会如实记录。仅选择 Flightradar24 时，可查询匹配状态，跟踪持续到取消、授权失效、截止或额度用尽。参考 [Flightradar24 MCP](https://fr24api.flightradar24.com/docs/mcp-server)、[API FAQ](https://fr24api.flightradar24.com/docs/faq) 和 [数据保留规则](https://fr24api.flightradar24.com/docs/storage-rules)。

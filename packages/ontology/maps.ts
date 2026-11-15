@@ -87,7 +87,7 @@ export const mapFunctions: OntologyDocument['functionTypes'] = [
   { apiName: 'searchNearbyPlaces', parameters: json(nearbySearch), returns: json(mapPlaceResult), dependencies: locationDependencies,
     description: 'Find nearby Amap venues by keyword around an explicit point or a specified or planned place. Omitting the point asks the original PA for the current device location.' },
   { apiName: 'estimateMapRoute', parameters: json(mapRouteInput), returns: json(mapRouteResult), dependencies: locationDependencies,
-    description: 'Estimate Amap walking or driving distance and travel time between named addresses or coordinates. Omit origin only for a route from the user’s current location.' },
+    description: 'Estimate Amap walking or driving distance and travel time. For a named landmark, use searchMapPlaces and readMapPlace to obtain a reliable point. A named address without a precise geocode can request confirmation from the original PA. Omit origin only for a route from the user’s current location.' },
   { apiName: 'readWeather', parameters: json(weatherInput), returns: json(weatherResult), dependencies: locationDependencies,
     description: 'Read live conditions (mode current) or the daily forecast (mode forecast, default) for a city, district code, explicit point or planned place. Omit location only for weather where the user is now. Forecasts cover today and the next three days when provided.' },
 ].map(definition => ({ ...definition, source: 'Amap' }));

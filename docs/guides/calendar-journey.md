@@ -15,7 +15,11 @@ PA 选择一场出发前的活动和下一场活动，明确授权监测范围�
 
 ## PA 投递提醒
 
-EIGOS 把版本化提醒交给发起跟踪的 PA。PA 根据用户授权和自身已有的通知能力选择投递渠道，管理启用、更新和撤回，并按自身渠道的回执确认送达。PA 可以用现有 `tasks:read` 在当前 Eigos Ontology 读取自己的行程提醒和航班提醒，仍须通过 Function、来源和值的访问校验。上线验收应从用户原来的 PA 发起，在同一 PA 核对提醒和投递结果。对应 Palantir 的 [Notification effects](https://www.palantir.com/docs/foundry/automate/effect-notification) 和 [Ontology MCP](https://www.palantir.com/docs/foundry/ontology-mcp/getting-started)。
+在 EIGOS 常驻运行模式中，Worker 使用已保存的对象引用定时检查，计算出发时间并提交提醒版本。未来的出发时间继续由 EIGOS 管理。到点或出现冲突时，Action 与通知任务在同一事务提交。Indexer 用现有 Action Effects 队列读取当前版本，把已生成的提醒和撤回推给配置的 PA。PA 根据自己的通知能力投递给用户。PA 可用现有 `tasks:read` 从 Ontology MCP 回读自己的状态，访问仍经过 Function、来源和对象权限检查。参考 [Palantir 时间条件](https://www.palantir.com/docs/foundry/automate/condition-time) 和 [Notification effects](https://www.palantir.com/docs/foundry/automate/effect-notification)。
+
+单租户部署可配置 `EIGOS_TRAVEL_PA_CONNECTION_FILE`，使用运行用户拥有的 0600 JSON 文件，字段为 `owner`、Grok Bot 官方 webhook `endpoint` 和凭证绝对路径 `keyFile`。PA 的 webhook 例行任务只接收事件触发，按 `object` 保存已处理的最高 `version`，忽略旧版本与重复事件。按 `operation` 更新或撤回同一对象的提醒，使用 EIGOS 提供的 `text`。专用连接可用 `objectTypes` 限定事件类型，例如仅接收 `DidiRideWatch`。默认用 Bearer 授权，使用 `X-Automation-Key` 的触发器在 `keyHeader` 指定该值。Webhook 回执表示 PA 受理。送达验收在原 PA 会话与其通知渠道回读。回执未知时保留原操作，禁止自动重复投递。[Grok Bot webhook](https://docs.x.ai/grok-bot/skills-routines-and-automations)
+
+若该用户单独向 EIGOS 部署授权 Google 日历只读来源，可配置 `EIGOS_JOURNEY_CALENDAR_CONNECTION_FILE`。私有 JSON 包含 `owner`、允许读取的 `calendarIds`、`clientId`、`clientSecret` 和该部署专用的 `refreshToken`。仅使用 `calendar.events.readonly` 并按选定活动 ID 读取。未配置时，原 PA 仍可用现有待办回传日历数据。[Google Calendar Events.get](https://developers.google.com/workspace/calendar/api/v3/reference/events/get)
 
 若用户和 PA 选择 Google 日历作为渠道，PA 可自主启用 `GoogleCalendarReminders`。构建后在 PA 环境运行 `node dist/scripts/calendar-journey-pa.js --reminders /absolute/private/reminder.json`。配置使用权限 0600，包含 `object`、`stopAt` 以及行程的 `selection`。PA 提供自己的 `EIGOS_PA_TOKEN_FILE`、`GOOGLE_CALENDAR_ACCESS_TOKEN_FILE`、`GOOGLE_CALENDAR_REMINDER_ID` 和稳定的 `EIGOS_PA_REMINDER_NAMESPACE`。适配器只更新由该 PA 创建的私人提醒，日历凭据留在 PA。参考 [Google Calendar reminders](https://developers.google.com/workspace/calendar/api/concepts/reminders)。
 

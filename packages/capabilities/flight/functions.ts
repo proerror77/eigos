@@ -130,7 +130,7 @@ export function flightFunctions(db: Database, functions: () => Functions, variFl
       const nextCheckAt = noSources || terminal || exhausted || next < now + 2 * minute ? null : iso(next);
       const observed = status || matches === 1;
       const changes = status ? changesFrom(previous, status) : [];
-      const alertVersion = previous.alertVersion + (changes.length ? 1 : 0);
+      const alertVersion = previous.alertVersion + (changes.length || (!statusAuthority && previous.alert) ? 1 : 0);
       const liveState = !positionAuthority ? 'source_changed' : matches === undefined ? 'source_unavailable' :
         matches === 1 ? 'tracked' : matches === 0 ? 'no_match' : 'ambiguous';
       await graph.edit(watch, row.revision, {
@@ -202,7 +202,7 @@ export function flightFunctions(db: Database, functions: () => Functions, variFl
         const fields = {
           settings, scheduleId, sourceAuthority: authorities.get(flightSource) ?? null, checks: 0, state: 'pending', reason: 'waiting',
           checkedAt: null, nextCheckAt: runAt, status: null, observedAt: null, knownGate: null, knownTerminal: null,
-          alert: null, alertVersion: previous?.alertVersion ?? 0,
+          alert: null, alertVersion: (previous?.alertVersion ?? 0) + (previous?.alert ? 1 : 0),
           liveTracking: positionAuthority ? { provider: flightPositionSource, authorityId: positionAuthority, state: 'pending', checkedAt: null } : null,
         };
         if (read) await graph.edit(watch, read.row.revision, fields);

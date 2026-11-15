@@ -33,7 +33,11 @@ Action 定义可声明 `effects`，每项指定唯一名称、已注册 handler 
 
 对象修改、Action 记录和 outbox 写入在同一事务中完成。Scenario 中的 Action 不投递副作用。真实 Action 重试使用原 requestId，返回既有结果并保留同一 outbox 记录。
 
+Function-backed Action 在调用准备函数前验证对象参数和提交条件，正式编辑事务持有原有写锁时再检查一次。受信任的编辑函数可用 `deferEffect` 产生声明式投递意图。投递请求需绑定相同 owner、requestId、Action 和发布的提交记录。提交失败时对象编辑、Action 记录和投递意图一起回滚。需要在返回结果前取得供应商回执的已授权操作，使用原有 `external_operations`，并在其派发标记事务里通过 `assertDispatch` 按当前状态检查准入。供应商结果未知时继续保留原操作身份并停止自动重发。[Palantir Submission criteria](https://www.palantir.com/docs/foundry/action-types/submission-criteria)
+
 独立运行的 `Effects.runOne()` 通过数据库租约领取消息，在调用 handler 前重新检查原始操作依赖的权限。调用时传入稳定的 `idempotencyKey` 和取消信号。失败记录进入 `failed`，`retry` 验证当前权限后重新排队，重试保持原幂等键。`status` 返回当前调用者自己操作的投递状态。
+
+开启 owner 隔离后，领取阶段只读取队列的技术身份及 owner。权限检查、handler 的对象查询、调用和结果记录均在获领 owner 的上下文中执行。每个需要数据访问的 PostgreSQL 事务分别设置事务级 owner，上下文随事务结束清除，连接可继续复用。外部请求在短事务提交后发出。[PostgreSQL 行级安全](https://www.postgresql.org/docs/17/ddl-rowsecurity.html)
 
 处理函数必须支持幂等键和取消信号。远端已完成、当前进程尚未确认的故障可能导致重试，交付语义为至少一次。部署方需要为每种外部行为注册明确的 handler，并通过独立进程运行 dispatcher。仓库默认不注册外部通知、支付、下单或日历写入 handler。
 

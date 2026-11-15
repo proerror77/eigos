@@ -1,12 +1,16 @@
 import { Conflict, NotFound, digest } from '../../core/identity.js';
 import { type ObjectRef } from '../../ontology/schema.js';
+import { diningEvidence, diningSource } from '../../ontology/dining.js';
+import { diningProof } from '../dining/research.js';
+import type { z } from 'zod';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import type { Database } from '../../runtime/database.js';
 import { Scenarios } from '../../runtime/scenarios.js';
 import { PARequests } from '../../runtime/pa.js';
 import { Objects } from '../../runtime/objects.js';
+import { recordScenarioAction } from '../../runtime/scenario-store.js';
 import { currentService } from '../services/functions.js';
-import { activityInputSchema, calendarResponseSchema, commitPlanSchema, jsonSchema, planInputSchema, planRefSchema, removeActivitySchema, searchSlotsSchema } from './contracts.js';
+import { activityInputSchema, calendarResponseSchema, commitPlanSchema, diningActivityInputSchema, jsonSchema, planInputSchema, planRefSchema, removeActivitySchema, searchSlotsSchema } from './contracts.js';
 
 type Reader = FunctionContext['objects'];
 type Interval = { start: string; end: string };
@@ -107,6 +111,50 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       AND (base_properties IS NULL OR properties->'start' IS DISTINCT FROM base_properties->'start' OR properties->'end' IS DISTINCT FROM base_properties->'end')`,[objects.model.scenario,objects.access.principal.owner],objects instanceof Objects?objects.client:undefined)).rows;
     return new Set(rows.map(row=>String(row.id)));
   };
+  const saveActivity = async (input: z.output<typeof activityInputSchema>, context: FunctionContext, requestId?: string) => {
+    const ref = input.activity??{ type:'ScheduledActivity',id:digest([input.plan.id,input.id]) };
+    if(ref.type!=='ScheduledActivity')throw new Conflict('Expected a ScheduledActivity reference');
+    if(input.activity&&!input.revision)throw new Conflict('Editing an activity reference requires its current revision');
+    interval(input.start,input.end);
+    if (context.execution && !context.objects.model.scenario) throw new Conflict('The Agent must propose activity edits in a scenario for PA review');
+    if (!context.edit) throw new Conflict('Activity edits require an Action');
+    return context.edit(ref,async graph => {
+      const state = await readPlan(graph,input.plan);
+      let dining: z.output<typeof diningEvidence> | undefined;
+      if (requestId) {
+        const task = context.execution?.task;
+        if (!task || !graph.model.scenario) throw new Conflict('Stage dining through the original task’s Scenario');
+        graph.access.source(graph.model, diningSource);
+        dining = await diningProof(db,graph.client,{ owner:graph.owner,taskId:task.id,requestId,start:input.start,end:input.end });
+      }
+      const fields = { id:ref.id,name:dining?.restaurant ?? input.name,start:input.start,end:input.end,...(dining ? { dining } : {}) };
+      if(!graph.model.scenario&&ms(input.start)<Date.now()){
+        const old=state.activities.find(activity=>same(activity.ref,ref));
+        if(!old||old.properties.start!==input.start||old.properties.end!==input.end)throw new Conflict('New or moved activities must start in the future');
+      }
+      if (input.revision) {
+        const activity = state.activities.find(item => same(item.ref, ref));
+        if (!activity) throw new Conflict('Activity does not belong to this plan');
+        if (Object.hasOwn(activity.properties, 'dining') && !dining &&
+            (activity.properties.name !== input.name || ms(activity.properties.start) !== ms(input.start) || ms(activity.properties.end) !== ms(input.end))) {
+          throw new Conflict('Refresh the verified dining evidence before editing this meal');
+        }
+        await graph.edit(ref,input.revision,fields);
+        for (const before of await graph.follow(ref,'predecessors')) await graph.unlink({ type:'ActivityDependency',from:ref,to:before.ref });
+      } else {
+        if(state.activities.some(a=>same(a.ref,ref)))throw new Conflict('Existing activities require their current revision');
+        await graph.create(ref,fields);
+      }
+      await graph.link({ type:'ActivityPlan',from:ref,to:input.plan });
+      for (const calendar of state.calendars) await graph.link({ type:'ActivityResource',from:ref,to:calendar.resource.ref });
+      for (const predecessor of input.predecessors) {
+        if (predecessor.type!=='ScheduledActivity' || same(predecessor,ref)) throw new Conflict('Invalid activity dependency');
+        await graph.read(predecessor); await graph.link({ type:'ActivityDependency',from:ref,to:predecessor });
+      }
+      // Scenarios retain conflicting edits for comparison; live writes must be feasible.
+      if (!graph.model.scenario && !(await validate(graph,input.plan)).valid) throw new Conflict('Schedule constraints are not satisfied');
+    });
+  };
   return new Map<string, FunctionHandler>([
     ['prepareSchedulePlan', async (raw, context) => {
       const input = planInputSchema.parse(raw); zone(input.timeZone);
@@ -115,21 +163,43 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       const range = interval(input.start,input.end);
       if (ms(range.end)-ms(range.start) > 31*86400000 || ms(range.end) <= Date.now()) throw new Conflict('Use a future planning window of at most 31 days');
       if (!context.execution || !context.operationId || !context.edit) throw new Conflict('Request calendar information through the original PA task');
-      const response = calendarResponseSchema.parse(await new PARequests(context.execution.tasks).request(context.execution.task, context.operationId, 'calendar.freebusy',
-        { start: input.start, end: input.end, timeZone: input.timeZone, fields: ['busy', 'windows'], purpose: input.title }, jsonSchema(calendarResponseSchema), { start:new Date(ms(input.start)).toISOString(),end:new Date(ms(input.end)).toISOString(),timeZone:input.timeZone }));
-      if (response.status !== 'available') throw new Conflict(`PA calendar response is ${response.status}`);
-      if(response.exclusions?.length)throw new Conflict('This planning request did not authorize calendar exclusions');
-      const now = Date.now();
-      if (ms(response.start) !== ms(input.start) || ms(response.end) !== ms(input.end) || response.timeZone !== input.timeZone || ms(response.observedAt)>now+5000 || ms(response.observedAt)<now-300000 || ms(response.expiresAt)<=now || ms(response.expiresAt)>ms(response.observedAt)+300000) throw new Conflict('PA calendar response has a stale or mismatched range');
-      for (const span of [...response.windows,...response.busy]) if (!contained(range,interval(span.start,span.end))) throw new Conflict('PA must clip availability to the requested range');
+      const requests = new PARequests(context.execution.tasks);
+      const scope = { start: new Date(ms(input.start)).toISOString(), end: new Date(ms(input.end)).toISOString(), timeZone: input.timeZone };
+      const request = { start: input.start, end: input.end, timeZone: input.timeZone, fields: ['busy', 'windows'], purpose: input.title };
+      const schema = jsonSchema(calendarResponseSchema);
+      let replaces: string | undefined;
+      let response: z.infer<typeof calendarResponseSchema>;
+      for (;;) {
+        context.signal.throwIfAborted();
+        const receipt = await requests.requestWithId(context.execution.task, context.operationId, 'calendar.freebusy',
+          request, schema, replaces ? { ...scope, replaces } : scope);
+        response = calendarResponseSchema.parse(receipt.response);
+        if (response.status !== 'available') throw new Conflict(`PA calendar response is ${response.status}`);
+        if (response.exclusions?.length) throw new Conflict('This planning request did not authorize calendar exclusions');
+        const now = Date.now(), observed = ms(response.observedAt), expires = ms(response.expiresAt);
+        if (ms(response.start) !== ms(input.start) || ms(response.end) !== ms(input.end) || response.timeZone !== input.timeZone ||
+            observed > now + 5000 || expires <= observed) {
+          throw new Conflict('PA calendar response has a stale or mismatched range');
+        }
+        for (const span of [...response.windows, ...response.busy])
+          if (!contained(range, interval(span.start, span.end))) throw new Conflict('PA must clip availability to the requested range');
+        if (expires > now) {
+          if (expires > observed + 300000) throw new Conflict('PA calendar response has a stale or mismatched range');
+          break;
+        }
+        if (observed < receipt.requestedAt.getTime() - 5000) throw new Conflict('PA calendar response has a stale or mismatched range');
+        replaces = receipt.requestId;
+      }
       const resource = { type: 'ScheduleResource', id: digest([context.principal.owner,'personal-calendar']) };
       const plan = input.plan ?? { type: 'SchedulePlan', id: context.operationId };
       const availability = { type:'CalendarAvailability',id:digest([resource.id,plan.id]) };
       if (plan.type !== 'SchedulePlan') throw new Conflict('Expected a SchedulePlan');
       if (input.plan) await context.objects.read(plan);
       return context.edit(plan, async live => {
-        const view=input.scenarioId?await new Scenarios(db).view(live.access,live.model,input.scenarioId,live.client):undefined;
-        const graph=view?new Objects(db,view,live.access,live.client):live;
+        if (input.scenarioId && live.model.scenario && input.scenarioId !== live.model.scenario)
+          throw new Conflict('Calendar preparation must stay within the selected scenario');
+        const view=input.scenarioId&&!live.model.scenario?await new Scenarios(db).view(live.access,live.model,input.scenarioId,live.client):undefined;
+        const graph=view?new Objects(db,view,live.access,live.client,{...live.change,scenarioEdits:[]}):live;
         await graph.create(resource,{ id: resource.id, name: 'User calendar' });
         const { status: _status, ...facts } = response;
         const properties = { id: availability.id, name: 'PA calendar availability', ...facts };
@@ -141,8 +211,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
         const fields = { id: plan.id, name: input.title, start: input.start, end: input.end, timeZone: input.timeZone, durationMinutes: input.durationMinutes };
         if (input.plan) { const current = await graph.read(plan); await graph.edit(plan,current.revision,fields); } else await graph.create(plan,{...fields,...(graph.model.object('SchedulePlan').properties.state?{state:'prepared'}:{})});
         await graph.linkBatch([{ type:'ResourceAvailability',from:resource,to:availability },{ type:'PlanResource',from:plan,to:resource },{ type:'PlanAvailability',from:plan,to:availability }]);
-        if(input.scenarioId)await db.query(`INSERT INTO ${db.schema}.scenario_actions(scenario_id,owner,request_id,digest,action,result,requirements)
-          VALUES($1,$2,$3,$4,'PrepareSchedulePlan',$5,$6)`,[input.scenarioId,graph.owner,context.operationId,digest({input,response}),plan,JSON.stringify(graph.access.requirements())],graph.client);
+        if(view)await recordScenarioAction(graph,'PrepareSchedulePlan',raw,plan,context.operationId!);
       });
     }],
     ['findScheduleSlots', async (raw, context) => {
@@ -166,36 +235,10 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       }
       return { plan: input.plan, slots, timeZone: state.plan.properties.timeZone, resources:state.calendars.map(c=>c.resource.ref), calendarEvidence:state.calendars.map(c=>({resource:c.resource.ref,sourceVersion:c.snapshot.properties.sourceVersion,observedAt:c.snapshot.properties.observedAt,expiresAt:c.snapshot.properties.expiresAt,evidence:c.snapshot.properties.evidence})),evaluatedAt:new Date().toISOString(),externalCalendarUpdated:false };
     }],
-    ['editScheduleActivity', async (raw, context) => {
-      const input = activityInputSchema.parse(raw), ref = input.activity??{ type:'ScheduledActivity',id:digest([input.plan.id,input.id]) };
-      if(ref.type!=='ScheduledActivity')throw new Conflict('Expected a ScheduledActivity reference');
-      if(input.activity&&!input.revision)throw new Conflict('Editing an activity reference requires its current revision');
-      interval(input.start,input.end);
-      if (context.execution && !context.objects.model.scenario) throw new Conflict('The Agent must propose activity edits in a scenario for PA review');
-      if (!context.edit) throw new Conflict('Activity edits require an Action');
-      return context.edit(ref,async graph => {
-        const state = await readPlan(graph,input.plan), fields = { id:ref.id,name:input.name,start:input.start,end:input.end };
-        if(!graph.model.scenario&&ms(input.start)<Date.now()){
-          const old=state.activities.find(activity=>same(activity.ref,ref));
-          if(!old||old.properties.start!==input.start||old.properties.end!==input.end)throw new Conflict('New or moved activities must start in the future');
-        }
-        if (input.revision) {
-          if (!state.activities.some(a=>same(a.ref,ref))) throw new Conflict('Activity does not belong to this plan');
-          await graph.edit(ref,input.revision,fields);
-          for (const before of await graph.follow(ref,'predecessors')) await graph.unlink({ type:'ActivityDependency',from:ref,to:before.ref });
-        } else {
-          if(state.activities.some(a=>same(a.ref,ref)))throw new Conflict('Existing activities require their current revision');
-          await graph.create(ref,fields);
-        }
-        await graph.link({ type:'ActivityPlan',from:ref,to:input.plan });
-        for (const calendar of state.calendars) await graph.link({ type:'ActivityResource',from:ref,to:calendar.resource.ref });
-        for (const predecessor of input.predecessors) {
-          if (predecessor.type!=='ScheduledActivity' || same(predecessor,ref)) throw new Conflict('Invalid activity dependency');
-          await graph.read(predecessor); await graph.link({ type:'ActivityDependency',from:ref,to:predecessor });
-        }
-        // Scenarios retain conflicting edits for comparison; live writes must be feasible.
-        if (!graph.model.scenario && !(await validate(graph,input.plan)).valid) throw new Conflict('Schedule constraints are not satisfied');
-      });
+    ['editScheduleActivity', (raw, context) => saveActivity(activityInputSchema.parse(raw), context)],
+    ['stageDiningActivity', (raw, context) => {
+      const { requestId, ...input } = diningActivityInputSchema.parse(raw);
+      return saveActivity(input, context, requestId);
     }],
     ['removeScheduleActivity', async (raw,context) => {
       const input=removeActivitySchema.parse(raw);
@@ -214,7 +257,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       if (!context.edit || context.execution) throw new Conflict('The PA must apply the reviewed merge Action explicitly');
       return context.edit(input.plan,async graph=>{
         const serviceLinks=[...graph.model.objects.keys()].filter(type=>graph.model.implements(type,'ServiceOffering')).map(type=>graph.model.navigation(type,'plans','ServiceOffering').link);
-        await new Scenarios(db).mergeInto(graph,input.scenarioId,input.revision,{objects:['ScheduledActivity','SchedulePlan','CalendarAvailability','EventTrip'],links:['ActivityPlan','ActivityResource','ActivityDependency','PlanResource','PlanAvailability','ResourceAvailability','TripPlan','TripEvent','TripTravel','TripActivities',...serviceLinks],validate:async(view,touched,links)=>{
+        await new Scenarios(db).mergeInto(graph,input.scenarioId,input.revision,{objects:['ScheduledActivity','SchedulePlan','CalendarAvailability','EventTrip'],links:['ActivityPlan','ActivityResource','ActivityDependency','PlanResource','PlanAvailability','ResourceAvailability','TripPlan','TripEvent','TripTravel','TripActivities',...serviceLinks],validateAction:context.validateScenarioAction,validate:async(view,touched,links)=>{
           if(links.some(link=>link.to.type==='SchedulePlan'&&!same(link.to,input.plan)))throw new Conflict('Scenario contains service links outside the selected plan');
           for(const item of touched){
             if(view.model.implements(item.ref.type,'ServiceOffering')){await currentService(view,item.ref);continue;}
@@ -232,6 +275,18 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
             }
             const plans=await (item.deleted?graph:view).follow(item.ref,'plan');
             if(plans.length!==1 || !same(plans[0]!.ref,input.plan))throw new Conflict('Scenario contains activities outside the selected plan');
+            if (item.ref.type === 'ScheduledActivity' && !item.deleted) {
+              const activity = await view.read(item.ref);
+              if (Object.hasOwn(activity.properties, 'dining')) {
+                view.access.source(view.model, diningSource);
+                const saved = diningEvidence.parse(activity.properties.dining);
+                const current = await diningProof(db,view.client,{ owner:view.owner,taskId:saved.taskId,requestId:saved.requestId,
+                  start:String(activity.properties.start),end:String(activity.properties.end) });
+                if (digest(current)!==digest(saved) || activity.properties.name!==current.restaurant) {
+                  throw new Conflict('Dining availability differs from the reviewed activity');
+                }
+              }
+            }
           }
           if(!(await validate(view,input.plan,undefined,await proposedTimes(view))).valid)throw new Conflict('Proposed schedule constraints reject this scenario');
         }});

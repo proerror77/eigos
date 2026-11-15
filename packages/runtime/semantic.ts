@@ -1,11 +1,14 @@
+import { documentChunkType, documentType } from '../ontology/documents.js';
+import { isProtected } from '../ontology/classification.js';
 import { z } from 'zod';
 import { Conflict, digest, NotFound } from '../core/identity.js';
 import { objectRefSchema, type ObjectData } from '../ontology/schema.js';
 import { Access } from './access.js';
-import type { Database } from './database.js';
+import type { Database, Sql } from './database.js';
 import type { PublishedOntology } from './metadata.js';
 import { Functions } from './functions.js';
-import { Objects } from './objects.js';
+import { Objects, querySchema } from './objects.js';
+import { pgvectorNamespace } from './semantic-pgvector.js';
 import { nestedValue, propertyPathSchema } from './query-filter.js';
 
 const indexName = z
@@ -26,8 +29,10 @@ export const semanticIndexSchema = z.strictObject({
 export const semanticSearchSchema = z.strictObject({
   name: indexName,
   text: z.string().min(1).max(32000),
+  from: querySchema.shape.from,
   limit: z.number().int().min(1).max(100).default(10),
 });
+export const semanticSearchViewSchema = semanticSearchSchema.extend({ scenarioId: z.uuid().optional() });
 export const semanticStatusSchema = z.strictObject({ name: indexName });
 type Configuration = z.output<typeof semanticConfigureSchema> & {
   release: string;
@@ -46,6 +51,19 @@ export async function initializeSemantic(db: Database) {
       indexed_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(ontology,release,name,owner,type,id),
       FOREIGN KEY(ontology,release,name) REFERENCES ${db.schema}.semantic_indexes(ontology,release,name));`);
 }
+function chunkCitation(object: ObjectData) {
+  const { documentId, index, startOffset, endOffset, page, paragraph } = object.properties;
+  if (typeof documentId !== 'string' || typeof index !== 'number' || typeof startOffset !== 'number' || typeof endOffset !== 'number') return undefined;
+  return {
+    version: { type: documentType, id: documentId }, chunk: object.ref, index, startOffset, endOffset,
+    ...(typeof page === 'number' ? { page } : {}), ...(typeof paragraph === 'number' ? { paragraph } : {}),
+  };
+}
+type Candidate = { object: ObjectData; citation?: ReturnType<typeof chunkCitation>; textDigest: string; tie: string };
+type DocumentScope = NonNullable<z.output<typeof semanticSearchSchema>['from']>;
+type Backend = 'jsonb' | 'pgvector';
+type CandidateSnapshot = { candidates: Candidate[]; client: Sql; namespace?: string; match: string; values: unknown[] };
+type ScoredCandidate = { ordinal: number; score: number };
 const normalized = (raw: unknown, dimensions: number): number[] => {
   const vector = z.array(z.number().finite()).length(dimensions).parse(raw),
     norm = Math.hypot(...vector);
@@ -203,7 +221,10 @@ export class SemanticSearch {
     for (const ref of refs) {
       if (ref.type !== configuration.type) throw new Conflict('Object type differs from the semantic index');
       const graph = new Objects(this.db, model, access),
-        object = await graph.readStored(ref);
+        scoped = await access.measureEgress(() => graph.readStored(ref)),
+        object = scoped.result;
+      if (isProtected(scoped.classification) && configuration.embeddingFunction !== 'embedTextLocal')
+        throw new Conflict('Protected embedding input requires the local embedding Function');
       const text = nestedValue(object.properties, configuration.property);
       if (typeof text !== 'string' || !text.length || text.length > 32000)
         throw new Conflict('Embedding input must be an authorized string of 1 to 32000 characters');
@@ -251,66 +272,98 @@ export class SemanticSearch {
       modelVersion: configuration.modelVersion,
     };
   }
-  private async candidates(access: Access, model: PublishedOntology, configuration: Configuration) {
+  private async documentChunks(graph: Objects, from: DocumentScope) {
+    if (graph.model.navigation(from.object.type, from.link, from.as).target !== documentType) {
+      throw new Conflict('Document search scope must link to a document version');
+    }
+    const ids: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await graph.queryStored({ type: documentType, from, select: ['id'], limit: 100, cursor });
+      ids.push(...page.items.map(item => item.ref.id));
+      if (ids.length > 10000) throw new Conflict('Document search scope exceeds 10000 authorized document versions');
+      cursor = page.cursor;
+    } while (cursor);
+    if (!ids.length) return [];
+    const chunks = await graph.followSet(documentType, ids, 'chunks', undefined, 10000);
+    if (!chunks) throw new Conflict('Document search scope needs a stored document chunk relationship');
+    const approved = new Set(ids);
+    return chunks.filter(chunk => typeof chunk.properties.documentId === 'string' && approved.has(chunk.properties.documentId));
+  }
+  private async withCandidates<T>(access: Access, model: PublishedOntology, configuration: Configuration,
+    read: (snapshot: CandidateSnapshot) => Promise<T>, from?: DocumentScope) {
     return this.db.transaction(async (client) => {
       await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', [], client);
       await access.refresh(client);
-      const graph = new Objects(this.db, model, access, client),
-        objects: ObjectData[] = [];
-      let cursor: string | undefined;
-      do {
-        const page = await graph.queryStored({ type: configuration.type, limit: 100, cursor });
-        objects.push(...page.items);
-        cursor = page.cursor;
-        if (objects.length > 10000)
-          throw new Conflict('Exact semantic search exceeds 10000 authorized objects');
-      } while (cursor);
-      const vectors = (
-        await this.db.query(
-          `SELECT vector.type,vector.id,vector.revision,vector.text_digest,vector.binding,vector.dimensions,vector.vector FROM ${this.db.schema}.semantic_vectors vector JOIN jsonb_to_recordset($5::jsonb) AS selected(type text,id text) ON selected.type=vector.type AND selected.id=vector.id WHERE ontology=$1 AND release=$2 AND name=$3 AND owner=$4`,
-          [
-            model.document.id,
-            model.release,
-            configuration.name,
-            access.principal.owner,
-            JSON.stringify(objects.map((object) => object.ref)),
-          ],
-          client,
-        )
-      ).rows;
-      const byRef = new Map(vectors.map((row) => [digest({ type: row.type, id: row.id }), row]));
-      return objects.flatMap((object) => {
-        const text = nestedValue(object.properties, configuration.property),
-          row = byRef.get(digest(object.ref));
-        if (
-          typeof text !== 'string' ||
-          !row ||
-          Number(row.revision) !== object.revision ||
-          row.text_digest !== digest(text) ||
-          row.binding !== configuration.binding ||
-          Number(row.dimensions) !== configuration.dimensions
-        )
-          return [];
-        return [{ object, vector: normalized(row.vector, configuration.dimensions) }];
-      });
+      const graph = new Objects(this.db, model, access, client), candidates: Candidate[] = [];
+      let seen = 0;
+      const accept = (objects: ObjectData[]) => {
+        seen += objects.length;
+        if (seen > 10000) throw new Conflict('Exact semantic search exceeds 10000 authorized objects');
+        for (const object of objects) {
+          const text = nestedValue(object.properties, configuration.property);
+          if (typeof text !== 'string') continue;
+          const citation = object.ref.type === documentChunkType ? chunkCitation(object) : undefined;
+          if (object.ref.type === documentChunkType && !citation) continue;
+          candidates.push({ object, citation, textDigest: digest(text), tie: digest(object.ref) });
+        }
+      };
+      if (from) accept(await this.documentChunks(graph, from));
+      else {
+        let cursor: string | undefined;
+        do {
+          const page = await graph.queryStored({ type: configuration.type, limit: 100, cursor });
+          accept(page.items);
+          cursor = page.cursor;
+        } while (cursor);
+      }
+      // Stable identity order breaks equal scores the same way in each backend.
+      candidates.sort((a, b) => a.tie < b.tie ? -1 : a.tie > b.tie ? 1 : 0);
+      const values = [
+        model.document.id, model.release, configuration.name, access.principal.owner, configuration.binding, configuration.dimensions,
+        JSON.stringify(candidates.map(({ object, textDigest }, ordinal) =>
+          ({ ...object.ref, revision: object.revision, text_digest: textDigest, ordinal }))),
+      ];
+      const match = `FROM ${this.db.schema}.semantic_vectors v
+        JOIN jsonb_to_recordset($7::jsonb) AS accepted(type text,id text,revision bigint,text_digest text,ordinal integer)
+          ON (v.type,v.id,v.revision,v.text_digest)=(accepted.type,accepted.id,accepted.revision,accepted.text_digest)
+        WHERE v.ontology=$1 AND v.release=$2 AND v.name=$3 AND v.owner=$4 AND v.binding=$5 AND v.dimensions=$6`;
+      const namespace = await pgvectorNamespace(this.db, client);
+      const backend: Backend = namespace ? 'pgvector' : 'jsonb';
+      return { backend, value: await read({ candidates, client, namespace, match, values }) };
     });
+  }
+  private async rank(snapshot: CandidateSnapshot, query: number[], limit: number): Promise<ScoredCandidate[]> {
+    const { namespace, values, match, client } = snapshot;
+    if (namespace) {
+      // Materialize the ACL- and freshness-matched vectors before scoring. The planner cannot use an
+      // approximate vector index in place of the exact authorized ranking, even if one was added separately.
+      const result = await this.db.query<ScoredCandidate>(`WITH eligible AS MATERIALIZED (
+        SELECT accepted.ordinal,v.pg_embedding ${match}
+      ), scored AS (
+        SELECT ordinal, pg_embedding OPERATOR(${namespace}.<=>) $8::${namespace}.vector AS distance FROM eligible
+      )
+      SELECT ordinal,1-distance AS score FROM scored ORDER BY distance,ordinal LIMIT $9`,
+      [...values, JSON.stringify(query), limit], client);
+      return result.rows;
+    }
+    const result = await this.db.query<{ ordinal: number; vector: unknown }>(
+      `SELECT accepted.ordinal,v.vector ${match}`, values, client);
+    return result.rows.map(({ ordinal, vector }) => ({
+      ordinal,
+      score: normalized(vector, query.length).reduce((sum, value, index) => sum + value * query[index]!, 0),
+    })).sort((a, b) => b.score - a.score || a.ordinal - b.ordinal).slice(0, limit);
   }
   async search(access: Access, model: PublishedOntology, raw: unknown) {
     const input = semanticSearchSchema.parse(raw),
       configuration = await this.configuration(access, model, input.name);
-    const query = await this.embed(access, model, configuration, input.text),
-      candidates = await this.candidates(access, model, configuration);
-    const items = candidates
-      .map(({ object, vector }) => ({
-        object,
-        score: vector.reduce((sum, value, index) => sum + value * query[index]!, 0),
-      }))
-      .sort(
-        (left, right) =>
-          right.score - left.score ||
-          Buffer.compare(Buffer.from(digest(left.object.ref)), Buffer.from(digest(right.object.ref))),
-      )
-      .slice(0, input.limit);
+    if (input.from && configuration.type !== documentChunkType) throw new Conflict('Search from an object requires a document chunk index');
+    const query = await this.embed(access, model, configuration, input.text);
+    const { backend, value: items } = await this.withCandidates(access, model, configuration, async snapshot =>
+      (await this.rank(snapshot, query, input.limit)).map(({ ordinal, score }) => {
+        const { object, citation } = snapshot.candidates[ordinal]!;
+        return { object, ...(citation ? { citation } : {}), score };
+      }), input.from);
     if (!(await access.canReturn(access.dataRequirements())))
       throw new Conflict('Semantic result permissions changed');
     return {
@@ -320,13 +373,16 @@ export class SemanticSearch {
       binding: configuration.binding,
       modelVersion: configuration.modelVersion,
       search: 'exact_cosine',
+      backend,
     };
   }
   async status(access: Access, model: PublishedOntology, name: string) {
-    const configuration = await this.configuration(access, model, name),
-      candidates = await this.candidates(access, model, configuration);
+    const configuration = await this.configuration(access, model, name);
+    const { backend, value: currentAuthorizedObjects } = await this.withCandidates(access, model, configuration,
+      async ({ client, match, values }) => Number((await this.db.query(
+        `SELECT count(*) AS count ${match}`, values, client)).rows[0]?.count ?? 0));
     if (!(await access.canReturn(access.dataRequirements())))
       throw new Conflict('Semantic status permissions changed');
-    return { ...configuration, currentAuthorizedObjects: candidates.length, search: 'exact_cosine' };
+    return { ...configuration, currentAuthorizedObjects, search: 'exact_cosine', backend };
   }
 }

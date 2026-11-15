@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { digest } from '../core/identity.js';
+import { initializeModelEgress } from './model-egress.js';
 import type { Database } from './database.js';
 
 const scalar = z.union([z.string(), z.number(), z.boolean(), z.null()]);
@@ -23,6 +24,7 @@ export async function initializeSecurity(db: Database) {
     subject text NOT NULL, kind text NOT NULL CHECK(kind IN ('group','marking')), name text NOT NULL, PRIMARY KEY(subject,kind,name));
     CREATE TABLE IF NOT EXISTS ${db.schema}.object_policies (
     ontology text NOT NULL, type text NOT NULL, policy jsonb NOT NULL, PRIMARY KEY(ontology,type));`);
+  await initializeModelEgress(db);
 }
 export function permits(expression: Expression | undefined, properties: Record<string, unknown>, context: SecurityContext): boolean {
   if (!expression) return true;

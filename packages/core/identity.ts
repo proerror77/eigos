@@ -12,10 +12,15 @@ export function canonical(value: unknown): string {
 }
 
 export const digest = (value: unknown) => createHash('sha256').update(canonical(value)).digest('hex');
-export interface Principal { owner: string; scopes: readonly string[] }
+export interface Principal { owner: string; scopes: readonly string[]; clientId?: string }
+export type ExecutionActor = {
+  kind: 'client' | 'agent' | 'workflow' | 'scheduled' | 'indexer' | 'system';
+  id: string;
+};
 export function requireScope(principal: Principal, scope: string): void {
   if (!principal.owner || !principal.scopes.includes(scope)) throw new Error(`Permission required: ${scope}`);
 }
 
 export class Conflict extends Error {}
 export class NotFound extends Error {}
+export class SourceReadFailure extends Error {}

@@ -32,7 +32,7 @@
 
 属性路径支持 `coordinates.lat`、嵌套 Struct 和带数字下标的数组路径。过滤、字段选择和排序都可以使用路径。只有实际存在的自身属性会被访问。属性级权限遮罩先执行，隐藏字段表现为 `null`，每个条件只处理遮罩后的值。
 
-`orderBy` 最多五个字段，支持 `asc` 和 `desc`，空值固定放在最后。同值对象按稳定身份排序。扩展查询先在 repeatable-read 事务中确定完整候选集合，再进行过滤、排序和分页。最多 10,000 个可见候选对象，超出会明确失败。游标绑定表达式、调用者、发布、Scenario 和可见结果内容，数据或权限变化后需重新查询。原有简单等值查询继续执行数据库查询路径。
+`orderBy` 最多五个字段，支持 `asc` 和 `desc`，空值固定放在最后。同值对象按稳定身份排序。存储属性的标量等值、数值范围、集合包含和布尔组合在 PostgreSQL 中过滤，数值和布尔排序也在库内完成。权限遮罩先于筛选和排序，最多返回 10,000 个匹配对象供完整快照分页。派生条件、Unicode 文本、正则和字符串范围沿用应用层求值，最多读取 10,000 个可见候选对象。字符串排序保留原有 Unicode 比较语义。扩展查询使用 repeatable-read 事务，游标绑定表达式、调用者、发布、Scenario 和可见结果内容。
 
 正则求值在独立 Worker 中执行，整个正则步骤有一秒期限。超时终止 Worker，服务器事件循环继续处理其他工作。单个待匹配字符串最多 65,536 字符，一次最多 50,000 个不同正则比较。
 
@@ -94,12 +94,20 @@
 
 `SemanticSearch.index` 接收 `{name, objects: [{type,id}]}`，每次最多一百个对象。服务只把有权限读取的文本交给嵌入 Function。模型调用发生在业务写锁之外，写入向量前在事务中重新验证对象 revision、文本摘要及权限。每个对象单独提交，批次中途失败后可重新提交同一组对象。
 
-`SemanticSearch.search` 接收 `{name,text,limit}`。服务先调用同一版本的嵌入 Function，将查询文本变成向量，然后从当前有权限读取的对象中选取仍有效的向量并计算余弦相似度。权限过滤发生在选取前 K 项之前。对象已更新、已删除、文本属性被隐藏或模型绑定变化时，旧向量被排除。更新对象后重新调用 `index` 即可补充向量。
+`SemanticSearch.search` 接收 `{name,text,limit,from?}`。服务先调用同一版本的嵌入 Function，将查询文本变成向量，然后从当前有权限读取的对象中选取仍有效的向量并计算余弦相似度。文档切片索引可通过 `from` 沿已发布的 Link 限定到具体业务对象。范围和权限都在选取前 K 项之前应用。对象已更新、已删除、文本属性被隐藏或模型绑定变化时，旧向量被排除。更新对象后重新调用 `index` 即可补充向量。 [按业务对象检索文档](document-versions.md)
 
-当前实现是持久向量上的精确余弦检索，每次最多扫描 10,000 个授权对象。它返回 `search: "exact_cosine"`。`status` 返回模型版本、绑定、维度和当前授权范围内有效向量的对象数量。HTTP 和 MCP 的 `semantic_search`、`semantic_status` 可传 `scenarioId`，工作台会传入当前方案。方案使用与该视图 revision 和文本摘要一致的既有向量；方案中被删除或没有匹配向量的对象不返回。构建向量使用正式对象视图。
+精确余弦检索最多扫描 10,000 个授权对象。响应保留 `search: "exact_cosine"`，并用 `backend` 报告 `jsonb` 或 `pgvector`。`status` 返回当前视图中具有有效向量的授权对象数量、模型版本、绑定和维度。HTTP、MCP 和工作台可用 `scenarioId` 查询方案。方案只使用与当前视图的对象修订和可见文本匹配的向量。
+
+### 启用 pgvector
+
+普通 PostgreSQL 保持使用 JSONB 向量。安装 pgvector 的 PostgreSQL 实例可以在 schema 升级后，由具备扩展安装权限和表权限的数据库管理员执行 `npm run db:enable-pgvector`。也支持管理员预先将扩展安装在独立 schema 中。运行角色需要已有 `semantic_vectors` 的权限和扩展 schema 的 `USAGE`。
+
+启用命令在一个事务中添加原始 JSONB 的持久生成列，自动转换现有向量。新写入和重索引会同步生成该列。转换失败会回滚，原向量仍可使用。迁移期间 PostgreSQL 会锁定向量表。可用 `semantic_status` 确认查询使用 `pgvector`。
+
+查询先按对象、文档父版本、模型出境权限、owner、发布、绑定、维度、修订和文本摘要筛选候选，再由 PostgreSQL 用 `<=>` 计算精确余弦距离并返回排名。向量本身留在数据库。pgvector 使用单精度向量，分数在浮点精度范围内可能和 JSONB 路径不同。分数相同时按稳定对象标识排序。 [pgvector 精确近邻](https://github.com/pgvector/pgvector#querying) · [PostgreSQL 生成列](https://www.postgresql.org/docs/17/ddl-generated-columns.html)
 
 数据库升级调用 `initializeSemantic(db)`，创建索引配置和向量表。配置变更需要本体管理权限，构建和检索需要对象读取与对应 Function 执行权限。HTTP/MCP 的入口还执行当前读写 scopes。
 
 ## 验证
 
-`tests/18-search.test.ts` 覆盖完整分页后的过滤排序、嵌套字段、隐藏字段、正则超时、关联聚合、算术、Scenario、只读派生属性以及从发布 Function 到语义排名的调用链。CI 使用明确命名的合成嵌入 Function，保持离线可重复。内置真实模型已另外验证中文机场与咖啡语义检索，该结果不代表大规模检索质量评测。
+`tests/18-search.test.ts` 覆盖完整分页后的过滤排序、嵌套字段、隐藏字段、正则超时、关联聚合、算术、Scenario、只读派生属性以及从发布 Function 到语义排名的调用链。CI 使用普通 PostgreSQL 和安装 pgvector 的 PostgreSQL，验证向量转换与回滚、跨 owner 隔离、按业务对象检索、文档父版本和模型权限。测试使用可重复的合成嵌入 Function。内置真实模型已另外验证中文机场与咖啡语义检索。

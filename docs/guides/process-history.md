@@ -11,6 +11,7 @@
 | `EventRegistration.state` | `EventRegistrationStateLog` | `stateLogs` |
 | `EventTrip.state` | `EventTripStateLog` | `stateLogs` |
 | `StripeLinkPaymentRequest.status` | `StripeLinkPaymentRequestStatusLog` | `statusLogs` |
+| `ActionConfirmation.state` | `ActionConfirmationStateLog` | `stateLogs` |
 | `SchedulePlan.state` | `SchedulePlanStateLog` | `stateLogs` |
 
 `packages/ontology/process-definition.ts` 生成这些普通类型和关系定义。类型的 `machinery-log` 分类标记来源对象类型，`machinery-property` 标记被跟踪属性；定义发布和重命名沿用现有校验与资源映射。它们不声明第二套状态转换规则。日志沿 `process` 关系返回原业务对象。
@@ -32,6 +33,14 @@ Gateway MCP 通过现有 `query_ontology` 查询：
 HTTP、MCP 和 Object Set 的关系查询使用同一对象与 Link 视图，包含过程日志的只读投影。也可按具体日志类型和 `processId` 筛选，或使用现有 Object Set 聚合、保存集合及物化读取。关系查询可以用 cursor 继续分页，直接跟随 Link 仍遵守既有完整读取上限。
 
 Worker 中的模型通过任务专用 `eigos_ontology` MCP 使用相同查询；其 `query_ontology` 工具使用 `queries` 批次封装。`describe_ontology` 能发现日志类型，`follow_links` 导航同一发布关系。模型不读取数据库文件或直连供应商来替代这些能力。
+
+`ontology_process_status` 或 `POST /ontology/services/process_status` 接受 `{type,object}`。其中 `type` 是具体日志类型，`object` 是对应业务对象引用。返回当前可见状态、最近一条可见转换的引用、观测时间、记录时间和按记录时间算出的停留秒数。最近的真实转换缺失或不可见时，时间和停留秒数为空。业务对象中每个独立状态属性可以各自发布过程日志和规则。状态转换监控和超时 Workflow 见 [过程规则](automation.md#过程规则)。
+
+## 状态值的数据库约束
+
+每个发布投影冻结其 Machinery 状态属性、可选值及必填性。数据库根据正式对象的投影和 Scenario 的所属发布绑定约束。`objects` 和 `scenario_objects` 使用同一个行内 PostgreSQL `CHECK` 检查状态值。约束同时覆盖方案的原始基线和拟议属性，删除差量使用 SQL NULL。可选状态可以缺省，显式的状态值必须是枚举中的字符串。
+
+运行 `npm run db:upgrade` 为现有发布和已跟踪对象绑定契约，并验证已有数据。常驻角色继续使用现有对象写权限及发布读取权限。候选复制使用候选契约，历史投影和旧方案继续使用其原契约。后续发布随原有事务保存新的契约，复用已有约束和触发器。[PostgreSQL CHECK 约束](https://www.postgresql.org/docs/17/ddl-constraints.html#DDL-CONSTRAINTS-CHECK-CONSTRAINTS)
 
 ## 日志来源与因果
 
@@ -57,7 +66,7 @@ Scenario 内的编辑不进入正式 `edit_history`，因此不会变成已发�
 
 候选搜索继续使用 `findScheduleSlots`，约束校验继续使用 `validateSchedule`，编辑与合并继续使用已有 Actions。拟议活动不会提前成为正式活动或日志；冲突、旧修订或撤权导致合并失败时，正式状态和日志一起保持原值。确认后再次调整但未改变状态的字段编辑仍保存在完整编辑历史中，不伪造新的状态转换。
 
-简单询价或单项服务操作继续直接调用能力，不因为存在日志类型而创建 SchedulePlan、Scenario 或保存 Workflow。只读搜索没有业务状态过程时无需建立 Machinery 过程。图形化过程挖掘、优化器和通用跨服务重规划不属于本次日志交付。
+简单询价或单项服务操作继续直接调用能力，不因为存在日志类型而创建 SchedulePlan、Scenario 或保存 Workflow。只读搜索没有业务状态过程时无需建立 Machinery 过程。询价遇到地点歧义时，才为原 Action 创建确认过程；状态与原任务的等待、确认和最终结果同步提交。原 Action 和地点候选继续使用既有权限；查看确认对象及日志需要单独的对象读取授权。图形化过程挖掘、优化器和通用跨服务重规划不属于本次日志交付。
 
 ## 升级与验证
 

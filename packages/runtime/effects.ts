@@ -13,17 +13,25 @@ export async function initializeEffects(db: Database) {
     token uuid, lease_until timestamptz, available_at timestamptz NOT NULL DEFAULT now(), error text,
     created_at timestamptz NOT NULL DEFAULT now(), completed_at timestamptz,
     UNIQUE(owner,request_id,name));
-    CREATE INDEX IF NOT EXISTS action_effects_queue ON ${db.schema}.action_effects(state,available_at);`);
+    CREATE INDEX IF NOT EXISTS action_effects_queue ON ${db.schema}.action_effects(state,available_at);
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='${db.schema}.action_effects'::regclass
+        AND conname='action_effects_committed_action_fkey') THEN
+        ALTER TABLE ${db.schema}.action_effects ADD CONSTRAINT action_effects_committed_action_fkey
+          FOREIGN KEY(owner,request_id) REFERENCES ${db.schema}.actions(owner,request_id) NOT VALID;
+      END IF;
+    END $$;`);
 }
 export interface EffectContext { idempotencyKey: string; principal: Principal; signal: AbortSignal }
-export type EffectHandler = (payload: Record<string, unknown>, context: EffectContext) => Promise<void>;
+export type EffectHandler = (payload: Record<string, unknown>, context: EffectContext) => Promise<void | 'canceled'>;
+export interface ActionEffect { name: string; handler: string; payload: Record<string, unknown> }
 export class Effects {
   constructor(private readonly db: Database, private readonly handlers: ReadonlyMap<string, EffectHandler>) {}
   check(names: readonly string[]) {
     for (const name of names) if (!this.handlers.has(name)) throw new Error(`Action effect handler is unavailable: ${name}`);
   }
-  async enqueue(client: Sql, access: Access, model: PublishedOntology, action: string, requestId: string, effects: { name: string; handler: string; payload: Record<string, unknown> }[]) {
-    if (model.scenario) return;
+  async enqueue(client: Sql, access: Access, model: PublishedOntology, action: string, requestId: string, effects: ActionEffect[]) {
+    if (model.scenario || !effects.length) return;
     this.check(effects.map(effect => effect.handler));
     const requirements=await access.finalRequirements(client);
     for (const effect of effects) {
@@ -54,37 +62,51 @@ export class Effects {
   async runOne(signal = AbortSignal.timeout(30000)): Promise<boolean> {
     signal.throwIfAborted();
     const token = randomUUID();
-    const row = await this.db.transaction(async client => {
-      const selected = (await this.db.query(`SELECT * FROM ${this.db.schema}.action_effects
+    const claim = await this.db.transaction(async client => {
+      const selected = (await this.db.query<{ id: string; owner: string }>(`SELECT id,owner FROM ${this.db.schema}.action_effects
         WHERE (state='pending' AND available_at<=now()) OR (state='working' AND lease_until<now())
         ORDER BY available_at,id FOR UPDATE SKIP LOCKED LIMIT 1`, [], client)).rows[0];
       if (!selected) return undefined;
-      await this.db.query(`UPDATE ${this.db.schema}.action_effects SET state='working',token=$2,lease_until=now()+interval '60 seconds',attempts=attempts+1 WHERE id=$1`, [selected.id, token], client);
+      await this.db.query(`UPDATE ${this.db.schema}.action_effects SET state='working',token=$3,lease_until=now()+interval '60 seconds',attempts=attempts+1
+        WHERE id=$1 AND owner=$2`, [selected.id, selected.owner, token], client);
       return selected;
     });
-    if (!row) return false;
+    if (!claim) return false;
+    const lease = [claim.id, claim.owner, token];
     const controller = new AbortController();
     const executionSignal = AbortSignal.any([signal, controller.signal, AbortSignal.timeout(45000)]);
     let renew: Promise<unknown> | undefined;
     const timer = setInterval(() => {
       if (renew) return;
-      renew = this.db.query(`UPDATE ${this.db.schema}.action_effects SET lease_until=now()+interval '60 seconds' WHERE id=$1 AND token=$2 AND state='working' RETURNING id`, [row.id, token])
+      renew = this.db.query(`UPDATE ${this.db.schema}.action_effects SET lease_until=now()+interval '60 seconds'
+        WHERE id=$1 AND owner=$2 AND token=$3 AND state='working' RETURNING id`, lease)
         .then(result => { if (!result.rowCount) controller.abort(); }).catch(() => controller.abort()).finally(() => { renew = undefined; });
     }, 15000);
     timer.unref();
     try {
-      const principal = { owner: String(row.owner), scopes: row.scopes as string[] };
-      const access = await Access.load(this.db, principal);
-      if (!await access.canReturn(row.requirements)) throw new Error('Effect data permissions changed');
-      for (const requirement of row.requirements as Requirement[]) access.require(requirement.ontology, requirement.permission, requirement.resource);
-      this.check([row.handler]);
-      executionSignal.throwIfAborted();
-      await this.handlers.get(row.handler)!(row.payload, { idempotencyKey: row.id, principal, signal: executionSignal });
-      executionSignal.throwIfAborted();
-      await this.db.query(`UPDATE ${this.db.schema}.action_effects SET state='completed',completed_at=now(),lease_until=NULL,token=NULL,error=NULL WHERE id=$1 AND token=$2`, [row.id, token]);
+      await this.db.withOwner(claim.owner, async () => {
+        const row = (await this.db.query(`SELECT effect.scopes,effect.requirements,effect.handler,effect.payload
+          FROM ${this.db.schema}.action_effects effect
+          JOIN ${this.db.schema}.actions committed
+            ON committed.owner=effect.owner AND committed.request_id=effect.request_id
+            AND committed.action=effect.action AND committed.release=effect.release
+          WHERE effect.id=$1 AND effect.owner=$2 AND effect.token=$3 AND effect.state='working' AND effect.lease_until>now()`, lease)).rows[0];
+        if (!row) throw new Conflict('Effect lease is unavailable');
+        const principal = { owner: claim.owner, scopes: row.scopes as string[] };
+        const access = await Access.load(this.db, principal);
+        if (!await access.canReturn(row.requirements)) throw new Error('Effect data permissions changed');
+        for (const requirement of row.requirements as Requirement[]) access.require(requirement.ontology, requirement.permission, requirement.resource);
+        this.check([row.handler]);
+        executionSignal.throwIfAborted();
+        const outcome = await this.handlers.get(row.handler)!(row.payload, { idempotencyKey: claim.id, principal, signal: executionSignal });
+        executionSignal.throwIfAborted();
+        await this.db.query(`UPDATE ${this.db.schema}.action_effects SET state=$4,completed_at=now(),lease_until=NULL,token=NULL,error=NULL
+          WHERE id=$1 AND owner=$2 AND token=$3`, [...lease, outcome === 'canceled' ? 'canceled' : 'completed']);
+      });
     } catch {
       // A handler can have completed remotely before a local failure. Retries always retain its idempotency key.
-      await this.db.query(`UPDATE ${this.db.schema}.action_effects SET state='failed',lease_until=NULL,token=NULL,error='Effect delivery failed; inspect the configured handler before retrying' WHERE id=$1 AND token=$2`, [row.id, token]);
+      await this.db.query(`UPDATE ${this.db.schema}.action_effects SET state='failed',lease_until=NULL,token=NULL,error='Effect delivery failed; inspect the configured handler before retrying'
+        WHERE id=$1 AND owner=$2 AND token=$3`, lease);
     } finally { clearInterval(timer); await renew; }
     return true;
   }
