@@ -490,17 +490,38 @@ export class Scenarios {
         }
         const edits:ScenarioMutation[]=[];
         const graph=new Objects(this.db,view,access,client,{action:step.action,requestId:step.request_id,scenarioEdits:edits});
-        for (const requirement of step.requirements) {
-          const row=requirement.row;
-          if(!row)continue;
-          if(row.scenario&&row.scenario!==source.id)throw new Conflict('Scenario depends on a different draft');
-          const reader=row.scenario?graph:new Objects(this.db,model,access,client);
-          const ref={type:row.type,id:row.id};
+        const live = new Objects(this.db, model, access, client);
+        const created = new Set(step.edits!.flatMap(edit => edit.op === 'create' ? [digest(edit.ref)] : []));
+        const deferred = new Map<string, NonNullable<Requirement['row']>[]>();
+        const checkRow = async (reader: Objects, row: NonNullable<Requirement['row']>) => {
+          const ref = { type: row.type, id: row.id };
           await reader.read(ref);
-          for(const field of row.fields)if(!await reader.propertyVisible(ref,field))
-            throw new PermissionDenied('Scenario evidence field is unavailable');
+          for (const field of row.fields) {
+            if (!await reader.propertyVisible(ref, field)) throw new PermissionDenied('Scenario evidence field is unavailable');
+          }
+        };
+        const checkCreated = async (key: string) => {
+          for (const row of deferred.get(key) ?? []) await checkRow(graph, row);
+          deferred.delete(key);
+        };
+        for (const { row } of step.requirements) {
+          if (!row) continue;
+          if (row.scenario && row.scenario !== source.id) throw new Conflict('Scenario depends on a different draft');
+          const key = digest({ type: row.type, id: row.id });
+          if (row.scenario && created.has(key)) {
+            // The Action can read its own new objects while creating relationships.
+            const requirements = deferred.get(key) ?? [];
+            requirements.push(row);
+            deferred.set(key, requirements);
+          } else {
+            await checkRow(row.scenario ? graph : live, row);
+          }
         }
-        for(const edit of step.edits!)await this.applyProposedEdit(graph,edit);
+        for (const edit of step.edits!) {
+          if (edit.op === 'delete') await checkCreated(digest(edit.ref));
+          await this.applyProposedEdit(graph, edit);
+        }
+        for (const key of deferred.keys()) await checkCreated(key);
         await recordScenarioAction(graph,step.action,step.input!,step.result,step.request_id);
       }
       const replayed=await this.changes(owner,next.id,client);

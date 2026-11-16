@@ -322,3 +322,33 @@ test('prepared candidate trials, saved evaluations and reviewer handoff share th
     assert.equal((await scenarios.list(f.access,f.model)).items.length,1);
   }finally{await f.close();}
 });
+
+test('cross-release continuation recovers a Function Action that creates and links its own output', async () => {
+  const f = await fixture();
+  try {
+    const { plan } = await seedPlan(f);
+    const scenarios = new Scenarios(f.db);
+    const source = await scenarios.create(f.access, f.model, { requestId: 'prior-plan', name: 'Prior plan' });
+    const view = await scenarios.view(f.access, f.model, source.id);
+    const at = (minutes: number) => new Date(Date.now() + minutes * 60000).toISOString();
+    const activity = await f.capabilities.actions.apply(f.access, view, 'SaveScheduleActivity', {
+      plan, id: 'linked-activity', name: 'Staged activity', start: at(30), end: at(40),
+    }, 'prior-activity');
+    const before = await scenarios.inspect(f.access, f.model, source.id);
+    const definition = structuredClone(f.model.document);
+    definition.version += '-compatible';
+    const current = await f.metadata.publish(definition, f.capabilities, f.publisher);
+    const copy = await scenarios.continueScenario(f.access, current, {
+      id: source.id, revision: before.revision, requestId: 'continue-linked-activity',
+    });
+    const after = await scenarios.inspect(f.access, current, copy.id);
+    assert.deepEqual(after.objects, before.objects);
+    assert.deepEqual(after.links, before.links);
+    const continued = await scenarios.view(f.access, current, copy.id);
+    const graph = new Objects(f.db, continued, f.access);
+    assert.deepEqual((await graph.follow(plan, 'activities')).map(item => item.ref), [activity]);
+    assert.deepEqual((await new Objects(f.db, current, f.access).follow(plan, 'activities')), []);
+  } finally {
+    await f.close();
+  }
+});
