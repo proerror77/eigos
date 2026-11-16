@@ -1,5 +1,7 @@
 import {digest} from '../core/identity.js';
 import {resourceGroups} from '../ontology/resource-mapping.js';
+import { PublicPlaceCatalogue } from '../capabilities/public-places/catalogue.js';
+import { listPublicPlacesSchema, publishPublicPlaceSchema, withdrawPublicPlaceSchema } from '../ontology/public-places.js';
 import {
   EntityResolution,
   bindEntitySchema,
@@ -31,7 +33,7 @@ import { Tasks, publicTask } from './tasks.js';
 import type { Actions } from './actions.js';
 import { z } from 'zod';
 import type { Principal } from '../core/identity.js';
-import { Conflict, requireScope } from '../core/identity.js';
+import { Conflict, PermissionDenied, requireScope } from '../core/identity.js';
 import { machineryModelSchema, objectRefSchema, ontologyName } from '../ontology/schema.js';
 import { Access } from './access.js';
 import { Database } from './database.js';
@@ -50,6 +52,8 @@ import { Indexing, indexingInputSchema } from './indexing.js';
 import { Materializations, materializationInputSchema } from './materializations.js';
 import { EditHistory, conflictPolicySchema, setConflictPolicy } from './edit-history.js';
 import { ExecutionTrace, executionTraceSchema } from './execution-trace.js';
+import { actionBatchSchema, actionCallSchema } from '../ontology/invocation.js';
+import { actionLogSchema, listActionLog } from './action-log.js';
 import {
   Governance,
   projectSchema,
@@ -107,7 +111,7 @@ export function ontologyServices(
         const access = await Access.load(db, principal),
           result = await run(access, schema.parse(raw));
         if (!write && !(await access.canReturn(access.dataRequirements())))
-          throw new Error('Result permissions changed');
+          throw new PermissionDenied('Result permissions changed');
         return result;
       },
     });
@@ -219,6 +223,27 @@ export function ontologyServices(
     (a, input) => new ExecutionTrace(db, metadata).read(a, ontologyId, input),
   );
   register(
+    'validate_action',
+    'Check a published Action’s parameters, object access and submission criteria without executing it.',
+    actionCallSchema,
+    true,
+    async (a, input) => actions.validate(a, await view(a, input.scenarioId), input),
+  );
+  register(
+    'apply_action_batch',
+    'Atomically submit up to 20 live declarative Actions without declared effects or Scenario merges, each with its own request ID.',
+    actionBatchSchema,
+    true,
+    async (a, input) => actions.applyBatch(a, await active(), input),
+  );
+  register(
+    'list_action_log',
+    'List committed Action receipts for one publication using current Action definition permissions.',
+    actionLogSchema,
+    false,
+    (a, input) => listActionLog(db, metadata, a, ontologyId, input),
+  );
+  register(
     'edit_policy',
     'Configure source and user edit conflict resolution.',
     z.strictObject({ type: z.string(), policy: conflictPolicySchema }),
@@ -232,6 +257,15 @@ export function ontologyServices(
     true,
     (a, input) => governance.project(a, input),
   );
+  if (ontologyId === 'Eigos') {
+    const publicPlaces = new PublicPlaceCatalogue(db, metadata, actions);
+    register('list_public_places', 'List explicitly published places in an authorized organization project.',
+      listPublicPlacesSchema, false, (access, input) => publicPlaces.list(access, input));
+    register('publish_public_place', 'Publish or revise reviewed public location fields in an organization project.',
+      publishPublicPlaceSchema, true, (access, input) => publicPlaces.publish(access, input));
+    register('withdraw_public_place', 'Withdraw a published location at its reviewed revision.',
+      withdrawPublicPlaceSchema, true, (access, input) => publicPlaces.withdraw(access, input));
+  }
   register(
     'assign_project',
     'Assign published resources to a project.',

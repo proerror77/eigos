@@ -1,5 +1,5 @@
 import { Conflict, NotFound, digest } from '../../core/identity.js';
-import { type ObjectRef } from '../../ontology/schema.js';
+import { type ObjectData, type ObjectRef } from '../../ontology/schema.js';
 import { diningEvidence, diningSource } from '../../ontology/dining.js';
 import { diningProof } from '../dining/research.js';
 import type { z } from 'zod';
@@ -56,7 +56,17 @@ export async function readPlan(objects: Reader, raw: ObjectRef, now = Date.now()
     const snapshot = snapshots[0]!, p = snapshot.properties;
     if (p.complete !== true || ms(p.expiresAt) <= now || ms(p.observedAt) > now+5000 || !Number.isFinite(ms(p.observedAt)) || !contained(interval(p.start,p.end),range)) throw new Conflict('Calendar availability is incomplete, stale or does not cover the plan');
     if (!Array.isArray(p.windows) || !Array.isArray(p.busy)) throw new Conflict('Calendar availability is unreadable');
-    const assignments = await objects.follow(resource.ref, 'activities');
+    const assignments: ObjectData[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await objects.query({ type: 'ScheduledActivity',
+        from: { object: resource.ref, link: 'activities' },
+        intervalOverlap: { start: 'start', end: 'end', from: range.start, until: range.end, includeUnknown: true },
+        limit: 100, cursor });
+      assignments.push(...page.items.filter(activity =>
+        overlaps(range, interval(activity.properties.start, activity.properties.end))));
+      cursor = page.cursor;
+    } while (cursor);
     return { resource, snapshot, windows: normalize(p.windows as Interval[]), busy: normalize(p.busy as Interval[]), assignments };
   }));
   const activities = await objects.follow(raw, 'activities');

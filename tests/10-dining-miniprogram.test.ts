@@ -109,7 +109,7 @@ else if (!command.startsWith('shell uiautomator dump /data/local/tmp/eigos-dinin
           await tools.get('complete_with_function')!.invoke({ function: 'readDiningReservation', input: { reservation } });
         }
       },
-    }, undefined, undefined, undefined, { diningMiniProgram });
+    }, undefined, undefined, undefined, { diningMiniProgram }, {}, { sandbox: true });
     const active = f;
     const token = randomUUID() + randomUUID();
     const { app } = createApp(configSchema.parse({

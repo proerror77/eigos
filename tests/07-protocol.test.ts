@@ -211,3 +211,57 @@ test('MCP publishes a model proposal and executes isolated, revision-checked sce
       input: { id: 'direct-route', name: 'Direct' } }), { type: 'Route', id: 'direct-route' });
   } finally { await client.close(); await new Promise<void>(resolve => server.close(() => resolve())); await f.close(); }
 });
+
+test('HTTP and MCP keep unexpected database errors private and report a traceable request ID', async t => {
+  const f = await fixture(), token = 'gateway-errors-token';
+  const config = readConfig({ DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token.repeat(4) });
+  const gateway = createApp(config, f.db, f.source, async incoming =>
+    incoming === token ? principal : { ...principal, scopes: [] });
+  const server = gateway.app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address();
+  assert(address && typeof address !== 'string');
+  const url = `http://127.0.0.1:${address.port}`;
+  const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
+  const client = new Client({ name: 'gateway-errors', version: '1' });
+  try {
+    const denied = await fetch(url + '/ontology', { headers: { Authorization: 'Bearer no-scopes' } });
+    assert.equal(denied.status, 403);
+    const malformed = await fetch(url + '/ontology/query', { method: 'POST', headers, body: '{' });
+    assert.equal(malformed.status, 400);
+
+    const failure = new Error('SELECT * FROM private_database_detail');
+    t.mock.method(gateway.metadata, 'active', async () => { throw failure; });
+    const log = t.mock.method(console, 'error', () => {});
+    const unexpected = await fetch(url + '/ontology', { headers });
+    assert.equal(unexpected.status, 500);
+    const body = await unexpected.json() as { error: string; requestId: string };
+    assert.equal(body.error, 'Internal server error');
+    assert.match(body.requestId, /^[\da-f-]{36}$/);
+    assert.deepEqual(log.mock.calls[0]?.arguments[1], { requestId: body.requestId, error: failure });
+
+    await client.connect(new StreamableHTTPClientTransport(new URL(url + '/mcp'), { requestInit: { headers } }));
+    const result = await client.callTool({ name: 'describe_ontology', arguments: {} });
+    assert.equal(result.isError, true);
+    const content = (result.content as { text: string }[])[0]!.text;
+    const requestId = /^Internal server error \(request ID: ([\da-f-]{36})\)$/.exec(content)?.[1];
+    assert.ok(requestId);
+    assert.deepEqual(log.mock.calls[1]?.arguments[1], { requestId, error: failure });
+
+    t.mock.method(gateway.tasks, 'get', async () => { throw failure; });
+    const rpc = await fetch(url + '/a2a', {
+      method: 'POST', headers: { ...headers, 'A2A-Version': '1.0' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'GetTask',
+        params: { id: '12e3a93f-5eb8-44aa-be21-ac53824d7e76' } }),
+    });
+    const rpcBody = await rpc.json() as { error: { code: number; message: string } };
+    assert.equal(rpcBody.error.code, -32603);
+    const rpcId = /^Internal server error \(request ID: ([\da-f-]{36})\)$/.exec(rpcBody.error.message)?.[1];
+    assert.ok(rpcId);
+    assert.deepEqual(log.mock.calls[2]?.arguments[1], { requestId: rpcId, error: failure });
+  } finally {
+    await client.close();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await f.close();
+  }
+});

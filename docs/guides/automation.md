@@ -113,8 +113,7 @@ Grok 可用 `list_learned_hotel_workflows` 查找当前账号的已保存行程�
 复用按新日期重新查询同一家酒店、路线和日历，生成新 Scenario 和审批请求。
 原日期、报价、行程对象、Scenario 及审批均不会被带入下一次运行。
 流程保留学习时的定义摘要。发布变更后，使用已保存步骤和已声明的依赖核对原发布与当前发布的 Action、Function、来源和对象契约。v8 流程可以在增加过程日志的 v9 中复用。相关契约变更或原发布无法核实的流程会从复用列表隐藏，尝试按原 ID 重放会在调用来源前停止。重放执行及审核使用当前发布，并复核原身份、酒店和路线证据。[Palantir Workflow Lineage](https://www.palantir.com/docs/foundry/workflow-lineage/refactor-and-understand-workflows)
-学习到的酒店 Workflow 使用任务入口运行，普通 Action Workflow 和对象规则
-继续使用各自原有的接口。
+酒店能力模块负责路线证据、日期绑定和模拟审批。普通 Action Workflow 和酒店 Workflow 共用按 owner 与本体限定的流程记录存储。酒店复用通过任务入口运行，调用同一套 Action、Function、权限和 Scenario 工具。
 
 学习到的正文保存实际成功的工具顺序，并把对象引用映射到前序步骤的返回值。
 酒店选择按原生酒店 ID 从新结果中定位，路线地点则重新读取并核对原地点身份。

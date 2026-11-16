@@ -8,7 +8,7 @@ import { locationFunctions, taskLocationValueType } from './location.js';
 import { luckinDefinition as luckin } from './luckin.js';
 import { deliveryFunctions } from './delivery.js';
 import {localEmbeddingDefinition} from './embedding-definition.js';
-import {applicationDefinition as applications} from './applications.js';
+import { applicationDefinition as applications, geometryUploadCriterion } from './applications.js';
 import {scenarioObjectType} from './scenario-definition.js';
 import { rideWatchDefinition, rideWatchType } from './ride-watch.js';
 import { addProcessLogs } from './process-definition.js';
@@ -24,6 +24,7 @@ import { dianpingResearchFunctions } from './dianping.js';
 import { diningReservations, diningReservationType } from './dining-reservations.js';
 import { diningActivityInputSchema, jsonSchema, recommendScheduleSchema, scheduleRecommendationSchema, stageScheduleSchema } from '../capabilities/scheduling/contracts.js';
 import { objectRefSchema } from './schema.js';
+import { businessAgentProfiles } from './agent-profiles.js';
 
 const ride = JSON.parse(readFileSync(new URL('./definitions/ride.json', import.meta.url), 'utf8')) as OntologyDocument;
 const scheduling = JSON.parse(readFileSync(new URL('./definitions/scheduling.json', import.meta.url), 'utf8')) as OntologyDocument;
@@ -36,7 +37,8 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '31',
+  id: ride.id, version: '32',
+  agentProfiles: businessAgentProfiles,
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...journey.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
   actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes, ...journey.actionTypes, ...flight.actionTypes, ...payments.actionTypes,...luckin.actionTypes,...applications.actionTypes,...documents.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
@@ -100,7 +102,7 @@ businessDefinition.typeGroups=[
 for(const group of businessDefinition.typeGroups)for(const name of group.objectTypes){const type=businessDefinition.objectTypes.find(type=>type.apiName===name)!;type.groups=[group.apiName];type.status='active';}
 
 for(const fn of businessDefinition.functionTypes){
-  if(fn.apiName==='embedTextLocal'){fn.dependencies={};continue;}
+  if(fn.apiName==='embedTextLocal' || fn.apiName===geometryUploadCriterion){fn.dependencies={};continue;}
   if(documents.functionTypes.includes(fn)||fliggy.functionTypes.includes(fn)||fliggyHotelDefinition.functionTypes.includes(fn)||fliggyFlightBookingDefinition.functionTypes.includes(fn)||diningResearchFunctions.includes(fn)||dianpingResearchFunctions.includes(fn)||diningReservations.functionTypes.includes(fn)||fn===diningActivityFunction)continue;
   if(fn === flightPositionFunction || journey.functionTypes.includes(fn) || flight.functionTypes.includes(fn) || payments.functionTypes.includes(fn) || deliveryFunctions.includes(fn) || locationFunctions.includes(fn) || mapFunctions.includes(fn) || luckin.functionTypes.includes(fn))continue;
   if(ride.functionTypes.some(item=>item.apiName===fn.apiName)){

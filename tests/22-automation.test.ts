@@ -13,7 +13,7 @@ import { OntologyClient } from '../packages/sdk/client.js';
 import type { AgentDriver } from '../packages/runtime/agent.js';
 import { PARequests } from '../packages/runtime/pa.js';
 import { publicTask, type Task } from '../packages/runtime/tasks.js';
-import { HotelWorkflows } from '../packages/runtime/hotel-workflows.js';
+import { HotelWorkflows } from '../packages/capabilities/services/hotel-workflows.js';
 import { calendarAnswer, planningInput } from './planning-fixture.js';
 import { serviceProvider } from './service-fixture.js';
 import { document, fixture, principal } from './fixture.js';
@@ -593,6 +593,20 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   addedFunctions.add('stageScheduleRecommendation');
   const v9Definition = structuredClone(document);
   v9Definition.version = '9';
+  delete v9Definition.agentProfiles;
+  for (const resource of [...v9Definition.objectTypes, ...v9Definition.functionTypes, ...v9Definition.actionTypes]) {
+    if (resource.typeClasses?.some(tag => tag.kind === 'agent-capability')) {
+      const tags = resource.typeClasses.filter(tag => tag.kind !== 'agent-capability');
+      if (tags.length) resource.typeClasses = tags;
+      else delete resource.typeClasses;
+    }
+  }
+  v9Definition.functionTypes = v9Definition.functionTypes.filter(fn => fn.apiName !== 'verifyGeometryUpload');
+  const geometry = v9Definition.actionTypes.find(action => action.apiName === 'RegisterGeometry')!;
+  delete geometry.rules;
+  delete geometry.result;
+  geometry.submissionCriteria = [];
+  geometry.function = 'registerGeometry';
   v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type => type.apiName !== 'RideInquiryWithPlaceClues' &&
     !fliggyServicesDefinition.interfaceTypes.some(item => item.apiName === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;

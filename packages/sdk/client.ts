@@ -1,11 +1,13 @@
 import type { ObjectData, ObjectRef, OntologyDocument } from '../ontology/schema.js';
-import type { ActionInput } from '../ontology/invocation.js';
+import type { ActionBatchInput, ActionCall, ActionInput } from '../ontology/invocation.js';
+import type { ActionLogInput, ActionLogEntry } from '../runtime/action-log.js';
 import type { Query } from '../runtime/objects.js';
 import type { ScenarioComparisonInput, ScenarioComparison, ScenarioTrialInput, ScenarioTrial } from '../runtime/scenario-evaluation.js';
 
 export type { ScenarioComparisonInput, ScenarioComparison, ScenarioTrialInput, ScenarioTrial };
 
 export type { ActionInput } from '../ontology/invocation.js';
+export type { ActionBatchInput, ActionCall, ActionLogInput, ActionLogEntry };
 
 export class OntologyHttpError extends Error {
   constructor(
@@ -133,6 +135,15 @@ export class OntologyClient {
   apply(input: ActionInput, options: { scenarioId?: string; signal?: AbortSignal } = {}): Promise<ObjectRef> {
     const { signal, ...scope } = options;
     return this.request('ontology/actions', { ...input, ontology: this.ontology, ...scope }, signal);
+  }
+  validateAction(input: ActionCall, signal?: AbortSignal) {
+    return this.service<{ valid: true; phase: 'submission'; action: string; release: string }>('validate_action', input, signal);
+  }
+  applyActionBatch(input: ActionBatchInput, signal?: AbortSignal) {
+    return this.service<{ release: string; items: { requestId: string; result: ObjectRef }[] }>('apply_action_batch', input, signal);
+  }
+  listActionLog(input: ActionLogInput = {}, signal?: AbortSignal) {
+    return this.service<QueryResult<ActionLogEntry> & { release: string }>('list_action_log', input, signal);
   }
   service<T>(operation: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     return this.request(

@@ -5,7 +5,7 @@ import { DerivedProperties } from './derived.js';
 import { compareValues, matchesPredicate, nestedValue, orderSchema, predicateFields, predicateSchema, regexMatches, propertyPathSchema } from './query-filter.js';
 import { recordObjectEdit, resolveSourceEdit } from './edit-history.js';
 import { z } from 'zod';
-import { Conflict, NotFound, digest, type ExecutionActor } from '../core/identity.js';
+import { Conflict, NotFound, PermissionDenied, digest, type ExecutionActor } from '../core/identity.js';
 import { PublishedOntology } from './metadata.js';
 import { Access } from './access.js';
 import { objectRefSchema, type ObjectData, type ObjectRef, type LinkData } from '../ontology/schema.js';
@@ -15,16 +15,23 @@ import { Database, type Sql } from './database.js';
 import { checkScenario, lockEdits, viewTables, stageObject, stageLink, type ScenarioMutation } from './scenario-store.js';
 import { isNumeric, storedPredicate, supportsStoredOrder, supportsStoredPredicate, type Metric } from './stored-query.js';
 
+const instant = z.iso.datetime({ offset: true });
+const intervalOverlapSchema = z.strictObject({
+  start: propertyPathSchema, end: propertyPathSchema,
+  from: instant, until: instant, includeUnknown: z.boolean().optional(),
+}).refine(input => Date.parse(input.from) < Date.parse(input.until), 'Expected a nonempty time window');
+
 export const querySchema = z.strictObject({
   type: z.string(), where: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).default({}),
-  filter: predicateSchema.optional(), orderBy: orderSchema.optional(),
+  filter: predicateSchema.optional(), orderBy: orderSchema.optional(), intervalOverlap: intervalOverlapSchema.optional(),
   select: z.array(propertyPathSchema).max(30).optional(), limit: z.number().int().min(1).max(100).default(50), cursor: z.string().optional(),
   from: z.strictObject({ object: objectRefSchema, link: z.string(), as: z.string().optional() }).optional(),
 });
 export type Query = z.input<typeof querySchema>;
-export function queryFields(query: Pick<z.output<typeof querySchema>, 'where' | 'filter' | 'orderBy' | 'select'>) {
+export function queryFields(query: Pick<z.output<typeof querySchema>, 'where' | 'filter' | 'orderBy' | 'select' | 'intervalOverlap'>) {
   return [...new Set([...Object.keys(query.where ?? {}), ...predicateFields(query.filter),
-    ...(query.orderBy ?? []).map(item => item.property), ...(query.select ?? [])])];
+    ...(query.orderBy ?? []).map(item => item.property), ...(query.select ?? []),
+    ...(query.intervalOverlap ? [query.intervalOverlap.start, query.intervalOverlap.end] : [])])];
 }
 export class Objects {
   constructor(readonly db: Database, readonly model: PublishedOntology, readonly access: Access, readonly client: Sql = db.pool,
@@ -197,7 +204,7 @@ export class Objects {
       const all: ObjectData[] = [];
       let cursor: string | undefined;
       do {
-        const page = await this.queryStored({ type: args.type, from: args.from, limit: 100, cursor });
+        const page = await this.queryStored({ type: args.type, from: args.from, intervalOverlap: args.intervalOverlap, limit: 100, cursor });
         for (const item of page.items) {
           all.push(await project(args.type === item.ref.type ? item : await this.readStored(item.ref)));
           if (all.length > 10000) throw new Conflict('Extended query exceeds 10000 complete candidate objects');
@@ -272,6 +279,31 @@ export class Objects {
         AND l.${target}_type=o.type AND l.${target}_id=o.id)`);
     }
     const property = this.storedFields(types, values, args.type);
+    // Add an indexable necessary condition only for readable, unmarked scalar cells.
+    if (types.length === 1 && types[0] === args.type && !processLogTarget(this.model, args.type)
+      && !this.access.hasObjectPolicy(this.model, args.type)) {
+      const exact = Object.entries(args.where).filter(([field, value]) => value !== null && !field.includes('.')
+        && this.access.canSeeModelData(this.model.object(args.type).properties[field]?.classification)
+        && this.access.property(this.model, args.type, field));
+      if (exact.length) clauses.push(`o.properties @> ${bind(JSON.stringify(Object.fromEntries(exact)))}::jsonb`);
+    }
+    if (args.intervalOverlap) {
+      const window = args.intervalOverlap;
+      const fields = [window.start, window.end];
+      if (fields.some(field => this.model.propertyPath(args.type, field).format !== 'date-time')
+        || !this.mayUseStoredFields(args.type, types, fields))
+        throw new Conflict('Time windows require stored date-time properties');
+      const timestamp = (field: string) => {
+        const raw = `(${property(field)}#>>'{}')`;
+        // Date.parse uses millisecond precision, including on offsets in legacy values.
+        const millis = `regexp_replace(${raw}, '([.][0-9]{3})[0-9]+', '\\1')`;
+        return `(CASE WHEN pg_input_is_valid(${millis},'timestamptz') THEN ${millis}::timestamptz END)`;
+      };
+      const start = timestamp(window.start), end = timestamp(window.end);
+      const overlap = `(${start}<${bind(new Date(window.until).toISOString())}::timestamptz AND ${end}>${bind(new Date(window.from).toISOString())}::timestamptz)`;
+      const known = `${start}<${end}`;
+      clauses.push(window.includeUnknown ? `((${known}) IS NOT TRUE OR ${overlap})` : `(${known} AND ${overlap})`);
+    }
     for (const [field, value] of Object.entries(args.where)) clauses.push(`${property(field)}=${bind(JSON.stringify(value))}::jsonb`);
     return { values, bind, clauses, property, tables, types };
   }
@@ -315,7 +347,10 @@ export class Objects {
     return { objects: records.map(record => this.visible(record)), ordered };
   }
   async queryStored(input: Query):Promise<{items:ObjectData[];cursor?:string}> {
-    if(input.type===scenarioMetadataType)return scenarioMetadataQuery(this,input);
+    if (input.type === scenarioMetadataType) {
+      if (input.intervalOverlap) throw new Conflict('Time windows require stored date-time properties');
+      return scenarioMetadataQuery(this, input);
+    }
     const args = querySchema.parse(input);
     const selection = await this.storedSelection(args);
     if (!selection) return { items: [], cursor: undefined };
@@ -519,8 +554,7 @@ export class Objects {
     const tables = viewTables(this.db, this.model, this.owner, values,[ref.type,nav.target]);
     const result = await this.db.readQuery(`${tables.prefix}SELECT o.type,o.id,o.revision,o.properties FROM ${tables.links} l
       JOIN ${tables.objects} o ON o.projection=l.projection AND o.owner=l.owner AND o.type=l.${to}_type AND o.id=l.${to}_id
-      WHERE l.owner=$1 AND l.type=$2 AND l.${from}_type=$3 AND l.${from}_id=$4 AND l.projection=$5 AND ${policy} ORDER BY o.id COLLATE "C" LIMIT 101`, values, this.client);
-    if (result.rows.length > 100) throw new Error('Relationship exceeds the complete read limit');
+      WHERE l.owner=$1 AND l.type=$2 AND l.${from}_type=$3 AND l.${from}_id=$4 AND l.projection=$5 AND ${policy} ORDER BY o.id COLLATE "C"`, values, this.client);
     await this.linkedSecurityReads(result.rows.map(row=>this.row(row)));
     if(nav.target===scenarioMetadataType){
       const items:ObjectData[]=[];
@@ -636,7 +670,7 @@ export class Objects {
     await this.prepareWrite(); this.writeType(ref.type);
     const old = await this.stored(ref);
     this.access.readRow(this.model,ref.type,old.properties);
-    for (const field of Object.keys(old.properties)) if (!this.access.cell(this.model,ref.type,field,old.properties)) throw new Error('Cannot delete an object with hidden properties');
+    for (const field of Object.keys(old.properties)) if (!this.access.cell(this.model,ref.type,field,old.properties)) throw new PermissionDenied('Cannot delete an object with hidden properties');
     if (old.revision !== revision) throw new Conflict('Object revision changed');
     for (const link of this.model.links.values()) {
       if (processLogTarget(this.model,link.from.type) || processLogTarget(this.model,link.to.type)) continue;

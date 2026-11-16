@@ -105,7 +105,7 @@ export class Metadata {
     await access.refresh(); access.require(model.document.id, 'manage_definition', model.document.id);
     this.checkBindings(model, bindings);
     const activate = async (client: Sql) => {
-      await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['publication:' + model.document.id], client);
+      await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [this.db.lockKey('publication', model.document.id)], client);
       const current = (await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1 FOR UPDATE`, [model.document.id], client)).rows[0]?.release;
       const prepared = (await this.db.query(`SELECT * FROM ${this.db.schema}.releases WHERE digest=$1`, [release], client)).rows[0]!;
       if (current === release) return;
@@ -141,7 +141,7 @@ export class Metadata {
     this.checkBindings(candidate, bindings);
     await access.refresh(); access.require(candidate.document.id, 'edit_definition', permissionTarget ?? candidate.document.id);
     const synchronize = async (client: Sql) => {
-      await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['publication:' + candidate.document.id], client);
+      await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [this.db.lockKey('publication', candidate.document.id)], client);
       const stored = (await this.db.query(`SELECT * FROM ${this.db.schema}.releases WHERE digest=$1 FOR UPDATE`, [release], client)).rows[0]!;
       const transform = stored.transform_id ? this.transforms.get(stored.transform_id) : undefined;
       if (stored.transform_id && !transform) throw new Conflict('Candidate transformation is unavailable; prepare it again with the original migration implementation');
@@ -196,7 +196,7 @@ export class Metadata {
     if (model.runtimeId !== this.db.runtimeId || digest(model.bindings) !== digest(bindings.describe(model))) throw new Conflict('The publication does not match this runtime implementation');
   }
   async active(id = 'Eigos', client?: Sql, lock = false): Promise<PublishedOntology> {
-    if (lock) await this.db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', ['publication:' + id], client);
+    if (lock) await this.db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [this.db.lockKey('publication', id)], client);
     const result = await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [id], client);
     if (!result.rows[0]) throw new Error('Publish the ontology before starting the runtime');
     return this.get(String(result.rows[0].release), client);

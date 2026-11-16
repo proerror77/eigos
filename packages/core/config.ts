@@ -36,6 +36,7 @@ export const configSchema = z.object({
   EIGOS_FR24_CONNECTION_FILE: z.string().optional(), EIGOS_FR24_MCP_ENTRYPOINT: z.string().optional(),
   EIGOS_STRIPE_SANDBOX_CONNECTION_FILE: z.string().optional(),
   EIGOS_HARNESS_BIN: z.string().optional(), EIGOS_HARNESS_CREDENTIAL_FILE: z.string().optional(),
+  EIGOS_AGENT_SANDBOX_ENABLED: z.enum(['true', 'false']).optional(),
   EIGOS_HARNESS_MODEL: z.string().default('gpt-6.1-sol'), EIGOS_HARNESS_REASONING_EFFORT: z.string().default('low'),
 });
 export type Config = z.infer<typeof configSchema>;
@@ -44,6 +45,8 @@ export function readConfig(env = process.env): Config {
   if (config.EIGOS_AUTH_MODE === 'development') {
     if (!config.EIGOS_DEV_TOKEN || env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost'].includes(config.HOST)) throw new Error('Development authentication requires an explicit loopback token');
   } else if (!config.OAUTH_ISSUER || !config.OAUTH_AUDIENCE || !config.OAUTH_JWKS_URL) throw new Error('Configure JWT issuer, audience and verification keys');
+  if (config.EIGOS_AGENT_SANDBOX_ENABLED === 'true' && config.EIGOS_AUTH_MODE !== 'development')
+    throw new Error('Agent sandbox capabilities require development authentication');
   return config;
 }
 const connectionSchema = z.strictObject({ owner: z.string().min(1), active: z.boolean(), expiresAt: z.iso.datetime().nullable().optional(), binding: didiBindingSchema, ordersEnabled:z.boolean().default(false) });

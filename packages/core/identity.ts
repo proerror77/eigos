@@ -18,9 +18,11 @@ export type ExecutionActor = {
   id: string;
 };
 export function requireScope(principal: Principal, scope: string): void {
-  if (!principal.owner || !principal.scopes.includes(scope)) throw new Error(`Permission required: ${scope}`);
+  if (!principal.owner || !principal.scopes.includes(scope)) throw new PermissionDenied(`Permission required: ${scope}`);
 }
 
+export class InvalidInput extends Error {}
+export class PermissionDenied extends Error {}
 export class Conflict extends Error {}
 export class NotFound extends Error {}
 export class SourceReadFailure extends Error {}

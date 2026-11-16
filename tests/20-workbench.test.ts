@@ -5,6 +5,7 @@ import {createApp} from '../apps/gateway/app.js';
 import {readConfig} from '../packages/core/config.js';
 import {Applications} from '../packages/runtime/applications.js';
 import {Objects} from '../packages/runtime/objects.js';
+import {Scenarios} from '../packages/runtime/scenarios.js';
 import {setGrants,memberGrants,Access} from '../packages/runtime/access.js';
 import {OntologyClient} from '../packages/sdk/client.js';
 import { readFile } from 'node:fs/promises';
@@ -226,6 +227,20 @@ test('content-addressed registrations survive publication and can be recreated a
     const original=(await f.db.query(`SELECT request_id FROM ${f.db.schema}.actions WHERE owner=$1 AND action='RegisterGeometry' AND result->>'id'=$2`,[principal.owner,ref.id])).rows[0]!.request_id as string;
     await f.capabilities.actions.undo(f.access,f.model,original,'undo-upload');
     await assert.rejects(app.download(f.access,f.model,ref.id),/unavailable/);
+
+    const action = f.model.action('RegisterGeometry');
+    assert.equal(action.rules?.[0]?.op, 'createObject');
+    assert.equal(action.submissionCriteria[0]?.function, 'verifyGeometryUpload');
+    const scenarios = new Scenarios(f.db);
+    const scene = await scenarios.create(f.access, f.model, { requestId: 'model-scene', name: 'Review geometry' });
+    const view = await scenarios.view(f.access, f.model, scene.id);
+    const params = { id: ref.id, contentHash: ref.id, byteLength: modelFile.length, ...metadata };
+    await assert.rejects(f.capabilities.actions.apply(f.access, view, 'RegisterGeometry',
+      { ...params, byteLength: 1 }, 'wrong-geometry-size'), /Uploaded model/);
+    assert.deepEqual(await f.capabilities.actions.apply(f.access, view, 'RegisterGeometry', params, 'review-geometry'), ref);
+    assert.equal((await new Objects(f.db, view, f.access).read(ref)).properties.contentHash, ref.id);
+    await assert.rejects(app.download(f.access, f.model, ref.id), /unavailable/);
+
     assert.deepEqual(await app.upload(await Access.load(f.db,principal),f.model,f.capabilities.actions,modelFile,metadata),ref);
     assert.deepEqual((await app.download(await Access.load(f.db,principal),f.model,ref.id)).bytes,modelFile);
     assert.deepEqual(await app.upload(await Access.load(f.db,principal),f.model,f.capabilities.actions,modelFile,metadata),ref);

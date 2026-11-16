@@ -26,7 +26,7 @@ const observationSchema = z.strictObject({
   offset: z.number().int().nonnegative(),
   clearance: classificationSchema.optional(),
   fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
-  refs: z.array(z.strictObject({ ref: objectRefSchema, revision: z.number().int().nonnegative() })).max(100),
+  refs: z.array(z.strictObject({ ref: objectRefSchema, revision: z.number().int().nonnegative() })).max(10000),
   savedSets: z.array(z.uuid()).optional(),
 });
 const maximumObservations = 3000;

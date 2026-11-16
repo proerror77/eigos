@@ -1,9 +1,10 @@
 import { AgentCard, Task as A2ATask, type SendMessageRequest, type GetTaskRequest, type CancelTaskRequest, type ListTasksRequest, type StreamResponse } from '@a2a-js/sdk';
 import type { A2ARequestHandler, ServerCallContext, User } from '@a2a-js/sdk/server';
-import { UnsupportedOperationError, PushNotificationNotSupportedError, ExtendedAgentCardNotConfiguredError, RequestMalformedError } from '@a2a-js/sdk/errors';
+import { UnsupportedOperationError, PushNotificationNotSupportedError, ExtendedAgentCardNotConfiguredError, RequestMalformedError, TaskNotFoundError, TaskNotCancelableError, A2AError } from '@a2a-js/sdk/errors';
 import type { Principal } from '../../packages/core/identity.js';
 import { PARequests } from '../../packages/runtime/pa.js';
 import { Tasks, type Task } from '../../packages/runtime/tasks.js';
+import { publicError } from './public-error.js';
 
 export class AgentUser implements User {
   readonly isAuthenticated = true;
@@ -27,23 +28,41 @@ export class A2A implements A2ARequestHandler {
     return context.user.principal;
   }
   async getAgentCard() { return this.card; }
-  async sendMessage(params: SendMessageRequest, context: ServerCallContext) {
-    const message = params.message;
-    if (!message?.messageId) throw new RequestMalformedError('Message ID is required');
-    const text = message.parts.flatMap(part => part.content?.$case === 'text' ? [part.content.value] : []).join('\n');
-    const dataPart = message.parts.find(part => part.content?.$case === 'data')?.content;
-    const data = dataPart?.$case === 'data' ? dataPart.value as Record<string, unknown> : undefined;
-    if (message.taskId) {
-      if (!data?.paResponse) throw new RequestMalformedError('Continuation requires the PA response for the original task');
-      return taskView(await new PARequests(this.tasks).respond(this.principal(context),message.taskId,data.paResponse,message.contextId || undefined));
+  private async task(operation: () => Promise<Task>, cancel = false) {
+    try {
+      return taskView(await operation());
+    } catch (error) {
+      if (error instanceof A2AError) throw error;
+      const { status, message, requestId } = publicError(error);
+      if (status === 404) throw new TaskNotFoundError(message);
+      if (status === 409 && cancel) throw new TaskNotCancelableError(message);
+      if (status !== 500) throw new RequestMalformedError(message);
+      throw new Error(`${message} (request ID: ${requestId})`);
     }
-    if (data?.paResponse) throw new RequestMalformedError('PA response requires the original taskId');
-    const task = await this.tasks.submit(this.principal(context), { requestId: message.messageId, message: text || data?.message, route: data?.route, classification: data?.classification,
-      conversationId: message.contextId || undefined }, { assignConversation: true });
-    return taskView(task);
   }
-  async getTask(params: GetTaskRequest, context: ServerCallContext) { return taskView(await this.tasks.get(this.principal(context), params.id)); }
-  async cancelTask(params: CancelTaskRequest, context: ServerCallContext) { return taskView(await this.tasks.cancel(this.principal(context), params.id)); }
+  async sendMessage(params: SendMessageRequest, context: ServerCallContext) {
+    return this.task(async () => {
+      const message = params.message;
+      if (!message?.messageId) throw new RequestMalformedError('Message ID is required');
+      const text = message.parts.flatMap(part => part.content?.$case === 'text' ? [part.content.value] : []).join('\n');
+      const dataPart = message.parts.find(part => part.content?.$case === 'data')?.content;
+      const data = dataPart?.$case === 'data' ? dataPart.value as Record<string, unknown> : undefined;
+      if (message.taskId) {
+        if (!data?.paResponse) throw new RequestMalformedError('Continuation requires the PA response for the original task');
+        return new PARequests(this.tasks).respond(this.principal(context), message.taskId, data.paResponse, message.contextId || undefined);
+      }
+      if (data?.paResponse) throw new RequestMalformedError('PA response requires the original taskId');
+      return this.tasks.submit(this.principal(context), { requestId: message.messageId, message: text || data?.message,
+        route: data?.route, classification: data?.classification, conversationId: message.contextId || undefined },
+        { assignConversation: true });
+    });
+  }
+  async getTask(params: GetTaskRequest, context: ServerCallContext) {
+    return this.task(() => this.tasks.get(this.principal(context), params.id));
+  }
+  async cancelTask(params: CancelTaskRequest, context: ServerCallContext) {
+    return this.task(() => this.tasks.cancel(this.principal(context), params.id), true);
+  }
   async listTasks(_params: ListTasksRequest): Promise<never> { throw new UnsupportedOperationError('Use GetTask with the submitted task ID'); }
   async getAuthenticatedExtendedAgentCard(): Promise<never> { throw new ExtendedAgentCardNotConfiguredError(); }
   async *sendMessageStream(): AsyncGenerator<StreamResponse, void, undefined> { throw new UnsupportedOperationError('Streaming is unavailable'); }

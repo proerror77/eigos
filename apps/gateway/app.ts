@@ -8,7 +8,7 @@ import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
 import { jsonRpcHandler } from '@a2a-js/sdk/server/express';
 import { AgentCard } from '@a2a-js/sdk';
 import { z } from 'zod';
-import { Conflict, NotFound, requireScope, type Principal } from '../../packages/core/identity.js';
+import { Conflict, NotFound, PermissionDenied, requireScope, type Principal } from '../../packages/core/identity.js';
 import type { Config } from '../../packages/core/config.js';
 import { actionRequestSchema as actionInput, functionRequestSchema as functionInput, completeWithActionRequestSchema } from '../../packages/ontology/invocation.js';
 import { Access } from '../../packages/runtime/access.js';
@@ -17,7 +17,7 @@ import { Metadata } from '../../packages/runtime/metadata.js';
 import { Objects, querySchema } from '../../packages/runtime/objects.js';
 import { Scenarios, createScenarioSchema } from '../../packages/runtime/scenarios.js';
 import { PARequests, paResponseSchema,paInboxSchema } from '../../packages/runtime/pa.js';
-import { HotelWorkflows, hotelApprovalSchema } from '../../packages/runtime/hotel-workflows.js';
+import { HotelWorkflows, hotelApprovalSchema } from '../../packages/capabilities/services/hotel-workflows.js';
 import { Tasks, submitSchema, publicTask, taskPlaceAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema } from '../../packages/runtime/tasks.js';
 import { createCapabilities } from '../../packages/capabilities/index.js';
 import { configuredServices } from '../../packages/capabilities/services/sources.js';
@@ -25,6 +25,7 @@ import { configuredStripeSandbox } from '../../packages/capabilities/payments/st
 import type { SourceResolver } from '../../packages/capabilities/didi/functions.js';
 import { verifier, type VerifyToken } from './auth.js';
 import { A2A, AgentUser, agentCard } from './a2a.js';
+import { publicError } from './public-error.js';
 
 const queryInput = z.strictObject({ ontology:z.string().optional(), taskId: z.uuid().optional(), scenarioId: z.uuid().optional(), query: querySchema });
 const scenarioCreateInput = createScenarioSchema.safeExtend({ ontology: z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(80).optional() });
@@ -100,7 +101,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   const query = async (p: Principal, raw: unknown) => {
     requireScope(p, 'ontology:read'); const input = queryInput.parse(raw);
     const access = await Access.load(db, p), result = await new Objects(db, await modelFor(p, input.taskId, input.scenarioId,undefined,input.ontology), access).query(input.query);
-    if(!await access.canReturn(access.dataRequirements()))throw new Error('Result permissions changed');
+    if(!await access.canReturn(access.dataRequirements()))throw new PermissionDenied('Result permissions changed');
     return result;
   };
   const evaluate = async (p: Principal, raw: unknown) => {
@@ -112,7 +113,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     if (!liveTravelReminder || !p.scopes.includes('tasks:read')) requireScope(p, 'ontology:read');
     const model = await modelFor(p, input.taskId, input.scenarioId,undefined,input.ontology), access = await Access.load(db, p);
     const result = await capabilities.functions.invoke(model, input.function, input.input, { principal: p, objects: new Objects(db, model, access), signal: AbortSignal.timeout(30000) });
-    if(!await access.canReturn(access.dataRequirements()))throw new Error('Result permissions changed');
+    if(!await access.canReturn(access.dataRequirements()))throw new PermissionDenied('Result permissions changed');
     return result;
   };
   const apply = async (p: Principal, raw: unknown) => {
@@ -129,7 +130,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const result = await capabilities.actions.complete(
       access, model, selected, input.requestId, input.read, undefined, AbortSignal.timeout(30000),
     );
-    if (!await access.canReturn(access.dataRequirements())) throw new Error('Result permissions changed');
+    if (!await access.canReturn(access.dataRequirements())) throw new PermissionDenied('Result permissions changed');
     return result;
   };
   const scenarioCreate = async (p: Principal, raw: unknown) => { requireScope(p,'ontology:write'); const {ontology,...input}=scenarioCreateInput.parse(raw);return scenarios.create(await Access.load(db,p),await metadata.active(ontology),input); };
@@ -149,7 +150,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const p=principal(req);requireScope(p,'ontology:read');
     const model=await metadata.active(typeof req.query.ontology==='string'?req.query.ontology:'Eigos'),access=await Access.load(db,p);
     const file=await new Applications(db).download(access,model,String(req.params.id));
-    if(!await access.canReturn(access.dataRequirements()))throw new Error('Model permissions changed');
+    if(!await access.canReturn(access.dataRequirements()))throw new PermissionDenied('Model permissions changed');
     res.setHeader('Cache-Control','no-store');res.type('application/octet-stream').send(file.bytes);
   });
   app.post('/tasks/:id/pa-response', async (req,res)=>res.json(publicTask(await pa.respond(principal(req),String(req.params.id),req.body))));
@@ -178,9 +179,26 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const p = principal(req), server = new McpServer({ name: 'eigos', version: '0.2.0' }, { instructions: paTravelInstructions });
     const response = async (operation: () => Promise<unknown>) => {
       try { const result = await operation(); return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] }; }
-      catch (error) { return { isError: true, content: [{ type: 'text' as const, text: error instanceof Error ? error.message : 'Request failed' }] }; }
+      catch (error) {
+        const { status, message, requestId } = publicError(error);
+        return { isError: true,
+          content: [{ type: 'text' as const, text: requestId ? `${message} (request ID: ${requestId})` : message }],
+          structuredContent: { status, error: message, ...(requestId ? { requestId } : {}) },
+        };
+      }
     };
-    for(const [name,service] of services) server.registerTool('ontology_'+name,{description:service.description,inputSchema:(service.schema as z.ZodObject).safeExtend({_ontology:z.string().optional()})},input=>response(()=>{const {_ontology,...args}=input;const selected=_ontology?ontologyServices(db,metadata,capabilities,capabilities.functions,capabilities.effects,capabilities.actions,z.string().parse(_ontology)):services;return selected.get(name)!.invoke(p,args);}));
+    for (const [name, service] of services) {
+      server.registerTool('ontology_' + name, {
+        description: service.description, inputSchema: (service.schema as z.ZodObject).safeExtend({ _ontology: z.string().optional() }),
+      }, input => response(() => {
+        const { _ontology, ...args } = input;
+        const selected = _ontology ? ontologyServices(db, metadata, capabilities, capabilities.functions,
+          capabilities.effects, capabilities.actions, z.string().parse(_ontology)) : services;
+        const operation = selected.get(name);
+        if (!operation) throw new NotFound('Ontology service is unavailable');
+        return operation.invoke(p, args);
+      }));
+    }
     server.registerTool('submit_task', { description: 'Submit a natural-language goal. To batch rapid messages, pass the same conversationId from your chat host and a distinct, stable requestId per message. Set learnHotelWorkflow when asked to learn and save a hotel itinerary, or replayHotelWorkflow with a saved ID and new date when asked to reuse one. Forward the goal without proposing tool steps. PA information requests resume on the original task.', inputSchema: submitSchema }, input => response(async () => publicTask(await tasks.submit(p, input))));
     server.registerTool('list_learned_hotel_workflows', {
       description: 'Find previously saved hotel itinerary workflows for the signed-in owner. To reuse, submit a task with the workflow ID and the new check-in date. Every proposal needs separate approval in EIGOS.',
@@ -216,9 +234,10 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     await transport.handleRequest(req, res, req.body);
   });
   app.use('/a2a', jsonRpcHandler({ requestHandler: new A2A(tasks, card), userBuilder: async req => new AgentUser(principal(req)) }));
-  app.use((error: unknown, _req: Request, res: express.Response, _next: express.NextFunction) => {
-    const status = error instanceof NotFound ? 404 : error instanceof Conflict ? 409 : error instanceof z.ZodError ? 400 : 403;
-    res.status(status).json({ error: error instanceof Error ? error.message : 'Request failed' });
+  app.use((error: unknown, _req: Request, res: express.Response, next: express.NextFunction) => {
+    if (res.headersSent) return next(error);
+    const { status, message, requestId } = publicError(error);
+    res.status(status).json({ error: message, ...(requestId ? { requestId } : {}) });
   });
   return { app, tasks, metadata, capabilities };
 }
