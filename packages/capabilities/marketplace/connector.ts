@@ -14,8 +14,8 @@ const identifier = z.union([z.string().regex(/^[\w-]{1,128}$/), z.number().int()
 const taobaoRow = z.object({
   item_id: identifier.optional(),
   item_basic_info: z.object({ title: shortText, seller_id: identifier.nullish(), shop_title: shortText.nullish() }),
-  price_promotion_info: z.object({ zk_final_price: z.unknown() }).nullish(),
-  publish_info: z.object({ click_url: z.unknown() }).nullish(),
+  price_promotion_info: z.object({ zk_final_price: z.unknown().optional().optional() }).nullish(),
+  publish_info: z.object({ click_url: z.unknown().optional() }).nullish(),
 });
 const taobaoResult = z.object({
   total_results: z.number().int().nonnegative().optional(),
@@ -25,8 +25,8 @@ const jdRow = z.object({
   skuId: identifier.pipe(z.string().regex(/^[1-9]\d{0,24}$/)),
   skuName: shortText,
   shopInfo: z.object({ shopId: identifier.nullish(), shopName: shortText.nullish() }).nullish(),
-  priceInfo: z.object({ price: z.unknown() }).nullish(),
-  materialUrl: z.unknown(),
+  priceInfo: z.object({ price: z.unknown().optional() }).nullish(),
+  materialUrl: z.unknown().optional(),
 });
 const jdEnvelope = z.object({ code: z.union([z.literal('0'), z.literal(0)]), queryResult: z.string().min(1) });
 const jdResult = z.object({

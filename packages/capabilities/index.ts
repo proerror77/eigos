@@ -59,7 +59,7 @@ export function createCapabilities(
     ...diningReservationFunctions(db, connections.diningWeb, connections.diningMiniProgram),
     ...applicationFunctions(db),
     [registerDocumentFunction, registerSchedulePlanDocument],
-    ...serviceFunctions(services, () => sources),
+    ...serviceFunctions(db, services, () => sources),
     ...marketplaceFunctions(services),
     ...fliggyFlightBookingFunctions(db, configuredFliggyFlight(connections.fliggyFlight, connections.fliggyFlightFetch)),
     ...fliggyHotelFunctions(db, configuredFliggyHotel(connections.fliggyHotel, connections.fliggyHotelFetch)),

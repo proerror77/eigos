@@ -9,6 +9,10 @@ import {
   flightFacts,
   productFacts,
   marketplaceFacts,
+  marketplaceComparisonInput,
+  marketplaceComparisonOutcomes,
+  marketplacePriceGroup,
+  readMarketplaceComparisonInput,
   marketplaceObservation,
   marketplacePurchaseFacts,
   prepareMarketplacePurchaseInput,
@@ -496,7 +500,7 @@ export const marketplaceDefinition = {
         required: true,
       },
     },
-  }] satisfies OntologyDocument['interfaceTypes'],
+  }] as OntologyDocument['interfaceTypes'],
 };
 const purchaseHandoff = object(marketplacePurchaseType, 'A buyer handoff for one current marketplace offer.', {
   id: z.string(),
@@ -545,4 +549,60 @@ marketplaceDefinition.functionTypes.push({
     objectTypes: [marketplacePurchaseType, ...marketplaceServiceCatalog.map(service => service.object)],
     linkTypes: marketplaceServiceCatalog.flatMap(service => [service.object + 'PurchaseHandoff', service.object + 'Source']),
   },
+});
+
+export const marketplaceComparisonType = 'MarketplaceProductComparison';
+const comparisonLinks: OntologyDocument['linkTypes'] = marketplaceServiceCatalog.map(service => ({
+  apiName: marketplaceComparisonType + service.result,
+  description: 'The original result page for this marketplace in the comparison.',
+  from: { type: marketplaceComparisonType, name: service.source, cardinality: 'one' },
+  to: { type: service.result, name: 'comparisons', cardinality: 'many' },
+}));
+const comparisonDependencies = {
+  objectTypes: [marketplaceComparisonType, ...marketplaceServiceCatalog.flatMap(service => [service.result, service.object])],
+  linkTypes: [...comparisonLinks.map(link => link.apiName),
+    ...marketplaceServiceCatalog.flatMap(service => [service.object + 'Source', service.object + 'SearchResult'])],
+  dataSources: marketplaceServiceCatalog.map(service => service.source),
+};
+const comparison = object(marketplaceComparisonType, 'A comparison with one independent outcome per marketplace.', {
+  id: z.string(), name: z.string(), outcomes: marketplaceComparisonOutcomes,
+});
+comparison.interfaces.MarketplaceComparisonInquiry = {
+  properties: { name: 'name' },
+  links: {},
+  actions: { search: { action: 'CompareMarketplaceProducts', parameters: { query: 'query', limit: 'limit' } } },
+};
+marketplaceDefinition.interfaceTypes.push(searchInterface('MarketplaceComparisonInquiry', marketplaceComparisonInput));
+marketplaceDefinition.objectTypes.push(comparison);
+marketplaceDefinition.linkTypes.push(...comparisonLinks);
+marketplaceDefinition.functionTypes.push(
+  {
+    apiName: 'compareMarketplaceProducts',
+    description: 'Search Taobao and JD concurrently with one query and retain each authorized source response independently.',
+    parameters: json(marketplaceComparisonInput),
+    returns: json(objectRefSchema),
+    edits: true,
+    dependencies: { ...comparisonDependencies, functions: marketplaceServiceCatalog.map(service => service.read) },
+  },
+  {
+    apiName: 'readMarketplaceProductComparison',
+    description: 'Return provider outcomes, source pages, comparable reference-price groups and unmatched candidates.',
+    parameters: json(readMarketplaceComparisonInput),
+    returns: json(z.strictObject({
+      search: objectRefSchema,
+      outcomes: marketplaceComparisonOutcomes,
+      pages: z.array(z.record(z.string(), z.unknown())).max(2),
+      groups: z.array(marketplacePriceGroup).max(10),
+      unmatched: z.array(objectRefSchema).max(20),
+    })),
+    dependencies: { ...comparisonDependencies, functions: ['readServiceSearch'] },
+  },
+);
+marketplaceDefinition.actionTypes.push({
+  apiName: 'CompareMarketplaceProducts',
+  description: 'Search Taobao and JD simultaneously and compare reference offers with the same advertised model and specification. Return every available result even when a marketplace has no match or is unavailable. Use readMarketplaceProductComparison to return the comparison.',
+  parameters: json(marketplaceComparisonInput),
+  objectParameters: {},
+  submissionCriteria: [],
+  function: 'compareMarketplaceProducts',
 });

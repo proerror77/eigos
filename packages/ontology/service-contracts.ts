@@ -127,6 +127,24 @@ export const productSearchInput = z.strictObject({
   country: z.string().regex(/^[A-Z]{2}$/),
   limit: z.number().int().min(1).max(10).default(5),
 });
+export const marketplaceComparisonInput = productSearchInput.pick({ query: true, limit: true }).extend({
+  query: z.string().trim().min(1).max(500),
+});
+export const marketplaceComparisonOutcomes = z.array(z.strictObject({
+  provider: marketplaceProvider,
+  status: z.enum(['searched', 'no_results', 'authorization_required', 'unavailable']),
+})).length(2);
+export const readMarketplaceComparisonInput = z.strictObject({ search: objectRefSchema });
+export const marketplacePriceGroup = z.strictObject({
+  title: shortText,
+  matchBasis: z.literal('same_advertised_model_and_specification'),
+  currency: z.literal('CNY'),
+  priceKind: z.literal('reference'),
+  offers: z.array(z.strictObject({
+    provider: marketplaceProvider, offer: objectRefSchema,
+    amountMinor: z.number().int().nonnegative().safe(),
+  })).min(2).max(20),
+});
 export const hotelSearchInput = z.strictObject({
   place: shortText,
   checkIn: z.iso.date(),
