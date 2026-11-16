@@ -8,6 +8,12 @@ import { Functions } from '../packages/runtime/functions.js';
 import { Actions } from '../packages/runtime/actions.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import { ExternalOperations } from '../packages/runtime/external-operations.js';
+import { once } from 'node:events';
+import { createApp } from '../apps/gateway/app.js';
+import { readConfig } from '../packages/core/config.js';
+import { OntologyClient, OntologyHttpError } from '../packages/sdk/client.js';
+import { TypedOntologyClient } from '../packages/sdk/typed-client.js';
+import { generateOntologyTypes } from '../packages/sdk/generate.js';
 
 test('edit Functions require an Action and source permissions are checked before provider access', async () => {
   const f = await fixture();
@@ -102,6 +108,17 @@ test('function Actions check admission before preparation and dispatch intents o
     const apply = (id: string, beforeCommit?: Parameters<Actions['apply']>[5]) =>
       capabilities.actions.apply(access, model, 'CommitNotice', { id }, id, beforeCommit);
 
+    const validate = () => capabilities.actions.validate(access, model, {
+      action: 'CommitNotice', input: { id: 'validated-notice' },
+    });
+    await assert.rejects(validate(), /submission criteria/);
+    allowed = true;
+    assert.deepEqual(await validate(), { valid: true, phase: 'submission', action: 'CommitNotice', release: model.release });
+    assert.equal(preparations, 0);
+    assert.equal(await capabilities.effects.runOne(), false);
+    assert.equal((await f.db.query(`SELECT 1 FROM ${f.db.schema}.actions`)).rowCount, 0);
+    assert.equal((await graph.query({ type: 'Route' })).items.length, 0);
+    allowed = false;
     await assert.rejects(apply('denied'), /submission criteria/);
     assert.equal(preparations, 0);
     assert.equal(await capabilities.effects.runOne(), false);
@@ -130,6 +147,84 @@ test('function Actions check admission before preparation and dispatch intents o
     assert.deepEqual(sent, ['committed-notice']);
     assert.equal(preparations, 3);
   } finally { await f.close(); }
+});
+
+test('the SDK validates and atomically batches Actions, and lists only visible committed receipts', async () => {
+  const f = await fixture();
+  const token = 'batch-fixture-token-'.repeat(3), otherToken = 'other-batch-fixture-'.repeat(3);
+  const other = { ...principal, owner: 'other-action-log-owner' };
+  const config = readConfig({ DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token });
+  const server = createApp(config, f.db, f.source, async candidate => {
+    if (candidate === token) return principal;
+    if (candidate === otherToken) return other;
+    throw new Error('Unknown fixture token');
+  }).app.listen(0, '127.0.0.1');
+  try {
+    await once(server, 'listening');
+    const address = server.address();
+    assert(address && typeof address !== 'string');
+    const baseUrl = 'http://127.0.0.1:' + address.port;
+    const sdk = new OntologyClient({ baseUrl, token });
+    const otherSdk = new OntologyClient({ baseUrl, token: otherToken });
+    const code = 'CreateBatchRoute';
+    const document = structuredClone(f.model.document);
+    document.actionTypes.push({
+      apiName: code, description: 'Create a synthetic route',
+      parameters: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } },
+        required: ['id', 'name'], additionalProperties: false },
+      objectParameters: {}, submissionCriteria: [],
+      rules: [{ op: 'createObject', object: { type: 'Route', id: { parameter: 'id' } },
+        properties: { id: { parameter: 'id' }, name: { parameter: 'name' } } }],
+      result: { type: 'Route', id: { parameter: 'id' } },
+    });
+    const model = await f.metadata.publish(document, f.capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, memberGrants(model));
+    await setGrants(f.db, other.owner, memberGrants(model));
+    const typed = new TypedOntologyClient<{
+      objects: { Route: { name: string } }; functions: {};
+      actions: { CreateBatchRoute: { id: string; name: string } };
+    }>(sdk);
+    const generated = generateOntologyTypes(await sdk.describe());
+    assert.match(generated, /"CreateBatchRoute": Arguments<\{ "id": string; "name": string; \}>;/);
+    const input = { id: 'batch-one', name: 'Synthetic route one' };
+    assert.equal((await typed.validateAction(code, input)).release, model.release);
+    assert.deepEqual((await sdk.listActionLog()).items, []);
+    const first = { action: code, requestId: 'batch-request-a', input } as const;
+    const second = { action: code, requestId: 'batch-request-b', input: { id: 'batch-two', name: 'Synthetic route two' } } as const;
+    const status = (expected: number) => (error: unknown) => error instanceof OntologyHttpError && error.status === expected;
+    await assert.rejects(sdk.applyActionBatch({ actions: [first, { ...second, input: { id: 'invalid-route' } }] }), status(400));
+    assert.deepEqual((await typed.query({ type: 'Route' })).items, []);
+    await assert.rejects(sdk.applyActionBatch({ actions: [first, { ...second, requestId: first.requestId }] }), status(400));
+    await assert.rejects(sdk.applyActionBatch({ actions: [{ action: 'EstimateRide', requestId: 'external-batch', input: route }] }), status(409));
+    assert.equal(f.provider.calls.length, 0);
+    assert.deepEqual((await sdk.listActionLog()).items, []);
+    const [batch, reversed] = await Promise.all([
+      typed.applyActionBatch([first, second]), typed.applyActionBatch([second, first]),
+    ]);
+    assert.deepEqual(batch.items.map(item => item.result.id), ['batch-one', 'batch-two']);
+    assert.deepEqual(reversed.items, [...batch.items].reverse());
+    const log = await sdk.listActionLog({ action: code, limit: 1 });
+    assert.equal(log.release, model.release);
+    assert.equal(log.items[0]?.requestId, second.requestId);
+    assert.deepEqual(Object.keys(log.items[0]!).sort(), ['action', 'appliedAt', 'executorKind', 'requestId']);
+    assert(log.cursor);
+    const next = await sdk.listActionLog({ action: code, limit: 1, cursor: log.cursor });
+    assert.equal(next.items[0]?.requestId, first.requestId);
+    assert.equal(next.cursor, undefined);
+    assert.deepEqual((await otherSdk.listActionLog()).items, []);
+    await assert.rejects(otherSdk.listActionLog({ action: code, cursor: log.cursor }), status(409));
+
+    const updated = await f.metadata.publish({ ...document, version: document.version + '-batch' }, f.capabilities, f.publisher);
+    assert.notEqual(updated.release, model.release);
+    assert.deepEqual((await sdk.listActionLog()).items, []);
+    assert.equal((await sdk.listActionLog({ release: model.release })).items.length, 2);
+    await setGrants(f.db, principal.owner, []);
+    assert.deepEqual((await sdk.listActionLog({ release: model.release })).items, []);
+    await assert.rejects(typed.validateAction(code, input), status(403));
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await f.close();
+  }
 });
 
 test('generic action rules commit once, detect changed retries and roll back a failed submission', async () => {

@@ -1,7 +1,7 @@
 import {resourceGroups} from '../ontology/resource-mapping.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { Conflict, NotFound, digest } from '../core/identity.js';
+import { InvalidInput, Conflict, NotFound, PermissionDenied, digest } from '../core/identity.js';
 import { Ontology } from '../ontology/model.js';
 import { ontologySchema, type OntologyDocument } from '../ontology/schema.js';
 import { Access, resource, type Permission } from './access.js';
@@ -11,7 +11,7 @@ import { Metadata, type Bindings } from './metadata.js';
 const identifier = z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(80);
 export const projectSchema = z.strictObject({ ontology: identifier, id: identifier, name: z.string().min(1).max(200) });
 export const assignProjectSchema = z.strictObject({ ontology: identifier, project: identifier, resources: z.array(z.string().min(1).max(300)).min(1).max(200) });
-export const branchCreateSchema = z.strictObject({ ontology: identifier, project: identifier.optional(), name: z.string().min(1).max(200), body: ontologySchema.optional() });
+export const branchCreateSchema = z.strictObject({ ontology: identifier, project: identifier.optional(), name: z.string().min(1).max(200), body: ontologySchema.optional(), baseRelease: z.string().regex(/^[0-9a-f]{64}$/).optional() });
 export const branchRevisionSchema = z.strictObject({ id: z.uuid(), revision: z.number().int().positive() });
 export const branchUpdateSchema = branchRevisionSchema.extend({ body: ontologySchema });
 export const branchReviewSchema = branchRevisionSchema.extend({ release: z.string().regex(/^[a-f0-9]{64}$/) });
@@ -64,7 +64,7 @@ export class Governance {
     const input = assignProjectSchema.parse(raw);
     access.require(input.ontology, 'manage_definition', input.ontology);
     const known = resources((await this.metadata.active(input.ontology)).document);
-    if (input.resources.some(name => !known.has(name))) throw new Error('Project assignment requires published Ontology resources');
+    if (input.resources.some(name => !known.has(name))) throw new InvalidInput('Project assignment requires published Ontology resources');
     return this.db.transaction(async client => {
       await access.refresh(client);
       for (const name of input.resources) await this.db.query(`INSERT INTO ${this.db.schema}.ontology_resource_projects(ontology,resource,project) VALUES($1,$2,$3)
@@ -85,6 +85,7 @@ export class Governance {
   }
   async create(access: Access, raw: unknown) {
     const input = branchCreateSchema.parse(raw), base = await this.metadata.active(input.ontology);
+    if (input.baseRelease && input.baseRelease !== base.release) throw new Conflict('Ontology changed; refresh the proposed definition');
     access.require(input.ontology, 'view_definition', input.ontology);
     const branch = { ontology: input.ontology, project: input.project ?? null };
     const body = input.body ?? base.document;
@@ -101,12 +102,13 @@ export class Governance {
     const row = await this.row(id);
     // Branch bodies include unchanged resources from the whole Ontology.
     access.require(row.ontology, 'view_definition', row.ontology);
-    this.authorize(access,row,'view_definition'); await access.refresh(); return row;
+    this.authorize(access,row,'edit_definition'); await access.refresh(); return row;
   }
   async list(access: Access, ontology: string) {
     identifier.parse(ontology); access.require(ontology,'view_definition',ontology);
+    if (access.workbenchRole(ontology)==='member') throw new PermissionDenied('Ontology management requires service team access');
     const rows = (await this.db.query(`SELECT id,ontology,project,name,author,revision,state,candidate,updated_at FROM ${this.db.schema}.ontology_branches WHERE ontology=$1 ORDER BY updated_at DESC LIMIT 100`, [ontology])).rows;
-    const visible = rows.filter(row => access.allows({ ontology, permission:'view_definition',resource:row.project ? resource(ontology,'project',row.project) : ontology }));
+    const visible = rows.filter(row => access.allows({ ontology, permission:'edit_definition',resource:row.project ? resource(ontology,'project',row.project) : ontology }));
     await access.refresh(); return visible;
   }
   async update(access: Access, raw: unknown) {
@@ -204,7 +206,7 @@ export class Governance {
     return this.db.transaction(async client=>{
       const row=await this.row(input.id,client,true);
       this.authorize(access,row,'manage_definition');
-      await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['publication:' + row.ontology], client);
+      await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [this.db.lockKey('publication', row.ontology)], client);
       await this.validateChanges(access,row,(await this.metadata.get(row.base_release,client)).document,row.body,client);
       if(row.state!=='approved'||row.revision!==input.revision||row.candidate!==input.release||row.reviewed_digest!==await this.reviewDigest(row,client))throw new Conflict('Merge requires the exact approved candidate');
       await this.metadata.activate(input.release,this.bindings,access,client);

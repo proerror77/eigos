@@ -12,6 +12,7 @@ export const resourceGroups = {
   valueType: 'valueTypes',
   struct: 'structTypes',
   group: 'typeGroups',
+  agentProfile: 'agentProfiles',
 } as const;
 export type ResourceKind = keyof typeof resourceGroups;
 export type ResourceNameMap = Partial<Record<ResourceKind, Record<string, string>>>;
@@ -84,6 +85,10 @@ export function remapResources(
   for (const type of document.objectTypes) {
     type.apiName = rename('object', type.apiName);
     for (const tag of type.typeClasses??[]) if(tag.kind==='machinery-log') tag.name=rename('object',tag.name);
+    if (type.machinery) {
+      for (const edge of type.machinery.transitions) if (edge.action) edge.action = rename('action', edge.action);
+      for (const child of type.machinery.subprocesses ?? []) child.process = rename('object', child.process);
+    }
     Object.values(type.properties).forEach(property);
     type.groups = type.groups?.map((name) => rename('group', name));
     type.interfaces = Object.fromEntries(
@@ -173,6 +178,19 @@ export function remapResources(
   for (const group of document.typeGroups ?? []) {
     group.apiName = rename('group', group.apiName);
     group.objectTypes = group.objectTypes.map((name) => rename('object', name));
+  }
+  for (const profile of document.agentProfiles ?? []) {
+    profile.apiName = rename('agentProfile', profile.apiName);
+    profile.objects = profile.objects?.map(name => rename('object', name));
+    profile.interfaces = profile.interfaces?.map(name => rename('interface', name));
+    profile.actions = profile.actions?.map(name => rename('action', name));
+    profile.functions = profile.functions?.map(name => rename('function', name));
+    profile.sources = profile.sources?.map(name => rename('datasource', name));
+    profile.links = profile.links?.map(name => rename('link', name));
+    for (const hint of profile.instructions ?? []) {
+      if (hint.action) hint.action = rename('action', hint.action);
+      if (hint.function) hint.function = rename('function', hint.function);
+    }
   }
   delete document.imports;
   return ontologySchema.parse(document);

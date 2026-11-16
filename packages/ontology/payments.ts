@@ -1,3 +1,4 @@
+import { sandboxAgentCapability } from './agent-profiles.js';
 import { z } from 'zod';
 import { objectRefSchema, type OntologyDocument } from './schema.js';
 import { json, time } from './service-contracts.js';
@@ -59,7 +60,7 @@ export const paymentsDefinition: OntologyDocument = {
   version: '1',
   objectTypes: [
     {
-      apiName: sandboxOrderType, displayName: 'Stripe sandbox order',
+      apiName: sandboxOrderType, typeClasses: [sandboxAgentCapability], displayName: 'Stripe sandbox order',
       description: 'Original fixed-price test merchant order and its Stripe checkout identity.',
       primaryKey: 'id', titleProperty: 'name',
       properties: properties({ id: z.string(), ...orderFacts, sessionId: z.string(), authorityId: z.string() }),
@@ -69,7 +70,7 @@ export const paymentsDefinition: OntologyDocument = {
       } },
     },
     {
-      apiName: stripePaymentType, displayName: 'Stripe Link payment request',
+      apiName: stripePaymentType, typeClasses: [sandboxAgentCapability], displayName: 'Stripe Link payment request',
       description: 'A sandbox payment request for a human payer, with independently read payment evidence.',
       primaryKey: 'id', titleProperty: 'name',
       properties: properties({ id: z.string(), ...paymentFacts, transactionId: z.string().optional() }),
@@ -101,12 +102,12 @@ export const paymentsDefinition: OntologyDocument = {
   }],
   functionTypes: operations.map(({ fn, input, description }) => ({
     apiName: fn, description, parameters: json(input), returns: json(objectRefSchema),
-    source: stripeSandboxSource, edits: true,
+    source: stripeSandboxSource, edits: true, typeClasses: [sandboxAgentCapability],
     dependencies: { objectTypes: [sandboxOrderType, stripePaymentType], linkTypes: ['SandboxOrderPayment'] },
   })),
   actionTypes: operations.map(({ action, fn, input, objects, description }) => ({
     apiName: action, description, parameters: json(input), objectParameters: objects,
-    submissionCriteria: [], function: fn,
+    submissionCriteria: [], function: fn, typeClasses: [sandboxAgentCapability],
   })),
   dataSources: [],
 };

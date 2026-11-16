@@ -83,7 +83,7 @@ flowchart LR
     Place -->|sources| Receipt
 ```
 
-模型接收用户原文与任务发布版本的 Interface、Link、Function、Action 和 data source 目录。Agent 理解需求并选择业务能力，确定性的业务步骤由该能力绑定的 Function 和 Action 执行。运行调度器不包含滴滴步骤或地点名称。[Palantir Agent 工具](https://www.palantir.com/docs/foundry/agent-sdk/customize-agent)
+模型接收用户原文和任务发布版本中与目标相关的 Ontology 定义。发布的 `agentProfiles` 声明可预加载的资源与操作指引，读取时应用当前资源权限和模型出口策略。触发词覆盖常见的中文口语说法，例如“叫个车”“有空吗”“住哪里”。业务资源描述为英文，未命中触发词的中文请求通过 `describe_ontology` 继续发现能力。复合或未匹配的目标可用 `describe_ontology` 浏览简明目录并按 API 名称读取完整定义。Agent 选择业务能力，确定性步骤由对应的 Function 和 Action 执行。标记为沙箱的能力仅在显式启用的本地开发 Worker 中对 Agent 开放。[Palantir Agent 工具](https://www.palantir.com/docs/foundry/agent-sdk/customize-agent)
 
 `RideRequest` 实现 `RideInquiry` Interface，其 `estimate` 能力映射到 `EstimateRide` Action。参数是城市、起终点场所名及可选车型。创建能力通过实现类型解析，无需编造一个尚不存在的对象引用。这对应官方 Ticket Interface 将创建能力映射到具体创建 Action 的模式。[Interface Action](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints)
 
@@ -98,7 +98,11 @@ flowchart LR
 
 Agent 可在一次 `complete_with_action` 调用中选择 Interface Action 与结果 Function，并指定把 Action 返回的对象引用绑定到哪个函数参数。运行层执行 Action 后调用 `readRideEstimates`，后者按 `PriceEstimate` 和 source Links 检查当前来源、有效期和报价，再直接返回真实结果。验收在读取时重新执行，重复 Action 不会使旧的验收标志跳过检查。Agent 不需要在来源读取、对象创建或验收之间继续往返。
 
+外部 MCP 也发布 `complete_with_action`。调用者提供 `requestId`、Interface Action 和结果 Function 的参数绑定。Gateway 和 Worker 共用 Action Engine，Gateway 按调用者身份检查 Ontology 读写权限，并在输出前复核数据权限。使用相同请求 ID 重试时复用已提交的 Action，重新读取并核验结果。需要补充信息的请求可通过下述 Worker 任务流程处理。这里沿用 [Interface Action](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints)、[Function-backed Action](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) 和 [Ontology MCP 授权](https://www.palantir.com/docs/foundry/ontology-mcp/authentication-and-authorization) 的约束。组合响应由 EIGOS MCP 提供，Action 提交和结果读取各自保留原有权限及事务边界。
+
 如果 Action 在准备阶段返回地点候选，Action Engine 保存已选 Action、参数、结果 Function 和来源回执，绑定原任务、发布版本和请求 ID。Machinery 通过 `ActionConfirmation.state` 及 `stateLogs` 显示等待、确认、完成或终止。确认由原任务入口接受，只接受对应侧候选内的 ObjectRef。Worker 唤醒原执行后直接进入 Action Engine，沿用原请求 ID、租约、权限检查和提交事务。仍属当前来源绑定且新鲜的地点回执可以复用；变旧或变化的那一侧重新读取。唯一匹配的询价直接完成，无需确认过程对象。
+
+裸地名匹配保留当前地点回执中的精确名称和全名仅补齐常见楼宇后缀的候选（`大厦`、`大楼`），不把含该名称的商铺、楼号、停车场或入口算作相同建筑。这样同名地点不会挤掉正式楼宇名。多个候选或只有一个由简称推得的候选时展示正式名称和地址，用户选择后沿原 Action 询价。沿用 [Action 提交条件](https://www.palantir.com/docs/foundry/action-types/submission-criteria) 与现有任务续接；筛选仅使用当次来源候选。
 
 如果正确地点不在原候选里，原任务调用者可用 `amend_task_place`（HTTP `POST /tasks/:id/place-amendment`）提交 `{side,address,name?,keep?}`。有多个候选的一端若保持不变，用 `keep` 指定当前候选中的 ObjectRef。Action Engine 把地址作为原调用的续接输入，验证现有授权和供应商回执，仅重新查被修正或回执过期的地点。地址和可选楼名必须能唯一对应本次来源结果，才继续询价。仍有歧义时保持原请求 ID 并再次等待确认。这里沿用 [Action 提交条件](https://www.palantir.com/docs/foundry/action-types/submission-criteria) 和 Machinery 的状态模型，未增加新执行器。
 
@@ -126,6 +130,24 @@ Machinery 使用已发布对象的枚举状态和原有编辑历史；Action Eng
 ```
 
 请求、任务调度和技术调用分别保存在专用运行表。地点和路线具有业务身份，费用估计是一次来源观察，来源凭据保存在运行配置中。标准化过程保留供应商坐标系声明及价格范围。[结构指导](https://www.palantir.com/docs/foundry/ontology/ontology-structural-guidance)
+
+## 网页订位试点
+
+`readDiningWebAvailability` 接收餐厅、城市、当地日期和人数。从指定餐厅官网跟随订位链接，核对 SevenRooms 页面上的门店、日期和人数，从页面主结果区提取可选时段。连接配置只保存官网起点。浏览器使用独立会话，只向官网和订位页面发出读取请求。
+
+配置通过 `EIGOS_DINING_WEB_CONNECTION_FILE` 加载，由执行进程读取权限为 `0600` 的独立 JSON 文件。文件字段为 `owner`、`restaurant`、`city`、`timeZone` 和 `officialPage`。运行网页能力与订位回归测试需要 Google Chrome。隔离测试可额外配置 `sandboxOrigin`，值为带显式端口的 `http://127.0.0.1` 商家测试服务。
+
+`PrepareDiningTestReservation`、`SubmitDiningTestReservation` 和 `RefreshDiningTestReservation` 通过 Action 记录同一 `DiningReservation`。测试商家收到提交前，`ExternalOperations` 先保存操作标识。回执丢失时，按该标识查商家原单，核对请求条件和商家单号后写回。结果暂时不可见或不匹配时，保留 `unknown`，后续操作继续查询同一标识。网页提交受限于已配置的本机测试商家，回执标为 `synthetic`。 [Palantir Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) · [外部写回](https://www.palantir.com/docs/foundry/action-types/webhooks) · [Machinery 状态](https://www.palantir.com/docs/foundry/machinery/core-concepts)
+
+### 微信小程序订位
+
+`readDiningMiniProgramAvailability` 按门店、当地日期和人数请求原 PA。PA 在已登录的 Android 微信小程序中识别配置的查询控件，核对页面上的小程序名称、分店、日期和人数后返回可选时间。页面明确显示无空位时才返回空列表。设备和微信会话留在 PA，EIGOS 收到结构化的 `pa_reported` 结果。 [Android UI Automator](https://developer.android.com/training/testing/other-components/ui-automator)
+
+服务端 `EIGOS_DINING_MINIPROGRAM_CONNECTION_FILE` 指向权限为 `0600` 的 JSON，字段为 `owner`、`restaurant`、`city`、`branch`、`miniProgram`。`miniProgram` 包含 `name`、`publisher` 和 `timeZone`。在原 PA 主机设置 `EIGOS_PA_URL`、`EIGOS_PA_TOKEN` 和 `EIGOS_DINING_MINIPROGRAM_PA_FILE` 后，对等待的任务运行 `node --import tsx scripts/dining-miniprogram-pa.ts TASK_ID`。PA 配置的 `android` 包含 `adb` 绝对路径、`serial`、`androidUser`、相同的 `miniProgram`，以及现场核对的 `screen` 选择器（`identity`、`branch`、`date`、`guests`、`slots`、可选 `noSlots`）。可选的 `readSteps` 用 `from`、`tap`、`to` 限定每次查询页面切换。
+
+如果 Android 无法返回可用的控件信息，Mac 上的 PA 可以用 `swiftc scripts/dining-miniprogram-vision.swift -o /absolute/private/dining-miniprogram-vision` 构建屏幕读取程序。将 `android.screen` 配置换成 `android.vision`，指定 `executable`、`programLabel`、`branchPrefix` 和 `bookingLabel`。在真机打开已选择城市、日期及人数的订座结果页。PA 核对前台小程序、查询摘要及该门店的「立即预订」标记，只返回页面可见的时段。截图在本机内存中处理。
+
+`PrepareDiningMiniProgramTestReservation` 创建同一个 `DiningReservation` 类型。测试须额外匹配服务端的 `testId` 和 PA 配置的 `sandbox.id`，PA 只向 `sandbox.origin` 指定的本机隔离商家提交。Action 把外部操作标识与待处理的 PA 请求一起保存。PA 在提交前使用 `sandbox.privateDirectory` 保存一次派发记录，重启后继续原请求的结果查询。订单状态由独立查询回执确认。套件 10 用模拟的 Android 屏幕和本机商家验证这些路径。 [Palantir Action 提交条件](https://www.palantir.com/docs/foundry/action-types/submission-criteria) · [外部写回](https://www.palantir.com/docs/foundry/action-types/webhooks)
 
 ## 执行与数据访问
 
@@ -173,7 +195,7 @@ Action 检查自身应用权限，以及实际访问的对象、关系和来源�
 
 `packages/runtime/scenarios.ts` 管理 owner 隔离的方案生命周期、跨账号审阅和原子合并，`scenario-store.ts` 将对象／关系差量叠加到当前发布数据上。Query、Function 和 Action 共用 `scenarioId` 上下文。显式 rebase 保留独立变更并更新审阅修订号。跨账号审阅以当前授权后的差量和修订为单位。 [Scenario 生命周期](../guides/scenario-lifecycle.md)
 
-`packages/runtime/pa.ts` 在原任务中记录带响应契约的信息请求，只有原 owner 的 PA 可以回传并继续该任务。`packages/capabilities/scheduling/` 绑定 Calendar 数据校验、候选时间搜索和排程 Actions。日历汇总数据由 PA 提供，Agent 不能把猜测的空闲时间写成来源事实。
+`packages/runtime/pa.ts` 在原任务中记录带响应契约的信息请求，只有原 owner 的 PA 可以回传并继续该任务。`packages/capabilities/scheduling/` 绑定 Calendar 数据校验、候选时间搜索、联合排程建议和排程 Actions。日历汇总数据由 PA 提供，Agent 不能把猜测的空闲时间写成来源事实。
 
 活动和资源是业务对象，Worker 租约和 PA 请求记录留在运行层。Functions 在 Scenario 中读取拟议状态；合并 Action 在同一事务中重检权限、版本、关系和业务约束。真实日历写入尚未接入。协议及边界见 [Scenario 与 PA 日历排程](../guides/scenarios-scheduling.md)。
 
@@ -196,9 +218,9 @@ Object Set Service 支持集合组合、多跳导航、分组聚合，以及静�
 
 PDF 和 SOP 的已提取文本按不可变文档版本与切片入库，随排程 Link 与对象字段权限查询。切片保留版本引用与提取文本中的准确范围，原件提供页码或段落信息时一并保留。对象集的可下推查询复用 PostgreSQL 的权限过滤。 [文档版本](../guides/document-versions.md) · [对象集](../guides/object-sets.md)
 
-Machinery 过程日志以普通 Object Type 实现共同 `ProcessLog` Interface，通过已发布 Link 关联原业务对象。查询投影复用正式编辑历史，不增加日志存储或执行引擎；Action、请求、原任务与来源观察时间在原事务中关联。Scenario 拟议修改不进入正式历史，排程确认沿原合并 Action 记录内部状态。Agent 通过既有 Ontology MCP 发现和查询这些对象，简单任务保持直接执行。定义、权限、升级和验收边界见 [过程日志](../guides/process-history.md)。
+Machinery 过程日志以普通 Object Type 实现共同 `ProcessLog` Interface，通过已发布 Link 关联原业务对象。正式日志投影复用编辑历史；外部观察记录独立归档，用于分析；Action、请求、原任务与来源观察时间在原事务中关联。Scenario 拟议修改不进入正式历史，排程确认沿原合并 Action 记录内部状态。Agent 通过既有 Ontology MCP 发现和查询这些对象，简单任务保持直接执行。定义、权限、升级和验收边界见 [过程日志](../guides/process-history.md)。同一投影也提供 [Machinery 流程挖掘和瓶颈分析](../guides/machinery.md)，参考流程随发布定义审阅，Workbench 和 MCP 按当前权限读取分析结果。
 
-过程规则按正式历史游标拾取状态跃迁，沿用 Workflow 队列和 Action 权限处理即时事件与停留超时。Agent 评估通过相同 MCP 路径执行固定业务用例，按实际工具调用、状态和差量评分。 [自动化](../guides/automation.md) · [Agent 评估](../guides/agent-evaluations.md)
+过程规则按正式历史游标拾取状态跃迁，沿用 Workflow 队列和 Action 权限处理即时事件与停留超时。自动化可先在 Scenario 中预演。流程筛选结果可转成评估集，选定的候选按当前证据复跑后进入 Scenario 审阅。[排程、预演与评估送审](../guides/operational-scenarios.md)Agent 评估通过相同 MCP 路径执行固定业务用例，按实际工具调用、状态和差量评分。 [自动化](../guides/automation.md) · [Agent 评估](../guides/agent-evaluations.md)
 
 执行追踪使用原任务和 Action 身份关联来源证据、模型授权、方案审阅、编辑历史、outbox 和实际供应商回执。读取追踪时复核权限，业务结果以各原始记录为准。 [EIGOS 执行追踪](../guides/execution-trace.md) · [Palantir 执行追踪](https://www.palantir.com/docs/foundry/aip-observability/trace-view)
 

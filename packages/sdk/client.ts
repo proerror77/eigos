@@ -1,8 +1,13 @@
 import type { ObjectData, ObjectRef, OntologyDocument } from '../ontology/schema.js';
-import type { ActionInput } from '../ontology/invocation.js';
+import type { ActionBatchInput, ActionCall, ActionInput } from '../ontology/invocation.js';
+import type { ActionLogInput, ActionLogEntry } from '../runtime/action-log.js';
 import type { Query } from '../runtime/objects.js';
+import type { ScenarioComparisonInput, ScenarioComparison, ScenarioTrialInput, ScenarioTrial } from '../runtime/scenario-evaluation.js';
+
+export type { ScenarioComparisonInput, ScenarioComparison, ScenarioTrialInput, ScenarioTrial };
 
 export type { ActionInput } from '../ontology/invocation.js';
+export type { ActionBatchInput, ActionCall, ActionLogInput, ActionLogEntry };
 
 export class OntologyHttpError extends Error {
   constructor(
@@ -35,6 +40,7 @@ export interface ScenarioInfo {
   expiresAt: string;
 }
 export interface ScenarioInspection extends ScenarioInfo {
+  review?: { reviewers: string[]; canInvite: boolean };
   objects: {
     ref: ObjectRef;
     before: Record<string, unknown> | null;
@@ -47,6 +53,22 @@ export interface ScenarioInspection extends ScenarioInfo {
 export interface ScenarioReview extends Pick<ScenarioInspection, 'id' | 'name' | 'revision' | 'objects' | 'links'> {
   conflicts: boolean;
   snapshot: string;
+  commit?: {
+    action: string;
+    input: Record<string, unknown>;
+    effects: { name: string; handler: string; payload: Record<string, unknown> }[];
+  };
+  evidence?: { ref: ObjectRef; revision: number }[];
+  evidenceVersion?: string;
+  evidenceChanged?: boolean;
+}
+export interface ScenarioReviewItem {
+  id: string;
+  name: string;
+  revision: number;
+  conflicts: boolean;
+  evidenceChanged?: boolean;
+  approved: boolean;
 }
 export interface ScenarioInput {
   requestId: string;
@@ -114,6 +136,15 @@ export class OntologyClient {
     const { signal, ...scope } = options;
     return this.request('ontology/actions', { ...input, ontology: this.ontology, ...scope }, signal);
   }
+  validateAction(input: ActionCall, signal?: AbortSignal) {
+    return this.service<{ valid: true; phase: 'submission'; action: string; release: string }>('validate_action', input, signal);
+  }
+  applyActionBatch(input: ActionBatchInput, signal?: AbortSignal) {
+    return this.service<{ release: string; items: { requestId: string; result: ObjectRef }[] }>('apply_action_batch', input, signal);
+  }
+  listActionLog(input: ActionLogInput = {}, signal?: AbortSignal) {
+    return this.service<QueryResult<ActionLogEntry> & { release: string }>('list_action_log', input, signal);
+  }
   service<T>(operation: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     return this.request(
       `ontology/services/${encodeURIComponent(operation)}`,
@@ -128,6 +159,15 @@ export class OntologyClient {
       signal,
     );
     return this.scenario(result.id, input.sessionId);
+  }
+  compareScenarios(input: ScenarioComparisonInput, signal?: AbortSignal) {
+    return this.service<ScenarioComparison>('compare_scenarios', input, signal);
+  }
+  trialScenarios(input: ScenarioTrialInput, signal?: AbortSignal) {
+    return this.service<ScenarioTrial>('trial_scenarios', input, signal);
+  }
+  pendingScenarioReviews(page = 1, signal?: AbortSignal) {
+    return this.service<{ items: ScenarioReviewItem[]; nextPage?: number }>('pending_scenario_reviews', { page }, signal);
   }
   scenario(id: string, sessionId?: string) {
     return new ScenarioClient(this, id, sessionId);

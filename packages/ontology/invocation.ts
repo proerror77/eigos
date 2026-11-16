@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { objectRefSchema } from './schema.js';
 
 const argumentsSchema = z.record(z.string(), z.unknown());
+const requestId = z.string().min(1).max(128);
 const call = { scenarioId: z.uuid().optional(), input: argumentsSchema };
 
 /** A capability constraint resolves to a concrete published Action. */
@@ -30,17 +31,27 @@ export const completeWithActionSchema = z.strictObject({
 });
 export type ActionResultRead = z.infer<typeof actionResultReadSchema>;
 
+export const completeWithActionRequestSchema = completeWithActionSchema.safeExtend({
+  ontology: z.string().optional(),
+  requestId,
+});
+
 export const functionCallSchema = z.strictObject({
   ...call, function: z.string(),
 });
 
 /** Protocol metadata does not change the operation or its Scenario view. */
 export const actionRequestSchema = actionCallSchema.safeExtend({
-  ontology: z.string().optional(), requestId: z.string().min(1).max(128),
+  ontology: z.string().optional(), requestId,
 });
+export const actionBatchSchema = z.strictObject({
+  actions: z.array(actionCallSchema.safeExtend({ requestId, scenarioId: z.never().optional() })).min(1).max(20),
+}).refine(({ actions }) => new Set(actions.map(action => action.requestId)).size === actions.length,
+  'Each Action in a batch requires a distinct request ID');
 export const functionRequestSchema = functionCallSchema.safeExtend({
   ontology: z.string().optional(), taskId: z.uuid().optional(),
 });
 
 export type ActionCall = z.infer<typeof actionCallSchema>;
 export type ActionInput = Omit<z.infer<typeof actionRequestSchema>, 'ontology' | 'scenarioId'>;
+export type ActionBatchInput = z.input<typeof actionBatchSchema>;

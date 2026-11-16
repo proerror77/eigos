@@ -1,10 +1,19 @@
+import { ingestMachineryHistory } from '../packages/runtime/machinery-history.js';
+import { ontologyServices } from '../packages/runtime/services.js';
+import { MachineryReviews, machineryReviewSchema } from '../packages/runtime/machinery-reviews.js';
+import { analyzeMachinery, machineryAnalysisSchema } from '../packages/runtime/machinery-analysis.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { createApp } from '../apps/gateway/app.js';
+import { readConfig } from '../packages/core/config.js';
+import { digest } from '../packages/core/identity.js';
+import { OntologyClient } from '../packages/sdk/client.js';
 import type { AgentDriver } from '../packages/runtime/agent.js';
 import { PARequests } from '../packages/runtime/pa.js';
 import { publicTask, type Task } from '../packages/runtime/tasks.js';
-import { HotelWorkflows } from '../packages/runtime/hotel-workflows.js';
+import { HotelWorkflows } from '../packages/capabilities/services/hotel-workflows.js';
 import { calendarAnswer, planningInput } from './planning-fixture.js';
 import { serviceProvider } from './service-fixture.js';
 import { document, fixture, principal } from './fixture.js';
@@ -12,8 +21,11 @@ import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
 import { Actions } from '../packages/runtime/actions.js';
 import { initializeActionUndo } from '../packages/runtime/action-journal.js';
 import { Scenarios, initializeScenarioLifecycle } from '../packages/runtime/scenarios.js';
+import { decisionEvidenceSchema } from '../packages/runtime/decision-evidence.js';
+import { ExecutionTrace } from '../packages/runtime/execution-trace.js';
 import { Automation, initializeAutomation } from '../packages/runtime/automation.js';
 import { Objects } from '../packages/runtime/objects.js';
+import { ObjectSets } from '../packages/runtime/object-sets.js';
 import { objectPolicySchema } from '../packages/runtime/security.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
@@ -21,13 +33,19 @@ import { Ontology } from '../packages/ontology/model.js';
 import { addProcessLogs, processLogTarget } from '../packages/ontology/process-definition.js';
 import { calendarJourneyDefinition } from '../packages/ontology/calendar-journey.js';
 import { deliveryFunctions } from '../packages/ontology/delivery.js';
+import { dianpingResearchFunctions } from '../packages/ontology/dianping.js';
+import { diningReservations } from '../packages/ontology/dining-reservations.js';
 import { documentDefinition } from '../packages/ontology/documents.js';
+import { fliggyFlightBookingDefinition } from '../packages/ontology/fliggy-flight-booking.js';
+import { fliggyHotelDefinition } from '../packages/ontology/fliggy-hotel.js';
 import { flightDefinition } from '../packages/ontology/flight.js';
 import { flightPositionFunction } from '../packages/ontology/flight-position.js';
 import { locationFunctions, taskLocationValueType } from '../packages/ontology/location.js';
 import { luckinDefinition } from '../packages/ontology/luckin.js';
 import { mapFunctions } from '../packages/ontology/maps.js';
 import { rideWatchDefinition, rideWatchType } from '../packages/ontology/ride-watch.js';
+import { fliggyServicesDefinition } from '../packages/ontology/services.js';
+import { checkWorkflowDependencies } from '../packages/runtime/workflow-compatibility.js';
 
 async function setup() {
   const f=await fixture();await initializeActionUndo(f.db);await initializeScenarioLifecycle(f.db);await initializeAutomation(f.db);
@@ -328,6 +346,110 @@ test('process dwell starts only for the latest uninterrupted state and reports r
   } finally { await f.close(); }
 });
 
+test('Machinery reconstructs repeated paths, measures dwell and excludes a case with hidden history', async () => {
+  const f = await processSetup();
+  try {
+    const now = Date.now();
+    const iso = (minutes: number) => new Date(now + minutes * 60000).toISOString();
+    for (const state of ['open', 'stalled', 'open', 'stalled', 'done']) await f.change(state);
+    const logs = await f.graph.query({ type: 'RouteStateLog' });
+    for (const [index, log] of logs.items.entries()) {
+      await f.db.query(`UPDATE ${f.db.schema}.edit_history SET happened_at=$1 WHERE sequence=$2`,
+        [iso([-40, -39, -34, -32, -12][index]!), log.properties.sequence]);
+    }
+    const input = machineryAnalysisSchema.parse({
+      type: 'RouteStateLog', from: iso(-45), to: iso(-1), object: f.source,
+      reference: {
+        states: [{ name: 'open' }, { name: 'stalled', dwellSeconds: 600 }, { name: 'done' }],
+        transitions: [{ from: null, to: 'open' }, { from: 'open', to: 'stalled' }, { from: 'stalled', to: 'done' }],
+      },
+    });
+    const inspect = async (query = input) => analyzeMachinery(f.db, await Access.load(f.db, principal), f.model, query);
+    const result = await inspect();
+    assert.equal(result.casesTotal, 1);
+    assert.deepEqual(result.cases[0]?.states, ['open', 'stalled', 'open', 'stalled', 'done']);
+    assert.equal(result.conformance.deviation, 1);
+    assert.deepEqual(result.mined.transitions.map(({ from, to }) => [from, to]), [['stalled', 'open']]);
+    const stalled = result.states.find(row => row.name === 'stalled')!;
+    assert.equal(stalled.historical.totalMs, 25 * 60000);
+    assert.equal(stalled.historical.p95Ms, 20 * 60000);
+    assert.equal(stalled.breaches, 1);
+    assert.equal(result.transitions.find(edge => edge.from === 'open')?.count, 2);
+    assert.equal(result.cases[0]?.timeline?.[4]?.action, 'ChangeRouteState');
+    const compared = await inspect({ ...input, candidate: {
+      ...input.reference!, transitions: [...input.reference!.transitions, { from: 'stalled', to: 'open' }],
+    } });
+    assert.equal(compared.comparison?.baseline.deviation, 1);
+    assert.equal(compared.comparison?.candidate.conforming, 1);
+    assert.equal(compared.comparison?.evidence, 'observed-transitions');
+    const narrow = await inspect({ ...input, from: iso(-38) });
+    assert.equal(narrow.cases[0]?.partial, true);
+    assert.equal(narrow.states.find(row => row.name === 'stalled')?.historical.totalMs, 25 * 60000);
+
+    const lastSequence = logs.items.at(-1)!.properties.sequence;
+    await f.db.query(`UPDATE ${f.db.schema}.edit_history SET observed_at=$1 WHERE sequence=$2`, [iso(-27), lastSequence]);
+    const observed = await inspect({ ...input, durationClock: 'observedAt' });
+    assert.equal(observed.states.find(row => row.name === 'stalled')?.historical.totalMs, 10 * 60000);
+    assert.equal(observed.cases[0]?.timeline?.at(-1)?.requestId, result.cases[0]?.timeline?.at(-1)?.requestId);
+
+    const set = await new ObjectSets(f.db).save(await Access.load(f.db, principal), f.model, {
+      requestId: 'route-analysis-cohort', name: 'Route analysis cohort', mode: 'static',
+      set: { op: 'refs', objects: [f.source] },
+    });
+    const { object: _object, ...cohort } = input;
+    assert.equal((await inspect({ ...cohort, setId: set.id })).cases[0]?.object.id, f.source.id);
+
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies VALUES('Eigos','RouteStateLog',$1)`,
+      [objectPolicySchema.parse({ read: { all: [{ op: 'equals', property: 'newState', value: 'done' }] } })]);
+    const restricted = await inspect();
+    assert.equal(restricted.casesTotal, 0);
+    assert.equal(restricted.paths.length, 0);
+    assert(restricted.transitions.every(edge => edge.count === 0));
+  } finally { await f.close(); }
+});
+
+test('definition discovery filters Machinery actions and subprocesses under limited resource grants', async () => {
+  const f = await setup();
+  try {
+    const reader = { owner: 'machinery-reader', scopes: ['ontology:read'] };
+    await setGrants(f.db, reader.owner, [
+      ...['EventTripStateLog', 'EventTrip'].flatMap(type => [
+        { resource: 'Eigos/object/' + type, permission: 'view_definition' as const },
+        { resource: 'Eigos/object/' + type, permission: 'view_objects' as const },
+      ]),
+    ]);
+    const access = await Access.load(f.db, reader);
+    const definition = access.describe(f.model);
+    const reference = definition.objectTypes.find(type => type.apiName === 'EventTripStateLog')?.machinery;
+    assert(reference);
+    assert(reference.transitions.every(edge => !edge.action));
+    assert.deepEqual(reference.subprocesses, []);
+  } finally { await f.close(); }
+});
+
+test('periodic Machinery review claims one window and recalculates it after visibility changes', async () => {
+  const f = await processSetup();
+  try {
+    await f.change('open');
+    await f.change('stalled');
+    const reviews = new MachineryReviews(f.db, f.metadata);
+    const review = await reviews.save(f.access, f.model, machineryReviewSchema.parse({
+      name: 'Weekly route review', type: 'RouteStateLog', enabled: true, minCases: 1,
+    }));
+    assert.deepEqual((await Promise.all([reviews.scanOne(), reviews.scanOne()])).sort(), [false, true]);
+    assert.deepEqual(await f.automation.list(f.access, f.model, 'object_rules'), { items: [], hasMore: false });
+    const list = await reviews.list(await Access.load(f.db, principal), f.model);
+    assert.equal(list.items[0]?.id, review.id);
+    assert.equal(list.items[0]?.checkpoint?.release, f.model.release);
+    const report = await reviews.read(await Access.load(f.db, principal), f.model, review.id, false);
+    assert.equal(report.casesTotal, 1);
+    assert.equal(report.mined.transitions.length, 2);
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies VALUES('Eigos','Route',$1)`,
+      [objectPolicySchema.parse({ read: { all: [{ op: 'equals', property: 'id', value: 'other' }] } })]);
+    assert.equal((await reviews.read(await Access.load(f.db, principal), f.model, review.id, false)).casesTotal, 0);
+  } finally { await f.close(); }
+});
+
 test('a queued transition is hidden and cannot run after its historical log permission is revoked', async () => {
   const f = await processSetup();
   try {
@@ -445,7 +567,10 @@ test('revoked prior-step result visibility blocks a later Action even when the t
 
 test('a hotel workflow saved under v8 replays in v9 and the current release with fresh inputs and separate approval', async () => {
   // Reconstruct the historical documents on the same runtime and check both published identities.
-  const laterDomains = [calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition];
+  const laterDomains = [
+    calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition, fliggyServicesDefinition,
+    fliggyFlightBookingDefinition, fliggyHotelDefinition, diningReservations,
+  ];
   const addedTypes = new Set([
     ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType,
   ]);
@@ -454,23 +579,49 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const addedLogs = logs.filter(log => addedTypes.has(log.objectType));
   const addedActions = new Set(laterDomains.flatMap(domain => domain.actionTypes.map(action => action.apiName)));
   addedActions.add('StageDiningActivity');
+  addedActions.add('StageScheduleRecommendation');
   const addedFunctions = new Set([
-    ...laterDomains.flatMap(domain => domain.functionTypes), ...deliveryFunctions, ...locationFunctions, ...mapFunctions, flightPositionFunction,
+    ...laterDomains.flatMap(domain => domain.functionTypes), ...deliveryFunctions, ...locationFunctions, ...mapFunctions, ...dianpingResearchFunctions, flightPositionFunction,
   ].map(fn => fn.apiName));
   for (const name of ['stageDiningActivity', 'searchRestaurantNotes', 'readWeatherHistory', 'readDiningAvailability']) addedFunctions.add(name);
   addedActions.add('EstimateRideWithPlaceClues');
   for (const action of rideWatchDefinition.actionTypes) addedActions.add(action.apiName);
   for (const fn of rideWatchDefinition.functionTypes) addedFunctions.add(fn.apiName);
   addedFunctions.add('prepareRideInquiryWithPlaceClues');
+  addedFunctions.add('readInteractiveRideEstimate');
+  addedFunctions.add('recommendSchedule');
+  addedFunctions.add('stageScheduleRecommendation');
   const v9Definition = structuredClone(document);
   v9Definition.version = '9';
-  v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type => type.apiName !== 'RideInquiryWithPlaceClues');
+  delete v9Definition.agentProfiles;
+  for (const resource of [...v9Definition.objectTypes, ...v9Definition.functionTypes, ...v9Definition.actionTypes]) {
+    if (resource.typeClasses?.some(tag => tag.kind === 'agent-capability')) {
+      const tags = resource.typeClasses.filter(tag => tag.kind !== 'agent-capability');
+      if (tags.length) resource.typeClasses = tags;
+      else delete resource.typeClasses;
+    }
+  }
+  v9Definition.functionTypes = v9Definition.functionTypes.filter(fn => fn.apiName !== 'verifyGeometryUpload');
+  const geometry = v9Definition.actionTypes.find(action => action.apiName === 'RegisterGeometry')!;
+  delete geometry.rules;
+  delete geometry.result;
+  geometry.submissionCriteria = [];
+  geometry.function = 'registerGeometry';
+  v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type => type.apiName !== 'RideInquiryWithPlaceClues' &&
+    !fliggyServicesDefinition.interfaceTypes.some(item => item.apiName === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;
   v9Definition.objectTypes = v9Definition.objectTypes.filter(type => !addedTypes.has(type.apiName) && !addedLogs.some(log => log.type === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'ScheduledActivity')!.properties.dining;
+  delete v9Definition.objectTypes.find(type => type.apiName === 'EventTripStateLog')!.machinery;
+  const routeProperties = v9Definition.objectTypes.find(type => type.apiName === 'Route')!.properties;
+  delete routeProperties.pickup;
+  delete routeProperties.drivingEstimate;
   v9Definition.linkTypes = v9Definition.linkTypes.filter(type =>
     !addedLogs.some(log => log.link === type.apiName) && !documentDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
-    !rideWatchDefinition.linkTypes.some(link => link.apiName === type.apiName));
+    !rideWatchDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    !calendarJourneyDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    !fliggyServicesDefinition.linkTypes.some(link => link.apiName === type.apiName));
+  v9Definition.dataSources = v9Definition.dataSources.filter(source => !fliggyServicesDefinition.dataSources.some(item => item.apiName === source.apiName));
   v9Definition.actionTypes = v9Definition.actionTypes.filter(action => !addedActions.has(action.apiName));
   v9Definition.functionTypes = v9Definition.functionTypes.filter(fn => !addedFunctions.has(fn.apiName));
   v9Definition.functionTypes.find(fn => fn.apiName === 'resolveRideLocations')!.description =
@@ -544,7 +695,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     const hotelWorkflows = new HotelWorkflows(f.db, f.metadata, f.capabilities.functions);
     const pa = new PARequests(f.tasks);
     const approvedBody = (task: Task) => {
-      const review = (publicTask(task).result as { hotelWorkflow: { scenarioId: string; revision: number; snapshot: string } }).hotelWorkflow;
+      const review = (publicTask(task, f.capabilities.projectTaskResult).result as { hotelWorkflow: { scenarioId: string; revision: number; snapshot: string } }).hotelWorkflow;
       assert.ok(!Object.hasOwn(review, 'recipe'));
       return { taskId: task.id, scenarioId: review.scenarioId, revision: review.revision,
         snapshot: review.snapshot, decision: 'approve-simulation' };
@@ -618,6 +769,8 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     assert.equal(repeated.workflowId, approved.workflowId);
     assert.equal(repeated.status, 'simulated');
     const currentModel = await f.metadata.publish(document, f.capabilities, f.publisher);
+    assert.throws(() => checkWorkflowDependencies(v9, currentModel, { interfaceTypes: ['HotelOffer'] }, new Set(['HotelOffer'])),
+      /interfaceTypes\/HotelOffer/);
     await setGrants(f.db, principal.owner, memberGrants(currentModel));
     const currentAccess = await Access.load(f.db, principal);
     assert.deepEqual((await hotelWorkflows.list(principal)).items.map(item => item.id), [approved.workflowId]);
@@ -696,4 +849,460 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     assert.deepEqual(safe, { external_operations: 0, scheduled_actions: 0, action_effects: 0, live_activities: 0 });
     assert.equal(f.provider.flags.orderCreates, 0);
   } finally { await f.close(); }
+});
+
+async function exerciseReviewedHotelWorkflow(outcome: 'commit' | 'changed-evidence' | 'conflicting-activity' | 'predicate-match' | 'revoked-at-expiry' | 'revoked-on-reclaim') {
+  const hotelSource = serviceProvider();
+  const initial = planningInput();
+  const start = new Date(Date.now() + 3 * 86400000);
+  start.setUTCHours(6, 0, 0, 0);
+  const checkIn = start.toISOString().slice(0, 10);
+  const target = {
+    title: 'Hongqiao to synthetic hotel',
+    start: start.toISOString(),
+    end: new Date(start.getTime() + 4 * 3600000).toISOString(),
+    timeZone: 'Asia/Shanghai',
+    durationMinutes: 45,
+  };
+  let hotel: ObjectRef, modelRuns = 0;
+  const driver: AgentDriver = {
+    model: 'fixture-hotel-replanning',
+    async run(prompt, tools) {
+      modelRuns++;
+      const { object: plan, scenarioId, ontology } = JSON.parse(prompt.split('\n').at(-1)!);
+      assert.deepEqual([...tools.keys()], ['evaluate_function', 'apply_action', 'submit_workflow_proposal']);
+      assert.deepEqual(ontology.dataSources, []);
+      const act = (action: string, input: Record<string, unknown>, scenario: string | null = scenarioId) =>
+        tools.get('apply_action')!.invoke({ ...(scenario ? { scenarioId: scenario } : {}), action, input });
+      await assert.rejects(act('CommitSchedulePlan', { plan, scenarioId, revision: 1 }), /capability list/);
+      await assert.rejects(act('PrepareSchedulePlan', { ...target, plan, scenarioId }, null), /assigned Scenario/);
+      await assert.rejects(tools.get('evaluate_function')!.invoke({
+        function: 'readSchedulePlan', input: { plan }, scenarioId,
+      }), /capability list/);
+      const prepared = await act('PrepareSchedulePlan', { ...target, plan, scenarioId }) as { waitingForPA?: boolean };
+      if (prepared.waitingForPA) return;
+      const attach = act('AttachPlanService', { plan, service: hotel });
+      await assert.rejects(tools.get('submit_workflow_proposal')!.invoke({}), /current Workflow tool/);
+      await attach;
+      const { slots } = await tools.get('evaluate_function')!.invoke({
+        scenarioId, function: 'findScheduleSlots', input: { plan, limit: 1 },
+      }) as { slots: { start: string; end: string }[] };
+      assert.equal(slots.length, 1);
+      await act('SaveScheduleActivity', { plan, id: 'hotel-transfer', name: 'Hotel transfer', ...slots[0] });
+      await tools.get('submit_workflow_proposal')!.invoke({});
+    },
+  };
+  const definition = structuredClone(document);
+  const commit = definition.actionTypes.find(action => action.apiName === 'CommitSchedulePlan')!;
+  commit.effects = [{
+    name: 'ConfirmedReplan', handler: 'SyntheticHotelReplan',
+    payload: { plan: { parameter: 'plan' }, approvedRevision: { parameter: 'revision' } },
+  }];
+  const deliveries: unknown[] = [];
+  const extensions = { effects: new Map([['SyntheticHotelReplan', async (payload: unknown) => { deliveries.push(payload); }]]) };
+  const f = await fixture(driver, hotelSource.resolve, undefined, definition, undefined, extensions);
+  const reviewer = { ...principal, owner: 'hotel-replan-reviewer' };
+  const config = readConfig({ DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL,
+    EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'workflow-isolated-test-'.repeat(3) });
+  const { app } = createApp(config, f.db, f.source, async token => {
+    if (token === 'workflow-owner') return principal;
+    if (token === 'workflow-reviewer') return reviewer;
+    throw new Error('Unknown synthetic test token');
+  }, extensions);
+  const server = app.listen(0, '127.0.0.1');
+  const mcp = new Client({ name: 'synthetic-hotel-pa', version: '1' });
+  try {
+    await new Promise<void>(resolve => server.once('listening', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    const baseUrl = 'http://127.0.0.1:' + address.port;
+    const ownerClient = new OntologyClient({ baseUrl, token: 'workflow-owner' });
+    const reviewerClient = new OntologyClient({ baseUrl, token: 'workflow-reviewer' });
+    await mcp.connect(new StreamableHTTPClientTransport(new URL(baseUrl + '/mcp'), {
+      requestInit: { headers: { Authorization: 'Bearer workflow-owner' } },
+    }));
+    const graph = new Objects(f.db, f.model, f.access), scenarios = new Scenarios(f.db);
+    const { actions, effects } = f.capabilities;
+    const plan = { type: 'SchedulePlan', id: 'existing-itinerary' };
+    const { title: name, ...dates } = initial;
+    await graph.create(plan, { id: plan.id, name, ...dates, state: 'prepared' });
+    const before = await graph.read(plan);
+    const resource = { type: 'ScheduleResource', id: digest([principal.owner, 'personal-calendar']) };
+    await graph.create(resource, { id: resource.id, name: 'User calendar' });
+    const conflictsQuery = {
+      type: 'ScheduledActivity', from: { object: resource, link: 'activities' },
+      filter: { op: 'all' as const, predicates: [
+        { op: 'lt' as const, property: 'start', value: target.end },
+        { op: 'gt' as const, property: 'end', value: target.start },
+      ] },
+    };
+    const validationInput = { type: 'Route', id: 'only-read-by-final-validator' };
+    await graph.create(validationInput, { id: validationInput.id, name: 'Approved evidence' });
+    const invoke = f.capabilities.functions.invoke.bind(f.capabilities.functions);
+    let addUnexpectedEdit = false;
+    f.capabilities.functions.invoke = async (model, name, input, context) => {
+      if (name === 'findScheduleSlots' && model.scenario) {
+        assert.deepEqual((await context.objects.query(conflictsQuery)).items, []);
+        const sets = new ObjectSets(f.db);
+        assert.equal((await sets.evaluate(context.objects.access, model, {
+          set: { op: 'query', query: conflictsQuery },
+        })).total, 0);
+      }
+      if (name === 'validateSchedule' && model.scenario) {
+        await context.objects.read(validationInput);
+        await context.objects.query({ type: 'Route', where: { name: 'Hotel route closure' } });
+      }
+      if (name === 'commitSchedulePlan' && addUnexpectedEdit && context.edit) {
+        const edit = context.edit;
+        return invoke(model, name, input, { ...context, edit: (ref, write) =>
+          edit(ref, async (target) => {
+            await write(target);
+            const { revision } = await target.read(ref);
+            await target.edit(ref, revision, { name: 'Unreviewed name' });
+          }),
+        });
+      }
+      return invoke(model, name, input, context);
+    };
+    const search = await actions.resolve(f.access, f.model, {
+      interface: { type: 'HotelSearch', implementation: 'RollingGoHotelSearch', action: 'search' },
+      input: { place: '上海', checkIn, adults: 1, nights: 1, currency: 'CNY', limit: 3 },
+    });
+    const page = await actions.apply(f.access, f.model, search.action, search.input, 'replan-hotel-read');
+    const found = await graph.query({ type: 'HotelOffer', from: { object: page, link: 'results', as: 'ServiceSearchResult' },
+      where: { nativeId: 'hotel-1' } });
+    hotel = found.items[0]!.ref;
+    await setGrants(f.db, reviewer.owner, memberGrants(f.model));
+    const reviewerAccess = await Access.load(f.db, reviewer);
+    const automation = new Automation(f.db, f.metadata, actions);
+    const workflow = await automation.workflow(f.access, f.model, {
+      name: 'Replan a hotel itinerary', steps: [],
+      proposal: {
+        name: 'Hotel transfer proposal', goal: 'Choose an available time for the hotel transfer.',
+        actions: ['PrepareSchedulePlan', 'AttachPlanService', 'SaveScheduleActivity'],
+        functions: ['findScheduleSlots'], validation: { function: 'validateSchedule', objectParameter: 'plan' },
+        mergeAction: 'CommitSchedulePlan', mergeObjectParameter: 'plan', reviewers: [reviewer.owner],
+      },
+    });
+    await setGrants(f.db,principal.owner,[...memberGrants(f.model),{resource:'Eigos',permission:'edit_definition'}]);
+    const started = await mcp.callTool({ name: 'ontology_run_workflow',
+      arguments: { workflow: workflow.id, object: plan, requestId: 'hotel-replan' } });
+    assert.equal(Boolean(started.isError), false, JSON.stringify(started.content));
+    const submitted = JSON.parse((started.content as { text: string }[])[0]!.text) as { id: string };
+    const status = async () => (await automation.list(await Access.load(f.db, principal), f.model, 'workflow_runs'))
+      .items.find(item => item.id === submitted.id)!;
+    assert.equal(await automation.runOne(), true);
+    const waiting = await status();
+    assert.equal(waiting.state, 'waiting-proposal');
+    const { taskId, scenarioId } = waiting.proposal!;
+    await assert.rejects(scenarios.inspectReview(reviewerAccess, f.model, scenarioId), /unavailable/);
+    assert.deepEqual((await reviewerClient.pendingScenarioReviews()).items, []);
+    const candidate = structuredClone(f.model.document);
+    candidate.version += '-next';
+    const prepared = await f.metadata.prepare(candidate, f.capabilities, f.publisher);
+    await assert.rejects(f.metadata.activate(prepared.release, f.capabilities, f.publisher), /unfinished tasks/);
+    assert.equal(await f.worker.runOne(), true);
+    const paused = await f.tasks.get(principal, taskId);
+    assert.equal(paused.state, 'input-required', paused.error ?? '');
+    const ask = paused.result as { requestId: string; capability: string; input: typeof initial };
+    assert.equal(ask.capability, 'calendar.freebusy');
+    assert.equal(await automation.runOne(), false);
+    if (outcome === 'revoked-at-expiry' || outcome === 'revoked-on-reclaim') {
+      await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant =>
+        grant.resource !== 'Eigos/action/CommitSchedulePlan' || grant.permission !== 'apply_action'));
+      const expired = outcome === 'revoked-at-expiry';
+      if (expired) {
+        await f.db.query(`UPDATE ${f.db.schema}.workflow_runs SET proposal_deadline=clock_timestamp()-interval '1 second'
+          WHERE id=$1`, [submitted.id]);
+      } else {
+        // Simulate reclaiming a dispatcher that stopped after claiming the paused run.
+        await f.db.query(`UPDATE ${f.db.schema}.workflow_runs SET state='working',lease_until=clock_timestamp()-interval '1 second'
+          WHERE id=$1`, [submitted.id]);
+      }
+      assert.equal(await automation.runOne(), true);
+      assert.equal((await status()).state, expired ? 'expired' : 'failed');
+      assert.equal((await f.tasks.get(principal, taskId)).state, 'canceled');
+      assert.deepEqual((await new PARequests(f.tasks).pending(principal)).items, []);
+      await assert.rejects(ownerClient.request('tasks/' + taskId + '/pa-response',
+        { requestId: ask.requestId, response: calendarAnswer(ask.input) }), /not waiting/);
+      assert.equal(await automation.runOne(), false);
+      assert.equal(await effects.runOne(), false);
+      assert.deepEqual(await graph.read(plan), before);
+      assert.equal(f.provider.flags.orderCreates, 0);
+      if (expired) {
+        await f.metadata.activate(prepared.release, f.capabilities, f.publisher);
+        assert.equal((await f.metadata.active()).release, prepared.release);
+      }
+      return;
+    }
+    await ownerClient.request('tasks/' + taskId + '/pa-response', { requestId: ask.requestId, response: calendarAnswer(ask.input) });
+    assert.equal(await f.worker.runOne(), true);
+    const proposed = await f.tasks.get(principal, taskId);
+    assert.equal(proposed.state, 'completed', proposed.error ?? '');
+    assert.equal(modelRuns, 2);
+    await assert.rejects(f.metadata.activate(prepared.release, f.capabilities, f.publisher), /unfinished workflows/);
+    assert.equal(await automation.runOne(), true);
+    assert.equal((await status()).state, 'waiting-approval');
+    assert.deepEqual(await graph.read(plan), before);
+    assert.equal((await graph.follow(plan, 'activities')).length, 0);
+
+    const review = await reviewerClient.scenario(scenarioId).inspectReview();
+    assert.deepEqual((await reviewerClient.pendingScenarioReviews()).items.map(({ id, approved }) => ({ id, approved })), [
+      { id: scenarioId, approved: false },
+    ]);
+    assert.deepEqual((await ownerClient.pendingScenarioReviews()).items, []);
+    const reviewedPlan = review.objects.find(({ ref }) => ref.id === plan.id);
+    assert.equal(reviewedPlan?.before?.state, 'prepared');
+    assert.equal(reviewedPlan?.after?.state, 'confirmed');
+    assert.equal(review.evidenceChanged, false);
+    assert.match(review.evidenceVersion ?? '', /^[a-f0-9]{64}$/);
+    const reviewedPayload = { plan, approvedRevision: review.revision };
+    assert.deepEqual(review.commit?.effects, [{ name: 'ConfirmedReplan', handler: 'SyntheticHotelReplan', payload: reviewedPayload }]);
+    assert.ok(review.evidence?.some(item => item.ref.id === hotel.id));
+    assert.ok(review.evidence?.some(item => item.ref.id === validationInput.id));
+    const { cognitive_evidence: rawEvidence } = (await f.db.query(
+      `SELECT cognitive_evidence FROM ${f.db.schema}.tasks WHERE owner=$1 AND id=$2`, [principal.owner, taskId],
+    )).rows[0]!;
+    const observations = decisionEvidenceSchema.parse(rawEvidence);
+    const empty = observations.find(item => item.read.kind === 'query' && item.read.input.type === 'ScheduledActivity');
+    assert.ok(empty && empty.read.kind === 'query');
+    assert.deepEqual(empty.read.input.filter, conflictsQuery.filter);
+    assert.equal(empty.fingerprint, digest({ value: { items: [] } }));
+    const emptySet = observations.find(item => item.read.kind === 'set');
+    assert.ok(emptySet && emptySet.read.kind === 'set');
+    assert.deepEqual(emptySet.refs, []);
+    assert.match(emptySet.fingerprint, /^[a-f0-9]{64}$/);
+    assert.ok(observations.some(item => item.read.kind === 'follow' && item.read.link === 'activities' && item.refs.length === 0));
+    assert.ok(observations.some(item => item.read.kind === 'pa'));
+    assert.ok(observations.some(item => item.read.kind === 'source' && item.read.ref.id === hotel.id));
+    const merge = () => actions.apply(f.access, f.model, 'CommitSchedulePlan', {
+      plan, scenarioId, revision: review.revision,
+    }, 'commit-hotel-replan');
+    assert.equal(await effects.runOne(), false);
+    await assert.rejects(merge(), /requires approval/);
+    await assert.rejects(scenarios.inviteReviewers(f.access, f.model, scenarioId, review.revision, []), /revision changed/);
+    await assert.rejects(scenarios.approveReview(reviewerAccess, f.model, scenarioId, review.revision, '0'.repeat(64)), /review changed/);
+    await reviewerClient.scenario(scenarioId).approveReview(review.revision, review.snapshot);
+    assert.equal((await reviewerClient.pendingScenarioReviews()).items[0]?.approved, true);
+    await assert.rejects(f.metadata.activate(prepared.release, f.capabilities, f.publisher), /unfinished workflows/);
+    assert.equal((await f.metadata.active()).release, f.model.release);
+    await setGrants(f.db, reviewer.owner, []);
+    await assert.rejects(merge(), /requires approval/);
+    await setGrants(f.db, reviewer.owner, memberGrants(f.model));
+    if (outcome === 'changed-evidence' || outcome === 'conflicting-activity' || outcome === 'predicate-match') {
+      if (outcome === 'changed-evidence') {
+        const evidence = await graph.read(validationInput);
+        await graph.edit(validationInput, evidence.revision, { name: 'Different decision evidence' });
+      } else if (outcome === 'predicate-match') {
+        await graph.create({ type: 'Route', id: 'new-predicate-match' }, { id: 'new-predicate-match', name: 'Hotel route closure' });
+      } else {
+        const activity = review.objects.find(item => item.ref.type === 'ScheduledActivity')!.after!;
+        const blocker = { type: 'ScheduledActivity', id: 'concurrent-reservation' };
+        await f.db.transaction(async client => {
+          const writer = new Objects(f.db, f.model, f.access, client);
+          await writer.create(blocker, { id: blocker.id, name: 'Concurrent reservation', start: activity.start, end: activity.end });
+          await writer.link({ type: 'ActivityResource', from: blocker, to: resource });
+        });
+        assert.equal((await graph.read(resource)).revision, review.evidence?.find(item => item.ref.id === resource.id)?.revision ?? 1);
+      }
+      const stale = await scenarios.inspectReview(reviewerAccess, f.model, scenarioId);
+      assert.equal(stale.evidenceVersion, review.evidenceVersion);
+      assert.equal(stale.evidenceChanged, true);
+      assert.equal(stale.conflicts, true);
+      await assert.rejects(scenarios.approveReview(reviewerAccess, f.model, scenarioId, stale.revision, stale.snapshot), /review changed/);
+      await assert.rejects(merge(), /decision evidence changed/);
+      assert.deepEqual(await graph.read(plan), before);
+      assert.equal(await effects.runOne(), false);
+      await automation.cancel(f.access, f.model, submitted.id);
+      const next = await f.metadata.publish(candidate, f.capabilities, f.publisher);
+      assert.equal((await f.metadata.active()).release, next.release);
+      assert.equal(f.provider.flags.orderCreates, 0);
+      return;
+    }
+
+    const unrelated = { type: 'Route', id: 'unrelated-route-after-approval' };
+    await graph.create(unrelated, { id: unrelated.id, name: 'Unrelated route' });
+    const afterUnrelatedWrite = await reviewerClient.scenario(scenarioId).inspectReview();
+    assert.equal(afterUnrelatedWrite.evidenceChanged, false);
+    assert.equal(afterUnrelatedWrite.snapshot, review.snapshot);
+
+    addUnexpectedEdit = true;
+    await assert.rejects(merge(), /differ from the reviewed Scenario delta/);
+    assert.deepEqual(await graph.read(plan), before);
+    assert.equal((await status()).state, 'waiting-approval');
+    assert.equal(await effects.runOne(), false);
+    addUnexpectedEdit = false;
+    assert.deepEqual(await ownerClient.scenario(scenarioId).merge('CommitSchedulePlan', 'commit-hotel-replan', review.revision, { plan }), plan);
+    assert.deepEqual(await merge(), plan);
+    assert.equal((await status()).state, 'completed');
+    assert.equal((await graph.read(plan)).properties.name, target.title);
+    assert.equal((await graph.read(plan)).properties.state, 'confirmed');
+    assert.equal((await graph.follow(plan, 'activities'))[0]?.properties.name, 'Hotel transfer');
+    assert.equal((await graph.follow(plan, 'availability'))[0]?.properties.evidence, 'synthetic');
+    assert.equal((await f.tasks.get(principal, taskId)).id, taskId);
+    assert.deepEqual(deliveries, []);
+    assert.equal(await effects.runOne(), true);
+    assert.equal(await effects.runOne(), false);
+    assert.deepEqual(deliveries, [reviewedPayload]);
+    const trace = await new ExecutionTrace(f.db, f.metadata).read(await Access.load(f.db, principal), 'Eigos', { taskId });
+    assert.ok(trace.events.some(event => event.kind === 'approval'));
+    assert.ok(trace.events.some(event => event.kind === 'merge' && event.taskId === taskId));
+    assert.ok(trace.effects.some(effect => effect.state === 'completed'));
+    assert.equal(f.provider.flags.orderCreates, 0);
+    const dispatches = await f.db.query(`SELECT
+      (SELECT count(*) FROM ${f.db.schema}.external_operations) AS operations,
+      (SELECT count(*) FROM ${f.db.schema}.action_effects) AS effects`);
+    assert.deepEqual(dispatches.rows[0], { operations: '0', effects: '1' });
+
+    const second = await automation.run(f.access, f.model, { workflow: workflow.id, object: plan, requestId: 'expired-hotel-replan' });
+    await automation.runOne();
+    const secondRun = (await automation.list(f.access, f.model, 'workflow_runs')).items.find(item => item.id === second.id)!;
+    await f.db.query(`UPDATE ${f.db.schema}.workflow_runs SET proposal_deadline=clock_timestamp()-interval '1 second'
+      WHERE id=$1`, [second.id]);
+    assert.equal(await automation.runOne(), true);
+    assert.equal((await f.tasks.get(principal, secondRun.proposal!.taskId)).state, 'canceled');
+    assert.equal((await automation.list(f.access, f.model, 'workflow_runs')).items.find(item => item.id === second.id)!.state, 'expired');
+    await assert.rejects(scenarios.inspectReview(reviewerAccess, f.model, secondRun.proposal!.scenarioId), /unavailable/);
+  } finally {
+    await mcp.close();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await f.close();
+  }
+}
+
+test('hotel replanning preserves the independent review and synthetic Outbox after an unrelated Route is added', () =>
+  exerciseReviewedHotelWorkflow('commit'));
+
+test('hotel replanning rejects drift in final-validator evidence and allows activation after closing the run', () =>
+  exerciseReviewedHotelWorkflow('changed-evidence'));
+
+test('hotel replanning rejects a new activity on the same resource in the previously empty window', () =>
+  exerciseReviewedHotelWorkflow('conflicting-activity'));
+
+test('hotel replanning rejects a new match in a validator-only predicate that returned no objects', () =>
+  exerciseReviewedHotelWorkflow('predicate-match'));
+
+
+test('hotel replanning expires and cancels the original PA task even after the merge grant is revoked', () =>
+  exerciseReviewedHotelWorkflow('revoked-at-expiry'));
+
+test('hotel replanning cancels the original PA task when a reclaimed proposal fails authorization', () =>
+  exerciseReviewedHotelWorkflow('revoked-on-reclaim'));
+
+test('saved object-rule preview runs actual workflow bindings in selected Scenarios without leaving writes',async()=>{
+  const f=await setup();try {
+    const scenarios=new Scenarios(f.db);
+    const [a,b]=await Promise.all(['matched','unchanged'].map(name=>scenarios.create(f.access,f.model,{requestId:name,name})));
+    assert(a && b);
+    const view=await scenarios.view(f.access,f.model,a.id);
+    await f.actions.apply(f.access,view,'RenameRoute',{route:f.source,revision:1,name:'match'},'preview-rename');
+    const rule=await f.automation.rule(f.access,f.model,{name:'Matches',query:{type:'Route',where:{name:'match'}},workflow:f.workflow.id,enabled:true});
+    const inspection=await scenarios.inspect(f.access,f.model,a.id);
+    const result=await f.automation.preview(f.access,f.model,{rule:rule.id,revision:rule.revision,
+      scenarios:[{id:a.id,revision:inspection.revision},{id:b.id,revision:b.revision}]});
+    assert.equal(result.scenarios[0]!.results[0]!.steps[0]!.status,'completed');
+    assert.equal(result.scenarios[1]!.results.length,0);
+    assert.equal((await scenarios.inspect(f.access,f.model,a.id)).revision,inspection.revision);
+    assert.equal((await f.objects.query({type:'Route'})).items.length,1);
+    assert.equal((await f.db.query(`SELECT * FROM ${f.db.schema}.workflow_runs`)).rowCount,0);
+  }finally{await f.close();}
+});
+
+test('continuation replays the exact authored journal on a compatible release and does not transfer approval',async()=>{
+  const f=await setup();try{
+    const scenarios=new Scenarios(f.db), draft=await scenarios.create(f.access,f.model,{requestId:'prior',name:'Draft'});
+    await f.actions.apply(f.access,await scenarios.view(f.access,f.model,draft.id),'RenameRoute',
+      {route:f.source,revision:1,name:'proposed'},'journal');
+    const prior=await scenarios.inspect(f.access,f.model,draft.id);
+    const review=await scenarios.inviteReviewers(f.access,f.model,draft.id,prior.revision,['independent-reviewer']);
+    const document=structuredClone(f.model.document);
+    document.version+='next';
+    const next=await f.metadata.publish(document,f.capabilities,f.publisher);
+    assert.deepEqual((await scenarios.list(f.access,next)).items,[]);
+    assert.equal((await scenarios.continuationSources(f.access,next)).items[0]!.id,draft.id);
+    const copied=await scenarios.continueScenario(f.access,next,{id:draft.id,revision:review.revision,requestId:'continue'});
+    assert.notEqual(copied.id,draft.id);
+    assert.equal((await scenarios.inspect(f.access,next,copied.id)).objects[0]!.after!.name,'proposed');
+    assert.equal((await new Objects(f.db,next,f.access).read(f.source)).properties.name,'original');
+    assert.equal((await scenarios.continueScenario(f.access,next,{id:draft.id,revision:review.revision,requestId:'continue'})).id,copied.id);
+    assert.equal((await f.db.query(`SELECT * FROM ${f.db.schema}.scenario_approvals WHERE scenario_id=$1`,[copied.id])).rowCount,0);
+    await new Objects(f.db,next,f.access).edit(f.source,1,{name:'other edit'});
+    await assert.rejects(scenarios.continueScenario(f.access,next,{id:draft.id,revision:review.revision,requestId:'collision'}),/conflict/);
+  }finally{await f.close();}
+});
+
+test('external process history is source-authorized, idempotent, isolated from live automation, and exportable',async()=>{
+  const f=await processSetup();try{
+    await setGrants(f.db,principal.owner,[...memberGrants(f.model),
+      {resource:'Eigos/source/Archive',permission:'ingest_source'},{resource:'Eigos/source/Archive',permission:'read_source'}]);
+    const access=await Access.load(f.db,principal);
+    const time=(minutes:number)=>new Date(Date.now()+minutes*60000).toISOString();
+    const history={type:'RouteStateLog',source:'Archive',events:[
+      {id:'A',object:f.source,from:null,to:'open',observedAt:time(-60)},
+      {id:'B',object:f.source,from:'open',to:'stalled',observedAt:time(-30)},
+    ]};
+    assert.equal((await ingestMachineryHistory(f.db,access,f.model,history)).inserted,2);
+    assert.equal((await ingestMachineryHistory(f.db,access,f.model,history)).replayed,2);
+    await assert.rejects(ingestMachineryHistory(f.db,access,f.model,{...history,events:[{...history.events[1],to:'done'}]}),/conflicts/);
+    const input=machineryAnalysisSchema.parse({type:'RouteStateLog',externalSource:'Archive',from:time(-75),to:time(-1)});
+    const analyzed=await analyzeMachinery(f.db,access,f.model,input,true);
+    assert.deepEqual(analyzed.cases[0]?.states,['open','stalled']);
+    assert.deepEqual(analyzed.members,[f.source]);
+    const services=ontologyServices(f.db,f.metadata,f.capabilities,f.capabilities.functions,f.capabilities.effects,f.actions);
+    const saved=await services.get('save_machinery_cases')!.invoke(principal,{analysis:input,name:'Stalled cases',requestId:'case-set'}) as {id:string};
+    assert.deepEqual(await f.db.transaction(client=>new ObjectSets(f.db).members(access,f.model,{op:'saved',id:saved.id},client)),[f.source]);
+    const cases=await services.get('evaluation_cases_from_set')!.invoke(principal,{set:saved.id,parameter:'route'});
+    assert.deepEqual(cases,{total:1,cases:[{name:'Case1',inputs:{route:f.source},
+      evidence:[{object:f.source,revision:(await f.graph.read(f.source)).revision}]}]});
+    assert.equal((await f.graph.query({type:'RouteStateLog'})).items.length,0);
+  }finally{await f.close();}
+});
+
+
+test('ordinary users run published Workflow snapshots under their own permissions without author access',async()=>{
+  const f=await setup();
+  try {
+    const services=ontologyServices(f.db,f.metadata,f.capabilities,f.capabilities.functions,f.capabilities.effects,f.actions);
+    const member={...principal,owner:'workflow-consumer'};
+    const editor={...principal,owner:'service-editor'};
+    await setGrants(f.db,principal.owner,[...memberGrants(f.model),{resource:'Eigos',permission:'manage_definition'}]);
+    await setGrants(f.db,editor.owner,[...memberGrants(f.model),{resource:'Eigos',permission:'edit_definition'}]);
+    await setGrants(f.db,member.owner,memberGrants(f.model));
+    const invoke=(name:string,actor:typeof principal,input:unknown={})=>services.get(name)!.invoke(actor,input);
+    for (const [actor,role] of [[principal,'admin'],[editor,'editor'],[member,'member']] as const) {
+      assert.equal((await invoke('workbench_access',actor) as {role:string}).role,role);
+    }
+    assert.deepEqual(await invoke('published_workflows',member),{items:[],hasMore:false});
+    await assert.rejects(invoke('raw_definition',member),/service team/);
+    await assert.rejects(invoke('list_branches',member),/service team/);
+    await assert.rejects(invoke('save_workflow',member,{name:'draft',steps:f.steps}),/edit_definition/);
+    await assert.rejects(invoke('run_workflow',member,{workflow:f.workflow.id,object:f.source,requestId:'draft'}),/edit_definition/);
+    await assert.rejects(invoke('publish_workflow',editor,{id:f.workflow.id,revision:1,targetType:'Route'}),/manage_definition/);
+    await assert.rejects(invoke('run_published_workflow',member,{workflow:f.workflow.id,revision:1,object:f.source,requestId:'not-released'}),/unavailable/);
+
+    const graph=new Objects(f.db,f.model,await Access.load(f.db,member));
+    const input={type:'Route',id:'member-route'};
+    await graph.create(input,{id:input.id,name:'member-input'});
+    await invoke('publish_workflow',principal,{id:f.workflow.id,revision:1,targetType:'Route'});
+    await invoke('save_workflow',principal,{id:f.workflow.id,revision:1,name:'Unreleased edit',steps:[{
+      ...f.steps[0],input:{...f.steps[0]!.input,name:{literal:'Draft-only name'}},
+    }]});
+    assert.deepEqual(await invoke('published_workflows',member),{items:[{
+      id:f.workflow.id,name:'Copy route',description:'',revision:1,targetType:'Route',
+    }],hasMore:false});
+    await assert.rejects(invoke('run_published_workflow',member,{workflow:f.workflow.id,revision:1,object:f.source,requestId:'foreign'}),/Object is unavailable/);
+    const request={workflow:f.workflow.id,revision:1,object:input,requestId:'published'};
+    const accepted=await invoke('run_published_workflow',member,request);
+    assert.deepEqual(await invoke('run_published_workflow',member,request),accepted);
+    assert(await f.automation.runOne());
+    assert.equal((await graph.read({type:'Route',id:'member-input'})).properties.name,'Copied');
+    assert.equal((await f.objects.query({type:'Route'})).items.length,1);
+
+    await setGrants(f.db,member.owner,memberGrants(f.model).filter(g=>g.resource!=='Eigos/action/CopyRoute'));
+    assert.deepEqual(await invoke('published_workflows',member),{items:[],hasMore:false});
+    await assert.rejects(invoke('run_published_workflow',member,{...request,requestId:'revoked'}),/apply_action/);
+    await setGrants(f.db,member.owner,memberGrants(f.model));
+    await invoke('withdraw_workflow',principal,{id:f.workflow.id,revision:1});
+    await assert.rejects(invoke('run_published_workflow',member,{...request,requestId:'withdrawn'}),/unavailable/);
+  }finally{await f.close();}
 });

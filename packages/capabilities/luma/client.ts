@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { InvalidInput, SourceReadFailure } from '../../core/identity.js';
 import { eventFacts, eventSearchInput } from '../../ontology/service-contracts.js';
 
 const event = z.object({
@@ -24,19 +25,25 @@ export class LumaReadClient {
     private readonly fetcher: typeof fetch = fetch,
   ) {}
   async read(raw: unknown, signal: AbortSignal) {
+    const input = eventSearchInput.parse(raw);
+    if (input.query || input.location)
+      throw new InvalidInput('Luma discovery requires the PA MCP connection; this API connection only reads an event or calendar');
+    const key = await this.credential().catch(() => {
+      throw new SourceReadFailure('Luma source authorization is unavailable', { unavailable: true });
+    });
+    const bounded = AbortSignal.any([signal, AbortSignal.timeout(20000)]);
     try {
-      return await this.request(raw, signal);
-    } catch {
-      throw new Error('Luma source unavailable; verify account authorization and the response contract');
+      return await this.request(input, key, bounded);
+    } catch (error) {
+      signal.throwIfAborted();
+      if (error instanceof SourceReadFailure) throw error;
+      throw new SourceReadFailure('Luma source unavailable; verify account authorization and the response contract', {
+        unavailable: bounded.aborted,
+      });
     }
   }
-  private async request(raw: unknown, signal: AbortSignal) {
-    const input = eventSearchInput.parse(raw),
-      url = new URL(input.eventId ? '/v1/events/get' : '/v1/calendars/events/list', 'https://public-api.luma.com');
-    if (input.query || input.location)
-      throw new Error(
-        'Luma discovery requires the PA MCP connection; this API connection only reads an event or calendar',
-      );
+  private async request(input: z.infer<typeof eventSearchInput>, key: string, signal: AbortSignal) {
+    const url = new URL(input.eventId ? '/v1/events/get' : '/v1/calendars/events/list', 'https://public-api.luma.com');
     if (input.eventId) url.searchParams.set('event_id', input.eventId);
     else {
       url.searchParams.set('pagination_limit', String(input.limit));
@@ -47,14 +54,21 @@ export class LumaReadClient {
       }))
         if (value) url.searchParams.set(key, value);
     }
-    const key = await this.credential(),
-      bounded = AbortSignal.any([signal, AbortSignal.timeout(20000)]);
     const response = await this.fetcher(url, {
       headers: { 'x-luma-api-key': key, accept: 'application/json' },
       redirect: 'error',
-      signal: bounded,
+      signal,
+    }).catch((error: unknown) => {
+      if (error instanceof TypeError || signal.aborted)
+        throw new SourceReadFailure('Luma source temporarily unavailable', { unavailable: true });
+      throw error;
     });
-    if (!response.ok) throw new Error(`Luma source unavailable (HTTP ${response.status})`);
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new SourceReadFailure('Luma source request failed', {
+        unavailable: [429, 503, 504].includes(response.status),
+      });
+    }
     const reader = response.body?.getReader();
     if (!reader) throw new Error('Luma returned no response');
     const chunks: Uint8Array[] = [];

@@ -14,6 +14,8 @@ EIGOS 通过同一套 Ontology MCP 提供地图、路线和天气 Function。查
 
 设备定位通过工作台或 PA 共享，带上采集时间、精度和坐标系。指定或行程地点优先。高德地图和天气查询使用 `TaskLocation`，位置引用只在原任务和获授权用途内有效。两类坐标均保留来源。WGS84 转 GCJ-02 使用[高德官方坐标转换](https://lbs.amap.com/api/webservice/guide/api/convert)。具备该来源授权的美团外卖任务可以直接使用浏览器共享的位置，查配送费和预计送达复用同一个收餐地点。
 
+叫车任务使用 `RideInquiryWithPlaceClues.estimate`。用户明确指定上车点时，Action 直接查询滴滴地点。省略上车点时，Action 在原任务向 PA 请求手机定位，要求两分钟内采集且精度为 50 米或更好。它通过高德将标明 WGS84 的设备定位转换为 GCJ-02，标明 GCJ-02 的定位直接反查地址。滴滴使用与地址对应的实时 POI 估价和计算车程。多个候选时，在原任务请用户确认。目的地缺失或定位不可用时，可在原任务补充地址。结果保留坐标转换状态。车程来源不可用时，车程显示未知。参考 [Palantir Actions](https://www.palantir.com/docs/foundry/action-types/overview)、[Palantir Functions](https://www.palantir.com/docs/foundry/functions/overview) 和 [滴滴 MCP 坐标约束](https://mcp.didichuxing.com/api)。
+
 ## 来源开通
 
 从高德开放平台取得 Web 服务 Key。Gateway 和 Worker 的 `EIGOS_AMAP_CONNECTION_FILE` 指向运行用户拥有的 `0600` JSON 文件，结构为 `owner`、`active`、`expiresAt`、`keyFile` 和 `keySha256`。其中 `keyFile` 为私有绝对路径，`keySha256` 是去掉首尾空白后的 Key 的 SHA-256。按 owner 授予 `Amap` 来源读取权限和所需 Function 的执行权限。设备位置另使用同一 owner 的 `PALocation` 权限。参考[高德开发者开通说明](https://lbs.amap.com/api/mcp-server/create-project-and-key)。

@@ -35,7 +35,9 @@ export function fakeAmap(calls: Recorded[], state: {
       delete query.key;
       calls.push({ name: url.pathname, input: query });
       if (url.pathname === '/v3/assistant/coordinate/convert') return Response.json({ status: '1', locations: '121.499,31.205' });
-      if (url.pathname === '/v3/geocode/regeo') return Response.json({ status: '1', regeocode: { addressComponent: { adcode: '310115' } } });
+      if (url.pathname === '/v3/geocode/regeo') return Response.json({ status: '1', regeocode: {
+        formatted_address: '上海市浦东新区示例路1号', addressComponent: { province: '上海市', adcode: '310115' },
+      } });
       assert.equal(url.pathname, '/v3/weather/weatherInfo');
       assert.equal(query.extensions, 'base');
       return Response.json({ status: '1', lives: [{

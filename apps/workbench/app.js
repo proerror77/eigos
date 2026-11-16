@@ -1,9 +1,11 @@
 const $ = (selector) => document.querySelector(selector);
 const state = {
   token: sessionStorage.getItem('eigos_token'),
+  identity: null,
   ontology: 'Eigos',
   page: 'objects',
   model: null,
+  membership: null,
   raw: null,
   scenario: null,
   selected: null,
@@ -160,10 +162,11 @@ function download(name, data, mime = 'application/json') {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 async function request(path, input, options = {}) {
+  const token = state.token;
   const response = await fetch(path, {
     method: input === undefined ? 'GET' : 'POST',
     headers: {
-      ...(state.token ? { Authorization: 'Bearer ' + state.token } : {}),
+      ...(token ? { Authorization: 'Bearer ' + token } : {}),
       ...(input === undefined ? {} : { 'Content-Type': 'application/json' }),
       ...options.headers,
     },
@@ -172,10 +175,20 @@ async function request(path, input, options = {}) {
   });
   const body = await response.json().catch(() => ({ error: '服务返回了无法读取的结果' }));
   if (!response.ok) {
-    if (response.status === 401) {
+    if (response.status === 401 && token && token === state.token) {
       state.token = null;
+      state.identity = null;
+      state.model = null;
+      state.raw = null;
+      state.scenario = null;
+      state.session = null;
       sessionStorage.removeItem('eigos_token');
       $('#connection').textContent = '登录已过期';
+      $('#connect').hidden = false;
+      $('#account').hidden = true;
+      $('#logout').hidden = true;
+      $('#definition-status').textContent = '连接后加载已授权的定义';
+      $('#main').replaceChildren(empty('请重新连接账户。'));
     }
     throw new Error(body.error || '请求失败');
   }
@@ -189,6 +202,34 @@ const query = (input) =>
     query: input,
     ...(state.scenario ? { scenarioId: state.scenario } : {}),
   });
+// The relationship service rejects more than 100 objects, so related objects page through
+// the authorized Link query. A short page does not end the read; only an empty cursor does.
+const relatedObjectLimit = 1000;
+function linkTarget(type, link) {
+  for (const definition of state.model?.linkTypes ?? []) {
+    if (definition.from.type === type && definition.from.name === link) return definition.to.type;
+    if (definition.to.type === type && definition.to.name === link) return definition.from.type;
+  }
+}
+async function relatedObjects(object, link, { scenarioId = state.scenario, complete = false } = {}) {
+  const type = linkTarget(object.type, link);
+  if (!type) throw new Error('当前定义中没有可读取的关系：' + link);
+  const items = [];
+  let cursor;
+  do {
+    const page = await request('/ontology/query', {
+      ontology: state.ontology,
+      query: { type, from: { object, link }, limit: 100, ...(cursor ? { cursor } : {}) },
+      ...(scenarioId ? { scenarioId } : {}),
+    });
+    items.push(...page.items);
+    cursor = page.cursor;
+  } while (cursor && items.length < relatedObjectLimit);
+  if (cursor && complete) throw new Error(`关联对象超过 ${relatedObjectLimit} 个，无法在此完整编辑。`);
+  return { items, truncated: Boolean(cursor) };
+}
+const relatedNotice = (related) =>
+  related.truncated ? [element('p', { class: 'subtle' }, `仅显示前 ${related.items.length} 个关联对象。`)] : [];
 async function applyAction(action, input, scenarioId = state.scenario) {
   const requestId = crypto.randomUUID();
   const result = await request('/ontology/actions', {
@@ -203,40 +244,76 @@ async function applyAction(action, input, scenarioId = state.scenario) {
 }
 async function connected() {
   const identity = await request('/identity');
-  state.model = await request('/ontology?ontology=' + encodeURIComponent(state.ontology));
+  const membership = await service('workbench_access');
+  state.membership = membership;
+  state.model = membership.role === 'member' ? null
+    : await request('/ontology?ontology=' + encodeURIComponent(state.ontology));
+  if (membership.role === 'member') state.page = 'published';
+  document.querySelectorAll('[data-page]').forEach(item => {
+    item.hidden = item.dataset.page !== 'published' &&
+      (membership.role === 'member' || item.dataset.page === 'rules' && !membership.canAuthorWorkflows);
+    item.classList.toggle('active', item.dataset.page === state.page);
+  });
+  $('#ontology-name').disabled = membership.role === 'member';
+  state.identity = identity;
   $('#connection').textContent = '已连接';
   $('#connect').hidden = true;
+  $('#account').hidden = false;
   $('#logout').hidden = false;
-  $('#definition-status').textContent = state.model.id + ' · 版本 ' + state.model.version;
+  $('#definition-status').textContent = membership.ontology + ' · 版本 ' + membership.version;
   state.raw = null;
   await render();
   return identity;
 }
+async function connectToken(token) {
+  state.token = token;
+  try {
+    await connected();
+    sessionStorage.setItem('eigos_token', token);
+  } catch (error) {
+    state.token = null;
+    sessionStorage.removeItem('eigos_token');
+    throw error;
+  }
+}
 async function login() {
   const config = await request('/workbench/config');
   const content = $('#login-options');
+  const dialog = $('#login');
+  const status = $('#login-status');
+  const attempt = new AbortController();
+  dialog.onclose = () => attempt.abort();
   content.replaceChildren();
-  $('#login-status').textContent = '';
+  status.textContent = '';
   if (config.deviceLogin)
     content.append(
       button(
         '通过账户登录',
         async () => {
-          const started = await request('/workbench/login/start', {});
-          window.open(started.url, '_blank', 'noopener');
-          $('#login-status').replaceChildren(
-            element('span', {}, '在登录页面确认代码 ' + started.userCode + '。'),
-            element('a', { href: started.url, target: '_blank', rel: 'noopener noreferrer' }, '打开登录页面'),
-          );
-          for (let attempt = 0; attempt < 120 && $('#login').open; attempt++) {
-            await new Promise((resolve) => setTimeout(resolve, (started.interval || 5) * 1000));
-            const result = await request('/workbench/login/poll', { id: started.id });
-            if (result.pending) continue;
-            state.token = result.accessToken;
-            sessionStorage.setItem('eigos_token', state.token);
-            $('#login').close();
-            await connected();
-            return;
+          try {
+            status.textContent = '正在准备登录…';
+            const started = await request('/workbench/login/start', {}, { signal: attempt.signal });
+            status.replaceChildren(
+              element('span', {}, '在登录页面确认代码 ' + started.userCode + '。 '),
+              element('a', { href: started.url, target: '_blank', rel: 'noopener noreferrer' }, '打开登录页面'),
+            );
+            const expires = Date.now() + (started.expiresIn ?? 900) * 1000;
+            let interval = started.interval;
+            while (!attempt.signal.aborted && dialog.open && Date.now() < expires) {
+              await new Promise((resolve) => setTimeout(resolve, interval * 1000));
+              if (attempt.signal.aborted || !dialog.open || Date.now() >= expires) break;
+              const result = await request('/workbench/login/poll', { id: started.id }, { signal: attempt.signal });
+              if (result.pending) {
+                interval = result.interval;
+                continue;
+              }
+              await connectToken(result.accessToken);
+              dialog.close();
+              return;
+            }
+            if (!attempt.signal.aborted) status.textContent = '登录已过期，请重新开始。';
+          } catch (error) {
+            if (!attempt.signal.aborted) status.textContent = error.message;
           }
         },
         'primary',
@@ -257,17 +334,16 @@ async function login() {
       button(
         '连接',
         async () => {
-          state.token = token.value.trim();
-          if (!state.token) throw new Error('请输入访问凭据');
-          await connected();
-          sessionStorage.setItem('eigos_token', state.token);
-          $('#login').close();
+          const value = token.value.trim();
+          if (!value) throw new Error('请输入访问凭据');
+          await connectToken(value);
+          dialog.close();
         },
         'primary',
       ),
     );
   }
-  $('#login').showModal();
+  dialog.showModal();
 }
 function jsonSchemaForm(schema, initial = {}) {
   const root = element('div'),
@@ -682,21 +758,22 @@ async function showObject(object, target) {
   for (const link of view.links)
     links.append(
       button(link, async () => {
-        const related = await service('follow_links', {
-          object: object.ref,
-          link,
-          ...(state.scenario ? { scenarioId: state.scenario } : {}),
-        });
+        const related = await relatedObjects(object.ref, link);
         modal(
           link,
-          related.length
-            ? table(
-                ['对象', '类型'],
-                related.map((item) => [titleOf(item), item.ref.type]),
-                (index) => {
-                  $('#editor').close();
-                  showObject(related[index], target);
-                },
+          related.items.length
+            ? element(
+                'div',
+                {},
+                ...relatedNotice(related),
+                table(
+                  ['对象', '类型'],
+                  related.items.map((item) => [titleOf(item), item.ref.type]),
+                  (index) => {
+                    $('#editor').close();
+                    showObject(related.items[index], target);
+                  },
+                ),
               )
             : empty('没有可见的关联对象。'),
         );
@@ -734,14 +811,19 @@ async function showObject(object, target) {
   );
   target.replaceChildren(node);
 }
-function actionDialog(object) {
+function actionDialog(object, options = {}) {
+  const scenarioId = options.live ? null : state.scenario;
+  const actions = options.actions
+    ? state.model.actionTypes.filter(action => options.actions.includes(action.apiName))
+    : state.model.actionTypes;
+  if (!actions.length) throw new Error('当前身份没有可用的流程操作。');
   const picker = select(
-      state.model.actionTypes.map((action) => [action.apiName, action.apiName]),
-      state.model.actionTypes[0]?.apiName,
+      actions.map((action) => [action.apiName, action.apiName]),
+      actions[0].apiName,
     ),
     holder = element('div');
   const draw = () => {
-    const action = state.model.actionTypes.find((action) => action.apiName === picker.value),
+    const action = actions.find((action) => action.apiName === picker.value),
       initial = {};
     for (const [name, type] of Object.entries(action.objectParameters))
       if (
@@ -757,15 +839,15 @@ function actionDialog(object) {
         'div',
         { class: 'actions' },
         button(
-          state.scenario ? '提交到当前方案' : '提交操作',
+          scenarioId ? '提交到当前方案' : '提交操作',
           async () => {
-            const result = await applyAction(action.apiName, form.read());
+            const result = await applyAction(action.apiName, form.read(), scenarioId);
             $('#editor').close();
             notice('操作已提交');
             if (result?.type && result?.id) {
               const current = await service('read_object', {
                 object: result,
-                ...(state.scenario ? { scenarioId: state.scenario } : {}),
+                ...(scenarioId ? { scenarioId } : {}),
               });
               state.selected = current;
             }
@@ -1381,8 +1463,18 @@ function migrationDialog() {
   );
 }
 
-async function renderScenarios() {
-  const list = await request('/ontology/scenarios?ontology=' + encodeURIComponent(state.ontology));
+async function openScenarioEvaluation(method, scenarios, initialSet) {
+  const { scenarioEvaluation } = await import('./scenario-evaluation.js');
+  return scenarioEvaluation({
+    element, field, button, modal, table, jsonInput, jsonSchemaForm, stringify, select, service, model: state.model,
+  }, scenarios)[method](initialSet);
+}
+
+async function renderScenarios(reviewPage = 1) {
+  const [list, reviews] = await Promise.all([
+    request('/ontology/scenarios?ontology=' + encodeURIComponent(state.ontology)),
+    service('pending_scenario_reviews', { page: reviewPage }),
+  ]);
   const holder = surface();
   const inspect = async (id) => {
     const diff = await request(
@@ -1394,6 +1486,10 @@ async function renderScenarios() {
       element('p', {}, diff.name),
       element('span', { class: 'badge' }, '修订 ' + diff.revision),
     );
+    if (diff.review?.reviewers.length) {
+      model.append(element('p', {}, '审阅人'),
+        element('ul', { class: 'review-identities' }, diff.review.reviewers.map((reviewer) => element('li', {}, reviewer))));
+    }
     model.append(
       table(
         ['对象', '原值', '方案值', '冲突'],
@@ -1427,6 +1523,30 @@ async function renderScenarios() {
           $('#editor').close();
           navigate('objects');
         }),
+        diff.review?.canInvite && button('邀请审阅', () => {
+          const readers = element('textarea', { rows: '4', placeholder: '每行一个审阅身份' });
+          readers.value = diff.review.reviewers.join('\n');
+          $('#editor-content').replaceChildren(
+            field('审阅人', readers, '审阅者可从顶栏「我的身份」复制身份。修改名单后需要审阅新的修订。'),
+            button('保存审阅人', async () => {
+              const reviewers = [...new Set(readers.value.split(/[\s,，]+/).filter(Boolean))];
+              if (reviewers.includes(state.identity?.owner)) throw new Error('请邀请其他账户审阅。');
+              if (!reviewers.length) throw new Error('请输入审阅人的身份。');
+              await service('invite_scenario_reviewers', { id, revision: diff.revision, reviewers });
+              await renderScenarios(reviewPage);
+              await inspect(id);
+              notice('已更新审阅人。');
+            }, 'primary'),
+            button('返回方案差异', () => inspect(id)),
+          );
+        }),
+        button('同步正式数据', async () => {
+          const result = await service('rebase_scenario', { id, revision: diff.revision });
+          await renderScenarios(reviewPage);
+          await inspect(id);
+          notice(result.revision === diff.revision ? '方案已与正式数据同步。' : '已同步正式数据，请审阅新修订。');
+        }),
+        button('刷新差异', () => inspect(id)),
         button('共享元数据', () => {
           const readers = element('input', { placeholder: '读者身份，逗号分隔' });
           $('#editor-content').replaceChildren(
@@ -1526,6 +1646,20 @@ async function renderScenarios() {
     heading(
       '方案比较',
       '查看拟议变更，处理冲突，再通过业务操作确认合并。',
+      button('接续方案',async()=>{
+        const {items}=await service('scenario_continuation_sources');
+        modal('接续到当前发布',items.length?table(['草稿','版本',''],items.map(item=>[
+          item.name,item.release.slice(0,8),
+          button('复制为持久方案',async()=>{
+            const saved=await service('continue_scenario',{id:item.id,revision:item.revision,requestId:crypto.randomUUID()});
+            state.scenario=saved.id;
+            $('#editor').close();
+            await renderScenarios();
+          }),
+        ])):empty('没有可尝试接续的草稿。'));
+      }),
+      list.items.length >= 2 && button('并排比较', () => openScenarioEvaluation('compare', list.items)),
+      button('离线试跑', () => openScenarioEvaluation('trial', list.items)),
       button('回到正式数据', () => {
         state.scenario = null;
         notice('已切换到正式数据');
@@ -1576,6 +1710,7 @@ async function renderScenarios() {
       ),
     ),
     holder,
+    scenarioReviews(reviews, reviewPage, renderScenarios),
     element(
       'div',
       { class: 'toolbar' },
@@ -1841,14 +1976,10 @@ async function renderSchedule() {
       ...(state.scenario ? { scenarioId: state.scenario } : {}),
     });
   } catch (error) {
-    const activities = await service('follow_links', {
-      object: chosen.ref,
-      link: 'activities',
-      ...(state.scenario ? { scenarioId: state.scenario } : {}),
-    });
+    const activities = await relatedObjects(chosen.ref, 'activities');
     data = {
       plan: chosen,
-      activities,
+      activities: activities.items,
       validation: {valid:false,evaluatedAt:null,unavailable:true,violations:[]},
     };
     panel.append(
@@ -1915,11 +2046,8 @@ async function renderSchedule() {
             });
             state.scenario = scenario.id;
           }
-          const predecessors = await service('follow_links', {
-            object: activity.ref,
-            link: 'predecessors',
-            scenarioId: state.scenario,
-          });
+          // The Action replaces the full predecessor list, so a partial read must not be saved.
+          const predecessors = (await relatedObjects(activity.ref, 'predecessors', { complete: true })).items;
           const idValue = activity.ref.id;
           const form = jsonSchemaForm(
             state.model.actionTypes.find((action) => action.apiName === 'SaveScheduleActivity').parameters,
@@ -1979,6 +2107,40 @@ async function renderSchedule() {
       element(
         'div',
         { class: 'actions' },
+        data.activities.length > 0 && state.model.functionTypes.some(fn => fn.apiName === 'recommendSchedule') &&
+          button('联合优化时段', () => {
+            const choices = data.activities.map(activity=>({activity, checkbox:element('input',{type:'checkbox'})}));
+            const objective = select([['minimum_displacement','最少改动'],['earliest_finish','最早完成']], 'minimum_displacement');
+            const output = element('div');
+            modal('排程优化', element('div', {},
+              field('目标',objective),
+              choices.map(({activity,checkbox})=>element('label',{class:'toolbar'},checkbox,titleOf(activity))),
+              button('计算建议',async()=>{
+                const selected=choices.filter(item=>item.checkbox.checked).map(item=>item.activity.ref);
+                if(!selected.length||selected.length>12)throw new Error('请选择 1–12 个活动');
+                const scenarioId=state.scenario;
+                const recommendation=await request('/ontology/functions',{ontology:state.ontology,function:'recommendSchedule',
+                  input:{plan:chosen.ref,activities:selected,objective:objective.value},...(scenarioId?{scenarioId}:{})});
+                const labels={optimal:'已找到最优时段',feasible:'达到搜索上限，已找到可行时段',
+                  infeasible:'当前网格没有可行时段',search_limit:'达到搜索上限，未找到可行时段'};
+                output.replaceChildren(element('p',{},labels[recommendation.status]),
+                  recommendation.moves.length>0&&table(['活动','开始','结束'],recommendation.moves.map(move=>[
+                    titleOf(data.activities.find(item=>item.ref.id===move.activity.id)),
+                    new Date(move.start).toLocaleString(),new Date(move.end).toLocaleString(),
+                  ])),
+                  recommendation.moves.length>0&&button('写入方案',async()=>{
+                    if(state.scenario!==scenarioId)throw new Error('当前方案已切换。请重新计算建议。');
+                    if(!scenarioId){
+                      const created=await request('/ontology/scenarios',{ontology:state.ontology,requestId:crypto.randomUUID(),name:'优化 '+titleOf(chosen)});
+                      state.scenario=created.id;
+                    }
+                    await applyAction('StageScheduleRecommendation',{plan:chosen.ref,moves:recommendation.moves});
+                    $('#editor').close();
+                    await renderSchedule();
+                  }),
+                );
+              }),output));
+          }),
         button('查找可用时段', async () => {
           const result = await request('/ontology/functions', {
             ontology: state.ontology,
@@ -2037,6 +2199,52 @@ async function renderSchedule() {
     ),
   );
 }
+async function renderPublishedWorkflows() {
+  const [published,runs] = await Promise.all([service('published_workflows'),service('workflow_runs')]);
+  const open = async workflow => {
+    const outcome = element('div');
+    const input = select([['','选择对象']], '');
+    async function load(cursor) {
+      const result = await query({type:workflow.targetType,limit:30,...(cursor?{cursor}:{})});
+      input.replaceChildren(...select([['','选择对象'],...result.items.map(item =>
+        [item.ref.id,item.properties.name ?? item.ref.id])], '').children);
+      outcome.replaceChildren(result.cursor ? button('下一页对象',()=>load(result.cursor)) : null);
+    }
+    await load();
+    modal(workflow.name, element('div', {},
+      workflow.description && element('p',{},workflow.description),
+      field('运行对象',input),outcome,
+      button('运行流程',async()=>{
+        if (!input.value) throw new Error('请选择运行对象');
+        const result=await service('run_published_workflow',{workflow:workflow.id,revision:workflow.revision,
+          object:{type:workflow.targetType,id:input.value},requestId:crypto.randomUUID()});
+        $('#editor').close();
+        notice('流程已提交 · '+result.id);
+        await renderPublishedWorkflows();
+      },'primary')));
+  };
+  const label = {pending:'待执行',working:'执行中',completed:'已完成',failed:'失败',canceled:'已取消',
+    'waiting-proposal':'等待生成方案','waiting-approval':'等待审核'};
+  $('#main').replaceChildren(
+    heading('已发布流程','选择流程和你有权使用的对象。',button('刷新',renderPublishedWorkflows)),
+    surface(published.items.length ? table(['流程','说明',''],published.items.map(item=>[
+      item.name,item.description,button('运行',()=>open(item)),
+    ])) : empty('暂无可用的已发布流程。')),
+    element('section',{class:'section'},element('h2',{},'我的运行'),
+      surface(runs.items.length ? table(['流程','状态','进度'],runs.items.map(run=>[
+        run.name,label[run.state]??run.state,run.step+' / '+run.stepCount,
+      ])) : empty('暂无流程运行。'))));
+}
+function workflowPublication(workflow) {
+  const type=select(state.model.objectTypes.map(item=>item.apiName),workflow.publication?.targetType);
+  modal('发布流程',element('div',{},
+    field('运行对象类型',type),
+    button('发布此修订',async()=>{
+      await service('publish_workflow',{id:workflow.id,revision:Number(workflow.revision),targetType:type.value});
+      $('#editor').close();
+      await renderRules();
+    },'primary')));
+}
 async function renderRules() {
   const [workflows, rules] = await Promise.all([service('workflows'), service('rules')]);
   const panel = surface(
@@ -2054,11 +2262,29 @@ async function renderRules() {
               condition,
               rule.enabled ? '监测中' : '已停用',
               rule.error || (rule.lastScan ? new Date(rule.lastScan).toLocaleString() : '尚未检查'),
+              element('div',{class:'actions'},
               button(rule.enabled ? '停用' : '启用', async () => {
                 const { lastScan, error, ...input } = rule;
                 await service('save_rule', { ...input, enabled: !rule.enabled });
                 await renderRules();
               }),
+                !rule.machineryReview&&button('预演',async()=>{
+                  const list=await request('/ontology/scenarios?ontology='+encodeURIComponent(state.ontology));
+                  const choices=list.items.map(row=>({row,checkbox:element('input',{type:'checkbox'})}));
+                  const elapsed=element('input',{type:'number',min:0,value:0});
+                  const results=element('div');
+                  modal('自动化预演',element('div',{},
+                    choices.map(({row,checkbox})=>element('label',{class:'toolbar'},checkbox,row.name)),
+                    field('模拟经过的秒数',elapsed),
+                    button('运行预演',async()=>{
+                      const scenarios=choices.filter(item=>item.checkbox.checked).map(({row})=>({id:row.id,revision:Number(row.revision)}));
+                      const report=await service('preview_automation',{rule:rule.id,revision:Number(rule.revision),scenarios,elapsedSeconds:Number(elapsed.value)});
+                      results.replaceChildren(table(['方案','匹配且执行','仍在等待'],report.scenarios.map(item=>[
+                        item.name,item.results.length,item.waiting.length])),
+                      element('pre',{class:'code'},JSON.stringify(report.scenarios,null,2)));
+                    }),results));
+                }),
+              ),
             ];
           }),
         )
@@ -2066,6 +2292,7 @@ async function renderRules() {
   );
   const makeWorkflow = () => {
     const name = element('input', { placeholder: '流程名称' }),
+      proposal = element('textarea', { spellcheck: false, rows: 7 }),
       steps = [],
       list = element('div', { class: 'list' });
     const addStep = () => {
@@ -2129,7 +2356,13 @@ async function renderRules() {
       };
       action.onchange = draw;
       draw();
-      list.append(surface(element('div', { class: 'detail' }, field('操作', action), fields)));
+      const card = surface(element('div', { class: 'detail' },
+        field('操作', action), fields, button('移除此步骤', () => {
+          steps.splice(steps.indexOf(item), 1);
+          card.remove();
+        }),
+      ));
+      list.append(card);
     };
     addStep();
     modal(
@@ -2140,11 +2373,17 @@ async function renderRules() {
         field('名称', name),
         list,
         button('添加步骤', addStep),
+        element('details', {},
+          element('summary', {}, 'Scenario 认知提案'),
+          field('提案配置 JSON', proposal,
+            '填写 name、goal、actions、functions、validation、mergeAction、mergeObjectParameter 和 reviewers。留空时只执行上面的 Action 步骤。'),
+        ),
         button(
           '保存流程',
           async () => {
             await service('save_workflow', {
               name: name.value,
+              ...(proposal.value.trim() ? { proposal: JSON.parse(proposal.value) } : {}),
               steps: steps.map((item, index) => ({
                 name: 'Step' + (index + 1),
                 action: item.action.value,
@@ -2252,10 +2491,17 @@ async function renderRules() {
       surface(
         workflows.items.length
           ? table(
-              ['名称', '步骤', ''],
+              ['名称', '步骤', '发布', ''],
               workflows.items.map((workflow) => [
                 workflow.name,
                 workflow.kind === 'learned-hotel-itinerary' ? '酒店行程 · 每次模拟前审批' : workflow.steps.map((step) => step.action).join(' → '),
+                state.membership?.canPublishWorkflows && workflow.kind !== 'learned-hotel-itinerary' &&
+                  element('div',{class:'actions'},
+                    button('发布',()=>workflowPublication(workflow)),
+                    workflow.publication && button('下架',async()=>{
+                      await service('withdraw_workflow',{id:workflow.id,revision:workflow.publication.revision});
+                      await renderRules();
+                    })),
                 button('运行', () => {
                   if (workflow.kind === 'learned-hotel-itinerary') {
                     const checkIn = element('input', { type: 'date', required: true });
@@ -2306,11 +2552,70 @@ async function renderRules() {
     ),
   );
 }
-async function renderProcesses() {
-  const [tasks, workflows] = await Promise.all([service('tasks'), service('workflow_runs')]);
+function scenarioReviews(reviews, page, refresh) {
+  const inspectReview = async (item) => {
+    const review = await service('inspect_scenario_review', { id: item.id });
+    const ref = ({ type, id }) => type + ' · ' + id;
+    const changes = review.objects.flatMap((object) =>
+      object.editedFields.map((field) => [
+        ref(object.ref), field, stringify(object.before?.[field]), stringify(object.after?.[field]),
+      ]),
+    );
+    const blocked = review.evidenceChanged
+      ? '决策证据已变化。需要重新生成提案。'
+      : review.conflicts ? '方案存在冲突。需要处理冲突后重新审阅。' : '';
+    modal(review.name, element('div', {},
+      element('p', {}, '方案第 ' + review.revision + ' 版'),
+      blocked && element('p', {}, blocked),
+      review.evidenceVersion && element('p', {}, '决策版本 ' + review.evidenceVersion.slice(0, 12)),
+      changes.length > 0 && table(['对象', '字段', '原值', '拟议值'], changes),
+      review.links.length > 0 && table(['关系', '起点', '终点', '变更'],
+        review.links.map((link) => [link.type, ref(link.from), ref(link.to), link.removed ? '移除' : '新增'])),
+      !review.evidenceChanged && (review.evidence?.length ?? 0) > 0 && table(['证据对象', '修订号'],
+        review.evidence.map((entry) => [ref(entry.ref), entry.revision])),
+      review.commit && element('div', { class: 'section' },
+        element('h3', {}, '合并 Action 与外发内容'),
+        element('pre', { class: 'code' }, JSON.stringify(review.commit, null, 2)),
+      ),
+      !review.conflicts && button('批准此版本', async () => {
+        await service('approve_scenario_review', { id: review.id, revision: review.revision, snapshot: review.snapshot });
+        $('#editor').close();
+        await refresh(page);
+        notice('已批准此修订。');
+      }, 'primary'),
+    ));
+  };
+  return element('section', { class: 'section' },
+    element('h2', {}, '受邀审阅'),
+    surface(reviews.items.length
+      ? table(['方案', '版本', '状态'], reviews.items.map((review) => [
+          review.name, review.revision, review.approved ? '已批准' : review.conflicts ? '需处理冲突' : '待审阅',
+        ]), (index) => inspectReview(reviews.items[index]))
+      : empty('这一页没有可审阅的方案。')),
+    page > 1 && button('上一页', () => refresh(page - 1)),
+    reviews.nextPage && button('下一页', () => refresh(reviews.nextPage)),
+  );
+}
+
+async function renderProcesses(reviewPage = 1) {
+  if (typeof reviewPage !== 'number') reviewPage = 1;
+  const [tasks, workflows, reviews] = await Promise.all([
+    service('tasks'), service('workflow_runs'), service('pending_scenario_reviews', { page: reviewPage }),
+  ]);
   const inspect = (task) => {
     const locationRequest = task.state === 'input-required' && task.result?.kind === 'pa-request' && task.result.capability === 'location.resolve';
     const body = element('div', {}, !locationRequest && element('p', {}, task.state + (task.error ? ' · ' + task.error : '')));
+    if (task.state === 'input-required' && ['city', 'origin', 'destination'].includes(task.result?.kind)) {
+      const kind = task.result.kind;
+      const title = ({ city: '城市', origin: '上车点', destination: '目的地' })[kind];
+      const field = kind === 'city' ? 'city' : 'place';
+      const form = jsonSchemaForm({ properties: { [field]: { type: 'string', title } }, required: [field] });
+      body.append(form.node, button('确认' + title, async () => {
+        await request('/tasks/' + task.id + '/input', { answer: { kind, ...form.read() } });
+        $('#editor').close();
+        await renderProcesses();
+      }, 'primary'));
+    }
     const review = task.result?.hotelWorkflow;
     if (review?.status === 'awaiting_approval') {
       const hotel = task.result.hotel.properties;
@@ -2347,7 +2652,7 @@ async function renderProcesses() {
         };
         const serviceName = ({
           waimai_delivery: '美团外卖', luckin_pickup: '瑞幸', nearby_search: '高德周边搜索',
-          map_route: '高德路线查询', weather: '高德天气',
+          map_route: '高德路线查询', weather: '高德天气', ride_pickup: '叫车上车点查询',
         })[use];
         const submitPlace = async (form, requiredPlace) => {
           const { place = requiredPlace, ...point } = form.read();
@@ -2361,6 +2666,7 @@ async function renderProcesses() {
           element('p', {}, (serviceName || '本次服务') + '会使用你此次提供的位置。'),
           use === 'waimai_delivery' && requestData.input.coordinateProvider === 'Amap'
             ? element('p', {}, '高德地图将转换设备坐标供美团外卖使用。') : null,
+          use === 'ride_pickup' && element('p', {}, '高德地图将把设备坐标转换为 GCJ-02，供你核对上车地址。'),
         );
         if (selection.source === 'current' && (coordinateSystem === 'wgs84' || requestData.input.acceptDeviceWgs84)) {
           body.append(button('共享本机当前位置', async () => {
@@ -2483,8 +2789,24 @@ async function renderProcesses() {
       );
     modal('任务 ' + task.id.slice(0, 8), body);
   };
+  const machinery = element('div', { class: 'section' });
+  const loadMachinery = async () => {
+    const { renderMachinery } = await import('./machinery.js');
+    await renderMachinery(machinery, { element, button, field, select, table, modal, jsonInput, service, proposalDialog,
+      openActions: (ref, actions) => actionDialog({ ref }, { actions, live: true }),
+      openEvaluation: (id) => openScenarioEvaluation('trial', [], id),
+      inspectTask: async (id) => {
+        const task = await request('/tasks/' + encodeURIComponent(id));
+        $('#editor').close();
+        inspect(task);
+      },
+    });
+  };
   $('#main').replaceChildren(
     heading('流程运行', '追踪原始任务、PA 信息回传及规则触发的执行步骤。', button('刷新', renderProcesses)),
+    element('section', { class: 'section' },
+      element('h2', {}, 'Machinery'), button('打开流程分析', loadMachinery), machinery),
+    scenarioReviews(reviews, reviewPage, renderProcesses),
     surface(
       tasks.items.length
         ? table(
@@ -2511,17 +2833,28 @@ async function renderProcesses() {
                 run.state,
                 run.step + ' / ' + run.stepCount,
                 run.error ?? '',
-                run.state === 'failed'
-                  ? button('重试剩余步骤', async () => {
-                      await service('retry_workflow', { id: run.id });
-                      await renderProcesses();
-                    })
-                  : ['pending', 'working'].includes(run.state)
-                    ? button('停止后续步骤', async () => {
-                        await service('cancel_workflow', { id: run.id });
-                        await renderProcesses();
+                element('div', {},
+                  run.state === 'waiting-approval' && run.proposal && run.object &&
+                    button('提交已批准方案', async () => {
+                      const scenarioId = run.proposal.scenarioId;
+                      const proposal = await request('/ontology/scenarios/' + encodeURIComponent(scenarioId) +
+                        '?ontology=' + encodeURIComponent(state.ontology));
+                      await applyAction(run.proposal.mergeAction, {
+                        [run.proposal.mergeObjectParameter]: run.object, scenarioId, revision: proposal.revision,
+                      }, null);
+                      await renderProcesses(reviewPage);
+                    }),
+                  run.state === 'failed' && !run.proposal
+                    ? button('重试剩余步骤', async () => {
+                        await service('retry_workflow', { id: run.id });
+                        await renderProcesses(reviewPage);
                       })
-                    : '',
+                    : ['pending', 'working', 'waiting-proposal', 'waiting-approval', 'failed'].includes(run.state)
+                      && button('停止后续步骤', async () => {
+                        await service('cancel_workflow', { id: run.id });
+                        await renderProcesses(reviewPage);
+                      }),
+                ),
               ]),
             )
           : empty('没有流程执行记录。'),
@@ -2771,21 +3104,24 @@ async function renderGeometry() {
       button('保存剖切平面',async()=>{if(!state.assetId)throw new Error('先保存模型');await applyAction('AnnotateGeometry',{id:crypto.randomUUID(),asset:{type:'GeometryAsset',id:state.assetId},name:'剖切平面',note:'',kind:'section',points:scene.sectionState()},null);notice('剖切平面已保存');}),
       button('查看已保存标注', async () => {
         if (!state.assetId) throw new Error('请选择已保存的模型');
-        const annotations = await service('follow_links', {
-          object: { type: 'GeometryAsset', id: state.assetId },
-          link: 'annotations',
-        });
+        const annotations = await relatedObjects({ type: 'GeometryAsset', id: state.assetId }, 'annotations',
+          { scenarioId: null });
         modal(
           '模型标注',
-          annotations.length
-            ? table(
-                ['标题', '类型', '备注', '距离'],
-                annotations.map((item) => [
-                  item.properties.name,
-                  item.properties.kind,
-                  item.properties.note,
-                  item.properties.distance,
-                ]),
+          annotations.items.length
+            ? element(
+                'div',
+                {},
+                ...relatedNotice(annotations),
+                table(
+                  ['标题', '类型', '备注', '距离'],
+                  annotations.items.map((item) => [
+                    item.properties.name,
+                    item.properties.kind,
+                    item.properties.note,
+                    item.properties.distance,
+                  ]),
+                ),
               )
             : empty('模型还没有标注。'),
         );
@@ -2795,6 +3131,7 @@ async function renderGeometry() {
   );
 }
 const pages = {
+  published: renderPublishedWorkflows,
   objects: renderObjects,
   model: renderModel,
   scenarios: renderScenarios,
@@ -2808,7 +3145,7 @@ const pages = {
 async function render() {
   cleanup();
   cleanup = () => {};
-  if (!state.token || !state.model) return;
+  if (!state.token || (!state.model && state.page !== 'published')) return;
   $('#main').replaceChildren(element('div', { class: 'spinner' }, '正在读取…'));
   try {
     await pages[state.page]();
@@ -2821,6 +3158,7 @@ async function render() {
   }
 }
 function navigate(page) {
+  if (state.membership?.role==='member' && page!=='published') return;
   state.page = page;
   document
     .querySelectorAll('[data-page]')
@@ -2832,6 +3170,19 @@ document
   .forEach((button) => (button.onclick = () => navigate(button.dataset.page)));
 $('#connect').onclick = () => login().catch((error) => notice(error.message, true));
 $('#welcome-connect').onclick = $('#connect').onclick;
+$('#account').onclick = () => {
+  if (!state.identity) return;
+  const owner = state.identity.owner;
+  const identifier = element('input', { value: owner, readonly: true });
+  modal('我的身份', element('div', {},
+    element('p',{},({admin:'Admin',editor:'服务团队',member:'流程使用者'})[state.membership?.role] ?? ''),
+    field('审阅身份', identifier, '把这个身份提供给方案发起人，即可接收审阅邀请。'),
+    button('复制身份', async () => {
+      await navigator.clipboard.writeText(owner);
+      notice('已复制身份。');
+    }),
+  ));
+};
 $('#logout').onclick = async () => {
   if (state.session) await service('close_scenario_session', { sessionId: state.session }).catch(() => {});
   sessionStorage.removeItem('eigos_token');

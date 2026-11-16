@@ -3,6 +3,9 @@ import { test } from 'node:test';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { createApp } from '../apps/gateway/app.js';
 import { readConfig } from '../packages/core/config.js';
+import { ServiceUnavailable, SourceReadFailure } from '../packages/core/identity.js';
+import { yuanToFen } from '../packages/core/private-source.js';
+import { publicError } from '../apps/gateway/public-error.js';
 import { fixture, route, principal } from './fixture.js';
 import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
 import { Ontology } from '../packages/ontology/model.js';
@@ -32,6 +35,66 @@ test('MCP and A2A share the same authenticated PostgreSQL task and ontology', as
     const body = await response.json() as { result?: { id: string }; error?: unknown };
     assert.equal(body.result?.id, task.id, JSON.stringify(body));
   } finally { await client.close(); await new Promise<void>(resolve => server.close(() => resolve())); await f.close(); }
+});
+
+test('MCP completes a published Interface Action and verifies its result in one call', async () => {
+  const f = await fixture(), token = 'direct-inquiry-token-'.repeat(3);
+  const config = readConfig({ DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token });
+  const server = createApp(config, f.db, f.source).app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address(); assert(address && typeof address !== 'string');
+  const client = new Client({ name: 'direct-inquiry-agent', version: '1' });
+  const input = {
+    requestId: 'direct-quote',
+    action: { interface: { type: 'RideInquiry', implementation: 'RideRequest', action: 'estimate' }, input: route },
+    read: { function: 'readRideEstimates', resultParameter: 'request' },
+  };
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`), {
+      requestInit: { headers: { Authorization: 'Bearer ' + token } },
+    }));
+    const invoke = (args: typeof input) => client.callTool({ name: 'complete_with_action', arguments: args });
+    const grants = memberGrants(f.model);
+    const withoutResult = grants.filter(grant => !grant.resource.endsWith('/readRideEstimates'));
+    await setGrants(f.db, principal.owner, withoutResult);
+    assert((await invoke(input)).isError);
+    await setGrants(f.db, principal.owner, grants);
+    assert((await invoke({ ...input, read: { ...input.read, resultParameter: 'invalid' } })).isError);
+    assert.equal(f.provider.calls.length, 0);
+    const first = await invoke(input);
+    assert(!first.isError, JSON.stringify(first));
+    const quote = JSON.parse((first.content as { text: string }[])[0]!.text);
+    assert.deepEqual(quote.request, { type: 'RideRequest', id: input.requestId });
+    assert.equal(quote.accepted, false);
+    assert.deepEqual(quote.evidence, ['fixture']);
+    assert.equal(quote.estimates.length, 2);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    const retry = await invoke(input);
+    assert.deepEqual(retry.content, first.content);
+    assert.equal(f.provider.calls.length, 3);
+    const assertCurrent = f.provider.source.assertCurrent;
+    f.provider.source.assertCurrent = async () => {
+      f.provider.source.assertCurrent = assertCurrent;
+      await setGrants(f.db, principal.owner, withoutResult);
+    };
+    const revoked = await invoke(input);
+    assert(revoked.isError);
+    assert.match((revoked.content as { text: string }[])[0]!.text, /Permission changed during execution/);
+    assert.equal(f.provider.calls.length, 3);
+    await setGrants(f.db, principal.owner, grants);
+    f.provider.flags.ambiguous = true;
+    const ambiguous = await invoke({ ...input, requestId: 'ambiguous-quote' });
+    assert(ambiguous.isError);
+    assert.match((ambiguous.content as { text: string }[])[0]!.text, /候选地点/);
+    assert.equal(f.provider.calls.filter(call => call === 'taxi_estimate').length, 1);
+    assert.deepEqual((await f.db.query(`SELECT request_id FROM ${f.db.schema}.actions`)).rows,
+      [{ request_id: input.requestId }]);
+    assert.deepEqual((await f.db.query(`SELECT count(*)::int AS count FROM ${f.db.schema}.tasks`)).rows, [{ count: 0 }]);
+  } finally {
+    await client.close();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await f.close();
+  }
 });
 
 test('JWT identity, audience and expiry are verified before owner queries', async () => {
@@ -150,4 +213,93 @@ test('MCP publishes a model proposal and executes isolated, revision-checked sce
     assert.deepEqual(await sdk.apply({ requestId: 'concrete-still-authorized', action: 'CreateRoute',
       input: { id: 'direct-route', name: 'Direct' } }), { type: 'Route', id: 'direct-route' });
   } finally { await client.close(); await new Promise<void>(resolve => server.close(() => resolve())); await f.close(); }
+});
+
+test('HTTP and MCP keep unexpected database errors private and report a traceable request ID', async t => {
+  const f = await fixture(), token = 'gateway-errors-token';
+  const config = readConfig({ DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token.repeat(4) });
+  const gateway = createApp(config, f.db, f.source, async incoming =>
+    incoming === token ? principal : { ...principal, scopes: [] });
+  const server = gateway.app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address();
+  assert(address && typeof address !== 'string');
+  const url = `http://127.0.0.1:${address.port}`;
+  const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
+  const client = new Client({ name: 'gateway-errors', version: '1' });
+  try {
+    const denied = await fetch(url + '/ontology', { headers: { Authorization: 'Bearer no-scopes' } });
+    assert.equal(denied.status, 403);
+    const malformed = await fetch(url + '/ontology/query', { method: 'POST', headers, body: '{' });
+    assert.equal(malformed.status, 400);
+    assert.equal((await fetch(url + '/ontology/scenarios/12e3a93f-5eb8-44aa-be21-ac53824d7e76/discard', {
+      method: 'POST', headers, body: '{}',
+    })).status, 400);
+    assert.equal((await fetch(url + '/ontology/media', {
+      method: 'POST', headers: { ...headers, 'Content-Type': 'application/octet-stream', 'x-asset-name': '%' },
+      body: Buffer.from('not a valid asset'),
+    })).status, 400);
+    const unrecognizedProperty = await fetch(url + '/ontology/query', {
+      method: 'POST', headers, body: JSON.stringify({ query: { type: 'Place', where: { unknownProperty: true } } }),
+    });
+    assert.equal(unrecognizedProperty.status, 400);
+    assert.match(JSON.stringify(await unrecognizedProperty.json()), /Unknown property/);
+    assert.equal((await fetch(url + '/ontology?ontology=MissingOntology', { headers })).status, 404);
+    const directEditFunction = await fetch(url + '/ontology/functions', {
+      method: 'POST', headers, body: JSON.stringify({ function: 'registerGeometry', input: {} }),
+    });
+    assert.equal(directEditFunction.status, 400);
+    assert.match(JSON.stringify(await directEditFunction.json()), /must be invoked through an Action/);
+
+    const failure = new Error('SELECT * FROM private_database_detail');
+    t.mock.method(gateway.metadata, 'active', async () => { throw failure; });
+    const log = t.mock.method(console, 'error', () => {});
+    const unexpected = await fetch(url + '/ontology', { headers });
+    assert.equal(unexpected.status, 500);
+    const body = await unexpected.json() as { error: string; requestId: string };
+    assert.equal(body.error, 'Internal server error');
+    assert.match(body.requestId, /^[\da-f-]{36}$/);
+    assert.deepEqual(log.mock.calls[0]?.arguments[1], { requestId: body.requestId, error: failure });
+
+    await client.connect(new StreamableHTTPClientTransport(new URL(url + '/mcp'), { requestInit: { headers } }));
+    const result = await client.callTool({ name: 'describe_ontology', arguments: {} });
+    assert.equal(result.isError, true);
+    const content = (result.content as { text: string }[])[0]!.text;
+    const requestId = /^Internal server error \(request ID: ([\da-f-]{36})\)$/.exec(content)?.[1];
+    assert.ok(requestId);
+    assert.deepEqual(log.mock.calls[1]?.arguments[1], { requestId, error: failure });
+
+    let taskFailure = failure;
+    t.mock.method(gateway.tasks, 'get', async () => { throw taskFailure; });
+    const rpc = () => fetch(url + '/a2a', {
+      method: 'POST', headers: { ...headers, 'A2A-Version': '1.0' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'GetTask',
+        params: { id: '12e3a93f-5eb8-44aa-be21-ac53824d7e76' } }),
+    });
+    const rpcBody = await (await rpc()).json() as { error: { code: number; message: string } };
+    assert.equal(rpcBody.error.code, -32603);
+    const rpcId = /^Internal server error \(request ID: ([\da-f-]{36})\)$/.exec(rpcBody.error.message)?.[1];
+    assert.ok(rpcId);
+    assert.deepEqual(log.mock.calls[2]?.arguments[1], { requestId: rpcId, error: failure });
+
+    taskFailure = new SourceReadFailure('private supplier error', { unavailable: true });
+    const sourceError = await (await rpc()).json() as { error: { code: number; message: string } };
+    assert.equal(sourceError.error.code, -32603);
+    assert.equal(sourceError.error.message, 'Source temporarily unavailable');
+  } finally {
+    await client.close();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await f.close();
+  }
+});
+
+test('saturated local dependencies and unusable supplier amounts keep their public status', () => {
+  const saturated = 'Local embedding queue is full; retry when current indexing completes';
+  assert.deepEqual(publicError(new ServiceUnavailable(saturated)), { status: 503, message: saturated });
+  for (const amount of ['12.345', '-1', '1e3', null, Number.MAX_SAFE_INTEGER]) {
+    assert.throws(() => yuanToFen(amount), (error: unknown) =>
+      error instanceof SourceReadFailure && publicError(error).status === 502, String(amount));
+  }
+  assert.equal(yuanToFen('12.3'), 1230);
+  assert.equal(yuanToFen(8), 800);
 });

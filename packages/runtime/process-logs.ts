@@ -42,7 +42,8 @@ export async function readProcessTransitions(
 }
 
 /** Extend the existing read view only when a query navigates process log types. */
-export function processLogTables(db: Database, model: PublishedOntology, owner: string, values: unknown[], base: Tables, types: readonly string[]) {
+export function processLogTables(db: Database, model: PublishedOntology, owner: string, values: unknown[], base: Tables, types: readonly string[],
+  scope?: { before: string; ids: string }) {
   const logs = [...new Set(types)].flatMap(type => {
     const target = processLogTarget(model, type);
     return target ? [target] : [];
@@ -54,7 +55,7 @@ export function processLogTables(db: Database, model: PublishedOntology, owner: 
   return { objects: 'process_view_objects', links: 'process_view_links', prefix: `${prefix}
     ${processReleases(db, release)}, process_log_rows AS (
       SELECT ${projection}::text AS projection,h.owner,c.type,lpad(h.sequence::text,20,'0') AS id,1::bigint AS revision,
-        c.link,c."objectType",h.id AS process_id,
+        c.link,c."objectType",h.id AS process_id,h.sequence,h.happened_at AS recorded_at,
         jsonb_build_object('id',lpad(h.sequence::text,20,'0'),'name',c."objectType"||'.'||c.property||' · '||h.sequence,
           'processId',h.id,'property',c.property,'oldState',h.before_values->c.property,'newState',h.after_values->c.property,
           'timestamp',coalesce(h.observed_at,h.happened_at),'recordedAt',h.happened_at,'sequence',h.sequence::text,
@@ -62,6 +63,8 @@ export function processLogTables(db: Database, model: PublishedOntology, owner: 
       FROM ${db.schema}.edit_history h JOIN process_releases r ON r.digest=h.release
       JOIN jsonb_to_recordset(${config}::jsonb) AS c(type text,"objectType" text,property text,link text) ON c."objectType"=h.type
       WHERE h.owner=${actor} AND ${stateChanged('c.property')}
+        ${scope ? `AND h.happened_at < ${scope.before}::timestamptz
+          AND (${scope.ids}::text[] IS NULL OR h.id=ANY(${scope.ids}::text[]))` : ''}
     ), process_view_objects AS (
       SELECT projection,owner,type,id,revision,properties FROM ${base.objects}
       UNION ALL SELECT projection,owner,type,id,revision,properties FROM process_log_rows

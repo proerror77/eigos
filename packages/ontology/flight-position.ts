@@ -1,9 +1,8 @@
 import { z } from 'zod';
-import { searchFlight } from './flight.js';
+import { flightPositionSource, searchFlight } from './flight.js';
 import type { OntologyDocument } from './schema.js';
 import { json, time } from './service-contracts.js';
 
-export const flightPositionSource = 'Flightradar24';
 export const flightPositionInput = z.strictObject({
   flightNumber: searchFlight.shape.flightNumber,
   origin: searchFlight.shape.origin,

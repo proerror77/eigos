@@ -18,9 +18,19 @@ export type ExecutionActor = {
   id: string;
 };
 export function requireScope(principal: Principal, scope: string): void {
-  if (!principal.owner || !principal.scopes.includes(scope)) throw new Error(`Permission required: ${scope}`);
+  if (!principal.owner || !principal.scopes.includes(scope)) throw new PermissionDenied(`Permission required: ${scope}`);
 }
 
+export class InvalidInput extends Error {}
+export class PermissionDenied extends Error {}
 export class Conflict extends Error {}
 export class NotFound extends Error {}
-export class SourceReadFailure extends Error {}
+/** A local runtime dependency is temporarily saturated. The same request can be retried later. */
+export class ServiceUnavailable extends Error {}
+export class SourceReadFailure extends Error {
+  readonly unavailable: boolean;
+  constructor(message: string, options?: ErrorOptions & { unavailable?: boolean }) {
+    super(message, options);
+    this.unavailable = options?.unavailable ?? false;
+  }
+}

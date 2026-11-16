@@ -8,23 +8,26 @@ import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
 import { jsonRpcHandler } from '@a2a-js/sdk/server/express';
 import { AgentCard } from '@a2a-js/sdk';
 import { z } from 'zod';
-import { Conflict, NotFound, requireScope, type Principal } from '../../packages/core/identity.js';
+import { Conflict, InvalidInput, NotFound, PermissionDenied, requireScope, type Principal } from '../../packages/core/identity.js';
 import type { Config } from '../../packages/core/config.js';
-import { actionRequestSchema as actionInput, functionRequestSchema as functionInput } from '../../packages/ontology/invocation.js';
+import { actionRequestSchema as actionInput, functionRequestSchema as functionInput, completeWithActionRequestSchema } from '../../packages/ontology/invocation.js';
 import { Access } from '../../packages/runtime/access.js';
 import { Database } from '../../packages/runtime/database.js';
 import { Metadata } from '../../packages/runtime/metadata.js';
 import { Objects, querySchema } from '../../packages/runtime/objects.js';
 import { Scenarios, createScenarioSchema } from '../../packages/runtime/scenarios.js';
 import { PARequests, paResponseSchema,paInboxSchema } from '../../packages/runtime/pa.js';
-import { HotelWorkflows, hotelApprovalSchema } from '../../packages/runtime/hotel-workflows.js';
-import { Tasks, submitSchema, publicTask, taskPlaceAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema } from '../../packages/runtime/tasks.js';
+import { HotelWorkflows, hotelApprovalSchema } from '../../packages/capabilities/services/hotel-workflows.js';
+import { amendMapPlace } from '../../packages/capabilities/amap/task-correction.js';
+import { Tasks, submitSchema, publicTask as projectTask, taskPlaceAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema, type Task } from '../../packages/runtime/tasks.js';
 import { createCapabilities } from '../../packages/capabilities/index.js';
 import { configuredServices } from '../../packages/capabilities/services/sources.js';
 import { configuredStripeSandbox } from '../../packages/capabilities/payments/stripe-sandbox.js';
 import type { SourceResolver } from '../../packages/capabilities/didi/functions.js';
 import { verifier, type VerifyToken } from './auth.js';
 import { A2A, AgentUser, agentCard } from './a2a.js';
+import { publicError } from './public-error.js';
+import { developmentSandboxEnabled } from '../../packages/core/sandbox-mode.js';
 
 const queryInput = z.strictObject({ ontology:z.string().optional(), taskId: z.uuid().optional(), scenarioId: z.uuid().optional(), query: querySchema });
 const scenarioCreateInput = createScenarioSchema.safeExtend({ ontology: z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(80).optional() });
@@ -40,13 +43,22 @@ const paTravelInstructions = [
 ].join(' ');
 
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {},
-  providerFetch: { amapFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch } = {}) {
+  providerFetch: { amapFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch;
+    dianpingFetch?: typeof fetch } = {}) {
+  if (db.sandboxEnabled && !developmentSandboxEnabled({ ...config, NODE_ENV: process.env.NODE_ENV }))
+    throw new Error('Gateway sandbox requires explicit loopback development configuration');
   const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE), configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
+    fliggyFlight: config.EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE,
+    fliggyHotel: config.EIGOS_FLIGGY_HOTEL_CONNECTION_FILE,
     paotui: config.EIGOS_PAOTUI_CONNECTION_FILE, waimai: config.EIGOS_WAIMAI_CONNECTION_FILE,
     amap: config.EIGOS_AMAP_CONNECTION_FILE, xiaohongshu: config.EIGOS_XIAOHONGSHU_CONNECTION_FILE, variFlight: config.EIGOS_VARIFLIGHT_CONNECTION_FILE,
+    dianping: config.EIGOS_DIANPING_CONNECTION_FILE,
+    diningWeb: config.EIGOS_DINING_WEB_CONNECTION_FILE,
+    diningMiniProgram: config.EIGOS_DINING_MINIPROGRAM_CONNECTION_FILE,
     fr24: config.EIGOS_FR24_CONNECTION_FILE, fr24Entrypoint: config.EIGOS_FR24_MCP_ENTRYPOINT,
     calendar: config.EIGOS_JOURNEY_CALENDAR_CONNECTION_FILE, travelPA: config.EIGOS_TRAVEL_PA_CONNECTION_FILE, ...providerFetch,
   });
+  const publicTask = (task: Task) => projectTask(task, capabilities.projectTaskResult);
   const scenarios = new Scenarios(db), pa = new PARequests(tasks);
   const hotelWorkflows = new HotelWorkflows(db, metadata, capabilities.functions);
   const principals = new WeakMap<Request, Principal>();
@@ -66,7 +78,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   const card = agentCard(config.PUBLIC_URL);
   app.get('/.well-known/agent-card.json', (_req, res) => res.json(AgentCard.toJSON(card)));
   app.get('/.well-known/oauth-protected-resource', (_req, res) => res.json({ resource: config.PUBLIC_URL, authorization_servers: config.OAUTH_ISSUER ? [config.OAUTH_ISSUER] : [], bearer_methods_supported: ['header'] }));
-  mountWorkbench(app,config);
+  mountWorkbench(app, config, verify);
   app.use(async (req, res, next) => {
     const token = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1];
     try {
@@ -94,7 +106,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   const query = async (p: Principal, raw: unknown) => {
     requireScope(p, 'ontology:read'); const input = queryInput.parse(raw);
     const access = await Access.load(db, p), result = await new Objects(db, await modelFor(p, input.taskId, input.scenarioId,undefined,input.ontology), access).query(input.query);
-    if(!await access.canReturn(access.dataRequirements()))throw new Error('Result permissions changed');
+    if(!await access.canReturn(access.dataRequirements()))throw new PermissionDenied('Result permissions changed');
     return result;
   };
   const evaluate = async (p: Principal, raw: unknown) => {
@@ -106,7 +118,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     if (!liveTravelReminder || !p.scopes.includes('tasks:read')) requireScope(p, 'ontology:read');
     const model = await modelFor(p, input.taskId, input.scenarioId,undefined,input.ontology), access = await Access.load(db, p);
     const result = await capabilities.functions.invoke(model, input.function, input.input, { principal: p, objects: new Objects(db, model, access), signal: AbortSignal.timeout(30000) });
-    if(!await access.canReturn(access.dataRequirements()))throw new Error('Result permissions changed');
+    if(!await access.canReturn(access.dataRequirements()))throw new PermissionDenied('Result permissions changed');
     return result;
   };
   const apply = async (p: Principal, raw: unknown) => {
@@ -115,6 +127,17 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const selected = capabilities.actions.resolve(access, model, input);
     return capabilities.actions.apply(access, model, selected.action, selected.input, input.requestId);
   };
+  const completeWithAction = async (p: Principal, input: z.infer<typeof completeWithActionRequestSchema>) => {
+    requireScope(p, 'ontology:read');
+    requireScope(p, 'ontology:write');
+    const access = await Access.load(db, p), model = await modelFor(p, undefined, input.action.scenarioId, access, input.ontology);
+    const selected = capabilities.actions.resolve(access, model, input.action);
+    const result = await capabilities.actions.complete(
+      access, model, selected, input.requestId, input.read, undefined, AbortSignal.timeout(30000),
+    );
+    if (!await access.canReturn(access.dataRequirements())) throw new PermissionDenied('Result permissions changed');
+    return result;
+  };
   const scenarioCreate = async (p: Principal, raw: unknown) => { requireScope(p,'ontology:write'); const {ontology,...input}=scenarioCreateInput.parse(raw);return scenarios.create(await Access.load(db,p),await metadata.active(ontology),input); };
   const scenarioRead = async (p: Principal, id: string,ontology='Eigos') => { requireScope(p,'ontology:read'); return scenarios.inspect(await Access.load(db,p),await metadata.active(ontology),id); };
   const scenarioList = async (p: Principal,cursor?:string,ontology='Eigos') => { requireScope(p,'ontology:read'); return scenarios.list(await Access.load(db,p),await metadata.active(ontology),cursor); };
@@ -122,17 +145,29 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   app.post('/ontology/scenarios', async (req,res)=>res.json(await scenarioCreate(principal(req),req.body)));
   app.get('/ontology/scenarios', async (req,res)=>res.json(await scenarioList(principal(req),typeof req.query.cursor==='string'?req.query.cursor:undefined,typeof req.query.ontology==='string'?req.query.ontology:'Eigos')));
   app.get('/ontology/scenarios/:id', async (req,res)=>res.json(await scenarioRead(principal(req),String(req.params.id),typeof req.query.ontology==='string'?req.query.ontology:'Eigos')));
-  app.post('/ontology/scenarios/:id/discard', async (req,res)=>res.json(await scenarioDiscard(principal(req),String(req.params.id),req.body.revision,typeof req.body.ontology==='string'?req.body.ontology:'Eigos')));
+  app.post('/ontology/scenarios/:id/discard', async (req,res) => {
+    const { revision, ontology } = z.object({ revision: z.number().int().positive(), ontology: z.string().optional() }).parse(req.body);
+    res.json(await scenarioDiscard(principal(req), String(req.params.id), revision, ontology));
+  });
   app.post('/ontology/media',express.raw({type:'application/octet-stream',limit:'20mb'}),async(req,res)=>{
     const p=principal(req);requireScope(p,'ontology:write');
+    if (!Buffer.isBuffer(req.body)) throw new InvalidInput('Media body must use application/octet-stream');
+    const header = (value: unknown) => {
+      try { return decodeURIComponent(String(value)); }
+      catch { throw new InvalidInput('Invalid media header encoding'); }
+    };
     const model=await metadata.active(typeof req.query.ontology==='string'?req.query.ontology:'Eigos');
-    res.json(await new Applications(db).upload(await Access.load(db,p),model,capabilities.actions,req.body,{name:decodeURIComponent(String(req.headers['x-asset-name']??'')),format:String(req.headers['x-asset-format']??''),units:decodeURIComponent(String(req.headers['x-asset-units']??'file units'))}));
+    res.json(await new Applications(db).upload(await Access.load(db,p),model,capabilities.actions,req.body,{
+      name: header(req.headers['x-asset-name']??''),
+      format: String(req.headers['x-asset-format']??''),
+      units: header(req.headers['x-asset-units']??'file units'),
+    }));
   });
   app.get('/ontology/media/:id',async(req,res)=>{
     const p=principal(req);requireScope(p,'ontology:read');
     const model=await metadata.active(typeof req.query.ontology==='string'?req.query.ontology:'Eigos'),access=await Access.load(db,p);
     const file=await new Applications(db).download(access,model,String(req.params.id));
-    if(!await access.canReturn(access.dataRequirements()))throw new Error('Model permissions changed');
+    if(!await access.canReturn(access.dataRequirements()))throw new PermissionDenied('Model permissions changed');
     res.setHeader('Cache-Control','no-store');res.type('application/octet-stream').send(file.bytes);
   });
   app.post('/tasks/:id/pa-response', async (req,res)=>res.json(publicTask(await pa.respond(principal(req),String(req.params.id),req.body))));
@@ -149,7 +184,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     res.json(publicTask(await tasks.answerInput(principal(req), String(req.params.id), req.body))));
   const amendPlace = (p: Principal, id: string, raw: unknown) => {
     const input = taskPlaceAmendmentSchema.parse(raw);
-    return 'source' in input ? tasks.amendMapPlace(p, id, input, capabilities.functions) : tasks.amendPlace(p, id, input);
+    return 'source' in input ? amendMapPlace(tasks, metadata, capabilities.functions, p, id, input) : tasks.amendPlace(p, id, input);
   };
   app.post('/tasks/:id/place-amendment', async (req, res) =>
     res.json(publicTask(await amendPlace(principal(req), String(req.params.id), req.body))));
@@ -161,9 +196,26 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const p = principal(req), server = new McpServer({ name: 'eigos', version: '0.2.0' }, { instructions: paTravelInstructions });
     const response = async (operation: () => Promise<unknown>) => {
       try { const result = await operation(); return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] }; }
-      catch (error) { return { isError: true, content: [{ type: 'text' as const, text: error instanceof Error ? error.message : 'Request failed' }] }; }
+      catch (error) {
+        const { status, message, requestId } = publicError(error);
+        return { isError: true,
+          content: [{ type: 'text' as const, text: requestId ? `${message} (request ID: ${requestId})` : message }],
+          structuredContent: { status, error: message, ...(requestId ? { requestId } : {}) },
+        };
+      }
     };
-    for(const [name,service] of services) server.registerTool('ontology_'+name,{description:service.description,inputSchema:(service.schema as z.ZodObject).safeExtend({_ontology:z.string().optional()})},input=>response(()=>{const {_ontology,...args}=input;const selected=_ontology?ontologyServices(db,metadata,capabilities,capabilities.functions,capabilities.effects,capabilities.actions,z.string().parse(_ontology)):services;return selected.get(name)!.invoke(p,args);}));
+    for (const [name, service] of services) {
+      server.registerTool('ontology_' + name, {
+        description: service.description, inputSchema: (service.schema as z.ZodObject).safeExtend({ _ontology: z.string().optional() }),
+      }, input => response(() => {
+        const { _ontology, ...args } = input;
+        const selected = _ontology ? ontologyServices(db, metadata, capabilities, capabilities.functions,
+          capabilities.effects, capabilities.actions, z.string().parse(_ontology)) : services;
+        const operation = selected.get(name);
+        if (!operation) throw new NotFound('Ontology service is unavailable');
+        return operation.invoke(p, args);
+      }));
+    }
     server.registerTool('submit_task', { description: 'Submit a natural-language goal. To batch rapid messages, pass the same conversationId from your chat host and a distinct, stable requestId per message. Set learnHotelWorkflow when asked to learn and save a hotel itinerary, or replayHotelWorkflow with a saved ID and new date when asked to reuse one. Forward the goal without proposing tool steps. PA information requests resume on the original task.', inputSchema: submitSchema }, input => response(async () => publicTask(await tasks.submit(p, input))));
     server.registerTool('list_learned_hotel_workflows', {
       description: 'Find previously saved hotel itinerary workflows for the signed-in owner. To reuse, submit a task with the workflow ID and the new check-in date. Every proposal needs separate approval in EIGOS.',
@@ -172,7 +224,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     server.registerTool('get_task', { description: 'Read your original task, result or PA information request.', inputSchema: z.strictObject({ taskId: z.uuid() }) }, input => response(async () => publicTask(await tasks.get(p, input.taskId))));
     server.registerTool('select_task_places', { description: 'Confirm endpoints from the original task’s current candidates. Present their formal names and addresses to the user. A PA may select a previously confirmed address; if uncertain it must ask the user.', inputSchema: z.strictObject({ taskId: z.uuid(), places: placeSelectionSchema }) }, input => response(async () => publicTask(await tasks.selectPlaces(p, input.taskId, input.places))));
     server.registerTool('supply_task_input', {
-      description: 'Supply the requested city or retry a failed read on the original Action. Retry only when the task explicitly returns retry-source.',
+      description: 'Supply the city, pickup or destination requested by the original Action. Retry only when the task explicitly returns retry-source.',
       inputSchema: z.strictObject({ taskId: z.uuid(), answer: taskInputAnswerSchema }),
     }, input => response(async () => publicTask(await tasks.answerInput(p, input.taskId, input.answer))));
     server.registerTool('amend_task_place', {
@@ -188,16 +240,21 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     server.registerTool('query_ontology', { description: 'Query object sets using an Object Type or Interface and its property and link names.', inputSchema: queryInput }, input => response(() => query(p, input)));
     server.registerTool('evaluate_ontology', { description: 'Invoke a published Function. A PA managing travel reminders reads readCalendarJourney, readFlightWatch or readDidiRideWatch with the original object reference.', inputSchema: functionInput }, input => response(() => evaluate(p, input)));
     server.registerTool('apply_ontology_action', { description: 'Submit a published Action through its declared parameters and submission criteria.', inputSchema: actionInput }, input => response(() => apply(p, input)));
+    server.registerTool('complete_with_action', {
+      description: 'Execute a published Interface Action and return its result through a published read Function. Bind the committed reference to read.resultParameter. Retry with the same requestId to read the result afresh. Use submit_task for requests that require clarification.',
+      inputSchema: completeWithActionRequestSchema,
+    }, input => response(() => completeWithAction(p, input)));
     server.registerTool('describe_ontology', { description: 'Read published types, properties, interfaces, links, functions and actions.', inputSchema: z.strictObject({ontology:z.string().optional()}) }, input => response(async () => { requireScope(p, 'ontology:read'); return (await Access.load(db, p)).describe(await metadata.active(input.ontology)); }));
     const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     await server.connect(transport);
     res.on('close', () => { void server.close(); });
     await transport.handleRequest(req, res, req.body);
   });
-  app.use('/a2a', jsonRpcHandler({ requestHandler: new A2A(tasks, card), userBuilder: async req => new AgentUser(principal(req)) }));
-  app.use((error: unknown, _req: Request, res: express.Response, _next: express.NextFunction) => {
-    const status = error instanceof NotFound ? 404 : error instanceof Conflict ? 409 : error instanceof z.ZodError ? 400 : 403;
-    res.status(status).json({ error: error instanceof Error ? error.message : 'Request failed' });
+  app.use('/a2a', jsonRpcHandler({ requestHandler: new A2A(tasks, card, capabilities.projectTaskResult), userBuilder: async req => new AgentUser(principal(req)) }));
+  app.use((error: unknown, _req: Request, res: express.Response, next: express.NextFunction) => {
+    if (res.headersSent) return next(error);
+    const { status, message, requestId } = publicError(error);
+    res.status(status).json({ error: message, ...(requestId ? { requestId } : {}) });
   });
   return { app, tasks, metadata, capabilities };
 }

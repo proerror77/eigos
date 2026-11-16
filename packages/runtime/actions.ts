@@ -1,53 +1,49 @@
-import { digest, Conflict, type ExecutionActor } from '../core/identity.js';
+import { digest, Conflict, InvalidInput, PermissionDenied, NotFound, type ExecutionActor } from '../core/identity.js';
 import { validator } from '../ontology/model.js';
-import type { ActionCall, ActionResultRead } from '../ontology/invocation.js';
+import { actionBatchSchema, type ActionCall, type ActionResultRead } from '../ontology/invocation.js';
 import { PublishedOntology } from './metadata.js';
 import { Access } from './access.js';
 import { objectRefSchema, type ObjectRef, type Value } from '../ontology/schema.js';
 import { Database, type Sql } from './database.js';
 import { Objects } from './objects.js';
-import { Functions, type FunctionContext } from './functions.js';
+import { Functions, type FunctionContext, type ScenarioEvaluation } from './functions.js';
 import { Effects, type ActionEffect } from './effects.js';
 import { Scenarios } from './scenarios.js';
-import { recordScenarioAction, type ScenarioMutation } from './scenario-store.js';
+import { checkScenario, recordScenarioAction, type ScenarioMutation } from './scenario-store.js';
 import { JournalObjects, compensate, type ObjectChange, type LinkChange } from './action-journal.js';
 
-import { Clarification, CityConfirmationRequired, PlaceConfirmationRequired, SourceRetryRequired, placeContinuationSchema } from './clarification.js';
+import { actionEffects, changeDigest, evaluate } from './action-values.js';
+import { validateCognitive } from './cognitive-workflow.js';
+import { ActionPARequestRequired, Clarification, CityConfirmationRequired, PlaceConfirmationRequired, RideEndpointRequired, SourceRetryRequired, placeContinuationSchema } from './clarification.js';
 import { assertActionConfirmed } from './action-confirmation.js';
 
-const evaluate = (expression: Value, input: Record<string, unknown>): unknown => {
-  if ('literal' in expression) return expression.literal;
-  let value: unknown = input[expression.parameter];
-  for (const field of expression.path ?? []) value = value && typeof value === 'object' ? Reflect.get(value, field) : undefined;
-  return value;
-};
 type TaskExecution = NonNullable<FunctionContext['execution']>;
 
 export type CommittedEffects = (model: PublishedOntology, owner: string, changes: readonly ObjectChange[]) => Promise<ActionEffect[]>;
 export class Actions {
   constructor(private readonly db: Database, private readonly functions: Functions, private readonly effects?: Effects,
     private readonly committedEffects?: CommittedEffects) {}
-  private async checkSubmission(objects: Objects, actionName: string, input: Record<string, unknown>, signal: AbortSignal) {
+  private async checkSubmission(objects: Objects, actionName: string, input: Record<string, unknown>, signal: AbortSignal, scenarioEvaluation?: ScenarioEvaluation) {
     const { model, access } = objects;
     for (const condition of model.action(actionName).submissionCriteria) {
       const conditionFunction = model.functions.get(condition.function);
       if (conditionFunction?.source || conditionFunction?.edits) throw new Error('Submission criteria require read-only object functions');
       const parameters = Object.fromEntries(Object.entries(condition.arguments).map(([name, value]) => [name, evaluate(value, input)]));
       const allowed = await this.functions.invoke(model, condition.function, parameters, {
-        principal: access.principal, objects, signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
+        principal: access.principal, objects, scenarioEvaluation, signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
       });
-      if (allowed !== true) throw new Conflict('Action submission criteria are not satisfied');
+      if (allowed !== true) throw new Conflict(condition.message ?? 'Action submission criteria are not satisfied');
     }
   }
-  private async checkInput(objects: Objects, name: string, input: Record<string, unknown>, signal: AbortSignal) {
+  private async checkInput(objects: Objects, name: string, input: Record<string, unknown>, signal: AbortSignal, scenarioEvaluation?: ScenarioEvaluation) {
     const { model } = objects;
     signal.throwIfAborted();
     for (const [parameter, type] of Object.entries(model.action(name).objectParameters)) {
       const ref = objectRefSchema.parse(input[parameter]);
-      if (!model.implements(ref.type, type)) throw new Error('Action input type does not satisfy its contract');
+      if (!model.implements(ref.type, type)) throw new InvalidInput('Action input type does not satisfy its contract');
       await objects.read(ref);
     }
-    await this.checkSubmission(objects, name, input, signal);
+    await this.checkSubmission(objects, name, input, signal, scenarioEvaluation);
   }
   resolve(access: Access, model: PublishedOntology, call: ActionCall) {
     const target = call.interface;
@@ -58,15 +54,84 @@ export class Actions {
       ? model.resolveAction(target.object, target.type, target.action, call.input)
       : model.resolveTypeAction(target.implementation!, target.type, target.action, call.input);
   }
-  async apply(access: Access, model: PublishedOntology, actionName: string, raw: Record<string, unknown>, requestId: string, beforeCommit?: (client: Sql) => Promise<void>, execution?: FunctionContext['execution'], signal = AbortSignal.timeout(120000), executor?: ExecutionActor) {
+  private async requireActive(model: PublishedOntology, client?: Sql) {
+    if (model.runtimeId !== this.db.runtimeId) throw new Conflict('Historical Actions are read-only');
+    if ((await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`,
+      [model.document.id], client)).rows[0]?.release !== model.release)
+      throw new Conflict('Historical and prepared Actions are read-only');
+  }
+  private lockRequest(client: Sql, model: PublishedOntology, owner: string, requestId: string) {
+    return this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
+      [this.db.lockKey('action', owner, model.scenario ?? 'main', requestId)], client);
+  }
+  async validate(access: Access, model: PublishedOntology, call: ActionCall, signal = AbortSignal.timeout(30_000)) {
+    const selected = await this.db.transaction(async client => {
+      await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY', [], client);
+      await access.refresh(client);
+      await this.requireActive(model, client);
+      await checkScenario(this.db, model, access.principal.owner, client);
+      const { action, input } = this.resolve(access, model, call);
+      access.action(model, action);
+      if (!model.actions.has(action)) throw new NotFound('Action is unavailable');
+      const parameters = validator(model.action(action).parameters).parse(input) as Record<string, unknown>;
+      await this.checkInput(new Objects(this.db, model, access, client), action, parameters, signal);
+      return action;
+    });
+    await access.refresh();
+    if (!(await access.canReturn(access.dataRequirements()))) throw new PermissionDenied('Result permissions changed');
+    return { valid: true as const, phase: 'submission' as const, action: selected, release: model.release };
+  }
+  async applyBatch(access: Access, model: PublishedOntology, raw: unknown, signal = AbortSignal.timeout(120_000)) {
+    const { actions } = actionBatchSchema.parse(raw);
+    if (model.scenario) throw new Conflict('Action batches require the live Ontology');
+    const items = await this.db.transaction(async client => {
+      await access.refresh(client);
+      await this.requireActive(model, client);
+      const submissions = actions.map(({ requestId, ...call }) => {
+        const { action, input } = this.resolve(access, model, call);
+        access.action(model, action);
+        if (!model.actions.has(action)) throw new NotFound('Action is unavailable');
+        const definition = model.action(action);
+        if (definition.function || definition.effects?.length || definition.rules?.some(rule => rule.op === 'applyScenario'))
+          throw new Conflict('Action batches require declarative rules without declared effects or Scenario merges');
+        return { requestId, action, input };
+      });
+      // Lock every request before taking the owner write lock, including when single Actions run in parallel.
+      for (const requestId of submissions.map(item => item.requestId).sort()) {
+        signal.throwIfAborted();
+        await this.lockRequest(client, model, access.principal.owner, requestId);
+      }
+      const committed = [];
+      for (const { action, input, requestId } of submissions)
+        committed.push({ requestId, result: await this.execute(access, model, action, input, requestId,
+          undefined, undefined, signal, undefined, undefined, client) });
+      return committed;
+    });
+    return { release: model.release, items };
+  }
+  apply(access: Access, model: PublishedOntology, actionName: string, raw: Record<string, unknown>, requestId: string, beforeCommit?: (client: Sql) => Promise<void>, execution?: FunctionContext['execution'], signal = AbortSignal.timeout(120000), executor?: ExecutionActor, scenarioEvaluation?: ScenarioEvaluation) {
+    return this.execute(access, model, actionName, raw, requestId, beforeCommit, execution, signal, executor, scenarioEvaluation);
+  }
+  private async execute(access: Access, model: PublishedOntology, actionName: string, raw: Record<string, unknown>,
+    requestId: string, beforeCommit: ((client: Sql) => Promise<void>) | undefined, execution: FunctionContext['execution'],
+    signal: AbortSignal, executor: ExecutionActor | undefined, scenarioEvaluation: ScenarioEvaluation | undefined,
+    batchClient?: Sql) {
     const principal = access.principal;
     const actor: ExecutionActor = executor ?? execution?.executor ?? (execution
       ? { kind: 'agent', id: 'eigos-ontology-agent' }
       : { kind: 'client', id: principal.clientId ?? principal.owner });
-    await access.refresh(); access.action(model, actionName);
-    if (model.runtimeId !== this.db.runtimeId) throw new Conflict('Historical Actions are read-only');
-    if ((await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [model.document.id])).rows[0]?.release !== model.release) throw new Conflict('Historical and prepared Actions are read-only');
+    const suppliedClient = scenarioEvaluation?.client ?? batchClient;
+    const transaction = <T>(run: (client: Sql) => Promise<T>) =>
+      suppliedClient ? run(suppliedClient) : this.db.transaction(run);
+    await access.refresh(suppliedClient); access.action(model, actionName);
+    if (model.evaluation) {
+      if (model.runtimeId !== this.db.runtimeId) throw new Conflict('Historical Actions are read-only');
+      if (!model.scenario || scenarioEvaluation?.client !== model.evaluation.client)
+        throw new Conflict('Prepared Actions require a temporary Scenario evaluation');
+    } else await this.requireActive(model, suppliedClient);
     const action = model.action(actionName), input = validator(action.parameters).parse(raw) as Record<string, unknown>;
+    if (scenarioEvaluation && (!model.scenario || execution || action.rules?.some(rule => rule.op === 'applyScenario')))
+      throw new Conflict('Scenario evaluation requires a staged Action');
     if (action.effects?.length && !model.scenario) {
       if (!this.effects) throw new Error('Action effects require a configured dispatcher');
       this.effects.check(action.effects.map(effect => effect.handler));
@@ -79,12 +144,15 @@ export class Actions {
       return this.checkInput(prefix, name, parameters, signal);
     };
     const journal = model.scenario ? 'scenario_actions' : 'actions';
-    const priorResult = (client: Sql = this.db.pool) => this.db.query(`SELECT digest,result FROM ${this.db.schema}.${journal} WHERE owner=$1 AND request_id=$2${model.scenario ? ' AND scenario_id=$3' : ''}`, [principal.owner, requestId, ...(model.scenario ? [model.scenario] : [])], client);
-    const commit = (write?: (objects: Objects) => Promise<ObjectRef>) => this.db.transaction(async client => {
+    const priorResult = (client: Sql = scenarioEvaluation?.client ?? this.db.pool) => this.db.query(`SELECT digest,result FROM ${this.db.schema}.${journal} WHERE owner=$1 AND request_id=$2${model.scenario ? ' AND scenario_id=$3' : ''}`, [principal.owner, requestId, ...(model.scenario ? [model.scenario] : [])], client);
+    const commit = (write?: (objects: Objects) => Promise<ObjectRef>) => transaction(async client => {
       // The request key serializes only duplicate submissions of this action.
-      await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify([principal.owner, model.scenario ?? 'main', requestId])], client);
+      if (!batchClient) await this.lockRequest(client, model, principal.owner, requestId);
       await beforeCommit?.(client);
-      const change = { action: actionName, requestId, taskId: execution?.task.id, executor: actor,
+      const change: NonNullable<Objects['change']> = {
+        action: actionName, requestId, inputDigest: fingerprint, taskId: execution?.task.id, executor: actor,
+        validateWorkflow: (objects, validation, object) =>
+          validateCognitive(this.functions, { objects, principal: access.principal, signal }, validation, object),
         scenarioEdits: model.scenario ? [] as ScenarioMutation[] : undefined };
       const objects = model.scenario ? new Objects(this.db, model, access, client,change) : new JournalObjects(this.db,model,access,client,change);
       await objects.lockWrites();
@@ -94,7 +162,7 @@ export class Actions {
         signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client);
         return objectRefSchema.parse(previous.rows[0].result);
       }
-      await this.checkInput(objects, actionName, input, signal);
+      await this.checkInput(objects, actionName, input, signal, scenarioEvaluation);
       const ref = (value: { type: string; id: Value }): ObjectRef => objectRefSchema.parse({ type: value.type, id: evaluate(value.id, input) });
       for (const rule of action.rules ?? []) {
         if (rule.op === 'addLink') await objects.link({ type: rule.link, from: ref(rule.from), to: ref(rule.to) });
@@ -120,14 +188,17 @@ export class Actions {
       const pendingEffects = [...declaredEffects];
       if(objects instanceof JournalObjects){
         const changes=await objects.changes();
+        if (change.reviewedChangeDigest && change.reviewedChangeDigest !== changeDigest(
+          changes.objects.map(({ ref, before, after }) => ({ ref, before: before?.properties ?? null, after: after?.properties ?? null })),
+          changes.links.map(({ edge, after }) => ({ edge, removed: !after })),
+        )) throw new Conflict('The committed changes differ from the reviewed Scenario delta');
         await this.db.query(`INSERT INTO ${this.db.schema}.action_changes(owner,request_id,release,action,result,objects,links) VALUES($1,$2,$3,$4,$5,$6,$7)`,[principal.owner,requestId,model.release,actionName,result,JSON.stringify(changes.objects),JSON.stringify(changes.links)],client);
         if(this.committedEffects) pendingEffects.push(...await this.committedEffects(model, principal.owner, changes.objects));
       }
       if (!model.scenario) {
-        for (const effect of action.effects ?? []) pendingEffects.push({
-          name: effect.name, handler: effect.handler,
-          payload: Object.fromEntries(Object.entries(effect.payload).map(([name, value]) => [name, evaluate(value, input)])),
-        });
+        if (change.reviewedChangeDigest && pendingEffects.length)
+          throw new Conflict('Workflow merge cannot dispatch effects outside the reviewed declaration');
+        pendingEffects.push(...actionEffects(model, actionName, input));
         if (pendingEffects.length) {
           if (!this.effects) throw new Error('Action effects require a configured dispatcher');
           await this.effects.enqueue(client, access, model, actionName, requestId, pendingEffects);
@@ -145,18 +216,18 @@ export class Actions {
     // Function preparation can perform authorized source reads. Check business
     // admission before invoking it, and recheck under the eventual write lock.
     if (action.submissionCriteria.length || Object.keys(action.objectParameters).length) {
-      await this.db.transaction(async client => {
-        await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', [], client);
+      await transaction(async client => {
+        if (!scenarioEvaluation) await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', [], client);
         await access.refresh(client);
-        await this.checkInput(new Objects(this.db, model, access, client), actionName, input, signal);
+        await this.checkInput(new Objects(this.db, model, access, client), actionName, input, signal, scenarioEvaluation);
       });
     }
     let staged: { result: ObjectRef; write: (objects: Objects) => Promise<void> } | undefined;
     const result = await this.functions.invoke(model, action.function, input, {
-      principal, objects: new Objects(this.db, model, access), signal, operationId: requestId, taskId: execution?.task.id, execution,
+      principal, objects: new Objects(this.db, model, access, scenarioEvaluation?.client), signal, scenarioEvaluation, operationId: requestId, taskId: execution?.task.id, execution,
       directAction: !beforeCommit && !execution,
       validateScenarioAction: validateAction,
-      assertCurrent: async (client = this.db.pool) => { signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client); },
+      assertCurrent: async (client = scenarioEvaluation?.client ?? this.db.pool) => { signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client); },
       assertDispatch: async client => {
         if (model.scenario) throw new Conflict('External dispatch requires a formal Action');
         const objects = new Objects(this.db, model, access, client);
@@ -183,9 +254,9 @@ export class Actions {
     const edits = staged;
     return commit(async objects => { await edits.write(objects); return edits.result; });
   }
-  /** End-to-end invocation selected over MCP. The engine owns completion and any durable pause. */
+  /** Complete an MCP invocation, with a durable pause only for task execution. */
   async complete(access: Access, model: PublishedOntology, selected: { action: string; input: Record<string, unknown> },
-    requestId: string, read: ActionResultRead, execution: TaskExecution, signal: AbortSignal,
+    requestId: string, read: ActionResultRead, execution: TaskExecution | undefined, signal: AbortSignal,
     options: { allowPause?: boolean; applied?: (reference: ObjectRef) => void } = {},
   ) {
     access.function(model, read.function);
@@ -194,34 +265,39 @@ export class Actions {
       throw new Conflict('Action completion requires a declared result parameter on a read Function');
     }
     if (definition.source) access.source(model, definition.source);
-    const guard = async (client: Sql) => {
+    const guard = execution && (async (client: Sql) => {
       signal.throwIfAborted();
       await execution.tasks.current(execution.task, client, true);
-    };
+    });
     let reference: ObjectRef;
     try {
       reference = await this.apply(access, model, selected.action, selected.input, requestId, guard, execution, signal);
     } catch (error) {
-      if (!options.allowPause || model.scenario) throw error;
+      if (!execution || !options.allowPause || model.scenario) throw error;
       const original = { ...selected, requestId, read };
       if (error instanceof CityConfirmationRequired) {
         throw new Clarification(error.message, error.choices, error.permissions, { ...original, waitingFor: 'city' });
+      }
+      if (error instanceof RideEndpointRequired || error instanceof ActionPARequestRequired) {
+        throw new Clarification(error.message, error.choices, error.permissions,
+          { ...original, waitingFor: error instanceof RideEndpointRequired ? error.side : 'pa-request' });
       }
       if (error instanceof SourceRetryRequired) {
         throw new Clarification(error.message, error.choices, error.permissions,
           { ...original, waitingFor: 'retry-source', receipts: error.receipts });
       }
       if (error instanceof PlaceConfirmationRequired) {
-        throw new Clarification(error.message, error.choices, error.permissions, { ...original, receipts: error.receipts });
+        throw new Clarification(error.message, error.choices, error.permissions,
+          { ...original, receipts: error.receipts, pickup: error.pickup });
       }
       throw error;
     }
     options.applied?.(reference);
     const result = await this.functions.invoke(model, read.function, { ...read.input, [read.resultParameter]: reference }, {
-      principal: access.principal, objects: new Objects(this.db, model, access), signal, taskId: execution.task.id, execution,
+      principal: access.principal, objects: new Objects(this.db, model, access), signal, taskId: execution?.task.id, execution,
     });
     signal.throwIfAborted();
-    await execution.tasks.current(execution.task);
+    if (execution) await execution.tasks.current(execution.task);
     return result;
   }
 
@@ -229,8 +305,10 @@ export class Actions {
     const { task, tasks } = execution;
     await tasks.current(task);
     const pending = placeContinuationSchema.parse(task.input.placeContinuation);
-    const missingInput = pending.waitingFor === 'city' ? !task.input.rideCity
-      : pending.waitingFor !== 'retry-source' && !task.input.places;
+    const missingInput = pending.waitingFor === 'city' && !task.input.rideCity ||
+      pending.waitingFor === 'origin' && !task.input.rideOrigin ||
+      pending.waitingFor === 'destination' && !task.input.rideDestination ||
+      !pending.waitingFor && !task.input.places;
     if (missingInput) {
       throw new Conflict('Original Action is waiting for input');
     }
@@ -244,7 +322,7 @@ export class Actions {
     if(!originalRequestId||!requestId||originalRequestId===requestId)throw new Conflict('Undo needs a distinct request ID');
     return this.db.transaction(async client=>{
       await access.refresh(client);
-      await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[JSON.stringify([access.principal.owner,'main',requestId])],client);
+      await this.lockRequest(client, model, access.principal.owner, requestId);
       const executor = { kind: 'client' as const, id: access.principal.clientId ?? access.principal.owner };
       const graph=new Objects(this.db,model,access,client,{requestId,executor});await graph.lockWrites();
       const original=(await this.db.query(`SELECT * FROM ${this.db.schema}.action_changes WHERE owner=$1 AND request_id=$2 FOR UPDATE`,[access.principal.owner,originalRequestId],client)).rows[0];

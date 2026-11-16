@@ -1,9 +1,11 @@
+import type { CognitiveStep } from './cognitive-workflow.js';
 import { scenarioMetadataRead, scenarioMetadataQuery, scenarioMetadataType } from './scenario-metadata.js';
+import { observeDecisionRead, observedObject, observedObjects, observedPage } from './decision-evidence.js';
 import { DerivedProperties } from './derived.js';
 import { compareValues, matchesPredicate, nestedValue, orderSchema, predicateFields, predicateSchema, regexMatches, propertyPathSchema } from './query-filter.js';
 import { recordObjectEdit, resolveSourceEdit } from './edit-history.js';
 import { z } from 'zod';
-import { Conflict, NotFound, digest, type ExecutionActor } from '../core/identity.js';
+import { Conflict, NotFound, PermissionDenied, InvalidInput, digest, type ExecutionActor } from '../core/identity.js';
 import { PublishedOntology } from './metadata.js';
 import { Access } from './access.js';
 import { objectRefSchema, type ObjectData, type ObjectRef, type LinkData } from '../ontology/schema.js';
@@ -13,20 +15,40 @@ import { Database, type Sql } from './database.js';
 import { checkScenario, lockEdits, viewTables, stageObject, stageLink, type ScenarioMutation } from './scenario-store.js';
 import { isNumeric, storedPredicate, supportsStoredOrder, supportsStoredPredicate, type Metric } from './stored-query.js';
 
+const maxCompleteRelationships = 1_000;
+
+const instant = z.iso.datetime({ offset: true });
+const intervalOverlapSchema = z.strictObject({
+  start: propertyPathSchema, end: propertyPathSchema,
+  from: instant, until: instant, includeUnknown: z.boolean().optional(),
+}).refine(input => Date.parse(input.from) < Date.parse(input.until), 'Expected a nonempty time window');
+
 export const querySchema = z.strictObject({
   type: z.string(), where: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).default({}),
-  filter: predicateSchema.optional(), orderBy: orderSchema.optional(),
+  filter: predicateSchema.optional(), orderBy: orderSchema.optional(), intervalOverlap: intervalOverlapSchema.optional(),
   select: z.array(propertyPathSchema).max(30).optional(), limit: z.number().int().min(1).max(100).default(50), cursor: z.string().optional(),
   from: z.strictObject({ object: objectRefSchema, link: z.string(), as: z.string().optional() }).optional(),
 });
 export type Query = z.input<typeof querySchema>;
-export function queryFields(query: Pick<z.output<typeof querySchema>, 'where' | 'filter' | 'orderBy' | 'select'>) {
+function decodeQueryCursor(token: string): unknown {
+  try {
+    return JSON.parse(Buffer.from(token, 'base64url').toString('utf8'));
+  } catch {
+    throw new InvalidInput('Invalid query cursor');
+  }
+}
+export function queryFields(query: Pick<z.output<typeof querySchema>, 'where' | 'filter' | 'orderBy' | 'select' | 'intervalOverlap'>) {
   return [...new Set([...Object.keys(query.where ?? {}), ...predicateFields(query.filter),
-    ...(query.orderBy ?? []).map(item => item.property), ...(query.select ?? [])])];
+    ...(query.orderBy ?? []).map(item => item.property), ...(query.select ?? []),
+    ...(query.intervalOverlap ? [query.intervalOverlap.start, query.intervalOverlap.end] : [])])];
 }
 export class Objects {
   constructor(readonly db: Database, readonly model: PublishedOntology, readonly access: Access, readonly client: Sql = db.pool,
-    readonly change?: { action?: string; requestId?: string; taskId?: string; executor?: ExecutionActor; scenarioEdits?: ScenarioMutation[] }) {}
+    readonly change?: {
+      action?: string; requestId?: string; taskId?: string; inputDigest?: string; reviewedChangeDigest?: string;
+      executor?: ExecutionActor; scenarioEdits?: ScenarioMutation[];
+      validateWorkflow?: (objects: Objects, validation: CognitiveStep['validation'], object: ObjectRef) => Promise<void>;
+    }) {}
   get owner() { return this.access.principal.owner; }
   private writeReady?: Promise<void>;
   async lockWrites() { await this.prepareWrite(); }
@@ -74,6 +96,10 @@ export class Objects {
     return this.row(rows.rows[0]);
   }
   async readStored(input: ObjectRef): Promise<ObjectData> {
+    return observeDecisionRead(this, { kind: 'stored', ref: objectRefSchema.parse(input) },
+      () => this.loadStored(input), observedObject);
+  }
+  private async loadStored(input: ObjectRef): Promise<ObjectData> {
     if(input.type===scenarioMetadataType)return scenarioMetadataRead(this,input);
     this.access.read(this.model, input.type);
     const object = await this.stored(input);
@@ -106,14 +132,24 @@ export class Objects {
     }
   }
   /** Source fields must match their baseline; unrelated local notes may remain. */
-  async matchesSource(ref:ObjectRef,sourceName:string):Promise<boolean>{
+  async matchesSource(ref: ObjectRef, sourceName: string): Promise<boolean> {
+    return (await observeDecisionRead(this, { kind: 'source', ref, source: sourceName },
+      () => this.sourceMatch(ref, sourceName))).matches;
+  }
+  private async sourceMatch(ref:ObjectRef,sourceName:string) {
     const mapping=this.model.sources.get(sourceName),provider=mapping&&this.model.functions.get(mapping.function)?.source;
     if(!mapping||mapping.objectType!==ref.type||!provider)throw new Error('Source certification requires a matching datasource');
     this.access.source(this.model,provider);
     const object=await this.stored(ref);this.access.readRow(this.model,ref.type,object.properties);
-    const baseline=(await this.db.readQuery(`SELECT properties FROM ${this.db.schema}.source_values WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND source=$5`,[this.model.projection,this.owner,ref.type,ref.id,sourceName],this.client)).rows[0]?.properties as Record<string,unknown>|undefined;
-    if(!baseline)return false;
-    return Object.entries(baseline).every(([field,value])=>Object.hasOwn(object.properties,field)&&this.access.cell(this.model,ref.type,field,object.properties)&&digest(object.properties[field])===digest(value));
+    const baseline = (await this.db.readQuery<{ properties: Record<string, unknown>; observed_at: string }>(
+      `SELECT properties,observed_at::text FROM ${this.db.schema}.source_values
+        WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND source=$5`,
+      [this.model.projection, this.owner, ref.type, ref.id, sourceName], this.client,
+    )).rows[0];
+    const matches = Boolean(baseline && Object.entries(baseline.properties).every(([field, value]) =>
+      Object.hasOwn(object.properties, field) && this.access.cell(this.model, ref.type, field, object.properties)
+      && digest(object.properties[field]) === digest(value)));
+    return { matches, version: baseline, revision: object.revision };
   }
   async propertyVisible(ref:ObjectRef,field:string):Promise<boolean> {
     const object=await this.stored(ref);
@@ -121,6 +157,9 @@ export class Objects {
     return this.access.cell(this.model,ref.type,field,object.properties);
   }
   async read(input: ObjectRef): Promise<ObjectData> {
+    return observeDecisionRead(this, { kind: 'object', ref: objectRefSchema.parse(input) }, () => this.readObject(input), observedObject);
+  }
+  private async readObject(input: ObjectRef): Promise<ObjectData> {
     if(this.client===this.db.pool&&Object.values(this.model.object(input.type).properties).some(property=>property.derived)) {
       const access=await this.access.fork();
       const result=await this.db.transaction(async client=>{
@@ -132,8 +171,11 @@ export class Objects {
     }
     return new DerivedProperties(this).enrich(await this.readStored(input));
   }
-  async query(input: Query):Promise<{items:ObjectData[];cursor?:string}> {
-    const args=querySchema.parse(input);
+  async query(input: Query): Promise<{ items: ObjectData[]; cursor?: string }> {
+    const args = querySchema.parse(input);
+    return observeDecisionRead(this, { kind: 'query', input: args }, () => this.queryObjects(args), observedPage);
+  }
+  private async queryObjects(args: z.output<typeof querySchema>): Promise<{ items: ObjectData[]; cursor?: string }> {
     const fields = queryFields(args);
     this.access.definition(this.model, this.model.interfaces.has(args.type) ? 'interface' : 'object', args.type);
     const viewLabel = this.model.interfaces.get(args.type)?.classification;
@@ -171,7 +213,7 @@ export class Objects {
       const all: ObjectData[] = [];
       let cursor: string | undefined;
       do {
-        const page = await this.queryStored({ type: args.type, from: args.from, limit: 100, cursor });
+        const page = await this.queryStored({ type: args.type, from: args.from, intervalOverlap: args.intervalOverlap, limit: 100, cursor });
         for (const item of page.items) {
           all.push(await project(args.type === item.ref.type ? item : await this.readStored(item.ref)));
           if (all.length > 10000) throw new Conflict('Extended query exceeds 10000 complete candidate objects');
@@ -193,7 +235,7 @@ export class Objects {
       return Buffer.compare(Buffer.from(JSON.stringify(left.ref)), Buffer.from(JSON.stringify(right.ref)));
     });
     const identity=digest({owner:this.owner,release:this.model.release,scenario:this.model.scenario,args:{...args,cursor:undefined,limit:undefined},objects:matching});
-    const offset=args.cursor?z.strictObject({query:z.literal(identity),offset:z.number().int().min(0).max(matching.length)}).parse(JSON.parse(Buffer.from(args.cursor,'base64url').toString())).offset:0;
+    const offset=args.cursor?z.strictObject({query:z.literal(identity),offset:z.number().int().min(0).max(matching.length)}).parse(decodeQueryCursor(args.cursor)).offset:0;
     const end=offset+args.limit;
     const items=matching.slice(offset,end).map(object=>args.select?{...object,properties:Object.fromEntries(args.select.map(field=>[field,nestedValue(object.properties,field)]))}:object);
     return {items,cursor:end<matching.length?Buffer.from(JSON.stringify({query:identity,offset:end})).toString('base64url'):undefined};
@@ -246,6 +288,31 @@ export class Objects {
         AND l.${target}_type=o.type AND l.${target}_id=o.id)`);
     }
     const property = this.storedFields(types, values, args.type);
+    // Add an indexable necessary condition only for readable, unmarked scalar cells.
+    if (types.length === 1 && types[0] === args.type && !processLogTarget(this.model, args.type)
+      && !this.access.hasObjectPolicy(this.model, args.type)) {
+      const exact = Object.entries(args.where).filter(([field, value]) => value !== null && !field.includes('.')
+        && this.access.canSeeModelData(this.model.object(args.type).properties[field]?.classification)
+        && this.access.property(this.model, args.type, field));
+      if (exact.length) clauses.push(`o.properties @> ${bind(JSON.stringify(Object.fromEntries(exact)))}::jsonb`);
+    }
+    if (args.intervalOverlap) {
+      const window = args.intervalOverlap;
+      const fields = [window.start, window.end];
+      if (fields.some(field => this.model.propertyPath(args.type, field).format !== 'date-time')
+        || !this.mayUseStoredFields(args.type, types, fields))
+        throw new Conflict('Time windows require stored date-time properties');
+      const timestamp = (field: string) => {
+        const raw = `(${property(field)}#>>'{}')`;
+        // Date.parse uses millisecond precision, including on offsets in legacy values.
+        const millis = `regexp_replace(${raw}, '([.][0-9]{3})[0-9]+', '\\1')`;
+        return `(CASE WHEN pg_input_is_valid(${millis},'timestamptz') THEN ${millis}::timestamptz END)`;
+      };
+      const start = timestamp(window.start), end = timestamp(window.end);
+      const overlap = `(${start}<${bind(new Date(window.until).toISOString())}::timestamptz AND ${end}>${bind(new Date(window.from).toISOString())}::timestamptz)`;
+      const known = `${start}<${end}`;
+      clauses.push(window.includeUnknown ? `((${known}) IS NOT TRUE OR ${overlap})` : `(${known} AND ${overlap})`);
+    }
     for (const [field, value] of Object.entries(args.where)) clauses.push(`${property(field)}=${bind(JSON.stringify(value))}::jsonb`);
     return { values, bind, clauses, property, tables, types };
   }
@@ -289,14 +356,17 @@ export class Objects {
     return { objects: records.map(record => this.visible(record)), ordered };
   }
   async queryStored(input: Query):Promise<{items:ObjectData[];cursor?:string}> {
-    if(input.type===scenarioMetadataType)return scenarioMetadataQuery(this,input);
+    if (input.type === scenarioMetadataType) {
+      if (input.intervalOverlap) throw new Conflict('Time windows require stored date-time properties');
+      return scenarioMetadataQuery(this, input);
+    }
     const args = querySchema.parse(input);
     const selection = await this.storedSelection(args);
     if (!selection) return { items: [], cursor: undefined };
     const { values, bind, clauses, tables, types } = selection;
     const queryDigest = digest({ ...args, cursor: undefined, owner: this.owner, release: this.model.release, scenario: this.model.scenario });
     if (args.cursor) {
-      const cursor = z.strictObject({ query: z.literal(queryDigest), type: z.string(), id: z.string() }).parse(JSON.parse(Buffer.from(args.cursor, 'base64url').toString()));
+      const cursor = z.strictObject({ query: z.literal(queryDigest), type: z.string(), id: z.string() }).parse(decodeQueryCursor(args.cursor));
       clauses.push(`(o.type COLLATE "C",o.id COLLATE "C")>(${bind(cursor.type)},${bind(cursor.id)})`);
     }
     const result = await this.db.readQuery(`${tables.prefix}SELECT o.type,o.id,o.revision,o.properties FROM ${tables.objects} o
@@ -466,14 +536,20 @@ export class Objects {
     await this.linkedSecurityReads(records);
     return records.map(record => this.visible(record));
   }
-  async follow(ref: ObjectRef, link: string, view = ref.type): Promise<ObjectData[]> {
+  async follow(ref: ObjectRef, link: string, view = ref.type, maximum?: number): Promise<ObjectData[]> {
+    if (maximum !== undefined && (!Number.isInteger(maximum) || maximum < 1 || maximum > maxCompleteRelationships))
+      throw new InvalidInput('Relationship read limit is out of range');
+    return observeDecisionRead(this, { kind: 'follow', ref, link, as: view, ...(maximum === undefined ? {} : { maximum }) },
+      () => this.followObjects(ref, link, view, maximum ?? maxCompleteRelationships), observedObjects);
+  }
+  private async followObjects(ref: ObjectRef, link: string, view: string, maximum: number): Promise<ObjectData[]> {
     if (view !== ref.type) this.access.definition(this.model, 'interface', view);
     const nav = this.model.navigation(ref.type, link, view);
     if(this.client===this.db.pool&&[ref.type,nav.target].some(type=>Object.values(this.model.object(type).properties).some(property=>property.derived))) {
       const access=await this.access.fork();
       const result=await this.db.transaction(async client=>{
         await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',[],client);
-        return new Objects(this.db,this.model,access,client).follow(ref,link,view);
+        return new Objects(this.db,this.model,access,client).follow(ref,link,view,maximum);
       });
       if(!await access.canReturn(access.dataRequirements()))throw new Conflict('Derived result permissions changed');
       this.access.adoptReads(access);return result;
@@ -487,10 +563,11 @@ export class Objects {
     const values: unknown[] = [this.owner, nav.link, ref.type, ref.id, this.model.projection];
     const policy = this.access.rowSql(this.model,nav.target,values,'o.properties');
     const tables = viewTables(this.db, this.model, this.owner, values,[ref.type,nav.target]);
+    const limit = values.push(maximum + 1);
     const result = await this.db.readQuery(`${tables.prefix}SELECT o.type,o.id,o.revision,o.properties FROM ${tables.links} l
       JOIN ${tables.objects} o ON o.projection=l.projection AND o.owner=l.owner AND o.type=l.${to}_type AND o.id=l.${to}_id
-      WHERE l.owner=$1 AND l.type=$2 AND l.${from}_type=$3 AND l.${from}_id=$4 AND l.projection=$5 AND ${policy} ORDER BY o.id COLLATE "C" LIMIT 101`, values, this.client);
-    if (result.rows.length > 100) throw new Error('Relationship exceeds the complete read limit');
+      WHERE l.owner=$1 AND l.type=$2 AND l.${from}_type=$3 AND l.${from}_id=$4 AND l.projection=$5 AND ${policy} ORDER BY o.id COLLATE "C" LIMIT $${limit}`, values, this.client);
+    if (result.rows.length > maximum) throw new Conflict('Relationship exceeds the complete read limit. Use a paginated query through the Link.');
     await this.linkedSecurityReads(result.rows.map(row=>this.row(row)));
     if(nav.target===scenarioMetadataType){
       const items:ObjectData[]=[];
@@ -552,7 +629,7 @@ export class Objects {
     this.assertStoredFields(ref,fields);
     const old = await this.stored(ref), properties = this.model.parseObject(ref, { ...old.properties, ...fields });
     this.access.readRow(this.model,ref.type,old.properties);
-    for (const field of Object.keys(fields)) if (!this.access.cell(this.model,ref.type,field,old.properties)) throw new Error('Cannot edit a hidden property');
+    for (const field of Object.keys(fields)) if (!this.access.cell(this.model,ref.type,field,old.properties)) throw new PermissionDenied('Cannot edit a hidden property');
     this.access.writeRow(this.model,ref.type,properties);
     if (old.revision !== revision) throw new Conflict('Object revision changed');
     if (this.model.scenario) {
@@ -573,23 +650,41 @@ export class Objects {
     const rows = edges.map(edge => {
       this.access.definition(this.model, 'link', edge.type); this.writeType(edge.from.type,true); this.writeType(edge.to.type,true);
       const definition = this.model.links.get(edge.type);
-      if (!definition || edge.from.type !== definition.from.type || edge.to.type !== definition.to.type) throw new Error('Invalid link endpoints');
+      if (!definition || edge.from.type !== definition.from.type || edge.to.type !== definition.to.type) throw new InvalidInput('Invalid link endpoints');
       return { type: edge.type, from_type: edge.from.type, from_id: edge.from.id, to_type: edge.to.type, to_id: edge.to.id, single_from: definition.from.cardinality === 'one', single_to: definition.to.cardinality === 'one' };
     });
     if (this.model.scenario) {
       for (const edge of edges) {
         await this.stored(edge.from); await this.stored(edge.to);
         const definition = this.model.links.get(edge.type)!;
-        const from = await this.follow(edge.from, definition.from.name), to = await this.follow(edge.to, definition.to.name);
-        if (definition.from.cardinality === 'one' && from.some(item => digest(item.ref) !== digest(edge.to)) || definition.to.cardinality === 'one' && to.some(item => digest(item.ref) !== digest(edge.from))) throw new Conflict('Link cardinality exceeded');
+        const singleFrom = definition.from.cardinality === 'one', singleTo = definition.to.cardinality === 'one';
+        if (singleFrom || singleTo) {
+          const values: unknown[] = [this.model.projection, this.owner, edge.type, edge.from.type, edge.from.id,
+            edge.to.type, edge.to.id, singleFrom, singleTo];
+          const tables = viewTables(this.db, this.model, this.owner, values, [], true);
+          const { rows: [row] } = await this.db.query(`${tables.prefix}SELECT EXISTS(
+            SELECT 1 FROM ${tables.links} WHERE projection=$1 AND owner=$2 AND type=$3
+            AND (($8 AND (from_type,from_id)=($4,$5) AND (to_type,to_id)<>($6,$7))
+              OR ($9 AND (to_type,to_id)=($6,$7) AND (from_type,from_id)<>($4,$5)))
+          ) AS conflicting`, values, this.client);
+          if (row?.conflicting) throw new Conflict('Link cardinality exceeded');
+        }
         await stageLink(this.db, this.model, this.owner, edge, false, this.client, this.change?.scenarioEdits);
       }
       return;
     }
-    await this.db.query(`INSERT INTO ${this.db.schema}.links(owner,type,from_type,from_id,to_type,to_id,single_from,single_to,projection)
-      SELECT $1,type,from_type,from_id,to_type,to_id,single_from,single_to,$3 FROM jsonb_to_recordset($2::jsonb)
-      AS input(type text,from_type text,from_id text,to_type text,to_id text,single_from boolean,single_to boolean)
-      ON CONFLICT(projection,owner,type,from_type,from_id,to_type,to_id) DO NOTHING`, [this.owner, JSON.stringify(rows), this.model.projection], this.client);
+    try {
+      await this.db.query(`INSERT INTO ${this.db.schema}.links(owner,type,from_type,from_id,to_type,to_id,single_from,single_to,projection)
+        SELECT $1,type,from_type,from_id,to_type,to_id,single_from,single_to,$3 FROM jsonb_to_recordset($2::jsonb)
+        AS input(type text,from_type text,from_id text,to_type text,to_id text,single_from boolean,single_to boolean)
+        ON CONFLICT(projection,owner,type,from_type,from_id,to_type,to_id) DO NOTHING`, [this.owner, JSON.stringify(rows), this.model.projection], this.client);
+    } catch (error) {
+      const databaseError = error as { code?: string; constraint?: string } | null;
+      if (databaseError?.code === '23505' &&
+        (databaseError.constraint === 'links_single_from' || databaseError.constraint === 'links_single_to'))
+        throw new Conflict('Link cardinality exceeded');
+      throw error;
+    }
   }
   async unlink(edge: LinkData): Promise<void> {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).unlink(edge));
@@ -597,7 +692,7 @@ export class Objects {
     await this.read(edge.from); await this.read(edge.to);
     this.writeType(edge.from.type,true); this.writeType(edge.to.type,true);
     const definition = this.model.links.get(edge.type);
-    if (!definition || definition.from.type !== edge.from.type || definition.to.type !== edge.to.type) throw new Error('Invalid link endpoints');
+    if (!definition || definition.from.type !== edge.from.type || definition.to.type !== edge.to.type) throw new InvalidInput('Invalid link endpoints');
     if (this.model.scenario) return stageLink(this.db, this.model, this.owner, edge, true, this.client, this.change?.scenarioEdits);
     await this.db.query(`DELETE FROM ${this.db.schema}.links WHERE projection=$1 AND owner=$2 AND type=$3 AND from_type=$4 AND from_id=$5 AND to_type=$6 AND to_id=$7`, [this.model.projection, this.owner, edge.type, edge.from.type, edge.from.id, edge.to.type, edge.to.id], this.client);
   }
@@ -606,15 +701,29 @@ export class Objects {
     await this.prepareWrite(); this.writeType(ref.type);
     const old = await this.stored(ref);
     this.access.readRow(this.model,ref.type,old.properties);
-    for (const field of Object.keys(old.properties)) if (!this.access.cell(this.model,ref.type,field,old.properties)) throw new Error('Cannot delete an object with hidden properties');
+    for (const field of Object.keys(old.properties)) if (!this.access.cell(this.model,ref.type,field,old.properties)) throw new PermissionDenied('Cannot delete an object with hidden properties');
     if (old.revision !== revision) throw new Conflict('Object revision changed');
+    const edges = new Map<string, LinkData>();
     for (const link of this.model.links.values()) {
-      if (processLogTarget(this.model,link.from.type) || processLogTarget(this.model,link.to.type)) continue;
+      if (processLogTarget(this.model, link.from.type) || processLogTarget(this.model, link.to.type)) continue;
       for (const side of ['from', 'to'] as const) if (link[side].type === ref.type) {
-        const others = await this.follow(ref, link[side].name);
-        for (const other of others) await this.unlink({ type: link.apiName, from: side === 'from' ? ref : other.ref, to: side === 'to' ? ref : other.ref });
+        for (const other of await this.follow(ref, link[side].name)) {
+          const edge = { type: link.apiName, from: side === 'from' ? ref : other.ref, to: side === 'to' ? ref : other.ref };
+          edges.set(digest(edge), edge);
+          if (edges.size > maxCompleteRelationships) throw new Conflict('Unlink relationships in smaller groups before deleting this object');
+        }
       }
     }
+    // Compare authorized edges with physical edges without returning hidden endpoints or counts.
+    const values: unknown[] = [this.model.projection, this.owner, ref.type, ref.id, edges.size];
+    const tables = viewTables(this.db, this.model, this.owner, values, [], true);
+    const { rows: [incident] } = await this.db.query(`${tables.prefix}SELECT EXISTS(
+      SELECT 1 FROM ${tables.links} WHERE projection=$1 AND owner=$2
+      AND ((from_type=$3 AND from_id=$4) OR (to_type=$3 AND to_id=$4))
+      LIMIT 1 OFFSET $5
+    ) AS hidden`, values, this.client);
+    if (incident?.hidden) throw new PermissionDenied('Cannot delete an object with inaccessible relationships');
+    for (const edge of edges.values()) await this.unlink(edge);
     if (this.model.scenario) return stageObject(this.db, this.model, this.owner, ref, revision + 1, null, this.client, [], { op: 'delete', journal: this.change?.scenarioEdits });
     await this.db.query(`DELETE FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND revision=$5`, [this.model.projection, this.owner, ref.type, ref.id, revision], this.client);
     await recordObjectEdit(this,ref,old.properties,null,undefined,'delete');

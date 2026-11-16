@@ -5,12 +5,22 @@ import {
   commonOffer,
   eventFacts,
   hotelFacts,
+  fliggyHotelFacts,
+  flightFacts,
   productFacts,
   eventSearchInput,
   hotelSearchInput,
+  flightSearchInput,
   productSearchInput,
   serviceObservation,
+  fliggyAccessMode,
+  fliggyHotelObservation,
+  fliggyFlightObservation,
   readServiceInput,
+  readServiceSearchPagesInput,
+  readTravelOfferSearchInput,
+  travelOfferSearchInput,
+  travelOfferSearchOutcomes,
   json,
   time,
   evidence,
@@ -22,7 +32,7 @@ const searchContracts = {
   HotelSearch: hotelSearchInput,
   ProductSearch: productSearchInput,
 };
-export const serviceCatalog = [
+const coreServiceCatalog = [
   {
     provider: 'Luma',
     object: 'LumaEvent',
@@ -34,6 +44,7 @@ export const serviceCatalog = [
     action: 'SearchLumaEvents',
     parameters: eventSearchInput,
     facts: eventFacts,
+    observation: serviceObservation,
   },
   {
     provider: 'RollingGo',
@@ -46,6 +57,7 @@ export const serviceCatalog = [
     action: 'SearchRollingGoHotels',
     parameters: hotelSearchInput,
     facts: hotelFacts,
+    observation: serviceObservation,
   },
   {
     provider: 'Shopify',
@@ -58,8 +70,45 @@ export const serviceCatalog = [
     action: 'SearchShopifyProducts',
     parameters: productSearchInput,
     facts: productFacts,
+    observation: serviceObservation,
   },
 ] as const;
+const fliggyServiceCatalog = [
+  {
+    provider: 'Fliggy',
+    object: 'FliggyHotelOffer',
+    result: 'FliggyHotelSearch',
+    searchInterface: 'HotelSearch',
+    source: 'FliggyHotels',
+    read: 'readFliggyHotels',
+    search: 'searchFliggyHotels',
+    action: 'SearchFliggyHotels',
+    parameters: hotelSearchInput,
+    facts: fliggyHotelFacts,
+    observation: fliggyHotelObservation,
+    terms: 'FlyAI finds hotels by place and dates. Use CNY. Adults is requested occupancy and FlyAI has not verified it. Keep masked and starting prices as displayed.',
+  },
+  {
+    provider: 'Fliggy',
+    object: 'FliggyFlightOffer',
+    result: 'FliggyFlightSearch',
+    searchInterface: 'FlightSearch',
+    source: 'FliggyFlights',
+    read: 'readFliggyFlights',
+    search: 'searchFliggyFlights',
+    action: 'SearchFliggyFlights',
+    parameters: flightSearchInput,
+    facts: flightFacts,
+    observation: fliggyFlightObservation,
+    terms: 'FlyAI returns dated flight candidates with local times and displayed fares. Passenger totals, taxes, seats and fare terms require provider confirmation.',
+  },
+] as const;
+export const serviceCatalog = [...coreServiceCatalog, ...fliggyServiceCatalog] as const;
+export const travelOfferSources = serviceCatalog.filter(service =>
+  service.searchInterface === 'HotelSearch' || service.searchInterface === 'FlightSearch',
+);
+export const travelOfferSearchType = 'TravelOfferSearch';
+
 const properties = (shape: Record<string, z.ZodType>) =>
   Object.fromEntries(
     Object.entries(shape).map(([name, schema]) => [
@@ -107,10 +156,9 @@ const object = (
   interfaces: {},
 });
 
-export const servicesDefinition: OntologyDocument = {
-  id: 'EigosServices',
-  version: '1',
-  objectTypes: serviceCatalog.flatMap((service) => {
+type ProviderServices = Pick<OntologyDocument, 'objectTypes' | 'linkTypes' | 'functionTypes' | 'actionTypes' | 'dataSources'>;
+const providerServices = (catalog: readonly (typeof serviceCatalog)[number][]): ProviderServices => ({
+  objectTypes: catalog.flatMap((service) => {
     const offer = object(
       service.object,
       `${service.provider} account-scoped service facts. Not a reservation or fulfillment receipt.`,
@@ -124,7 +172,7 @@ export const servicesDefinition: OntologyDocument = {
     const result = object(
       service.result,
       `A bounded ${service.provider} result page; complete=false is not proof of absence.`,
-      searchProperties,
+      service.provider === 'Fliggy' ? { ...searchProperties, accessMode: fliggyAccessMode } : searchProperties,
     );
     result.interfaces.ServiceSearchResult = {
       properties: identity(Object.keys(searchProperties)),
@@ -138,6 +186,80 @@ export const servicesDefinition: OntologyDocument = {
     };
     return [offer, result];
   }),
+  linkTypes: catalog.flatMap((service) => [
+    {
+      apiName: `${service.object}Source`,
+      description: 'Current source supporting this canonical provider object.',
+      from: { type: service.object, name: 'source', cardinality: 'one' as const },
+      to: { type: service.result, name: 'currentObjects', cardinality: 'many' as const },
+    },
+    {
+      apiName: `${service.object}SearchResult`,
+      description: 'Original page membership; current values retain their own source link.',
+      from: { type: service.result, name: 'results', cardinality: 'many' as const },
+      to: { type: service.object, name: 'searches', cardinality: 'many' as const },
+    },
+    {
+      apiName: `${service.object}Plan`,
+      description: 'Service option selected in a plan without an external commitment.',
+      from: { type: service.object, name: 'plans', cardinality: 'many' as const },
+      to: { type: 'SchedulePlan', name: service.object + 's', cardinality: 'many' as const },
+    },
+  ]),
+  functionTypes: catalog.flatMap((service) => [
+    {
+      apiName: service.read,
+      description: `Read a bounded ${service.provider} ${service.searchInterface} page.${'terms' in service ? ' ' + service.terms : ''}`,
+      parameters: json(service.parameters),
+      returns: json(service.observation),
+      source: service.provider,
+    },
+    {
+      apiName: service.search,
+      description: `Read ${service.provider} and atomically project its business objects and source evidence.`,
+      parameters: json(service.parameters),
+      returns: json(objectRefSchema),
+      edits: true,
+      ...('terms' in service ? { dependencies: {
+        objectTypes: [service.object, service.result],
+        linkTypes: [service.object + 'Source', service.object + 'SearchResult'],
+        dataSources: [service.source],
+        functions: [service.read],
+      } } : {}),
+    },
+  ]),
+  actionTypes: catalog.map((service) => ({
+    apiName: service.action,
+    description: `Query and retain ${service.provider} facts. No booking, order or payment.${'terms' in service ? ' ' + service.terms : ''}`,
+    parameters: json(service.parameters),
+    objectParameters: {},
+    submissionCriteria: [],
+    function: service.search,
+  })),
+  dataSources: catalog.map((service) => ({
+    apiName: service.source,
+    objectType: service.object,
+    function: service.read,
+    properties: identity(Object.keys({ ...service.facts.shape, ...common })),
+  })),
+});
+
+function searchInterface(apiName: string, parameters: z.ZodType): OntologyDocument['interfaceTypes'][number] {
+  return {
+    apiName,
+    description: 'Business search contract; choose an authorized implementing source, independently of its MCP transport.',
+    properties: properties({ name: z.string() }),
+    optionalProperties: [],
+    links: {},
+    actions: { search: { parameters: json(parameters), objectParameters: {}, required: true } },
+  };
+}
+
+const coreServices = providerServices(coreServiceCatalog);
+export const servicesDefinition: OntologyDocument = {
+  id: 'EigosServices',
+  version: '1',
+  ...coreServices,
   interfaceTypes: [
     {
       apiName: 'ServiceOffering',
@@ -165,52 +287,10 @@ export const servicesDefinition: OntologyDocument = {
       links: { results: { target: 'ServiceOffering', cardinality: 'many', required: true } },
       actions: {},
     },
-    ...Object.entries(searchContracts).map(([apiName, parameters]) => ({
-      apiName,
-      description: `Business search contract; choose an authorized implementing source, independently of its MCP transport.`,
-      properties: properties({ name: z.string() }),
-      optionalProperties: [],
-      links: {},
-      actions: { search: { parameters: json(parameters), objectParameters: {}, required: true } },
-    })),
+    ...Object.entries(searchContracts).map(([name, parameters]) => searchInterface(name, parameters)),
   ],
-  linkTypes: serviceCatalog.flatMap((service) => [
-    {
-      apiName: `${service.object}Source`,
-      description: 'Current source supporting this canonical provider object.',
-      from: { type: service.object, name: 'source', cardinality: 'one' as const },
-      to: { type: service.result, name: 'currentObjects', cardinality: 'many' as const },
-    },
-    {
-      apiName: `${service.object}SearchResult`,
-      description: 'Original page membership; current values retain their own source link.',
-      from: { type: service.result, name: 'results', cardinality: 'many' as const },
-      to: { type: service.object, name: 'searches', cardinality: 'many' as const },
-    },
-    {
-      apiName: `${service.object}Plan`,
-      description: 'Service option selected in a plan without an external commitment.',
-      from: { type: service.object, name: 'plans', cardinality: 'many' as const },
-      to: { type: 'SchedulePlan', name: service.object + 's', cardinality: 'many' as const },
-    },
-  ]),
   functionTypes: [
-    ...serviceCatalog.flatMap((service) => [
-      {
-        apiName: service.read,
-        description: `Read a bounded ${service.provider} ${service.searchInterface} page.`,
-        parameters: json(service.parameters),
-        returns: json(serviceObservation),
-        source: service.provider,
-      },
-      {
-        apiName: service.search,
-        description: `Read ${service.provider} and atomically project its business objects and source evidence.`,
-        parameters: json(service.parameters),
-        returns: json(objectRefSchema),
-        edits: true,
-      },
-    ]),
+    ...coreServices.functionTypes,
     {
       apiName: 'attachPlanService',
       description:
@@ -251,14 +331,7 @@ export const servicesDefinition: OntologyDocument = {
     },
   ],
   actionTypes: [
-    ...serviceCatalog.map((service) => ({
-      apiName: service.action,
-      description: `Query and retain ${service.provider} facts. No booking, order or payment.`,
-      parameters: json(service.parameters),
-      objectParameters: {},
-      submissionCriteria: [],
-      function: service.search,
-    })),
+    ...coreServices.actionTypes,
     {
       apiName: 'AttachPlanService',
       description: 'Select a service option for this plan.',
@@ -268,19 +341,81 @@ export const servicesDefinition: OntologyDocument = {
       function: 'attachPlanService',
     },
   ],
-  dataSources: serviceCatalog.map((service) => ({
-    apiName: service.source,
-    objectType: service.object,
-    function: service.read,
-    properties: identity(Object.keys({ ...service.facts.shape, ...common })),
-  })),
 };
 
-for (const [type, apiName, shape] of [
-  ['RollingGoHotelOffer', 'HotelOffer', { ...hotelFacts.shape, priceKind: z.enum(['reference', 'room_rate']) }],
-  ['ShopifyProductOffer', 'ProductOffer', productFacts.shape],
+// Compose these providers into Eigos without changing the original service Function contracts.
+export const fliggyServicesDefinition = {
+  ...providerServices(fliggyServiceCatalog),
+  interfaceTypes: [searchInterface('FlightSearch', flightSearchInput)],
+};
+fliggyServicesDefinition.functionTypes.push({
+  apiName: 'readServiceSearchPages',
+  description: 'Return several exact service search pages together, retaining each provider, freshness, and completeness.',
+  parameters: json(readServiceSearchPagesInput),
+  returns: json(z.strictObject({ pages: z.array(z.record(z.string(), z.unknown())).min(1).max(5) })),
+  dependencies: { functions: ['readServiceSearch'] },
+});
+
+const travelOfferLinks: OntologyDocument['linkTypes'] = travelOfferSources.map(service => ({
+  apiName: travelOfferSearchType + service.result,
+  description: 'The exact supplier result page returned for this travel search.',
+  from: { type: travelOfferSearchType, name: service.source, cardinality: 'one' },
+  to: { type: service.result, name: 'travelSearches', cardinality: 'many' },
+}));
+const travelOfferDependencies = {
+  objectTypes: [travelOfferSearchType, ...travelOfferSources.flatMap(service => [service.result, service.object])],
+  linkTypes: [...travelOfferLinks.map(link => link.apiName),
+    ...travelOfferSources.flatMap(service => [service.object + 'Source', service.object + 'SearchResult'])],
+  dataSources: travelOfferSources.map(service => service.source),
+};
+const travelOfferSearch = object(travelOfferSearchType, 'A search for dated flight and hotel offers with one outcome per supplier source.', {
+  id: z.string(), name: z.string(), outcomes: travelOfferSearchOutcomes,
+});
+travelOfferSearch.interfaces.TravelOfferInquiry = {
+  properties: { name: 'name' },
+  links: {},
+  actions: { search: { action: 'SearchTravelOffers', parameters: { hotel: 'hotel', flight: 'flight' } } },
+};
+fliggyServicesDefinition.objectTypes.push(travelOfferSearch);
+fliggyServicesDefinition.interfaceTypes.push(searchInterface('TravelOfferInquiry', travelOfferSearchInput));
+fliggyServicesDefinition.linkTypes.push(...travelOfferLinks);
+fliggyServicesDefinition.functionTypes.push(
+  {
+    apiName: 'searchTravelOffers',
+    description: 'Query the authorized hotel and flight sources concurrently and retain each successful result page.',
+    parameters: json(travelOfferSearchInput),
+    returns: json(objectRefSchema),
+    edits: true,
+    dependencies: { ...travelOfferDependencies, functions: travelOfferSources.map(service => service.read) },
+  },
+  {
+    apiName: 'readTravelOfferSearch',
+    description: 'Read the retained supplier pages plus the outcome of every requested source.',
+    parameters: json(readTravelOfferSearchInput),
+    returns: json(z.strictObject({
+      search: objectRefSchema,
+      outcomes: travelOfferSearchOutcomes,
+      pages: z.array(z.record(z.string(), z.unknown())).max(3),
+    })),
+    dependencies: { ...travelOfferDependencies, functions: ['readServiceSearch'] },
+  },
+);
+fliggyServicesDefinition.actionTypes.push({
+  apiName: 'SearchTravelOffers',
+  description: 'Find flights from Fliggy and compare hotels from RollingGo and Fliggy with concurrent supplier reads. Supply hotel criteria, flight criteria, or both. Preserves separate prices and availability evidence.',
+  parameters: json(travelOfferSearchInput),
+  objectParameters: {},
+  submissionCriteria: [],
+  function: 'searchTravelOffers',
+});
+
+for (const [types, apiName, shape] of [
+  [['RollingGoHotelOffer', 'FliggyHotelOffer'], 'HotelOffer', { ...hotelFacts.shape, priceKind: z.enum(['reference', 'room_rate']) }],
+  [['FliggyFlightOffer'], 'FlightOffer', flightFacts.shape],
+  [['ShopifyProductOffer'], 'ProductOffer', productFacts.shape],
 ] as const) {
-  servicesDefinition.interfaceTypes.push({
+  const definition = apiName === 'FlightOffer' ? fliggyServicesDefinition : servicesDefinition;
+  definition.interfaceTypes.push({
     apiName,
     description: `Provider-neutral ${apiName} selection. Concrete implementations bind source-specific identity and Actions.`,
     properties: properties(shape),
@@ -294,9 +429,12 @@ for (const [type, apiName, shape] of [
       },
     },
   });
-  servicesDefinition.objectTypes.find((item) => item.apiName === type)!.interfaces[apiName] = {
-    properties: identity(Object.keys(shape)),
-    links: { plans: 'plans' },
-    actions: { select: { action: 'AttachPlanService', parameters: { service: 'service', plan: 'plan' } } },
-  };
+  for (const type of types) {
+    const offer = [...servicesDefinition.objectTypes, ...fliggyServicesDefinition.objectTypes].find(item => item.apiName === type)!;
+    offer.interfaces[apiName] = {
+      properties: identity(Object.keys(shape)),
+      links: { plans: 'plans' },
+      actions: { select: { action: 'AttachPlanService', parameters: { service: 'service', plan: 'plan' } } },
+    };
+  }
 }

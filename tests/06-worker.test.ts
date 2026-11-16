@@ -3,6 +3,7 @@ import { Ontology } from '../packages/ontology/model.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readdirSync, readFileSync } from 'node:fs';
 import { z } from 'zod';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import { classificationSchema } from '../packages/ontology/classification.js';
@@ -10,6 +11,8 @@ import { Objects } from '../packages/runtime/objects.js';
 import { digest } from '../packages/core/identity.js';
 import { document, fixture, principal, route } from './fixture.js';
 import { OntologyAgent } from '../packages/runtime/agent.js';
+import { taskCatalogueScope } from '../packages/runtime/agent-catalogue.js';
+import { businessDefinition } from '../packages/ontology/definition.js';
 import { Functions } from '../packages/runtime/functions.js';
 import { Actions } from '../packages/runtime/actions.js';
 import { Sources } from '../packages/runtime/sources.js';
@@ -17,6 +20,53 @@ import { Scenarios } from '../packages/runtime/scenarios.js';
 import { setModelClearance } from '../packages/runtime/model-egress.js';
 import { Worker } from '../apps/worker/worker.js';
 import { harnessFixture } from './harness-fixture.js';
+
+test('unprofiled Chinese requests rank relevant published resources before the first sixteen types', () => {
+  const cargo = { apiName: 'CargoManifest', displayName: '货运清单', description: '港口货运清单保存集装箱编号',
+    primaryKey: 'id', titleProperty: 'id', interfaces: {},
+    properties: { id: { description: 'Identity', schema: { type: 'string' }, required: true } } };
+  const model = new Ontology({ ...document, agentProfiles: [], objectTypes: [...document.objectTypes, cargo] });
+  const canDefine = () => true;
+  for (const message of ['麻烦核对这份港口货运清单里的集装箱编号', '查看 ＣａｒｇｏＭａｎｉｆｅｓｔ']) {
+    const scope = taskCatalogueScope(model, { canDefine }, { requestId: 'rank-fallback', message });
+    assert.deepEqual(scope.profiles, []);
+    assert(scope.include('object', 'CargoManifest'));
+  }
+});
+
+test('colloquial Chinese requests preload their published Agent profile', () => {
+  const model = new Ontology(businessDefinition);
+  const canDefine = () => true;
+  const expected: Record<string, string> = {
+    '帮我叫个车去机场多少钱': 'RideQuote', '从公司到机场打个车要多久': 'RideQuote',
+    '明天下午我有空吗': 'SchedulePlanning', '帮我订个周五晚上的位子': 'Dining', '附近有什么好吃的': 'Dining',
+    '下周去上海住哪里好': 'TravelOffers', '来杯拿铁': 'CoffeePickup', '我的航班延误了吗': 'TravelMonitoring',
+    '外面会下雨吗': 'MapsAndWeather', '帮我报名这个周末的活动': 'Events',
+  };
+  for (const [message, profile] of Object.entries(expected)) {
+    const scope = taskCatalogueScope(model, { canDefine }, { requestId: 'colloquial', message });
+    assert(scope.profiles.some(item => item.apiName === profile), message);
+  }
+  for (const message of ['今天心情不太好', '帮我写一封感谢邮件', '房间有空调吗']) {
+    assert.deepEqual(taskCatalogueScope(model, { canDefine }, { requestId: 'unrelated', message }).profiles, [], message);
+  }
+});
+
+test('runtime modules stay provider-neutral outside listed compatibility contracts', () => {
+  const provider = /\.\.\/capabilities\/[\w-]+|hotel\w*|amap\w*|didi\w*|fliggy|meituan|dianping|rollinggo|\bluma\b|luckin|stripe|taobao|shopify|xiaohongshu|variflight|flightradar|fr24|mapPlace\w*/gi;
+  // Existing clients and persisted tasks still send these public request and clarification fields.
+  // The organization catalogue service registers through the shared Ontology services.
+  const compatibility: Record<string, string[]> = {
+    'clarification.ts': ['Amap', 'amapPlaceAmendmentSchema', 'DiDi', 'MapPlace', 'mapPlaceCorrectionSchema', 'mapPlaceCorrectionsSchema'],
+    'services.ts': ['../capabilities/public-places'],
+    'task-input.ts': ['HotelWorkflow', 'mapPlaceCorrections', 'mapPlaceCorrectionsSchema'],
+  };
+  const directory = new URL('../packages/runtime/', import.meta.url);
+  for (const file of readdirSync(directory).filter(name => name.endsWith('.ts'))) {
+    const found = new Set([...readFileSync(new URL(file, directory), 'utf8').matchAll(provider)].map(match => match[0]));
+    assert.deepEqual([...found].sort(), [...(compatibility[file] ?? [])].sort(), file);
+  }
+});
 
 test('one Agent capability choice resolves unique supplier names despite different formatting and nearby entrances', async t => {
   const f = await fixture();
@@ -158,6 +208,48 @@ test('one confirmation resumes the original Action using current supplier receip
   } finally { await f.close(); await harness.close(); }
 });
 
+test('an exact short building name cannot hide a formal building candidate from the same receipt', async () => {
+  const harness = await harnessFixture(), f = await fixture(harness.driver);
+  try {
+    f.provider.flags.placeAddress = name => name === '上海中心' ? '徐汇区陕西南路188弄16号' : name;
+    f.provider.flags.placeAlternatives = (name, place) => name === '上海中心' ? [
+      { ...place, display_name: '上海中心大厦', address_all: '浦东新区银城中路501号',
+        location: { lat: 31.235, lng: 121.505 } },
+      { ...place, display_name: '上海中心大厦停车场', address_all: '浦东新区银城中路501号',
+        location: { lat: 31.234, lng: 121.505 } },
+      { ...place, display_name: '上海之巅观光厅(上海中心大厦店)', address_all: '浦东新区银城中路501号',
+        location: { lat: 31.235, lng: 121.506 } },
+    ] : [];
+    const initial = await f.tasks.submit(principal, {
+      requestId: 'shanghai-center-quote', message: '从中企云翠森林到上海中心，只查实时价格。',
+      route: { ...route, destination: '上海中心' },
+    });
+    await f.worker.runOne();
+    const paused = await f.tasks.get(principal, initial.id);
+    assert.equal(paused.state, 'input-required');
+    const result = paused.result as {kind: string; origin: {ref: ObjectRef}[];
+      destination: {ref: ObjectRef; properties: {name: string; address: string}}[]};
+    assert.equal(result.kind, 'place-selection');
+    const expected = [
+      {name: '上海中心', address: '徐汇区陕西南路188弄16号'},
+      {name: '上海中心大厦', address: '浦东新区银城中路501号'},
+    ];
+    assert.deepEqual(result.destination.map(v => ({name:v.properties.name,address:v.properties.address}))
+      .sort((a,b) => a.name.length-b.name.length), expected);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch','maps_textsearch']);
+    const selected = result.destination.find(v => v.properties.name==='上海中心大厦')!;
+    const resumed = await f.tasks.selectPlaces(principal, initial.id, {origin:result.origin[0]!.ref,destination:selected.ref});
+    assert.equal(resumed.id,initial.id);
+    await f.worker.runOne();
+    const done = await f.tasks.get(principal, initial.id);
+    assert.equal(done.state,'completed',done.error ?? undefined);
+    const quote = done.result as {request: ObjectRef; route: {destination:{name:string;address:string}}};
+    assert.equal(quote.request.id,paused.input.placeContinuation!.requestId);
+    assert.equal(quote.route.destination.address,selected.properties.address);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch','maps_textsearch','taxi_estimate']);
+  } finally { await f.close(); await harness.close(); }
+});
+
 test('a corrected address continues the original Action and refreshes only the amended endpoint', async () => {
   const harness = await harnessFixture(), f = await fixture(harness.driver);
   try {
@@ -226,7 +318,7 @@ test('missing city pauses the original Action before source reads and resumes af
     assert.equal(done.state, 'completed', done.error ?? undefined);
     assert.equal((done.result as {request: {id: string}}).request.id, paused.input.placeContinuation!.requestId);
     assert.equal(modelCalls, 1);
-    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate', 'maps_direction_driving']);
     assert(f.provider.inputs.slice(0, 2).every(input => input.city === '上海市'));
   } finally { await f.close(); }
 });
@@ -376,6 +468,95 @@ test('task-only PA permission executes the inquiry through the source-bound Work
     assert.equal((await f.tasks.get(caller, task.id)).state, 'completed');
     await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant => grant.permission !== 'apply_action'));
     await assert.rejects(f.capabilities.actions.apply(await Access.load(f.db, caller), f.model, 'EstimateRide', route, 'direct-write'), /Permission/);
+  } finally { await f.close(); }
+});
+
+test('the fare-only prompt uses the named inquiry when the interactive result Function is not executable', async () => {
+  const f = await fixture({
+    model: 'scoped-ride-quotes',
+    provider: 'openai-codex',
+    async run(prompt, tools) {
+      const instructions = prompt.split('\n').slice(0, -1).join('\n');
+      assert.match(instructions, /RideInquiry\.estimate on RideRequest and readRideEstimates/);
+      assert.doesNotMatch(instructions, /readInteractiveRideEstimate/);
+      await tools.get('complete_with_action')!.invoke({
+        action: { interface: { type: 'RideInquiry', implementation: 'RideRequest', action: 'estimate' },
+          input: { ...route, serviceClass: '专车' } },
+        read: { function: 'readRideEstimates', resultParameter: 'request' },
+      });
+    },
+  });
+  try {
+    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant =>
+      grant.permission !== 'execute_function' || !grant.resource.endsWith('/readInteractiveRideEstimate')));
+    const task = await f.tasks.submit(principal, { requestId: 'scoped-ride-quote', message: '上海从中企云翠森林到前滩太古里，只查专车估价。' });
+    assert(await f.worker.runOne());
+    const done = await f.tasks.get(principal, task.id);
+    assert.equal(done.state, 'completed', done.error ?? undefined);
+    const result = done.result as { estimates: { properties: { name: string; priceText: string } }[] };
+    assert.deepEqual(result.estimates.map(({ properties }) => [properties.name, properties.priceText]),
+      [['专车', '100-120元']]);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    assert.equal(f.provider.flags.orderCreates, 0);
+  } finally { await f.close(); }
+});
+
+test('a missing tool grant fails before supplier calls and is distinct from model egress policy denial', async () => {
+  const f = await fixture({
+    model: 'scoped-ride-quotes',
+    provider: 'openai-codex',
+    async run(_prompt, tools) {
+      await tools.get('complete_with_action')!.invoke({
+        action: { interface: { type: 'RideInquiryWithPlaceClues', implementation: 'RideRequest', action: 'estimate' },
+          input: route },
+        read: { function: 'readInteractiveRideEstimate', resultParameter: 'request' },
+      });
+    },
+  });
+  try {
+    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant =>
+      grant.permission !== 'execute_function' || !grant.resource.endsWith('/readInteractiveRideEstimate')));
+    const task = await f.submit();
+    assert(await f.worker.runOne());
+    assert.equal((await f.tasks.get(principal, task.id)).state, 'failed');
+    const traces = await f.db.query(`SELECT event->>'code' AS code FROM ${f.db.schema}.execution_trace
+      WHERE task_id=$1 AND event->>'kind'='egress' AND event->>'state'='blocked'`, [task.id]);
+    assert.deepEqual(traces.rows, [{ code: 'tool_permission_denied' }]);
+    assert.deepEqual(f.provider.calls, []);
+  } finally { await f.close(); }
+});
+
+test('a rate-limited quote revalidates stored DiDi endpoints nearby and rejects moved points', async () => {
+  const f = await fixture();
+  try {
+    f.provider.flags.related = false;
+    for (const keywords of [route.origin, route.destination]) {
+      await f.capabilities.sources.refresh(f.model, 'DidiPlaces', { city: route.city, keywords },
+        f.access, undefined, undefined, AbortSignal.timeout(5000));
+    }
+    f.provider.calls.length = 0;
+    f.provider.flags.rateLimitPlaceSearch = true;
+    f.provider.flags.related = true;
+    const task = await f.submit();
+    assert(await f.worker.runOne());
+    const done = await f.tasks.get(principal, task.id);
+    assert.equal(done.state, 'completed', done.error ?? undefined);
+    assert.deepEqual([...f.provider.calls].sort(),
+      ['maps_place_around', 'maps_place_around', 'maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    assert.equal(f.provider.calls.at(-1), 'taxi_estimate');
+    const objects = new Objects(f.db, f.model, f.access);
+    assert.equal((await objects.query({ type: 'Place' })).items.length, 2);
+    assert.equal((await objects.query({ type: 'SourceReceipt', where: { tool: 'maps_place_around' } })).items.length, 2);
+
+    f.provider.calls.length = 0;
+    f.provider.flags.moveNearbyPlace = true;
+    const moved = await f.submit();
+    assert(await f.worker.runOne());
+    const pending = await f.tasks.get(principal, moved.id);
+    assert.equal(pending.state, 'input-required');
+    assert.deepEqual(pending.result, { kind: 'retry-source', source: 'DiDi', stage: 'places' });
+    assert(!f.provider.calls.includes('taxi_estimate'));
+    assert.equal(f.provider.flags.orderCreates, 0);
   } finally { await f.close(); }
 });
 
@@ -683,4 +864,50 @@ test('linked derived values retain their classification through grant downgrade 
       }
     }
   } finally { worker?.stop(); await f.close(); }
+});
+
+test('task prompts preload the selected capability and keep sandbox tools out of production discovery', async t => {
+  const f = await fixture({
+    model: 'fixture-profile-scope',
+    async run(prompt, tools) {
+      const { ontology, userRequest } = JSON.parse(prompt.split('\n').at(-1)!);
+      const actions = ontology.actions.map((action: { apiName: string }) => action.apiName);
+      assert(prompt.length < 30_000, `Prompt is ${prompt.length} characters`);
+      t.diagnostic(`${userRequest.route ? 'Ride' : 'Calendar'} prompt: ${prompt.length} characters`);
+      if (userRequest.route) {
+        assert(actions.includes('EstimateRide'));
+        assert(!actions.includes('PrepareSchedulePlan'));
+      } else {
+        assert(actions.includes('PrepareSchedulePlan'));
+        assert(!actions.includes('EstimateRide'));
+        assert.match(prompt, /original PA and resumes this same task/);
+      }
+      const discover = tools.get('describe_ontology')!;
+      const compact = await discover.invoke({}) as { actions: { apiName: string }[] };
+      assert(compact.actions.some(action => action.apiName === 'PrepareSchedulePlan'));
+      assert(!compact.actions.some(action => action.apiName === 'PrepareDiningTestReservation'));
+      assert.deepEqual(await discover.invoke({
+        names: ['PrepareDiningTestReservation', 'CreateStripeSandboxOrder', 'createStripeSandboxOrder'],
+      }), []);
+      const order = { action: 'CreateStripeSandboxOrder', input: { orderKey: '1ef80429-639b-4ed0-9d61-84e43d211b6b' } };
+      await assert.rejects(tools.get('apply_action')!.invoke(order), /requires a sandbox Agent/);
+      const sandboxOrder = { type: 'StripeSandboxOrder', id: 'unsubmitted-order' };
+      await assert.rejects(tools.get('complete_with_action')!.invoke({
+        action: { interface: { type: 'PayableOrder', action: 'prepare', object: sandboxOrder },
+          input: { order: sandboxOrder } },
+        read: { function: 'readSchedulePlan', resultParameter: 'plan' },
+      }), /Data is unavailable to the selected model/);
+      await tools.get('request_clarification')!.invoke({ message: 'Confirm the intended time.' });
+    },
+  });
+  try {
+    for (const task of [await f.submit(), await f.tasks.submit(principal, {
+      requestId: 'scoped-calendar', message: '帮我排程并检查日历可用时段。',
+    })]) {
+      assert(await f.worker.runOne());
+      const result = await f.tasks.get(principal, task.id);
+      assert.equal(result.state, 'input-required', result.error ?? undefined);
+    }
+    assert.equal(f.provider.calls.length, 0);
+  } finally { await f.close(); }
 });

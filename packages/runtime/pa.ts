@@ -2,9 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Conflict, NotFound, digest, requireScope, type Principal } from '../core/identity.js';
 import { validator } from '../ontology/model.js';
-import { Clarification } from './clarification.js';
+import { PARequestRequired } from './clarification.js';
+import { recordActionConfirmation } from './action-confirmation.js';
+import { Metadata } from './metadata.js';
 import { Tasks, type Task } from './tasks.js';
 import { Access, type Requirement } from './access.js';
+import { observePAResponse } from './decision-evidence.js';
+import type { Sql } from './database.js';
 
 export const paResponseSchema = z.strictObject({ requestId: z.uuid(), response: z.record(z.string(), z.unknown()) });
 export const paInboxSchema=z.strictObject({cursor:z.uuid().optional(),limit:z.number().int().min(1).max(50).default(20)});
@@ -30,17 +34,25 @@ export class PARequests {
   async request(task: Task, operation: string, capability: string, input: Record<string, unknown>, responseSchema: Record<string, unknown>, dataScope?: Record<string, unknown>) {
     return (await this.requestWithId(task, operation, capability, input, responseSchema, dataScope)).response;
   }
-  async requestWithId(task: Task, operation: string, capability: string, input: Record<string, unknown>, responseSchema: Record<string, unknown>, dataScope?: Record<string, unknown>) {
+  async requestWithId(task: Task, operation: string, capability: string, input: Record<string, unknown>, responseSchema: Record<string, unknown>,
+    dataScope?: Record<string, unknown>, beforeDispatch?: (client: Sql) => Promise<void>) {
+    if (task.cognitive_context && capability !== 'calendar.freebusy')
+      throw new Conflict('Workflow proposals may request PA calendar availability only');
     const { db } = this.tasks, request = { capability, input, responseSchema };
     // Data identity is independent of a model's wording or Action request ID.
     const key = digest(dataScope ? { capability, dataScope, responseSchema } : { operation, request });
     const row = await db.transaction(async client => {
       await this.tasks.current(task, client, true);
-      await db.query(`INSERT INTO ${db.schema}.pa_requests(id,task_id,owner,request_key,request) VALUES($1,$2,$3,$4,$5) ON CONFLICT(task_id,request_key) DO NOTHING`, [randomUUID(), task.id, task.owner, key, request], client);
+      const inserted = await db.query(`INSERT INTO ${db.schema}.pa_requests(id,task_id,owner,request_key,request) VALUES($1,$2,$3,$4,$5) ON CONFLICT(task_id,request_key) DO NOTHING`, [randomUUID(), task.id, task.owner, key, request], client);
+      if (inserted.rowCount) await beforeDispatch?.(client);
       return (await db.query(`SELECT id,response,created_at FROM ${db.schema}.pa_requests WHERE task_id=$1 AND request_key=$2 AND owner=$3`, [task.id, key, task.owner], client)).rows[0]!;
     });
-    if (row.response !== null) return { requestId: String(row.id), requestedAt: row.created_at as Date, response: validator(responseSchema).parse(row.response) };
-    throw new Clarification('Please ask the user’s PA to provide the requested authorized information.', {
+    if (row.response !== null) {
+      const response = validator(responseSchema).parse(row.response);
+      observePAResponse(db, task, String(row.id), digest(row.response));
+      return { requestId: String(row.id), requestedAt: row.created_at as Date, response };
+    }
+    throw new PARequestRequired('Please ask the user’s PA to provide the requested authorized information.', {
       kind: 'pa-request', taskId: task.id, requestId: row.id, ...request,
     });
   }
@@ -60,8 +72,14 @@ export class PARequests {
       }
       if (task.state !== 'input-required' || task.result?.kind !== 'pa-request' || task.result?.requestId !== input.requestId) throw new Conflict('The original task is not waiting for this PA response');
       const permissions = task.result_permissions as Requirement[] | null;
-      if (!permissions || !await (await Access.load(db, principal, client)).canReturn(permissions, client))
+      const access = await Access.load(db, principal, client);
+      if (!permissions || !await access.canReturn(permissions, client))
         throw new Conflict('The original PA request is no longer authorized');
+      const continuation = (task as Task).input.placeContinuation;
+      if (continuation?.waitingFor === 'pa-request') {
+        const model = await new Metadata(db).get(task.release, client);
+        await recordActionConfirmation(db, model, access, task as Task, client, continuation, 'confirmed');
+      }
       await db.query(`UPDATE ${db.schema}.pa_requests SET response=$2,response_digest=$3 WHERE id=$1`, [input.requestId, response, fingerprint], client);
       await db.query(`UPDATE ${db.schema}.tasks SET state='submitted',result=NULL,error=NULL,updated_at=now() WHERE id=$1`, [taskId], client);
       await db.query("SELECT pg_notify('eigos_tasks','ready')", [], client);

@@ -120,7 +120,16 @@ function dependencies(model: Ontology, ref: Resource, value: Record<string, any>
   };
   if (ref.kind === 'object') {
     const log=processLogTarget(model,ref.name);
-    if(log){add('object',log.objectType);add('link',log.link);}
+    if (log) {
+      add('object', log.objectType);
+      add('link', log.link);
+      const process = model.object(ref.name).machinery;
+      for (const edge of process?.transitions ?? []) if (edge.action) add('action', edge.action);
+      for (const child of process?.subprocesses ?? []) {
+        add('object', child.process);
+        add('link', model.navigation(log.objectType, child.link).link);
+      }
+    }
     Object.values(value.properties).forEach((item) => property(item as Record<string, any>));
     // Shared properties may supply the expression, whose Link names resolve on this concrete type.
     for (const definition of Object.values(model.object(ref.name).properties)) {
@@ -166,6 +175,12 @@ function dependencies(model: Ontology, ref: Resource, value: Record<string, any>
       for (const name of value.dependencies[field] ?? []) add(kind, name);
     schema(value.parameters);
     schema(value.returns);
+  }
+  if (ref.kind === 'agentProfile') {
+    const kinds = { objects: 'object', interfaces: 'interface', actions: 'action', functions: 'function',
+      sources: 'datasource', links: 'link' } as const;
+    for (const [field, kind] of Object.entries(kinds))
+      for (const name of value[field] ?? []) add(kind, name);
   }
   if (ref.kind === 'action') {
     schema(value.parameters);

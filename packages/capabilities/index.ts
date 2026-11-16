@@ -1,7 +1,13 @@
+import { evaluateCalendarJourneyRelease } from './journey/release-checks.js';
 import { registerDocumentFunction } from '../ontology/documents.js';
 import { registerSchedulePlanDocument } from './documents.js';
+import { dianpingFunctions } from './dining/dianping.js';
 import { diningResearch } from './dining/research.js';
-import { flightradar24Functions } from './flight/flightradar24.js';
+import { diningReservationFunctions } from './dining/reservations.js';
+import { configuredFlightradar24 } from './flight/flightradar24.js';
+import { fliggyHotelFunctions } from './fliggy/hotel-booking.js';
+import { fliggyFlightBookingFunctions } from './fliggy/flight-booking.js';
+import { configuredFliggyFlight, configuredFliggyHotel } from './fliggy/top.js';
 import { flightFunctions } from './flight/functions.js';
 import { configuredVariFlight } from './flight/variflight.js';
 import { calendarJourneyFunctions } from './journey/functions.js';
@@ -9,6 +15,8 @@ import { configuredJourneyCalendar } from './journey/calendar-source.js';
 import { configuredTravelNotifications } from './pa/travel-notifications.js';
 import { configuredAmap } from './amap/client.js';
 import { amapFunctions } from './amap/functions.js';
+import { prepareMapCorrectionPrompt } from './amap/task-correction.js';
+import { hotelTaskWorkflow, publicHotelTaskResult } from './services/hotel-workflows.js';
 import { resolveTaskLocation } from './location.js';
 import { luckinFunctions } from './luckin/functions.js';
 import { paotuiFunctions } from './meituan/paotui.js';
@@ -38,7 +46,8 @@ export function createCapabilities(
   stripe: StripeSandboxResolver = configuredStripeSandbox(),
   connections: { paotui?: string; waimai?: string; amap?: string; amapFetch?: typeof fetch; variFlight?: string; variFlightFetch?: typeof fetch;
     fr24?: string; fr24Entrypoint?: string; calendar?: string; calendarFetch?: typeof fetch; travelPA?: string; travelPAFetch?: typeof fetch;
-    xiaohongshu?: string; xiaohongshuFetch?: typeof fetch } = {},
+    xiaohongshu?: string; xiaohongshuFetch?: typeof fetch; dianping?: string; dianpingFetch?: typeof fetch; diningWeb?: string; diningMiniProgram?: string;
+    fliggyHotel?: string; fliggyHotelFetch?: typeof fetch; fliggyFlight?: string; fliggyFlightFetch?: typeof fetch } = {},
 ) {
   let sources: Sources;
   const amap = configuredAmap(connections.amap, connections.amapFetch);
@@ -47,14 +56,18 @@ export function createCapabilities(
   const handlers = new Map([
     ...schedulingFunctions(db),
     ...diningResearch(connections.xiaohongshu, connections.xiaohongshuFetch),
+    ...dianpingFunctions(connections.dianping, connections.dianpingFetch),
+    ...diningReservationFunctions(db, connections.diningWeb, connections.diningMiniProgram),
     ...applicationFunctions(db),
     [registerDocumentFunction, registerSchedulePlanDocument],
     ...serviceFunctions(services, () => sources),
+    ...fliggyFlightBookingFunctions(db, configuredFliggyFlight(connections.fliggyFlight, connections.fliggyFlightFetch)),
+    ...fliggyHotelFunctions(db, configuredFliggyHotel(connections.fliggyHotel, connections.fliggyHotelFetch)),
     ...travelFunctions(db, source, services, () => sources),
     ...didiRideWatchFunctions(db, source),
     ...calendarJourneyFunctions(db, getFunctions, amap, configuredJourneyCalendar(connections.calendar, connections.calendarFetch)),
-    ...flightFunctions(db, getFunctions, configuredVariFlight(connections.variFlight, connections.variFlightFetch)),
-    ...flightradar24Functions(connections.fr24, connections.fr24Entrypoint),
+    ...flightFunctions(db, getFunctions, configuredVariFlight(connections.variFlight, connections.variFlightFetch),
+      configuredFlightradar24(connections.fr24, connections.fr24Entrypoint)),
     ...stripePaymentFunctions(db, stripe),
     ...paotuiFunctions(connections.paotui),
     ...waimaiFunctions(connections.waimai, fetch, connections.amap ? amap : undefined),
@@ -67,5 +80,7 @@ export function createCapabilities(
       effects: new Map([...(extensions.effects ?? []), ...notifications.handlers]) },
     serviceProjections(services), notifications.committed);
   sources = capabilities.sources;
-  return capabilities;
+  return { ...capabilities, evaluateRelease: evaluateCalendarJourneyRelease,
+    taskWorkflow: hotelTaskWorkflow(capabilities.functions), taskPrompt: prepareMapCorrectionPrompt,
+    projectTaskResult: publicHotelTaskResult };
 }
