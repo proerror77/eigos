@@ -15,7 +15,8 @@ export type AgentProfile = NonNullable<OntologyDocument['agentProfiles']>[number
 export const businessAgentProfiles: AgentProfile[] = [
   {
     apiName: 'RideQuote',
-    terms: ['打车', '滴滴', '估价', '车费', '车价', '询价', '出租车', 'didi', 'taxi', 'ride quote', 'fare only', 'fare estimate'],
+    terms: ['打车', '滴滴', '估价', '车费', '车价', '询价', '出租车', 'didi', 'taxi', 'ride quote', 'fare only', 'fare estimate',
+      '叫车', '叫个车', '叫辆车', '打个车', '打辆车', '网约车', '专车', '快车', '用车'],
     objects: ['RideRequest', 'Route', 'Place', 'RideEstimate'],
     interfaces: ['RideInquiry', 'RideInquiryWithPlaceClues', 'RideEstimatable'],
     actions: ['EstimateRide', 'EstimateRideWithPlaceClues'],
@@ -27,7 +28,8 @@ export const businessAgentProfiles: AgentProfile[] = [
   },
   {
     apiName: 'SchedulePlanning',
-    terms: ['日历', '排程', '行程', '安排', '时段', 'schedule', 'calendar', 'planning', 'itinerary', 'time slot'],
+    terms: ['日历', '排程', '行程', '安排', '时段', 'schedule', 'calendar', 'planning', 'itinerary', 'time slot',
+      '日程', '有空吗', '有没有空', '什么时候有空', '哪天有空', '空闲时间', '有没有时间'],
     objects: ['SchedulePlan', 'ScheduledActivity', 'ScheduleResource', 'CalendarAvailability', 'SchedulePlanStateLog'],
     interfaces: ['SchedulablePlan'],
     actions: ['PrepareSchedulePlan', 'SaveScheduleActivity', 'StageScheduleRecommendation'],
@@ -38,7 +40,8 @@ export const businessAgentProfiles: AgentProfile[] = [
   },
   {
     apiName: 'TravelOffers',
-    terms: ['酒店', '机票', '航班', 'hotel', 'flight', 'travel offer', 'rollinggo', 'fliggy', '飞猪'],
+    terms: ['酒店', '机票', '航班', 'hotel', 'flight', 'travel offer', 'rollinggo', 'fliggy', '飞猪',
+      '住哪', '住宿', '订房', '宾馆', '民宿', '飞机'],
     objects: ['TravelOfferSearch'],
     interfaces: ['TravelOfferInquiry', 'FlightSearch', 'HotelSearch', 'HotelOffer'],
     actions: ['SearchTravelOffers', 'SearchRollingGoHotels', 'PrepareFliggyHotelBooking', 'PrepareFliggyFlightBooking'],
@@ -51,7 +54,8 @@ export const businessAgentProfiles: AgentProfile[] = [
   },
   {
     apiName: 'Dining',
-    terms: ['餐厅', '订位', '约饭', '吃饭', '菜单', '大众点评', 'dianping', 'restaurant', 'dining', 'table availability'],
+    terms: ['餐厅', '订位', '约饭', '吃饭', '菜单', '大众点评', 'dianping', 'restaurant', 'dining', 'table availability',
+      '订座', '位子', '好吃', '餐馆', '吃什么', '订餐', '午饭', '晚饭'],
     actions: ['StageDiningActivity'],
     functions: ['readDiningAvailability', 'readDiningWebAvailability', 'readDiningMiniProgramAvailability',
       'searchDianpingRestaurants', 'readDianpingRestaurant'],
@@ -61,7 +65,8 @@ export const businessAgentProfiles: AgentProfile[] = [
   },
   {
     apiName: 'MapsAndWeather',
-    terms: ['高德', '地图', '天气', '驾车', '导航', '路线', 'weather', 'forecast', 'map', 'driving'],
+    terms: ['高德', '地图', '天气', '驾车', '导航', '路线', 'weather', 'forecast', 'map', 'driving',
+      '下雨', '下雪', '气温', '温度', '刮风', '怎么走', '多远', '堵车'],
     functions: ['readMapPlace', 'geocodeAddress', 'reverseGeocode', 'searchMapPlaces', 'searchNearbyPlaces', 'estimateMapRoute', 'readWeather'],
     instructions: [
       { function: 'readWeather', text: 'Use the requested city or place first. Select current for measured conditions and forecast for a future date. Preserve whether the supplier reported current conditions or a daily forecast.' },
@@ -69,7 +74,7 @@ export const businessAgentProfiles: AgentProfile[] = [
   },
   {
     apiName: 'CoffeePickup',
-    terms: ['瑞幸', '咖啡', 'luckin', 'coffee'],
+    terms: ['瑞幸', '咖啡', 'luckin', 'coffee', '拿铁', '美式', '生椰', '卡布奇诺'],
     actions: ['PreviewLuckinPickup', 'SubmitLuckinPickup'],
     functions: ['readLuckinPickup'],
     instructions: [
@@ -79,7 +84,7 @@ export const businessAgentProfiles: AgentProfile[] = [
   },
   {
     apiName: 'Events',
-    terms: ['luma', '报名', '活动', 'event registration'],
+    terms: ['luma', '报名', '活动', 'event registration', '讲座', '聚会', 'meetup'],
     actions: ['SearchLumaEvents', 'PrepareEventRegistration'],
     functions: ['readServiceSearch', 'readServiceOffering'],
     instructions: [
@@ -89,7 +94,8 @@ export const businessAgentProfiles: AgentProfile[] = [
   },
   {
     apiName: 'TravelMonitoring',
-    terms: ['行程提醒', '追踪航班', '航班提醒', '航班监控', 'travel reminder', 'flight watch', 'flight tracking'],
+    terms: ['行程提醒', '追踪航班', '航班提醒', '航班监控', 'travel reminder', 'flight watch', 'flight tracking',
+      '延误', '航班动态', '航班状态', '起飞时间', '到达时间'],
     functions: ['readCalendarJourney', 'readFlightWatch', 'readDidiRideWatch'],
     instructions: [
       { function: 'readCalendarJourney', text: 'Use the original journey reference to read the current reminder. Starting or stopping monitoring requires the PA to explicitly submit the corresponding Action with the selected event identities.' },

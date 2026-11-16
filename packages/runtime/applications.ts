@@ -164,7 +164,7 @@ export class Applications {
           if (!access.canDefine(model, 'link', link.type)) continue;
           const target = model.navigation(ref.type, link.name).target;
           if (!access.canRead(model, target)) continue;
-          for (const neighbor of await objects.follow(ref, link.name)) {
+          for (const neighbor of await objects.follow(ref, link.name, ref.type, input.limit)) {
             const key = JSON.stringify(neighbor.ref);
             if (!nodes.has(key)) {
               if (nodes.size === input.limit)

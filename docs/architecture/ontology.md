@@ -83,7 +83,7 @@ flowchart LR
     Place -->|sources| Receipt
 ```
 
-模型接收用户原文和任务发布版本中与目标相关的 Ontology 定义。发布的 `agentProfiles` 声明可预加载的资源与操作指引，读取时应用当前资源权限和模型出口策略。复合或未匹配的目标可用 `describe_ontology` 浏览简明目录并按 API 名称读取完整定义。Agent 选择业务能力，确定性步骤由对应的 Function 和 Action 执行。标记为沙箱的能力仅在显式启用的本地开发 Worker 中对 Agent 开放。[Palantir Agent 工具](https://www.palantir.com/docs/foundry/agent-sdk/customize-agent)
+模型接收用户原文和任务发布版本中与目标相关的 Ontology 定义。发布的 `agentProfiles` 声明可预加载的资源与操作指引，读取时应用当前资源权限和模型出口策略。触发词覆盖常见的中文口语说法，例如“叫个车”“有空吗”“住哪里”。业务资源描述为英文，未命中触发词的中文请求通过 `describe_ontology` 继续发现能力。复合或未匹配的目标可用 `describe_ontology` 浏览简明目录并按 API 名称读取完整定义。Agent 选择业务能力，确定性步骤由对应的 Function 和 Action 执行。标记为沙箱的能力仅在显式启用的本地开发 Worker 中对 Agent 开放。[Palantir Agent 工具](https://www.palantir.com/docs/foundry/agent-sdk/customize-agent)
 
 `RideRequest` 实现 `RideInquiry` Interface，其 `estimate` 能力映射到 `EstimateRide` Action。参数是城市、起终点场所名及可选车型。创建能力通过实现类型解析，无需编造一个尚不存在的对象引用。这对应官方 Ticket Interface 将创建能力映射到具体创建 Action 的模式。[Interface Action](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints)
 

@@ -1,6 +1,7 @@
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
+import { SourceReadFailure } from './identity.js';
 
 export async function readPrivateSourceFile(path: string) {
   if (!isAbsolute(path)) throw new Error('Source configuration requires a private absolute path');
@@ -13,11 +14,12 @@ export async function readPrivateSourceFile(path: string) {
   } finally { await file.close(); }
 }
 
+/** Converts a supplier-reported yuan amount. An unusable amount is a supplier response failure. */
 export function yuanToFen(value: unknown) {
   if ((typeof value !== 'number' && typeof value !== 'string') || !/^\d+(?:\.\d{1,2})?$/.test(String(value)))
-    throw new Error('Provider amount is missing or invalid');
+    throw new SourceReadFailure('Provider amount is missing or invalid');
   const [yuan, fraction = ''] = String(value).split('.');
   const result = Number(yuan) * 100 + Number(fraction.padEnd(2, '0'));
-  if (!Number.isSafeInteger(result)) throw new Error('Provider amount exceeds the supported range');
+  if (!Number.isSafeInteger(result)) throw new SourceReadFailure('Provider amount exceeds the supported range');
   return result;
 }

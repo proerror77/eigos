@@ -8,7 +8,7 @@ import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
 import { jsonRpcHandler } from '@a2a-js/sdk/server/express';
 import { AgentCard } from '@a2a-js/sdk';
 import { z } from 'zod';
-import { Conflict, NotFound, PermissionDenied, requireScope, type Principal } from '../../packages/core/identity.js';
+import { Conflict, InvalidInput, NotFound, PermissionDenied, requireScope, type Principal } from '../../packages/core/identity.js';
 import type { Config } from '../../packages/core/config.js';
 import { actionRequestSchema as actionInput, functionRequestSchema as functionInput, completeWithActionRequestSchema } from '../../packages/ontology/invocation.js';
 import { Access } from '../../packages/runtime/access.js';
@@ -18,7 +18,8 @@ import { Objects, querySchema } from '../../packages/runtime/objects.js';
 import { Scenarios, createScenarioSchema } from '../../packages/runtime/scenarios.js';
 import { PARequests, paResponseSchema,paInboxSchema } from '../../packages/runtime/pa.js';
 import { HotelWorkflows, hotelApprovalSchema } from '../../packages/capabilities/services/hotel-workflows.js';
-import { Tasks, submitSchema, publicTask, taskPlaceAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema } from '../../packages/runtime/tasks.js';
+import { amendMapPlace } from '../../packages/capabilities/amap/task-correction.js';
+import { Tasks, submitSchema, publicTask as projectTask, taskPlaceAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema, type Task } from '../../packages/runtime/tasks.js';
 import { createCapabilities } from '../../packages/capabilities/index.js';
 import { configuredServices } from '../../packages/capabilities/services/sources.js';
 import { configuredStripeSandbox } from '../../packages/capabilities/payments/stripe-sandbox.js';
@@ -26,6 +27,7 @@ import type { SourceResolver } from '../../packages/capabilities/didi/functions.
 import { verifier, type VerifyToken } from './auth.js';
 import { A2A, AgentUser, agentCard } from './a2a.js';
 import { publicError } from './public-error.js';
+import { developmentSandboxEnabled } from '../../packages/core/sandbox-mode.js';
 
 const queryInput = z.strictObject({ ontology:z.string().optional(), taskId: z.uuid().optional(), scenarioId: z.uuid().optional(), query: querySchema });
 const scenarioCreateInput = createScenarioSchema.safeExtend({ ontology: z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(80).optional() });
@@ -43,6 +45,8 @@ const paTravelInstructions = [
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {},
   providerFetch: { amapFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch;
     dianpingFetch?: typeof fetch; marketplaceFetch?: typeof fetch } = {}) {
+  if (db.sandboxEnabled && !developmentSandboxEnabled({ ...config, NODE_ENV: process.env.NODE_ENV }))
+    throw new Error('Gateway sandbox requires explicit loopback development configuration');
   const { marketplaceFetch, ...sourceFetch } = providerFetch;
   const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE, undefined, marketplaceFetch), configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
     fliggyFlight: config.EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE,
@@ -55,6 +59,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     fr24: config.EIGOS_FR24_CONNECTION_FILE, fr24Entrypoint: config.EIGOS_FR24_MCP_ENTRYPOINT,
     calendar: config.EIGOS_JOURNEY_CALENDAR_CONNECTION_FILE, travelPA: config.EIGOS_TRAVEL_PA_CONNECTION_FILE, ...sourceFetch,
   });
+  const publicTask = (task: Task) => projectTask(task, capabilities.projectTaskResult);
   const scenarios = new Scenarios(db), pa = new PARequests(tasks);
   const hotelWorkflows = new HotelWorkflows(db, metadata, capabilities.functions);
   const principals = new WeakMap<Request, Principal>();
@@ -141,11 +146,23 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   app.post('/ontology/scenarios', async (req,res)=>res.json(await scenarioCreate(principal(req),req.body)));
   app.get('/ontology/scenarios', async (req,res)=>res.json(await scenarioList(principal(req),typeof req.query.cursor==='string'?req.query.cursor:undefined,typeof req.query.ontology==='string'?req.query.ontology:'Eigos')));
   app.get('/ontology/scenarios/:id', async (req,res)=>res.json(await scenarioRead(principal(req),String(req.params.id),typeof req.query.ontology==='string'?req.query.ontology:'Eigos')));
-  app.post('/ontology/scenarios/:id/discard', async (req,res)=>res.json(await scenarioDiscard(principal(req),String(req.params.id),req.body.revision,typeof req.body.ontology==='string'?req.body.ontology:'Eigos')));
+  app.post('/ontology/scenarios/:id/discard', async (req,res) => {
+    const { revision, ontology } = z.object({ revision: z.number().int().positive(), ontology: z.string().optional() }).parse(req.body);
+    res.json(await scenarioDiscard(principal(req), String(req.params.id), revision, ontology));
+  });
   app.post('/ontology/media',express.raw({type:'application/octet-stream',limit:'20mb'}),async(req,res)=>{
     const p=principal(req);requireScope(p,'ontology:write');
+    if (!Buffer.isBuffer(req.body)) throw new InvalidInput('Media body must use application/octet-stream');
+    const header = (value: unknown) => {
+      try { return decodeURIComponent(String(value)); }
+      catch { throw new InvalidInput('Invalid media header encoding'); }
+    };
     const model=await metadata.active(typeof req.query.ontology==='string'?req.query.ontology:'Eigos');
-    res.json(await new Applications(db).upload(await Access.load(db,p),model,capabilities.actions,req.body,{name:decodeURIComponent(String(req.headers['x-asset-name']??'')),format:String(req.headers['x-asset-format']??''),units:decodeURIComponent(String(req.headers['x-asset-units']??'file units'))}));
+    res.json(await new Applications(db).upload(await Access.load(db,p),model,capabilities.actions,req.body,{
+      name: header(req.headers['x-asset-name']??''),
+      format: String(req.headers['x-asset-format']??''),
+      units: header(req.headers['x-asset-units']??'file units'),
+    }));
   });
   app.get('/ontology/media/:id',async(req,res)=>{
     const p=principal(req);requireScope(p,'ontology:read');
@@ -168,7 +185,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     res.json(publicTask(await tasks.answerInput(principal(req), String(req.params.id), req.body))));
   const amendPlace = (p: Principal, id: string, raw: unknown) => {
     const input = taskPlaceAmendmentSchema.parse(raw);
-    return 'source' in input ? tasks.amendMapPlace(p, id, input, capabilities.functions) : tasks.amendPlace(p, id, input);
+    return 'source' in input ? amendMapPlace(tasks, metadata, capabilities.functions, p, id, input) : tasks.amendPlace(p, id, input);
   };
   app.post('/tasks/:id/place-amendment', async (req, res) =>
     res.json(publicTask(await amendPlace(principal(req), String(req.params.id), req.body))));
@@ -234,7 +251,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     res.on('close', () => { void server.close(); });
     await transport.handleRequest(req, res, req.body);
   });
-  app.use('/a2a', jsonRpcHandler({ requestHandler: new A2A(tasks, card), userBuilder: async req => new AgentUser(principal(req)) }));
+  app.use('/a2a', jsonRpcHandler({ requestHandler: new A2A(tasks, card, capabilities.projectTaskResult), userBuilder: async req => new AgentUser(principal(req)) }));
   app.use((error: unknown, _req: Request, res: express.Response, next: express.NextFunction) => {
     if (res.headersSent) return next(error);
     const { status, message, requestId } = publicError(error);

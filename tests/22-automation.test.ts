@@ -699,7 +699,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     const hotelWorkflows = new HotelWorkflows(f.db, f.metadata, f.capabilities.functions);
     const pa = new PARequests(f.tasks);
     const approvedBody = (task: Task) => {
-      const review = (publicTask(task).result as { hotelWorkflow: { scenarioId: string; revision: number; snapshot: string } }).hotelWorkflow;
+      const review = (publicTask(task, f.capabilities.projectTaskResult).result as { hotelWorkflow: { scenarioId: string; revision: number; snapshot: string } }).hotelWorkflow;
       assert.ok(!Object.hasOwn(review, 'recipe'));
       return { taskId: task.id, scenarioId: review.scenarioId, revision: review.revision,
         snapshot: review.snapshot, decision: 'approve-simulation' };

@@ -1,31 +1,18 @@
 import { PermissionDenied } from '../core/identity.js';
-import { businessAgentProfiles, historicalAgentSandboxResources, sandboxAgentCapability, type AgentProfile } from '../ontology/agent-profiles.js';
+import { businessAgentProfiles, type AgentProfile } from '../ontology/agent-profiles.js';
+import { isSandboxResource } from '../ontology/sandbox.js';
 import type { Ontology } from '../ontology/model.js';
 import { resourceGroups } from '../ontology/resource-mapping.js';
 import type { Task } from './tasks.js';
 import type { Access } from './access.js';
 
-const sandboxActions = new Set(historicalAgentSandboxResources.actions);
-const sandboxFunctions = new Set([...sandboxActions].map(name => name[0]!.toLowerCase() + name.slice(1)));
-sandboxFunctions.add('readDiningReservation');
-const sandboxObjects = new Set(historicalAgentSandboxResources.objects);
-
-function testCapability(model: Ontology, kind: string, name: string): boolean {
-  const definition = kind === 'action' ? model.actions.get(name)
-    : kind === 'function' ? model.functions.get(name) : kind === 'object' ? model.objects.get(name) : undefined;
-  if (definition?.typeClasses?.some(tag => tag.kind === sandboxAgentCapability.kind && tag.name === sandboxAgentCapability.name))
-    return true;
-  return (kind === 'action' && (sandboxActions.has(name) ||
-    testCapability(model, 'function', model.actions.get(name)?.function ?? '')))
-    || (kind === 'function' && sandboxFunctions.has(name))
-    || (kind === 'object' && sandboxObjects.has(name));
-}
-
 export function checkAgentCapability(model: Ontology, sandbox: boolean, kind: 'action' | 'function', name: string) {
-  if (!sandbox && testCapability(model, kind, name)) throw new PermissionDenied('Capability requires a sandbox Agent');
+  if (!sandbox && isSandboxResource(model, kind, name)) throw new PermissionDenied('Capability requires a sandbox Agent');
 }
 
-type Candidate = { apiName: string; description?: string };
+type Candidate = { apiName: string; description?: string; displayName?: string };
+const wordSegmenter = new Intl.Segmenter('zh', { granularity: 'word' });
+const normalize = (text: string) => text.normalize('NFKC').toLowerCase();
 
 function namedScope(model: Ontology, names: Iterable<string>): (kind: string, name: string) => boolean {
   const selected = new Set(names);
@@ -66,40 +53,44 @@ const profileNames = (profile: AgentProfile) => [
   ...(profile.functions ?? []), ...(profile.sources ?? []), ...(profile.links ?? []),
 ];
 
-export function taskCatalogueScope(model: Ontology, access: Access, input: Task['input'],
+export function taskCatalogueScope(model: Ontology, access: Pick<Access, 'canDefine'>, input: Task['input'],
   additional: { profiles: readonly string[]; resources: readonly string[] } = { profiles: [], resources: [] }) {
   // Releases 30 and 31 predate profile metadata. Keep their common routes discoverable.
   const profiles = model.resolvedDocument.agentProfiles ??
     (model.document.id === 'Eigos' && ['30', '31'].includes(model.document.version) ? businessAgentProfiles : []);
-  const message = input.message.toLowerCase();
+  const message = normalize(input.message);
   const matched = profiles.filter(profile =>
     access.canDefine(model, 'agentProfile', profile.apiName) &&
-    (profile.terms.some(term => message.includes(term.toLowerCase())) ||
+    (profile.terms.some(term => message.includes(normalize(term))) ||
       profile.apiName === 'RideQuote' && Boolean(input.route) ||
       additional.profiles.includes(profile.apiName)));
   if (matched.length) {
     return { profiles: matched, include: namedScope(model, [...matched.flatMap(profileNames), ...additional.resources]) };
   }
+  const terms = new Set([...wordSegmenter.segment(message)]
+    .filter(({ segment, isWordLike }) => isWordLike && segment.length >= (/\p{Script=Han}/u.test(segment) ? 2 : 3))
+    .map(({ segment }) => segment));
   const eligible = [...model.objects.values(), ...model.functions.values(), ...model.actions.values()]
     .filter(item => !('edits' in item && item.edits))
-    .map(item => ({ item, rank: rank(item, message) }))
+    .map(item => ({ item, rank: rank(item, message, terms) }))
     .sort((left, right) => right.rank - left.rank);
   const candidates = eligible.slice(0, 16).map(({ item }) => item.apiName);
   return { profiles: matched, include: namedScope(model, [...candidates, ...additional.resources]) };
 }
 
-function rank(item: Candidate, message: string) {
-  const name = item.apiName.toLowerCase();
-  if (message.includes(name)) return 100;
-  const context = `${name} ${item.description?.toLowerCase() ?? ''}`;
-  const terms = new Set(message.match(/\p{L}[\p{L}\p{N}]{2,}/gu) ?? []);
-  return [...terms].filter(term => context.includes(term)).length;
+function rank(item: Candidate, message: string, terms: ReadonlySet<string>) {
+  const name = normalize(item.apiName);
+  if (message.includes(name)) return Number.MAX_SAFE_INTEGER;
+  const description = normalize(`${item.displayName ?? ''} ${item.description ?? ''}`);
+  let score = 0;
+  for (const term of terms) score += name.includes(term) ? 2 : Number(description.includes(term));
+  return score;
 }
 
 export function catalogue(model: Ontology, access: Access, sandbox: boolean,
   include = (_kind: string, _name: string) => true, compact = false) {
   const document = access.describe(model, true, (kind, name) =>
-    include(kind, name) && (sandbox || !testCapability(model, kind, name)));
+    include(kind, name) && (sandbox || !isSandboxResource(model, kind, name)));
   const summary = ({ apiName, description }: Candidate) => ({ apiName, description: description?.slice(0, 220) });
   return {
     definition: model.digest,
@@ -120,7 +111,7 @@ export function catalogue(model: Ontology, access: Access, sandbox: boolean,
 export function describeAgentResources(model: Ontology, access: Access, sandbox: boolean, names: string[]) {
   const selected = new Set(names), supporting = namedScope(model, names);
   const document = access.describe(model, true, (kind, name) =>
-    supporting(kind, name) && (sandbox || !testCapability(model, kind, name)));
+    supporting(kind, name) && (sandbox || !isSandboxResource(model, kind, name)));
   return Object.values(resourceGroups).flatMap(field =>
     (document[field] as Candidate[] | undefined)?.filter(item => selected.has(item.apiName)) ?? []);
 }

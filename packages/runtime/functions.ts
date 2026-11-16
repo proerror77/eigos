@@ -1,4 +1,4 @@
-import { Conflict, digest, type Principal, type ExecutionActor } from '../core/identity.js';
+import { Conflict, InvalidInput, NotFound, SourceReadFailure, digest, type Principal, type ExecutionActor } from '../core/identity.js';
 import { validator, Ontology } from '../ontology/model.js';
 import { Objects } from './objects.js';
 import type { Tasks, Task } from './tasks.js';
@@ -77,13 +77,14 @@ export class Functions {
     const access = context.objects.access;
     access.function(model, name);
     const definition = model.functions.get(name), entry = definition && this.registered.get(key(definition));
-    if (!definition || !entry) throw new Error(`Function is unavailable: ${name}`);
-    if ((!definition.version && model.runtimeId !== access.runtimeId) || model.bindings.functions[name] !== entry.binding || contract(definition) !== entry.contract) throw new Error('Historical Function implementation is unavailable in this runtime');
+    if (!definition) throw new NotFound(`Function is unavailable: ${name}`);
+    if (!entry) throw new Error(`Published Function implementation is unavailable: ${name}`);
+    if ((!definition.version && model.runtimeId !== access.runtimeId) || model.bindings.functions[name] !== entry.binding || contract(definition) !== entry.contract) throw new Conflict('Historical Function implementation is unavailable in this runtime');
     if (context.scenarioEvaluation) this.requireScenarioEvaluation(model, name);
     if (model.scenario && definition.source && !(entry.handler.scenarioPARead && definition.edits && context.edit &&
       context.execution?.task.cognitive_context?.scenarioId === model.scenario))
-      throw new Error('Read external sources before opening a scenario; scenario Functions only use Ontology data');
-    if (definition.edits && !context.edit) throw new Error('Ontology edit Functions must be invoked through an Action');
+      throw new Conflict('Read external sources before opening a scenario; scenario Functions only use Ontology data');
+    if (definition.edits && !context.edit) throw new InvalidInput('Ontology edit Functions must be invoked through an Action');
     if (definition.source) { await access.refresh(); access.source(model, definition.source); }
     context.signal.throwIfAborted();
     const parameters = validator(definition.parameters).parse(input) as Record<string, unknown>;
@@ -92,6 +93,9 @@ export class Functions {
     });
     context.signal.throwIfAborted();
     await access.refresh(context.scenarioEvaluation?.client);
-    return validator(definition.returns).parse(output);
+    const result = validator(definition.returns).safeParse(output);
+    if (result.success) return result.data;
+    if (definition.source) throw new SourceReadFailure('Source result does not match its published contract', { cause: result.error });
+    throw new Error('Function result does not match its published contract', { cause: result.error });
   }
 }

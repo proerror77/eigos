@@ -131,6 +131,31 @@ test('authorized Dianping search and shop details work through the published MCP
     };
     await assert.rejects(read('readDianpingRestaurant', selected), /连接不可用/);
     await connection(binding);
+    const sourceRequest = { function: 'searchDianpingRestaurants', input: search };
+    const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' };
+    const base = 'http://127.0.0.1:' + address.port;
+    for (const [status, message, sourceResponse] of [
+      [502, 'Source request failed', () => Response.json({ detail: 'private-upstream-error' })],
+      [503, 'Source temporarily unavailable', () => new Response('private-upstream-error', { status: 503 })],
+    ] as const) {
+      override = sourceResponse;
+      const httpResponse = await fetch(base + '/ontology/functions', {
+        method: 'POST', headers, body: JSON.stringify(sourceRequest),
+      });
+      assert.equal(httpResponse.status, status);
+      assert.deepEqual(await httpResponse.json(), { error: message });
+
+      const mcpResponse = await fetch(base + '/mcp', {
+        method: 'POST', headers, body: JSON.stringify({
+          jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'evaluate_ontology', arguments: sourceRequest },
+        }),
+      });
+      const { result } = await mcpResponse.json();
+      assert.equal(mcpResponse.status, 200);
+      assert.equal(result.isError, true);
+      assert.deepEqual(result.structuredContent, { status, error: message });
+      assert(!JSON.stringify(result).includes('private-upstream-error'));
+    }
     const requests = calls.length;
     await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant => grant.resource !== 'Eigos/source/Dianping'));
     await assert.rejects(read('readDianpingRestaurant', selected), /Permission required/);

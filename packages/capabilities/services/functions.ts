@@ -1,4 +1,5 @@
-import { Conflict, NotFound, SourceReadFailure, digest } from '../../core/identity.js';
+import { z } from 'zod';
+import { Conflict, InvalidInput, NotFound, SourceReadFailure, digest } from '../../core/identity.js';
 import { objectRefSchema, type ObjectRef } from '../../ontology/schema.js';
 import { marketplaceComparisonType, marketplaceOfferType, marketplaceServiceCatalog, serviceCatalog, travelOfferSearchType, travelOfferSources } from '../../ontology/services.js';
 import {
@@ -128,6 +129,7 @@ export function serviceFunctions(db: Database, resolve: ServiceResolver, getSour
       }
       await source.assertCurrent();
       const response = await source.read(input, context.signal).catch((error: unknown) => {
+        if (error instanceof SourceReadFailure || error instanceof InvalidInput || error instanceof z.ZodError) throw error;
         if (context.execution && (provider === 'RollingGo' || provider === 'Fliggy' || provider === 'Taobao' || provider === 'JD')) {
           context.signal.throwIfAborted();
           throw new SourceReadFailure('Supplier search failed', { cause: error });

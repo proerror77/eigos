@@ -113,7 +113,7 @@ npm run test:e2e:run
 
 定义摘要与发布引用分开。发布引用同时绑定定义、实现摘要和对象/关系投影，任务保存该引用。`ontology:prepare` 在同一 PostgreSQL 库内准备候选投影，校验数据和已注册 Function/来源绑定；`ontology:activate -- <release>` 在原子事务中切换。`ontology:publish` 连续完成两步。候选失败或准备后源数据发生变化时，当前版本继续服务。切换前需完成或取消尚未结束的旧任务，避免同一任务混用实现与数据。历史任务和旧投影保留只读。
 
-已有安装先停止写入、备份原 schema，再用 `npm run db:upgrade` 在原库升级。没有新增数据库。生产实现摘要由构建输入生成，Gateway/Worker 在启动与调用时检查绑定。更改属性类型需先修正来源数据；可向 prepare/publish 传入一个绝对路径的普通模块，导出 `project(ref, properties)` 做明确的数据转换，不能隐式强制转换。
+已有安装先停止写入、备份原 schema，再用 `npm run db:upgrade` 在原库升级。没有新增数据库。生产实现摘要由构建输入生成，Gateway/Worker 在启动与调用时检查绑定。同一 schema 的 Gateway、Worker 和 Indexer 需要协调切换到相同实现版本，数据库锁键变更时尤其如此。更改属性类型需先修正来源数据；可向 prepare/publish 传入一个绝对路径的普通模块，导出 `project(ref, properties)` 做明确的数据转换，不能隐式强制转换。
 
 权限记录分为定义的 view/edit/manage、对象数据读取、受限属性读取、Action 应用、Function 执行和来源读取。owner 行隔离继续生效。定义管理不授予数据或 Action 权限。额外受限属性没有授权时返回 null，筛选条件也只能看到遮罩后的值。任务输出保留其读取权限依赖，撤权后不会从缓存继续返回受限结果。
 
@@ -130,7 +130,7 @@ npm run test:e2e:run
 }
 ```
 
-省略 properties 保持当前属性限制；提供该数组则完整替换限制。`access:grant-member` 只授予指定账号当前定义中的业务能力，未来新能力不会自动获得执行授权。受限属性权限需明确配置。对象内容策略、属性策略、组织组和标记规则的配置见 [Ontology 运行服务](docs/guides/ontology-services.md)，实例仍按 owner 隔离。
+省略 properties 保持当前属性限制；提供该数组则完整替换限制。`access:grant-member` 只授予指定账号当前定义中的业务能力，未来新能力不会自动获得执行授权。受限属性权限需明确配置。沙箱能力仅在显式设置 `EIGOS_AGENT_SANDBOX_ENABLED=true` 的本地开发环境授予并执行，Gateway、Worker 和索引进程沿用同一环境限制。对象内容策略、属性策略、组织组和标记规则的配置见 [Ontology 运行服务](docs/guides/ontology-services.md)，实例仍按 owner 隔离。
 
 ## Scenario 与日历排程
 
