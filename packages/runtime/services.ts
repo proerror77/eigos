@@ -374,10 +374,10 @@ export function ontologyServices(
   );
   register(
     'follow_links',
-    'Navigate authorized object relationships.',
+    'Read up to 100 objects related by a published Link. Use query_ontology with from and cursor for larger relationships.',
     z.strictObject({ object: objectRefSchema, link: z.string(), scenarioId: z.uuid().optional() }),
     false,
-    async (a, input) => new Objects(db, await view(a, input.scenarioId), a).follow(input.object, input.link),
+    async (a, input) => new Objects(db, await view(a, input.scenarioId), a).follow(input.object, input.link, input.object.type, 100),
   );
   register(
     'object_view',

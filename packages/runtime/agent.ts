@@ -282,9 +282,9 @@ export class OntologyAgent {
       async ({ names }) => names ? describeAgentResources(model, access, sandbox, names) : catalogue(model, access, sandbox, undefined, true));
     add('query_ontology', 'Query Object or Interface sets, optionally reached through a Link. Independent queries run together. Read cursor before assuming completeness.',
       z.strictObject({ scenarioId:z.uuid().optional(), queries: z.array(querySchema).min(1).max(20) }), async ({ queries,scenarioId }) => { const graph = new Objects(this.db,await view(scenarioId),access); return Promise.all(queries.map((query: z.input<typeof querySchema>) => graph.query(query))); });
-    add('follow_links', 'Navigate published object or Interface Link names from returned object references.',
+    add('follow_links', 'Read up to 50 objects per Link. Use query_ontology with from and cursor for larger relationships.',
       z.strictObject({ scenarioId:z.uuid().optional(), links: z.array(z.strictObject({ object: objectRefSchema, link: z.string(), as: z.string().optional() })).min(1).max(20) }),
-      async ({ links,scenarioId }) => { const graph=new Objects(this.db,await view(scenarioId),access); return Promise.all(links.map(link=>graph.follow(link.object,link.link,link.as))); });
+      async ({ links,scenarioId }) => { const graph=new Objects(this.db,await view(scenarioId),access); return Promise.all(links.map(link=>graph.follow(link.object,link.link,link.as,50))); });
     add('refresh_sources', 'Refresh named Ontology data sources using their published Function parameters. The server maps real responses into objects and links. Supply view with the desired Interface/Object Type and the published Link from SourceReceipt to return those properties in the same call. Independent reads run together.',
       z.strictObject({ sources: z.array(z.strictObject({ source: z.string(), input: argumentsSchema, view: z.strictObject({ type: z.string(), link: z.string() }).optional() })).min(1).max(20) }),
       async ({ sources }) => Promise.all(sources.map(async source => {
