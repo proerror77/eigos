@@ -23,7 +23,12 @@ test('the PA keeps the original pet ride task, requires exact approval and recov
     model: 'synthetic-pet-ride-decisions',
     async run(prompt, tools) {
       runs++;
-      const { userRequest } = JSON.parse(prompt.split('\n').at(-1)!);
+      const { userRequest, ontology } = JSON.parse(prompt.split('\n').at(-1)!);
+      // A pet ride request preloads the published PetRideTrial profile and its guidance.
+      if (userRequest.message.includes('pet ride')) {
+        assert(prompt.includes('For an explicitly requested synthetic pet ride trial'));
+        assert(ontology.actions.some((action: { apiName: string }) => action.apiName === 'PreparePetRideHandoff'));
+      }
       const handoff = userRequest.message === 'recover test order' ? recovery :
         await tools.get('apply_action')!.invoke({ action: 'PreparePetRideHandoff', input: terms });
       assert(handoff);
