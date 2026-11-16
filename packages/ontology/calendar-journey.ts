@@ -74,6 +74,25 @@ export const journeyReadResult = z.strictObject({
   destination: z.strictObject({ name: label, start: time }).nullable(),
 });
 
+export const journeyReplayInput = journeyInput.extend({
+  sequence: z.string().regex(/^[1-9][0-9]{0,17}$/),
+});
+export const journeyPolicyProposalType = 'CalendarJourneyPolicyReview';
+export const journeyReplayResult = z.strictObject({
+  evidence: z.enum(['pa_reported', 'live_readonly', 'synthetic', 'unavailable']),
+  evidenceDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  observedState: state,
+  decisionMatchesHistory: z.boolean(),
+  baselineReminderChanges: z.number().int().nonnegative(),
+  candidateReminderChanges: z.number().int().nonnegative(),
+  observedReminderChanges: z.number().int().nonnegative(),
+  leadTimeDeltaSeconds: z.number().int().nullable(),
+  keepsSafety: z.boolean(),
+});
+const policyReviewProperties = journeyReplayResult.extend({
+  id: label, name: label, policy: z.literal('retain_earlier'), sequence: journeyReplayInput.shape.sequence,
+});
+
 const actions = [
   { action: 'StartCalendarJourney', fn: 'startCalendarJourney', schema: journeySettings, existing: false,
     description: 'Explicitly authorize read-only monitoring of two selected events until monitorUntil. Does not edit the calendar or place orders.' },
@@ -83,15 +102,31 @@ const actions = [
     description: 'Stop monitoring and withdraw the current travel reminder.' },
 ] as const;
 
-export const calendarJourneyDefinition: Pick<OntologyDocument, 'objectTypes' | 'functionTypes' | 'actionTypes'> = {
+export const calendarJourneyDefinition: Pick<OntologyDocument, 'objectTypes' | 'linkTypes' | 'functionTypes' | 'actionTypes'> = {
   objectTypes: [{
     apiName: journeyType, displayName: 'Calendar journey',
     description: 'One trip between selected calendar events, with authorized observations and a versioned departure reminder.',
     primaryKey: 'id', titleProperty: 'name', interfaces: {},
     properties: Object.fromEntries(Object.entries(properties.shape)
       .map(([name, schema]) => [name, { description: name, required: true, schema: json(schema) }])),
+  }, {
+    apiName: journeyPolicyProposalType, displayName: 'Calendar journey policy review',
+    description: 'An offline policy comparison staged for review; does not update the original trip or deliver a reminder.',
+    primaryKey: 'id', titleProperty: 'name', interfaces: {},
+    properties: Object.fromEntries(Object.entries(policyReviewProperties.shape)
+      .map(([name, schema]) => [name, { description: name, required: true, schema: json(schema) }])),
+  }],
+  linkTypes: [{
+    apiName: 'CalendarJourneyPolicyReviewEvidence', description: 'Original journey used for the policy review',
+    from: { type: journeyPolicyProposalType, name: 'journey', cardinality: 'one' },
+    to: { type: journeyType, name: 'policyReviews', cardinality: 'many' },
   }],
   functionTypes: [
+    { apiName: 'evaluateCalendarJourneyHistory', description: 'Replay a recorded check and compare the current and proposed reminder policies.',
+      parameters: json(journeyReplayInput), returns: json(journeyReplayResult), dependencies: { objectTypes: [journeyType] } },
+    { apiName: 'stageCalendarJourneyPolicyReview', description: 'Stage the results of a historical policy comparison for review.',
+      parameters: json(journeyReplayInput), returns: json(objectRefSchema), edits: true,
+      dependencies: { objectTypes: [journeyType, journeyPolicyProposalType], linkTypes: ['CalendarJourneyPolicyReviewEvidence'] } },
     ...actions.map(({ fn, schema, description }) => ({
       apiName: fn, description, parameters: json(schema), returns: json(objectRefSchema), edits: true,
       ...(fn === 'checkCalendarJourney' ? { source: 'PACalendar' } : {}),
@@ -102,8 +137,12 @@ export const calendarJourneyDefinition: Pick<OntologyDocument, 'objectTypes' | '
       source: 'PACalendar', parameters: json(journeyInput), returns: json(journeyReadResult),
       dependencies: { objectTypes: [journeyType] } },
   ],
-  actionTypes: actions.map(({ action, fn, schema, existing, description }) => {
+  actionTypes: [...actions.map(({ action, fn, schema, existing, description }) => {
     const objectParameters: Record<string, string> = existing ? { journey: journeyType } : {};
     return { apiName: action, description, parameters: json(schema), objectParameters, function: fn, submissionCriteria: [] };
-  }),
+  }), {
+    apiName: 'StageCalendarJourneyPolicyReview', description: 'Propose a historical policy evaluation to a Scenario for review.',
+    parameters: json(journeyReplayInput), objectParameters: { journey: journeyType },
+    function: 'stageCalendarJourneyPolicyReview', submissionCriteria: [],
+  }],
 };

@@ -1,3 +1,4 @@
+import { requireReleaseEvaluation, type ReleaseCheck } from './release-evaluation.js';
 import { copyEditState } from './edit-history.js';
 import { migrateProjectionState } from './projection-migration.js';
 import { checkSavedObjectSets } from './object-set-compatibility.js';
@@ -10,7 +11,10 @@ import { Access } from './access.js';
 import { machineryStateContract } from './machinery-state.js';
 
 export interface BindingManifest { functions: Record<string, string>; sources: Record<string, string> }
-export interface Bindings { describe(model: Ontology): BindingManifest }
+export interface Bindings {
+  describe(model: Ontology): BindingManifest;
+  evaluateRelease?(model: Ontology): { policy: string; checks: ReleaseCheck[] };
+}
 export class PublishedOntology extends Ontology {
   constructor(body: unknown, readonly release: string, readonly projection: string, readonly runtimeId: string, readonly bindings: BindingManifest, readonly scenario?: string, readonly evaluation?: {base:string;client:Sql}) { super(body,{published:true}); }
 }
@@ -123,6 +127,7 @@ export class Metadata {
         }
       }
       if (await this.fingerprint(model.projection, client) !== prepared.projection_fingerprint) throw new Conflict('Prepared projection changed');
+      await requireReleaseEvaluation(this.db, client, model, bindings, current ?? null, prepared.projection_fingerprint);
       await access.refresh(client);
       if (current) await this.db.query(`UPDATE ${this.db.schema}.releases SET state='retired' WHERE digest=$1`, [current], client);
       await this.db.query(`INSERT INTO ${this.db.schema}.ontology(id,release) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET release=excluded.release`, [model.document.id, release], client);

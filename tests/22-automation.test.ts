@@ -605,6 +605,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   v9Definition.linkTypes = v9Definition.linkTypes.filter(type =>
     !addedLogs.some(log => log.link === type.apiName) && !documentDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !rideWatchDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    !calendarJourneyDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !fliggyServicesDefinition.linkTypes.some(link => link.apiName === type.apiName));
   v9Definition.dataSources = v9Definition.dataSources.filter(source => !fliggyServicesDefinition.dataSources.some(item => item.apiName === source.apiName));
   v9Definition.actionTypes = v9Definition.actionTypes.filter(action => !addedActions.has(action.apiName));

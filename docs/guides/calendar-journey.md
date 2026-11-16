@@ -34,3 +34,17 @@ PA 选择一场出发前的活动和下一场活动，明确授权监测范围�
 ## 验收
 
 `npm test -- --suite=29` 用真实 PostgreSQL、Gateway MCP、Worker 和同一个 PA 续接。Google Calendar 及高德只读响应采用测试替身。场景覆盖车程 25 分钟增至 40 分钟、降雨缓冲、提前改期、日历冲突、取消、同一观测去重、提醒有效期、换高德连接以及撤销 PA 权限。正式联调需要已授权的高德连接和用户选定的两场日历活动。
+
+## 历史回放与政策审阅
+
+从 Machinery 筛选已授权的 CalendarJourney，再保存为 Object Set。用该集合生成评估案例，使用原任务已经提交的 CheckCalendarJourney 编辑历史序号作为 `sequence`。同一行程可以有不同的历史序号。通过 `evaluateCalendarJourneyHistory` 回读原决策与候选的安全指标。运行时仍检查行程、历史字段、PA 日历与 Amap 的当前权限，输出证据指纹、状态和计数。试跑由事件当时的复查时间决定，不会请求供应商、重建任务或投递提醒。
+
+当前候选只在两次观测的日历事件完全相同、缓冲未变、原提醒仍在未来、并且路线改善会使准备时间小幅推迟时，比较保留原先较早提醒的效果。日历变更、到期、取消和风险保留现有行为。`StageCalendarJourneyPolicyReview` 在 Scenario 中创建关联原行程的审阅对象。它比较已经记录的历史，不修改正式行程或启用候选策略。可将同样的用例用于 Scenario 独立送审。
+
+已保存的评估集可以在 `ontology_save_machinery_review` 的 `evaluation: {id, revision}` 中固定版本。到期后 Indexer 用原创建者的 scopes 和现时权限重跑，评估回执和复盘进度原子保存。更改集合或证据时刷新案例和复盘配置。长期效果与时延应随着真实样本积累再设门槛。
+
+## 正式激活的回归门槛
+
+安装 `initializeReleaseEvaluation` 创建的治理表。在上线窗口由发布管理角色为 Eigos 在 `release_evaluation_policy` 设置 `required_policy = calendar-journey-v1`。启用后，任何经 Metadata 激活的候选均须由自己的运行构建通过 CalendarJourney 固定用例。通过的回执与活动发布切换在同一事务，记录候选、基线、运行构建、绑定和投影指纹。失败保持原发布，发布操作返回失败的用例名称。
+
+门槛使用合成的固定决策用例，测试到期、拒绝、取消、风险和幂等。这些用例与正式检查共用确定性决策函数。真实案例评估用于核对实际运营证据和比较候选策略。开发 schema 默认没有启用政策；准备第一批生产发布时先备份并安装新表。治理角色保持独立于业务调用角色。参考 [Palantir Machinery](https://www.palantir.com/docs/foundry/machinery/analyze-and-monitor) 和 [AIP Evals](https://www.palantir.com/docs/foundry/aip-evals/ontology-edits)。
