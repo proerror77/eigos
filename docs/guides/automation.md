@@ -156,3 +156,9 @@ Grok 可用 `list_learned_hotel_workflows` 查找当前账号的已保存行程�
 等待总时限从创建 Scenario 起计算。超时检查先于项目发布和执行权限复核。超时以及流程终止时，在同一事务中取消尚未完成的原认知任务。普通 Action 步骤的重试行为继续适用，认知提案终止后可发起新的 Workflow 运行。该节点用于内部编辑提案。模型只能暂存编辑。合并动作可以派发审批中列出的声明式效果，发单或付款仍需各供应商 Action 的业务授权。
 
 实现沿用 [Palantir 的 Scenario 合并权限](https://www.palantir.com/docs/foundry/ontology/merge-scenario)、[AIP Logic 调用者权限](https://www.palantir.com/docs/foundry/logic/blocks) 和 EIGOS 已有 Action、Task、Scenario 与执行追踪。数据库升级后，Indexer 的角色需要创建和取消认知任务，以及写入 Scenario 元数据和执行追踪。现有任务和 Workflow 记录使用兼容的默认值。
+
+## 向使用者发布流程
+
+本体定义管理员（`manage_definition`）在工作台的「规则与监测」中选择一个工作流草稿的准确修订和运行对象类型，发布后才进入「已发布流程」。`ontology_publish_workflow` 和 `ontology_withdraw_workflow` 提供同一管理入口。修改草稿保留正在使用的发布副本，直到管理员发布新修订。切换 Ontology 发布后，运行前检查原发布谱系及 Action、Function 和对象契约。
+
+服务团队维护本体和流程草稿，普通已准入账号登录后进入「已发布流程」。目录仅显示当前用户有权执行、兼容当前本体的公开修订，不包含步骤配置或绑定。运行使用用户自己的身份、授权对象和当前 Action 权限，保留现有审批和幂等机制。下架阻止新的运行，已经提交的运行保留其冻结输入。管理员和编辑者继续通过既有 `manage_definition`、`edit_definition` 授权，发布流程不会转授任何业务或来源权限。参考 [Palantir Action 权限](https://www.palantir.com/docs/foundry/action-types/permissions) 与 [Ontology 权限](https://www.palantir.com/docs/foundry/object-permissioning/ontology-permissions)。

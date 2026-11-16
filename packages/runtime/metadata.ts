@@ -201,13 +201,14 @@ export class Metadata {
     if (!result.rows[0]) throw new NotFound('Published Ontology is unavailable');
     return this.get(String(result.rows[0].release), client);
   }
-  async findAncestor(model: PublishedOntology, definition: string, client?: Sql) {
+  async findAncestor(model: PublishedOntology, identity: string, client?: Sql, match: 'definition'|'release' = 'definition') {
+    const field=match==='release'?'digest':'definition_digest';
     const {rows} = await this.db.query<{digest:string}>(`WITH RECURSIVE ancestors AS (
       SELECT digest,prepared_from,definition_digest FROM ${this.db.schema}.releases WHERE digest=$1
       UNION ALL
       SELECT r.digest,r.prepared_from,r.definition_digest FROM ${this.db.schema}.releases r
-      JOIN ancestors a ON r.digest=a.prepared_from WHERE a.definition_digest<>$2
-    ) SELECT digest FROM ancestors WHERE definition_digest=$2`, [model.release,definition],client);
+      JOIN ancestors a ON r.digest=a.prepared_from WHERE a.${field}<>$2
+    ) SELECT digest FROM ancestors WHERE ${field}=$2`, [model.release,identity],client);
     if (rows[0]) return this.get(rows[0].digest,client);
   }
   async get(release: string, client?: Sql): Promise<PublishedOntology> {
