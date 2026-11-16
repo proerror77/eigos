@@ -441,6 +441,7 @@ test('complete relationship reads are bounded while an authorized paginated quer
       cursor = page.cursor;
     } while (cursor);
     assert.equal(ids.size, 1001);
+    await assert.rejects(graph.query({ type: 'ScheduledActivity', cursor: 'not-a-query-cursor' }), InvalidInput);
 
     const scenarios = new Scenarios(f.db);
     const scenario = await scenarios.create(f.access, f.model, { requestId: 'crowded-link', name: 'Crowded calendar' });
@@ -486,6 +487,9 @@ test('deletion with a hidden relationship returns a permission failure and keeps
     assert.deepEqual((await remaining.follow(visible, 'predecessors')).map(item => item.ref), [companion]);
     assert.equal((await scenarios.inspect(access, f.model, created.id)).revision, created.revision);
     await assert.rejects(remaining.link({ type: 'ActivityResource', from: visible, to: plan }), InvalidInput);
+    const secondPlan = { ...plan, id: 'second-plan' };
+    await remaining.create(secondPlan, { ...(await remaining.read(plan)).properties, id: secondPlan.id });
+    await assert.rejects(remaining.link({ type: 'ActivityPlan', from: visible, to: secondPlan }), Conflict);
 
     await f.db.query(`INSERT INTO ${f.db.schema}.property_security VALUES($1,$2,$3)`,
       [f.model.document.id, visible.type, 'name']);

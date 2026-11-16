@@ -30,6 +30,13 @@ export const querySchema = z.strictObject({
   from: z.strictObject({ object: objectRefSchema, link: z.string(), as: z.string().optional() }).optional(),
 });
 export type Query = z.input<typeof querySchema>;
+function decodeQueryCursor(token: string): unknown {
+  try {
+    return JSON.parse(Buffer.from(token, 'base64url').toString('utf8'));
+  } catch {
+    throw new InvalidInput('Invalid query cursor');
+  }
+}
 export function queryFields(query: Pick<z.output<typeof querySchema>, 'where' | 'filter' | 'orderBy' | 'select' | 'intervalOverlap'>) {
   return [...new Set([...Object.keys(query.where ?? {}), ...predicateFields(query.filter),
     ...(query.orderBy ?? []).map(item => item.property), ...(query.select ?? []),
@@ -228,7 +235,7 @@ export class Objects {
       return Buffer.compare(Buffer.from(JSON.stringify(left.ref)), Buffer.from(JSON.stringify(right.ref)));
     });
     const identity=digest({owner:this.owner,release:this.model.release,scenario:this.model.scenario,args:{...args,cursor:undefined,limit:undefined},objects:matching});
-    const offset=args.cursor?z.strictObject({query:z.literal(identity),offset:z.number().int().min(0).max(matching.length)}).parse(JSON.parse(Buffer.from(args.cursor,'base64url').toString())).offset:0;
+    const offset=args.cursor?z.strictObject({query:z.literal(identity),offset:z.number().int().min(0).max(matching.length)}).parse(decodeQueryCursor(args.cursor)).offset:0;
     const end=offset+args.limit;
     const items=matching.slice(offset,end).map(object=>args.select?{...object,properties:Object.fromEntries(args.select.map(field=>[field,nestedValue(object.properties,field)]))}:object);
     return {items,cursor:end<matching.length?Buffer.from(JSON.stringify({query:identity,offset:end})).toString('base64url'):undefined};
@@ -359,7 +366,7 @@ export class Objects {
     const { values, bind, clauses, tables, types } = selection;
     const queryDigest = digest({ ...args, cursor: undefined, owner: this.owner, release: this.model.release, scenario: this.model.scenario });
     if (args.cursor) {
-      const cursor = z.strictObject({ query: z.literal(queryDigest), type: z.string(), id: z.string() }).parse(JSON.parse(Buffer.from(args.cursor, 'base64url').toString()));
+      const cursor = z.strictObject({ query: z.literal(queryDigest), type: z.string(), id: z.string() }).parse(decodeQueryCursor(args.cursor));
       clauses.push(`(o.type COLLATE "C",o.id COLLATE "C")>(${bind(cursor.type)},${bind(cursor.id)})`);
     }
     const result = await this.db.readQuery(`${tables.prefix}SELECT o.type,o.id,o.revision,o.properties FROM ${tables.objects} o
@@ -666,10 +673,18 @@ export class Objects {
       }
       return;
     }
-    await this.db.query(`INSERT INTO ${this.db.schema}.links(owner,type,from_type,from_id,to_type,to_id,single_from,single_to,projection)
-      SELECT $1,type,from_type,from_id,to_type,to_id,single_from,single_to,$3 FROM jsonb_to_recordset($2::jsonb)
-      AS input(type text,from_type text,from_id text,to_type text,to_id text,single_from boolean,single_to boolean)
-      ON CONFLICT(projection,owner,type,from_type,from_id,to_type,to_id) DO NOTHING`, [this.owner, JSON.stringify(rows), this.model.projection], this.client);
+    try {
+      await this.db.query(`INSERT INTO ${this.db.schema}.links(owner,type,from_type,from_id,to_type,to_id,single_from,single_to,projection)
+        SELECT $1,type,from_type,from_id,to_type,to_id,single_from,single_to,$3 FROM jsonb_to_recordset($2::jsonb)
+        AS input(type text,from_type text,from_id text,to_type text,to_id text,single_from boolean,single_to boolean)
+        ON CONFLICT(projection,owner,type,from_type,from_id,to_type,to_id) DO NOTHING`, [this.owner, JSON.stringify(rows), this.model.projection], this.client);
+    } catch (error) {
+      const databaseError = error as { code?: string; constraint?: string } | null;
+      if (databaseError?.code === '23505' &&
+        (databaseError.constraint === 'links_single_from' || databaseError.constraint === 'links_single_to'))
+        throw new Conflict('Link cardinality exceeded');
+      throw error;
+    }
   }
   async unlink(edge: LinkData): Promise<void> {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).unlink(edge));
