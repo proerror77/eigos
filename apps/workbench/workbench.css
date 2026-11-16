@@ -336,6 +336,9 @@ tbody tr.selected {
   gap: 7px;
   margin: 14px 0;
 }
+.field[hidden] {
+  display: none;
+}
 .field > label {
   font-size: 12px;
   font-weight: 550;

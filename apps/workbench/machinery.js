@@ -48,7 +48,7 @@ function processGraph(result, element, button, selectState) {
 }
 
 export async function renderMachinery(body, ui) {
-  const { element, button, field, select, table, modal, jsonInput, service, proposalDialog, inspectTask, openActions } = ui;
+  const { element, button, field, select, table, modal, jsonInput, service, proposalDialog, inspectTask, openActions, openEvaluation } = ui;
 
   async function open() {
     const [processes, reviews, sets] = await Promise.all([
@@ -65,6 +65,7 @@ export async function renderMachinery(body, ui) {
     const day = date => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
     const from = element('input', { type: 'date', value: day(new Date(today.getTime() - 7 * 86400000)) });
     const to = element('input', { type: 'date', value: day(today) });
+    const externalSource = element('input',{placeholder:'留空使用 EIGOS 提交历史'});
     const minCases = element('input', { type: 'number', min: 1, value: 1 });
     const coverage = element('input', { type: 'number', min: 1, max: 100, value: 100 });
     const clocks = [['recordedAt', '记录时间'], ['observedAt', '来源观察时间']];
@@ -81,7 +82,7 @@ export async function renderMachinery(body, ui) {
     };
 
     async function render(input = { type: type.value, ...dateRange(),
-      ...(set.value ? { setId: set.value } : {}), includeIdle: includeIdle.checked, durationClock: durationClock.value,
+      ...(set.value ? { setId: set.value } : {}), ...(externalSource.value ? {externalSource:externalSource.value} : {}), includeIdle: includeIdle.checked, durationClock: durationClock.value,
       mining: { minCases: Number(minCases.value), coveragePercent: Number(coverage.value) } }, loaded) {
       const id = ++generation;
       progress.textContent = '正在读取过程日志…';
@@ -93,6 +94,7 @@ export async function renderMachinery(body, ui) {
           return (async () => {
             const data = await service('machinery_analysis', {
               type: input.type, from: input.from, to: result.to, object: item.object, durationClock: result.durationClock,
+              ...(input.externalSource ? {externalSource:input.externalSource} : {}),
             });
             const entry = data.cases[0];
             if (!entry) throw new Error('当前查询范围内没有可读的完整记录。');
@@ -210,7 +212,14 @@ export async function renderMachinery(body, ui) {
         });
         progress.textContent = result.casesTotal + ' 个流程实例 · 耗时按'
           + (result.durationClock === 'observedAt' ? '来源观察时间' : '记录时间');
+        const setName=element('input',{placeholder:'待复用实例名称'});
+        const saved=element('div',{role:'status'});
         output.replaceChildren(
+          result.casesTotal>0&&element('div',{class:'toolbar'},setName,button('保存匹配实例为对象集',async()=>{
+            const result=await service('save_machinery_cases',{analysis:fixed,name:setName.value,requestId:crypto.randomUUID()});
+            saved.replaceChildren(element('span',{},'对象集 '+result.id+' 已保存。'),
+              button('用对象集试跑',()=>openEvaluation(result.id)));
+          }),saved),
           element('div', { class: 'toolbar' },
             (input.filter || input.focus) && button('清除筛选', () => render()),
             ...Object.entries(result.conformance).map(([key, count]) =>
@@ -282,7 +291,7 @@ export async function renderMachinery(body, ui) {
     }
     showReviews();
     body.replaceChildren(element('div', { class: 'toolbar' },
-      field('流程', type), field('对象集', set), field('起始日期', from), field('结束日期', to),
+      field('流程', type), field('对象集', set), field('外部历史来源',externalSource), field('起始日期', from), field('结束日期', to),
       field('挖掘所需最少实例', minCases), field('挖掘覆盖率（%）', coverage),
       field('耗时依据', durationClock), field('包含窗口内无转换的实例', includeIdle), button('分析流程', () => render(), 'primary')),
       reviewPanel, progress, output);

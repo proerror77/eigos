@@ -7,8 +7,9 @@ import {
   entityHistorySchema,
 } from './entity-resolution.js';
 import { Applications, objectViewSchema, graphSchema, mapSchema } from './applications.js';
-import { Automation, workflowSchema, saveRuleSchema, runWorkflowSchema } from './automation.js';
+import { Automation, workflowSchema, saveRuleSchema, runWorkflowSchema, automationPreviewSchema } from './automation.js';
 import { analyzeMachinery, listMachineryProcesses, machineryAnalysisSchema } from './machinery-analysis.js';
+import { ingestMachineryHistory, machineryHistorySchema } from './machinery-history.js';
 import { MachineryReviews, machineryReviewSchema } from './machinery-reviews.js';
 import { processStatusSchema } from './process-automation.js';
 import {
@@ -35,8 +36,8 @@ import { machineryModelSchema, objectRefSchema, ontologyName } from '../ontology
 import { Access } from './access.js';
 import { Database } from './database.js';
 import { Metadata } from './metadata.js';
-import { ScenarioEvaluations, compareScenariosSchema, trialScenariosSchema } from './scenario-evaluation.js';
-import { Scenarios } from './scenarios.js';
+import { ScenarioEvaluations, compareScenariosSchema, trialScenariosSchema, saveEvaluationSuiteSchema, runEvaluationSuiteSchema, promoteEvaluationSchema, evaluationCasesFromSetSchema } from './scenario-evaluation.js';
+import { Scenarios, continueScenarioSchema } from './scenarios.js';
 import { Objects } from './objects.js';
 import {
   ObjectSets,
@@ -436,6 +437,38 @@ export function ontologyServices(
     (a, input) => new Scenarios(db).closeSession(a, input.sessionId),
   );
   const evaluations = new ScenarioEvaluations(db, actions, functions);
+  register('trial_candidate_scenarios','Run an offline trial against a prepared definition and release projection without activating it.',
+    z.strictObject({release:z.string().regex(/^[0-9a-f]{64}$/),trial:trialScenariosSchema}),true,async(a,input)=>{
+      requireScope(a.principal,'ontology:read');
+      const current=await active();
+      a.require(current.document.id,'edit_definition',current.document.id);
+      const candidate=await metadata.get(input.release);
+      if(candidate.document.id!==current.document.id)throw new Conflict('Candidate belongs to another Ontology');
+      metadata.checkBindings(candidate,bindings);
+      return evaluations.trial(a,candidate,input.trial,current.release);
+    });
+  register('evaluation_suites','List saved evaluation suites and run references.',
+    z.strictObject({}),false,async a=>evaluations.listSuites(a,await active()));
+  register('evaluation_cases_from_set','Generate trial case inputs from authorized Object Set members and their current revisions.',
+    evaluationCasesFromSetSchema,false,async(a,input)=>evaluations.casesFromSet(a,await active(),input));
+  register('save_evaluation_suite','Save a revisioned Scenario trial, optionally scoped to a Machinery Object Set.',
+    saveEvaluationSuiteSchema,true,async(a,input)=>evaluations.saveSuite(a,await active(),input));
+  register('run_evaluation_suite','Run a saved revision and retain a release-bound result receipt.',
+    runEvaluationSuiteSchema,true,async(a,input)=>{
+      requireScope(a.principal,'ontology:read');
+      return evaluations.runSuite(a,await active(),input);
+    });
+  register('promote_evaluation_candidate','Re-evaluate a selected trial result and create a persisted Scenario for invited reviewers.',
+    promoteEvaluationSchema,true,async(a,input)=>{
+      requireScope(a.principal,'ontology:read');
+      return evaluations.promote(a,await active(),input);
+    });
+  register('scenario_continuation_sources','List owned temporary or previous-release drafts eligible for a continuation attempt.',
+    z.strictObject({}),false,async a=>new Scenarios(db).continuationSources(a,await active()));
+  register('continue_scenario','Replay a compatible Scenario journal into a new persisted draft with fresh review.',
+    continueScenarioSchema,true,async (a,input)=>new Scenarios(db).continueScenario(a,await active(),input));
+  register('preview_automation', 'Evaluate a saved automation against Scenario revisions and preview its Actions without enqueuing a live run.',
+    automationPreviewSchema,true,async (a,input)=>automation.preview(a,await active(),input));
   register(
     'scenario_trial_options',
     'List the authorized Actions and read-only Functions available for an offline Scenario trial.',
@@ -545,6 +578,17 @@ export function ontologyServices(
     z.strictObject({}), false, async a => listMachineryProcesses(a, await active()));
   register('machinery_analysis', 'Mine authorized process paths, compare observed transitions with a reference, and analyze dwell time.',
     machineryAnalysisSchema, false, async (a, input) => analyzeMachinery(db, a, await active(), input));
+  register('ingest_machinery_history','Import idempotent observed transitions for an authorized history source.',
+    machineryHistorySchema,true,async(a,input)=>ingestMachineryHistory(db,a,await active(),input));
+  register('save_machinery_cases','Save all authorized matches from a Machinery filter into a static Object Set.',
+    z.strictObject({analysis:machineryAnalysisSchema,name:z.string().min(1).max(200),requestId:z.string().min(1).max(128)}),
+    true,async(a,input)=>{
+      requireScope(a.principal,'ontology:read');
+      const model=await active(), result=await analyzeMachinery(db,a,model,input.analysis,true);
+      if(!result.members?.length)throw new Conflict('The analysis contains no visible cases');
+      if(!await a.canReturn(a.dataRequirements()))throw new Conflict('Machinery case permissions changed');
+      return sets.save(a,model,{requestId:input.requestId,name:input.name,mode:'static',set:{op:'refs',objects:result.members}});
+    });
   register('machinery_propose_model', 'Open a definition branch for a manual or mined process model at the observed release.',
     z.strictObject({ type: ontologyName, model: machineryModelSchema, name: z.string().min(1).max(200),
       release: z.string().regex(/^[0-9a-f]{64}$/), project: ontologyName.optional() }), true, async (a, input) => {

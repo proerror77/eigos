@@ -55,9 +55,14 @@ export function scenarioTrialForm(ui, options) {
     };
     initial.forEach(add);
     return {
-      node: element('section', { class: 'section trial-section' },
+      node: element('section', { class: 'section' },
         element('h3', {}, title), body, button(addLabel, () => add())),
       read: () => rows.map(row => row.read()),
+      replace: (items) => {
+        body.replaceChildren();
+        rows.length = 0;
+        items.forEach(add);
+      },
     };
   }
 
@@ -93,8 +98,9 @@ export function scenarioTrialForm(ui, options) {
   function evidence(entry = {}) {
     const types = model.objectTypes.map(type => [type.apiName, type.displayName ?? type.apiName]);
     const type = select(types, entry.type ?? types[0]?.[0]), id = text(entry.id), alias = text(entry.alias);
-    const status = element('p', { class: 'subtle', role: 'status' }, '请读取并锁定对象修订。');
-    let pinned;
+    let pinned = entry.revision ? { object: { type: entry.type, id: entry.id }, revision: entry.revision } : undefined;
+    const status = element('p', { class: 'subtle', role: 'status' },
+      pinned ? '已锁定修订 ' + pinned.revision : '请读取并锁定对象修订。');
     const invalidate = () => {
       pinned = undefined;
       status.textContent = '对象已修改，请重新读取修订。';
@@ -150,7 +156,7 @@ export function scenarioTrialForm(ui, options) {
   function parameters(schema, initial = {}) {
     const rows = Object.entries(schema.properties ?? {}).map(([name, definition]) => {
       const required = schema.required?.includes(name);
-      const source = initial[name];
+      const source = Object.hasOwn(initial, name) ? initial[name] : undefined;
       const mode = source ? Object.keys(source)[0] : required ? 'value' : 'omit';
       const option = select([
         ...(required ? [] : [['omit', '留空']]), ['value', '固定值'], ['input', '案例输入'], ['result', '前序步骤'],
@@ -247,5 +253,17 @@ export function scenarioTrialForm(ui, options) {
         ? element('details', { class: 'section' }, element('summary', {}, '编辑候选流程和指标'), variants.node, metrics.node)
         : [variants.node, metrics.node]),
     read: () => ({ cases: cases.read(), variants: variants.read(), metrics: metrics.read() }),
+    replaceCases: (items, parameter) => {
+      cases.replace(items.map(item => {
+        const target = item.inputs[parameter];
+        const evidence = item.evidence.map(({ object, revision }) => ({
+          ...object, revision, alias: object.type === target?.type && object.id === target.id ? parameter : '',
+        }));
+        const schedule = hasSchedule && parameter === 'plan' && target?.type === 'SchedulePlan';
+        if (schedule && !evidence.some(entry => entry.type === 'CalendarAvailability'))
+          evidence.push({ type: 'CalendarAvailability' });
+        return { name: item.name, evidence, inputs: schedule ? schedulePreset().cases[0].inputs : [] };
+      }));
+    },
   };
 }

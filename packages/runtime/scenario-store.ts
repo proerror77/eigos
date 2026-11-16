@@ -18,6 +18,14 @@ type ObjectCapture = { op: 'create' | 'edit' | 'delete'; journal?: ScenarioMutat
 export async function lockEdits(db: Database, model: PublishedOntology, owner: string, client: Sql) {
   await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', ['publication:' + model.document.id], client);
   await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify(['objects', model.release, owner])], client);
+  if(model.evaluation){
+    if(model.evaluation.client!==client)throw new Conflict('Candidate evaluation must remain in its original transaction');
+    const ready=await db.query(`SELECT 1 FROM ${db.schema}.ontology o JOIN ${db.schema}.releases r ON r.digest=$3
+      WHERE o.id=$1 AND o.release=$2 AND r.prepared_from=o.release AND r.state='prepared' AND r.body->>'id'=o.id`,
+      [model.document.id,model.evaluation.base,model.release],client);
+    if(!ready.rowCount)throw new Conflict('Prepare the candidate against the current publication before evaluation');
+    return;
+  }
   if ((await db.query(`SELECT release FROM ${db.schema}.ontology WHERE id=$1`, [model.document.id], client)).rows[0]?.release !== model.release) throw new Conflict('Historical and prepared projections are read-only');
 }
 

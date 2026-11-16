@@ -1423,6 +1423,13 @@ function migrationDialog() {
   );
 }
 
+async function openScenarioEvaluation(method, scenarios, initialSet) {
+  const { scenarioEvaluation } = await import('./scenario-evaluation.js');
+  return scenarioEvaluation({
+    element, field, button, modal, table, jsonInput, jsonSchemaForm, stringify, select, service, model: state.model,
+  }, scenarios)[method](initialSet);
+}
+
 async function renderScenarios(reviewPage = 1) {
   const [list, reviews] = await Promise.all([
     request('/ontology/scenarios?ontology=' + encodeURIComponent(state.ontology)),
@@ -1484,7 +1491,7 @@ async function renderScenarios(reviewPage = 1) {
             button('保存审阅人', async () => {
               const reviewers = [...new Set(readers.value.split(/[\s,，]+/).filter(Boolean))];
               if (reviewers.includes(state.identity?.owner)) throw new Error('请邀请其他账户审阅。');
-              if (!reviewers.length && !diff.review.reviewers.length) throw new Error('请输入审阅人的身份。');
+              if (!reviewers.length) throw new Error('请输入审阅人的身份。');
               await service('invite_scenario_reviewers', { id, revision: diff.revision, reviewers });
               await renderScenarios(reviewPage);
               await inspect(id);
@@ -1595,18 +1602,24 @@ async function renderScenarios(reviewPage = 1) {
         )
       : empty('创建一个方案，再在方案中应用对象操作。'),
   );
-  const openEvaluation = async (method) => {
-    const { scenarioEvaluation } = await import('./scenario-evaluation.js');
-    return scenarioEvaluation({
-      element, field, button, modal, table, jsonInput, jsonSchemaForm, stringify, select, service, model: state.model,
-    }, list.items)[method]();
-  };
   $('#main').replaceChildren(
     heading(
       '方案比较',
       '查看拟议变更，处理冲突，再通过业务操作确认合并。',
-      list.items.length >= 2 && button('并排比较', () => openEvaluation('compare')),
-      button('离线试跑', () => openEvaluation('trial')),
+      button('接续方案',async()=>{
+        const {items}=await service('scenario_continuation_sources');
+        modal('接续到当前发布',items.length?table(['草稿','版本',''],items.map(item=>[
+          item.name,item.release.slice(0,8),
+          button('复制为持久方案',async()=>{
+            const saved=await service('continue_scenario',{id:item.id,revision:item.revision,requestId:crypto.randomUUID()});
+            state.scenario=saved.id;
+            $('#editor').close();
+            await renderScenarios();
+          }),
+        ])):empty('没有可尝试接续的草稿。'));
+      }),
+      list.items.length >= 2 && button('并排比较', () => openScenarioEvaluation('compare', list.items)),
+      button('离线试跑', () => openScenarioEvaluation('trial', list.items)),
       button('回到正式数据', () => {
         state.scenario = null;
         notice('已切换到正式数据');
@@ -2061,6 +2074,40 @@ async function renderSchedule() {
       element(
         'div',
         { class: 'actions' },
+        data.activities.length > 0 && state.model.functionTypes.some(fn => fn.apiName === 'recommendSchedule') &&
+          button('联合优化时段', () => {
+            const choices = data.activities.map(activity=>({activity, checkbox:element('input',{type:'checkbox'})}));
+            const objective = select([['minimum_displacement','最少改动'],['earliest_finish','最早完成']], 'minimum_displacement');
+            const output = element('div');
+            modal('排程优化', element('div', {},
+              field('目标',objective),
+              choices.map(({activity,checkbox})=>element('label',{class:'toolbar'},checkbox,titleOf(activity))),
+              button('计算建议',async()=>{
+                const selected=choices.filter(item=>item.checkbox.checked).map(item=>item.activity.ref);
+                if(!selected.length||selected.length>12)throw new Error('请选择 1–12 个活动');
+                const scenarioId=state.scenario;
+                const recommendation=await request('/ontology/functions',{ontology:state.ontology,function:'recommendSchedule',
+                  input:{plan:chosen.ref,activities:selected,objective:objective.value},...(scenarioId?{scenarioId}:{})});
+                const labels={optimal:'已找到最优时段',feasible:'达到搜索上限，已找到可行时段',
+                  infeasible:'当前网格没有可行时段',search_limit:'达到搜索上限，未找到可行时段'};
+                output.replaceChildren(element('p',{},labels[recommendation.status]),
+                  recommendation.moves.length>0&&table(['活动','开始','结束'],recommendation.moves.map(move=>[
+                    titleOf(data.activities.find(item=>item.ref.id===move.activity.id)),
+                    new Date(move.start).toLocaleString(),new Date(move.end).toLocaleString(),
+                  ])),
+                  recommendation.moves.length>0&&button('写入方案',async()=>{
+                    if(state.scenario!==scenarioId)throw new Error('当前方案已切换。请重新计算建议。');
+                    if(!scenarioId){
+                      const created=await request('/ontology/scenarios',{ontology:state.ontology,requestId:crypto.randomUUID(),name:'优化 '+titleOf(chosen)});
+                      state.scenario=created.id;
+                    }
+                    await applyAction('StageScheduleRecommendation',{plan:chosen.ref,moves:recommendation.moves});
+                    $('#editor').close();
+                    await renderSchedule();
+                  }),
+                );
+              }),output));
+          }),
         button('查找可用时段', async () => {
           const result = await request('/ontology/functions', {
             ontology: state.ontology,
@@ -2136,11 +2183,29 @@ async function renderRules() {
               condition,
               rule.enabled ? '监测中' : '已停用',
               rule.error || (rule.lastScan ? new Date(rule.lastScan).toLocaleString() : '尚未检查'),
+              element('div',{class:'actions'},
               button(rule.enabled ? '停用' : '启用', async () => {
                 const { lastScan, error, ...input } = rule;
                 await service('save_rule', { ...input, enabled: !rule.enabled });
                 await renderRules();
               }),
+                !rule.machineryReview&&button('预演',async()=>{
+                  const list=await request('/ontology/scenarios?ontology='+encodeURIComponent(state.ontology));
+                  const choices=list.items.map(row=>({row,checkbox:element('input',{type:'checkbox'})}));
+                  const elapsed=element('input',{type:'number',min:0,value:0});
+                  const results=element('div');
+                  modal('自动化预演',element('div',{},
+                    choices.map(({row,checkbox})=>element('label',{class:'toolbar'},checkbox,row.name)),
+                    field('模拟经过的秒数',elapsed),
+                    button('运行预演',async()=>{
+                      const scenarios=choices.filter(item=>item.checkbox.checked).map(({row})=>({id:row.id,revision:Number(row.revision)}));
+                      const report=await service('preview_automation',{rule:rule.id,revision:Number(rule.revision),scenarios,elapsedSeconds:Number(elapsed.value)});
+                      results.replaceChildren(table(['方案','匹配且执行','仍在等待'],report.scenarios.map(item=>[
+                        item.name,item.results.length,item.waiting.length])),
+                      element('pre',{class:'code'},JSON.stringify(report.scenarios,null,2)));
+                    }),results));
+                }),
+              ),
             ];
           }),
         )
@@ -2643,6 +2708,7 @@ async function renderProcesses(reviewPage = 1) {
     const { renderMachinery } = await import('./machinery.js');
     await renderMachinery(machinery, { element, button, field, select, table, modal, jsonInput, service, proposalDialog,
       openActions: (ref, actions) => actionDialog({ ref }, { actions, live: true }),
+      openEvaluation: (id) => openScenarioEvaluation('trial', [], id),
       inspectTask: async (id) => {
         const task = await request('/tasks/' + encodeURIComponent(id));
         $('#editor').close();

@@ -7,6 +7,7 @@ import {Objects} from '../packages/runtime/objects.js';
 import {Scenarios} from '../packages/runtime/scenarios.js';
 import {Access,setGrants,memberGrants} from '../packages/runtime/access.js';
 import { ScenarioEvaluations, trialScenariosSchema } from '../packages/runtime/scenario-evaluation.js';
+import {seedPlan} from './service-fixture.js';
 import {harnessFixture} from './harness-fixture.js';
 
 async function pending(f:Awaited<ReturnType<typeof fixture>>) {
@@ -256,4 +257,68 @@ test('offline trials run real schedule Actions on the same PA evidence and roll 
     }), /offline Scenario evaluation/);
     assert.deepEqual(await counts(), before);
   } finally { await f.close(); }
+});
+
+test('joint scheduling honors multiple calendars, dependencies and current revisions before staging',async()=>{
+  const f=await fixture();try{
+    const seed=await seedPlan(f), graph=new Objects(f.db,f.model,f.access), scenarios=new Scenarios(f.db);
+    const first=await graph.read(seed.availability), resource={type:'ScheduleResource',id:'second-resource'};
+    const second={type:'CalendarAvailability',id:'second-coverage'};
+    const start=new Date(Date.now()+10*60000), end=new Date(start.getTime()+20*60000);
+    await graph.create(resource,{id:resource.id,name:'Second resource'});
+    await graph.create(second,{...first.properties,id:second.id,name:'Second calendar',busy:[{start:start.toISOString(),end:end.toISOString()}]});
+    await graph.linkBatch([{type:'PlanResource',from:seed.plan,to:resource},{type:'PlanAvailability',from:seed.plan,to:second},
+      {type:'ResourceAvailability',from:resource,to:second}]);
+    const scenario=await scenarios.create(f.access,f.model,{requestId:'optimizer',name:'Optimization'});
+    const view=await scenarios.view(f.access,f.model,scenario.id);
+    const schedule={plan:seed.plan,start:start.toISOString(),end:end.toISOString(),name:'Activity'};
+    const a=await f.capabilities.actions.apply(f.access,view,'SaveScheduleActivity',{...schedule,id:'first'},'first');
+    const b=await f.capabilities.actions.apply(f.access,view,'SaveScheduleActivity',{...schedule,id:'second',predecessors:[a]},'second');
+    const context={objects:new Objects(f.db,view,f.access),principal,signal:AbortSignal.timeout(10000)};
+    const recommendation=await f.capabilities.functions.invoke(view,'recommendSchedule',{plan:seed.plan,activities:[a,b],
+      objective:'earliest_finish'},context) as {status:string;moves:{activity:typeof a;revision:number;start:string;end:string}[]};
+    assert.equal(recommendation.status,'optimal');
+    assert(recommendation.moves.every(move=>Date.parse(move.start)>=end.getTime()));
+    assert(Date.parse(recommendation.moves[0]!.end)<=Date.parse(recommendation.moves[1]!.start));
+    await f.capabilities.actions.apply(f.access,view,'StageScheduleRecommendation',{plan:seed.plan,moves:recommendation.moves},'stage');
+    assert.equal((await f.capabilities.functions.invoke(view,'validateSchedule',{plan:seed.plan},context) as {valid:boolean}).valid,true);
+    assert.equal((await graph.query({type:'ScheduledActivity'})).items.length,0);
+    await assert.rejects(f.capabilities.actions.apply(f.access,view,'StageScheduleRecommendation',
+      {plan:seed.plan,moves:recommendation.moves},'stale'),/revision/);
+  }finally{await f.close();}
+});
+
+test('prepared candidate trials, saved evaluations and reviewer handoff share the existing Scenario transaction',async()=>{
+  const f=await fixture();try{
+    const seed=await seedPlan(f), graph=new Objects(f.db,f.model,f.access), scenarios=new Scenarios(f.db);
+    const plan=await graph.read(seed.plan), calendar=await graph.read(seed.availability);
+    const start=new Date(Date.now()+30*60000).toISOString(), end=new Date(Date.now()+60*60000).toISOString();
+    const trial=trialScenariosSchema.parse({
+      cases:[{name:'case1',inputs:{plan:plan.ref},evidence:[{object:plan.ref,revision:plan.revision},{object:calendar.ref,revision:calendar.revision}]}],
+      variants:[{name:'Baseline',steps:[]},{name:'Candidate',steps:[{kind:'action',name:'schedule',action:'SaveScheduleActivity',
+        input:{plan:{input:'plan'},id:{value:'trial'},name:{value:'Trial'},start:{value:start},end:{value:end}}}]}],
+      metrics:[{name:'valid',function:'validateSchedule',input:{plan:{input:'plan'}},path:['valid']}],
+    });
+    const evaluations=new ScenarioEvaluations(f.db,f.capabilities.actions,f.capabilities.functions);
+    const definition=structuredClone(f.model.document);definition.version+='-candidate';
+    const candidate=await f.metadata.prepare(definition,f.capabilities,f.publisher);
+    const offline=await evaluations.trial(f.access,candidate,trial,f.model.release);
+    assert.equal(offline.release,candidate.release);
+    assert.equal(offline.cases[0]!.variants[1]!.status,'completed');
+    assert.equal((await f.metadata.active()).release,f.model.release);
+    assert.equal((await scenarios.list(f.access,f.model)).items.length,0);
+    const suite=await evaluations.saveSuite(f.access,f.model,{name:'Release test',requestId:'suite',trial});
+    const report=await evaluations.runSuite(f.access,f.model,suite);
+    const proposed=await evaluations.promote(f.access,f.model,{run:report.run,case:'case1',variant:'Candidate',
+      reviewers:['reviewer-test'],requestId:'promote'});
+    const diff=await scenarios.inspect(f.access,f.model,proposed.id);
+    assert.equal(diff.objects[0]?.ref.type,'ScheduledActivity');
+    assert.equal((await graph.query({type:'ScheduledActivity'})).items.length,0);
+    await assert.rejects(f.capabilities.actions.apply(f.access,f.model,'CommitSchedulePlan',
+      {plan:seed.plan,scenarioId:proposed.id,revision:proposed.revision},'premature-merge'),/approval|review/i);
+    await graph.edit(calendar.ref,calendar.revision,{sourceVersion:'new evidence'});
+    await assert.rejects(evaluations.promote(f.access,f.model,{run:report.run,case:'case1',variant:'Candidate',
+      reviewers:['reviewer-test'],requestId:'stale-evidence'}),/evidence/i);
+    assert.equal((await scenarios.list(f.access,f.model)).items.length,1);
+  }finally{await f.close();}
 });
