@@ -15,7 +15,7 @@ import { petRideDefinition, petRideType } from './pet-ride.js';
 import { addProcessLogs } from './process-definition.js';
 import { readFileSync } from 'node:fs';
 import type { OntologyDocument } from './schema.js';
-import { fliggyServicesDefinition as fliggy, servicesDefinition as services } from './services.js';
+import { fliggyServicesDefinition as fliggy, marketplaceDefinition as marketplace, servicesDefinition as services } from './services.js';
 import { fliggyFlightBookingDefinition } from './fliggy-flight-booking.js';
 import { fliggyHotelDefinition } from './fliggy-hotel.js';
 import { travelDefinition as travel } from './travel.js';
@@ -58,6 +58,12 @@ businessDefinition.linkTypes.push(...fliggy.linkTypes);
 businessDefinition.functionTypes.push(...fliggy.functionTypes);
 businessDefinition.actionTypes.push(...fliggy.actionTypes);
 businessDefinition.dataSources.push(...fliggy.dataSources);
+businessDefinition.objectTypes.push(...marketplace.objectTypes);
+businessDefinition.interfaceTypes.push(...marketplace.interfaceTypes);
+businessDefinition.linkTypes.push(...marketplace.linkTypes);
+businessDefinition.functionTypes.push(...marketplace.functionTypes);
+businessDefinition.actionTypes.push(...marketplace.actionTypes);
+businessDefinition.dataSources.push(...marketplace.dataSources);
 businessDefinition.objectTypes.push(...fliggyHotelDefinition.objectTypes);
 businessDefinition.functionTypes.push(...fliggyHotelDefinition.functionTypes);
 businessDefinition.actionTypes.push(...fliggyHotelDefinition.actionTypes);
@@ -97,7 +103,7 @@ businessDefinition.objectTypes.find(type=>type.apiName==='RideRequest')!.propert
 businessDefinition.typeGroups=[
   {apiName:'Travel',displayName:'出行',description:'Places, routes and source-backed price estimates',objectTypes:[...ride.objectTypes.map(type=>type.apiName),petRideType]},
   {apiName:'Scheduling',displayName:'排程',description:'Resources, calendar availability and schedule plans',objectTypes:scheduling.objectTypes.map(type=>type.apiName)},
-  {apiName:'Services',displayName:'服务',description:'Provider-neutral service offerings',objectTypes:[...services.objectTypes,...luckin.objectTypes,...fliggy.objectTypes,...fliggyHotelDefinition.objectTypes,...fliggyFlightBookingDefinition.objectTypes,...diningReservations.objectTypes].map(type=>type.apiName)},
+  {apiName:'Services',displayName:'服务',description:'Provider-neutral service offerings',objectTypes:[...services.objectTypes,...luckin.objectTypes,...fliggy.objectTypes,...marketplace.objectTypes,...fliggyHotelDefinition.objectTypes,...fliggyFlightBookingDefinition.objectTypes,...diningReservations.objectTypes].map(type=>type.apiName)},
   {apiName:'TimedTravel',displayName:'定时出行',description:'Authorized event and travel planning',objectTypes:[...travel.objectTypes,...journey.objectTypes,...flight.objectTypes].map(type=>type.apiName)},
   {apiName:'Payments',displayName:'付款',description:'Merchant order handoff and independently read payment status',objectTypes:payments.objectTypes.map(type=>type.apiName)},
   {apiName:'Models',displayName:'三维模型',description:'Model assets and annotations',objectTypes:applications.objectTypes.map(type=>type.apiName)},
@@ -108,7 +114,7 @@ for(const group of businessDefinition.typeGroups)for(const name of group.objectT
 
 for(const fn of businessDefinition.functionTypes){
   if(fn.apiName==='embedTextLocal' || fn.apiName===geometryUploadCriterion){fn.dependencies={};continue;}
-  if(documents.functionTypes.includes(fn)||fliggy.functionTypes.includes(fn)||fliggyHotelDefinition.functionTypes.includes(fn)||fliggyFlightBookingDefinition.functionTypes.includes(fn)||diningResearchFunctions.includes(fn)||dianpingResearchFunctions.includes(fn)||diningReservations.functionTypes.includes(fn)||petRideDefinition.functionTypes.includes(fn)||fn===diningActivityFunction)continue;
+  if(documents.functionTypes.includes(fn)||fliggy.functionTypes.includes(fn)||marketplace.functionTypes.includes(fn)||fliggyHotelDefinition.functionTypes.includes(fn)||fliggyFlightBookingDefinition.functionTypes.includes(fn)||diningResearchFunctions.includes(fn)||dianpingResearchFunctions.includes(fn)||diningReservations.functionTypes.includes(fn)||petRideDefinition.functionTypes.includes(fn)||fn===diningActivityFunction)continue;
   if(fn === flightPositionFunction || journey.functionTypes.includes(fn) || flight.functionTypes.includes(fn) || payments.functionTypes.includes(fn) || deliveryFunctions.includes(fn) || locationFunctions.includes(fn) || mapFunctions.includes(fn) || luckin.functionTypes.includes(fn))continue;
   if(ride.functionTypes.some(item=>item.apiName===fn.apiName)){
     fn.dependencies={objectTypes:ride.objectTypes.map(type=>type.apiName),interfaceTypes:ride.interfaceTypes.map(type=>type.apiName),linkTypes:ride.linkTypes.map(link=>link.apiName),dataSources:ride.dataSources.map(source=>source.apiName),functions:ride.functionTypes.filter(item=>item.apiName!==fn.apiName).map(item=>item.apiName)};
