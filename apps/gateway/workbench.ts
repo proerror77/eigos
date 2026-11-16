@@ -5,9 +5,13 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import type { Config } from '../../packages/core/config.js';
+import type { VerifyToken } from './auth.js';
 import { z } from 'zod';
 
-export function mountWorkbench(app: express.Express, config: Config) {
+const scopes = 'openid ontology:read ontology:write tasks:read tasks:write';
+const deviceGrant = 'urn:ietf:params:oauth:grant-type:device_code';
+
+export function mountWorkbench(app: express.Express, config: Config, verify: VerifyToken) {
   const directory = fileURLToPath(new URL('../workbench/', import.meta.url));
   const importMap =
     readFileSync(join(directory, 'index.html'), 'utf8').match(
@@ -15,9 +19,16 @@ export function mountWorkbench(app: express.Express, config: Config) {
     )?.[1] ?? '';
   const require = createRequire(import.meta.url),
     three = join(dirname(require.resolve('three')), '..');
+  const issuer = config.OAUTH_ISSUER;
+  const clientId = config.EIGOS_AUTH_MODE === 'jwt' ? config.OAUTH_WORKBENCH_CLIENT_ID : undefined;
+  const cookieOptions = {
+    httpOnly: true, secure: new URL(config.PUBLIC_URL).protocol === 'https:',
+    sameSite: 'strict', path: '/workbench/login',
+  } as const;
+  let starting = 0;
   const logins = new Map<
     string,
-    { device: string; expires: number; interval: number; next: number; cookie: string }
+    { device: string; expires: number; interval: number; next: number; cookie: string; polling?: boolean }
   >();
   const cookie = (req: express.Request) =>
     req.headers.cookie
@@ -30,8 +41,8 @@ export function mountWorkbench(app: express.Express, config: Config) {
       device_code: z.string(),
       user_code: z.string(),
       verification_uri_complete: z.url(),
-      expires_in: z.number(),
-      interval: z.number().optional(),
+      expires_in: z.number().int().positive(),
+      interval: z.number().int().positive().optional(),
     })
     .passthrough();
   app.use('/workbench', (_req, res, next) => {
@@ -47,93 +58,98 @@ export function mountWorkbench(app: express.Express, config: Config) {
   app.get('/workbench/config', (_req, res) =>
     res.json({
       development: config.EIGOS_AUTH_MODE === 'development',
-      deviceLogin: Boolean(config.OAUTH_WORKBENCH_CLIENT_ID && config.OAUTH_ISSUER),
-      scopes: 'openid ontology:read ontology:write tasks:read tasks:write',
+      deviceLogin: Boolean(clientId && issuer),
+      scopes,
     }),
   );
+  app.use('/workbench/login', (_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
+  const providerRequest = (path: string, fields: Record<string, string>) => fetch(new URL(path, issuer), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(fields),
+    redirect: 'error',
+    signal: AbortSignal.timeout(15000),
+  });
   app.post('/workbench/login/start', async (req, res) => {
-    if (!config.OAUTH_WORKBENCH_CLIENT_ID || !config.OAUTH_ISSUER) {
-      res.status(503).json({ error: 'Configure the workbench OAuth public client' });
+    if (!clientId || !issuer) {
+      res.status(503).json({ error: '请先配置工作台登录。' });
       return;
     }
-    const now = Date.now();
-    for (const [id, session] of logins) if (session.expires <= now) logins.delete(id);
-    if (logins.size >= 100) {
-      res.status(429).json({ error: 'Too many pending logins' });
+    const now = Date.now(), previous = cookie(req);
+    for (const [id, session] of logins)
+      if (session.expires <= now || session.cookie === previous) logins.delete(id);
+    if (logins.size + starting >= 100) {
+      res.status(429).json({ error: '当前登录请求过多，请稍后重试。' });
       return;
     }
-    const response = await fetch(new URL('oauth/device/code', config.OAUTH_ISSUER), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: config.OAUTH_WORKBENCH_CLIENT_ID,
-        audience: config.OAUTH_AUDIENCE!,
-        scope: 'openid ontology:read ontology:write tasks:read tasks:write',
-      }),
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!response.ok) {
-      res.status(502).json({ error: 'Login provider rejected this client configuration' });
-      return;
+    starting++;
+    try {
+      const response = await providerRequest('oauth/device/code', {
+        client_id: clientId, audience: config.OAUTH_AUDIENCE!, scope: scopes,
+      });
+      if (!response.ok) throw new Error('Device authorization failed');
+      const data = deviceSchema.parse(await response.json());
+      if (new URL(data.verification_uri_complete).origin !== new URL(issuer).origin)
+        throw new Error('Unexpected login provider URL');
+      const id = randomUUID(), secret = randomUUID();
+      const interval = Math.max(5, data.interval ?? 5), expiresIn = Math.min(data.expires_in, 900);
+      const issued = Date.now();
+      logins.set(id, {
+        device: data.device_code, cookie: secret, interval,
+        expires: issued + expiresIn * 1000, next: issued + interval * 1000,
+      });
+      res.cookie('eigos_login', secret, { ...cookieOptions, maxAge: expiresIn * 1000 });
+      res.json({ id, userCode: data.user_code, url: data.verification_uri_complete, interval, expiresIn });
+    } catch {
+      res.status(502).json({ error: '账户服务无法开始登录，请稍后重试。' });
+    } finally {
+      starting--;
     }
-    const data = deviceSchema.parse(await response.json());
-    if (new URL(data.verification_uri_complete).origin !== new URL(config.OAUTH_ISSUER).origin)
-      throw new Error('Unexpected login provider URL');
-    const id = randomUUID(),
-      secret = randomUUID(),
-      interval = Math.max(5, data.interval ?? 5);
-    logins.set(id, {
-      device: data.device_code,
-      expires: now + Math.min(data.expires_in, 900) * 1000,
-      interval,
-      next: now + interval * 1000,
-      cookie: secret,
-    });
-    res.cookie('eigos_login', secret, {
-      httpOnly: true,
-      secure: config.PUBLIC_URL.startsWith('https:'),
-      sameSite: 'strict',
-      path: '/workbench/login',
-      maxAge: 900000,
-    });
-    res.json({ id, userCode: data.user_code, url: data.verification_uri_complete, interval });
   });
   app.post('/workbench/login/poll', async (req, res) => {
-    const id = z.uuid().parse(req.body.id),
-      session = logins.get(id);
-    if (!session || session.expires <= Date.now() || session.cookie !== cookie(req)) {
-      res.status(403).json({ error: 'Login session expired' });
+    const id = z.uuid().parse(req.body.id), session = logins.get(id);
+    if (!clientId || !session || session.expires <= Date.now() || session.cookie !== cookie(req)) {
+      res.status(403).json({ error: '登录会话已失效，请重新开始。' });
       return;
     }
-    if (Date.now() < session.next) {
+    if (session.polling || Date.now() < session.next) {
       res.status(202).json({ pending: true, interval: session.interval });
       return;
     }
-    session.next = Date.now() + session.interval * 1000;
-    const response = await fetch(new URL('oauth/token', config.OAUTH_ISSUER!), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: config.OAUTH_WORKBENCH_CLIENT_ID!,
-        device_code: session.device,
-        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-      }),
-      signal: AbortSignal.timeout(15000),
-    });
-    const data = (await response.json()) as { error?: string; access_token?: string; expires_in?: number };
-    if (data.error === 'authorization_pending' || data.error === 'slow_down') {
-      if (data.error === 'slow_down') session.interval += 5;
-      res.status(202).json({ pending: true, interval: session.interval });
-      return;
+    session.polling = true;
+    try {
+      const response = await providerRequest('oauth/token', {
+        client_id: clientId, device_code: session.device, grant_type: deviceGrant,
+      });
+      const data = z.object({
+        error: z.string().optional(), access_token: z.string().optional(), expires_in: z.number().optional(),
+      }).parse(await response.json());
+      if (data.error === 'authorization_pending' || data.error === 'slow_down') {
+        if (data.error === 'slow_down') session.interval += 5;
+        res.status(202).json({ pending: true, interval: session.interval });
+        return;
+      }
+      logins.delete(id);
+      res.clearCookie('eigos_login', cookieOptions);
+      if (!response.ok || !data.access_token || session.expires <= Date.now()) {
+        res.status(403).json({ error: '登录已被拒绝或过期，请重新开始。' });
+        return;
+      }
+      const identity = await verify(data.access_token).catch(() => null);
+      if (identity?.clientId !== clientId || !identity.scopes.includes('ontology:read')) {
+        res.status(403).json({ error: '此账户没有可用于工作台的访问权限。' });
+        return;
+      }
+      res.json({ accessToken: data.access_token, expiresIn: data.expires_in });
+    } catch {
+      res.status(502).json({ error: '账户服务暂时无法验证登录，请重试。' });
+    } finally {
+      session.polling = false;
+      session.next = Date.now() + session.interval * 1000;
     }
-    logins.delete(id);
-    res.clearCookie('eigos_login', { path: '/workbench/login' });
-    if (!response.ok || !data.access_token) {
-      res.status(403).json({ error: 'Login was declined or expired' });
-      return;
-    }
-    res.setHeader('Cache-Control', 'no-store');
-    res.json({ accessToken: data.access_token, expiresIn: data.expires_in });
   });
   app.use('/workbench/vendor/three', express.static(three, { dotfiles: 'deny', index: false }));
   app.use('/workbench', express.static(directory, { dotfiles: 'deny', index: 'index.html' }));

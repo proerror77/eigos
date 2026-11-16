@@ -154,4 +154,12 @@ Luma 默认沿用原 PA 已连接的 MCP。未来执行需要 PA 持续处理 `l
 
 [类型系统与资源包](docs/guides/type-system.md) 支持共享属性、版本化值类型、Struct、Interface 继承及可审阅的共享定义导入。[查询与语义检索](docs/guides/search.md) 支持嵌套字段、组合筛选、派生属性和本地多语言向量；`npm run embeddings:warm` 可提前下载固定版本模型。[实体归一](docs/guides/entity-resolution.md)、[跨本体对象复制](docs/guides/ontology-data-migration.md) 和 [Workflow 与规则](docs/guides/automation.md) 保留独立授权与审计。
 
-`/workbench/` 提供同一套服务的浏览器入口，包括建模提案、对象及关系探索、查询、Scenario、排程和规则。宿主提供当前身份的 Bearer token；界面不授予额外业务权限。三维文件与标注是独立的可选应用领域，Ontology 核心运行不依赖它。
+`/workbench/` 提供同一套服务的浏览器入口，包括建模提案、对象及关系探索、查询、Scenario、排程和规则。三维文件与标注是独立的可选应用领域。
+
+### 工作台账户登录
+
+在既有 Auth0 租户中为工作台使用 Native 类型的公开客户端，启用 Device Code grant、OIDC 和团队使用的连接。沿用 Gateway 的 issuer、audience 及 tenant claim。该客户端签发的 JWT 应包含该客户端的 `azp` 或 `client_id`、有效的 tenant claim 和 `ontology:read`。同一账号继续使用原有 owner 和 Ontology 权限。客户端访问 scope 与建模、审核或对象数据授权分别由身份提供方和 EIGOS 权限管理。
+
+设置 Gateway 的 `OAUTH_WORKBENCH_CLIENT_ID` 后，`/workbench/config` 应返回 `deviceLogin: true`。工作台选择「通过账户登录」，在身份提供方页面确认显示的代码。验收时用各自授权的建模者与审阅者账号验证身份、提案准备和审核权限，并检查审阅者只看到受邀且有权读取的方案。
+
+配置流程参见 [Auth0 Device Authorization](https://auth0.com/docs/get-started/authentication-and-authorization-flow/device-authorization-flow/call-your-api-using-the-device-authorization-flow)。

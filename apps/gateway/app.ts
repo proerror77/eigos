@@ -72,7 +72,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   const card = agentCard(config.PUBLIC_URL);
   app.get('/.well-known/agent-card.json', (_req, res) => res.json(AgentCard.toJSON(card)));
   app.get('/.well-known/oauth-protected-resource', (_req, res) => res.json({ resource: config.PUBLIC_URL, authorization_servers: config.OAUTH_ISSUER ? [config.OAUTH_ISSUER] : [], bearer_methods_supported: ['header'] }));
-  mountWorkbench(app,config);
+  mountWorkbench(app, config, verify);
   app.use(async (req, res, next) => {
     const token = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1];
     try {

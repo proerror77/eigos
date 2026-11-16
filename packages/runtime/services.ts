@@ -470,6 +470,13 @@ export function ontologyServices(
   register('preview_automation', 'Evaluate a saved automation against Scenario revisions and preview its Actions without enqueuing a live run.',
     automationPreviewSchema,true,async (a,input)=>automation.preview(a,await active(),input));
   register(
+    'scenario_trial_options',
+    'List the authorized Actions and read-only Functions available for an offline Scenario trial.',
+    z.strictObject({}),
+    false,
+    async (access) => evaluations.options(access, await active()),
+  );
+  register(
     'compare_scenarios',
     'Compare exact Scenario revisions and shared metrics against one current Ontology baseline.',
     compareScenariosSchema,

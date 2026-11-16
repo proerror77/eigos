@@ -38,6 +38,7 @@ export interface ScenarioInfo {
   expiresAt: string;
 }
 export interface ScenarioInspection extends ScenarioInfo {
+  review?: { reviewers: string[]; canInvite: boolean };
   objects: {
     ref: ObjectRef;
     before: Record<string, unknown> | null;

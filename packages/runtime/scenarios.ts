@@ -708,7 +708,8 @@ export class Scenarios {
     const inspect = async (client: Sql) => {
       const view = await this.view(access, model, id, client);
       await lockEdits(this.db, model, owner, client); await checkScenario(this.db, view, owner, client, true);
-      const row = (await this.db.query(`SELECT id,name,revision,state,expires_at,journal_steps FROM ${this.db.schema}.scenarios WHERE owner=$1 AND id=$2`, [owner, id], client)).rows[0]!;
+      const row = (await this.db.query(`SELECT id,name,revision,state,expires_at,journal_steps,kind,reviewers,workflow_run_id
+        FROM ${this.db.schema}.scenarios WHERE owner=$1 AND id=$2`, [owner, id], client)).rows[0]!;
       const changes = await this.changes(owner, id, client), objects = [];
       for (const item of changes.objects) {
         access.read(model, item.type);
@@ -737,7 +738,15 @@ export class Scenarios {
         const present=(await this.db.query(`SELECT 1 FROM ${this.db.schema}.links WHERE projection=$1 AND owner=$2 AND type=$3 AND from_type=$4 AND from_id=$5 AND to_type=$6 AND to_id=$7`,[model.projection,owner,item.type,item.from_type,item.from_id,item.to_type,item.to_id],client)).rowCount!>0;
         links.push({ type: item.type, from: { type: item.from_type, id: item.from_id }, to: { type: item.to_type, id: item.to_id }, removed: item.removed,conflict:present!==item.base_present || await this.cardinalityConflict(model,owner,item,client) });
       }
-      await access.refresh(client); return { id:String(row.id),name:String(row.name),revision:Number(row.revision),state:String(row.state),expiresAt:row.expires_at as Date,objects,links,conflicts:[...objects,...links].some(item=>item.conflict) };
+      await access.refresh(client);
+      return {
+        id: String(row.id), name: String(row.name), revision: Number(row.revision), state: String(row.state),
+        expiresAt: row.expires_at as Date, objects, links, conflicts: [...objects, ...links].some(item => item.conflict),
+        review: {
+          reviewers: row.reviewers as string[],
+          canInvite: row.kind === 'persisted' && row.workflow_run_id === null,
+        },
+      };
     };
     return existing ? inspect(existing) : this.db.transaction(inspect);
   }

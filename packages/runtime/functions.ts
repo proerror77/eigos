@@ -65,9 +65,12 @@ export class Functions {
       return [fn.apiName, entry.binding];
     }));
   }
-  requireScenarioEvaluation(model: PublishedOntology, name: string) {
+  supportsScenarioEvaluation(model: PublishedOntology, name: string) {
     const definition = model.functions.get(name);
-    if (!definition || definition.source || !this.registered.get(key(definition))?.handler.scenarioEvaluation)
+    return Boolean(definition && !definition.source && this.registered.get(key(definition))?.handler.scenarioEvaluation);
+  }
+  requireScenarioEvaluation(model: PublishedOntology, name: string) {
+    if (!this.supportsScenarioEvaluation(model, name))
       throw new Conflict(`Function is unavailable for offline Scenario evaluation: ${name}`);
   }
   async invoke(model: PublishedOntology, name: string, input: Record<string, unknown>, context: FunctionContext) {
