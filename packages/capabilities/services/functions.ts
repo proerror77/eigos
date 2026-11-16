@@ -1,6 +1,6 @@
 import { Conflict, NotFound, SourceReadFailure, digest } from '../../core/identity.js';
 import { objectRefSchema, type ObjectRef } from '../../ontology/schema.js';
-import { serviceCatalog, travelOfferSearchType, travelOfferSources } from '../../ontology/services.js';
+import { marketplaceOfferType, serviceCatalog, travelOfferSearchType, travelOfferSources } from '../../ontology/services.js';
 import {
   attachServiceInput,
   readServiceInput,
@@ -262,7 +262,8 @@ export function serviceFunctions(resolve: ServiceResolver, getSources: () => Sou
       );
     } else if (context.objects.model.implements(item.ref.type, 'FlightOffer')) {
       reasons.push('displayed_fare_only', 'seat_inventory_and_fare_terms_not_observed', 'booking_connector_not_configured');
-    } else if (context.objects.model.implements(item.ref.type, 'ProductOffer')) {
+    } else if (context.objects.model.implements(item.ref.type, 'ProductOffer') ||
+      context.objects.model.implements(item.ref.type, marketplaceOfferType)) {
       planning = p.available === false ? 'unavailable' : p.available === true ? 'available' : 'unknown';
       reasons.push('delivery_time_unknown', 'merchant_checkout_required');
       if (p.available === false) commitment = 'unavailable';

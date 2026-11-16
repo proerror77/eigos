@@ -449,22 +449,17 @@ fliggyServicesDefinition.actionTypes.push({
   function: 'searchTravelOffers',
 });
 
-const productOfferShape = {
-  ...productFacts.partial({ variantId: true, sellerId: true, merchantDomain: true }).shape,
-  sellerName: marketplaceFacts.shape.sellerName,
-  priceKind: marketplaceFacts.shape.priceKind.optional(),
-};
 for (const [types, apiName, shape] of [
   [['RollingGoHotelOffer', 'FliggyHotelOffer'], 'HotelOffer', { ...hotelFacts.shape, priceKind: z.enum(['reference', 'room_rate']) }],
   [['FliggyFlightOffer'], 'FlightOffer', flightFacts.shape],
-  [['ShopifyProductOffer'], 'ProductOffer', productOfferShape],
+  [['ShopifyProductOffer'], 'ProductOffer', productFacts.shape],
 ] as const) {
   const definition = apiName === 'FlightOffer' ? fliggyServicesDefinition : servicesDefinition;
   definition.interfaceTypes.push({
     apiName,
     description: `Provider-neutral ${apiName} selection. Concrete implementations bind source-specific identity and Actions.`,
     properties: properties(shape),
-    optionalProperties: Object.entries(shape).filter(([, schema]) => schema.isOptional()).map(([name]) => name),
+    optionalProperties: ['url'],
     links: { plans: { target: 'SchedulePlan', cardinality: 'many', required: true } },
     actions: {
       select: {
@@ -477,7 +472,7 @@ for (const [types, apiName, shape] of [
   for (const type of types) {
     const offer = [...servicesDefinition.objectTypes, ...fliggyServicesDefinition.objectTypes].find(item => item.apiName === type)!;
     offer.interfaces[apiName] = {
-      properties: identity(Object.keys(shape).filter(name => offer.properties[name])),
+      properties: identity(Object.keys(shape)),
       links: { plans: 'plans' },
       actions: { select: { action: 'AttachPlanService', parameters: { service: 'service', plan: 'plan' } } },
     };
@@ -485,7 +480,24 @@ for (const [types, apiName, shape] of [
 }
 
 export const marketplacePurchaseType = 'MarketplacePurchaseHandoff';
-export const marketplaceDefinition = providerServices(marketplaceServiceCatalog);
+export const marketplaceOfferType = 'MarketplaceProductOffer';
+export const marketplaceDefinition = {
+  ...providerServices(marketplaceServiceCatalog),
+  interfaceTypes: [{
+    apiName: marketplaceOfferType,
+    description: 'A marketplace catalog observation with optional seller, variant and product link.',
+    properties: properties(marketplaceFacts.shape),
+    optionalProperties: Object.entries(marketplaceFacts.shape).filter(([, schema]) => schema.isOptional()).map(([name]) => name),
+    links: { plans: { target: 'SchedulePlan', cardinality: 'many', required: true } },
+    actions: {
+      select: {
+        parameters: json(attachServiceInput),
+        objectParameters: { service: marketplaceOfferType, plan: 'SchedulePlan' },
+        required: true,
+      },
+    },
+  }] satisfies OntologyDocument['interfaceTypes'],
+};
 const purchaseHandoff = object(marketplacePurchaseType, 'A buyer handoff for one current marketplace offer.', {
   id: z.string(),
   ...marketplacePurchaseFacts.omit({ url: true }).shape,
@@ -494,8 +506,8 @@ const purchaseHandoff = object(marketplacePurchaseType, 'A buyer handoff for one
 marketplaceDefinition.objectTypes.push(purchaseHandoff);
 for (const service of marketplaceServiceCatalog) {
   const offer = marketplaceDefinition.objectTypes.find(item => item.apiName === service.object)!;
-  offer.interfaces.ProductOffer = {
-    properties: identity(Object.keys(productOfferShape).filter(name => offer.properties[name])),
+  offer.interfaces[marketplaceOfferType] = {
+    properties: identity(Object.keys(marketplaceFacts.shape)),
     links: { plans: 'plans' },
     actions: { select: { action: 'AttachPlanService', parameters: { service: 'service', plan: 'plan' } } },
   };

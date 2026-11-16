@@ -58,6 +58,7 @@ businessDefinition.functionTypes.push(...fliggy.functionTypes);
 businessDefinition.actionTypes.push(...fliggy.actionTypes);
 businessDefinition.dataSources.push(...fliggy.dataSources);
 businessDefinition.objectTypes.push(...marketplace.objectTypes);
+businessDefinition.interfaceTypes.push(...marketplace.interfaceTypes);
 businessDefinition.linkTypes.push(...marketplace.linkTypes);
 businessDefinition.functionTypes.push(...marketplace.functionTypes);
 businessDefinition.actionTypes.push(...marketplace.actionTypes);

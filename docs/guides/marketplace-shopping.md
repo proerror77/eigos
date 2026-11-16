@@ -10,7 +10,7 @@ Agent 通过 EIGOS Ontology MCP 查找淘宝、天猫及京东联盟的商品，
 
 淘宝桌面版 MCP 配置因维护曾暂停。EIGOS 的连接使用两家联盟的公开开发接口。 [淘宝官方通知](https://jianghu.taobao.com/detail/47301_94927182)
 
-两家搜索沿用 `ProductSearch`，以 `{ "query": "折叠雨伞", "country": "CN", "limit": 5 }` 为例。在 PA 中可选择两家的已授权 Action，再通过 `readServiceSearchPages` 对照两页 `ProductOffer`。结果保留平台、商品原生 ID、可用的店铺信息、可核对的参考价格和观察时间。联盟只覆盖符合条件的商品，且每页有界。购买链接来自联盟响应，可能包含平台推广参数。库存和配送保持未知。淘宝条目没有 SKU 时不推定具体规格，JD SKU 保留原始整数精度。
+两家搜索沿用 `ProductSearch`，以 `{ "query": "折叠雨伞", "country": "CN", "limit": 5 }` 为例。在 PA 中可选择两家的已授权 Action，再通过 `readServiceSearchPages` 对照两页 `MarketplaceProductOffer`。结果保留平台、商品原生 ID、可用的店铺信息、可核对的参考价格和观察时间。联盟只覆盖符合条件的商品，且每页有界。购买链接来自联盟响应，可能包含平台推广参数。库存和配送保持未知。淘宝条目没有 SKU 时不推定具体规格，JD SKU 保留原始整数精度。
 
 购物交接使用搜索结果中当前的具体商品引用，例如 `{ "offer": { "type": "TaobaoProductOffer", "id": "<offer-id>" } }`。随后的读回使用 `{ "handoff": { "type": "MarketplacePurchaseHandoff", "id": "<handoff-id>" } }`。系统复核来源未过期、权限和连接仍有效、商品未被刷新或人工覆盖，并从原报价取商品网址。状态为 `awaiting_buyer`。价格是 CNY 参考价，优惠、地区库存、运费和实付由平台结算页确认。
 

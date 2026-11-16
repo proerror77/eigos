@@ -108,7 +108,7 @@ test('Taobao and JD search and buyer handoff Actions work on the published Gatew
     const jdPage = await apply('SearchJdProducts', query, 'jd');
     assert.equal((await graph.read(taobaoPage)).properties.evidence, 'provider_mock');
     assert.equal((await graph.read(jdPage)).properties.complete, false);
-    const items = (await graph.query({ type: 'ProductOffer' })).items;
+    const items = (await graph.query({ type: 'MarketplaceProductOffer' })).items;
     const taobao = items.find(item => item.ref.type === 'TaobaoProductOffer')!;
     const jd = items.find(item => item.ref.type === 'JdProductOffer')!;
     assert.equal(taobao.properties.amountMinor, 3250);

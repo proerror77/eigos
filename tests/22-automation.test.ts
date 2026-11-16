@@ -608,12 +608,8 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   geometry.submissionCriteria = [];
   geometry.function = 'registerGeometry';
   v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type => type.apiName !== 'RideInquiryWithPlaceClues' &&
-    !fliggyServicesDefinition.interfaceTypes.some(item => item.apiName === type.apiName));
-  const productOffer = v9Definition.interfaceTypes.find(type => type.apiName === 'ProductOffer')!;
-  delete productOffer.properties.sellerName;
-  delete productOffer.properties.priceKind;
-  productOffer.optionalProperties = ['url'];
-  for (const field of ['variantId', 'sellerId', 'merchantDomain']) productOffer.properties[field]!.required = true;
+    !fliggyServicesDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
+    !marketplaceDefinition.interfaceTypes.some(item => item.apiName === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;
   v9Definition.objectTypes = v9Definition.objectTypes.filter(type => !addedTypes.has(type.apiName) && !addedLogs.some(log => log.type === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'ScheduledActivity')!.properties.dining;
