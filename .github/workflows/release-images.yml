@@ -1,0 +1,74 @@
+name: Release images
+# Publishes the Gateway and Worker images of one reviewed main commit. It runs only when started by hand.
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Main commit to publish (40 lowercase hex characters)
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: release-images-${{ inputs.source_sha }}
+  cancel-in-progress: false
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Require a main commit whose CI succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo 'Give the full 40-character commit' >&2; exit 1; }
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$SOURCE_SHA...main" --jq .status)
+          [[ "$status" == ahead || "$status" == identical ]] || { echo "$SOURCE_SHA is not on main" >&2; exit 1; }
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SOURCE_SHA&status=success&per_page=1" --jq .total_count)
+          [[ "$runs" -gt 0 ]] || { echo "CI has not succeeded on $SOURCE_SHA" >&2; exit 1; }
+  image:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Build and check the images from the exact source
+        run: |
+          docker build --target runtime --tag eigos-release:gateway .
+          docker build --target worker --tag eigos-release:worker .
+          scripts/container-smoke.sh eigos-release:gateway eigos-release:worker
+      - name: Log in to GitHub Container Registry
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$GH_TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+      - name: Publish immutable source tags
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          # Check both tags first, so a release never publishes one role and stops on the other.
+          for role in gateway worker; do
+            if result=$(docker manifest inspect "$repository/$role:sha-$SOURCE_SHA" 2>&1); then
+              echo "$role:sha-$SOURCE_SHA is already published and is never overwritten" >&2
+              exit 1
+            elif [[ "$result" != *"manifest unknown"* && "$result" != *"no such manifest"* && "$result" != *"not found"* ]]; then
+              echo "Could not establish that $role:sha-$SOURCE_SHA is absent: $result" >&2
+              exit 1
+            fi
+          done
+          for role in gateway worker; do
+            docker tag "eigos-release:$role" "$repository/$role:sha-$SOURCE_SHA"
+            docker push "$repository/$role:sha-$SOURCE_SHA"
+            echo "- \`$(docker inspect --format '{{index .RepoDigests 0}}' "$repository/$role:sha-$SOURCE_SHA")\`" >> "$GITHUB_STEP_SUMMARY"
+          done
