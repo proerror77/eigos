@@ -1,10 +1,13 @@
-import { Conflict, NotFound, digest } from '../../core/identity.js';
+import { Conflict, NotFound, SourceReadFailure, digest } from '../../core/identity.js';
 import { objectRefSchema, type ObjectRef } from '../../ontology/schema.js';
-import { serviceCatalog } from '../../ontology/services.js';
+import { serviceCatalog, travelOfferSearchType, travelOfferSources } from '../../ontology/services.js';
 import {
   attachServiceInput,
   readServiceInput,
   readServiceSearchPagesInput,
+  readTravelOfferSearchInput,
+  travelOfferSearchInput,
+  travelOfferSearchOutcomes,
   serviceObservation,
   lumaPAResponse,
   json,
@@ -14,6 +17,7 @@ import type { FunctionHandler, FunctionContext } from '../../runtime/functions.j
 import type { SourceProjection, Sources } from '../../runtime/sources.js';
 import { ServiceAuthorizationRequired, type ServiceResolver } from './sources.js';
 import { PARequests } from '../../runtime/pa.js';
+import { PermissionDenied } from '../../runtime/access.js';
 
 async function currentSource(resolve: ServiceResolver, owner: string, provider: ServiceName) {
   try {
@@ -107,7 +111,14 @@ export function serviceFunctions(resolve: ServiceResolver, getSources: () => Sou
         });
       }
       await source.assertCurrent();
-      const result = service.observation.parse(await source.read(input, context.signal));
+      const response = await source.read(input, context.signal).catch((error: unknown) => {
+        if (context.execution && (provider === 'RollingGo' || provider === 'Fliggy')) {
+          context.signal.throwIfAborted();
+          throw new SourceReadFailure('Supplier search failed', { cause: error });
+        }
+        throw error;
+      });
+      const result = service.observation.parse(response);
       await source.assertCurrent();
       if (result.provider !== provider || result.bindingId !== source.bindingId || result.inputDigest !== digest(input))
         throw new Conflict('Source result identity mismatch');
@@ -168,6 +179,58 @@ export function serviceFunctions(resolve: ServiceResolver, getSources: () => Sou
   handlers.set('readServiceSearchPages', async (input, context) => {
     const { searches } = readServiceSearchPagesInput.parse(input);
     return { pages: await Promise.all(searches.map(search => readSearch(search, context))) };
+  });
+  handlers.set('searchTravelOffers', async (input, context) => {
+    const { model, access } = context.objects;
+    if (!context.edit || model.scenario || !context.operationId)
+      throw new Conflict('Search travel offers through a formal Action before planning in a Scenario');
+    const { hotel, flight } = travelOfferSearchInput.parse(input);
+    if (!hotel && !flight) throw new Conflict('Hotel or flight search criteria are required');
+    const sources = getSources();
+    const jobs = travelOfferSources.flatMap(service => {
+      const query = service.searchInterface === 'HotelSearch' ? hotel : flight;
+      return query ? [{ service, query }] : [];
+    });
+    const results = await Promise.all(jobs.map(async ({ service, query }) => {
+      if (service.source === 'FliggyHotels' && 'currency' in query && query.currency !== 'CNY')
+        return { service, status: 'unsupported_currency' as const };
+      try {
+        access.action(model, service.action);
+        const result = await sources.read(model, service.source, query, access,
+          context.execution?.task, context.execution?.tasks, context.signal);
+        return { service, status: 'searched' as const, query, result };
+      } catch (error) {
+        context.signal.throwIfAborted();
+        const status = error instanceof PermissionDenied || error instanceof ServiceAuthorizationRequired
+          ? 'authorization_required' : 'unavailable';
+        return { service, status } as const;
+      }
+    }));
+    const search = { type: travelOfferSearchType, id: digest([context.principal.owner, context.operationId]) };
+    const outcomes = results.map(({ service, status }) => ({ source: service.source, status }));
+    return context.edit(search, async graph => {
+      await graph.create(search, { id: search.id, name: 'Travel offer search', outcomes });
+      for (const job of results) {
+        if (job.status !== 'searched') continue;
+        const { service } = job;
+        graph.access.action(graph.model, service.action);
+        sources.checkReadAccess(graph.model, service.source, graph.access);
+        const { receipt } = await sources.project(graph, service.source, job.query, job.result, context.signal);
+        await graph.link({ type: travelOfferSearchType + service.result, from: search, to: receipt });
+      }
+    });
+  });
+  handlers.set('readTravelOfferSearch', async (input, context) => {
+    const { search } = readTravelOfferSearchInput.parse(input);
+    if (search.type !== travelOfferSearchType) throw new Conflict('Expected a TravelOfferSearch');
+    const record = await context.objects.read(search);
+    const outcomes = travelOfferSearchOutcomes.parse(record.properties.outcomes);
+    const pages = await Promise.all(outcomes.filter(outcome => outcome.status === 'searched').map(async ({ source }) => {
+      const [page] = await context.objects.follow(search, source);
+      if (!page) throw new Conflict('Travel search result page is unavailable');
+      return readSearch(page.ref, context);
+    }));
+    return { search, outcomes, pages };
   });
   handlers.set('evaluateServiceOffering', async (input, context) => {
     const item = await currentService(context.objects, readServiceInput.parse(input).service),

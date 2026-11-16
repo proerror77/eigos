@@ -4,6 +4,9 @@ import { dianpingFunctions } from './dining/dianping.js';
 import { diningResearch } from './dining/research.js';
 import { diningReservationFunctions } from './dining/reservations.js';
 import { configuredFlightradar24 } from './flight/flightradar24.js';
+import { fliggyHotelFunctions } from './fliggy/hotel-booking.js';
+import { fliggyFlightBookingFunctions } from './fliggy/flight-booking.js';
+import { configuredFliggyFlight, configuredFliggyHotel } from './fliggy/top.js';
 import { flightFunctions } from './flight/functions.js';
 import { configuredVariFlight } from './flight/variflight.js';
 import { calendarJourneyFunctions } from './journey/functions.js';
@@ -40,7 +43,8 @@ export function createCapabilities(
   stripe: StripeSandboxResolver = configuredStripeSandbox(),
   connections: { paotui?: string; waimai?: string; amap?: string; amapFetch?: typeof fetch; variFlight?: string; variFlightFetch?: typeof fetch;
     fr24?: string; fr24Entrypoint?: string; calendar?: string; calendarFetch?: typeof fetch; travelPA?: string; travelPAFetch?: typeof fetch;
-    xiaohongshu?: string; xiaohongshuFetch?: typeof fetch; dianping?: string; dianpingFetch?: typeof fetch; diningWeb?: string; diningMiniProgram?: string } = {},
+    xiaohongshu?: string; xiaohongshuFetch?: typeof fetch; dianping?: string; dianpingFetch?: typeof fetch; diningWeb?: string; diningMiniProgram?: string;
+    fliggyHotel?: string; fliggyHotelFetch?: typeof fetch; fliggyFlight?: string; fliggyFlightFetch?: typeof fetch } = {},
 ) {
   let sources: Sources;
   const amap = configuredAmap(connections.amap, connections.amapFetch);
@@ -54,6 +58,8 @@ export function createCapabilities(
     ...applicationFunctions(db),
     [registerDocumentFunction, registerSchedulePlanDocument],
     ...serviceFunctions(services, () => sources),
+    ...fliggyFlightBookingFunctions(db, configuredFliggyFlight(connections.fliggyFlight, connections.fliggyFlightFetch)),
+    ...fliggyHotelFunctions(db, configuredFliggyHotel(connections.fliggyHotel, connections.fliggyHotelFetch)),
     ...travelFunctions(db, source, services, () => sources),
     ...didiRideWatchFunctions(db, source),
     ...calendarJourneyFunctions(db, getFunctions, amap, configuredJourneyCalendar(connections.calendar, connections.calendarFetch)),

@@ -21,6 +21,8 @@ export const configSchema = z.object({
   EIGOS_DIDI_CONNECTION_FILE: z.string().optional(),
   EIGOS_DIDI_WATCH_SANDBOX_CONNECTION_FILE: z.string().optional(),
   EIGOS_SERVICE_CONNECTION_FILE: z.string().optional(),
+  EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE: z.string().optional(),
+  EIGOS_FLIGGY_HOTEL_CONNECTION_FILE: z.string().optional(),
   EIGOS_PAOTUI_CONNECTION_FILE: z.string().optional(),
   EIGOS_WAIMAI_CONNECTION_FILE: z.string().optional(),
   EIGOS_AMAP_CONNECTION_FILE: z.string().optional(),

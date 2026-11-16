@@ -5,6 +5,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import { searchFliggy, type FlyAIRead } from '../packages/capabilities/fliggy/connector.js';
 import { FLIGGY_CLI_GUARD } from '../packages/capabilities/fliggy/cli-guard.js';
 import { configuredServices } from '../packages/capabilities/services/sources.js';
@@ -31,7 +32,7 @@ const hotelItem = (id: string, price: string) => ({
   shId: id, name: 'Fixture ' + id, address: 'Synthetic address', price, detailUrl: 'https://router.feizhu.com/hotel',
 });
 
-test('a PA task returns dated FlyAI flights and both hotel sources as separate verified pages', async () => {
+test('a PA task queries flights and both hotel sources concurrently and retains independent outcomes', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eigos-flyai-fixture-'));
   const file = join(directory, 'services.json');
   const binding = {
@@ -40,7 +41,19 @@ test('a PA task returns dated FlyAI flights and both hotel sources as separate v
   };
   const setConnection = (value: Record<string, unknown>) => writeFile(file, JSON.stringify([value]), { mode: 0o600 });
   await setConnection(binding);
+  const started = new Set<string>();
+  let releaseSuppliers!: () => void;
+  const allStarted = new Promise<void>(resolve => { releaseSuppliers = resolve; });
+  const waitForOtherSuppliers = async (source: string) => {
+    started.add(source);
+    if (started.size === 3) releaseSuppliers();
+    await Promise.race([
+      allStarted,
+      delay(5000, undefined, { ref: false }).then(() => { throw new Error('Supplier reads did not overlap'); }),
+    ]);
+  };
   const transport: FlyAIRead = async (command, criteria, key) => {
+    await waitForOtherSuppliers(command);
     assert.equal(key, undefined);
     if (command === 'search-flight') {
       assert.deepEqual(criteria, { origin: '上海', destination: '北京', depDate: flight.departureDate, backDate: flight.returnDate, journeyType: 1 });
@@ -50,30 +63,51 @@ test('a PA task returns dated FlyAI flights and both hotel sources as separate v
     return sourcePage([hotelItem('hotel-a', '¥2xx'), hotelItem('hotel-b', '¥500起')]);
   };
   const flyai = configuredServices(file, transport), rolling = serviceProvider();
+  let rollingFails = false;
   const f = await fixture({
     model: 'recorded-travel-search-decisions',
     async run(prompt, tools) {
-      assert.match(prompt, /readServiceSearchPages/);
-      const search = (type: string, implementation: string, input: unknown) =>
-        tools.get('apply_action')!.invoke({ interface: { type, implementation, action: 'search' }, input });
-      const searches = [];
-      searches.push(await search('FlightSearch', 'FliggyFlightSearch', flight));
-      searches.push(await search('HotelSearch', 'FliggyHotelSearch', hotel));
-      searches.push(await search('HotelSearch', 'RollingGoHotelSearch', hotel));
-      await tools.get('complete_with_function')!.invoke({ function: 'readServiceSearchPages', input: { searches } });
+      assert.match(prompt, /TravelOfferInquiry.search Interface Action on TravelOfferSearch so the supplier reads run concurrently/);
+      await tools.get('complete_with_action')!.invoke({
+        action: {
+          interface: { type: 'TravelOfferInquiry', implementation: 'TravelOfferSearch', action: 'search' },
+          input: { flight, hotel },
+        },
+        read: { function: 'readTravelOfferSearch', resultParameter: 'search' },
+      });
     },
-  }, (owner, provider) => provider === 'Fliggy' ? flyai(owner, provider) : rolling.resolve(owner, provider));
+  }, async (owner, provider) => {
+    if (provider === 'Fliggy') return flyai(owner, provider);
+    const source = await rolling.resolve(owner, provider);
+    return {
+      ...source,
+      async read(input, signal) {
+        await waitForOtherSuppliers('rollinggo-hotel');
+        if (rollingFails) throw new Error('Private supplier diagnostic');
+        return source.read(input, signal);
+      },
+    };
+  });
   try {
     const task = await f.tasks.submit(principal, { requestId: 'travel-search', message: '查上海到北京的往返机票，比较飞猪和 RollingGo 的酒店' });
     await f.worker.runOne();
     const finished = await f.tasks.get(principal, task.id);
     assert.equal(finished.state, 'completed', finished.error ?? '');
     type Page = { search: { ref: ObjectRef; properties: Record<string, unknown> }; items: Array<{ properties: Record<string, unknown> }>; complete: boolean };
-    const { pages } = finished.result as { pages: Page[] };
-    const [flights, hotels] = pages as [Page, Page, Page];
-    assert.deepEqual(pages.map(page => page.search.ref.type), ['FliggyFlightSearch', 'FliggyHotelSearch', 'RollingGoHotelSearch']);
-    assert.deepEqual(pages.map(page => page.items.length), [2, 2, 1]);
-    assert.deepEqual(pages.map(page => page.search.properties.provider), ['Fliggy', 'Fliggy', 'RollingGo']);
+    const { search, outcomes, pages } = finished.result as {
+      search: ObjectRef; outcomes: Array<{ source: string; status: string }>; pages: Page[];
+    };
+    assert.equal(started.size, 3);
+    assert.equal(search.type, 'TravelOfferSearch');
+    assert.deepEqual(outcomes, [
+      { source: 'RollingGoHotels', status: 'searched' },
+      { source: 'FliggyHotels', status: 'searched' },
+      { source: 'FliggyFlights', status: 'searched' },
+    ]);
+    const [, hotels, flights] = pages as [Page, Page, Page];
+    assert.deepEqual(pages.map(page => page.search.ref.type), ['RollingGoHotelSearch', 'FliggyHotelSearch', 'FliggyFlightSearch']);
+    assert.deepEqual(pages.map(page => page.items.length), [1, 2, 2]);
+    assert.deepEqual(pages.map(page => page.search.properties.provider), ['RollingGo', 'Fliggy', 'Fliggy']);
     assert.equal(flights.complete, false);
     assert.equal(flights.search.properties.accessMode, 'trial');
     assert.equal(flights.search.properties.evidence, 'provider_mock');
@@ -89,10 +123,39 @@ test('a PA task returns dated FlyAI flights and both hotel sources as separate v
     const read = async () => f.capabilities.functions.invoke(f.model, 'readServiceSearchPages', { searches: [flights.search.ref] },
       { principal, objects: new Objects(f.db, f.model, await Access.load(f.db, principal)), signal: AbortSignal.timeout(5000) });
     await assert.rejects(read, /Permission required/);
+    const readTravel = async (search: ObjectRef) => f.capabilities.functions.invoke(f.model, 'readTravelOfferSearch', { search },
+      { principal, objects: new Objects(f.db, f.model, await Access.load(f.db, principal)), signal: AbortSignal.timeout(5000) });
+    await assert.rejects(readTravel(search), /Permission required/);
+    const searchHotels = async (id: string) => f.capabilities.actions.apply(
+      await Access.load(f.db, principal), f.model, 'SearchTravelOffers', { hotel }, id,
+    );
+    const rollingOnly = await readTravel(await searchHotels('fliggy-not-authorized')) as { outcomes: unknown; pages: Page[] };
+    assert.deepEqual(rollingOnly.outcomes, [
+      { source: 'RollingGoHotels', status: 'searched' },
+      { source: 'FliggyHotels', status: 'authorization_required' },
+    ]);
+    assert.deepEqual(rollingOnly.pages.map(page => page.search.ref.type), ['RollingGoHotelSearch']);
+
     await setGrants(f.db, principal.owner, memberGrants(f.model));
     await setConnection({ ...binding, expiresAt: new Date(Date.now() + 600000).toISOString() });
     await assert.rejects(read, /account changed/);
     await assert.rejects(flyai('other-owner', 'Fliggy'), /no owner connection/);
+
+    rollingFails = true;
+    const retryTask = await f.tasks.submit(principal, { requestId: 'rollinggo-unavailable', message: '比较两家酒店与飞猪往返机票' });
+    await f.worker.runOne();
+    const retryResult = await f.tasks.get(principal, retryTask.id);
+    assert.equal(retryResult.state, 'completed');
+    const fliggyOnly = retryResult.result as { outcomes: unknown; pages: Page[] };
+    assert.deepEqual(fliggyOnly.outcomes, [
+      { source: 'RollingGoHotels', status: 'unavailable' },
+      { source: 'FliggyHotels', status: 'searched' },
+      { source: 'FliggyFlights', status: 'searched' },
+    ]);
+    assert.deepEqual(fliggyOnly.pages.map(page => page.search.ref.type), ['FliggyHotelSearch', 'FliggyFlightSearch']);
+    assert(!JSON.stringify(fliggyOnly).includes('Private supplier diagnostic'));
+    const calls = await f.db.query(`SELECT state FROM ${f.db.schema}.source_calls WHERE task_id=$1 ORDER BY state`, [retryTask.id]);
+    assert.deepEqual(calls.rows.map(row => row.state), ['completed', 'completed', 'failed']);
   } finally {
     await f.close();
     await rm(directory, { recursive: true, force: true });

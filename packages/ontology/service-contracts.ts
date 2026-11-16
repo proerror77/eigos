@@ -147,4 +147,14 @@ export type ServiceObservation = z.infer<typeof serviceObservation | typeof flig
 export const attachServiceInput = z.strictObject({ plan: objectRefSchema, service: objectRefSchema });
 export const readServiceInput = z.strictObject({ service: objectRefSchema });
 export const readServiceSearchPagesInput = z.strictObject({ searches: z.array(objectRefSchema).min(1).max(5) });
+export const travelOfferSearchInput = z.strictObject({
+  hotel: hotelSearchInput.optional(),
+  flight: flightSearchInput.optional(),
+});
+export const travelOfferSearchOutcome = z.strictObject({
+  source: z.enum(['RollingGoHotels', 'FliggyHotels', 'FliggyFlights']),
+  status: z.enum(['searched', 'authorization_required', 'unsupported_currency', 'unavailable']),
+});
+export const travelOfferSearchOutcomes = z.array(travelOfferSearchOutcome).min(1).max(3);
+export const readTravelOfferSearchInput = z.strictObject({ search: objectRefSchema });
 export const json = (schema: z.ZodType) => z.toJSONSchema(schema) as Record<string, unknown>;
