@@ -1,3 +1,4 @@
+import { initializeReleaseEvaluation } from './release-evaluation.js';
 import {initializeOntologyDataMigrations} from './ontology-migrations.js';
 import {initializeEntityResolution} from './entity-resolution.js';
 import {initializeSemantic} from './semantic.js';
@@ -213,6 +214,7 @@ export class Database {
     await initializeAutomation(this);
     await initializeMachineryHistory(this);
     await initializeScenarioEvaluations(this);
+    await initializeReleaseEvaluation(this);
     await initializeScenarioLifecycle(this);
     await initializeMachineryStates(this);
     await initializeActionUndo(this);

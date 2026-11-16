@@ -79,7 +79,7 @@ export function ontologyServices(
   const active = () => metadata.active(ontologyId);
   const applications = new Applications(db),
     automation = new Automation(db, metadata, actions),
-    machinery = new MachineryReviews(db, metadata),
+    machinery = new MachineryReviews(db, metadata, new ScenarioEvaluations(db, actions, functions)),
     semantic = new SemanticSearch(db, functions),
     packages = new OntologyPackages(db, metadata, bindings);
   const sets = new ObjectSets(db),

@@ -343,7 +343,7 @@ export class ScenarioEvaluations {
       {status:result.status,reason:result.reason});
   }
 
-  async runSuite(access:Access,model:PublishedOntology,raw:unknown){
+  async runSuite(access:Access,model:PublishedOntology,raw:unknown, receiptClient?: Sql){
     const input=runEvaluationSuiteSchema.parse(raw);
     const {trial,set}=await this.db.withOwner(access.principal.owner,
       ()=>this.loadSuite(access,model,input.id,input.revision));
@@ -353,13 +353,20 @@ export class ScenarioEvaluations {
       name:item.name,evaluatedAt:item.evaluatedAt,inputDigest:item.inputDigest,
       variants:item.variants.map(variant=>({name:variant.name,status:variant.status,outcome:this.outcome(variant)})),
     }));
-    await this.snapshot(access,model,async client=>{
+    const persist = async (client: Sql) => {
       await this.loadSuite(access,model,input.id,input.revision,client);
       if(set)await this.requireCaseSet(access,model,trial,set,client);
       await this.db.query(`INSERT INTO ${this.db.schema}.scenario_evaluation_runs
         (id,owner,ontology,suite_id,suite_revision,release,result) VALUES($1,$2,$3,$4,$5,$6,$7)`,
         [id,access.principal.owner,model.document.id,input.id,input.revision,report.release,JSON.stringify(receipt)],client);
-    });
+    };
+    if (receiptClient) {
+      await this.db.withTransactionOwner(receiptClient, access.principal.owner, async () => {
+        await lockEdits(this.db, model, access.principal.owner, receiptClient);
+        await access.refresh(receiptClient);
+        await persist(receiptClient);
+      });
+    } else await this.snapshot(access, model, persist);
     return {...this.publicTrial(report),run:id,suite:input.id,suiteRevision:input.revision};
   }
 

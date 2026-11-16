@@ -68,9 +68,9 @@ const profileNames = (profile: AgentProfile) => [
 
 export function taskCatalogueScope(model: Ontology, access: Access, input: Task['input'],
   additional: { profiles: readonly string[]; resources: readonly string[] } = { profiles: [], resources: [] }) {
-  // Release 30 predates profile metadata. Keep its common routes discoverable for queued tasks.
+  // Releases 30 and 31 predate profile metadata. Keep their common routes discoverable.
   const profiles = model.resolvedDocument.agentProfiles ??
-    (model.document.id === 'Eigos' && model.document.version === '30' ? businessAgentProfiles : []);
+    (model.document.id === 'Eigos' && ['30', '31'].includes(model.document.version) ? businessAgentProfiles : []);
   const message = input.message.toLowerCase();
   const matched = profiles.filter(profile =>
     access.canDefine(model, 'agentProfile', profile.apiName) &&
