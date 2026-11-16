@@ -175,7 +175,8 @@ test('workbench serves guarded assets and normal HTTP model, media and SDK scena
     const b = await client.createScenario({ requestId: 'sdk-compare-b', name: 'Second' });
     const comparison = await client.compareScenarios({ scenarios: [{ id: a.id, revision: 1 }, { id: b.id, revision: 1 }] });
     assert.deepEqual(comparison.scenarios.map(row => row.name), ['First', 'Second']);
-    const list=await client.service<{items:unknown[]}>('workflows',{});assert.deepEqual(list.items,[]);
+    const list=await client.service<{items:unknown[]}>('published_workflows',{});assert.deepEqual(list.items,[]);
+    await assert.rejects(client.service('workflows',{}),/edit_definition/);
   }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await f.close();}
 });
 
