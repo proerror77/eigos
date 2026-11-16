@@ -15,6 +15,7 @@ import { authorizeCognitive, cognitiveContextSchema, cognitiveResultSchema, cogn
 import { lockEdits } from './scenario-store.js';
 import { Scenarios } from './scenarios.js';
 import { appendTrace } from './execution-trace.js';
+import { insertWorkflowRecord, readWorkflowRecord } from './workflow-records.js';
 
 const binding = z.union([
   z.strictObject({ literal: z.unknown() }),
@@ -166,11 +167,9 @@ export class Automation {
             [id, access.principal.owner, input.name, input, input.revision, model.document.id],
             client,
           )
-        : await this.db.query(
-            `INSERT INTO ${this.db.schema}.workflows(id,owner,ontology,name,body,revision) VALUES($1,$2,$3,$4,$5,1) RETURNING revision`,
-            [id, access.principal.owner, model.document.id, input.name, input],
-            client,
-          );
+        : await insertWorkflowRecord(this.db, client, {
+            id, owner: access.principal.owner, ontology: model.document.id, name: input.name, body: input,
+          });
       if (!result.rowCount) throw new Conflict('Workflow changed or is unavailable');
       await access.refresh(client);
       return { ...input, id, revision: Number(result.rows[0]!.revision) };
@@ -189,13 +188,9 @@ export class Automation {
         [id, access.principal.owner, input.revision, model.document.id], client)).rowCount)
         throw new Conflict('Rule changed or is unavailable');
       await this.active(model, client);
-      const workflow = (
-        await this.db.query(
-          `SELECT body FROM ${this.db.schema}.workflows WHERE id=$1 AND owner=$2 AND ontology=$3 AND body->>'kind' IS NULL`,
-          [input.workflow, access.principal.owner, model.document.id],
-          client,
-        )
-      ).rows[0];
+      const workflow = await readWorkflowRecord(this.db, {
+        id: input.workflow, owner: access.principal.owner, ontology: model.document.id,
+      }, client);
       if (!workflow) throw new NotFound('Workflow is unavailable');
       const definition = workflowSchema.parse(workflow.body);
       this.authorize(access, model, definition.steps);
@@ -344,8 +339,9 @@ export class Automation {
       const savedScopes = z.array(z.string()).parse(rule.scopes??[]);
       if(!savedScopes.includes('ontology:write'))throw new PermissionDenied('Save the rule with current write permission before previewing');
       const configuration=ruleSchema.parse(rule.body);
-      const workflow=(await this.db.query(`SELECT body,revision FROM ${this.db.schema}.workflows WHERE id=$1 AND owner=$2 AND ontology=$3 FOR SHARE`,
-        [configuration.workflow,owner,model.document.id],client)).rows[0];
+      const workflow = await readWorkflowRecord(this.db, {
+        id: configuration.workflow, owner, ontology: model.document.id,
+      }, client, null, true);
       if(!workflow)throw new NotFound('Automation workflow is unavailable');
       const definition=workflowSchema.parse(workflow.body);
       await lockEdits(this.db,model,owner,client);
@@ -429,13 +425,9 @@ export class Automation {
     await access.refresh();
     return this.db.transaction(async (client) => {
       await this.active(model, client);
-      const workflow = (
-        await this.db.query(
-          `SELECT body,revision FROM ${this.db.schema}.workflows WHERE id=$1 AND owner=$2 AND ontology=$3 AND body->>'kind' IS NULL`,
-          [input.workflow, access.principal.owner, model.document.id],
-          client,
-        )
-      ).rows[0];
+      const workflow = await readWorkflowRecord(this.db, {
+        id: input.workflow, owner: access.principal.owner, ontology: model.document.id,
+      }, client);
       if (!workflow) throw new NotFound('Workflow is unavailable');
       const definition = workflowSchema.parse(workflow.body);
       this.authorize(access, model, definition.steps);
@@ -506,13 +498,9 @@ export class Automation {
         const model = await this.metadata.active(rule.ontology, client, true),
           access = await Access.load(this.db, principal, client);
         const input = ruleSchema.parse(rule.body),
-          workflow = (
-            await this.db.query(
-              `SELECT * FROM ${this.db.schema}.workflows WHERE id=$1 AND owner=$2 AND ontology=$3 AND body->>'kind' IS NULL`,
-              [input.workflow, rule.owner, rule.ontology],
-              client,
-            )
-          ).rows[0];
+          workflow = await readWorkflowRecord(this.db, {
+            id: input.workflow, owner: String(rule.owner), ontology: String(rule.ontology),
+          }, client);
         if (!workflow) throw new NotFound('Rule workflow is unavailable');
         const body = workflowSchema.parse(workflow.body);
         this.authorize(access, model, body.steps);

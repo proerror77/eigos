@@ -7,6 +7,7 @@ Gateway 通过 HTTP `POST /ontology/services/<operation>` 和 MCP `ontology_<ope
 | 对象集 | `evaluate_set`、`aggregate_set`、`save_set`、`get_set`、`list_sets`、`delete_set` |
 | 来源索引 | `submit_index`、`index_status`、`retry_index`、`cancel_index` |
 | 编辑与物化 | `edit_history`、`edit_policy`、`materialize`、`read_materialization`、`materialized_links` |
+| [组织公共地点](shared-public-places.md) | `list_public_places`、`publish_public_place`、`withdraw_public_place` |
 | 发布治理 | `project`、`assign_project`、`create_branch`、`get_branch`、`list_branches`、`update_branch`、`prepare_branch`、`review_branch`、`merge_branch`、`rebase_branch`、`catch_up_branch` |
 | 逻辑与副作用 | `function_versions`、`effect_status`、`retry_effect` |
 

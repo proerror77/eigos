@@ -48,6 +48,9 @@ export class Database {
     }
     return client.query<T>(text, values);
   }
+  lockKey(namespace: string, ...parts: string[]): string {
+    return JSON.stringify([this.schema, namespace, ...parts]);
+  }
   withOwner<T>(owner: string, operation: () => T): T {
     return this.ownerIsolation ? this.ownerContext.run(owner, operation) : operation();
   }
@@ -154,6 +157,7 @@ export class Database {
       CREATE UNIQUE INDEX IF NOT EXISTS links_single_from ON ${s}.links(projection,owner,type,from_type,from_id) WHERE single_from;
       CREATE UNIQUE INDEX IF NOT EXISTS links_single_to ON ${s}.links(projection,owner,type,to_type,to_id) WHERE single_to;
       CREATE TABLE IF NOT EXISTS ${s}.actions (owner text NOT NULL, request_id text NOT NULL, digest text NOT NULL, action text NOT NULL, release text NOT NULL REFERENCES ${s}.releases(digest), result jsonb NOT NULL, applied_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(owner,request_id));
+      CREATE INDEX IF NOT EXISTS actions_log_order ON ${s}.actions(owner,release,applied_at DESC,request_id DESC);
       ALTER TABLE ${s}.actions ADD COLUMN IF NOT EXISTS executor_kind text;
       ALTER TABLE ${s}.actions ADD COLUMN IF NOT EXISTS executor_id text;
       ALTER TABLE ${s}.actions ADD COLUMN IF NOT EXISTS task_id uuid;

@@ -15,7 +15,7 @@ import type { CognitiveContext } from './cognitive-workflow.js';
 import { Clarification, amapPlaceAmendmentSchema, cityInputSchema, mapPlaceCorrectionsSchema, rideEndpointSchema, taskInputAnswerSchema, placeAmendmentSchema, placeAmendmentsSchema, placeChoicesSchema, placeContinuationSchema, placeSelectionSchema, unresolvedMapPlace, type PlaceContinuation } from './clarification.js';
 import { recordActionConfirmation } from './action-confirmation.js';
 export { placeAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema, taskPlaceAmendmentSchema } from './clarification.js';
-import { publicHotelTaskResult, workflowReplaySchema } from './hotel-workflows.js';
+import { publicHotelTaskResult, workflowReplaySchema } from '../capabilities/services/hotel-workflows.js';
 
 export const routeInputSchema = z.strictObject({ city: z.string().min(1).max(100), origin: z.string().min(1).max(500), destination: z.string().min(1).max(500), serviceClass: z.string().min(1).max(100).optional() });
 export type RouteInput = z.infer<typeof routeInputSchema>;
@@ -98,7 +98,7 @@ export class Tasks {
     return this.visible(principal, task);
   }
   private async lockInboxKey(client: Sql, key: string[]) {
-    await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify([this.db.schema, 'task-inbox', ...key])], client);
+    await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [this.db.lockKey('task-inbox', ...key)], client);
   }
   private async visible(principal: Principal, task: Task): Promise<Task> {
     if (task.result !== null && (!task.result_permissions || !await (await Access.load(this.db, principal)).canReturn(task.result_permissions))) return { ...task, result: null, error: 'Result access is unavailable' };

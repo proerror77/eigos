@@ -12,6 +12,7 @@ export const resourceGroups = {
   valueType: 'valueTypes',
   struct: 'structTypes',
   group: 'typeGroups',
+  agentProfile: 'agentProfiles',
 } as const;
 export type ResourceKind = keyof typeof resourceGroups;
 export type ResourceNameMap = Partial<Record<ResourceKind, Record<string, string>>>;
@@ -177,6 +178,19 @@ export function remapResources(
   for (const group of document.typeGroups ?? []) {
     group.apiName = rename('group', group.apiName);
     group.objectTypes = group.objectTypes.map((name) => rename('object', name));
+  }
+  for (const profile of document.agentProfiles ?? []) {
+    profile.apiName = rename('agentProfile', profile.apiName);
+    profile.objects = profile.objects?.map(name => rename('object', name));
+    profile.interfaces = profile.interfaces?.map(name => rename('interface', name));
+    profile.actions = profile.actions?.map(name => rename('action', name));
+    profile.functions = profile.functions?.map(name => rename('function', name));
+    profile.sources = profile.sources?.map(name => rename('datasource', name));
+    profile.links = profile.links?.map(name => rename('link', name));
+    for (const hint of profile.instructions ?? []) {
+      if (hint.action) hint.action = rename('action', hint.action);
+      if (hint.function) hint.function = rename('function', hint.function);
+    }
   }
   delete document.imports;
   return ontologySchema.parse(document);

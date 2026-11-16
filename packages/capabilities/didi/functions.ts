@@ -27,8 +27,13 @@ async function endpoints(context: FunctionContext, route: unknown): Promise<[Obj
 async function locationsReady(context: FunctionContext, places: ObjectData[]) {
   for (const place of places) {
     if (!isCurrentDidiObservation(place.properties.observedAt)) return false;
-    const sources = await context.objects.follow(place.ref, 'sources');
-    if (!sources.some(source => source.properties.bindingId === place.properties.sourceBinding && source.properties.observedAt === place.properties.observedAt)) return false;
+    const { sourceBinding, observedAt } = place.properties;
+    if (typeof sourceBinding !== 'string' || typeof observedAt !== 'string') return false;
+    const { items } = await context.objects.query({
+      type: 'SourceReceipt', from: { object: place.ref, link: 'sources' },
+      where: { bindingId: sourceBinding, observedAt }, limit: 1,
+    });
+    if (!items.length) return false;
   }
   return true;
 }

@@ -184,7 +184,7 @@ export class OntologyDataMigrations {
       for (const graph of graphs.values()) await graph.lockWrites();
       await this.db.query(
         'SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
-        [JSON.stringify(['data-migration', access.principal.owner, input.requestId])],
+        [this.db.lockKey('data-migration', access.principal.owner, input.requestId)],
         client,
       );
       const previous = (

@@ -1,0 +1,34 @@
+# Action 校验、批量提交与日志
+
+这些操作通过现有 Ontology Services 提供。HTTP 客户端调用 POST `/ontology/services/<operation>`，MCP 工具名加前缀 `ontology_`。TypeScript 的 `OntologyClient` 提供对应方法。
+
+| 服务 | SDK 方法 | 行为 |
+| --- | --- | --- |
+| `validate_action` | `validateAction` | 用当前发布版和指定 Scenario 检查参数、对象访问与提交条件。成功返回 `valid: true` 和 `phase: "submission"`。正式提交仍会检查权限、版本、规则和依赖的数据。 |
+| `apply_action_batch` | `applyActionBatch` | 每批 1 至 20 条，按输入顺序执行当前发布版的声明式 Action。每条使用独立且可重试的 `requestId`，失败时回滚本批中新提交的对象、关系和收据。带编辑 Function、声明副作用或 Scenario 合并的 Action 走普通提交。 |
+| `list_action_log` | `listActionLog` | 按提交时间倒序分页，支持按 Action 名称和发布版过滤。默认读当前发布版，可明确指定该 Ontology 的历史发布版。每条包含已提交 Action 的名称、请求 ID、时间和执行者类型。当前身份只能看到自己拥有且有定义访问权的提交。 |
+
+校验只运行只读的提交条件，执行过程没有对象写入、供应商调用、Action 收据或副作用。Scenario 编辑以独立的 Scenario 请求保存，日志收录正式提交的 Action。日志可关联现有 `execution_trace` 服务读取授权范围内的执行证据。
+
+实现沿用同一套 Action 执行与幂等收据。接口设计参考 [Foundry Validate Action](https://www.palantir.com/docs/foundry/api/ontology-resources/actions/validate-action)、[Apply Action Batch](https://www.palantir.com/docs/foundry/api/ontologies-v2-resources/actions/apply-action-batch) 和 [Action Log](https://www.palantir.com/docs/foundry/action-types/action-log)。
+
+## 生成 TypeScript 类型
+
+从目标环境读取经过当前身份过滤的发布定义，例如用 `OntologyClient.describe()`，将 JSON 写入本地文件，再生成类型。
+
+```sh
+node --import tsx scripts/generate-ontology-sdk.ts published-definition.json > ontology-bindings.ts
+```
+
+在应用中将生成的 `Bindings` 用于现有客户端。
+
+```ts
+import type { Bindings } from './ontology-bindings.js'
+import { OntologyClient } from './packages/sdk/client.js'
+import { TypedOntologyClient } from './packages/sdk/typed-client.js'
+
+const client = new TypedOntologyClient<Bindings>(new OntologyClient({ baseUrl, token }))
+const result = await client.query({ type: 'Place', limit: 10 })
+```
+
+生成类型提供对象属性、Action 参数以及读取 Function 的输入和返回值。服务端始终校验发布契约和权限。发布结构变更时，用目标环境的新定义重新生成类型。

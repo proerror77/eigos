@@ -1,3 +1,4 @@
+import { sandboxAgentCapability } from './agent-profiles.js';
 import { z } from 'zod';
 import { objectRefSchema, type OntologyDocument } from './schema.js';
 import { json, time } from './service-contracts.js';
@@ -73,7 +74,7 @@ export const diningMiniProgramCapabilities = {
 const edit = (apiName: string, parameters: z.ZodType, description: string, existing = false) => ({
   apiName, description, parameters: json(parameters),
   objectParameters: existing ? { reservation: diningReservationType } as Record<string, string> : {},
-  function: apiName[0]!.toLowerCase() + apiName.slice(1), submissionCriteria: [],
+  function: apiName[0]!.toLowerCase() + apiName.slice(1), submissionCriteria: [], typeClasses: [sandboxAgentCapability],
 });
 const edits = [
   edit('PrepareDiningTestReservation', diningWebTerms, 'Prepare exact terms for an explicitly requested synthetic restaurant web reservation.'),
@@ -84,7 +85,7 @@ const edits = [
 
 export const diningReservations: Pick<OntologyDocument, 'objectTypes' | 'functionTypes' | 'actionTypes'> = {
   objectTypes: [{
-    apiName: diningReservationType, displayName: '餐厅订位', primaryKey: 'id', titleProperty: 'name', interfaces: {},
+    apiName: diningReservationType, typeClasses: [sandboxAgentCapability], displayName: '餐厅订位', primaryKey: 'id', titleProperty: 'name', interfaces: {},
     description: 'Exact dining reservation terms and merchant-confirmed outcome for the synthetic reservation pilot.',
     properties: Object.fromEntries(Object.entries(diningReservationData.shape).map(([name, schema]) =>
       [name, { description: name, required: true, schema: json(schema) }])),
@@ -104,10 +105,10 @@ export const diningReservations: Pick<OntologyDocument, 'objectTypes' | 'functio
       apiName: action.function, description: action.description, parameters: action.parameters, returns: json(objectRefSchema),
       ...(action.apiName === 'PrepareDiningMiniProgramTestReservation' ? { source: diningMiniProgramSource } :
         action.apiName === 'PrepareDiningTestReservation' ? { source: diningWebSource } : {}),
-      edits: true, dependencies: { objectTypes: [diningReservationType] },
+      edits: true, typeClasses: [sandboxAgentCapability], dependencies: { objectTypes: [diningReservationType] },
     })),
     {
-      apiName: 'readDiningReservation', parameters: json(diningReservationRef), dependencies: { objectTypes: [diningReservationType] },
+      apiName: 'readDiningReservation', typeClasses: [sandboxAgentCapability], parameters: json(diningReservationRef), dependencies: { objectTypes: [diningReservationType] },
       returns: json(diningReservationData.omit({ binding: true })),
       description: 'Read this reservation’s recorded state, exact terms and verified merchant receipt.',
     },

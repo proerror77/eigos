@@ -9,6 +9,7 @@ import {Access,setGrants,memberGrants} from '../packages/runtime/access.js';
 import { ScenarioEvaluations, trialScenariosSchema } from '../packages/runtime/scenario-evaluation.js';
 import {seedPlan} from './service-fixture.js';
 import {harnessFixture} from './harness-fixture.js';
+import {readPlan} from '../packages/capabilities/scheduling/functions.js';
 
 async function pending(f:Awaited<ReturnType<typeof fixture>>) {
  const input=planningInput(),task=await f.tasks.submit(principal,{requestId:'planning',message:JSON.stringify({planning:input})});
@@ -348,6 +349,63 @@ test('cross-release continuation recovers a Function Action that creates and lin
     const graph = new Objects(f.db, continued, f.access);
     assert.deepEqual((await graph.follow(plan, 'activities')).map(item => item.ref), [activity]);
     assert.deepEqual((await new Objects(f.db, current, f.access).follow(plan, 'activities')), []);
+  } finally {
+    await f.close();
+  }
+});
+
+test('scheduling reads past 100 resource links and an Action can undo a high-degree deletion', async () => {
+  const f = await fixture();
+  try {
+    const { plan, resource, input } = await seedPlan(f);
+    const graph = new Objects(f.db, f.model, f.access);
+    const start = Date.parse(input.start), end = Date.parse(input.end);
+    const timestamp = (value: number) => new Date(value).toISOString();
+    const target = { type: 'ScheduledActivity', id: 'plan-activity' };
+    const create = async (writer: Objects, ref: typeof target, start: number, end: number) => {
+      await writer.create(ref, { id: ref.id, name: ref.id, start: timestamp(start), end: timestamp(end) });
+    };
+    await f.db.transaction(async client => {
+      const writer = new Objects(f.db, f.model, f.access, client);
+      await create(writer, target, end - 1800000, end);
+      const historical = Array.from({ length: 101 }, (_, index) => ({
+        type: 'ScheduledActivity', id: `history-${String(index).padStart(3, '0')}`,
+      }));
+      const current = Array.from({ length: 101 }, (_, index) => ({
+        type: 'ScheduledActivity', id: `occupied-${String(index).padStart(3, '0')}`,
+      }));
+      for (const item of historical) await create(writer, item, start - 3600000, start);
+      for (const item of current) {
+        const at = start + 8 * 3600000;
+        // Stored values may include offsets, even if the plan boundaries are in UTC.
+        await writer.create(item, { id: item.id, name: item.id,
+          start: timestamp(at).replace('Z', '+08:00'),
+          end: timestamp(end + 8 * 3600000).replace('Z', '+08:00') });
+      }
+      await writer.linkBatch([
+        { type: 'ActivityPlan', from: target, to: plan },
+        ...[target, ...historical, ...current].map(from => ({ type: 'ActivityResource', from, to: resource })),
+        ...historical.map(to => ({ type: 'ActivityDependency', from: target, to })),
+      ]);
+    });
+
+    const context = { principal, objects: graph, signal: AbortSignal.timeout(30000) };
+    const state = await readPlan(graph, plan);
+    assert.equal(state.calendars[0]?.assignments.length, 102);
+    const result = await f.capabilities.functions.invoke(f.model, 'findScheduleSlots', { plan }, context) as { slots: unknown[] };
+    assert.deepEqual(result.slots, []);
+    const validation = await f.capabilities.functions.invoke(f.model, 'validateSchedule', { plan }, context) as {
+      violations: { code: string; related: { id: string }[] }[];
+    };
+    const overlaps = validation.violations.filter(item => item.code === 'resource_overlap');
+    assert.equal(overlaps.length, 101);
+    assert(overlaps.some(item => item.related[0]?.id === 'occupied-100'));
+
+    await f.capabilities.actions.apply(f.access, f.model, 'RemoveScheduleActivity', { activity: target, revision: 1 }, 'remove-many-links');
+    assert.deepEqual(await graph.follow(plan, 'activities'), []);
+    await f.capabilities.actions.undo(f.access, f.model, 'remove-many-links', 'restore-many-links');
+    assert.equal((await graph.follow(target, 'predecessors')).length, 101);
+    assert.equal((await graph.follow(plan, 'activities'))[0]?.ref.id, target.id);
   } finally {
     await f.close();
   }

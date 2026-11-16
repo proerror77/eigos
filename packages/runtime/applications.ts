@@ -2,7 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Conflict, NotFound } from '../core/identity.js';
 import { objectRefSchema, type ObjectRef } from '../ontology/schema.js';
-import type { FunctionHandler } from './functions.js';
+import { withScenarioEvaluation, type FunctionContext, type FunctionHandler } from './functions.js';
+import { geometryUploadCriterion } from '../ontology/applications.js';
 import { Access } from './access.js';
 import { Database } from './database.js';
 import { Objects, querySchema } from './objects.js';
@@ -253,24 +254,25 @@ export class Applications {
   }
 }
 export function applicationFunctions(db: Database): ReadonlyMap<string, FunctionHandler> {
+  const matchesUpload = async (input: Record<string, unknown>, context: FunctionContext) => {
+    const { id, contentHash, format, byteLength } = input;
+    if (id !== contentHash) return false;
+    const { rows } = await db.query(
+      `SELECT format,octet_length(bytes) AS size FROM ${db.schema}.geometry_blobs
+        WHERE owner=$1 AND digest=$2 AND ontology=$3`,
+      [context.principal.owner, contentHash, context.objects.model.document.id],
+      context.scenarioEvaluation?.client,
+    );
+    const row = rows[0];
+    return row?.format === format && row?.size === byteLength;
+  };
   return new Map<string, FunctionHandler>([
+    [geometryUploadCriterion, withScenarioEvaluation(matchesUpload)],
     [
       'registerGeometry',
       async (input, context) => {
         if (!context.edit) throw new Conflict('Model registration requires an Action');
-        const row = (
-          await db.query(
-            `SELECT format,octet_length(bytes) AS size FROM ${db.schema}.geometry_blobs WHERE owner=$1 AND digest=$2 AND ontology=$3`,
-            [context.principal.owner, input.contentHash, context.objects.model.document.id],
-          )
-        ).rows[0];
-        if (
-          !row ||
-          row.format !== input.format ||
-          row.size !== input.byteLength ||
-          input.id !== input.contentHash
-        )
-          throw new Conflict('Uploaded model does not match its metadata');
+        if (!await matchesUpload(input, context)) throw new Conflict('Uploaded model does not match its metadata');
         const ref = { type: 'GeometryAsset', id: String(input.id) };
         return context.edit(ref, async (graph) => {
           await graph.create(ref, input);

@@ -6,7 +6,7 @@ import { schemaSubset } from './schema-compatibility.js';
 import { validateDerivedProperties } from './derived-validation.js';
 import { fieldSchema, propertyPathSchema } from './property-path.js';
 import { processLogTarget, validateMachineryModel } from './process-definition.js';
-import { digest } from '../core/identity.js';
+import { digest, InvalidInput, NotFound } from '../core/identity.js';
 import { ontologySchema, type OntologyDocument, type ObjectRef } from './schema.js';
 
 const validators = new WeakMap<object, z.ZodType>();
@@ -50,6 +50,19 @@ export class Ontology {
     this.functions = unique(this.resolvedDocument.functionTypes);
     this.actions = unique(this.resolvedDocument.actionTypes);
     this.sources = unique(this.resolvedDocument.dataSources);
+    for (const profile of unique(this.resolvedDocument.agentProfiles ?? []).values()) {
+      for (const name of profile.objects ?? []) required(this.objects, name);
+      for (const name of profile.interfaces ?? []) required(this.interfaces, name);
+      for (const name of profile.actions ?? []) required(this.actions, name);
+      for (const name of profile.functions ?? []) required(this.functions, name);
+      for (const name of profile.sources ?? []) required(this.sources, name);
+      for (const name of profile.links ?? []) required(this.links, name);
+      for (const hint of profile.instructions ?? []) {
+        if (hint.action && !profile.actions?.includes(hint.action)
+          || hint.function && !profile.functions?.includes(hint.function))
+          throw new Error('Agent instructions require resources within their profile');
+      }
+    }
     // Publication performs the current inclusion proof. Stored snapshots retain the
     // basic-type contract accepted by earlier runtimes without rewriting their identity.
     const compatible = (supplied: Record<string, unknown>, accepted: Record<string, unknown>) =>
@@ -194,17 +207,17 @@ export class Ontology {
   resolveAction(ref: ObjectRef, interfaceName: string, name: string, input: Record<string, unknown>) {
     const contract = required(this.interfaces, interfaceName).actions[name];
     const mapping = this.object(ref.type).interfaces[interfaceName]?.actions[name];
-    if (!contract || !mapping) throw new Error('Interface action is unavailable');
+    if (!contract || !mapping) throw new NotFound('Interface action is unavailable');
     const supplied = validator(contract.parameters).parse(input) as Record<string, unknown>;
     const subjects = Object.keys(contract.objectParameters).filter(parameter => this.implements(ref.type, contract.objectParameters[parameter]!));
-    if (!subjects.some(parameter => digest(supplied[parameter]) === digest(ref))) throw new Error('Interface action must bind the selected object');
+    if (!subjects.some(parameter => digest(supplied[parameter]) === digest(ref))) throw new InvalidInput('Interface action must bind the selected object');
     return { action: mapping.action, input: Object.fromEntries(Object.entries(mapping.parameters)
       .flatMap(([alias, local]) => supplied[alias] === undefined ? [] : [[local, supplied[alias]]])) };
   }
   resolveTypeAction(type: string, interfaceName: string, name: string, input: Record<string, unknown>) {
     const contract = required(this.interfaces, interfaceName).actions[name];
     const mapping = this.object(type).interfaces[interfaceName]?.actions[name];
-    if (!contract || !mapping) throw new Error('Interface action is unavailable');
+    if (!contract || !mapping) throw new NotFound('Interface action is unavailable');
     const supplied = validator(contract.parameters).parse(input) as Record<string, unknown>;
     return { action: mapping.action, input: Object.fromEntries(Object.entries(mapping.parameters)
       .flatMap(([alias, local]) => supplied[alias] === undefined ? [] : [[local, supplied[alias]]])) };

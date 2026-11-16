@@ -781,3 +781,49 @@ test('linked derived values retain their classification through grant downgrade 
     }
   } finally { worker?.stop(); await f.close(); }
 });
+
+test('task prompts preload the selected capability and keep sandbox tools out of production discovery', async t => {
+  const f = await fixture({
+    model: 'fixture-profile-scope',
+    async run(prompt, tools) {
+      const { ontology, userRequest } = JSON.parse(prompt.split('\n').at(-1)!);
+      const actions = ontology.actions.map((action: { apiName: string }) => action.apiName);
+      assert(prompt.length < 30_000, `Prompt is ${prompt.length} characters`);
+      t.diagnostic(`${userRequest.route ? 'Ride' : 'Calendar'} prompt: ${prompt.length} characters`);
+      if (userRequest.route) {
+        assert(actions.includes('EstimateRide'));
+        assert(!actions.includes('PrepareSchedulePlan'));
+      } else {
+        assert(actions.includes('PrepareSchedulePlan'));
+        assert(!actions.includes('EstimateRide'));
+        assert.match(prompt, /original PA and resumes this same task/);
+      }
+      const discover = tools.get('describe_ontology')!;
+      const compact = await discover.invoke({}) as { actions: { apiName: string }[] };
+      assert(compact.actions.some(action => action.apiName === 'PrepareSchedulePlan'));
+      assert(!compact.actions.some(action => action.apiName === 'PrepareDiningTestReservation'));
+      assert.deepEqual(await discover.invoke({
+        names: ['PrepareDiningTestReservation', 'CreateStripeSandboxOrder', 'createStripeSandboxOrder'],
+      }), []);
+      const order = { action: 'CreateStripeSandboxOrder', input: { orderKey: '1ef80429-639b-4ed0-9d61-84e43d211b6b' } };
+      await assert.rejects(tools.get('apply_action')!.invoke(order), /requires a sandbox Agent/);
+      const sandboxOrder = { type: 'StripeSandboxOrder', id: 'unsubmitted-order' };
+      await assert.rejects(tools.get('complete_with_action')!.invoke({
+        action: { interface: { type: 'PayableOrder', action: 'prepare', object: sandboxOrder },
+          input: { order: sandboxOrder } },
+        read: { function: 'readSchedulePlan', resultParameter: 'plan' },
+      }), /requires a sandbox Agent/);
+      await tools.get('request_clarification')!.invoke({ message: 'Confirm the intended time.' });
+    },
+  });
+  try {
+    for (const task of [await f.submit(), await f.tasks.submit(principal, {
+      requestId: 'scoped-calendar', message: '帮我排程并检查日历可用时段。',
+    })]) {
+      assert(await f.worker.runOne());
+      const result = await f.tasks.get(principal, task.id);
+      assert.equal(result.state, 'input-required', result.error ?? undefined);
+    }
+    assert.equal(f.provider.calls.length, 0);
+  } finally { await f.close(); }
+});

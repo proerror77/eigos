@@ -463,3 +463,21 @@ test('independent source objects retain their own markings within one ordered tr
     assert.deepEqual(rows.map(row=>row.properties.marks),[['A'],['B']]);
   }finally{await f.close();}
 });
+
+test('publication locks serialize inside a schema and allow another schema to publish', async () => {
+  const first = await fixture(), second = await fixture();
+  try {
+    const lock = (f: typeof first) => f.db.lockKey('publication', f.model.document.id);
+    await first.db.transaction(async client => {
+      await first.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [lock(first)], client);
+      const { rows } = await first.db.query(
+        'SELECT pg_try_advisory_xact_lock_shared(hashtextextended($1,0)) AS acquired', [lock(first)]);
+      assert.equal(rows[0]?.acquired, false);
+      const published = await second.metadata.publish(second.model.document, second.capabilities, second.publisher);
+      assert.notEqual(published.release, second.model.release);
+      assert.equal((await second.metadata.active()).release, published.release);
+    });
+  } finally {
+    await Promise.all([first.close(), second.close()]);
+  }
+});
