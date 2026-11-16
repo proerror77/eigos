@@ -15,6 +15,8 @@ import { addProcessLogs } from './process-definition.js';
 import { readFileSync } from 'node:fs';
 import type { OntologyDocument } from './schema.js';
 import { fliggyServicesDefinition as fliggy, servicesDefinition as services } from './services.js';
+import { fliggyFlightBookingDefinition } from './fliggy-flight-booking.js';
+import { fliggyHotelDefinition } from './fliggy-hotel.js';
 import { travelDefinition as travel } from './travel.js';
 import { paymentsDefinition as payments } from './payments.js';
 import { diningEvidence, diningResearchFunctions } from './dining.js';
@@ -34,7 +36,7 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '28',
+  id: ride.id, version: '29',
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
   actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes, ...journey.actionTypes, ...flight.actionTypes, ...payments.actionTypes,...luckin.actionTypes,...applications.actionTypes,...documents.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
@@ -45,6 +47,12 @@ businessDefinition.linkTypes.push(...fliggy.linkTypes);
 businessDefinition.functionTypes.push(...fliggy.functionTypes);
 businessDefinition.actionTypes.push(...fliggy.actionTypes);
 businessDefinition.dataSources.push(...fliggy.dataSources);
+businessDefinition.objectTypes.push(...fliggyHotelDefinition.objectTypes);
+businessDefinition.functionTypes.push(...fliggyHotelDefinition.functionTypes);
+businessDefinition.actionTypes.push(...fliggyHotelDefinition.actionTypes);
+businessDefinition.objectTypes.push(...fliggyFlightBookingDefinition.objectTypes);
+businessDefinition.functionTypes.push(...fliggyFlightBookingDefinition.functionTypes);
+businessDefinition.actionTypes.push(...fliggyFlightBookingDefinition.actionTypes);
 businessDefinition.functionTypes.push(diningActivityFunction, ...diningResearchFunctions, ...dianpingResearchFunctions);
 businessDefinition.objectTypes.push(...diningReservations.objectTypes);
 businessDefinition.functionTypes.push(...diningReservations.functionTypes);
@@ -74,7 +82,7 @@ businessDefinition.objectTypes.find(type=>type.apiName==='RideRequest')!.propert
 businessDefinition.typeGroups=[
   {apiName:'Travel',displayName:'出行',description:'Places, routes and source-backed price estimates',objectTypes:ride.objectTypes.map(type=>type.apiName)},
   {apiName:'Scheduling',displayName:'排程',description:'Resources, calendar availability and schedule plans',objectTypes:scheduling.objectTypes.map(type=>type.apiName)},
-  {apiName:'Services',displayName:'服务',description:'Provider-neutral service offerings',objectTypes:[...services.objectTypes,...luckin.objectTypes,...fliggy.objectTypes,...diningReservations.objectTypes].map(type=>type.apiName)},
+  {apiName:'Services',displayName:'服务',description:'Provider-neutral service offerings',objectTypes:[...services.objectTypes,...luckin.objectTypes,...fliggy.objectTypes,...fliggyHotelDefinition.objectTypes,...fliggyFlightBookingDefinition.objectTypes,...diningReservations.objectTypes].map(type=>type.apiName)},
   {apiName:'TimedTravel',displayName:'定时出行',description:'Authorized event and travel planning',objectTypes:[...travel.objectTypes,...journey.objectTypes,...flight.objectTypes].map(type=>type.apiName)},
   {apiName:'Payments',displayName:'付款',description:'Merchant order handoff and independently read payment status',objectTypes:payments.objectTypes.map(type=>type.apiName)},
   {apiName:'Models',displayName:'三维模型',description:'Model assets and annotations',objectTypes:applications.objectTypes.map(type=>type.apiName)},
@@ -85,7 +93,7 @@ for(const group of businessDefinition.typeGroups)for(const name of group.objectT
 
 for(const fn of businessDefinition.functionTypes){
   if(fn.apiName==='embedTextLocal'){fn.dependencies={};continue;}
-  if(documents.functionTypes.includes(fn)||fliggy.functionTypes.includes(fn)||diningResearchFunctions.includes(fn)||dianpingResearchFunctions.includes(fn)||diningReservations.functionTypes.includes(fn)||fn===diningActivityFunction)continue;
+  if(documents.functionTypes.includes(fn)||fliggy.functionTypes.includes(fn)||fliggyHotelDefinition.functionTypes.includes(fn)||fliggyFlightBookingDefinition.functionTypes.includes(fn)||diningResearchFunctions.includes(fn)||dianpingResearchFunctions.includes(fn)||diningReservations.functionTypes.includes(fn)||fn===diningActivityFunction)continue;
   if(fn === flightPositionFunction || journey.functionTypes.includes(fn) || flight.functionTypes.includes(fn) || payments.functionTypes.includes(fn) || deliveryFunctions.includes(fn) || locationFunctions.includes(fn) || mapFunctions.includes(fn) || luckin.functionTypes.includes(fn))continue;
   if(ride.functionTypes.some(item=>item.apiName===fn.apiName)){
     fn.dependencies={objectTypes:ride.objectTypes.map(type=>type.apiName),interfaceTypes:ride.interfaceTypes.map(type=>type.apiName),linkTypes:ride.linkTypes.map(link=>link.apiName),dataSources:ride.dataSources.map(source=>source.apiName),functions:ride.functionTypes.filter(item=>item.apiName!==fn.apiName).map(item=>item.apiName)};

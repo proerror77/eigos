@@ -46,6 +46,8 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     dianpingFetch?: typeof fetch; memberLogin?: ReturnType<typeof auth0MemberLogin> } = {}) {
   const { memberLogin, ...sourceFetch } = providerFetch;
   const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE), configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
+    fliggyFlight: config.EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE,
+    fliggyHotel: config.EIGOS_FLIGGY_HOTEL_CONNECTION_FILE,
     paotui: config.EIGOS_PAOTUI_CONNECTION_FILE, waimai: config.EIGOS_WAIMAI_CONNECTION_FILE,
     amap: config.EIGOS_AMAP_CONNECTION_FILE, xiaohongshu: config.EIGOS_XIAOHONGSHU_CONNECTION_FILE, variFlight: config.EIGOS_VARIFLIGHT_CONNECTION_FILE,
     dianping: config.EIGOS_DIANPING_CONNECTION_FILE,
