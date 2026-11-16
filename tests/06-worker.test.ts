@@ -526,6 +526,40 @@ test('a missing tool grant fails before supplier calls and is distinct from mode
   } finally { await f.close(); }
 });
 
+test('a rate-limited quote revalidates stored DiDi endpoints nearby and rejects moved points', async () => {
+  const f = await fixture();
+  try {
+    f.provider.flags.related = false;
+    for (const keywords of [route.origin, route.destination]) {
+      await f.capabilities.sources.refresh(f.model, 'DidiPlaces', { city: route.city, keywords },
+        f.access, undefined, undefined, AbortSignal.timeout(5000));
+    }
+    f.provider.calls.length = 0;
+    f.provider.flags.rateLimitPlaceSearch = true;
+    f.provider.flags.related = true;
+    const task = await f.submit();
+    assert(await f.worker.runOne());
+    const done = await f.tasks.get(principal, task.id);
+    assert.equal(done.state, 'completed', done.error ?? undefined);
+    assert.deepEqual([...f.provider.calls].sort(),
+      ['maps_place_around', 'maps_place_around', 'maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    assert.equal(f.provider.calls.at(-1), 'taxi_estimate');
+    const objects = new Objects(f.db, f.model, f.access);
+    assert.equal((await objects.query({ type: 'Place' })).items.length, 2);
+    assert.equal((await objects.query({ type: 'SourceReceipt', where: { tool: 'maps_place_around' } })).items.length, 2);
+
+    f.provider.calls.length = 0;
+    f.provider.flags.moveNearbyPlace = true;
+    const moved = await f.submit();
+    assert(await f.worker.runOne());
+    const pending = await f.tasks.get(principal, moved.id);
+    assert.equal(pending.state, 'input-required');
+    assert.deepEqual(pending.result, { kind: 'retry-source', source: 'DiDi', stage: 'places' });
+    assert(!f.provider.calls.includes('taxi_estimate'));
+    assert.equal(f.provider.flags.orderCreates, 0);
+  } finally { await f.close(); }
+});
+
 test('revoked data rights also remove access to a cached task result', async () => {
   const f = await fixture();
   try {

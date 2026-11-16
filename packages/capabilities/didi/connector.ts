@@ -5,7 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { z } from 'zod';
 import { Conflict, digest, PermissionDenied, SourceReadFailure } from '../../core/identity.js';
-import { didiBindingSchema, didiEndpoint, didiReceiptSchema, didiToolInputs, DIDI_TOOLS, type DidiBinding, type DidiData, type DidiEvidenceKind, type DidiReceipt, type DidiTool } from './contracts.js';
+import { didiBindingSchema, didiEndpoint, didiReceiptSchema, didiToolInputs, DIDI_REQUIRED_TOOLS, DIDI_TOOLS, type DidiBinding, type DidiData, type DidiEvidenceKind, type DidiReceipt, type DidiTool } from './contracts.js';
 import { mapDidiResult } from './mapping.js';
 
 export class DidiReadError extends SourceReadFailure {
@@ -116,8 +116,12 @@ export class DidiMcpConnector implements DidiConnector {
         const expected = z.toJSONSchema(didiToolInputs[tool.name as DidiTool]) as {properties:Record<string,{type?:string}>};
         const schema = tool.inputSchema;
         const required = [...(schema.required ?? [])].sort();
-        const mandatory = tool.name === 'maps_direction_driving' ? ['destination','origin'] : Object.keys(expected.properties).sort();
-        if (schema.type !== 'object' || digest(required) !== digest(mandatory) || Object.keys(expected.properties).some(k => (schema.properties?.[k] as { type?: unknown } | undefined)?.type !== expected.properties[k]!.type)) throw new DidiReadError('TOOL_SCHEMA_CHANGED');
+        const mandatory = tool.name === 'maps_direction_driving' ? ['destination','origin']
+          : tool.name === 'maps_place_around' ? ['keywords', 'location'] : Object.keys(expected.properties).sort();
+        if (schema.type !== 'object' || digest(required) !== digest(mandatory) || Object.keys(expected.properties).some(k => (schema.properties?.[k] as { type?: unknown } | undefined)?.type !== expected.properties[k]!.type)) {
+          if (tool.name === 'maps_place_around') continue;
+          throw new DidiReadError('TOOL_SCHEMA_CHANGED');
+        }
         // Do not send upstream descriptions, annotations or instructions to models.
         found.set(tool.name, { name: tool.name, inputSchema: { type: 'object', properties: Object.fromEntries(Object.entries(expected.properties).map(([k,v]) => [k, { type: v.type }])), required } });
       }
@@ -125,8 +129,8 @@ export class DidiMcpConnector implements DidiConnector {
       if (!cursor) break;
       if (page === 3) throw new DidiReadError('TOOL_DIRECTORY_TOO_LARGE');
     }
-    if (found.size !== DIDI_TOOLS.length) throw new DidiReadError('READ_TOOLS_UNAVAILABLE');
-    return DIDI_TOOLS.map(name => found.get(name)!);
+    if (DIDI_REQUIRED_TOOLS.some(name => !found.has(name))) throw new DidiReadError('READ_TOOLS_UNAVAILABLE');
+    return DIDI_TOOLS.flatMap(name => found.has(name) ? [found.get(name)!] : []);
   }
   async discover(signal: AbortSignal) {
     return this.session(signal, async client => ({ endpoint: didiEndpoint(this.binding.environment), environment: this.binding.environment, bindingId: this.binding.bindingId, enabledTools: await this.directory(client, signal), evidenceKind: this.evidenceKind }));
@@ -153,6 +157,8 @@ export class DidiMcpConnector implements DidiConnector {
     await beforeCall?.('prepare');
     const { data, receipt, serialized } = await this.session(signal, async (client, secret) => {
       const directory = await this.readDirectory(client, signal, context), startedAt = new Date().toISOString();
+      const descriptor = directory.find(t => t.name === tool);
+      if (!descriptor) throw new DidiReadError('READ_TOOLS_UNAVAILABLE');
       signal.throwIfAborted();
       const raw = await client.callTool({ name: tool, arguments: parsed.data }, { signal, timeout: 20000 });
       await this.verifyCredential();
@@ -160,7 +166,7 @@ export class DidiMcpConnector implements DidiConnector {
       if (serialized.includes(secret)) throw new DidiReadError('CREDENTIAL_ECHO_BLOCKED');
       let data: DidiData;
       try { data = mapDidiResult(tool, raw); } catch { throw new DidiReadError(raw.isError ? 'TOOL_REJECTED' : 'INVALID_SOURCE_RESULT'); }
-      const receipt = didiReceiptSchema.parse({ id: randomUUID(), bindingId: this.binding.bindingId, environment: this.binding.environment, endpoint: didiEndpoint(this.binding.environment), tool, inputDigest: digest(parsed.data), resultDigest: digest(data), responseSha256: createHash('sha256').update(serialized).digest('hex'), toolSchemaDigest: digest(directory.find(t => t.name === tool)!.inputSchema), startedAt, receivedAt });
+      const receipt = didiReceiptSchema.parse({ id: randomUUID(), bindingId: this.binding.bindingId, environment: this.binding.environment, endpoint: didiEndpoint(this.binding.environment), tool, inputDigest: digest(parsed.data), resultDigest: digest(data), responseSha256: createHash('sha256').update(serialized).digest('hex'), toolSchemaDigest: digest(descriptor.inputSchema), startedAt, receivedAt });
       signal.throwIfAborted();
       return { data, receipt, serialized };
     }, beforeCall).catch(error => { this.directoryCache = undefined; throw error; });
