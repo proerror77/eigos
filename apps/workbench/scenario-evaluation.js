@@ -47,7 +47,7 @@ export function scenarioEvaluation(ui, scenarios) {
     ));
   }
 
-  function trial() {
+  function trial(initialSet = '') {
     const plan = { type: 'SchedulePlan', id: '' };
     const calendar = { type: 'CalendarAvailability', id: '' };
     const check = { function: 'validateSchedule', input: { plan: { input: 'plan' } }, path: ['valid'] };
@@ -67,22 +67,66 @@ export function scenarioEvaluation(ui, scenarios) {
       metrics: [{ ...check, name: 'valid' }],
     });
     const output = element('div');
+    const summary = (data) => output.replaceChildren(
+      table(['流程', '完成', '未通过', '尝试步骤'], data.summary.map(row =>
+        [row.name, row.completed, row.rejected, row.attemptedSteps])),
+      ...data.cases.map(row => element('details', {},
+        element('summary', {}, row.name + ' · ' + new Date(row.evaluatedAt).toLocaleString()),
+        table(['流程', '结果', '指标', '原因', ''], row.variants.map(variant=>
+          [variant.name,variant.status==='completed'?'完成':'未通过',display(variant.metrics),variant.reason??'—',
+            data.run&&variant.status==='completed'&&button('送审',async()=>{
+              const reviewers=element('input',{placeholder:'用逗号分隔审阅者身份'});
+              const panel=element('div');
+              output.append(field('独立审阅者',reviewers),button('创建送审草稿',async()=>{
+                const result=await service('promote_evaluation_candidate',{run:data.run,case:row.name,variant:variant.name,
+                  requestId:crypto.randomUUID(),reviewers:reviewers.value.split(',').map(x=>x.trim()).filter(Boolean)});
+                panel.textContent='送审草稿 '+result.id+' · 修订 '+result.revision;
+              }),panel);
+            })
+          ])),
+      )),
+    );
+    const showSuites=async()=>{
+      const {suites}=await service('evaluation_suites');
+      output.replaceChildren(table(['评估集','修订',''],suites.map(suite=>[
+        suite.name,suite.revision,button('重跑',async()=>summary(await service('run_evaluation_suite',{id:suite.id,revision:suite.revision}))),
+      ])));
+    };
+    const suiteName=element('input',{placeholder:'评估集名称'}),
+      machinerySet=element('input',{placeholder:'Machinery 对象集 ID',value:initialSet}),
+      parameter=element('input',{value:initialSet?'target':'plan'}),
+      caseLimit=element('input',{type:'number',min:1,max:8,value:4}),
+      candidateRelease=element('input',{placeholder:'可选：候选发布摘要'});
+    const loadCases=async()=>{
+      const data=await service('evaluation_cases_from_set',{set:machinerySet.value.trim(),
+        parameter:parameter.value.trim(),limit:Number(caseLimit.value)});
+      if(!data.cases.length)throw new Error('对象集没有可读的实例。');
+      const trial=JSON.parse(editor.value), template=trial.cases[0];
+      trial.cases=data.cases.map(item=>({...item,inputs:{...template?.inputs,...item.inputs},evidence:[
+        ...item.evidence,...(template?.evidence??[]).filter(e=>e.object.id
+          && !item.evidence.some(other=>other.object.type===e.object.type && other.object.id===e.object.id)),
+      ]}));
+      editor.value=JSON.stringify(trial,null,2);
+      output.replaceChildren(element('p',{},'已载入 '+data.cases.length+' / '+data.total+' 个实例。请为这些实例设置试跑步骤、指标和其他必要证据。'));
+    };
     modal('离线试跑', element('div', {},
       element('p', {}, '把同一组对象引用、修订和回执交给每个候选流程。试跑结束后自动回滚。'),
       field('试跑配置', editor),
+      field('候选发布',candidateRelease),
       button('运行试跑', async () => {
-        const data = await service('trial_scenarios', JSON.parse(editor.value));
-        output.replaceChildren(
-          table(['流程', '完成', '未通过', '尝试步骤'], data.summary.map(row =>
-            [row.name, row.completed, row.rejected, row.attemptedSteps])),
-          ...data.cases.map(row => element('details', {},
-            element('summary', {}, row.name + ' · ' + new Date(row.evaluatedAt).toLocaleString()),
-            table(['流程', '结果', '指标', '原因'], row.variants.map(variant =>
-              [variant.name, variant.status === 'completed' ? '完成' : '未通过', display(variant.metrics), variant.reason ?? '—'])),
-            element('pre', { class: 'code' }, JSON.stringify(row, null, 2)),
-          )),
-        );
+        const trial=JSON.parse(editor.value);
+        summary(candidateRelease.value
+          ?await service('trial_candidate_scenarios',{trial,release:candidateRelease.value.trim()})
+          :await service('trial_scenarios',trial));
       }, 'primary'),
+      element('details',{open:!!initialSet},element('summary',{},'保存和重跑评估集'),
+        field('名称',suiteName),field('Machinery 对象集',machinerySet),
+        field('实例输入参数',parameter),field('载入实例数',caseLimit),button('从对象集载入案例',loadCases),
+        button('保存评估集',async()=>{
+          await service('save_evaluation_suite',{name:suiteName.value,requestId:crypto.randomUUID(),trial:JSON.parse(editor.value),
+            ...(machinerySet.value?{machinerySet:machinerySet.value.trim()}:{})});
+          await showSuites();
+        }),button('查看已保存评估集',showSuites)),
       output,
     ));
   }

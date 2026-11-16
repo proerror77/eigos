@@ -4,11 +4,11 @@ import { Conflict, NotFound, digest } from '../core/identity.js';
 import { objectRefSchema, type LinkData, type ObjectRef } from '../ontology/schema.js';
 import { Access, PermissionDenied, type Requirement } from './access.js';
 import { Database, type Sql } from './database.js';
-import { PublishedOntology } from './metadata.js';
+import { Metadata, PublishedOntology } from './metadata.js';
 import { Objects, querySchema } from './objects.js';
 import { ObjectSets } from './object-sets.js';
 import { decisionEvidenceSchema, replayRead, type DecisionObservation } from './decision-evidence.js';
-import { bumpScenario, checkScenario, lockEdits, objectLinks, type ScenarioMutation } from './scenario-store.js';
+import { bumpScenario, checkScenario, lockEdits, objectLinks, recordScenarioAction, type ScenarioMutation } from './scenario-store.js';
 import { scenarioMetadataRead, syncScenarioMetadata, removeScenarioMetadata } from './scenario-metadata.js';
 import { appendTrace } from './execution-trace.js';
 import { changeDigest } from './action-values.js';
@@ -22,7 +22,7 @@ type ScenarioObjectEdit = {
 type LiveObject = { revision: string; properties: Properties };
 type ReviewableScenario = { id: string; owner: string; name: string; revision: string; reviewers: string[]; journal_steps: number; workflow_run_id: string | null };
 type ScenarioStep = {
-  action: string; request_id: string; digest: string; input: Properties | null;
+  action: string; request_id: string; digest: string; result: ObjectRef; input: Properties | null;
   requirements: Requirement[]; step_revision: string | null; edits: ScenarioMutation[] | null;
 };
 type ValidateAction = (prefix: Objects, action: string, input: Properties) => Promise<void>;
@@ -58,6 +58,9 @@ export const createScenarioSchema = z.strictObject({
   kind: z.enum(['persisted','temporary']).default('persisted'), sessionId: z.uuid().optional(),
   description: z.string().max(2000).default(''), ttlSeconds: z.number().int().min(1).max(31*86400).optional(),
 }).refine(input=>input.kind==='temporary'?Boolean(input.sessionId):!input.sessionId,'Temporary scenarios require a session');
+export const continueScenarioSchema = z.strictObject({
+  id:z.uuid(), revision:z.number().int().positive(), requestId:z.string().min(1).max(128),
+});
 export async function initializeScenarioLifecycle(db: Database) {
   await db.query(`CREATE TABLE IF NOT EXISTS ${db.schema}.scenario_sessions(
     id uuid PRIMARY KEY,owner text NOT NULL,expires_at timestamptz NOT NULL,closed_at timestamptz);
@@ -150,12 +153,12 @@ export class Scenarios {
       return {id:String(row.id),revision:Number(row.revision),readers:[...new Set(shared)]};
     });
   }
-  async inviteReviewers(access: Access, model: PublishedOntology, id: string, revision: number, reviewers: string[]) {
+  async inviteReviewers(access: Access, model: PublishedOntology, id: string, revision: number, reviewers: string[], existing?: Sql) {
     z.number().int().positive().parse(revision);
     const owner = access.principal.owner;
     const allowed = [...new Set(z.array(z.string().min(1).max(200)).max(100).parse(reviewers))].sort();
     if (allowed.includes(owner)) throw new Conflict('Scenario reviewers must be separate identities');
-    return this.db.transaction(async client => {
+    const invite = async (client: Sql) => {
       await access.refresh(client);
       access.require(model.document.id, 'view_definition', model.document.id);
       await lockEdits(this.db, model, owner, client);
@@ -167,7 +170,8 @@ export class Scenarios {
       await syncScenarioMetadata(this.db, model, id, client);
       await access.refresh(client);
       return { id, revision: Number(result.rows[0]!.revision), reviewers: allowed };
-    });
+    };
+    return existing ? invite(existing) : this.db.transaction(invite);
   }
   async pendingReviews(access: Access, model: PublishedOntology, page: number) {
     const reviewer = access.principal.owner;
@@ -385,6 +389,8 @@ export class Scenarios {
     context?: { client: Sql; runId: string; reviewers: string[] } | { client: Sql }) {
     const workflow = context && 'runId' in context ? context : undefined;
     const input = createScenarioSchema.parse(raw), owner = access.principal.owner;
+    if(model.evaluation&&(input.kind!=='temporary'||context?.client!==model.evaluation.client))
+      throw new Conflict('Prepared candidates only allow temporary evaluation Scenarios');
     access.require(model.document.id, 'view_definition', model.document.id);
     const create = async (client: Sql) => {
       await beforeCommit?.(client);
@@ -409,11 +415,108 @@ export class Scenarios {
   }
   async view(access: Access, model: PublishedOntology, id: string, client: Sql = this.db.pool) {
     z.uuid().parse(id);
-    const view = new PublishedOntology(model.document, model.release, model.projection, model.runtimeId, model.bindings, id);
+    const view = new PublishedOntology(model.document, model.release, model.projection, model.runtimeId, model.bindings, id, model.evaluation);
     await checkScenario(this.db, view, access.principal.owner, client);
-    if ((await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [model.document.id], client)).rows[0]?.release !== model.release) throw new Conflict('Scenario publication changed; create a new scenario');
+    if (model.evaluation) await lockEdits(this.db,view,access.principal.owner,client);
+    else if ((await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [model.document.id], client)).rows[0]?.release !== model.release) throw new Conflict('Scenario publication changed; create a new scenario');
     return view;
   }
+  async continuationSources(access:Access,model:PublishedOntology) {
+    access.require(model.document.id,'view_definition',model.document.id);
+    const rows=(await this.db.query(`WITH RECURSIVE releases AS (
+      SELECT digest,prepared_from FROM ${this.db.schema}.releases WHERE digest=$1
+      UNION ALL SELECT r.digest,r.prepared_from FROM ${this.db.schema}.releases r JOIN releases parent ON r.digest=parent.prepared_from
+    ) SELECT s.id,s.name,s.kind,s.release,s.revision,s.expires_at FROM ${this.db.schema}.scenarios s JOIN releases r ON r.digest=s.release
+      LEFT JOIN ${this.db.schema}.scenario_sessions session ON session.id=s.session_id
+      WHERE s.owner=$2 AND s.state='open' AND s.workflow_run_id IS NULL AND (s.release<>$1 OR s.kind='temporary')
+      AND s.expires_at>now() AND (s.session_id IS NULL OR (session.closed_at IS NULL AND session.expires_at>now()))
+      ORDER BY s.expires_at DESC,s.id LIMIT 100`,[model.release,access.principal.owner])).rows;
+    return {items:rows.map(row=>({id:String(row.id),name:String(row.name),kind:String(row.kind),release:String(row.release),revision:Number(row.revision),expiresAt:row.expires_at as Date}))};
+  }
+
+  async continueScenario(access:Access,model:PublishedOntology,raw:unknown) {
+    const input=continueScenarioSchema.parse(raw), owner=access.principal.owner;
+    return this.db.withOwner(owner,()=>this.db.transaction(async client=>{
+      await access.refresh(client);
+      access.require(model.document.id,'view_definition',model.document.id);
+      await lockEdits(this.db,model,owner,client);
+      const source=(await this.db.query(`WITH RECURSIVE releases AS (
+        SELECT digest,prepared_from FROM ${this.db.schema}.releases WHERE digest=$1
+        UNION ALL SELECT r.digest,r.prepared_from FROM ${this.db.schema}.releases r JOIN releases parent ON r.digest=parent.prepared_from
+      ) SELECT s.* FROM ${this.db.schema}.scenarios s JOIN releases r ON r.digest=s.release
+        LEFT JOIN ${this.db.schema}.scenario_sessions session ON session.id=s.session_id
+        WHERE s.owner=$2 AND s.id=$3 AND s.state='open' AND s.workflow_run_id IS NULL
+        AND (s.release<>$1 OR s.kind='temporary') AND s.expires_at>now()
+        AND (s.session_id IS NULL OR (session.closed_at IS NULL AND session.expires_at>now()))
+        FOR UPDATE OF s`,[model.release,owner,input.id],client)).rows[0];
+      if(!source||Number(source.revision)!==input.revision)throw new Conflict('Continuation source changed or is unavailable');
+      const previous=await new Metadata(this.db).get(source.release,client);
+      const changes=await this.changes(owner,source.id,client), steps=await this.steps(owner,source.id,client);
+      if(steps.length!==source.journal_steps||steps.some(step=>step.step_revision===null||!step.input||!Array.isArray(step.edits))
+        ||(!steps.length&&(changes.objects.length||changes.links.length)))
+        throw new Conflict('Scenario continuation requires a complete Action journal');
+      const name=source.name.slice(0,190)+' (continued)';
+      const next=await this.create(access,model,{requestId:input.requestId,name,
+        description:`Continued from ${source.id} revision ${input.revision}. Previous approvals do not transfer.`},undefined,{client});
+      // The creation digest binds both the source revision and the target publication.
+      if(next.revision>1)return {id:next.id,revision:next.revision,source:source.id,release:model.release};
+      const view=await this.view(access,model,next.id,client);
+      for(const item of changes.objects){
+        access.read(model,item.type);
+        for(const snapshot of [item.base_properties,item.properties])if(snapshot){
+          access.readRow(model,item.type,snapshot);
+          for(const field of editedFields(item))if(Object.hasOwn(snapshot,field)&&!access.cell(model,item.type,field,snapshot))
+            throw new PermissionDenied('Scenario evidence field is unavailable');
+        }
+        const live=(await this.db.query<LiveObject>(`SELECT revision,properties FROM ${this.db.schema}.objects
+          WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`,[model.projection,owner,item.type,item.id],client)).rows[0];
+        if(objectConflict(item,live,true)||item.properties===null&&digest(await objectLinks(this.db,model,owner,{type:item.type,id:item.id},client))!==digest(item.base_links))
+          throw new Conflict('Continuation conflicts with current object data or relationships');
+      }
+      for(const step of steps){
+        if(step.digest!==digest({release:previous.release,action:step.action,input:step.input}))
+          throw new Conflict('Action journal fingerprint changed');
+        const prior=previous.actions.get(step.action), action=model.actions.get(step.action);
+        if(!prior||!action||digest(prior)!==digest(action))throw new Conflict('Action contract changed; propose the step again');
+        for(const name of [...(action.function?[action.function]:[]),...action.submissionCriteria.map(item=>item.function)]){
+          if(!model.functions.has(name)||digest(previous.functions.get(name))!==digest(model.functions.get(name))
+            ||previous.bindings.functions[name]!==model.bindings.functions[name])
+            throw new Conflict('Action Function binding changed; propose the step again');
+        }
+        access.action(model,step.action);
+        for(const requirement of step.requirements){
+          if(!access.allows(requirement)) throw new PermissionDenied('Scenario evidence permissions changed');
+          access.require(requirement.ontology,requirement.permission,requirement.resource);
+        }
+        const edits:ScenarioMutation[]=[];
+        const graph=new Objects(this.db,view,access,client,{action:step.action,requestId:step.request_id,scenarioEdits:edits});
+        for (const requirement of step.requirements) {
+          const row=requirement.row;
+          if(!row)continue;
+          if(row.scenario&&row.scenario!==source.id)throw new Conflict('Scenario depends on a different draft');
+          const reader=row.scenario?graph:new Objects(this.db,model,access,client);
+          const ref={type:row.type,id:row.id};
+          await reader.read(ref);
+          for(const field of row.fields)if(!await reader.propertyVisible(ref,field))
+            throw new PermissionDenied('Scenario evidence field is unavailable');
+        }
+        for(const edit of step.edits!)await this.applyProposedEdit(graph,edit);
+        await recordScenarioAction(graph,step.action,step.input!,step.result,step.request_id);
+      }
+      const replayed=await this.changes(owner,next.id,client);
+      if(this.footprint(changes)!==this.footprint(replayed))throw new Conflict('Scenario replay changed the proposed differences');
+      for(const link of replayed.links)if(await this.linkConflict(model,owner,link,client))
+        throw new Conflict('Continuation conflicts with current links');
+      let current=await this.inspect(access,model,next.id,client);
+      if(source.reviewers?.length){
+        const review=await this.inviteReviewers(access,model,next.id,current.revision,source.reviewers,client);
+        current={...current,revision:review.revision};
+      }
+      await access.refresh(client);
+      return {id:next.id,revision:current.revision,source:source.id,release:model.release};
+    }));
+  }
+
   private async changes(owner: string, id: string, client: Sql) {
     const objects = (await this.db.query<ScenarioObjectEdit>(`SELECT * FROM ${this.db.schema}.scenario_objects WHERE owner=$1 AND scenario_id=$2
       AND (properties IS DISTINCT FROM base_properties OR (properties IS NOT NULL AND jsonb_array_length(edited_fields) > 0))
@@ -423,9 +526,12 @@ export class Scenarios {
   }
   private async steps(owner: string, id: string, client: Sql) {
     return (await this.db.query<ScenarioStep>(
-      `SELECT action,request_id,digest,input,requirements,step_revision,edits FROM ${this.db.schema}.scenario_actions
+      `SELECT action,request_id,digest,result,input,requirements,step_revision,edits FROM ${this.db.schema}.scenario_actions
       WHERE owner=$1 AND scenario_id=$2 ORDER BY step_revision NULLS FIRST,request_id`, [owner, id], client,
     )).rows;
+  }
+  async evaluationFootprint(owner:string,id:string,client:Sql){
+    return this.footprint(await this.changes(owner,id,client));
   }
   private footprint({ objects, links }: Awaited<ReturnType<Scenarios['changes']>>) {
     return digest({
