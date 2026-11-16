@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { DidiMcpConnector } from '../capabilities/didi/connector.js';
 import { didiBindingSchema } from '../capabilities/didi/contracts.js';
 import type { SourceResolver } from '../capabilities/didi/functions.js';
-import { digest } from './identity.js';
+import { Conflict, digest, SourceReadFailure } from './identity.js';
 import { readPrivateSourceFile } from './private-source.js';
 import { DidiOperations } from '../capabilities/didi/operations.js';
 
@@ -40,6 +40,7 @@ export const configSchema = z.object({
   EIGOS_FR24_CONNECTION_FILE: z.string().optional(), EIGOS_FR24_MCP_ENTRYPOINT: z.string().optional(),
   EIGOS_STRIPE_SANDBOX_CONNECTION_FILE: z.string().optional(),
   EIGOS_HARNESS_BIN: z.string().optional(), EIGOS_HARNESS_CREDENTIAL_FILE: z.string().optional(),
+  EIGOS_AGENT_SANDBOX_ENABLED: z.enum(['true', 'false']).optional(),
   EIGOS_HARNESS_MODEL: z.string().default('gpt-6.1-sol'), EIGOS_HARNESS_REASONING_EFFORT: z.string().default('low'),
 });
 export type Config = z.infer<typeof configSchema>;
@@ -59,6 +60,8 @@ export function readConfig(env = process.env): Config {
       throw new Error('Configure separate HTTPS member portal, MCP and existing OAuth clients');
     }
   }
+  if (config.EIGOS_AGENT_SANDBOX_ENABLED === 'true' && config.EIGOS_AUTH_MODE !== 'development')
+    throw new Error('Agent sandbox capabilities require development authentication');
   return config;
 }
 const connectionSchema = z.strictObject({ owner: z.string().min(1), active: z.boolean(), expiresAt: z.iso.datetime().nullable().optional(), binding: didiBindingSchema, ordersEnabled:z.boolean().default(false) });
@@ -70,26 +73,36 @@ const sandboxWatchSchema = connectionSchema.extend({
 export function configuredSource(primaryPath?: string, sandboxWatchPath?: string): SourceResolver {
   const cache = new Map<boolean, { hash: string; connector: DidiMcpConnector }>();
   const read = async (path?: string) => {
-    if (!path || !isAbsolute(path)) throw new Error('Configure an absolute DiDi connection file');
-    return connectionSchema.parse(JSON.parse(await readFile(path, 'utf8')));
+    if (!path || !isAbsolute(path))
+      throw new SourceReadFailure('Configure an absolute DiDi connection file', { unavailable: true });
+    try {
+      return connectionSchema.parse(JSON.parse(await readFile(path, 'utf8')));
+    } catch (cause) {
+      throw new SourceReadFailure('DiDi connection configuration is unavailable', { cause, unavailable: true });
+    }
   };
   return async (owner, order) => {
     const primary = await read(primaryPath);
     // Tracking supplies the binding from its stored order. Other calls select the primary connection.
     const sandbox = order !== undefined && order.bindingId !== primary.binding.bindingId;
     const readSandbox = async () => {
-      if (!sandboxWatchPath) throw new Error('DiDi sandbox tracking is unavailable');
-      return sandboxWatchSchema.parse(JSON.parse(await readPrivateSourceFile(sandboxWatchPath)));
+      if (!sandboxWatchPath)
+        throw new SourceReadFailure('DiDi sandbox tracking is unavailable', { unavailable: true });
+      try {
+        return sandboxWatchSchema.parse(JSON.parse(await readPrivateSourceFile(sandboxWatchPath)));
+      } catch (cause) {
+        throw new SourceReadFailure('DiDi sandbox connection configuration is unavailable', { cause, unavailable: true });
+      }
     };
     const sandboxConnection = sandbox ? await readSandbox() : undefined;
     const connection = sandboxConnection ?? primary;
     if (sandboxConnection && sandboxConnection.binding.bindingId !== order?.bindingId)
-      throw new Error('Invalid DiDi sandbox watch binding');
+      throw new Conflict('Invalid DiDi sandbox watch binding');
     if (sandboxConnection && sandboxConnection.originalOrderId !== order?.orderId)
-      throw new Error('Original sandbox order identity changed');
+      throw new Conflict('Original sandbox order identity changed');
     const hash = digest(connection);
     if (!connection.active || connection.owner !== owner || connection.expiresAt && Date.parse(connection.expiresAt) <= Date.now())
-      throw new Error('DiDi source is unavailable for this owner');
+      throw new SourceReadFailure('DiDi source is unavailable for this owner', { unavailable: true });
     const cached = cache.get(sandbox);
     const connector = cached?.hash === hash ? cached.connector : new DidiMcpConnector(connection.binding);
     cache.set(sandbox, { hash, connector });
@@ -97,7 +110,7 @@ export function configuredSource(primaryPath?: string, sandboxWatchPath?: string
     return { bindingId: connection.binding.bindingId, authorityId: hash, connector, orders, async assertCurrent() {
       if (digest(await (sandbox ? readSandbox() : read(primaryPath))) !== hash ||
         connection.expiresAt && Date.parse(connection.expiresAt) <= Date.now())
-        throw new Error('DiDi source configuration changed or expired');
+        throw new Conflict('DiDi source configuration changed or expired');
       await connector.verifyCredential();
     } };
   };

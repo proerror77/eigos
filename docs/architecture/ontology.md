@@ -83,7 +83,7 @@ flowchart LR
     Place -->|sources| Receipt
 ```
 
-模型接收用户原文与任务发布版本的 Interface、Link、Function、Action 和 data source 目录。Agent 理解需求并选择业务能力，确定性的业务步骤由该能力绑定的 Function 和 Action 执行。运行调度器不包含滴滴步骤或地点名称。[Palantir Agent 工具](https://www.palantir.com/docs/foundry/agent-sdk/customize-agent)
+模型接收用户原文和任务发布版本中与目标相关的 Ontology 定义。发布的 `agentProfiles` 声明可预加载的资源与操作指引，读取时应用当前资源权限和模型出口策略。触发词覆盖常见的中文口语说法，例如“叫个车”“有空吗”“住哪里”。业务资源描述为英文，未命中触发词的中文请求通过 `describe_ontology` 继续发现能力。复合或未匹配的目标可用 `describe_ontology` 浏览简明目录并按 API 名称读取完整定义。Agent 选择业务能力，确定性步骤由对应的 Function 和 Action 执行。标记为沙箱的能力仅在显式启用的本地开发 Worker 中对 Agent 开放。[Palantir Agent 工具](https://www.palantir.com/docs/foundry/agent-sdk/customize-agent)
 
 `RideRequest` 实现 `RideInquiry` Interface，其 `estimate` 能力映射到 `EstimateRide` Action。参数是城市、起终点场所名及可选车型。创建能力通过实现类型解析，无需编造一个尚不存在的对象引用。这对应官方 Ticket Interface 将创建能力映射到具体创建 Action 的模式。[Interface Action](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints)
 
@@ -195,7 +195,7 @@ Action 检查自身应用权限，以及实际访问的对象、关系和来源�
 
 `packages/runtime/scenarios.ts` 管理 owner 隔离的方案生命周期、跨账号审阅和原子合并，`scenario-store.ts` 将对象／关系差量叠加到当前发布数据上。Query、Function 和 Action 共用 `scenarioId` 上下文。显式 rebase 保留独立变更并更新审阅修订号。跨账号审阅以当前授权后的差量和修订为单位。 [Scenario 生命周期](../guides/scenario-lifecycle.md)
 
-`packages/runtime/pa.ts` 在原任务中记录带响应契约的信息请求，只有原 owner 的 PA 可以回传并继续该任务。`packages/capabilities/scheduling/` 绑定 Calendar 数据校验、候选时间搜索和排程 Actions。日历汇总数据由 PA 提供，Agent 不能把猜测的空闲时间写成来源事实。
+`packages/runtime/pa.ts` 在原任务中记录带响应契约的信息请求，只有原 owner 的 PA 可以回传并继续该任务。`packages/capabilities/scheduling/` 绑定 Calendar 数据校验、候选时间搜索、联合排程建议和排程 Actions。日历汇总数据由 PA 提供，Agent 不能把猜测的空闲时间写成来源事实。
 
 活动和资源是业务对象，Worker 租约和 PA 请求记录留在运行层。Functions 在 Scenario 中读取拟议状态；合并 Action 在同一事务中重检权限、版本、关系和业务约束。真实日历写入尚未接入。协议及边界见 [Scenario 与 PA 日历排程](../guides/scenarios-scheduling.md)。
 
@@ -218,9 +218,9 @@ Object Set Service 支持集合组合、多跳导航、分组聚合，以及静�
 
 PDF 和 SOP 的已提取文本按不可变文档版本与切片入库，随排程 Link 与对象字段权限查询。切片保留版本引用与提取文本中的准确范围，原件提供页码或段落信息时一并保留。对象集的可下推查询复用 PostgreSQL 的权限过滤。 [文档版本](../guides/document-versions.md) · [对象集](../guides/object-sets.md)
 
-Machinery 过程日志以普通 Object Type 实现共同 `ProcessLog` Interface，通过已发布 Link 关联原业务对象。查询投影复用正式编辑历史，不增加日志存储或执行引擎；Action、请求、原任务与来源观察时间在原事务中关联。Scenario 拟议修改不进入正式历史，排程确认沿原合并 Action 记录内部状态。Agent 通过既有 Ontology MCP 发现和查询这些对象，简单任务保持直接执行。定义、权限、升级和验收边界见 [过程日志](../guides/process-history.md)。同一投影也提供 [Machinery 流程挖掘和瓶颈分析](../guides/machinery.md)，参考流程随发布定义审阅，Workbench 和 MCP 按当前权限读取分析结果。
+Machinery 过程日志以普通 Object Type 实现共同 `ProcessLog` Interface，通过已发布 Link 关联原业务对象。正式日志投影复用编辑历史；外部观察记录独立归档，用于分析；Action、请求、原任务与来源观察时间在原事务中关联。Scenario 拟议修改不进入正式历史，排程确认沿原合并 Action 记录内部状态。Agent 通过既有 Ontology MCP 发现和查询这些对象，简单任务保持直接执行。定义、权限、升级和验收边界见 [过程日志](../guides/process-history.md)。同一投影也提供 [Machinery 流程挖掘和瓶颈分析](../guides/machinery.md)，参考流程随发布定义审阅，Workbench 和 MCP 按当前权限读取分析结果。
 
-过程规则按正式历史游标拾取状态跃迁，沿用 Workflow 队列和 Action 权限处理即时事件与停留超时。Agent 评估通过相同 MCP 路径执行固定业务用例，按实际工具调用、状态和差量评分。 [自动化](../guides/automation.md) · [Agent 评估](../guides/agent-evaluations.md)
+过程规则按正式历史游标拾取状态跃迁，沿用 Workflow 队列和 Action 权限处理即时事件与停留超时。自动化可先在 Scenario 中预演。流程筛选结果可转成评估集，选定的候选按当前证据复跑后进入 Scenario 审阅。[排程、预演与评估送审](../guides/operational-scenarios.md)Agent 评估通过相同 MCP 路径执行固定业务用例，按实际工具调用、状态和差量评分。 [自动化](../guides/automation.md) · [Agent 评估](../guides/agent-evaluations.md)
 
 执行追踪使用原任务和 Action 身份关联来源证据、模型授权、方案审阅、编辑历史、outbox 和实际供应商回执。读取追踪时复核权限，业务结果以各原始记录为准。 [EIGOS 执行追踪](../guides/execution-trace.md) · [Palantir 执行追踪](https://www.palantir.com/docs/foundry/aip-observability/trace-view)
 

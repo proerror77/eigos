@@ -1,4 +1,4 @@
-import { digest } from '../core/identity.js';
+import { digest, NotFound } from '../core/identity.js';
 import type { Ontology } from '../ontology/model.js';
 import type { ObjectRef } from '../ontology/schema.js';
 import { Database } from './database.js';
@@ -18,7 +18,8 @@ export class Sources {
   constructor(private readonly db: Database, private readonly functions: Functions, private readonly projections: ReadonlyMap<string, SourceProjection>) {}
   private projection(model: Ontology, name: string) {
     const mapping = model.sources.get(name), projection = mapping && this.projections.get(mapping.apiName);
-    if (!mapping || !projection) throw new Error('Datasource is unavailable');
+    if (!mapping) throw new NotFound('Datasource is unavailable');
+    if (!projection) throw new Error('Published datasource implementation is unavailable');
     return { mapping, projection };
   }
   bindings(model: Ontology) {
@@ -64,6 +65,11 @@ export class Sources {
   }
   async refresh(model: PublishedOntology, name: string, input: Record<string, unknown>, access: Access, task: Task | undefined, tasks: Tasks | undefined, signal: AbortSignal, view?: { type: string; link: string }) {
     const result = await this.read(model, name, input, access, task, tasks, signal);
+    return this.publishRead(model, name, input, result, access, task, tasks, signal, view);
+  }
+  /** Commit a reading already verified against the source and its account. */
+  async publishRead(model: PublishedOntology, name: string, input: Record<string, unknown>, result: unknown, access: Access, task: Task | undefined, tasks: Tasks | undefined, signal: AbortSignal, view?: { type: string; link: string }) {
+    this.checkReadAccess(model, name, access);
     return this.db.transaction(async client => {
       if (task && tasks) await tasks.current(task, client, true);
       const executor = task

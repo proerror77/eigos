@@ -1,4 +1,3 @@
-import type { z } from 'zod';
 import { Conflict, NotFound, digest, requireScope } from '../../core/identity.js';
 import {
   calendarJourney, journeyCalendarCapability, journeyCalendarReply, journeyInput, journeyReadResult,
@@ -10,21 +9,13 @@ import type { ObjectRef } from '../../ontology/schema.js';
 import { Clarification } from '../../runtime/clarification.js';
 import type { Database } from '../../runtime/database.js';
 import type { FunctionContext, FunctionHandler, Functions } from '../../runtime/functions.js';
+import { calendarJourneyReplayFunctions } from './replay.js';
 import { PARequests } from '../../runtime/pa.js';
 import { ScheduledActions } from '../../runtime/scheduled-actions.js';
 import type { AmapResolver } from '../amap/client.js';
 import type { JourneyCalendarSource } from './calendar-source.js';
 
-type Journey = z.infer<typeof calendarJourney>;
-type UsableWeather = z.infer<typeof weatherResult>;
-type Observation = Pick<Journey, 'calendar' | 'route' | 'weather' | 'timing' | 'state' | 'reason'>;
-const minute = 60_000;
-const iso = (value: number) => new Date(value).toISOString();
-const epoch = (value: string) => Date.parse(value);
-const terminal = (state: Journey['state']) => state === 'canceled' || state === 'ended';
-
-const emptyObservation = (state: Journey['state'], reason: Journey['reason'], calendar: Journey['calendar'] = null): Observation =>
-  ({ state, reason, calendar, route: null, weather: null, timing: null });
+import { decideJourney, emptyObservation, journeyReminderFor, epoch, iso, minute, terminal, type Journey, type Observation } from './decision.js';
 
 async function optionalRead<T>(read: () => Promise<T>) {
   try { return await read(); }
@@ -46,28 +37,6 @@ async function readJourney(ctx: FunctionContext['objects'], ref: ObjectRef) {
   return { row, journey: calendarJourney.parse(row.properties) };
 }
 
-function weatherNeedsBuffer(weather: UsableWeather | null, arrival: number): boolean {
-  const wet = (condition: string) => /雨|雪|冰雹/.test(condition);
-  if (weather?.kind === 'current') return wet(weather.condition);
-  if (weather?.kind !== 'forecast') return false;
-  // Amap publishes China-local day/night forecasts. Use a conservative daily allowance.
-  const date = iso(arrival + 8 * 60 * minute).slice(0, 10);
-  return weather.days.some(day => day.date === date && (wet(day.daytime) || wet(day.nighttime)));
-}
-
-function timingFor(start: number, originEnd: number, duration: number, settings: Journey['settings'],
-  weather: UsableWeather | null, now: number): Pick<Observation, 'timing' | 'state' | 'reason'> {
-  const arriveBy = start - settings.entryMinutes * minute;
-  const weatherBufferMinutes = weatherNeedsBuffer(weather, arriveBy) ? settings.rainBufferMinutes : 0;
-  const departAt = arriveBy - duration * 1000 - weatherBufferMinutes * minute;
-  const prepareAt = departAt - settings.preparationMinutes * minute;
-  const timing = { arriveBy: iso(arriveBy), departAt: iso(departAt), prepareAt: iso(prepareAt), durationSeconds: duration, weatherBufferMinutes };
-  if (originEnd > prepareAt) return { timing, state: 'risk', reason: 'calendar_conflict' };
-  if (now > departAt) return { timing, state: 'risk', reason: 'late_arrival' };
-  if (now >= prepareAt) return { timing, state: 'due', reason: 'departure_due' };
-  return { timing, state: 'scheduled', reason: 'route_checked' };
-}
-
 function nextCheck(now: number, deadline: number, observation: Observation) {
   if (terminal(observation.state)) return null;
   const destination = observation.calendar?.status === 'available' ? observation.calendar.destination : null;
@@ -79,39 +48,6 @@ function nextCheck(now: number, deadline: number, observation: Observation) {
     : until > 120 * minute ? 30 * minute : until > 30 * minute ? 15 * minute : until > 5 * minute ? 5 * minute : minute;
   const next = Math.min(now + interval, target > now ? target : Infinity, eventStart > now ? eventStart : Infinity);
   return next + 2000 < deadline ? iso(next) : null;
-}
-
-function reminderFor(observation: Observation, previous: Journey) {
-  const { calendar, timing, state } = observation;
-  if (!timing || calendar?.status !== 'available' || calendar.destination.status !== 'confirmed' ||
-      (state !== 'scheduled' && state !== 'due' && state !== 'risk')) {
-    return {
-      reminder: null,
-      reminderVersion: previous.reminderVersion + (previous.reminder ? 1 : 0),
-    };
-  }
-  const eventKey = digest([
-    calendar.origin.status === 'confirmed' ? [calendar.origin.location, calendar.origin.end] : null,
-    calendar.destination.start, calendar.destination.location,
-    Math.floor(epoch(timing.prepareAt) / minute), state, observation.reason,
-  ]);
-  if (previous.reminder?.eventKey === eventKey)
-    return { reminder: previous.reminder, reminderVersion: previous.reminderVersion };
-  const version = previous.reminderVersion + 1;
-  const inputs = (pair: Journey['calendar']) => pair?.status === 'available' &&
-    pair.origin.status === 'confirmed' && pair.destination.status === 'confirmed'
-    ? [pair.origin.location, pair.origin.end, pair.destination.location, pair.destination.start] : null;
-  let cause: NonNullable<Journey['reminder']>['cause'] = 'initial';
-  if (previous.reminder) {
-    if (digest(inputs(calendar)) !== digest(inputs(previous.calendar))) cause = 'calendar_changed';
-    else if (timing.durationSeconds !== previous.timing?.durationSeconds) cause = 'route_estimate_changed';
-    else if (timing.weatherBufferMinutes !== previous.timing.weatherBufferMinutes) cause = 'weather_buffer_changed';
-    else cause = 'status_changed';
-  }
-  return {
-    reminder: { version, prepareAt: iso(Math.floor(epoch(timing.prepareAt) / minute) * minute), state, cause, eventKey },
-    reminderVersion: version,
-  };
 }
 
 export function calendarJourneyFunctions(db: Database, getFunctions: () => Functions, resolveAmap: AmapResolver,
@@ -171,12 +107,11 @@ export function calendarJourneyFunctions(db: Database, getFunctions: () => Funct
     })));
     if ((await resolveAmap(context)).authorityId !== journey.mapAuthority)
       return emptyObservation('ended', 'source_changed', calendar);
-    if (!isFresh()) return emptyObservation('unavailable', 'calendar_unavailable', calendar);
-    if (epoch(destination.start) <= Date.now()) return emptyObservation('ended', 'event_started', calendar);
-    return { calendar, route, weather, ...timingFor(epoch(destination.start), epoch(origin.end), duration, settings, weather, Date.now()) };
+    return decideJourney(journey, calendar, route, weather, Date.now()).observation;
   };
 
   return new Map<string, FunctionHandler>([
+    ...calendarJourneyReplayFunctions(db),
     ['startCalendarJourney', async (raw, context) => {
       const edit = requireDirect(context);
       const settings = journeySettings.parse(raw);
@@ -231,7 +166,7 @@ export function calendarJourneyFunctions(db: Database, getFunctions: () => Funct
         destination?.status === 'confirmed' ? epoch(destination.start) : deadline, (next ? epoch(next) : now) + 2 * minute)) : null;
       return edit(ref, async graph => {
         await graph.edit(ref, row.revision, {
-          ...observation, ...reminderFor(observation, journey), checkedAt: iso(now), validUntil, nextCheckAt: next,
+          ...observation, ...journeyReminderFor(observation, journey), checkedAt: iso(now), validUntil, nextCheckAt: next,
         });
         if (next) await schedules.continueAt(graph, execution.task, next);
       });

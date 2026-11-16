@@ -4,6 +4,7 @@ import { isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { z } from 'zod';
+import { InvalidInput, SourceReadFailure } from '../../core/identity.js';
 
 const ENDPOINT = 'https://mcp.rollinggo.ai/mcp';
 export const rollingGoInputSchema = z.strictObject({
@@ -84,11 +85,13 @@ export class RollingGoSearchConnector {
   async search(input: RollingGoSearchInput, signal: AbortSignal) {
     const args = rollingGoInputSchema.parse(input);
     const today = new Date().toISOString().slice(0, 10);
-    if (args.checkInParam.checkInDate < today) throw new Error('PAST_CHECK_IN');
-    const key = await this.credential();
+    if (args.checkInParam.checkInDate < today) throw new InvalidInput('PAST_CHECK_IN');
+    const readCredential = () => this.credential().catch(() => {
+      throw new SourceReadFailure('RollingGo credential is unavailable', { unavailable: true });
+    });
+    const key = await readCredential();
     const bounded = AbortSignal.any([signal, AbortSignal.timeout(60000)]);
-    let calls = 0,
-      businessCalls = 0;
+    let calls = 0, businessCalls = 0, unavailable = false;
     const guarded: typeof fetch = async (target, init = {}) => {
       if (String(target) !== ENDPOINT || ++calls > 20) throw new Error('UNEXPECTED_ENDPOINT');
       if (init.method === 'POST') {
@@ -116,7 +119,11 @@ export class RollingGoSearchConnector {
         ...init,
         redirect: 'manual',
         signal: bounded,
+      }).catch((error: unknown) => {
+        if (error instanceof TypeError) unavailable = true;
+        throw error;
       });
+      if ([429, 503, 504].includes(response.status)) unavailable = true;
       if (response.redirected || (response.status >= 300 && response.status < 400)) throw new Error('REDIRECT_BLOCKED');
       if (!response.body) return response;
       let bytes = 0;
@@ -173,16 +180,19 @@ export class RollingGoSearchConnector {
         new Set(parsed.hotelInformationList.map((h) => h.hotelId)).size !== parsed.hotelInformationList.length
       )
         throw new Error('SOURCE_REJECTED');
-      await this.credential();
+      await readCredential();
       return {
         hotels: parsed.hotelInformationList ?? [],
         observedAt: new Date().toISOString(),
         priceKind: 'reference' as const,
         providerExpiry: 'unknown' as const,
       };
-    } catch {
-      throw new Error(
+    } catch (error) {
+      signal.throwIfAborted();
+      if (error instanceof SourceReadFailure) throw error;
+      throw new SourceReadFailure(
         'RollingGo search failed; verify the private credential and provider availability. No order or payment was sent.',
+        { unavailable: unavailable || bounded.aborted },
       );
     } finally {
       await client.close().catch(() => {});

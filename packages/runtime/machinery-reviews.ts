@@ -6,6 +6,7 @@ import { Access } from './access.js';
 import type { Database, Sql } from './database.js';
 import { analyzeMachinery, listMachineryProcesses, machineryAnalysisSchema } from './machinery-analysis.js';
 import type { Metadata, PublishedOntology } from './metadata.js';
+import { runEvaluationSuiteSchema, type ScenarioEvaluations } from './scenario-evaluation.js';
 
 const day = 86400000;
 export const machineryReviewSchema = z.strictObject({
@@ -17,10 +18,12 @@ export const machineryReviewSchema = z.strictObject({
   durationClock: z.enum(['recordedAt', 'observedAt']).default('recordedAt'),
   minCases: z.number().int().min(1).max(20000).default(2),
   enabled: z.boolean().default(false),
+  evaluation: runEvaluationSuiteSchema.optional(),
 });
 const reviewDefinition = machineryReviewSchema.omit({ id: true, revision: true, enabled: true });
 const checkpointSchema = z.strictObject({
   release: z.string(), from: z.iso.datetime(), to: z.iso.datetime(),
+  evaluation: z.strictObject({ run: z.uuid(), rejected: z.number().int().nonnegative(), completed: z.number().int().nonnegative() }).optional(),
 });
 type Checkpoint = z.output<typeof checkpointSchema>;
 type RuleRow = {
@@ -30,7 +33,7 @@ type RuleRow = {
 };
 
 export class MachineryReviews {
-  constructor(private readonly db: Database, private readonly metadata: Metadata) {}
+  constructor(private readonly db: Database, private readonly metadata: Metadata, private readonly evaluations?: ScenarioEvaluations) {}
 
   private definition(access: Access, model: PublishedOntology, row: RuleRow) {
     const definition = reviewDefinition.parse(row.body.machineryReview);
@@ -45,6 +48,7 @@ export class MachineryReviews {
     const { id, revision, enabled, ...definition } = input;
     if (!listMachineryProcesses(access, model).items.some(process => process.type === input.type))
       throw new NotFound('Machinery process is unavailable');
+    if (definition.evaluation) requireScope(access.principal, 'ontology:write');
     const owner = access.principal.owner;
     type Saved = { id: string; revision: number };
     return this.db.transaction(async client => {
@@ -98,6 +102,16 @@ export class MachineryReviews {
       if (!await access.canReturn(access.dataRequirements()))
         throw new Conflict('Machinery review permissions changed');
     });
+    if (definition.evaluation) {
+      requireScope(access.principal, 'ontology:write');
+      if (!this.evaluations) throw new Conflict('Scheduled evaluation is unavailable');
+      const evaluated = await this.evaluations.runSuite(access, model, definition.evaluation, client);
+      checkpoint.evaluation = {
+        run: evaluated.run,
+        rejected: evaluated.summary.reduce((sum, variant) => sum + variant.rejected, 0),
+        completed: evaluated.summary.reduce((sum, variant) => sum + variant.completed, 0),
+      };
+    }
     // Persist the authorized analysis window, not a cache of protected object data.
     await this.db.query(`UPDATE ${this.db.schema}.object_rules SET last_scan=$2,error=NULL,body=$3 WHERE id=$1`,
       [row.id, to, { machineryReview: definition, checkpoint }], client);
@@ -126,13 +140,17 @@ export class MachineryReviews {
         ORDER BY last_scan NULLS FIRST,id FOR UPDATE SKIP LOCKED LIMIT 1`, [], client);
       const row = result.rows[0];
       if (!row) return false;
+      await this.db.query('SAVEPOINT run_periodic_review', [], client);
       try {
         const principal = { owner: row.owner, scopes: z.array(z.string()).parse(row.scopes) };
         requireScope(principal, 'ontology:read');
         const model = await this.metadata.active(row.ontology);
         const access = await Access.load(this.db, principal);
         await this.compute(access, model, row, client);
+        await this.db.query('RELEASE SAVEPOINT run_periodic_review', [], client);
       } catch (error) {
+        await this.db.query('ROLLBACK TO SAVEPOINT run_periodic_review', [], client);
+        await this.db.query('RELEASE SAVEPOINT run_periodic_review', [], client);
         const code = (error as { code?: string }).code;
         if (code === '55P03' || code === '40001' || code === '40P01') return true;
         if (!(error instanceof NotFound || error instanceof Conflict || error instanceof z.ZodError) && !code)

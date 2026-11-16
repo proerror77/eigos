@@ -7,6 +7,7 @@ const protectedTables = [
   'scenario_objects', 'scenario_links', 'scenario_actions', 'scenario_approvals',
   'actions', 'action_changes', 'action_undo_requests', 'execution_trace',
   'materializations', 'semantic_vectors', 'geometry_blobs', 'entity_bindings', 'entity_binding_history',
+  'machinery_history', 'scenario_evaluation_suites', 'scenario_evaluation_runs',
 ] as const;
 const capturedTables = ['materialized_objects', 'materialized_links'] as const;
 const tables = [...protectedTables, ...capturedTables];

@@ -67,7 +67,7 @@ export class Indexing {
     await access.refresh(); authorize(access,model,input.source);
     const fingerprint = digest({input,release:model.release});
     return this.db.transaction(async client => {
-      await this.db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',['publication:'+model.document.id],client);
+      await this.db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',[this.db.lockKey('publication', model.document.id)],client);
       if ((await this.metadata.active(model.document.id,client)).release !== model.release) throw new Conflict('Indexing publication changed');
       const findPrevious = () => this.db.query(`SELECT id,digest,state,input,release FROM ${this.db.schema}.index_transactions WHERE owner=$1 AND ontology=$2 AND source=$3 AND stream=$4 AND offset_value=$5`,[access.principal.owner,model.document.id,input.source,input.stream,input.offset],client);
       let row = (await findPrevious()).rows[0];

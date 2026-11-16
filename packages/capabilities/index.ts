@@ -1,3 +1,4 @@
+import { evaluateCalendarJourneyRelease } from './journey/release-checks.js';
 import { registerDocumentFunction } from '../ontology/documents.js';
 import { registerSchedulePlanDocument } from './documents.js';
 import { dianpingFunctions } from './dining/dianping.js';
@@ -14,6 +15,8 @@ import { configuredJourneyCalendar } from './journey/calendar-source.js';
 import { configuredTravelNotifications } from './pa/travel-notifications.js';
 import { configuredAmap } from './amap/client.js';
 import { amapFunctions } from './amap/functions.js';
+import { prepareMapCorrectionPrompt } from './amap/task-correction.js';
+import { hotelTaskWorkflow, publicHotelTaskResult } from './services/hotel-workflows.js';
 import { resolveTaskLocation } from './location.js';
 import { luckinFunctions } from './luckin/functions.js';
 import { paotuiFunctions } from './meituan/paotui.js';
@@ -77,5 +80,7 @@ export function createCapabilities(
       effects: new Map([...(extensions.effects ?? []), ...notifications.handlers]) },
     serviceProjections(services), notifications.committed);
   sources = capabilities.sources;
-  return capabilities;
+  return { ...capabilities, evaluateRelease: evaluateCalendarJourneyRelease,
+    taskWorkflow: hotelTaskWorkflow(capabilities.functions), taskPrompt: prepareMapCorrectionPrompt,
+    projectTaskResult: publicHotelTaskResult };
 }

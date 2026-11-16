@@ -1,3 +1,5 @@
+import { developmentSandboxEnabled } from '../core/sandbox-mode.js';
+import { initializeReleaseEvaluation } from './release-evaluation.js';
 import {initializeOntologyDataMigrations} from './ontology-migrations.js';
 import {initializeEntityResolution} from './entity-resolution.js';
 import {initializeSemantic} from './semantic.js';
@@ -16,6 +18,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import pg, { type PoolClient, type QueryResultRow } from 'pg';
 import { initializeSecurity } from './security.js';
 import { implementationDigest } from './implementation.js';
+import { initializeScenarioEvaluations } from './scenario-evaluation.js';
+import { initializeMachineryHistory } from './machinery-history.js';
 import { initializeExecutionTrace } from './execution-trace.js';
 import { initializeMembers } from './members.js';
 
@@ -28,7 +32,9 @@ export class Database {
   private readonly queryCount = new AsyncLocalStorage<{ count: number }>();
   private readonly ownerContext = new AsyncLocalStorage<string>();
   private readonly transactionOwners = new WeakMap<Sql, string>();
-  constructor(connectionString: string, schema = 'eigos', readonly runtimeId = implementationDigest(), queryConnectionString?: string, readonly ownerIsolation = process.env.EIGOS_ENFORCE_OWNER_RLS === 'true') {
+  constructor(connectionString: string, schema = 'eigos', readonly runtimeId = implementationDigest(),
+    queryConnectionString?: string, readonly ownerIsolation = process.env.EIGOS_ENFORCE_OWNER_RLS === 'true',
+    readonly sandboxEnabled = developmentSandboxEnabled()) {
     if (!/^eigos(?:_[a-z0-9]+)*$/.test(schema)) throw new Error('Invalid schema');
     this.schema = `"${schema}"`;
     this.pool = new pg.Pool({ connectionString, max: 8, connectionTimeoutMillis: 5000, statement_timeout: 10000 });
@@ -46,6 +52,9 @@ export class Database {
       return this.transaction(connection => connection.query<T>(text, values));
     }
     return client.query<T>(text, values);
+  }
+  lockKey(namespace: string, ...parts: string[]): string {
+    return JSON.stringify([this.schema, namespace, ...parts]);
   }
   withOwner<T>(owner: string, operation: () => T): T {
     return this.ownerIsolation ? this.ownerContext.run(owner, operation) : operation();
@@ -153,6 +162,7 @@ export class Database {
       CREATE UNIQUE INDEX IF NOT EXISTS links_single_from ON ${s}.links(projection,owner,type,from_type,from_id) WHERE single_from;
       CREATE UNIQUE INDEX IF NOT EXISTS links_single_to ON ${s}.links(projection,owner,type,to_type,to_id) WHERE single_to;
       CREATE TABLE IF NOT EXISTS ${s}.actions (owner text NOT NULL, request_id text NOT NULL, digest text NOT NULL, action text NOT NULL, release text NOT NULL REFERENCES ${s}.releases(digest), result jsonb NOT NULL, applied_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(owner,request_id));
+      CREATE INDEX IF NOT EXISTS actions_log_order ON ${s}.actions(owner,release,applied_at DESC,request_id DESC);
       ALTER TABLE ${s}.actions ADD COLUMN IF NOT EXISTS executor_kind text;
       ALTER TABLE ${s}.actions ADD COLUMN IF NOT EXISTS executor_id text;
       ALTER TABLE ${s}.actions ADD COLUMN IF NOT EXISTS task_id uuid;
@@ -207,6 +217,9 @@ export class Database {
     await initializeSemantic(this);
     await initializeApplications(this);
     await initializeAutomation(this);
+    await initializeMachineryHistory(this);
+    await initializeScenarioEvaluations(this);
+    await initializeReleaseEvaluation(this);
     await initializeScenarioLifecycle(this);
     await initializeMachineryStates(this);
     await initializeActionUndo(this);

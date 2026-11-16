@@ -336,7 +336,7 @@ export class ObjectSets {
     const fingerprint = digest(input);
     return this.snapshot(access, async client => {
       // Serializes create retries and optimistic updates without holding a data edit lock.
-      await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [canonical(['object-set', model.document.id, owner, input.id ?? input.requestId])], client);
+      await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [this.db.lockKey('object-set', model.document.id, owner, input.id ?? input.requestId)], client);
       if (input.id) {
         const existing = await this.saved(access, model, input.id, client);
         if (existing.owner !== owner) throw new PermissionDenied('Only the owner can edit this object set');

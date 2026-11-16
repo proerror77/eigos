@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-export const DIDI_TOOLS = ['maps_textsearch', 'taxi_estimate', 'maps_direction_driving'] as const;
+export const DIDI_REQUIRED_TOOLS = ['maps_textsearch', 'taxi_estimate', 'maps_direction_driving'] as const;
+export const DIDI_TOOLS = [...DIDI_REQUIRED_TOOLS, 'maps_place_around'] as const;
 export type DidiTool = typeof DIDI_TOOLS[number];
 const text = z.string().min(1).max(500);
 export const didiBindingSchema = z.strictObject({
@@ -11,6 +12,11 @@ export type DidiBinding = z.infer<typeof didiBindingSchema>;
 const coordinate = (limit: number) => z.string().regex(/^-?\d+(?:\.\d+)?$/).refine(v => Number.isFinite(Number(v)) && Math.abs(Number(v)) <= limit);
 export const didiToolInputs = {
   maps_textsearch: z.strictObject({ keywords: text, city: text }),
+  maps_place_around: z.strictObject({
+    keywords: text,
+    location: z.string().regex(/^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$/),
+    max_distance: z.literal('500').optional(),
+  }),
   taxi_estimate: z.strictObject({ from_lng: coordinate(180), from_lat: coordinate(90), from_name: text, to_lng: coordinate(180), to_lat: coordinate(90), to_name: text }),
   maps_direction_driving: z.strictObject({ origin: z.string().regex(/^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$/), destination: z.string().regex(/^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$/), need_geo: z.literal(false).default(false) }),
 };

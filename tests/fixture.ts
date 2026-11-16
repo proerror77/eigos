@@ -34,7 +34,7 @@ export async function provider() {
   const calls: string[] = [], inputs: Record<string, unknown>[] = [];
   const flags = {
     active: true, ambiguous: false, related: true,
-    failPlaceSearch: false, emptyPlaces: (_name: string) => false,
+    failPlaceSearch: false, rateLimitPlaceSearch: false, moveNearbyPlace: false, emptyPlaces: (_name: string) => false,
     placeName: (name: string) => name,
     placeAddress: (name: string) => name + '上海市浦东新区',
     placeAlternatives: undefined as ((name: string, place: FixturePlace) => FixturePlace[]) | undefined,
@@ -52,14 +52,18 @@ export async function provider() {
     else if (request.method === 'tools/call') {
       const name = request.params.name, args = request.params.arguments;
       calls.push(name); inputs.push(args); await flags.before?.();
-      if (name === 'maps_textsearch') {
-        if (flags.failPlaceSearch) return new Response(null, { status: 503 });
-        const place = { display_name: flags.placeName(args.keywords), address: '浦东新区', address_all: flags.placeAddress(args.keywords), city: args.city, location: { lat: 31.2, lng: args.keywords === route.origin ? 121.5 : 121.48 } };
+      if (name === 'maps_textsearch' || name === 'maps_place_around') {
+        if (name === 'maps_textsearch' && flags.failPlaceSearch) return new Response(null, { status: 503 });
+        if (name === 'maps_textsearch' && flags.rateLimitPlaceSearch)
+          return Response.json({ jsonrpc: '2.0', id: request.id, error: { code: -32001, message: 'Location search quota exceeded' } });
+        const place = { display_name: flags.placeName(args.keywords), address: '浦东新区', address_all: flags.placeAddress(args.keywords), city: args.city ?? route.city,
+          location: { lat: name === 'maps_place_around' && flags.moveNearbyPlace ? 31.2001 : 31.2, lng: args.keywords === route.origin ? 121.5 : 121.48 } };
         const places = [place];
         if (flags.related) places.push({ ...place, display_name: args.keywords + '东门', location: { lat: 31.21, lng: 121.51 } });
         places.push(...(flags.placeAlternatives?.(args.keywords, place) ?? []));
         if (flags.ambiguous) places.push({ ...place, location: { lat: 31.3, lng: 121.6 } });
-        result = { content: [{ type: 'text', text: JSON.stringify(flags.emptyPlaces(args.keywords) ? [] : places) }] };
+        const matches = flags.emptyPlaces(args.keywords) ? [] : places;
+        result = { content: [{ type: 'text', text: JSON.stringify(name === 'maps_place_around' ? { pois: matches } : matches) }] };
       } else if (name === 'taxi_estimate') result = { structuredContent: { traceId: 'PRIVATE_ORDER_TOKEN', items: [{ productName: '快车', productCategory: 'fast', priceText: '73.05' }, { productName: '专车', productCategory: 'premium', priceText: '100-120元' }] } };
       else if(name==='maps_direction_driving')result={structuredContent:{status:'success',duration:{value:flags.durationSeconds},distance:{value:1951}}};
       else throw new Error('Unexpected provider tool');
@@ -72,18 +76,19 @@ export async function provider() {
   return { source, calls, inputs, flags, close: () => rm(directory, { recursive: true, force: true }) };
 }
 export async function fixture(driver: AgentDriver = new FixtureAgent(),services?:ServiceResolver,stripe?:StripeSandboxResolver,definition=document,
-  connections?: Parameters<typeof createCapabilities>[5], extensions: RuntimeExtensions = {}) {
+  connections?: Parameters<typeof createCapabilities>[5], extensions: RuntimeExtensions = {},
+  agentOptions?: ConstructorParameters<typeof OntologyAgent>[5]) {
   const url = process.env.EIGOS_TEST_DATABASE_URL;
   if (!url || new URL(url).hostname !== '127.0.0.1' || new URL(url).password !== 'synthetic-only') throw new Error('Use npm test to provision the isolated test database');
-  const schema = 'eigos_test_' + randomUUID().replaceAll('-', ''), db = new Database(url, schema);
+  const schema = 'eigos_test_' + randomUUID().replaceAll('-', ''), db = new Database(url, schema, undefined, undefined, undefined, agentOptions?.sandbox === true);
   await db.initialize();
   const metadata = new Metadata(db), tasks = new Tasks(db, metadata), p = await provider();
   await setGrants(db, 'deployment', [{ resource: 'Eigos', permission: 'manage_definition' }]);
   const publisher = await Access.load(db, { owner: 'deployment', scopes: [] });
-  await setGrants(db, principal.owner, memberGrants(new Ontology(definition)));
+  await setGrants(db, principal.owner, memberGrants(new Ontology(definition), db.sandboxEnabled));
   const access = await Access.load(db, principal);
   const source = async (owner: string) => { if (owner !== principal.owner) throw new Error('Wrong source owner'); return p.source; };
-  const capabilities = createCapabilities(db, source, extensions, services, stripe, connections), model = await metadata.publish(definition, capabilities, publisher), agent = new OntologyAgent(db, metadata, tasks, capabilities, driver), worker = new Worker(tasks, agent,new ScheduledActions(db,metadata),new ScheduledActionRunner(db,metadata,tasks,capabilities.actions));
+  const capabilities = createCapabilities(db, source, extensions, services, stripe, connections), model = await metadata.publish(definition, capabilities, publisher), agent = new OntologyAgent(db, metadata, tasks, capabilities, driver, agentOptions), worker = new Worker(tasks, agent,new ScheduledActions(db,metadata),new ScheduledActionRunner(db,metadata,tasks,capabilities.actions));
   return { db, schema, model, metadata, tasks, capabilities, access, publisher, agent, worker, source, provider: p,
     submit: () => tasks.submit(principal, { requestId: randomUUID(), message: '从中企云翠森林到前滩太古里，只询价', route }),
     async close() { worker.stop(); await db.query(`DROP SCHEMA ${db.schema} CASCADE`); await db.close(); await p.close(); },

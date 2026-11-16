@@ -113,8 +113,7 @@ Grok 可用 `list_learned_hotel_workflows` 查找当前账号的已保存行程�
 复用按新日期重新查询同一家酒店、路线和日历，生成新 Scenario 和审批请求。
 原日期、报价、行程对象、Scenario 及审批均不会被带入下一次运行。
 流程保留学习时的定义摘要。发布变更后，使用已保存步骤和已声明的依赖核对原发布与当前发布的 Action、Function、来源和对象契约。v8 流程可以在增加过程日志的 v9 中复用。相关契约变更或原发布无法核实的流程会从复用列表隐藏，尝试按原 ID 重放会在调用来源前停止。重放执行及审核使用当前发布，并复核原身份、酒店和路线证据。[Palantir Workflow Lineage](https://www.palantir.com/docs/foundry/workflow-lineage/refactor-and-understand-workflows)
-学习到的酒店 Workflow 使用任务入口运行，普通 Action Workflow 和对象规则
-继续使用各自原有的接口。
+酒店能力模块负责路线证据、日期绑定和模拟审批。普通 Action Workflow 和酒店 Workflow 共用按 owner 与本体限定的流程记录存储。酒店复用通过任务入口运行，调用同一套 Action、Function、权限和 Scenario 工具。
 
 学习到的正文保存实际成功的工具顺序，并把对象引用映射到前序步骤的返回值。
 酒店选择按原生酒店 ID 从新结果中定位，路线地点则重新读取并核对原地点身份。
@@ -157,3 +156,9 @@ Grok 可用 `list_learned_hotel_workflows` 查找当前账号的已保存行程�
 等待总时限从创建 Scenario 起计算。超时检查先于项目发布和执行权限复核。超时以及流程终止时，在同一事务中取消尚未完成的原认知任务。普通 Action 步骤的重试行为继续适用，认知提案终止后可发起新的 Workflow 运行。该节点用于内部编辑提案。模型只能暂存编辑。合并动作可以派发审批中列出的声明式效果，发单或付款仍需各供应商 Action 的业务授权。
 
 实现沿用 [Palantir 的 Scenario 合并权限](https://www.palantir.com/docs/foundry/ontology/merge-scenario)、[AIP Logic 调用者权限](https://www.palantir.com/docs/foundry/logic/blocks) 和 EIGOS 已有 Action、Task、Scenario 与执行追踪。数据库升级后，Indexer 的角色需要创建和取消认知任务，以及写入 Scenario 元数据和执行追踪。现有任务和 Workflow 记录使用兼容的默认值。
+
+## 向使用者发布流程
+
+本体定义管理员（`manage_definition`）在工作台的「规则与监测」中选择一个工作流草稿的准确修订和运行对象类型，发布后才进入「已发布流程」。`ontology_publish_workflow` 和 `ontology_withdraw_workflow` 提供同一管理入口。修改草稿保留正在使用的发布副本，直到管理员发布新修订。切换 Ontology 发布后，运行前检查原发布谱系及 Action、Function 和对象契约。
+
+服务团队维护本体和流程草稿，普通已准入账号登录后进入「已发布流程」。目录仅显示当前用户有权执行、兼容当前本体的公开修订，不包含步骤配置或绑定。运行使用用户自己的身份、授权对象和当前 Action 权限，保留现有审批和幂等机制。下架阻止新的运行，已经提交的运行保留其冻结输入。管理员和编辑者继续通过既有 `manage_definition`、`edit_definition` 授权，发布流程不会转授任何业务或来源权限。参考 [Palantir Action 权限](https://www.palantir.com/docs/foundry/action-types/permissions) 与 [Ontology 权限](https://www.palantir.com/docs/foundry/object-permissioning/ontology-permissions)。

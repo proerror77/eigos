@@ -1,9 +1,10 @@
+import { checkWorkflowDependencies } from './workflow-compatibility.js';
 import { randomUUID } from 'node:crypto';
 import type { QueryResultRow } from 'pg';
 import { z } from 'zod';
 import { Conflict, NotFound, digest, requireScope } from '../core/identity.js';
 import { validator } from '../ontology/model.js';
-import { objectRefSchema, type ObjectRef } from '../ontology/schema.js';
+import { ontologyName, objectRefSchema, type ObjectData, type ObjectRef } from '../ontology/schema.js';
 import { Access, PermissionDenied, type Requirement } from './access.js';
 import { Database, type Sql } from './database.js';
 import { Metadata, type PublishedOntology } from './metadata.js';
@@ -12,8 +13,10 @@ import { Objects, querySchema } from './objects.js';
 import { matchingTransition, processRuleSchema, processStatusSchema, processTarget, processTriggerSchema, readProcessStatus } from './process-automation.js';
 import { readProcessTransitions } from './process-logs.js';
 import { authorizeCognitive, cognitiveContextSchema, cognitiveResultSchema, cognitiveStepSchema, workflowMerge, type CognitiveStep } from './cognitive-workflow.js';
+import { lockEdits } from './scenario-store.js';
 import { Scenarios } from './scenarios.js';
 import { appendTrace } from './execution-trace.js';
+import { insertWorkflowRecord, readWorkflowRecord } from './workflow-records.js';
 
 const binding = z.union([
   z.strictObject({ literal: z.unknown() }),
@@ -73,8 +76,39 @@ export const runWorkflowSchema = z.strictObject({
   requestId: z.string().min(1).max(128),
 });
 
+export const publishWorkflowSchema = z.strictObject({
+  id:z.uuid(), revision:z.number().int().positive(), targetType:ontologyName,
+});
+export const withdrawWorkflowSchema = z.strictObject({id:z.uuid(), revision:z.number().int().positive()});
+export const runPublishedWorkflowSchema = runWorkflowSchema.extend({revision:z.number().int().positive()});
+type PublishedWorkflowRow = {
+  id: string; published_body: unknown; published_revision: string; published_release: string; published_target: string;
+};
+export const automationPreviewSchema = z.strictObject({
+  rule: z.uuid(), revision: z.number().int().positive(),
+  scenarios: z.array(z.strictObject({id:z.uuid(), revision:z.number().int().positive()})).min(1).max(6),
+  elapsedSeconds: z.number().int().min(0).max(31*86400).default(0),
+}).refine(input=>new Set(input.scenarios.map(item=>item.id)).size===input.scenarios.length, 'Select distinct Scenarios');
+
+function bindWorkflowInput(item: z.output<typeof step>, object: ObjectData, previousResults: Map<string,ObjectRef>) {
+  return Object.fromEntries(Object.entries(item.input).map(([key,binding]) => {
+    if ('literal' in binding) return [key,binding.literal];
+    if ('object' in binding) return [key,object.ref];
+    if ('step' in binding) return [key,previousResults.get(binding.step)!];
+    if (binding.property === '$revision') return [key,object.revision];
+    let value: unknown = object.properties;
+    for (const field of binding.property.split('.'))
+      value=value&&typeof value==='object'&&Object.hasOwn(value,field)?Reflect.get(value,field):undefined;
+    return [key,value];
+  }));
+}
+
 export async function initializeAutomation(db: Database) {
   await db.query(`CREATE TABLE IF NOT EXISTS ${db.schema}.workflows(id uuid PRIMARY KEY,owner text NOT NULL,ontology text NOT NULL,name text NOT NULL,body jsonb NOT NULL,revision integer NOT NULL);
+    ALTER TABLE ${db.schema}.workflows ADD COLUMN IF NOT EXISTS published_body jsonb,
+      ADD COLUMN IF NOT EXISTS published_revision integer,
+      ADD COLUMN IF NOT EXISTS published_release text,
+      ADD COLUMN IF NOT EXISTS published_target text;
     CREATE TABLE IF NOT EXISTS ${db.schema}.object_rules(id uuid PRIMARY KEY,owner text NOT NULL,ontology text NOT NULL,name text NOT NULL,body jsonb NOT NULL,revision integer NOT NULL,enabled boolean NOT NULL DEFAULT false,last_scan timestamptz,error text);
     ALTER TABLE ${db.schema}.object_rules ADD COLUMN IF NOT EXISTS scopes jsonb;
     ALTER TABLE ${db.schema}.object_rules ADD COLUMN IF NOT EXISTS process_cursor bigint;
@@ -146,11 +180,9 @@ export class Automation {
             [id, access.principal.owner, input.name, input, input.revision, model.document.id],
             client,
           )
-        : await this.db.query(
-            `INSERT INTO ${this.db.schema}.workflows(id,owner,ontology,name,body,revision) VALUES($1,$2,$3,$4,$5,1) RETURNING revision`,
-            [id, access.principal.owner, model.document.id, input.name, input],
-            client,
-          );
+        : await insertWorkflowRecord(this.db, client, {
+            id, owner: access.principal.owner, ontology: model.document.id, name: input.name, body: input,
+          });
       if (!result.rowCount) throw new Conflict('Workflow changed or is unavailable');
       await access.refresh(client);
       return { ...input, id, revision: Number(result.rows[0]!.revision) };
@@ -169,13 +201,9 @@ export class Automation {
         [id, access.principal.owner, input.revision, model.document.id], client)).rowCount)
         throw new Conflict('Rule changed or is unavailable');
       await this.active(model, client);
-      const workflow = (
-        await this.db.query(
-          `SELECT body FROM ${this.db.schema}.workflows WHERE id=$1 AND owner=$2 AND ontology=$3 AND body->>'kind' IS NULL`,
-          [input.workflow, access.principal.owner, model.document.id],
-          client,
-        )
-      ).rows[0];
+      const workflow = await readWorkflowRecord(this.db, {
+        id: input.workflow, owner: access.principal.owner, ontology: model.document.id,
+      }, client);
       if (!workflow) throw new NotFound('Workflow is unavailable');
       const definition = workflowSchema.parse(workflow.body);
       this.authorize(access, model, definition.steps);
@@ -305,6 +333,9 @@ export class Automation {
           name: row.name,
           id: row.id,
           revision: row.revision,
+          ...(kind==='workflows'&&row.published_revision?{publication:{
+            revision:Number(row.published_revision),targetType:row.published_target,
+          }}:{}),
           enabled: row.enabled,
           lastScan: row.last_scan,
           error: row.error,
@@ -313,28 +344,217 @@ export class Automation {
     await access.refresh();
     return { items: items.slice(0, 100), hasMore: items.length > 100 };
   }
-  async run(access: Access, model: PublishedOntology, raw: unknown) {
+  async preview(access: Access, model: PublishedOntology, raw: unknown) {
+    const input=automationPreviewSchema.parse(raw), owner=access.principal.owner;
+    requireScope(access.principal,'ontology:read');
+    requireScope(access.principal,'ontology:write');
+    return this.db.withOwner(owner,()=>this.db.transaction(async client=>{
+      const rule=(await this.db.query(`SELECT body,scopes,enabled,revision FROM ${this.db.schema}.object_rules
+        WHERE id=$1 AND owner=$2 AND ontology=$3 FOR SHARE`,[input.rule,owner,model.document.id],client)).rows[0];
+      if(!rule||Number(rule.revision)!==input.revision)throw new Conflict('Automation revision changed or is unavailable');
+      const savedScopes = z.array(z.string()).parse(rule.scopes??[]);
+      if(!savedScopes.includes('ontology:write'))throw new PermissionDenied('Save the rule with current write permission before previewing');
+      const configuration=ruleSchema.parse(rule.body);
+      const workflow = await readWorkflowRecord(this.db, {
+        id: configuration.workflow, owner, ontology: model.document.id,
+      }, client, null, true);
+      if(!workflow)throw new NotFound('Automation workflow is unavailable');
+      const definition=workflowSchema.parse(workflow.body);
+      await lockEdits(this.db,model,owner,client);
+      await access.refresh(client);
+      this.authorize(access,model,definition.steps);
+      const runnerPrincipal={...access.principal,scopes:access.principal.scopes.filter(scope=>savedScopes.includes(scope))};
+      const evaluatedAt=Date.now()+input.elapsedSeconds*1000, signal=AbortSignal.timeout(15_000);
+      const scenarios=new Scenarios(this.db), reports=[];
+      const live=new Objects(this.db,model,access,client);
+      const match=async(graph:Objects,query:z.output<typeof ruleQuerySchema>)=>{
+        const page=await graph.query({...query,limit:100});
+        if(page.cursor||page.items.length>100)throw new Conflict('Narrow conditions to at most 100 matching objects before previewing');
+        return page.items;
+      };
+      const baseline='query' in configuration?new Set((await match(live,configuration.query)).map(item=>digest(item.ref))):undefined;
+      for(const selected of input.scenarios){
+        signal.throwIfAborted();
+        const view=await scenarios.view(access,model,selected.id,client);
+        const diff=await scenarios.inspect(access,model,selected.id,client);
+        if(diff.revision!==selected.revision)throw new Conflict('Scenario revision changed; reload the selection');
+        if(diff.conflicts)throw new Conflict('Resolve Scenario conflicts before previewing automations');
+        const branch=await Access.load(this.db,runnerPrincipal,client), graph=new Objects(this.db,view,branch,client);
+        const waiting:ObjectRef[]=[];
+        let entered:ObjectRef[];
+        if('query' in configuration){
+          entered=(await match(graph,configuration.query)).filter(item=>!baseline!.has(digest(item.ref))).map(item=>item.ref);
+        }else{
+          const target=processTarget(graph,configuration.process);
+          entered=diff.objects.filter(item=>{
+            if(item.ref.type!==target.objectType||!item.after||typeof item.after[target.property]!=='string')return false;
+            if(item.before&&!Object.hasOwn(item.before,target.property))return false;
+            const prev=item.before?.[target.property]??null,next=item.after[target.property];
+            return prev!==next&&(configuration.process.from===undefined||configuration.process.from===prev)
+              &&(configuration.process.to===undefined||configuration.process.to===next);
+          }).map(item=>item.ref);
+          if((configuration.process.dwellSeconds??0)>input.elapsedSeconds)waiting.push(...entered.splice(0));
+        }
+        if(entered.length>20||entered.length*Math.max(1,definition.steps.length)>60)
+          throw new Conflict('Automation preview exceeds its execution budget; narrow the condition');
+        const results=[];
+        for(const ref of entered){
+          const steps:{name:string;action:string;status:'completed'|'rejected'}[]=[];
+          let status:'completed'|'rejected'|'proposal_required'='completed', reason:string|undefined;
+          await this.db.query('SAVEPOINT automation_preview',[],client);
+          try{
+            const bindings=new Map<string,ObjectRef>();
+            for(const item of definition.steps){
+              try{
+                const object=await graph.read(ref);
+                const result=await this.actions.apply(branch,view,item.action,bindWorkflowInput(item,object,bindings),
+                  randomUUID(),undefined,undefined,signal,undefined,{client,evaluatedAt});
+                bindings.set(item.name,result);
+                steps.push({name:item.name,action:item.action,status:'completed'});
+              }catch(error){
+                if(!(error instanceof Conflict||error instanceof NotFound))throw error;
+                steps.push({name:item.name,action:item.action,status:'rejected'});
+                status='rejected';reason=error.message;break;
+              }
+            }
+            if(status==='completed'&&definition.proposal)status='proposal_required';
+            await branch.refresh(client);
+          }finally{
+            await this.db.query('ROLLBACK TO SAVEPOINT automation_preview',[],client);
+            await this.db.query('RELEASE SAVEPOINT automation_preview',[],client);
+          }
+          results.push({object:ref,status,reason,steps});
+        }
+        await branch.refresh(client);
+        access.adoptReads(branch);
+        reports.push({id:selected.id,revision:selected.revision,name:diff.name,waiting,results});
+      }
+      await access.refresh(client);
+      return {rule:input.rule,revision:input.revision,enabled:rule.enabled,workflowRevision:Number(workflow.revision),
+        release:model.release,mode:'scenario_preview',scenarios:reports};
+    }));
+  }
+
+  async publishWorkflow(access: Access, model: PublishedOntology, raw: unknown) {
+    const input = publishWorkflowSchema.parse(raw), ontology = model.document.id;
+    access.require(ontology, 'manage_definition', ontology);
+    model.object(input.targetType);
+    return this.db.transaction(async client => {
+      await this.active(model, client);
+      await access.refresh(client);
+      const {rows:[draft]} = await this.db.query(
+        `SELECT body,revision FROM ${this.db.schema}.workflows
+         WHERE id=$1 AND ontology=$2 AND body->>'kind' IS NULL FOR UPDATE`, [input.id,ontology],client);
+      if (!draft || Number(draft.revision) !== input.revision) throw new Conflict('Workflow draft changed or is unavailable');
+      const definition = workflowSchema.parse(draft.body);
+      this.authorize(access,model,definition.steps);
+      for (const step of definition.steps) {
+        const parameters=model.action(step.action).objectParameters;
+        for (const [key,binding] of Object.entries(step.input)) {
+          const required=parameters[key];
+          if ('object' in binding && required && !model.concreteTypes(required).includes(input.targetType))
+            throw new Conflict('The workflow target cannot bind to '+step.name+'/'+key);
+        }
+      }
+      if (definition.proposal) authorizeCognitive(access,model,definition.proposal);
+      await this.db.query(
+        `UPDATE ${this.db.schema}.workflows SET published_body=body,published_revision=revision,published_release=$3,published_target=$4
+          WHERE id=$1 AND ontology=$2`, [input.id,ontology,model.release,input.targetType],client);
+      return {id:input.id,revision:input.revision,release:model.release,targetType:input.targetType};
+    });
+  }
+
+  async withdrawWorkflow(access: Access, model: PublishedOntology, raw: unknown) {
+    const input=withdrawWorkflowSchema.parse(raw), ontology=model.document.id;
+    access.require(ontology, 'manage_definition', ontology);
+    return this.db.transaction(async client => {
+      await this.active(model,client);
+      await access.refresh(client);
+      const result=await this.db.query(`UPDATE ${this.db.schema}.workflows SET published_body=NULL,published_revision=NULL,
+          published_release=NULL,published_target=NULL WHERE id=$1 AND ontology=$2 AND published_revision=$3`,
+        [input.id,ontology,input.revision],client);
+      if (!result.rowCount) throw new Conflict('Published workflow changed or is unavailable');
+      return {id:input.id,withdrawn:true};
+    });
+  }
+
+  private async checkPublishedWorkflow(access: Access, model: PublishedOntology, row: PublishedWorkflowRow, client?: Sql) {
+    const definition=workflowSchema.parse(row.published_body);
+    const ontology=model.document.id;
+    access.require(ontology,'view_definition',ontology);
+    access.read(model,row.published_target);
+    this.authorize(access,model,definition.steps);
+    if (definition.proposal) authorizeCognitive(access,model,definition.proposal);
+    if (row.published_release !== model.release) {
+      const prior=await this.metadata.findAncestor(model,row.published_release,client,'release');
+      if (!prior) throw new Conflict('Published workflow requires review for this Ontology release');
+      const proposal=definition.proposal;
+      checkWorkflowDependencies(prior,model,{
+        objectTypes:[row.published_target],
+        actions:[...definition.steps.map(step=>step.action),...(proposal?[...proposal.actions,proposal.mergeAction]:[])],
+        functions:proposal?[...proposal.functions,proposal.validation.function]:[],
+      },new Set());
+    }
+    return definition;
+  }
+
+  async listPublishedWorkflows(access: Access, model: PublishedOntology) {
+    access.require(model.document.id,'view_definition',model.document.id);
+    const { rows }=await this.db.query<PublishedWorkflowRow>(
+      `SELECT id,published_body,published_revision,published_release,published_target FROM ${this.db.schema}.workflows
+        WHERE ontology=$1 AND published_body IS NOT NULL ORDER BY published_body->>'name',id LIMIT 101`, [model.document.id]);
+    const items=[];
+    for (const row of rows.slice(0,100)) {
+      const candidate=await access.fork();
+      try {
+        const body=await this.checkPublishedWorkflow(candidate,model,row);
+        await candidate.refresh();
+        access.adoptReads(candidate);
+        items.push({id:row.id,name:body.name,description:body.description,revision:Number(row.published_revision),targetType:row.published_target});
+      } catch (error) {
+        if (!(error instanceof NotFound || error instanceof PermissionDenied || error instanceof Conflict)) throw error;
+      }
+    }
+    await access.refresh();
+    return {items,hasMore:rows.length>100};
+  }
+
+  async runPublishedWorkflow(access: Access, model: PublishedOntology, raw: unknown) {
+    const { revision,...input }=runPublishedWorkflowSchema.parse(raw);
+    return this.run(access,model,input,revision);
+  }
+
+  async run(access: Access, model: PublishedOntology, raw: unknown, publishedRevision?: number) {
     requireScope(access.principal, 'ontology:write');
     const input = runWorkflowSchema.parse(raw);
     await access.refresh();
     return this.db.transaction(async (client) => {
       await this.active(model, client);
-      const workflow = (
-        await this.db.query(
-          `SELECT body,revision FROM ${this.db.schema}.workflows WHERE id=$1 AND owner=$2 AND ontology=$3 AND body->>'kind' IS NULL`,
-          [input.workflow, access.principal.owner, model.document.id],
-          client,
-        )
-      ).rows[0];
-      if (!workflow) throw new NotFound('Workflow is unavailable');
-      const definition = workflowSchema.parse(workflow.body);
-      this.authorize(access, model, definition.steps);
-      if (definition.proposal) authorizeCognitive(access, model, definition.proposal);
+      let workflow;
+      if (publishedRevision !== undefined) {
+        const { rows:[published] }=await this.db.query<PublishedWorkflowRow>(
+          `SELECT id,published_body,published_revision,published_release,published_target FROM ${this.db.schema}.workflows
+            WHERE id=$1 AND ontology=$2 AND published_revision=$3 AND published_body IS NOT NULL FOR SHARE`,
+          [input.workflow,model.document.id,publishedRevision],client);
+        if (!published) throw new NotFound('Published workflow revision is unavailable');
+        if (published.published_target !== input.object.type) throw new Conflict('Select an object of the published workflow target type');
+        await this.checkPublishedWorkflow(access,model,published,client);
+        workflow={body:published.published_body,revision:published.published_revision};
+      } else {
+        workflow=await readWorkflowRecord(this.db,{
+          id:input.workflow,owner:access.principal.owner,ontology:model.document.id,
+        },client);
+        if (!workflow) throw new NotFound('Workflow is unavailable');
+        const definition=workflowSchema.parse(workflow.body);
+        this.authorize(access,model,definition.steps);
+        if (definition.proposal) authorizeCognitive(access,model,definition.proposal);
+      }
       await new Objects(this.db, model, access, client).read(input.object);
       const fingerprint = digest({
         input,
         body: workflow.body,
         revision: workflow.revision,
+        ...(publishedRevision===undefined?{}:{published:true}),
         release: model.release,
       });
       await this.db.query(
@@ -396,13 +616,9 @@ export class Automation {
         const model = await this.metadata.active(rule.ontology, client, true),
           access = await Access.load(this.db, principal, client);
         const input = ruleSchema.parse(rule.body),
-          workflow = (
-            await this.db.query(
-              `SELECT * FROM ${this.db.schema}.workflows WHERE id=$1 AND owner=$2 AND ontology=$3 AND body->>'kind' IS NULL`,
-              [input.workflow, rule.owner, rule.ontology],
-              client,
-            )
-          ).rows[0];
+          workflow = await readWorkflowRecord(this.db, {
+            id: input.workflow, owner: String(rule.owner), ontology: String(rule.ontology),
+          }, client);
         if (!workflow) throw new NotFound('Rule workflow is unavailable');
         const body = workflowSchema.parse(workflow.body);
         this.authorize(access, model, body.steps);
@@ -626,21 +842,7 @@ export class Automation {
             await graph.read(reference);
             previousResults.set(binding.step, reference);
           }
-          const input = Object.fromEntries(
-            Object.entries(item.input).map(([key, binding]) => {
-              if ('literal' in binding) return [key, binding.literal];
-              if ('object' in binding) return [key, object.ref];
-              if ('step' in binding) return [key, previousResults.get(binding.step)!];
-              let value: unknown = object.properties;
-              if (binding.property === '$revision') return [key, object.revision];
-              for (const field of binding.property.split('.'))
-                value =
-                  value && typeof value === 'object' && Object.hasOwn(value, field)
-                    ? Reflect.get(value, field)
-                    : undefined;
-              return [key, value];
-            }),
-          );
+          const input = bindWorkflowInput(item,object,previousResults);
           const validated = validator(model.action(item.action).parameters).parse(input) as Record<
             string,
             unknown

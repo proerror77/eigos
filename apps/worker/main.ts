@@ -28,7 +28,9 @@ const tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, con
   });
 metadata.checkBindings(await metadata.active(), capabilities);
 const driver = new HarnessAgent({ binary: config.EIGOS_HARNESS_BIN, credentialFile: config.EIGOS_HARNESS_CREDENTIAL_FILE, model: config.EIGOS_HARNESS_MODEL, reasoningEffort: config.EIGOS_HARNESS_REASONING_EFFORT });
-const worker = new Worker(tasks, new OntologyAgent(db, metadata, tasks, capabilities, driver),new ScheduledActions(db,metadata),new ScheduledActionRunner(db,metadata,tasks,capabilities.actions));
+const worker = new Worker(tasks, new OntologyAgent(db, metadata, tasks, capabilities, driver, {
+  sandbox: db.sandboxEnabled,
+}),new ScheduledActions(db,metadata),new ScheduledActionRunner(db,metadata,tasks,capabilities.actions));
 process.on('SIGTERM', () => { void worker.stop(); });
 process.on('SIGINT', () => { void worker.stop(); });
 try { await worker.run(); } finally { await db.close(); }

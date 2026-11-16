@@ -17,6 +17,9 @@ import { modelClearanceSchema, setModelClearance } from '../packages/runtime/mod
 import { enablePgvector } from '../packages/runtime/semantic-pgvector.js';
 import { Members } from '../packages/runtime/members.js';
 import { installOwnerIsolation } from '../packages/runtime/owner-isolation.js';
+import { provisionPublicPlaceCatalogue } from '../packages/capabilities/public-places/catalogue.js';
+import { publicPlacesOntology } from '../packages/ontology/public-places.js';
+import { ontologyName } from '../packages/ontology/schema.js';
 
 const command = process.argv[2];
 const document = businessDefinition;
@@ -38,9 +41,17 @@ else {
       const email = z.email().parse(process.argv[3]);
       const hours = z.coerce.number().int().min(1).max(168).parse(process.argv[4] ?? 48);
       console.log(await new Members(db).invite(email, hours));
+    } else if (command === 'provision-public-places') {
+      const project = ontologyName.parse(process.argv[3]);
+      await db.query(`INSERT INTO ${db.schema}.resource_grants(subject,resource,permission) VALUES($1,$2,'manage_definition')
+        ON CONFLICT DO NOTHING`, [publisher.owner, publicPlacesOntology]);
+      const access = await Access.load(db, publisher);
+      const bindings = createCapabilities(db, configuredSource(process.env.EIGOS_DIDI_CONNECTION_FILE),
+        await loadExtensions(process.env.EIGOS_EXTENSION_MODULE));
+      console.log(JSON.stringify(await provisionPublicPlaceCatalogue(db, metadata, bindings, access, project)));
     } else if (command === 'grant-member') {
       const owner = process.argv[3]; if (!owner) throw new Error('Provide the verified member owner');
-      await setGrants(db, owner, memberGrants(model));
+      await setGrants(db, owner, memberGrants(model, db.sandboxEnabled));
     } else if (command === 'permissions') {
       const config = z.strictObject({ subjects: z.array(z.strictObject({ owner: z.string().min(1), grants: z.array(grantSchema) })), properties: z.array(z.strictObject({ ontology: z.string(), type: z.string(), property: z.string() })).optional(), policies: z.array(z.strictObject({ type:z.string(),policy:objectPolicySchema })).optional(), memberships:z.array(z.strictObject({subject:z.string(),groups:z.array(z.string()),markings:z.array(z.string())})).optional(), modelClearances:z.array(modelClearanceSchema).optional() }).parse(JSON.parse(await readFile(process.argv[3]!, 'utf8')));
       for (const property of config.properties ?? []) if (property.ontology !== model.document.id || !model.object(property.type).properties[property.property]) throw new Error('Unknown protected property');
@@ -78,7 +89,7 @@ else {
       const published = command === 'prepare' ? await metadata.prepare(document, bindings, access, transform)
         : command === 'activate' ? await metadata.activate(process.argv[3]!, bindings, access)
         : command === 'publish' ? await metadata.publish(document, bindings, access, transform) : undefined;
-      if (!published) throw new Error('Use check, initialize, upgrade, enable-owner-isolation, enable-pgvector, permissions, invite-member, grant-member, prepare, activate or publish');
+      if (!published) throw new Error('Use check, initialize, upgrade, enable-owner-isolation, enable-pgvector, permissions, invite-member, grant-member, provision-public-places, prepare, activate or publish');
       console.log(JSON.stringify({ release: published.release, definition: published.digest, projection: published.projection, runtime: published.runtimeId }));
     }
   } finally { await db.close(); }

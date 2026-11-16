@@ -8,6 +8,7 @@ import { Functions, type FunctionContext, type FunctionHandler, type VersionedFu
 import type { DidiConnector, DidiCallContext, DidiReadResult } from './connector.js';
 import { didiDataSchema, didiReceiptSchema } from './contracts.js';
 import type { RideOrders } from './operations.js';
+import type { DidiTool } from './contracts.js';
 
 export interface DidiSource { bindingId: string; authorityId?:string; connector: DidiConnector; orders?:RideOrders; assertCurrent(): Promise<void> }
 export type SourceResolver = (owner: string, order?: { bindingId: string; orderId: string }) => Promise<DidiSource>;
@@ -27,20 +28,36 @@ async function endpoints(context: FunctionContext, route: unknown): Promise<[Obj
 async function locationsReady(context: FunctionContext, places: ObjectData[]) {
   for (const place of places) {
     if (!isCurrentDidiObservation(place.properties.observedAt)) return false;
-    const sources = await context.objects.follow(place.ref, 'sources');
-    if (!sources.some(source => source.properties.bindingId === place.properties.sourceBinding && source.properties.observedAt === place.properties.observedAt)) return false;
+    const { sourceBinding, observedAt } = place.properties;
+    if (typeof sourceBinding !== 'string' || typeof observedAt !== 'string') return false;
+    const { items } = await context.objects.query({
+      type: 'SourceReceipt', from: { object: place.ref, link: 'sources' },
+      where: { bindingId: sourceBinding, observedAt }, limit: 1,
+    });
+    if (!items.length) return false;
   }
   return true;
 }
+export async function verifiedDidiRead(source: DidiSource, context: FunctionContext, tool: DidiTool,
+  input: Record<string, string>, guard?: () => Promise<void>): Promise<SourceResult> {
+  await source.assertCurrent();
+  const call: DidiCallContext = { requestId: context.taskId ?? randomUUID(), requestRevision: 1 };
+  const result: DidiReadResult = await source.connector.invoke(call, tool, input, context.signal, async () => {
+    await context.objects.access.refresh();
+    await guard?.();
+    await source.assertCurrent();
+  });
+  await source.assertCurrent();
+  if (result.receipt.bindingId !== source.bindingId || result.receipt.inputDigest !== digest(input) ||
+      result.receipt.resultDigest !== digest(result.data) || result.receipt.tool !== tool)
+    throw new Error('Source receipt does not match the invoked function');
+  return sourceResultSchema.parse({ ...result, evidence: source.connector.evidenceKind });
+}
+
 export function rideFunctions(resolveSource: SourceResolver, additional: ReadonlyMap<string, FunctionHandler> = new Map(), definitions?: OntologyDocument['functionTypes'], versions: readonly VersionedFunction[] = []) {
-  const read = async (context: FunctionContext, tool: 'maps_textsearch' | 'taxi_estimate', input: Record<string, string>): Promise<SourceResult> => {
+  const read = async (context: FunctionContext, tool: 'maps_textsearch' | 'taxi_estimate', input: Record<string, string>) => {
     const source = await resolveSource(context.principal.owner);
-    await source.assertCurrent();
-    const call: DidiCallContext = { requestId: context.taskId ?? randomUUID(), requestRevision: 1 };
-    const result: DidiReadResult = await source.connector.invoke(call, tool, input, context.signal, async () => { await context.objects.access.refresh(); await source.assertCurrent(); });
-    await source.assertCurrent();
-    if (result.receipt.bindingId !== source.bindingId || result.receipt.inputDigest !== digest(input) || result.receipt.resultDigest !== digest(result.data) || result.receipt.tool !== tool) throw new Error('Source receipt does not match the invoked function');
-    return sourceResultSchema.parse({ ...result, evidence: source.connector.evidenceKind });
+    return verifiedDidiRead(source, context, tool, input);
   };
   const readEstimates = (includeRouteEvidence: boolean): FunctionHandler => async (input, context) => {
     const request = objectRefSchema.parse(input.request);

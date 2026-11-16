@@ -176,6 +176,12 @@ function dependencies(model: Ontology, ref: Resource, value: Record<string, any>
     schema(value.parameters);
     schema(value.returns);
   }
+  if (ref.kind === 'agentProfile') {
+    const kinds = { objects: 'object', interfaces: 'interface', actions: 'action', functions: 'function',
+      sources: 'datasource', links: 'link' } as const;
+    for (const [field, kind] of Object.entries(kinds))
+      for (const name of value[field] ?? []) add(kind, name);
+  }
   if (ref.kind === 'action') {
     schema(value.parameters);
     Object.values(value.objectParameters as Record<string, string>).forEach(target);
