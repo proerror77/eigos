@@ -94,6 +94,21 @@ export class ScenarioEvaluations {
     this.sets = new ObjectSets(db);
   }
 
+  options(access: Access, model: PublishedOntology) {
+    access.require(model.document.id, 'view_definition', model.document.id);
+    const definition = access.describe(model, true);
+    const eligible = definition.functionTypes.filter(fn => this.functions.supportsScenarioEvaluation(model, fn.apiName));
+    const supported = new Set(eligible.map(fn => fn.apiName));
+    const functions = eligible.filter(fn => !fn.edits).map(fn => fn.apiName);
+    const checks = new Set(functions);
+    const actions = definition.actionTypes.filter(action =>
+      !action.rules?.some(rule => rule.op === 'applyScenario')
+      && (!action.function || supported.has(action.function))
+      && action.submissionCriteria.every(criterion => checks.has(criterion.function))
+    ).map(action => action.apiName);
+    return { actions, functions };
+  }
+
   private snapshot<T>(access: Access, model: PublishedOntology, evaluate: (client: Sql, at: Date, signal: AbortSignal) => Promise<T>) {
     if (model.scenario) throw new Conflict('Select the current Ontology publication');
     access.require(model.document.id, 'view_definition', model.document.id);

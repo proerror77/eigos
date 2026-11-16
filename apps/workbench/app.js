@@ -1,6 +1,7 @@
 const $ = (selector) => document.querySelector(selector);
 const state = {
   token: sessionStorage.getItem('eigos_token'),
+  identity: null,
   ontology: 'Eigos',
   page: 'objects',
   model: null,
@@ -160,10 +161,11 @@ function download(name, data, mime = 'application/json') {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 async function request(path, input, options = {}) {
+  const token = state.token;
   const response = await fetch(path, {
     method: input === undefined ? 'GET' : 'POST',
     headers: {
-      ...(state.token ? { Authorization: 'Bearer ' + state.token } : {}),
+      ...(token ? { Authorization: 'Bearer ' + token } : {}),
       ...(input === undefined ? {} : { 'Content-Type': 'application/json' }),
       ...options.headers,
     },
@@ -172,10 +174,20 @@ async function request(path, input, options = {}) {
   });
   const body = await response.json().catch(() => ({ error: '服务返回了无法读取的结果' }));
   if (!response.ok) {
-    if (response.status === 401) {
+    if (response.status === 401 && token && token === state.token) {
       state.token = null;
+      state.identity = null;
+      state.model = null;
+      state.raw = null;
+      state.scenario = null;
+      state.session = null;
       sessionStorage.removeItem('eigos_token');
       $('#connection').textContent = '登录已过期';
+      $('#connect').hidden = false;
+      $('#account').hidden = true;
+      $('#logout').hidden = true;
+      $('#definition-status').textContent = '连接后加载已授权的定义';
+      $('#main').replaceChildren(empty('请重新连接账户。'));
     }
     throw new Error(body.error || '请求失败');
   }
@@ -204,39 +216,65 @@ async function applyAction(action, input, scenarioId = state.scenario) {
 async function connected() {
   const identity = await request('/identity');
   state.model = await request('/ontology?ontology=' + encodeURIComponent(state.ontology));
+  state.identity = identity;
   $('#connection').textContent = '已连接';
   $('#connect').hidden = true;
+  $('#account').hidden = false;
   $('#logout').hidden = false;
   $('#definition-status').textContent = state.model.id + ' · 版本 ' + state.model.version;
   state.raw = null;
   await render();
   return identity;
 }
+async function connectToken(token) {
+  state.token = token;
+  try {
+    await connected();
+    sessionStorage.setItem('eigos_token', token);
+  } catch (error) {
+    state.token = null;
+    sessionStorage.removeItem('eigos_token');
+    throw error;
+  }
+}
 async function login() {
   const config = await request('/workbench/config');
   const content = $('#login-options');
+  const dialog = $('#login');
+  const status = $('#login-status');
+  const attempt = new AbortController();
+  dialog.onclose = () => attempt.abort();
   content.replaceChildren();
-  $('#login-status').textContent = '';
+  status.textContent = '';
   if (config.deviceLogin)
     content.append(
       button(
         '通过账户登录',
         async () => {
-          const started = await request('/workbench/login/start', {});
-          window.open(started.url, '_blank', 'noopener');
-          $('#login-status').replaceChildren(
-            element('span', {}, '在登录页面确认代码 ' + started.userCode + '。'),
-            element('a', { href: started.url, target: '_blank', rel: 'noopener noreferrer' }, '打开登录页面'),
-          );
-          for (let attempt = 0; attempt < 120 && $('#login').open; attempt++) {
-            await new Promise((resolve) => setTimeout(resolve, (started.interval || 5) * 1000));
-            const result = await request('/workbench/login/poll', { id: started.id });
-            if (result.pending) continue;
-            state.token = result.accessToken;
-            sessionStorage.setItem('eigos_token', state.token);
-            $('#login').close();
-            await connected();
-            return;
+          try {
+            status.textContent = '正在准备登录…';
+            const started = await request('/workbench/login/start', {}, { signal: attempt.signal });
+            status.replaceChildren(
+              element('span', {}, '在登录页面确认代码 ' + started.userCode + '。 '),
+              element('a', { href: started.url, target: '_blank', rel: 'noopener noreferrer' }, '打开登录页面'),
+            );
+            const expires = Date.now() + (started.expiresIn ?? 900) * 1000;
+            let interval = started.interval;
+            while (!attempt.signal.aborted && dialog.open && Date.now() < expires) {
+              await new Promise((resolve) => setTimeout(resolve, interval * 1000));
+              if (attempt.signal.aborted || !dialog.open || Date.now() >= expires) break;
+              const result = await request('/workbench/login/poll', { id: started.id }, { signal: attempt.signal });
+              if (result.pending) {
+                interval = result.interval;
+                continue;
+              }
+              await connectToken(result.accessToken);
+              dialog.close();
+              return;
+            }
+            if (!attempt.signal.aborted) status.textContent = '登录已过期，请重新开始。';
+          } catch (error) {
+            if (!attempt.signal.aborted) status.textContent = error.message;
           }
         },
         'primary',
@@ -257,17 +295,16 @@ async function login() {
       button(
         '连接',
         async () => {
-          state.token = token.value.trim();
-          if (!state.token) throw new Error('请输入访问凭据');
-          await connected();
-          sessionStorage.setItem('eigos_token', state.token);
-          $('#login').close();
+          const value = token.value.trim();
+          if (!value) throw new Error('请输入访问凭据');
+          await connectToken(value);
+          dialog.close();
         },
         'primary',
       ),
     );
   }
-  $('#login').showModal();
+  dialog.showModal();
 }
 function jsonSchemaForm(schema, initial = {}) {
   const root = element('div'),
@@ -1386,8 +1423,11 @@ function migrationDialog() {
   );
 }
 
-async function renderScenarios() {
-  const list = await request('/ontology/scenarios?ontology=' + encodeURIComponent(state.ontology));
+async function renderScenarios(reviewPage = 1) {
+  const [list, reviews] = await Promise.all([
+    request('/ontology/scenarios?ontology=' + encodeURIComponent(state.ontology)),
+    service('pending_scenario_reviews', { page: reviewPage }),
+  ]);
   const holder = surface();
   const inspect = async (id) => {
     const diff = await request(
@@ -1399,6 +1439,10 @@ async function renderScenarios() {
       element('p', {}, diff.name),
       element('span', { class: 'badge' }, '修订 ' + diff.revision),
     );
+    if (diff.review?.reviewers.length) {
+      model.append(element('p', {}, '审阅人'),
+        element('ul', { class: 'review-identities' }, diff.review.reviewers.map((reviewer) => element('li', {}, reviewer))));
+    }
     model.append(
       table(
         ['对象', '原值', '方案值', '冲突'],
@@ -1432,6 +1476,30 @@ async function renderScenarios() {
           $('#editor').close();
           navigate('objects');
         }),
+        diff.review?.canInvite && button('邀请审阅', () => {
+          const readers = element('textarea', { rows: '4', placeholder: '每行一个审阅身份' });
+          readers.value = diff.review.reviewers.join('\n');
+          $('#editor-content').replaceChildren(
+            field('审阅人', readers, '审阅者可从顶栏「我的身份」复制身份。修改名单后需要审阅新的修订。'),
+            button('保存审阅人', async () => {
+              const reviewers = [...new Set(readers.value.split(/[\s,，]+/).filter(Boolean))];
+              if (reviewers.includes(state.identity?.owner)) throw new Error('请邀请其他账户审阅。');
+              if (!reviewers.length && !diff.review.reviewers.length) throw new Error('请输入审阅人的身份。');
+              await service('invite_scenario_reviewers', { id, revision: diff.revision, reviewers });
+              await renderScenarios(reviewPage);
+              await inspect(id);
+              notice('已更新审阅人。');
+            }, 'primary'),
+            button('返回方案差异', () => inspect(id)),
+          );
+        }),
+        button('同步正式数据', async () => {
+          const result = await service('rebase_scenario', { id, revision: diff.revision });
+          await renderScenarios(reviewPage);
+          await inspect(id);
+          notice(result.revision === diff.revision ? '方案已与正式数据同步。' : '已同步正式数据，请审阅新修订。');
+        }),
+        button('刷新差异', () => inspect(id)),
         button('共享元数据', () => {
           const readers = element('input', { placeholder: '读者身份，逗号分隔' });
           $('#editor-content').replaceChildren(
@@ -1529,7 +1597,9 @@ async function renderScenarios() {
   );
   const openEvaluation = async (method) => {
     const { scenarioEvaluation } = await import('./scenario-evaluation.js');
-    scenarioEvaluation({ element, field, button, modal, table, jsonInput, stringify, service }, list.items)[method]();
+    return scenarioEvaluation({
+      element, field, button, modal, table, jsonInput, jsonSchemaForm, stringify, select, service, model: state.model,
+    }, list.items)[method]();
   };
   $('#main').replaceChildren(
     heading(
@@ -1587,6 +1657,7 @@ async function renderScenarios() {
       ),
     ),
     holder,
+    scenarioReviews(reviews, reviewPage, renderScenarios),
     element(
       'div',
       { class: 'toolbar' },
@@ -2330,11 +2401,7 @@ async function renderRules() {
     ),
   );
 }
-async function renderProcesses(reviewPage = 1) {
-  if (typeof reviewPage !== 'number') reviewPage = 1;
-  const [tasks, workflows, reviews] = await Promise.all([
-    service('tasks'), service('workflow_runs'), service('pending_scenario_reviews', { page: reviewPage }),
-  ]);
+function scenarioReviews(reviews, page, refresh) {
   const inspectReview = async (item) => {
     const review = await service('inspect_scenario_review', { id: item.id });
     const ref = ({ type, id }) => type + ' · ' + id;
@@ -2362,10 +2429,28 @@ async function renderProcesses(reviewPage = 1) {
       !review.conflicts && button('批准此版本', async () => {
         await service('approve_scenario_review', { id: review.id, revision: review.revision, snapshot: review.snapshot });
         $('#editor').close();
-        await renderProcesses(reviewPage);
+        await refresh(page);
+        notice('已批准此修订。');
       }, 'primary'),
     ));
   };
+  return element('section', { class: 'section' },
+    element('h2', {}, '受邀审阅'),
+    surface(reviews.items.length
+      ? table(['方案', '版本', '状态'], reviews.items.map((review) => [
+          review.name, review.revision, review.approved ? '已批准' : review.conflicts ? '需处理冲突' : '待审阅',
+        ]), (index) => inspectReview(reviews.items[index]))
+      : empty('这一页没有可审阅的方案。')),
+    page > 1 && button('上一页', () => refresh(page - 1)),
+    reviews.nextPage && button('下一页', () => refresh(reviews.nextPage)),
+  );
+}
+
+async function renderProcesses(reviewPage = 1) {
+  if (typeof reviewPage !== 'number') reviewPage = 1;
+  const [tasks, workflows, reviews] = await Promise.all([
+    service('tasks'), service('workflow_runs'), service('pending_scenario_reviews', { page: reviewPage }),
+  ]);
   const inspect = (task) => {
     const locationRequest = task.state === 'input-required' && task.result?.kind === 'pa-request' && task.result.capability === 'location.resolve';
     const body = element('div', {}, !locationRequest && element('p', {}, task.state + (task.error ? ' · ' + task.error : '')));
@@ -2569,16 +2654,7 @@ async function renderProcesses(reviewPage = 1) {
     heading('流程运行', '追踪原始任务、PA 信息回传及规则触发的执行步骤。', button('刷新', renderProcesses)),
     element('section', { class: 'section' },
       element('h2', {}, 'Machinery'), button('打开流程分析', loadMachinery), machinery),
-    element('div', { class: 'section' },
-      element('h2', {}, '受邀审阅'),
-      surface(reviews.items.length
-        ? table(['方案', '版本', '状态'], reviews.items.map((review) => [
-            review.name, review.revision, review.approved ? '已批准' : review.conflicts ? '需处理冲突' : '待审阅',
-          ]), (index) => inspectReview(reviews.items[index]))
-        : empty('这一页没有可审阅的方案。')),
-      reviewPage > 1 && button('上一页', () => renderProcesses(reviewPage - 1)),
-      reviews.nextPage && button('下一页', () => renderProcesses(reviews.nextPage)),
-    ),
+    scenarioReviews(reviews, reviewPage, renderProcesses),
     surface(
       tasks.items.length
         ? table(
@@ -2937,6 +3013,18 @@ document
   .forEach((button) => (button.onclick = () => navigate(button.dataset.page)));
 $('#connect').onclick = () => login().catch((error) => notice(error.message, true));
 $('#welcome-connect').onclick = $('#connect').onclick;
+$('#account').onclick = () => {
+  if (!state.identity) return;
+  const owner = state.identity.owner;
+  const identifier = element('input', { value: owner, readonly: true });
+  modal('我的身份', element('div', {},
+    field('审阅身份', identifier, '把这个身份提供给方案发起人，即可接收审阅邀请。'),
+    button('复制身份', async () => {
+      await navigator.clipboard.writeText(owner);
+      notice('已复制身份。');
+    }),
+  ));
+};
 $('#logout').onclick = async () => {
   if (state.session) await service('close_scenario_session', { sessionId: state.session }).catch(() => {});
   sessionStorage.removeItem('eigos_token');

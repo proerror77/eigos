@@ -9,16 +9,21 @@ import {setGrants,memberGrants,Access} from '../packages/runtime/access.js';
 import {OntologyClient} from '../packages/sdk/client.js';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
+import express from 'express';
+import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
+import { jwtVerifier } from '../apps/gateway/auth.js';
 
 const modelFile=Buffer.from('solid test\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid test\n');
 
-test('workbench renders relationship conflicts, scoped searches and both rule kinds', async () => {
+test('workbench renders relationship conflicts, manages Scenario reviews and scopes queries', async () => {
   const buttons = new Map<string, () => Promise<void>>();
   const controls: { value: string; placeholder?: string }[] = [];
   const tables: { headers: string[]; rows: unknown[][]; click?: (index: number) => Promise<void> }[] = [];
   const requests: { path: string; input: Record<string, unknown> }[] = [];
   const node = () => ({ append() {}, replaceChildren() {}, close() {} });
   const scenarioId = 'scenario-ui-fixture';
+  let scenarioRevision = 2;
+  let reviewers: string[] = [];
   const processRule = { id: 'process-rule-fixture', revision: 2, name: 'Late trip', enabled: true,
     process: { type: 'EventTripStateLog', to: 'authorized', dwellSeconds: 7200 }, workflow: 'workflow-fixture' };
   const context = {
@@ -42,15 +47,20 @@ test('workbench renders relationship conflicts, scoped searches and both rule ki
     },
     uiNode: node,
     uiRequest: async (path: string, input: Record<string, unknown>) => {
-      requests.push({ path, input: { ...input } });
+      requests.push({ path, input: JSON.parse(JSON.stringify(input ?? {})) });
       if (path.startsWith('/ontology/scenarios?')) return { items: [{ id: scenarioId, name: 'Proposal' }] };
       if (path.startsWith('/ontology/scenarios/')) return {
-        name: 'Proposal', revision: 2, objects: [],
+        name: 'Proposal', revision: scenarioRevision, objects: [], review: { canInvite: true, reviewers },
         links: [
           { type: 'RequestRoute', from: { id: 'request' }, to: { id: 'route' }, removed: false, conflict: true },
           { type: 'RequestRoute', from: { id: 'resolved' }, to: { id: 'route' }, removed: true, conflict: false },
         ],
       };
+      if (path === '/ontology/services/invite_scenario_reviewers') {
+        reviewers = input.reviewers as string[];
+        return { revision: ++scenarioRevision };
+      }
+      if (path === '/ontology/services/rebase_scenario') return { revision: ++scenarioRevision };
       if (path === '/ontology/services/pending_scenario_reviews') return {
         items: [{ id: scenarioId, name: 'Hotel replan', revision: 3, approved: false, conflicts: false }],
       };
@@ -73,6 +83,7 @@ test('workbench renders relationship conflicts, scoped searches and both rule ki
     button = uiButton;
     table = uiTable;
     surface = heading = field = empty = modal = uiNode;
+    notice = () => {};
     request = uiRequest;
     ({ state, renderScenarios, renderObjects, semanticDialog, renderRules, renderProcesses });
   `, context);
@@ -88,6 +99,14 @@ test('workbench renders relationship conflicts, scoped searches and both rule ki
   assert.equal(links.headers[4], '冲突');
   assert.equal(links.rows[0]![4], '需要处理');
   assert.equal(links.rows[1]![4], '无');
+  await buttons.get('邀请审阅')!();
+  controls.find(control => control.placeholder === '每行一个审阅身份')!.value = 'reviewer-1\nreviewer-2\nreviewer-1';
+  await buttons.get('保存审阅人')!();
+  assert.deepEqual(requests.find(item => item.path === '/ontology/services/invite_scenario_reviewers')?.input,
+    { id: scenarioId, revision: 2, reviewers: ['reviewer-1', 'reviewer-2'], _ontology: 'Eigos' });
+  await buttons.get('同步正式数据')!();
+  assert.deepEqual(requests.find(item => item.path === '/ontology/services/rebase_scenario')?.input,
+    { id: scenarioId, revision: 3, _ontology: 'Eigos' });
 
   await workbench.renderObjects();
   controls.find(control => control.value === 'text')!.value = 'semantic';
@@ -145,6 +164,12 @@ test('workbench serves guarded assets and normal HTTP model, media and SDK scena
     const session=await client.openSession(300),scenario=await client.createScenario({requestId:'sdk-temporary',name:'SDK temporary',kind:'temporary',sessionId:session.id});
     assert.equal((await scenario.inspect()).name,'SDK temporary');await client.service('close_scenario_session',{sessionId:session.id});await assert.rejects(scenario.inspect());
     assert.equal((await fetch(base + '/workbench/scenario-evaluation.js')).status, 200);
+    assert.equal((await fetch(base + '/workbench/scenario-trial-form.js')).status, 200);
+    const options = await client.service<{actions:string[]; functions:string[]}>('scenario_trial_options', {});
+    assert(options.actions.includes('SaveScheduleActivity'));
+    assert(options.functions.includes('validateSchedule'));
+    assert(!options.actions.includes('CommitSchedulePlan'));
+    assert(!options.functions.includes('SaveScheduleActivity'));
     const a = await client.createScenario({ requestId: 'sdk-compare-a', name: 'First' });
     const b = await client.createScenario({ requestId: 'sdk-compare-b', name: 'Second' });
     const comparison = await client.compareScenarios({ scenarios: [{ id: a.id, revision: 1 }, { id: b.id, revision: 1 }] });
@@ -211,4 +236,139 @@ test('content-addressed registrations survive publication and can be recreated a
     assert.deepEqual(await app.upload(await Access.load(f.db,principal),model,f.capabilities.actions,modelFile,metadata),ref);
     assert.deepEqual((await app.download(await Access.load(f.db,principal),model,ref.id)).bytes,modelFile);
   }finally{await f.close();}
+});
+
+test('workbench account login preserves separate modeler and reviewer permissions', async (t) => {
+  const f = await fixture();
+  t.after(() => f.close());
+  const keys = await generateKeyPair('ES256');
+  const jwks = createLocalJWKSet({ keys: [{ ...await exportJWK(keys.publicKey), kid: 'workbench' }] });
+  const audience = 'eigos-workbench-test', clientId = 'workbench-public-client';
+  let clock = Date.now();
+  t.mock.method(Date, 'now', () => clock);
+  let selected = '';
+  const challenges = new Map<string, { subject: string; polled: boolean }>();
+  const provider = express();
+  provider.use(express.urlencoded({ extended: false }));
+  const issuerServer = provider.listen(0, '127.0.0.1');
+  t.after(() => new Promise<void>(resolve => issuerServer.close(() => resolve())));
+  await new Promise<void>(resolve => issuerServer.once('listening', resolve));
+  const addr = issuerServer.address();
+  assert(addr && typeof addr !== 'string');
+  const issuer = 'http://127.0.0.1:' + addr.port + '/';
+  const verify = jwtVerifier(issuer, audience, jwks);
+  const sign = (subject: string) =>
+    new SignJWT({ tenant_id: 'workbench-fixture', scope: 'ontology:read ontology:write',
+      azp: subject === 'other-client' ? 'unrelated-client' : clientId })
+      .setProtectedHeader({ alg: 'ES256', kid: 'workbench' }).setIssuer(issuer).setAudience(audience)
+      .setSubject(subject).setIssuedAt().setExpirationTime('1h').sign(keys.privateKey);
+  provider.post('/oauth/device/code', (req, res) => {
+    assert.equal(req.body.client_id, clientId);
+    assert.equal(req.body.audience, audience);
+    assert(req.body.scope.split(' ').includes('ontology:read'));
+    const deviceCode = 'device-' + challenges.size;
+    challenges.set(deviceCode, { subject: selected, polled: false });
+    res.json({ device_code: deviceCode, user_code: 'ABCD-WXYZ', verification_uri_complete: issuer + 'activate',
+      expires_in: 180, interval: 5 });
+  });
+  provider.post('/oauth/token', async (req, res) => {
+    const challenge = challenges.get(req.body.device_code);
+    assert(challenge);
+    assert.equal(req.body.client_id, clientId);
+    assert.equal(req.body.grant_type, 'urn:ietf:params:oauth:grant-type:device_code');
+    if (!challenge.polled) {
+      challenge.polled = true;
+      res.status(400).json({ error: 'slow_down' });
+      return;
+    }
+    res.json({ access_token: await sign(challenge.subject), expires_in: 3600 });
+  });
+  const config = readConfig({
+    DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_AUTH_MODE: 'jwt',
+    OAUTH_ISSUER: issuer, OAUTH_AUDIENCE: audience, OAUTH_JWKS_URL: issuer + 'jwks', OAUTH_WORKBENCH_CLIENT_ID: clientId,
+  });
+  const server = createApp(config, f.db, f.source, verify).app.listen(0, '127.0.0.1');
+  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address();
+  assert(address && typeof address !== 'string');
+  const base = 'http://127.0.0.1:' + address.port;
+  assert.equal((await (await fetch(base + '/workbench/config')).json()).deviceLogin, true);
+  const post = (path: string, body: unknown, headers = {}) => fetch(base + path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body),
+  });
+  async function login(subject: string) {
+    selected = subject;
+    const start = await post('/workbench/login/start', {});
+    assert.equal(start.status, 200);
+    assert.equal(start.headers.get('cache-control'), 'no-store');
+    const cookie = start.headers.get('set-cookie')!;
+    assert.match(cookie, /HttpOnly; SameSite=Strict/);
+    const session = await start.json();
+    assert.equal(session.expiresIn, 180);
+    assert.equal(session.url, issuer + 'activate');
+    const poll = () => post('/workbench/login/poll', { id: session.id }, { Cookie: cookie.split(';')[0]! });
+    assert.equal((await post('/workbench/login/poll', { id: session.id })).status, 403);
+    assert.equal((await poll()).status, 202);
+    clock += 5001;
+    const pending = await poll();
+    assert.equal(pending.status, 202);
+    assert.deepEqual(await pending.json(), { pending: true, interval: 10 });
+    clock += 5001;
+    assert.equal((await poll()).status, 202);
+    clock += 5001;
+    const finished = await poll();
+    if (subject === 'other-client') {
+      assert.equal(finished.status, 403);
+      assert.equal((await finished.json()).accessToken, undefined);
+      return '';
+    }
+    assert.equal(finished.status, 200);
+    assert.equal(finished.headers.get('cache-control'), 'no-store');
+    assert.equal((await poll()).status, 403);
+    return (await finished.json()).accessToken as string;
+  }
+  const builderToken = await login('builder'), reviewerToken = await login('reviewer');
+  await login('other-client');
+  const who = async (token: string) => {
+    const response = await fetch(base + '/identity', { headers: { Authorization: 'Bearer ' + token } });
+    assert.equal(response.status, 200);
+    return (await response.json()).owner as string;
+  };
+  const builder = await who(builderToken), reviewer = await who(reviewerToken);
+  assert.notEqual(builder, reviewer);
+  const common = memberGrants(f.model);
+  await setGrants(f.db, builder, [...common, { resource: 'Eigos', permission: 'edit_definition' }]);
+  await setGrants(f.db, reviewer, [...common, { resource: 'Eigos', permission: 'manage_definition' }]);
+  const builderClient = new OntologyClient({ baseUrl: base, token: builderToken });
+  const reviewerClient = new OntologyClient({ baseUrl: base, token: reviewerToken });
+  const draft = structuredClone(f.model.document);
+  draft.objectTypes.find(type => type.apiName === 'Route')!.description = 'Reviewed in the workbench test';
+  const branch = await builderClient.service<{id:string; revision:number}>('create_branch', {
+    name: 'Workbench model proposal', ontology: 'Eigos', body: draft,
+  });
+  const prepared = await builderClient.service<{id:string; revision:number; release:string}>('prepare_branch', {
+    id: branch.id, revision: branch.revision,
+  });
+  assert.equal((await f.metadata.active()).release, f.model.release);
+  const review = { id: prepared.id, revision: prepared.revision, release: prepared.release };
+  const denied = await post('/ontology/services/review_branch', review, { Authorization: 'Bearer ' + builderToken });
+  assert.equal(denied.status, 403);
+  const approved = await reviewerClient.service<{revision:number}>('review_branch', review);
+  await reviewerClient.service('merge_branch', { ...review, revision: approved.revision });
+  assert.equal((await f.metadata.active()).release, prepared.release);
+
+  const scenario = await builderClient.createScenario({ name: 'Workbench Scenario', requestId: 'workbench-review' });
+  const first = await scenario.inspect();
+  assert.deepEqual(first.review, { reviewers: [], canInvite: true });
+  await assert.rejects(reviewerClient.scenario(scenario.id).inspect(), /unavailable/);
+  const invited = await scenario.inviteReviewers(first.revision, [reviewer]);
+  const diff = await scenario.inspect();
+  assert.equal(diff.revision, invited.revision);
+  assert.deepEqual(diff.review, { reviewers: [reviewer], canInvite: true });
+  await assert.rejects(scenario.rebase(first.revision), /changed/);
+  assert.equal((await scenario.rebase(diff.revision)).revision, diff.revision);
+  const offered = await reviewerClient.scenario(scenario.id).inspectReview();
+  await reviewerClient.scenario(scenario.id).approveReview(offered.revision, offered.snapshot);
+  assert.equal((await reviewerClient.pendingScenarioReviews()).items[0]?.approved, true);
 });

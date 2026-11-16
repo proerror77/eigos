@@ -1,3 +1,5 @@
+import { scenarioTrialForm } from './scenario-trial-form.js';
+
 export function scenarioEvaluation(ui, scenarios) {
   const { element, field, button, modal, table, jsonInput, stringify, service } = ui;
   const display = value => value === null || value === undefined ? '—' : stringify(value);
@@ -47,32 +49,18 @@ export function scenarioEvaluation(ui, scenarios) {
     ));
   }
 
-  function trial() {
-    const plan = { type: 'SchedulePlan', id: '' };
-    const calendar = { type: 'CalendarAvailability', id: '' };
-    const check = { function: 'validateSchedule', input: { plan: { input: 'plan' } }, path: ['valid'] };
-    const allocate = (start, end) => ({
-      kind: 'action', name: 'allocate', action: 'SaveScheduleActivity',
-      input: { plan: { input: 'plan' }, id: { value: 'meeting' }, name: { value: 'Meeting' },
-        start: { input: start }, end: { input: end } },
-    });
-    const editor = jsonInput({
-      cases: [{ name: 'sameCalendar',
-        inputs: { plan, currentStart: '', currentEnd: '', candidateStart: '', candidateEnd: '' },
-        evidence: [{ object: plan, revision: 1 }, { object: calendar, revision: 1 }] }],
-      variants: [
-        { name: 'current', steps: [allocate('currentStart', 'currentEnd'), { ...check, kind: 'check', name: 'validate', equals: true }] },
-        { name: 'candidate', steps: [allocate('candidateStart', 'candidateEnd'), { ...check, kind: 'check', name: 'validate', equals: true }] },
-      ],
-      metrics: [{ ...check, name: 'valid' }],
-    });
+  async function trial() {
+    const options = await service('scenario_trial_options');
+    if (!options.functions.length) throw new Error('当前身份没有可用于离线试跑的只读函数。');
+    const form = scenarioTrialForm(ui, options);
+    const editor = jsonInput({ cases: [], variants: [], metrics: [] });
     const output = element('div');
-    modal('离线试跑', element('div', {},
-      element('p', {}, '把同一组对象引用、修订和回执交给每个候选流程。试跑结束后自动回滚。'),
-      field('试跑配置', editor),
-      button('运行试跑', async () => {
-        const data = await service('trial_scenarios', JSON.parse(editor.value));
+    const run = async (read) => {
+      output.replaceChildren(element('p', { role: 'status' }, '正在试跑…'));
+      try {
+        const data = await service('trial_scenarios', read());
         output.replaceChildren(
+          element('h3', {}, '试跑结果'),
           table(['流程', '完成', '未通过', '尝试步骤'], data.summary.map(row =>
             [row.name, row.completed, row.rejected, row.attemptedSteps])),
           ...data.cases.map(row => element('details', {},
@@ -82,7 +70,16 @@ export function scenarioEvaluation(ui, scenarios) {
             element('pre', { class: 'code' }, JSON.stringify(row, null, 2)),
           )),
         );
-      }, 'primary'),
+      } catch (error) {
+        output.replaceChildren(element('p', { class: 'error', role: 'alert' }, error.message));
+      }
+    };
+    modal('离线试跑', element('div', {},
+      element('p', {}, '用同一批证据试跑各候选流程。每个候选的编辑在试跑结束后自动回滚。'),
+      element('details', {}, element('summary', {}, '导入高级配置'),
+        field('JSON 配置', editor), button('运行高级配置', () => run(() => JSON.parse(editor.value)))),
+      form.node,
+      button('运行试跑', () => run(form.read), 'primary'),
       output,
     ));
   }
