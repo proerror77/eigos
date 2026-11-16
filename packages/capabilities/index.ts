@@ -1,3 +1,4 @@
+import { evaluateCalendarJourneyRelease } from './journey/release-checks.js';
 import { registerDocumentFunction } from '../ontology/documents.js';
 import { registerSchedulePlanDocument } from './documents.js';
 import { dianpingFunctions } from './dining/dianping.js';
@@ -77,5 +78,5 @@ export function createCapabilities(
       effects: new Map([...(extensions.effects ?? []), ...notifications.handlers]) },
     serviceProjections(services), notifications.committed);
   sources = capabilities.sources;
-  return capabilities;
+  return { ...capabilities, evaluateRelease: evaluateCalendarJourneyRelease };
 }
