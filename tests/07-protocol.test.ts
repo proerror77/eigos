@@ -3,7 +3,9 @@ import { test } from 'node:test';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { createApp } from '../apps/gateway/app.js';
 import { readConfig } from '../packages/core/config.js';
-import { SourceReadFailure } from '../packages/core/identity.js';
+import { ServiceUnavailable, SourceReadFailure } from '../packages/core/identity.js';
+import { yuanToFen } from '../packages/core/private-source.js';
+import { publicError } from '../apps/gateway/public-error.js';
 import { fixture, route, principal } from './fixture.js';
 import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
 import { Ontology } from '../packages/ontology/model.js';
@@ -289,4 +291,15 @@ test('HTTP and MCP keep unexpected database errors private and report a traceabl
     await new Promise<void>(resolve => server.close(() => resolve()));
     await f.close();
   }
+});
+
+test('saturated local dependencies and unusable supplier amounts keep their public status', () => {
+  const saturated = 'Local embedding queue is full; retry when current indexing completes';
+  assert.deepEqual(publicError(new ServiceUnavailable(saturated)), { status: 503, message: saturated });
+  for (const amount of ['12.345', '-1', '1e3', null, Number.MAX_SAFE_INTEGER]) {
+    assert.throws(() => yuanToFen(amount), (error: unknown) =>
+      error instanceof SourceReadFailure && publicError(error).status === 502, String(amount));
+  }
+  assert.equal(yuanToFen('12.3'), 1230);
+  assert.equal(yuanToFen(8), 800);
 });

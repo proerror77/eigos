@@ -3,7 +3,7 @@ import { Ontology } from '../packages/ontology/model.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { z } from 'zod';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import { classificationSchema } from '../packages/ontology/classification.js';
@@ -12,6 +12,7 @@ import { digest } from '../packages/core/identity.js';
 import { document, fixture, principal, route } from './fixture.js';
 import { OntologyAgent } from '../packages/runtime/agent.js';
 import { taskCatalogueScope } from '../packages/runtime/agent-catalogue.js';
+import { businessDefinition } from '../packages/ontology/definition.js';
 import { Functions } from '../packages/runtime/functions.js';
 import { Actions } from '../packages/runtime/actions.js';
 import { Sources } from '../packages/runtime/sources.js';
@@ -33,10 +34,37 @@ test('unprofiled Chinese requests rank relevant published resources before the f
   }
 });
 
-test('core Agent and task persistence have no provider-specific workflow or correction dependency', () => {
-  for (const file of ['agent.ts', 'tasks.ts']) {
-    const source = readFileSync(new URL('../packages/runtime/' + file, import.meta.url), 'utf8');
-    assert.doesNotMatch(source, /\.\.\/capabilities\/|hotelWorkflow|Amap|mapPlace|readMapPlace/i, file);
+test('colloquial Chinese requests preload their published Agent profile', () => {
+  const model = new Ontology(businessDefinition);
+  const canDefine = () => true;
+  const expected: Record<string, string> = {
+    '帮我叫个车去机场多少钱': 'RideQuote', '从公司到机场打个车要多久': 'RideQuote',
+    '明天下午我有空吗': 'SchedulePlanning', '帮我订个周五晚上的位子': 'Dining', '附近有什么好吃的': 'Dining',
+    '下周去上海住哪里好': 'TravelOffers', '来杯拿铁': 'CoffeePickup', '我的航班延误了吗': 'TravelMonitoring',
+    '外面会下雨吗': 'MapsAndWeather', '帮我报名这个周末的活动': 'Events',
+  };
+  for (const [message, profile] of Object.entries(expected)) {
+    const scope = taskCatalogueScope(model, { canDefine }, { requestId: 'colloquial', message });
+    assert(scope.profiles.some(item => item.apiName === profile), message);
+  }
+  for (const message of ['今天心情不太好', '帮我写一封感谢邮件', '房间有空调吗']) {
+    assert.deepEqual(taskCatalogueScope(model, { canDefine }, { requestId: 'unrelated', message }).profiles, [], message);
+  }
+});
+
+test('runtime modules stay provider-neutral outside listed compatibility contracts', () => {
+  const provider = /\.\.\/capabilities\/[\w-]+|hotel\w*|amap\w*|didi\w*|fliggy|meituan|dianping|rollinggo|\bluma\b|luckin|stripe|taobao|shopify|xiaohongshu|variflight|flightradar|fr24|mapPlace\w*/gi;
+  // Existing clients and persisted tasks still send these public request and clarification fields.
+  // The organization catalogue service registers through the shared Ontology services.
+  const compatibility: Record<string, string[]> = {
+    'clarification.ts': ['Amap', 'amapPlaceAmendmentSchema', 'DiDi', 'MapPlace', 'mapPlaceCorrectionSchema', 'mapPlaceCorrectionsSchema'],
+    'services.ts': ['../capabilities/public-places'],
+    'task-input.ts': ['HotelWorkflow', 'mapPlaceCorrections', 'mapPlaceCorrectionsSchema'],
+  };
+  const directory = new URL('../packages/runtime/', import.meta.url);
+  for (const file of readdirSync(directory).filter(name => name.endsWith('.ts'))) {
+    const found = new Set([...readFileSync(new URL(file, directory), 'utf8').matchAll(provider)].map(match => match[0]));
+    assert.deepEqual([...found].sort(), [...(compatibility[file] ?? [])].sort(), file);
   }
 });
 
