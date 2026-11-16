@@ -1,11 +1,12 @@
-import { Conflict, NotFound, SourceReadFailure } from '../../core/identity.js';
+import { Conflict, NotFound, SourceReadFailure, digest } from '../../core/identity.js';
 import { objectRefSchema, type ObjectData, type ObjectRef } from '../../ontology/schema.js';
 import { ActionPARequestRequired, CityConfirmationRequired, Clarification, PARequestRequired, PlaceConfirmationRequired, RideEndpointRequired, SourceRetryRequired } from '../../runtime/clarification.js';
 import { ridePickupResult } from '../../ontology/maps.js';
 import type { Functions, FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import { PermissionDenied } from '../../runtime/access.js';
 import type { Sources } from '../../runtime/sources.js';
-import { isCurrentDidiObservation, type SourceResolver } from './functions.js';
+import { isCurrentDidiObservation, sourceResultSchema, verifiedDidiRead, type SourceResolver } from './functions.js';
+import { DidiReadError } from './connector.js';
 import { readDidiDriving } from './driving.js';
 
 type Resolution = { status: 'resolved'; origin: ObjectRef; destination: ObjectRef }
@@ -141,7 +142,7 @@ async function reusablePlace(
 ): Promise<boolean> {
   try {
     const [proof, selected] = await Promise.all([context.objects.read(receipt), context.objects.read(place)]);
-    return receipt.type === 'SourceReceipt' && proof.properties.tool === 'maps_textsearch' &&
+    return receipt.type === 'SourceReceipt' && ['maps_textsearch', 'maps_place_around'].includes(String(proof.properties.tool)) &&
       proof.properties.bindingId === bindingId && selected.properties.sourceBinding === bindingId &&
       isCurrentDidiObservation(proof.properties.observedAt) &&
       selected.properties.observedAt === proof.properties.observedAt;
@@ -149,6 +150,39 @@ async function reusablePlace(
     if (error instanceof NotFound) return false;
     throw error;
   }
+}
+
+async function refreshNearbyQuotePlace(sources: Sources, resolveSource: SourceResolver, context: FunctionContext,
+  city: string, keywords: string) {
+  const { model, access } = context.objects, execution = context.execution;
+  sources.checkReadAccess(model, 'DidiPlaces', access);
+  const source = await resolveSource(context.principal.owner);
+  const saved = await context.objects.query({
+    type: 'Place', where: { name: keywords, sourceBinding: source.bindingId }, limit: 10,
+  });
+  const seeds = saved.items.filter(place => cityKey(place.properties.city) === cityKey(city));
+  if (saved.cursor || seeds.length !== 1) return;
+  const seed = seeds[0]!;
+  const history = await context.objects.query({ type: 'SourceReceipt', from: { object: seed.ref, link: 'sources' },
+    where: { tool: 'maps_textsearch', bindingId: source.bindingId, evidence: source.connector.evidenceKind }, limit: 1 });
+  if (!history.items.length) return;
+  const coordinate = seed.properties.coordinates as { lng: number; lat: number } | undefined;
+  if (!coordinate || !Number.isFinite(coordinate.lng) || !Number.isFinite(coordinate.lat)) return;
+  const input = { keywords, location: `${coordinate.lng},${coordinate.lat}`, max_distance: '500' };
+  const read = () => verifiedDidiRead(source, context, 'maps_place_around', input, async () => {
+    sources.checkReadAccess(model, 'DidiPlaces', access);
+    if (execution) await execution.tasks.current(execution.task);
+  });
+  const result = sourceResultSchema.parse(execution ? await execution.tasks.readSource(execution.task,
+    digest({ source: 'DidiPlaces', tool: 'maps_place_around', input, binding: source.bindingId, step: execution.task.execution_step ?? 0 }), input, read) : await read());
+  if (result.data.kind !== 'places' || result.receipt.bindingId !== source.bindingId ||
+      result.receipt.tool !== 'maps_place_around' || !isCurrentDidiObservation(result.receipt.receivedAt)) return;
+  const matches = result.data.places.filter(place => matchName(place.name) === matchName(keywords) &&
+    cityKey(place.city) === cityKey(city) && place.lng === coordinate.lng && place.lat === coordinate.lat);
+  if (matches.length !== 1) return;
+  return (await sources.publishRead(model, 'DidiPlaces',
+    { exactPlaceId: matches[0]!.id, savedPlace: seed.ref, keywords }, result,
+    access, execution?.task, execution?.tasks, context.signal)).receipt;
 }
 
 /** Implementation of the published edit Function backing the RideInquiry Action. */
@@ -207,7 +241,15 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
       const existing = lookups.get(keywords);
       if (existing) return existing;
       const pending = sources.refresh(model, 'DidiPlaces', { city, keywords },
-        context.objects.access, execution?.task, execution?.tasks, context.signal).then(result => result.receipt);
+        context.objects.access, execution?.task, execution?.tasks, context.signal).then(result => result.receipt).catch(async error => {
+        if (!(error instanceof DidiReadError) || error.code !== 'RATE_LIMITED') throw error;
+        const fallback = await refreshNearbyQuotePlace(sources, resolveSource, context, city, keywords).catch(failure => {
+          if (failure instanceof SourceReadFailure) return undefined;
+          throw failure;
+        });
+        if (!fallback) throw error;
+        return fallback;
+      });
       lookups.set(keywords, pending);
       return pending;
     };
