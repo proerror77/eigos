@@ -22,15 +22,19 @@ const headOfConversation = (table: string) => `NOT EXISTS (
   SELECT 1 FROM ${table} earlier WHERE earlier.owner=t.owner AND earlier.conversation_id=t.conversation_id
     AND earlier.conversation_batch<t.conversation_batch AND earlier.state IN('submitted','working','input-required'))`;
 
+export const taskPrincipal = (task: Task): Principal =>
+  ({ owner: task.owner, scopes: task.scopes, memberAccess: task.input.memberAccess });
 export type TaskResultProjection = (result: unknown) => unknown;
 export const publicTask = (task: Task, project: TaskResultProjection) => ({ id: task.id, ...(task.conversation_id ? { conversationId: task.conversation_id } : {}), state: task.state, result: project(task.result), error: task.error, createdAt: task.created_at, updatedAt: task.updated_at });
 export class Tasks {
   constructor(readonly db: Database, private readonly metadata: Metadata) {}
-  async submit(principal: Principal, raw: unknown, { assignConversation = false } = {}): Promise<Task> {
+  async submit(principal: Principal, raw: unknown, { assignConversation = false, authorize }: { assignConversation?: boolean; authorize?: (client: Sql) => Promise<void> } = {}): Promise<Task> {
     requireScope(principal, 'tasks:write');
     const input = parseSubmission(raw);
     const fingerprint = digest(input);
+    const stored = principal.memberAccess ? { ...input, memberAccess: true } : input;
     const task = await this.db.transaction(async client => {
+      await authorize?.(client);
       const table = `${this.db.schema}.tasks`, events = `${this.db.schema}.task_inbox_events`;
       const { owner } = principal;
       // The same delivery may arrive through any gateway, including from a different process.
@@ -56,6 +60,7 @@ export class Tasks {
       if (latest?.collecting && latest.message_count < maxBatchMessages && latest.release === model.release
           && digest([...new Set(latest.scopes)].sort()) === digest([...new Set(scopes)].sort())
           && latest.input.message.length + 1 + input.message.length <= maxBatchLength
+          && Boolean(latest.input.memberAccess) === Boolean(principal.memberAccess)
           && digest(taskOptions.parse(latest.input)) === digest(taskOptions.parse(input))) {
         const merged = { ...latest.input, message: `${latest.input.message}\n${input.message}` };
         submitted = (await this.db.query<Task>(`UPDATE ${table} SET input=$2,input_digest=$3,message_count=$4,updated_at=clock_timestamp()
@@ -67,7 +72,7 @@ export class Tasks {
         const batch = conversation ? (BigInt(latest?.conversation_batch ?? '0') + 1n).toString() : null;
         submitted = (await this.db.query<Task>(`INSERT INTO ${table}(id,owner,request_id,input_digest,input,release,scopes,conversation_id,conversation_batch,available_at)
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,clock_timestamp()+$10::int*interval '1 ms') ON CONFLICT(owner,request_id) DO NOTHING RETURNING *`,
-          [id, owner, input.requestId, fingerprint, input, model.release, JSON.stringify(scopes), conversation, batch, conversation ? batchWindowMs : 0], client)).rows[0];
+          [id, owner, input.requestId, fingerprint, stored, model.release, JSON.stringify(scopes), conversation, batch, conversation ? batchWindowMs : 0], client)).rows[0];
         if (!submitted) throw new Conflict('Request ID already used with different input');
       }
       if (conversation) await this.db.query(`INSERT INTO ${events}(owner,request_id,input_digest,message,task_id,position) VALUES($1,$2,$3,$4,$5,$6)`,
@@ -224,7 +229,7 @@ export class Tasks {
       await this.current(task, client, true);
       const continuation = pending ?? task.input.placeContinuation;
       const access = result !== null || continuation
-        ? await Access.load(this.db, { owner: task.owner, scopes: task.scopes }, client) : undefined;
+        ? await Access.load(this.db, taskPrincipal(task), client) : undefined;
       if (result !== null && !await access!.canReturn(permissions, client)) throw new Conflict('Result permissions changed');
       if (continuation && (state !== 'input-required' || pending)) {
         const model = await this.metadata.get(task.release, client);
