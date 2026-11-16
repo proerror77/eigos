@@ -17,6 +17,8 @@ export const machineryAnalysisSchema = z.strictObject({
   to: z.iso.datetime({ offset: true }),
   object: objectRefSchema.optional(),
   setId: z.uuid().optional(),
+  externalSource: ontologyName.optional(),
+  eventLimit: z.number().int().min(1).max(100000).default(20000),
   focus: z.strictObject({ parent: objectRefSchema, type: ontologyName, link: ontologyName }).optional(),
   reference: machineryModelSchema.optional(),
   candidate: machineryModelSchema.optional(),
@@ -35,7 +37,7 @@ export const machineryAnalysisSchema = z.strictObject({
     conformance: z.enum(['conforming', 'deviation', 'unknown']).optional(),
     duration: z.strictObject({ state, minMs: milliseconds.default(0), maxExclusiveMs: milliseconds.optional() }).optional(),
   }).optional(),
-  offset: z.number().int().min(0).max(20000).default(0),
+  offset: z.number().int().min(0).max(100000).default(0),
   limit: z.number().int().min(1).max(100).default(25),
 });
 
@@ -52,7 +54,6 @@ type ProcessCase = {
   current: string | null; conformance: Conformance; episodes: Episode[]; events: Event[];
 };
 const edgeKey = (from: string | null, to: string | null) => JSON.stringify([from, to]);
-const maxEvents = 20000;
 const maxWindowMs = 366 * 86400000;
 
 function targetFor(model: PublishedOntology, type: string) {
@@ -130,10 +131,45 @@ async function readEvents(db: Database, client: Sql, access: Access, model: Publ
     SELECT o.process_id AS "caseId",o.id,o.properties->>'oldState' AS "from",o.properties->>'newState' AS "to",
       o.properties->>'recordedAt' AS "recordedAt",o.timestamp,o.action,o.source,o."taskId",o."requestId",o.prior
     FROM checked o JOIN complete USING (process_id)
-    ORDER BY o.process_id,o.sequence LIMIT ${maxEvents + 1}`, values, client);
-  if (result.rows.length > maxEvents)
+    ORDER BY o.process_id,o.sequence LIMIT ${input.eventLimit + 1}`, values, client);
+  if (result.rows.length > input.eventLimit)
     throw new Conflict('Process analysis exceeds the event limit. Narrow the date range or focus on a process object.');
   return result.rows;
+}
+
+async function readExternalEvents(db:Database,client:Sql,access:Access,model:PublishedOntology,target:ProcessLogTarget,
+  input:Input,ids:string[]|undefined):Promise<Event[]>{
+  const owner=access.principal.owner;
+  access.source(model,input.externalSource!);
+  const values:unknown[]=[model.document.id,owner,target.type,input.externalSource,target.objectType,target.property,
+    model.projection,input.from,input.to,ids??null,input.includeIdle];
+  const visible=(column:string)=>access.rowSql(model,target.objectType,values,column)+' AND '+access.cellSql(model,target.objectType,target.property,values,column);
+  const current=visible('o.properties');
+  const before=visible("jsonb_set(o.properties, ARRAY[h.property], COALESCE(to_jsonb(h.previous_state),'null'::jsonb))");
+  const after=visible("jsonb_set(o.properties, ARRAY[h.property], COALESCE(to_jsonb(h.next_state),'null'::jsonb))");
+  const fields=['id','processId','oldState','newState','sequence','recordedAt','source','timestamp'];
+  // Imported rows have their own source grants and object snapshot checks. No synthetic ProcessLog
+  // row receives contextual access rules written for committed history.
+  if(access.hasObjectPolicy(model,target.type)||fields.some(field=>
+      !access.property(model,target.type,field)||!access.canSeeModelData(model.object(target.type).properties[field]?.classification)))
+    throw new Conflict('External process history requires readable log fields without a log-specific row policy');
+  const checked=await db.query<Event>(`WITH events AS (
+     SELECT h.*,h.observed_at<$8::timestamptz AS prior,(${before}) AND (${after}) AS visible
+     FROM ${db.schema}.machinery_history h
+     JOIN ${db.schema}.objects o ON o.projection=$7 AND o.owner=h.owner AND o.type=h.object_type AND o.id=h.object_id
+     WHERE h.ontology=$1 AND h.owner=$2 AND h.type=$3 AND h.source=$4 AND h.object_type=$5 AND h.property=$6
+       AND h.observed_at<$9::timestamptz AND ($10::text[] IS NULL OR h.object_id=ANY($10)) AND (${current})
+   ), history AS (
+     SELECT * FROM events WHERE NOT prior
+     UNION ALL (SELECT DISTINCT ON(object_id) * FROM events e WHERE prior
+       AND ($11::boolean OR EXISTS(SELECT 1 FROM events observed WHERE observed.object_id=e.object_id AND NOT observed.prior))
+       ORDER BY object_id,observed_at DESC)
+   ), complete AS (SELECT object_id FROM history GROUP BY object_id HAVING bool_and(COALESCE(visible,false)))
+   SELECT h.object_id AS "caseId",h.id,h.previous_state AS "from",h.next_state AS "to",
+     h.observed_at::text AS "recordedAt",h.observed_at::text AS timestamp,NULL AS action,h.source,NULL AS "taskId",NULL AS "requestId",h.prior
+   FROM history h JOIN complete USING(object_id) ORDER BY h.object_id,h.observed_at LIMIT ${input.eventLimit+1}`,values,client);
+  if(checked.rows.length>input.eventLimit)throw new Conflict('Narrow the external history window before analyzing');
+  return checked.rows;
 }
 
 function trace(target: ProcessLogTarget, history: Event[], from: number, to: number,
@@ -290,7 +326,7 @@ function mine(summary: ReturnType<typeof summarize>, reference: MachineryModel |
   return { states: observedStates.map(state => ({ name: state.name, cases: state.ever })), transitions: observedOnly };
 }
 
-export async function analyzeMachinery(db: Database, access: Access, model: PublishedOntology, input: Input) {
+export async function analyzeMachinery(db: Database, access: Access, model: PublishedOntology, input: Input, collectMembers = false) {
   const from = Date.parse(input.from), to = Date.parse(input.to);
   if (to <= from || to - from > maxWindowMs) throw new Conflict('Select a positive process analysis window of at most 366 days');
   if ([input.object, input.setId, input.focus].filter(Boolean).length > 1)
@@ -335,7 +371,7 @@ export async function analyzeMachinery(db: Database, access: Access, model: Publ
     }
     const baseline = input.reference ?? model.object(target.type).machinery;
     const reference = readableModel(access, model, target, baseline);
-    const events = await readEvents(db, client, access, model, target, { ...input, to: new Date(end).toISOString() }, ids);
+    const events = await (input.externalSource ? readExternalEvents : readEvents)(db, client, access, model, target, { ...input, to: new Date(end).toISOString() }, ids);
     const idsInHistory = [...new Set(events.map(event => event.caseId))];
     if (idsInHistory.length) {
       const snapshots = await db.query<{ properties: Record<string, unknown> }>(
@@ -364,7 +400,8 @@ export async function analyzeMachinery(db: Database, access: Access, model: Publ
       evidence: 'observed-transitions',
     } : undefined;
     return { release: model.release, type: target.type, objectType: target.objectType,
-      from: new Date(from).toISOString(), to: new Date(end).toISOString(), windowClock: 'recordedAt', durationClock: input.durationClock,
+      from: new Date(from).toISOString(), to: new Date(end).toISOString(), windowClock: input.externalSource ? 'observedAt' : 'recordedAt', durationClock: input.durationClock,
+      ...(collectMembers ? {members:cases.map(item=>item.object)} : {}),
       reference, ...summary, mined: mine(summary, baseline, input.mining), comparison,
       casesTotal: cases.length, nextOffset: offset + limit < cases.length ? offset + limit : null,
       cases: cases.slice(offset, offset + limit).map(({ events: history, episodes, ...item }) => ({

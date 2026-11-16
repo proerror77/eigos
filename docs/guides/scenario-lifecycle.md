@@ -30,6 +30,8 @@ Scenario 的对象和关系差量由已有 Query、Function、Action 运行层�
 
 持久方案的创建者可调用 `invite_scenario_reviewers({id,revision,reviewers})` 指定其他已验证身份。元数据共享继续使用 `share_scenario`。设置审阅者后，正式合并需要其中一人批准当前修订。
 
+在工作台「方案比较」打开自己的持久方案，选择「邀请审阅」并填写对方从「我的身份」复制的审阅身份。受邀账号可在「方案比较」或「流程运行」的「受邀审阅」中打开差异并批准该修订。使用「同步正式数据」将兼容的正式数据变更带入方案。同步产生新修订时需要重新审阅，冲突由运行层返回。这里沿用同一发布内的显式变基和已发布合并 Action。参考 [Palantir Scenario 隔离与合并](https://www.palantir.com/docs/foundry/ontology/overview-ontology-scenario)。
+
 审阅者使用 `inspect_scenario_review({id})` 读取拟议属性和 Link 的差异。创建者和审阅者都要满足当前对象、行、字段及 Link 权限。审阅者通过该接口读取被邀请方案的差量，提交 `approve_scenario_review({id,revision,snapshot})`。合并由数据所属账号通过有权执行的已发布 Action 提交，并复核当前邀请、审阅者权限及准确版本。快照绑定差异、录入顺序和修订号。修改方案、变基或修改审阅者名单均要求重新批准。[Palantir 持久方案审阅](https://www.palantir.com/docs/foundry/ontology/persisted-scenario)
 
 ## 内部排程重规划

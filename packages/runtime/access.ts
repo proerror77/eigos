@@ -1,10 +1,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
-import { digest, type Principal } from '../core/identity.js';
+import { digest, PermissionDenied, type Principal } from '../core/identity.js';
 import { allowsClassification, classificationSchema, combineClassification, internalClassification, marksClassification, sensitivityRank, type Classification } from '../ontology/classification.js';
 import { documentChunkType, documentType } from '../ontology/documents.js';
 import type { Ontology } from '../ontology/model.js';
 import { processLogTarget } from '../ontology/process-definition.js';
+import { isSandboxResource } from '../ontology/sandbox.js';
 import { ModelEgressDenied } from './model-egress.js';
 import { Database, type Sql } from './database.js';
 import { markingsOf, permits, policySql, type ObjectPolicy, type SecurityContext } from './security.js';
@@ -20,7 +21,7 @@ export class TaskResult {
   constructor(readonly value: unknown, readonly permissions: Requirement[]) {}
 }
 export const resource = (ontology: string, kind: string, name: string) => `${ontology}/${kind}/${name}`;
-export class PermissionDenied extends Error {}
+export { PermissionDenied } from '../core/identity.js';
 
 /** Resource grants and object/property visibility, independent of OAuth transport scopes. */
 export class Access {
@@ -148,9 +149,26 @@ export class Access {
     if (kind === 'link') this.useModelData(model.links.get(name)?.classification);
   }
   canDefine(model: Ontology, kind: string, name: string) { return this.allows({ ontology: model.document.id, permission: 'view_definition', resource: resource(model.document.id, kind, name) }); }
-  canRead(model: Ontology, type: string) { return this.canDefine(model, 'object', type) && this.allows({ ontology: model.document.id, permission: 'view_objects', resource: resource(model.document.id, 'object', type) }); }
+  private available(model: Ontology, kind: string, name: string) {
+    return this.db.sandboxEnabled || !isSandboxResource(model, kind, name);
+  }
+  private requireAvailable(model: Ontology, kind: string, name: string) {
+    if (!this.available(model, kind, name)) throw new PermissionDenied('Capability requires explicit sandbox development mode');
+  }
+  canRead(model: Ontology, type: string) {
+    return this.available(model, 'object', type) && this.canDefine(model, 'object', type)
+      && this.allows({ ontology: model.document.id, permission: 'view_objects', resource: resource(model.document.id, 'object', type) });
+  }
   hasObjectPolicy(model: Ontology, type: string) { return type === documentChunkType || Boolean(model.object(type).classificationProperty) || this.policies.has(model.document.id + '/' + type); }
+  workbenchRole(ontology: string): 'admin' | 'editor' | 'member' {
+    if (this.allows({ontology, resource:ontology, permission:'manage_definition'})) return 'admin';
+    if (this.allows({ontology, resource:ontology, permission:'edit_definition'}) ||
+        [...this.grants].some(grant => grant.startsWith('edit_definition:'+ontology+'/project/') ||
+          grant.startsWith('manage_definition:'+ontology+'/project/'))) return 'editor';
+    return 'member';
+  }
   read(model: Ontology, type: string) {
+    this.requireAvailable(model, 'object', type);
     this.definition(model, 'object', type);
     this.require(model.document.id, 'view_objects', resource(model.document.id, 'object', type), true);
   }
@@ -311,8 +329,18 @@ export class Access {
     const markings = markingsOf(this.policies.get(model.document.id+'/'+type),properties);
     if ([...this.readMarkings].some(marking=>!markings.includes(marking))) throw new PermissionDenied('Output must retain input security markings');
   }
-  action(model: Ontology, name: string) { this.useModelData(model.actions.get(name)?.classification); this.definition(model, 'action', name); this.require(model.document.id, 'apply_action', resource(model.document.id, 'action', name)); }
-  function(model: Ontology, name: string) { this.useModelData(model.functions.get(name)?.classification); this.definition(model, 'function', name); this.require(model.document.id, 'execute_function', resource(model.document.id, 'function', name)); }
+  action(model: Ontology, name: string) {
+    this.requireAvailable(model, 'action', name);
+    this.useModelData(model.actions.get(name)?.classification);
+    this.definition(model, 'action', name);
+    this.require(model.document.id, 'apply_action', resource(model.document.id, 'action', name));
+  }
+  function(model: Ontology, name: string) {
+    this.requireAvailable(model, 'function', name);
+    this.useModelData(model.functions.get(name)?.classification);
+    this.definition(model, 'function', name);
+    this.require(model.document.id, 'execute_function', resource(model.document.id, 'function', name));
+  }
   source(model: Ontology, name: string) { this.require(model.document.id, 'read_source', resource(model.document.id, 'source', name), true); }
   recordScenarioRead(model: Ontology, id: string, release: string) {
     const ontology = model.document.id;
@@ -390,8 +418,13 @@ export class Access {
       [this.principal.owner, JSON.stringify(views)], client);
     return { expected: views.length, rows: available.rows };
   }
-  describe(model: Ontology, executable = false) {
+  describe(model: Ontology, executable = false, include = (_kind: string, _name: string) => true) {
     const document = structuredClone(model.resolvedDocument);
+    const definitionAdministration = !executable && this.allows({
+      ontology: model.document.id, resource: model.document.id, permission: 'edit_definition',
+    });
+    const visibleInCatalogue = (kind: string, name: string) =>
+      definitionAdministration || this.available(model, kind, name);
     const limited = Boolean(this.modelClearance());
     const modelVisible = (item: { classification?: Classification }) => {
       if (!limited) return true;
@@ -399,19 +432,19 @@ export class Access {
       this.observeClassification(item.classification);
       return true;
     };
-    document.objectTypes = document.objectTypes.filter(type => this.canDefine(model, 'object', type.apiName) && modelVisible(type));
-    document.interfaceTypes = document.interfaceTypes.filter(type => this.canDefine(model, 'interface', type.apiName) && modelVisible(type));
+    document.objectTypes = document.objectTypes.filter(type => include('object', type.apiName) && visibleInCatalogue('object', type.apiName) && this.canDefine(model, 'object', type.apiName) && modelVisible(type));
+    document.interfaceTypes = document.interfaceTypes.filter(type => include('interface', type.apiName) && this.canDefine(model, 'interface', type.apiName) && modelVisible(type));
     if (limited) {
       for (const type of [...document.objectTypes, ...document.interfaceTypes])
         type.properties = Object.fromEntries(Object.entries(type.properties).filter(([, property]) => modelVisible(property)));
     }
     const objects = new Set(document.objectTypes.map(type => type.apiName)), interfaces = new Set(document.interfaceTypes.map(type => type.apiName));
-    document.linkTypes = document.linkTypes.filter(link => this.canDefine(model, 'link', link.apiName) && objects.has(link.from.type) && objects.has(link.to.type) && modelVisible(link));
-    document.functionTypes = document.functionTypes.filter(fn => this.canDefine(model, 'function', fn.apiName) && (!executable || this.allows({ ontology: model.document.id, permission: 'execute_function', resource: resource(model.document.id, 'function', fn.apiName) })) && modelVisible(fn));
+    document.linkTypes = document.linkTypes.filter(link => include('link', link.apiName) && this.canDefine(model, 'link', link.apiName) && objects.has(link.from.type) && objects.has(link.to.type) && modelVisible(link));
+    document.functionTypes = document.functionTypes.filter(fn => include('function', fn.apiName) && visibleInCatalogue('function', fn.apiName) && this.canDefine(model, 'function', fn.apiName) && (!executable || this.allows({ ontology: model.document.id, permission: 'execute_function', resource: resource(model.document.id, 'function', fn.apiName) })) && modelVisible(fn));
     const functions = new Set(document.functionTypes.map(fn => fn.apiName));
-    document.actionTypes = document.actionTypes.filter(action => this.canDefine(model, 'action', action.apiName) && (!executable || this.allows({ ontology: model.document.id, permission: 'apply_action', resource: resource(model.document.id, 'action', action.apiName) })) && (!action.function || functions.has(action.function)) && Object.values(action.objectParameters).every(type => objects.has(type) || interfaces.has(type)) && modelVisible(action));
+    document.actionTypes = document.actionTypes.filter(action => include('action', action.apiName) && visibleInCatalogue('action', action.apiName) && this.canDefine(model, 'action', action.apiName) && (!executable || this.allows({ ontology: model.document.id, permission: 'apply_action', resource: resource(model.document.id, 'action', action.apiName) })) && (!action.function || functions.has(action.function)) && Object.values(action.objectParameters).every(type => objects.has(type) || interfaces.has(type)) && modelVisible(action));
     const actions = new Set(document.actionTypes.map(action => action.apiName));
-    document.dataSources = document.dataSources.filter(source => this.canDefine(model, 'datasource', source.apiName) && objects.has(source.objectType) && functions.has(source.function) && modelVisible(source));
+    document.dataSources = document.dataSources.filter(source => include('datasource', source.apiName) && this.canDefine(model, 'datasource', source.apiName) && objects.has(source.objectType) && functions.has(source.function) && modelVisible(source));
     if (limited) {
       const visibleObjects = new Map(document.objectTypes.map(type => [type.apiName, type]));
       for (const source of document.dataSources) {
@@ -459,10 +492,24 @@ export class Access {
       type.links = Object.fromEntries(Object.entries(type.links).filter(([, link]) => objects.has(link.target) || interfaces.has(link.target)));
       type.actions = Object.fromEntries(Object.entries(type.actions).filter(([name]) => document.objectTypes.some(object => object.interfaces[type.apiName]?.actions[name])));
     }
-    document.sharedProperties=document.sharedProperties?.filter(item=>this.canDefine(model,'sharedProperty',item.apiName) && modelVisible(item));
-    document.valueTypes=document.valueTypes?.filter(item=>this.canDefine(model,'valueType',item.apiName+'@'+item.version) && modelVisible(item));
-    document.structTypes=document.structTypes?.filter(item=>this.canDefine(model,'struct',item.apiName) && modelVisible(item));
-    document.typeGroups=document.typeGroups?.filter(item=>this.canDefine(model,'group',item.apiName)).map(item=>({...item,objectTypes:item.objectTypes.filter(type=>objects.has(type))}));
+    document.sharedProperties=document.sharedProperties?.filter(item => include('sharedProperty', item.apiName) && this.canDefine(model, 'sharedProperty', item.apiName) && modelVisible(item));
+    document.valueTypes=document.valueTypes?.filter(item => include('valueType', item.apiName+'@'+item.version) && this.canDefine(model, 'valueType', item.apiName+'@'+item.version) && modelVisible(item));
+    document.structTypes=document.structTypes?.filter(item => include('struct', item.apiName) && this.canDefine(model, 'struct', item.apiName) && modelVisible(item));
+    document.typeGroups=document.typeGroups?.filter(item => include('group', item.apiName) && this.canDefine(model, 'group', item.apiName)).map(item=>({...item,objectTypes:item.objectTypes.filter(type=>objects.has(type))}));
+    const sources = new Set(document.dataSources.map(source => source.apiName));
+    document.agentProfiles = document.agentProfiles?.filter(profile =>
+      include('agentProfile', profile.apiName) && this.canDefine(model, 'agentProfile', profile.apiName))
+      .map(profile => ({
+        ...profile,
+        objects: profile.objects?.filter(name => objects.has(name)),
+        interfaces: profile.interfaces?.filter(name => interfaces.has(name)),
+        links: profile.links?.filter(name => visibleLinks.has(name)),
+        actions: profile.actions?.filter(name => actions.has(name)),
+        functions: profile.functions?.filter(name => functions.has(name)),
+        sources: profile.sources?.filter(name => sources.has(name)),
+        instructions: profile.instructions?.filter(hint =>
+          (!hint.action || actions.has(hint.action)) && (!hint.function || functions.has(hint.function))),
+      }));
     delete document.imports;
     return document;
   }
@@ -477,11 +524,13 @@ export async function setGrants(db: Database, subject: string, grants: Grant[], 
   };
   if (client) await write(client); else await db.transaction(write);
 }
-export function memberGrants(model: Ontology): Grant[] {
+export function memberGrants(model: Ontology, sandboxEnabled = false): Grant[] {
+  const available = (kind: string) => (item: { apiName: string }) => sandboxEnabled || !isSandboxResource(model, kind, item.apiName);
+  const functions = model.resolvedDocument.functionTypes.filter(available('function'));
   return [{ resource: model.document.id, permission: 'view_definition' },
-    ...model.resolvedDocument.objectTypes.map(type => ({ resource: resource(model.document.id, 'object', type.apiName), permission: 'view_objects' as const })),
-    ...model.resolvedDocument.functionTypes.map(fn => ({ resource: resource(model.document.id, 'function', fn.apiName), permission: 'execute_function' as const })),
-    ...model.resolvedDocument.actionTypes.map(action => ({ resource: resource(model.document.id, 'action', action.apiName), permission: 'apply_action' as const })),
-    ...[...new Set(model.resolvedDocument.functionTypes.flatMap(fn => fn.source ? [fn.source] : []))].map(name => ({ resource: resource(model.document.id, 'source', name), permission: 'read_source' as const })),
+    ...model.resolvedDocument.objectTypes.filter(available('object')).map(type => ({ resource: resource(model.document.id, 'object', type.apiName), permission: 'view_objects' as const })),
+    ...functions.map(fn => ({ resource: resource(model.document.id, 'function', fn.apiName), permission: 'execute_function' as const })),
+    ...model.resolvedDocument.actionTypes.filter(available('action')).map(action => ({ resource: resource(model.document.id, 'action', action.apiName), permission: 'apply_action' as const })),
+    ...[...new Set(functions.flatMap(fn => fn.source ? [fn.source] : []))].map(name => ({ resource: resource(model.document.id, 'source', name), permission: 'read_source' as const })),
   ];
 }

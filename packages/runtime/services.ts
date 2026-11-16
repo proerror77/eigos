@@ -1,5 +1,7 @@
 import {digest} from '../core/identity.js';
 import {resourceGroups} from '../ontology/resource-mapping.js';
+import { PublicPlaceCatalogue } from '../capabilities/public-places/catalogue.js';
+import { listPublicPlacesSchema, publishPublicPlaceSchema, withdrawPublicPlaceSchema } from '../ontology/public-places.js';
 import {
   EntityResolution,
   bindEntitySchema,
@@ -7,8 +9,9 @@ import {
   entityHistorySchema,
 } from './entity-resolution.js';
 import { Applications, objectViewSchema, graphSchema, mapSchema } from './applications.js';
-import { Automation, workflowSchema, saveRuleSchema, runWorkflowSchema } from './automation.js';
+import { Automation, workflowSchema, saveRuleSchema, runWorkflowSchema, automationPreviewSchema, publishWorkflowSchema, withdrawWorkflowSchema, runPublishedWorkflowSchema } from './automation.js';
 import { analyzeMachinery, listMachineryProcesses, machineryAnalysisSchema } from './machinery-analysis.js';
+import { ingestMachineryHistory, machineryHistorySchema } from './machinery-history.js';
 import { MachineryReviews, machineryReviewSchema } from './machinery-reviews.js';
 import { processStatusSchema } from './process-automation.js';
 import {
@@ -26,17 +29,17 @@ import {
   migrateOntologyDataSchema,
   readDataMigrationSchema,
 } from './ontology-packages.js';
-import { Tasks, publicTask } from './tasks.js';
+import { Tasks, publicTask, type TaskResultProjection } from './tasks.js';
 import type { Actions } from './actions.js';
 import { z } from 'zod';
 import type { Principal } from '../core/identity.js';
-import { Conflict, requireScope } from '../core/identity.js';
+import { Conflict, PermissionDenied, requireScope } from '../core/identity.js';
 import { machineryModelSchema, objectRefSchema, ontologyName } from '../ontology/schema.js';
 import { Access } from './access.js';
 import { Database } from './database.js';
 import { Metadata } from './metadata.js';
-import { ScenarioEvaluations, compareScenariosSchema, trialScenariosSchema } from './scenario-evaluation.js';
-import { Scenarios } from './scenarios.js';
+import { ScenarioEvaluations, compareScenariosSchema, trialScenariosSchema, saveEvaluationSuiteSchema, runEvaluationSuiteSchema, promoteEvaluationSchema, evaluationCasesFromSetSchema } from './scenario-evaluation.js';
+import { Scenarios, continueScenarioSchema } from './scenarios.js';
 import { Objects } from './objects.js';
 import {
   ObjectSets,
@@ -49,6 +52,8 @@ import { Indexing, indexingInputSchema } from './indexing.js';
 import { Materializations, materializationInputSchema } from './materializations.js';
 import { EditHistory, conflictPolicySchema, setConflictPolicy } from './edit-history.js';
 import { ExecutionTrace, executionTraceSchema } from './execution-trace.js';
+import { actionBatchSchema, actionCallSchema } from '../ontology/invocation.js';
+import { actionLogSchema, listActionLog } from './action-log.js';
 import {
   Governance,
   projectSchema,
@@ -65,7 +70,7 @@ import type { Bindings } from './metadata.js';
 export function ontologyServices(
   db: Database,
   metadata: Metadata,
-  bindings: Bindings,
+  bindings: Bindings & { projectTaskResult: TaskResultProjection },
   functions: Functions,
   effects: Effects,
   actions: Actions,
@@ -74,7 +79,7 @@ export function ontologyServices(
   const active = () => metadata.active(ontologyId);
   const applications = new Applications(db),
     automation = new Automation(db, metadata, actions),
-    machinery = new MachineryReviews(db, metadata),
+    machinery = new MachineryReviews(db, metadata, new ScenarioEvaluations(db, actions, functions)),
     semantic = new SemanticSearch(db, functions),
     packages = new OntologyPackages(db, metadata, bindings);
   const sets = new ObjectSets(db),
@@ -106,11 +111,33 @@ export function ontologyServices(
         const access = await Access.load(db, principal),
           result = await run(access, schema.parse(raw));
         if (!write && !(await access.canReturn(access.dataRequirements())))
-          throw new Error('Result permissions changed');
+          throw new PermissionDenied('Result permissions changed');
         return result;
       },
     });
   };
+  const define = async (access:Access) => {
+    const model=await active();
+    access.require(model.document.id,'edit_definition',model.document.id);
+    return model;
+  };
+  register('workbench_access','Report the verified account’s Workbench role and available editing scope.',
+    z.strictObject({}),false,async a=>{
+      const model=await active(), ontology=model.document.id;
+      a.require(ontology,'view_definition',ontology);
+      const role=a.workbenchRole(ontology), writable=a.principal.scopes.includes('ontology:write');
+      return {role,ontology,version:model.document.version,
+        canAuthorWorkflows:writable && a.allows({ontology,resource:ontology,permission:'edit_definition'}),
+        canPublishWorkflows:writable && role==='admin'};
+    });
+  register('published_workflows','List compatible published Workflows the caller can use.',
+    z.strictObject({}),false,async a=>automation.listPublishedWorkflows(a,await active()));
+  register('publish_workflow','Publish an exact Workflow draft revision for authorized users.',
+    publishWorkflowSchema,true,async(a,input)=>automation.publishWorkflow(a,await active(),input));
+  register('withdraw_workflow','Withdraw an exact published Workflow revision.',
+    withdrawWorkflowSchema,true,async(a,input)=>automation.withdrawWorkflow(a,await active(),input));
+  register('run_published_workflow','Execute an exact published Workflow revision against the caller’s authorized object.',
+    runPublishedWorkflowSchema,true,async(a,input)=>automation.runPublishedWorkflow(a,await active(),input));
   const view = async (access: Access, scenarioId?: string) => {
     const model = await active();
     return scenarioId ? new Scenarios(db).view(access, model, scenarioId) : model;
@@ -218,6 +245,27 @@ export function ontologyServices(
     (a, input) => new ExecutionTrace(db, metadata).read(a, ontologyId, input),
   );
   register(
+    'validate_action',
+    'Check a published Action’s parameters, object access and submission criteria without executing it.',
+    actionCallSchema,
+    true,
+    async (a, input) => actions.validate(a, await view(a, input.scenarioId), input),
+  );
+  register(
+    'apply_action_batch',
+    'Atomically submit up to 20 live declarative Actions without declared effects or Scenario merges, each with its own request ID.',
+    actionBatchSchema,
+    true,
+    async (a, input) => actions.applyBatch(a, await active(), input),
+  );
+  register(
+    'list_action_log',
+    'List committed Action receipts for one publication using current Action definition permissions.',
+    actionLogSchema,
+    false,
+    (a, input) => listActionLog(db, metadata, a, ontologyId, input),
+  );
+  register(
     'edit_policy',
     'Configure source and user edit conflict resolution.',
     z.strictObject({ type: z.string(), policy: conflictPolicySchema }),
@@ -231,6 +279,15 @@ export function ontologyServices(
     true,
     (a, input) => governance.project(a, input),
   );
+  if (ontologyId === 'Eigos') {
+    const publicPlaces = new PublicPlaceCatalogue(db, metadata, actions);
+    register('list_public_places', 'List explicitly published places in an authorized organization project.',
+      listPublicPlacesSchema, false, (access, input) => publicPlaces.list(access, input));
+    register('publish_public_place', 'Publish or revise reviewed public location fields in an organization project.',
+      publishPublicPlaceSchema, true, (access, input) => publicPlaces.publish(access, input));
+    register('withdraw_public_place', 'Withdraw a published location at its reviewed revision.',
+      withdrawPublicPlaceSchema, true, (access, input) => publicPlaces.withdraw(access, input));
+  }
   register(
     'assign_project',
     'Assign published resources to a project.',
@@ -327,6 +384,7 @@ export function ontologyServices(
     async (a) => {
       const model = await active();
       a.require(model.document.id, 'view_definition', model.document.id);
+      if (a.workbenchRole(model.document.id)==='member') throw new PermissionDenied('Ontology management requires service team access');
       return model.document;
     },
   );
@@ -339,10 +397,10 @@ export function ontologyServices(
   );
   register(
     'follow_links',
-    'Navigate authorized object relationships.',
+    'Read up to 100 objects related by a published Link. Use query_ontology with from and cursor for larger relationships.',
     z.strictObject({ object: objectRefSchema, link: z.string(), scenarioId: z.uuid().optional() }),
     false,
-    async (a, input) => new Objects(db, await view(a, input.scenarioId), a).follow(input.object, input.link),
+    async (a, input) => new Objects(db, await view(a, input.scenarioId), a).follow(input.object, input.link, input.object.type, 100),
   );
   register(
     'object_view',
@@ -436,6 +494,45 @@ export function ontologyServices(
     (a, input) => new Scenarios(db).closeSession(a, input.sessionId),
   );
   const evaluations = new ScenarioEvaluations(db, actions, functions);
+  register('trial_candidate_scenarios','Run an offline trial against a prepared definition and release projection without activating it.',
+    z.strictObject({release:z.string().regex(/^[0-9a-f]{64}$/),trial:trialScenariosSchema}),true,async(a,input)=>{
+      requireScope(a.principal,'ontology:read');
+      const current=await active();
+      a.require(current.document.id,'edit_definition',current.document.id);
+      const candidate=await metadata.get(input.release);
+      if(candidate.document.id!==current.document.id)throw new Conflict('Candidate belongs to another Ontology');
+      metadata.checkBindings(candidate,bindings);
+      return evaluations.trial(a,candidate,input.trial,current.release);
+    });
+  register('evaluation_suites','List saved evaluation suites and run references.',
+    z.strictObject({}),false,async a=>evaluations.listSuites(a,await active()));
+  register('evaluation_cases_from_set','Generate trial case inputs from authorized Object Set members and their current revisions.',
+    evaluationCasesFromSetSchema,false,async(a,input)=>evaluations.casesFromSet(a,await active(),input));
+  register('save_evaluation_suite','Save a revisioned Scenario trial, optionally scoped to a Machinery Object Set.',
+    saveEvaluationSuiteSchema,true,async(a,input)=>evaluations.saveSuite(a,await active(),input));
+  register('run_evaluation_suite','Run a saved revision and retain a release-bound result receipt.',
+    runEvaluationSuiteSchema,true,async(a,input)=>{
+      requireScope(a.principal,'ontology:read');
+      return evaluations.runSuite(a,await active(),input);
+    });
+  register('promote_evaluation_candidate','Re-evaluate a selected trial result and create a persisted Scenario for invited reviewers.',
+    promoteEvaluationSchema,true,async(a,input)=>{
+      requireScope(a.principal,'ontology:read');
+      return evaluations.promote(a,await active(),input);
+    });
+  register('scenario_continuation_sources','List owned temporary or previous-release drafts eligible for a continuation attempt.',
+    z.strictObject({}),false,async a=>new Scenarios(db).continuationSources(a,await active()));
+  register('continue_scenario','Replay a compatible Scenario journal into a new persisted draft with fresh review.',
+    continueScenarioSchema,true,async (a,input)=>new Scenarios(db).continueScenario(a,await active(),input));
+  register('preview_automation', 'Evaluate a saved automation against Scenario revisions and preview its Actions without enqueuing a live run.',
+    automationPreviewSchema,true,async (a,input)=>automation.preview(a,await define(a),input));
+  register(
+    'scenario_trial_options',
+    'List the authorized Actions and read-only Functions available for an offline Scenario trial.',
+    z.strictObject({}),
+    false,
+    async (access) => evaluations.options(access, await active()),
+  );
   register(
     'compare_scenarios',
     'Compare exact Scenario revisions and shared metrics against one current Ontology baseline.',
@@ -512,20 +609,20 @@ export function ontologyServices(
     'Save an authorized sequence of Actions with an optional reviewed Scenario proposal.',
     workflowSchema,
     true,
-    async (a, input) => automation.workflow(a, await active(), input),
+    async (a, input) => automation.workflow(a, await define(a), input),
   );
   register(
     'save_rule',
     'Configure an object-set rule or a committed process transition rule with an optional dwell time.',
     saveRuleSchema,
     true,
-    async (a, input) => automation.rule(a, await active(), input),
+    async (a, input) => automation.rule(a, await define(a), input),
   );
   register('workflows', 'List workflows.', z.strictObject({}), false, async (a) =>
-    automation.list(a, await active(), 'workflows'),
+    automation.list(a, await define(a), 'workflows'),
   );
   register('rules', 'List rules and monitoring state.', z.strictObject({}), false, async (a) =>
-    automation.list(a, await active(), 'object_rules'),
+    automation.list(a, await define(a), 'object_rules'),
   );
   register(
     'process_status',
@@ -538,6 +635,17 @@ export function ontologyServices(
     z.strictObject({}), false, async a => listMachineryProcesses(a, await active()));
   register('machinery_analysis', 'Mine authorized process paths, compare observed transitions with a reference, and analyze dwell time.',
     machineryAnalysisSchema, false, async (a, input) => analyzeMachinery(db, a, await active(), input));
+  register('ingest_machinery_history','Import idempotent observed transitions for an authorized history source.',
+    machineryHistorySchema,true,async(a,input)=>ingestMachineryHistory(db,a,await active(),input));
+  register('save_machinery_cases','Save all authorized matches from a Machinery filter into a static Object Set.',
+    z.strictObject({analysis:machineryAnalysisSchema,name:z.string().min(1).max(200),requestId:z.string().min(1).max(128)}),
+    true,async(a,input)=>{
+      requireScope(a.principal,'ontology:read');
+      const model=await active(), result=await analyzeMachinery(db,a,model,input.analysis,true);
+      if(!result.members?.length)throw new Conflict('The analysis contains no visible cases');
+      if(!await a.canReturn(a.dataRequirements()))throw new Conflict('Machinery case permissions changed');
+      return sets.save(a,model,{requestId:input.requestId,name:input.name,mode:'static',set:{op:'refs',objects:result.members}});
+    });
   register('machinery_propose_model', 'Open a definition branch for a manual or mined process model at the observed release.',
     z.strictObject({ type: ontologyName, model: machineryModelSchema, name: z.string().min(1).max(200),
       release: z.string().regex(/^[0-9a-f]{64}$/), project: ontologyName.optional() }), true, async (a, input) => {
@@ -569,7 +677,7 @@ export function ontologyServices(
     'Run a saved workflow against an authorized object.',
     runWorkflowSchema,
     true,
-    async (a, input) => automation.run(a, await active(), input),
+    async (a, input) => automation.run(a, await define(a), input),
   );
   register(
     'retry_workflow',
@@ -586,7 +694,7 @@ export function ontologyServices(
     ).rows;
     const tasks = new Tasks(db, metadata);
     return {
-      items: await Promise.all(rows.map(async (row) => publicTask(await tasks.get(a.principal, row.id)))),
+      items: await Promise.all(rows.map(async (row) => publicTask(await tasks.get(a.principal, row.id), bindings.projectTaskResult))),
     };
   });
   register(

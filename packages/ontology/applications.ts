@@ -29,6 +29,9 @@ const assetInput = parameters({
   byteLength: { type: 'integer', minimum: 1 },
   units: text,
 });
+const uploadFields = ['id', 'format', 'contentHash', 'byteLength'] as const;
+const uploadInput = parameters(Object.fromEntries(uploadFields.map(field => [field, assetInput.properties[field]])));
+export const geometryUploadCriterion = 'verifyGeometryUpload';
 const annotationInput = parameters({
   id: text,
   asset: reference,
@@ -94,6 +97,13 @@ export const applicationDefinition: Pick<
       edits: true,
     },
     {
+      apiName: geometryUploadCriterion,
+      description: 'Verify that the original owner has uploaded bytes matching the exact model ID, content digest, format and size.',
+      parameters: uploadInput,
+      returns: { type: 'boolean' },
+      dependencies: {},
+    },
+    {
       apiName: 'annotateGeometry',
       description: 'Save a model note, measurement or section through an Action.',
       parameters: annotationInput,
@@ -107,8 +117,17 @@ export const applicationDefinition: Pick<
       description: 'Register an uploaded geometry asset.',
       parameters: assetInput,
       objectParameters: {},
-      submissionCriteria: [],
-      function: 'registerGeometry',
+      submissionCriteria: [{
+        function: geometryUploadCriterion,
+        message: 'Uploaded model does not match its metadata',
+        arguments: Object.fromEntries(uploadFields.map(field => [field, { parameter: field }])),
+      }],
+      rules: [{
+        op: 'createObject',
+        object: { type: 'GeometryAsset', id: { parameter: 'id' } },
+        properties: Object.fromEntries(Object.keys(assetInput.properties).map(field => [field, { parameter: field }])),
+      }],
+      result: { type: 'GeometryAsset', id: { parameter: 'id' } },
     },
     {
       apiName: 'AnnotateGeometry',

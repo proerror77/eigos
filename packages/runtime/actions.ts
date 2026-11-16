@@ -1,6 +1,6 @@
-import { digest, Conflict, type ExecutionActor } from '../core/identity.js';
+import { digest, Conflict, InvalidInput, PermissionDenied, NotFound, type ExecutionActor } from '../core/identity.js';
 import { validator } from '../ontology/model.js';
-import type { ActionCall, ActionResultRead } from '../ontology/invocation.js';
+import { actionBatchSchema, type ActionCall, type ActionResultRead } from '../ontology/invocation.js';
 import { PublishedOntology } from './metadata.js';
 import { Access } from './access.js';
 import { objectRefSchema, type ObjectRef, type Value } from '../ontology/schema.js';
@@ -9,7 +9,7 @@ import { Objects } from './objects.js';
 import { Functions, type FunctionContext, type ScenarioEvaluation } from './functions.js';
 import { Effects, type ActionEffect } from './effects.js';
 import { Scenarios } from './scenarios.js';
-import { recordScenarioAction, type ScenarioMutation } from './scenario-store.js';
+import { checkScenario, recordScenarioAction, type ScenarioMutation } from './scenario-store.js';
 import { JournalObjects, compensate, type ObjectChange, type LinkChange } from './action-journal.js';
 
 import { actionEffects, changeDigest, evaluate } from './action-values.js';
@@ -32,7 +32,7 @@ export class Actions {
       const allowed = await this.functions.invoke(model, condition.function, parameters, {
         principal: access.principal, objects, scenarioEvaluation, signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
       });
-      if (allowed !== true) throw new Conflict('Action submission criteria are not satisfied');
+      if (allowed !== true) throw new Conflict(condition.message ?? 'Action submission criteria are not satisfied');
     }
   }
   private async checkInput(objects: Objects, name: string, input: Record<string, unknown>, signal: AbortSignal, scenarioEvaluation?: ScenarioEvaluation) {
@@ -40,7 +40,7 @@ export class Actions {
     signal.throwIfAborted();
     for (const [parameter, type] of Object.entries(model.action(name).objectParameters)) {
       const ref = objectRefSchema.parse(input[parameter]);
-      if (!model.implements(ref.type, type)) throw new Error('Action input type does not satisfy its contract');
+      if (!model.implements(ref.type, type)) throw new InvalidInput('Action input type does not satisfy its contract');
       await objects.read(ref);
     }
     await this.checkSubmission(objects, name, input, signal, scenarioEvaluation);
@@ -54,16 +54,81 @@ export class Actions {
       ? model.resolveAction(target.object, target.type, target.action, call.input)
       : model.resolveTypeAction(target.implementation!, target.type, target.action, call.input);
   }
-  async apply(access: Access, model: PublishedOntology, actionName: string, raw: Record<string, unknown>, requestId: string, beforeCommit?: (client: Sql) => Promise<void>, execution?: FunctionContext['execution'], signal = AbortSignal.timeout(120000), executor?: ExecutionActor, scenarioEvaluation?: ScenarioEvaluation) {
+  private async requireActive(model: PublishedOntology, client?: Sql) {
+    if (model.runtimeId !== this.db.runtimeId) throw new Conflict('Historical Actions are read-only');
+    if ((await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`,
+      [model.document.id], client)).rows[0]?.release !== model.release)
+      throw new Conflict('Historical and prepared Actions are read-only');
+  }
+  private lockRequest(client: Sql, model: PublishedOntology, owner: string, requestId: string) {
+    return this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
+      [this.db.lockKey('action', owner, model.scenario ?? 'main', requestId)], client);
+  }
+  async validate(access: Access, model: PublishedOntology, call: ActionCall, signal = AbortSignal.timeout(30_000)) {
+    const selected = await this.db.transaction(async client => {
+      await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY', [], client);
+      await access.refresh(client);
+      await this.requireActive(model, client);
+      await checkScenario(this.db, model, access.principal.owner, client);
+      const { action, input } = this.resolve(access, model, call);
+      access.action(model, action);
+      if (!model.actions.has(action)) throw new NotFound('Action is unavailable');
+      const parameters = validator(model.action(action).parameters).parse(input) as Record<string, unknown>;
+      await this.checkInput(new Objects(this.db, model, access, client), action, parameters, signal);
+      return action;
+    });
+    await access.refresh();
+    if (!(await access.canReturn(access.dataRequirements()))) throw new PermissionDenied('Result permissions changed');
+    return { valid: true as const, phase: 'submission' as const, action: selected, release: model.release };
+  }
+  async applyBatch(access: Access, model: PublishedOntology, raw: unknown, signal = AbortSignal.timeout(120_000)) {
+    const { actions } = actionBatchSchema.parse(raw);
+    if (model.scenario) throw new Conflict('Action batches require the live Ontology');
+    const items = await this.db.transaction(async client => {
+      await access.refresh(client);
+      await this.requireActive(model, client);
+      const submissions = actions.map(({ requestId, ...call }) => {
+        const { action, input } = this.resolve(access, model, call);
+        access.action(model, action);
+        if (!model.actions.has(action)) throw new NotFound('Action is unavailable');
+        const definition = model.action(action);
+        if (definition.function || definition.effects?.length || definition.rules?.some(rule => rule.op === 'applyScenario'))
+          throw new Conflict('Action batches require declarative rules without declared effects or Scenario merges');
+        return { requestId, action, input };
+      });
+      // Lock every request before taking the owner write lock, including when single Actions run in parallel.
+      for (const requestId of submissions.map(item => item.requestId).sort()) {
+        signal.throwIfAborted();
+        await this.lockRequest(client, model, access.principal.owner, requestId);
+      }
+      const committed = [];
+      for (const { action, input, requestId } of submissions)
+        committed.push({ requestId, result: await this.execute(access, model, action, input, requestId,
+          undefined, undefined, signal, undefined, undefined, client) });
+      return committed;
+    });
+    return { release: model.release, items };
+  }
+  apply(access: Access, model: PublishedOntology, actionName: string, raw: Record<string, unknown>, requestId: string, beforeCommit?: (client: Sql) => Promise<void>, execution?: FunctionContext['execution'], signal = AbortSignal.timeout(120000), executor?: ExecutionActor, scenarioEvaluation?: ScenarioEvaluation) {
+    return this.execute(access, model, actionName, raw, requestId, beforeCommit, execution, signal, executor, scenarioEvaluation);
+  }
+  private async execute(access: Access, model: PublishedOntology, actionName: string, raw: Record<string, unknown>,
+    requestId: string, beforeCommit: ((client: Sql) => Promise<void>) | undefined, execution: FunctionContext['execution'],
+    signal: AbortSignal, executor: ExecutionActor | undefined, scenarioEvaluation: ScenarioEvaluation | undefined,
+    batchClient?: Sql) {
     const principal = access.principal;
     const actor: ExecutionActor = executor ?? execution?.executor ?? (execution
       ? { kind: 'agent', id: 'eigos-ontology-agent' }
       : { kind: 'client', id: principal.clientId ?? principal.owner });
+    const suppliedClient = scenarioEvaluation?.client ?? batchClient;
     const transaction = <T>(run: (client: Sql) => Promise<T>) =>
-      scenarioEvaluation ? run(scenarioEvaluation.client) : this.db.transaction(run);
-    await access.refresh(scenarioEvaluation?.client); access.action(model, actionName);
-    if (model.runtimeId !== this.db.runtimeId) throw new Conflict('Historical Actions are read-only');
-    if ((await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [model.document.id], scenarioEvaluation?.client)).rows[0]?.release !== model.release) throw new Conflict('Historical and prepared Actions are read-only');
+      suppliedClient ? run(suppliedClient) : this.db.transaction(run);
+    await access.refresh(suppliedClient); access.action(model, actionName);
+    if (model.evaluation) {
+      if (model.runtimeId !== this.db.runtimeId) throw new Conflict('Historical Actions are read-only');
+      if (!model.scenario || scenarioEvaluation?.client !== model.evaluation.client)
+        throw new Conflict('Prepared Actions require a temporary Scenario evaluation');
+    } else await this.requireActive(model, suppliedClient);
     const action = model.action(actionName), input = validator(action.parameters).parse(raw) as Record<string, unknown>;
     if (scenarioEvaluation && (!model.scenario || execution || action.rules?.some(rule => rule.op === 'applyScenario')))
       throw new Conflict('Scenario evaluation requires a staged Action');
@@ -82,7 +147,7 @@ export class Actions {
     const priorResult = (client: Sql = scenarioEvaluation?.client ?? this.db.pool) => this.db.query(`SELECT digest,result FROM ${this.db.schema}.${journal} WHERE owner=$1 AND request_id=$2${model.scenario ? ' AND scenario_id=$3' : ''}`, [principal.owner, requestId, ...(model.scenario ? [model.scenario] : [])], client);
     const commit = (write?: (objects: Objects) => Promise<ObjectRef>) => transaction(async client => {
       // The request key serializes only duplicate submissions of this action.
-      await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify([principal.owner, model.scenario ?? 'main', requestId])], client);
+      if (!batchClient) await this.lockRequest(client, model, principal.owner, requestId);
       await beforeCommit?.(client);
       const change: NonNullable<Objects['change']> = {
         action: actionName, requestId, inputDigest: fingerprint, taskId: execution?.task.id, executor: actor,
@@ -257,7 +322,7 @@ export class Actions {
     if(!originalRequestId||!requestId||originalRequestId===requestId)throw new Conflict('Undo needs a distinct request ID');
     return this.db.transaction(async client=>{
       await access.refresh(client);
-      await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[JSON.stringify([access.principal.owner,'main',requestId])],client);
+      await this.lockRequest(client, model, access.principal.owner, requestId);
       const executor = { kind: 'client' as const, id: access.principal.clientId ?? access.principal.owner };
       const graph=new Objects(this.db,model,access,client,{requestId,executor});await graph.lockWrites();
       const original=(await this.db.query(`SELECT * FROM ${this.db.schema}.action_changes WHERE owner=$1 AND request_id=$2 FOR UPDATE`,[access.principal.owner,originalRequestId],client)).rows[0];

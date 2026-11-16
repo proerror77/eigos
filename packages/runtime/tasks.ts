@@ -4,35 +4,15 @@ import { Conflict, NotFound, SourceReadFailure, digest, requireScope, type Princ
 import type { Sql } from './database.js';
 import { Database } from './database.js';
 import { Metadata } from './metadata.js';
-import { classificationSchema } from '../ontology/classification.js';
-import { placeDetailResult } from '../ontology/maps.js';
 import { Access, type Requirement } from './access.js';
-import { appendTrace } from './execution-trace.js';
-import type { Functions } from './functions.js';
-import { Objects } from './objects.js';
 import type { ScheduledCall } from './scheduled-actions.js';
 import type { CognitiveContext } from './cognitive-workflow.js';
-import { Clarification, amapPlaceAmendmentSchema, cityInputSchema, mapPlaceCorrectionsSchema, rideEndpointSchema, taskInputAnswerSchema, placeAmendmentSchema, placeAmendmentsSchema, placeChoicesSchema, placeContinuationSchema, placeSelectionSchema, unresolvedMapPlace, type PlaceContinuation } from './clarification.js';
+import { Clarification, taskInputAnswerSchema, placeAmendmentSchema, placeChoicesSchema, placeContinuationSchema, placeSelectionSchema, type PlaceContinuation } from './clarification.js';
 import { recordActionConfirmation } from './action-confirmation.js';
 export { placeAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema, taskPlaceAmendmentSchema } from './clarification.js';
-import { publicHotelTaskResult, workflowReplaySchema } from './hotel-workflows.js';
+import { parseSubmission, storedInputSchema, taskOptions } from './task-input.js';
+export { routeInputSchema, submitSchema, type RouteInput } from './task-input.js';
 
-export const routeInputSchema = z.strictObject({ city: z.string().min(1).max(100), origin: z.string().min(1).max(500), destination: z.string().min(1).max(500), serviceClass: z.string().min(1).max(100).optional() });
-export type RouteInput = z.infer<typeof routeInputSchema>;
-export const submitSchema = z.strictObject({ requestId: z.string().min(1).max(128), message: z.string().min(1).max(4000), route: routeInputSchema.optional(),
-  classification: classificationSchema.optional(),
-  learnHotelWorkflow: z.literal(true).optional(), replayHotelWorkflow: workflowReplaySchema.optional(),
-  conversationId: z.string().min(1).max(128).regex(/^[^\u0000-\u001f\u007f]+$/u).optional(),
-});
-const storedInputSchema = submitSchema.extend({
-  places: placeSelectionSchema.partial().optional(),
-  placeAmendments: placeAmendmentsSchema.optional(),
-  mapPlaceCorrections: mapPlaceCorrectionsSchema.optional(),
-  rideCity: cityInputSchema.optional(),
-  rideOrigin: rideEndpointSchema.optional(),
-  rideDestination: rideEndpointSchema.optional(),
-  placeContinuation: placeContinuationSchema.optional(),
-});
 export interface Task { id: string; owner: string; request_id: string; input: z.infer<typeof storedInputSchema> & {scheduledAction?:ScheduledCall}; release: string; scopes: string[]; state: string; token: string | null; result: unknown; result_permissions?: Requirement[] | null; error: string | null; created_at: Date; updated_at: Date; execution_step?:number; conversation_id?: string | null; cognitive_context?: CognitiveContext | null }
 type InboxTask = Task & { conversation_batch: string; message_count: number; collecting: boolean };
 const batchWindowMs = 2000;
@@ -42,13 +22,13 @@ const headOfConversation = (table: string) => `NOT EXISTS (
   SELECT 1 FROM ${table} earlier WHERE earlier.owner=t.owner AND earlier.conversation_id=t.conversation_id
     AND earlier.conversation_batch<t.conversation_batch AND earlier.state IN('submitted','working','input-required'))`;
 
-export const publicTask = (task: Task) => ({ id: task.id, ...(task.conversation_id ? { conversationId: task.conversation_id } : {}), state: task.state, result: publicHotelTaskResult(task.result), error: task.error, createdAt: task.created_at, updatedAt: task.updated_at });
+export type TaskResultProjection = (result: unknown) => unknown;
+export const publicTask = (task: Task, project: TaskResultProjection) => ({ id: task.id, ...(task.conversation_id ? { conversationId: task.conversation_id } : {}), state: task.state, result: project(task.result), error: task.error, createdAt: task.created_at, updatedAt: task.updated_at });
 export class Tasks {
   constructor(readonly db: Database, private readonly metadata: Metadata) {}
   async submit(principal: Principal, raw: unknown, { assignConversation = false } = {}): Promise<Task> {
     requireScope(principal, 'tasks:write');
-    const input = submitSchema.parse(raw);
-    if (input.learnHotelWorkflow && input.replayHotelWorkflow) throw new Conflict('Choose learning or replay for this task');
+    const input = parseSubmission(raw);
     const fingerprint = digest(input);
     const task = await this.db.transaction(async client => {
       const table = `${this.db.schema}.tasks`, events = `${this.db.schema}.task_inbox_events`;
@@ -76,7 +56,7 @@ export class Tasks {
       if (latest?.collecting && latest.message_count < maxBatchMessages && latest.release === model.release
           && digest([...new Set(latest.scopes)].sort()) === digest([...new Set(scopes)].sort())
           && latest.input.message.length + 1 + input.message.length <= maxBatchLength
-          && digest(taskOptions(latest.input)) === digest(taskOptions(input))) {
+          && digest(taskOptions.parse(latest.input)) === digest(taskOptions.parse(input))) {
         const merged = { ...latest.input, message: `${latest.input.message}\n${input.message}` };
         submitted = (await this.db.query<Task>(`UPDATE ${table} SET input=$2,input_digest=$3,message_count=$4,updated_at=clock_timestamp()
           WHERE id=$1 AND state='submitted' AND available_at>clock_timestamp() RETURNING *`,
@@ -98,9 +78,10 @@ export class Tasks {
     return this.visible(principal, task);
   }
   private async lockInboxKey(client: Sql, key: string[]) {
-    await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify([this.db.schema, 'task-inbox', ...key])], client);
+    await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [this.db.lockKey('task-inbox', ...key)], client);
   }
-  private async visible(principal: Principal, task: Task): Promise<Task> {
+  async visible(principal: Principal, task: Task): Promise<Task> {
+    if (task.owner !== principal.owner) throw new NotFound('Task is unavailable');
     if (task.result !== null && (!task.result_permissions || !await (await Access.load(this.db, principal)).canReturn(task.result_permissions))) return { ...task, result: null, error: 'Result access is unavailable' };
     return task;
   }
@@ -156,76 +137,6 @@ export class Tasks {
         placeAmendments: { ...task.input.placeAmendments, [side]: amendment },
       };
     });
-  }
-  async amendMapPlace(principal: Principal, id: string, raw: unknown, functions: Functions): Promise<Task> {
-    requireScope(principal, 'tasks:read'); requireScope(principal, 'tasks:write'); z.uuid().parse(id);
-    const input = amapPlaceAmendmentSchema.parse(raw), fingerprint = digest(input);
-    const { owner } = principal, { db } = this, schema = db.schema;
-    const load = async (client?: Sql) => {
-      const task = (await db.query<Task>(`SELECT * FROM ${schema}.tasks WHERE owner=$1 AND id=$2${client ? ' FOR UPDATE' : ''}`,
-        [owner, id], client)).rows[0];
-      if (!task) throw new NotFound('Task is unavailable');
-      return task;
-    };
-    const alreadyApplied = (task: Task) => {
-      const previous = Object.values(task.input.mapPlaceCorrections ?? {}).find(place => place?.requestId === input.requestId);
-      if (previous && previous.fingerprint !== fingerprint) throw new Conflict('Place correction ID was already used');
-      return Boolean(previous);
-    };
-    const check = async (task: Task, access: Access, client?: Sql) => {
-      const waiting = task.state === 'input-required' || task.state === 'canceled' && input.restoreCanceled === true;
-      if (!waiting || task.result !== null || task.error !== unresolvedMapPlace ||
-          task.updated_at.getTime() !== Date.parse(input.expectedUpdatedAt) || task.input.placeContinuation ||
-          task.input.scheduledAction || task.input.learnHotelWorkflow || task.input.replayHotelWorkflow) {
-        throw new Conflict('The original task is not waiting for this map correction');
-      }
-      if (!task.result_permissions || !await access.canReturn(task.result_permissions, client)) {
-        throw new Conflict('Task input permissions changed');
-      }
-      const used = (await db.query(`SELECT 1 WHERE
-        EXISTS(SELECT 1 FROM ${schema}.actions WHERE owner=$1 AND task_id=$2::uuid)
-        OR EXISTS(SELECT 1 FROM ${schema}.scenario_actions WHERE owner=$1 AND task_id=$2::uuid)
-        OR EXISTS(SELECT 1 FROM ${schema}.edit_history WHERE owner=$1 AND task_id=$2::text)
-        OR EXISTS(SELECT 1 FROM ${schema}.external_operations WHERE owner=$1 AND task_id=$2::uuid)
-        OR EXISTS(SELECT 1 FROM ${schema}.scheduled_actions WHERE owner=$1 AND (task_id=$2::uuid OR body->>'sourceTaskId'=$2::text))
-        OR EXISTS(SELECT 1 FROM ${schema}.execution_trace WHERE owner=$1 AND task_id=$2::uuid AND event->>'kind' IN ('proposal','approval','merge'))`,
-        [owner, id], client)).rowCount;
-      if (used) throw new Conflict('A task with prior business Actions cannot use map recovery');
-    };
-
-    const task = await load();
-    if (alreadyApplied(task)) return this.visible(principal, task);
-    const access = await Access.load(db, principal);
-    await check(task, access);
-    const model = await this.metadata.active('Eigos');
-    const { place } = placeDetailResult.parse(await functions.invoke(model, 'readMapPlace', { id: input.placeId }, {
-      principal, objects: new Objects(db, model, access), signal: AbortSignal.timeout(15000),
-    }));
-    if (place.id !== input.placeId || !place.point) throw new Conflict('The selected Amap place has no verified point');
-
-    const resumed = await db.transaction(async client => {
-      const active = await this.metadata.active('Eigos', client, true);
-      const current = await load(client);
-      if (alreadyApplied(current)) return current;
-      if (active.release !== model.release || (await this.metadata.get(current.release, client)).document.id !== active.document.id) {
-        throw new Conflict('The publication changed during map correction');
-      }
-      await access.refresh(client);
-      await check(current, access, client);
-      const nextInput = { ...current.input, mapPlaceCorrections: { ...current.input.mapPlaceCorrections,
-        [input.side]: { requestId: input.requestId, fingerprint, placeId: place.id, name: place.name, city: place.city } } };
-      const result = (await db.query<Task>(`UPDATE ${schema}.tasks
-        SET input=$2,release=$3,state='submitted',error=NULL,result=NULL,result_permissions=NULL,execution_step=execution_step+1,
-          available_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1 RETURNING *`,
-        [id, nextInput, active.release], client)).rows[0]!;
-      await appendTrace(db, { owner, taskId: id, release: active.release, projection: active.projection }, {
-        kind: 'map-place-correction', side: input.side, previousRelease: current.release,
-        previousState: current.state === 'canceled' ? 'canceled' : 'input-required',
-      }, client, access.dataRequirements());
-      await db.query("SELECT pg_notify('eigos_tasks','ready')", [], client);
-      return result;
-    });
-    return this.visible(principal, resumed);
   }
   answerInput(principal: Principal, id: string, input: unknown): Promise<Task> {
     const answer = taskInputAnswerSchema.parse(input);
@@ -369,8 +280,4 @@ export class Tasks {
     });
     return result;
   }
-}
-
-function taskOptions(input: z.infer<typeof submitSchema>) {
-  return { route: input.route, classification: input.classification, learnHotelWorkflow: input.learnHotelWorkflow, replayHotelWorkflow: input.replayHotelWorkflow };
 }

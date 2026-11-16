@@ -231,6 +231,18 @@ p {
 .section {
   margin-top: 22px;
 }
+.trial-item {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin: 10px 0;
+}
+.trial-parameter [hidden] {
+  display: none;
+}
+.review-identities {
+  overflow-wrap: anywhere;
+}
 .scroll {
   overflow: auto;
 }
@@ -323,6 +335,9 @@ tbody tr.selected {
   display: grid;
   gap: 7px;
   margin: 14px 0;
+}
+.field[hidden] {
+  display: none;
 }
 .field > label {
   font-size: 12px;

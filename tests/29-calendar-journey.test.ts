@@ -8,6 +8,8 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { createApp } from '../apps/gateway/app.js';
 import { Worker } from '../apps/worker/worker.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
+import { evaluateCalendarJourneyRelease, journeyReleasePolicy } from '../packages/capabilities/journey/release-checks.js';
+import { decideJourney } from '../packages/capabilities/journey/decision.js';
 import { readConfig } from '../packages/core/config.js';
 import { calendarJourney, journeyReadResult } from '../packages/ontology/calendar-journey.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
@@ -260,5 +262,87 @@ test('a changed map account withdraws the reminder and stops repeated calendar r
     assert.deepEqual(await f.startJourney('corrected-map-source'), ref);
     const second = await f.pending();
     assert.notEqual(second.taskId, first.taskId);
+  } finally { await f.close(); }
+});
+
+
+test('a captured CalendarJourney check can be scheduled for recurring evaluation and staged for review', async () => {
+  const f = await setup();
+  try {
+    const journey = await f.startJourney();
+    const task = await f.pending();
+    await f.answer(task.taskId);
+    const graph = new Objects(f.db, f.model, f.access);
+    const before = await graph.read(journey);
+    const change = (await f.db.query(`SELECT sequence::text FROM ${f.db.schema}.edit_history
+      WHERE type='CalendarJourney' AND id=$1 AND action='CheckCalendarJourney' ORDER BY sequence DESC LIMIT 1`, [journey.id])).rows[0];
+    assert(change);
+    const sequence = change.sequence as string;
+    const input = { journey, sequence };
+    const original = await f.call('evaluate_ontology', {function:'evaluateCalendarJourneyHistory', input});
+    assert.equal(original.decisionMatchesHistory, true);
+    assert.equal(original.keepsSafety, true);
+    assert.equal(original.observedReminderChanges, 1);
+    await assert.rejects(f.call('apply_ontology_action',{action:'StageCalendarJourneyPolicyReview',requestId:'bad-live',input}),/Scenario/);
+    const end = new Date().toISOString(), start = new Date(Date.now()-3600000).toISOString();
+    const saved = await f.call('ontology_save_machinery_cases',{name:'One checked journey',requestId:'case-set',
+      analysis:{type:'CalendarJourneyStateLog',from:start,to:end,filter:{state:'scheduled'}}});
+    const cases = await f.call('ontology_evaluation_cases_from_set',{set:saved.id,parameter:'journey'});
+    assert.equal(cases.total,1);
+    const bound = {journey:{input:'journey'},sequence:{input:'sequence'}};
+    const suite = await f.call('ontology_save_evaluation_suite',{name:'Review journey policy',requestId:'journey-eval',
+      machinerySet:saved.id,trial:{
+        cases:cases.cases.map((item: {inputs:Record<string,unknown>})=>({...item,inputs:{...item.inputs,sequence}})),
+        variants:[
+          {name:'Current',steps:[]},
+          {name:'Candidate',steps:[{kind:'action',name:'Stage',action:'StageCalendarJourneyPolicyReview',input:bound}]},
+        ],
+        metrics:[
+          {name:'matches',function:'evaluateCalendarJourneyHistory',input:bound,path:['decisionMatchesHistory']},
+          {name:'safe',function:'evaluateCalendarJourneyHistory',input:bound,path:['keepsSafety']},
+        ],
+      }});
+    const review=await f.call('ontology_save_machinery_review',{name:'Recurring check',type:'CalendarJourneyStateLog',
+      enabled:true,periodDays:1,minCases:1,evaluation:{id:suite.id,revision:suite.revision}});
+    const worker = new (await import('../packages/runtime/machinery-reviews.js')).MachineryReviews(f.db,f.metadata,
+      new (await import('../packages/runtime/scenario-evaluation.js')).ScenarioEvaluations(f.db,f.capabilities.actions,f.capabilities.functions));
+    assert.equal(await worker.scanOne(),true);
+    assert.equal(await worker.scanOne(),false);
+    const reviews=await f.call('ontology_machinery_reviews',{});
+    const receipt=reviews.items.find((item:{id:string})=>item.id===review.id).checkpoint.evaluation;
+    assert.equal(receipt.completed,2);
+    assert.equal(receipt.rejected,0);
+    const proposal=await f.call('ontology_promote_evaluation_candidate',{run:receipt.run,case:cases.cases[0].name,variant:'Candidate',
+      requestId:'submit-review',reviewers:['other-pa']});
+    const diff=await f.call('inspect_scenario',{scenarioId:proposal.id});
+    assert.equal(diff.objects[0].ref.type,'CalendarJourneyPolicyReview');
+    assert.equal(diff.links.length,1);
+    assert.deepEqual(await graph.read(journey),before);
+    assert.deepEqual((await graph.query({type:'CalendarJourneyPolicyReview'})).items,[]);
+  } finally { await f.close(); }
+});
+
+test('the production activation boundary rejects an unsafe candidate and records only passing releases', async () => {
+  const f = await fixture();
+  try {
+    await f.db.query(`INSERT INTO ${f.db.schema}.release_evaluation_policy(ontology,required_policy) VALUES('Eigos',$1)`,[journeyReleasePolicy]);
+    const definition=structuredClone(f.model.document);
+    definition.version += '-quality';
+    const candidate=await f.metadata.prepare(definition,f.capabilities,f.publisher);
+    const broken={...f.capabilities,evaluateRelease: (model:Parameters<typeof evaluateCalendarJourneyRelease>[0]) =>
+      evaluateCalendarJourneyRelease(model, (...args)=>{
+        const result = decideJourney(...args);
+        if (result.observation.state === 'canceled') return decideJourney(args[0], args[0].calendar, args[0].route, args[0].weather, args[4]);
+        return result;
+      })};
+    await assert.rejects(f.metadata.activate(candidate.release,broken,f.publisher),/canceled-withdraws-reminder/);
+    assert.equal((await f.metadata.active()).release,f.model.release);
+    assert.equal((await f.db.query(`SELECT count(*)::int AS n FROM ${f.db.schema}.release_evaluation_receipts`)).rows[0]?.n,0);
+    await f.metadata.activate(candidate.release,f.capabilities,f.publisher);
+    const {rows:[receipt]}=await f.db.query(`SELECT release,policy,checks FROM ${f.db.schema}.release_evaluation_receipts`);
+    assert(receipt);
+    assert.equal(receipt.release,candidate.release);
+    assert.equal(receipt.policy,journeyReleasePolicy);
+    assert(receipt.checks.every((item:{passed:boolean})=>item.passed));
   } finally { await f.close(); }
 });

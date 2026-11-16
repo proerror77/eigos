@@ -6,7 +6,7 @@ import type { Access } from './access.js';
 import type { Actions } from './actions.js';
 import type { Database, Sql } from './database.js';
 import type { Functions } from './functions.js';
-import type { PublishedOntology } from './metadata.js';
+import { PublishedOntology } from './metadata.js';
 import { ObjectSets, aggregateSetSchema } from './object-sets.js';
 import { Objects } from './objects.js';
 import { lockEdits } from './scenario-store.js';
@@ -56,6 +56,33 @@ export const trialScenariosSchema = z.strictObject({
 }).refine(input => input.cases.length * input.variants.reduce((sum, item) => sum + item.steps.length + input.metrics.length, 0) <= 120,
   'The trial exceeds its step budget');
 
+const suiteRef = z.strictObject({id:z.uuid(), revision});
+export const saveEvaluationSuiteSchema = z.strictObject({
+  id:z.uuid().optional(), revision:revision.optional(), requestId:z.string().min(1).max(128),
+  name:z.string().min(1).max(200), trial:trialScenariosSchema, machinerySet:z.uuid().optional(),
+}).refine(input=>Boolean(input.id)===Boolean(input.revision),'Updating a suite requires its revision');
+export const runEvaluationSuiteSchema = suiteRef;
+export const evaluationCasesFromSetSchema = z.strictObject({
+  set:z.uuid(), parameter:name, limit:z.number().int().min(1).max(8).default(4),
+});
+export const promoteEvaluationSchema = z.strictObject({
+  run:z.uuid(), case:name, variant:name, requestId:z.string().min(1).max(128),
+  reviewers:z.array(z.string().min(1).max(200)).min(1).max(20),
+});
+
+export async function initializeScenarioEvaluations(db:Database){
+  await db.query(`CREATE TABLE IF NOT EXISTS ${db.schema}.scenario_evaluation_suites(
+    id uuid PRIMARY KEY, owner text NOT NULL, ontology text NOT NULL, request_id text NOT NULL, revision integer NOT NULL,
+    name text NOT NULL, body jsonb NOT NULL, machinery_set uuid, UNIQUE(owner,ontology,request_id));
+    CREATE TABLE IF NOT EXISTS ${db.schema}.scenario_evaluation_runs(
+    id uuid PRIMARY KEY, owner text NOT NULL, ontology text NOT NULL, suite_id uuid NOT NULL, suite_revision integer NOT NULL,
+    release text NOT NULL, result jsonb NOT NULL, created_at timestamptz DEFAULT now());
+    CREATE INDEX IF NOT EXISTS scenario_evaluation_runs_owner ON ${db.schema}.scenario_evaluation_runs(owner,ontology,created_at)`);
+}
+const trialReceiptSchema=z.array(z.strictObject({
+  name, evaluatedAt:z.iso.datetime({offset:true}), inputDigest:z.string(),
+  variants:z.array(z.strictObject({name, status:z.enum(['completed','rejected']), outcome:z.string()})),
+}));
 type CompareInput = z.output<typeof compareScenariosSchema>;
 type TrialInput = z.output<typeof trialScenariosSchema>;
 type EvaluationStep = { name: string; operation: string; status: 'completed' | 'rejected'; value?: z.output<typeof scalar> | ObjectRef };
@@ -94,15 +121,32 @@ export class ScenarioEvaluations {
     this.sets = new ObjectSets(db);
   }
 
-  private snapshot<T>(access: Access, model: PublishedOntology, evaluate: (client: Sql, at: Date, signal: AbortSignal) => Promise<T>) {
+  options(access: Access, model: PublishedOntology) {
+    access.require(model.document.id, 'view_definition', model.document.id);
+    const definition = access.describe(model, true);
+    const eligible = definition.functionTypes.filter(fn => this.functions.supportsScenarioEvaluation(model, fn.apiName));
+    const supported = new Set(eligible.map(fn => fn.apiName));
+    const functions = eligible.filter(fn => !fn.edits).map(fn => fn.apiName);
+    const checks = new Set(functions);
+    const actions = definition.actionTypes.filter(action =>
+      !action.rules?.some(rule => rule.op === 'applyScenario')
+      && (!action.function || supported.has(action.function))
+      && action.submissionCriteria.every(criterion => checks.has(criterion.function))
+    ).map(action => action.apiName);
+    return { actions, functions };
+  }
+
+  private snapshot<T>(access: Access, model: PublishedOntology, evaluate: (client: Sql, at: Date, signal: AbortSignal, model:PublishedOntology) => Promise<T>,candidateBase?:string) {
     if (model.scenario) throw new Conflict('Select the current Ontology publication');
     access.require(model.document.id, 'view_definition', model.document.id);
     return this.db.withOwner(access.principal.owner, () => this.db.transaction(async client => {
-      await lockEdits(this.db, model, access.principal.owner, client);
+      const scoped=candidateBase?new PublishedOntology(model.document,model.release,model.projection,model.runtimeId,
+        model.bindings,undefined,{base:candidateBase,client}):model;
+      await lockEdits(this.db, scoped, access.principal.owner, client);
       await access.refresh(client);
       const at = (await this.db.query<{ at: Date }>('SELECT clock_timestamp() AS at', [], client)).rows[0]!.at;
       const signal = AbortSignal.timeout(15_000);
-      const result = await evaluate(client, at, signal);
+      const result = await evaluate(client,at,signal,scoped);
       signal.throwIfAborted();
       await access.refresh(client);
       return result;
@@ -154,7 +198,19 @@ export class ScenarioEvaluations {
     });
   }
 
-  async trial(access: Access, model: PublishedOntology, input: TrialInput) {
+  async trial(access: Access, model: PublishedOntology, input: TrialInput, candidateBase?:string) {
+    return this.publicTrial(await this.trialReport(access,model,input,candidateBase));
+  }
+
+  private publicTrial(report:Awaited<ReturnType<ScenarioEvaluations['trialReport']>>){
+    return {...report,cases:report.cases.map(item=>({...item,variants:item.variants.map(variant=>{
+      if(variant.status==='rejected')return variant;
+      const {footprint:_footprint,...visible}=variant;
+      return visible;
+    })}))};
+  }
+
+  private async trialReport(access: Access, model: PublishedOntology, input: TrialInput, candidateBase?:string) {
     for (const metric of input.metrics) this.requireMetric(model, metric.function);
     for (const variant of input.variants) {
       for (const step of variant.steps) {
@@ -169,7 +225,7 @@ export class ScenarioEvaluations {
         for (const criterion of action.submissionCriteria) this.requireMetric(model, criterion.function);
       }
     }
-    return this.snapshot(access, model, async (client, at, signal) => {
+    return this.snapshot(access, model, async (client, at, signal, model) => {
       const cases: {
         name: string; evidence: z.output<typeof objectVersion>[]; evaluatedAt: string; inputDigest: string;
         variants: Awaited<ReturnType<ScenarioEvaluations['runVariant']>>[];
@@ -211,15 +267,149 @@ export class ScenarioEvaluations {
             attemptedSteps: results.reduce((count, item) => count + item.steps.length, 0) };
         }),
       };
+    },candidateBase);
+  }
+
+  async saveSuite(access:Access,model:PublishedOntology,raw:unknown){
+    const input=saveEvaluationSuiteSchema.parse(raw),owner=access.principal.owner;
+    return this.snapshot(access,model,async client=>{
+      if(input.machinerySet)await this.requireCaseSet(access,model,input.trial,input.machinerySet,client);
+      if(!input.id){
+        const existing=(await this.db.query(`SELECT id,revision,name,body,machinery_set FROM ${this.db.schema}.scenario_evaluation_suites
+          WHERE owner=$1 AND ontology=$2 AND request_id=$3`,[owner,model.document.id,input.requestId],client)).rows[0];
+        if(existing){
+          if(existing.name!==input.name||digest(existing.body)!==digest(input.trial)||existing.machinery_set!==(input.machinerySet??null))
+            throw new Conflict('Evaluation suite request ID has different content');
+          return {id:existing.id,revision:Number(existing.revision)};
+        }
+        const id=randomUUID();
+        await this.db.query(`INSERT INTO ${this.db.schema}.scenario_evaluation_suites
+          (id,owner,ontology,request_id,revision,name,body,machinery_set) VALUES($1,$2,$3,$4,1,$5,$6,$7)`,
+          [id,owner,model.document.id,input.requestId,input.name,input.trial,input.machinerySet??null],client);
+        return {id,revision:1};
+      }
+      const updated=(await this.db.query(`UPDATE ${this.db.schema}.scenario_evaluation_suites SET revision=revision+1,name=$5,body=$6,machinery_set=$7
+        WHERE id=$1 AND owner=$2 AND ontology=$3 AND revision=$4 RETURNING revision`,
+        [input.id,owner,model.document.id,input.revision,input.name,input.trial,input.machinerySet??null],client)).rows[0];
+      if(!updated)throw new Conflict('Evaluation suite revision changed or is unavailable');
+      return {id:input.id,revision:Number(updated.revision)};
+    });
+  }
+
+  async casesFromSet(access:Access,model:PublishedOntology,raw:unknown){
+    const input=evaluationCasesFromSetSchema.parse(raw);
+    return this.snapshot(access,model,async client=>{
+      const refs=await this.sets.members(access,model,{op:'saved',id:input.set},client);
+      refs.sort((a,b)=>a.type.localeCompare(b.type)||a.id.localeCompare(b.id));
+      const graph=new Objects(this.db,model,access,client);
+      const cases=[];
+      for(const [index,ref] of refs.slice(0,input.limit).entries()){
+        const object=await graph.read(ref);
+        cases.push({name:'Case'+(index+1),inputs:{[input.parameter]:ref},evidence:[{object:ref,revision:object.revision}]});
+      }
+      if(!await access.canReturn(access.dataRequirements(),client))throw new Conflict('Trial evidence permissions changed');
+      return {cases,total:refs.length};
+    });
+  }
+
+  private async requireCaseSet(access:Access,model:PublishedOntology,trial:TrialInput,set:string,client:Sql){
+    const refs=new Set((await this.sets.members(access,model,{op:'saved',id:set},client)).map(item=>digest(item)));
+    if(!trial.cases.every(item=>item.evidence.some(evidence=>refs.has(digest(evidence.object)))))
+      throw new Conflict('Each evaluation case must reference an object in the selected Machinery Object Set');
+  }
+
+  async listSuites(access:Access,model:PublishedOntology){
+    access.require(model.document.id,'view_definition',model.document.id);
+    return this.db.withOwner(access.principal.owner,()=>this.db.transaction(async client=>{
+      const args=[access.principal.owner,model.document.id];
+      const suites=(await this.db.query(`SELECT id,revision,name,machinery_set AS "machinerySet"
+        FROM ${this.db.schema}.scenario_evaluation_suites WHERE owner=$1 AND ontology=$2 ORDER BY name,id LIMIT 100`,args,client)).rows;
+      const runs=(await this.db.query(`SELECT id,suite_id AS "suite",suite_revision AS "revision",release,created_at AS "createdAt"
+        FROM ${this.db.schema}.scenario_evaluation_runs WHERE owner=$1 AND ontology=$2 ORDER BY created_at DESC,id LIMIT 100`,args,client)).rows;
+      return {suites,runs};
+    }));
+  }
+
+  private async loadSuite(access:Access,model:PublishedOntology,id:string,revision:number,client?:Sql){
+    const row=(await this.db.query(`SELECT body,machinery_set FROM ${this.db.schema}.scenario_evaluation_suites
+      WHERE id=$1 AND owner=$2 AND ontology=$3 AND revision=$4`,
+      [id,access.principal.owner,model.document.id,revision],client)).rows[0];
+    if(!row)throw new Conflict('Evaluation suite revision changed or is unavailable');
+    return {trial:trialScenariosSchema.parse(row.body),set:row.machinery_set as string|null};
+  }
+
+  private outcome(result:Awaited<ReturnType<ScenarioEvaluations['runVariant']>>){
+    return digest(result.status==='completed'?{metrics:result.metrics,footprint:result.footprint}:
+      {status:result.status,reason:result.reason});
+  }
+
+  async runSuite(access:Access,model:PublishedOntology,raw:unknown, receiptClient?: Sql){
+    const input=runEvaluationSuiteSchema.parse(raw);
+    const {trial,set}=await this.db.withOwner(access.principal.owner,
+      ()=>this.loadSuite(access,model,input.id,input.revision));
+    const report=await this.trialReport(access,model,trial);
+    const id=randomUUID();
+    const receipt=report.cases.map(item=>({
+      name:item.name,evaluatedAt:item.evaluatedAt,inputDigest:item.inputDigest,
+      variants:item.variants.map(variant=>({name:variant.name,status:variant.status,outcome:this.outcome(variant)})),
+    }));
+    const persist = async (client: Sql) => {
+      await this.loadSuite(access,model,input.id,input.revision,client);
+      if(set)await this.requireCaseSet(access,model,trial,set,client);
+      await this.db.query(`INSERT INTO ${this.db.schema}.scenario_evaluation_runs
+        (id,owner,ontology,suite_id,suite_revision,release,result) VALUES($1,$2,$3,$4,$5,$6,$7)`,
+        [id,access.principal.owner,model.document.id,input.id,input.revision,report.release,JSON.stringify(receipt)],client);
+    };
+    if (receiptClient) {
+      await this.db.withTransactionOwner(receiptClient, access.principal.owner, async () => {
+        await lockEdits(this.db, model, access.principal.owner, receiptClient);
+        await access.refresh(receiptClient);
+        await persist(receiptClient);
+      });
+    } else await this.snapshot(access, model, persist);
+    return {...this.publicTrial(report),run:id,suite:input.id,suiteRevision:input.revision};
+  }
+
+  async promote(access:Access,model:PublishedOntology,raw:unknown){
+    const input=promoteEvaluationSchema.parse(raw),owner=access.principal.owner;
+    return this.snapshot(access,model,async(client,at,signal)=>{
+      const run=(await this.db.query(`SELECT suite_id,suite_revision,release,result FROM ${this.db.schema}.scenario_evaluation_runs
+        WHERE id=$1 AND owner=$2 AND ontology=$3`,[input.run,owner,model.document.id],client)).rows[0];
+      if(!run||run.release!==model.release)throw new Conflict('Run the evaluation on the current publication before promoting');
+      const receipt=trialReceiptSchema.parse(run.result).find(item=>item.name===input.case);
+      const verdict=receipt?.variants.find(item=>item.name===input.variant);
+      if(verdict?.status!=='completed')throw new Conflict('Only a completed candidate can be proposed');
+      const {trial,set}=await this.loadSuite(access,model,run.suite_id,Number(run.suite_revision),client);
+      if(set)await this.requireCaseSet(access,model,trial,set,client);
+      const item=trial.cases.find(item=>item.name===input.case)!;
+      const variant=trial.variants.find(item=>item.name===input.variant)!;
+      const readers=new Objects(this.db,model,access,client), evidence=[];
+      for(const expected of item.evidence){
+        const current=await readers.read(expected.object);
+        if(current.revision!==expected.revision)throw new Conflict('Trial evidence changed; run the evaluation again');
+        evidence.push(current);
+      }
+      if(digest({evidence,inputs:item.inputs,evaluatedAt:receipt!.evaluatedAt})!==receipt!.inputDigest)
+        throw new Conflict('Trial evidence changed; run the evaluation again');
+      const draft=await this.scenarios.create(access,model,{requestId:input.requestId,name:variant.name,
+        description:`Evaluation run ${input.run}, case ${input.case}, candidate ${input.variant}, outcome ${verdict.outcome}, reviewers ${digest([...new Set(input.reviewers)].sort())}`},undefined,{client});
+      // Re-evaluate for the current business clock. Historical evidence is useful for
+      // comparison only; expired facts cannot become an actionable recommendation.
+      if(draft.revision>1)return {id:draft.id,revision:draft.revision,run:input.run};
+      const result=await this.runVariant(access,model,item.inputs,variant,trial.metrics,client,at,signal,draft);
+      if(result.status!=='completed'||result.changes.conflicts||this.outcome(result)!==verdict.outcome)
+        throw new Conflict('The chosen outcome changed; refresh evidence and rerun before proposing');
+      const diff=await this.scenarios.inspect(access,model,draft.id,client);
+      const review=await this.scenarios.inviteReviewers(access,model,draft.id,diff.revision,input.reviewers,client);
+      return {id:draft.id,revision:review.revision,run:input.run,reviewers:review.reviewers};
     });
   }
 
   private async runVariant(access: Access, model: PublishedOntology, facts: Facts, variant: z.output<typeof trialVariant>,
-    metrics: TrialInput['metrics'], client: Sql, at: Date, signal: AbortSignal) {
-    const session = await this.scenarios.openSession(access, 60, client);
-    const trial = await this.scenarios.create(access, model, {
-      requestId: randomUUID(), name: variant.name, kind: 'temporary', sessionId: session.id,
-    }, undefined, { client });
+    metrics: TrialInput['metrics'], client: Sql, at: Date, signal: AbortSignal, existing?:{id:string}) {
+    const trial=existing??await this.scenarios.create(access,model,{
+      requestId:randomUUID(),name:variant.name,kind:'temporary',sessionId:(await this.scenarios.openSession(access,60,client)).id,
+    },undefined,{client});
     const view = await this.scenarios.view(access, model, trial.id, client);
     const objects = new Objects(this.db, view, access, client);
     const results = new Map<string, unknown>(), steps: EvaluationStep[] = [];
@@ -229,7 +419,7 @@ export class ScenarioEvaluations {
       const input = bind(step.input, facts, results);
       try {
         const value = step.kind === 'action'
-          ? await this.actions.apply(access, view, step.action, input, randomUUID(), undefined, undefined, signal,
+          ? await this.actions.apply(access, view, step.action, input, digest(['evaluation',variant.name,step.name,facts]), undefined, undefined, signal,
               undefined, { client, evaluatedAt: at.getTime() })
           : await this.scalar(objects, step, input, at, signal);
         if (step.kind === 'check' && value !== step.equals) {
@@ -254,7 +444,8 @@ export class ScenarioEvaluations {
       }
     }
     const diff = await this.scenarios.inspect(access, model, trial.id, client);
-    return { name: variant.name, status: 'completed' as const, steps, metrics: Object.fromEntries(values), changes: changes(diff) };
+    return { name: variant.name, status: 'completed' as const, steps, metrics: Object.fromEntries(values), changes: changes(diff),
+      footprint:await this.scenarios.evaluationFootprint(access.principal.owner,trial.id,client) };
   }
 }
 

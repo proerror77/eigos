@@ -113,7 +113,7 @@ npm run test:e2e:run
 
 定义摘要与发布引用分开。发布引用同时绑定定义、实现摘要和对象/关系投影，任务保存该引用。`ontology:prepare` 在同一 PostgreSQL 库内准备候选投影，校验数据和已注册 Function/来源绑定；`ontology:activate -- <release>` 在原子事务中切换。`ontology:publish` 连续完成两步。候选失败或准备后源数据发生变化时，当前版本继续服务。切换前需完成或取消尚未结束的旧任务，避免同一任务混用实现与数据。历史任务和旧投影保留只读。
 
-已有安装先停止写入、备份原 schema，再用 `npm run db:upgrade` 在原库升级。没有新增数据库。生产实现摘要由构建输入生成，Gateway/Worker 在启动与调用时检查绑定。更改属性类型需先修正来源数据；可向 prepare/publish 传入一个绝对路径的普通模块，导出 `project(ref, properties)` 做明确的数据转换，不能隐式强制转换。
+已有安装先停止写入、备份原 schema，再用 `npm run db:upgrade` 在原库升级。没有新增数据库。生产实现摘要由构建输入生成，Gateway/Worker 在启动与调用时检查绑定。同一 schema 的 Gateway、Worker 和 Indexer 需要协调切换到相同实现版本，数据库锁键变更时尤其如此。更改属性类型需先修正来源数据；可向 prepare/publish 传入一个绝对路径的普通模块，导出 `project(ref, properties)` 做明确的数据转换，不能隐式强制转换。
 
 权限记录分为定义的 view/edit/manage、对象数据读取、受限属性读取、Action 应用、Function 执行和来源读取。owner 行隔离继续生效。定义管理不授予数据或 Action 权限。额外受限属性没有授权时返回 null，筛选条件也只能看到遮罩后的值。任务输出保留其读取权限依赖，撤权后不会从缓存继续返回受限结果。
 
@@ -130,7 +130,7 @@ npm run test:e2e:run
 }
 ```
 
-省略 properties 保持当前属性限制；提供该数组则完整替换限制。`access:grant-member` 只授予指定账号当前定义中的业务能力，未来新能力不会自动获得执行授权。受限属性权限需明确配置。对象内容策略、属性策略、组织组和标记规则的配置见 [Ontology 运行服务](docs/guides/ontology-services.md)，实例仍按 owner 隔离。
+省略 properties 保持当前属性限制；提供该数组则完整替换限制。`access:grant-member` 只授予指定账号当前定义中的业务能力，未来新能力不会自动获得执行授权。受限属性权限需明确配置。沙箱能力仅在显式设置 `EIGOS_AGENT_SANDBOX_ENABLED=true` 的本地开发环境授予并执行，Gateway、Worker 和索引进程沿用同一环境限制。对象内容策略、属性策略、组织组和标记规则的配置见 [Ontology 运行服务](docs/guides/ontology-services.md)，实例仍按 owner 隔离。
 
 ## Scenario 与日历排程
 
@@ -154,4 +154,12 @@ Luma 默认沿用原 PA 已连接的 MCP。未来执行需要 PA 持续处理 `l
 
 [类型系统与资源包](docs/guides/type-system.md) 支持共享属性、版本化值类型、Struct、Interface 继承及可审阅的共享定义导入。[查询与语义检索](docs/guides/search.md) 支持嵌套字段、组合筛选、派生属性和本地多语言向量；`npm run embeddings:warm` 可提前下载固定版本模型。[实体归一](docs/guides/entity-resolution.md)、[跨本体对象复制](docs/guides/ontology-data-migration.md) 和 [Workflow 与规则](docs/guides/automation.md) 保留独立授权与审计。
 
-`/workbench/` 提供同一套服务的浏览器入口，包括建模提案、对象及关系探索、查询、Scenario、排程和规则。宿主提供当前身份的 Bearer token；界面不授予额外业务权限。三维文件与标注是独立的可选应用领域，Ontology 核心运行不依赖它。
+`/workbench/` 提供同一套服务的浏览器入口，包括建模提案、对象及关系探索、查询、Scenario、排程和规则。三维文件与标注是独立的可选应用领域。
+
+### 工作台账户登录
+
+在既有 Auth0 租户中为工作台使用 Native 类型的公开客户端，启用 Device Code grant、OIDC 和团队使用的连接。沿用 Gateway 的 issuer、audience 及 tenant claim。该客户端签发的 JWT 应包含该客户端的 `azp` 或 `client_id`、有效的 tenant claim 和 `ontology:read`。同一账号继续使用原有 owner 和 Ontology 权限。客户端访问 scope 与建模、审核或对象数据授权分别由身份提供方和 EIGOS 权限管理。
+
+设置 Gateway 的 `OAUTH_WORKBENCH_CLIENT_ID` 后，`/workbench/config` 应返回 `deviceLogin: true`。工作台选择「通过账户登录」，在身份提供方页面确认显示的代码。验收时用各自授权的建模者与审阅者账号验证身份、提案准备和审核权限，并检查审阅者只看到受邀且有权读取的方案。
+
+配置流程参见 [Auth0 Device Authorization](https://auth0.com/docs/get-started/authentication-and-authorization-flow/device-authorization-flow/call-your-api-using-the-device-authorization-flow)。

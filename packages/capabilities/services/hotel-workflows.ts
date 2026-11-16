@@ -1,17 +1,22 @@
 import { z } from 'zod';
-import { Conflict, NotFound, digest, requireScope, type Principal } from '../core/identity.js';
-import { objectRefSchema, type FunctionDependencies, type ObjectRef } from '../ontology/schema.js';
-import { hotelSearchInput } from '../ontology/service-contracts.js';
-import { activityInputSchema, planInputSchema, planResultSchema } from '../capabilities/scheduling/contracts.js';
-import { Access, type Requirement } from './access.js';
-import type { AgentTool } from './agent.js';
-import type { Database, Sql } from './database.js';
-import type { Functions } from './functions.js';
-import type { Metadata, PublishedOntology } from './metadata.js';
-import { Objects } from './objects.js';
-import { Scenarios } from './scenarios.js';
-import { lockEdits } from './scenario-store.js';
-import { checkWorkflowDependencies } from './workflow-compatibility.js';
+import { Conflict, NotFound, digest, requireScope, type Principal } from '../../core/identity.js';
+import { actionCallSchema, functionCallSchema } from '../../ontology/invocation.js';
+import type { Actions } from '../../runtime/actions.js';
+import type { Task, Tasks } from '../../runtime/tasks.js';
+import { objectRefSchema, type FunctionDependencies, type ObjectRef } from '../../ontology/schema.js';
+import { hotelSearchInput } from '../../ontology/service-contracts.js';
+import { activityInputSchema, planInputSchema, planResultSchema } from '../scheduling/contracts.js';
+import { Access, type Requirement } from '../../runtime/access.js';
+import type { AgentTool } from '../../runtime/agent.js';
+import type { AgentTaskWorkflow } from '../../runtime/agent-task.js';
+import type { Database, Sql } from '../../runtime/database.js';
+import type { Functions } from '../../runtime/functions.js';
+import type { Metadata, PublishedOntology } from '../../runtime/metadata.js';
+import { Objects } from '../../runtime/objects.js';
+import { Scenarios } from '../../runtime/scenarios.js';
+import { lockEdits } from '../../runtime/scenario-store.js';
+import { insertWorkflowRecord, readWorkflowRecord } from '../../runtime/workflow-records.js';
+import { checkWorkflowDependencies } from '../../runtime/workflow-compatibility.js';
 
 const objects = z.object({
   ref: objectRefSchema,
@@ -119,7 +124,6 @@ const reviewSchema = z.strictObject({
     })
     .optional(),
 });
-export const workflowReplaySchema = z.strictObject({ workflowId: z.uuid(), checkIn: z.iso.date() });
 export const hotelApprovalSchema = z.strictObject({
   taskId: z.uuid(),
   scenarioId: z.uuid(),
@@ -128,6 +132,7 @@ export const hotelApprovalSchema = z.strictObject({
   decision: z.literal('approve-simulation'),
 });
 
+export const hotelWorkflowGuidance = 'For this hotel itinerary, use the Ontology tools to produce a validated SchedulePlan in a persisted Scenario. Retrieve the selected hotel for the requested date, resolve both places through the location source, read the authoritative driving estimate, and link the hotel and one travel activity. Complete with the authoritative plan result. The server derives a reusable workflow and requests separate approval before saving it or simulating execution.';
 const safeActions = new Set(['PrepareSchedulePlan', 'SearchRollingGoHotels', 'ObserveDidiDrivingTime', 'AttachPlanService', 'SaveScheduleActivity']);
 const safeFunctions = new Set([
   'findScheduleSlots',
@@ -138,6 +143,13 @@ const safeFunctions = new Set([
   'evaluateServiceOffering',
   'readDrivingEstimate',
 ]);
+
+export const hotelWorkflowCatalogue = {
+  profiles: ['TravelOffers', 'SchedulePlanning'],
+  resources: [...safeActions, ...safeFunctions, 'DidiPlaces', 'HotelOffer', 'readServiceSearch'],
+};
+
+export const hotelWorkflowAllowsAction = (name: string) => safeActions.has(name);
 
 function checkHotelWorkflowDefinition(recipe: Recipe, previous: PublishedOntology, current: PublishedOntology) {
   const roots = {
@@ -223,7 +235,7 @@ export function checkHotelWorkflowTool(tool: string, input: unknown) {
 }
 export function checkHotelWorkflowAction(action: string, model: PublishedOntology, scenario?: string) {
   if (
-    !safeActions.has(action) ||
+    !hotelWorkflowAllowsAction(action) ||
     model.action(action).effects?.length ||
     Boolean(scenario) !== ['AttachPlanService', 'SaveScheduleActivity'].includes(action)
   ) {
@@ -522,6 +534,53 @@ export class HotelWorkflows {
     private readonly functions: Functions,
   ) {}
 
+  async beginTrace(task: Task, tasks: Tasks, actions: Actions, access: Access, model: PublishedOntology) {
+    const eventSchema = z.object({ tool: z.string(), input: z.unknown(), output: z.unknown() });
+    const trace: HotelWorkflowTrace = { events: [], actions: [], locations: [], reads: [] };
+    const captureReads = (event: z.infer<typeof eventSchema>) => {
+      if (event.tool === 'evaluate_function') {
+        const read = functionCallSchema.parse(event.input);
+        if (read.function === 'readDrivingEstimate') trace.reads.push({ function: read.function, output: event.output });
+      } else if (event.tool === 'refresh_sources') {
+        const { sources } = z.object({ sources: z.array(source) }).parse(event.input);
+        const outputs = z.array(z.unknown()).parse(event.output);
+        for (const [index, item] of sources.entries()) trace.locations.push({ input: item.input, output: outputs[index] });
+      }
+    };
+    const saved = (await this.db.query(`SELECT workflow_trace FROM ${this.db.schema}.tasks WHERE id=$1 AND owner=$2`,
+      [task.id, task.owner])).rows[0]?.workflow_trace;
+    for (const event of z.array(eventSchema).max(80).parse(saved ?? [])) {
+      trace.events.push(event);
+      if (event.tool === 'apply_action') {
+        const input = actionCallSchema.parse(event.input);
+        const selected = actions.resolve(access, model, input);
+        trace.actions.push({ ...selected, scenarioId: input.scenarioId, output: objectRefSchema.parse(event.output) });
+      }
+      captureReads(event);
+    }
+    return {
+      trace,
+      recordAction(selected: { action: string; input: Record<string, unknown> }, scenarioId: string | undefined, output: ObjectRef) {
+        trace.actions.push({ ...selected, scenarioId, output });
+      },
+      recordEvent: async (tool: string, input: unknown, output: unknown) => {
+        const event = { tool, input, output };
+        if (JSON.stringify(event).length > 250000 || trace.events.length >= 80)
+          throw new Conflict('Workflow trace exceeds the supported learning bound');
+        await this.db.transaction(async client => {
+          await tasks.current(task, client, true);
+          const saved = await this.db.query(
+            `UPDATE ${this.db.schema}.tasks SET workflow_trace=workflow_trace||$2::jsonb
+             WHERE id=$1 AND jsonb_array_length(workflow_trace)<80`,
+            [task.id, JSON.stringify([event])], client);
+          if (!saved.rowCount) throw new Conflict('Workflow trace exceeds the supported learning bound');
+        });
+        trace.events.push(event);
+        captureReads(event);
+      },
+    };
+  }
+
   private checkReplayDefinition(recipe: Recipe, model: PublishedOntology, previous: PublishedOntology | undefined) {
     if (!previous) throw new Conflict('Saved workflow Ontology definition is unavailable');
     try { checkHotelWorkflowDefinition(recipe, previous, model); }
@@ -532,13 +591,8 @@ export class HotelWorkflows {
   }
 
   async load(model: PublishedOntology, owner: string, id: string, client?: Sql) {
-    const row = (
-      await this.db.query(
-        `SELECT body FROM ${this.db.schema}.workflows WHERE id=$1 AND owner=$2 AND ontology=$3 AND body->>'kind'='learned-hotel-itinerary'`,
-        [id, owner, model.document.id],
-        client,
-      )
-    ).rows[0];
+    const row = await readWorkflowRecord(this.db, { id, owner, ontology: model.document.id },
+      client, 'learned-hotel-itinerary');
     if (!row) throw new NotFound('Learned workflow is unavailable');
     const recipe = recipeSchema.parse(row.body);
     if (recipe.definition !== model.digest) {
@@ -709,12 +763,10 @@ export class HotelWorkflows {
       const workflowId = review.workflowId ?? input.taskId;
       if (review.workflowId) await this.load(model, principal.owner, review.workflowId, client);
       else
-        await this.db.query(
-          `INSERT INTO ${this.db.schema}.workflows(id,owner,ontology,name,body,revision)
-        VALUES($1,$2,$3,$4,$5,1)`,
-          [workflowId, principal.owner, model.document.id, '酒店行程 · ' + current.offer.properties.name, review.recipe],
-          client,
-        );
+        await insertWorkflowRecord(this.db, client, {
+          id: workflowId, owner: principal.owner, ontology: model.document.id,
+          name: '酒店行程 · ' + current.offer.properties.name, body: review.recipe,
+        });
       const estimatedArrival =
         Date.parse(current.activity.start) + current.route.travel.properties.durationSeconds * 1000;
       const approved = reviewSchema.parse({
@@ -788,4 +840,36 @@ export function publicHotelTaskResult(result: unknown): unknown {
     if (review.success) return { ...result, hotelWorkflow: publicHotelReview(review.data) };
   }
   return result;
+}
+
+export function hotelTaskWorkflow(functions: Functions): AgentTaskWorkflow {
+  return ({ task, tasks, metadata, actions, access, model, signal }) => {
+    const replay = task.input.replayHotelWorkflow;
+    const learning = task.input.learnHotelWorkflow === true;
+    if (!learning && !replay) return undefined;
+    return {
+      replay: Boolean(replay),
+      catalogue: hotelWorkflowCatalogue,
+      instructions: learning ? [hotelWorkflowGuidance] : [],
+      checkTool: checkHotelWorkflowTool,
+      checkAction: (action, scenarioId) => checkHotelWorkflowAction(action, model, scenarioId),
+      allowsAction: hotelWorkflowAllowsAction,
+      async start() {
+        const workflows = new HotelWorkflows(tasks.db, metadata, functions);
+        const trace = await workflows.beginTrace(task, tasks, actions, access, model);
+        let recipe: Recipe | undefined;
+        return {
+          recordAction: trace.recordAction,
+          recordEvent: trace.recordEvent,
+          prepareReplay: replay && (async () => {
+            const saved = await workflows.load(model, task.owner, replay.workflowId);
+            recipe = saved;
+            return tools => replayHotelWorkflow(tools, saved, replay.checkIn);
+          }),
+          complete: output => workflows.prepare(model, access, trace.trace, output, signal,
+            replay && recipe ? { id: replay.workflowId, recipe, checkIn: replay.checkIn } : undefined),
+        };
+      },
+    };
+  };
 }

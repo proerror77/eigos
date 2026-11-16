@@ -11,7 +11,7 @@ import type { Objects } from './objects.js';
 const readSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('object'), ref: objectRefSchema }),
   z.strictObject({ kind: z.literal('stored'), ref: objectRefSchema }),
-  z.strictObject({ kind: z.literal('follow'), ref: objectRefSchema, link: z.string(), as: z.string() }),
+  z.strictObject({ kind: z.literal('follow'), ref: objectRefSchema, link: z.string(), as: z.string(), maximum: z.number().int().min(1).max(1000).optional() }),
   z.strictObject({ kind: z.literal('query'), input: z.record(z.string(), z.unknown()) }),
   z.strictObject({ kind: z.literal('source'), ref: objectRefSchema, source: z.string() }),
   z.strictObject({ kind: z.literal('set'), input: z.record(z.string(), z.unknown()), maximum: z.number().int().min(1).max(10000) }),
@@ -26,7 +26,7 @@ const observationSchema = z.strictObject({
   offset: z.number().int().nonnegative(),
   clearance: classificationSchema.optional(),
   fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
-  refs: z.array(z.strictObject({ ref: objectRefSchema, revision: z.number().int().nonnegative() })).max(100),
+  refs: z.array(z.strictObject({ ref: objectRefSchema, revision: z.number().int().nonnegative() })).max(10000),
   savedSets: z.array(z.uuid()).optional(),
 });
 const maximumObservations = 3000;

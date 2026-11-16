@@ -109,11 +109,12 @@ else if (!command.startsWith('shell uiautomator dump /data/local/tmp/eigos-dinin
           await tools.get('complete_with_function')!.invoke({ function: 'readDiningReservation', input: { reservation } });
         }
       },
-    }, undefined, undefined, undefined, { diningMiniProgram });
+    }, undefined, undefined, undefined, { diningMiniProgram }, {}, { sandbox: true });
     const active = f;
     const token = randomUUID() + randomUUID();
     const { app } = createApp(configSchema.parse({
       DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token,
+      EIGOS_AGENT_SANDBOX_ENABLED: 'true',
       PUBLIC_URL: 'http://127.0.0.1', EIGOS_DINING_MINIPROGRAM_CONNECTION_FILE: diningMiniProgram,
     }), active.db, active.source);
     const server = gateway = app.listen(0, '127.0.0.1');

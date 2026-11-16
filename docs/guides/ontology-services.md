@@ -7,6 +7,7 @@ Gateway 通过 HTTP `POST /ontology/services/<operation>` 和 MCP `ontology_<ope
 | 对象集 | `evaluate_set`、`aggregate_set`、`save_set`、`get_set`、`list_sets`、`delete_set` |
 | 来源索引 | `submit_index`、`index_status`、`retry_index`、`cancel_index` |
 | 编辑与物化 | `edit_history`、`edit_policy`、`materialize`、`read_materialization`、`materialized_links` |
+| [组织公共地点](shared-public-places.md) | `list_public_places`、`publish_public_place`、`withdraw_public_place` |
 | 发布治理 | `project`、`assign_project`、`create_branch`、`get_branch`、`list_branches`、`update_branch`、`prepare_branch`、`review_branch`、`merge_branch`、`rebase_branch`、`catch_up_branch` |
 | 逻辑与副作用 | `function_versions`、`effect_status`、`retry_effect` |
 
@@ -68,6 +69,8 @@ Gateway 可配置 `QUERY_DATABASE_URL` 使用独立只读连接池，包括已�
 | 副作用 | `action_effects` 的 SELECT/INSERT/UPDATE，以及核对提交凭据所需的 `actions` SELECT |
 | 发布管理 | 治理与发布表的编辑权限，以及候选对象、关系和来源/编辑状态复制权限 |
 | 查询连接 | 对象、关系、`storage_identity` 的 SELECT，连接强制只读 |
+
+MCP 和 HTTP 的 `follow_links` 每次最多返回 100 个对象，Agent 的 `follow_links` 每条关系最多 50 个。更大的关系使用带 `from` 的对象查询，按 `cursor` 翻页。运行层需要完整结果时，每条关系最多读取 1000 个对象，超过上限会停止并提示分页。Workbench 的关系浏览同样按 `cursor` 翻页，最多显示 1000 个对象；编辑整组前置活动前必须读完全部关系。本地嵌入队列已满时返回 503，可稍后重试同一请求；供应商返回无法识别的金额按来源失败返回 502。
 
 应用层对象集完整计算和单次物化上限为 10000 个对象，符合下推条件的聚合在 PostgreSQL 计算。物化最多 100000 条关系，单次来源事务最多 1000 个写入和 1000 个删除。超限明确失败。来源生产者负责提供连续 offset 和批次删除列表。
 

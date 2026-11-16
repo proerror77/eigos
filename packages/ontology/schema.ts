@@ -60,12 +60,27 @@ export const machineryModelSchema = z.strictObject({
   subprocesses: z.array(z.strictObject({ link: name, process: name })).max(20).optional(),
 });
 
+export const agentProfileSchema = z.strictObject({
+  apiName: name,
+  terms: z.array(z.string().min(1).max(80)).min(1).max(40),
+  objects: z.array(name).max(80).optional(),
+  interfaces: z.array(name).max(50).optional(),
+  actions: z.array(name).max(80).optional(),
+  functions: z.array(name).max(80).optional(),
+  sources: z.array(name).max(30).optional(),
+  links: z.array(name).max(80).optional(),
+  instructions: z.array(z.strictObject({
+    action: name.optional(), function: name.optional(), text: z.string().min(1).max(2000),
+  }).refine(hint => hint.action || hint.function, 'An Agent instruction requires an Action or Function')).max(30).optional(),
+});
+
 export const ontologySchema = z.strictObject({
   id: name, version: z.string().min(1), classification: classificationSchema.optional(),
   sharedProperties:z.array(property.extend({apiName:name})).optional(),
   valueTypes:z.array(z.strictObject({apiName:name,version:z.string().min(1).max(100),description:z.string().min(1),schema:jsonSchema,...metadata})).optional(),
   structTypes:z.array(z.strictObject({apiName:name,description:z.string().min(1),fields:z.record(name,jsonSchema),required:z.array(name).optional(),mainField:name.optional(),...metadata})).optional(),
   typeGroups:z.array(z.strictObject({apiName:name,displayName:z.string().min(1),description:z.string().min(1),objectTypes:z.array(name)})).optional(),
+  agentProfiles: z.array(agentProfileSchema).max(30).optional(),
   imports:z.array(z.strictObject({ontology:name,version:z.string().min(1),digest:z.string().regex(/^[a-f0-9]{64}$/),namespace:name,document:z.unknown()})).optional(),
   objectTypes: z.array(z.strictObject({
     apiName: name, displayName: z.string().min(1), description: z.string().min(1),
@@ -92,7 +107,9 @@ export const ontologySchema = z.strictObject({
   })),
   actionTypes: z.array(z.strictObject({
     apiName: name, description: z.string().min(1),...metadata, parameters: jsonSchema, objectParameters: z.record(name, name),
-    submissionCriteria: z.array(z.strictObject({ function: name, arguments: z.record(name, value) })),
+    submissionCriteria: z.array(z.strictObject({
+      function: name, arguments: z.record(name, value), message: z.string().min(1).max(500).optional(),
+    })),
     rules: z.array(z.discriminatedUnion('op', [
       z.strictObject({ op: z.literal('createObject'), object: reference, properties: z.record(name, value) }),
       z.strictObject({ op: z.literal('editObject'), object: parameter, expectedRevision: value, properties: z.record(name, value) }),

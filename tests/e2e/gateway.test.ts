@@ -22,7 +22,7 @@ async function stop(child: ChildProcess) {
 }
 test('separate Gateway and Worker complete inquiries and PA calendar scenarios on the original PostgreSQL tasks', async t => {
   const f = await fixture(), token = 'process-test-token-'.repeat(3);
-  await setGrants(f.db,principal.owner,[...memberGrants(f.model),{resource:'Eigos/datasource/DidiPlaces',permission:'ingest_source'}]);
+  await setGrants(f.db,principal.owner,[...memberGrants(f.model),{resource:'Eigos',permission:'edit_definition'},{resource:'Eigos/datasource/DidiPlaces',permission:'ingest_source'}]);
   const portServer = createServer().listen(0, '127.0.0.1'); await once(portServer, 'listening');
   const address = portServer.address(); assert(address && typeof address !== 'string'); const port = address.port;
   await new Promise<void>(resolve => portServer.close(() => resolve()));
@@ -95,6 +95,11 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
       assert.equal(scenarioMetadata.items[0].properties.state, 'open');
       const live=await call('query_ontology',{query:{type:'ScheduledActivity'}});assert.equal(live.items.length,0);
       const scenario=await call('query_ontology',{scenarioId,query:{type:'ScheduledActivity'}});assert.equal(scenario.items.length,1);
+      const recommendation=await call('evaluate_ontology',{scenarioId,function:'recommendSchedule',input:{
+        plan:completed.result.plan.ref,activities:[scenario.items[0].ref],objective:'earliest_finish',
+      }});
+      assert.equal(recommendation.status,'optimal');
+      assert.equal(recommendation.moves[0].activity.id,scenario.items[0].ref.id);
       const logQuery={type:'ProcessLog',from:{object:completed.result.plan.ref,link:'stateLogs'}};
       const proposedLogs=await call('query_ontology',{scenarioId,query:logQuery});
       assert.equal(proposedLogs.items.length,1);assert.equal(proposedLogs.items[0].properties.newState,'prepared');
@@ -165,9 +170,14 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
       assert.deepEqual(analysis.paths.map((path: { states: string[] }) => path.states), [['proposed', 'authorized', 'confirmed']]);
       assert.equal(analysis.cases[0].timeline.at(-1).taskId, request.taskId);
       const workbenchService = await fetch(url + '/ontology/services/machinery_analysis',
-        { method: 'POST', headers, body: JSON.stringify(analysisInput) });
+        { method: 'POST', headers, body: JSON.stringify({ ...analysisInput, to: analysis.to }) });
       assert.equal(workbenchService.status, 200);
       assert.deepEqual(await workbenchService.json(), analysis);
+      const cases=await call('ontology_save_machinery_cases',{analysis:{...analysisInput,to:analysis.to},
+        name:'Synthetic registration cases',requestId:'e2e-machinery-cases'});
+      const inputs=await call('ontology_evaluation_cases_from_set',{set:cases.id,parameter:'registration'});
+      assert.equal(inputs.total,1);
+      assert.deepEqual(inputs.cases[0].inputs.registration,registration);
       const workbenchModule = await fetch(url + '/workbench/machinery.js');
       assert.equal(workbenchModule.status, 200);
       assert.match(await workbenchModule.text(), /renderMachinery/);

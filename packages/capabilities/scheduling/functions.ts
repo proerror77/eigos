@@ -1,5 +1,5 @@
 import { Conflict, NotFound, digest } from '../../core/identity.js';
-import { type ObjectRef } from '../../ontology/schema.js';
+import { type ObjectData, type ObjectRef } from '../../ontology/schema.js';
 import { diningEvidence, diningSource } from '../../ontology/dining.js';
 import { diningProof } from '../dining/research.js';
 import type { z } from 'zod';
@@ -8,9 +8,10 @@ import type { Database } from '../../runtime/database.js';
 import { Scenarios } from '../../runtime/scenarios.js';
 import { PARequests } from '../../runtime/pa.js';
 import { Objects } from '../../runtime/objects.js';
+import { optimizeSchedule, type OptimizationActivity } from './optimizer.js';
 import { recordScenarioAction } from '../../runtime/scenario-store.js';
 import { currentService } from '../services/functions.js';
-import { activityInputSchema, calendarResponseSchema, commitPlanSchema, diningActivityInputSchema, jsonSchema, planInputSchema, planRefSchema, removeActivitySchema, searchSlotsSchema } from './contracts.js';
+import { activityInputSchema, calendarResponseSchema, commitPlanSchema, diningActivityInputSchema, jsonSchema, planInputSchema, planRefSchema, removeActivitySchema, searchSlotsSchema, recommendScheduleSchema, stageScheduleSchema } from './contracts.js';
 
 type Reader = FunctionContext['objects'];
 type Interval = { start: string; end: string };
@@ -55,7 +56,17 @@ export async function readPlan(objects: Reader, raw: ObjectRef, now = Date.now()
     const snapshot = snapshots[0]!, p = snapshot.properties;
     if (p.complete !== true || ms(p.expiresAt) <= now || ms(p.observedAt) > now+5000 || !Number.isFinite(ms(p.observedAt)) || !contained(interval(p.start,p.end),range)) throw new Conflict('Calendar availability is incomplete, stale or does not cover the plan');
     if (!Array.isArray(p.windows) || !Array.isArray(p.busy)) throw new Conflict('Calendar availability is unreadable');
-    const assignments = await objects.follow(resource.ref, 'activities');
+    const assignments: ObjectData[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await objects.query({ type: 'ScheduledActivity',
+        from: { object: resource.ref, link: 'activities' },
+        intervalOverlap: { start: 'start', end: 'end', from: range.start, until: range.end, includeUnknown: true },
+        limit: 100, cursor });
+      assignments.push(...page.items.filter(activity =>
+        overlaps(range, interval(activity.properties.start, activity.properties.end))));
+      cursor = page.cursor;
+    } while (cursor);
     return { resource, snapshot, windows: normalize(p.windows as Interval[]), busy: normalize(p.busy as Interval[]), assignments };
   }));
   const activities = await objects.follow(raw, 'activities');
@@ -90,7 +101,7 @@ export async function validate(objects: Reader, plan: ObjectRef, sourceTrip?:Obj
     if(sourceTrip&&!same(trip.ref,sourceTrip))continue;
     const events=await objects.follow(trip.ref,'event'),travels=await objects.follow(trip.ref,'travel'),activities=await objects.follow(trip.ref,'activities');
     if(events.length!==1||travels.length!==1||activities.length!==2){add('trip_relationship_incomplete',trip.ref);continue;}
-    await currentService(objects,events[0]!.ref);
+    await currentService(objects,events[0]!.ref,undefined,now);
     const travel=travels[0]!,event=events[0]!,p=trip.properties;
     if(event.properties.status!=='active')add('event_not_active',trip.ref);
     if(!Number.isFinite(ms(travel.properties.expiresAt))||!Number.isFinite(ms(travel.properties.observedAt))||ms(travel.properties.expiresAt)<=now||ms(travel.properties.observedAt)>now+5000)add('trip_route_stale',trip.ref);
@@ -155,7 +166,59 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       if (!graph.model.scenario && !(await validate(graph,input.plan)).valid) throw new Conflict('Schedule constraints are not satisfied');
     });
   };
+  const movable = async (objects: Reader, plan: ObjectRef, ids: Set<string>) => {
+    if (!objects.model.objects.has('EventTrip')) return;
+    for (const trip of await objects.follow(plan,'trips'))
+      if ((await objects.follow(trip.ref,'activities')).some(activity => ids.has(activity.ref.id)))
+        throw new Conflict('Replan trip activities together through the trip Action');
+  };
   const handlers = new Map<string, FunctionHandler>([
+    ['recommendSchedule', async (raw,context) => {
+      const input = recommendScheduleSchema.parse(raw), graph = context.objects;
+      const now = context.scenarioEvaluation?.evaluatedAt ?? Date.now();
+      const state = await readPlan(graph,input.plan,now);
+      const moving = new Set(input.activities.map(item => item.id));
+      await movable(graph,input.plan,moving);
+      let free = [state.range];
+      for (const calendar of state.calendars) {
+        const fixed = calendar.assignments.filter(item => !moving.has(item.ref.id))
+          .map(item => interval(item.properties.start,item.properties.end));
+        free = intersects(free,subtract(calendar.windows,normalize([...calendar.busy,...fixed])));
+      }
+      const items: OptimizationActivity[] = [];
+      for (const ref of input.activities) {
+        const item = state.activities.find(item => same(item.ref,ref));
+        if (!item || item.properties.dining) throw new Conflict('Select movable activities in the plan');
+        const predecessors = await graph.follow(ref,'predecessors'), successors = await graph.follow(ref,'successors');
+        const lower = Math.max(now,...predecessors.filter(x=>!moving.has(x.ref.id)).map(x=>ms(x.properties.end)));
+        const upper = Math.min(Infinity,...successors.filter(x=>!moving.has(x.ref.id)).map(x=>ms(x.properties.start)));
+        items.push({activity:ref,revision:item.revision,
+          original:{start:ms(item.properties.start),end:ms(item.properties.end)},
+          windows:free.map(w=>({start:Math.max(lower,ms(w.start)),end:Math.min(upper,ms(w.end))})),
+          predecessors:predecessors.map(x=>x.ref.id),successors:successors.map(x=>x.ref.id)});
+      }
+      return optimizeSchedule(items,input.stepMinutes*60_000,input.objective,context.signal);
+    }],
+    ['stageScheduleRecommendation', async (raw,context) => {
+      const {plan,moves}=stageScheduleSchema.parse(raw);
+      if (!context.edit || !context.objects.model.scenario) throw new Conflict('Stage schedule changes in a Scenario');
+      const ids = new Set(moves.map(move=>move.activity.id));
+      if(ids.size!==moves.length) throw new Conflict('Schedule activities must be distinct');
+      return context.edit(plan,async graph=>{
+        const now = context.scenarioEvaluation?.evaluatedAt ?? Date.now();
+        const state=await readPlan(graph,plan,now);
+        await movable(graph,plan,ids);
+        for(const move of moves){
+          const activity=state.activities.find(item=>same(item.ref,move.activity));
+          if(!activity||activity.properties.dining||activity.revision!==move.revision) throw new Conflict('Schedule activity or revision changed');
+          const next=interval(move.start,move.end);
+          if(ms(next.end)-ms(next.start)!==ms(activity.properties.end)-ms(activity.properties.start))
+            throw new Conflict('Schedule moves must keep activity duration');
+          await graph.edit(move.activity,move.revision,next);
+        }
+        if(!(await validate(graph,plan,undefined,ids,now)).valid)throw new Conflict('Schedule changes violate the current constraints');
+      });
+    }],
     ['prepareSchedulePlan', withScenarioPARead(async (raw, context) => {
       const input = planInputSchema.parse(raw); zone(input.timeZone);
       if(input.plan&&!input.scenarioId)throw new Conflict('Replanning an existing plan requires a scenarioId');
@@ -302,7 +365,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       });
     }],
   ]);
-  for (const name of ['findScheduleSlots', 'editScheduleActivity', 'removeScheduleActivity', 'validateSchedule', 'readSchedulePlan'])
+  for (const name of ['findScheduleSlots', 'recommendSchedule', 'stageScheduleRecommendation', 'editScheduleActivity', 'removeScheduleActivity', 'validateSchedule', 'readSchedulePlan'])
     withScenarioEvaluation(handlers.get(name)!);
   return handlers;
 }

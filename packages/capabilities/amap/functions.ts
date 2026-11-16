@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Conflict } from '../../core/identity.js';
+import { Conflict, SourceReadFailure } from '../../core/identity.js';
 import { locationPlace, type locationSelection, type locationUse } from '../../ontology/location.js';
 import {
   adcode, gcjPoint, geocodeResult, mapAddress, mapPlaceResult, mapPoint, mapRouteInput, mapRouteResult,
@@ -48,7 +48,7 @@ function handler(run: FunctionHandler): FunctionHandler {
   return async (input, context) => {
     try { return await run(input, context); }
     catch (error) {
-      if (error instanceof z.ZodError) throw new Conflict('高德返回的数据格式不受支持。');
+      if (error instanceof z.ZodError) throw new SourceReadFailure('高德返回的数据格式不受支持。');
       throw error;
     }
   };
