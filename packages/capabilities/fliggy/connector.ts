@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { z } from 'zod';
-import { Conflict, digest } from '../../core/identity.js';
+import { digest, InvalidInput, SourceReadFailure } from '../../core/identity.js';
 import { flightFacts, flightSearchInput, fliggyHotelFacts, hotelSearchInput, shortText } from '../../ontology/service-contracts.js';
 import { FLIGGY_CLI_GUARD } from './cli-guard.js';
 
@@ -146,7 +146,7 @@ function distinct<T extends { nativeId: string }>(items: T[], limit: number) {
 }
 
 export async function searchFliggy(input: Record<string, unknown>, key: string | undefined, signal: AbortSignal, read: FlyAIRead = readFlyAI) {
-  if (key !== undefined && !/^[\x21-\x7E]{16,2048}$/.test(key)) throw new Conflict('FlyAI API Key configuration is invalid');
+  if (key !== undefined && !/^[\x21-\x7E]{16,2048}$/.test(key)) throw new SourceReadFailure('FlyAI API Key configuration is invalid', { unavailable: true });
   const request = async (command: keyof typeof commands, criteria: Record<string, string | number>) => {
     signal.throwIfAborted();
     const page = sourcePage.parse(await read(command, criteria, key, signal));
@@ -160,7 +160,7 @@ export async function searchFliggy(input: Record<string, unknown>, key: string |
     const q = flightSearchInput.parse(input);
     const origin = q.origin.trim(), destination = q.destination.trim();
     if (!origin || !destination || origin.toLowerCase() === destination.toLowerCase() || q.returnDate && q.returnDate < q.departureDate)
-      throw new Conflict('FlyAI requires different origin and destination, with return on or after departure');
+      throw new InvalidInput('FlyAI requires different origin and destination, with return on or after departure');
     try {
       const raw = await request('search-flight', {
         origin, destination, depDate: q.departureDate, ...(q.returnDate ? { backDate: q.returnDate } : {}),
@@ -169,12 +169,12 @@ export async function searchFliggy(input: Record<string, unknown>, key: string |
       return { kind: 'flight' as const, items: distinct(raw.map(item => flightOffer(item, q)), q.limit) };
     } catch {
       signal.throwIfAborted();
-      throw new Conflict('FlyAI flight search failed or returned an invalid source response');
+      throw new SourceReadFailure('FlyAI flight search failed or returned an invalid source response');
     }
   }
   const q = hotelSearchInput.parse(input);
   const destName = q.place.trim();
-  if (!destName || q.currency !== 'CNY') throw new Conflict('FlyAI hotel search requires a destination and CNY');
+  if (!destName || q.currency !== 'CNY') throw new InvalidInput('FlyAI hotel search requires a destination and CNY');
   const end = new Date(q.checkIn + 'T00:00:00Z');
   end.setUTCDate(end.getUTCDate() + q.nights);
   try {
@@ -182,6 +182,6 @@ export async function searchFliggy(input: Record<string, unknown>, key: string |
     return { kind: 'hotel' as const, items: distinct(raw.map(item => hotelOffer(item, q)), q.limit) };
   } catch {
     signal.throwIfAborted();
-    throw new Conflict('FlyAI hotel search failed or returned an invalid source response');
+    throw new SourceReadFailure('FlyAI hotel search failed or returned an invalid source response');
   }
 }

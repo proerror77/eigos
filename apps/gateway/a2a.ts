@@ -39,8 +39,8 @@ export class A2A implements A2ARequestHandler {
       const { status, message, requestId } = publicError(error);
       if (status === 404) throw new TaskNotFoundError(message);
       if (status === 409 && cancel) throw new TaskNotCancelableError(message);
-      if (status !== 500) throw new RequestMalformedError(message);
-      throw new Error(`${message} (request ID: ${requestId})`);
+      if (status < 500) throw new RequestMalformedError(message);
+      throw new Error(requestId ? `${message} (request ID: ${requestId})` : message);
     }
   }
   async sendMessage(params: SendMessageRequest, context: ServerCallContext) {

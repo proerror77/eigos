@@ -198,7 +198,7 @@ test('Agent MCP discovers map and weather Functions in the same published model 
       assert(manifest.functionTypes.some((fn: {apiName: string; source: string}) => fn.apiName === name && fn.source === 'Amap'));
     const failed = await send('evaluate_ontology', { function: 'readWeather', input: { city: '上海' } });
     assert(failed.isError);
-    assert.match(JSON.stringify(failed.content), /尚未配置有效的高德/);
+    assert.deepEqual(failed.structuredContent, { status: 503, error: 'Source temporarily unavailable' });
   } finally {
     await mcp.close();
     server.closeAllConnections();

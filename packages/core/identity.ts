@@ -25,4 +25,10 @@ export class InvalidInput extends Error {}
 export class PermissionDenied extends Error {}
 export class Conflict extends Error {}
 export class NotFound extends Error {}
-export class SourceReadFailure extends Error {}
+export class SourceReadFailure extends Error {
+  readonly unavailable: boolean;
+  constructor(message: string, options?: ErrorOptions & { unavailable?: boolean }) {
+    super(message, options);
+    this.unavailable = options?.unavailable ?? false;
+  }
+}

@@ -1,7 +1,7 @@
 import {resourceGroups} from '../ontology/resource-mapping.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { Conflict, NotFound, digest } from '../core/identity.js';
+import { InvalidInput, Conflict, NotFound, digest } from '../core/identity.js';
 import { Ontology } from '../ontology/model.js';
 import { ontologySchema, type OntologyDocument } from '../ontology/schema.js';
 import { Access, resource, type Permission } from './access.js';
@@ -64,7 +64,7 @@ export class Governance {
     const input = assignProjectSchema.parse(raw);
     access.require(input.ontology, 'manage_definition', input.ontology);
     const known = resources((await this.metadata.active(input.ontology)).document);
-    if (input.resources.some(name => !known.has(name))) throw new Error('Project assignment requires published Ontology resources');
+    if (input.resources.some(name => !known.has(name))) throw new InvalidInput('Project assignment requires published Ontology resources');
     return this.db.transaction(async client => {
       await access.refresh(client);
       for (const name of input.resources) await this.db.query(`INSERT INTO ${this.db.schema}.ontology_resource_projects(ontology,resource,project) VALUES($1,$2,$3)

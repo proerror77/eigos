@@ -8,7 +8,7 @@ import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
 import { jsonRpcHandler } from '@a2a-js/sdk/server/express';
 import { AgentCard } from '@a2a-js/sdk';
 import { z } from 'zod';
-import { Conflict, NotFound, PermissionDenied, requireScope, type Principal } from '../../packages/core/identity.js';
+import { Conflict, InvalidInput, NotFound, PermissionDenied, requireScope, type Principal } from '../../packages/core/identity.js';
 import type { Config } from '../../packages/core/config.js';
 import { actionRequestSchema as actionInput, functionRequestSchema as functionInput, completeWithActionRequestSchema } from '../../packages/ontology/invocation.js';
 import { Access } from '../../packages/runtime/access.js';
@@ -145,11 +145,23 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   app.post('/ontology/scenarios', async (req,res)=>res.json(await scenarioCreate(principal(req),req.body)));
   app.get('/ontology/scenarios', async (req,res)=>res.json(await scenarioList(principal(req),typeof req.query.cursor==='string'?req.query.cursor:undefined,typeof req.query.ontology==='string'?req.query.ontology:'Eigos')));
   app.get('/ontology/scenarios/:id', async (req,res)=>res.json(await scenarioRead(principal(req),String(req.params.id),typeof req.query.ontology==='string'?req.query.ontology:'Eigos')));
-  app.post('/ontology/scenarios/:id/discard', async (req,res)=>res.json(await scenarioDiscard(principal(req),String(req.params.id),req.body.revision,typeof req.body.ontology==='string'?req.body.ontology:'Eigos')));
+  app.post('/ontology/scenarios/:id/discard', async (req,res) => {
+    const { revision, ontology } = z.object({ revision: z.number().int().positive(), ontology: z.string().optional() }).parse(req.body);
+    res.json(await scenarioDiscard(principal(req), String(req.params.id), revision, ontology));
+  });
   app.post('/ontology/media',express.raw({type:'application/octet-stream',limit:'20mb'}),async(req,res)=>{
     const p=principal(req);requireScope(p,'ontology:write');
+    if (!Buffer.isBuffer(req.body)) throw new InvalidInput('Media body must use application/octet-stream');
+    const header = (value: unknown) => {
+      try { return decodeURIComponent(String(value)); }
+      catch { throw new InvalidInput('Invalid media header encoding'); }
+    };
     const model=await metadata.active(typeof req.query.ontology==='string'?req.query.ontology:'Eigos');
-    res.json(await new Applications(db).upload(await Access.load(db,p),model,capabilities.actions,req.body,{name:decodeURIComponent(String(req.headers['x-asset-name']??'')),format:String(req.headers['x-asset-format']??''),units:decodeURIComponent(String(req.headers['x-asset-units']??'file units'))}));
+    res.json(await new Applications(db).upload(await Access.load(db,p),model,capabilities.actions,req.body,{
+      name: header(req.headers['x-asset-name']??''),
+      format: String(req.headers['x-asset-format']??''),
+      units: header(req.headers['x-asset-units']??'file units'),
+    }));
   });
   app.get('/ontology/media/:id',async(req,res)=>{
     const p=principal(req);requireScope(p,'ontology:read');
