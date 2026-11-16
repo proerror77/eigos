@@ -150,6 +150,13 @@ export class Access {
   canDefine(model: Ontology, kind: string, name: string) { return this.allows({ ontology: model.document.id, permission: 'view_definition', resource: resource(model.document.id, kind, name) }); }
   canRead(model: Ontology, type: string) { return this.canDefine(model, 'object', type) && this.allows({ ontology: model.document.id, permission: 'view_objects', resource: resource(model.document.id, 'object', type) }); }
   hasObjectPolicy(model: Ontology, type: string) { return type === documentChunkType || Boolean(model.object(type).classificationProperty) || this.policies.has(model.document.id + '/' + type); }
+  workbenchRole(ontology: string): 'admin' | 'editor' | 'member' {
+    if (this.allows({ontology, resource:ontology, permission:'manage_definition'})) return 'admin';
+    if (this.allows({ontology, resource:ontology, permission:'edit_definition'}) ||
+        [...this.grants].some(grant => grant.startsWith('edit_definition:'+ontology+'/project/') ||
+          grant.startsWith('manage_definition:'+ontology+'/project/'))) return 'editor';
+    return 'member';
+  }
   read(model: Ontology, type: string) {
     this.definition(model, 'object', type);
     this.require(model.document.id, 'view_objects', resource(model.document.id, 'object', type), true);

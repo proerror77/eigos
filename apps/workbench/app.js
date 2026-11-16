@@ -5,6 +5,7 @@ const state = {
   ontology: 'Eigos',
   page: 'objects',
   model: null,
+  membership: null,
   raw: null,
   scenario: null,
   selected: null,
@@ -215,13 +216,23 @@ async function applyAction(action, input, scenarioId = state.scenario) {
 }
 async function connected() {
   const identity = await request('/identity');
-  state.model = await request('/ontology?ontology=' + encodeURIComponent(state.ontology));
+  const membership = await service('workbench_access');
+  state.membership = membership;
+  state.model = membership.role === 'member' ? null
+    : await request('/ontology?ontology=' + encodeURIComponent(state.ontology));
+  if (membership.role === 'member') state.page = 'published';
+  document.querySelectorAll('[data-page]').forEach(item => {
+    item.hidden = item.dataset.page !== 'published' &&
+      (membership.role === 'member' || item.dataset.page === 'rules' && !membership.canAuthorWorkflows);
+    item.classList.toggle('active', item.dataset.page === state.page);
+  });
+  $('#ontology-name').disabled = membership.role === 'member';
   state.identity = identity;
   $('#connection').textContent = '已连接';
   $('#connect').hidden = true;
   $('#account').hidden = false;
   $('#logout').hidden = false;
-  $('#definition-status').textContent = state.model.id + ' · 版本 ' + state.model.version;
+  $('#definition-status').textContent = membership.ontology + ' · 版本 ' + membership.version;
   state.raw = null;
   await render();
   return identity;
@@ -2166,6 +2177,52 @@ async function renderSchedule() {
     ),
   );
 }
+async function renderPublishedWorkflows() {
+  const [published,runs] = await Promise.all([service('published_workflows'),service('workflow_runs')]);
+  const open = async workflow => {
+    const outcome = element('div');
+    const input = select([['','选择对象']], '');
+    async function load(cursor) {
+      const result = await query({type:workflow.targetType,limit:30,...(cursor?{cursor}:{})});
+      input.replaceChildren(...select([['','选择对象'],...result.items.map(item =>
+        [item.ref.id,item.properties.name ?? item.ref.id])], '').children);
+      outcome.replaceChildren(result.cursor ? button('下一页对象',()=>load(result.cursor)) : null);
+    }
+    await load();
+    modal(workflow.name, element('div', {},
+      workflow.description && element('p',{},workflow.description),
+      field('运行对象',input),outcome,
+      button('运行流程',async()=>{
+        if (!input.value) throw new Error('请选择运行对象');
+        const result=await service('run_published_workflow',{workflow:workflow.id,revision:workflow.revision,
+          object:{type:workflow.targetType,id:input.value},requestId:crypto.randomUUID()});
+        $('#editor').close();
+        notice('流程已提交 · '+result.id);
+        await renderPublishedWorkflows();
+      },'primary')));
+  };
+  const label = {pending:'待执行',working:'执行中',completed:'已完成',failed:'失败',canceled:'已取消',
+    'waiting-proposal':'等待生成方案','waiting-approval':'等待审核'};
+  $('#main').replaceChildren(
+    heading('已发布流程','选择流程和你有权使用的对象。',button('刷新',renderPublishedWorkflows)),
+    surface(published.items.length ? table(['流程','说明',''],published.items.map(item=>[
+      item.name,item.description,button('运行',()=>open(item)),
+    ])) : empty('暂无可用的已发布流程。')),
+    element('section',{class:'section'},element('h2',{},'我的运行'),
+      surface(runs.items.length ? table(['流程','状态','进度'],runs.items.map(run=>[
+        run.name,label[run.state]??run.state,run.step+' / '+run.stepCount,
+      ])) : empty('暂无流程运行。'))));
+}
+function workflowPublication(workflow) {
+  const type=select(state.model.objectTypes.map(item=>item.apiName),workflow.publication?.targetType);
+  modal('发布流程',element('div',{},
+    field('运行对象类型',type),
+    button('发布此修订',async()=>{
+      await service('publish_workflow',{id:workflow.id,revision:Number(workflow.revision),targetType:type.value});
+      $('#editor').close();
+      await renderRules();
+    },'primary')));
+}
 async function renderRules() {
   const [workflows, rules] = await Promise.all([service('workflows'), service('rules')]);
   const panel = surface(
@@ -2412,10 +2469,17 @@ async function renderRules() {
       surface(
         workflows.items.length
           ? table(
-              ['名称', '步骤', ''],
+              ['名称', '步骤', '发布', ''],
               workflows.items.map((workflow) => [
                 workflow.name,
                 workflow.kind === 'learned-hotel-itinerary' ? '酒店行程 · 每次模拟前审批' : workflow.steps.map((step) => step.action).join(' → '),
+                state.membership?.canPublishWorkflows && workflow.kind !== 'learned-hotel-itinerary' &&
+                  element('div',{class:'actions'},
+                    button('发布',()=>workflowPublication(workflow)),
+                    workflow.publication && button('下架',async()=>{
+                      await service('withdraw_workflow',{id:workflow.id,revision:workflow.publication.revision});
+                      await renderRules();
+                    })),
                 button('运行', () => {
                   if (workflow.kind === 'learned-hotel-itinerary') {
                     const checkIn = element('input', { type: 'date', required: true });
@@ -3042,6 +3106,7 @@ async function renderGeometry() {
   );
 }
 const pages = {
+  published: renderPublishedWorkflows,
   objects: renderObjects,
   model: renderModel,
   scenarios: renderScenarios,
@@ -3055,7 +3120,7 @@ const pages = {
 async function render() {
   cleanup();
   cleanup = () => {};
-  if (!state.token || !state.model) return;
+  if (!state.token || (!state.model && state.page !== 'published')) return;
   $('#main').replaceChildren(element('div', { class: 'spinner' }, '正在读取…'));
   try {
     await pages[state.page]();
@@ -3068,6 +3133,7 @@ async function render() {
   }
 }
 function navigate(page) {
+  if (state.membership?.role==='member' && page!=='published') return;
   state.page = page;
   document
     .querySelectorAll('[data-page]')
@@ -3084,6 +3150,7 @@ $('#account').onclick = () => {
   const owner = state.identity.owner;
   const identifier = element('input', { value: owner, readonly: true });
   modal('我的身份', element('div', {},
+    element('p',{},({admin:'Admin',editor:'服务团队',member:'流程使用者'})[state.membership?.role] ?? ''),
     field('审阅身份', identifier, '把这个身份提供给方案发起人，即可接收审阅邀请。'),
     button('复制身份', async () => {
       await navigator.clipboard.writeText(owner);

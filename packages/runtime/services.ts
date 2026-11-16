@@ -9,7 +9,7 @@ import {
   entityHistorySchema,
 } from './entity-resolution.js';
 import { Applications, objectViewSchema, graphSchema, mapSchema } from './applications.js';
-import { Automation, workflowSchema, saveRuleSchema, runWorkflowSchema, automationPreviewSchema } from './automation.js';
+import { Automation, workflowSchema, saveRuleSchema, runWorkflowSchema, automationPreviewSchema, publishWorkflowSchema, withdrawWorkflowSchema, runPublishedWorkflowSchema } from './automation.js';
 import { analyzeMachinery, listMachineryProcesses, machineryAnalysisSchema } from './machinery-analysis.js';
 import { ingestMachineryHistory, machineryHistorySchema } from './machinery-history.js';
 import { MachineryReviews, machineryReviewSchema } from './machinery-reviews.js';
@@ -116,6 +116,28 @@ export function ontologyServices(
       },
     });
   };
+  const define = async (access:Access) => {
+    const model=await active();
+    access.require(model.document.id,'edit_definition',model.document.id);
+    return model;
+  };
+  register('workbench_access','Report the verified account’s Workbench role and available editing scope.',
+    z.strictObject({}),false,async a=>{
+      const model=await active(), ontology=model.document.id;
+      a.require(ontology,'view_definition',ontology);
+      const role=a.workbenchRole(ontology), writable=a.principal.scopes.includes('ontology:write');
+      return {role,ontology,version:model.document.version,
+        canAuthorWorkflows:writable && a.allows({ontology,resource:ontology,permission:'edit_definition'}),
+        canPublishWorkflows:writable && role==='admin'};
+    });
+  register('published_workflows','List compatible published Workflows the caller can use.',
+    z.strictObject({}),false,async a=>automation.listPublishedWorkflows(a,await active()));
+  register('publish_workflow','Publish an exact Workflow draft revision for authorized users.',
+    publishWorkflowSchema,true,async(a,input)=>automation.publishWorkflow(a,await active(),input));
+  register('withdraw_workflow','Withdraw an exact published Workflow revision.',
+    withdrawWorkflowSchema,true,async(a,input)=>automation.withdrawWorkflow(a,await active(),input));
+  register('run_published_workflow','Execute an exact published Workflow revision against the caller’s authorized object.',
+    runPublishedWorkflowSchema,true,async(a,input)=>automation.runPublishedWorkflow(a,await active(),input));
   const view = async (access: Access, scenarioId?: string) => {
     const model = await active();
     return scenarioId ? new Scenarios(db).view(access, model, scenarioId) : model;
@@ -362,6 +384,7 @@ export function ontologyServices(
     async (a) => {
       const model = await active();
       a.require(model.document.id, 'view_definition', model.document.id);
+      if (a.workbenchRole(model.document.id)==='member') throw new PermissionDenied('Ontology management requires service team access');
       return model.document;
     },
   );
@@ -502,7 +525,7 @@ export function ontologyServices(
   register('continue_scenario','Replay a compatible Scenario journal into a new persisted draft with fresh review.',
     continueScenarioSchema,true,async (a,input)=>new Scenarios(db).continueScenario(a,await active(),input));
   register('preview_automation', 'Evaluate a saved automation against Scenario revisions and preview its Actions without enqueuing a live run.',
-    automationPreviewSchema,true,async (a,input)=>automation.preview(a,await active(),input));
+    automationPreviewSchema,true,async (a,input)=>automation.preview(a,await define(a),input));
   register(
     'scenario_trial_options',
     'List the authorized Actions and read-only Functions available for an offline Scenario trial.',
@@ -586,20 +609,20 @@ export function ontologyServices(
     'Save an authorized sequence of Actions with an optional reviewed Scenario proposal.',
     workflowSchema,
     true,
-    async (a, input) => automation.workflow(a, await active(), input),
+    async (a, input) => automation.workflow(a, await define(a), input),
   );
   register(
     'save_rule',
     'Configure an object-set rule or a committed process transition rule with an optional dwell time.',
     saveRuleSchema,
     true,
-    async (a, input) => automation.rule(a, await active(), input),
+    async (a, input) => automation.rule(a, await define(a), input),
   );
   register('workflows', 'List workflows.', z.strictObject({}), false, async (a) =>
-    automation.list(a, await active(), 'workflows'),
+    automation.list(a, await define(a), 'workflows'),
   );
   register('rules', 'List rules and monitoring state.', z.strictObject({}), false, async (a) =>
-    automation.list(a, await active(), 'object_rules'),
+    automation.list(a, await define(a), 'object_rules'),
   );
   register(
     'process_status',
@@ -654,7 +677,7 @@ export function ontologyServices(
     'Run a saved workflow against an authorized object.',
     runWorkflowSchema,
     true,
-    async (a, input) => automation.run(a, await active(), input),
+    async (a, input) => automation.run(a, await define(a), input),
   );
   register(
     'retry_workflow',
