@@ -16,6 +16,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import pg, { type PoolClient, type QueryResultRow } from 'pg';
 import { initializeSecurity } from './security.js';
 import { implementationDigest } from './implementation.js';
+import { initializeScenarioEvaluations } from './scenario-evaluation.js';
+import { initializeMachineryHistory } from './machinery-history.js';
 import { initializeExecutionTrace } from './execution-trace.js';
 
 export type Sql = Pick<pg.Pool, 'query'> | Pick<PoolClient, 'query'>;
@@ -205,6 +207,8 @@ export class Database {
     await initializeSemantic(this);
     await initializeApplications(this);
     await initializeAutomation(this);
+    await initializeMachineryHistory(this);
+    await initializeScenarioEvaluations(this);
     await initializeScenarioLifecycle(this);
     await initializeMachineryStates(this);
     await initializeActionUndo(this);

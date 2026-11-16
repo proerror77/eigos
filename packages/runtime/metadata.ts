@@ -12,7 +12,7 @@ import { machineryStateContract } from './machinery-state.js';
 export interface BindingManifest { functions: Record<string, string>; sources: Record<string, string> }
 export interface Bindings { describe(model: Ontology): BindingManifest }
 export class PublishedOntology extends Ontology {
-  constructor(body: unknown, readonly release: string, readonly projection: string, readonly runtimeId: string, readonly bindings: BindingManifest, readonly scenario?: string) { super(body,{published:true}); }
+  constructor(body: unknown, readonly release: string, readonly projection: string, readonly runtimeId: string, readonly bindings: BindingManifest, readonly scenario?: string, readonly evaluation?: {base:string;client:Sql}) { super(body,{published:true}); }
 }
 export type ProjectionTransform = (ref: ObjectRef, properties: Record<string, unknown>) => Record<string, unknown>;
 

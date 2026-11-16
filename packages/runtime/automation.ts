@@ -3,7 +3,7 @@ import type { QueryResultRow } from 'pg';
 import { z } from 'zod';
 import { Conflict, NotFound, digest, requireScope } from '../core/identity.js';
 import { validator } from '../ontology/model.js';
-import { objectRefSchema, type ObjectRef } from '../ontology/schema.js';
+import { objectRefSchema, type ObjectData, type ObjectRef } from '../ontology/schema.js';
 import { Access, PermissionDenied, type Requirement } from './access.js';
 import { Database, type Sql } from './database.js';
 import { Metadata, type PublishedOntology } from './metadata.js';
@@ -12,6 +12,7 @@ import { Objects, querySchema } from './objects.js';
 import { matchingTransition, processRuleSchema, processStatusSchema, processTarget, processTriggerSchema, readProcessStatus } from './process-automation.js';
 import { readProcessTransitions } from './process-logs.js';
 import { authorizeCognitive, cognitiveContextSchema, cognitiveResultSchema, cognitiveStepSchema, workflowMerge, type CognitiveStep } from './cognitive-workflow.js';
+import { lockEdits } from './scenario-store.js';
 import { Scenarios } from './scenarios.js';
 import { appendTrace } from './execution-trace.js';
 
@@ -72,6 +73,25 @@ export const runWorkflowSchema = z.strictObject({
   object: objectRefSchema,
   requestId: z.string().min(1).max(128),
 });
+
+export const automationPreviewSchema = z.strictObject({
+  rule: z.uuid(), revision: z.number().int().positive(),
+  scenarios: z.array(z.strictObject({id:z.uuid(), revision:z.number().int().positive()})).min(1).max(6),
+  elapsedSeconds: z.number().int().min(0).max(31*86400).default(0),
+}).refine(input=>new Set(input.scenarios.map(item=>item.id)).size===input.scenarios.length, 'Select distinct Scenarios');
+
+function bindWorkflowInput(item: z.output<typeof step>, object: ObjectData, previousResults: Map<string,ObjectRef>) {
+  return Object.fromEntries(Object.entries(item.input).map(([key,binding]) => {
+    if ('literal' in binding) return [key,binding.literal];
+    if ('object' in binding) return [key,object.ref];
+    if ('step' in binding) return [key,previousResults.get(binding.step)!];
+    if (binding.property === '$revision') return [key,object.revision];
+    let value: unknown = object.properties;
+    for (const field of binding.property.split('.'))
+      value=value&&typeof value==='object'&&Object.hasOwn(value,field)?Reflect.get(value,field):undefined;
+    return [key,value];
+  }));
+}
 
 export async function initializeAutomation(db: Database) {
   await db.query(`CREATE TABLE IF NOT EXISTS ${db.schema}.workflows(id uuid PRIMARY KEY,owner text NOT NULL,ontology text NOT NULL,name text NOT NULL,body jsonb NOT NULL,revision integer NOT NULL);
@@ -313,6 +333,96 @@ export class Automation {
     await access.refresh();
     return { items: items.slice(0, 100), hasMore: items.length > 100 };
   }
+  async preview(access: Access, model: PublishedOntology, raw: unknown) {
+    const input=automationPreviewSchema.parse(raw), owner=access.principal.owner;
+    requireScope(access.principal,'ontology:read');
+    requireScope(access.principal,'ontology:write');
+    return this.db.withOwner(owner,()=>this.db.transaction(async client=>{
+      const rule=(await this.db.query(`SELECT body,scopes,enabled,revision FROM ${this.db.schema}.object_rules
+        WHERE id=$1 AND owner=$2 AND ontology=$3 FOR SHARE`,[input.rule,owner,model.document.id],client)).rows[0];
+      if(!rule||Number(rule.revision)!==input.revision)throw new Conflict('Automation revision changed or is unavailable');
+      const savedScopes = z.array(z.string()).parse(rule.scopes??[]);
+      if(!savedScopes.includes('ontology:write'))throw new PermissionDenied('Save the rule with current write permission before previewing');
+      const configuration=ruleSchema.parse(rule.body);
+      const workflow=(await this.db.query(`SELECT body,revision FROM ${this.db.schema}.workflows WHERE id=$1 AND owner=$2 AND ontology=$3 FOR SHARE`,
+        [configuration.workflow,owner,model.document.id],client)).rows[0];
+      if(!workflow)throw new NotFound('Automation workflow is unavailable');
+      const definition=workflowSchema.parse(workflow.body);
+      await lockEdits(this.db,model,owner,client);
+      await access.refresh(client);
+      this.authorize(access,model,definition.steps);
+      const runnerPrincipal={...access.principal,scopes:access.principal.scopes.filter(scope=>savedScopes.includes(scope))};
+      const evaluatedAt=Date.now()+input.elapsedSeconds*1000, signal=AbortSignal.timeout(15_000);
+      const scenarios=new Scenarios(this.db), reports=[];
+      const live=new Objects(this.db,model,access,client);
+      const match=async(graph:Objects,query:z.output<typeof ruleQuerySchema>)=>{
+        const page=await graph.query({...query,limit:100});
+        if(page.cursor||page.items.length>100)throw new Conflict('Narrow conditions to at most 100 matching objects before previewing');
+        return page.items;
+      };
+      const baseline='query' in configuration?new Set((await match(live,configuration.query)).map(item=>digest(item.ref))):undefined;
+      for(const selected of input.scenarios){
+        signal.throwIfAborted();
+        const view=await scenarios.view(access,model,selected.id,client);
+        const diff=await scenarios.inspect(access,model,selected.id,client);
+        if(diff.revision!==selected.revision)throw new Conflict('Scenario revision changed; reload the selection');
+        if(diff.conflicts)throw new Conflict('Resolve Scenario conflicts before previewing automations');
+        const branch=await Access.load(this.db,runnerPrincipal,client), graph=new Objects(this.db,view,branch,client);
+        const waiting:ObjectRef[]=[];
+        let entered:ObjectRef[];
+        if('query' in configuration){
+          entered=(await match(graph,configuration.query)).filter(item=>!baseline!.has(digest(item.ref))).map(item=>item.ref);
+        }else{
+          const target=processTarget(graph,configuration.process);
+          entered=diff.objects.filter(item=>{
+            if(item.ref.type!==target.objectType||!item.after||typeof item.after[target.property]!=='string')return false;
+            if(item.before&&!Object.hasOwn(item.before,target.property))return false;
+            const prev=item.before?.[target.property]??null,next=item.after[target.property];
+            return prev!==next&&(configuration.process.from===undefined||configuration.process.from===prev)
+              &&(configuration.process.to===undefined||configuration.process.to===next);
+          }).map(item=>item.ref);
+          if((configuration.process.dwellSeconds??0)>input.elapsedSeconds)waiting.push(...entered.splice(0));
+        }
+        if(entered.length>20||entered.length*Math.max(1,definition.steps.length)>60)
+          throw new Conflict('Automation preview exceeds its execution budget; narrow the condition');
+        const results=[];
+        for(const ref of entered){
+          const steps:{name:string;action:string;status:'completed'|'rejected'}[]=[];
+          let status:'completed'|'rejected'|'proposal_required'='completed', reason:string|undefined;
+          await this.db.query('SAVEPOINT automation_preview',[],client);
+          try{
+            const bindings=new Map<string,ObjectRef>();
+            for(const item of definition.steps){
+              try{
+                const object=await graph.read(ref);
+                const result=await this.actions.apply(branch,view,item.action,bindWorkflowInput(item,object,bindings),
+                  randomUUID(),undefined,undefined,signal,undefined,{client,evaluatedAt});
+                bindings.set(item.name,result);
+                steps.push({name:item.name,action:item.action,status:'completed'});
+              }catch(error){
+                if(!(error instanceof Conflict||error instanceof NotFound))throw error;
+                steps.push({name:item.name,action:item.action,status:'rejected'});
+                status='rejected';reason=error.message;break;
+              }
+            }
+            if(status==='completed'&&definition.proposal)status='proposal_required';
+            await branch.refresh(client);
+          }finally{
+            await this.db.query('ROLLBACK TO SAVEPOINT automation_preview',[],client);
+            await this.db.query('RELEASE SAVEPOINT automation_preview',[],client);
+          }
+          results.push({object:ref,status,reason,steps});
+        }
+        await branch.refresh(client);
+        access.adoptReads(branch);
+        reports.push({id:selected.id,revision:selected.revision,name:diff.name,waiting,results});
+      }
+      await access.refresh(client);
+      return {rule:input.rule,revision:input.revision,enabled:rule.enabled,workflowRevision:Number(workflow.revision),
+        release:model.release,mode:'scenario_preview',scenarios:reports};
+    }));
+  }
+
   async run(access: Access, model: PublishedOntology, raw: unknown) {
     requireScope(access.principal, 'ontology:write');
     const input = runWorkflowSchema.parse(raw);
@@ -626,21 +736,7 @@ export class Automation {
             await graph.read(reference);
             previousResults.set(binding.step, reference);
           }
-          const input = Object.fromEntries(
-            Object.entries(item.input).map(([key, binding]) => {
-              if ('literal' in binding) return [key, binding.literal];
-              if ('object' in binding) return [key, object.ref];
-              if ('step' in binding) return [key, previousResults.get(binding.step)!];
-              let value: unknown = object.properties;
-              if (binding.property === '$revision') return [key, object.revision];
-              for (const field of binding.property.split('.'))
-                value =
-                  value && typeof value === 'object' && Object.hasOwn(value, field)
-                    ? Reflect.get(value, field)
-                    : undefined;
-              return [key, value];
-            }),
-          );
+          const input = bindWorkflowInput(item,object,previousResults);
           const validated = validator(model.action(item.action).parameters).parse(input) as Record<
             string,
             unknown

@@ -63,7 +63,9 @@ export class Actions {
       scenarioEvaluation ? run(scenarioEvaluation.client) : this.db.transaction(run);
     await access.refresh(scenarioEvaluation?.client); access.action(model, actionName);
     if (model.runtimeId !== this.db.runtimeId) throw new Conflict('Historical Actions are read-only');
-    if ((await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [model.document.id], scenarioEvaluation?.client)).rows[0]?.release !== model.release) throw new Conflict('Historical and prepared Actions are read-only');
+    if(model.evaluation&&(!model.scenario||scenarioEvaluation?.client!==model.evaluation.client))
+      throw new Conflict('Prepared Actions require a temporary Scenario evaluation');
+    if (!model.evaluation && (await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [model.document.id], scenarioEvaluation?.client)).rows[0]?.release !== model.release) throw new Conflict('Historical and prepared Actions are read-only');
     const action = model.action(actionName), input = validator(action.parameters).parse(raw) as Record<string, unknown>;
     if (scenarioEvaluation && (!model.scenario || execution || action.rules?.some(rule => rule.op === 'applyScenario')))
       throw new Conflict('Scenario evaluation requires a staged Action');

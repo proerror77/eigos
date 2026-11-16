@@ -32,3 +32,16 @@ export const validationResultSchema = z.strictObject({valid:z.boolean(),evaluate
   externalCalendarUpdated:z.literal(false)});
 export const slotsResultSchema=z.strictObject({plan:objectRefSchema,slots:z.array(intervalSchema),timeZone:timeZoneSchema,resources:z.array(objectRefSchema),calendarEvidence:validationResultSchema.shape.calendarEvidence,evaluatedAt:timestamp,externalCalendarUpdated:z.literal(false)});
 export const planResultSchema=z.strictObject({plan:objectData,activities:z.array(objectData),validation:validationResultSchema,scenarioId:z.uuid().nullable(),externalCalendarUpdated:z.literal(false)});
+
+const scheduleMove = intervalSchema.extend({ activity: objectRefSchema, revision: z.number().int().positive() });
+export const recommendScheduleSchema = planRefSchema.extend({
+  activities: z.array(objectRefSchema).min(1).max(12),
+  stepMinutes: z.number().int().min(5).max(60).default(15),
+  objective: z.enum(['minimum_displacement', 'earliest_finish']).default('minimum_displacement'),
+});
+export const scheduleRecommendationSchema = z.strictObject({
+  status: z.enum(['optimal', 'feasible', 'infeasible', 'search_limit']),
+  moves: z.array(scheduleMove),
+  explored: z.number().int(),
+});
+export const stageScheduleSchema = planRefSchema.extend({ moves: z.array(scheduleMove).min(1).max(12) });

@@ -22,7 +22,7 @@ import { paymentsDefinition as payments } from './payments.js';
 import { diningEvidence, diningResearchFunctions } from './dining.js';
 import { dianpingResearchFunctions } from './dianping.js';
 import { diningReservations, diningReservationType } from './dining-reservations.js';
-import { diningActivityInputSchema, jsonSchema } from '../capabilities/scheduling/contracts.js';
+import { diningActivityInputSchema, jsonSchema, recommendScheduleSchema, scheduleRecommendationSchema, stageScheduleSchema } from '../capabilities/scheduling/contracts.js';
 import { objectRefSchema } from './schema.js';
 
 const ride = JSON.parse(readFileSync(new URL('./definitions/ride.json', import.meta.url), 'utf8')) as OntologyDocument;
@@ -36,11 +36,19 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '29',
+  id: ride.id, version: '30',
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
   actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes, ...journey.actionTypes, ...flight.actionTypes, ...payments.actionTypes,...luckin.actionTypes,...applications.actionTypes,...documents.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
 };
+businessDefinition.functionTypes.push(
+  {apiName:'recommendSchedule',description:'Search jointly for feasible activity times across the plan resources and dependencies.',
+    parameters:jsonSchema(recommendScheduleSchema),returns:jsonSchema(scheduleRecommendationSchema)},
+  {apiName:'stageScheduleRecommendation',description:'Stage a validated schedule adjustment in a Scenario.',
+    parameters:jsonSchema(stageScheduleSchema),returns:jsonSchema(objectRefSchema),edits:true},
+);
+businessDefinition.actionTypes.push({apiName:'StageScheduleRecommendation',description:'Propose a schedule adjustment using current activity revisions and constraints.',
+  parameters:jsonSchema(stageScheduleSchema),objectParameters:{plan:'SchedulePlan'},submissionCriteria:[],function:'stageScheduleRecommendation'});
 businessDefinition.objectTypes.push(...fliggy.objectTypes);
 businessDefinition.interfaceTypes.push(...fliggy.interfaceTypes);
 businessDefinition.linkTypes.push(...fliggy.linkTypes);
