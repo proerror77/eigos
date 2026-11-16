@@ -27,6 +27,17 @@ export const businessAgentProfiles: AgentProfile[] = [
     ],
   },
   {
+    apiName: 'PetRideTrial',
+    terms: ['宠物', '携宠', '带狗', '带猫', '带着狗', '带着猫', '狗狗', '猫咪', 'pet ride', 'pet-friendly ride'],
+    objects: ['PetRideHandoff'],
+    interfaces: ['PetRide'],
+    actions: ['PreparePetRideHandoff', 'RecordPetRideReceipt'],
+    functions: ['readPetRideHandoff'],
+    instructions: [
+      { action: 'PreparePetRideHandoff', function: 'readPetRideHandoff', text: 'For an explicitly requested synthetic pet ride trial, apply PreparePetRideHandoff with the exact pickup, destination, pet details and requested pet vehicle. Then use complete_with_action for the returned object’s PetRide.recordReceipt with readPetRideHandoff (resultParameter: handoff). The original PA provides the test quote, approval and original-order readback. Ordinary DiDi quotes do not establish that a car accepts pets.' },
+    ],
+  },
+  {
     apiName: 'SchedulePlanning',
     terms: ['日历', '排程', '行程', '安排', '时段', 'schedule', 'calendar', 'planning', 'itinerary', 'time slot',
       '日程', '有空吗', '有没有空', '什么时候有空', '哪天有空', '空闲时间', '有没有时间'],
