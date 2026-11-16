@@ -1,3 +1,4 @@
+import { analyzeMachinery, machineryAnalysisSchema } from '../packages/runtime/machinery-analysis.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fixture, principal, route as inquiry } from './fixture.js';
@@ -167,6 +168,18 @@ test('event registration, scenario allocation and durable timed Action lead to o
     assert.equal(p.f.provider.flags.orderQueries, 1);
     assert.equal(await p.f.worker.runOne(), false);
     assert.equal(p.f.provider.flags.orderCreates, 1);
+    const access = await Access.load(p.f.db, principal);
+    const window = { from: new Date(Date.now() - 3600000).toISOString(), to: new Date().toISOString() };
+    const analysis = await analyzeMachinery(p.f.db, access, p.f.model, machineryAnalysisSchema.parse({
+      ...window, type: 'EventTripStateLog', object: p.trip,
+    }));
+    assert.deepEqual(analysis.cases[0]?.states, ['proposed', 'authorized', 'dispatched']);
+    assert.equal(analysis.conformance.conforming, 1);
+    assert.equal(analysis.cases[0]?.timeline?.at(-1)?.taskId, execution.taskId);
+    const subprocess = await analyzeMachinery(p.f.db, access, p.f.model, machineryAnalysisSchema.parse({
+      ...window, type: 'EventRegistrationStateLog', focus: { type: 'EventTripStateLog', parent: p.trip, link: 'registration' },
+    }));
+    assert.deepEqual(subprocess.cases.map(item => item.object), [p.registration]);
     const rows = await p.f.db.query(`SELECT * FROM ${p.f.db.schema}.external_operations`);
     assert.equal(rows.rowCount, 1);
     assert(!JSON.stringify(rows.rows).includes('PRIVATE_ORDER_TOKEN'));
