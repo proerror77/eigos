@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { z } from 'zod';
-import { Conflict, digest } from '../../core/identity.js';
+import { Conflict, digest, SourceReadFailure } from '../../core/identity.js';
 import { readPrivateSourceFile } from '../../core/private-source.js';
 import type { FunctionContext } from '../../runtime/functions.js';
 
@@ -37,12 +37,25 @@ export class AmapClient {
   constructor(private readonly key: string, private readonly fetcher: typeof fetch, private readonly guard: () => Promise<void>,
     readonly authorityId?: string) {}
 
+  private async fetchResponse(target: string | URL | Request, init: RequestInit) {
+    const response = await this.fetcher(target, init).catch((error: unknown) => {
+      if (error instanceof TypeError || init.signal?.aborted)
+        throw new SourceReadFailure('高德来源暂时不可用。', { unavailable: true });
+      throw error;
+    });
+    if ([429, 503, 504].includes(response.status)) {
+      await response.body?.cancel();
+      throw new SourceReadFailure('高德来源暂时不可用。', { unavailable: true });
+    }
+    return bounded(response);
+  }
+
   async mcp(name: Tool, args: Record<string, string>, outer: AbortSignal): Promise<unknown> {
     if (!toolNames.includes(name)) throw new Conflict('This Amap MCP tool is outside the published read contract');
     const url = new URL(amapMcpEndpoint);
     url.searchParams.set('key', this.key);
     const signal = AbortSignal.any([outer, AbortSignal.timeout(16000)]);
-    let sent = false;
+    let sent = false, guardFailure: { error: unknown } | undefined, transportFailure: SourceReadFailure | undefined;
     const client = new Client({ name: 'eigos-amap', version: '1' });
     const transport = new StreamableHTTPClientTransport(url, {
       reconnectionOptions: { maxRetries: 0, initialReconnectionDelay: 1000, maxReconnectionDelay: 1000, reconnectionDelayGrowFactor: 1 },
@@ -56,11 +69,16 @@ export class AmapClient {
             if (sent || packet.params?.name !== name || digest(packet.params.arguments) !== digest(args))
               throw new Error('Unexpected Amap MCP operation');
             sent = true;
-            await this.guard();
+            try { await this.guard(); }
+            catch (error) { guardFailure = { error }; throw error; }
           } else if (!protocolMethods.has(packet.method)) throw new Error('Unsupported Amap MCP request');
         }
         signal.throwIfAborted();
-        return bounded(await this.fetcher(target, { ...init, redirect: 'error', signal }));
+        try { return await this.fetchResponse(target, { ...init, redirect: 'error', signal }); }
+        catch (error) {
+          if (error instanceof SourceReadFailure) transportFailure = error;
+          throw error;
+        }
       },
     });
     try {
@@ -69,11 +87,14 @@ export class AmapClient {
       if (result.isError || JSON.stringify(result).includes(this.key)) throw new Error('Amap MCP rejected the read');
       const content = result.content.filter(block => block.type === 'text');
       if (!result.structuredContent && content.length !== 1) throw new Error('Expected a single Amap MCP result');
-      await this.guard();
+      try { await this.guard(); }
+      catch (error) { guardFailure = { error }; throw error; }
       return result.structuredContent ?? JSON.parse((content[0] as { text: string }).text);
     } catch {
       outer.throwIfAborted();
-      throw new Conflict('高德 MCP 查询失败，请检查来源授权和接口权限。');
+      if (guardFailure) throw guardFailure.error;
+      if (transportFailure) throw transportFailure;
+      throw new SourceReadFailure('高德 MCP 查询失败，请检查来源授权和接口权限。', { unavailable: signal.aborted });
     } finally {
       await client.close().catch(() => {});
       await transport.close().catch(() => {});
@@ -85,19 +106,21 @@ export class AmapClient {
     const url = new URL(path, 'https://restapi.amap.com');
     url.search = new URLSearchParams({ ...args, key: this.key, output: 'JSON' }).toString();
     const signal = AbortSignal.any([outer, AbortSignal.timeout(10000)]);
+    await this.guard();
+    signal.throwIfAborted();
+    let result: z.infer<typeof status>;
     try {
-      await this.guard();
-      signal.throwIfAborted();
-      const response = bounded(await this.fetcher(url, { method: 'GET', signal, redirect: 'error' }));
+      const response = await this.fetchResponse(url, { method: 'GET', signal, redirect: 'error' });
       if (!response.ok) throw new Error('Unexpected Amap HTTP status');
-      const result = status.parse(await response.json());
+      result = status.parse(await response.json());
       if (JSON.stringify(result).includes(this.key)) throw new Error('Unexpected Amap response');
-      await this.guard();
-      return result;
-    } catch {
+    } catch (error) {
       outer.throwIfAborted();
-      throw new Conflict('高德 Web 服务查询失败，请检查来源授权和接口权限。');
+      if (error instanceof SourceReadFailure) throw error;
+      throw new SourceReadFailure('高德 Web 服务查询失败，请检查来源授权和接口权限。', { unavailable: signal.aborted });
     }
+    await this.guard();
+    return result;
   }
 }
 
@@ -117,7 +140,7 @@ export function configuredAmap(path?: string, fetcher: typeof fetch = fetch) {
       return { key, binding: digest(config) };
     };
     const read = () => connection().catch(() => {
-      throw new Conflict('此账号尚未配置有效的高德 Web 服务连接。');
+      throw new SourceReadFailure('此账号尚未配置有效的高德 Web 服务连接。', { unavailable: true });
     });
     const { key, binding } = await read();
     return new AmapClient(key, fetcher, async () => {

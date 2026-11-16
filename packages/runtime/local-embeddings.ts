@@ -4,6 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import type { FeatureExtractionPipeline } from '@huggingface/transformers';
 import { localEmbeddingDefinition, localEmbeddingModel } from '../ontology/embedding-definition.js';
 import type { VersionedFunction } from './functions.js';
+import { ServiceUnavailable } from '../core/identity.js';
 
 let extractor: Promise<FeatureExtractionPipeline> | undefined;
 let tail: Promise<unknown> = Promise.resolve();
@@ -30,7 +31,7 @@ export async function warmLocalEmbeddings() {
 }
 export async function embedLocal(text: string, signal: AbortSignal): Promise<number[]> {
   signal.throwIfAborted();
-  if (pending >= 16) throw new Error('Local embedding queue is full; retry when current indexing completes');
+  if (pending >= 16) throw new ServiceUnavailable('Local embedding queue is full; retry when current indexing completes');
   pending++;
   const work = tail
     .then(async () => {

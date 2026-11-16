@@ -12,6 +12,7 @@ import { amapFunctions } from '../packages/capabilities/amap/functions.js';
 import { configuredAmap } from '../packages/capabilities/amap/client.js';
 import { Functions } from '../packages/runtime/functions.js';
 import { unresolvedMapPlace } from '../packages/runtime/clarification.js';
+import { amendMapPlace } from '../packages/capabilities/amap/task-correction.js';
 import { ExecutionTrace } from '../packages/runtime/execution-trace.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { PARequests } from '../packages/runtime/pa.js';
@@ -197,7 +198,7 @@ test('Agent MCP discovers map and weather Functions in the same published model 
       assert(manifest.functionTypes.some((fn: {apiName: string; source: string}) => fn.apiName === name && fn.source === 'Amap'));
     const failed = await send('evaluate_ontology', { function: 'readWeather', input: { city: '上海' } });
     assert(failed.isError);
-    assert.match(JSON.stringify(failed.content), /尚未配置有效的高德/);
+    assert.deepEqual(failed.structuredContent, { status: 503, error: 'Source temporarily unavailable' });
   } finally {
     await mcp.close();
     server.closeAllConnections();
@@ -317,9 +318,9 @@ test('a verified endpoint correction reopens the original legacy map pause acros
     const blockedCanceled = await f.tasks.cancel(principal, blocked.id);
     await f.db.query(`INSERT INTO ${f.db.schema}.actions(owner,request_id,digest,action,release,result,task_id)
       VALUES($1,'already-applied','fixture','PrepareSchedulePlan',$2,'{}',$3)`, [principal.owner, active.release, blocked.id]);
-    await assert.rejects(f.tasks.amendMapPlace(principal, blocked.id, {
+    await assert.rejects(amendMapPlace(f.tasks, f.metadata, f.capabilities.functions, principal, blocked.id, {
       ...amendment, expectedUpdatedAt: blockedCanceled.updated_at.toISOString(),
-    }, f.capabilities.functions), /prior business Actions/);
+    }), /prior business Actions/);
     assert.equal(calls.length, 0);
     const response = await post(amendment);
     assert.equal(response.status, 200);

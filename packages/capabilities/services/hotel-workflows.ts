@@ -8,6 +8,7 @@ import { hotelSearchInput } from '../../ontology/service-contracts.js';
 import { activityInputSchema, planInputSchema, planResultSchema } from '../scheduling/contracts.js';
 import { Access, type Requirement } from '../../runtime/access.js';
 import type { AgentTool } from '../../runtime/agent.js';
+import type { AgentTaskWorkflow } from '../../runtime/agent-task.js';
 import type { Database, Sql } from '../../runtime/database.js';
 import type { Functions } from '../../runtime/functions.js';
 import type { Metadata, PublishedOntology } from '../../runtime/metadata.js';
@@ -123,7 +124,6 @@ const reviewSchema = z.strictObject({
     })
     .optional(),
 });
-export const workflowReplaySchema = z.strictObject({ workflowId: z.uuid(), checkIn: z.iso.date() });
 export const hotelApprovalSchema = z.strictObject({
   taskId: z.uuid(),
   scenarioId: z.uuid(),
@@ -840,4 +840,36 @@ export function publicHotelTaskResult(result: unknown): unknown {
     if (review.success) return { ...result, hotelWorkflow: publicHotelReview(review.data) };
   }
   return result;
+}
+
+export function hotelTaskWorkflow(functions: Functions): AgentTaskWorkflow {
+  return ({ task, tasks, metadata, actions, access, model, signal }) => {
+    const replay = task.input.replayHotelWorkflow;
+    const learning = task.input.learnHotelWorkflow === true;
+    if (!learning && !replay) return undefined;
+    return {
+      replay: Boolean(replay),
+      catalogue: hotelWorkflowCatalogue,
+      instructions: learning ? [hotelWorkflowGuidance] : [],
+      checkTool: checkHotelWorkflowTool,
+      checkAction: (action, scenarioId) => checkHotelWorkflowAction(action, model, scenarioId),
+      allowsAction: hotelWorkflowAllowsAction,
+      async start() {
+        const workflows = new HotelWorkflows(tasks.db, metadata, functions);
+        const trace = await workflows.beginTrace(task, tasks, actions, access, model);
+        let recipe: Recipe | undefined;
+        return {
+          recordAction: trace.recordAction,
+          recordEvent: trace.recordEvent,
+          prepareReplay: replay && (async () => {
+            const saved = await workflows.load(model, task.owner, replay.workflowId);
+            recipe = saved;
+            return tools => replayHotelWorkflow(tools, saved, replay.checkIn);
+          }),
+          complete: output => workflows.prepare(model, access, trace.trace, output, signal,
+            replay && recipe ? { id: replay.workflowId, recipe, checkIn: replay.checkIn } : undefined),
+        };
+      },
+    };
+  };
 }

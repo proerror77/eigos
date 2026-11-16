@@ -202,6 +202,34 @@ const query = (input) =>
     query: input,
     ...(state.scenario ? { scenarioId: state.scenario } : {}),
   });
+// The relationship service rejects more than 100 objects, so related objects page through
+// the authorized Link query. A short page does not end the read; only an empty cursor does.
+const relatedObjectLimit = 1000;
+function linkTarget(type, link) {
+  for (const definition of state.model?.linkTypes ?? []) {
+    if (definition.from.type === type && definition.from.name === link) return definition.to.type;
+    if (definition.to.type === type && definition.to.name === link) return definition.from.type;
+  }
+}
+async function relatedObjects(object, link, { scenarioId = state.scenario, complete = false } = {}) {
+  const type = linkTarget(object.type, link);
+  if (!type) throw new Error('当前定义中没有可读取的关系：' + link);
+  const items = [];
+  let cursor;
+  do {
+    const page = await request('/ontology/query', {
+      ontology: state.ontology,
+      query: { type, from: { object, link }, limit: 100, ...(cursor ? { cursor } : {}) },
+      ...(scenarioId ? { scenarioId } : {}),
+    });
+    items.push(...page.items);
+    cursor = page.cursor;
+  } while (cursor && items.length < relatedObjectLimit);
+  if (cursor && complete) throw new Error(`关联对象超过 ${relatedObjectLimit} 个，无法在此完整编辑。`);
+  return { items, truncated: Boolean(cursor) };
+}
+const relatedNotice = (related) =>
+  related.truncated ? [element('p', { class: 'subtle' }, `仅显示前 ${related.items.length} 个关联对象。`)] : [];
 async function applyAction(action, input, scenarioId = state.scenario) {
   const requestId = crypto.randomUUID();
   const result = await request('/ontology/actions', {
@@ -730,21 +758,22 @@ async function showObject(object, target) {
   for (const link of view.links)
     links.append(
       button(link, async () => {
-        const related = await service('follow_links', {
-          object: object.ref,
-          link,
-          ...(state.scenario ? { scenarioId: state.scenario } : {}),
-        });
+        const related = await relatedObjects(object.ref, link);
         modal(
           link,
-          related.length
-            ? table(
-                ['对象', '类型'],
-                related.map((item) => [titleOf(item), item.ref.type]),
-                (index) => {
-                  $('#editor').close();
-                  showObject(related[index], target);
-                },
+          related.items.length
+            ? element(
+                'div',
+                {},
+                ...relatedNotice(related),
+                table(
+                  ['对象', '类型'],
+                  related.items.map((item) => [titleOf(item), item.ref.type]),
+                  (index) => {
+                    $('#editor').close();
+                    showObject(related.items[index], target);
+                  },
+                ),
               )
             : empty('没有可见的关联对象。'),
         );
@@ -1947,14 +1976,10 @@ async function renderSchedule() {
       ...(state.scenario ? { scenarioId: state.scenario } : {}),
     });
   } catch (error) {
-    const activities = await service('follow_links', {
-      object: chosen.ref,
-      link: 'activities',
-      ...(state.scenario ? { scenarioId: state.scenario } : {}),
-    });
+    const activities = await relatedObjects(chosen.ref, 'activities');
     data = {
       plan: chosen,
-      activities,
+      activities: activities.items,
       validation: {valid:false,evaluatedAt:null,unavailable:true,violations:[]},
     };
     panel.append(
@@ -2021,11 +2046,8 @@ async function renderSchedule() {
             });
             state.scenario = scenario.id;
           }
-          const predecessors = await service('follow_links', {
-            object: activity.ref,
-            link: 'predecessors',
-            scenarioId: state.scenario,
-          });
+          // The Action replaces the full predecessor list, so a partial read must not be saved.
+          const predecessors = (await relatedObjects(activity.ref, 'predecessors', { complete: true })).items;
           const idValue = activity.ref.id;
           const form = jsonSchemaForm(
             state.model.actionTypes.find((action) => action.apiName === 'SaveScheduleActivity').parameters,
@@ -3082,21 +3104,24 @@ async function renderGeometry() {
       button('保存剖切平面',async()=>{if(!state.assetId)throw new Error('先保存模型');await applyAction('AnnotateGeometry',{id:crypto.randomUUID(),asset:{type:'GeometryAsset',id:state.assetId},name:'剖切平面',note:'',kind:'section',points:scene.sectionState()},null);notice('剖切平面已保存');}),
       button('查看已保存标注', async () => {
         if (!state.assetId) throw new Error('请选择已保存的模型');
-        const annotations = await service('follow_links', {
-          object: { type: 'GeometryAsset', id: state.assetId },
-          link: 'annotations',
-        });
+        const annotations = await relatedObjects({ type: 'GeometryAsset', id: state.assetId }, 'annotations',
+          { scenarioId: null });
         modal(
           '模型标注',
-          annotations.length
-            ? table(
-                ['标题', '类型', '备注', '距离'],
-                annotations.map((item) => [
-                  item.properties.name,
-                  item.properties.kind,
-                  item.properties.note,
-                  item.properties.distance,
-                ]),
+          annotations.items.length
+            ? element(
+                'div',
+                {},
+                ...relatedNotice(annotations),
+                table(
+                  ['标题', '类型', '备注', '距离'],
+                  annotations.items.map((item) => [
+                    item.properties.name,
+                    item.properties.kind,
+                    item.properties.note,
+                    item.properties.distance,
+                  ]),
+                ),
               )
             : empty('模型还没有标注。'),
         );
