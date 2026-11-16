@@ -25,6 +25,8 @@ import { configuredServices } from '../../packages/capabilities/services/sources
 import { configuredStripeSandbox } from '../../packages/capabilities/payments/stripe-sandbox.js';
 import type { SourceResolver } from '../../packages/capabilities/didi/functions.js';
 import { verifier, type VerifyToken } from './auth.js';
+import { mountMembers, type auth0MemberLogin } from './member-login.js';
+import { Members, memberTaskScopes } from '../../packages/runtime/members.js';
 import { A2A, AgentUser, agentCard } from './a2a.js';
 import { publicError } from './public-error.js';
 import { developmentSandboxEnabled } from '../../packages/core/sandbox-mode.js';
@@ -44,10 +46,11 @@ const paTravelInstructions = [
 
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {},
   providerFetch: { amapFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch;
-    dianpingFetch?: typeof fetch; marketplaceFetch?: typeof fetch } = {}) {
+    dianpingFetch?: typeof fetch; marketplaceFetch?: typeof fetch;
+    memberLogin?: ReturnType<typeof auth0MemberLogin> } = {}) {
   if (db.sandboxEnabled && !developmentSandboxEnabled({ ...config, NODE_ENV: process.env.NODE_ENV }))
     throw new Error('Gateway sandbox requires explicit loopback development configuration');
-  const { marketplaceFetch, ...sourceFetch } = providerFetch;
+  const { marketplaceFetch, memberLogin, ...sourceFetch } = providerFetch;
   const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE, undefined, marketplaceFetch), configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
     fliggyFlight: config.EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE,
     fliggyHotel: config.EIGOS_FLIGGY_HOTEL_CONNECTION_FILE,
@@ -63,6 +66,15 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   const scenarios = new Scenarios(db), pa = new PARequests(tasks);
   const hotelWorkflows = new HotelWorkflows(db, metadata, capabilities.functions);
   const principals = new WeakMap<Request, Principal>();
+  const memberRequests = new WeakSet<Request>();
+  const memberClient = config.OAUTH_MEMBER_MCP_CLIENT_ID;
+  const members = memberClient ? new Members(db) : undefined;
+  const existingClients = config.OAUTH_EXISTING_CLIENT_IDS?.split(',') ?? [];
+  const mcpResource = config.PUBLIC_URL + '/mcp';
+  const mcpMetadataPath = '/.well-known/oauth-protected-resource/mcp';
+  const challenge = members
+    ? `Bearer resource_metadata="${config.PUBLIC_URL + mcpMetadataPath}", scope="${memberTaskScopes.join(' ')}"`
+    : `Bearer resource_metadata="${config.PUBLIC_URL}/.well-known/oauth-protected-resource"`;
   app.disable('x-powered-by');
   // Published domain definitions can exceed the ordinary task/query body bound.
   app.use(['/mcp','/ontology/services'],express.json({limit:'2mb'}));
@@ -79,16 +91,37 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   const card = agentCard(config.PUBLIC_URL);
   app.get('/.well-known/agent-card.json', (_req, res) => res.json(AgentCard.toJSON(card)));
   app.get('/.well-known/oauth-protected-resource', (_req, res) => res.json({ resource: config.PUBLIC_URL, authorization_servers: config.OAUTH_ISSUER ? [config.OAUTH_ISSUER] : [], bearer_methods_supported: ['header'] }));
+  if (members) app.get(mcpMetadataPath, (_req, res) => res.json({
+    resource: mcpResource, authorization_servers: [config.OAUTH_ISSUER],
+    scopes_supported: memberTaskScopes, bearer_methods_supported: ['header'],
+  }));
+  if (members) {
+    mountMembers(app, config, members, memberLogin);
+    app.get('/', (_req, res) => res.redirect(302, '/members'));
+  }
   mountWorkbench(app, config, verify);
   app.use(async (req, res, next) => {
     const token = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1];
+    let verified: Principal;
     try {
       if (!token) throw new Error();
-      const verified = await verify(token);
-      principals.set(req, verified);
-      db.withOwner(verified.owner, next);
+      verified = await verify(token);
+    } catch {
+      const auth = req.path === '/mcp' && config.OAUTH_ISSUER ? challenge : 'Bearer';
+      res.setHeader('WWW-Authenticate', token ? auth + (auth === 'Bearer' ? ' ' : ', ') + 'error="invalid_token"' : auth);
+      res.status(401).json({ error: 'Authentication required' }); return;
     }
-    catch { res.setHeader('WWW-Authenticate', 'Bearer'); res.status(401).json({ error: 'Authentication required' }); }
+    if (members && memberClient) {
+      const access = await members.authorize(verified, memberClient, existingClients);
+      if (access === 'member' && (req.path === '/mcp' || req.path === '/identity')) {
+        verified = { ...verified, scopes: memberTaskScopes, memberAccess: true };
+        memberRequests.add(req);
+      } else if (access !== 'existing') {
+        res.status(403).json({ error: 'Active EIGOS membership and client authorization required', membership: '/members' }); return;
+      }
+    }
+    principals.set(req, verified);
+    db.withOwner(verified.owner, next);
   });
   const principal = (req: Request) => principals.get(req)!;
   const services=ontologyServices(db,metadata,capabilities,capabilities.functions,capabilities.effects,capabilities.actions);
@@ -173,7 +206,10 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   });
   app.post('/tasks/:id/pa-response', async (req,res)=>res.json(publicTask(await pa.respond(principal(req),String(req.params.id),req.body))));
   app.get('/pa/requests',async(req,res)=>res.json(await pa.pending(principal(req),{...(typeof req.query.cursor==='string'?{cursor:req.query.cursor}:{}),...(typeof req.query.limit==='string'?{limit:Number(req.query.limit)}:{})})));
-  app.get('/identity', (req, res) => res.json(principal(req)));
+  app.get('/identity', (req, res) => {
+    const { owner, scopes, clientId } = principal(req);
+    res.json({ owner, scopes, clientId });
+  });
   app.post('/tasks', async (req, res) => res.json(publicTask(await tasks.submit(principal(req), req.body))));
   app.post('/tasks/:id/hotel-simulation-approval', async (req, res) => {
     res.json(await hotelWorkflows.approve(principal(req), { ...req.body, taskId: req.params.id }));
@@ -193,8 +229,11 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   app.post('/ontology/query', async (req, res) => res.json(await query(principal(req), req.body)));
   app.post('/ontology/functions', async (req, res) => res.json(await evaluate(principal(req), req.body)));
   app.post('/ontology/actions', async (req, res) => res.json(await apply(principal(req), req.body)));
+  app.get('/mcp', (_req, res) => res.set('Allow', 'POST').sendStatus(405));
   app.post('/mcp', async (req, res) => {
-    const p = principal(req), server = new McpServer({ name: 'eigos', version: '0.2.0' }, { instructions: paTravelInstructions });
+    const p = principal(req), member = memberRequests.has(req);
+    const instructions = member ? 'Submit the user’s read-only travel query once. Poll get_task with the original returned ID and deliver the result in the same conversation.' : paTravelInstructions;
+    const server = new McpServer({ name: 'eigos', version: '0.2.0' }, { instructions });
     const response = async (operation: () => Promise<unknown>) => {
       try { const result = await operation(); return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] }; }
       catch (error) {
@@ -205,6 +244,27 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
         };
       }
     };
+    const serve = async () => {
+      const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+      await server.connect(transport);
+      res.on('close', () => { void server.close(); });
+      await transport.handleRequest(req, res, req.body);
+    };
+    if (member) {
+      const memberSubmit = submitSchema.pick({ requestId: true, message: true, conversationId: true });
+      server.registerTool('submit_task', {
+        description: 'Submit a read-only travel inquiry. Send the natural-language request once and preserve the returned task ID.',
+        inputSchema: memberSubmit,
+      }, input => response(async () => publicTask(await tasks.submit(p, input, {
+        authorize: async client => {
+          if (!await members!.active(p.owner, client)) throw new PermissionDenied('EIGOS authorization was revoked');
+        },
+      }))));
+      server.registerTool('get_task', {
+        description: 'Poll the same task ID for the completed result.', inputSchema: z.strictObject({ taskId: z.uuid() }),
+      }, input => response(async () => publicTask(await tasks.get(p, input.taskId))));
+      await serve(); return;
+    }
     for (const [name, service] of services) {
       server.registerTool('ontology_' + name, {
         description: service.description, inputSchema: (service.schema as z.ZodObject).safeExtend({ _ontology: z.string().optional() }),
@@ -246,10 +306,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       inputSchema: completeWithActionRequestSchema,
     }, input => response(() => completeWithAction(p, input)));
     server.registerTool('describe_ontology', { description: 'Read published types, properties, interfaces, links, functions and actions.', inputSchema: z.strictObject({ontology:z.string().optional()}) }, input => response(async () => { requireScope(p, 'ontology:read'); return (await Access.load(db, p)).describe(await metadata.active(input.ontology)); }));
-    const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    await server.connect(transport);
-    res.on('close', () => { void server.close(); });
-    await transport.handleRequest(req, res, req.body);
+    await serve();
   });
   app.use('/a2a', jsonRpcHandler({ requestHandler: new A2A(tasks, card, capabilities.projectTaskResult), userBuilder: async req => new AgentUser(principal(req)) }));
   app.use((error: unknown, _req: Request, res: express.Response, next: express.NextFunction) => {

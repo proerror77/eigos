@@ -18,7 +18,7 @@ import { Actions } from './actions.js';
 import { Functions } from './functions.js';
 import { SemanticSearch, semanticSearchViewSchema } from './semantic.js';
 import { Sources } from './sources.js';
-import { Tasks, type Task } from './tasks.js';
+import { Tasks, taskPrincipal, type Task } from './tasks.js';
 import { Clarification } from './clarification.js';
 import { advanceDecisionReadStep, captureProposalReads } from './decision-evidence.js';
 import type { Classification } from '../ontology/classification.js';
@@ -77,12 +77,12 @@ export class OntologyAgent {
     return this.db.measureQueries(queryCount => this.execute(task, outerSignal, queryCount));
   }
   private async execute(task: Task, outerSignal: AbortSignal, queryCount: () => number) {
-    requireScope({ owner: task.owner, scopes: task.scopes }, 'tasks:write');
+    const principal = taskPrincipal(task);
+    requireScope(principal, 'tasks:write');
     const cognitive = task.cognitive_context ? cognitiveContextSchema.parse(task.cognitive_context) : undefined;
     const model = await this.metadata.get(task.release), stopped = new AbortController();
     const signal = AbortSignal.any([outerSignal, stopped.signal, AbortSignal.timeout(120000)]);
     this.metadata.checkBindings(model, this.capabilities);
-    const principal = { owner: task.owner, scopes: task.scopes };
     const access = await Access.load(this.db, principal);
     const sandbox = this.options.sandbox === true;
     const requireCapability = (kind: 'action' | 'function', name: string) =>
