@@ -421,6 +421,61 @@ test('task-only PA permission executes the inquiry through the source-bound Work
   } finally { await f.close(); }
 });
 
+test('the fare-only prompt uses the named inquiry when the interactive result Function is not executable', async () => {
+  const f = await fixture({
+    model: 'scoped-ride-quotes',
+    provider: 'openai-codex',
+    async run(prompt, tools) {
+      const instructions = prompt.split('\n').slice(0, -1).join('\n');
+      assert.match(instructions, /RideInquiry\.estimate on RideRequest and readRideEstimates/);
+      assert.doesNotMatch(instructions, /readInteractiveRideEstimate/);
+      await tools.get('complete_with_action')!.invoke({
+        action: { interface: { type: 'RideInquiry', implementation: 'RideRequest', action: 'estimate' },
+          input: { ...route, serviceClass: '专车' } },
+        read: { function: 'readRideEstimates', resultParameter: 'request' },
+      });
+    },
+  });
+  try {
+    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant =>
+      grant.permission !== 'execute_function' || !grant.resource.endsWith('/readInteractiveRideEstimate')));
+    const task = await f.tasks.submit(principal, { requestId: 'scoped-ride-quote', message: '上海从中企云翠森林到前滩太古里，只查专车估价。' });
+    assert(await f.worker.runOne());
+    const done = await f.tasks.get(principal, task.id);
+    assert.equal(done.state, 'completed', done.error ?? undefined);
+    const result = done.result as { estimates: { properties: { name: string; priceText: string } }[] };
+    assert.deepEqual(result.estimates.map(({ properties }) => [properties.name, properties.priceText]),
+      [['专车', '100-120元']]);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    assert.equal(f.provider.flags.orderCreates, 0);
+  } finally { await f.close(); }
+});
+
+test('a missing tool grant fails before supplier calls and is distinct from model egress policy denial', async () => {
+  const f = await fixture({
+    model: 'scoped-ride-quotes',
+    provider: 'openai-codex',
+    async run(_prompt, tools) {
+      await tools.get('complete_with_action')!.invoke({
+        action: { interface: { type: 'RideInquiryWithPlaceClues', implementation: 'RideRequest', action: 'estimate' },
+          input: route },
+        read: { function: 'readInteractiveRideEstimate', resultParameter: 'request' },
+      });
+    },
+  });
+  try {
+    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant =>
+      grant.permission !== 'execute_function' || !grant.resource.endsWith('/readInteractiveRideEstimate')));
+    const task = await f.submit();
+    assert(await f.worker.runOne());
+    assert.equal((await f.tasks.get(principal, task.id)).state, 'failed');
+    const traces = await f.db.query(`SELECT event->>'code' AS code FROM ${f.db.schema}.execution_trace
+      WHERE task_id=$1 AND event->>'kind'='egress' AND event->>'state'='blocked'`, [task.id]);
+    assert.deepEqual(traces.rows, [{ code: 'tool_permission_denied' }]);
+    assert.deepEqual(f.provider.calls, []);
+  } finally { await f.close(); }
+});
+
 test('revoked data rights also remove access to a cached task result', async () => {
   const f = await fixture();
   try {
