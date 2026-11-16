@@ -385,11 +385,17 @@ test('empty source candidates request more address information on the original t
   } finally { await f.close(); }
 });
 
-test('supplier failure pauses for a distinct read retry, rather than requesting a different address', async () => {
+test('a paused supplier retry releases the next chat batch and resumes the original Action safely', async () => {
   const f = await fixture();
   try {
     f.provider.flags.failPlaceSearch = true;
-    const task = await f.submit();
+    const submit = (requestId: string) => f.tasks.submit(principal, {
+      requestId, conversationId: 'ride-estimate-chat', message: '从中企云翠森林到前滩太古里，只询价', route,
+    });
+    const makeAvailable = (id: string) => f.db.query(
+      `UPDATE ${f.db.schema}.tasks SET available_at=now() WHERE id=$1`, [id]);
+    const task = await submit('before-supplier-recovery');
+    await makeAvailable(task.id);
     await f.worker.runOne();
     const paused = await f.tasks.get(principal, task.id);
     assert.equal(paused.state, 'input-required');
@@ -397,8 +403,18 @@ test('supplier failure pauses for a distinct read retry, rather than requesting 
     await assert.rejects(f.tasks.amendPlace(principal, task.id, {side:'destination', address:'建国西路285号'}), /no place candidates/);
     assert.deepEqual((await f.db.query(`SELECT state FROM ${f.db.schema}.source_calls WHERE task_id=$1 ORDER BY name`,[task.id])).rows,
       [{state:'failed'}, {state:'failed'}]);
+    const fresh = await submit('after-supplier-recovery');
+    await makeAvailable(fresh.id);
+    assert.equal((await f.tasks.claim())?.id, fresh.id);
+    assert.equal((await f.tasks.get(principal, task.id)).state, 'input-required');
+
     f.provider.flags.failPlaceSearch = false;
     await f.tasks.answerInput(principal, task.id, {kind:'retry-source'});
+    assert.equal(await f.tasks.claim(), undefined);
+    await f.db.query(`UPDATE ${f.db.schema}.tasks SET lease_until=now()-interval '1 second' WHERE id=$1`, [fresh.id]);
+    assert(await f.worker.runOne());
+    assert.equal((await f.tasks.get(principal, fresh.id)).state, 'completed');
+
     await f.worker.runOne();
     const done = await f.tasks.get(principal, task.id);
     assert.equal(done.state,'completed',done.error ?? undefined);
