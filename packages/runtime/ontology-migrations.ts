@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { Conflict, NotFound, digest } from '../core/identity.js';
+import { Conflict, NotFound, PermissionDenied, digest } from '../core/identity.js';
 import { objectRefSchema, ontologyName, type ObjectRef } from '../ontology/schema.js';
 import { processLogTarget } from '../ontology/process-definition.js';
 import { Access, type Permission } from './access.js';
@@ -200,7 +200,7 @@ export class OntologyDataMigrations {
         await this.authorizeReceipt(access, source, target, previous.id, client);
         await access.refresh(client);
         if (!(await access.canReturn(access.dataRequirements(), client)))
-          throw new Error('Migration permissions changed');
+          throw new PermissionDenied('Migration permissions changed');
         return summary(previous);
       }
       const rows = (
@@ -301,7 +301,7 @@ export class OntologyDataMigrations {
         await this.copyGeometry(objectAccess, source, target, item.source, item.ref, item.properties, client);
         await new Objects(this.db, target, objectAccess, client).create(item.ref, item.properties);
         if (!(await objectAccess.canReturn(objectAccess.dataRequirements(), client)))
-          throw new Error('Copied object permissions changed');
+          throw new PermissionDenied('Copied object permissions changed');
         for (const requirement of objectAccess.requirements())
           access.require(requirement.ontology, requirement.permission, requirement.resource);
       }
@@ -354,7 +354,7 @@ export class OntologyDataMigrations {
         );
       await access.refresh(client);
       if (!(await access.canReturn(access.dataRequirements(), client)))
-        throw new Error('Migration permissions changed');
+        throw new PermissionDenied('Migration permissions changed');
       return summary(receipt);
     });
   }
@@ -434,7 +434,7 @@ export class OntologyDataMigrations {
       const items = objects.slice(0, input.limit);
       await access.refresh(client);
       if (!(await access.canReturn(access.dataRequirements(), client)))
-        throw new Error('Migration receipt permissions changed');
+        throw new PermissionDenied('Migration receipt permissions changed');
       return {
         ...summary(row),
         items,

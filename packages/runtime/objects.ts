@@ -5,7 +5,7 @@ import { DerivedProperties } from './derived.js';
 import { compareValues, matchesPredicate, nestedValue, orderSchema, predicateFields, predicateSchema, regexMatches, propertyPathSchema } from './query-filter.js';
 import { recordObjectEdit, resolveSourceEdit } from './edit-history.js';
 import { z } from 'zod';
-import { Conflict, NotFound, digest, type ExecutionActor } from '../core/identity.js';
+import { Conflict, NotFound, PermissionDenied, digest, type ExecutionActor } from '../core/identity.js';
 import { PublishedOntology } from './metadata.js';
 import { Access } from './access.js';
 import { objectRefSchema, type ObjectData, type ObjectRef, type LinkData } from '../ontology/schema.js';
@@ -670,7 +670,7 @@ export class Objects {
     await this.prepareWrite(); this.writeType(ref.type);
     const old = await this.stored(ref);
     this.access.readRow(this.model,ref.type,old.properties);
-    for (const field of Object.keys(old.properties)) if (!this.access.cell(this.model,ref.type,field,old.properties)) throw new Error('Cannot delete an object with hidden properties');
+    for (const field of Object.keys(old.properties)) if (!this.access.cell(this.model,ref.type,field,old.properties)) throw new PermissionDenied('Cannot delete an object with hidden properties');
     if (old.revision !== revision) throw new Conflict('Object revision changed');
     for (const link of this.model.links.values()) {
       if (processLogTarget(this.model,link.from.type) || processLogTarget(this.model,link.to.type)) continue;

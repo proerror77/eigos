@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Conflict, NotFound, digest } from '../core/identity.js';
+import { Conflict, NotFound, PermissionDenied, digest } from '../core/identity.js';
 import { objectRefSchema, type ObjectRef } from '../ontology/schema.js';
 import { Access } from './access.js';
 import type { Database, Sql } from './database.js';
@@ -87,7 +87,7 @@ export class EntityResolution {
     const result = await this.selected(new Objects(this.db, model, access), input.source, input.externalId);
     await access.refresh();
     if (!(await access.canReturn(access.dataRequirements())))
-      throw new Error('Entity binding permissions changed');
+      throw new PermissionDenied('Entity binding permissions changed');
     return result;
   }
   /** Source adapters call inside their write transaction, before mapping a source row's primary key. */
@@ -154,7 +154,7 @@ export class EntityResolution {
       );
       await access.refresh(client);
       if (!(await access.canReturn(access.dataRequirements(), client)))
-        throw new Error('Entity binding permissions changed');
+        throw new PermissionDenied('Entity binding permissions changed');
       return { ref: input.target, revision: revision + 1, bound: true };
     });
   }
@@ -182,7 +182,7 @@ export class EntityResolution {
     }
     await access.refresh();
     if (!(await access.canReturn(access.dataRequirements())))
-      throw new Error('Entity history permissions changed');
+      throw new PermissionDenied('Entity history permissions changed');
     return {
       items: rows,
       cursor: result.rows.length > input.limit ? (rows.at(-1)!.sequence as string) : undefined,
