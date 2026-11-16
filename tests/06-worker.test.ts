@@ -3,6 +3,7 @@ import { Ontology } from '../packages/ontology/model.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import { classificationSchema } from '../packages/ontology/classification.js';
@@ -10,6 +11,7 @@ import { Objects } from '../packages/runtime/objects.js';
 import { digest } from '../packages/core/identity.js';
 import { document, fixture, principal, route } from './fixture.js';
 import { OntologyAgent } from '../packages/runtime/agent.js';
+import { taskCatalogueScope } from '../packages/runtime/agent-catalogue.js';
 import { Functions } from '../packages/runtime/functions.js';
 import { Actions } from '../packages/runtime/actions.js';
 import { Sources } from '../packages/runtime/sources.js';
@@ -17,6 +19,26 @@ import { Scenarios } from '../packages/runtime/scenarios.js';
 import { setModelClearance } from '../packages/runtime/model-egress.js';
 import { Worker } from '../apps/worker/worker.js';
 import { harnessFixture } from './harness-fixture.js';
+
+test('unprofiled Chinese requests rank relevant published resources before the first sixteen types', () => {
+  const cargo = { apiName: 'CargoManifest', displayName: '货运清单', description: '港口货运清单保存集装箱编号',
+    primaryKey: 'id', titleProperty: 'id', interfaces: {},
+    properties: { id: { description: 'Identity', schema: { type: 'string' }, required: true } } };
+  const model = new Ontology({ ...document, agentProfiles: [], objectTypes: [...document.objectTypes, cargo] });
+  const canDefine = () => true;
+  for (const message of ['麻烦核对这份港口货运清单里的集装箱编号', '查看 ＣａｒｇｏＭａｎｉｆｅｓｔ']) {
+    const scope = taskCatalogueScope(model, { canDefine }, { requestId: 'rank-fallback', message });
+    assert.deepEqual(scope.profiles, []);
+    assert(scope.include('object', 'CargoManifest'));
+  }
+});
+
+test('core Agent and task persistence have no provider-specific workflow or correction dependency', () => {
+  for (const file of ['agent.ts', 'tasks.ts']) {
+    const source = readFileSync(new URL('../packages/runtime/' + file, import.meta.url), 'utf8');
+    assert.doesNotMatch(source, /\.\.\/capabilities\/|hotelWorkflow|Amap|mapPlace|readMapPlace/i, file);
+  }
+});
 
 test('one Agent capability choice resolves unique supplier names despite different formatting and nearby entrances', async t => {
   const f = await fixture();
@@ -846,7 +868,7 @@ test('task prompts preload the selected capability and keep sandbox tools out of
         action: { interface: { type: 'PayableOrder', action: 'prepare', object: sandboxOrder },
           input: { order: sandboxOrder } },
         read: { function: 'readSchedulePlan', resultParameter: 'plan' },
-      }), /requires a sandbox Agent/);
+      }), /Data is unavailable to the selected model/);
       await tools.get('request_clarification')!.invoke({ message: 'Confirm the intended time.' });
     },
   });

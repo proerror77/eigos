@@ -689,7 +689,7 @@ export class Scenarios {
             case 'object': return graph.read(read.ref);
             case 'stored': return graph.readStored(read.ref);
             case 'query': return graph.query(querySchema.parse(read.input));
-            case 'follow': return graph.follow(read.ref, read.link, read.as);
+            case 'follow': return graph.follow(read.ref, read.link, read.as, read.maximum);
             case 'source': return graph.matchesSource(read.ref, read.source);
             case 'set': return new ObjectSets(this.db, read.maximum).evaluate(graph.access, graph.model, read.input, graph.client);
             case 'aggregate': return new ObjectSets(this.db, read.maximum).aggregate(graph.access, graph.model, read.input, graph.client);

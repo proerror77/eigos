@@ -80,12 +80,12 @@ export async function fixture(driver: AgentDriver = new FixtureAgent(),services?
   agentOptions?: ConstructorParameters<typeof OntologyAgent>[5]) {
   const url = process.env.EIGOS_TEST_DATABASE_URL;
   if (!url || new URL(url).hostname !== '127.0.0.1' || new URL(url).password !== 'synthetic-only') throw new Error('Use npm test to provision the isolated test database');
-  const schema = 'eigos_test_' + randomUUID().replaceAll('-', ''), db = new Database(url, schema);
+  const schema = 'eigos_test_' + randomUUID().replaceAll('-', ''), db = new Database(url, schema, undefined, undefined, undefined, agentOptions?.sandbox === true);
   await db.initialize();
   const metadata = new Metadata(db), tasks = new Tasks(db, metadata), p = await provider();
   await setGrants(db, 'deployment', [{ resource: 'Eigos', permission: 'manage_definition' }]);
   const publisher = await Access.load(db, { owner: 'deployment', scopes: [] });
-  await setGrants(db, principal.owner, memberGrants(new Ontology(definition)));
+  await setGrants(db, principal.owner, memberGrants(new Ontology(definition), db.sandboxEnabled));
   const access = await Access.load(db, principal);
   const source = async (owner: string) => { if (owner !== principal.owner) throw new Error('Wrong source owner'); return p.source; };
   const capabilities = createCapabilities(db, source, extensions, services, stripe, connections), model = await metadata.publish(definition, capabilities, publisher), agent = new OntologyAgent(db, metadata, tasks, capabilities, driver, agentOptions), worker = new Worker(tasks, agent,new ScheduledActions(db,metadata),new ScheduledActionRunner(db,metadata,tasks,capabilities.actions));

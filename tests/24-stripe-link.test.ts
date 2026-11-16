@@ -123,7 +123,7 @@ test('published payment Interface Actions deliver only to the original PA owner 
 test('recovering a lost response registers the same provider order without creating another checkout', async () => {
   const stripe = simulatedStripe();
   stripe.loseResponse();
-  const f = await fixture(undefined, undefined, resolver(stripe));
+  const f = await fixture(undefined, undefined, resolver(stripe), undefined, undefined, {}, { sandbox: true });
   try {
     const orderKey = randomUUID();
     const apply = (action: string, input: Record<string, unknown>) =>

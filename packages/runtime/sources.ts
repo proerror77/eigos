@@ -1,4 +1,4 @@
-import { digest } from '../core/identity.js';
+import { digest, NotFound } from '../core/identity.js';
 import type { Ontology } from '../ontology/model.js';
 import type { ObjectRef } from '../ontology/schema.js';
 import { Database } from './database.js';
@@ -18,7 +18,8 @@ export class Sources {
   constructor(private readonly db: Database, private readonly functions: Functions, private readonly projections: ReadonlyMap<string, SourceProjection>) {}
   private projection(model: Ontology, name: string) {
     const mapping = model.sources.get(name), projection = mapping && this.projections.get(mapping.apiName);
-    if (!mapping || !projection) throw new Error('Datasource is unavailable');
+    if (!mapping) throw new NotFound('Datasource is unavailable');
+    if (!projection) throw new Error('Published datasource implementation is unavailable');
     return { mapping, projection };
   }
   bindings(model: Ontology) {

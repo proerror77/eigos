@@ -4,6 +4,7 @@ import {fixture,principal} from './fixture.js';
 import {PlanningFixtureAgent,planningInput,calendarAnswer} from './planning-fixture.js';
 import {PARequests} from '../packages/runtime/pa.js';
 import {Objects} from '../packages/runtime/objects.js';
+import {Conflict, InvalidInput, PermissionDenied} from '../packages/core/identity.js';
 import {Scenarios} from '../packages/runtime/scenarios.js';
 import {Access,setGrants,memberGrants} from '../packages/runtime/access.js';
 import { ScenarioEvaluations, trialScenariosSchema } from '../packages/runtime/scenario-evaluation.js';
@@ -406,6 +407,94 @@ test('scheduling reads past 100 resource links and an Action can undo a high-deg
     await f.capabilities.actions.undo(f.access, f.model, 'remove-many-links', 'restore-many-links');
     assert.equal((await graph.follow(target, 'predecessors')).length, 101);
     assert.equal((await graph.follow(plan, 'activities'))[0]?.ref.id, target.id);
+  } finally {
+    await f.close();
+  }
+});
+
+test('complete relationship reads are bounded while an authorized paginated query keeps every activity', async () => {
+  const f = await fixture();
+  try {
+    const { resource, input } = await seedPlan(f);
+    const graph = new Objects(f.db, f.model, f.access);
+    await f.db.transaction(async client => {
+      const scope = [f.model.projection, principal.owner];
+      await f.db.query(`INSERT INTO ${f.db.schema}.objects(projection,owner,type,id,properties)
+        SELECT $1,$2,'ScheduledActivity',id,jsonb_build_object('id',id,'name',id,'start',$3::text,'end',$4::text)
+        FROM (SELECT 'crowded-'||lpad(n::text,4,'0') AS id FROM generate_series(1,1001) n) activities`,
+      [...scope, input.start, input.end], client);
+      await f.db.query(`INSERT INTO ${f.db.schema}.links(projection,owner,type,from_type,from_id,to_type,to_id,single_from,single_to)
+        SELECT $1,$2,'ActivityResource',type,id,$3,$4,false,false FROM ${f.db.schema}.objects
+        WHERE projection=$1 AND owner=$2 AND type='ScheduledActivity'`,
+      [...scope, resource.type, resource.id], client);
+    });
+    await assert.rejects(graph.follow(resource, 'activities'), (error: unknown) =>
+      error instanceof Conflict && /complete read limit.*paginated query/.test(error.message));
+    await assert.rejects(graph.follow(resource, 'activities', resource.type, 50), Conflict);
+
+    const ids = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const page = await graph.query({ type: 'ScheduledActivity',
+        from: { object: resource, link: 'activities' }, limit: 100, cursor });
+      for (const item of page.items) ids.add(item.ref.id);
+      cursor = page.cursor;
+    } while (cursor);
+    assert.equal(ids.size, 1001);
+    await assert.rejects(graph.query({ type: 'ScheduledActivity', cursor: 'not-a-query-cursor' }), InvalidInput);
+
+    const scenarios = new Scenarios(f.db);
+    const scenario = await scenarios.create(f.access, f.model, { requestId: 'crowded-link', name: 'Crowded calendar' });
+    const staged = new Objects(f.db, await scenarios.view(f.access, f.model, scenario.id), f.access);
+    const extra = { type: 'ScheduledActivity', id: 'additional-activity' };
+    await staged.create(extra, { id: extra.id, name: extra.id, start: input.start, end: input.end });
+    await staged.link({ type: 'ActivityResource', from: extra, to: resource });
+    assert.deepEqual((await staged.follow(extra, 'resources')).map(item => item.ref), [resource]);
+  } finally {
+    await f.close();
+  }
+});
+
+test('deletion with a hidden relationship returns a permission failure and keeps all changes atomic', async () => {
+  const f = await fixture();
+  try {
+    const { plan, resource, input } = await seedPlan(f);
+    const graph = new Objects(f.db, f.model, f.access);
+    const activity = (id: string) => ({ type: 'ScheduledActivity', id });
+    const visible = activity('visible-target'), companion = activity('visible-companion');
+    const hidden = activity('hidden-dependency');
+    for (const ref of [visible, companion, hidden])
+      await graph.create(ref, { id: ref.id, name: ref === hidden ? 'Hidden' : 'Visible', start: input.start, end: input.end });
+    await graph.linkBatch([
+      { type: 'ActivityPlan', from: visible, to: plan },
+      { type: 'ActivityResource', from: visible, to: resource },
+      { type: 'ActivityDependency', from: visible, to: companion },
+      { type: 'ActivityDependency', from: hidden, to: visible },
+    ]);
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies VALUES($1,$2,$3)`,
+      [f.model.document.id, visible.type, { read: { all: [{ op: 'equals', property: 'name', value: 'Visible' }], any: [] }, properties: {} }]);
+    const access = await Access.load(f.db, principal);
+    const scenarios = new Scenarios(f.db);
+    const created = await scenarios.create(access, f.model, { requestId: 'hidden-link-scenario', name: 'Hidden relationship deletion' });
+    const view = await scenarios.view(access, f.model, created.id);
+    for (const [model, id] of [[f.model, 'hidden-live-delete'], [view, 'hidden-draft-delete']] as const) {
+      await assert.rejects(f.capabilities.actions.apply(access, model, 'RemoveScheduleActivity',
+        { activity: visible, revision: 1 }, id), (error: unknown) =>
+          error instanceof PermissionDenied && /inaccessible relationships/.test(error.message) && !error.message.includes(hidden.id));
+    }
+    const remaining = new Objects(f.db, f.model, access);
+    assert.deepEqual((await remaining.follow(plan, 'activities')).map(item => item.ref), [visible]);
+    assert.deepEqual((await remaining.follow(visible, 'predecessors')).map(item => item.ref), [companion]);
+    assert.equal((await scenarios.inspect(access, f.model, created.id)).revision, created.revision);
+    await assert.rejects(remaining.link({ type: 'ActivityResource', from: visible, to: plan }), InvalidInput);
+    const secondPlan = { ...plan, id: 'second-plan' };
+    await remaining.create(secondPlan, { ...(await remaining.read(plan)).properties, id: secondPlan.id });
+    await assert.rejects(remaining.link({ type: 'ActivityPlan', from: visible, to: secondPlan }), Conflict);
+
+    await f.db.query(`INSERT INTO ${f.db.schema}.property_security VALUES($1,$2,$3)`,
+      [f.model.document.id, visible.type, 'name']);
+    const hiddenField = new Objects(f.db, f.model, await Access.load(f.db, principal));
+    await assert.rejects(hiddenField.edit(visible, 1, { name: 'Different' }), PermissionDenied);
   } finally {
     await f.close();
   }

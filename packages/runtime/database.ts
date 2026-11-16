@@ -1,3 +1,4 @@
+import { developmentSandboxEnabled } from '../core/sandbox-mode.js';
 import { initializeReleaseEvaluation } from './release-evaluation.js';
 import {initializeOntologyDataMigrations} from './ontology-migrations.js';
 import {initializeEntityResolution} from './entity-resolution.js';
@@ -30,7 +31,9 @@ export class Database {
   private readonly queryCount = new AsyncLocalStorage<{ count: number }>();
   private readonly ownerContext = new AsyncLocalStorage<string>();
   private readonly transactionOwners = new WeakMap<Sql, string>();
-  constructor(connectionString: string, schema = 'eigos', readonly runtimeId = implementationDigest(), queryConnectionString?: string, readonly ownerIsolation = process.env.EIGOS_ENFORCE_OWNER_RLS === 'true') {
+  constructor(connectionString: string, schema = 'eigos', readonly runtimeId = implementationDigest(),
+    queryConnectionString?: string, readonly ownerIsolation = process.env.EIGOS_ENFORCE_OWNER_RLS === 'true',
+    readonly sandboxEnabled = developmentSandboxEnabled()) {
     if (!/^eigos(?:_[a-z0-9]+)*$/.test(schema)) throw new Error('Invalid schema');
     this.schema = `"${schema}"`;
     this.pool = new pg.Pool({ connectionString, max: 8, connectionTimeoutMillis: 5000, statement_timeout: 10000 });

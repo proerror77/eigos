@@ -4,12 +4,18 @@ import { isAbsolute, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { z } from 'zod';
-import { digest, SourceReadFailure } from '../../core/identity.js';
+import { Conflict, digest, PermissionDenied, SourceReadFailure } from '../../core/identity.js';
 import { didiBindingSchema, didiEndpoint, didiReceiptSchema, didiToolInputs, DIDI_REQUIRED_TOOLS, DIDI_TOOLS, type DidiBinding, type DidiData, type DidiEvidenceKind, type DidiReceipt, type DidiTool } from './contracts.js';
 import { mapDidiResult } from './mapping.js';
 
 export class DidiReadError extends SourceReadFailure {
-  constructor(readonly code: string) { super(code === 'RATE_LIMITED' ? 'DiDi read quota is exhausted (RATE_LIMITED); wait for the provider window to reset before a new read. No business operation was sent.' : `DiDi read failed (${code}); check the private connection or choose a new read. No business operation was sent.`); }
+  constructor(readonly code: string) {
+    super(code === 'RATE_LIMITED'
+      ? 'DiDi read quota is exhausted (RATE_LIMITED); wait for the provider window to reset before a new read. No business operation was sent.'
+      : `DiDi read failed (${code}); check the private connection or choose a new read. No business operation was sent.`, {
+      unavailable: ['RATE_LIMITED', 'SOURCE_UNAVAILABLE', 'PRIVATE_CREDENTIAL_UNAVAILABLE', 'ABORTED'].includes(code),
+    });
+  }
 }
 export interface DidiCallContext { requestId: string; requestRevision: number }
 export interface DidiReadResult { data: DidiData; receipt: DidiReceipt }
@@ -54,7 +60,7 @@ export class DidiMcpConnector implements DidiConnector {
     const secret = await this.key(), endpoint = didiEndpoint(this.binding.environment), url = new URL(endpoint);
     url.searchParams.set('key', secret);
     const bounded = AbortSignal.any([signal, AbortSignal.timeout(30000)]);
-    let requests = 0;
+    let requests = 0, guardFailure: { error: unknown } | undefined;
     const guarded: typeof fetch = async (target, init = {}) => {
       if (String(target) !== url.href || ++requests > 20) throw new DidiReadError('UNEXPECTED_ENDPOINT');
       bounded.throwIfAborted();
@@ -66,12 +72,21 @@ export class DidiMcpConnector implements DidiConnector {
         if (request.method === 'tools/call') {
           if (!Object.hasOwn(allowed, request.params?.name)) throw new DidiReadError('TOOL_NOT_ALLOWED');
           if (!allowed[request.params.name as keyof typeof allowed]!.safeParse(request.params.arguments).success) throw new DidiReadError('INVALID_TOOL_INPUT');
-          await beforeCall?.('dispatch');
+          try { await beforeCall?.('dispatch'); }
+          catch (error) { guardFailure = { error }; throw error; }
         }
       }
-      const response = await this.fetcher(target, { ...init, redirect: 'manual', signal: bounded });
+      const response = await this.fetcher(target, { ...init, redirect: 'manual', signal: bounded }).catch((error: unknown) => {
+        if (error instanceof TypeError) throw new DidiReadError('SOURCE_UNAVAILABLE');
+        throw error;
+      });
       if (response.status >= 300 && response.status < 400 || response.redirected) throw new DidiReadError('REDIRECT_BLOCKED');
-      if (!response.ok && !(method === 'GET' && response.status === 405)) throw new DidiReadError(response.status === 401 || response.status === 403 ? 'AUTH_REJECTED' : response.status === 429 ? 'RATE_LIMITED' : 'HTTP_REJECTED');
+      if (!response.ok && !(method === 'GET' && response.status === 405)) {
+        if (response.status === 401 || response.status === 403) throw new DidiReadError('AUTH_REJECTED');
+        if (response.status === 429) throw new DidiReadError('RATE_LIMITED');
+        if (response.status === 503 || response.status === 504) throw new DidiReadError('SOURCE_UNAVAILABLE');
+        throw new DidiReadError('HTTP_REJECTED');
+      }
       if (!response.body) return response;
       let bytes = 0;
       const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({ transform(chunk, controller) { bytes += chunk.byteLength; if (bytes > 1048576) throw new DidiReadError('RESPONSE_TOO_LARGE'); controller.enqueue(chunk); } }));
@@ -82,7 +97,12 @@ export class DidiMcpConnector implements DidiConnector {
     const abort = () => { void client.close().catch(() => {}); };
     bounded.addEventListener('abort', abort, { once: true });
     try { await client.connect(transport, { signal: bounded, timeout: 10000 }); return await run(client, secret); }
-    catch (error) { if (error instanceof DidiReadError) throw error; if (error && typeof error === 'object' && 'code' in error && error.code === -32001) throw new DidiReadError('RATE_LIMITED'); throw new DidiReadError(bounded.aborted ? 'ABORTED' : 'MCP_REJECTED'); }
+    catch (error) {
+      if (guardFailure) throw guardFailure.error;
+      if (error instanceof SourceReadFailure || error instanceof PermissionDenied || error instanceof Conflict) throw error;
+      if (error && typeof error === 'object' && 'code' in error && error.code === -32001) throw new DidiReadError('RATE_LIMITED');
+      throw new DidiReadError(bounded.aborted ? 'ABORTED' : 'MCP_REJECTED');
+    }
     finally { bounded.removeEventListener('abort', abort); await client.close().catch(() => {}); await transport.close().catch(() => {}); }
   }
   private async directory(client: Client, signal: AbortSignal) {
@@ -135,7 +155,7 @@ export class DidiMcpConnector implements DidiConnector {
     const parsed = didiToolInputs[tool].safeParse(input);
     if (!parsed.success) throw new DidiReadError('INVALID_TOOL_INPUT');
     await beforeCall?.('prepare');
-    return this.session(signal, async (client, secret) => {
+    const { data, receipt, serialized } = await this.session(signal, async (client, secret) => {
       const directory = await this.readDirectory(client, signal, context), startedAt = new Date().toISOString();
       const descriptor = directory.find(t => t.name === tool);
       if (!descriptor) throw new DidiReadError('READ_TOOLS_UNAVAILABLE');
@@ -148,12 +168,13 @@ export class DidiMcpConnector implements DidiConnector {
       try { data = mapDidiResult(tool, raw); } catch { throw new DidiReadError(raw.isError ? 'TOOL_REJECTED' : 'INVALID_SOURCE_RESULT'); }
       const receipt = didiReceiptSchema.parse({ id: randomUUID(), bindingId: this.binding.bindingId, environment: this.binding.environment, endpoint: didiEndpoint(this.binding.environment), tool, inputDigest: digest(parsed.data), resultDigest: digest(data), responseSha256: createHash('sha256').update(serialized).digest('hex'), toolSchemaDigest: digest(descriptor.inputSchema), startedAt, receivedAt });
       signal.throwIfAborted();
-      if (this.binding.auditDirectory) {
-        await mkdir(join(this.binding.auditDirectory, 'responses'), { recursive: true, mode: 0o700 });
-        await writeFile(join(this.binding.auditDirectory, 'responses', `${receipt.id}.json`), serialized, { mode: 0o600, flag: 'wx' });
-        await appendFile(join(this.binding.auditDirectory, 'reads.jsonl'), JSON.stringify({ ...context, receipt, input: parsed.data, evidenceKind: this.evidenceKind }) + '\n', { mode: 0o600 });
-      }
-      return { data, receipt };
+      return { data, receipt, serialized };
     }, beforeCall).catch(error => { this.directoryCache = undefined; throw error; });
+    if (this.binding.auditDirectory) {
+      await mkdir(join(this.binding.auditDirectory, 'responses'), { recursive: true, mode: 0o700 });
+      await writeFile(join(this.binding.auditDirectory, 'responses', `${receipt.id}.json`), serialized, { mode: 0o600, flag: 'wx' });
+      await appendFile(join(this.binding.auditDirectory, 'reads.jsonl'), JSON.stringify({ ...context, receipt, input: parsed.data, evidenceKind: this.evidenceKind }) + '\n', { mode: 0o600 });
+    }
+    return { data, receipt };
   }
 }

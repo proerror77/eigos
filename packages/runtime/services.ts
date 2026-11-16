@@ -29,7 +29,7 @@ import {
   migrateOntologyDataSchema,
   readDataMigrationSchema,
 } from './ontology-packages.js';
-import { Tasks, publicTask } from './tasks.js';
+import { Tasks, publicTask, type TaskResultProjection } from './tasks.js';
 import type { Actions } from './actions.js';
 import { z } from 'zod';
 import type { Principal } from '../core/identity.js';
@@ -70,7 +70,7 @@ import type { Bindings } from './metadata.js';
 export function ontologyServices(
   db: Database,
   metadata: Metadata,
-  bindings: Bindings,
+  bindings: Bindings & { projectTaskResult: TaskResultProjection },
   functions: Functions,
   effects: Effects,
   actions: Actions,
@@ -374,10 +374,10 @@ export function ontologyServices(
   );
   register(
     'follow_links',
-    'Navigate authorized object relationships.',
+    'Read up to 100 objects related by a published Link. Use query_ontology with from and cursor for larger relationships.',
     z.strictObject({ object: objectRefSchema, link: z.string(), scenarioId: z.uuid().optional() }),
     false,
-    async (a, input) => new Objects(db, await view(a, input.scenarioId), a).follow(input.object, input.link),
+    async (a, input) => new Objects(db, await view(a, input.scenarioId), a).follow(input.object, input.link, input.object.type, 100),
   );
   register(
     'object_view',
@@ -671,7 +671,7 @@ export function ontologyServices(
     ).rows;
     const tasks = new Tasks(db, metadata);
     return {
-      items: await Promise.all(rows.map(async (row) => publicTask(await tasks.get(a.principal, row.id)))),
+      items: await Promise.all(rows.map(async (row) => publicTask(await tasks.get(a.principal, row.id), bindings.projectTaskResult))),
     };
   });
   register(
