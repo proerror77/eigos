@@ -44,7 +44,7 @@ import { locationFunctions, taskLocationValueType } from '../packages/ontology/l
 import { luckinDefinition } from '../packages/ontology/luckin.js';
 import { mapFunctions } from '../packages/ontology/maps.js';
 import { rideWatchDefinition, rideWatchType } from '../packages/ontology/ride-watch.js';
-import { fliggyServicesDefinition } from '../packages/ontology/services.js';
+import { fliggyServicesDefinition, marketplaceDefinition } from '../packages/ontology/services.js';
 import { checkWorkflowDependencies } from '../packages/runtime/workflow-compatibility.js';
 
 async function setup() {
@@ -569,7 +569,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   // Reconstruct the historical documents on the same runtime and check both published identities.
   const laterDomains = [
     calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition, fliggyServicesDefinition,
-    fliggyFlightBookingDefinition, fliggyHotelDefinition, diningReservations,
+    fliggyFlightBookingDefinition, fliggyHotelDefinition, diningReservations, marketplaceDefinition,
   ];
   const addedTypes = new Set([
     ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType,
@@ -609,6 +609,11 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   geometry.function = 'registerGeometry';
   v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type => type.apiName !== 'RideInquiryWithPlaceClues' &&
     !fliggyServicesDefinition.interfaceTypes.some(item => item.apiName === type.apiName));
+  const productOffer = v9Definition.interfaceTypes.find(type => type.apiName === 'ProductOffer')!;
+  delete productOffer.properties.sellerName;
+  delete productOffer.properties.priceKind;
+  productOffer.optionalProperties = ['url'];
+  for (const field of ['variantId', 'sellerId', 'merchantDomain']) productOffer.properties[field]!.required = true;
   delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;
   v9Definition.objectTypes = v9Definition.objectTypes.filter(type => !addedTypes.has(type.apiName) && !addedLogs.some(log => log.type === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'ScheduledActivity')!.properties.dining;
@@ -620,8 +625,11 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     !addedLogs.some(log => log.link === type.apiName) && !documentDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !rideWatchDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !calendarJourneyDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
-    !fliggyServicesDefinition.linkTypes.some(link => link.apiName === type.apiName));
-  v9Definition.dataSources = v9Definition.dataSources.filter(source => !fliggyServicesDefinition.dataSources.some(item => item.apiName === source.apiName));
+    !fliggyServicesDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    !marketplaceDefinition.linkTypes.some(link => link.apiName === type.apiName));
+  v9Definition.dataSources = v9Definition.dataSources.filter(source =>
+    !fliggyServicesDefinition.dataSources.some(item => item.apiName === source.apiName) &&
+    !marketplaceDefinition.dataSources.some(item => item.apiName === source.apiName));
   v9Definition.actionTypes = v9Definition.actionTypes.filter(action => !addedActions.has(action.apiName));
   v9Definition.functionTypes = v9Definition.functionTypes.filter(fn => !addedFunctions.has(fn.apiName));
   v9Definition.functionTypes.find(fn => fn.apiName === 'resolveRideLocations')!.description =
