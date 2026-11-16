@@ -3,7 +3,7 @@ import { open } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { digest } from '../../core/identity.js';
+import { digest, SourceReadFailure } from '../../core/identity.js';
 import {
   serviceObservation,
   fliggyFlightObservation,
@@ -25,7 +25,9 @@ export interface ServiceSource {
   assertCurrent(): Promise<void>;
 }
 export type ServiceResolver = (owner: string, provider: ServiceName) => Promise<ServiceSource>;
-export class ServiceAuthorizationRequired extends Error {}
+export class ServiceAuthorizationRequired extends SourceReadFailure {
+  constructor(message: string) { super(message, { unavailable: true }); }
+}
 export const unavailableServices: ServiceResolver = async () => {
   throw new ServiceAuthorizationRequired(
     'SERVICE_AUTHORIZATION_REQUIRED: configure the owner-scoped service connection',
@@ -69,24 +71,28 @@ export async function privateFile(path: string) {
  * payment authority. Secrets and raw provider responses are not Ontology rows. */
 export function configuredServices(path?: string, flyAIRead?: FlyAIRead): ServiceResolver {
   if (!path) return unavailableServices;
-  const load = async () =>
-    z
-      .array(connection)
-      .max(100)
-      .parse(JSON.parse(await privateFile(path)));
+  const load = async () => {
+    try { return z.array(connection).max(100).parse(JSON.parse(await privateFile(path))); }
+    catch {
+      throw new SourceReadFailure('Private service configuration is unavailable', { unavailable: true });
+    }
+  };
   return async (owner, provider) => {
     const entries = (await load()).filter((c) => c.owner === owner && c.provider === provider);
     if (entries.length === 0)
       throw new ServiceAuthorizationRequired('SERVICE_AUTHORIZATION_REQUIRED: no owner connection');
-    if (entries.length !== 1) throw new Error('Ambiguous service connection');
+    if (entries.length !== 1) throw new SourceReadFailure('Ambiguous service connection', { unavailable: true });
     const binding = entries[0]!, fingerprint = digest(binding);
     const bindingId = binding.provider === 'Fliggy' ? binding.bindingId + ':' + fingerprint : binding.bindingId;
     const credential = async () => {
-      if (!('credentialFile' in binding)) throw new Error('Service connection has no private credential');
-      const text = (await privateFile(binding.credentialFile)).trim();
-      if (createHash('sha256').update(text).digest('hex') !== binding.credentialSha256)
-        throw new Error('Service credential changed');
-      return text;
+      if (!('credentialFile' in binding))
+        throw new SourceReadFailure('Service connection has no private credential', { unavailable: true });
+      const text = await privateFile(binding.credentialFile).catch(() => {
+        throw new SourceReadFailure('Service credential is unavailable', { unavailable: true });
+      });
+      if (createHash('sha256').update(text.trim()).digest('hex') !== binding.credentialSha256)
+        throw new SourceReadFailure('Service credential changed', { unavailable: true });
+      return text.trim();
     };
     const assertCurrent = async () => {
       const now = (await load()).filter((c) => c.owner === owner && c.provider === provider);
@@ -96,7 +102,7 @@ export function configuredServices(path?: string, flyAIRead?: FlyAIRead): Servic
         now.length !== 1 ||
         digest(now[0]) !== fingerprint
       )
-        throw new Error('Service connection expired or was revoked');
+        throw new SourceReadFailure('Service connection expired or was revoked', { unavailable: true });
       if ('credentialFile' in binding) await credential();
     };
     await assertCurrent();
@@ -151,7 +157,7 @@ export function configuredServices(path?: string, flyAIRead?: FlyAIRead): Servic
               .strictObject({ clientId: z.string(), clientSecret: z.string() })
               .parse(JSON.parse(await credential()));
           } catch {
-            throw new Error('Private Shopify credential configuration is invalid');
+            throw new SourceReadFailure('Private Shopify credential configuration is invalid', { unavailable: true });
           }
           const access = await ShopifyCatalogAccess.exchange(secret.clientId, secret.clientSecret, signal),
             client = new ShopifyReadOnlyClient({ access });

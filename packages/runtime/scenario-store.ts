@@ -87,7 +87,11 @@ export async function stageObject(db: Database, model: PublishedOntology, owner:
   await bumpScenario(db, model, owner, client);
 }
 export async function objectLinks(db: Database, model: PublishedOntology, owner: string, ref: ObjectRef, client: Sql) {
-  return (await db.query(`SELECT type,from_type,from_id,to_type,to_id FROM ${db.schema}.links WHERE projection=$1 AND owner=$2 AND ((from_type=$3 AND from_id=$4) OR (to_type=$3 AND to_id=$4)) ORDER BY type,from_type,from_id,to_type,to_id`, [model.projection,owner,ref.type,ref.id],client)).rows;
+  const { rows } = await db.query(`SELECT type,from_type,from_id,to_type,to_id FROM ${db.schema}.links
+    WHERE projection=$1 AND owner=$2 AND ((from_type=$3 AND from_id=$4) OR (to_type=$3 AND to_id=$4))
+    ORDER BY type,from_type,from_id,to_type,to_id LIMIT 10001`, [model.projection, owner, ref.type, ref.id], client);
+  if (rows.length > 10000) throw new Conflict('Object relationships exceed the complete snapshot limit');
+  return rows;
 }
 
 export async function stageLink(db: Database, model: PublishedOntology, owner: string, edge: LinkData, removed: boolean, client: Sql, journal?: ScenarioMutation[]) {

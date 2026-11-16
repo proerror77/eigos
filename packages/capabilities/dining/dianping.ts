@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { Conflict, digest } from '../../core/identity.js';
+import { Conflict, digest, SourceReadFailure } from '../../core/identity.js';
 import { readPrivateSourceFile } from '../../core/private-source.js';
 import {
   dianpingSearch, dianpingSearchResult, dianpingShopRead, dianpingShopResult, dianpingSource,
@@ -70,7 +70,9 @@ function bookingFlag(value: unknown) {
 async function responseText(response: Response) {
   if (!response.ok || response.redirected || !response.body) {
     await response.body?.cancel();
-    throw new Error('Dianping rejected the read');
+    throw new SourceReadFailure('大众点评查询失败，请检查该接口的授权、签名配置和服务状态。', {
+      unavailable: response.status === 429 || response.status === 503 || response.status === 504,
+    });
   }
   let received = 0;
   const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
@@ -93,14 +95,14 @@ export function dianpingFunctions(path?: string, mockedFetch?: typeof fetch): Re
       const { access, model } = context.objects;
       await access.refresh();
       access.source(model, dianpingSource);
-      if (!path) throw new Conflict('此账号尚未配置大众点评来源。');
+      if (!path) throw new SourceReadFailure('此账号尚未配置大众点评来源。', { unavailable: true });
       let binding;
       try { binding = connection.parse(JSON.parse(await readPrivateSourceFile(path))); }
-      catch { throw new Conflict('大众点评连接配置无效。'); }
+      catch { throw new SourceReadFailure('大众点评连接配置无效。', { unavailable: true }); }
       if (!binding.active || binding.owner !== context.principal.owner || Date.parse(binding.expiresAt) <= Date.now())
-        throw new Conflict('当前账号的大众点评连接不可用或已过期。');
+        throw new SourceReadFailure('当前账号的大众点评连接不可用或已过期。', { unavailable: true });
       const session = binding.sessions[operation];
-      if (!session) throw new Conflict(operation === 'search' ? '大众点评 POI 搜索授权尚未配置。' : '大众点评 POI 详情授权尚未配置。');
+      if (!session) throw new SourceReadFailure(operation === 'search' ? '大众点评 POI 搜索授权尚未配置。' : '大众点评 POI 详情授权尚未配置。', { unavailable: true });
       return { binding, session };
     };
     const { binding, session } = await authorize();
@@ -113,15 +115,23 @@ export function dianpingFunctions(path?: string, mockedFetch?: typeof fetch): Re
         method: 'POST', redirect: 'error', signal,
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ ...parameters, sign }),
+      }).catch((error: unknown) => {
+        context.signal.throwIfAborted();
+        if (error instanceof TypeError || signal.aborted)
+          throw new SourceReadFailure('大众点评查询失败，请检查服务状态。', { unavailable: true });
+        throw error;
       });
       const raw = JSON.parse(await responseText(response));
       const serialized = JSON.stringify(raw);
       if ([binding.appKey, binding.appSecret, session, sign].some(value => serialized.includes(value)))
         throw new Error('Unexpected credential in Dianping response');
       result = decode(raw);
-    } catch {
+    } catch (error) {
       context.signal.throwIfAborted();
-      throw new Conflict('大众点评查询失败，请检查该接口的授权、签名配置和服务状态。');
+      if (error instanceof SourceReadFailure) throw error;
+      throw new SourceReadFailure('大众点评查询失败，请检查该接口的授权、签名配置和服务状态。', {
+        unavailable: signal.aborted,
+      });
     }
     if (digest((await authorize()).binding) !== digest(binding)) throw new Conflict('大众点评来源授权已变化。');
     return { result, provider: dianpingSource, observedAt: new Date().toISOString(), evidence };

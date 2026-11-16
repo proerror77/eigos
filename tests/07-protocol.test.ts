@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { createApp } from '../apps/gateway/app.js';
 import { readConfig } from '../packages/core/config.js';
+import { SourceReadFailure } from '../packages/core/identity.js';
 import { fixture, route, principal } from './fixture.js';
 import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
 import { Ontology } from '../packages/ontology/model.js';
@@ -229,6 +230,24 @@ test('HTTP and MCP keep unexpected database errors private and report a traceabl
     assert.equal(denied.status, 403);
     const malformed = await fetch(url + '/ontology/query', { method: 'POST', headers, body: '{' });
     assert.equal(malformed.status, 400);
+    assert.equal((await fetch(url + '/ontology/scenarios/12e3a93f-5eb8-44aa-be21-ac53824d7e76/discard', {
+      method: 'POST', headers, body: '{}',
+    })).status, 400);
+    assert.equal((await fetch(url + '/ontology/media', {
+      method: 'POST', headers: { ...headers, 'Content-Type': 'application/octet-stream', 'x-asset-name': '%' },
+      body: Buffer.from('not a valid asset'),
+    })).status, 400);
+    const unrecognizedProperty = await fetch(url + '/ontology/query', {
+      method: 'POST', headers, body: JSON.stringify({ query: { type: 'Place', where: { unknownProperty: true } } }),
+    });
+    assert.equal(unrecognizedProperty.status, 400);
+    assert.match(JSON.stringify(await unrecognizedProperty.json()), /Unknown property/);
+    assert.equal((await fetch(url + '/ontology?ontology=MissingOntology', { headers })).status, 404);
+    const directEditFunction = await fetch(url + '/ontology/functions', {
+      method: 'POST', headers, body: JSON.stringify({ function: 'registerGeometry', input: {} }),
+    });
+    assert.equal(directEditFunction.status, 400);
+    assert.match(JSON.stringify(await directEditFunction.json()), /must be invoked through an Action/);
 
     const failure = new Error('SELECT * FROM private_database_detail');
     t.mock.method(gateway.metadata, 'active', async () => { throw failure; });
@@ -248,17 +267,23 @@ test('HTTP and MCP keep unexpected database errors private and report a traceabl
     assert.ok(requestId);
     assert.deepEqual(log.mock.calls[1]?.arguments[1], { requestId, error: failure });
 
-    t.mock.method(gateway.tasks, 'get', async () => { throw failure; });
-    const rpc = await fetch(url + '/a2a', {
+    let taskFailure = failure;
+    t.mock.method(gateway.tasks, 'get', async () => { throw taskFailure; });
+    const rpc = () => fetch(url + '/a2a', {
       method: 'POST', headers: { ...headers, 'A2A-Version': '1.0' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'GetTask',
         params: { id: '12e3a93f-5eb8-44aa-be21-ac53824d7e76' } }),
     });
-    const rpcBody = await rpc.json() as { error: { code: number; message: string } };
+    const rpcBody = await (await rpc()).json() as { error: { code: number; message: string } };
     assert.equal(rpcBody.error.code, -32603);
     const rpcId = /^Internal server error \(request ID: ([\da-f-]{36})\)$/.exec(rpcBody.error.message)?.[1];
     assert.ok(rpcId);
     assert.deepEqual(log.mock.calls[2]?.arguments[1], { requestId: rpcId, error: failure });
+
+    taskFailure = new SourceReadFailure('private supplier error', { unavailable: true });
+    const sourceError = await (await rpc()).json() as { error: { code: number; message: string } };
+    assert.equal(sourceError.error.code, -32603);
+    assert.equal(sourceError.error.message, 'Source temporarily unavailable');
   } finally {
     await client.close();
     await new Promise<void>(resolve => server.close(() => resolve()));
