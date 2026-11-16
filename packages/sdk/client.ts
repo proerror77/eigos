@@ -1,6 +1,9 @@
 import type { ObjectData, ObjectRef, OntologyDocument } from '../ontology/schema.js';
 import type { ActionInput } from '../ontology/invocation.js';
 import type { Query } from '../runtime/objects.js';
+import type { ScenarioComparisonInput, ScenarioComparison, ScenarioTrialInput, ScenarioTrial } from '../runtime/scenario-evaluation.js';
+
+export type { ScenarioComparisonInput, ScenarioComparison, ScenarioTrialInput, ScenarioTrial };
 
 export type { ActionInput } from '../ontology/invocation.js';
 
@@ -144,6 +147,12 @@ export class OntologyClient {
       signal,
     );
     return this.scenario(result.id, input.sessionId);
+  }
+  compareScenarios(input: ScenarioComparisonInput, signal?: AbortSignal) {
+    return this.service<ScenarioComparison>('compare_scenarios', input, signal);
+  }
+  trialScenarios(input: ScenarioTrialInput, signal?: AbortSignal) {
+    return this.service<ScenarioTrial>('trial_scenarios', input, signal);
   }
   pendingScenarioReviews(page = 1, signal?: AbortSignal) {
     return this.service<{ items: ScenarioReviewItem[]; nextPage?: number }>('pending_scenario_reviews', { page }, signal);

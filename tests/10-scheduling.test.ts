@@ -6,6 +6,7 @@ import {PARequests} from '../packages/runtime/pa.js';
 import {Objects} from '../packages/runtime/objects.js';
 import {Scenarios} from '../packages/runtime/scenarios.js';
 import {Access,setGrants,memberGrants} from '../packages/runtime/access.js';
+import { ScenarioEvaluations, trialScenariosSchema } from '../packages/runtime/scenario-evaluation.js';
 import {harnessFixture} from './harness-fixture.js';
 
 async function pending(f:Awaited<ReturnType<typeof fixture>>) {
@@ -201,4 +202,58 @@ test('a model changing the plan title after PA response still resumes the same c
   const p=await proposed(f);assert.equal(p.result.validation.valid,true);
   assert.equal((await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.pa_requests WHERE task_id=$1`,[p.task.id])).rows[0]!.n,1);
  }finally{await f.close();}
+});
+
+
+test('offline trials run real schedule Actions on the same PA evidence and roll back both alternatives', async () => {
+  const f = await fixture(new PlanningFixtureAgent());
+  try {
+    const p = await proposed(f), graph = new Objects(f.db, f.model, f.access);
+    const plan = await graph.read(p.result.plan.ref);
+    const [calendar] = await graph.follow(plan.ref, 'availability');
+    assert(calendar);
+    const metric = { function: 'validateSchedule', input: { plan: { input: 'plan' } }, path: ['valid'] };
+    const at = (minutes: number) => new Date(Date.parse(p.input.start) + minutes * 60000).toISOString();
+    const activity = (minutes: number) => ({
+      kind: 'action', name: 'allocate', action: 'SaveScheduleActivity',
+      input: { plan: { input: 'plan' }, id: { value: 'same-activity' }, name: { value: 'Meeting' },
+        start: { value: at(minutes) }, end: { value: at(minutes + 30) } },
+    });
+    const input = trialScenariosSchema.parse({
+      cases: [{ name: 'calendar', inputs: { plan: plan.ref },
+        evidence: [{ object: plan.ref, revision: plan.revision }, { object: calendar.ref, revision: calendar.revision }] }],
+      variants: [
+        { name: 'current', steps: [activity(0), { ...metric, kind: 'check', name: 'validate', equals: true }] },
+        { name: 'candidate', steps: [{ ...metric, kind: 'check', name: 'precheck', equals: true }, activity(60)] },
+      ],
+      metrics: [{ ...metric, name: 'feasible' }],
+    });
+    const evaluations = new ScenarioEvaluations(f.db, f.capabilities.actions, f.capabilities.functions);
+    const tables = ['scenarios', 'scenario_sessions', 'scenario_objects', 'scenario_links', 'scenario_actions',
+      'actions', 'action_effects', 'external_operations', 'scheduled_actions', 'tasks', 'pa_requests', 'edit_history'];
+    const counts = () => Promise.all(tables.map(async table =>
+      (await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.${table}`)).rows[0]?.n));
+    const before = await counts();
+    const report = await evaluations.trial(await Access.load(f.db, principal), f.model, input);
+    assert.deepEqual(report.summary.map(row => [row.name, row.completed, row.rejected]), [
+      ['current', 0, 1], ['candidate', 1, 0],
+    ]);
+    const [current, candidate] = report.cases[0]!.variants;
+    assert.equal(current?.steps[1]?.value, false);
+    assert(candidate?.status === 'completed');
+    assert.deepEqual(candidate.metrics, { feasible: true });
+    assert.equal(candidate.changes.objectsCreated, 1);
+    assert.equal((await graph.query({ type: 'ScheduledActivity' })).items.length, 0);
+    assert.equal(f.provider.calls.length, 0);
+    assert.deepEqual(await counts(), before);
+
+    await assert.rejects(evaluations.trial(await Access.load(f.db, principal), f.model, {
+      ...input, cases: [{ ...input.cases[0]!, evidence: [{ object: plan.ref, revision: plan.revision + 1 }] }],
+    }), /evidence changed/);
+    await assert.rejects(evaluations.trial(await Access.load(f.db, principal), f.model, {
+      ...input, variants: [{ name: 'merge', steps: [{ kind: 'action', name: 'merge', action: 'CommitSchedulePlan', input: {} }] },
+        input.variants[1]!],
+    }), /offline Scenario evaluation/);
+    assert.deepEqual(await counts(), before);
+  } finally { await f.close(); }
 });

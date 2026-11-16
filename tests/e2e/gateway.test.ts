@@ -99,6 +99,32 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
       const proposedLogs=await call('query_ontology',{scenarioId,query:logQuery});
       assert.equal(proposedLogs.items.length,1);assert.equal(proposedLogs.items[0].properties.newState,'prepared');
       const diff=await call('inspect_scenario',{scenarioId});
+      const alternative = await call('create_scenario', { requestId: 'e2e-alternative', name: 'Alternative' });
+      const sharedMetric = { name: 'valid', function: 'validateSchedule', path: ['valid'], input: { plan: completed.result.plan.ref } };
+      const compared = await call('ontology_compare_scenarios', {
+        scenarios: [{ id: scenarioId, revision: diff.revision }, { id: alternative.id, revision: alternative.revision }],
+        metrics: [sharedMetric],
+      });
+      assert.deepEqual(compared.scenarios.map((row: { changes: { objectsCreated: number } }) => row.changes.objectsCreated), [1, 0]);
+      assert.equal(compared.baseline.metrics.valid, true);
+      const plan = (await call('query_ontology', { query: { type: 'SchedulePlan', where: { id: completed.result.plan.ref.id } } })).items[0];
+      const calendar = (await call('query_ontology', { query: { type: 'CalendarAvailability' } })).items[0];
+      const trial = await call('ontology_trial_scenarios', {
+        cases: [{ name: 'scheduled', inputs: { plan: plan.ref }, evidence: [
+          { object: plan.ref, revision: plan.revision }, { object: calendar.ref, revision: calendar.revision },
+        ] }],
+        variants: [{ name: 'baseline', steps: [] }, { name: 'candidate', steps: [{
+          kind: 'action', name: 'allocate', action: 'SaveScheduleActivity', input: {
+            plan: { input: 'plan' }, id: { value: 'trial-activity' }, name: { value: 'Trial activity' },
+            start: { value: completed.result.activities[0].properties.start }, end: { value: completed.result.activities[0].properties.end },
+          },
+        }] }],
+        metrics: [{ ...sharedMetric, input: { plan: { input: 'plan' } } }],
+      });
+      assert.equal(trial.mode, 'offline');
+      assert.deepEqual(trial.cases[0].variants.map((row: { metrics: { valid: boolean } }) => row.metrics.valid), [true, true]);
+      assert.equal(trial.cases[0].variants[1].changes.objectsCreated, 1);
+      assert.equal((await call('query_ontology', { query: { type: 'ScheduledActivity' } })).items.length, 0);
       await call('apply_ontology_action',{requestId:'e2e-explicit-merge',action:'CommitSchedulePlan',input:{plan:completed.result.plan.ref,scenarioId,revision:diff.revision}});
       assert.equal((await call('query_ontology',{query:{type:'ScheduledActivity'}})).items.length,1);
       assert.equal((await call('query_ontology',{query:{type:'OntologyScenario',where:{id:scenarioId}}})).items[0].properties.state, 'merged');

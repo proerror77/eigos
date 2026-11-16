@@ -1,4 +1,4 @@
-import { digest, type Principal, type ExecutionActor } from '../core/identity.js';
+import { Conflict, digest, type Principal, type ExecutionActor } from '../core/identity.js';
 import { validator, Ontology } from '../ontology/model.js';
 import { Objects } from './objects.js';
 import type { Tasks, Task } from './tasks.js';
@@ -7,7 +7,10 @@ import type { PublishedOntology } from './metadata.js';
 import type { Sql } from './database.js';
 import type { ActionEffect } from './effects.js';
 
+export type ScenarioEvaluation = { client: Sql; evaluatedAt: number };
+
 export interface FunctionContext {
+  scenarioEvaluation?: ScenarioEvaluation;
   principal: Principal; objects: Pick<Objects, 'model' | 'access' | 'read' | 'query' | 'follow' | 'matchesSource'>; signal: AbortSignal; taskId?: string;
   execution?: { task: Task; tasks: Tasks; executor?: ExecutionActor };
   operationId?: string;
@@ -21,9 +24,11 @@ export interface FunctionContext {
   edit?: (result: ObjectRef, write: (objects: Objects) => Promise<void>) => ObjectRef;
 }
 export type FunctionHandler = ((input: Record<string, unknown>, context: FunctionContext) => unknown | Promise<unknown>)
-  & { scenarioPARead?: true };
+  & { scenarioPARead?: true; scenarioEvaluation?: true };
 export const withScenarioPARead = (handler: FunctionHandler): FunctionHandler =>
   Object.assign(handler, { scenarioPARead: true as const });
+export const withScenarioEvaluation = (handler: FunctionHandler): FunctionHandler =>
+  Object.assign(handler, { scenarioEvaluation: true as const });
 type Definition = OntologyDocument['functionTypes'][number];
 export interface VersionedFunction {
   definition: Definition & { version: string };
@@ -60,12 +65,18 @@ export class Functions {
       return [fn.apiName, entry.binding];
     }));
   }
+  requireScenarioEvaluation(model: PublishedOntology, name: string) {
+    const definition = model.functions.get(name);
+    if (!definition || definition.source || !this.registered.get(key(definition))?.handler.scenarioEvaluation)
+      throw new Conflict(`Function is unavailable for offline Scenario evaluation: ${name}`);
+  }
   async invoke(model: PublishedOntology, name: string, input: Record<string, unknown>, context: FunctionContext) {
     const access = context.objects.access;
     access.function(model, name);
     const definition = model.functions.get(name), entry = definition && this.registered.get(key(definition));
     if (!definition || !entry) throw new Error(`Function is unavailable: ${name}`);
     if ((!definition.version && model.runtimeId !== access.runtimeId) || model.bindings.functions[name] !== entry.binding || contract(definition) !== entry.contract) throw new Error('Historical Function implementation is unavailable in this runtime');
+    if (context.scenarioEvaluation) this.requireScenarioEvaluation(model, name);
     if (model.scenario && definition.source && !(entry.handler.scenarioPARead && definition.edits && context.edit &&
       context.execution?.task.cognitive_context?.scenarioId === model.scenario))
       throw new Error('Read external sources before opening a scenario; scenario Functions only use Ontology data');
@@ -77,7 +88,7 @@ export class Functions {
       ...context, edit: undefined, validateScenarioAction: undefined, assertDispatch: undefined, deferEffect: undefined,
     });
     context.signal.throwIfAborted();
-    await access.refresh();
+    await access.refresh(context.scenarioEvaluation?.client);
     return validator(definition.returns).parse(output);
   }
 }

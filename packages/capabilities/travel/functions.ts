@@ -18,7 +18,7 @@ import { ExternalOperations } from '../../runtime/external-operations.js';
 import { ScheduledActions } from '../../runtime/scheduled-actions.js';
 import { PARequests } from '../../runtime/pa.js';
 import type { Database } from '../../runtime/database.js';
-import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
+import { withScenarioEvaluation, type FunctionContext, type FunctionHandler } from '../../runtime/functions.js';
 import type { Sources } from '../../runtime/sources.js';
 import type { SourceResolver } from '../didi/functions.js';
 import { rideOrderSchema, type RideOrder } from '../didi/operations.js';
@@ -36,12 +36,12 @@ const requiredNumber = (value: unknown) => {
     throw new Conflict('Required timing information is unavailable');
   return value;
 };
-const fresh = (object: ObjectData) => {
+const fresh = (object: ObjectData, now = Date.now()) => {
   if (
     !Number.isFinite(ms(object.properties.observedAt)) ||
-    ms(object.properties.observedAt) > Date.now() + 5000 ||
+    ms(object.properties.observedAt) > now + 5000 ||
     !Number.isFinite(ms(object.properties.expiresAt)) ||
-    ms(object.properties.expiresAt) <= Date.now()
+    ms(object.properties.expiresAt) <= now
   )
     throw new Conflict('Travel evidence expired');
 };
@@ -86,7 +86,7 @@ export function travelFunctions(
     const id = context.taskId ?? requested;
     if (
       id &&
-      !(await db.query(`SELECT 1 FROM ${db.schema}.tasks WHERE id=$1 AND owner=$2`, [id, context.principal.owner]))
+      !(await db.query(`SELECT 1 FROM ${db.schema}.tasks WHERE id=$1 AND owner=$2`, [id, context.principal.owner], context.scenarioEvaluation?.client))
         .rowCount
     )
       throw new Conflict('Original task is unavailable for this owner');
@@ -126,7 +126,8 @@ export function travelFunctions(
     const [origin, destination] = await route(context.objects, travel.ref);
     return { travel, origin, destination };
   });
-  handlers.set('planEventTrip', async (raw, context) => {
+  handlers.set('planEventTrip', withScenarioEvaluation(async (raw, context) => {
+    const now = context.scenarioEvaluation?.evaluatedAt ?? Date.now();
     const input = tripInput.parse(raw);
     if (!context.edit || !context.operationId) throw new Conflict('Use an Action');
     const sourceTaskId = await originalTask(context, input.sourceTaskId);
@@ -134,9 +135,9 @@ export function travelFunctions(
       throw new Conflict('The Agent must propose the trip in a scenario');
     const ref = { type: 'EventTrip', id: digest([input.plan, context.operationId]) };
     return context.edit(ref, async (graph) => {
-      const event = await currentService(graph, input.event),
+      const event = await currentService(graph, input.event, undefined, now),
         travel = await graph.read(input.travel);
-      fresh(travel);
+      fresh(travel, now);
       await assertServiceAuthority(services, graph.owner, 'Luma', String(event.properties.bindingId));
       if (
         input.event.type !== 'LumaEvent' ||
@@ -147,7 +148,7 @@ export function travelFunctions(
       const [origin, destination] = await route(graph, travel.ref);
       await graph.read(origin!.ref);
       await graph.read(destination!.ref);
-      const state = await readPlan(graph, input.plan),
+      const state = await readPlan(graph, input.plan, now),
         times = timing(
           String(event.properties.start),
           String(event.properties.end),
@@ -155,7 +156,7 @@ export function travelFunctions(
           input.waitMinutes,
           input.entryMinutes,
         );
-      if (ms(times.callAt) <= Date.now()) throw new Conflict('There is insufficient time for this trip');
+      if (ms(times.callAt) <= now) throw new Conflict('There is insufficient time for this trip');
       await graph.create(ref, {
         id: ref.id,
         name: `Attend ${event.properties.name}`,
@@ -207,7 +208,7 @@ export function travelFunctions(
       if (!graph.model.scenario && !(await validate(graph, input.plan, ref)).valid)
         throw new Conflict('Trip conflicts with the current schedule');
     });
-  });
+  }));
   handlers.set('authorizeEventTrip', async (raw, context) => {
     const input = authorizeTripInput.parse(raw);
     if (!context.edit || context.execution || context.objects.model.scenario)

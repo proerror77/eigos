@@ -4,6 +4,7 @@ import { fixture, principal } from './fixture.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { Scenarios } from '../packages/runtime/scenarios.js';
 import { Access } from '../packages/runtime/access.js';
+import { ScenarioEvaluations, compareScenariosSchema } from '../packages/runtime/scenario-evaluation.js';
 import { calendarAnswer } from './planning-fixture.js';
 
 const ref={type:'Route',id:'shared-route'};
@@ -231,4 +232,34 @@ test('a deleted and recreated live object cannot masquerade as the scenario base
   await assert.rejects(f.db.transaction(c=>s.mergeInto(new Objects(f.db,f.model,f.access,c),a.id,diff.revision,{objects:['Route'],links:[]})),/conflicts/);
   assert.equal((await live.read(ref)).properties.name,'replacement');
  }finally{await f.close();}
+});
+
+
+test('scenario comparison selects exact revisions and compares one shared aggregate', async () => {
+  const f = await fixture();
+  try {
+    const scenarios = new Scenarios(f.db), live = new Objects(f.db, f.model, f.access);
+    await live.create(ref, { id: ref.id, name: 'original' });
+    const zones = [];
+    for (const name of ['north', 'south']) {
+      const scenario = await scenarios.create(f.access, f.model, { requestId: name, name });
+      const view = await scenarios.view(f.access, f.model, scenario.id);
+      await new Objects(f.db, view, f.access).edit(ref, 1, { name });
+      zones.push(await scenarios.inspect(f.access, f.model, scenario.id));
+    }
+    const evaluations = new ScenarioEvaluations(f.db, f.capabilities.actions, f.capabilities.functions);
+    const input = compareScenariosSchema.parse({
+      scenarios: zones.map(({ id, revision }) => ({ id, revision })),
+      aggregates: [{ set: { op: 'query', query: { type: 'Route', where: { name: 'north' } } }, metrics: { matches: { op: 'count' } } }],
+    });
+    const comparison = await evaluations.compare(await Access.load(f.db, principal), f.model, input);
+    assert.equal(comparison.baseline.aggregates[0]?.items[0]?.metrics.matches, 0);
+    assert.deepEqual(comparison.scenarios.map(row => row.aggregates[0]?.items[0]?.metrics.matches), [1, 0]);
+    assert.deepEqual(comparison.scenarios.map(row => row.preview.objects[0]?.after?.name), ['north', 'south']);
+    assert.equal(comparison.scenarios[0]?.changes.objectsEdited, 1);
+    await assert.rejects(evaluations.compare(await Access.load(f.db, principal), f.model, {
+      ...input, scenarios: [{ id: zones[0]!.id, revision: 1 }, input.scenarios[1]!],
+    }), /revision changed/);
+    await assert.rejects(evaluations.compare(await Access.load(f.db, { ...principal, owner: 'another' }), f.model, input), /Permission|unavailable/);
+  } finally { await f.close(); }
 });
