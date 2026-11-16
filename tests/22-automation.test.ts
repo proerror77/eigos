@@ -35,6 +35,7 @@ import { calendarJourneyDefinition } from '../packages/ontology/calendar-journey
 import { deliveryFunctions } from '../packages/ontology/delivery.js';
 import { dianpingResearchFunctions } from '../packages/ontology/dianping.js';
 import { diningReservations } from '../packages/ontology/dining-reservations.js';
+import { petRideDefinition } from '../packages/ontology/pet-ride.js';
 import { documentDefinition } from '../packages/ontology/documents.js';
 import { fliggyFlightBookingDefinition } from '../packages/ontology/fliggy-flight-booking.js';
 import { fliggyHotelDefinition } from '../packages/ontology/fliggy-hotel.js';
@@ -569,7 +570,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   // Reconstruct the historical documents on the same runtime and check both published identities.
   const laterDomains = [
     calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition, fliggyServicesDefinition,
-    fliggyFlightBookingDefinition, fliggyHotelDefinition, diningReservations, marketplaceDefinition,
+    fliggyFlightBookingDefinition, fliggyHotelDefinition, diningReservations, marketplaceDefinition, petRideDefinition,
   ];
   const addedTypes = new Set([
     ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType,
@@ -609,7 +610,8 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   geometry.function = 'registerGeometry';
   v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type => type.apiName !== 'RideInquiryWithPlaceClues' &&
     !fliggyServicesDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
-    !marketplaceDefinition.interfaceTypes.some(item => item.apiName === type.apiName));
+    !marketplaceDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
+    !petRideDefinition.interfaceTypes.some(item => item.apiName === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;
   v9Definition.objectTypes = v9Definition.objectTypes.filter(type => !addedTypes.has(type.apiName) && !addedLogs.some(log => log.type === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'ScheduledActivity')!.properties.dining;

@@ -12,6 +12,8 @@ export const submitSchema = z.strictObject({ requestId: z.string().min(1).max(12
   conversationId: z.string().min(1).max(128).regex(/^[^\u0000-\u001f\u007f]+$/u).optional(),
 });
 export const storedInputSchema = submitSchema.extend({
+  // Set by the Gateway for member MCP tokens; Workers load the restricted member grants from it.
+  memberAccess: z.literal(true).optional(),
   places: placeSelectionSchema.partial().optional(),
   placeAmendments: placeAmendmentsSchema.optional(),
   mapPlaceCorrections: mapPlaceCorrectionsSchema.optional(),

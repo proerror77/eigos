@@ -15,6 +15,7 @@ import { pathToFileURL } from 'node:url';
 import type { ProjectionTransform } from '../packages/runtime/metadata.js';
 import { modelClearanceSchema, setModelClearance } from '../packages/runtime/model-egress.js';
 import { enablePgvector } from '../packages/runtime/semantic-pgvector.js';
+import { Members } from '../packages/runtime/members.js';
 import { installOwnerIsolation } from '../packages/runtime/owner-isolation.js';
 import { provisionPublicPlaceCatalogue } from '../packages/capabilities/public-places/catalogue.js';
 import { publicPlacesOntology } from '../packages/ontology/public-places.js';
@@ -36,6 +37,10 @@ else {
       console.log(JSON.stringify(await installOwnerIsolation(db)));
     } else if (command === 'enable-pgvector') {
       console.log(JSON.stringify(await enablePgvector(db)));
+    } else if (command === 'invite-member') {
+      const email = z.email().parse(process.argv[3]);
+      const hours = z.coerce.number().int().min(1).max(168).parse(process.argv[4] ?? 48);
+      console.log(await new Members(db).invite(email, hours));
     } else if (command === 'provision-public-places') {
       const project = ontologyName.parse(process.argv[3]);
       await db.query(`INSERT INTO ${db.schema}.resource_grants(subject,resource,permission) VALUES($1,$2,'manage_definition')
@@ -84,7 +89,7 @@ else {
       const published = command === 'prepare' ? await metadata.prepare(document, bindings, access, transform)
         : command === 'activate' ? await metadata.activate(process.argv[3]!, bindings, access)
         : command === 'publish' ? await metadata.publish(document, bindings, access, transform) : undefined;
-      if (!published) throw new Error('Use check, initialize, upgrade, enable-owner-isolation, enable-pgvector, permissions, grant-member, provision-public-places, prepare, activate or publish');
+      if (!published) throw new Error('Use check, initialize, upgrade, enable-owner-isolation, enable-pgvector, permissions, invite-member, grant-member, provision-public-places, prepare, activate or publish');
       console.log(JSON.stringify({ release: published.release, definition: published.digest, projection: published.projection, runtime: published.runtimeId }));
     }
   } finally { await db.close(); }
