@@ -21,7 +21,7 @@ test('a lost web confirmation reconciles the original test order and never repea
     await writeFile(diningWeb, JSON.stringify({
       owner: principal.owner, restaurant: terms.restaurant, city: terms.city, timeZone, sandboxOrigin: merchant.origin,
     }), { mode: 0o600 });
-    const f = active = await fixture(undefined, undefined, undefined, undefined, { diningWeb });
+    const f = active = await fixture(undefined, undefined, undefined, undefined, { diningWeb }, {}, { sandbox: true });
     const apply = (action: string, input: Record<string, unknown>, requestId: string) =>
       f.capabilities.actions.apply(f.access, f.model, action, input, requestId);
     const objects = new Objects(f.db, f.model, f.access);

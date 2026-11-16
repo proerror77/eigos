@@ -26,6 +26,7 @@ import type { SourceResolver } from '../../packages/capabilities/didi/functions.
 import { verifier, type VerifyToken } from './auth.js';
 import { A2A, AgentUser, agentCard } from './a2a.js';
 import { publicError } from './public-error.js';
+import { developmentSandboxEnabled } from '../../packages/core/sandbox-mode.js';
 
 const queryInput = z.strictObject({ ontology:z.string().optional(), taskId: z.uuid().optional(), scenarioId: z.uuid().optional(), query: querySchema });
 const scenarioCreateInput = createScenarioSchema.safeExtend({ ontology: z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(80).optional() });
@@ -43,6 +44,8 @@ const paTravelInstructions = [
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {},
   providerFetch: { amapFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch;
     dianpingFetch?: typeof fetch } = {}) {
+  if (db.sandboxEnabled && !developmentSandboxEnabled({ ...config, NODE_ENV: process.env.NODE_ENV }))
+    throw new Error('Gateway sandbox requires explicit loopback development configuration');
   const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE), configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
     fliggyFlight: config.EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE,
     fliggyHotel: config.EIGOS_FLIGGY_HOTEL_CONNECTION_FILE,

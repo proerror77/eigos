@@ -1,28 +1,13 @@
 import { PermissionDenied } from '../core/identity.js';
-import { businessAgentProfiles, historicalAgentSandboxResources, sandboxAgentCapability, type AgentProfile } from '../ontology/agent-profiles.js';
+import { businessAgentProfiles, type AgentProfile } from '../ontology/agent-profiles.js';
+import { isSandboxResource } from '../ontology/sandbox.js';
 import type { Ontology } from '../ontology/model.js';
 import { resourceGroups } from '../ontology/resource-mapping.js';
 import type { Task } from './tasks.js';
 import type { Access } from './access.js';
 
-const sandboxActions = new Set(historicalAgentSandboxResources.actions);
-const sandboxFunctions = new Set([...sandboxActions].map(name => name[0]!.toLowerCase() + name.slice(1)));
-sandboxFunctions.add('readDiningReservation');
-const sandboxObjects = new Set(historicalAgentSandboxResources.objects);
-
-function testCapability(model: Ontology, kind: string, name: string): boolean {
-  const definition = kind === 'action' ? model.actions.get(name)
-    : kind === 'function' ? model.functions.get(name) : kind === 'object' ? model.objects.get(name) : undefined;
-  if (definition?.typeClasses?.some(tag => tag.kind === sandboxAgentCapability.kind && tag.name === sandboxAgentCapability.name))
-    return true;
-  return (kind === 'action' && (sandboxActions.has(name) ||
-    testCapability(model, 'function', model.actions.get(name)?.function ?? '')))
-    || (kind === 'function' && sandboxFunctions.has(name))
-    || (kind === 'object' && sandboxObjects.has(name));
-}
-
 export function checkAgentCapability(model: Ontology, sandbox: boolean, kind: 'action' | 'function', name: string) {
-  if (!sandbox && testCapability(model, kind, name)) throw new PermissionDenied('Capability requires a sandbox Agent');
+  if (!sandbox && isSandboxResource(model, kind, name)) throw new PermissionDenied('Capability requires a sandbox Agent');
 }
 
 type Candidate = { apiName: string; description?: string };
@@ -99,7 +84,7 @@ function rank(item: Candidate, message: string) {
 export function catalogue(model: Ontology, access: Access, sandbox: boolean,
   include = (_kind: string, _name: string) => true, compact = false) {
   const document = access.describe(model, true, (kind, name) =>
-    include(kind, name) && (sandbox || !testCapability(model, kind, name)));
+    include(kind, name) && (sandbox || !isSandboxResource(model, kind, name)));
   const summary = ({ apiName, description }: Candidate) => ({ apiName, description: description?.slice(0, 220) });
   return {
     definition: model.digest,
@@ -120,7 +105,7 @@ export function catalogue(model: Ontology, access: Access, sandbox: boolean,
 export function describeAgentResources(model: Ontology, access: Access, sandbox: boolean, names: string[]) {
   const selected = new Set(names), supporting = namedScope(model, names);
   const document = access.describe(model, true, (kind, name) =>
-    supporting(kind, name) && (sandbox || !testCapability(model, kind, name)));
+    supporting(kind, name) && (sandbox || !isSandboxResource(model, kind, name)));
   return Object.values(resourceGroups).flatMap(field =>
     (document[field] as Candidate[] | undefined)?.filter(item => selected.has(item.apiName)) ?? []);
 }
