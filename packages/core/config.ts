@@ -14,6 +14,10 @@ export const configSchema = z.object({
   PUBLIC_URL: z.url().default('http://127.0.0.1:3000'),
   EIGOS_AUTH_MODE: z.enum(['jwt', 'development']).default('jwt'), EIGOS_DEV_TOKEN: z.string().min(32).optional(),
   OAUTH_WORKBENCH_CLIENT_ID: z.string().min(1).optional(),
+  OAUTH_MEMBER_CLIENT_ID: z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/).optional(),
+  OAUTH_MEMBER_CLIENT_SECRET: z.string().min(1).optional(),
+  OAUTH_MEMBER_MCP_CLIENT_ID: z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/).optional(),
+  OAUTH_EXISTING_CLIENT_IDS: z.string().regex(/^[a-zA-Z0-9_-]+(?:,[a-zA-Z0-9_-]+)*$/).optional(),
   OAUTH_ISSUER: z.url().optional(), OAUTH_AUDIENCE: z.string().optional(), OAUTH_JWKS_URL: z.url().optional(),
   OAUTH_TENANT_CLAIM: z.string().min(1).default('tenant_id'),
   EIGOS_EXTENSION_MODULE: z.string().optional(),
@@ -42,6 +46,17 @@ export function readConfig(env = process.env): Config {
   if (config.EIGOS_AUTH_MODE === 'development') {
     if (!config.EIGOS_DEV_TOKEN || env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost'].includes(config.HOST)) throw new Error('Development authentication requires an explicit loopback token');
   } else if (!config.OAUTH_ISSUER || !config.OAUTH_AUDIENCE || !config.OAUTH_JWKS_URL) throw new Error('Configure JWT issuer, audience and verification keys');
+  if (config.OAUTH_MEMBER_CLIENT_ID || config.OAUTH_MEMBER_CLIENT_SECRET || config.OAUTH_MEMBER_MCP_CLIENT_ID || config.OAUTH_EXISTING_CLIENT_IDS) {
+    if (config.EIGOS_AUTH_MODE !== 'jwt' || !config.OAUTH_MEMBER_CLIENT_ID || !config.OAUTH_MEMBER_CLIENT_SECRET ||
+        !config.OAUTH_MEMBER_MCP_CLIENT_ID || !config.OAUTH_EXISTING_CLIENT_IDS ||
+        config.OAUTH_MEMBER_CLIENT_ID === config.OAUTH_MEMBER_MCP_CLIENT_ID ||
+        config.OAUTH_EXISTING_CLIENT_IDS.split(',').some(id => id === config.OAUTH_MEMBER_CLIENT_ID || id === config.OAUTH_MEMBER_MCP_CLIENT_ID) ||
+        new URL(config.OAUTH_ISSUER!).protocol !== 'https:' || config.OAUTH_ISSUER !== new URL(config.OAUTH_ISSUER!).origin + '/' ||
+        new URL(config.OAUTH_JWKS_URL!).origin !== new URL(config.OAUTH_ISSUER!).origin ||
+        new URL(config.PUBLIC_URL).origin !== config.PUBLIC_URL || new URL(config.PUBLIC_URL).protocol !== 'https:') {
+      throw new Error('Configure separate HTTPS member portal, MCP and existing OAuth clients');
+    }
+  }
   return config;
 }
 const connectionSchema = z.strictObject({ owner: z.string().min(1), active: z.boolean(), expiresAt: z.iso.datetime().nullable().optional(), binding: didiBindingSchema, ordersEnabled:z.boolean().default(false) });

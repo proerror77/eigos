@@ -45,12 +45,13 @@ const headOfConversation = (table: string) => `NOT EXISTS (
 export const publicTask = (task: Task) => ({ id: task.id, ...(task.conversation_id ? { conversationId: task.conversation_id } : {}), state: task.state, result: publicHotelTaskResult(task.result), error: task.error, createdAt: task.created_at, updatedAt: task.updated_at });
 export class Tasks {
   constructor(readonly db: Database, private readonly metadata: Metadata) {}
-  async submit(principal: Principal, raw: unknown, { assignConversation = false } = {}): Promise<Task> {
+  async submit(principal: Principal, raw: unknown, { assignConversation = false, authorize }: { assignConversation?: boolean; authorize?: (client: Sql) => Promise<void> } = {}): Promise<Task> {
     requireScope(principal, 'tasks:write');
     const input = submitSchema.parse(raw);
     if (input.learnHotelWorkflow && input.replayHotelWorkflow) throw new Conflict('Choose learning or replay for this task');
     const fingerprint = digest(input);
     const task = await this.db.transaction(async client => {
+      await authorize?.(client);
       const table = `${this.db.schema}.tasks`, events = `${this.db.schema}.task_inbox_events`;
       const { owner } = principal;
       // The same delivery may arrive through any gateway, including from a different process.

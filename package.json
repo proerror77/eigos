@@ -27,6 +27,7 @@
     "db:enable-owner-isolation": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts enable-owner-isolation",
     "ontology:prepare": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts prepare",
     "ontology:activate": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts activate",
+    "access:invite-member": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts invite-member",
     "access:grant-member": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts grant-member",
     "access:configure": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts permissions",
     "start:indexer": "node --env-file-if-exists=.env dist/apps/indexer/main.js",

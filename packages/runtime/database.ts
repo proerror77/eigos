@@ -17,6 +17,7 @@ import pg, { type PoolClient, type QueryResultRow } from 'pg';
 import { initializeSecurity } from './security.js';
 import { implementationDigest } from './implementation.js';
 import { initializeExecutionTrace } from './execution-trace.js';
+import { initializeMembers } from './members.js';
 
 export type Sql = Pick<pg.Pool, 'query'> | Pick<PoolClient, 'query'>;
 export class Database {
@@ -174,6 +175,7 @@ export class Database {
         received_at timestamptz NOT NULL DEFAULT clock_timestamp(), PRIMARY KEY(owner,request_id), UNIQUE(task_id,position));
       CREATE TABLE IF NOT EXISTS ${s}.source_calls (task_id uuid NOT NULL REFERENCES ${s}.tasks(id), name text NOT NULL, state text NOT NULL, input_digest text NOT NULL, result jsonb, PRIMARY KEY(task_id,name));
       ALTER TABLE ${s}.source_calls ADD COLUMN IF NOT EXISTS lease_token uuid;`);
+    await initializeMembers(this);
     await this.query(`
       CREATE TABLE IF NOT EXISTS ${s}.scenarios (id uuid PRIMARY KEY, owner text NOT NULL, request_id text NOT NULL, name text NOT NULL,
         release text NOT NULL REFERENCES ${s}.releases(digest), revision bigint NOT NULL DEFAULT 1, state text NOT NULL DEFAULT 'open',

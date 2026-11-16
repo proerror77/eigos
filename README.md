@@ -60,6 +60,8 @@ Key 文件由运行用户拥有，权限为 `0600`。查询连接器调用滴滴
 
 ## Agent 入口
 
+邀请制用户入口和 Grok OAuth 配置见 [会员与 Grok MCP](docs/guides/member-mcp.md)。
+
 MCP 位于 `/mcp`，提供 `describe_ontology`、`query_ontology`、`evaluate_ontology`、`apply_ontology_action`、`submit_task`、`get_task`、`select_task_places`，以及 PA 的 `list_pa_requests`、`respond_to_task` 和 Scenario 生命周期工具。
 
 对于无需补充信息的请求，外部 Agent 可用 `complete_with_action` 在一次 MCP 工具调用中运行 Interface Action 并通过发布的 Function 返回结果。上海滴滴实时询价的本机入口为 `node scripts/ontology-agent.mjs 上海市 '中企·云萃森林257弄' 前滩太古里`。入口复用已授权的本机 Ontology 操作员 OAuth 配置，按需续期，并只调用询价组合。
