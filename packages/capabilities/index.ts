@@ -17,6 +17,7 @@ import { configuredAmap } from './amap/client.js';
 import { amapFunctions } from './amap/functions.js';
 import { resolveTaskLocation } from './location.js';
 import { luckinFunctions } from './luckin/functions.js';
+import { marketplaceFunctions } from './marketplace/functions.js';
 import { paotuiFunctions } from './meituan/paotui.js';
 import { waimaiFunctions } from './meituan/waimai.js';
 import {localEmbeddingVersion} from '../runtime/local-embeddings.js';
@@ -59,6 +60,7 @@ export function createCapabilities(
     ...applicationFunctions(db),
     [registerDocumentFunction, registerSchedulePlanDocument],
     ...serviceFunctions(services, () => sources),
+    ...marketplaceFunctions(services),
     ...fliggyFlightBookingFunctions(db, configuredFliggyFlight(connections.fliggyFlight, connections.fliggyFlightFetch)),
     ...fliggyHotelFunctions(db, configuredFliggyHotel(connections.fliggyHotel, connections.fliggyHotelFetch)),
     ...travelFunctions(db, source, services, () => sources),

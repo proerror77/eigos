@@ -42,8 +42,9 @@ const paTravelInstructions = [
 
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {},
   providerFetch: { amapFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch;
-    dianpingFetch?: typeof fetch } = {}) {
-  const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE), configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
+    dianpingFetch?: typeof fetch; marketplaceFetch?: typeof fetch } = {}) {
+  const { marketplaceFetch, ...sourceFetch } = providerFetch;
+  const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE, undefined, marketplaceFetch), configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
     fliggyFlight: config.EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE,
     fliggyHotel: config.EIGOS_FLIGGY_HOTEL_CONNECTION_FILE,
     paotui: config.EIGOS_PAOTUI_CONNECTION_FILE, waimai: config.EIGOS_WAIMAI_CONNECTION_FILE,
@@ -52,7 +53,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     diningWeb: config.EIGOS_DINING_WEB_CONNECTION_FILE,
     diningMiniProgram: config.EIGOS_DINING_MINIPROGRAM_CONNECTION_FILE,
     fr24: config.EIGOS_FR24_CONNECTION_FILE, fr24Entrypoint: config.EIGOS_FR24_MCP_ENTRYPOINT,
-    calendar: config.EIGOS_JOURNEY_CALENDAR_CONNECTION_FILE, travelPA: config.EIGOS_TRAVEL_PA_CONNECTION_FILE, ...providerFetch,
+    calendar: config.EIGOS_JOURNEY_CALENDAR_CONNECTION_FILE, travelPA: config.EIGOS_TRAVEL_PA_CONNECTION_FILE, ...sourceFetch,
   });
   const scenarios = new Scenarios(db), pa = new PARequests(tasks);
   const hotelWorkflows = new HotelWorkflows(db, metadata, capabilities.functions);

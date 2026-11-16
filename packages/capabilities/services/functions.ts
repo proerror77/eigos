@@ -23,7 +23,10 @@ async function currentSource(resolve: ServiceResolver, owner: string, provider: 
   try {
     return await resolve(owner, provider);
   } catch (error) {
-    if (provider === 'Luma' && error instanceof ServiceAuthorizationRequired) return;
+    if (error instanceof ServiceAuthorizationRequired) {
+      if (provider === 'Luma') return;
+      if (provider === 'Taobao' || provider === 'JD') throw new PermissionDenied(error.message);
+    }
     throw error;
   }
 }
@@ -112,7 +115,7 @@ export function serviceFunctions(resolve: ServiceResolver, getSources: () => Sou
       }
       await source.assertCurrent();
       const response = await source.read(input, context.signal).catch((error: unknown) => {
-        if (context.execution && (provider === 'RollingGo' || provider === 'Fliggy')) {
+        if (context.execution && (provider === 'RollingGo' || provider === 'Fliggy' || provider === 'Taobao' || provider === 'JD')) {
           context.signal.throwIfAborted();
           throw new SourceReadFailure('Supplier search failed', { cause: error });
         }

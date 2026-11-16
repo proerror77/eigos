@@ -4,6 +4,8 @@
 
 餐厅搜索、门店详情和点评预订入口见[大众点评连接](dianping.md)。
 
+淘宝、天猫与京东商品搜索和买家交接见[淘宝和京东购物](marketplace-shopping.md)。
+
 ## 自驾用餐计划
 
 用同一个 PA Task 提交目的地、想吃的菜和已知的出发点。Agent 可调用 `searchRestaurantNotes` 发现小红书候选，使用 `readWeather` 查高德短期预报，用 `readWeatherHistory` 向原 PA 请求历史天气。历史回传区分站点观测与再分析，并报告日期覆盖是否完整。通过高德查询去程和返程，用既有 `PrepareSchedulePlan` 请求原 PA 的授权日历忙闲并校验整个行程。

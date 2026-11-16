@@ -8,6 +8,7 @@ import {
   serviceObservation,
   fliggyFlightObservation,
   fliggyHotelObservation,
+  marketplaceObservation,
   type ServiceName,
   type ServiceObservation,
   hotelSearchInput,
@@ -15,6 +16,7 @@ import {
 } from '../../ontology/service-contracts.js';
 import { searchFliggy, type FlyAIRead } from '../fliggy/connector.js';
 import { LumaReadClient } from '../luma/client.js';
+import { searchMarketplace } from '../marketplace/connector.js';
 import { RollingGoSearchConnector } from '../rollinggo/connector.js';
 import { ShopifyCatalogAccess, ShopifyReadOnlyClient } from '../shopify/read-only.js';
 
@@ -43,7 +45,7 @@ const credentialFields = {
   credentialSha256: z.string().regex(/^[a-f0-9]{64}$/),
 };
 const connection = z.union([
-  connectionBase.extend({ provider: z.enum(['Luma', 'RollingGo', 'Shopify']), ...credentialFields }),
+  connectionBase.extend({ provider: z.enum(['Luma', 'RollingGo', 'Shopify', 'Taobao', 'JD']), ...credentialFields }),
   connectionBase.extend({ provider: z.literal('Fliggy'), mode: z.literal('trial') }),
   connectionBase.extend({ provider: z.literal('Fliggy'), mode: z.literal('key'), ...credentialFields }),
 ]);
@@ -67,7 +69,7 @@ export async function privateFile(path: string) {
 }
 /** Configuration grants source access to one owner; it never grants booking or
  * payment authority. Secrets and raw provider responses are not Ontology rows. */
-export function configuredServices(path?: string, flyAIRead?: FlyAIRead): ServiceResolver {
+export function configuredServices(path?: string, flyAIRead?: FlyAIRead, marketplaceFetch?: typeof fetch): ServiceResolver {
   if (!path) return unavailableServices;
   const load = async () =>
     z
@@ -80,7 +82,8 @@ export function configuredServices(path?: string, flyAIRead?: FlyAIRead): Servic
       throw new ServiceAuthorizationRequired('SERVICE_AUTHORIZATION_REQUIRED: no owner connection');
     if (entries.length !== 1) throw new Error('Ambiguous service connection');
     const binding = entries[0]!, fingerprint = digest(binding);
-    const bindingId = binding.provider === 'Fliggy' ? binding.bindingId + ':' + fingerprint : binding.bindingId;
+    const marketplace = binding.provider === 'Taobao' || binding.provider === 'JD';
+    const bindingId = binding.provider === 'Fliggy' || marketplace ? binding.bindingId + ':' + fingerprint : binding.bindingId;
     const credential = async () => {
       if (!('credentialFile' in binding)) throw new Error('Service connection has no private credential');
       const text = (await privateFile(binding.credentialFile)).trim();
@@ -143,6 +146,10 @@ export function configuredServices(path?: string, flyAIRead?: FlyAIRead): Servic
               priceKind: 'reference',
             })),
           };
+        } else if (binding.provider === 'Taobao' || binding.provider === 'JD') {
+          const items = await searchMarketplace(binding.provider, input, await credential(), signal, marketplaceFetch);
+          result = { items, complete: false, cursor: null };
+          resultSchema = marketplaceObservation;
         } else {
           const q = productSearchInput.parse(input);
           let secret: { clientId: string; clientSecret: string };
@@ -189,7 +196,7 @@ export function configuredServices(path?: string, flyAIRead?: FlyAIRead): Servic
           ...(accessMode ? { accessMode } : {}),
           observedAt: new Date(observedAt).toISOString(),
           expiresAt: new Date(Math.min(observedAt + 300000, Date.parse(binding.expiresAt))).toISOString(),
-          evidence: binding.provider === 'Fliggy' && flyAIRead ? 'provider_mock' : 'live_readonly',
+          evidence: (binding.provider === 'Fliggy' && flyAIRead || marketplace && marketplaceFetch) ? 'provider_mock' : 'live_readonly',
           ...result,
           inputDigest: digest(input),
           contentDigest: digest(result),

@@ -8,6 +8,11 @@ import {
   fliggyHotelFacts,
   flightFacts,
   productFacts,
+  marketplaceFacts,
+  marketplaceObservation,
+  marketplacePurchaseFacts,
+  prepareMarketplacePurchaseInput,
+  readMarketplacePurchaseInput,
   eventSearchInput,
   hotelSearchInput,
   flightSearchInput,
@@ -103,7 +108,41 @@ const fliggyServiceCatalog = [
     terms: 'FlyAI returns dated flight candidates with local times and displayed fares. Passenger totals, taxes, seats and fare terms require provider confirmation.',
   },
 ] as const;
-export const serviceCatalog = [...coreServiceCatalog, ...fliggyServiceCatalog] as const;
+export const marketplaceServiceCatalog = [
+  {
+    provider: 'Taobao',
+    object: 'TaobaoProductOffer',
+    result: 'TaobaoProductSearch',
+    searchInterface: 'ProductSearch',
+    source: 'TaobaoProducts',
+    read: 'readTaobaoProducts',
+    search: 'searchTaobaoProducts',
+    action: 'SearchTaobaoProducts',
+    prepare: 'prepareTaobaoPurchase',
+    purchase: 'PrepareTaobaoPurchase',
+    parameters: productSearchInput,
+    facts: marketplaceFacts,
+    observation: marketplaceObservation,
+    terms: 'Search the eligible Taobao and Tmall affiliate catalog in CN. Prices are reference amounts; inventory, options and checkout total require buyer verification.',
+  },
+  {
+    provider: 'JD',
+    object: 'JdProductOffer',
+    result: 'JdProductSearch',
+    searchInterface: 'ProductSearch',
+    source: 'JdProducts',
+    read: 'readJdProducts',
+    search: 'searchJdProducts',
+    action: 'SearchJdProducts',
+    prepare: 'prepareJdPurchase',
+    purchase: 'PrepareJdPurchase',
+    parameters: productSearchInput,
+    facts: marketplaceFacts,
+    observation: marketplaceObservation,
+    terms: 'Search the eligible JD Union catalog in CN. Prices are reference amounts; inventory, delivery and checkout total require buyer verification.',
+  },
+] as const;
+export const serviceCatalog = [...coreServiceCatalog, ...fliggyServiceCatalog, ...marketplaceServiceCatalog] as const;
 export const travelOfferSources = serviceCatalog.filter(service =>
   service.searchInterface === 'HotelSearch' || service.searchInterface === 'FlightSearch',
 );
@@ -213,6 +252,7 @@ const providerServices = (catalog: readonly (typeof serviceCatalog)[number][]): 
       parameters: json(service.parameters),
       returns: json(service.observation),
       source: service.provider,
+      ...('purchase' in service ? { dependencies: {} } : {}),
     },
     {
       apiName: service.search,
@@ -409,17 +449,22 @@ fliggyServicesDefinition.actionTypes.push({
   function: 'searchTravelOffers',
 });
 
+const productOfferShape = {
+  ...productFacts.partial({ variantId: true, sellerId: true, merchantDomain: true }).shape,
+  sellerName: marketplaceFacts.shape.sellerName,
+  priceKind: marketplaceFacts.shape.priceKind.optional(),
+};
 for (const [types, apiName, shape] of [
   [['RollingGoHotelOffer', 'FliggyHotelOffer'], 'HotelOffer', { ...hotelFacts.shape, priceKind: z.enum(['reference', 'room_rate']) }],
   [['FliggyFlightOffer'], 'FlightOffer', flightFacts.shape],
-  [['ShopifyProductOffer'], 'ProductOffer', productFacts.shape],
+  [['ShopifyProductOffer'], 'ProductOffer', productOfferShape],
 ] as const) {
   const definition = apiName === 'FlightOffer' ? fliggyServicesDefinition : servicesDefinition;
   definition.interfaceTypes.push({
     apiName,
     description: `Provider-neutral ${apiName} selection. Concrete implementations bind source-specific identity and Actions.`,
     properties: properties(shape),
-    optionalProperties: ['url'],
+    optionalProperties: Object.entries(shape).filter(([, schema]) => schema.isOptional()).map(([name]) => name),
     links: { plans: { target: 'SchedulePlan', cardinality: 'many', required: true } },
     actions: {
       select: {
@@ -432,9 +477,60 @@ for (const [types, apiName, shape] of [
   for (const type of types) {
     const offer = [...servicesDefinition.objectTypes, ...fliggyServicesDefinition.objectTypes].find(item => item.apiName === type)!;
     offer.interfaces[apiName] = {
-      properties: identity(Object.keys(shape)),
+      properties: identity(Object.keys(shape).filter(name => offer.properties[name])),
       links: { plans: 'plans' },
       actions: { select: { action: 'AttachPlanService', parameters: { service: 'service', plan: 'plan' } } },
     };
   }
 }
+
+export const marketplacePurchaseType = 'MarketplacePurchaseHandoff';
+export const marketplaceDefinition = providerServices(marketplaceServiceCatalog);
+const purchaseHandoff = object(marketplacePurchaseType, 'A buyer handoff for one current marketplace offer.', {
+  id: z.string(),
+  ...marketplacePurchaseFacts.omit({ url: true }).shape,
+  offerRevision: z.number().int().positive(),
+});
+marketplaceDefinition.objectTypes.push(purchaseHandoff);
+for (const service of marketplaceServiceCatalog) {
+  const offer = marketplaceDefinition.objectTypes.find(item => item.apiName === service.object)!;
+  offer.interfaces.ProductOffer = {
+    properties: identity(Object.keys(productOfferShape).filter(name => offer.properties[name])),
+    links: { plans: 'plans' },
+    actions: { select: { action: 'AttachPlanService', parameters: { service: 'service', plan: 'plan' } } },
+  };
+  const link = service.object + 'PurchaseHandoff';
+  marketplaceDefinition.linkTypes.push({
+    apiName: link,
+    description: 'The exact source offer the buyer selected for handoff.',
+    from: { type: marketplacePurchaseType, name: service.provider === 'Taobao' ? 'taobaoOffer' : 'jdOffer', cardinality: 'one' },
+    to: { type: service.object, name: 'purchaseHandoffs', cardinality: 'many' },
+  });
+  marketplaceDefinition.functionTypes.push({
+    apiName: service.prepare,
+    description: 'Record a handoff for a current marketplace offer so the buyer can open the platform and confirm the purchase.',
+    parameters: json(prepareMarketplacePurchaseInput),
+    returns: json(objectRefSchema),
+    source: service.provider,
+    edits: true,
+    dependencies: { objectTypes: [service.object, marketplacePurchaseType], linkTypes: [link, service.object + 'Source'] },
+  });
+  marketplaceDefinition.actionTypes.push({
+    apiName: service.purchase,
+    description: 'Prepare a verified product link for the buyer to review and complete on the marketplace.',
+    parameters: json(prepareMarketplacePurchaseInput),
+    objectParameters: { offer: service.object },
+    submissionCriteria: [],
+    function: service.prepare,
+  });
+}
+marketplaceDefinition.functionTypes.push({
+  apiName: 'readMarketplacePurchaseHandoff',
+  description: 'Return the product, reference price and approved marketplace URL while the original offer remains current.',
+  parameters: json(readMarketplacePurchaseInput),
+  returns: json(marketplacePurchaseFacts.extend({ offer: objectRefSchema })),
+  dependencies: {
+    objectTypes: [marketplacePurchaseType, ...marketplaceServiceCatalog.map(service => service.object)],
+    linkTypes: marketplaceServiceCatalog.flatMap(service => [service.object + 'PurchaseHandoff', service.object + 'Source']),
+  },
+});
