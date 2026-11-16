@@ -8,6 +8,8 @@ import {
 } from './entity-resolution.js';
 import { Applications, objectViewSchema, graphSchema, mapSchema } from './applications.js';
 import { Automation, workflowSchema, saveRuleSchema, runWorkflowSchema } from './automation.js';
+import { analyzeMachinery, listMachineryProcesses, machineryAnalysisSchema } from './machinery-analysis.js';
+import { MachineryReviews, machineryReviewSchema } from './machinery-reviews.js';
 import { processStatusSchema } from './process-automation.js';
 import {
   SemanticSearch,
@@ -28,11 +30,12 @@ import { Tasks, publicTask } from './tasks.js';
 import type { Actions } from './actions.js';
 import { z } from 'zod';
 import type { Principal } from '../core/identity.js';
-import { requireScope } from '../core/identity.js';
-import { objectRefSchema } from '../ontology/schema.js';
+import { Conflict, requireScope } from '../core/identity.js';
+import { machineryModelSchema, objectRefSchema, ontologyName } from '../ontology/schema.js';
 import { Access } from './access.js';
 import { Database } from './database.js';
 import { Metadata } from './metadata.js';
+import { ScenarioEvaluations, compareScenariosSchema, trialScenariosSchema } from './scenario-evaluation.js';
 import { Scenarios } from './scenarios.js';
 import { Objects } from './objects.js';
 import {
@@ -71,6 +74,7 @@ export function ontologyServices(
   const active = () => metadata.active(ontologyId);
   const applications = new Applications(db),
     automation = new Automation(db, metadata, actions),
+    machinery = new MachineryReviews(db, metadata),
     semantic = new SemanticSearch(db, functions),
     packages = new OntologyPackages(db, metadata, bindings);
   const sets = new ObjectSets(db),
@@ -431,6 +435,24 @@ export function ontologyServices(
     true,
     (a, input) => new Scenarios(db).closeSession(a, input.sessionId),
   );
+  const evaluations = new ScenarioEvaluations(db, actions, functions);
+  register(
+    'compare_scenarios',
+    'Compare exact Scenario revisions and shared metrics against one current Ontology baseline.',
+    compareScenariosSchema,
+    false,
+    async (access, input) => evaluations.compare(access, await active(), input),
+  );
+  register(
+    'trial_scenarios',
+    'Execute published Action variants offline on the same evidence, then roll back every trial.',
+    trialScenariosSchema,
+    true,
+    async (access, input) => {
+      requireScope(access.principal, 'ontology:read');
+      return evaluations.trial(access, await active(), input);
+    },
+  );
   register(
     'share_scenario',
     'Share persisted Scenario metadata with specific readers.',
@@ -512,6 +534,33 @@ export function ontologyServices(
     false,
     async (a, input) => automation.processStatus(a, await active(), input),
   );
+  register('machinery_processes', 'Discover authorized Ontology processes and their published reference models.',
+    z.strictObject({}), false, async a => listMachineryProcesses(a, await active()));
+  register('machinery_analysis', 'Mine authorized process paths, compare observed transitions with a reference, and analyze dwell time.',
+    machineryAnalysisSchema, false, async (a, input) => analyzeMachinery(db, a, await active(), input));
+  register('machinery_propose_model', 'Open a definition branch for a manual or mined process model at the observed release.',
+    z.strictObject({ type: ontologyName, model: machineryModelSchema, name: z.string().min(1).max(200),
+      release: z.string().regex(/^[0-9a-f]{64}$/), project: ontologyName.optional() }), true, async (a, input) => {
+      const current = await active();
+      if (current.release !== input.release) throw new Conflict('Ontology changed; refresh the process analysis');
+      const body = structuredClone(current.document);
+      const definition = body.objectTypes.find(type => type.apiName === input.type);
+      if (!definition) throw new Conflict('Select a local process definition in this Ontology');
+      definition.machinery = input.model;
+      return governance.create(a, { ontology: ontologyId, name: input.name, project: input.project,
+        body, baseRelease: current.release });
+    });
+  register('save_machinery_review', 'Save or disable periodic review of an authorized Machinery process.',
+    machineryReviewSchema, true, async (a, input) => machinery.save(a, await active(), input));
+  register('machinery_reviews', 'List owned periodic Machinery reviews and their latest analyzed windows.',
+    z.strictObject({}), false, async a => machinery.list(a, await active()));
+  register('machinery_review', 'Read the last analyzed window with current process permissions.',
+    idSchema, false, async (a, { id }) => machinery.read(a, await active(), id, false));
+  register('run_machinery_review', 'Analyze the configured process now and record the authorized analysis window.',
+    idSchema, true, async (a, { id }) => {
+      requireScope(a.principal, 'ontology:read');
+      return machinery.read(a, await active(), id, true);
+    });
   register('workflow_runs', 'List workflow execution progress.', z.strictObject({}), false, async (a) =>
     automation.list(a, await active(), 'workflow_runs'),
   );

@@ -11,7 +11,7 @@ import { Metadata, type Bindings } from './metadata.js';
 const identifier = z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(80);
 export const projectSchema = z.strictObject({ ontology: identifier, id: identifier, name: z.string().min(1).max(200) });
 export const assignProjectSchema = z.strictObject({ ontology: identifier, project: identifier, resources: z.array(z.string().min(1).max(300)).min(1).max(200) });
-export const branchCreateSchema = z.strictObject({ ontology: identifier, project: identifier.optional(), name: z.string().min(1).max(200), body: ontologySchema.optional() });
+export const branchCreateSchema = z.strictObject({ ontology: identifier, project: identifier.optional(), name: z.string().min(1).max(200), body: ontologySchema.optional(), baseRelease: z.string().regex(/^[0-9a-f]{64}$/).optional() });
 export const branchRevisionSchema = z.strictObject({ id: z.uuid(), revision: z.number().int().positive() });
 export const branchUpdateSchema = branchRevisionSchema.extend({ body: ontologySchema });
 export const branchReviewSchema = branchRevisionSchema.extend({ release: z.string().regex(/^[a-f0-9]{64}$/) });
@@ -85,6 +85,7 @@ export class Governance {
   }
   async create(access: Access, raw: unknown) {
     const input = branchCreateSchema.parse(raw), base = await this.metadata.active(input.ontology);
+    if (input.baseRelease && input.baseRelease !== base.release) throw new Conflict('Ontology changed; refresh the proposed definition');
     access.require(input.ontology, 'view_definition', input.ontology);
     const branch = { ontology: input.ontology, project: input.project ?? null };
     const body = input.body ?? base.document;

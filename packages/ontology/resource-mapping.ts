@@ -84,6 +84,10 @@ export function remapResources(
   for (const type of document.objectTypes) {
     type.apiName = rename('object', type.apiName);
     for (const tag of type.typeClasses??[]) if(tag.kind==='machinery-log') tag.name=rename('object',tag.name);
+    if (type.machinery) {
+      for (const edge of type.machinery.transitions) if (edge.action) edge.action = rename('action', edge.action);
+      for (const child of type.machinery.subprocesses ?? []) child.process = rename('object', child.process);
+    }
     Object.values(type.properties).forEach(property);
     type.groups = type.groups?.map((name) => rename('group', name));
     type.interfaces = Object.fromEntries(

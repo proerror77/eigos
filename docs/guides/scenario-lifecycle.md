@@ -50,6 +50,10 @@ Scenario 的对象和关系差量由已有 Query、Function、Action 运行层�
 
 通过 `client.scenario(id)` 获取具备场景范围的客户端。Query、Function 和编辑 Action 自动携带 scenarioId。`merge`、`rebase` 和 `discard` 要求提供已读取的 revision。审阅使用 `inviteReviewers`、`inspectReview` 和 `approveReview`。临时客户端可使用 `closeSession` 关闭所属会话。HTTP 错误保留响应状态与错误内容，取消信号传给实际 HTTP 请求。
 
+## 方案评估
+
+使用 [多方案比较与离线试跑](scenario-evaluation.md) 对齐业务指标和候选执行结果。
+
 ## 验证
 
 回归覆盖临时会话归属、关闭与过期清理，元数据共享及撤销，Struct 编辑和通用合并，Action 补偿及更新冲突，待投递副作用取消和执行中拒绝，重规划放弃与合并，以及过去时段的最终提交拒绝。日历测试使用明确标注的合成 PA 数据。

@@ -99,6 +99,32 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
       const proposedLogs=await call('query_ontology',{scenarioId,query:logQuery});
       assert.equal(proposedLogs.items.length,1);assert.equal(proposedLogs.items[0].properties.newState,'prepared');
       const diff=await call('inspect_scenario',{scenarioId});
+      const alternative = await call('create_scenario', { requestId: 'e2e-alternative', name: 'Alternative' });
+      const sharedMetric = { name: 'valid', function: 'validateSchedule', path: ['valid'], input: { plan: completed.result.plan.ref } };
+      const compared = await call('ontology_compare_scenarios', {
+        scenarios: [{ id: scenarioId, revision: diff.revision }, { id: alternative.id, revision: alternative.revision }],
+        metrics: [sharedMetric],
+      });
+      assert.deepEqual(compared.scenarios.map((row: { changes: { objectsCreated: number } }) => row.changes.objectsCreated), [1, 0]);
+      assert.equal(compared.baseline.metrics.valid, true);
+      const plan = (await call('query_ontology', { query: { type: 'SchedulePlan', where: { id: completed.result.plan.ref.id } } })).items[0];
+      const calendar = (await call('query_ontology', { query: { type: 'CalendarAvailability' } })).items[0];
+      const trial = await call('ontology_trial_scenarios', {
+        cases: [{ name: 'scheduled', inputs: { plan: plan.ref }, evidence: [
+          { object: plan.ref, revision: plan.revision }, { object: calendar.ref, revision: calendar.revision },
+        ] }],
+        variants: [{ name: 'baseline', steps: [] }, { name: 'candidate', steps: [{
+          kind: 'action', name: 'allocate', action: 'SaveScheduleActivity', input: {
+            plan: { input: 'plan' }, id: { value: 'trial-activity' }, name: { value: 'Trial activity' },
+            start: { value: completed.result.activities[0].properties.start }, end: { value: completed.result.activities[0].properties.end },
+          },
+        }] }],
+        metrics: [{ ...sharedMetric, input: { plan: { input: 'plan' } } }],
+      });
+      assert.equal(trial.mode, 'offline');
+      assert.deepEqual(trial.cases[0].variants.map((row: { metrics: { valid: boolean } }) => row.metrics.valid), [true, true]);
+      assert.equal(trial.cases[0].variants[1].changes.objectsCreated, 1);
+      assert.equal((await call('query_ontology', { query: { type: 'ScheduledActivity' } })).items.length, 0);
       await call('apply_ontology_action',{requestId:'e2e-explicit-merge',action:'CommitSchedulePlan',input:{plan:completed.result.plan.ref,scenarioId,revision:diff.revision}});
       assert.equal((await call('query_ontology',{query:{type:'ScheduledActivity'}})).items.length,1);
       assert.equal((await call('query_ontology',{query:{type:'OntologyScenario',where:{id:scenarioId}}})).items[0].properties.state, 'merged');
@@ -131,6 +157,20 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
       const registrationLogs=await call('query_ontology',{query:{type:'EventRegistrationStateLog',where:{processId:registration.id}}});
       assert.deepEqual(registrationLogs.items.map((item:{properties:{newState:string}})=>item.properties.newState),['proposed','authorized','confirmed']);
       assert.equal(registrationLogs.items[2].properties.action,'ExecuteEventRegistration');assert.equal(registrationLogs.items[2].properties.taskId,request.taskId);
+      const processes = await call('ontology_machinery_processes', {});
+      assert(processes.items.some((item: { type: string }) => item.type === 'EventTripStateLog'));
+      const analysisInput = { type: 'EventRegistrationStateLog', object: registration,
+        from: new Date(Date.now() - 3600000).toISOString(), to: new Date().toISOString() };
+      const analysis = await call('ontology_machinery_analysis', analysisInput);
+      assert.deepEqual(analysis.paths.map((path: { states: string[] }) => path.states), [['proposed', 'authorized', 'confirmed']]);
+      assert.equal(analysis.cases[0].timeline.at(-1).taskId, request.taskId);
+      const workbenchService = await fetch(url + '/ontology/services/machinery_analysis',
+        { method: 'POST', headers, body: JSON.stringify(analysisInput) });
+      assert.equal(workbenchService.status, 200);
+      assert.deepEqual(await workbenchService.json(), analysis);
+      const workbenchModule = await fetch(url + '/workbench/machinery.js');
+      assert.equal(workbenchModule.status, 200);
+      assert.match(await workbenchModule.text(), /renderMachinery/);
       assert.equal((await call('query_ontology',{query:{type:'RideOrder'}})).items.length,0);
       t.diagnostic(JSON.stringify({lumaTask:luma.id,scheduledRegistrationTask:request.taskId,PA:'synthetic Grok/Luma responses',externalMutations:0}));
     } finally {await client.close();}

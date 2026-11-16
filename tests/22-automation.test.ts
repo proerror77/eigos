@@ -1,3 +1,5 @@
+import { MachineryReviews, machineryReviewSchema } from '../packages/runtime/machinery-reviews.js';
+import { analyzeMachinery, machineryAnalysisSchema } from '../packages/runtime/machinery-analysis.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
@@ -342,6 +344,110 @@ test('process dwell starts only for the latest uninterrupted state and reports r
   } finally { await f.close(); }
 });
 
+test('Machinery reconstructs repeated paths, measures dwell and excludes a case with hidden history', async () => {
+  const f = await processSetup();
+  try {
+    const now = Date.now();
+    const iso = (minutes: number) => new Date(now + minutes * 60000).toISOString();
+    for (const state of ['open', 'stalled', 'open', 'stalled', 'done']) await f.change(state);
+    const logs = await f.graph.query({ type: 'RouteStateLog' });
+    for (const [index, log] of logs.items.entries()) {
+      await f.db.query(`UPDATE ${f.db.schema}.edit_history SET happened_at=$1 WHERE sequence=$2`,
+        [iso([-40, -39, -34, -32, -12][index]!), log.properties.sequence]);
+    }
+    const input = machineryAnalysisSchema.parse({
+      type: 'RouteStateLog', from: iso(-45), to: iso(-1), object: f.source,
+      reference: {
+        states: [{ name: 'open' }, { name: 'stalled', dwellSeconds: 600 }, { name: 'done' }],
+        transitions: [{ from: null, to: 'open' }, { from: 'open', to: 'stalled' }, { from: 'stalled', to: 'done' }],
+      },
+    });
+    const inspect = async (query = input) => analyzeMachinery(f.db, await Access.load(f.db, principal), f.model, query);
+    const result = await inspect();
+    assert.equal(result.casesTotal, 1);
+    assert.deepEqual(result.cases[0]?.states, ['open', 'stalled', 'open', 'stalled', 'done']);
+    assert.equal(result.conformance.deviation, 1);
+    assert.deepEqual(result.mined.transitions.map(({ from, to }) => [from, to]), [['stalled', 'open']]);
+    const stalled = result.states.find(row => row.name === 'stalled')!;
+    assert.equal(stalled.historical.totalMs, 25 * 60000);
+    assert.equal(stalled.historical.p95Ms, 20 * 60000);
+    assert.equal(stalled.breaches, 1);
+    assert.equal(result.transitions.find(edge => edge.from === 'open')?.count, 2);
+    assert.equal(result.cases[0]?.timeline?.[4]?.action, 'ChangeRouteState');
+    const compared = await inspect({ ...input, candidate: {
+      ...input.reference!, transitions: [...input.reference!.transitions, { from: 'stalled', to: 'open' }],
+    } });
+    assert.equal(compared.comparison?.baseline.deviation, 1);
+    assert.equal(compared.comparison?.candidate.conforming, 1);
+    assert.equal(compared.comparison?.evidence, 'observed-transitions');
+    const narrow = await inspect({ ...input, from: iso(-38) });
+    assert.equal(narrow.cases[0]?.partial, true);
+    assert.equal(narrow.states.find(row => row.name === 'stalled')?.historical.totalMs, 25 * 60000);
+
+    const lastSequence = logs.items.at(-1)!.properties.sequence;
+    await f.db.query(`UPDATE ${f.db.schema}.edit_history SET observed_at=$1 WHERE sequence=$2`, [iso(-27), lastSequence]);
+    const observed = await inspect({ ...input, durationClock: 'observedAt' });
+    assert.equal(observed.states.find(row => row.name === 'stalled')?.historical.totalMs, 10 * 60000);
+    assert.equal(observed.cases[0]?.timeline?.at(-1)?.requestId, result.cases[0]?.timeline?.at(-1)?.requestId);
+
+    const set = await new ObjectSets(f.db).save(await Access.load(f.db, principal), f.model, {
+      requestId: 'route-analysis-cohort', name: 'Route analysis cohort', mode: 'static',
+      set: { op: 'refs', objects: [f.source] },
+    });
+    const { object: _object, ...cohort } = input;
+    assert.equal((await inspect({ ...cohort, setId: set.id })).cases[0]?.object.id, f.source.id);
+
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies VALUES('Eigos','RouteStateLog',$1)`,
+      [objectPolicySchema.parse({ read: { all: [{ op: 'equals', property: 'newState', value: 'done' }] } })]);
+    const restricted = await inspect();
+    assert.equal(restricted.casesTotal, 0);
+    assert.equal(restricted.paths.length, 0);
+    assert(restricted.transitions.every(edge => edge.count === 0));
+  } finally { await f.close(); }
+});
+
+test('definition discovery filters Machinery actions and subprocesses under limited resource grants', async () => {
+  const f = await setup();
+  try {
+    const reader = { owner: 'machinery-reader', scopes: ['ontology:read'] };
+    await setGrants(f.db, reader.owner, [
+      ...['EventTripStateLog', 'EventTrip'].flatMap(type => [
+        { resource: 'Eigos/object/' + type, permission: 'view_definition' as const },
+        { resource: 'Eigos/object/' + type, permission: 'view_objects' as const },
+      ]),
+    ]);
+    const access = await Access.load(f.db, reader);
+    const definition = access.describe(f.model);
+    const reference = definition.objectTypes.find(type => type.apiName === 'EventTripStateLog')?.machinery;
+    assert(reference);
+    assert(reference.transitions.every(edge => !edge.action));
+    assert.deepEqual(reference.subprocesses, []);
+  } finally { await f.close(); }
+});
+
+test('periodic Machinery review claims one window and recalculates it after visibility changes', async () => {
+  const f = await processSetup();
+  try {
+    await f.change('open');
+    await f.change('stalled');
+    const reviews = new MachineryReviews(f.db, f.metadata);
+    const review = await reviews.save(f.access, f.model, machineryReviewSchema.parse({
+      name: 'Weekly route review', type: 'RouteStateLog', enabled: true, minCases: 1,
+    }));
+    assert.deepEqual((await Promise.all([reviews.scanOne(), reviews.scanOne()])).sort(), [false, true]);
+    assert.deepEqual(await f.automation.list(f.access, f.model, 'object_rules'), { items: [], hasMore: false });
+    const list = await reviews.list(await Access.load(f.db, principal), f.model);
+    assert.equal(list.items[0]?.id, review.id);
+    assert.equal(list.items[0]?.checkpoint?.release, f.model.release);
+    const report = await reviews.read(await Access.load(f.db, principal), f.model, review.id, false);
+    assert.equal(report.casesTotal, 1);
+    assert.equal(report.mined.transitions.length, 2);
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies VALUES('Eigos','Route',$1)`,
+      [objectPolicySchema.parse({ read: { all: [{ op: 'equals', property: 'id', value: 'other' }] } })]);
+    assert.equal((await reviews.read(await Access.load(f.db, principal), f.model, review.id, false)).casesTotal, 0);
+  } finally { await f.close(); }
+});
+
 test('a queued transition is hidden and cannot run after its historical log permission is revoked', async () => {
   const f = await processSetup();
   try {
@@ -487,6 +593,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;
   v9Definition.objectTypes = v9Definition.objectTypes.filter(type => !addedTypes.has(type.apiName) && !addedLogs.some(log => log.type === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'ScheduledActivity')!.properties.dining;
+  delete v9Definition.objectTypes.find(type => type.apiName === 'EventTripStateLog')!.machinery;
   const routeProperties = v9Definition.objectTypes.find(type => type.apiName === 'Route')!.properties;
   delete routeProperties.pickup;
   delete routeProperties.drivingEstimate;

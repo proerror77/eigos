@@ -243,6 +243,10 @@ export class ObjectSets {
     }
     return undefined;
   }
+  async members(access: Access, model: PublishedOntology, set: SetExpression, client: Sql): Promise<ObjectRef[]> {
+    return (await this.resolve(access, model, set, client)).map(object => object.ref);
+  }
+
   async evaluate(access: Access, model: PublishedOntology, raw: unknown, client?: Sql) {
     const input = evaluateSetSchema.parse(raw);
     return observeDecisionRead({ db: this.db, access, model }, { kind: 'set', input, maximum: this.maximumObjects },

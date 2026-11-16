@@ -635,3 +635,15 @@ dialog header button {
 input { accent-color:var(--accent); }
 .model-layout { grid-template-columns:240px minmax(0,1fr); }
 @media(max-width:650px) { .model-layout {grid-template-columns:1fr;} .model-tree {max-height:180px;} }
+
+.machinery-graph {
+  display: block;
+  width: min(100%, 720px);
+  max-height: 540px;
+  margin-bottom: 12px;
+}
+.machinery-graph rect { fill: #eef4f1; stroke: #b6ceca; }
+.machinery-graph path { fill: none; stroke: #4f8175; }
+.machinery-graph .unexpected { stroke: #a94e29; }
+.machinery-graph .expected { stroke: #8a9592; stroke-dasharray: 4 3; }
+.machinery-graph text { fill: var(--ink); font-size: 12px; }

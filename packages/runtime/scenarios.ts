@@ -97,10 +97,10 @@ export async function initializeScenarioLifecycle(db: Database) {
 }
 export class Scenarios {
   constructor(private readonly db: Database) {}
-  async openSession(access: Access, ttlSeconds=3600) {
+  async openSession(access: Access, ttlSeconds=3600, client?: Sql) {
     z.number().int().min(1).max(86400).parse(ttlSeconds);
     const id=randomUUID();
-    const row=(await this.db.query(`INSERT INTO ${this.db.schema}.scenario_sessions(id,owner,expires_at) VALUES($1,$2,now()+$3*interval '1 second') RETURNING id,expires_at`,[id,access.principal.owner,ttlSeconds])).rows[0]!;
+    const row=(await this.db.query(`INSERT INTO ${this.db.schema}.scenario_sessions(id,owner,expires_at) VALUES($1,$2,now()+$3*interval '1 second') RETURNING id,expires_at`,[id,access.principal.owner,ttlSeconds],client)).rows[0]!;
     return {id:String(row.id),expiresAt:row.expires_at as Date};
   }
   async closeSession(access: Access, sessionId: string) {
@@ -382,7 +382,8 @@ export class Scenarios {
     return {items:rows.slice(0,100).map(row=>({id:String(row.id),name:String(row.name),revision:Number(row.revision),state:String(row.state),expiresAt:row.expires_at as Date,expires_at:row.expires_at as Date})),cursor:rows.length>100?String(rows[99]!.id):undefined};
   }
   async create(access: Access, model: PublishedOntology, raw: unknown, beforeCommit?: (client: Sql) => Promise<void>,
-    workflow?: { client: Sql; runId: string; reviewers: string[] }) {
+    context?: { client: Sql; runId: string; reviewers: string[] } | { client: Sql }) {
+    const workflow = context && 'runId' in context ? context : undefined;
     const input = createScenarioSchema.parse(raw), owner = access.principal.owner;
     access.require(model.document.id, 'view_definition', model.document.id);
     const create = async (client: Sql) => {
@@ -404,7 +405,7 @@ export class Scenarios {
       await access.refresh(client); await beforeCommit?.(client);
       return {id:String(row.id),name:String(row.name),release:String(row.release),revision:Number(row.revision),state:String(row.state),expiresAt:row.expires_at as Date,expires_at:row.expires_at as Date,kind:String(row.kind),description:String(row.description)};
     };
-    return workflow ? create(workflow.client) : this.db.transaction(create);
+    return context ? create(context.client) : this.db.transaction(create);
   }
   async view(access: Access, model: PublishedOntology, id: string, client: Sql = this.db.pool) {
     z.uuid().parse(id);
@@ -575,21 +576,22 @@ export class Scenarios {
     } };
   }
 
-  async inspect(access: Access, model: PublishedOntology, id: string) {
-    const owner = access.principal.owner, view = await this.view(access, model, id);
-    return this.db.transaction(async client => {
+  async inspect(access: Access, model: PublishedOntology, id: string, existing?: Sql) {
+    const owner = access.principal.owner;
+    const inspect = async (client: Sql) => {
+      const view = await this.view(access, model, id, client);
       await lockEdits(this.db, model, owner, client); await checkScenario(this.db, view, owner, client, true);
       const row = (await this.db.query(`SELECT id,name,revision,state,expires_at,journal_steps FROM ${this.db.schema}.scenarios WHERE owner=$1 AND id=$2`, [owner, id], client)).rows[0]!;
       const changes = await this.changes(owner, id, client), objects = [];
       for (const item of changes.objects) {
         access.read(model, item.type);
-        const mask = (properties: Record<string, unknown> | null) => {
+        const mask = (properties: Record<string, unknown> | null, snapshotModel: PublishedOntology) => {
           if (!properties) return null;
-          access.readRow(model,item.type,properties);
-          return new Objects(this.db,view,access,client).maskSnapshot({type:item.type,id:item.id},properties);
+          access.readRow(snapshotModel,item.type,properties);
+          return new Objects(this.db,snapshotModel,access,client).maskSnapshot({type:item.type,id:item.id},properties);
         };
         const live = (await this.db.query<LiveObject>(`SELECT revision,properties FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`, [model.projection, owner, item.type, item.id], client)).rows[0];
-        objects.push({ ref: { type: item.type, id: item.id }, before: mask(item.base_properties), after: mask(item.properties), editedFields: editedFields(item).filter(field => access.cell(model,item.type,field,item.properties ?? item.base_properties ?? {})), conflict: objectConflict(item, live, row.journal_steps > 0) || item.properties===null && digest(await objectLinks(this.db,model,owner,{type:item.type,id:item.id},client))!==digest(item.base_links) });
+        objects.push({ ref: { type: item.type, id: item.id }, before: mask(item.base_properties, model), after: mask(item.properties, view), editedFields: editedFields(item).filter(field => access.cell(item.properties ? view : model,item.type,field,item.properties ?? item.base_properties ?? {})), conflict: objectConflict(item, live, row.journal_steps > 0) || item.properties===null && digest(await objectLinks(this.db,model,owner,{type:item.type,id:item.id},client))!==digest(item.base_links) });
       }
       const proposed = new Objects(this.db,view,access,client), live = new Objects(this.db,model,access,client);
       const requireEndpoint = async (ref: ObjectRef) => {
@@ -609,7 +611,8 @@ export class Scenarios {
         links.push({ type: item.type, from: { type: item.from_type, id: item.from_id }, to: { type: item.to_type, id: item.to_id }, removed: item.removed,conflict:present!==item.base_present || await this.cardinalityConflict(model,owner,item,client) });
       }
       await access.refresh(client); return { id:String(row.id),name:String(row.name),revision:Number(row.revision),state:String(row.state),expiresAt:row.expires_at as Date,objects,links,conflicts:[...objects,...links].some(item=>item.conflict) };
-    });
+    };
+    return existing ? inspect(existing) : this.db.transaction(inspect);
   }
   async rebase(access: Access, model: PublishedOntology, id: string, revision: number) {
     z.number().int().positive().parse(revision);

@@ -186,7 +186,7 @@ export class Automation {
         for (const type of model.concreteTypes(input.query.type)) access.read(model, type);
       const result = input.id
         ? await this.db.query(
-            `UPDATE ${this.db.schema}.object_rules SET name=$3,body=$4,enabled=$5,revision=revision+1,error=NULL,scopes=$8,last_scan=NULL,process_cursor=NULL WHERE id=$1 AND owner=$2 AND revision=$6 AND ontology=$7 RETURNING revision`,
+            `UPDATE ${this.db.schema}.object_rules SET name=$3,body=$4,enabled=$5,revision=revision+1,error=NULL,scopes=$8,last_scan=NULL,process_cursor=NULL WHERE id=$1 AND owner=$2 AND revision=$6 AND ontology=$7 AND NOT (body ? 'machineryReview') RETURNING revision`,
             [
               id,
               access.principal.owner,
@@ -244,7 +244,7 @@ export class Automation {
     access.require(model.document.id, 'view_definition', model.document.id);
     const rows = (
       await this.db.query(
-        `SELECT * FROM ${this.db.schema}.${kind} WHERE owner=$1 AND ontology=$2 ORDER BY id DESC LIMIT 101`,
+        `SELECT * FROM ${this.db.schema}.${kind} WHERE owner=$1 AND ontology=$2 ${kind === 'object_rules' ? "AND NOT (body ? 'machineryReview')" : ''} ORDER BY id DESC LIMIT 101`,
         [access.principal.owner, model.document.id],
       )
     ).rows;
@@ -375,7 +375,7 @@ export class Automation {
       if (!process) await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', [], client);
       const rule = (
         await this.db.query(
-          `SELECT * FROM ${this.db.schema}.object_rules WHERE enabled AND (process_cursor IS NOT NULL)=$1
+          `SELECT * FROM ${this.db.schema}.object_rules WHERE enabled AND NOT (body ? 'machineryReview') AND (process_cursor IS NOT NULL)=$1
             AND (last_scan IS NULL OR last_scan<=now()-$2*interval '1 second') ORDER BY last_scan NULLS FIRST FOR UPDATE SKIP LOCKED LIMIT 1`,
           [process, process ? 1 : 30],
           client,

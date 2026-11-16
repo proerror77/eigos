@@ -6,7 +6,7 @@ import { Access } from './access.js';
 import { objectRefSchema, type ObjectRef, type Value } from '../ontology/schema.js';
 import { Database, type Sql } from './database.js';
 import { Objects } from './objects.js';
-import { Functions, type FunctionContext } from './functions.js';
+import { Functions, type FunctionContext, type ScenarioEvaluation } from './functions.js';
 import { Effects, type ActionEffect } from './effects.js';
 import { Scenarios } from './scenarios.js';
 import { recordScenarioAction, type ScenarioMutation } from './scenario-store.js';
@@ -23,19 +23,19 @@ export type CommittedEffects = (model: PublishedOntology, owner: string, changes
 export class Actions {
   constructor(private readonly db: Database, private readonly functions: Functions, private readonly effects?: Effects,
     private readonly committedEffects?: CommittedEffects) {}
-  private async checkSubmission(objects: Objects, actionName: string, input: Record<string, unknown>, signal: AbortSignal) {
+  private async checkSubmission(objects: Objects, actionName: string, input: Record<string, unknown>, signal: AbortSignal, scenarioEvaluation?: ScenarioEvaluation) {
     const { model, access } = objects;
     for (const condition of model.action(actionName).submissionCriteria) {
       const conditionFunction = model.functions.get(condition.function);
       if (conditionFunction?.source || conditionFunction?.edits) throw new Error('Submission criteria require read-only object functions');
       const parameters = Object.fromEntries(Object.entries(condition.arguments).map(([name, value]) => [name, evaluate(value, input)]));
       const allowed = await this.functions.invoke(model, condition.function, parameters, {
-        principal: access.principal, objects, signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
+        principal: access.principal, objects, scenarioEvaluation, signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
       });
       if (allowed !== true) throw new Conflict('Action submission criteria are not satisfied');
     }
   }
-  private async checkInput(objects: Objects, name: string, input: Record<string, unknown>, signal: AbortSignal) {
+  private async checkInput(objects: Objects, name: string, input: Record<string, unknown>, signal: AbortSignal, scenarioEvaluation?: ScenarioEvaluation) {
     const { model } = objects;
     signal.throwIfAborted();
     for (const [parameter, type] of Object.entries(model.action(name).objectParameters)) {
@@ -43,7 +43,7 @@ export class Actions {
       if (!model.implements(ref.type, type)) throw new Error('Action input type does not satisfy its contract');
       await objects.read(ref);
     }
-    await this.checkSubmission(objects, name, input, signal);
+    await this.checkSubmission(objects, name, input, signal, scenarioEvaluation);
   }
   resolve(access: Access, model: PublishedOntology, call: ActionCall) {
     const target = call.interface;
@@ -54,15 +54,19 @@ export class Actions {
       ? model.resolveAction(target.object, target.type, target.action, call.input)
       : model.resolveTypeAction(target.implementation!, target.type, target.action, call.input);
   }
-  async apply(access: Access, model: PublishedOntology, actionName: string, raw: Record<string, unknown>, requestId: string, beforeCommit?: (client: Sql) => Promise<void>, execution?: FunctionContext['execution'], signal = AbortSignal.timeout(120000), executor?: ExecutionActor) {
+  async apply(access: Access, model: PublishedOntology, actionName: string, raw: Record<string, unknown>, requestId: string, beforeCommit?: (client: Sql) => Promise<void>, execution?: FunctionContext['execution'], signal = AbortSignal.timeout(120000), executor?: ExecutionActor, scenarioEvaluation?: ScenarioEvaluation) {
     const principal = access.principal;
     const actor: ExecutionActor = executor ?? execution?.executor ?? (execution
       ? { kind: 'agent', id: 'eigos-ontology-agent' }
       : { kind: 'client', id: principal.clientId ?? principal.owner });
-    await access.refresh(); access.action(model, actionName);
+    const transaction = <T>(run: (client: Sql) => Promise<T>) =>
+      scenarioEvaluation ? run(scenarioEvaluation.client) : this.db.transaction(run);
+    await access.refresh(scenarioEvaluation?.client); access.action(model, actionName);
     if (model.runtimeId !== this.db.runtimeId) throw new Conflict('Historical Actions are read-only');
-    if ((await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [model.document.id])).rows[0]?.release !== model.release) throw new Conflict('Historical and prepared Actions are read-only');
+    if ((await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [model.document.id], scenarioEvaluation?.client)).rows[0]?.release !== model.release) throw new Conflict('Historical and prepared Actions are read-only');
     const action = model.action(actionName), input = validator(action.parameters).parse(raw) as Record<string, unknown>;
+    if (scenarioEvaluation && (!model.scenario || execution || action.rules?.some(rule => rule.op === 'applyScenario')))
+      throw new Conflict('Scenario evaluation requires a staged Action');
     if (action.effects?.length && !model.scenario) {
       if (!this.effects) throw new Error('Action effects require a configured dispatcher');
       this.effects.check(action.effects.map(effect => effect.handler));
@@ -75,8 +79,8 @@ export class Actions {
       return this.checkInput(prefix, name, parameters, signal);
     };
     const journal = model.scenario ? 'scenario_actions' : 'actions';
-    const priorResult = (client: Sql = this.db.pool) => this.db.query(`SELECT digest,result FROM ${this.db.schema}.${journal} WHERE owner=$1 AND request_id=$2${model.scenario ? ' AND scenario_id=$3' : ''}`, [principal.owner, requestId, ...(model.scenario ? [model.scenario] : [])], client);
-    const commit = (write?: (objects: Objects) => Promise<ObjectRef>) => this.db.transaction(async client => {
+    const priorResult = (client: Sql = scenarioEvaluation?.client ?? this.db.pool) => this.db.query(`SELECT digest,result FROM ${this.db.schema}.${journal} WHERE owner=$1 AND request_id=$2${model.scenario ? ' AND scenario_id=$3' : ''}`, [principal.owner, requestId, ...(model.scenario ? [model.scenario] : [])], client);
+    const commit = (write?: (objects: Objects) => Promise<ObjectRef>) => transaction(async client => {
       // The request key serializes only duplicate submissions of this action.
       await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify([principal.owner, model.scenario ?? 'main', requestId])], client);
       await beforeCommit?.(client);
@@ -93,7 +97,7 @@ export class Actions {
         signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client);
         return objectRefSchema.parse(previous.rows[0].result);
       }
-      await this.checkInput(objects, actionName, input, signal);
+      await this.checkInput(objects, actionName, input, signal, scenarioEvaluation);
       const ref = (value: { type: string; id: Value }): ObjectRef => objectRefSchema.parse({ type: value.type, id: evaluate(value.id, input) });
       for (const rule of action.rules ?? []) {
         if (rule.op === 'addLink') await objects.link({ type: rule.link, from: ref(rule.from), to: ref(rule.to) });
@@ -147,18 +151,18 @@ export class Actions {
     // Function preparation can perform authorized source reads. Check business
     // admission before invoking it, and recheck under the eventual write lock.
     if (action.submissionCriteria.length || Object.keys(action.objectParameters).length) {
-      await this.db.transaction(async client => {
-        await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', [], client);
+      await transaction(async client => {
+        if (!scenarioEvaluation) await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', [], client);
         await access.refresh(client);
-        await this.checkInput(new Objects(this.db, model, access, client), actionName, input, signal);
+        await this.checkInput(new Objects(this.db, model, access, client), actionName, input, signal, scenarioEvaluation);
       });
     }
     let staged: { result: ObjectRef; write: (objects: Objects) => Promise<void> } | undefined;
     const result = await this.functions.invoke(model, action.function, input, {
-      principal, objects: new Objects(this.db, model, access), signal, operationId: requestId, taskId: execution?.task.id, execution,
+      principal, objects: new Objects(this.db, model, access, scenarioEvaluation?.client), signal, scenarioEvaluation, operationId: requestId, taskId: execution?.task.id, execution,
       directAction: !beforeCommit && !execution,
       validateScenarioAction: validateAction,
-      assertCurrent: async (client = this.db.pool) => { signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client); },
+      assertCurrent: async (client = scenarioEvaluation?.client ?? this.db.pool) => { signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client); },
       assertDispatch: async client => {
         if (model.scenario) throw new Conflict('External dispatch requires a formal Action');
         const objects = new Objects(this.db, model, access, client);

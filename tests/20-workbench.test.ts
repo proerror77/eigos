@@ -144,6 +144,11 @@ test('workbench serves guarded assets and normal HTTP model, media and SDK scena
     assert((await client.describe()).objectTypes.some(type=>type.apiName==='OntologyScenario'));
     const session=await client.openSession(300),scenario=await client.createScenario({requestId:'sdk-temporary',name:'SDK temporary',kind:'temporary',sessionId:session.id});
     assert.equal((await scenario.inspect()).name,'SDK temporary');await client.service('close_scenario_session',{sessionId:session.id});await assert.rejects(scenario.inspect());
+    assert.equal((await fetch(base + '/workbench/scenario-evaluation.js')).status, 200);
+    const a = await client.createScenario({ requestId: 'sdk-compare-a', name: 'First' });
+    const b = await client.createScenario({ requestId: 'sdk-compare-b', name: 'Second' });
+    const comparison = await client.compareScenarios({ scenarios: [{ id: a.id, revision: 1 }, { id: b.id, revision: 1 }] });
+    assert.deepEqual(comparison.scenarios.map(row => row.name), ['First', 'Second']);
     const list=await client.service<{items:unknown[]}>('workflows',{});assert.deepEqual(list.items,[]);
   }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await f.close();}
 });

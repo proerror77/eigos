@@ -189,3 +189,20 @@ addProcessLogs(businessDefinition, [
   { type: 'StripeLinkPaymentRequest', property: 'status' }, { type: 'SchedulePlan', property: 'state' }, { type: journeyType, property: 'state' }, { type: flightWatchType, property: 'state' },
   { type: diningReservationType, property: 'state' },
 ]);
+
+businessDefinition.objectTypes.find(type => type.apiName === 'EventTripStateLog')!.machinery = {
+  states: [
+    { name: 'proposed' }, { name: 'authorized' },
+    { name: 'dispatched', terminal: true }, { name: 'canceled', terminal: true },
+  ],
+  transitions: [
+    { from: null, to: 'proposed', action: 'CommitSchedulePlan' },
+    { from: 'proposed', to: 'authorized', action: 'AuthorizeEventTrip' },
+    { from: 'authorized', to: 'dispatched', action: 'ExecuteEventTrip' },
+    { from: 'authorized', to: 'canceled', action: 'CancelEventTrip' },
+  ],
+  subprocesses: [
+    { link: 'plan', process: 'SchedulePlanStateLog' },
+    { link: 'registration', process: 'EventRegistrationStateLog' },
+  ],
+};
