@@ -8,6 +8,15 @@ import {
   fliggyHotelFacts,
   flightFacts,
   productFacts,
+  marketplaceFacts,
+  marketplaceComparisonInput,
+  marketplaceComparisonOutcomes,
+  marketplacePriceGroup,
+  readMarketplaceComparisonInput,
+  marketplaceObservation,
+  marketplacePurchaseFacts,
+  prepareMarketplacePurchaseInput,
+  readMarketplacePurchaseInput,
   eventSearchInput,
   hotelSearchInput,
   flightSearchInput,
@@ -103,7 +112,41 @@ const fliggyServiceCatalog = [
     terms: 'FlyAI returns dated flight candidates with local times and displayed fares. Passenger totals, taxes, seats and fare terms require provider confirmation.',
   },
 ] as const;
-export const serviceCatalog = [...coreServiceCatalog, ...fliggyServiceCatalog] as const;
+export const marketplaceServiceCatalog = [
+  {
+    provider: 'Taobao',
+    object: 'TaobaoProductOffer',
+    result: 'TaobaoProductSearch',
+    searchInterface: 'ProductSearch',
+    source: 'TaobaoProducts',
+    read: 'readTaobaoProducts',
+    search: 'searchTaobaoProducts',
+    action: 'SearchTaobaoProducts',
+    prepare: 'prepareTaobaoPurchase',
+    purchase: 'PrepareTaobaoPurchase',
+    parameters: productSearchInput,
+    facts: marketplaceFacts,
+    observation: marketplaceObservation,
+    terms: 'Search the eligible Taobao and Tmall affiliate catalog in CN. Prices are reference amounts; inventory, options and checkout total require buyer verification.',
+  },
+  {
+    provider: 'JD',
+    object: 'JdProductOffer',
+    result: 'JdProductSearch',
+    searchInterface: 'ProductSearch',
+    source: 'JdProducts',
+    read: 'readJdProducts',
+    search: 'searchJdProducts',
+    action: 'SearchJdProducts',
+    prepare: 'prepareJdPurchase',
+    purchase: 'PrepareJdPurchase',
+    parameters: productSearchInput,
+    facts: marketplaceFacts,
+    observation: marketplaceObservation,
+    terms: 'Search the eligible JD Union catalog in CN. Prices are reference amounts; inventory, delivery and checkout total require buyer verification.',
+  },
+] as const;
+export const serviceCatalog = [...coreServiceCatalog, ...fliggyServiceCatalog, ...marketplaceServiceCatalog] as const;
 export const travelOfferSources = serviceCatalog.filter(service =>
   service.searchInterface === 'HotelSearch' || service.searchInterface === 'FlightSearch',
 );
@@ -213,6 +256,7 @@ const providerServices = (catalog: readonly (typeof serviceCatalog)[number][]): 
       parameters: json(service.parameters),
       returns: json(service.observation),
       source: service.provider,
+      ...('purchase' in service ? { dependencies: {} } : {}),
     },
     {
       apiName: service.search,
@@ -438,3 +482,127 @@ for (const [types, apiName, shape] of [
     };
   }
 }
+
+export const marketplacePurchaseType = 'MarketplacePurchaseHandoff';
+export const marketplaceOfferType = 'MarketplaceProductOffer';
+export const marketplaceDefinition = {
+  ...providerServices(marketplaceServiceCatalog),
+  interfaceTypes: [{
+    apiName: marketplaceOfferType,
+    description: 'A marketplace catalog observation with optional seller, variant and product link.',
+    properties: properties(marketplaceFacts.shape),
+    optionalProperties: Object.entries(marketplaceFacts.shape).filter(([, schema]) => schema.isOptional()).map(([name]) => name),
+    links: { plans: { target: 'SchedulePlan', cardinality: 'many', required: true } },
+    actions: {
+      select: {
+        parameters: json(attachServiceInput),
+        objectParameters: { service: marketplaceOfferType, plan: 'SchedulePlan' },
+        required: true,
+      },
+    },
+  }] as OntologyDocument['interfaceTypes'],
+};
+const purchaseHandoff = object(marketplacePurchaseType, 'A buyer handoff for one current marketplace offer.', {
+  id: z.string(),
+  ...marketplacePurchaseFacts.omit({ url: true }).shape,
+  offerRevision: z.number().int().positive(),
+});
+marketplaceDefinition.objectTypes.push(purchaseHandoff);
+for (const service of marketplaceServiceCatalog) {
+  const offer = marketplaceDefinition.objectTypes.find(item => item.apiName === service.object)!;
+  offer.interfaces[marketplaceOfferType] = {
+    properties: identity(Object.keys(marketplaceFacts.shape)),
+    links: { plans: 'plans' },
+    actions: { select: { action: 'AttachPlanService', parameters: { service: 'service', plan: 'plan' } } },
+  };
+  const link = service.object + 'PurchaseHandoff';
+  marketplaceDefinition.linkTypes.push({
+    apiName: link,
+    description: 'The exact source offer the buyer selected for handoff.',
+    from: { type: marketplacePurchaseType, name: service.provider === 'Taobao' ? 'taobaoOffer' : 'jdOffer', cardinality: 'one' },
+    to: { type: service.object, name: 'purchaseHandoffs', cardinality: 'many' },
+  });
+  marketplaceDefinition.functionTypes.push({
+    apiName: service.prepare,
+    description: 'Record a handoff for a current marketplace offer so the buyer can open the platform and confirm the purchase.',
+    parameters: json(prepareMarketplacePurchaseInput),
+    returns: json(objectRefSchema),
+    source: service.provider,
+    edits: true,
+    dependencies: { objectTypes: [service.object, marketplacePurchaseType], linkTypes: [link, service.object + 'Source'] },
+  });
+  marketplaceDefinition.actionTypes.push({
+    apiName: service.purchase,
+    description: 'Prepare a verified product link for the buyer to review and complete on the marketplace.',
+    parameters: json(prepareMarketplacePurchaseInput),
+    objectParameters: { offer: service.object },
+    submissionCriteria: [],
+    function: service.prepare,
+  });
+}
+marketplaceDefinition.functionTypes.push({
+  apiName: 'readMarketplacePurchaseHandoff',
+  description: 'Return the product, reference price and approved marketplace URL while the original offer remains current.',
+  parameters: json(readMarketplacePurchaseInput),
+  returns: json(marketplacePurchaseFacts.extend({ offer: objectRefSchema })),
+  dependencies: {
+    objectTypes: [marketplacePurchaseType, ...marketplaceServiceCatalog.map(service => service.object)],
+    linkTypes: marketplaceServiceCatalog.flatMap(service => [service.object + 'PurchaseHandoff', service.object + 'Source']),
+  },
+});
+
+export const marketplaceComparisonType = 'MarketplaceProductComparison';
+const comparisonLinks: OntologyDocument['linkTypes'] = marketplaceServiceCatalog.map(service => ({
+  apiName: marketplaceComparisonType + service.result,
+  description: 'The original result page for this marketplace in the comparison.',
+  from: { type: marketplaceComparisonType, name: service.source, cardinality: 'one' },
+  to: { type: service.result, name: 'comparisons', cardinality: 'many' },
+}));
+const comparisonDependencies = {
+  objectTypes: [marketplaceComparisonType, ...marketplaceServiceCatalog.flatMap(service => [service.result, service.object])],
+  linkTypes: [...comparisonLinks.map(link => link.apiName),
+    ...marketplaceServiceCatalog.flatMap(service => [service.object + 'Source', service.object + 'SearchResult'])],
+  dataSources: marketplaceServiceCatalog.map(service => service.source),
+};
+const comparison = object(marketplaceComparisonType, 'A comparison with one independent outcome per marketplace.', {
+  id: z.string(), name: z.string(), outcomes: marketplaceComparisonOutcomes,
+});
+comparison.interfaces.MarketplaceComparisonInquiry = {
+  properties: { name: 'name' },
+  links: {},
+  actions: { search: { action: 'CompareMarketplaceProducts', parameters: { query: 'query', limit: 'limit' } } },
+};
+marketplaceDefinition.interfaceTypes.push(searchInterface('MarketplaceComparisonInquiry', marketplaceComparisonInput));
+marketplaceDefinition.objectTypes.push(comparison);
+marketplaceDefinition.linkTypes.push(...comparisonLinks);
+marketplaceDefinition.functionTypes.push(
+  {
+    apiName: 'compareMarketplaceProducts',
+    description: 'Search Taobao and JD concurrently with one query and retain each authorized source response independently.',
+    parameters: json(marketplaceComparisonInput),
+    returns: json(objectRefSchema),
+    edits: true,
+    dependencies: { ...comparisonDependencies, functions: marketplaceServiceCatalog.map(service => service.read) },
+  },
+  {
+    apiName: 'readMarketplaceProductComparison',
+    description: 'Return provider outcomes, source pages, comparable reference-price groups and unmatched candidates.',
+    parameters: json(readMarketplaceComparisonInput),
+    returns: json(z.strictObject({
+      search: objectRefSchema,
+      outcomes: marketplaceComparisonOutcomes,
+      pages: z.array(z.record(z.string(), z.unknown())).max(2),
+      groups: z.array(marketplacePriceGroup).max(10),
+      unmatched: z.array(objectRefSchema).max(20),
+    })),
+    dependencies: { ...comparisonDependencies, functions: ['readServiceSearch'] },
+  },
+);
+marketplaceDefinition.actionTypes.push({
+  apiName: 'CompareMarketplaceProducts',
+  description: 'Search Taobao and JD simultaneously and compare reference offers with the same advertised model and specification. Return every available result even when a marketplace has no match or is unavailable. Use readMarketplaceProductComparison to return the comparison.',
+  parameters: json(marketplaceComparisonInput),
+  objectParameters: {},
+  submissionCriteria: [],
+  function: 'compareMarketplaceProducts',
+});
