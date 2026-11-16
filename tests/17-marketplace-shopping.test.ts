@@ -14,7 +14,7 @@ import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { fixture, principal } from './fixture.js';
 
-test('Taobao and JD search and buyer handoff Actions work on the published Gateway MCP', async () => {
+test('Taobao and JD search, comparison and buyer handoff work on the published Gateway MCP', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eigos-marketplace-'));
   const connectionFile = join(directory, 'bindings.json');
   const appSecret = 'synthetic-app-secret';
@@ -143,9 +143,8 @@ test('Taobao and JD search and buyer handoff Actions work on the published Gatew
     const handoff = await apply('PrepareTaobaoPurchase', selected, 'buyer');
     assert.deepEqual(await apply('PrepareTaobaoPurchase', selected, 'buyer'), handoff);
     const jdbuy = await apply('PrepareJdPurchase', { offer: jd.ref }, 'jd-buyer');
-    const context = { principal, objects: graph, signal: AbortSignal.timeout(5000) };
     const read = (ref: typeof handoff) => f.capabilities.functions.invoke(f.model, 'readMarketplacePurchaseHandoff',
-      { handoff: ref }, context) as Promise<Record<string, unknown>>;
+      { handoff: ref }, { principal, objects: graph, signal: AbortSignal.timeout(5000) }) as Promise<Record<string, unknown>>;
     const returned = await invoke<{ url: string; status: string }>('evaluate_ontology',
       { function: 'readMarketplacePurchaseHandoff', input: { handoff } });
     assert.equal(returned.url, 'https://item.taobao.com/item.htm?id=556633720749');
