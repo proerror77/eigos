@@ -26,6 +26,7 @@ import type { Database } from '../runtime/database.js';
 import { businessDefinition } from '../ontology/definition.js';
 import type { SourceResolver } from './didi/functions.js';
 import { didiRideWatchFunctions } from './didi/ride-watch.js';
+import { petRideFunctions } from './didi/pet-ride.js';
 import { rideCapabilities } from './didi/pipeline.js';
 import { schedulingFunctions } from './scheduling/functions.js';
 import { serviceFunctions, serviceProjections } from './services/functions.js';
@@ -62,6 +63,7 @@ export function createCapabilities(
     ...fliggyHotelFunctions(db, configuredFliggyHotel(connections.fliggyHotel, connections.fliggyHotelFetch)),
     ...travelFunctions(db, source, services, () => sources),
     ...didiRideWatchFunctions(db, source),
+    ...petRideFunctions(db),
     ...calendarJourneyFunctions(db, getFunctions, amap, configuredJourneyCalendar(connections.calendar, connections.calendarFetch)),
     ...flightFunctions(db, getFunctions, configuredVariFlight(connections.variFlight, connections.variFlightFetch),
       configuredFlightradar24(connections.fr24, connections.fr24Entrypoint)),
