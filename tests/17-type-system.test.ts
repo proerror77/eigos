@@ -9,6 +9,9 @@ import { Actions } from '../packages/runtime/actions.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
 import { OntologyPackages } from '../packages/runtime/ontology-packages.js';
+import { z } from 'zod';
+import { objectRefSchema, type OntologyDocument } from '../packages/ontology/schema.js';
+import { json } from '../packages/ontology/service-contracts.js';
 
 const property = (schema:Record<string,unknown>,required=false) => ({description:'Test property',schema,required});
 const basic = () => ({id:'Eigos',version:'types',objectTypes:[{apiName:'Item',displayName:'Item',description:'Test item',primaryKey:'id',titleProperty:'name',properties:{id:property({type:'string'},true),name:property({type:'string'},true)},interfaces:{}}],interfaceTypes:[],linkTypes:[],functionTypes:[],actionTypes:[],dataSources:[]});
@@ -309,4 +312,71 @@ test('Interface Action mappings preserve object-level conditions across renamed 
   const conditionOnly = structuredClone(unconstrained);
   conditionOnly.actionTypes.at(-1)!.parameters.anyOf = [{ required: ['title'] }, { required: ['caption'] }];
   assert.throws(() => new Ontology(conditionOnly), /Incompatible action parameter constraints/);
+});
+
+// Note and Card implement one Interface Action, each through an Action that accepts only its own objects.
+const tagInput = (...objects: string[]) =>
+  json(z.strictObject({ ...Object.fromEntries(objects.map(name => [name, objectRefSchema])), label: z.string() }));
+const taggable = (apiName: string, interfaces: OntologyDocument['objectTypes'][number]['interfaces'] = {}) => ({
+  apiName, displayName: apiName, description: `${apiName} test object`, primaryKey: 'id', titleProperty: 'name',
+  properties: { id: property({ type: 'string' }, true), name: property({ type: 'string' }, true) }, interfaces,
+});
+const tagMapping = (action: string) => ({ Tagged: { properties: {}, links: {}, actions: { tag: { action, parameters: { item: 'item', label: 'label' } } } } });
+const markAction = (apiName: string, objectParameters: Record<string, string>): OntologyDocument['actionTypes'][number] => ({
+  apiName, description: `${apiName} test Action`, parameters: tagInput(...Object.keys(objectParameters)), objectParameters, submissionCriteria: [],
+  rules: [{ op: 'createObject', object: { type: 'Mark', id: { parameter: 'label' } }, properties: { id: { parameter: 'label' }, name: { parameter: 'label' } } }],
+  result: { type: 'Mark', id: { parameter: 'label' } },
+});
+const tagged = (): OntologyDocument => ({
+  id: 'Eigos', version: 'tagged',
+  objectTypes: [taggable('Note', tagMapping('TagNote')), taggable('Card', tagMapping('TagCard')), taggable('Mark')],
+  interfaceTypes: [{ apiName: 'Tagged', description: 'An object that can be labelled', properties: {}, optionalProperties: [], links: {},
+    actions: { tag: { parameters: tagInput('item'), objectParameters: { item: 'Tagged' }, required: true } } }],
+  linkTypes: [], functionTypes: [], actionTypes: [markAction('TagNote', { item: 'Note' }), markAction('TagCard', { item: 'Card' })], dataSources: [],
+});
+
+test('each Interface implementation can map an Interface Action to an Action that accepts only its own objects', () => {
+  const model = new Ontology(tagged());
+  const note = { type: 'Note', id: 'n1' }, card = { type: 'Card', id: 'c1' };
+  assert.deepEqual(model.resolveAction(note, 'Tagged', 'tag', { item: note, label: 'urgent' }),
+    { action: 'TagNote', input: { item: note, label: 'urgent' } });
+  assert.deepEqual(model.resolveAction(card, 'Tagged', 'tag', { item: card, label: 'urgent' }),
+    { action: 'TagCard', input: { item: card, label: 'urgent' } });
+  assert.throws(() => model.resolveAction(note, 'Tagged', 'tag', { item: card, label: 'urgent' }), /must bind the selected object/);
+});
+
+test('Interface Action object parameters that cannot be the selected object still accept every implementation', () => {
+  const pinned = tagged();
+  pinned.interfaceTypes.push({ apiName: 'Pinboard', description: 'A board that holds labelled objects', properties: {}, optionalProperties: [], links: {},
+    actions: { pin: { parameters: tagInput('board', 'item'), objectParameters: { board: 'Pinboard', item: 'Tagged' }, required: true } } });
+  pinned.objectTypes.push(taggable('Board', { Pinboard: { properties: {}, links: {},
+    actions: { pin: { action: 'PinToBoard', parameters: { board: 'board', item: 'item', label: 'label' } } } } }));
+  pinned.actionTypes.push(markAction('PinToBoard', { board: 'Board', item: 'Note' }));
+  assert.throws(() => new Ontology(pinned), /Incompatible Action object parameter type for Board\.pin$/);
+  pinned.actionTypes.at(-1)!.objectParameters.item = 'Tagged';
+  assert.doesNotThrow(() => new Ontology(pinned));
+  // When two parameters can hold the implementing object, either one may be the selected object.
+  const paired = tagged();
+  paired.interfaceTypes[0]!.actions.tag = { parameters: tagInput('item', 'other'), objectParameters: { item: 'Tagged', other: 'Tagged' }, required: true };
+  paired.actionTypes = [markAction('TagNote', { item: 'Note', other: 'Note' }), markAction('TagCard', { item: 'Card', other: 'Card' })];
+  for (const type of paired.objectTypes.slice(0, 2)) type.interfaces.Tagged!.actions.tag!.parameters = { item: 'item', other: 'other', label: 'label' };
+  assert.throws(() => new Ontology(paired), /Incompatible Action object parameter type for Note\.tag$/);
+});
+
+test('Interface Actions run the selected implementation and execution rejects an object of another implementation', async () => {
+  const f = await fixture(); try {
+    const model = await f.metadata.publish(tagged(), noBindings, f.publisher);
+    await setGrants(f.db, principal.owner, memberGrants(model)); await f.access.refresh();
+    const card = { type: 'Card', id: 'c1' }, graph = new Objects(f.db, model, f.access);
+    await graph.ingestBatch([{ ref: { type: 'Note', id: 'n1' }, properties: { id: 'n1', name: 'Note' } }, { ref: card, properties: { id: 'c1', name: 'Card' } }]);
+    const actions = new Actions(f.db, new Functions(new Map(), []));
+    const own = actions.resolve(f.access, model, { interface: { type: 'Tagged', action: 'tag', object: card }, input: { item: card, label: 'filed' } });
+    assert.equal(own.action, 'TagCard');
+    await actions.apply(f.access, model, own.action, own.input, 'tag-card');
+    const foreign = actions.resolve(f.access, model, { interface: { type: 'Tagged', action: 'tag', implementation: 'Note' }, input: { item: card, label: 'misfiled' } });
+    assert.equal(foreign.action, 'TagNote');
+    await assert.rejects(actions.apply(f.access, model, foreign.action, foreign.input, 'tag-foreign'), /Action input type does not satisfy its contract/);
+    assert.equal((await graph.read({ type: 'Mark', id: 'filed' })).properties.name, 'filed');
+    await assert.rejects(graph.read({ type: 'Mark', id: 'misfiled' }));
+  } finally { await f.close(); }
 });
