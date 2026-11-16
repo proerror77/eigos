@@ -44,6 +44,20 @@ function addressMatches(place: ObjectData, address: string) {
 
 type Endpoint = 'origin' | 'destination';
 type LandmarkReceipts = Partial<Record<Endpoint, { name: string; receipt: ObjectRef }>>;
+type AddressClues = Partial<Record<Endpoint, string>>;
+
+function quoteEndpoint(actionName: string, submittedName: string | undefined, message: string) {
+  if (!submittedName) return { name: actionName };
+  const submitted = submittedName.trim();
+  if (matchName(actionName) === matchName(submitted)) return { name: submitted };
+  const decorated = actionName.normalize('NFKC').match(/^(.+)\(([^()]+)\)$/u);
+  if (!decorated || matchName(decorated[1]!) !== matchName(submitted) || !/\d+[弄号]/u.test(decorated[2]!)) {
+    return { name: actionName };
+  }
+  const address = decorated[2]!.trim();
+  // A model-added suffix may explain a search, but only a submitted address can select between equal names.
+  return { name: submitted, address: matchName(message).includes(matchName(address)) ? address : undefined };
+}
 
 const cityKey = (city: unknown) => matchName(String(city ?? '')).replace(/市$/u, '');
 const municipalityPrefixes = new Set(['11', '12', '31', '50']);
@@ -80,7 +94,10 @@ function embeddedVenue(place: ObjectData, venues: ObjectData[], city: string | u
 }
 
 async function resolvePlaces(
-  input: Record<string, unknown>, context: FunctionContext, landmarks: LandmarkReceipts = {}, city?: string, pickupAddress?: string,
+  input: Record<string, unknown>, context: FunctionContext,
+  { landmarks = {}, addresses = {}, city, pickupAddress }: {
+    landmarks?: LandmarkReceipts; addresses?: AddressClues; city?: string; pickupAddress?: string;
+  } = {},
 ): Promise<Resolution> {
   const resumed = resumedPlaceInput(context);
   const selection = input.selection as { origin: ObjectRef; destination: ObjectRef } | undefined;
@@ -120,14 +137,18 @@ async function resolvePlaces(
     });
     const venues = hint && !choice && !amendment?.name
       ? matches.filter(place => !embeddedVenue(place, matches, city)) : matches;
-    if (venues.length === 1) {
-      const venue = venues[0]!;
+    const address = !choice && !amendment && !hint && addresses[role];
+    const byAddress = address && venues.length > 1 ? venues.filter(place =>
+      cityKey(place.properties.city) === cityKey(city) && addressMatches(place, address)) : [];
+    const eligible = byAddress.length ? byAddress : venues;
+    if (eligible.length === 1) {
+      const venue = eligible[0]!;
       const expanded = allowBuildingExpansion && expandedBuildingName(name, matchName(String(venue.properties.name)));
       // An abbreviated name or landmark recommends a venue, but only an
       // explicit selection authorizes the quote for that recommendation.
-      if ((!hint || choice) && !expanded) return { selected: venue.ref, candidates: venues };
+      if ((!hint || choice) && !expanded) return { selected: venue.ref, candidates: eligible };
     }
-    return { candidates: venues.length || (!choice && (hint || amendment?.address)) ? venues : candidates.items };
+    return { candidates: eligible.length || (!choice && (hint || amendment?.address)) ? eligible : candidates.items };
   };
   const [origin, destination] = await Promise.all([find('origin'), find('destination')]);
   return origin.selected && destination.selected ? { status: 'resolved', origin: origin.selected, destination: destination.selected }
@@ -225,7 +246,13 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
       }
     }
     if (!city) throw new CityConfirmationRequired();
-    const endpoints = { origin: originName, destination: destinationName };
+    const submitted = execution?.task.input.route;
+    const structuredRoute = submitted && cityKey(submitted.city) === cityKey(city) ? submitted : undefined;
+    const message = execution?.task.input.message ?? '';
+    const originEndpoint = quoteEndpoint(originName, pickup || resumed?.rideOrigin ? undefined : structuredRoute?.origin, message);
+    const destinationEndpoint = quoteEndpoint(destinationName, resumed?.rideDestination ? undefined : structuredRoute?.destination, message);
+    const endpoints = { origin: originEndpoint.name, destination: destinationEndpoint.name };
+    const addresses = { origin: originEndpoint.address, destination: destinationEndpoint.address };
     const pickupEvidence = pickup ? pickupEvidenceFrom(pickup) :
       selection?.origin && !resumed?.placeAmendments?.origin ? resumed?.placeContinuation?.pickup : undefined;
     const saved = resumed?.placeContinuation?.receipts;
@@ -285,9 +312,11 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
     // Landmark receipts are internal inputs to this Action, obtained from the same
     // source; the existing published read Function retains its original contract.
     let resolution: Resolution;
-    if (originLandmark || destinationLandmark || pickup) {
+    if (originLandmark || destinationLandmark || pickup || addresses.origin || addresses.destination) {
       context.objects.access.function(model, 'resolveRideLocations');
-      resolution = await resolvePlaces(resolveInput, context, { origin: originLandmark, destination: destinationLandmark }, city, pickup?.address);
+      resolution = await resolvePlaces(resolveInput, context, {
+        landmarks: { origin: originLandmark, destination: destinationLandmark }, addresses, city, pickupAddress: pickup?.address,
+      });
     } else {
       resolution = await functions.invoke(model, 'resolveRideLocations', resolveInput, context) as Resolution;
     }

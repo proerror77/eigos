@@ -102,6 +102,56 @@ test('one Agent capability choice resolves unique supplier names despite differe
   } finally { await f.close(); }
 });
 
+test('fare Actions preserve the submitted venue name and use a submitted address to break ties', async () => {
+  const origin = '東發道茶冰廰·甄选(前滩店)', address = '浦东新区园照路193号';
+  const decorated = `${origin}（${address}）`;
+  const itinerary = { city: '上海', origin, destination: '中企·云萃森林257弄20号地下车库' };
+  const f = await fixture({ model: 'fixture-decorated-venue', async run(_prompt, tools) {
+    await tools.get('complete_with_action')!.invoke({
+      action: { interface: { type: 'RideInquiry', implementation: 'RideRequest', action: 'estimate' },
+        input: { ...itinerary, city: '上海市', origin: decorated } },
+      read: { function: 'readRideEstimates', resultParameter: 'request' },
+    });
+  } });
+  const quote = async (requestId: string, message: string) => {
+    f.provider.calls.length = 0;
+    f.provider.inputs.length = 0;
+    const task = await f.tasks.submit(principal, { requestId, message, route: itinerary });
+    assert(await f.worker.runOne());
+    const keywords = f.provider.inputs.flatMap(input => typeof input.keywords === 'string' ? [input.keywords] : []);
+    assert.deepEqual(keywords.sort(), [origin, itinerary.destination].sort());
+    return f.tasks.get(principal, task.id);
+  };
+  try {
+    f.provider.flags.related = false;
+    f.provider.flags.placeName = name => name === decorated ? origin : name;
+    f.provider.flags.placeAddress = name => name.startsWith(origin) ? '浦东新区三林镇园照路193、197号' : name;
+    f.provider.flags.placeAlternatives = (name, place) => name.startsWith(origin) ? [
+      { ...place, display_name: '园照路193号', address_all: address,
+        location: { lat: 31.15, lng: 121.47 } },
+    ] : [];
+    const unique = await quote('structured-origin', `从${decorated}到地下车库，只询价`);
+    assert.equal(unique.state, 'completed', unique.error ?? undefined);
+    assert.equal((unique.result as {route: {origin: {name: string}}}).route.origin.name, origin);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+
+    f.provider.flags.placeAddress = name => name.startsWith(origin) ? address : name;
+    f.provider.flags.placeAlternatives = (name, place) => name.startsWith(origin) ? [
+      { ...place, address_all: '浦东新区东育路500弄', location: { lat: 31.16, lng: 121.46 } },
+    ] : [];
+    const resolved = await quote('structured-origin-same-name', `从${decorated}到地下车库，只询价`);
+    assert.equal(resolved.state, 'completed', resolved.error ?? undefined);
+    assert.equal((resolved.result as {route: {origin: {address: string}}}).route.origin.address, address);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+
+    const unresolved = await quote('structured-origin-no-address', `从${origin}到地下车库，只询价`);
+    assert.equal(unresolved.state, 'input-required');
+    assert.equal((unresolved.result as {origin: unknown[]}).origin.length, 2);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch']);
+    assert.equal(f.provider.flags.orderCreates, 0);
+  } finally { await f.close(); }
+});
+
 test('the production Harness discovers the Ontology and executes a simple capability through MCP',async()=>{
   const harness=await harnessFixture(),f=await fixture(harness.driver);
   try{
