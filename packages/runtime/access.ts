@@ -37,7 +37,7 @@ export class Access {
   private readonly egress = new AsyncLocalStorage<{ classification: Classification; requirements: Map<string, Requirement>; clearance?: Classification }>();
   readonly principal: Principal;
   private constructor(private readonly db: Database, principal: Principal, private readonly inheritedClearance?: Classification) {
-    this.principal = Object.freeze({ owner: principal.owner, scopes: Object.freeze([...principal.scopes]), clientId: principal.clientId });
+    this.principal = Object.freeze({ owner: principal.owner, scopes: Object.freeze([...principal.scopes]), clientId: principal.clientId, memberAccess: principal.memberAccess });
   }
   observeClassification(label?: Classification) {
     if (!label) return;
@@ -113,15 +113,17 @@ export class Access {
     const access = new Access(db, principal); await access.refresh(client); return access;
   }
   async refresh(client?: Sql) {
+    const grantSubject = this.principal.memberAccess
+      ? `subject=$2 AND EXISTS (SELECT 1 FROM ${this.db.schema}.member_accounts WHERE owner=$1 AND approved_at IS NOT NULL AND revoked_at IS NULL)`
+      : `(subject=$1 OR subject IN (SELECT 'group:'||name FROM ${this.db.schema}.security_memberships WHERE subject=$1 AND kind='group'))`;
+    const subjects = this.principal.memberAccess ? [this.principal.owner, 'group:' + memberQueryGroup] : [this.principal.owner];
     const result = await this.db.query(`SELECT
       (SELECT coalesce(jsonb_agg(jsonb_build_object('resource',resource,'permission',permission)),'[]')
-        FROM ${this.db.schema}.resource_grants WHERE subject=$1 OR subject IN
-        (SELECT 'group:'||name FROM ${this.db.schema}.security_memberships WHERE subject=$1 AND kind='group'
-          UNION ALL SELECT $2 FROM ${this.db.schema}.member_accounts WHERE owner=$1 AND approved_at IS NOT NULL AND revoked_at IS NULL)) AS grants,
+        FROM ${this.db.schema}.resource_grants WHERE ${grantSubject}) AS grants,
       (SELECT coalesce(jsonb_agg(ontology||'/property/'||type||'/'||property),'[]') FROM ${this.db.schema}.property_security) AS properties,
       (SELECT coalesce(jsonb_agg(jsonb_build_object('ontology',ontology,'type',type,'policy',policy)),'[]') FROM ${this.db.schema}.object_policies) AS policies,
       (SELECT coalesce(jsonb_agg(jsonb_build_object('kind',kind,'name',name)),'[]') FROM ${this.db.schema}.security_memberships WHERE subject=$1) AS memberships,
-      (SELECT coalesce(jsonb_agg(jsonb_build_object('ontology',ontology,'resource',resource,'project',project)),'[]') FROM ${this.db.schema}.ontology_resource_projects) AS projects`, [this.principal.owner, 'group:' + memberQueryGroup], client);
+      (SELECT coalesce(jsonb_agg(jsonb_build_object('ontology',ontology,'resource',resource,'project',project)),'[]') FROM ${this.db.schema}.ontology_resource_projects) AS projects`, subjects, client);
     this.grants = new Set((result.rows[0]!.grants as Grant[]).map(grant => `${grant.permission}:${grant.resource}`));
     for (const assignment of result.rows[0]!.projects as {ontology:string;resource:string;project:string}[]) {
       for (const permission of ['view_definition','edit_definition','manage_definition']) {

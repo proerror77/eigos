@@ -12,7 +12,7 @@ export function canonical(value: unknown): string {
 }
 
 export const digest = (value: unknown) => createHash('sha256').update(canonical(value)).digest('hex');
-export interface Principal { owner: string; scopes: readonly string[]; clientId?: string; issuedAt?: number; memberAudience?: true }
+export interface Principal { owner: string; scopes: readonly string[]; clientId?: string; issuedAt?: number; memberAudience?: true; memberAccess?: true }
 export type ExecutionActor = {
   kind: 'client' | 'agent' | 'workflow' | 'scheduled' | 'indexer' | 'system';
   id: string;

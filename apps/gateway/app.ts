@@ -105,7 +105,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     if (members && memberClient) {
       const access = await members.authorize(verified, memberClient, existingClients);
       if (access === 'member' && (req.path === '/mcp' || req.path === '/identity')) {
-        verified = { ...verified, scopes: memberTaskScopes };
+        verified = { ...verified, scopes: memberTaskScopes, memberAccess: true };
         memberRequests.add(req);
       } else if (access !== 'existing') {
         res.status(403).json({ error: 'Active EIGOS membership and client authorization required', membership: '/members' }); return;
