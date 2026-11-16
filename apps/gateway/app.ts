@@ -18,7 +18,8 @@ import { Objects, querySchema } from '../../packages/runtime/objects.js';
 import { Scenarios, createScenarioSchema } from '../../packages/runtime/scenarios.js';
 import { PARequests, paResponseSchema,paInboxSchema } from '../../packages/runtime/pa.js';
 import { HotelWorkflows, hotelApprovalSchema } from '../../packages/capabilities/services/hotel-workflows.js';
-import { Tasks, submitSchema, publicTask, taskPlaceAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema } from '../../packages/runtime/tasks.js';
+import { amendMapPlace } from '../../packages/capabilities/amap/task-correction.js';
+import { Tasks, submitSchema, publicTask as projectTask, taskPlaceAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema, type Task } from '../../packages/runtime/tasks.js';
 import { createCapabilities } from '../../packages/capabilities/index.js';
 import { configuredServices } from '../../packages/capabilities/services/sources.js';
 import { configuredStripeSandbox } from '../../packages/capabilities/payments/stripe-sandbox.js';
@@ -57,6 +58,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     fr24: config.EIGOS_FR24_CONNECTION_FILE, fr24Entrypoint: config.EIGOS_FR24_MCP_ENTRYPOINT,
     calendar: config.EIGOS_JOURNEY_CALENDAR_CONNECTION_FILE, travelPA: config.EIGOS_TRAVEL_PA_CONNECTION_FILE, ...providerFetch,
   });
+  const publicTask = (task: Task) => projectTask(task, capabilities.projectTaskResult);
   const scenarios = new Scenarios(db), pa = new PARequests(tasks);
   const hotelWorkflows = new HotelWorkflows(db, metadata, capabilities.functions);
   const principals = new WeakMap<Request, Principal>();
@@ -170,7 +172,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     res.json(publicTask(await tasks.answerInput(principal(req), String(req.params.id), req.body))));
   const amendPlace = (p: Principal, id: string, raw: unknown) => {
     const input = taskPlaceAmendmentSchema.parse(raw);
-    return 'source' in input ? tasks.amendMapPlace(p, id, input, capabilities.functions) : tasks.amendPlace(p, id, input);
+    return 'source' in input ? amendMapPlace(tasks, metadata, capabilities.functions, p, id, input) : tasks.amendPlace(p, id, input);
   };
   app.post('/tasks/:id/place-amendment', async (req, res) =>
     res.json(publicTask(await amendPlace(principal(req), String(req.params.id), req.body))));
@@ -236,7 +238,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     res.on('close', () => { void server.close(); });
     await transport.handleRequest(req, res, req.body);
   });
-  app.use('/a2a', jsonRpcHandler({ requestHandler: new A2A(tasks, card), userBuilder: async req => new AgentUser(principal(req)) }));
+  app.use('/a2a', jsonRpcHandler({ requestHandler: new A2A(tasks, card, capabilities.projectTaskResult), userBuilder: async req => new AgentUser(principal(req)) }));
   app.use((error: unknown, _req: Request, res: express.Response, next: express.NextFunction) => {
     if (res.headersSent) return next(error);
     const { status, message, requestId } = publicError(error);

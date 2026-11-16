@@ -29,7 +29,7 @@ import {
   migrateOntologyDataSchema,
   readDataMigrationSchema,
 } from './ontology-packages.js';
-import { Tasks, publicTask } from './tasks.js';
+import { Tasks, publicTask, type TaskResultProjection } from './tasks.js';
 import type { Actions } from './actions.js';
 import { z } from 'zod';
 import type { Principal } from '../core/identity.js';
@@ -70,7 +70,7 @@ import type { Bindings } from './metadata.js';
 export function ontologyServices(
   db: Database,
   metadata: Metadata,
-  bindings: Bindings,
+  bindings: Bindings & { projectTaskResult: TaskResultProjection },
   functions: Functions,
   effects: Effects,
   actions: Actions,
@@ -671,7 +671,7 @@ export function ontologyServices(
     ).rows;
     const tasks = new Tasks(db, metadata);
     return {
-      items: await Promise.all(rows.map(async (row) => publicTask(await tasks.get(a.principal, row.id)))),
+      items: await Promise.all(rows.map(async (row) => publicTask(await tasks.get(a.principal, row.id), bindings.projectTaskResult))),
     };
   });
   register(
