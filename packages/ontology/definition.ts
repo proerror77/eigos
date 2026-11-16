@@ -34,7 +34,7 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '27',
+  id: ride.id, version: '28',
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
   actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes, ...journey.actionTypes, ...flight.actionTypes, ...payments.actionTypes,...luckin.actionTypes,...applications.actionTypes,...documents.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
@@ -181,3 +181,20 @@ addProcessLogs(businessDefinition, [
   { type: 'StripeLinkPaymentRequest', property: 'status' }, { type: 'SchedulePlan', property: 'state' }, { type: journeyType, property: 'state' }, { type: flightWatchType, property: 'state' },
   { type: diningReservationType, property: 'state' },
 ]);
+
+businessDefinition.objectTypes.find(type => type.apiName === 'EventTripStateLog')!.machinery = {
+  states: [
+    { name: 'proposed' }, { name: 'authorized' },
+    { name: 'dispatched', terminal: true }, { name: 'canceled', terminal: true },
+  ],
+  transitions: [
+    { from: null, to: 'proposed', action: 'CommitSchedulePlan' },
+    { from: 'proposed', to: 'authorized', action: 'AuthorizeEventTrip' },
+    { from: 'authorized', to: 'dispatched', action: 'ExecuteEventTrip' },
+    { from: 'authorized', to: 'canceled', action: 'CancelEventTrip' },
+  ],
+  subprocesses: [
+    { link: 'plan', process: 'SchedulePlanStateLog' },
+    { link: 'registration', process: 'EventRegistrationStateLog' },
+  ],
+};

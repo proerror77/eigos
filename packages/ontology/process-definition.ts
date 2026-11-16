@@ -1,5 +1,5 @@
 import type { Ontology } from './model.js';
-import { ontologyName, type OntologyDocument } from './schema.js';
+import { ontologyName, type OntologyDocument, type ObjectRef } from './schema.js';
 
 const text = { type: 'string' };
 const nullableText = { type: ['string', 'null'] };
@@ -44,4 +44,32 @@ export function processLogTarget(model: Ontology, type: string) {
   const navigation = model.navigation(type,'process');
   if (navigation.target!==objectType || navigation.cardinality!=='one') throw new Error('Process log requires its business-object relationship');
   return { type, objectType, property, link: navigation.link };
+}
+
+export type MachineryModel = NonNullable<OntologyDocument['objectTypes'][number]['machinery']>;
+export type ProcessLogTarget = NonNullable<ReturnType<typeof processLogTarget>>;
+
+export function validateMachineryModel(model: Ontology, type: ObjectRef['type'], specification: MachineryModel) {
+  const target = processLogTarget(model, type);
+  if (!target) throw new Error('Machinery models require a published ProcessLog type');
+  const allowed = new Set(model.object(target.objectType).properties[target.property]!.schema.enum as string[]);
+  const states = new Set(specification.states.map(state => state.name));
+  if (states.size !== specification.states.length || [...states].some(state => !allowed.has(state)))
+    throw new Error('Machinery states must be unique values of the tracked state property');
+  const transitions = new Set<string>();
+  for (const edge of specification.transitions) {
+    const key = JSON.stringify([edge.from, edge.to]);
+    if (edge.from === edge.to || (edge.from !== null && !states.has(edge.from))
+        || (edge.to !== null && !states.has(edge.to)) || transitions.has(key))
+      throw new Error('Machinery transitions require distinct known endpoints and must be unique');
+    transitions.add(key);
+    if (edge.action) model.action(edge.action);
+  }
+  const children = new Set<string>();
+  for (const child of specification.subprocesses ?? []) {
+    const navigation = model.navigation(target.objectType, child.link);
+    if (children.has(child.link) || processLogTarget(model, child.process)?.objectType !== navigation.target)
+      throw new Error('Machinery subprocesses require a unique link to a tracked business object');
+    children.add(child.link);
+  }
 }

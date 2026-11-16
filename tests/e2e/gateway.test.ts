@@ -157,6 +157,20 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
       const registrationLogs=await call('query_ontology',{query:{type:'EventRegistrationStateLog',where:{processId:registration.id}}});
       assert.deepEqual(registrationLogs.items.map((item:{properties:{newState:string}})=>item.properties.newState),['proposed','authorized','confirmed']);
       assert.equal(registrationLogs.items[2].properties.action,'ExecuteEventRegistration');assert.equal(registrationLogs.items[2].properties.taskId,request.taskId);
+      const processes = await call('ontology_machinery_processes', {});
+      assert(processes.items.some((item: { type: string }) => item.type === 'EventTripStateLog'));
+      const analysisInput = { type: 'EventRegistrationStateLog', object: registration,
+        from: new Date(Date.now() - 3600000).toISOString(), to: new Date().toISOString() };
+      const analysis = await call('ontology_machinery_analysis', analysisInput);
+      assert.deepEqual(analysis.paths.map((path: { states: string[] }) => path.states), [['proposed', 'authorized', 'confirmed']]);
+      assert.equal(analysis.cases[0].timeline.at(-1).taskId, request.taskId);
+      const workbenchService = await fetch(url + '/ontology/services/machinery_analysis',
+        { method: 'POST', headers, body: JSON.stringify(analysisInput) });
+      assert.equal(workbenchService.status, 200);
+      assert.deepEqual(await workbenchService.json(), analysis);
+      const workbenchModule = await fetch(url + '/workbench/machinery.js');
+      assert.equal(workbenchModule.status, 200);
+      assert.match(await workbenchModule.text(), /renderMachinery/);
       assert.equal((await call('query_ontology',{query:{type:'RideOrder'}})).items.length,0);
       t.diagnostic(JSON.stringify({lumaTask:luma.id,scheduledRegistrationTask:request.taskId,PA:'synthetic Grok/Luma responses',externalMutations:0}));
     } finally {await client.close();}

@@ -218,7 +218,7 @@ Object Set Service 支持集合组合、多跳导航、分组聚合，以及静�
 
 PDF 和 SOP 的已提取文本按不可变文档版本与切片入库，随排程 Link 与对象字段权限查询。切片保留版本引用与提取文本中的准确范围，原件提供页码或段落信息时一并保留。对象集的可下推查询复用 PostgreSQL 的权限过滤。 [文档版本](../guides/document-versions.md) · [对象集](../guides/object-sets.md)
 
-Machinery 过程日志以普通 Object Type 实现共同 `ProcessLog` Interface，通过已发布 Link 关联原业务对象。查询投影复用正式编辑历史，不增加日志存储或执行引擎；Action、请求、原任务与来源观察时间在原事务中关联。Scenario 拟议修改不进入正式历史，排程确认沿原合并 Action 记录内部状态。Agent 通过既有 Ontology MCP 发现和查询这些对象，简单任务保持直接执行。定义、权限、升级和验收边界见 [过程日志](../guides/process-history.md)。
+Machinery 过程日志以普通 Object Type 实现共同 `ProcessLog` Interface，通过已发布 Link 关联原业务对象。查询投影复用正式编辑历史，不增加日志存储或执行引擎；Action、请求、原任务与来源观察时间在原事务中关联。Scenario 拟议修改不进入正式历史，排程确认沿原合并 Action 记录内部状态。Agent 通过既有 Ontology MCP 发现和查询这些对象，简单任务保持直接执行。定义、权限、升级和验收边界见 [过程日志](../guides/process-history.md)。同一投影也提供 [Machinery 流程挖掘和瓶颈分析](../guides/machinery.md)，参考流程随发布定义审阅，Workbench 和 MCP 按当前权限读取分析结果。
 
 过程规则按正式历史游标拾取状态跃迁，沿用 Workflow 队列和 Action 权限处理即时事件与停留超时。Agent 评估通过相同 MCP 路径执行固定业务用例，按实际工具调用、状态和差量评分。 [自动化](../guides/automation.md) · [Agent 评估](../guides/agent-evaluations.md)
 

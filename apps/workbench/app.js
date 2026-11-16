@@ -734,14 +734,19 @@ async function showObject(object, target) {
   );
   target.replaceChildren(node);
 }
-function actionDialog(object) {
+function actionDialog(object, options = {}) {
+  const scenarioId = options.live ? null : state.scenario;
+  const actions = options.actions
+    ? state.model.actionTypes.filter(action => options.actions.includes(action.apiName))
+    : state.model.actionTypes;
+  if (!actions.length) throw new Error('当前身份没有可用的流程操作。');
   const picker = select(
-      state.model.actionTypes.map((action) => [action.apiName, action.apiName]),
-      state.model.actionTypes[0]?.apiName,
+      actions.map((action) => [action.apiName, action.apiName]),
+      actions[0].apiName,
     ),
     holder = element('div');
   const draw = () => {
-    const action = state.model.actionTypes.find((action) => action.apiName === picker.value),
+    const action = actions.find((action) => action.apiName === picker.value),
       initial = {};
     for (const [name, type] of Object.entries(action.objectParameters))
       if (
@@ -757,15 +762,15 @@ function actionDialog(object) {
         'div',
         { class: 'actions' },
         button(
-          state.scenario ? '提交到当前方案' : '提交操作',
+          scenarioId ? '提交到当前方案' : '提交操作',
           async () => {
-            const result = await applyAction(action.apiName, form.read());
+            const result = await applyAction(action.apiName, form.read(), scenarioId);
             $('#editor').close();
             notice('操作已提交');
             if (result?.type && result?.id) {
               const current = await service('read_object', {
                 object: result,
-                ...(state.scenario ? { scenarioId: state.scenario } : {}),
+                ...(scenarioId ? { scenarioId } : {}),
               });
               state.selected = current;
             }
@@ -2548,8 +2553,22 @@ async function renderProcesses(reviewPage = 1) {
       );
     modal('任务 ' + task.id.slice(0, 8), body);
   };
+  const machinery = element('div', { class: 'section' });
+  const loadMachinery = async () => {
+    const { renderMachinery } = await import('./machinery.js');
+    await renderMachinery(machinery, { element, button, field, select, table, modal, jsonInput, service, proposalDialog,
+      openActions: (ref, actions) => actionDialog({ ref }, { actions, live: true }),
+      inspectTask: async (id) => {
+        const task = await request('/tasks/' + encodeURIComponent(id));
+        $('#editor').close();
+        inspect(task);
+      },
+    });
+  };
   $('#main').replaceChildren(
     heading('流程运行', '追踪原始任务、PA 信息回传及规则触发的执行步骤。', button('刷新', renderProcesses)),
+    element('section', { class: 'section' },
+      element('h2', {}, 'Machinery'), button('打开流程分析', loadMachinery), machinery),
     element('div', { class: 'section' },
       element('h2', {}, '受邀审阅'),
       surface(reviews.items.length

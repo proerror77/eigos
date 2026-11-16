@@ -5,6 +5,7 @@ import { Indexing } from '../../packages/runtime/indexing.js';
 import { loadExtensions } from '../../packages/runtime/extensions.js';
 import { Metadata } from '../../packages/runtime/metadata.js';
 import { Scenarios } from '../../packages/runtime/scenarios.js';
+import { MachineryReviews } from '../../packages/runtime/machinery-reviews.js';
 import { Automation } from '../../packages/runtime/automation.js';
 import { createCapabilities } from '../../packages/capabilities/index.js';
 import { configuredSource } from '../../packages/core/config.js';
@@ -26,6 +27,7 @@ const indexing = new Indexing(db, metadata);
 const { effects } = capabilities;
 const automation = new Automation(db, metadata, capabilities.actions);
 const scenarios = new Scenarios(db);
+const machinery = new MachineryReviews(db, metadata);
 const controller = new AbortController();
 process.on('SIGTERM', () => controller.abort());
 process.on('SIGINT', () => controller.abort());
@@ -47,7 +49,14 @@ async function dispatch() {
     if (!worked) await idle();
   }
 }
-const jobs = [indexing.run(controller.signal), dispatch(), deliverEffects()];
+async function reviewProcesses() {
+  while (!controller.signal.aborted) {
+    if (!await machinery.scanOne()) {
+      await delay(60000, undefined, { signal: controller.signal }).catch(() => {});
+    }
+  }
+}
+const jobs = [indexing.run(controller.signal), dispatch(), deliverEffects(), reviewProcesses()];
 try { await Promise.all(jobs); }
 catch (error) { if (!controller.signal.aborted) throw error; }
 finally { controller.abort(); await Promise.allSettled(jobs); await db.close(); }
