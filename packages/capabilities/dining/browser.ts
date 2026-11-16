@@ -7,7 +7,8 @@ export async function withDiningPage<T>(
 ): Promise<T> {
   signal.throwIfAborted();
   const { chromium } = await import('playwright-core');
-  const browser = await chromium.launch({ channel: 'chrome', headless: true, timeout: 10000 });
+  // Playwright's default. Under load Chrome can take longer than 10 seconds to start; the caller's signal bounds the whole read.
+  const browser = await chromium.launch({ channel: 'chrome', headless: true, timeout: 30000 });
   const stop = () => { void browser.close().catch(() => {}); };
   signal.addEventListener('abort', stop, { once: true });
   try {
