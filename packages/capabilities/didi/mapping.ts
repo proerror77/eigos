@@ -18,9 +18,17 @@ export function mapDidiResult(tool: DidiTool, value: unknown): DidiData {
     return didiDataSchema.parse({kind:'driving',durationSeconds:route.duration.value,distanceMeters:route.distance.value});
   }
   if (result.isError) throw new Error('Rejected MCP result');
-  if (tool === 'maps_textsearch') {
-    if (result.content?.[0]?.type !== 'text' || !result.content[0].text) throw new Error('Missing map JSON');
-    const places = z.array(z.object({ display_name: z.string().min(1).max(500), address: z.string().max(1000), address_all: z.string().max(1500), city: z.string().min(1).max(500), location: z.object({ lng: z.number().finite().min(-180).max(180), lat: z.number().finite().min(-90).max(90) }) })).max(50).parse(JSON.parse(result.content[0].text));
+  if (tool === 'maps_textsearch' || tool === 'maps_place_around') {
+    let map = tool === 'maps_place_around' ? result.structuredContent : undefined;
+    if (map === undefined) {
+      if (result.content?.[0]?.type !== 'text' || !result.content[0].text) throw new Error('Missing map JSON');
+      map = JSON.parse(result.content[0].text);
+    }
+    if (tool === 'maps_place_around' && !Array.isArray(map)) {
+      const { pois, data } = z.object({ pois: z.unknown().optional(), data: z.unknown().optional() }).parse(map);
+      map = pois ?? data;
+    }
+    const places = z.array(z.object({ display_name: z.string().min(1).max(500), address: z.string().max(1000), address_all: z.string().max(1500), city: z.string().min(1).max(500), location: z.object({ lng: z.number().finite().min(-180).max(180), lat: z.number().finite().min(-90).max(90) }) })).max(50).parse(map);
     return didiDataSchema.parse({ kind: 'places', places: places.map(p => ({ id: digest(p), name: p.display_name, address: p.address, addressAll: p.address_all, city: p.city, lng: p.location.lng, lat: p.location.lat, coordinateSystem: 'provider_unspecified', identityKind: 'local_snapshot_digest' })) });
   }
   const estimate = z.object({ traceId: z.string().min(1).max(1000), items: z.array(z.object({ productName: z.string().min(1).max(500), productCategory: z.string().min(1).max(500), priceText: z.string().max(500) })).max(50) }).parse(result.structuredContent);

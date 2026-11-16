@@ -175,7 +175,8 @@ test('workbench serves guarded assets and normal HTTP model, media and SDK scena
     const b = await client.createScenario({ requestId: 'sdk-compare-b', name: 'Second' });
     const comparison = await client.compareScenarios({ scenarios: [{ id: a.id, revision: 1 }, { id: b.id, revision: 1 }] });
     assert.deepEqual(comparison.scenarios.map(row => row.name), ['First', 'Second']);
-    const list=await client.service<{items:unknown[]}>('workflows',{});assert.deepEqual(list.items,[]);
+    const list=await client.service<{items:unknown[]}>('published_workflows',{});assert.deepEqual(list.items,[]);
+    await assert.rejects(client.service('workflows',{}),/edit_definition/);
   }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await f.close();}
 });
 
@@ -386,4 +387,59 @@ test('workbench account login preserves separate modeler and reviewer permission
   const offered = await reviewerClient.scenario(scenario.id).inspectReview();
   await reviewerClient.scenario(scenario.id).approveReview(offered.revision, offered.snapshot);
   assert.equal((await reviewerClient.pendingScenarioReviews()).items[0]?.approved, true);
+});
+
+test('workbench pages large relationships through the authorized Link query', async () => {
+  const buttons = new Map<string, () => Promise<void>>();
+  const tables: { headers: string[]; rows: unknown[][] }[] = [];
+  const requests: { path: string; input: Record<string, unknown> }[] = [];
+  const node = () => ({ append() {}, replaceChildren() {}, close() {} });
+  const activity = (index: number) => ({ ref: { type: 'ScheduledActivity', id: 'activity-' + String(index).padStart(3, '0') },
+    revision: 1, properties: { name: 'Activity ' + index } });
+  const page = (start: number, length: number) => Array.from({ length }, (_, index) => activity(start + index));
+  const context = {
+    document: { querySelector: node, querySelectorAll: () => [] },
+    sessionStorage: { getItem: () => null },
+    window: { addEventListener() {} },
+    uiElement: (_tag: string, attributes: Record<string, unknown> = {}) => ({ ...node(), ...attributes }),
+    uiButton: (label: string, action: () => Promise<void>) => { buttons.set(label, action); return node(); },
+    uiTable: (headers: string[], rows: unknown[][]) => { tables.push({ headers, rows }); return node(); },
+    uiNode: node,
+    uiRequest: async (path: string, input: Record<string, unknown>) => {
+      requests.push({ path, input: JSON.parse(JSON.stringify(input ?? {})) });
+      if (path === '/ontology/services/object_view') return { properties: ['name'], links: ['activities'] };
+      if (path === '/ontology/query') {
+        const cursor = (input.query as { cursor?: string }).cursor;
+        // A short first page must not end the read; only an empty cursor does.
+        if (!cursor) return { items: page(0, 60), cursor: 'page-2' };
+        if (cursor === 'page-2') return { items: page(60, 100), cursor: 'page-3' };
+        return { items: page(160, 20) };
+      }
+      return { items: [] };
+    },
+  };
+  const source = await readFile(new URL('../apps/workbench/app.js', import.meta.url), 'utf8');
+  const workbench = runInNewContext(source + `
+    element = uiElement;
+    button = uiButton;
+    table = uiTable;
+    surface = heading = field = empty = modal = uiNode;
+    request = uiRequest;
+    ({ state, showObject });
+  `, context);
+  workbench.state.ontology = 'Eigos';
+  workbench.state.model = {
+    objectTypes: ['ScheduleResource', 'ScheduledActivity'].map(apiName =>
+      ({ apiName, titleProperty: 'name', properties: { name: { schema: { type: 'string' } } } })),
+    linkTypes: [{ apiName: 'ActivityResource', from: { type: 'ScheduledActivity', name: 'resources' },
+      to: { type: 'ScheduleResource', name: 'activities' } }],
+  };
+  const calendar = { type: 'ScheduleResource', id: 'calendar' };
+  await workbench.showObject({ ref: calendar, revision: 1, properties: { name: 'Calendar' } }, node());
+  await buttons.get('activities')!();
+  const link = { type: 'ScheduledActivity', from: { object: calendar, link: 'activities' }, limit: 100 };
+  assert.deepEqual(requests.filter(item => item.path === '/ontology/query').map(item => item.input.query),
+    [link, { ...link, cursor: 'page-2' }, { ...link, cursor: 'page-3' }]);
+  assert(!requests.some(item => item.path === '/ontology/services/follow_links'));
+  assert.equal(tables.at(-1)!.rows.length, 180);
 });

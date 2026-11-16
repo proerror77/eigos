@@ -1,8 +1,13 @@
-import { Conflict, NotFound, SourceReadFailure, digest } from '../../core/identity.js';
+import { z } from 'zod';
+import { Conflict, InvalidInput, NotFound, SourceReadFailure, digest } from '../../core/identity.js';
 import { objectRefSchema, type ObjectRef } from '../../ontology/schema.js';
-import { serviceCatalog, travelOfferSearchType, travelOfferSources } from '../../ontology/services.js';
+import { marketplaceComparisonType, marketplaceOfferType, marketplaceServiceCatalog, serviceCatalog, travelOfferSearchType, travelOfferSources } from '../../ontology/services.js';
 import {
   attachServiceInput,
+  marketplaceComparisonInput,
+  marketplaceComparisonOutcomes,
+  marketplaceObservation,
+  readMarketplaceComparisonInput,
   readServiceInput,
   readServiceSearchPagesInput,
   readTravelOfferSearchInput,
@@ -18,12 +23,24 @@ import type { SourceProjection, Sources } from '../../runtime/sources.js';
 import { ServiceAuthorizationRequired, type ServiceResolver } from './sources.js';
 import { PARequests } from '../../runtime/pa.js';
 import { PermissionDenied } from '../../runtime/access.js';
+import type { Database } from '../../runtime/database.js';
+import { Objects } from '../../runtime/objects.js';
+import { compareMarketplacePrices } from '../marketplace/comparison.js';
+
+function marketplaceSourceFailure(error: unknown, signal: AbortSignal) {
+  signal.throwIfAborted();
+  return error instanceof PermissionDenied || error instanceof ServiceAuthorizationRequired
+    ? 'authorization_required' as const : 'unavailable' as const;
+}
 
 async function currentSource(resolve: ServiceResolver, owner: string, provider: ServiceName) {
   try {
     return await resolve(owner, provider);
   } catch (error) {
-    if (provider === 'Luma' && error instanceof ServiceAuthorizationRequired) return;
+    if (error instanceof ServiceAuthorizationRequired) {
+      if (provider === 'Luma') return;
+      if (provider === 'Taobao' || provider === 'JD') throw new PermissionDenied(error.message);
+    }
     throw error;
   }
 }
@@ -69,7 +86,7 @@ export async function currentService(objects: FunctionContext['objects'], ref: O
     throw new Conflict('Service observation is stale or lacks source evidence');
   return item;
 }
-export function serviceFunctions(resolve: ServiceResolver, getSources: () => Sources) {
+export function serviceFunctions(db: Database, resolve: ServiceResolver, getSources: () => Sources) {
   const handlers = new Map<string, FunctionHandler>();
   for (const service of serviceCatalog) {
     const provider = service.provider;
@@ -112,7 +129,8 @@ export function serviceFunctions(resolve: ServiceResolver, getSources: () => Sou
       }
       await source.assertCurrent();
       const response = await source.read(input, context.signal).catch((error: unknown) => {
-        if (context.execution && (provider === 'RollingGo' || provider === 'Fliggy')) {
+        if (error instanceof SourceReadFailure || error instanceof InvalidInput || error instanceof z.ZodError) throw error;
+        if (context.execution && (provider === 'RollingGo' || provider === 'Fliggy' || provider === 'Taobao' || provider === 'JD')) {
           context.signal.throwIfAborted();
           throw new SourceReadFailure('Supplier search failed', { cause: error });
         }
@@ -179,6 +197,86 @@ export function serviceFunctions(resolve: ServiceResolver, getSources: () => Sou
   handlers.set('readServiceSearchPages', async (input, context) => {
     const { searches } = readServiceSearchPagesInput.parse(input);
     return { pages: await Promise.all(searches.map(search => readSearch(search, context))) };
+  });
+  handlers.set('compareMarketplaceProducts', async (input, context) => {
+    const { model, access } = context.objects;
+    if (!context.edit || model.scenario || !context.operationId)
+      throw new Conflict('Compare marketplace products through the live Ontology Action');
+    const query = { ...marketplaceComparisonInput.parse(input), country: 'CN' };
+    const sources = getSources();
+    const results = await Promise.all(marketplaceServiceCatalog.map(async service => {
+      try {
+        const supplierAccess = await access.fork();
+        supplierAccess.action(model, service.action);
+        const result = marketplaceObservation.parse(await sources.read(model, service.source, query, supplierAccess,
+          context.execution?.task, context.execution?.tasks, context.signal));
+        return { service, result } as const;
+      } catch (error) {
+        return { service, status: marketplaceSourceFailure(error, context.signal) } as const;
+      }
+    }));
+    const search = { type: marketplaceComparisonType, id: digest([context.principal.owner, context.operationId]) };
+    return context.edit(search, async graph => {
+      const outcomes: ReturnType<typeof marketplaceComparisonOutcomes.parse> = [];
+      const pages: { type: string; ref: ObjectRef }[] = [];
+      await graph.lockWrites();
+      for (const job of results) {
+        const { service } = job;
+        if (!job.result) {
+          outcomes.push({ provider: service.provider, status: job.status });
+          continue;
+        }
+        // A source whose evidence expires or fails projection must not roll back its peer.
+        await graph.db.query('SAVEPOINT marketplace_comparison_source', [], graph.client);
+        try {
+          const supplierAccess = await graph.access.fork(graph.client);
+          supplierAccess.action(graph.model, service.action);
+          supplierAccess.definition(graph.model, 'link', marketplaceComparisonType + service.result);
+          sources.checkReadAccess(graph.model, service.source, supplierAccess);
+          const supplierGraph = new Objects(graph.db, graph.model, supplierAccess, graph.client, graph.change);
+          const page = await sources.project(supplierGraph, service.source, query, job.result, context.signal);
+          supplierAccess.read(graph.model, service.result);
+          await supplierAccess.refresh(graph.client);
+          graph.access.adoptReads(supplierAccess);
+          pages.push({ type: marketplaceComparisonType + service.result, ref: page.receipt });
+          outcomes.push({ provider: service.provider, status: page.objects.length ? 'searched' : 'no_results' });
+        } catch (error) {
+          await graph.db.query('ROLLBACK TO SAVEPOINT marketplace_comparison_source', [], graph.client);
+          outcomes.push({ provider: service.provider, status: marketplaceSourceFailure(error, context.signal) });
+        }
+        await graph.db.query('RELEASE SAVEPOINT marketplace_comparison_source', [], graph.client);
+      }
+      await graph.create(search, { id: search.id, name: 'Taobao and JD product comparison', outcomes });
+      await graph.linkBatch(pages.map(page => ({ type: page.type, from: search, to: page.ref })));
+    });
+  });
+  handlers.set('readMarketplaceProductComparison', async (input, context) => {
+    const { search } = readMarketplaceComparisonInput.parse(input);
+    if (search.type !== marketplaceComparisonType) throw new Conflict('Expected a MarketplaceProductComparison');
+    const record = await context.objects.read(search);
+    const outcomes = marketplaceComparisonOutcomes.parse(record.properties.outcomes);
+    const results = await Promise.all(outcomes.map(async outcome => {
+      if (outcome.status !== 'searched' && outcome.status !== 'no_results') return { outcome };
+      const service = marketplaceServiceCatalog.find(service => service.provider === outcome.provider)!;
+      try {
+        const supplierAccess = await context.objects.access.fork();
+        const objects = new Objects(db, context.objects.model, supplierAccess);
+        const [page] = await objects.follow(search, service.source);
+        if (!page) throw new Conflict('Marketplace result page is unavailable');
+        const result = await readSearch(page.ref, { ...context, objects });
+        await supplierAccess.refresh();
+        return { outcome, result, supplierAccess };
+      } catch (error) {
+        return { outcome: { ...outcome, status: marketplaceSourceFailure(error, context.signal) } };
+      }
+    }));
+    const pages = results.flatMap(({ result, supplierAccess }) => {
+      if (!result || !supplierAccess) return [];
+      context.objects.access.adoptReads(supplierAccess);
+      return [result];
+    });
+    return { search, outcomes: results.map(({ outcome }) => outcome), pages,
+      ...compareMarketplacePrices(pages.flatMap(page => page.items)) };
   });
   handlers.set('searchTravelOffers', async (input, context) => {
     const { model, access } = context.objects;
@@ -259,7 +357,8 @@ export function serviceFunctions(resolve: ServiceResolver, getSources: () => Sou
       );
     } else if (context.objects.model.implements(item.ref.type, 'FlightOffer')) {
       reasons.push('displayed_fare_only', 'seat_inventory_and_fare_terms_not_observed', 'booking_connector_not_configured');
-    } else if (context.objects.model.implements(item.ref.type, 'ProductOffer')) {
+    } else if (context.objects.model.implements(item.ref.type, 'ProductOffer') ||
+      context.objects.model.implements(item.ref.type, marketplaceOfferType)) {
       planning = p.available === false ? 'unavailable' : p.available === true ? 'available' : 'unknown';
       reasons.push('delivery_time_unknown', 'merchant_checkout_required');
       if (p.available === false) commitment = 'unavailable';

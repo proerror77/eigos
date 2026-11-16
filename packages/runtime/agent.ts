@@ -23,7 +23,7 @@ import { Clarification } from './clarification.js';
 import { advanceDecisionReadStep, captureProposalReads } from './decision-evidence.js';
 import type { Classification } from '../ontology/classification.js';
 import { cognitiveContextSchema, requireDecisionVersion, validateCognitive } from './cognitive-workflow.js';
-import { checkHotelWorkflowAction, checkHotelWorkflowTool, HotelWorkflows, replayHotelWorkflow, hotelWorkflowAllowsAction, hotelWorkflowCatalogue, hotelWorkflowGuidance } from '../capabilities/services/hotel-workflows.js';
+import type { AgentTaskPrompt, AgentTaskWorkflow } from './agent-task.js';
 import { catalogue, checkAgentCapability, describeAgentResources, taskCatalogueScope } from './agent-catalogue.js';
 export { Clarification } from './clarification.js';
 export interface AgentTool { description: string; schema: z.ZodType; invoke(input: unknown): Promise<unknown> }
@@ -32,7 +32,11 @@ export interface AgentDriver {
   readonly provider?: string;
   run(prompt: string, tools: ReadonlyMap<string, AgentTool>, signal: AbortSignal): Promise<void>;
 }
-export interface Capabilities extends Bindings { functions: Functions; actions: Actions; sources: Sources }
+export interface Capabilities extends Bindings {
+  functions: Functions; actions: Actions; sources: Sources;
+  taskWorkflow?: AgentTaskWorkflow;
+  taskPrompt?: AgentTaskPrompt;
+}
 const argumentsSchema = z.record(z.string(), z.unknown());
 
 type Completion = { result: unknown } | { clarification: Clarification };
@@ -104,16 +108,15 @@ export class OntologyAgent {
     const objects = new Objects(this.db, model, access), context = { principal, objects, signal, taskId: task.id, execution: executionContext };
     const steps: { tool: string; startedAt: string; durationMs: number; outcome: string }[] = [];
     const scenarios = new Scenarios(this.db);
-    const workflows = new HotelWorkflows(this.db, this.metadata, this.capabilities.functions);
-    const replay = task.input.replayHotelWorkflow;
-    const learning = task.input.learnHotelWorkflow === true;
-    const capture = learning || Boolean(replay);
+    const workflow = this.capabilities.taskWorkflow?.({
+      task, tasks: this.tasks, metadata: this.metadata, actions: this.capabilities.actions, access, model, signal,
+    });
     const anchor = { owner: task.owner, release: model.release, projection: model.projection, taskId: task.id };
     const attempt = randomUUID();
     const recordModelTrace = (event: TraceEvent, requirements?: Requirement[]) =>
-      replay ? Promise.resolve() : appendTrace(this.db, anchor, event, undefined, requirements);
-    if (capture && isProtected(disclosed)) throw new ModelEgressDenied();
-    const learningSession = capture ? await workflows.beginTrace(task, this.tasks, this.capabilities.actions, access, model) : undefined;
+      workflow?.replay ? Promise.resolve() : appendTrace(this.db, anchor, event, undefined, requirements);
+    if (workflow && isProtected(disclosed)) throw new ModelEgressDenied();
+    const workflowSession = await workflow?.start();
     const view = (id?: string) => {
       if (cognitive && id !== cognitive.scenarioId) throw new Conflict('Workflow tools require the assigned Scenario');
       return id ? scenarios.view(access,model,id) : Promise.resolve(model);
@@ -175,7 +178,7 @@ export class OntologyAgent {
           proof = check.policyDigest;
           if (!check.allowed) throw new ModelEgressDenied();
           const scoped = await captureEvidence(check.clearance, () => access.measureEgress(async () => {
-            if (capture) checkHotelWorkflowTool(name, input);
+            workflow?.checkTool(name, input);
             const scenarioId = cognitive?.scenarioId ??
               (input && typeof input === 'object' && 'scenarioId' in input && typeof input.scenarioId === 'string' ? input.scenarioId : undefined);
             await boundaryReads(input, scenarioId);
@@ -193,7 +196,7 @@ export class OntologyAgent {
           const classification = combineClassification(disclosed, scoped.classification);
           const decision = await egress.decide(classification);
           proof = decision.policyDigest;
-          if (!decision.allowed || capture && isProtected(classification)) throw new ModelEgressDenied();
+          if (!decision.allowed || workflow && isProtected(classification)) throw new ModelEgressDenied();
           if (!await access.canDisclose(scoped.requirements)) {
             blockCode = 'access_revoked';
             throw new ModelEgressDenied();
@@ -219,7 +222,7 @@ export class OntologyAgent {
           }
           // Pauses are resumable task results, not successful Action outputs
           // that can be frozen into a learned workflow.
-          if (!completion || 'result' in completion.completion) await learningSession?.recordEvent(name, input, output);
+          if (!completion || 'result' in completion.completion) await workflowSession?.recordEvent(name, input, output);
           // Trace storage and workflow capture can wait on PostgreSQL. Check the
           // current model grant again immediately before handing off the reply.
           const delivery = await egress.decide(combineClassification(disclosed, classification));
@@ -282,9 +285,9 @@ export class OntologyAgent {
       async ({ names }) => names ? describeAgentResources(model, access, sandbox, names) : catalogue(model, access, sandbox, undefined, true));
     add('query_ontology', 'Query Object or Interface sets, optionally reached through a Link. Independent queries run together. Read cursor before assuming completeness.',
       z.strictObject({ scenarioId:z.uuid().optional(), queries: z.array(querySchema).min(1).max(20) }), async ({ queries,scenarioId }) => { const graph = new Objects(this.db,await view(scenarioId),access); return Promise.all(queries.map((query: z.input<typeof querySchema>) => graph.query(query))); });
-    add('follow_links', 'Navigate published object or Interface Link names from returned object references.',
+    add('follow_links', 'Read up to 50 objects per Link. Use query_ontology with from and cursor for larger relationships.',
       z.strictObject({ scenarioId:z.uuid().optional(), links: z.array(z.strictObject({ object: objectRefSchema, link: z.string(), as: z.string().optional() })).min(1).max(20) }),
-      async ({ links,scenarioId }) => { const graph=new Objects(this.db,await view(scenarioId),access); return Promise.all(links.map(link=>graph.follow(link.object,link.link,link.as))); });
+      async ({ links,scenarioId }) => { const graph=new Objects(this.db,await view(scenarioId),access); return Promise.all(links.map(link=>graph.follow(link.object,link.link,link.as,50))); });
     add('refresh_sources', 'Refresh named Ontology data sources using their published Function parameters. The server maps real responses into objects and links. Supply view with the desired Interface/Object Type and the published Link from SourceReceipt to return those properties in the same call. Independent reads run together.',
       z.strictObject({ sources: z.array(z.strictObject({ source: z.string(), input: argumentsSchema, view: z.strictObject({ type: z.string(), link: z.string() }).optional() })).min(1).max(20) }),
       async ({ sources }) => Promise.all(sources.map(async source => {
@@ -306,10 +309,10 @@ export class OntologyAgent {
       const selected = this.capabilities.actions.resolve(access, model, input);
       requireCapability('action', selected.action);
       if (cognitive && !cognitive.actions.includes(selected.action)) throw new Conflict('Action is outside the workflow capability list');
-      if (capture) checkHotelWorkflowAction(selected.action, model, input.scenarioId);
+      workflow?.checkAction(selected.action, input.scenarioId);
       const output = await this.capabilities.actions.apply(access, await view(input.scenarioId), selected.action, selected.input, digest([task.id, input.scenarioId, selected]), guard, executionContext, signal);
       await advanceDecisionReadStep();
-      learningSession?.recordAction(selected, input.scenarioId, output);
+      workflowSession?.recordAction(selected, input.scenarioId, output);
       return output;
     };
     add('apply_action', 'Apply a published Action or mapped Interface Action. Use an implementing Object Type for creation capabilities; existing-object actions can bind an object reference. The runtime enforces the published parameters and submission criteria.', actionCall, apply);
@@ -320,11 +323,11 @@ export class OntologyAgent {
           const selected = this.capabilities.actions.resolve(access, model, action);
           requireCapability('action', selected.action);
           requireCapability('function', read.function);
-          if (capture) checkHotelWorkflowAction(selected.action, model, action.scenarioId);
+          workflow?.checkAction(selected.action, action.scenarioId);
           const result = await this.capabilities.actions.complete(access, await view(action.scenarioId),
             selected, digest([task.id, action.scenarioId, selected]), read, executionContext, signal, {
-              allowPause: !capture,
-              applied: output => learningSession?.recordAction(selected, action.scenarioId, output),
+              allowPause: !workflow,
+              applied: output => workflowSession?.recordAction(selected, action.scenarioId, output),
             });
           return completedResult(result);
         } catch (error) {
@@ -361,14 +364,13 @@ export class OntologyAgent {
     let visibleCatalogue: ReturnType<typeof catalogue>;
     let profileInstructions: string[] = [];
     let initialRequirements: Requirement[];
+    let taskPrompt: ReturnType<AgentTaskPrompt>;
+    const { classification: _classification, ...userRequest } = task.input;
     try {
       if (!initialDecision.allowed) throw new ModelEgressDenied();
       await checkLegacyEvidence();
       const initial = await captureEvidence(initialDecision.clearance, () => access.measureEgress(async () => {
-        if (task.input.mapPlaceCorrections) {
-          access.function(model, 'readMapPlace');
-          access.source(model, 'Amap');
-        }
+        const prompt = this.capabilities.taskPrompt?.(model, access, userRequest);
         await boundaryReads(task.input);
         if (cognitive) {
           const input = await objects.read(cognitive.object);
@@ -386,23 +388,24 @@ export class OntologyAgent {
             catalogue: { ...scoped, interfaces: [], links: [], objects: [], dataSources: [],
               actions: scoped.actions.filter(action => cognitive.actions.includes(action.apiName)),
               functions: scoped.functions.filter(fn => cognitive.functions.includes(fn.apiName)) },
-            instructions: [],
+            instructions: [], prompt,
           };
         }
-        const { profiles, include } = taskCatalogueScope(model, access, task.input, capture ? hotelWorkflowCatalogue : undefined);
+        const { profiles, include } = taskCatalogueScope(model, access, task.input, workflow?.catalogue);
         const scoped = catalogue(model, access, sandbox, include);
         const actions = new Set(scoped.actions.map(action => action.apiName));
         const functions = new Set(scoped.functions.map(fn => fn.apiName));
-        return { catalogue: scoped, instructions: profiles.flatMap(profile => (profile.instructions ?? [])
-          .filter(hint => (!hint.action || actions.has(hint.action) && (!capture || hotelWorkflowAllowsAction(hint.action))) && (!hint.function || functions.has(hint.function)))
+        return { catalogue: scoped, prompt, instructions: profiles.flatMap(profile => (profile.instructions ?? [])
+          .filter(hint => (!hint.action || actions.has(hint.action) && (!workflow || workflow.allowsAction(hint.action))) && (!hint.function || functions.has(hint.function)))
           .map(hint => hint.text)) };
       }, initialDecision.clearance));
       disclosed = combineClassification(disclosed, initial.classification);
       if (!(await egress.decide(disclosed)).allowed || !await access.canDisclose(initial.requirements)
-        || capture && isProtected(disclosed)) throw new ModelEgressDenied();
+        || workflow && isProtected(disclosed)) throw new ModelEgressDenied();
       visibleCatalogue = initial.result.catalogue;
       profileInstructions = initial.result.instructions;
       initialRequirements = initial.requirements;
+      taskPrompt = initial.result.prompt;
       await recordModelTrace({ kind: 'egress', state: 'allowed', policyDigest: initialDecision.policyDigest },
         isProtected(disclosed) ? [] : initial.requirements);
     } catch (error) {
@@ -410,9 +413,6 @@ export class OntologyAgent {
         policyDigest: initialDecision.policyDigest, code: 'egress_policy_denied' });
       throw error;
     }
-    const { classification: _classification, mapPlaceCorrections, ...userRequest } = task.input;
-    const confirmedMapPlaces = mapPlaceCorrections && Object.fromEntries(Object.entries(mapPlaceCorrections)
-      .flatMap(([side, place]) => place ? [[side, { placeId: place.placeId, name: place.name, city: place.city }]] : []));
     const prompt = cognitive ? [
       'Use only the assigned Scenario and listed Ontology tools. Stage edits in order, read the resulting view, then call submit_workflow_proposal.',
       'Use the provided object reference. Include scenarioId in every Action and Function tool call. The proposal is submitted for independent review.',
@@ -430,12 +430,12 @@ export class OntologyAgent {
       'Use the location selected for the current goal. For current location, use the original PA when authorized. Preserve coordinate systems and ask for a specific address when the device location is unavailable.',
       'For definitions beyond this request’s initial context, call describe_ontology to discover available capabilities, then request the exact API names for full contracts.',
       ...profileInstructions,
-      ...(confirmedMapPlaces ? ['Use the authenticated caller’s confirmedMapPlaces values. Read the exact placeId for each corrected endpoint and preserve it across dependent legs. Use the current execution date for planning.'] : []),
-      ...(learning ? [hotelWorkflowGuidance] : []),
-      JSON.stringify({ taskId: task.id, requestedAt: task.created_at.toISOString(), userRequest, confirmedMapPlaces,
-        ...(confirmedMapPlaces ? { executionAt: new Date().toISOString() } : {}), ontology: visibleCatalogue }),
+      ...(taskPrompt?.instructions ?? []),
+      ...(workflow?.instructions ?? []),
+      JSON.stringify({ taskId: task.id, requestedAt: task.created_at.toISOString(),
+        userRequest: taskPrompt?.userRequest ?? userRequest, ...taskPrompt?.context, ontology: visibleCatalogue }),
     ].join('\n');
-    const recipe = replay ? await workflows.load(model, principal.owner, replay.workflowId) : undefined;
+    const replay = await workflowSession?.prepareReplay?.();
     await recordModelTrace({ kind: 'model', state: 'started', model: this.driver.model, attempt });
     const execution = Promise.resolve().then(async () => {
       const delivery = await egress.decide(disclosed);
@@ -445,13 +445,11 @@ export class OntologyAgent {
         throw new ModelEgressDenied();
       }
       signal.throwIfAborted();
-      return replay && recipe ? replayHotelWorkflow(tools, recipe, replay.checkIn) : this.driver.run(prompt, tools, signal);
+      return replay ? replay(tools) : this.driver.run(prompt, tools, signal);
     });
     try {
       const output = await Promise.race([completed, execution.then(() => { throw new Error('Agent ended without returning a Function result or requesting clarification'); })]);
-      const result = learningSession
-        ? await workflows.prepare(model, access, learningSession.trace, output, signal, replay && recipe ? { id: replay.workflowId, recipe, checkIn: replay.checkIn } : undefined)
-        : output;
+      const result = workflowSession ? await workflowSession.complete(output) : output;
       const durationMs = Math.round(performance.now() - started);
       await recordModelTrace({ kind: 'model', state: 'completed', model: this.driver.model, attempt, durationMs });
       return new TaskResult({ ...(result && typeof result === 'object' && !Array.isArray(result) ? result : { value: result }), elapsedMs: Date.now() - task.created_at.getTime(),

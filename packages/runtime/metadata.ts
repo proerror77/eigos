@@ -3,7 +3,7 @@ import { copyEditState } from './edit-history.js';
 import { migrateProjectionState } from './projection-migration.js';
 import { checkSavedObjectSets } from './object-set-compatibility.js';
 import { randomUUID } from 'node:crypto';
-import { digest, Conflict } from '../core/identity.js';
+import { digest, Conflict, NotFound } from '../core/identity.js';
 import { Ontology, validator } from '../ontology/model.js';
 import type { ObjectRef } from '../ontology/schema.js';
 import { Database, type Sql } from './database.js';
@@ -198,22 +198,24 @@ export class Metadata {
   async active(id = 'Eigos', client?: Sql, lock = false): Promise<PublishedOntology> {
     if (lock) await this.db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [this.db.lockKey('publication', id)], client);
     const result = await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [id], client);
-    if (!result.rows[0]) throw new Error('Publish the ontology before starting the runtime');
+    if (!result.rows[0]) throw new NotFound('Published Ontology is unavailable');
     return this.get(String(result.rows[0].release), client);
   }
-  async findAncestor(model: PublishedOntology, definition: string, client?: Sql) {
+  async findAncestor(model: PublishedOntology, identity: string, client?: Sql, match: 'definition'|'release' = 'definition') {
+    const field=match==='release'?'digest':'definition_digest';
     const {rows} = await this.db.query<{digest:string}>(`WITH RECURSIVE ancestors AS (
       SELECT digest,prepared_from,definition_digest FROM ${this.db.schema}.releases WHERE digest=$1
       UNION ALL
       SELECT r.digest,r.prepared_from,r.definition_digest FROM ${this.db.schema}.releases r
-      JOIN ancestors a ON r.digest=a.prepared_from WHERE a.definition_digest<>$2
-    ) SELECT digest FROM ancestors WHERE definition_digest=$2`, [model.release,definition],client);
+      JOIN ancestors a ON r.digest=a.prepared_from WHERE a.${field}<>$2
+    ) SELECT digest FROM ancestors WHERE ${field}=$2`, [model.release,identity],client);
     if (rows[0]) return this.get(rows[0].digest,client);
   }
   async get(release: string, client?: Sql): Promise<PublishedOntology> {
     const cached = this.models.get(release); if (cached) return cached;
     const row = (await this.db.query(`SELECT * FROM ${this.db.schema}.releases WHERE digest=$1`, [release], client)).rows[0];
-    if (!row?.projection) throw new Error('Published projection is unavailable');
+    if (!row) throw new NotFound('Ontology release is unavailable');
+    if (!row.projection) throw new Error('Published projection is unavailable');
     const model = new PublishedOntology(row.body, release, row.projection, row.runtime_id, row.bindings);
     if (model.digest !== row.definition_digest) throw new Error('Ontology release content differs');
     if (this.models.size >= 16) this.models.delete(this.models.keys().next().value!);

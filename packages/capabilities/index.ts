@@ -15,8 +15,11 @@ import { configuredJourneyCalendar } from './journey/calendar-source.js';
 import { configuredTravelNotifications } from './pa/travel-notifications.js';
 import { configuredAmap } from './amap/client.js';
 import { amapFunctions } from './amap/functions.js';
+import { prepareMapCorrectionPrompt } from './amap/task-correction.js';
+import { hotelTaskWorkflow, publicHotelTaskResult } from './services/hotel-workflows.js';
 import { resolveTaskLocation } from './location.js';
 import { luckinFunctions } from './luckin/functions.js';
+import { marketplaceFunctions } from './marketplace/functions.js';
 import { paotuiFunctions } from './meituan/paotui.js';
 import { waimaiFunctions } from './meituan/waimai.js';
 import {localEmbeddingVersion} from '../runtime/local-embeddings.js';
@@ -58,7 +61,8 @@ export function createCapabilities(
     ...diningReservationFunctions(db, connections.diningWeb, connections.diningMiniProgram),
     ...applicationFunctions(db),
     [registerDocumentFunction, registerSchedulePlanDocument],
-    ...serviceFunctions(services, () => sources),
+    ...serviceFunctions(db, services, () => sources),
+    ...marketplaceFunctions(services),
     ...fliggyFlightBookingFunctions(db, configuredFliggyFlight(connections.fliggyFlight, connections.fliggyFlightFetch)),
     ...fliggyHotelFunctions(db, configuredFliggyHotel(connections.fliggyHotel, connections.fliggyHotelFetch)),
     ...travelFunctions(db, source, services, () => sources),
@@ -78,5 +82,7 @@ export function createCapabilities(
       effects: new Map([...(extensions.effects ?? []), ...notifications.handlers]) },
     serviceProjections(services), notifications.committed);
   sources = capabilities.sources;
-  return { ...capabilities, evaluateRelease: evaluateCalendarJourneyRelease };
+  return { ...capabilities, evaluateRelease: evaluateCalendarJourneyRelease,
+    taskWorkflow: hotelTaskWorkflow(capabilities.functions), taskPrompt: prepareMapCorrectionPrompt,
+    projectTaskResult: publicHotelTaskResult };
 }

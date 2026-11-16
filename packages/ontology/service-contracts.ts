@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { objectRefSchema } from './schema.js';
 
-export const serviceName = z.enum(['Luma', 'RollingGo', 'Shopify', 'Fliggy']);
+export const serviceName = z.enum(['Luma', 'RollingGo', 'Shopify', 'Fliggy', 'Taobao', 'JD']);
 export type ServiceName = z.infer<typeof serviceName>;
 export const time = z.iso.datetime({ offset: true });
 export const shortText = z.string().min(1).max(500);
@@ -75,6 +75,30 @@ export const productFacts = commonOffer.extend({
   available: z.boolean().nullable(),
   deliveryTime: z.literal('unknown'),
 });
+export const marketplaceProvider = z.enum(['Taobao', 'JD']);
+export type MarketplaceProvider = z.infer<typeof marketplaceProvider>;
+export const marketplaceFacts = productFacts.omit({ merchantDomain: true }).partial({
+  variantId: true,
+  sellerId: true,
+}).extend({
+  sellerName: shortText.optional(),
+  available: z.null(),
+  priceKind: z.literal('reference'),
+});
+export const prepareMarketplacePurchaseInput = z.strictObject({ offer: objectRefSchema });
+export const readMarketplacePurchaseInput = z.strictObject({ handoff: objectRefSchema });
+export const marketplacePurchaseFacts = z.strictObject({
+  provider: marketplaceProvider,
+  name: shortText,
+  url: z.url().max(2000),
+  amountMinor: marketplaceFacts.shape.amountMinor,
+  currency: z.literal('CNY'),
+  priceKind: marketplaceFacts.shape.priceKind,
+  observedAt: time,
+  expiresAt: time,
+  status: z.literal('awaiting_buyer'),
+  evidence,
+});
 export const eventSearchInput = z.strictObject({
   eventId: shortText.optional(),
   query: shortText.optional(),
@@ -102,6 +126,24 @@ export const productSearchInput = z.strictObject({
   query: z.string().min(1).max(500),
   country: z.string().regex(/^[A-Z]{2}$/),
   limit: z.number().int().min(1).max(10).default(5),
+});
+export const marketplaceComparisonInput = productSearchInput.pick({ query: true, limit: true }).extend({
+  query: z.string().trim().min(1).max(500),
+});
+export const marketplaceComparisonOutcomes = z.array(z.strictObject({
+  provider: marketplaceProvider,
+  status: z.enum(['searched', 'no_results', 'authorization_required', 'unavailable']),
+})).length(2);
+export const readMarketplaceComparisonInput = z.strictObject({ search: objectRefSchema });
+export const marketplacePriceGroup = z.strictObject({
+  title: shortText,
+  matchBasis: z.literal('same_advertised_model_and_specification'),
+  currency: z.literal('CNY'),
+  priceKind: z.literal('reference'),
+  offers: z.array(z.strictObject({
+    provider: marketplaceProvider, offer: objectRefSchema,
+    amountMinor: z.number().int().nonnegative().safe(),
+  })).min(2).max(20),
 });
 export const hotelSearchInput = z.strictObject({
   place: shortText,
@@ -139,11 +181,15 @@ export const serviceObservation = z.discriminatedUnion('provider', [
   observation.extend({ provider: z.literal('RollingGo'), items: z.array(hotelFacts).max(10) }),
   observation.extend({ provider: z.literal('Shopify'), items: z.array(productFacts).max(100) }),
 ]);
+export const marketplaceObservation = z.discriminatedUnion('provider', [
+  observation.extend({ provider: z.literal('Taobao'), items: z.array(marketplaceFacts).max(10) }),
+  observation.extend({ provider: z.literal('JD'), items: z.array(marketplaceFacts).max(10) }),
+]);
 export const fliggyAccessMode = z.enum(['trial', 'key']);
 const fliggyObservation = observation.extend({ provider: z.literal('Fliggy'), accessMode: fliggyAccessMode });
 export const fliggyHotelObservation = fliggyObservation.extend({ items: z.array(fliggyHotelFacts).max(10) });
 export const fliggyFlightObservation = fliggyObservation.extend({ items: z.array(flightFacts).max(10) });
-export type ServiceObservation = z.infer<typeof serviceObservation | typeof fliggyHotelObservation | typeof fliggyFlightObservation>;
+export type ServiceObservation = z.infer<typeof serviceObservation | typeof fliggyHotelObservation | typeof fliggyFlightObservation | typeof marketplaceObservation>;
 export const attachServiceInput = z.strictObject({ plan: objectRefSchema, service: objectRefSchema });
 export const readServiceInput = z.strictObject({ service: objectRefSchema });
 export const readServiceSearchPagesInput = z.strictObject({ searches: z.array(objectRefSchema).min(1).max(5) });

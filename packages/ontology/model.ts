@@ -164,17 +164,25 @@ export class Ontology {
       if (definition.machinery) validateMachineryModel(this, type, definition.machinery);
     }
   }
-  object(name: string) { return required(this.objects, name); }
-  action(name: string) { return required(this.actions, name); }
+  object(name: string) {
+    const object = this.objects.get(name);
+    if (!object) throw new NotFound(`Unknown ontology resource ${name}`);
+    return object;
+  }
+  action(name: string) {
+    const action = this.actions.get(name);
+    if (!action) throw new NotFound(`Unknown ontology resource ${name}`);
+    return action;
+  }
   implements(type: string, target: string) { return type === target || Object.hasOwn(this.object(type).interfaces, target); }
   concreteTypes(target: string): string[] {
-    if (!this.objects.has(target) && !this.interfaces.has(target)) throw new Error(`Unknown type ${target}`);
+    if (!this.objects.has(target) && !this.interfaces.has(target)) throw new NotFound(`Unknown type ${target}`);
     return [...this.objects.keys()].filter(type => this.implements(type, target));
   }
   propertyName(type: string, view: string, property: string): string | undefined {
-    if (type === view) { if (!Object.hasOwn(this.object(type).properties, property)) throw new Error('Unknown property ' + type + '.' + property); return property; }
+    if (type === view) { if (!Object.hasOwn(this.object(type).properties, property)) throw new InvalidInput('Unknown property ' + type + '.' + property); return property; }
     const mapping = this.object(type).interfaces[view];
-    if (!mapping || !Object.hasOwn(required(this.interfaces, view).properties, property)) throw new Error('Unknown interface property ' + view + '.' + property);
+    if (!mapping || !Object.hasOwn(required(this.interfaces, view).properties, property)) throw new InvalidInput('Unknown interface property ' + view + '.' + property);
     return Object.hasOwn(mapping.properties, property) ? mapping.properties[property] : undefined;
   }
   propertyPath(view: string, path: string): Record<string, unknown> {
@@ -182,7 +190,7 @@ export class Ontology {
     const definitions = this.interfaces.get(view)?.properties ?? this.object(view).properties;
     let schema = Object.hasOwn(definitions, name!) ? definitions[name!]!.schema : undefined;
     for (const field of fields) schema = schema && fieldSchema(schema, field);
-    if (!schema) throw new Error('Unknown property ' + view + '.' + path);
+    if (!schema) throw new InvalidInput('Unknown property ' + view + '.' + path);
     return schema;
   }
   parseObject(ref: ObjectRef, properties: Record<string, unknown>): Record<string, unknown> {
@@ -202,10 +210,10 @@ export class Ontology {
       if (link.from.type === type && link.from.name === actual) return { link: link.apiName, forward: true, target: link.to.type, cardinality: link.from.cardinality };
       if (link.to.type === type && link.to.name === actual) return { link: link.apiName, forward: false, target: link.from.type, cardinality: link.to.cardinality };
     }
-    throw new Error(`Unknown relationship ${view}.${name}`);
+    throw new InvalidInput(`Unknown relationship ${view}.${name}`);
   }
   resolveAction(ref: ObjectRef, interfaceName: string, name: string, input: Record<string, unknown>) {
-    const contract = required(this.interfaces, interfaceName).actions[name];
+    const contract = this.interfaces.get(interfaceName)?.actions[name];
     const mapping = this.object(ref.type).interfaces[interfaceName]?.actions[name];
     if (!contract || !mapping) throw new NotFound('Interface action is unavailable');
     const supplied = validator(contract.parameters).parse(input) as Record<string, unknown>;
@@ -215,7 +223,7 @@ export class Ontology {
       .flatMap(([alias, local]) => supplied[alias] === undefined ? [] : [[local, supplied[alias]]])) };
   }
   resolveTypeAction(type: string, interfaceName: string, name: string, input: Record<string, unknown>) {
-    const contract = required(this.interfaces, interfaceName).actions[name];
+    const contract = this.interfaces.get(interfaceName)?.actions[name];
     const mapping = this.object(type).interfaces[interfaceName]?.actions[name];
     if (!contract || !mapping) throw new NotFound('Interface action is unavailable');
     const supplied = validator(contract.parameters).parse(input) as Record<string, unknown>;

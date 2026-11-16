@@ -31,6 +31,21 @@ export function rideCapabilities(db: Database, resolve: SourceResolver, addition
       await graph.create(receipt, { id: receipt.id, name: result.receipt.tool, bindingId: result.receipt.bindingId, tool: result.receipt.tool,
         observedAt: result.receipt.receivedAt, evidence: result.evidence, contentDigest: result.receipt.resultDigest });
       if (result.data.kind === 'places' && source === 'DidiPlaces') {
+        if (result.receipt.tool === 'maps_place_around') {
+          const matches = result.data.places.filter(place => place.id === input.exactPlaceId);
+          const saved = await graph.read(objectRefSchema.parse(input.savedPlace));
+          const { id, name, city, address, coordinates, coordinateSystem, sourceBinding } = saved.properties;
+          const point = coordinates as { lat: number; lng: number } | undefined;
+          if (matches.length !== 1 || saved.ref.type !== 'Place' || name !== input.keywords ||
+              sourceBinding !== result.receipt.bindingId || !point || point.lat !== matches[0]!.lat ||
+              point.lng !== matches[0]!.lng)
+            throw new Error('The saved quote endpoint changed during the source lookup');
+          const objects = await ingest(graph, graph.model, source, [{
+            id, name, city, address, coordinates, coordinateSystem, sourceBinding, observedAt: result.receipt.receivedAt,
+          }]);
+          await graph.link({ type: 'PlaceSource', from: saved.ref, to: receipt });
+          return { receipt, objects };
+        }
         const rows = await Promise.all(result.data.places.map(async place => ({ id: (await new EntityResolution(db).resolve(graph,source,String(place.id),digest([result.receipt.bindingId,place.id]))).id, name: place.name, city: place.city,
           address: place.addressAll || place.address || place.name, coordinates: { lat: place.lat, lng: place.lng }, coordinateSystem: place.coordinateSystem,
           sourceBinding: result.receipt.bindingId, observedAt: result.receipt.receivedAt })));

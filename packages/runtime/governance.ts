@@ -1,7 +1,7 @@
 import {resourceGroups} from '../ontology/resource-mapping.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { Conflict, NotFound, digest } from '../core/identity.js';
+import { InvalidInput, Conflict, NotFound, PermissionDenied, digest } from '../core/identity.js';
 import { Ontology } from '../ontology/model.js';
 import { ontologySchema, type OntologyDocument } from '../ontology/schema.js';
 import { Access, resource, type Permission } from './access.js';
@@ -64,7 +64,7 @@ export class Governance {
     const input = assignProjectSchema.parse(raw);
     access.require(input.ontology, 'manage_definition', input.ontology);
     const known = resources((await this.metadata.active(input.ontology)).document);
-    if (input.resources.some(name => !known.has(name))) throw new Error('Project assignment requires published Ontology resources');
+    if (input.resources.some(name => !known.has(name))) throw new InvalidInput('Project assignment requires published Ontology resources');
     return this.db.transaction(async client => {
       await access.refresh(client);
       for (const name of input.resources) await this.db.query(`INSERT INTO ${this.db.schema}.ontology_resource_projects(ontology,resource,project) VALUES($1,$2,$3)
@@ -102,12 +102,13 @@ export class Governance {
     const row = await this.row(id);
     // Branch bodies include unchanged resources from the whole Ontology.
     access.require(row.ontology, 'view_definition', row.ontology);
-    this.authorize(access,row,'view_definition'); await access.refresh(); return row;
+    this.authorize(access,row,'edit_definition'); await access.refresh(); return row;
   }
   async list(access: Access, ontology: string) {
     identifier.parse(ontology); access.require(ontology,'view_definition',ontology);
+    if (access.workbenchRole(ontology)==='member') throw new PermissionDenied('Ontology management requires service team access');
     const rows = (await this.db.query(`SELECT id,ontology,project,name,author,revision,state,candidate,updated_at FROM ${this.db.schema}.ontology_branches WHERE ontology=$1 ORDER BY updated_at DESC LIMIT 100`, [ontology])).rows;
-    const visible = rows.filter(row => access.allows({ ontology, permission:'view_definition',resource:row.project ? resource(ontology,'project',row.project) : ontology }));
+    const visible = rows.filter(row => access.allows({ ontology, permission:'edit_definition',resource:row.project ? resource(ontology,'project',row.project) : ontology }));
     await access.refresh(); return visible;
   }
   async update(access: Access, raw: unknown) {

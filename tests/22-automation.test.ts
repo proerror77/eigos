@@ -44,7 +44,7 @@ import { locationFunctions, taskLocationValueType } from '../packages/ontology/l
 import { luckinDefinition } from '../packages/ontology/luckin.js';
 import { mapFunctions } from '../packages/ontology/maps.js';
 import { rideWatchDefinition, rideWatchType } from '../packages/ontology/ride-watch.js';
-import { fliggyServicesDefinition } from '../packages/ontology/services.js';
+import { fliggyServicesDefinition, marketplaceDefinition } from '../packages/ontology/services.js';
 import { checkWorkflowDependencies } from '../packages/runtime/workflow-compatibility.js';
 
 async function setup() {
@@ -569,7 +569,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   // Reconstruct the historical documents on the same runtime and check both published identities.
   const laterDomains = [
     calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition, fliggyServicesDefinition,
-    fliggyFlightBookingDefinition, fliggyHotelDefinition, diningReservations,
+    fliggyFlightBookingDefinition, fliggyHotelDefinition, diningReservations, marketplaceDefinition,
   ];
   const addedTypes = new Set([
     ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType,
@@ -608,7 +608,8 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   geometry.submissionCriteria = [];
   geometry.function = 'registerGeometry';
   v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type => type.apiName !== 'RideInquiryWithPlaceClues' &&
-    !fliggyServicesDefinition.interfaceTypes.some(item => item.apiName === type.apiName));
+    !fliggyServicesDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
+    !marketplaceDefinition.interfaceTypes.some(item => item.apiName === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;
   v9Definition.objectTypes = v9Definition.objectTypes.filter(type => !addedTypes.has(type.apiName) && !addedLogs.some(log => log.type === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'ScheduledActivity')!.properties.dining;
@@ -620,8 +621,11 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     !addedLogs.some(log => log.link === type.apiName) && !documentDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !rideWatchDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !calendarJourneyDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
-    !fliggyServicesDefinition.linkTypes.some(link => link.apiName === type.apiName));
-  v9Definition.dataSources = v9Definition.dataSources.filter(source => !fliggyServicesDefinition.dataSources.some(item => item.apiName === source.apiName));
+    !fliggyServicesDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    !marketplaceDefinition.linkTypes.some(link => link.apiName === type.apiName));
+  v9Definition.dataSources = v9Definition.dataSources.filter(source =>
+    !fliggyServicesDefinition.dataSources.some(item => item.apiName === source.apiName) &&
+    !marketplaceDefinition.dataSources.some(item => item.apiName === source.apiName));
   v9Definition.actionTypes = v9Definition.actionTypes.filter(action => !addedActions.has(action.apiName));
   v9Definition.functionTypes = v9Definition.functionTypes.filter(fn => !addedFunctions.has(fn.apiName));
   v9Definition.functionTypes.find(fn => fn.apiName === 'resolveRideLocations')!.description =
@@ -695,7 +699,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     const hotelWorkflows = new HotelWorkflows(f.db, f.metadata, f.capabilities.functions);
     const pa = new PARequests(f.tasks);
     const approvedBody = (task: Task) => {
-      const review = (publicTask(task).result as { hotelWorkflow: { scenarioId: string; revision: number; snapshot: string } }).hotelWorkflow;
+      const review = (publicTask(task, f.capabilities.projectTaskResult).result as { hotelWorkflow: { scenarioId: string; revision: number; snapshot: string } }).hotelWorkflow;
       assert.ok(!Object.hasOwn(review, 'recipe'));
       return { taskId: task.id, scenarioId: review.scenarioId, revision: review.revision,
         snapshot: review.snapshot, decision: 'approve-simulation' };
@@ -984,6 +988,7 @@ async function exerciseReviewedHotelWorkflow(outcome: 'commit' | 'changed-eviden
         mergeAction: 'CommitSchedulePlan', mergeObjectParameter: 'plan', reviewers: [reviewer.owner],
       },
     });
+    await setGrants(f.db,principal.owner,[...memberGrants(f.model),{resource:'Eigos',permission:'edit_definition'}]);
     const started = await mcp.callTool({ name: 'ontology_run_workflow',
       arguments: { workflow: workflow.id, object: plan, requestId: 'hotel-replan' } });
     assert.equal(Boolean(started.isError), false, JSON.stringify(started.content));
@@ -1254,5 +1259,54 @@ test('external process history is source-authorized, idempotent, isolated from l
     assert.deepEqual(cases,{total:1,cases:[{name:'Case1',inputs:{route:f.source},
       evidence:[{object:f.source,revision:(await f.graph.read(f.source)).revision}]}]});
     assert.equal((await f.graph.query({type:'RouteStateLog'})).items.length,0);
+  }finally{await f.close();}
+});
+
+
+test('ordinary users run published Workflow snapshots under their own permissions without author access',async()=>{
+  const f=await setup();
+  try {
+    const services=ontologyServices(f.db,f.metadata,f.capabilities,f.capabilities.functions,f.capabilities.effects,f.actions);
+    const member={...principal,owner:'workflow-consumer'};
+    const editor={...principal,owner:'service-editor'};
+    await setGrants(f.db,principal.owner,[...memberGrants(f.model),{resource:'Eigos',permission:'manage_definition'}]);
+    await setGrants(f.db,editor.owner,[...memberGrants(f.model),{resource:'Eigos',permission:'edit_definition'}]);
+    await setGrants(f.db,member.owner,memberGrants(f.model));
+    const invoke=(name:string,actor:typeof principal,input:unknown={})=>services.get(name)!.invoke(actor,input);
+    for (const [actor,role] of [[principal,'admin'],[editor,'editor'],[member,'member']] as const) {
+      assert.equal((await invoke('workbench_access',actor) as {role:string}).role,role);
+    }
+    assert.deepEqual(await invoke('published_workflows',member),{items:[],hasMore:false});
+    await assert.rejects(invoke('raw_definition',member),/service team/);
+    await assert.rejects(invoke('list_branches',member),/service team/);
+    await assert.rejects(invoke('save_workflow',member,{name:'draft',steps:f.steps}),/edit_definition/);
+    await assert.rejects(invoke('run_workflow',member,{workflow:f.workflow.id,object:f.source,requestId:'draft'}),/edit_definition/);
+    await assert.rejects(invoke('publish_workflow',editor,{id:f.workflow.id,revision:1,targetType:'Route'}),/manage_definition/);
+    await assert.rejects(invoke('run_published_workflow',member,{workflow:f.workflow.id,revision:1,object:f.source,requestId:'not-released'}),/unavailable/);
+
+    const graph=new Objects(f.db,f.model,await Access.load(f.db,member));
+    const input={type:'Route',id:'member-route'};
+    await graph.create(input,{id:input.id,name:'member-input'});
+    await invoke('publish_workflow',principal,{id:f.workflow.id,revision:1,targetType:'Route'});
+    await invoke('save_workflow',principal,{id:f.workflow.id,revision:1,name:'Unreleased edit',steps:[{
+      ...f.steps[0],input:{...f.steps[0]!.input,name:{literal:'Draft-only name'}},
+    }]});
+    assert.deepEqual(await invoke('published_workflows',member),{items:[{
+      id:f.workflow.id,name:'Copy route',description:'',revision:1,targetType:'Route',
+    }],hasMore:false});
+    await assert.rejects(invoke('run_published_workflow',member,{workflow:f.workflow.id,revision:1,object:f.source,requestId:'foreign'}),/Object is unavailable/);
+    const request={workflow:f.workflow.id,revision:1,object:input,requestId:'published'};
+    const accepted=await invoke('run_published_workflow',member,request);
+    assert.deepEqual(await invoke('run_published_workflow',member,request),accepted);
+    assert(await f.automation.runOne());
+    assert.equal((await graph.read({type:'Route',id:'member-input'})).properties.name,'Copied');
+    assert.equal((await f.objects.query({type:'Route'})).items.length,1);
+
+    await setGrants(f.db,member.owner,memberGrants(f.model).filter(g=>g.resource!=='Eigos/action/CopyRoute'));
+    assert.deepEqual(await invoke('published_workflows',member),{items:[],hasMore:false});
+    await assert.rejects(invoke('run_published_workflow',member,{...request,requestId:'revoked'}),/apply_action/);
+    await setGrants(f.db,member.owner,memberGrants(f.model));
+    await invoke('withdraw_workflow',principal,{id:f.workflow.id,revision:1});
+    await assert.rejects(invoke('run_published_workflow',member,{...request,requestId:'withdrawn'}),/unavailable/);
   }finally{await f.close();}
 });
