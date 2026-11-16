@@ -413,6 +413,11 @@ export class Access {
   }
   describe(model: Ontology, executable = false, include = (_kind: string, _name: string) => true) {
     const document = structuredClone(model.resolvedDocument);
+    const definitionAdministration = !executable && this.allows({
+      ontology: model.document.id, resource: model.document.id, permission: 'edit_definition',
+    });
+    const visibleInCatalogue = (kind: string, name: string) =>
+      definitionAdministration || this.available(model, kind, name);
     const limited = Boolean(this.modelClearance());
     const modelVisible = (item: { classification?: Classification }) => {
       if (!limited) return true;
@@ -420,7 +425,7 @@ export class Access {
       this.observeClassification(item.classification);
       return true;
     };
-    document.objectTypes = document.objectTypes.filter(type => include('object', type.apiName) && this.available(model, 'object', type.apiName) && this.canDefine(model, 'object', type.apiName) && modelVisible(type));
+    document.objectTypes = document.objectTypes.filter(type => include('object', type.apiName) && visibleInCatalogue('object', type.apiName) && this.canDefine(model, 'object', type.apiName) && modelVisible(type));
     document.interfaceTypes = document.interfaceTypes.filter(type => include('interface', type.apiName) && this.canDefine(model, 'interface', type.apiName) && modelVisible(type));
     if (limited) {
       for (const type of [...document.objectTypes, ...document.interfaceTypes])
@@ -428,9 +433,9 @@ export class Access {
     }
     const objects = new Set(document.objectTypes.map(type => type.apiName)), interfaces = new Set(document.interfaceTypes.map(type => type.apiName));
     document.linkTypes = document.linkTypes.filter(link => include('link', link.apiName) && this.canDefine(model, 'link', link.apiName) && objects.has(link.from.type) && objects.has(link.to.type) && modelVisible(link));
-    document.functionTypes = document.functionTypes.filter(fn => include('function', fn.apiName) && this.available(model, 'function', fn.apiName) && this.canDefine(model, 'function', fn.apiName) && (!executable || this.allows({ ontology: model.document.id, permission: 'execute_function', resource: resource(model.document.id, 'function', fn.apiName) })) && modelVisible(fn));
+    document.functionTypes = document.functionTypes.filter(fn => include('function', fn.apiName) && visibleInCatalogue('function', fn.apiName) && this.canDefine(model, 'function', fn.apiName) && (!executable || this.allows({ ontology: model.document.id, permission: 'execute_function', resource: resource(model.document.id, 'function', fn.apiName) })) && modelVisible(fn));
     const functions = new Set(document.functionTypes.map(fn => fn.apiName));
-    document.actionTypes = document.actionTypes.filter(action => include('action', action.apiName) && this.available(model, 'action', action.apiName) && this.canDefine(model, 'action', action.apiName) && (!executable || this.allows({ ontology: model.document.id, permission: 'apply_action', resource: resource(model.document.id, 'action', action.apiName) })) && (!action.function || functions.has(action.function)) && Object.values(action.objectParameters).every(type => objects.has(type) || interfaces.has(type)) && modelVisible(action));
+    document.actionTypes = document.actionTypes.filter(action => include('action', action.apiName) && visibleInCatalogue('action', action.apiName) && this.canDefine(model, 'action', action.apiName) && (!executable || this.allows({ ontology: model.document.id, permission: 'apply_action', resource: resource(model.document.id, 'action', action.apiName) })) && (!action.function || functions.has(action.function)) && Object.values(action.objectParameters).every(type => objects.has(type) || interfaces.has(type)) && modelVisible(action));
     const actions = new Set(document.actionTypes.map(action => action.apiName));
     document.dataSources = document.dataSources.filter(source => include('datasource', source.apiName) && this.canDefine(model, 'datasource', source.apiName) && objects.has(source.objectType) && functions.has(source.function) && modelVisible(source));
     if (limited) {

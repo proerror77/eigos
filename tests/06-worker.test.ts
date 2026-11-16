@@ -834,7 +834,7 @@ test('task prompts preload the selected capability and keep sandbox tools out of
         action: { interface: { type: 'PayableOrder', action: 'prepare', object: sandboxOrder },
           input: { order: sandboxOrder } },
         read: { function: 'readSchedulePlan', resultParameter: 'plan' },
-      }), /requires a sandbox Agent/);
+      }), /Data is unavailable to the selected model/);
       await tools.get('request_clarification')!.invoke({ message: 'Confirm the intended time.' });
     },
   });
