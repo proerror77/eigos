@@ -19,8 +19,16 @@ const batchWindowMs = 2000;
 const maxBatchMessages = 16;
 const maxBatchLength = 16000;
 const headOfConversation = (table: string) => `NOT EXISTS (
-  SELECT 1 FROM ${table} earlier WHERE earlier.owner=t.owner AND earlier.conversation_id=t.conversation_id
-    AND earlier.conversation_batch<t.conversation_batch AND earlier.state IN('submitted','working','input-required'))`;
+  SELECT 1 FROM ${table} sibling WHERE sibling.owner=t.owner AND sibling.conversation_id=t.conversation_id
+    AND sibling.id<>t.id AND sibling.state IN('submitted','working','input-required')
+    AND ((sibling.state='working' AND (
+      t.state='submitted' OR sibling.lease_until>=now() OR sibling.conversation_batch<t.conversation_batch
+    )) OR (
+      t.state='submitted' AND sibling.conversation_batch<t.conversation_batch
+      AND (sibling.state='submitted' OR (
+        sibling.state='input-required' AND sibling.input#>>'{placeContinuation,waitingFor}' IS DISTINCT FROM 'retry-source'
+      ))
+    )))`;
 
 export const taskPrincipal = (task: Task): Principal =>
   ({ owner: task.owner, scopes: task.scopes, memberAccess: task.input.memberAccess });
@@ -193,12 +201,27 @@ export class Tasks {
     const kind = lane === 'scheduled' ? " AND t.input ? 'scheduledAction'" :
       lane === 'interactive' ? " AND NOT (t.input ? 'scheduledAction')" : '';
     const table = `${this.db.schema}.tasks`;
-    const result = await this.db.query<Task>(`WITH next AS(SELECT t.id FROM ${table} t
-      WHERE ((t.state='submitted' AND t.available_at<=now()) OR (t.state='working' AND t.lease_until<now()))
-        AND (t.conversation_id IS NULL OR ${headOfConversation(table)})${kind}
-      ORDER BY t.available_at,t.created_at FOR UPDATE OF t SKIP LOCKED LIMIT 1)
-      UPDATE ${table} t SET state='working',token=$1,lease_until=now()+interval '30 seconds',updated_at=now() FROM next WHERE t.id=next.id RETURNING t.*`, [randomUUID()]);
-    return result.rows[0];
+    const atHead = `(t.conversation_id IS NULL OR ${headOfConversation(table)})`;
+    return this.db.transaction(async client => {
+      const candidate = (await this.db.query<Pick<Task, 'id' | 'owner' | 'conversation_id'>>(
+        `SELECT t.id,t.owner,t.conversation_id FROM ${table} t
+        WHERE ((t.state='submitted' AND t.available_at<=now()) OR (t.state='working' AND t.lease_until<now()))
+          AND ${atHead}${kind}
+        ORDER BY t.available_at,t.created_at FOR UPDATE OF t SKIP LOCKED LIMIT 1`, [], client)).rows[0];
+      if (!candidate) return undefined;
+      if (candidate.conversation_id) {
+        // A paused source retry can rejoin while another Worker is selecting a later batch.
+        const key = this.db.lockKey('task-inbox-claim', candidate.owner, candidate.conversation_id);
+        const lock = await this.db.query<{ acquired: boolean }>(
+          'SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired', [key], client);
+        if (!lock.rows[0]!.acquired) return undefined;
+      }
+      // Recheck in a fresh statement after taking the conversation lock.
+      const result = await this.db.query<Task>(`UPDATE ${table} t SET state='working',token=$2,
+        lease_until=clock_timestamp()+interval '30 seconds',updated_at=clock_timestamp()
+        WHERE t.id=$1 AND ${atHead} RETURNING t.*`, [candidate.id, randomUUID()], client);
+      return result.rows[0];
+    });
   }
   async nextInboxDelay() {
     const table = `${this.db.schema}.tasks`;
@@ -241,7 +264,9 @@ export class Tasks {
           ELSE jsonb_set(input,'{placeContinuation}',$6::jsonb) END WHERE id=$1`,
         [task.id, state, result ?? null, error ?? null, JSON.stringify(permissions),
           pending ? JSON.stringify(placeContinuationSchema.parse(pending)) : null], client);
-      if (task.conversation_id && state !== 'input-required') await this.db.query("SELECT pg_notify('eigos_tasks','ready')", [], client);
+      if (task.conversation_id && (state !== 'input-required' || pending?.waitingFor === 'retry-source')) {
+        await this.db.query("SELECT pg_notify('eigos_tasks','ready')", [], client);
+      }
     });
   }
   async readSource<T>(task: Task, name: string, input: unknown, invoke: () => Promise<T>): Promise<T> {
