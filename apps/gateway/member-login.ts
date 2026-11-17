@@ -4,7 +4,7 @@ import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import { z } from 'zod';
 import type { Config } from '../../packages/core/config.js';
 import { digest } from '../../packages/core/identity.js';
-import { Members, newMemberSecret } from '../../packages/runtime/members.js';
+import { Accounts, newAccountSecret } from '../../packages/runtime/accounts.js';
 
 type Attempt = { state: string; nonce: string; verifier: string; expires: number };
 const ttl = 300_000;
@@ -62,7 +62,7 @@ export function auth0MemberLogin(config: Config, exchange: typeof fetch = fetch,
   };
 }
 
-export function mountMembers(app: express.Express, config: Config, members: Members, login = auth0MemberLogin(config)) {
+export function mountMembers(app: express.Express, config: Config, members: Accounts, login = auth0MemberLogin(config)) {
   const flows = new Map<string, Attempt>();
   const redirect = (res: Response, status?: keyof typeof statuses) =>
     res.redirect(303, '/members' + (status ? '?status=' + status : ''));
@@ -99,8 +99,8 @@ export function mountMembers(app: express.Express, config: Config, members: Memb
     const previous = cookie(req, loginCookie);
     if (previous) flows.delete(digest(previous));
     if (flows.size >= 500) { res.sendStatus(429); return; }
-    const token = newMemberSecret(), attempt = {
-      state: newMemberSecret(), nonce: newMemberSecret(), verifier: newMemberSecret(), expires: now + ttl,
+    const token = newAccountSecret(), attempt = {
+      state: newAccountSecret(), nonce: newAccountSecret(), verifier: newAccountSecret(), expires: now + ttl,
     };
     flows.set(digest(token), attempt);
     res.cookie(loginCookie, token, { ...cookieOptions, maxAge: ttl });
@@ -134,7 +134,7 @@ export function mountMembers(app: express.Express, config: Config, members: Memb
     if (!session) { res.sendStatus(401); return; }
     if (req.path === '/activate') {
       const code = z.string().regex(/^[A-Za-z0-9_-]{43}$/).safeParse(req.body?.code);
-      const activated = code.success && await members.activate(session, code.data);
+      const activated = code.success && await members.activate(session, code.data) === 'activated';
       redirect(res, activated ? undefined : 'invite'); return;
     }
     if (req.path === '/approve') await members.approve(session.owner);

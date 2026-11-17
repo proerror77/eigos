@@ -1,4 +1,4 @@
-import { memberQueryGroup } from './members.js';
+import { accountGroup } from './accounts.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { digest, PermissionDenied, type Principal } from '../core/identity.js';
@@ -115,9 +115,9 @@ export class Access {
   }
   async refresh(client?: Sql) {
     const grantSubject = this.principal.memberAccess
-      ? `subject=$2 AND EXISTS (SELECT 1 FROM ${this.db.schema}.member_accounts WHERE owner=$1 AND approved_at IS NOT NULL AND revoked_at IS NULL)`
+      ? `subject=$2 AND EXISTS (SELECT 1 FROM ${this.db.schema}.accounts WHERE owner=$1 AND status='active' AND approved_at IS NOT NULL AND revoked_at IS NULL)`
       : `(subject=$1 OR subject IN (SELECT 'group:'||name FROM ${this.db.schema}.security_memberships WHERE subject=$1 AND kind='group'))`;
-    const subjects = this.principal.memberAccess ? [this.principal.owner, 'group:' + memberQueryGroup] : [this.principal.owner];
+    const subjects = this.principal.memberAccess ? [this.principal.owner, 'group:' + accountGroup] : [this.principal.owner];
     const result = await this.db.query(`SELECT
       (SELECT coalesce(jsonb_agg(jsonb_build_object('resource',resource,'permission',permission)),'[]')
         FROM ${this.db.schema}.resource_grants WHERE ${grantSubject}) AS grants,

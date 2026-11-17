@@ -26,7 +26,7 @@ import { configuredStripeSandbox } from '../../packages/capabilities/payments/st
 import type { SourceResolver } from '../../packages/capabilities/didi/functions.js';
 import { verifier, type VerifyToken } from './auth.js';
 import { mountMembers, type auth0MemberLogin } from './member-login.js';
-import { Members, memberTaskScopes } from '../../packages/runtime/members.js';
+import { Accounts, accountTaskScopes } from '../../packages/runtime/accounts.js';
 import { A2A, AgentUser, agentCard } from './a2a.js';
 import { publicError } from './public-error.js';
 import { developmentSandboxEnabled } from '../../packages/core/sandbox-mode.js';
@@ -68,12 +68,12 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   const principals = new WeakMap<Request, Principal>();
   const memberRequests = new WeakSet<Request>();
   const memberClient = config.OAUTH_MEMBER_MCP_CLIENT_ID;
-  const members = memberClient ? new Members(db) : undefined;
+  const members = memberClient ? new Accounts(db, config.EIGOS_SIGNUP) : undefined;
   const existingClients = config.OAUTH_EXISTING_CLIENT_IDS?.split(',') ?? [];
   const mcpResource = config.PUBLIC_URL + '/mcp';
   const mcpMetadataPath = '/.well-known/oauth-protected-resource/mcp';
   const challenge = members
-    ? `Bearer resource_metadata="${config.PUBLIC_URL + mcpMetadataPath}", scope="${memberTaskScopes.join(' ')}"`
+    ? `Bearer resource_metadata="${config.PUBLIC_URL + mcpMetadataPath}", scope="${accountTaskScopes.join(' ')}"`
     : `Bearer resource_metadata="${config.PUBLIC_URL}/.well-known/oauth-protected-resource"`;
   app.disable('x-powered-by');
   // Published domain definitions can exceed the ordinary task/query body bound.
@@ -93,7 +93,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   app.get('/.well-known/oauth-protected-resource', (_req, res) => res.json({ resource: config.PUBLIC_URL, authorization_servers: config.OAUTH_ISSUER ? [config.OAUTH_ISSUER] : [], bearer_methods_supported: ['header'] }));
   if (members) app.get(mcpMetadataPath, (_req, res) => res.json({
     resource: mcpResource, authorization_servers: [config.OAUTH_ISSUER],
-    scopes_supported: memberTaskScopes, bearer_methods_supported: ['header'],
+    scopes_supported: accountTaskScopes, bearer_methods_supported: ['header'],
   }));
   if (members) {
     mountMembers(app, config, members, memberLogin);
@@ -112,11 +112,11 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       res.status(401).json({ error: 'Authentication required' }); return;
     }
     if (members && memberClient) {
-      const access = await members.authorize(verified, memberClient, existingClients);
-      if (access === 'member' && (req.path === '/mcp' || req.path === '/identity')) {
-        verified = { ...verified, scopes: memberTaskScopes, memberAccess: true };
+      const result = await members.authorize(verified, memberClient, existingClients);
+      if (result.kind === 'account' && (req.path === '/mcp' || req.path === '/identity')) {
+        verified = { ...verified, scopes: accountTaskScopes, memberAccess: true };
         memberRequests.add(req);
-      } else if (access !== 'existing') {
+      } else if (result.kind !== 'existing') {
         res.status(403).json({ error: 'Active EIGOS membership and client authorization required', membership: '/members' }); return;
       }
     }

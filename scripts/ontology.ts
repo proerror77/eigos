@@ -15,7 +15,7 @@ import { pathToFileURL } from 'node:url';
 import type { ProjectionTransform } from '../packages/runtime/metadata.js';
 import { modelClearanceSchema, setModelClearance } from '../packages/runtime/model-egress.js';
 import { enablePgvector } from '../packages/runtime/semantic-pgvector.js';
-import { Members } from '../packages/runtime/members.js';
+import { Accounts } from '../packages/runtime/accounts.js';
 import { installOwnerIsolation } from '../packages/runtime/owner-isolation.js';
 import { provisionPublicPlaceCatalogue } from '../packages/capabilities/public-places/catalogue.js';
 import { publicPlacesOntology } from '../packages/ontology/public-places.js';
@@ -40,7 +40,7 @@ else {
     } else if (command === 'invite-member') {
       const email = z.email().parse(process.argv[3]);
       const hours = z.coerce.number().int().min(1).max(168).parse(process.argv[4] ?? 48);
-      console.log(await new Members(db).invite(email, hours));
+      console.log(await new Accounts(db, z.enum(['open', 'invite', 'closed']).default('open').parse(process.env.EIGOS_SIGNUP)).invite(email, hours));
     } else if (command === 'provision-public-places') {
       const project = ontologyName.parse(process.argv[3]);
       await db.query(`INSERT INTO ${db.schema}.resource_grants(subject,resource,permission) VALUES($1,$2,'manage_definition')

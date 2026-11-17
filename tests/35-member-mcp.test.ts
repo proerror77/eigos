@@ -9,7 +9,7 @@ import { auth0MemberLogin } from '../apps/gateway/member-login.js';
 import { readConfig } from '../packages/core/config.js';
 import { digest } from '../packages/core/identity.js';
 import { setGrants } from '../packages/runtime/access.js';
-import { Members, memberQueryGroup } from '../packages/runtime/members.js';
+import { Accounts, accountGroup } from '../packages/runtime/accounts.js';
 import { fixture } from './fixture.js';
 
 test('verified invitation, separate Grok consent, owner isolation and revocation on the actual MCP gateway', async () => {
@@ -38,7 +38,7 @@ test('verified invitation, separate Grok consent, owner isolation and revocation
       };
     } };
   });
-  const members = new Members(f.db);
+  const members = new Accounts(f.db, 'invite');
   const config = readConfig({
     DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, PUBLIC_URL: publicUrl,
     OAUTH_ISSUER: issuer, OAUTH_AUDIENCE: publicUrl, OAUTH_JWKS_URL: issuer + '.well-known/jwks.json',
@@ -132,7 +132,7 @@ test('verified invitation, separate Grok consent, owner isolation and revocation
     const bobCode = await members.invite('bob@example.test', 24);
     await form('activate', bob.cookie, new URLSearchParams({ code: bobCode }));
     await form('approve', bob.cookie);
-    await setGrants(f.db, 'group:' + memberQueryGroup, [
+    await setGrants(f.db, 'group:' + accountGroup, [
       { resource: 'Eigos', permission: 'view_definition' },
       { resource: 'Eigos/function/readFliggyFlights', permission: 'execute_function' },
       { resource: 'Eigos/source/Fliggy', permission: 'read_source' },
@@ -171,7 +171,10 @@ test('verified invitation, separate Grok consent, owner isolation and revocation
     }
     assert.equal((await call('/mcp', await token('alice', 'grok', audience, undefined, issuedAt + 1))).status, 403);
     await form('approve', alice.cookie);
-    assert.equal((await call('/mcp', aliceToken)).status, 403);
+    // Approving again starts a new grant: tokens issued before it stay rejected, tokens issued after it work.
+    assert.equal((await call('/mcp', await token('alice', 'grok', audience, undefined, issuedAt - 5))).status, 403);
+    const renewed = await makeClient(await token('alice', 'grok', audience, undefined, Math.ceil(Date.now() / 1000)));
+    assert.equal((await renewed.listTools()).tools.length, 2);
     assert.equal((await bobMcp.listTools()).tools.length, 2);
   } finally {
     for (const client of clients) await client.close();
