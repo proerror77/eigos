@@ -493,3 +493,52 @@ test('the portal checks the Origin of form posts itself, without help from the G
   assert.equal(await post({ Origin: config.PUBLIC_URL + '.other.example' }), 403, 'only the exact origin counts');
   assert.equal(await post({ Origin: config.PUBLIC_URL }), 401, 'the right origin reaches the session check');
 });
+
+test('gateway explains why an account token is refused', async () => {
+  const f = await fixture(), g = await accountGateway(f, { signup: 'open' }), closed = await accountGateway(f, { signup: 'closed' });
+  try {
+    const first = await g.call('/mcp', await g.token('gina'));
+    assert.equal(first.status, 403);
+    assert.deepEqual(await first.json(), { error: 'Authorize this client on the EIGOS account page', reason: 'client_not_authorized', account: '/account' });
+    assert.equal((await g.accounts.account(g.owner('gina')))?.status, 'active');
+    await g.accounts.approve(g.owner('gina'));
+    const later = Math.floor(Date.now() / 1000) + 5;
+    const narrow = await g.call('/mcp', await g.token('gina', { scope: 'tasks:read', issuedAt: later }));
+    assert.equal(narrow.status, 403);
+    assert.match(narrow.headers.get('www-authenticate')!, /error="insufficient_scope", scope="tasks:read tasks:write"/);
+    await g.accounts.suspend(g.owner('gina'), 'synthetic');
+    assert.equal((await (await g.call('/mcp', await g.token('gina', { issuedAt: later }))).json()).reason, 'account_suspended');
+    assert.equal((await (await closed.call('/mcp', await closed.token('hank'))).json()).reason, 'signup_closed');
+  } finally { await g.close(); await closed.close(); await f.close(); }
+});
+
+test('every refusal names its reason and only a missing scope adds a challenge', async () => {
+  const f = await fixture(), open = await accountGateway(f, { signup: 'open' }), invite = await accountGateway(f, { signup: 'invite' });
+  const publicUrl = open.config.PUBLIC_URL;
+  const answer = async (g: AccountGateway, path: string, token: string) => {
+    const response = await g.call(path, token);
+    return { status: response.status, challenge: response.headers.get('www-authenticate'), body: await response.json() };
+  };
+  const refusedAs = (error: string, reason: string) => ({ status: 403, challenge: null, body: { error, reason, account: '/account' } });
+  try {
+    assert.deepEqual(await answer(invite, '/mcp', await invite.token('ivan')),
+      refusedAs('Redeem an EIGOS invitation on the account page first', 'invite_required'));
+    await setGrants(f.db, open.owner('olga'), [{ resource: 'Eigos', permission: 'view_definition' }]);
+    assert.deepEqual(await answer(open, '/mcp', await open.token('olga')), refusedAs('Operator accounts use their existing client', 'operator_account'));
+    const notAllowed = refusedAs('This client is not allowed for EIGOS accounts', 'client_not_allowed');
+    assert.deepEqual(await answer(open, '/mcp', await open.token('pete', { azp: 'arbitrary-client' })), notAllowed);
+    assert.deepEqual(await answer(open, '/identity', await open.token('legacy', { azp: 'existing-client', aud: publicUrl })), notAllowed);
+
+    // The first request opens quinn's account, which still has to authorize Grok.
+    assert.equal((await open.call('/mcp', await open.token('quinn'))).status, 403);
+    await open.accounts.approve(open.owner('quinn'));
+    const issuedAt = Math.floor(Date.now() / 1000) + 5, ready = await open.token('quinn', { issuedAt });
+    assert.equal((await open.call('/identity', ready)).status, 200);
+    assert.deepEqual(await answer(open, '/ontology', ready), notAllowed, 'an account token reaches only /mcp and /identity');
+    assert.deepEqual(await answer(open, '/mcp', await open.token('quinn', { scope: 'tasks:write', issuedAt })), {
+      status: 403,
+      challenge: `Bearer error="insufficient_scope", scope="tasks:read tasks:write", resource_metadata="${publicUrl}/.well-known/oauth-protected-resource/mcp"`,
+      body: { error: 'The token is missing tasks:read or tasks:write', reason: 'insufficient_scope', account: '/account' },
+    });
+  } finally { await open.close(); await invite.close(); await f.close(); }
+});

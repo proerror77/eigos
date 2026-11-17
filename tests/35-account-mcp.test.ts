@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { digest } from '../packages/core/identity.js';
 import { setGrants } from '../packages/runtime/access.js';
-import { accountGroup } from '../packages/runtime/accounts.js';
+import { accountGroup, Accounts } from '../packages/runtime/accounts.js';
 import { accountGateway, type AccountGateway } from './account-harness.js';
 import { fixture } from './fixture.js';
 
@@ -111,9 +111,15 @@ test('verified invitation, separate Grok consent, owner isolation and revocation
       assert.equal(denied.status, 403);
     }
     assert.equal((await g.call('/mcp', await g.token('alice', { issuedAt: issuedAt + 1 }))).status, 403);
+    // An approval is stamped by the database clock and compared in whole seconds: approve again only once that clock is past the second aliceToken was issued in.
+    const databaseSecond = async () => Number((await f.db.query<{ second: string }>("SELECT floor(extract(epoch FROM clock_timestamp()))::text AS second")).rows[0]!.second);
+    for (let attempt = 0; await databaseSecond() <= issuedAt; attempt++) {
+      assert(attempt < 200, 'the database clock did not pass the second the token was issued in');
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
     await g.form('approve', alice.cookie);
-    // Approving again starts a new grant: tokens issued before it stay rejected (403), tokens issued after it work (200).
-    assert.equal((await g.call('/mcp', await g.token('alice', { issuedAt: issuedAt - 5 }))).status, 403);
+    // Approving again starts a new grant: the token issued before it stays rejected (403), a token issued after it works (200).
+    assert.equal((await g.call('/mcp', aliceToken)).status, 403);
     const renewedToken = await g.token('alice', { issuedAt: Math.ceil(Date.now() / 1000) });
     assert.equal((await g.call('/identity', renewedToken)).status, 200);
     const renewed = await makeClient(renewedToken);
@@ -124,4 +130,28 @@ test('verified invitation, separate Grok consent, owner isolation and revocation
     await g.close();
     await f.close();
   }
+});
+
+test('a task submitted while its account is being suspended is refused with the reason', async t => {
+  const f = await fixture(), g = await accountGateway(f, { signup: 'open' }), client = new Client({ name: 'test-grok', version: '1' });
+  try {
+    const { cookie } = await g.login('ivy', 'ivy@example.test');
+    assert.equal((await g.form('approve', cookie)).status, 303);
+    const active = Accounts.prototype.active;
+    let checks = 0;
+    // The token passes the Gateway's own check. The suspension lands before the submission checks the account again inside its transaction.
+    t.mock.method(Accounts.prototype, 'active', async function (this: Accounts, ...args: Parameters<Accounts['active']>) {
+      checks++;
+      await this.suspend(g.owner('ivy'), 'synthetic');
+      return active.apply(this, args);
+    });
+    await client.connect(new StreamableHTTPClientTransport(new URL(g.url + '/mcp'), {
+      requestInit: { headers: { Authorization: 'Bearer ' + await g.token('ivy', { issuedAt: Math.ceil(Date.now() / 1000) }) } },
+    }));
+    const refused = await client.callTool({ name: 'submit_task', arguments: { requestId: 'suspended-meanwhile', message: '只查询明天上海到北京的航班' } });
+    assert.equal(checks, 1);
+    assert.equal(refused.isError, true);
+    assert.deepEqual(refused.structuredContent, { status: 403, error: 'This EIGOS account is suspended or its client authorization was revoked' });
+    assert.equal((await g.accounts.account(g.owner('ivy')))?.status, 'suspended');
+  } finally { await client.close(); await g.close(); await f.close(); }
 });

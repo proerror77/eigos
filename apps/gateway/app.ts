@@ -26,7 +26,7 @@ import { configuredStripeSandbox } from '../../packages/capabilities/payments/st
 import type { SourceResolver } from '../../packages/capabilities/didi/functions.js';
 import { verifier, type VerifyToken } from './auth.js';
 import { mountAccountPortal, type auth0AccountLogin } from './account-portal.js';
-import { Accounts, accountTaskScopes } from '../../packages/runtime/accounts.js';
+import { Accounts, accountTaskScopes, type Denial } from '../../packages/runtime/accounts.js';
 import { A2A, AgentUser, agentCard } from './a2a.js';
 import { publicError } from './public-error.js';
 import { developmentSandboxEnabled } from '../../packages/core/sandbox-mode.js';
@@ -43,6 +43,17 @@ const paTravelInstructions = [
   'Withdraw pending notifications when the current reminder or alert is null. Discard expired calendar timing using validUntil.',
   'Report notification delivery only after your PA channel confirms it.',
 ].join(' ');
+
+/** What an agent is told when an account token is refused. English, for machine clients; the reason code is the stable part. */
+const refusal: Record<Denial, string> = {
+  signup_closed: 'EIGOS sign-up is closed',
+  invite_required: 'Redeem an EIGOS invitation on the account page first',
+  operator_account: 'Operator accounts use their existing client',
+  account_suspended: 'This EIGOS account is suspended',
+  client_not_allowed: 'This client is not allowed for EIGOS accounts',
+  client_not_authorized: 'Authorize this client on the EIGOS account page',
+  insufficient_scope: 'The token is missing tasks:read or tasks:write',
+};
 
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {},
   providerFetch: { amapFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch;
@@ -75,6 +86,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   const challenge = members
     ? `Bearer resource_metadata="${config.PUBLIC_URL + mcpMetadataPath}", scope="${accountTaskScopes.join(' ')}"`
     : `Bearer resource_metadata="${config.PUBLIC_URL}/.well-known/oauth-protected-resource"`;
+  const insufficientScope = `Bearer error="insufficient_scope", scope="${accountTaskScopes.join(' ')}", resource_metadata="${config.PUBLIC_URL + mcpMetadataPath}"`;
   app.disable('x-powered-by');
   // Behind a reverse proxy, `req.ip` (the per-address rate limits) is the forwarded client only if the proxy is trusted.
   if (config.EIGOS_TRUST_PROXY) app.set('trust proxy', /^\d+$/.test(config.EIGOS_TRUST_PROXY) ? Number(config.EIGOS_TRUST_PROXY) : config.EIGOS_TRUST_PROXY);
@@ -119,7 +131,10 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
         verified = { ...verified, scopes: accountTaskScopes, memberAccess: true };
         memberRequests.add(req);
       } else if (result.kind !== 'existing') {
-        res.status(403).json({ error: 'Active EIGOS membership and client authorization required', membership: '/members' }); return;
+        // An account token that passed every check still reaches only /mcp and /identity: any other path is a client accounts may not use.
+        const reason: Denial = result.kind === 'denied' ? result.reason : 'client_not_allowed';
+        if (reason === 'insufficient_scope') res.setHeader('WWW-Authenticate', insufficientScope);
+        res.status(403).json({ error: refusal[reason], reason, account: '/account' }); return;
       }
     }
     principals.set(req, verified);
@@ -259,7 +274,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
         inputSchema: memberSubmit,
       }, input => response(async () => publicTask(await tasks.submit(p, input, {
         authorize: async client => {
-          if (!await members!.active(p.owner, client)) throw new PermissionDenied('EIGOS authorization was revoked');
+          if (!await members!.active(p.owner, client)) throw new PermissionDenied('This EIGOS account is suspended or its client authorization was revoked');
         },
       }))));
       server.registerTool('get_task', {
