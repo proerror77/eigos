@@ -69,10 +69,11 @@ export class DiningMiniProgramPA {
     if (!info.isDirectory() || info.mode & 0o077 || info.uid !== process.getuid?.())
       throw new Conflict('Use a private directory owned by the PA for test submissions');
     const filename = join(configuration.privateDirectory, digest([input.testId, input.reference]) + '.dispatched');
-    if (await lstat(filename).catch(error => {
-      if (error.code === 'ENOENT') return undefined;
+    const claimed = () => lstat(filename).then(() => true, error => {
+      if (error.code === 'ENOENT') return false;
       throw error;
-    })) return { status: 'unknown' };
+    });
+    if (await claimed()) return { status: 'unknown' };
     try {
       await sandbox.submit(input.terms, input.reference, signal, async send => {
         if (digest(await this.pending(request.taskId, signal)) !== digest(request))
@@ -83,8 +84,10 @@ export class DiningMiniProgramPA {
         return send();
       });
       return { status: 'attempted' };
-    } catch {
+    } catch (error) {
       signal.throwIfAborted();
+      // Without the local claim nothing reached the merchant, so the original request stays open for a retry.
+      if (!await claimed()) throw error;
       return { status: 'unknown' };
     }
   }
