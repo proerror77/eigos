@@ -473,7 +473,7 @@ export class Scenarios {
       const changes=await this.changes(access.principal.owner,id,client),graph=new Objects(this.db,model,access,client);
       const mask=(ref:ObjectRef,values:Properties|null)=>{
         if(!values)return null;
-        const visible=graph.maskSnapshot(ref,values);
+        const visible=access.maskHistoricalSnapshot(model,ref.type,values);
         if(!visible)throw new NotFound('Scenario recovery data is unavailable');
         return visible;
       };
@@ -481,7 +481,7 @@ export class Scenarios {
         access.read(model,ref.type);
         const live=(await this.db.query<LiveObject>(`SELECT revision,properties FROM ${this.db.schema}.objects
           WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`,[model.projection,access.principal.owner,ref.type,ref.id],client)).rows[0];
-        if(live)mask(ref,live.properties);
+        if(live&&!graph.maskSnapshot(ref,live.properties))throw new NotFound('Scenario recovery data is unavailable');
         return live;
       };
       const objects=[];

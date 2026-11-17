@@ -273,14 +273,25 @@ export class Access {
     if (!this.rowAllowed(model,type,properties)) throw new PermissionDenied('Source object policy denied access');
     this.trackRow(model,type,properties);
   }
-  cell(model: Ontology, type: string, field: string, properties: Record<string,unknown>) {
+  private visibleCell(model: Ontology, type: string, field: string, properties: Record<string,unknown>) {
     const classification = model.object(type).properties[field]?.classification;
     const allowed = this.canSeeModelData(classification) && this.property(model,type,field) && permits(this.policies.get(model.document.id+'/'+type)?.properties[field],properties,this.security);
-    if (allowed) {
-      this.trackRow(model, type, properties, field);
-      this.observeClassification(classification);
-    }
+    if (allowed) this.observeClassification(classification);
     return allowed;
+  }
+  cell(model: Ontology, type: string, field: string, properties: Record<string,unknown>) {
+    const allowed = this.visibleCell(model,type,field,properties);
+    if (allowed) this.trackRow(model,type,properties,field);
+    return allowed;
+  }
+  /** A locked historical draft snapshot has current policy dependencies, not a fictitious live row. */
+  maskHistoricalSnapshot(model: Ontology, type: string, properties: Record<string,unknown>) {
+    this.read(model,type);
+    if (!this.rowAllowed(model,type,properties)) return null;
+    this.observeRowClassification(model,type,properties);
+    for (const marking of markingsOf(this.policies.get(model.document.id+'/'+type),properties)) this.readMarkings.add(marking);
+    return Object.fromEntries(Object.entries(properties).filter(([field])=>model.object(type).properties[field])
+      .map(([field,value])=>[field,this.visibleCell(model,type,field,properties)?value:null]));
   }
   rowSql(model: Ontology, type: string, values: unknown[], column = 'properties') {
     this.trackSecurity(model,type);

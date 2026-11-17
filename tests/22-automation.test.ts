@@ -1433,3 +1433,27 @@ test('continuation recovery enforces owner, revision, session expiry and current
     await assert.rejects(scenarios.inspectContinuation(f.access,next,draft.id,revision),/unavailable/);
   }finally{await f.close();}
 });
+
+test('the recovery service validates draft-only rows against current policies without requiring live counterparts',async()=>{
+  const f=await setup();try{
+    const scenarios=new Scenarios(f.db),draft=await scenarios.create(f.access,f.model,{requestId:'draft-only-policy',name:'Policy-aware recovery'});
+    const ref={type:'Route',id:'draft-only'},view=await scenarios.view(f.access,f.model,draft.id);
+    await new Objects(f.db,view,f.access).create(ref,{id:ref.id,name:'Allowed proposed route'});
+    const revision=(await scenarios.inspect(f.access,f.model,draft.id)).revision;
+    const next=await f.metadata.publish(f.model.document,f.capabilities,f.publisher);
+    const policy=objectPolicySchema.parse({read:{all:[{op:'equals',property:'id',value:ref.id}]},
+      properties:{name:{all:[{op:'equals',property:'name',value:'Allowed proposed route'}]}}});
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies VALUES('Eigos','Route',$1)`,[policy]);
+    const services=ontologyServices(f.db,f.metadata,f.capabilities,f.capabilities.functions,f.capabilities.effects,f.actions);
+    const read=()=>services.get('inspect_scenario_continuation')!.invoke({...principal,scopes:['ontology:read']},{id:draft.id,revision}) as Promise<Awaited<ReturnType<Scenarios['inspectContinuation']>>>;
+    const result=await read();
+    assert.deepEqual(result.objects,[{ref,before:null,after:{id:ref.id,name:'Allowed proposed route'}}]);
+    assert.equal((await f.db.query(`SELECT count(*)::int count FROM ${f.db.schema}.objects WHERE projection=$1 AND type='Route' AND id=$2`,[next.projection,ref.id])).rows[0]!.count,0);
+    await f.db.query(`UPDATE ${f.db.schema}.object_policies SET policy=$1 WHERE type='Route'`,
+      [objectPolicySchema.parse({...policy,properties:{name:{all:[{op:'equals',property:'name',value:'not-permitted'}]}}})]);
+    assert.equal((await read()).objects[0]!.after!.name,null);
+    await f.db.query(`UPDATE ${f.db.schema}.object_policies SET policy=$1 WHERE type='Route'`,
+      [objectPolicySchema.parse({read:{all:[{op:'equals',property:'id',value:'different-row'}]}})]);
+    await assert.rejects(read(),/unavailable|denied/);
+  }finally{await f.close();}
+});
