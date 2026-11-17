@@ -5,7 +5,7 @@ import { Ontology } from '../packages/ontology/model.js';
 import { Database } from '../packages/runtime/database.js';
 import { Metadata } from '../packages/runtime/metadata.js';
 import { objectPolicySchema } from '../packages/runtime/security.js';
-import { Access, setGrants, businessGrants, syncAccountGrants, grantSchema } from '../packages/runtime/access.js';
+import { Access, setGrants, businessGrants, syncAccountGrantsAfterActivation, grantSchema } from '../packages/runtime/access.js';
 import { upgradePublicationStorage } from '../packages/runtime/upgrade.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import { configuredSource } from '../packages/core/config.js';
@@ -94,7 +94,7 @@ else {
         : command === 'activate' ? await metadata.activate(process.argv[3]!, bindings, access)
         : command === 'publish' ? await metadata.publish(document, bindings, access, transform) : undefined;
       if (!published) throw new Error('Use check, initialize, upgrade, enable-owner-isolation, enable-pgvector, permissions, invite, account, grant-business, provision-public-places, prepare, activate or publish');
-      if (command === 'activate' || command === 'publish') await syncAccountGrants(db, published);
+      if (command === 'activate' || command === 'publish') await syncAccountGrantsAfterActivation(db, published);
       console.log(JSON.stringify({ release: published.release, definition: published.digest, projection: published.projection, runtime: published.runtimeId }));
     }
   } finally { await db.close(); }

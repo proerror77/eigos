@@ -540,7 +540,16 @@ export function businessGrants(model: Ontology, sandboxEnabled = false): Grant[]
     ...[...new Set(functions.flatMap(fn => fn.source ? [fn.source] : []))].map(name => ({ resource: resource(model.document.id, 'source', name), permission: 'read_source' as const })),
   ];
 }
-/** Makes the account group hold exactly the business grants of the published definition. Run it after each activation. */
+/** Makes the account group hold exactly the business grants of `model`, replacing whatever the group held. Pass the business Ontology only; after an activation use `syncAccountGrantsAfterActivation`. */
 export async function syncAccountGrants(db: Database, model: Ontology, client?: Sql): Promise<void> {
   await setGrants(db, 'group:' + accountGroup, businessGrants(model, db.sandboxEnabled), client);
+}
+const businessOntology = 'Eigos';
+/**
+ * Keeps the account group in step with the business Ontology. Pass what an activation returned, and the activating
+ * transaction as `client` when there is one, so a rolled-back activation rolls the sync back too. Any other Ontology
+ * (public places, say) is ignored: its resources must never replace the business grants of every account.
+ */
+export async function syncAccountGrantsAfterActivation(db: Database, activated: Ontology, client?: Sql): Promise<void> {
+  if (activated.document.id === businessOntology) await syncAccountGrants(db, activated, client);
 }

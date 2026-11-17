@@ -1,12 +1,20 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { provisionPublicPlaceCatalogue } from '../packages/capabilities/public-places/catalogue.js';
 import { readConfig } from '../packages/core/config.js';
 import type { Principal } from '../packages/core/identity.js';
-import { Access, businessGrants, setGrants, syncAccountGrants } from '../packages/runtime/access.js';
+import { publicPlacesOntology } from '../packages/ontology/public-places.js';
+import { Access, businessGrants, setGrants, syncAccountGrants, syncAccountGrantsAfterActivation } from '../packages/runtime/access.js';
 import { Accounts, accountGroup, emailDigest, initializeAccounts } from '../packages/runtime/accounts.js';
+import type { Database } from '../packages/runtime/database.js';
+import { Governance } from '../packages/runtime/governance.js';
 import { accountCommand } from '../scripts/account-command.js';
 import { portalEnv } from './account-env.js';
 import { fixture } from './fixture.js';
+
+const grantKey = (grant: { resource: string; permission: string }) => grant.permission + ':' + grant.resource;
+const accountGroupGrants = async (db: Database) => new Set((await db.query(
+  `SELECT permission||':'||resource AS entry FROM ${db.schema}.resource_grants WHERE subject=$1`, ['group:' + accountGroup])).rows.map(row => row.entry as string));
 
 test('account portal configuration requires secrets and owner isolation for sign-up', () => {
   assert.equal(readConfig(portalEnv).EIGOS_SIGNUP, 'open');
@@ -240,17 +248,63 @@ test('account grants follow the published business resources', async () => {
 test('syncing the account group replaces its grants, follows the sandbox switch and joins a caller transaction', async () => {
   const f = await fixture(undefined, undefined, undefined, undefined, undefined, {}, { sandbox: true });
   try {
-    const group = 'group:' + accountGroup, retired = { resource: 'Eigos/object/Retired', permission: 'view_objects' } as const;
-    const key = (grant: { resource: string; permission: string }) => grant.permission + ':' + grant.resource;
-    const held = async () => new Set((await f.db.query(`SELECT permission||':'||resource AS entry FROM ${f.db.schema}.resource_grants WHERE subject=$1`, [group])).rows.map(r => r.entry));
-    await setGrants(f.db, group, [retired]);
+    const retired = { resource: 'Eigos/object/Retired', permission: 'view_objects' } as const;
+    await setGrants(f.db, 'group:' + accountGroup, [retired]);
     // Inside a caller's transaction the sync is committed or rolled back with it.
     await assert.rejects(f.db.transaction(async client => { await syncAccountGrants(f.db, f.model, client); throw new Error('roll back'); }), /roll back/);
-    assert.deepEqual(await held(), new Set([key(retired)]));
+    assert.deepEqual(await accountGroupGrants(f.db), new Set([grantKey(retired)]));
     await syncAccountGrants(f.db, f.model);
     // The sync replaces what the group held, and the database's sandbox switch decides which resources count as business grants.
     assert.ok(businessGrants(f.model, true).length > businessGrants(f.model, false).length);
-    assert.deepEqual(await held(), new Set(businessGrants(f.model, true).map(key)));
+    assert.deepEqual(await accountGroupGrants(f.db), new Set(businessGrants(f.model, true).map(grantKey)));
+  } finally { await f.close(); }
+});
+
+test('after an activation only the business Ontology feeds the account group', async () => {
+  const f = await fixture();
+  try {
+    const retired = { resource: 'Eigos/object/Retired', permission: 'view_objects' } as const;
+    await setGrants(f.db, 'group:' + accountGroup, [retired]);
+    await setGrants(f.db, 'deployment', [{ resource: 'Eigos', permission: 'manage_definition' }, { resource: publicPlacesOntology, permission: 'manage_definition' }]);
+    const deployer = await Access.load(f.db, { owner: 'deployment', scopes: [] });
+    await new Governance(f.db, f.metadata, f.capabilities).project(deployer, { ontology: 'Eigos', id: 'Alpha', name: 'Alpha' });
+    // Activating the public places Ontology, even its current release again, must not replace the business grants of every account.
+    const { release } = await provisionPublicPlaceCatalogue(f.db, f.metadata, f.capabilities, deployer, 'Alpha');
+    const places = await f.metadata.activate(release, f.capabilities, deployer);
+    assert.equal(places.document.id, publicPlacesOntology);
+    await syncAccountGrantsAfterActivation(f.db, places);
+    assert.deepEqual(await accountGroupGrants(f.db), new Set([grantKey(retired)]));
+    // The business Ontology does sync.
+    await syncAccountGrantsAfterActivation(f.db, await f.metadata.activate(f.model.release, f.capabilities, deployer));
+    assert.deepEqual(await accountGroupGrants(f.db), new Set(businessGrants(f.model).map(grantKey)));
+  } finally { await f.close(); }
+});
+
+test('merging a branch syncs the account group in the same transaction as the activation', async () => {
+  const f = await fixture();
+  try {
+    const retired = { resource: 'Eigos/object/Retired', permission: 'view_objects' } as const, governance = new Governance(f.db, f.metadata, f.capabilities);
+    // Only the merged release has this object type, so only a sync from the merged release grants it.
+    const body = structuredClone(f.model.document);
+    body.version = 'account-sync';
+    body.objectTypes.push({ apiName: 'AccountProbe', displayName: 'Account probe', description: 'Synthetic type for the account group sync',
+      primaryKey: 'id', titleProperty: 'id', interfaces: {}, properties: { id: { description: 'Identity', schema: { type: 'string' }, required: true } } });
+    const branch = await governance.create(f.publisher, { ontology: 'Eigos', name: 'Account sync', body });
+    const prepared = await governance.prepare(f.publisher, { id: branch.id, revision: branch.revision });
+    const approved = await governance.review(f.publisher, { id: prepared.id, revision: prepared.revision, release: prepared.release });
+    const merge = () => governance.merge(f.publisher, { id: approved.id, revision: approved.revision, release: approved.release });
+    await setGrants(f.db, 'group:' + accountGroup, [retired]);
+    // A merge that fails after activating the release rolls the sync back with it.
+    await f.db.query(`ALTER TABLE ${f.db.schema}.ontology_branches ADD CONSTRAINT synthetic_merge_failure CHECK (state <> 'merged')`);
+    await assert.rejects(merge(), /synthetic_merge_failure/);
+    assert.equal((await f.metadata.active()).release, f.model.release);
+    assert.deepEqual(await accountGroupGrants(f.db), new Set([grantKey(retired)]));
+    await f.db.query(`ALTER TABLE ${f.db.schema}.ontology_branches DROP CONSTRAINT synthetic_merge_failure`);
+    await merge();
+    const merged = await f.metadata.active();
+    assert.equal(merged.release, prepared.release);
+    assert.ok(businessGrants(merged).some(grant => grant.resource === 'Eigos/object/AccountProbe'));
+    assert.deepEqual(await accountGroupGrants(f.db), new Set(businessGrants(merged).map(grantKey)));
   } finally { await f.close(); }
 });
 
