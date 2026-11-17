@@ -21,3 +21,9 @@ EIGOS 通过同一套 Ontology MCP 提供地图、路线和天气 Function。查
 从高德开放平台取得 Web 服务 Key。Gateway 和 Worker 的 `EIGOS_AMAP_CONNECTION_FILE` 指向运行用户拥有的 `0600` JSON 文件，结构为 `owner`、`active`、`expiresAt`、`keyFile` 和 `keySha256`。其中 `keyFile` 为私有绝对路径，`keySha256` 是去掉首尾空白后的 Key 的 SHA-256。按 owner 授予 `Amap` 来源读取权限和所需 Function 的执行权限。设备位置另使用同一 owner 的 `PALocation` 权限。参考[高德开发者开通说明](https://lbs.amap.com/api/mcp-server/create-project-and-key)。
 
 指定地点的地图和天气查询不需要设备定位授权。地图和天气查询只使用已公开的查询操作。接入验收可先查公开地标和城市天气，再验证设备共享与坐标转换。测试替身通过不等于已取得高德账户权限。
+
+## 滴滴地图与打车链接
+
+`generateDidiRideAppLink` 从已确认起终点的询价生成 App、小程序及浏览器链接。用户指定车型时用该次询价中的对应报价。用户通过链接在滴滴完成下单。`complete_with_action` 可在询价 Action 完成后，将返回的 `RideRequest` 传入链接 Function。
+
+`reverseGeocodeDidi`、`searchDidiNearbyPlaces` 和 `estimateDidiMapRoute` 读取逆地理编码、周边点位和步行、骑行、公交路线。输入需要明确的滴滴原生或 GCJ-02 坐标。公交同时需要完整城市名。路线查询保留供应商提供的距离、耗时及摘要。各结果带来源证据和回执摘要。供应商契约见 [滴滴 MCP 文档](https://mcp.didichuxing.com/api)。

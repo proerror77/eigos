@@ -4,7 +4,7 @@ import { digest } from '../../core/identity.js';
 import { didiEndpoint, type DidiBinding } from './contracts.js';
 import { readDidiCredential } from './connector.js';
 import { mapDidiResult } from './mapping.js';
-import { sandboxRideStatus } from './sandbox-status.js';
+import { sandboxOrderStatusText, sandboxRideStatus } from './sandbox-status.js';
 import { ridePosition, rideProgress } from '../../ontology/ride-watch.js';
 
 const text = z.string().min(1).max(500);
@@ -37,6 +37,7 @@ export interface RideOrders {
   readonly environment: 'production' | 'mock';
   readonly supportedCurrencies: readonly string[];
   assertAvailable(): Promise<void>;
+  assertCancellationAvailable?(): Promise<void>;
   quote(
     input: Record<string, string>,
     category: string,
@@ -50,7 +51,7 @@ export interface RideOrders {
   query(orderId: string, signal: AbortSignal): Promise<RideOrder>;
   observe?(orderId: string, signal: AbortSignal): Promise<z.infer<typeof rideProgress>>;
   driverPosition?(orderId: string, signal: AbortSignal): Promise<z.infer<typeof ridePosition>>;
-  cancel(orderId: string, reason: string, signal: AbortSignal, beforeDispatch: () => Promise<void>): Promise<RideOrder>;
+  cancel(orderId: string, reason: string | undefined, signal: AbortSignal, beforeDispatch: () => Promise<void>): Promise<{ order: RideOrder; acknowledgementDigest: string }>;
 }
 /** Mutations have a separate transport and an operator connection switch. They
  * are unreachable through the read connector or a model-selected MCP tool name. */
@@ -62,13 +63,18 @@ export class DidiOperations implements RideOrders {
     private readonly enabled = false,
     private readonly fetcher: typeof fetch = fetch,
     private readonly sandboxOrderId?: string,
+    private readonly cancellationsEnabled = enabled,
   ) {
     this.environment = binding.environment;
-    if (sandboxOrderId !== undefined && (this.environment !== 'mock' || enabled))
+    if (sandboxOrderId !== undefined && (this.environment !== 'mock' || enabled || cancellationsEnabled))
       throw new Error('A sandbox watch must use a read-only sandbox connection');
   }
   async assertAvailable() {
     if (!this.enabled) throw new Error('DIDI_ORDER_EXECUTION_DISABLED');
+    await readDidiCredential(this.binding);
+  }
+  async assertCancellationAvailable() {
+    if (!this.cancellationsEnabled) throw new Error('DIDI_ORDER_CANCELLATION_DISABLED');
     await readDidiCredential(this.binding);
   }
   private async call(
@@ -77,7 +83,8 @@ export class DidiOperations implements RideOrders {
     signal: AbortSignal,
     beforeDispatch?: () => Promise<void>,
   ) {
-    if (tool === 'taxi_create_order' || tool === 'taxi_cancel_order') await this.assertAvailable();
+    if (tool === 'taxi_create_order') await this.assertAvailable();
+    if (tool === 'taxi_cancel_order') await this.assertCancellationAvailable();
     const args = commandSchemas[tool].parse(input);
     if (this.sandboxOrderId !== undefined && 'order_id' in args && args.order_id !== this.sandboxOrderId)
       throw new Error('Original sandbox order identity changed');
@@ -268,8 +275,19 @@ export class DidiOperations implements RideOrders {
     if (observedOrder && observedOrder !== orderId) throw new Error('Original provider order identity changed');
     return ridePosition.parse({ ...point, coordinateSystem: 'provider_unspecified', observedAt: new Date().toISOString() });
   }
-  async cancel(orderId: string, reason: string, signal: AbortSignal, beforeDispatch: () => Promise<void>) {
-    await this.call('taxi_cancel_order', { order_id: orderId, reason }, signal, beforeDispatch);
-    return this.query(orderId, signal);
+  async cancel(orderId: string, reason: string | undefined, signal: AbortSignal, beforeDispatch: () => Promise<void>) {
+    const reply = await this.call('taxi_cancel_order', { order_id: orderId, ...(reason ? { reason } : {}) }, signal, beforeDispatch);
+    const accepted = z.object({ success: z.literal(true), orderId: text.optional() }).parse(reply.structuredContent);
+    if (accepted.orderId && accepted.orderId !== orderId) throw new Error('Cancellation order identity changed');
+    const raw = await this.call('taxi_query_order', { order_id: orderId }, signal);
+    let order = this.normalize(raw, true, orderId);
+    if (this.environment === 'mock' && raw.structuredContent === undefined) {
+      // The mock returns text after cancellation. Only accept it after the
+      // explicit success acknowledgement for the exact test request.
+      const { heading } = sandboxOrderStatusText(raw.content, orderId);
+      if (heading !== '❌ 订单已取消') throw new Error('The sandbox did not read back a canceled order');
+      order = { ...order, status: '订单已取消', state: 'reported' };
+    }
+    return { order, acknowledgementDigest: digest(reply) };
   }
 }

@@ -1,7 +1,9 @@
 import { z } from 'zod';
+import { didiAddress, didiAppLinks, didiMapRoutes } from '../../ontology/didi-reads.js';
 
 export const DIDI_REQUIRED_TOOLS = ['maps_textsearch', 'taxi_estimate', 'maps_direction_driving'] as const;
-export const DIDI_TOOLS = [...DIDI_REQUIRED_TOOLS, 'maps_place_around'] as const;
+export const DIDI_TOOLS = [...DIDI_REQUIRED_TOOLS, 'maps_place_around', 'taxi_generate_ride_app_link',
+  'maps_regeocode', 'maps_direction_walking', 'maps_direction_bicycling', 'maps_direction_transit'] as const;
 export type DidiTool = typeof DIDI_TOOLS[number];
 const text = z.string().min(1).max(500);
 export const didiBindingSchema = z.strictObject({
@@ -10,15 +12,26 @@ export const didiBindingSchema = z.strictObject({
 });
 export type DidiBinding = z.infer<typeof didiBindingSchema>;
 const coordinate = (limit: number) => z.string().regex(/^-?\d+(?:\.\d+)?$/).refine(v => Number.isFinite(Number(v)) && Math.abs(Number(v)) <= limit);
+const pointPair = z.string().regex(/^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$/);
+const route = z.strictObject({ origin: pointPair, destination: pointPair });
+const routeWithGeometry = route.extend({ need_geo: z.literal(false).default(false) });
 export const didiToolInputs = {
   maps_textsearch: z.strictObject({ keywords: text, city: text }),
   maps_place_around: z.strictObject({
     keywords: text,
-    location: z.string().regex(/^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$/),
-    max_distance: z.literal('500').optional(),
+    location: pointPair,
+    max_distance: z.string().regex(/^[1-9]\d{0,3}$/).refine(value => Number(value) <= 5000).optional(),
   }),
   taxi_estimate: z.strictObject({ from_lng: coordinate(180), from_lat: coordinate(90), from_name: text, to_lng: coordinate(180), to_lat: coordinate(90), to_name: text }),
-  maps_direction_driving: z.strictObject({ origin: z.string().regex(/^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$/), destination: z.string().regex(/^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$/), need_geo: z.literal(false).default(false) }),
+  maps_direction_driving: routeWithGeometry,
+  maps_direction_walking: routeWithGeometry,
+  maps_direction_bicycling: routeWithGeometry,
+  maps_direction_transit: route.extend({ city: text }),
+  maps_regeocode: z.strictObject({ location: pointPair }),
+  taxi_generate_ride_app_link: z.strictObject({
+    from_lng: coordinate(180), from_lat: coordinate(90), to_lng: coordinate(180), to_lat: coordinate(90),
+    product_category: text.optional(),
+  }),
 };
 export const didiPlaceSchema = z.strictObject({
   id: z.string().regex(/^[a-f0-9]{64}$/), name: text, address: z.string().max(1000), addressAll: z.string().max(1500), city: text,
@@ -32,6 +45,9 @@ export const didiPriceSchema = z.strictObject({
   feesComplete: z.literal('unknown'),
 });
 export const didiDataSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('app_links'), links: didiAppLinks }),
+  z.strictObject({ kind: z.literal('address'), address: didiAddress }),
+  z.strictObject({ kind: z.literal('map_routes'), routes: didiMapRoutes }),
   z.strictObject({ kind: z.literal('places'), places: z.array(didiPlaceSchema).max(50) }),
   z.strictObject({ kind: z.literal('estimate'), items: z.array(didiPriceSchema).max(50) }),
   z.strictObject({ kind: z.literal('driving'), durationSeconds: z.number().int().positive().max(604800), distanceMeters: z.number().int().nonnegative().max(20000000) }),

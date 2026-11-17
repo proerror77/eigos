@@ -9,11 +9,9 @@ const headings = new Map([
   ['✅ 行程已完成！', 5],
 ]);
 
-export function sandboxRideStatus(content: unknown, orderId: string) {
+export function sandboxOrderStatusText(content: unknown, orderId: string) {
   const [{ text }] = sandboxText.parse(content);
   const [heading, ...lines] = text.trim().split(/\r?\n/).map(line => line.trim());
-  const statusCode = headings.get(heading ?? '');
-  if (statusCode === undefined) throw new Error('Unrecognized DiDi sandbox status');
   // The sandbox usually omits an ID and can return the latest result for an invalid ID.
   // Its caller must pin the request to the order returned by sandbox creation.
   const reportedOrder = /^(?:订单号|订单编号|订单\s*ID|order_?id)\s*[:：]\s*(.*)$/i;
@@ -21,6 +19,13 @@ export function sandboxRideStatus(content: unknown, orderId: string) {
     const match = reportedOrder.exec(line);
     if (match && match[1] !== orderId) throw new Error('Original provider order identity changed');
   }
+  return { heading, lines };
+}
+
+export function sandboxRideStatus(content: unknown, orderId: string) {
+  const { heading, lines } = sandboxOrderStatusText(content, orderId);
+  const statusCode = headings.get(heading ?? '');
+  if (statusCode === undefined) throw new Error('Unrecognized DiDi sandbox status');
   const label = (key: string) => lines.find(line => line.startsWith(key))?.slice(key.length).trim().slice(0, 120) || null;
   const name = label('• 称呼：'), carModel = label('• 车型：'), carPlate = label('• 车牌：');
   const distance = /^(?:师傅离上车点还有|离终点还有)：(\d+(?:\.\d+)?)\s*公里，约需(\d+(?:\.\d+)?)分钟到达。$/;

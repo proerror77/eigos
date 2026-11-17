@@ -64,10 +64,14 @@ export function readConfig(env = process.env): Config {
     throw new Error('Agent sandbox capabilities require development authentication');
   return config;
 }
-const connectionSchema = z.strictObject({ owner: z.string().min(1), active: z.boolean(), expiresAt: z.iso.datetime().nullable().optional(), binding: didiBindingSchema, ordersEnabled:z.boolean().default(false) });
+const connectionSchema = z.strictObject({
+  owner: z.string().min(1), active: z.boolean(), expiresAt: z.iso.datetime().nullable().optional(),
+  binding: didiBindingSchema, ordersEnabled: z.boolean().default(false), cancellationsEnabled: z.boolean().optional(),
+});
 const sandboxWatchSchema = connectionSchema.extend({
   binding: didiBindingSchema.extend({ environment: z.literal('mock') }),
   ordersEnabled: z.literal(false).default(false),
+  cancellationsEnabled: z.literal(false).optional(),
   originalOrderId: z.string().min(1).max(500),
 });
 export function configuredSource(primaryPath?: string, sandboxWatchPath?: string): SourceResolver {
@@ -106,8 +110,11 @@ export function configuredSource(primaryPath?: string, sandboxWatchPath?: string
     const cached = cache.get(sandbox);
     const connector = cached?.hash === hash ? cached.connector : new DidiMcpConnector(connection.binding);
     cache.set(sandbox, { hash, connector });
-    const orders = new DidiOperations(connection.binding, connection.ordersEnabled, fetch, sandboxConnection?.originalOrderId);
-    return { bindingId: connection.binding.bindingId, authorityId: hash, connector, orders, async assertCurrent() {
+    // The cancel switch can change independently of the original order's authority.
+    const { cancellationsEnabled, ...authority } = connection;
+    const orders = new DidiOperations(connection.binding, connection.ordersEnabled, fetch, sandboxConnection?.originalOrderId,
+      cancellationsEnabled ?? connection.ordersEnabled);
+    return { bindingId: connection.binding.bindingId, authorityId: digest(authority), connector, orders, async assertCurrent() {
       if (digest(await (sandbox ? readSandbox() : read(primaryPath))) !== hash ||
         connection.expiresAt && Date.parse(connection.expiresAt) <= Date.now())
         throw new Conflict('DiDi source configuration changed or expired');

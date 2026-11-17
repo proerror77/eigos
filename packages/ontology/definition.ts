@@ -18,7 +18,8 @@ import type { OntologyDocument } from './schema.js';
 import { fliggyServicesDefinition as fliggy, marketplaceDefinition as marketplace, servicesDefinition as services } from './services.js';
 import { fliggyFlightBookingDefinition } from './fliggy-flight-booking.js';
 import { fliggyHotelDefinition } from './fliggy-hotel.js';
-import { travelDefinition as travel } from './travel.js';
+import { didiReadDefinitions } from './didi-reads.js';
+import { didiOrderDefinitions, travelDefinition as travel } from './travel.js';
 import { paymentsDefinition as payments } from './payments.js';
 import { diningEvidence, diningResearchFunctions } from './dining.js';
 import { dianpingResearchFunctions } from './dianping.js';
@@ -38,7 +39,7 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '35',
+  id: ride.id, version: '36',
   agentProfiles: businessAgentProfiles,
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...journey.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
@@ -125,6 +126,10 @@ for(const fn of businessDefinition.functionTypes){
     fn.dependencies={objectTypes:applications.objectTypes.map(type=>type.apiName),linkTypes:applications.linkTypes.map(link=>link.apiName)};
   }
 }
+// These Functions declare their own dependencies so historical workflow bindings stay compatible.
+businessDefinition.functionTypes.push(...didiOrderDefinitions.functionTypes, ...didiReadDefinitions);
+businessDefinition.actionTypes.push(...didiOrderDefinitions.actionTypes);
+businessDefinition.interfaceTypes.push(...didiOrderDefinitions.interfaceTypes);
 businessDefinition.objectTypes.find(type=>type.apiName==='LumaEvent')!.interfaces.AttendableEvent={properties:Object.fromEntries(['name','start','end','timeZone','status','locationPrecision','registrationOpen','approvalRequired'].map(name=>[name,name])),links:{registrations:'registrations',trips:'trips'},actions:{register:{action:'PrepareEventRegistration',parameters:{event:'event',ticketId:'ticketId',sourceTaskId:'sourceTaskId'}}}};
 
 // Keep the existing published contract for historical workflows and callers with complete inputs.

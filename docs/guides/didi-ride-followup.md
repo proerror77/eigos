@@ -1,6 +1,6 @@
 # 滴滴原订单追踪与接驾提醒
 
-依据滴滴的 [MCP 开发者文档](https://mcp.didichuxing.com/api)。已用生产绑定只读获取工具目录，确认订单侧包含估价、发单、取消、原单状态、司机坐标和 App 跳转链接，地图侧包含地点、周边、逆地理编码和四种路线。目录没有到车推送、支付、账单或退款查询。工具目录证明工具可发现，订单权限和真实回包仍需独立验收。
+依据滴滴的 [MCP 开发者文档](https://mcp.didichuxing.com/api)。已用生产绑定只读获取工具目录，确认订单侧包含估价、发单、取消、原单状态、司机坐标和 App 跳转链接，地图侧包含地点、周边、逆地理编码和四种路线。目录没有到车推送、支付、账单或退款查询。工具目录证明工具可发现，真实订单权限和履约仍需独立验收。
 
 | 乘客需要知道什么 | EIGOS 依据与行为 |
 | --- | --- |
@@ -11,6 +11,14 @@
 | 行程是否结束 | 完程时停止追踪。未识别的终止码保留原值并停止，不能作为成功、取消或退款证明。 |
 | 订单状态暂时读不到 | 保留最新已知进度，按 60、120 秒退避。第三次失败或超出期限时终止，注明来源不可用。 |
 | 最终费用、支付、退款和发票 | 行程完成只验证运输状态，结算继续标为未核验。这些后续服务需要独立、可授权的账单来源。 |
+
+## 取消已发订单
+
+`CancelableRideOrder.cancel` 映射到 `CancelDidiRideOrder`。PA 在用户确认确切订单后提交 Action，传入原 `DidiRideOrder` 引用、`confirmCancellation: true`，可选取消原因。Action 沿 `TripOrder` 核对订单、所属用户和原滴滴绑定。连接的 `cancellationsEnabled` 可以单独开放取消，省略时沿用 `ordersEnabled`。滴滴根据当时的订单状态决定能否取消。
+
+EIGOS 先保存原单取消尝试，再调用 `taxi_cancel_order`。收到明确成功回执后独立回查原单，并用 `readDidiRideOrder` 读回结果。响应丢失时，同一 Action 回查原单，只在滴滴明确报告取消后确认。重复请求沿用原取消尝试。已确认取消的订单会结束跟单并撤回接驾提醒。待发车计划使用 `CancelEventTrip` 停止。
+
+依据 [Palantir Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) 和 [Interface](https://www.palantir.com/docs/foundry/interfaces/interface-overview)，取消入口沿用已有 Action 授权、对象检查和外部操作日志。验证使用合成订单及滴滴 MCP 的调试环境。
 
 ## 进入和退出
 
