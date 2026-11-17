@@ -2,7 +2,7 @@
 
 - 日期：2026-11-17
 - 基线：`origin/main` `5a7aa8e6`
-- 状态：草案，待确认
+- 状态：已确认（2026-11-17）。第 1 步的计划见 `docs/superpowers/plans/2026-11-17-accounts-and-sign-up.md`
 - 依据：见文末「参考资料」
 
 ## 1. 背景和目的
