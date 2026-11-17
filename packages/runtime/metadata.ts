@@ -93,8 +93,7 @@ export class Metadata {
         await copyEditState(this.db,current.projection,projection,client,[...model.objects.keys()]);
         if (transform) await migrateProjectionState(this.db,current.projection,projection,model,transform,client);
         await this.validateEditState(model,projection,client);
-        await copySemanticIndexes(this.db,current.digest,
-          new PublishedOntology(model.document,release,projection,this.db.runtimeId,manifest),client);
+        await copySemanticIndexes(this.db,current.digest,model,{release,bindings:manifest},client);
       }
       await access.refresh(client);
       await this.db.query(`UPDATE ${this.db.schema}.releases SET projection_fingerprint=$2 WHERE digest=$1`,
@@ -188,7 +187,7 @@ export class Metadata {
       await copyEditState(this.db,live.projection,candidate.projection,client,types);
       if (transform) await migrateProjectionState(this.db,live.projection,candidate.projection,candidate,transform,client);
       await this.validateEditState(candidate,candidate.projection,client);
-      await copySemanticIndexes(this.db,live.release,candidate,client);
+      await copySemanticIndexes(this.db,live.release,candidate,candidate,client);
       await access.refresh(client);
       await this.db.query(`UPDATE ${this.db.schema}.releases SET source_fingerprint=$2,projection_fingerprint=$3 WHERE digest=$1`,[release,await this.fingerprint(live.projection,client,candidate.document.id),await this.fingerprint(candidate.projection,client)],client);
       return {release,projection:candidate.projection,objectsUpdated:updated,linksAdded:edges.length};

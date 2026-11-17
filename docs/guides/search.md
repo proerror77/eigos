@@ -94,7 +94,7 @@
 
 准备发布和候选追赶会把兼容的索引配置及向量复制到候选发布，包括不同 owner 的独立向量；不会在发布事务中调用模型。索引的存储属性、版本化嵌入 Function 和绑定必须仍兼容，否则准备阶段拒绝，当前发布继续服务。已有索引的破坏性属性或模型变更需要单独迁移，不能借重新发布静默丢弃旧索引。
 
-配置和向量内容纳入来源及候选指纹。准备后新增索引或重建向量需要先追赶候选并重新审阅；候选中的向量被修改也会阻止激活。JSONB 与可选 pgvector 使用同一复制路径。对象迁移改变文本或修订号后，旧向量仍会被新视图的鲜度检查排除；通过 `semantic_status` 检查覆盖并用 `semantic_index` 重新索引这些对象。发布本身不扩大读取、属性或模型权限。此处沿用 [Funnel 替换发布](https://www.palantir.com/docs/foundry/object-indexing/funnel-batch-pipelines) 的准备与切换职责。
+配置和向量内容纳入来源及候选指纹。准备后新增索引或向量内容变化需要先追赶候选并重新审阅；候选中的向量被修改也会阻止激活。JSONB 与可选 pgvector 使用同一复制路径。对象迁移改变文本或修订号后，旧向量仍会被新视图的鲜度检查排除；通过 `semantic_status` 检查覆盖并用 `semantic_index` 重新索引这些对象。发布本身不扩大读取、属性或模型权限。此处沿用 [Funnel 替换发布](https://www.palantir.com/docs/foundry/object-indexing/funnel-batch-pipelines) 的准备与切换职责。
 
 `SemanticSearch.index` 接收 `{name, objects: [{type,id}]}`，每次最多一百个对象。服务只把有权限读取的文本交给嵌入 Function。模型调用发生在业务写锁之外，写入向量前在事务中重新验证对象 revision、文本摘要及权限。每个对象单独提交，批次中途失败后可重新提交同一组对象。
 

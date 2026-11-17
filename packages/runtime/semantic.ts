@@ -81,7 +81,7 @@ export class SemanticSearch {
     if (model.scenario) throw new Conflict('Configure semantic indexes on a published live Ontology');
     await access.refresh();
     access.require(model.document.id, 'manage_definition', model.document.id);
-    const { binding, modelVersion } = semanticIndexBinding(model, input);
+    const { binding, modelVersion } = semanticIndexBinding(model, model.bindings, input);
     return this.db.transaction(async (client) => {
       await new Objects(this.db, model, access, client).lockWrites();
       const existing = (

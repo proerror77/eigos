@@ -1,13 +1,14 @@
 import { Conflict } from '../core/identity.js';
+import type { Ontology } from '../ontology/model.js';
 import type { Database, Sql } from './database.js';
-import type { PublishedOntology } from './metadata.js';
+import type { BindingManifest } from './metadata.js';
 
 export type SemanticIndexInput = {
   name: string; type: string; property: string; embeddingFunction: string; dimensions: number;
 };
 
 /** Configuration and publication use the same stored-text and versioned-model contract. */
-export function semanticIndexBinding(model: PublishedOntology, input: SemanticIndexInput) {
+export function semanticIndexBinding(model: Ontology, bindings: BindingManifest, input: SemanticIndexInput) {
   const property = model.object(input.type).properties[input.property.split('.')[0]!];
   if (!property || property.derived) throw new Conflict('Semantic indexes require a stored text property');
   let schema = property.schema;
@@ -20,7 +21,7 @@ export function semanticIndexBinding(model: PublishedOntology, input: SemanticIn
   if (schema.type !== 'string' && !(Array.isArray(schema.type) && schema.type.includes('string')))
     throw new Conflict('Embedding property schema must contain text');
   const definition = model.functions.get(input.embeddingFunction);
-  const binding = model.bindings.functions[input.embeddingFunction];
+  const binding = bindings.functions[input.embeddingFunction];
   if (!definition?.version || definition.edits || !binding)
     throw new Conflict('Register and publish a versioned read-only embedding Function first');
   const parameters = definition.parameters.properties as Record<string, { type?: string }> | undefined;
@@ -31,13 +32,14 @@ export function semanticIndexBinding(model: PublishedOntology, input: SemanticIn
 }
 
 /** Copy publication-owned storage; query-time permissions and freshness still govern every vector. */
-export async function copySemanticIndexes(db: Database, from: string, target: PublishedOntology, client: Sql) {
+export async function copySemanticIndexes(db: Database, from: string, model: Ontology,
+  target: { release: string; bindings: BindingManifest }, client: Sql) {
   if (from === target.release) throw new Conflict('A replacement publication must differ from its source');
   const indexes = (await db.query(`SELECT * FROM ${db.schema}.semantic_indexes WHERE release=$1 ORDER BY name`, [from], client)).rows;
   if (!indexes.length) return;
   for (const index of indexes) {
     try {
-      const contract = semanticIndexBinding(target, { name: index.name, type: index.type, property: index.property,
+      const contract = semanticIndexBinding(model, target.bindings, { name: index.name, type: index.type, property: index.property,
         embeddingFunction: index.embedding_function, dimensions: Number(index.dimensions) });
       if (contract.binding !== index.binding || contract.modelVersion !== index.embedding_version)
         throw new Conflict('Embedding model binding changed');
