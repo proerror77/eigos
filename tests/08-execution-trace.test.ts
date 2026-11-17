@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { digest, NotFound } from '../packages/core/identity.js';
 import { documentType, registerDocument } from '../packages/ontology/documents.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { Effects } from '../packages/runtime/effects.js';
 import { appendTrace, ExecutionTrace } from '../packages/runtime/execution-trace.js';
 import { ExternalOperations } from '../packages/runtime/external-operations.js';
@@ -54,7 +54,7 @@ test('execution trace joins authoritative rows and filters cross-owner or revoke
     const sceneOrigin = { ...taskOrigin, scenarioId: proposal.id };
     await appendTrace(db, sceneOrigin, { kind: 'proposal' });
     const reviewerPrincipal = { ...principal, owner: 'isolated-trace-reviewer' };
-    await setGrants(db, reviewerPrincipal.owner, memberGrants(model));
+    await setGrants(db, reviewerPrincipal.owner, businessGrants(model));
     const reviewer = await Access.load(db, reviewerPrincipal);
     const invited = await scenarios.inviteReviewers(f.access, model, proposal.id, proposal.revision, [reviewerPrincipal.owner]);
     const first = await scenarios.inspectReview(reviewer, model, proposal.id);
@@ -100,7 +100,7 @@ test('execution trace joins authoritative rows and filters cross-owner or revoke
     await assert.rejects(operation.invoke(reviewerPrincipal, { requestId: quote.requestId }), NotFound);
     await assert.rejects(operation.invoke({ ...principal, scopes: ['ontology:read'] }, { taskId: task.id }), /tasks:read/);
 
-    await setGrants(db, principal.owner, memberGrants(model).filter(
+    await setGrants(db, principal.owner, businessGrants(model).filter(
       grant => ![model.document.id + '/object/' + documentType, model.document.id + '/source/Didi'].includes(grant.resource)));
     const revoked = await operation.invoke(principal, { taskId: task.id }) as typeof evidence;
     assert(!JSON.stringify(revoked).includes(document.id));

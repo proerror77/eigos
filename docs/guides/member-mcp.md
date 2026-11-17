@@ -21,7 +21,7 @@ Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的
 - `member_invitations` 的 SELECT、UPDATE(redeemed_by)。使用数据库管理员生成邀请。
 - `member_sessions` 的 SELECT、INSERT、DELETE。浏览器会话和邀请令牌只存摘要。执行会员查询的 Worker 需要 `member_accounts` 的 SELECT。已有执行和只读查询角色沿用原权限。
 
-用管理角色运行 `npm run access:invite-member -- <已授权的测试邮箱> 48`。输出是单次邀请码，按私有材料保管；有效期可设 1 至 168 小时。邀请与 Auth0 验证后的邮箱一致才可兑换。
+用管理角色运行 `npm run account:invite -- <已授权的测试邮箱> 48`。输出是单次邀请码，按私有材料保管；有效期可设 1 至 168 小时。邀请与 Auth0 验证后的邮箱一致才可兑换。
 
 已开通且 Grok 授权有效的会员可使用 `group:eigos-member-queries` 上已有的 Ontology 资源授权。根据首个查询能力用 `access:configure` 配置该组，只选经过确认的外部只读能力。举例，首条只读航班查询可用：
 

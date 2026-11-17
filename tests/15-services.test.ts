@@ -5,7 +5,7 @@ import { fixture, principal } from './fixture.js';
 import { createApp } from '../apps/gateway/app.js';
 import { readConfig } from '../packages/core/config.js';
 import { Objects } from '../packages/runtime/objects.js';
-import { memberGrants, setGrants } from '../packages/runtime/access.js';
+import { businessGrants, setGrants } from '../packages/runtime/access.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import { Scenarios } from '../packages/runtime/scenarios.js';
 import { SemanticSearch } from '../packages/runtime/semantic.js';
@@ -37,7 +37,7 @@ test('HTTP and MCP expose object sets, materialization, history and reviewed def
     assert.equal((await call('edit_history',{object:ref})).items.length,1);
     const denied=await fetch(url+'/ontology/services/create_branch',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({ontology:'Eigos',name:'Denied'})});
     assert.equal(denied.status,403);
-    await setGrants(f.db,principal.owner,[...memberGrants(f.model),{resource:'Eigos',permission:'manage_definition'}]);
+    await setGrants(f.db,principal.owner,[...businessGrants(f.model),{resource:'Eigos',permission:'manage_definition'}]);
     const branch=await call('create_branch',{ontology:'Eigos',name:'Reviewed definition'});
     assert.equal(branch.state,'draft');
     const prepared=await call('prepare_branch',{id:branch.id,revision:branch.revision});
@@ -75,7 +75,7 @@ test('HTTP and MCP semantic reads use the selected Scenario and reject closed or
     doc.functionTypes.push(embedding.definition);
     const capabilities = createCapabilities(f.db, f.source, extensions);
     const model = await f.metadata.publish(doc, capabilities, f.publisher);
-    await setGrants(f.db, principal.owner, memberGrants(model));
+    await setGrants(f.db, principal.owner, businessGrants(model));
     const live = new Objects(f.db, model, f.access);
     const edited = { type: 'Route', id: 'edited-route' };
     const removed = { type: 'Route', id: 'removed-route' };

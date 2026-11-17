@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { Database } from '../packages/runtime/database.js';
-import { Access, setGrants, memberGrants } from '../packages/runtime/access.js';
+import { Access, setGrants, businessGrants } from '../packages/runtime/access.js';
 import { businessDefinition } from '../packages/ontology/definition.js';
 import { Ontology } from '../packages/ontology/model.js';
 import { Metadata } from '../packages/runtime/metadata.js';
@@ -85,7 +85,7 @@ export async function fixture(driver: AgentDriver = new FixtureAgent(),services?
   const metadata = new Metadata(db), tasks = new Tasks(db, metadata), p = await provider();
   await setGrants(db, 'deployment', [{ resource: 'Eigos', permission: 'manage_definition' }]);
   const publisher = await Access.load(db, { owner: 'deployment', scopes: [] });
-  await setGrants(db, principal.owner, memberGrants(new Ontology(definition), db.sandboxEnabled));
+  await setGrants(db, principal.owner, businessGrants(new Ontology(definition), db.sandboxEnabled));
   const access = await Access.load(db, principal);
   const source = async (owner: string) => { if (owner !== principal.owner) throw new Error('Wrong source owner'); return p.source; };
   const capabilities = createCapabilities(db, source, extensions, services, stripe, connections), model = await metadata.publish(definition, capabilities, publisher), agent = new OntologyAgent(db, metadata, tasks, capabilities, driver, agentOptions), worker = new Worker(tasks, agent,new ScheduledActions(db,metadata),new ScheduledActionRunner(db,metadata,tasks,capabilities.actions));

@@ -6,7 +6,7 @@ import {readConfig} from '../packages/core/config.js';
 import {Applications} from '../packages/runtime/applications.js';
 import {Objects} from '../packages/runtime/objects.js';
 import {Scenarios} from '../packages/runtime/scenarios.js';
-import {setGrants,memberGrants,Access} from '../packages/runtime/access.js';
+import {setGrants,businessGrants,Access} from '../packages/runtime/access.js';
 import {OntologyClient} from '../packages/sdk/client.js';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
@@ -186,7 +186,7 @@ test('media registration rejects invalid formats and incomplete measurements',as
     await assert.rejects(app.upload(f.access,f.model,f.capabilities.actions,Buffer.from('not a model'),{name:'bad',format:'glb'}),/GLB/);
     const ref=await app.upload(f.access,f.model,f.capabilities.actions,modelFile,{name:'triangle',format:'stl',units:'m'});
     await assert.rejects(f.capabilities.actions.apply(f.access,f.model,'AnnotateGeometry',{id:'bad',asset:ref,name:'Bad',note:'',kind:'measurement',points:[[0,0,0]]},'bad-measure'),/two positions/);
-    await setGrants(f.db,'another',memberGrants(f.model));
+    await setGrants(f.db,'another',businessGrants(f.model));
     await assert.rejects(app.download(await Access.load(f.db,{owner:'another',scopes:principal.scopes}),f.model,ref.id),/unavailable/);
   }finally{await f.close();}
 });
@@ -209,7 +209,7 @@ test('media bytes and registration are isolated by Ontology after source access 
     await setGrants(f.db,'deployment',[{resource:'Eigos',permission:'manage_definition'},{resource:'Other',permission:'manage_definition'}]);
     const body=structuredClone(f.model.document);body.id='Other';
     const other=await f.metadata.publish(body,f.capabilities,await Access.load(f.db,{owner:'deployment',scopes:[]}));
-    await setGrants(f.db,principal.owner,[...memberGrants(f.model),...memberGrants(other)]);
+    await setGrants(f.db,principal.owner,[...businessGrants(f.model),...businessGrants(other)]);
     await f.db.query(`INSERT INTO ${f.db.schema}.object_policies VALUES('Eigos','GeometryAsset',$1)`,[{read:{all:[{op:'equals',property:'name',value:'Allowed'}],any:[]},properties:{}}]);
     const access=await Access.load(f.db,principal);
     await assert.rejects(app.download(access,f.model,asset.id),/policy/);
@@ -353,7 +353,7 @@ test('workbench account login preserves separate modeler and reviewer permission
   };
   const builder = await who(builderToken), reviewer = await who(reviewerToken);
   assert.notEqual(builder, reviewer);
-  const common = memberGrants(f.model);
+  const common = businessGrants(f.model);
   await setGrants(f.db, builder, [...common, { resource: 'Eigos', permission: 'edit_definition' }]);
   await setGrants(f.db, reviewer, [...common, { resource: 'Eigos', permission: 'manage_definition' }]);
   const builderClient = new OntologyClient({ baseUrl: base, token: builderToken });

@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { Objects } from '../packages/runtime/objects.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import { fixture, principal } from './fixture.js';
@@ -131,7 +131,7 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
     await act('CancelFliggyHotelBooking', approval);
     assert.equal((await view(booking)).state, 'cancelled');
     assert.equal(calls.filter(operation => operation === 'cancel').length, 1);
-    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant => grant.resource !== 'Eigos/source/FliggyHotelDistribution'));
+    await setGrants(f.db, principal.owner, businessGrants(f.model).filter(grant => grant.resource !== 'Eigos/source/FliggyHotelDistribution'));
     await assert.rejects(view(booking), /Permission required/);
   } finally {
     await f.close();

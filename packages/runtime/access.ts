@@ -530,7 +530,7 @@ export async function setGrants(db: Database, subject: string, grants: Grant[], 
   };
   if (client) await write(client); else await db.transaction(write);
 }
-export function memberGrants(model: Ontology, sandboxEnabled = false): Grant[] {
+export function businessGrants(model: Ontology, sandboxEnabled = false): Grant[] {
   const available = (kind: string) => (item: { apiName: string }) => sandboxEnabled || !isSandboxResource(model, kind, item.apiName);
   const functions = model.resolvedDocument.functionTypes.filter(available('function'));
   return [{ resource: model.document.id, permission: 'view_definition' },
@@ -539,4 +539,8 @@ export function memberGrants(model: Ontology, sandboxEnabled = false): Grant[] {
     ...model.resolvedDocument.actionTypes.filter(available('action')).map(action => ({ resource: resource(model.document.id, 'action', action.apiName), permission: 'apply_action' as const })),
     ...[...new Set(functions.flatMap(fn => fn.source ? [fn.source] : []))].map(name => ({ resource: resource(model.document.id, 'source', name), permission: 'read_source' as const })),
   ];
+}
+/** Makes the account group hold exactly the business grants of the published definition. Run it after each activation. */
+export async function syncAccountGrants(db: Database, model: Ontology, client?: Sql): Promise<void> {
+  await setGrants(db, 'group:' + accountGroup, businessGrants(model, db.sandboxEnabled), client);
 }

@@ -7,7 +7,7 @@ import { initializeActionUndo } from '../packages/runtime/action-journal.js';
 import { scenarioObjectType } from '../packages/ontology/scenario-definition.js';
 import { scenarioMetadataRead, scenarioMetadataQuery } from '../packages/runtime/scenario-metadata.js';
 import { Objects } from '../packages/runtime/objects.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { PARequests } from '../packages/runtime/pa.js';
 import { OntologyClient, OntologyHttpError } from '../packages/sdk/client.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
@@ -23,7 +23,7 @@ async function lifecycleFixture(driver=new PlanningFixtureAgent()){
   const document=structuredClone(f.model.document);
   if(!document.objectTypes.some(type=>type.apiName==='OntologyScenario'))document.objectTypes.push(scenarioObjectType);
   const model=await f.metadata.publish(document,f.capabilities,f.publisher);
-  await setGrants(f.db,principal.owner,memberGrants(model));
+  await setGrants(f.db,principal.owner,businessGrants(model));
   const access=await Access.load(f.db,principal);
   return {...f,model,access,scenarios:new Scenarios(f.db)};
 }
@@ -46,7 +46,7 @@ test('temporary scenarios are bound to owned sessions and close and TTL cleanup 
 test('persisted scenario metadata can be shared and revoked without sharing private proposal data',async()=>{
   const f=await lifecycleFixture();try{
     const scene=await f.scenarios.create(f.access,f.model,{requestId:'shared',name:'Shared proposal',description:'Compare alternatives'});
-    await setGrants(f.db,'reader',memberGrants(f.model));
+    await setGrants(f.db,'reader',businessGrants(f.model));
     const peer=await Access.load(f.db,{...principal,owner:'reader'}),peerGraph=new Objects(f.db,f.model,peer);
     assert.equal((await scenarioMetadataQuery(peerGraph,{type:'OntologyScenario'})).items.length,0);
     const shared=await f.scenarios.share(f.access,f.model,scene.id,1,['reader']);
@@ -66,7 +66,7 @@ test('persisted Scenario objects are linkable through Actions and shared readers
     const object={type:'object',properties:{type:{type:'string'},id:{type:'string'}},required:['type','id'],additionalProperties:false};
     document.actionTypes.push({apiName:'LinkRouteScenario',description:'Attach a route to a persisted scenario',parameters:{type:'object',properties:{route:object,scenario:object},required:['route','scenario'],additionalProperties:false},objectParameters:{route:'Route',scenario:'OntologyScenario'},submissionCriteria:[],rules:[{op:'addLink',link:'RouteScenario',from:{type:'Route',id:{parameter:'route',path:['id']}},to:{type:'OntologyScenario',id:{parameter:'scenario',path:['id']}}}],result:{type:'Route',id:{parameter:'route',path:['id']}}});
     const model=await f.metadata.publish(document,f.capabilities,f.publisher);
-    await setGrants(f.db,principal.owner,memberGrants(model));await setGrants(f.db,'reader',memberGrants(model));
+    await setGrants(f.db,principal.owner,businessGrants(model));await setGrants(f.db,'reader',businessGrants(model));
     const access=await Access.load(f.db,principal),graph=new Objects(f.db,model,access),route={type:'Route',id:'linked-route'};
     await graph.create(route,{id:route.id,name:'Linked route'});
     const scene=await f.scenarios.create(access,model,{requestId:'linked-scenario',name:'Linked scenario'}),scenario={type:'OntologyScenario',id:String(scene.id)};
@@ -102,7 +102,7 @@ test('definitions without Scenario metadata continue creating isolated scenarios
     const document=structuredClone(f.model.document);document.objectTypes=document.objectTypes.filter(type=>type.apiName!=='OntologyScenario');
   for(const group of document.typeGroups??[])group.objectTypes=group.objectTypes.filter(type=>type!=='OntologyScenario');
     const model=await f.metadata.publish(document,f.capabilities,f.publisher);
-    await setGrants(f.db,principal.owner,memberGrants(model));const access=await Access.load(f.db,principal);
+    await setGrants(f.db,principal.owner,businessGrants(model));const access=await Access.load(f.db,principal);
     const scene=await f.scenarios.create(access,model,{requestId:'legacy-definition',name:'Legacy definition'});
     const view=await f.scenarios.view(access,model,scene.id);
     await new Objects(f.db,view,access).create({type:'Route',id:'legacy-scenario-route'},{id:'legacy-scenario-route',name:'Legacy route'});
@@ -174,7 +174,7 @@ test('Agent completes a generic merge with live permissions and effect delivery 
     document.actionTypes.push({apiName:'StageRouteName',description:'Stage route name',parameters:{type:'object',properties:{route:object,revision:{type:'integer'},name:{type:'string'}},required:['route','revision','name'],additionalProperties:false},objectParameters:{route:'Route'},submissionCriteria:[],rules:[{op:'editObject',object:{parameter:'route'},expectedRevision:{parameter:'revision'},properties:{name:{parameter:'name'}}}],result:{type:'Route',id:{parameter:'route',path:['id']}}});
     document.actionTypes.push({apiName:'MergeProposedRoute',description:'Merge reviewed changes',parameters,objectParameters:{route:'Route'},submissionCriteria:[],rules:[{op:'applyScenario',scenario:{parameter:'scenarioId'},expectedRevision:{parameter:'revision'},objectTypes:['Route'],linkTypes:[]}],result:{type:'Route',id:{parameter:'route',path:['id']}},effects:[{name:'Merged',handler:'RecordMerge',payload:{route:{parameter:'route'}}}]});
     const model=await f.metadata.publish(document,capabilities,f.publisher);
-    await setGrants(f.db,principal.owner,memberGrants(model));
+    await setGrants(f.db,principal.owner,businessGrants(model));
     await f.db.query(`INSERT INTO ${f.db.schema}.object_policies(ontology,type,policy) VALUES('Eigos','Route',$1)`,[{read:{all:[],any:[{op:'equals',property:'name',value:'before'},{op:'equals',property:'name',value:'after'}]},properties:{}}]);
     const access=await Access.load(f.db,principal);await new Objects(f.db,model,access).create(route,{id:route.id,name:'before'});
     const agent=new OntologyAgent(f.db,f.metadata,f.tasks,capabilities,new MergeDriver());worker=new Worker(f.tasks,agent);
@@ -225,7 +225,7 @@ test('generic Scenario merge rechecks staged Action submission criteria against 
       }],
     });
     const model = await f.metadata.publish(document, capabilities, f.publisher);
-    await setGrants(f.db, principal.owner, memberGrants(model));
+    await setGrants(f.db, principal.owner, businessGrants(model));
     const access = () => Access.load(f.db, principal);
     const live = new Objects(f.db, model, await access());
     const route = { type: 'Route', id: 'route-with-prerequisite' }, request = { type: 'RideRequest', id: 'request-prerequisite' };
@@ -313,8 +313,8 @@ test('Scenario replay uses ordered draft objects and links, rechecks live data a
       ],
     });
     const model = await f.metadata.publish(document, capabilities, f.publisher);
-    await setGrants(f.db, principal.owner, memberGrants(model));
-    await setGrants(f.db, 'route-reviewer', memberGrants(model));
+    await setGrants(f.db, principal.owner, businessGrants(model));
+    await setGrants(f.db, 'route-reviewer', businessGrants(model));
     const access = () => Access.load(f.db, principal);
     const reviewer = () => Access.load(f.db, { ...principal, owner: 'route-reviewer' });
     const live = new Objects(f.db, model, await access());
@@ -399,7 +399,7 @@ test('Action compensation restores edits once and rejects newer object revisions
     const document=structuredClone(f.model.document);
     document.actionTypes.push({apiName:'RenameRoute',description:'Rename a route',parameters:{type:'object',properties:{route:{type:'object',properties:{type:{type:'string'},id:{type:'string'}},required:['type','id'],additionalProperties:false},revision:{type:'integer'},name:{type:'string'}},required:['route','revision','name'],additionalProperties:false},objectParameters:{route:'Route'},submissionCriteria:[],rules:[{op:'editObject',object:{parameter:'route'},expectedRevision:{parameter:'revision'},properties:{name:{parameter:'name'}}}],result:{type:'Route',id:{parameter:'route',path:['id']}}});
     const model=await f.metadata.publish(document,f.capabilities,f.publisher);
-    await setGrants(f.db,principal.owner,memberGrants(model));const access=await Access.load(f.db,principal),graph=new Objects(f.db,model,access),ref={type:'Route',id:'undo'};
+    await setGrants(f.db,principal.owner,businessGrants(model));const access=await Access.load(f.db,principal),graph=new Objects(f.db,model,access),ref={type:'Route',id:'undo'};
     await graph.create(ref,{id:ref.id,name:'Before'});
     await f.capabilities.actions.apply(access,model,'RenameRoute',{route:ref,revision:1,name:'After'},'rename');
     const undone=await f.capabilities.actions.undo(access,model,'rename','undo-rename');
@@ -422,7 +422,7 @@ test('undo cancels pending effects atomically and rejects an effect already in f
     const capabilities=createCapabilities(f.db,f.source,{effects:handlers}),document=structuredClone(f.model.document);
     document.actionTypes.push({apiName:'CreateUndoRoute',description:'Create and notify',parameters:{type:'object',properties:{id:{type:'string'}},required:['id'],additionalProperties:false},objectParameters:{},submissionCriteria:[],rules:[{op:'createObject',object:{type:'Route',id:{parameter:'id'}},properties:{id:{parameter:'id'},name:{literal:'New route'}}}],result:{type:'Route',id:{parameter:'id'}},effects:[{name:'Notice',handler:'Notice',payload:{id:{parameter:'id'}}}]});
     const model=await f.metadata.publish(document,capabilities,f.publisher);
-    await setGrants(f.db,principal.owner,memberGrants(model));const access=await Access.load(f.db,principal),effects=new Effects(f.db,handlers),actions=new Actions(f.db,capabilities.functions,effects);
+    await setGrants(f.db,principal.owner,businessGrants(model));const access=await Access.load(f.db,principal),effects=new Effects(f.db,handlers),actions=new Actions(f.db,capabilities.functions,effects);
     await actions.apply(access,model,'CreateUndoRoute',{id:'pending'},'pending');
     const result=await actions.undo(access,model,'pending','undo-pending');assert.equal(result.pendingEffectsCanceled,1);
     assert.equal((await effects.status(access,'pending'))[0]!.state,'canceled');assert.equal(await effects.runOne(),false);assert.equal(delivered,0);
@@ -444,7 +444,7 @@ test('declarative struct edits, scoped scenario merge, unlink and deletion use a
     document.actionTypes.push({apiName:'DeleteRoute',description:'Delete a route',parameters:{type:'object',properties:{route:object,revision:{type:'integer'}},required:['route','revision'],additionalProperties:false},objectParameters:{route:'Route'},submissionCriteria:[],rules:[{op:'deleteObject',object:{parameter:'route'},expectedRevision:{parameter:'revision'}}],result:{type:'Route',id:{parameter:'route',path:['id']}}});
     document.actionTypes.push({apiName:'UnlinkRequest',description:'Remove the request route relation',parameters:{type:'object',properties:{route:object,request:object},required:['route','request'],additionalProperties:false},objectParameters:{route:'Route',request:'RideRequest'},submissionCriteria:[],rules:[{op:'removeLink',link:'RequestRoute',from:{type:'RideRequest',id:{parameter:'request',path:['id']}},to:{type:'Route',id:{parameter:'route',path:['id']}}}],result:{type:'Route',id:{parameter:'route',path:['id']}}});
     const model=await f.metadata.publish(document,f.capabilities,f.publisher);
-    await setGrants(f.db,principal.owner,memberGrants(model));const access=await Access.load(f.db,principal),graph=new Objects(f.db,model,access),route={type:'Route',id:'rules'};
+    await setGrants(f.db,principal.owner,businessGrants(model));const access=await Access.load(f.db,principal),graph=new Objects(f.db,model,access),route={type:'Route',id:'rules'};
     await graph.create(route,{id:route.id,name:'Rules',details:{x:1,y:2}});
     const scenario=await f.scenarios.create(access,model,{requestId:'rules',name:'Rules'}),view=await f.scenarios.view(access,model,scenario.id);
     await f.capabilities.actions.apply(access,view,'EditDetails',{route,revision:1,x:3},'edit-details');

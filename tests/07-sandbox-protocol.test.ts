@@ -6,7 +6,7 @@ import { createApp } from '../apps/gateway/app.js';
 import { readConfig } from '../packages/core/config.js';
 import { developmentSandboxEnabled } from '../packages/core/sandbox-mode.js';
 import { sandboxAgentCapability } from '../packages/ontology/agent-profiles.js';
-import { memberGrants, setGrants } from '../packages/runtime/access.js';
+import { businessGrants, setGrants } from '../packages/runtime/access.js';
 import { document, fixture, principal } from './fixture.js';
 
 test('sandbox opt-in is available in loopback development only', () => {
@@ -48,10 +48,10 @@ test('HTTP and MCP deny tagged and legacy sandbox capabilities even with stored 
     const url = 'http://127.0.0.1:' + address.port;
     const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
     const resources = [legacyAction.apiName, legacyFunction.apiName, 'readDiningReservation', tagged.apiName, 'StripeSandboxOrder', 'StripeSandbox'];
-    const deniedByDefault = (name: string) => !memberGrants(f.model).some(grant => grant.resource.endsWith('/' + name));
+    const deniedByDefault = (name: string) => !businessGrants(f.model).some(grant => grant.resource.endsWith('/' + name));
     assert(resources.every(deniedByDefault));
     // Preserve the pre-upgrade grant rows to verify runtime admission also checks the environment.
-    const legacyGrants = memberGrants(f.model, true);
+    const legacyGrants = businessGrants(f.model, true);
     assert(resources.every(name => legacyGrants.some(grant => grant.resource.endsWith('/' + name))));
     await setGrants(f.db, principal.owner, legacyGrants);
 

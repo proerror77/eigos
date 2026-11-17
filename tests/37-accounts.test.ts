@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readConfig } from '../packages/core/config.js';
 import type { Principal } from '../packages/core/identity.js';
-import { Access, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants, syncAccountGrants } from '../packages/runtime/access.js';
 import { Accounts, accountGroup, emailDigest, initializeAccounts } from '../packages/runtime/accounts.js';
+import { accountCommand } from '../scripts/account-command.js';
 import { portalEnv } from './account-env.js';
 import { fixture } from './fixture.js';
 
@@ -51,7 +52,8 @@ test('authorization gives a reason, revocation can be undone and suspension remo
     assert.deepEqual(await accounts.authorize(grok(), 'grok', []), { kind: 'denied', reason: 'client_not_authorized' });
     assert.equal((await accounts.account(owner))?.status, 'active');
     assert.equal(await accounts.approve(owner), true);
-    const first = (await accounts.account(owner))!.approved_at!;
+    // Kept as text with its microseconds: read as a JS Date it is cut to milliseconds, and an unchanged approval time would still compare as later.
+    const first = (await f.db.query<{ at: string }>(`SELECT approved_at::text AS at FROM ${f.db.schema}.accounts WHERE owner=$1`, [owner])).rows[0]!.at;
     assert.deepEqual(await accounts.authorize(grok({ issuedAt: now + 5 }), 'grok', []), { kind: 'account' });
     assert.deepEqual(await accounts.authorize(grok({ issuedAt: now + 5, scopes: ['tasks:read'] }), 'grok', []), { kind: 'denied', reason: 'insufficient_scope' });
     assert.deepEqual(await accounts.authorize(grok({ issuedAt: now + 5, clientId: 'other' }), 'grok', []), { kind: 'denied', reason: 'client_not_allowed' });
@@ -60,8 +62,12 @@ test('authorization gives a reason, revocation can be undone and suspension remo
     assert.equal(await accounts.approve(owner), true);
     const again = (await accounts.account(owner))!;
     assert.equal(again.revoked_at, null);
-    assert.ok(again.approved_at! > first);
+    assert.equal((await f.db.query<{ later: boolean }>(`SELECT approved_at > $1::timestamptz AS later FROM ${f.db.schema}.accounts WHERE owner=$2`, [first, owner])).rows[0]!.later, true);
     assert.deepEqual(await accounts.authorize(grok({ issuedAt: now - 3600 }), 'grok', []), { kind: 'denied', reason: 'client_not_authorized' });
+    // The grant starts in the second of the latest approval: a token issued in that second counts, one issued the second before does not.
+    const approvedSecond = Math.floor(again.approved_at!.getTime() / 1000);
+    assert.deepEqual(await accounts.authorize(grok({ issuedAt: approvedSecond }), 'grok', []), { kind: 'account' });
+    assert.deepEqual(await accounts.authorize(grok({ issuedAt: approvedSecond - 1 }), 'grok', []), { kind: 'denied', reason: 'client_not_authorized' });
     await setGrants(f.db, 'group:' + accountGroup, [{ resource: 'Eigos', permission: 'view_definition' }]);
     const asAccount = { owner, scopes: ['tasks:read'], memberAccess: true as const };
     const canView = async () => (await Access.load(f.db, asAccount)).allows({ ontology: 'Eigos', permission: 'view_definition', resource: 'Eigos' });
@@ -217,5 +223,79 @@ test('upgrading the legacy member schema keeps accounts and invitations, and can
     // The redeemed invitation still references the renamed table.
     await assert.rejects(f.db.query(`DELETE FROM ${s}.accounts WHERE owner=$1`, [owner]), /member_invitations/);
     assert.equal((await f.db.query(`SELECT 1 FROM pg_indexes WHERE schemaname=$1 AND indexname='accounts_email'`, [f.schema])).rowCount, 1);
+  } finally { await f.close(); }
+});
+
+test('account grants follow the published business resources', async () => {
+  const f = await fixture();
+  try {
+    await syncAccountGrants(f.db, f.model);
+    const rows = (await f.db.query(`SELECT resource,permission FROM ${f.db.schema}.resource_grants WHERE subject=$1`, ['group:' + accountGroup])).rows;
+    assert.deepEqual(new Set(rows.map(r => r.permission + ':' + r.resource)),
+      new Set(businessGrants(f.model, f.db.sandboxEnabled).map(g => g.permission + ':' + g.resource)));
+    assert.ok(rows.every(r => !['edit_definition', 'manage_definition'].includes(r.permission)));
+  } finally { await f.close(); }
+});
+
+test('syncing the account group replaces its grants, follows the sandbox switch and joins a caller transaction', async () => {
+  const f = await fixture(undefined, undefined, undefined, undefined, undefined, {}, { sandbox: true });
+  try {
+    const group = 'group:' + accountGroup, retired = { resource: 'Eigos/object/Retired', permission: 'view_objects' } as const;
+    const key = (grant: { resource: string; permission: string }) => grant.permission + ':' + grant.resource;
+    const held = async () => new Set((await f.db.query(`SELECT permission||':'||resource AS entry FROM ${f.db.schema}.resource_grants WHERE subject=$1`, [group])).rows.map(r => r.entry));
+    await setGrants(f.db, group, [retired]);
+    // Inside a caller's transaction the sync is committed or rolled back with it.
+    await assert.rejects(f.db.transaction(async client => { await syncAccountGrants(f.db, f.model, client); throw new Error('roll back'); }), /roll back/);
+    assert.deepEqual(await held(), new Set([key(retired)]));
+    await syncAccountGrants(f.db, f.model);
+    // The sync replaces what the group held, and the database's sandbox switch decides which resources count as business grants.
+    assert.ok(businessGrants(f.model, true).length > businessGrants(f.model, false).length);
+    assert.deepEqual(await held(), new Set(businessGrants(f.model, true).map(key)));
+  } finally { await f.close(); }
+});
+
+test('operator account commands find accounts by owner or email', async () => {
+  const f = await fixture();
+  try {
+    const owner = '3'.repeat(64), accounts = new Accounts(f.db, 'open');
+    await accounts.provision(owner, emailDigest('carol@example.test'));
+    assert.equal((await accountCommand(f.db, 'open', ['show', 'Carol@example.test'])).status, 'active');
+    assert.equal((await accountCommand(f.db, 'open', ['suspend', owner, 'synthetic', 'report'])).status, 'suspended');
+    assert.equal((await accounts.account(owner))?.suspended_reason, 'synthetic report');
+    assert.equal((await accountCommand(f.db, 'open', ['restore', owner])).status, 'active');
+    await assert.rejects(accountCommand(f.db, 'open', ['show', 'nobody@example.test']), /Account not found/);
+    await assert.rejects(accountCommand(f.db, 'open', ['suspend', owner]), /Provide a suspension reason/);
+    await assert.rejects(accountCommand(f.db, 'open', ['delete', owner]), /Use account show, suspend or restore/);
+  } finally { await f.close(); }
+});
+
+test('operator account commands report the stored account and check their arguments', async () => {
+  const f = await fixture();
+  try {
+    const owner = '4'.repeat(64), accounts = new Accounts(f.db, 'open'), run = (...args: string[]) => accountCommand(f.db, 'open', args);
+    const iso = (date: Date | null) => date?.toISOString() ?? null;
+    await accounts.provision(owner, emailDigest('dana@example.test'));
+    await accounts.approve(owner);
+    await accounts.revoke(owner);
+    const stored = (await accounts.account(owner))!;
+    assert.ok(stored.approved_at && stored.revoked_at);
+    // Every stored field is reported with dates as ISO strings, and the e-mail hash is left out.
+    assert.deepEqual(await run('show', owner), { owner, status: 'active', activatedAt: iso(stored.activated_at), approvedAt: iso(stored.approved_at),
+      revokedAt: iso(stored.revoked_at), suspendedAt: null, suspendedReason: null });
+    const suspended = await run('suspend', 'Dana@example.test', 'first', 'reason');
+    assert.deepEqual([suspended.status, suspended.suspendedReason, suspended.suspendedAt], ['suspended', 'first reason', iso((await accounts.account(owner))!.suspended_at)]);
+    // Repeating a command changes nothing: the report shows the stored account, not the request.
+    assert.deepEqual(await run('suspend', owner, 'second reason'), suspended);
+    const restored = await run('restore', owner);
+    assert.deepEqual([restored.status, restored.suspendedAt, restored.suspendedReason], ['active', null, null]);
+    assert.deepEqual(await run('restore', 'DANA@example.test'), restored);
+    // Arguments are checked before anything changes.
+    await assert.rejects(run('suspend', owner, '', '  '), /Provide a suspension reason/);
+    await assert.rejects(run('suspend', owner, 'x'.repeat(201)), /Suspension reason must be 1 to 200 characters/);
+    assert.equal((await accounts.account(owner))?.status, 'active');
+    await assert.rejects(run('suspend', 'nobody@example.test', 'reason'), /Account not found/);
+    await assert.rejects(run('restore', 'nobody@example.test'), /Account not found/);
+    await assert.rejects(run('show'), /Provide the account owner or e-mail address/);
+    await assert.rejects(run(), /Use account show, suspend or restore/);
   } finally { await f.close(); }
 });
