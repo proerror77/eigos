@@ -8,8 +8,15 @@ const coordinateLimits = new Map([
   ['slat', 90], ['dlat', 90], ['fromlat', 90], ['tolat', 90],
   ['slng', 180], ['dlng', 180], ['fromlng', 180], ['tolng', 180],
 ]);
+const selectedVehicles = z.array(z.strictObject({
+  product_category: z.string().min(1).max(80).regex(/^[A-Za-z0-9_-]+$/),
+  is_selected: z.union([z.literal(0), z.literal(1)]),
+})).min(1).max(20);
 const vehicleSelection = z.strictObject({
-  multi_require_product: z.string().max(200).regex(/^[A-Za-z0-9_-]+(?:,[A-Za-z0-9_-]+)*$/),
+  multi_require_product: z.string().max(1024).refine(value => {
+    try { return selectedVehicles.safeParse(JSON.parse(value)).success; }
+    catch { return false; }
+  }),
 });
 const miniProgramSelection = vehicleSelection.extend({ from_type: z.number().int() });
 
