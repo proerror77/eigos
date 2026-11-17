@@ -29,6 +29,8 @@ npm run dev:worker
 
 Gateway 和 Worker 使用相同的 `DATABASE_URL`、`EIGOS_PG_SCHEMA`。构建后的入口为 `npm run start:gateway` 和 `npm run start:worker`。Docker 的 `runtime` 与 `worker` target 使用相同代码。
 
+每次 CI 都会构建这两个镜像，但不发布。`scripts/container-smoke.sh` 以非 root 用户、在没有任何配置的情况下运行 Gateway、Worker 和 Indexer 的入口。每个入口都必须先加载完全部依赖，并停在配置检查上，才算通过。镜像只能手动发布：在 Actions 中运行 Release images，并填写 main 上 CI 已通过的完整提交号。镜像推送到 `ghcr.io/<仓库>/gateway` 和 `ghcr.io/<仓库>/worker`，标签为 `sha-<提交号>`。同一标签不会被覆盖，部署仍须单独授权。
+
 JWT 身份由现有身份提供方验证，owner 由 issuer、tenant 和 subject 计算。`GET /identity` 返回当前 owner 与 scopes。本地开发使用 `.env` 中的随机令牌，owner 为 `local-developer`。
 
 `OAUTH_TENANT_CLAIM` 可配置身份提供方的租户字段。PA 使用任务权限提交询价，Worker 在该任务 owner 的有效来源绑定内执行本体操作。直接调用本体 API 仍使用令牌中的对应权限。来源连接可带 `expiresAt`，运行时按其截止时间检查。

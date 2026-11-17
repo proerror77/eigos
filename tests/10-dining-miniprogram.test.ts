@@ -153,6 +153,14 @@ else if (!command.startsWith('shell uiautomator dump /data/local/tmp/eigos-dinin
       'PrepareDiningMiniProgramTestReservation', terms, 'prepare-mini');
     const submit = await create('submit the synthetic mini-program order');
     await next(submit.id, capabilities.submitTest);
+    // A form that cannot open sent nothing. The PA reports the failure and leaves the request for a retry.
+    merchant.flags.formUnavailable = true;
+    await assert.rejects(pa.answer(submit.id), /form is unavailable/);
+    assert.equal(merchant.submissions, 0);
+    const waiting = await active.tasks.get(principal, submit.id);
+    assert.equal(waiting.state, 'input-required');
+    assert.equal(z.object({ capability: z.string() }).parse(waiting.result).capability, capabilities.submitTest);
+    merchant.flags.formUnavailable = false;
     const lost = new DiningMiniProgramPA({ ...options, ontology: {
       request: async <T>(path: string, payload?: unknown, signal?: AbortSignal) => {
         if (path.endsWith('/pa-response')) throw new Error('Synthetic PA acknowledgement lost');

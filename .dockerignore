@@ -1,6 +1,7 @@
 **
 !package.json
 !package-lock.json
+!.npmrc
 !tsconfig.json
 !Dockerfile
 !.dockerignore
@@ -8,6 +9,5 @@
 !apps/**
 !packages/
 !packages/**
-!scripts/
 !scripts/build.mjs
 !scripts/ontology.ts
