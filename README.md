@@ -62,7 +62,7 @@ Key 文件由运行用户拥有，权限为 `0600`。查询连接器调用滴滴
 
 ## Agent 入口
 
-邀请制用户入口和 Grok OAuth 配置见 [会员与 Grok MCP](docs/guides/member-mcp.md)。
+账号注册（Google 或邮箱密码）、开户模式、Auth0 Action、Grok OAuth 配置和运营者命令见 [账号注册与 Grok MCP](docs/guides/accounts.md)。
 
 MCP 位于 `/mcp`，提供 `describe_ontology`、`query_ontology`、`evaluate_ontology`、`apply_ontology_action`、`submit_task`、`get_task`、`select_task_places`，以及 PA 的 `list_pa_requests`、`respond_to_task` 和 Scenario 生命周期工具。
 
