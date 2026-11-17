@@ -17,6 +17,8 @@
 
 Interface 通过实现映射引用具体 Object Type 的属性、关系与 Action 参数。查询由本体查询服务执行，Function 可以组合查询和计算。Action 表达用户或 Agent 提交的变更。[Interface 实现](https://www.palantir.com/docs/foundry/interfaces/implement-interface)、[Action 参数约束](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints)
 
+每个实现类型可以把 Interface Action 映射到只接受本类型对象的 Action。约束中如果只有一个参数能放入实现对象本身，这个参数按实现类型检查；其他对象参数须接受全部实现。执行时仍逐个核对对象引用的类型。商户 agent 与连接器共用的契约见 [网络契约草案](network-contract.md)。
+
 `packages/ontology/invocation.ts` 定义已有 Function、具体 Action 与 Interface Action 的共用调用契约。Agent、HTTP/MCP 和 SDK 使用相同参数形状；协议入口仅补充本体、任务或请求身份。Interface 能力由现有 `Actions.resolve` 按发布映射解析，随后仍由 `Actions.apply` 检查具体操作的权限、提交条件、版本和幂等记录。Interface 本身不执行操作，契约解析不增加模型规划回合。[官方接口动作语义](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints)
 
 单项能力能完成目标时，直接执行 Function 或 Action 并读取结果；Task 的等待与恢复不要求创建 SchedulePlan、Scenario 或 Workflow。跨服务依赖由 Agent 或已发布逻辑协调，时间与资源取舍使用排程，拟议编辑的比较或审阅才使用 Scenario。Scenario 复用同一调用契约与业务逻辑；过程状态及历史由现有业务对象和编辑记录提供给后续 Machinery 视图，不建立第二个操作入口。[Action 跨应用复用](https://www.palantir.com/docs/foundry/action-types/overview)、[Scenario 执行上下文](https://www.palantir.com/docs/foundry/ontology/overview-ontology-scenario)
@@ -54,6 +56,7 @@ flowchart TD
 | `packages/ontology/model.ts` | 解析定义、属性映射、Link 导航、Action 参数映射 |
 | `packages/ontology/definitions/ride.json` | 滴滴领域的发布定义及来源字段映射 |
 | `packages/ontology/services.ts`、`travel.ts` | 服务 Interface、活动报名、出行对象与 Action 契约，组合成同一发布定义 |
+| `packages/ontology/network-contract.ts` | 网络契约草案 `EigosNetwork`：`Commitment` 与 `TableReservation` Interface，单独发布，业务定义尚未导入 |
 | `packages/runtime/metadata.ts` | 发布定义并按任务引用解析 |
 | `packages/runtime/objects.ts` | Owner 范围内的对象集查询、关系查询与存储 |
 | `packages/runtime/ingestion.ts` | 将来源行按发布映射写入对象 |
@@ -138,6 +141,8 @@ Machinery 使用已发布对象的枚举状态和原有编辑历史；Action Eng
 配置通过 `EIGOS_DINING_WEB_CONNECTION_FILE` 加载，由执行进程读取权限为 `0600` 的独立 JSON 文件。文件字段为 `owner`、`restaurant`、`city`、`timeZone` 和 `officialPage`。运行网页能力与订位回归测试需要 Google Chrome。隔离测试可额外配置 `sandboxOrigin`，值为带显式端口的 `http://127.0.0.1` 商家测试服务。
 
 `PrepareDiningTestReservation`、`SubmitDiningTestReservation` 和 `RefreshDiningTestReservation` 通过 Action 记录同一 `DiningReservation`。测试商家收到提交前，`ExternalOperations` 先保存操作标识。回执丢失时，按该标识查商家原单，核对请求条件和商家单号后写回。结果暂时不可见或不匹配时，保留 `unknown`，后续操作继续查询同一标识。网页提交受限于已配置的本机测试商家，回执标为 `synthetic`。 [Palantir Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) · [外部写回](https://www.palantir.com/docs/foundry/action-types/webhooks) · [Machinery 状态](https://www.palantir.com/docs/foundry/machinery/core-concepts)
+
+`DiningReservation` 还没有实现网络契约的 `TableReservation`。还差的四处见 [网络契约草案](network-contract.md#订位试点的差距)。
 
 ### 微信小程序订位
 

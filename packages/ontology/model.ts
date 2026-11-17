@@ -109,14 +109,19 @@ export class Ontology {
         const expectedRequired = new Set(constraint.parameters.required as string[] ?? []);
         const actualRequired = new Set(action.parameters.required as string[] ?? []);
         const targets = Object.values(local.parameters);
+        // Each implementing type maps the constraint to an Action of its own, as with Palantir
+        // action type constraints. Only a sole parameter able to hold the selected object may narrow
+        // to this type; Actions.checkInput still checks every object reference at execution.
+        const own = Object.keys(constraint.objectParameters).filter(name => this.implements(type.apiName, constraint.objectParameters[name]!));
         if (new Set(targets).size !== targets.length) throw new Error('An action parameter can satisfy one interface parameter');
         for (const parameter of expectedRequired) if (!local.parameters[parameter]) throw new Error('Incompatible action parameters');
         for (const [parameter,target] of Object.entries(local.parameters)) {
           if (!expected[parameter] || !actual[target] || !compatible(expected[parameter],actual[target])) throw new Error('Incompatible action parameter constraints');
           if (actualRequired.has(target) && !expectedRequired.has(parameter) && !Object.hasOwn(actual[target],'default') && !Object.hasOwn(expected[parameter],'default')) throw new Error('Optional Interface input cannot satisfy a required Action input');
           const objectType=constraint.objectParameters[parameter],targetType=action.objectParameters[target];
-          if (objectType && (!targetType || !this.concreteTypes(objectType).every(type=>this.implements(type,targetType)))) throw new Error('Incompatible Action object parameter type');
-          if (!options.published && targetType && !objectType) throw new Error('Incompatible Action object parameter type');
+          const candidates = own.length === 1 && own[0] === parameter ? [type.apiName] : objectType ? this.concreteTypes(objectType) : [];
+          if (objectType && (!targetType || !candidates.every(candidate=>this.implements(candidate,targetType)))) throw new Error(`Incompatible Action object parameter type for ${type.apiName}.${alias}`);
+          if (!options.published && targetType && !objectType) throw new Error(`Incompatible Action object parameter type for ${type.apiName}.${alias}`);
         }
         for(const parameter of actualRequired)if(!targets.includes(parameter)&&!Object.hasOwn(actual[parameter]??{},'default'))throw new Error('Action requires an unmapped parameter');
         if (!options.published) {
