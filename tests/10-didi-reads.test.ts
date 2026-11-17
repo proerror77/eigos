@@ -32,6 +32,31 @@ test('DiDi App handoff accepts the original quote and returns only vetted short 
   }
 });
 
+test('DiDi production short links preserve bounded coordinates and selected-vehicle parameters', () => {
+  const appQuery = new URLSearchParams({
+    slat: '39.8949', slng: '116.3211', dlat: '39.9109', dlng: '116.4053',
+    estimate_params: JSON.stringify({ multi_require_product: '301,302' }),
+  });
+  const miniProgramQuery = new URLSearchParams({
+    fromlat: '39.8949', fromlng: '116.3211', tolat: '39.9109', tolng: '116.4053', source: 'mcp',
+    extra_request_pramas: JSON.stringify({ from_type: 1, multi_require_product: '301' }),
+  });
+  const links = {
+    appLink: 'https://v.didi.cn/TestABC?' + appQuery,
+    miniprogramLink: 'https://v.didi.cn/p/TestDEF?' + miniProgramQuery,
+    browserLink: 'https://v.didi.cn/TestGHI',
+  };
+  assert.deepEqual(mapDidiResult('taxi_generate_ride_app_link', { structuredContent: links }), { kind: 'app_links', links });
+  for (const appLink of [
+    links.appLink + '&slat=39.8949',
+    'https://v.didi.cn/TestABC?slat=91',
+    'https://v.didi.cn/TestABC?redirect=https%3A%2F%2Fexample.com',
+    'https://v.didi.cn/TestABC?estimate_params=' + encodeURIComponent(JSON.stringify({
+      multi_require_product: '301', redirect: 'https://example.com',
+    })),
+  ]) assert.throws(() => mapDidiResult('taxi_generate_ride_app_link', { structuredContent: { ...links, appLink } }));
+});
+
 test('DiDi map reads keep supported modes, coordinate evidence and source receipts', async () => {
   const f = await fixture();
   try {

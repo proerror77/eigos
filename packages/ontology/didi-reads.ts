@@ -4,12 +4,39 @@ import { json, time } from './service-contracts.js';
 import { coordinates } from './location.js';
 
 export const didiAppLinkInput = z.strictObject({ request: ref, estimate: ref.optional() });
+const coordinateLimits = new Map([
+  ['slat', 90], ['dlat', 90], ['fromlat', 90], ['tolat', 90],
+  ['slng', 180], ['dlng', 180], ['fromlng', 180], ['tolng', 180],
+]);
+const vehicleSelection = z.strictObject({
+  multi_require_product: z.string().max(200).regex(/^[A-Za-z0-9_-]+(?:,[A-Za-z0-9_-]+)*$/),
+});
+const miniProgramSelection = vehicleSelection.extend({ from_type: z.number().int() });
+
+function allowedRideLinkQuery(query: URLSearchParams) {
+  const keys = new Set<string>();
+  for (const [key, value] of query) {
+    if (keys.has(key)) return false;
+    keys.add(key);
+    const limit = coordinateLimits.get(key);
+    if (limit !== undefined) {
+      if (!/^-?\d+(?:\.\d+)?$/.test(value) || Math.abs(Number(value)) > limit) return false;
+    } else if (key === 'source') {
+      if (!/^[A-Za-z0-9_-]{1,100}$/.test(value)) return false;
+    } else if (key === 'estimate_params' || key === 'extra_request_pramas') {
+      const schema = key === 'estimate_params' ? vehicleSelection : miniProgramSelection;
+      try { if (!schema.safeParse(JSON.parse(value)).success) return false; }
+      catch { return false; }
+    } else return false;
+  }
+  return true;
+}
 const shortLink = z.url({ protocol: /^https$/, hostname: /^v\.didi\.cn$/ }).max(2048)
   .refine(value => {
     const url = new URL(value);
-    return !url.username && !url.password && !url.port && !url.search && !url.hash
-      && /^\/(?:p\/)?[a-zA-Z0-9]+$/.test(url.pathname);
-  }, 'Expected a DiDi short link');
+    return !url.username && !url.password && !url.port && !url.hash
+      && /^\/(?:p\/)?[a-zA-Z0-9]+$/.test(url.pathname) && allowedRideLinkQuery(url.searchParams);
+  }, 'Expected a DiDi short link with valid ride parameters');
 export const didiAppLinks = z.strictObject({
   appLink: shortLink, miniprogramLink: shortLink.optional(), browserLink: shortLink.optional(),
 });
