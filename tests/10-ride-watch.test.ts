@@ -161,6 +161,14 @@ test('only the tracked order can select the separate read-only sandbox binding',
     await writeFile(sandboxFile,JSON.stringify({...sandbox,ordersEnabled:true}),{mode:0o600});
     await assert.rejects(resolver(principal.owner,original));
     assert.equal((await resolver(principal.owner)).orders?.environment,'production');
+    await writeFile(sandboxFile,JSON.stringify({...sandbox,cancellationsEnabled:true}),{mode:0o600});
+    await assert.rejects(resolver(principal.owner,original));
+    await writeFile(primaryFile, JSON.stringify({ ...details, cancellationsEnabled: true }), { mode: 0o600 });
+    const updated = await resolver(principal.owner);
+    assert.equal(updated.authorityId, ordinary.authorityId);
+    await assert.rejects(ordinary.assertCurrent(), /changed/);
+    await updated.orders!.assertCancellationAvailable!();
+    await assert.rejects(updated.orders!.assertAvailable(), /DIDI_ORDER_EXECUTION_DISABLED/);
   } finally { await rm(dir,{recursive:true,force:true}); }
 });
 
@@ -260,4 +268,146 @@ test('stopping a watch stops observation without canceling the original ride', a
     assert.equal(cancels,0);
     assert.equal(reads,1);
   } finally { await f.close(); }
+});
+
+test('the RideOrder cancellation Action dispatches once and stops following the canceled order', async () => {
+  const f = await fixture();
+  try {
+    const { graph, order } = await originalOrder(f);
+    const ops = f.provider.source.orders!;
+    let calls = 0;
+    ops.observe = async orderId => progress(orderId, 1);
+    const originalQuery = ops.query.bind(ops);
+    ops.query = async (orderId, signal) => ({ ...await originalQuery(orderId, signal), state: 'unknown' });
+    ops.cancel = async (orderId, reason, signal, beforeDispatch) => {
+      await beforeDispatch();
+      assert.equal(orderId, 'provider-test-order');
+      assert.equal(reason, 'Change of plans');
+      calls++;
+      const status = await originalQuery(orderId, signal);
+      return { order: { ...status, status: '订单已取消' }, acknowledgementDigest: digest('accepted') };
+    };
+    const { actions, functions } = f.capabilities;
+    const watch = await actions.apply(f.access, f.model, 'StartDidiRideWatch',
+      { order, expiresAt: at(30), notifyArrival: false }, 'watch-before-cancel');
+    const selected = actions.resolve(f.access, f.model, {
+      interface: { type: 'RideOrder', action: 'cancel', object: order },
+      input: { order, confirmCancellation: true, reason: 'Change of plans' },
+    });
+    assert.equal(selected.action, 'CancelDidiRideOrder');
+    const apply = (id: string, input = selected.input) =>
+      actions.apply(f.access, f.model, selected.action, input, id);
+    await assert.rejects(apply('no-confirmation', { order }));
+    await assert.rejects(apply('wrong-order', { ...selected.input, order: { ...order, id: 'other' } }));
+    f.provider.flags.orderEnabled = false;
+    await assert.rejects(apply('disabled'), /DIDI_ORDER_EXECUTION_DISABLED/);
+    assert.equal(calls, 0);
+    f.provider.flags.orderEnabled = true;
+    assert.deepEqual(await apply('cancel-order'), order);
+    assert.deepEqual(await apply('cancel-order'), order);
+    assert.deepEqual(await apply('cancel-order-repeated'), order);
+    assert.equal(calls, 1);
+    const read = (name: string, input: Record<string, unknown>) => functions.invoke(f.model, name, input, {
+      principal, objects: graph, signal: AbortSignal.timeout(5000),
+    });
+    const result = await read('readDidiRideOrder', { order }) as { cancellation: string; cancellationReceipt: { receiptDigest: string } };
+    assert.equal(result.cancellation, 'confirmed');
+    assert.equal(result.cancellationReceipt.receiptDigest, digest('accepted'));
+    assert.equal(rideWatchRead.parse(await read('readDidiRideWatch', { watch })).state, 'provider_terminal');
+    await due(f, watch);
+    assert.equal((await graph.read(watch)).properties.state, 'provider_terminal');
+    await assert.rejects(read('readDidiDriverPosition', { watch }));
+  } finally {
+    await f.close();
+  }
+});
+
+test('an unresolved cancellation looks up the original order and never submits it again', async () => {
+  const f = await fixture();
+  try {
+    const { graph, order } = await originalOrder(f);
+    const ops = f.provider.source.orders!, query = ops.query.bind(ops);
+    let calls = 0, settled = false;
+    ops.cancel = async (_id, _reason, _signal, beforeDispatch) => {
+      await beforeDispatch();
+      calls++;
+      throw new Error('Provider response lost');
+    };
+    ops.query = async (id, signal) => ({
+      ...await query(id, signal), status: settled ? '订单已取消' : '正在匹配',
+    });
+    const apply = (id: string) => f.capabilities.actions.apply(f.access, f.model, 'CancelDidiRideOrder',
+      { order, confirmCancellation: true }, id);
+    const read = () => f.capabilities.functions.invoke(f.model, 'readDidiRideOrder', { order }, {
+      principal, objects: graph, signal: AbortSignal.timeout(5000),
+    }) as Promise<{ cancellation: string; cancellationReceipt: { evidence: string } }>;
+    await assert.rejects(apply('lost-cancel'), /unresolved/);
+    assert.equal((await read()).cancellation, 'unresolved');
+    await assert.rejects(apply('recovery-before-provider-settles'), /reconcile/);
+    settled = true;
+    assert.deepEqual(await apply('recovery-after-provider-settles'), order);
+    assert.equal((await read()).cancellationReceipt.evidence, 'original_order_readback');
+    assert.equal(calls, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test('the DiDi cancel adapter requires acknowledgement and reads the original order', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'eigos-didi-cancel-adapter-'));
+  try {
+    const key = 'synthetic-didi-cancel-adapter-key', keyFile = join(dir, 'key');
+    await writeFile(keyFile, key, { mode: 0o600 });
+    let success = true, readback = '❌ 订单已取消';
+    const calls: string[] = [];
+    const provider: typeof fetch = async (url, init) => {
+      assert.equal(new URL(String(url)).pathname, '/mcp-servers-sandbox');
+      if (init?.method === 'GET') return new Response(null, { status: 405 });
+      if (init?.method === 'DELETE') return new Response(null, { status: 200 });
+      const rpc = JSON.parse(String(init?.body));
+      if (rpc.method.startsWith('notifications/')) return new Response(null, { status: 202 });
+      let result: unknown;
+      if (rpc.method === 'initialize') result = {
+        protocolVersion: rpc.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1' },
+      };
+      else if (rpc.method === 'tools/list') result = {
+        tools: [
+          { name: 'taxi_cancel_order', inputSchema: {
+            type: 'object', properties: { order_id: { type: 'string' }, reason: { type: 'string' } }, required: ['order_id'],
+          } },
+          { name: 'taxi_query_order', inputSchema: {
+            type: 'object', properties: { order_id: { type: 'string' } },
+          } },
+        ],
+      };
+      else {
+        assert.equal(rpc.method, 'tools/call');
+        assert.equal(rpc.params.arguments.order_id, 'original-order');
+        calls.push(rpc.params.name);
+        result = rpc.params.name === 'taxi_cancel_order' ? { structuredContent: { success } }
+          : { content: [{ type: 'text', text: readback }] };
+      }
+      return Response.json({ jsonrpc: '2.0', id: rpc.id, result });
+    };
+    const client = new DidiOperations({ bindingId: 'adapter', environment: 'mock', keyFile,
+      keySha256: createHash('sha256').update(key).digest('hex') }, false, provider, undefined, true);
+    await assert.rejects(client.assertAvailable(), /DIDI_ORDER_EXECUTION_DISABLED/);
+    let guarded = 0;
+    const submit = () => client.cancel('original-order', undefined, AbortSignal.timeout(5000), async () => { guarded++; });
+    success = false;
+    await assert.rejects(submit());
+    assert.deepEqual(calls, ['taxi_cancel_order']);
+    calls.length = 0;
+    success = true;
+    const result = await submit();
+    assert.deepEqual(calls, ['taxi_cancel_order', 'taxi_query_order']);
+    assert.equal(result.order.status, '订单已取消');
+    assert.equal(result.order.evidence, 'provider_mock');
+    assert.equal(result.order.independentRead, true);
+    assert.equal(guarded, 2);
+    readback += '\n订单号: different-order';
+    await assert.rejects(submit(), /identity changed/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

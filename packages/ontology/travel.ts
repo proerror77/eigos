@@ -12,6 +12,26 @@ export const tripInput = z.strictObject({
   entryMinutes: z.number().int().min(0).max(120).default(10),
 });
 export const tripRef = z.strictObject({ trip: ref });
+export const didiOrderRef = z.strictObject({ order: ref });
+export const cancelRideInput = didiOrderRef.extend({
+  confirmCancellation: z.literal(true),
+  reason: z.string().trim().min(1).max(500).optional(),
+});
+export const rideCancellationReceipt = z.strictObject({
+  confirmedAt: time,
+  evidence: z.enum(['provider_response', 'original_order_readback']),
+  receiptDigest: z.string().length(64),
+});
+export const didiOrderRead = z.strictObject({
+  order: ref,
+  orderId: z.string().min(1).max(500),
+  status: z.string(),
+  independentRead: z.boolean(),
+  evidence: z.enum(['live', 'provider_mock', 'synthetic']),
+  observedAt: time,
+  cancellation: z.enum(['unrequested', 'unresolved', 'confirmed']),
+  cancellationReceipt: rideCancellationReceipt.nullable(),
+});
 export const permitSchema = z.strictObject({
   category: shortText,
   maxEstimateMinor: z.string().regex(/^(0|[1-9]\d{0,11})$/),
@@ -113,6 +133,12 @@ const functions = [
     'Independently read the original provider order; no unscoped account-order query.',
     'Didi',
   ],
+  [
+    'cancelDidiRideOrder',
+    cancelRideInput,
+    'Cancel the exact linked DiDi order after explicit PA confirmation. Recover the original attempt if its outcome is uncertain.',
+    'Didi',
+  ],
 ] as const;
 export const travelDefinition: OntologyDocument = {
   id: 'EigosTravel',
@@ -183,6 +209,7 @@ export const travelDefinition: OntologyDocument = {
         observedAt: time,
         contentDigest: z.string(),
         bindingId: z.string(),
+        cancellationReceipt: rideCancellationReceipt.optional(),
       },
       'The exact original ride order and latest independent status report. Creation does not mean arrival or completion.',
     ),
@@ -252,7 +279,9 @@ export const travelDefinition: OntologyDocument = {
       }),
       optionalProperties: [],
       links: {},
-      actions: {},
+      actions: {
+        cancel: { parameters: json(cancelRideInput), objectParameters: { order: 'RideOrder' }, required: false },
+      },
     },
   ],
   linkTypes: [
@@ -276,6 +305,12 @@ export const travelDefinition: OntologyDocument = {
       ...(source ? { source } : {}),
     })),
     {
+      apiName: 'readDidiRideOrder',
+      description: 'Read the linked original order and the independently verified or unresolved cancellation outcome.',
+      parameters: json(didiOrderRef),
+      returns: json(didiOrderRead),
+    },
+    {
       apiName: 'readDrivingEstimate',
       description: 'Read the current routing observation and exact endpoints from its implementation.',
       parameters: json(z.strictObject({ travel: ref })),
@@ -298,6 +333,8 @@ export const travelDefinition: OntologyDocument = {
     const objectParameters: Record<string, string> =
       name === 'observeDidiDrivingTime'
         ? { origin: 'Place', destination: 'Place' }
+        : name === 'cancelDidiRideOrder'
+          ? { order: 'DidiRideOrder' }
         : name === 'planEventTrip'
           ? { plan: 'SchedulePlan', event: 'AttendableEvent', travel: 'DrivingEstimate' }
           : name === 'prepareEventRegistration'
@@ -330,5 +367,9 @@ travelDefinition.objectTypes.find((type) => type.apiName === 'DidiRideOrder')!.i
     ['name', 'orderId', 'status', 'state', 'observedAt', 'independentRead', 'evidence'].map((n) => [n, n]),
   ),
   links: {},
-  actions: {},
+  actions: {
+    cancel: { action: 'CancelDidiRideOrder', parameters: {
+      order: 'order', confirmCancellation: 'confirmCancellation', reason: 'reason',
+    } },
+  },
 };
