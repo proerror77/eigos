@@ -8,6 +8,7 @@ import { Actions, type CommittedEffects } from '../../runtime/actions.js';
 import { ingest } from '../../runtime/ingestion.js';
 import { Sources, type SourceProjection } from '../../runtime/sources.js';
 import { rideFunctions, sourceResultSchema, type SourceResolver } from './functions.js';
+import { immediateDidiRideFunctions } from './immediate-ride.js';
 import { prepareRideInquiry, resolveRideLocations } from './inquiry.js';
 import type { Ontology } from '../../ontology/model.js';
 import type { OntologyDocument } from '../../ontology/schema.js';
@@ -20,6 +21,7 @@ export function rideCapabilities(db: Database, resolve: SourceResolver, addition
   const prepare = prepareRideInquiry(() => sources, () => functions, resolve);
   const functions = rideFunctions(resolve, new Map([
     ...additional,
+    ...immediateDidiRideFunctions(db, resolve, () => sources, () => functions),
     ['resolveRideLocations', resolveRideLocations],
     ['prepareRideInquiry', prepare],
     ['prepareRideInquiryWithPlaceClues', prepareRideInquiry(() => sources, () => functions, resolve, true)],

@@ -49,6 +49,7 @@ export interface RideOrders {
     beforeDispatch: () => Promise<void>,
   ): Promise<RideOrder>;
   query(orderId: string, signal: AbortSignal): Promise<RideOrder>;
+  queryAfterCreate?(created: RideOrder, signal: AbortSignal): Promise<RideOrder>;
   observe?(orderId: string, signal: AbortSignal): Promise<z.infer<typeof rideProgress>>;
   driverPosition?(orderId: string, signal: AbortSignal): Promise<z.infer<typeof ridePosition>>;
   cancel(orderId: string, reason: string | undefined, signal: AbortSignal, beforeDispatch: () => Promise<void>): Promise<{ order: RideOrder; acknowledgementDigest: string }>;
@@ -240,6 +241,17 @@ export class DidiOperations implements RideOrders {
   }
   async query(orderId: string, signal: AbortSignal) {
     return this.normalize(await this.call('taxi_query_order', { order_id: orderId }, signal), true, orderId);
+  }
+  async queryAfterCreate(created: RideOrder, signal: AbortSignal) {
+    const orderId = created.orderId;
+    const raw = await this.call('taxi_query_order', { order_id: orderId }, signal);
+    const result = this.normalize(raw, true, orderId);
+    if (this.environment !== 'mock' || raw.structuredContent !== undefined) return result;
+    if (created.evidence !== 'provider_mock' || created.state !== 'created' || created.independentRead)
+      throw new Error('Sandbox lookup requires the original create acknowledgement');
+    const { heading } = sandboxOrderStatusText(raw.content, orderId);
+    sandboxRideStatus(raw.content, orderId);
+    return { ...result, status: heading!, state: 'reported' as const };
   }
   async observe(orderId: string, signal: AbortSignal) {
     const raw = await this.call('taxi_query_order', { order_id: orderId }, signal);

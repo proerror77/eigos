@@ -1,3 +1,4 @@
+import { bookImmediateRideAction, immediateRideInterface, immediateRideType } from './didi-immediate-ride.js';
 import type { OntologyDocument } from './schema.js';
 
 export const sandboxAgentCapability = { kind: 'agent-capability', name: 'sandbox' } as const;
@@ -24,13 +25,25 @@ export const businessAgentProfiles: AgentProfile[] = [
     instructions: [
       { function: 'generateDidiRideAppLink', text: 'When asked for an App or mini-program link, use complete_with_action with the ride estimate Interface Action and generateDidiRideAppLink as the result Function (resultParameter: request). Pass serviceClass only for a vehicle the user selected. For an existing quote, pass its RideRequest reference and, when applicable, the selected RideEstimate. The user completes the booking on DiDi.' },
       { action: 'EstimateRide', function: 'readRideEstimates', text: 'When the user provides the city, pickup and destination for a fare-only inquiry, use complete_with_action with RideInquiry.estimate on RideRequest and readRideEstimates (resultParameter: request). Include serviceClass only for a specified vehicle class.' },
-      { action: 'EstimateRideWithPlaceClues', function: 'readInteractiveRideEstimate', text: 'Use RideInquiryWithPlaceClues.estimate on RideRequest with readInteractiveRideEstimate when the user also requests driving time, provides landmark clues, or the named ride inquiry cannot be used. Pass a given pickup or itinerary point as origin. With authorized device location, omit origin to ask the original PA for fresh phone location and verify its coordinate system. Omit a missing destination so the Action asks for it. Pass only a city established by the user. Keep nearby landmarks separate and preserve ambiguous names for the Action to resolve.' },
+      { action: 'EstimateRideWithPlaceClues', function: 'readInteractiveRideEstimate', text: 'For read-only inquiries, use RideInquiryWithPlaceClues.estimate on RideRequest with readInteractiveRideEstimate when the user also requests driving time, provides landmark clues, or the named ride inquiry cannot be used. Pass a given pickup or itinerary point as origin. With authorized device location, omit origin to ask the original PA for fresh phone location and verify its coordinate system. Omit a missing destination so the Action asks for it. Pass only a city established by the user. Keep nearby landmarks separate and preserve ambiguous names for the Action to resolve.' },
     ],
+  },
+  {
+    apiName: 'DidiImmediateBooking',
+    terms: ['叫车', '叫个车', '叫一辆车', '叫辆车', '打个车', '打一辆车', '打辆车', '现在打车', '现在下单', 'book a ride', 'call a taxi'],
+    objects: [immediateRideType, 'DidiRideOrder'],
+    interfaces: [immediateRideInterface],
+    actions: [bookImmediateRideAction],
+    functions: ['readDidiImmediateRide'],
+    instructions: [{
+      action: bookImmediateRideAction, function: 'readDidiImmediateRide',
+      text: 'For an explicit request to book a ride now, such as 帮我叫辆车, use complete_with_action with ImmediateRideBooking.book on DidiImmediateRide and readDidiImmediateRide (resultParameter: ride). Pass only known endpoints and an explicitly requested vehicle and let the Action ask for missing inputs and obtain authenticated PA approval. If the request is only a quote, an App link or a future ride, use the corresponding inquiry or planning capability.',
+    }],
   },
   {
     apiName: 'DidiOrderManagement',
     terms: ['取消滴滴', '取消订单', '取消打车', '取消叫车', '滴滴订单', '滴滴司机', 'cancel ride', 'cancel taxi', 'didi order'],
-    objects: ['DidiRideOrder', 'DidiRideWatch', 'EventTrip'],
+    objects: ['DidiRideOrder', 'DidiRideWatch', 'EventTrip', immediateRideType],
     interfaces: ['RideOrder', 'CancelableRideOrder'],
     actions: ['CancelDidiRideOrder', 'RefreshDidiRideOrder', 'StartDidiRideWatch', 'StopDidiRideWatch'],
     functions: ['readDidiRideOrder', 'readDidiRideWatch', 'readDidiDriverPosition'],
