@@ -19,7 +19,7 @@ import { fliggyServicesDefinition as fliggy, marketplaceDefinition as marketplac
 import { fliggyFlightBookingDefinition } from './fliggy-flight-booking.js';
 import { fliggyHotelDefinition } from './fliggy-hotel.js';
 import { didiReadDefinitions } from './didi-reads.js';
-import { travelDefinition as travel } from './travel.js';
+import { didiOrderDefinitions, travelDefinition as travel } from './travel.js';
 import { paymentsDefinition as payments } from './payments.js';
 import { diningEvidence, diningResearchFunctions } from './dining.js';
 import { dianpingResearchFunctions } from './dianping.js';
@@ -71,7 +71,7 @@ businessDefinition.actionTypes.push(...fliggyHotelDefinition.actionTypes);
 businessDefinition.objectTypes.push(...fliggyFlightBookingDefinition.objectTypes);
 businessDefinition.functionTypes.push(...fliggyFlightBookingDefinition.functionTypes);
 businessDefinition.actionTypes.push(...fliggyFlightBookingDefinition.actionTypes);
-businessDefinition.functionTypes.push(...didiReadDefinitions, diningActivityFunction, ...diningResearchFunctions, ...dianpingResearchFunctions);
+businessDefinition.functionTypes.push(diningActivityFunction, ...diningResearchFunctions, ...dianpingResearchFunctions);
 businessDefinition.objectTypes.push(...diningReservations.objectTypes);
 businessDefinition.functionTypes.push(...diningReservations.functionTypes);
 businessDefinition.actionTypes.push(...diningReservations.actionTypes);
@@ -115,7 +115,7 @@ for(const group of businessDefinition.typeGroups)for(const name of group.objectT
 
 for(const fn of businessDefinition.functionTypes){
   if(fn.apiName==='embedTextLocal' || fn.apiName===geometryUploadCriterion){fn.dependencies={};continue;}
-  if(didiReadDefinitions.includes(fn)||documents.functionTypes.includes(fn)||fliggy.functionTypes.includes(fn)||marketplace.functionTypes.includes(fn)||fliggyHotelDefinition.functionTypes.includes(fn)||fliggyFlightBookingDefinition.functionTypes.includes(fn)||diningResearchFunctions.includes(fn)||dianpingResearchFunctions.includes(fn)||diningReservations.functionTypes.includes(fn)||petRideDefinition.functionTypes.includes(fn)||fn===diningActivityFunction)continue;
+  if(documents.functionTypes.includes(fn)||fliggy.functionTypes.includes(fn)||marketplace.functionTypes.includes(fn)||fliggyHotelDefinition.functionTypes.includes(fn)||fliggyFlightBookingDefinition.functionTypes.includes(fn)||diningResearchFunctions.includes(fn)||dianpingResearchFunctions.includes(fn)||diningReservations.functionTypes.includes(fn)||petRideDefinition.functionTypes.includes(fn)||fn===diningActivityFunction)continue;
   if(fn === flightPositionFunction || journey.functionTypes.includes(fn) || flight.functionTypes.includes(fn) || payments.functionTypes.includes(fn) || deliveryFunctions.includes(fn) || locationFunctions.includes(fn) || mapFunctions.includes(fn) || luckin.functionTypes.includes(fn))continue;
   if(ride.functionTypes.some(item=>item.apiName===fn.apiName)){
     fn.dependencies={objectTypes:ride.objectTypes.map(type=>type.apiName),interfaceTypes:ride.interfaceTypes.map(type=>type.apiName),linkTypes:ride.linkTypes.map(link=>link.apiName),dataSources:ride.dataSources.map(source=>source.apiName),functions:ride.functionTypes.filter(item=>item.apiName!==fn.apiName).map(item=>item.apiName)};
@@ -126,6 +126,9 @@ for(const fn of businessDefinition.functionTypes){
     fn.dependencies={objectTypes:applications.objectTypes.map(type=>type.apiName),linkTypes:applications.linkTypes.map(link=>link.apiName)};
   }
 }
+// These Functions declare their own dependencies so historical workflow bindings stay compatible.
+businessDefinition.functionTypes.push(...didiOrderDefinitions.functionTypes, ...didiReadDefinitions);
+businessDefinition.actionTypes.push(...didiOrderDefinitions.actionTypes);
 businessDefinition.objectTypes.find(type=>type.apiName==='LumaEvent')!.interfaces.AttendableEvent={properties:Object.fromEntries(['name','start','end','timeZone','status','locationPrecision','registrationOpen','approvalRequired'].map(name=>[name,name])),links:{registrations:'registrations',trips:'trips'},actions:{register:{action:'PrepareEventRegistration',parameters:{event:'event',ticketId:'ticketId',sourceTaskId:'sourceTaskId'}}}};
 
 // Keep the existing published contract for historical workflows and callers with complete inputs.

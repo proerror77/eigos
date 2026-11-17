@@ -133,12 +133,6 @@ const functions = [
     'Independently read the original provider order; no unscoped account-order query.',
     'Didi',
   ],
-  [
-    'cancelDidiRideOrder',
-    cancelRideInput,
-    'Cancel the exact linked DiDi order after explicit PA confirmation. Recover the original attempt if its outcome is uncertain.',
-    'Didi',
-  ],
 ] as const;
 export const travelDefinition: OntologyDocument = {
   id: 'EigosTravel',
@@ -305,12 +299,6 @@ export const travelDefinition: OntologyDocument = {
       ...(source ? { source } : {}),
     })),
     {
-      apiName: 'readDidiRideOrder',
-      description: 'Read the linked original order and the independently verified or unresolved cancellation outcome.',
-      parameters: json(didiOrderRef),
-      returns: json(didiOrderRead),
-    },
-    {
       apiName: 'readDrivingEstimate',
       description: 'Read the current routing observation and exact endpoints from its implementation.',
       parameters: json(z.strictObject({ travel: ref })),
@@ -333,8 +321,6 @@ export const travelDefinition: OntologyDocument = {
     const objectParameters: Record<string, string> =
       name === 'observeDidiDrivingTime'
         ? { origin: 'Place', destination: 'Place' }
-        : name === 'cancelDidiRideOrder'
-          ? { order: 'DidiRideOrder' }
         : name === 'planEventTrip'
           ? { plan: 'SchedulePlan', event: 'AttendableEvent', travel: 'DrivingEstimate' }
           : name === 'prepareEventRegistration'
@@ -372,4 +358,38 @@ travelDefinition.objectTypes.find((type) => type.apiName === 'DidiRideOrder')!.i
       order: 'order', confirmCancellation: 'confirmCancellation', reason: 'reason',
     } },
   },
+};
+
+
+const originalDidiOrderDependencies = {
+  objectTypes: ['DidiRideOrder', 'EventTrip'], linkTypes: ['TripOrder'], interfaceTypes: ['RideOrder'],
+};
+const cancelDidiRideOrder = {
+  apiName: 'cancelDidiRideOrder',
+  description: 'Cancel the exact linked DiDi order after explicit PA confirmation. Recover the original attempt if its outcome is uncertain.',
+  parameters: json(cancelRideInput),
+  returns: json(ref),
+  edits: true,
+  source: 'Didi',
+  dependencies: originalDidiOrderDependencies,
+};
+export const didiOrderDefinitions: Pick<OntologyDocument, 'functionTypes' | 'actionTypes'> = {
+  functionTypes: [
+    cancelDidiRideOrder,
+    {
+      apiName: 'readDidiRideOrder',
+      description: 'Read the linked original order and the verified or unresolved cancellation outcome.',
+      parameters: json(didiOrderRef),
+      returns: json(didiOrderRead),
+      dependencies: originalDidiOrderDependencies,
+    },
+  ],
+  actionTypes: [{
+    apiName: 'CancelDidiRideOrder',
+    description: cancelDidiRideOrder.description,
+    parameters: cancelDidiRideOrder.parameters,
+    objectParameters: { order: 'DidiRideOrder' },
+    submissionCriteria: [],
+    function: cancelDidiRideOrder.apiName,
+  }],
 };
