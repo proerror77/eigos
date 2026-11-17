@@ -26,6 +26,7 @@ import { configuredStripeSandbox } from '../../packages/capabilities/payments/st
 import type { SourceResolver } from '../../packages/capabilities/didi/functions.js';
 import { verifier, type VerifyToken } from './auth.js';
 import { mountAccountPortal, type auth0AccountLogin } from './account-portal.js';
+import { auth0Management, type Auth0Management } from './auth0-management.js';
 import { Accounts, accountTaskScopes, type Denial } from '../../packages/runtime/accounts.js';
 import { A2A, AgentUser, agentCard } from './a2a.js';
 import { publicError } from './public-error.js';
@@ -58,10 +59,10 @@ const refusal: Record<Denial, string> = {
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {},
   providerFetch: { amapFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch;
     dianpingFetch?: typeof fetch; marketplaceFetch?: typeof fetch;
-    accountLogin?: ReturnType<typeof auth0AccountLogin> } = {}) {
+    accountLogin?: ReturnType<typeof auth0AccountLogin>; management?: Auth0Management } = {}) {
   if (db.sandboxEnabled && !developmentSandboxEnabled({ ...config, NODE_ENV: process.env.NODE_ENV }))
     throw new Error('Gateway sandbox requires explicit loopback development configuration');
-  const { marketplaceFetch, accountLogin, ...sourceFetch } = providerFetch;
+  const { marketplaceFetch, accountLogin, management, ...sourceFetch } = providerFetch;
   const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE, undefined, marketplaceFetch), configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
     fliggyFlight: config.EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE,
     fliggyHotel: config.EIGOS_FLIGGY_HOTEL_CONNECTION_FILE,
@@ -110,7 +111,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     scopes_supported: accountTaskScopes, bearer_methods_supported: ['header'],
   }));
   if (members) {
-    mountAccountPortal(app, config, members, accountLogin);
+    mountAccountPortal(app, config, members, accountLogin, management ?? auth0Management(config));
     app.get('/', (_req, res) => res.redirect(302, '/account'));
   }
   mountWorkbench(app, config, verify);

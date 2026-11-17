@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
-import express, { type Request, type Response } from 'express';
+import express, { type Request, type RequestHandler, type Response } from 'express';
 import { createRemoteJWKSet, jwtVerify, SignJWT, type JWTVerifyGetKey } from 'jose';
 import { z } from 'zod';
 import type { Config } from '../../packages/core/config.js';
 import { digest } from '../../packages/core/identity.js';
 import { Accounts, emailDigest, newAccountSecret } from '../../packages/runtime/accounts.js';
+import type { Auth0Management } from './auth0-management.js';
 import { rateLimit } from './rate-limit.js';
 import { seal, unseal } from './sealed-cookie.js';
 
@@ -34,12 +35,15 @@ const linkText = z.string().min(1).max(256);
 const linkClaims = z.object({ sub: linkText, primary: linkText, connection: linkText });
 const linkQuery = z.object({ session_token: z.string().min(1).max(4096), state: z.string().min(1).max(2000) });
 const linkSchema = z.strictObject({ auth0State: z.string().min(1).max(2000), subject: linkText, primary: linkText, connection: linkText });
+const verifySchema = z.strictObject({ subject: z.string().min(1) });
 const ttl = 300_000;
+const verifyTtl = 600_000;
 const resumeSeconds = 300;
 const sessionAge = 8 * 60 * 60 * 1000;
 const sessionCookie = '__Host-eigos-account';
 const loginCookie = '__Host-eigos-account-login';
 const linkCookie = '__Host-eigos-account-link';
+const verifyCookie = '__Host-eigos-account-verify';
 const sessionShape = /^[A-Za-z0-9_-]{43}$/, sealedShape = /^[A-Za-z0-9_-]{1,4096}$/;
 const cookieOptions = { httpOnly: true, secure: true, sameSite: 'lax' as const, path: '/' };
 const statuses = {
@@ -51,6 +55,7 @@ const statuses = {
   operator: '这是运营者账号，不需要开通，请继续使用原来的客户端。',
   origin: '请回到账号页重新提交。',
   link: '合并没有完成，请用原来的方式重新登录。',
+  resent: '验证邮件已重新发送，请查收后重新登录。',
 } as const;
 
 function cookie(req: Request, key: string, shape: RegExp) {
@@ -139,12 +144,19 @@ export function auth0AccountLogin(config: Config, exchange: typeof fetch = fetch
   };
 }
 
-export function mountAccountPortal(app: express.Express, config: Config, accounts: Accounts, login = auth0AccountLogin(config)) {
+export function mountAccountPortal(app: express.Express, config: Config, accounts: Accounts, login = auth0AccountLogin(config),
+  management?: Auth0Management) {
   const secret = config.EIGOS_PORTAL_SECRET!;
   // The Action and this portal share this secret to sign tokens. The cookies use the portal secret, which Auth0 never sees.
   const linkKey = new TextEncoder().encode(config.EIGOS_ACCOUNT_LINK_SECRET!);
-  // One counter per group and client address: every login-flow GET shares one, every POST shares the other.
+  // One counter per group and client address: every login-flow GET shares one, every POST of the session forms shares the other.
   const flowLimit = rateLimit({ windowMs: 60_000, max: 20 }), postLimit = rateLimit({ windowMs: 60_000, max: 30 });
+  // A resend sends a mail to whoever owns the address that signed up, so it has a small counter of its own that counts hours, not minutes.
+  const resendLimit = rateLimit({ windowMs: 3_600_000, max: 5 });
+  const sameOrigin: RequestHandler = (req, res, next) => {
+    if (req.headers.origin !== config.PUBLIC_URL) { res.status(403).send(statuses.origin); return; }
+    next();
+  };
   const redirect = (res: Response, status?: keyof typeof statuses) =>
     res.redirect(303, '/account' + (status ? '?status=' + status : ''));
   app.use('/account', express.urlencoded({ extended: false, limit: '2kb' }), (_req, res, next) => {
@@ -175,8 +187,11 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     else content = '<p>账号已开通。授权后，Grok 可以提交和读取你自己的查询任务。</p><form method="post" action="/account/approve"><button>授权 Grok</button></form>';
     // A status the page body already spells out is not repeated as a banner.
     const banner = status && status !== explains ? `<p role="status">${statuses[status]}</p>` : '';
+    // The verify status offers a new verification email when there is a Management API client to ask for it.
+    const resend = status === 'verify' && management
+      ? '<form method="post" action="/account/resend-verification"><button>重新发送验证邮件</button></form>' : '';
     // Browser form navigation must preserve Origin for the POST checks. The OIDC callback remains no-referrer.
-    res.set('Referrer-Policy', 'same-origin').type('html').send(page('EIGOS 账号', `${banner}${content}
+    res.set('Referrer-Policy', 'same-origin').type('html').send(page('EIGOS 账号', `${banner}${resend}${content}
       ${session ? '<form method="post" action="/account/logout"><button>退出登录</button></form>' : ''}`));
   });
   app.get('/account/login', flowLimit, (req, res) => {
@@ -231,6 +246,8 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     if (result.kind === 'unverified') {
       if (previous) await accounts.endSession(previous);
       res.clearCookie(sessionCookie, cookieOptions);
+      // The browser has no session to name this user, so a sealed cookie holds the Auth0 user for the resend on the verify page.
+      res.cookie(verifyCookie, seal(secret, 'verify', { subject: result.subject }, verifyTtl), { ...cookieOptions, maxAge: verifyTtl });
       redirect(res, 'verify'); return;
     }
     const opened = await accounts.provision(result.owner, emailDigest(result.email));
@@ -239,8 +256,18 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     // An invitation-only deployment opens the account on the page, so `invite_required` needs no status.
     redirect(res, opened === 'signup_closed' ? 'closed' : opened === 'operator_account' ? 'operator' : undefined);
   });
-  app.post(['/account/activate', '/account/approve', '/account/revoke', '/account/logout'], postLimit, async (req, res) => {
-    if (req.headers.origin !== config.PUBLIC_URL) { res.status(403).send(statuses.origin); return; }
+  // Unlike the forms below, this one has no session: the sign-in ended at an unverified email, and only the verify cookie names the user.
+  // The route exists only when there is a Management API client to ask.
+  if (management) {
+    app.post('/account/resend-verification', sameOrigin, resendLimit, async (req, res) => {
+      const held = unseal(secret, 'verify', cookie(req, verifyCookie, sealedShape), verifySchema);
+      if (!held) { redirect(res, 'verify'); return; }
+      // Whatever went wrong at Auth0 stays on the server: the page the browser lands on is the same.
+      try { await management.resendVerification(held.subject); } catch { redirect(res, 'verify'); return; }
+      redirect(res, 'resent');
+    });
+  }
+  app.post(['/account/activate', '/account/approve', '/account/revoke', '/account/logout'], postLimit, sameOrigin, async (req, res) => {
     const token = cookie(req, sessionCookie, sessionShape), session = await accounts.session(token);
     if (!session) { res.sendStatus(401); return; }
     if (req.path === '/account/activate') {

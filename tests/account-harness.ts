@@ -4,6 +4,7 @@ import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { auth0AccountLogin } from '../apps/gateway/account-portal.js';
 import { createApp } from '../apps/gateway/app.js';
 import { jwtVerifier } from '../apps/gateway/auth.js';
+import type { Auth0Management } from '../apps/gateway/auth0-management.js';
 import { readConfig, type Config } from '../packages/core/config.js';
 import { digest } from '../packages/core/identity.js';
 import { Accounts, type SignupMode } from '../packages/runtime/accounts.js';
@@ -38,10 +39,12 @@ const responseCookie = (response: Response, name: string) =>
 /**
  * The real Gateway on a loopback port, with the account portal logging in against a fake Auth0:
  * issuer https://identity.example/, PUBLIC_URL https://127.0.0.1, MCP audience https://127.0.0.1/mcp, tenant `personal`,
- * clients `portal`, `grok` and `existing-client`. `signup` sets EIGOS_SIGNUP and `env` adds or overrides variables.
- * The caller closes the fixture; `close()` only stops the server.
+ * clients `portal`, `grok` and `existing-client`. `signup` sets EIGOS_SIGNUP and `env` adds or overrides variables. `management`
+ * stands in for the Auth0 Management API client that resends verification emails; without it the Gateway builds its own from
+ * OAUTH_MANAGEMENT_*, which `portalEnv` leaves unset. The caller closes the fixture; `close()` only stops the server.
  */
-export async function accountGateway(f: Fixture, options: { signup?: SignupMode; env?: Record<string, string> } = {}): Promise<AccountGateway> {
+export async function accountGateway(f: Fixture, options: { signup?: SignupMode; env?: Record<string, string>; management?: Auth0Management } = {}):
+  Promise<AccountGateway> {
   const config = readConfig({ ...portalEnv, ...(options.signup ? { EIGOS_SIGNUP: options.signup } : {}), ...options.env });
   const issuer = config.OAUTH_ISSUER!, publicUrl = config.PUBLIC_URL, audience = publicUrl + '/mcp', tenant = 'personal';
   const owner = (sub: string) => digest([issuer, tenant, sub]);
@@ -71,7 +74,7 @@ export async function accountGateway(f: Fixture, options: { signup?: SignupMode;
   };
   const accounts = new Accounts(f.db, config.EIGOS_SIGNUP);
   const gateway = createApp(config, f.db, f.source, jwtVerifier(issuer, publicUrl, jwks, config.OAUTH_TENANT_CLAIM, audience), {},
-    { accountLogin: auth0AccountLogin(config, exchange, jwks) });
+    { accountLogin: auth0AccountLogin(config, exchange, jwks), management: options.management });
   const server = gateway.app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
   const address = server.address();

@@ -6,6 +6,7 @@ import express, { type Request, type Response } from 'express';
 import { createLocalJWKSet, exportJWK, generateKeyPair, jwtVerify, SignJWT } from 'jose';
 import { z } from 'zod';
 import { auth0AccountLogin, mountAccountPortal } from '../apps/gateway/account-portal.js';
+import { auth0Management, type Auth0Management } from '../apps/gateway/auth0-management.js';
 import { rateLimit } from '../apps/gateway/rate-limit.js';
 import { seal, unseal } from '../apps/gateway/sealed-cookie.js';
 import { readConfig } from '../packages/core/config.js';
@@ -911,4 +912,289 @@ test('the continue address keeps the paused sign-in only while the browser holds
     };
     for (const [name, held] of Object.entries(unusable)) assert.equal(await carried(held), undefined, name);
   } finally { await g.close(); await f.close(); }
+});
+
+test('an unverified user can ask Auth0 to resend the verification email', async () => {
+  const sent: string[] = [];
+  const f = await fixture(), g = await accountGateway(f, { signup: 'open', management: { async resendVerification(subject) { sent.push(subject); } } });
+  try {
+    const dan = await g.login('auth0|dan', 'dan@example.test', { verified: false });
+    assert.equal(dan.location, '/account?status=verify');
+    const verifyCookie = dan.response.headers.getSetCookie().find(c => c.startsWith('__Host-eigos-account-verify='))!.split(';')[0]!;
+    assert.match(await (await fetch(g.url + '/account?status=verify', { headers: { Cookie: verifyCookie } })).text(), /重新发送验证邮件/);
+    const post = (cookie: string, origin?: string) => fetch(g.url + '/account/resend-verification',
+      { method: 'POST', redirect: 'manual', headers: { Cookie: cookie, ...(origin ? { Origin: origin } : {}) } });
+    assert.equal((await post(verifyCookie)).status, 403);
+    assert.equal((await post('', g.config.PUBLIC_URL)).headers.get('location'), '/account?status=verify');
+    assert.equal((await post(verifyCookie, g.config.PUBLIC_URL)).headers.get('location'), '/account?status=resent');
+    assert.deepEqual(sent, ['auth0|dan']);
+  } finally { await g.close(); await f.close(); }
+});
+
+// The Management API as a test double. It records every request and answers a token that lives an hour and a created job, unless a
+// test supplies an answer; an answer function that returns nothing gets the default one.
+type Answer = () => globalThis.Response | undefined;
+function fakeAuth0(answers: { token?: Answer; job?: Answer } = {}) {
+  const calls: { url: string; init: RequestInit }[] = [];
+  let issued = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    calls.push({ url: String(input), init: init! });
+    return String(input).endsWith('/oauth/token')
+      ? answers.token?.() ?? Response.json({ access_token: 'token-' + ++issued, token_type: 'Bearer', expires_in: 3600 })
+      : answers.job?.() ?? Response.json({ status: 'pending', type: 'verification_email', id: 'job_1' }, { status: 201 });
+  };
+  return { fetcher, calls, urls: () => calls.map(call => call.url),
+    header: (index: number, name: string) => new Headers(calls[index]!.init.headers).get(name),
+    body: (index: number): unknown => JSON.parse(String(calls[index]!.init.body)) };
+}
+const managementConfig = readConfig({ ...portalEnv, OAUTH_MANAGEMENT_CLIENT_ID: 'management', OAUTH_MANAGEMENT_CLIENT_SECRET: 'synthetic-management-secret' });
+const managementFor = (auth0: ReturnType<typeof fakeAuth0>) => auth0Management(managementConfig, auth0.fetcher)!;
+const tokenUrl = 'https://identity.example/oauth/token', jobUrl = 'https://identity.example/api/v2/jobs/verification-email';
+
+test('the Auth0 management client caches its token and sends the job request', async t => {
+  let clock = 1_000_000;
+  t.mock.method(Date, 'now', () => clock);
+  const auth0 = fakeAuth0(), management = managementFor(auth0);
+  await management.resendVerification('auth0|dan');
+  await management.resendVerification('auth0|erin');
+  assert.deepEqual(auth0.urls(), [tokenUrl, jobUrl, jobUrl], 'two resends take one token');
+  assert.equal(auth0.calls[0]!.init.method, 'POST');
+  assert.equal(auth0.header(0, 'content-type'), 'application/json');
+  assert.deepEqual(auth0.body(0), { grant_type: 'client_credentials', client_id: 'management',
+    client_secret: 'synthetic-management-secret', audience: 'https://identity.example/api/v2/' });
+  for (const [index, user] of [[1, 'auth0|dan'], [2, 'auth0|erin']] as const) {
+    assert.equal(auth0.calls[index]!.init.method, 'POST', user);
+    assert.equal(auth0.header(index, 'authorization'), 'Bearer token-1', user);
+    assert.equal(auth0.header(index, 'content-type'), 'application/json', user);
+    assert.deepEqual(auth0.body(index), { user_id: user, client_id: 'portal' }, user);
+  }
+  for (const [index, call] of auth0.calls.entries()) {
+    assert.equal(call.init.redirect, 'error', 'a token or secret is never sent on to a redirect target: request ' + index);
+    assert.ok(call.init.signal, 'every request has a timeout: request ' + index);
+  }
+
+  // The token lives an hour, and the client stops using it a minute early.
+  clock += 3_539_999;
+  await management.resendVerification('auth0|dan');
+  assert.equal(auth0.calls.length, 4, 'one millisecond before the margin the same token still serves');
+  clock += 1;
+  await management.resendVerification('auth0|dan');
+  assert.deepEqual(auth0.urls().slice(4), [tokenUrl, jobUrl]);
+  assert.equal(auth0.header(5, 'authorization'), 'Bearer token-2');
+});
+
+test('the Auth0 management client exists only when both management settings are present', () => {
+  assert.equal(auth0Management(readConfig(portalEnv)), undefined);
+  assert.equal(auth0Management({ ...managementConfig, OAUTH_MANAGEMENT_CLIENT_ID: undefined }), undefined);
+  assert.equal(auth0Management({ ...managementConfig, OAUTH_MANAGEMENT_CLIENT_SECRET: undefined }), undefined);
+  assert.ok(auth0Management(managementConfig));
+});
+
+test('the Auth0 management client keeps a token only while it is good', async () => {
+  // A token that lives no longer than the margin is used once and not kept.
+  const brief = fakeAuth0({ token: () => Response.json({ access_token: 'brief', expires_in: 60 }) }), short = managementFor(brief);
+  await short.resendVerification('auth0|dan');
+  await short.resendVerification('auth0|dan');
+  assert.deepEqual(brief.urls(), [tokenUrl, jobUrl, tokenUrl, jobUrl]);
+
+  // A refused job throws. Only a 401 means the token itself is bad, so only a 401 makes the next request ask for a new one.
+  const answers = [400, 403, 429, 500, 401];
+  const refusing = fakeAuth0({ job: () => { const status = answers.shift(); return status ? new Response(null, { status }) : undefined; } });
+  const client = managementFor(refusing);
+  for (const status of [400, 403, 429, 500, 401]) await assert.rejects(client.resendVerification('auth0|dan'), new RegExp(String(status)));
+  await client.resendVerification('auth0|dan');
+  assert.deepEqual(refusing.urls(), [tokenUrl, jobUrl, jobUrl, jobUrl, jobUrl, jobUrl, tokenUrl, jobUrl]);
+
+  // A token request that fails or answers with something unusable stops the resend before any job request, and is not remembered.
+  const unusable: Record<string, () => globalThis.Response> = {
+    'a refused request': () => Response.json({ error: 'access_denied' }, { status: 401 }),
+    'text instead of JSON': () => new Response('<html>'),
+    'no token': () => Response.json({ expires_in: 3600 }),
+    'an empty token': () => Response.json({ access_token: '', expires_in: 3600 }),
+    'no lifetime': () => Response.json({ access_token: 'x' }),
+    'a lifetime that is not a number': () => Response.json({ access_token: 'x', expires_in: '3600' }),
+  };
+  for (const [name, answer] of Object.entries(unusable)) {
+    let attempts = 0;
+    const auth0 = fakeAuth0({ token: () => ++attempts === 1 ? answer() : undefined }), flaky = managementFor(auth0);
+    await assert.rejects(flaky.resendVerification('auth0|dan'), Error, name);
+    assert.deepEqual(auth0.urls(), [tokenUrl], name + ': no job request without a token');
+    await flaky.resendVerification('auth0|dan');
+    assert.deepEqual(auth0.urls(), [tokenUrl, tokenUrl, jobUrl], name + ': the failure is not remembered');
+  }
+
+  // Requests that arrive while a token is on its way wait for that token.
+  const together = fakeAuth0(), shared = managementFor(together);
+  await Promise.all([shared.resendVerification('auth0|dan'), shared.resendVerification('auth0|erin')]);
+  assert.deepEqual(together.urls().sort(), [jobUrl, jobUrl, tokenUrl]);
+});
+
+test('the Auth0 management client reports a status and nothing from the request or the answer', async () => {
+  const leaks = /token-1|synthetic-management-secret|client_secret|auth0\|dan|dan@example\.test|Bearer/;
+  const echo = { message: 'user auth0|dan dan@example.test was not found', access_token: 'token-1', client_secret: 'synthetic-management-secret' };
+  const failure = (auth0: ReturnType<typeof fakeAuth0>) => managementFor(auth0).resendVerification('auth0|dan')
+    .then(() => assert.fail('the resend should have failed'), (error: Error) => error.message);
+  const cases: Record<string, [ReturnType<typeof fakeAuth0>, RegExp | undefined]> = {
+    'a refused job': [fakeAuth0({ job: () => Response.json(echo, { status: 404 }) }), /404/],
+    'a refused token request': [fakeAuth0({ token: () => Response.json(echo, { status: 403 }) }), /403/],
+    'a token answer of the wrong shape': [fakeAuth0({ token: () => Response.json({ ...echo, expires_in: 'x' }) }), undefined],
+    'a token answer that is not JSON': [fakeAuth0({ token: () => new Response('client_secret=synthetic-management-secret token-1 {') }), undefined],
+  };
+  for (const [name, [auth0, status]] of Object.entries(cases)) {
+    const message = await failure(auth0);
+    assert.doesNotMatch(message, leaks, name);
+    if (status) assert.match(message, status, name);
+  }
+});
+
+const verifyCookieName = '__Host-eigos-account-verify=';
+const verifyShape = z.strictObject({ subject: z.string() });
+// The form as the account page spells it.
+const resendForm = /<form method="post" action="\/account\/resend-verification"><button>重新发送验证邮件<\/button><\/form>/;
+const verifySeal = (g: AccountGateway, subject = 'auth0|dan') => seal(g.config.EIGOS_PORTAL_SECRET!, 'verify', { subject }, 600_000);
+// A Management API stand-in that remembers whom it was asked about.
+function recorder() {
+  const sent: string[] = [];
+  const management: Auth0Management = { async resendVerification(subject) { sent.push(subject); } };
+  return { sent, management };
+}
+// A resend request as the account page's form sends it. `cookie` is the sealed verify cookie without its name.
+const resend = (g: AccountGateway, cookie?: string, headers: Record<string, string> = {}) => fetch(g.url + '/account/resend-verification',
+  { method: 'POST', redirect: 'manual', headers: { Origin: g.config.PUBLIC_URL, ...(cookie === undefined ? {} : { Cookie: verifyCookieName + cookie }), ...headers } });
+
+test('an unverified login leaves a sealed ten-minute cookie that names only the user, and no other outcome leaves one', async () => {
+  const f = await fixture(), { management } = recorder(), g = await accountGateway(f, { signup: 'open', management });
+  try {
+    const dan = await g.login('auth0|dan', 'dan@example.test', { verified: false });
+    assert.equal(dan.location, '/account?status=verify');
+    const set = cookieAfter(dan.response, verifyCookieName)!;
+    assert.ok(set, 'the login leaves the verify cookie');
+    for (const flag of [/; Max-Age=600(;|$)/, /; Path=\/(;|$)/, /; HttpOnly/, /; Secure/, /; SameSite=Lax/]) assert.match(set, flag);
+    assert.doesNotMatch(set, /Domain=/i);
+    const sealed = pairOf(set).slice(verifyCookieName.length), secret = g.config.EIGOS_PORTAL_SECRET!;
+    assert.deepEqual(unseal(secret, 'verify', sealed, verifyShape), { subject: 'auth0|dan' });
+    assert.equal(unseal(secret, 'login', sealed, verifyShape), undefined, 'sealed for the verify purpose only');
+    assert.equal(unseal(g.config.EIGOS_ACCOUNT_LINK_SECRET!, 'verify', sealed, verifyShape), undefined, 'sealed with the portal secret, which Auth0 never sees');
+
+    const others = {
+      'a verified login': await g.login('auth0|amy', 'amy@example.test'),
+      'a login without a tenant claim': await g.login('auth0|bo', 'bo@example.test', { tenant: false, verified: false }),
+      'a callback for another login': await g.login('auth0|cy', 'cy@example.test', { verified: false, wrongState: true }),
+    };
+    for (const [name, result] of Object.entries(others))
+      assert.equal(result.response.headers.getSetCookie().some(value => value.startsWith(verifyCookieName)), false, name);
+  } finally { await g.close(); await f.close(); }
+});
+
+test('the resend route acts only on an intact verify cookie and answers a failed call like a missing cookie', async () => {
+  const f = await fixture(), { sent, management } = recorder();
+  const g = await accountGateway(f, { management, env: { EIGOS_TRUST_PROXY: '1' } });
+  const failing = await accountGateway(f, { management: { async resendVerification() { throw new Error('token-1 for dan@example.test was refused'); } } });
+  const secret = g.config.EIGOS_PORTAL_SECRET!, user = { subject: 'auth0|dan' };
+  // Every request comes from an address of its own, so that the hourly budget does not get in the way.
+  let hop = 0;
+  const post = (cookie?: string) => resend(g, cookie, { 'X-Forwarded-For': '198.51.100.' + String(++hop) });
+  try {
+    const unusable: Record<string, string | undefined> = {
+      'no cookie': undefined,
+      expired: seal(secret, 'verify', user, -1),
+      'sealed for another purpose': seal(secret, 'login', user, 600_000),
+      'sealed with another secret': seal('x'.repeat(32), 'verify', user, 600_000),
+      'sealed with the Auth0 link secret': seal(g.config.EIGOS_ACCOUNT_LINK_SECRET!, 'verify', user, 600_000),
+      'unexpected fields': seal(secret, 'verify', { ...user, extra: 1 }, 600_000),
+      'no subject': seal(secret, 'verify', {}, 600_000),
+      'an empty subject': seal(secret, 'verify', { subject: '' }, 600_000),
+      'a subject that is not text': seal(secret, 'verify', { subject: 5 }, 600_000),
+      'not base64url': '!!!',
+      'too long': 'A'.repeat(4097),
+    };
+    for (const [name, cookie] of Object.entries(unusable)) {
+      const response = await post(cookie);
+      assert.equal(response.status, 303, name);
+      assert.equal(response.headers.get('location'), '/account?status=verify', name);
+    }
+    assert.deepEqual(sent, [], 'none of them gets as far as Auth0');
+    const resent = await post(seal(secret, 'verify', user, 600_000));
+    assert.equal(resent.status, 303);
+    assert.equal(resent.headers.get('location'), '/account?status=resent');
+    assert.deepEqual(sent, ['auth0|dan']);
+
+    // Auth0 refusing, or not answering, is the same as having no cookie. Nothing of the failure reaches the browser.
+    const failed = await resend(failing, verifySeal(failing));
+    assert.equal(failed.status, 303);
+    assert.equal(failed.headers.get('location'), '/account?status=verify');
+    assert.doesNotMatch(await failed.text(), /token-1|dan@example\.test/);
+  } finally { await g.close(); await failing.close(); await f.close(); }
+});
+
+test('the resend route checks the Origin itself, needs no session and keeps refused requests out of its budget', async t => {
+  const f = await fixture(), config = readConfig(portalEnv), app = express(), { sent, management } = recorder();
+  t.after(() => f.close());
+  mountAccountPortal(app, config, new Accounts(f.db, 'open'), undefined, management);
+  const server = app.listen(0, '127.0.0.1');
+  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const { port } = server.address() as AddressInfo;
+  const cookie = verifyCookieName + seal(config.EIGOS_PORTAL_SECRET!, 'verify', { subject: 'auth0|dan' }, 600_000);
+  const post = (headers: Record<string, string>) => fetch(`http://127.0.0.1:${port}/account/resend-verification`,
+    { method: 'POST', redirect: 'manual', headers: { Cookie: cookie, ...headers } });
+  const refused = await post({});
+  assert.equal(refused.status, 403, 'no Origin');
+  assert.equal(await refused.text(), '请回到账号页重新提交。');
+  assert.equal((await post({ Origin: 'https://other.example' })).status, 403);
+  assert.equal((await post({ Origin: config.PUBLIC_URL + '.other.example' })).status, 403, 'only the exact origin counts');
+  assert.deepEqual(sent, [], 'a refused request asks Auth0 for nothing');
+  // The three refusals did not use up the budget of five, and no request here holds a session.
+  for (let request = 1; request <= 5; request++)
+    assert.equal((await post({ Origin: config.PUBLIC_URL })).headers.get('location'), '/account?status=resent', 'request ' + request);
+  assert.equal((await post({ Origin: config.PUBLIC_URL })).status, 429);
+  assert.equal(sent.length, 5);
+});
+
+test('resend requests have an hourly budget per client address that forms and sign-ins do not share', async () => {
+  const f = await fixture(), { management } = recorder(), g = await accountGateway(f, { management, env: { EIGOS_TRUST_PROXY: '1' } });
+  const post = (ip: string, path = 'resend-verification') => fetch(g.url + '/account/' + path, { method: 'POST', redirect: 'manual',
+    headers: { Cookie: verifyCookieName + verifySeal(g), Origin: g.config.PUBLIC_URL, 'X-Forwarded-For': ip } });
+  try {
+    for (let request = 1; request <= 5; request++) assert.equal((await post('198.51.100.1')).status, 303, 'request ' + request);
+    const limited = await post('198.51.100.1');
+    assert.equal(limited.status, 429);
+    const wait = Number(limited.headers.get('retry-after'));
+    assert.ok(wait > 3_500 && wait <= 3_600, 'the window is an hour long, not a minute: ' + wait);
+    assert.equal((await post('198.51.100.2')).status, 303, 'another client address has its own budget');
+
+    assert.equal((await post('198.51.100.1', 'approve')).status, 401, 'the budget of the other forms is untouched');
+    const login = await fetch(g.url + '/account/login', { redirect: 'manual', headers: { 'X-Forwarded-For': '198.51.100.1' } });
+    assert.equal(login.status, 303, 'so is the budget of the sign-in');
+    for (let request = 1; request <= 30; request++) assert.equal((await post('198.51.100.3', 'approve')).status, 401, 'request ' + request);
+    assert.equal((await post('198.51.100.3', 'approve')).status, 429, 'the other forms have used up theirs');
+    assert.equal((await post('198.51.100.3')).status, 303, 'resending has its own');
+  } finally { await g.close(); await f.close(); }
+});
+
+test('the account page offers to resend the email only on the verify status and only with a management client', async () => {
+  const f = await fixture(), { management } = recorder();
+  const withClient = await accountGateway(f, { signup: 'open', management }), without = await accountGateway(f, { signup: 'open' });
+  const configured = await accountGateway(f, { env: { OAUTH_MANAGEMENT_CLIENT_ID: 'management', OAUTH_MANAGEMENT_CLIENT_SECRET: 'synthetic-management-secret' } });
+  const page = async (g: AccountGateway, query: string) => (await fetch(g.url + '/account' + query)).text();
+  const noButton = /resend-verification|重新发送验证邮件/;
+  try {
+    const verify = await page(withClient, '?status=verify');
+    assert.match(verify, resendForm);
+    assert.match(verify, /<p role="status">请先打开 Auth0 发到你邮箱的验证邮件，验证后再重新登录。<\/p>/, 'the status still says what to do first');
+    assert.match(verify, /<a href="\/account\/login">登录<\/a>/, 'and the sign-in link stays');
+    for (const query of ['', '?status=login', '?status=resent', '?status=link', '?status=verify&status=verify', '?status[]=verify'])
+      assert.doesNotMatch(await page(withClient, query), noButton, query || 'no status');
+    assert.match(await page(withClient, '?status=resent'), /<p role="status">验证邮件已重新发送，请查收后重新登录。<\/p>/);
+
+    assert.doesNotMatch(await page(without, '?status=verify'), noButton, 'no management client, no button');
+    const post = (path: string) => fetch(without.url + path, { method: 'POST', redirect: 'manual', headers: { Origin: without.config.PUBLIC_URL } });
+    const absent = await post('/account/resend-verification'), unknown = await post('/account/no-such-form');
+    assert.equal(absent.status, unknown.status, 'and the route is not served: it answers like any address the Gateway does not know');
+    assert.equal(absent.headers.get('location'), null);
+
+    // The two settings are enough: the Gateway builds the client itself, and no request leaves for Auth0 just to show the button.
+    assert.match(await page(configured, '?status=verify'), resendForm);
+    assert.doesNotMatch(await page(configured, '?status=login'), noButton);
+  } finally { await withClient.close(); await without.close(); await configured.close(); await f.close(); }
 });
