@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import express, { type Request, type Response } from 'express';
-import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
+import { createRemoteJWKSet, jwtVerify, SignJWT, type JWTVerifyGetKey } from 'jose';
 import { z } from 'zod';
 import type { Config } from '../../packages/core/config.js';
 import { digest } from '../../packages/core/identity.js';
@@ -18,10 +18,18 @@ const attemptSchema: z.ZodType<LoginAttempt> = z.strictObject({
   state: z.string().min(1), nonce: z.string().min(1), verifier: z.string().min(1),
   link: z.strictObject({ auth0State: z.string().min(1), subject: z.string().min(1), primary: z.string().min(1) }).optional(),
 });
+// What the Auth0 Action sends to the link page and what the link cookie keeps. The length bounds keep the sealed cookies within
+// the 4096 characters `unseal` reads: the longest ASCII values seal to 3842 characters (link cookie) and 3711 (login cookie).
+const linkText = z.string().min(1).max(256);
+const linkClaims = z.object({ sub: linkText, primary: linkText, connection: linkText });
+const linkQuery = z.object({ session_token: z.string().min(1).max(4096), state: z.string().min(1).max(2000) });
+const linkSchema = z.strictObject({ auth0State: z.string().min(1).max(2000), subject: linkText, primary: linkText, connection: linkText });
 const ttl = 300_000;
+const resumeSeconds = 300;
 const sessionAge = 8 * 60 * 60 * 1000;
 const sessionCookie = '__Host-eigos-account';
 const loginCookie = '__Host-eigos-account-login';
+const linkCookie = '__Host-eigos-account-link';
 const sessionShape = /^[A-Za-z0-9_-]{43}$/, sealedShape = /^[A-Za-z0-9_-]{1,4096}$/;
 const cookieOptions = { httpOnly: true, secure: true, sameSite: 'lax' as const, path: '/' };
 const statuses = {
@@ -32,11 +40,43 @@ const statuses = {
   invite: '邀请码无效、已过期，或者和已验证的邮箱不一致。',
   operator: '这是运营者账号，不需要开通，请继续使用原来的客户端。',
   origin: '请回到账号页重新提交。',
+  link: '合并没有完成，请用原来的方式重新登录。',
 } as const;
 
 function cookie(req: Request, key: string, shape: RegExp) {
   const value = req.headers.cookie?.split(';').map(item => item.trim()).find(item => item.startsWith(key + '='))?.slice(key.length + 1);
   return value && shape.test(value) ? value : '';
+}
+
+const page = (heading: string, body: string) => `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EIGOS 账号</title>
+      <style>body{font:1rem system-ui;max-width:42rem;margin:7vh auto;padding:0 1.5rem;line-height:1.6}button,input,.button{font:inherit;padding:.35rem .6rem}.button{display:inline-block;border:1px solid;border-radius:.25rem;color:inherit;text-decoration:none}form{margin-block:1.3rem}dd{margin:0 0 .75rem;overflow-wrap:anywhere}</style>
+      <main><h1>${heading}</h1>${body}</main></html>`;
+
+/**
+ * The link context of a request from Auth0's paused login, or undefined unless it carries a fresh HS256 session token that
+ * the Action signed with the account link secret. `sub` is the user who is being merged, `primary` the account they merge
+ * into, `connection` the login method of that account and `state` the paused Auth0 login.
+ */
+async function pausedLogin(key: Uint8Array, query: unknown) {
+  const request = linkQuery.safeParse(query);
+  if (!request.success) return undefined;
+  try {
+    const { payload } = await jwtVerify(request.data.session_token, key, { algorithms: ['HS256'], requiredClaims: ['sub', 'exp'] });
+    const claims = linkClaims.safeParse(payload);
+    return claims.success
+      ? { auth0State: request.data.state, subject: claims.data.sub, primary: claims.data.primary, connection: claims.data.connection }
+      : undefined;
+  } catch { return undefined; }
+}
+
+/** Where Auth0 resumes the paused login: its original state and a five-minute token that names the merged user and the verified account. */
+async function resumeUrl(issuer: string, key: Uint8Array, link: NonNullable<LoginAttempt['link']>) {
+  const now = Math.floor(Date.now() / 1000);
+  const token = await new SignJWT({ state: link.auth0State, primary: link.primary }).setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
+    .setSubject(link.subject).setIssuedAt(now).setExpirationTime(now + resumeSeconds).sign(key);
+  const url = new URL('continue', issuer);
+  url.search = new URLSearchParams({ state: link.auth0State, session_token: token }).toString();
+  return url;
 }
 
 export function auth0AccountLogin(config: Config, exchange: typeof fetch = fetch,
@@ -81,6 +121,8 @@ export function auth0AccountLogin(config: Config, exchange: typeof fetch = fetch
 
 export function mountAccountPortal(app: express.Express, config: Config, accounts: Accounts, login = auth0AccountLogin(config)) {
   const secret = config.EIGOS_PORTAL_SECRET!;
+  // The Action and this portal share this secret to sign tokens. The cookies use the portal secret, which Auth0 never sees.
+  const linkKey = new TextEncoder().encode(config.EIGOS_ACCOUNT_LINK_SECRET!);
   // One counter per group and client address: every login-flow GET shares one, every POST shares the other.
   const flowLimit = rateLimit({ windowMs: 60_000, max: 20 }), postLimit = rateLimit({ windowMs: 60_000, max: 30 });
   const redirect = (res: Response, status?: keyof typeof statuses) =>
@@ -114,16 +156,32 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     // A status the page body already spells out is not repeated as a banner.
     const banner = status && status !== explains ? `<p role="status">${statuses[status]}</p>` : '';
     // Browser form navigation must preserve Origin for the POST checks. The OIDC callback remains no-referrer.
-    res.set('Referrer-Policy', 'same-origin').type('html').send(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EIGOS 账号</title>
-      <style>body{font:1rem system-ui;max-width:42rem;margin:7vh auto;padding:0 1.5rem;line-height:1.6}button,input{font:inherit;padding:.35rem .6rem}form{margin-block:1.3rem}dd{margin:0 0 .75rem;overflow-wrap:anywhere}</style>
-      <main><h1>EIGOS 账号</h1>${banner}${content}
-      ${session ? '<form method="post" action="/account/logout"><button>退出登录</button></form>' : ''}</main></html>`);
+    res.set('Referrer-Policy', 'same-origin').type('html').send(page('EIGOS 账号', `${banner}${content}
+      ${session ? '<form method="post" action="/account/logout"><button>退出登录</button></form>' : ''}`));
   });
   app.get('/account/login', flowLimit, (req, res) => {
     // The attempt travels in a sealed cookie, so any Gateway replica can finish the login.
     const attempt: LoginAttempt = { state: newAccountSecret(), nonce: newAccountSecret(), verifier: newAccountSecret() };
     res.cookie(loginCookie, seal(secret, 'login', attempt, ttl), { ...cookieOptions, maxAge: ttl });
     res.redirect(303, login.start(attempt, { signup: req.query.signup === '1' }).href);
+  });
+  // Auth0 pauses a login whose verified email already belongs to an older account and sends the browser here. The page keeps
+  // that context in a sealed cookie and asks for a second login with the original method. The address carries a token, so the
+  // portal-wide `Referrer-Policy: no-referrer` stays in force and the page repeats nothing it was given.
+  app.get('/account/link', flowLimit, async (req, res) => {
+    const link = await pausedLogin(linkKey, req.query);
+    if (!link) { redirect(res, 'link'); return; }
+    res.cookie(linkCookie, seal(secret, 'link', link, ttl), { ...cookieOptions, maxAge: ttl });
+    res.type('html').send(page('合并账号', `<p>这个邮箱已经有 EIGOS 账号。为了确认是你本人，请用原来的方式再登录一次，登录后两个登录方式会合并成一个账号。</p>
+      <p><a class="button" href="/account/link/continue">用原来的方式登录</a></p>`));
+  });
+  app.get('/account/link/continue', flowLimit, (req, res) => {
+    const link = unseal(secret, 'link', cookie(req, linkCookie, sealedShape), linkSchema);
+    if (!link) { redirect(res, 'link'); return; }
+    const { connection, ...paused } = link;
+    const attempt: LoginAttempt = { state: newAccountSecret(), nonce: newAccountSecret(), verifier: newAccountSecret(), link: paused };
+    res.cookie(loginCookie, seal(secret, 'login', attempt, ttl), { ...cookieOptions, maxAge: ttl });
+    res.redirect(303, login.start(attempt, { signup: false, connection, linking: true }).href);
   });
   app.get('/account/callback', flowLimit, async (req, res) => {
     const attempt = unseal(secret, 'login', cookie(req, loginCookie, sealedShape), attemptSchema);
@@ -133,6 +191,14 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     let result: LoginResult;
     // The authorization code works once, so a replayed callback fails here as well.
     try { result = await login.finish(code.data, attempt); } catch { redirect(res, 'login'); return; }
+    if (attempt.link) {
+      // This login only proves the original account to Auth0. Anything but that account's verified sign-in turns back, and
+      // neither outcome opens a session or an account here.
+      if (result.kind === 'verified' && result.subject === attempt.link.primary)
+        res.redirect(303, (await resumeUrl(config.OAUTH_ISSUER!, linkKey, attempt.link)).href);
+      else redirect(res, 'link');
+      return;
+    }
     if (result.kind === 'tenant_missing') { redirect(res, 'tenant'); return; }
     const previous = cookie(req, sessionCookie, sessionShape);
     if (result.kind === 'unverified') {

@@ -3,7 +3,7 @@ import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } f
 import type { AddressInfo } from 'node:net';
 import { test, type TestContext } from 'node:test';
 import express, { type Request, type Response } from 'express';
-import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
+import { createLocalJWKSet, exportJWK, generateKeyPair, jwtVerify, SignJWT } from 'jose';
 import { z } from 'zod';
 import { auth0AccountLogin, mountAccountPortal } from '../apps/gateway/account-portal.js';
 import { rateLimit } from '../apps/gateway/rate-limit.js';
@@ -541,4 +541,242 @@ test('every refusal names its reason and only a missing scope adds a challenge',
       body: { error: 'The token is missing tasks:read or tasks:write', reason: 'insufficient_scope', account: '/account' },
     });
   } finally { await open.close(); await invite.close(); await f.close(); }
+});
+
+test('the link page continues the Auth0 login only after the original account signs in', async () => {
+  const f = await fixture(), g = await accountGateway(f, { signup: 'open' });
+  const secret = new TextEncoder().encode('l'.repeat(32));
+  const sessionToken = (key = secret) => new SignJWT({ primary: 'google-oauth2|old', connection: 'google-oauth2' })
+    .setProtectedHeader({ alg: 'HS256' }).setSubject('auth0|new').setExpirationTime('5m').sign(key);
+  try {
+    const bad = await fetch(g.url + '/account/link?state=orig&session_token=' + await sessionToken(new TextEncoder().encode('x'.repeat(32))), { redirect: 'manual' });
+    assert.equal(bad.headers.get('location'), '/account?status=link');
+    const page = await fetch(g.url + '/account/link?state=orig&session_token=' + await sessionToken(), { redirect: 'manual' });
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /用原来的方式登录/);
+    const linkCookie = page.headers.getSetCookie().find(c => c.startsWith('__Host-eigos-account-link='))!.split(';')[0]!;
+    const start = await fetch(g.url + '/account/link/continue', { redirect: 'manual', headers: { Cookie: linkCookie } });
+    const authorize = new URL(start.headers.get('location')!);
+    assert.deepEqual([authorize.searchParams.get('connection'), authorize.searchParams.get('prompt'), authorize.searchParams.get('eigos_link')],
+      ['google-oauth2', 'login', null]);
+    const wrong = await g.login('someone-else', 'amy@example.test', { start: '/account/link/continue', startCookie: linkCookie });
+    assert.equal(wrong.location, '/account?status=link');
+    const right = await g.login('google-oauth2|old', 'amy@example.test', { start: '/account/link/continue', startCookie: linkCookie });
+    const resumed = new URL(right.location!);
+    assert.equal(resumed.origin + resumed.pathname, 'https://identity.example/continue');
+    assert.equal(resumed.searchParams.get('state'), 'orig');
+    const { payload } = await jwtVerify(resumed.searchParams.get('session_token')!, secret, { algorithms: ['HS256'] });
+    assert.deepEqual([payload.sub, payload.state, payload.primary], ['auth0|new', 'orig', 'google-oauth2|old']);
+  } finally { await g.close(); await f.close(); }
+});
+
+// What the Auth0 Action sends to the link page: HS256 with the account link secret, Auth0's own `sub` and the Action's payload.
+const linkSecret = new TextEncoder().encode('l'.repeat(32));
+const linkClaims = { primary: 'google-oauth2|old', connection: 'google-oauth2' };
+function linkToken(claims: Record<string, unknown> = linkClaims,
+  options: { key?: Uint8Array; alg?: string; subject?: string | null; expires?: string | null } = {}) {
+  const token = new SignJWT(claims).setProtectedHeader({ alg: options.alg ?? 'HS256' });
+  if (options.subject !== null) token.setSubject(options.subject ?? 'auth0|new');
+  if (options.expires !== null) token.setExpirationTime(options.expires ?? '5m');
+  return token.sign(options.key ?? linkSecret);
+}
+const linkCookieName = '__Host-eigos-account-link=';
+
+test('the link page takes only a fresh Action token that names the user, the original account and its login method', async () => {
+  const f = await fixture(), g = await accountGateway(f, { signup: 'open', env: { EIGOS_TRUST_PROXY: '1' } });
+  // The cases outnumber one address's budget of 20 a minute, so each visit comes from its own client address.
+  let clients = 0;
+  const visit = (query: string) => fetch(g.url + '/account/link?' + query,
+    { redirect: 'manual', headers: { 'X-Forwarded-For': '198.51.100.' + ++clients } });
+  const turnedBack = (response: Awaited<ReturnType<typeof visit>>, name: string) => {
+    assert.equal(response.status, 303, name);
+    assert.equal(response.headers.get('location'), '/account?status=link', name);
+    assert.equal(response.headers.getSetCookie().some(value => value.startsWith(linkCookieName)), false, 'no link cookie: ' + name);
+  };
+  try {
+    const unsigned = [{ alg: 'none' }, { ...linkClaims, sub: 'auth0|new', exp: Math.floor(Date.now() / 1000) + 300 }]
+      .map(part => Buffer.from(JSON.stringify(part)).toString('base64url')).join('.') + '.';
+    const refused: Record<string, Promise<string>> = {
+      'another secret': linkToken(linkClaims, { key: new TextEncoder().encode('x'.repeat(32)) }),
+      'another algorithm': linkToken(linkClaims, { alg: 'HS384' }),
+      unsigned: Promise.resolve(unsigned),
+      expired: linkToken(linkClaims, { expires: '-1m' }),
+      'no expiry': linkToken(linkClaims, { expires: null }),
+      'no subject': linkToken(linkClaims, { subject: null }),
+      'no primary': linkToken({ connection: 'google-oauth2' }),
+      'no connection': linkToken({ primary: 'google-oauth2|old' }),
+      'primary is a number': linkToken({ ...linkClaims, primary: 5 }),
+      'connection is a list': linkToken({ ...linkClaims, connection: ['google-oauth2'] }),
+      'empty primary': linkToken({ ...linkClaims, primary: '' }),
+      'primary over 256 characters': linkToken({ ...linkClaims, primary: 'p'.repeat(257) }),
+      // The token this portal sends back to Auth0 has the same shape without `connection`, so it cannot be played back here.
+      'a continue token': linkToken({ primary: 'google-oauth2|old', state: 'orig' }),
+    };
+    for (const [name, token] of Object.entries(refused))
+      turnedBack(await visit(new URLSearchParams({ state: 'orig', session_token: await token }).toString()), name);
+
+    const good = await linkToken();
+    const queries: Record<string, string> = {
+      'no state': 'session_token=' + good, 'empty state': 'state=&session_token=' + good,
+      'state over 2000 characters': 'state=' + 'a'.repeat(2001) + '&session_token=' + good,
+      'two states': 'state=a&state=b&session_token=' + good, 'two tokens': 'state=a&session_token=' + good + '&session_token=' + good,
+      'no token': 'state=orig', 'empty token': 'state=orig&session_token=', 'nothing': '',
+    };
+    for (const [name, query] of Object.entries(queries)) turnedBack(await visit(query), name);
+    assert.equal((await visit('state=' + 'a'.repeat(2000) + '&session_token=' + good)).status, 200, 'a state of exactly 2000 characters is fine');
+
+    const banner = await (await fetch(g.url + '/account?status=link')).text();
+    assert.match(banner, /<p role="status">合并没有完成，请用原来的方式重新登录。<\/p>/);
+  } finally { await g.close(); await f.close(); }
+});
+
+test('the link page shows its fixed copy and keeps the context in a sealed five-minute cookie that Auth0 cannot read', async () => {
+  const f = await fixture(), g = await accountGateway(f, { signup: 'open' });
+  try {
+    const token = await linkToken(), query = new URLSearchParams({ state: 'paused-state-1', session_token: token });
+    const page = await fetch(g.url + '/account/link?' + query, { redirect: 'manual' });
+    assert.equal(page.status, 200);
+    assert.equal(page.headers.get('cache-control'), 'no-store');
+    assert.equal(page.headers.get('referrer-policy'), 'no-referrer', 'the address carries the token, so it must not leave in a Referer');
+    assert.match(page.headers.get('content-security-policy')!, /default-src 'none'/);
+    assert.match(page.headers.get('content-type')!, /^text\/html/);
+    const html = await page.text();
+    assert.match(html, /<h1>合并账号<\/h1>/);
+    assert.match(html, /这个邮箱已经有 EIGOS 账号。为了确认是你本人，请用原来的方式再登录一次，登录后两个登录方式会合并成一个账号。/);
+    assert.match(html, /<a [^>]*href="\/account\/link\/continue"[^>]*>用原来的方式登录<\/a>/);
+    for (const given of [token, 'google-oauth2', 'auth0|new', 'paused-state-1']) assert.equal(html.includes(given), false, 'the page repeats nothing it was given: ' + given);
+
+    const set = page.headers.getSetCookie().find(value => value.startsWith(linkCookieName))!;
+    for (const flag of [/; Max-Age=300(;|$)/, /; Path=\/(;|$)/, /; HttpOnly/, /; Secure/, /; SameSite=Lax/]) assert.match(set, flag);
+    assert.doesNotMatch(set, /Domain=/i);
+    const sealed = set.split(';')[0]!.slice(linkCookieName.length), anything = z.record(z.string(), z.string());
+    assert.deepEqual(unseal(g.config.EIGOS_PORTAL_SECRET!, 'link', sealed, anything),
+      { auth0State: 'paused-state-1', subject: 'auth0|new', primary: 'google-oauth2|old', connection: 'google-oauth2' });
+    assert.equal(unseal(g.config.EIGOS_PORTAL_SECRET!, 'login', sealed, anything), undefined, 'it is sealed for the link purpose only');
+    assert.equal(unseal(g.config.EIGOS_ACCOUNT_LINK_SECRET!, 'link', sealed, anything), undefined, 'the secret shared with Auth0 does not open it');
+  } finally { await g.close(); await f.close(); }
+});
+
+test('the link page starts the original login pinned to its method, and an unusable link cookie starts nothing', async () => {
+  const f = await fixture(), g = await accountGateway(f, { signup: 'open' });
+  const secret = g.config.EIGOS_PORTAL_SECRET!, shared = g.config.EIGOS_ACCOUNT_LINK_SECRET!, loginName = '__Host-eigos-account-login=';
+  const link = { auth0State: 'orig', subject: 'auth0|new', primary: 'google-oauth2|old', connection: 'google-oauth2' };
+  const start = (cookie?: string) => fetch(g.url + '/account/link/continue',
+    { redirect: 'manual', headers: cookie === undefined ? {} : { Cookie: linkCookieName + cookie } });
+  try {
+    const unusable: Record<string, string | undefined> = {
+      'no cookie': undefined,
+      expired: seal(secret, 'link', link, -1),
+      'sealed for another purpose': seal(secret, 'login', link, 300_000),
+      'sealed with the secret shared with Auth0': seal(shared, 'link', link, 300_000),
+      'unexpected fields': seal(secret, 'link', { ...link, extra: 1 }, 300_000),
+      'missing connection': seal(secret, 'link', { auth0State: 'orig', subject: 'auth0|new', primary: 'google-oauth2|old' }, 300_000),
+      'empty primary': seal(secret, 'link', { ...link, primary: '' }, 300_000),
+      'not base64url': '!!!',
+    };
+    for (const [name, cookie] of Object.entries(unusable)) {
+      const response = await start(cookie);
+      assert.equal(response.status, 303, name);
+      assert.equal(response.headers.get('location'), '/account?status=link', name);
+      assert.equal(response.headers.getSetCookie().some(value => value.startsWith(loginName)), false, 'no login attempt starts: ' + name);
+    }
+
+    const response = await start(seal(secret, 'link', link, 300_000));
+    assert.equal(response.status, 303);
+    const authorize = new URL(response.headers.get('location')!);
+    assert.equal(authorize.origin + authorize.pathname, 'https://identity.example/authorize');
+    assert.deepEqual(['connection', 'prompt', 'screen_hint', 'eigos_link'].map(name => authorize.searchParams.get(name)),
+      ['google-oauth2', 'login', null, null], 'a fresh login with the original method, never a sign-up');
+    const set = response.headers.getSetCookie().find(value => value.startsWith(loginName))!;
+    for (const flag of [/; Max-Age=300(;|$)/, /; Path=\/(;|$)/, /; HttpOnly/, /; Secure/, /; SameSite=Lax/]) assert.match(set, flag);
+    const attempt = unseal(secret, 'login', set.split(';')[0]!.slice(loginName.length), z.strictObject({
+      state: z.string(), nonce: z.string(), verifier: z.string(),
+      link: z.strictObject({ auth0State: z.string(), subject: z.string(), primary: z.string() }) }));
+    assert.ok(attempt, 'the login cookie carries the link context');
+    assert.deepEqual(attempt.link, { auth0State: 'orig', subject: 'auth0|new', primary: 'google-oauth2|old' });
+    assert.equal(authorize.searchParams.get('state'), attempt.state);
+    assert.equal(authorize.searchParams.get('nonce'), attempt.nonce);
+    assert.equal(authorize.searchParams.get('code_challenge'), createHash('sha256').update(attempt.verifier).digest('base64url'));
+    const again = new URL((await start(seal(secret, 'link', link, 300_000))).headers.get('location')!);
+    assert.notEqual(again.searchParams.get('state'), attempt.state, 'every start is a new login');
+  } finally { await g.close(); await f.close(); }
+});
+
+// The link context as the link page seals it, for tests that start at /account/link/continue.
+const pausedCookie = (g: AccountGateway) => linkCookieName + seal(g.config.EIGOS_PORTAL_SECRET!, 'link',
+  { auth0State: 'orig', subject: 'auth0|new', primary: 'google-oauth2|old', connection: 'google-oauth2' }, 300_000);
+const verifyAs = (g: AccountGateway, sub: string, options: Parameters<AccountGateway['login']>[2] = {}) =>
+  g.login(sub, 'amy@example.test', { start: '/account/link/continue', startCookie: pausedCookie(g), ...options });
+const opensNoSession = (result: Awaited<ReturnType<typeof verifyAs>>, name: string) => {
+  assert.equal(result.cookie, '', name);
+  assert.equal(result.response.headers.getSetCookie().some(value => value.startsWith('__Host-eigos-account=')), false, name);
+};
+
+test('a login that started on the link page turns back unless it is the verified sign-in of the original account', async () => {
+  const f = await fixture(), g = await accountGateway(f, { signup: 'open' });
+  try {
+    // Outside linking these end in other statuses. Here every one of them is a failed merge, and none opens a session.
+    const turned = {
+      'another account': await verifyAs(g, 'someone-else'),
+      'the original account with an unverified email': await verifyAs(g, 'google-oauth2|old', { verified: false }),
+      'the original account without a tenant claim': await verifyAs(g, 'google-oauth2|old', { tenant: false }),
+      'the account that is being merged': await verifyAs(g, 'auth0|new'),
+    };
+    for (const [name, result] of Object.entries(turned)) {
+      assert.equal(result.location, '/account?status=link', name);
+      opensNoSession(result, name);
+    }
+    assert.equal((await verifyAs(g, 'google-oauth2|old', { wrongState: true })).location, '/account?status=login',
+      'a callback that is not this login never gets as far as the merge');
+    for (const sub of ['someone-else', 'google-oauth2|old', 'auth0|new']) assert.equal(await g.accounts.account(g.owner(sub)), undefined, sub + ' gets no account');
+  } finally { await g.close(); await f.close(); }
+});
+
+test('the original account signing in resumes the paused Auth0 login with a five-minute token and still opens no session or account', async () => {
+  const f = await fixture(), g = await accountGateway(f, { signup: 'open' });
+  try {
+    const right = await verifyAs(g, 'google-oauth2|old');
+    const resumed = new URL(right.location!);
+    assert.equal(resumed.origin + resumed.pathname, 'https://identity.example/continue');
+    opensNoSession(right, 'the original account');
+    for (const sub of ['google-oauth2|old', 'auth0|new']) assert.equal(await g.accounts.account(g.owner(sub)), undefined, sub + ' gets no account');
+
+    assert.deepEqual([...resumed.searchParams.keys()].sort(), ['session_token', 'state']);
+    const { payload, protectedHeader } = await jwtVerify(resumed.searchParams.get('session_token')!, linkSecret, { algorithms: ['HS256'] });
+    assert.deepEqual(protectedHeader, { alg: 'HS256', typ: 'JWT' });
+    assert.deepEqual([payload.sub, payload.state, payload.primary], ['auth0|new', 'orig', 'google-oauth2|old']);
+    assert.equal(payload.exp! - payload.iat!, 300, 'valid for five minutes');
+    assert.ok(Math.abs(payload.iat! - Date.now() / 1000) < 60);
+    await assert.rejects(jwtVerify(resumed.searchParams.get('session_token')!, new TextEncoder().encode('p'.repeat(32)), { algorithms: ['HS256'] }),
+      'signed with the account link secret, not the portal secret');
+  } finally { await g.close(); await f.close(); }
+});
+
+test('the longest accepted link values still fit the sealed cookies from the first page to the continue redirect', async () => {
+  const f = await fixture(), g = await accountGateway(f, { signup: 'open' });
+  const state = 's'.repeat(2000), claims = { primary: 'p'.repeat(256), connection: 'c'.repeat(256) };
+  try {
+    const token = await linkToken(claims, { subject: 'n'.repeat(256) });
+    const page = await fetch(g.url + '/account/link?' + new URLSearchParams({ state, session_token: token }), { redirect: 'manual' });
+    assert.equal(page.status, 200);
+    const linkCookie = page.headers.getSetCookie().find(value => value.startsWith(linkCookieName))!.split(';')[0]!;
+    assert.ok(linkCookie.length - linkCookieName.length <= 4096, 'within the sealed cookie limit');
+    const right = await g.login(claims.primary, 'amy@example.test', { start: '/account/link/continue', startCookie: linkCookie });
+    const resumed = new URL(right.location!);
+    assert.equal(resumed.origin + resumed.pathname, 'https://identity.example/continue');
+    assert.equal(resumed.searchParams.get('state'), state);
+    const { payload } = await jwtVerify(resumed.searchParams.get('session_token')!, linkSecret, { algorithms: ['HS256'] });
+    assert.deepEqual([payload.sub, payload.state, payload.primary], ['n'.repeat(256), state, claims.primary]);
+  } finally { await g.close(); await f.close(); }
+});
+
+test('the link routes draw on the same per-address budget as the sign-in routes', async () => {
+  const f = await fixture(), g = await accountGateway(f, { env: { EIGOS_TRUST_PROXY: '1' } });
+  const paths = ['/account/link', '/account/link/continue', '/account/login', '/account/callback'];
+  const get = (path: string, ip: string) => fetch(g.url + path, { redirect: 'manual', headers: { 'X-Forwarded-For': ip } }).then(response => response.status);
+  try {
+    for (let i = 0; i < 5; i++) for (const path of paths) assert.equal(await get(path, '198.51.100.1'), 303, path);
+    for (const path of paths) assert.equal(await get(path, '198.51.100.1'), 429, path);
+    assert.equal(await get('/account/link', '198.51.100.2'), 303, 'another client address has its own budget');
+  } finally { await g.close(); await f.close(); }
 });
