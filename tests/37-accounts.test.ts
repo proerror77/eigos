@@ -280,11 +280,11 @@ test('after an activation only the business Ontology feeds the account group', a
   } finally { await f.close(); }
 });
 
-test('merging a branch syncs the account group in the same transaction as the activation', async () => {
+test('a branch merge leaves every authorization row alone, so the operator syncs the account group by activating again', async () => {
   const f = await fixture();
   try {
     const retired = { resource: 'Eigos/object/Retired', permission: 'view_objects' } as const, governance = new Governance(f.db, f.metadata, f.capabilities);
-    // Only the merged release has this object type, so only a sync from the merged release grants it.
+    // Only the merged release has this object type, so the account group can only hold it after a sync from the merged release.
     const body = structuredClone(f.model.document);
     body.version = 'account-sync';
     body.objectTypes.push({ apiName: 'AccountProbe', displayName: 'Account probe', description: 'Synthetic type for the account group sync',
@@ -292,18 +292,20 @@ test('merging a branch syncs the account group in the same transaction as the ac
     const branch = await governance.create(f.publisher, { ontology: 'Eigos', name: 'Account sync', body });
     const prepared = await governance.prepare(f.publisher, { id: branch.id, revision: branch.revision });
     const approved = await governance.review(f.publisher, { id: prepared.id, revision: prepared.revision, release: prepared.release });
-    const merge = () => governance.merge(f.publisher, { id: approved.id, revision: approved.revision, release: approved.release });
     await setGrants(f.db, 'group:' + accountGroup, [retired]);
-    // A merge that fails after activating the release rolls the sync back with it.
-    await f.db.query(`ALTER TABLE ${f.db.schema}.ontology_branches ADD CONSTRAINT synthetic_merge_failure CHECK (state <> 'merged')`);
-    await assert.rejects(merge(), /synthetic_merge_failure/);
-    assert.equal((await f.metadata.active()).release, f.model.release);
-    assert.deepEqual(await accountGroupGrants(f.db), new Set([grantKey(retired)]));
-    await f.db.query(`ALTER TABLE ${f.db.schema}.ontology_branches DROP CONSTRAINT synthetic_merge_failure`);
-    await merge();
+    // The runtime role cannot write authorization tables, so a merge must not write resource_grants at all.
+    // xmin also exposes a row that was rewritten with the same values.
+    const grantRows = async () => (await f.db.query(`SELECT xmin::text AS written_by,subject,resource,permission
+      FROM ${f.db.schema}.resource_grants ORDER BY subject,resource,permission`)).rows;
+    const before = await grantRows();
+    await governance.merge(f.publisher, { id: approved.id, revision: approved.revision, release: approved.release });
     const merged = await f.metadata.active();
     assert.equal(merged.release, prepared.release);
     assert.ok(businessGrants(merged).some(grant => grant.resource === 'Eigos/object/AccountProbe'));
+    assert.deepEqual(await grantRows(), before);
+    assert.deepEqual(await accountGroupGrants(f.db), new Set([grantKey(retired)]));
+    // The operator activates the merged release again with the admin role, which is what `npm run ontology:activate <release>` does.
+    await syncAccountGrantsAfterActivation(f.db, await f.metadata.activate(merged.release, f.capabilities, f.publisher));
     assert.deepEqual(await accountGroupGrants(f.db), new Set(businessGrants(merged).map(grantKey)));
   } finally { await f.close(); }
 });

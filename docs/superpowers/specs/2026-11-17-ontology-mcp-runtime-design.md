@@ -176,7 +176,7 @@ Gateway：验证令牌 → 账号 → 授权交集 → Action Engine / Functions
   - `closed`：不开新户。
 - **默认授权。**
   - 新账号加入 `eigos-accounts` 组，这个组由 `eigos-member-queries` 改名而来。
-  - 组里的授权按当前发布版本的业务资源生成，逻辑沿用 `memberGrants`，每次激活新版本时同步。
+  - 组里的授权按当前发布版本的业务资源生成，逻辑沿用 `memberGrants`，运营者用 `publish` 或 `activate` 命令激活新版本时同步；分支合并激活新版本后，运营者要用管理角色重新执行 `ontology:activate`，因为常驻运行角色不能写授权表。
   - 不含定义编辑权限；sandbox 资源按现有开关处理。
 - **运营者命令。** 新增 `account show|suspend|restore`。账号停用后可以恢复。
 

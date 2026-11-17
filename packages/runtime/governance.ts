@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { InvalidInput, Conflict, NotFound, PermissionDenied, digest } from '../core/identity.js';
 import { Ontology } from '../ontology/model.js';
 import { ontologySchema, type OntologyDocument } from '../ontology/schema.js';
-import { Access, resource, syncAccountGrantsAfterActivation, type Permission } from './access.js';
+import { Access, resource, type Permission } from './access.js';
 import type { Database, Sql } from './database.js';
 import { Metadata, type Bindings } from './metadata.js';
 
@@ -209,8 +209,7 @@ export class Governance {
       await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [this.db.lockKey('publication', row.ontology)], client);
       await this.validateChanges(access,row,(await this.metadata.get(row.base_release,client)).document,row.body,client);
       if(row.state!=='approved'||row.revision!==input.revision||row.candidate!==input.release||row.reviewed_digest!==await this.reviewDigest(row,client))throw new Conflict('Merge requires the exact approved candidate');
-      const activated=await this.metadata.activate(input.release,this.bindings,access,client);
-      await syncAccountGrantsAfterActivation(this.db,activated,client);
+      await this.metadata.activate(input.release,this.bindings,access,client);
       if(row.project) {
         const base=resources((await this.metadata.get(row.base_release,client)).document);
         for(const name of resources(row.body).keys()) if(!base.has(name))await this.db.query(`INSERT INTO ${this.db.schema}.ontology_resource_projects(ontology,resource,project) VALUES($1,$2,$3)`,[row.ontology,name,row.project],client);
