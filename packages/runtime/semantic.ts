@@ -9,6 +9,7 @@ import type { PublishedOntology } from './metadata.js';
 import { Functions } from './functions.js';
 import { Objects, querySchema } from './objects.js';
 import { pgvectorNamespace } from './semantic-pgvector.js';
+import { semanticIndexBinding } from './semantic-publication.js';
 import { nestedValue, propertyPathSchema } from './query-filter.js';
 
 const indexName = z
@@ -80,38 +81,7 @@ export class SemanticSearch {
     if (model.scenario) throw new Conflict('Configure semantic indexes on a published live Ontology');
     await access.refresh();
     access.require(model.document.id, 'manage_definition', model.document.id);
-    const property = model.object(input.type).properties[input.property.split('.')[0]!];
-    if (!property || property.derived) throw new Conflict('Semantic indexes require a stored text property');
-    let valueSchema = property.schema;
-    for (const field of input.property.split('.').slice(1)) {
-      const next =
-        valueSchema.type === 'array' && /^\d+$/.test(field)
-          ? valueSchema.items
-          : (valueSchema.properties as Record<string, unknown> | undefined)?.[field];
-      if (!next || typeof next !== 'object') throw new Conflict('Unknown nested embedding property');
-      valueSchema = next as Record<string, unknown>;
-    }
-    if (
-      valueSchema.type !== 'string' &&
-      !(Array.isArray(valueSchema.type) && valueSchema.type.includes('string'))
-    )
-      throw new Conflict('Embedding property schema must contain text');
-    const definition = model.functions.get(input.embeddingFunction);
-    if (
-      !definition ||
-      !definition.version ||
-      definition.edits ||
-      !model.bindings.functions[input.embeddingFunction]
-    )
-      throw new Conflict('Register and publish a versioned read-only embedding Function first');
-    const parameters = definition.parameters.properties as Record<string, { type?: string }> | undefined;
-    if (
-      parameters?.text?.type !== 'string' ||
-      definition.returns.type !== 'array' ||
-      (definition.returns.items as { type?: string } | undefined)?.type !== 'number'
-    )
-      throw new Conflict('Embedding Function must accept text:string and return number[]');
-    const binding = model.bindings.functions[input.embeddingFunction]!;
+    const { binding, modelVersion } = semanticIndexBinding(model, input);
     return this.db.transaction(async (client) => {
       await new Objects(this.db, model, access, client).lockWrites();
       const existing = (
@@ -128,7 +98,7 @@ export class SemanticSearch {
           existing.embedding_function !== input.embeddingFunction ||
           existing.dimensions !== input.dimensions ||
           existing.binding !== binding ||
-          existing.embedding_version !== definition.version)
+          existing.embedding_version !== modelVersion)
       )
         throw new Conflict('A semantic index configuration is immutable; use another name or publication');
       await this.db.query(
@@ -143,7 +113,7 @@ export class SemanticSearch {
           input.embeddingFunction,
           binding,
           input.dimensions,
-          definition.version,
+          modelVersion,
         ],
         client,
       );
@@ -160,11 +130,11 @@ export class SemanticSearch {
         configured.embedding_function !== input.embeddingFunction ||
         Number(configured.dimensions) !== input.dimensions ||
         configured.binding !== binding ||
-        configured.embedding_version !== definition.version
+        configured.embedding_version !== modelVersion
       )
         throw new Conflict('Concurrent semantic configuration differs');
       await access.refresh(client);
-      return { ...input, release: model.release, binding, modelVersion: definition.version };
+      return { ...input, release: model.release, binding, modelVersion };
     });
   }
   private async configuration(

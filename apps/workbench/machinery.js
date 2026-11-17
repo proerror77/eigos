@@ -250,7 +250,10 @@ export async function renderMachinery(body, ui) {
         ...reviews.items.map(review => element('div', { class: 'toolbar' },
           element('span', {}, review.name + ' · 每 ' + review.periodDays + ' 天'),
           element('span', {}, review.enabled ? '已启用' : '已暂停'),
-          review.checkpoint && button('查看上次复盘', async () => {
+          review.status === 'stale' && element('span', {}, review.enabled ? '发布已更新，等待刷新分析' : '发布已更新，请立即复盘'),
+          review.status === 'failed' && element('span', {}, '复盘失败，请检查权限和配置后重试'),
+          review.status === 'pending' && element('span', {}, '尚未完成复盘'),
+          review.checkpoint && review.status === 'ready' && button('查看上次复盘', async () => {
             const report = await service('machinery_review', { id: review.id });
             await render({ type: review.type, from: report.from, to: report.to, includeIdle: false,
               mining: { minCases: review.minCases }, durationClock: review.durationClock }, report);
@@ -258,6 +261,7 @@ export async function renderMachinery(body, ui) {
           button('立即复盘', async () => {
             const report = await service('run_machinery_review', { id: review.id });
             review.checkpoint = { from: report.from, to: report.to };
+            review.status = 'ready';
             review.error = null;
             showReviews();
             await render({ type: review.type, from: report.from, to: report.to, includeIdle: false,

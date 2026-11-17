@@ -360,3 +360,76 @@ test('pgvector applies document parent and model permissions before ranking and 
     assert.equal((await semantic.status(await Access.load(db, principal), model, name)).currentAuthorizedObjects, 0);
   } finally { await f.close(); }
 });
+
+async function publicationSearchFixture() {
+  const f=await fixture();
+  try {
+    const embedding:VersionedFunction={definition:{apiName:'PublicationEmbedding',description:'Synthetic publication embedding',version:'1',
+      parameters:{type:'object',properties:{text:{type:'string'}},required:['text'],additionalProperties:false},
+      returns:{type:'array',items:{type:'number'},minItems:2,maxItems:2}},
+      implementationId:'synthetic-publication-embedding-v1',handler:async()=>[1,0]};
+    const capabilities=createCapabilities(f.db,f.source,{functions:[embedding]});
+    const document=structuredClone(f.model.document);document.functionTypes.push(embedding.definition);
+    const model=await f.metadata.publish(document,capabilities,f.publisher);
+    await setGrants(f.db,principal.owner,memberGrants(model));
+    const access=await Access.load(f.db,principal),graph=new Objects(f.db,model,access);
+    const semantic=new SemanticSearch(f.db,capabilities.functions),ref={type:'Route',id:'publication-route'};
+    await graph.create(ref,{id:ref.id,name:'Original searchable route'});
+    await semantic.configure(f.publisher,model,{name:'Routes',type:'Route',property:'name',embeddingFunction:embedding.definition.apiName,dimensions:2});
+    await semantic.index(access,model,{name:'Routes',objects:[ref]});
+    if(process.env.EIGOS_TEST_PGVECTOR==='true')await enablePgvector(f.db);
+    return {...f,model,document,capabilities,embedding,access,graph,semantic,ref};
+  }catch(error){await f.close();throw error;}
+}
+
+test('unchanged publications retain semantic indexes and vectors without sharing owners or bypassing current permissions',async()=>{
+  const f=await publicationSearchFixture();try{
+    await setGrants(f.db,'semantic-peer',memberGrants(f.model));
+    const peer=await Access.load(f.db,{...principal,owner:'semantic-peer'});
+    await new Objects(f.db,f.model,peer).create(f.ref,{id:f.ref.id,name:'Private peer route'});
+    await f.semantic.index(peer,f.model,{name:'Routes',objects:[f.ref]});
+    const next=await f.metadata.publish(f.document,f.capabilities,f.publisher);
+    assert.equal(next.digest,f.model.digest);assert.notEqual(next.release,f.model.release);
+    assert.equal(await f.metadata.fingerprint(next.projection),await f.metadata.fingerprint(f.model.projection));
+    const search=await f.semantic.search(f.access,next,{name:'Routes',text:'route'});
+    assert.equal(search.items.length,1);assert.equal(search.items[0]!.object.properties.name,'Original searchable route');
+    assert.equal(search.backend,process.env.EIGOS_TEST_PGVECTOR==='true'?'pgvector':'jsonb');
+    assert.equal((await f.semantic.search(peer,next,{name:'Routes',text:'route'})).items[0]!.object.properties.name,'Private peer route');
+    await f.db.query(`INSERT INTO ${f.db.schema}.property_security VALUES('Eigos','Route','name')`);
+    assert.equal((await f.semantic.search(await Access.load(f.db,principal),next,{name:'Routes',text:'route'})).items.length,0);
+  }finally{await f.close();}
+});
+
+test('semantic configuration and vector changes invalidate prepared publications and catch-up carries the latest index state',async()=>{
+  const f=await publicationSearchFixture();try{
+    const candidate=await f.metadata.prepare(f.document,f.capabilities,f.publisher);
+    await f.semantic.configure(f.publisher,f.model,{name:'Second',type:'Route',property:'name',embeddingFunction:f.embedding.definition.apiName,dimensions:2});
+    await assert.rejects(f.metadata.activate(candidate.release,f.capabilities,f.publisher),/Source data changed/);
+    await f.metadata.catchUp(candidate.release,f.capabilities,f.publisher);
+    await f.semantic.index(f.access,f.model,{name:'Second',objects:[f.ref]});
+    await assert.rejects(f.metadata.activate(candidate.release,f.capabilities,f.publisher),/Source data changed/);
+    await f.metadata.catchUp(candidate.release,f.capabilities,f.publisher);
+    await f.metadata.activate(candidate.release,f.capabilities,f.publisher);
+    assert.equal((await f.semantic.search(f.access,candidate,{name:'Second',text:'route'})).items.length,1);
+    const tampered=await f.metadata.prepare(f.document,f.capabilities,f.publisher);
+    await f.db.query(`UPDATE ${f.db.schema}.semantic_vectors SET vector='[0,1]'::jsonb WHERE release=$1`,[tampered.release]);
+    await assert.rejects(f.metadata.activate(tampered.release,f.capabilities,f.publisher),/Prepared projection changed/);
+  }finally{await f.close();}
+});
+
+test('semantic publication rejects incompatible models and never reuses vectors for transformed text',async()=>{
+  const f=await publicationSearchFixture();try{
+    const incompatible=structuredClone(f.document);
+    const v2={...f.embedding,definition:{...f.embedding.definition,version:'2'},implementationId:'synthetic-publication-embedding-v2'};
+    incompatible.functionTypes=incompatible.functionTypes.map(fn=>fn.apiName===v2.definition.apiName?v2.definition:fn);
+    const capabilities=createCapabilities(f.db,f.source,{functions:[f.embedding,v2]});
+    await assert.rejects(f.metadata.prepare(incompatible,capabilities,f.publisher),/Semantic index Routes requires/);
+    assert.equal((await f.metadata.active()).release,f.model.release);
+    const changed=await f.metadata.publish(f.document,f.capabilities,f.publisher,(ref,properties)=>
+      ref.type==='Route'?{...properties,name:'Changed searchable text'}:properties);
+    assert.equal((await f.semantic.status(f.access,changed,'Routes')).currentAuthorizedObjects,0);
+    assert.equal((await f.semantic.search(f.access,changed,{name:'Routes',text:'route'})).items.length,0);
+    await f.semantic.index(f.access,changed,{name:'Routes',objects:[f.ref]});
+    assert.equal((await f.semantic.search(f.access,changed,{name:'Routes',text:'route'})).items[0]!.object.properties.name,'Changed searchable text');
+  }finally{await f.close();}
+});

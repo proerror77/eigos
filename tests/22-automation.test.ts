@@ -1,6 +1,7 @@
 import { ingestMachineryHistory } from '../packages/runtime/machinery-history.js';
 import { ontologyServices } from '../packages/runtime/services.js';
 import { MachineryReviews, machineryReviewSchema } from '../packages/runtime/machinery-reviews.js';
+import { ScenarioEvaluations } from '../packages/runtime/scenario-evaluation.js';
 import { analyzeMachinery, machineryAnalysisSchema } from '../packages/runtime/machinery-analysis.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -451,6 +452,60 @@ test('periodic Machinery review claims one window and recalculates it after visi
       [objectPolicySchema.parse({ read: { all: [{ op: 'equals', property: 'id', value: 'other' }] } })]);
     assert.equal((await reviews.read(await Access.load(f.db, principal), f.model, review.id, false)).casesTotal, 0);
   } finally { await f.close(); }
+});
+
+test('publication refreshes Machinery analysis once without repeating evaluations or shifting their cadence', async () => {
+  const f=await processSetup();try{
+    await f.change('open');await f.change('stalled');
+    class CountingEvaluations extends ScenarioEvaluations {
+      calls=0;
+      override async runSuite(...args:Parameters<ScenarioEvaluations['runSuite']>){
+        this.calls++;
+        return {mode:'offline' as const,release:args[1].release,evaluatedAt:new Date().toISOString(),
+          experimentDigest:'synthetic-evaluation',cases:[],summary:[],run:randomUUID(),suite:'synthetic-suite',suiteRevision:1};
+      }
+    }
+    const evaluations=new CountingEvaluations(f.db,f.actions,f.capabilities.functions);
+    const reviews=new MachineryReviews(f.db,f.metadata,evaluations);
+    const review=await reviews.save(f.access,f.model,machineryReviewSchema.parse({name:'Weekly analysis',type:'RouteStateLog',
+      enabled:true,evaluation:{id:randomUUID(),revision:1}}));
+    assert.equal(await reviews.scanOne(),true);assert.equal(evaluations.calls,1);
+    const before=(await reviews.list(f.access,f.model)).items[0]!;
+    const next=await f.metadata.publish(f.model.document,f.capabilities,f.publisher);
+    assert.equal((await reviews.list(f.access,next)).items[0]!.status,'stale');
+    await assert.rejects(reviews.read(f.access,next,review.id,false),/publication changed/);
+    assert.deepEqual((await Promise.all([reviews.scanOne(),reviews.scanOne()])).sort(),[false,true]);
+    const after=(await reviews.list(f.access,next)).items[0]!;
+    assert.equal(after.status,'ready');assert.equal(after.checkpoint!.release,next.release);
+    assert.equal(after.checkpoint!.from,before.checkpoint!.from);assert.equal(after.checkpoint!.to,before.checkpoint!.to);
+    assert.deepEqual(after.lastScan,before.lastScan);assert.equal(after.checkpoint!.evaluation,undefined);
+    assert.equal(evaluations.calls,1);assert.equal(await reviews.scanOne(),false);
+    assert.equal((await reviews.read(f.access,next,review.id,false)).casesTotal,1);
+    await f.db.query(`UPDATE ${f.db.schema}.object_rules SET last_scan=now()-interval '8 days' WHERE id=$1`,[review.id]);
+    assert.equal(await reviews.scanOne(),true);assert.equal(evaluations.calls,2);
+    assert.equal(await reviews.scanOne(),false);
+  }finally{await f.close();}
+});
+
+test('Machinery publication refresh honors pause and revocation without retrying a failed refresh in a tight loop',async()=>{
+  const f=await processSetup();try{
+    await f.change('open');const reviews=new MachineryReviews(f.db,f.metadata);
+    const active=await reviews.save(f.access,f.model,machineryReviewSchema.parse({name:'Active',type:'RouteStateLog',enabled:true}));
+    const paused=await reviews.save(f.access,f.model,machineryReviewSchema.parse({name:'Paused',type:'RouteStateLog',enabled:false}));
+    await reviews.scanOne();await reviews.read(f.access,f.model,paused.id,true);
+    const next=await f.metadata.publish(f.model.document,f.capabilities,f.publisher);
+    await setGrants(f.db,principal.owner,memberGrants(next).filter(grant=>grant.resource!=='Eigos/object/Route'));
+    assert.equal(await reviews.scanOne(),true);assert.equal(await reviews.scanOne(),false);
+    const failed=(await f.db.query(`SELECT error,body FROM ${f.db.schema}.object_rules WHERE id=$1`,[active.id])).rows[0]!;
+    assert.match(failed.error,/Review failed/);assert.equal(failed.body.attemptedRelease,next.release);
+    await setGrants(f.db,principal.owner,memberGrants(next));const access=await Access.load(f.db,principal);
+    const list=await reviews.list(access,next);
+    assert.equal(list.items.find(row=>row.id===active.id)!.status,'failed');
+    assert.equal(list.items.find(row=>row.id===paused.id)!.status,'stale');
+    assert.equal(await reviews.scanOne(),false);
+    await reviews.read(access,next,active.id,true);
+    assert.equal((await reviews.list(access,next)).items.find(row=>row.id===active.id)!.status,'ready');
+  }finally{await f.close();}
 });
 
 test('a queued transition is hidden and cannot run after its historical log permission is revoked', async () => {
@@ -1319,5 +1374,62 @@ test('ordinary users run published Workflow snapshots under their own permission
     await setGrants(f.db,member.owner,memberGrants(f.model));
     await invoke('withdraw_workflow',principal,{id:f.workflow.id,revision:1});
     await assert.rejects(invoke('run_published_workflow',member,{...request,requestId:'withdrawn'}),/unavailable/);
+  }finally{await f.close();}
+});
+
+test('legacy drafts expose blocked continuation and an authorized recovery difference without inventing a journal',async()=>{
+  const f=await setup();try{
+    const scenarios=new Scenarios(f.db);
+    const place={type:'Place',id:'recovery-place'};
+    await f.objects.create(place,{id:place.id,name:'Synthetic place',city:'Shanghai',address:'Synthetic address',
+      coordinates:{lat:31,lng:121},coordinateSystem:'GCJ02',sourceBinding:'fixture',observedAt:new Date().toISOString()});
+    const draft=await scenarios.create(f.access,f.model,{requestId:'legacy-continuation',name:'Legacy route proposal'});
+    await f.actions.apply(f.access,await scenarios.view(f.access,f.model,draft.id),'RenameRoute',
+      {route:f.source,revision:1,name:'Proposed route'},'legacy-step');
+    await new Objects(f.db,await scenarios.view(f.access,f.model,draft.id),f.access).link({type:'RouteOrigin',from:f.source,to:place});
+    const revision=(await scenarios.inspect(f.access,f.model,draft.id)).revision;
+    await f.db.query(`UPDATE ${f.db.schema}.scenarios SET journal_steps=0 WHERE id=$1`,[draft.id]);
+    await f.db.query(`UPDATE ${f.db.schema}.scenario_actions SET step_revision=NULL,input=NULL,edits=NULL WHERE scenario_id=$1`,[draft.id]);
+    const next=await f.metadata.publish(f.model.document,f.capabilities,f.publisher);
+    const listed=(await scenarios.continuationSources(f.access,next)).items.find(item=>item.id===draft.id)!;
+    assert.deepEqual(listed.continuation,{status:'blocked',reason:'incomplete-action-journal'});
+    await assert.rejects(scenarios.continueScenario(f.access,next,{id:draft.id,revision,requestId:'invalid-copy'}),/complete Action journal/);
+    const services=ontologyServices(f.db,f.metadata,f.capabilities,f.capabilities.functions,f.capabilities.effects,f.actions);
+    const preview=await services.get('inspect_scenario_continuation')!.invoke(
+      {...principal,scopes:['ontology:read']},{id:draft.id,revision}) as Awaited<ReturnType<Scenarios['inspectContinuation']>>;
+    assert.equal(preview.objects[0]!.before!.name,'original');assert.equal(preview.objects[0]!.after!.name,'Proposed route');
+    assert.deepEqual(preview.links,[{type:'RouteOrigin',from:f.source,to:place,removed:false}]);
+    assert.equal((await new Objects(f.db,next,f.access).read(f.source)).properties.name,'original');
+    assert.equal((await scenarios.list(f.access,next)).items.length,0);
+    await f.db.query(`INSERT INTO ${f.db.schema}.property_security VALUES('Eigos','Route','name')`);
+    const masked=await scenarios.inspectContinuation(await Access.load(f.db,principal),next,draft.id,revision);
+    assert.equal(masked.objects[0]!.before!.name,null);assert.equal(masked.objects[0]!.after!.name,null);
+    await setGrants(f.db,principal.owner,memberGrants(next).filter(grant=>grant.resource!=='Eigos/object/Place'));
+    await assert.rejects(scenarios.inspectContinuation(await Access.load(f.db,principal),next,draft.id,revision),/permission|denied|Place/i);
+    await setGrants(f.db,principal.owner,memberGrants(next));
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies VALUES('Eigos','Route',$1)`,
+      [objectPolicySchema.parse({read:{all:[{op:'equals',property:'id',value:'unavailable'}]}})]);
+    await assert.rejects(scenarios.inspectContinuation(await Access.load(f.db,principal),next,draft.id,revision),/unavailable/);
+  }finally{await f.close();}
+});
+
+test('continuation recovery enforces owner, revision, session expiry and current object permissions',async()=>{
+  const f=await setup();try{
+    const scenarios=new Scenarios(f.db),session=await scenarios.openSession(f.access,3600);
+    const draft=await scenarios.create(f.access,f.model,{requestId:'temporary-recovery',name:'Temporary recovery',kind:'temporary',sessionId:session.id});
+    await new Objects(f.db,await scenarios.view(f.access,f.model,draft.id),f.access).edit(f.source,1,{name:'Unjournaled'});
+    const revision=(await scenarios.inspect(f.access,f.model,draft.id)).revision;
+    const next=await f.metadata.publish(f.model.document,f.capabilities,f.publisher);
+    await setGrants(f.db,'different-owner',memberGrants(next));
+    const other=await Access.load(f.db,{...principal,owner:'different-owner'});
+    assert.equal((await scenarios.continuationSources(other,next)).items.length,0);
+    await assert.rejects(scenarios.inspectContinuation(other,next,draft.id,revision),/unavailable/);
+    await assert.rejects(scenarios.inspectContinuation(f.access,next,draft.id,revision+1),/changed/);
+    await setGrants(f.db,principal.owner,memberGrants(next).filter(grant=>grant.resource!=='Eigos/object/Route'));
+    await assert.rejects(scenarios.inspectContinuation(await Access.load(f.db,principal),next,draft.id,revision),/permission|denied|Route/i);
+    await setGrants(f.db,principal.owner,memberGrants(next));
+    await f.db.query(`UPDATE ${f.db.schema}.scenario_sessions SET closed_at=now() WHERE id=$1`,[session.id]);
+    assert.equal((await scenarios.continuationSources(f.access,next)).items.length,0);
+    await assert.rejects(scenarios.inspectContinuation(f.access,next,draft.id,revision),/unavailable/);
   }finally{await f.close();}
 });

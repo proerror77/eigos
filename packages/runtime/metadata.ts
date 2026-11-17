@@ -1,5 +1,6 @@
 import { requireReleaseEvaluation, type ReleaseCheck } from './release-evaluation.js';
 import { copyEditState } from './edit-history.js';
+import { copySemanticIndexes, semanticFingerprint } from './semantic-publication.js';
 import { migrateProjectionState } from './projection-migration.js';
 import { checkSavedObjectSets } from './object-set-compatibility.js';
 import { randomUUID } from 'node:crypto';
@@ -32,7 +33,7 @@ export class Metadata {
       (SELECT md5(coalesce(string_agg(md5(row(owner,type,id,source,properties,observed_at)::text),'' ORDER BY owner,type,id,source),'')) FROM ${this.db.schema}.source_values WHERE projection=$1) AS sources,
       (SELECT md5(coalesce(string_agg(md5(row(owner,type,id,overrides,deleted,created)::text),'' ORDER BY owner,type,id),'')) FROM ${this.db.schema}.object_edits WHERE projection=$1) AS edits,
       (SELECT md5(coalesce(string_agg(row(ontology,type,policy)::text,'' ORDER BY ontology,type),'')) FROM ${this.db.schema}.edit_policies WHERE ontology=$2) AS policies`,[projection,ontology??null],client)).rows[0];
-    return digest({row,edits});
+    return digest({row,edits,semantic:await semanticFingerprint(this.db,projection,client)});
   }
   private async validateEditState(model: PublishedOntology | Ontology, projection: string, client: Sql) {
     const sources = (await this.db.query(`SELECT type,properties FROM ${this.db.schema}.source_values WHERE projection=$1 AND properties IS NOT NULL`,[projection],client)).rows;
@@ -92,6 +93,8 @@ export class Metadata {
         await copyEditState(this.db,current.projection,projection,client,[...model.objects.keys()]);
         if (transform) await migrateProjectionState(this.db,current.projection,projection,model,transform,client);
         await this.validateEditState(model,projection,client);
+        await copySemanticIndexes(this.db,current.digest,
+          new PublishedOntology(model.document,release,projection,this.db.runtimeId,manifest),client);
       }
       await access.refresh(client);
       await this.db.query(`UPDATE ${this.db.schema}.releases SET projection_fingerprint=$2 WHERE digest=$1`,
@@ -185,6 +188,7 @@ export class Metadata {
       await copyEditState(this.db,live.projection,candidate.projection,client,types);
       if (transform) await migrateProjectionState(this.db,live.projection,candidate.projection,candidate,transform,client);
       await this.validateEditState(candidate,candidate.projection,client);
+      await copySemanticIndexes(this.db,live.release,candidate,client);
       await access.refresh(client);
       await this.db.query(`UPDATE ${this.db.schema}.releases SET source_fingerprint=$2,projection_fingerprint=$3 WHERE digest=$1`,[release,await this.fingerprint(live.projection,client,candidate.document.id),await this.fingerprint(candidate.projection,client)],client);
       return {release,projection:candidate.projection,objectsUpdated:updated,linksAdded:edges.length};
