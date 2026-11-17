@@ -914,11 +914,12 @@ exports.onContinuePostLogin = /* 同上 */;
 
 1. `eigosApi` 表示 `event.resource_server?.identifier` 是否在 `EIGOS_AUDIENCES` 里。如果 `eigosApi` 为真且 `event.user.email_verified !== true`，执行 `api.access.deny('请先验证邮箱，再连接 EIGOS。')` 并结束。
 2. 从 `app_metadata[TENANT_METADATA_KEY]` 取 tenant。取不到非空字符串时，用 `DEFAULT_TENANT`，并执行 `api.user.setAppMetadata(TENANT_METADATA_KEY, DEFAULT_TENANT)`。
-3. 同时满足下面四个条件时，检查有没有要合并的账号：
+3. 同时满足下面三个条件时，检查有没有要合并的账号：
    - `event.transaction?.protocol !== 'oauth2-refresh-token'`；
-   - `event.request?.query?.eigos_link !== '1'`；
    - 邮箱已验证；
    - `event.user.identities.length === 1`。
+
+   不要用请求参数（例如 `event.request.query`）决定跳过这项检查，因为参数由调用方控制。用原账号做验证登录时不会循环：原账号就是最早创建的那个，查不到更早的重复账号，所以不会被转走。
 
    检查步骤：
    1. 用 client credentials 取 Management token，用 `api.cache` 缓存，到 `expires_in - 60` 秒为止。
@@ -1022,7 +1023,7 @@ git commit -m "Add the Auth0 Post-Login Action for verified email, tenant claims
     - h1：`合并账号`；
     - 说明：`这个邮箱已经有 EIGOS 账号。为了确认是你本人，请用原来的方式再登录一次，登录后两个登录方式会合并成一个账号。`；
     - 链接按钮：`用原来的方式登录`，指向 `/account/link/continue`。
-- **GET `/account/link/continue`**：解开 link cookie，用 `link` 上下文发起登录。authorize 请求要带 `connection=<connection>`、`prompt=login`、`eigos_link=1`，不带 `screen_hint`。
+- **GET `/account/link/continue`**：解开 link cookie，用 `link` 上下文发起登录。authorize 请求要带 `connection=<connection>` 和 `prompt=login`，不带 `screen_hint`。
 - **callback 收到 `attempt.link` 时**：
   - 只有结果是 `verified` 且 `subject === link.primary`，才签发 continue token 并 303 跳转。
   - 其他情况跳 `/account?status=link`。
@@ -1047,7 +1048,7 @@ test('the link page continues the Auth0 login only after the original account si
     const start = await fetch(g.url + '/account/link/continue', { redirect: 'manual', headers: { Cookie: linkCookie } });
     const authorize = new URL(start.headers.get('location')!);
     assert.deepEqual([authorize.searchParams.get('connection'), authorize.searchParams.get('prompt'), authorize.searchParams.get('eigos_link')],
-      ['google-oauth2', 'login', '1']);
+      ['google-oauth2', 'login', null]);
     const wrong = await g.login('someone-else', 'amy@example.test', { start: '/account/link/continue', startCookie: linkCookie });
     assert.equal(wrong.location, '/account?status=link');
     const right = await g.login('google-oauth2|old', 'amy@example.test', { start: '/account/link/continue', startCookie: linkCookie });
