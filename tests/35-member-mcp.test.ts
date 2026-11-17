@@ -44,6 +44,8 @@ test('verified invitation, separate Grok consent, owner isolation and revocation
     OAUTH_ISSUER: issuer, OAUTH_AUDIENCE: publicUrl, OAUTH_JWKS_URL: issuer + '.well-known/jwks.json',
     OAUTH_MEMBER_CLIENT_ID: 'portal', OAUTH_MEMBER_CLIENT_SECRET: 'synthetic-portal-secret',
     OAUTH_MEMBER_MCP_CLIENT_ID: 'grok', OAUTH_EXISTING_CLIENT_IDS: 'existing-client',
+    EIGOS_PORTAL_SECRET: 'p'.repeat(32), EIGOS_ACCOUNT_LINK_SECRET: 'l'.repeat(32),
+    EIGOS_ENFORCE_OWNER_RLS: 'true', EIGOS_SIGNUP: 'invite',
   });
   const key = await generateKeyPair('RS256'), jwks = createLocalJWKSet({ keys: [{ ...await exportJWK(key.publicKey), kid: 'test' }] });
   const sign = (payload: Record<string, unknown>, sub: string, aud: string, issuedAt = Math.floor(Date.now() / 1000)) =>

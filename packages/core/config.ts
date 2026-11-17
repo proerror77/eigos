@@ -18,8 +18,14 @@ export const configSchema = z.object({
   OAUTH_MEMBER_CLIENT_SECRET: z.string().min(1).optional(),
   OAUTH_MEMBER_MCP_CLIENT_ID: z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/).optional(),
   OAUTH_EXISTING_CLIENT_IDS: z.string().regex(/^[a-zA-Z0-9_-]+(?:,[a-zA-Z0-9_-]+)*$/).optional(),
+  OAUTH_MANAGEMENT_CLIENT_ID: z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/).optional(),
+  OAUTH_MANAGEMENT_CLIENT_SECRET: z.string().min(1).optional(),
   OAUTH_ISSUER: z.url().optional(), OAUTH_AUDIENCE: z.string().optional(), OAUTH_JWKS_URL: z.url().optional(),
   OAUTH_TENANT_CLAIM: z.string().min(1).default('tenant_id'),
+  EIGOS_SIGNUP: z.enum(['open', 'invite', 'closed']).default('open'),
+  EIGOS_ENFORCE_OWNER_RLS: z.enum(['true', 'false']).optional(),
+  EIGOS_PORTAL_SECRET: z.string().min(32).optional(), EIGOS_ACCOUNT_LINK_SECRET: z.string().min(32).optional(),
+  EIGOS_TRUST_PROXY: z.string().optional(),
   EIGOS_EXTENSION_MODULE: z.string().optional(),
   EIGOS_SOURCE_COMMIT: z.string().regex(/^[a-f0-9]{40}$/).optional(),
   EIGOS_DIDI_CONNECTION_FILE: z.string().optional(),
@@ -59,6 +65,14 @@ export function readConfig(env = process.env): Config {
         new URL(config.PUBLIC_URL).origin !== config.PUBLIC_URL || new URL(config.PUBLIC_URL).protocol !== 'https:') {
       throw new Error('Configure separate HTTPS member portal, MCP and existing OAuth clients');
     }
+    if (!config.EIGOS_PORTAL_SECRET || !config.EIGOS_ACCOUNT_LINK_SECRET)
+      throw new Error('Configure EIGOS_PORTAL_SECRET and EIGOS_ACCOUNT_LINK_SECRET for the account portal');
+    if (config.EIGOS_PORTAL_SECRET === config.EIGOS_ACCOUNT_LINK_SECRET)
+      throw new Error('Use separate portal and account link secrets');
+    if (config.EIGOS_SIGNUP !== 'closed' && config.EIGOS_ENFORCE_OWNER_RLS !== 'true')
+      throw new Error('Self sign-up requires EIGOS_ENFORCE_OWNER_RLS=true');
+    if (Boolean(config.OAUTH_MANAGEMENT_CLIENT_ID) !== Boolean(config.OAUTH_MANAGEMENT_CLIENT_SECRET))
+      throw new Error('Configure both OAUTH_MANAGEMENT_CLIENT_ID and OAUTH_MANAGEMENT_CLIENT_SECRET');
   }
   if (config.EIGOS_AGENT_SANDBOX_ENABLED === 'true' && config.EIGOS_AUTH_MODE !== 'development')
     throw new Error('Agent sandbox capabilities require development authentication');

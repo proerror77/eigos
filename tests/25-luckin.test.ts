@@ -92,7 +92,7 @@ test('Luckin pickup confirms and resumes the original PA task, pins the merchant
   const config: Config = {
     DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL!, EIGOS_PG_SCHEMA: f.schema, HOST: '127.0.0.1', PORT: 0,
     PUBLIC_URL: 'http://127.0.0.1', EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token,
-    OAUTH_TENANT_CLAIM: 'tenant_id', EIGOS_HARNESS_MODEL: 'synthetic', EIGOS_HARNESS_REASONING_EFFORT: 'low',
+    OAUTH_TENANT_CLAIM: 'tenant_id', EIGOS_SIGNUP: 'open', EIGOS_HARNESS_MODEL: 'synthetic', EIGOS_HARNESS_REASONING_EFFORT: 'low',
   };
   const server = createApp(config, f.db, f.source).app.listen(0, '127.0.0.1');
   const listening = await new Promise<{ port: number }>(resolve => server.once('listening', () => resolve(server.address() as {port: number})));
