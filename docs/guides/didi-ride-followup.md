@@ -14,7 +14,7 @@
 
 ## 取消已发订单
 
-`RideOrder.cancel` 映射到 `CancelDidiRideOrder`。PA 在用户确认确切订单后提交 Action，传入原 `DidiRideOrder` 引用、`confirmCancellation: true`，可选取消原因。Action 沿 `TripOrder` 核对订单、所属用户和原滴滴绑定。连接的 `cancellationsEnabled` 可以单独开放取消，省略时沿用 `ordersEnabled`。滴滴根据当时的订单状态决定能否取消。
+`CancelableRideOrder.cancel` 映射到 `CancelDidiRideOrder`。PA 在用户确认确切订单后提交 Action，传入原 `DidiRideOrder` 引用、`confirmCancellation: true`，可选取消原因。Action 沿 `TripOrder` 核对订单、所属用户和原滴滴绑定。连接的 `cancellationsEnabled` 可以单独开放取消，省略时沿用 `ordersEnabled`。滴滴根据当时的订单状态决定能否取消。
 
 EIGOS 先保存原单取消尝试，再调用 `taxi_cancel_order`。收到明确成功回执后独立回查原单，并用 `readDidiRideOrder` 读回结果。响应丢失时，同一 Action 回查原单，只在滴滴明确报告取消后确认。重复请求沿用原取消尝试。已确认取消的订单会结束跟单并撤回接驾提醒。待发车计划使用 `CancelEventTrip` 停止。
 

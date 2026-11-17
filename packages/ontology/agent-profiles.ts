@@ -31,11 +31,11 @@ export const businessAgentProfiles: AgentProfile[] = [
     apiName: 'DidiOrderManagement',
     terms: ['取消滴滴', '取消订单', '取消打车', '取消叫车', '滴滴订单', '滴滴司机', 'cancel ride', 'cancel taxi', 'didi order'],
     objects: ['DidiRideOrder', 'DidiRideWatch', 'EventTrip'],
-    interfaces: ['RideOrder'],
+    interfaces: ['RideOrder', 'CancelableRideOrder'],
     actions: ['CancelDidiRideOrder', 'RefreshDidiRideOrder', 'StartDidiRideWatch', 'StopDidiRideWatch'],
     functions: ['readDidiRideOrder', 'readDidiRideWatch', 'readDidiDriverPosition'],
     instructions: [
-      { action: 'CancelDidiRideOrder', function: 'readDidiRideOrder', text: 'Identify the exact linked original DiDi order. Cancellation is submitted directly by the authenticated PA through RideOrder.cancel with confirmCancellation=true after user approval. Read the original cancellation outcome before reporting success. An unresolved attempt permits readback only.' },
+      { action: 'CancelDidiRideOrder', function: 'readDidiRideOrder', text: 'Identify the exact linked original DiDi order. Cancellation is submitted directly by the authenticated PA through CancelableRideOrder.cancel with confirmCancellation=true after user approval. Read the original cancellation outcome before reporting success. An unresolved attempt permits readback only.' },
     ],
   },
   {

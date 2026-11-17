@@ -129,6 +129,7 @@ for(const fn of businessDefinition.functionTypes){
 // These Functions declare their own dependencies so historical workflow bindings stay compatible.
 businessDefinition.functionTypes.push(...didiOrderDefinitions.functionTypes, ...didiReadDefinitions);
 businessDefinition.actionTypes.push(...didiOrderDefinitions.actionTypes);
+businessDefinition.interfaceTypes.push(...didiOrderDefinitions.interfaceTypes);
 businessDefinition.objectTypes.find(type=>type.apiName==='LumaEvent')!.interfaces.AttendableEvent={properties:Object.fromEntries(['name','start','end','timeZone','status','locationPrecision','registrationOpen','approvalRequired'].map(name=>[name,name])),links:{registrations:'registrations',trips:'trips'},actions:{register:{action:'PrepareEventRegistration',parameters:{event:'event',ticketId:'ticketId',sourceTaskId:'sourceTaskId'}}}};
 
 // Keep the existing published contract for historical workflows and callers with complete inputs.

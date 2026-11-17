@@ -619,8 +619,9 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;
   const didiOrder = v9Definition.objectTypes.find(type => type.apiName === 'DidiRideOrder')!;
   delete didiOrder.properties.cancellationReceipt;
-  delete didiOrder.interfaces.RideOrder!.actions.cancel;
-  delete v9Definition.interfaceTypes.find(type => type.apiName === 'RideOrder')!.actions.cancel;
+  for (const type of didiOrderDefinitions.interfaceTypes) delete didiOrder.interfaces[type.apiName];
+  v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type =>
+    !didiOrderDefinitions.interfaceTypes.some(item => item.apiName === type.apiName));
   v9Definition.objectTypes = v9Definition.objectTypes.filter(type => !addedTypes.has(type.apiName) && !addedLogs.some(log => log.type === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'ScheduledActivity')!.properties.dining;
   delete v9Definition.objectTypes.find(type => type.apiName === 'EventTripStateLog')!.machinery;

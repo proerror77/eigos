@@ -273,9 +273,7 @@ export const travelDefinition: OntologyDocument = {
       }),
       optionalProperties: [],
       links: {},
-      actions: {
-        cancel: { parameters: json(cancelRideInput), objectParameters: { order: 'RideOrder' }, required: false },
-      },
+      actions: {},
     },
   ],
   linkTypes: [
@@ -353,13 +351,19 @@ travelDefinition.objectTypes.find((type) => type.apiName === 'DidiRideOrder')!.i
     ['name', 'orderId', 'status', 'state', 'observedAt', 'independentRead', 'evidence'].map((n) => [n, n]),
   ),
   links: {},
+  actions: {},
+};
+
+const didiRideOrder = travelDefinition.objectTypes.find(type => type.apiName === 'DidiRideOrder')!;
+const rideOrderInterface = travelDefinition.interfaceTypes.find(type => type.apiName === 'RideOrder')!;
+didiRideOrder.interfaces.CancelableRideOrder = {
+  ...structuredClone(didiRideOrder.interfaces.RideOrder!),
   actions: {
     cancel: { action: 'CancelDidiRideOrder', parameters: {
       order: 'order', confirmCancellation: 'confirmCancellation', reason: 'reason',
     } },
   },
 };
-
 
 const originalDidiOrderDependencies = {
   objectTypes: ['DidiRideOrder', 'EventTrip'], linkTypes: ['TripOrder'], interfaceTypes: ['RideOrder'],
@@ -373,7 +377,15 @@ const cancelDidiRideOrder = {
   source: 'Didi',
   dependencies: originalDidiOrderDependencies,
 };
-export const didiOrderDefinitions: Pick<OntologyDocument, 'functionTypes' | 'actionTypes'> = {
+export const didiOrderDefinitions: Pick<OntologyDocument, 'interfaceTypes' | 'functionTypes' | 'actionTypes'> = {
+  interfaceTypes: [{
+    ...structuredClone(rideOrderInterface),
+    apiName: 'CancelableRideOrder',
+    description: 'Original ride order that the PA can explicitly ask its supplier to cancel.',
+    actions: {
+      cancel: { parameters: json(cancelRideInput), objectParameters: { order: 'CancelableRideOrder' }, required: true },
+    },
+  }],
   functionTypes: [
     cancelDidiRideOrder,
     {

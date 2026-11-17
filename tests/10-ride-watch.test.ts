@@ -270,7 +270,7 @@ test('stopping a watch stops observation without canceling the original ride', a
   } finally { await f.close(); }
 });
 
-test('the RideOrder cancellation Action dispatches once and stops following the canceled order', async () => {
+test('the CancelableRideOrder cancellation Action dispatches once and stops following the canceled order', async () => {
   const f = await fixture();
   try {
     const { graph, order } = await originalOrder(f);
@@ -291,7 +291,7 @@ test('the RideOrder cancellation Action dispatches once and stops following the 
     const watch = await actions.apply(f.access, f.model, 'StartDidiRideWatch',
       { order, expiresAt: at(30), notifyArrival: false }, 'watch-before-cancel');
     const selected = actions.resolve(f.access, f.model, {
-      interface: { type: 'RideOrder', action: 'cancel', object: order },
+      interface: { type: 'CancelableRideOrder', action: 'cancel', object: order },
       input: { order, confirmCancellation: true, reason: 'Change of plans' },
     });
     assert.equal(selected.action, 'CancelDidiRideOrder');
