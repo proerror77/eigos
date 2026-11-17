@@ -520,8 +520,11 @@ export function ontologyServices(
       requireScope(a.principal,'ontology:read');
       return evaluations.promote(a,await active(),input);
     });
-  register('scenario_continuation_sources','List owned temporary or previous-release drafts eligible for a continuation attempt.',
+  register('scenario_continuation_sources','List owned temporary or previous-release drafts with Action-journal readiness and recovery reasons.',
     z.strictObject({}),false,async a=>new Scenarios(db).continuationSources(a,await active()));
+  register('inspect_scenario_continuation','Read an owned historical draft difference under current permissions before re-proposing its business edits.',
+    z.strictObject({id:z.uuid(),revision:z.number().int().positive()}),false,
+    async(a,input)=>new Scenarios(db).inspectContinuation(a,await active(),input.id,input.revision));
   register('continue_scenario','Replay a compatible Scenario journal into a new persisted draft with fresh review.',
     continueScenarioSchema,true,async (a,input)=>new Scenarios(db).continueScenario(a,await active(),input));
   register('preview_automation', 'Evaluate a saved automation against Scenario revisions and preview its Actions without enqueuing a live run.',

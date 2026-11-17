@@ -56,6 +56,14 @@ Scenario 的对象和关系差量由已有 Query、Function、Action 运行层�
 
 使用 [多方案比较与离线试跑](scenario-evaluation.md) 对齐业务指标和候选执行结果。
 
+## 接续与旧方案恢复
+
+`scenario_continuation_sources` 列出当前 owner 的未过期临时或旧发布方案，返回 `continuation.status`（`ready` 或 `blocked`）及原因。`ready` 表示操作日志完整，可以尝试接续；提交时仍重新检查当前契约、权限和数据冲突。日志缺失或不完整返回 `incomplete-action-journal`，不会推断操作顺序或沿用旧审批。
+
+被阻塞的方案可用只读 `inspect_scenario_continuation({id, revision})` 查看差异。接口只接受同一发布祖先链中的自有开放方案，按当前 Schema、对象、行、属性和 Link 权限返回历史前后值；当前对象不可读、方案已过期或修订变化时拒绝。删除的字段不会重新暴露。这个读回不创建方案、不应用编辑，也不代表旧操作仍能执行。
+
+工作台在阻塞行显示「查看差异并重新提案」。用户查看后可通过原生命周期入口新建空的持久方案，再用当前已发布的业务 Action 重新提出变更并送审。恢复不复制旧差量或审批，也不会把无日志草稿升级为可自动合并的方案。隔离和合并继续遵循 [Scenario 与 Action](https://www.palantir.com/docs/foundry/ontology/overview-ontology-scenario) 的职责。
+
 ## 验证
 
 回归覆盖临时会话归属、关闭与过期清理，元数据共享及撤销，Struct 编辑和通用合并，Action 补偿及更新冲突，待投递副作用取消和执行中拒绝，重规划放弃与合并，以及过去时段的最终提交拒绝。日历测试使用明确标注的合成 PA 数据。

@@ -1648,15 +1648,35 @@ async function renderScenarios(reviewPage = 1) {
       '查看拟议变更，处理冲突，再通过业务操作确认合并。',
       button('接续方案',async()=>{
         const {items}=await service('scenario_continuation_sources');
-        modal('接续到当前发布',items.length?table(['草稿','版本',''],items.map(item=>[
-          item.name,item.release.slice(0,8),
-          button('复制为持久方案',async()=>{
+        modal('接续到当前发布',items.length?table(['草稿','版本','状态',''],items.map(item=>[
+          item.name,item.release.slice(0,8),item.continuation.status==='blocked'?'操作记录不完整，需要重新提案':'可尝试接续，提交时检查契约与冲突',
+          item.continuation.status==='blocked'?button('查看差异并重新提案',async()=>{
+            const diff=await service('inspect_scenario_continuation',{id:item.id,revision:item.revision});
+            modal('旧方案恢复',element('div',{},
+              element('p',{},'以下差异按当前权限显示。新方案从正式数据开始，请通过业务操作重新提出这些变更并送审。'),
+              table(['对象','原值','拟议值'],diff.objects.map(change=>[
+                change.ref.type+' / '+change.ref.id,stringify(change.before),stringify(change.after),
+              ])),
+              table(['关系','起点','终点','操作'],diff.links.map(change=>[
+                change.type,change.from.id,change.to.id,change.removed?'移除':'添加',
+              ])),
+              button('新建方案重新提案',async()=>{
+                const saved=await request('/ontology/scenarios',{ontology:state.ontology,requestId:crypto.randomUUID(),
+                  name:diff.name.slice(0,180)+'（重新提案）',kind:'persisted',
+                  description:`依据旧方案 ${diff.id} 修订 ${diff.revision} 重新提案，未复制旧审批或编辑。`});
+                state.scenario=saved.id;
+                $('#editor').close();
+                await renderScenarios();
+                notice('新方案已创建，请通过业务操作重新提出变更并送审');
+              }),
+            ));
+          }):button('复制为持久方案',async()=>{
             const saved=await service('continue_scenario',{id:item.id,revision:item.revision,requestId:crypto.randomUUID()});
             state.scenario=saved.id;
             $('#editor').close();
             await renderScenarios();
           }),
-        ])):empty('没有可尝试接续的草稿。'));
+        ])):empty('没有可接续或恢复的草稿。'));
       }),
       list.items.length >= 2 && button('并排比较', () => openScenarioEvaluation('compare', list.items)),
       button('离线试跑', () => openScenarioEvaluation('trial', list.items)),
