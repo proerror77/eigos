@@ -11,12 +11,20 @@ import { portalEnv } from './account-env.js';
 import type { fixture } from './fixture.js';
 
 export type Fixture = Awaited<ReturnType<typeof fixture>>;
+export type CallbackOutcome = { location: string | null; cookie: string; response: Response; replay: Response };
 export interface AccountGateway {
   url: string; config: Config; accounts: Accounts;
   owner(sub: string): string;
   token(sub: string, options?: { azp?: string; aud?: string; scope?: string; issuedAt?: number }): Promise<string>;
   login(sub: string, email: string, options?: { verified?: boolean; tenant?: boolean; wrongState?: boolean; start?: string; startCookie?: string }):
-    Promise<{ location: string | null; cookie: string; response: Response; replay: Response }>;
+    Promise<CallbackOutcome>;
+  /**
+   * Auth0 sends the browser back to /account/callback for the authorize request `authorize`, with a fresh code that it issues for
+   * `sub`. `cookie` is the login cookie (name and value) the browser holds. This is the second half of `login`; calling it alone
+   * stands for a login that Auth0 paused and resumes later.
+   */
+  callback(authorize: URL, cookie: string, sub: string, email: string, options?: { verified?: boolean; tenant?: boolean; wrongState?: boolean }):
+    Promise<CallbackOutcome>;
   form(path: string, cookie: string, body?: URLSearchParams, origin?: string): Promise<Response>;
   call(path: string, accessToken?: string): Promise<Response>;
   page(cookie: string): Promise<string>;
@@ -69,8 +77,20 @@ export async function accountGateway(f: Fixture, options: { signup?: SignupMode;
   const address = server.address();
   assert(address && typeof address !== 'string');
   const url = 'http://127.0.0.1:' + address.port;
+  const callback: AccountGateway['callback'] = async (authorize, loginCookie, sub, email, o = {}) => {
+    const code = 'code-' + randomUUID();
+    codes.set(code, { sub, email, verified: o.verified ?? true, tenant: o.tenant ?? true,
+      nonce: authorize.searchParams.get('nonce')!, challenge: authorize.searchParams.get('code_challenge')! });
+    const target = url + '/account/callback?code=' + code + '&state=' + (o.wrongState ? 'wrong' : authorize.searchParams.get('state'));
+    const response = await fetch(target, { redirect: 'manual', headers: { Cookie: loginCookie } });
+    const replay = await fetch(target, { redirect: 'manual', headers: { Cookie: loginCookie } });
+    if (mismatch) throw mismatch;
+    if (o.wrongState) assert(codes.has(code), 'a callback with the wrong state must not exchange the code');
+    assert.equal(replay.headers.get('location'), '/account?status=login');
+    return { location: response.headers.get('location'), cookie: responseCookie(response, '__Host-eigos-account'), response, replay };
+  };
   return {
-    url, config, accounts, owner,
+    url, config, accounts, owner, callback,
     token: (sub, o = {}) => sign({ [config.OAUTH_TENANT_CLAIM]: tenant, azp: o.azp ?? 'grok', scope: o.scope ?? 'tasks:read tasks:write ontology:write' },
       sub, o.aud ?? audience, o.issuedAt),
     async login(sub, email, o = {}) {
@@ -81,16 +101,7 @@ export async function accountGateway(f: Fixture, options: { signup?: SignupMode;
       if (!o.start) assert.equal(authorize.searchParams.get('screen_hint'), 'signup');
       const loginCookie = responseCookie(start, '__Host-eigos-account-login');
       assert(loginCookie);
-      const code = 'code-' + randomUUID();
-      codes.set(code, { sub, email, verified: o.verified ?? true, tenant: o.tenant ?? true,
-        nonce: authorize.searchParams.get('nonce')!, challenge: authorize.searchParams.get('code_challenge')! });
-      const callback = url + '/account/callback?code=' + code + '&state=' + (o.wrongState ? 'wrong' : authorize.searchParams.get('state'));
-      const response = await fetch(callback, { redirect: 'manual', headers: { Cookie: loginCookie } });
-      const replay = await fetch(callback, { redirect: 'manual', headers: { Cookie: loginCookie } });
-      if (mismatch) throw mismatch;
-      if (o.wrongState) assert(codes.has(code), 'a callback with the wrong state must not exchange the code');
-      assert.equal(replay.headers.get('location'), '/account?status=login');
-      return { location: response.headers.get('location'), cookie: responseCookie(response, '__Host-eigos-account'), response, replay };
+      return callback(authorize, loginCookie, sub, email, o);
     },
     form: (path, cookie, body = new URLSearchParams(), origin = publicUrl) =>
       fetch(url + '/account/' + path, { method: 'POST', headers: { Cookie: cookie, Origin: origin }, body, redirect: 'manual' }),

@@ -8,18 +8,28 @@ import { Accounts, emailDigest, newAccountSecret } from '../../packages/runtime/
 import { rateLimit } from './rate-limit.js';
 import { seal, unseal } from './sealed-cookie.js';
 
-export type LoginAttempt = { state: string; nonce: string; verifier: string; link?: { auth0State: string; subject: string; primary: string } };
+/**
+ * One sign-in of the portal. `link` is set on the login that verifies the original account for a login that Auth0 paused for
+ * linking. Its `first` is the portal sign-in that Auth0 paused, when the browser still held it.
+ */
+export type LoginAttempt = {
+  state: string; nonce: string; verifier: string;
+  link?: { auth0State: string; subject: string; primary: string; first?: { state: string; nonce: string; verifier: string } };
+};
 export type LoginResult =
   | { kind: 'verified'; owner: string; email: string; subject: string }
   | { kind: 'unverified'; subject: string }
   | { kind: 'tenant_missing' };
 
+const attemptFields = { state: z.string().min(1), nonce: z.string().min(1), verifier: z.string().min(1) };
 const attemptSchema: z.ZodType<LoginAttempt> = z.strictObject({
-  state: z.string().min(1), nonce: z.string().min(1), verifier: z.string().min(1),
-  link: z.strictObject({ auth0State: z.string().min(1), subject: z.string().min(1), primary: z.string().min(1) }).optional(),
+  ...attemptFields,
+  link: z.strictObject({ auth0State: z.string().min(1), subject: z.string().min(1), primary: z.string().min(1),
+    first: z.strictObject(attemptFields).optional() }).optional(),
 });
 // What the Auth0 Action sends to the link page and what the link cookie keeps. The length bounds keep the sealed cookies within
-// the 4096 characters `unseal` reads: the longest ASCII values seal to 3842 characters (link cookie) and 3711 (login cookie).
+// the 4096 characters `unseal` reads: the longest ASCII values seal to 3842 characters (link cookie) and 3944 (the login cookie of
+// a merge, with the paused sign-in inside it).
 const linkText = z.string().min(1).max(256);
 const linkClaims = z.object({ sub: linkText, primary: linkText, connection: linkText });
 const linkQuery = z.object({ session_token: z.string().min(1).max(4096), state: z.string().min(1).max(2000) });
@@ -67,6 +77,16 @@ async function pausedLogin(key: Uint8Array, query: unknown) {
       ? { auth0State: request.data.state, subject: claims.data.sub, primary: claims.data.primary, connection: claims.data.connection }
       : undefined;
   } catch { return undefined; }
+}
+
+/**
+ * The sign-in that Auth0 paused, read from the login cookie that the browser sends to the continue address: the portal's own first
+ * attempt, or the one that an earlier visit for the same paused login already carries. Undefined when the browser holds neither.
+ */
+function pausedSignIn(held: LoginAttempt | undefined, auth0State: string) {
+  if (!held) return undefined;
+  if (!held.link) return { state: held.state, nonce: held.nonce, verifier: held.verifier };
+  return held.link.auth0State === auth0State ? held.link.first : undefined;
 }
 
 /** Where Auth0 resumes the paused login: its original state and a five-minute token that names the merged user and the verified account. */
@@ -179,7 +199,9 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     const link = unseal(secret, 'link', cookie(req, linkCookie, sealedShape), linkSchema);
     if (!link) { redirect(res, 'link'); return; }
     const { connection, ...paused } = link;
-    const attempt: LoginAttempt = { state: newAccountSecret(), nonce: newAccountSecret(), verifier: newAccountSecret(), link: paused };
+    // The browser may still hold the sign-in that Auth0 paused. It goes inside this attempt, because the login cookie is replaced here.
+    const first = pausedSignIn(unseal(secret, 'login', cookie(req, loginCookie, sealedShape), attemptSchema), paused.auth0State);
+    const attempt: LoginAttempt = { state: newAccountSecret(), nonce: newAccountSecret(), verifier: newAccountSecret(), link: { ...paused, ...(first && { first }) } };
     res.cookie(loginCookie, seal(secret, 'login', attempt, ttl), { ...cookieOptions, maxAge: ttl });
     res.redirect(303, login.start(attempt, { signup: false, connection, linking: true }).href);
   });
@@ -194,9 +216,14 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     if (attempt.link) {
       // This login only proves the original account to Auth0. Anything but that account's verified sign-in turns back, and
       // neither outcome opens a session or an account here.
-      if (result.kind === 'verified' && result.subject === attempt.link.primary)
-        res.redirect(303, (await resumeUrl(config.OAUTH_ISSUER!, linkKey, attempt.link)).href);
-      else redirect(res, 'link');
+      if (result.kind !== 'verified' || result.subject !== attempt.link.primary) { redirect(res, 'link'); return; }
+      const next = await resumeUrl(config.OAUTH_ISSUER!, linkKey, attempt.link);
+      // Auth0 now resumes the sign-in it paused and sends the browser back to this callback with that sign-in's own state, so the
+      // first attempt goes back into the login cookie. A browser keeps the last Set-Cookie of a name, which replaces the drop above.
+      // Only a finished merge gets here: a failed one leaves the paused sign-in dropped and the link cookie in place.
+      if (attempt.link.first) res.cookie(loginCookie, seal(secret, 'login', attempt.link.first, ttl), { ...cookieOptions, maxAge: ttl });
+      res.clearCookie(linkCookie, cookieOptions);
+      res.redirect(303, next.href);
       return;
     }
     if (result.kind === 'tenant_missing') { redirect(res, 'tenant'); return; }
