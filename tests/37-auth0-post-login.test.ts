@@ -24,13 +24,18 @@ const notVerified = '请先验证邮箱，再连接 EIGOS。', notLinked = '合�
 const login = (user: Profile, extra: Claims = {}) => ({ user, secrets, transaction: { protocol: 'oidc-basic-profile' }, request: { query: {} },
   resource_server: { identifier: 'https://eigos.example/mcp' }, ...extra });
 
+/** Auth0 Actions refuse to cache under a key longer than this many bytes. */
+const CACHE_KEY_LIMIT = 64;
+
 /**
  * Records what the Action does to Auth0's `api`. `token` is what validateToken returns (it throws without one),
- * and `order` collects the calls whose order matters.
+ * and `order` collects the calls whose order matters. Like Auth0, `cache.set` answers a key over the limit with
+ * `{ type: 'error' }` instead of throwing, stores nothing and lists the key in `calls.refusedKeys`.
  */
 function fakeApi(token?: Claims, order: string[] = []) {
   const calls = { deny: [] as string[], idToken: {} as Claims, accessToken: {} as Claims, metadata: [] as Array<[string, unknown]>,
-    redirects: [] as Array<{ url: string; options: unknown }>, encoded: [] as unknown[], validated: [] as unknown[], primary: [] as string[] };
+    redirects: [] as Array<{ url: string; options: unknown }>, encoded: [] as unknown[], validated: [] as unknown[], primary: [] as string[],
+    refusedKeys: [] as string[] };
   const cache = new Map<string, { value: string; ttl?: number }>();
   const api = {
     access: { deny: (reason: string) => { calls.deny.push(reason); } },
@@ -45,7 +50,11 @@ function fakeApi(token?: Claims, order: string[] = []) {
     },
     cache: {
       get: (key: string) => { const record = cache.get(key); return record && { value: record.value }; },
-      set: (key: string, value: string, options?: { ttl?: number }) => { cache.set(key, { value, ttl: options?.ttl }); return { type: 'success' }; },
+      set: (key: string, value: string, options?: { ttl?: number }) => {
+        if (Buffer.byteLength(key) > CACHE_KEY_LIMIT) { calls.refusedKeys.push(key); return { type: 'error' }; }
+        cache.set(key, { value, ttl: options?.ttl });
+        return { type: 'success' };
+      },
     },
   };
   return { api, calls, cache };
@@ -54,15 +63,15 @@ function fakeApi(token?: Claims, order: string[] = []) {
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 /** Stands in for the Auth0 tenant: the token endpoint and the three Management API calls the Action makes. */
-function fakeManagement(users: Profile[], options: { expiresIn?: number; tokenStatus?: number; searchStatus?: number; linkStatus?: number } = {}, order: string[] = []) {
-  const { expiresIn = 86400, tokenStatus = 200, searchStatus = 200, linkStatus = 201 } = options;
+function fakeManagement(users: Profile[], options: { domain?: string; expiresIn?: number; tokenStatus?: number; searchStatus?: number; linkStatus?: number } = {}, order: string[] = []) {
+  const { domain = secrets.MANAGEMENT_DOMAIN, expiresIn = 86400, tokenStatus = 200, searchStatus = 200, linkStatus = 201 } = options;
   const requests: Array<{ method: string; path: string; query: Record<string, string>; body: unknown; authorization: string | null }> = [];
   const links: Array<{ primary: string; body: unknown }> = [];
   const fetch = async (input: string | URL, init: RequestInit = {}): Promise<Response> => {
     const url = new URL(input), method = init.method ?? 'GET', authorization = new Headers(init.headers).get('authorization');
     const body: unknown = typeof init.body === 'string' ? JSON.parse(init.body) : undefined;
     requests.push({ method, path: url.pathname, query: Object.fromEntries(url.searchParams), body, authorization });
-    assert.equal(url.origin, 'https://tenant.example');
+    assert.equal(url.origin, `https://${domain}`);
     if (url.pathname === '/oauth/token') return tokenStatus === 200 ? json({ access_token: 'management-token', token_type: 'Bearer', expires_in: expiresIn }) : json({ error: 'server_error' }, tokenStatus);
     if (authorization !== 'Bearer management-token') return json({ message: 'Unauthorized' }, 401);
     if (url.pathname === '/api/v2/users-by-email') {
@@ -125,6 +134,13 @@ test('a newer identity with an older verified duplicate is sent to the EIGOS lin
   assert.deepEqual(management.requests[0]?.body,
     { grant_type: 'client_credentials', client_id: 'm2m', client_secret: 'synthetic', audience: 'https://tenant.example/api/v2/' });
 
+  // No request parameter can skip the check: a newer duplicate that adds eigos_link=1 to /authorize is sent to the link page all the same.
+  const forged = fakeApi(), forgedLookup = fakeManagement([older, newer]);
+  await createPostLogin({ fetch: forgedLookup.fetch }).onExecutePostLogin(login(newer, { request: { query: { eigos_link: '1' } } }), forged.api);
+  assert.deepEqual(forged.calls.redirects, [{ url: secrets.LINK_URL, options: { query: { session_token: 'encoded:{"primary":"google-oauth2|1","connection":"google-oauth2"}' } } }]);
+  assert.deepEqual([forged.calls.idToken, forged.calls.accessToken, forged.calls.deny], [{}, {}, []]);
+  assert.equal(forgedLookup.requests.some(request => request.path === '/api/v2/users-by-email'), true);
+
   // With several candidates the earliest verified account is the primary, wherever it sits in the result.
   const oldest: Profile = { ...older, user_id: 'auth0|0', created_at: '2025-06-01T00:00:00Z',
     identities: [{ provider: 'auth0', user_id: '0', connection: 'Username-Password-Authentication' }] };
@@ -155,7 +171,9 @@ test('no link redirect for unverified duplicates, refresh tokens or the link ver
     { name: 'the new account has not verified its email and only asks for an ID token', user: unverifiedNewer, users: [older, unverifiedNewer],
       extra: { resource_server: undefined }, lookup: false, accessToken: false },
     { name: 'a refresh token exchange', user: newer, users: [older, newer], extra: { transaction: { protocol: 'oauth2-refresh-token' } }, lookup: false, accessToken: true },
-    { name: 'the link verification login', user: newer, users: [older, newer], extra: { request: { query: { eigos_link: '1' } } }, lookup: false, accessToken: true },
+    // The verification login is the older primary signing in again. It is checked like every login (eigos_link=1 changes nothing) and
+    // passes because no verified account is older than the oldest one.
+    { name: 'the link verification login', user: older, users: [older, newer], extra: { request: { query: { eigos_link: '1' } } }, lookup: true, accessToken: true },
     { name: 'an account that already has several identities', user: linked, users: [older, linked], lookup: false, accessToken: true },
   ];
   for (const { name, user, users, extra, lookup, accessToken } of cases) {
@@ -165,7 +183,7 @@ test('no link redirect for unverified duplicates, refresh tokens or the link ver
     assert.deepEqual(calls.deny, [], name);
     assert.deepEqual(calls.idToken, { tenant_id: 'personal' }, name);
     assert.deepEqual(calls.accessToken, accessToken ? { tenant_id: 'personal' } : {}, name);
-    // Only the first case gets as far as looking for duplicates, and finds none it may use.
+    // Only the first case and the verification login look for duplicates, and neither finds one it may use.
     assert.equal(management.requests.some(request => request.path === '/api/v2/users-by-email'), lookup, name);
   }
 });
@@ -231,19 +249,24 @@ test('continue refuses when the Management API cannot link the identity', async 
 });
 
 test('the Management token is cached until a minute before it expires', async () => {
+  // What a real tenant has: a domain like dev-abcd1234.us.auth0.com and a 32 character client id. A cache key built from them
+  // (management-token:<domain>:<client id> is 75 bytes with these values) is refused by Auth0, so the token would never be cached.
+  const real = { MANAGEMENT_DOMAIN: 'dev-abcd1234.us.auth0.com', MANAGEMENT_CLIENT_ID: 'AbCdEfGh1234IjKlMnOp5678QrStUvWx' };
+  const event = (user: Profile) => login(user, { secrets: { ...secrets, ...real } });
   const tokenRequests = (management: ReturnType<typeof fakeManagement>) => management.requests.filter(request => request.path === '/oauth/token').length;
-  const { api, cache } = fakeApi(), management = fakeManagement([older, newer], { expiresIn: 3600 });
+  const { api, calls, cache } = fakeApi(), management = fakeManagement([older, newer], { domain: real.MANAGEMENT_DOMAIN, expiresIn: 3600 });
   const { onExecutePostLogin } = createPostLogin({ fetch: management.fetch });
-  await onExecutePostLogin(login(newer), api);
-  await onExecutePostLogin(login(newer), api);
+  await onExecutePostLogin(event(newer), api);
+  await onExecutePostLogin(event(newer), api);
+  assert.deepEqual(calls.refusedKeys, [], 'every cache key fits the 64 byte limit');
   assert.equal(tokenRequests(management), 1);
   assert.equal(management.requests.filter(request => request.path === '/api/v2/users-by-email').length, 2);
   assert.deepEqual([...cache.values()], [{ value: 'management-token', ttl: (3600 - 60) * 1000 }]);
 
   // A token that would be expired by then is not worth keeping.
-  const short = fakeApi(), brief = fakeManagement([older, newer], { expiresIn: 30 });
-  await createPostLogin({ fetch: brief.fetch }).onExecutePostLogin(login(newer), short.api);
-  await createPostLogin({ fetch: brief.fetch }).onExecutePostLogin(login(newer), short.api);
+  const short = fakeApi(), brief = fakeManagement([older, newer], { domain: real.MANAGEMENT_DOMAIN, expiresIn: 30 });
+  await createPostLogin({ fetch: brief.fetch }).onExecutePostLogin(event(newer), short.api);
+  await createPostLogin({ fetch: brief.fetch }).onExecutePostLogin(event(newer), short.api);
   assert.equal(short.cache.size, 0);
   assert.equal(tokenRequests(brief), 2);
 });

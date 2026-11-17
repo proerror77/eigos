@@ -19,7 +19,8 @@
  * last, so a token without the claim is the only thing that can come out of a half-done login.
  *
  * Auth0 behavior this relies on (Post-Login API object and redirect documentation):
- * - api.cache.set takes ttl in milliseconds; api.redirect.encodeToken takes expiresInSeconds in seconds.
+ * - api.cache.set takes ttl in milliseconds and a key of at most 64 bytes; a refused write is returned as
+ *   { type: 'error' } instead of thrown. api.redirect.encodeToken takes expiresInSeconds in seconds.
  * - api.redirect.validateToken returns the token's payload, and onContinuePostLogin only runs for a login this
  *   Action paused with sendUserTo.
  * - api.authentication.setPrimaryUser only works after the login's identity is linked to that user.
@@ -30,6 +31,9 @@ const NOT_VERIFIED = '请先验证邮箱，再连接 EIGOS。';
 const NOT_LINKED = '合并没有完成，请用原来的方式重新登录。';
 const LINK_TOKEN_SECONDS = 300;
 const TOKEN_MARGIN_SECONDS = 60;
+// Auth0 caps a cache key at 64 bytes, which a key built from the domain and the 32 character client id easily passes.
+// One Action serves one tenant and one machine-to-machine client, so a short fixed key says enough.
+const TOKEN_CACHE_KEY = 'eigos-mgmt-token';
 
 function createPostLogin({ fetch }) {
   const secret = (event, name) => {
@@ -57,8 +61,7 @@ function createPostLogin({ fetch }) {
   /** A client-credentials token for the Management API, cached until a minute before it expires. */
   const managementToken = async (event, api) => {
     const domain = secret(event, 'MANAGEMENT_DOMAIN'), clientId = secret(event, 'MANAGEMENT_CLIENT_ID');
-    const cacheKey = `management-token:${domain}:${clientId}`;
-    const cached = api.cache.get(cacheKey)?.value;
+    const cached = api.cache.get(TOKEN_CACHE_KEY)?.value;
     if (cached) return cached;
     const response = await fetch(`https://${domain}/oauth/token`, {
       method: 'POST',
@@ -70,7 +73,7 @@ function createPostLogin({ fetch }) {
     const { access_token: token, expires_in: expiresIn } = await response.json();
     if (typeof token !== 'string' || token === '') throw new Error('Auth0 token response has no access_token');
     const ttl = (expiresIn - TOKEN_MARGIN_SECONDS) * 1000;
-    if (ttl > 0) api.cache.set(cacheKey, token, { ttl });
+    if (ttl > 0) api.cache.set(TOKEN_CACHE_KEY, token, { ttl });
     return token;
   };
 
@@ -109,9 +112,10 @@ function createPostLogin({ fetch }) {
     }
 
     // A verified account that signs in through a second connection must merge into the older verified one instead of
-    // becoming another account. Refresh exchanges cannot redirect, and the link verification login is the older
-    // account signing in again, so neither looks for duplicates.
-    const looksForDuplicates = event.transaction?.protocol !== 'oauth2-refresh-token' && event.request?.query?.eigos_link !== '1'
+    // becoming another account. Refresh exchanges cannot redirect, so they do not look for duplicates. No request
+    // parameter may switch the check off, because the caller controls them: the link verification login is checked like
+    // any other, and passes because it signs in as the oldest verified account, so nobody is older to merge into.
+    const looksForDuplicates = event.transaction?.protocol !== 'oauth2-refresh-token'
       && event.user.email_verified === true && event.user.identities.length === 1;
     const older = looksForDuplicates ? await olderDuplicate(event, api) : undefined;
     if (older) {
