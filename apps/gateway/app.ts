@@ -25,7 +25,7 @@ import { configuredServices } from '../../packages/capabilities/services/sources
 import { configuredStripeSandbox } from '../../packages/capabilities/payments/stripe-sandbox.js';
 import type { SourceResolver } from '../../packages/capabilities/didi/functions.js';
 import { verifier, type VerifyToken } from './auth.js';
-import { mountMembers, type auth0MemberLogin } from './member-login.js';
+import { mountAccountPortal, type auth0AccountLogin } from './account-portal.js';
 import { Accounts, accountTaskScopes } from '../../packages/runtime/accounts.js';
 import { A2A, AgentUser, agentCard } from './a2a.js';
 import { publicError } from './public-error.js';
@@ -47,10 +47,10 @@ const paTravelInstructions = [
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {},
   providerFetch: { amapFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch;
     dianpingFetch?: typeof fetch; marketplaceFetch?: typeof fetch;
-    memberLogin?: ReturnType<typeof auth0MemberLogin> } = {}) {
+    accountLogin?: ReturnType<typeof auth0AccountLogin> } = {}) {
   if (db.sandboxEnabled && !developmentSandboxEnabled({ ...config, NODE_ENV: process.env.NODE_ENV }))
     throw new Error('Gateway sandbox requires explicit loopback development configuration');
-  const { marketplaceFetch, memberLogin, ...sourceFetch } = providerFetch;
+  const { marketplaceFetch, accountLogin, ...sourceFetch } = providerFetch;
   const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE, undefined, marketplaceFetch), configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
     fliggyFlight: config.EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE,
     fliggyHotel: config.EIGOS_FLIGGY_HOTEL_CONNECTION_FILE,
@@ -76,6 +76,8 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     ? `Bearer resource_metadata="${config.PUBLIC_URL + mcpMetadataPath}", scope="${accountTaskScopes.join(' ')}"`
     : `Bearer resource_metadata="${config.PUBLIC_URL}/.well-known/oauth-protected-resource"`;
   app.disable('x-powered-by');
+  // Behind a reverse proxy, `req.ip` (the per-address rate limits) is the forwarded client only if the proxy is trusted.
+  if (config.EIGOS_TRUST_PROXY) app.set('trust proxy', /^\d+$/.test(config.EIGOS_TRUST_PROXY) ? Number(config.EIGOS_TRUST_PROXY) : config.EIGOS_TRUST_PROXY);
   // Published domain definitions can exceed the ordinary task/query body bound.
   app.use(['/mcp','/ontology/services'],express.json({limit:'2mb'}));
   app.use(express.json({ limit: '256kb' }));
@@ -96,8 +98,8 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     scopes_supported: accountTaskScopes, bearer_methods_supported: ['header'],
   }));
   if (members) {
-    mountMembers(app, config, members, memberLogin);
-    app.get('/', (_req, res) => res.redirect(302, '/members'));
+    mountAccountPortal(app, config, members, accountLogin);
+    app.get('/', (_req, res) => res.redirect(302, '/account'));
   }
   mountWorkbench(app, config, verify);
   app.use(async (req, res, next) => {
