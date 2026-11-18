@@ -65,6 +65,12 @@ Interface 按业务语义命名，供应商名称放在具体 Object Type、来�
 
 已有滴滴原订单后的状态轮询、按需司机位置和接驾提醒见 [滴滴原订单追踪](didi-ride-followup.md)。
 
+#### 选中飞猪报价后打开供应商详情
+
+PA 从一次飞猪酒店或航班搜索结果中取得用户选定的 `offer` 和对应的 `search` 对象引用。通过 `complete_with_action` 调用 `TravelOfferSelection.prepare`，实现类型为 `FliggyTravelOfferHandoff`，把返回引用绑定给 `readFliggyTravelHandoff.handoff`。
+
+返回值保留来源提供的 HTTPS 详情链接、日期／航段、原始展示价、`accessMode`、证据类型及有效期。试用连接可用，酒店的掩码价和起价按原文返回。没有受支持链接、来源账号变化、搜索页被替代、报价过期或本地价格／链接被编辑时，需要重新选择有效报价。交接状态 `ready_for_review` 表示买家可以打开供应商页面核对；后续预订另行授权。EIGOS 只写入选中记录及其关联，沿用 [Function 支持的 Action](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) 与 [对象支持的关联](https://www.palantir.com/docs/foundry/object-link-types/create-link-type)。
+
 ## 飞猪合作方机酒交易
 
 机酒搜索继续使用 FlyAI 和 RollingGo 并行查询。进入交易时使用飞猪 TOP 的可交易库存标识。FlyAI 展示价、酒店卡片 ID、航班号和跳转链接无法代替分销商品、政策 ID 或京杭报价 `itemId`。
@@ -203,9 +209,3 @@ RollingGo 凭据是原 API Key 文件。Shopify 凭据文件是 `{ "clientId": "
 | DidiRideOrder | 沿 watches 读取 DidiRideWatch.state | 由现有跟单记录提供接驾和行程阶段、来源观察时间及观察终止原因。 |
 
 在工作台的 Machinery 里打开流程实例，查看正式状态转换及其来源。具备任务读取权限的用户还可查看自己针对该对象的单对象后台 Action、状态、下一次检查和截止时间。授权撤回、超过期限或供应商详情无法确认时，保留最后可验证的业务状态。历史定义沿用原有人工刷新方式；发布新定义并给实际执行身份授予新增 ProcessLog 的读取权限后才能从 Machinery 查看。合成订单覆盖此路径；生产供应商接入和履约验收另行进行。
-
-## 选中飞猪报价后打开供应商详情
-
-PA 从一次飞猪酒店或航班搜索结果中取得用户选定的 `offer` 和对应的 `search` 对象引用。通过 `complete_with_action` 调用 `TravelOfferSelection.prepare`，实现类型为 `FliggyTravelOfferHandoff`，把返回引用绑定给 `readFliggyTravelHandoff.handoff`。
-
-返回值保留来源提供的 HTTPS 详情链接、日期／航段、原始展示价、`accessMode`、证据类型及有效期。试用连接可用，酒店的掩码价和起价按原文返回。没有受支持链接、来源账号变化、搜索页被替代、报价过期或本地价格／链接被编辑时，需要重新选择有效报价。交接状态 `ready_for_review` 表示买家可以打开供应商页面核对；后续预订另行授权。EIGOS 只写入选中记录及其关联，沿用 [Function 支持的 Action](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) 与 [对象支持的关联](https://www.palantir.com/docs/foundry/object-link-types/create-link-type)。
