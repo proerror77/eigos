@@ -186,7 +186,10 @@ function createPostLogin({ fetch, now = Date.now }) {
     }
 
     writeClaims(event, api, tenant, eigosApi);
-    if (event.user.email_verified === true && eigosSince(event.user) === undefined) api.user.setAppMetadata(STAMP_KEY, new Date(now()).toISOString());
+    // These are the EIGOS claims of a verified user. The first ones make it an EIGOS account from now on, and later ones keep its stamp.
+    if (event.user.email_verified === true && eigosSince(event.user) === undefined) {
+      api.user.setAppMetadata(STAMP_KEY, new Date(now()).toISOString());
+    }
   };
 
   const onContinuePostLogin = async (event, api) => {
