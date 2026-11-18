@@ -20,7 +20,11 @@ test('Jinghang payment schedules original-order checks through restart, independ
   const flight = { dep_airport: 'PKX', arr_airport: 'XMN', marketing_flight_no: 'CZ8957',
     dep_time: '2030-03-10 08:45:00', arr_time: '2030-03-10 11:35:00', id: 'XZ0001' };
   const itinerary = { trip_type: 1, flight_journey_list: { flight_journey: [{ flight_segment_list: { flight_segment: [flight] } }] } };
+  let restrictions: unknown = { age_range_list: { pair_num_range: [{ min_num: 40, max_num: 40 }] },
+    person_num_range: { min_num: 1, max_num: 1 }, supported_cert_type_map: '{"0":[0]}' };
+  const approvedRules = restrictions;
   const fare = (amount: number) => ({
+    passenger_restrict: restrictions,
     item_id: 'approved-fare', refund_change_details: 'Fixture fare terms', search_extra_attribute: { standard_product: true },
     flight_route: itinerary, passenger_price_list: { flight_passenger_item: [
       { passenger_type: 'ADT', flight_price: { sell_price: amount, build_price: 50, oil_price: 20, tax: 70 },
@@ -48,8 +52,12 @@ test('Jinghang payment schedules original-order checks through restart, independ
       .replaceAll('"LARGE_ID"', nativeId));
     if (operation === 'search') {
       const criteria = JSON.parse(request.get('search_flight_info_req')!);
-      assert.deepEqual(criteria.search_od_info_list, [{ dep_city_code: 'BJS', arr_city_code: 'XMN', dep_date: '2030-03-10' }]);
-      return reply({ search_flight_info_res: { is_success: true, flight_group_item_list: { flight_group_item: [fare(amount)] } } });
+      assert.deepEqual(criteria, {
+        trip_type: 1, search_mode: 0, cabin_class: 'ALL_CABIN', has_child: false, has_infant: false,
+        external_agent_name: 'fixture-channel',
+        search_od_info_list: [{ dep_city_code: 'BJS', arr_city_code: 'XMN', dep_date: '2030-03-10' }],
+      });
+      return reply({ search_flight_info_res: { is_success: 'true', flight_group_item_list: { flight_group_item: [fare(amount)] } } });
     }
     if (operation === 'airbook') {
       const order = JSON.parse(request.get('create_order_request')!);
@@ -92,11 +100,33 @@ test('Jinghang payment schedules original-order checks through restart, independ
       await f.capabilities.functions.invoke(f.model, 'readFliggyFlightBooking', { booking },
         { principal, objects: new Objects(f.db, f.model, await Access.load(f.db, principal)),
           signal: AbortSignal.timeout(5000) }) as Record<string, unknown>;
+    const listing = await f.capabilities.functions.invoke(f.model, 'readFliggyFlightQuotes', search,
+      { principal, objects: new Objects(f.db, f.model, await Access.load(f.db, principal)), signal: AbortSignal.timeout(5000) });
+    assert.deepEqual(calls, ['search']);
+    assert.equal((listing as {quotes: {itemId:string}[]}).quotes[0]?.itemId, 'approved-fare');
+    restrictions = { member_restrict: { member_type: 1 } };
+    await assert.rejects(act('PrepareFliggyFlightBooking', { search, itemId: 'approved-fare', profileId: 'adult-1', bookingKey: randomUUID() }), /membership eligibility/);
+    restrictions = approvedRules;
     const booking = await act('PrepareFliggyFlightBooking', { search, itemId: 'approved-fare', profileId: 'adult-1', bookingKey: randomUUID() });
     const preview = await view(booking);
     assert.equal(preview.evidence, 'synthetic');
     assert(!JSON.stringify(preview).match(/Private passenger|credential_no|session/));
     const approval = { booking, approvedDigest: preview.approvalDigest, amountMinor: 53000 };
+    for (const [changed, reason] of [
+      [{ age_range_list: { pair_num_range: [{ max_num: 39 }] } }, /age requirements/],
+      [{ person_num_range: { min_num: 2 } }, /single adult/],
+      [{ regions: '11,22' }, /Regional eligibility/],
+      [{ member_restrict: { member_type: 0 } }, /membership eligibility/],
+      [{ supported_cert_type_map: '{"0":[1]}' }, /credential is not eligible/],
+      [{ supported_cert_type_map: '{' }, /malformed/],
+      [{ future_rule: true }, /unsupported passenger restrictions/],
+      [{ person_num_range: { min_num: 1, max_num: 9 } }, /changed the fare/],
+    ] as const) {
+      restrictions = changed;
+      await assert.rejects(act('CreateFliggyFlightBooking', approval), reason);
+      assert.equal(calls.includes('airbook'), false);
+    }
+    restrictions = approvedRules;
     amount = 461;
     await assert.rejects(act('CreateFliggyFlightBooking', approval), /changed the fare/);
     amount = 460;
@@ -162,7 +192,7 @@ test('Jinghang payment schedules original-order checks through restart, independ
     assert.equal(fulfilled.independentRead, true);
     assert(!JSON.stringify(fulfilled).includes('8702222211119'));
     await assert.rejects(act('CloseFliggyFlightBooking', approval), /unpaid/);
-    paid = false; issued = false;
+    paid = false; issued = false; restrictions = undefined;
     const unpaid = await act('PrepareFliggyFlightBooking', { search, itemId: 'approved-fare', profileId: 'adult-1', bookingKey: randomUUID() });
     const approvedUnpaid = { booking: unpaid, approvedDigest: (await view(unpaid)).approvalDigest, amountMinor: 53000 };
     await act('CreateFliggyFlightBooking', approvedUnpaid);

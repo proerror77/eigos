@@ -11,6 +11,7 @@ import { ExternalOperations } from '../../runtime/external-operations.js';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import type { Objects } from '../../runtime/objects.js';
 import type { Task } from '../../runtime/tasks.js';
+import { requireEligiblePassenger } from './passenger-restrictions.js';
 import { OrderObservation } from './order-observation.js';
 import { topIdentifier, topNumber, type FliggyFlightResolver } from './top.js';
 
@@ -39,6 +40,7 @@ const flightRoute = z.object({ trip_type: z.literal(1),
   })).length(1) }),
 });
 const offer = z.object({
+  passenger_restrict: z.unknown().optional(),
   item_id: partnerFlightQuote.shape.itemId, refund_change_details: partnerFlightQuote.shape.refundTerms,
   search_extra_attribute: z.object({ standard_product: z.literal(true) }),
   flight_route: flightRoute,
@@ -76,12 +78,12 @@ async function readQuotes(partner: Partner, search: Search, signal: AbortSignal)
   if (search.origin === search.destination || search.departureDate < new Date(Date.now() + 28800000).toISOString().slice(0, 10))
     throw new Conflict('Use a future domestic flight with distinct airports or cities');
   const body = await partner.call('search', {
-    trip_type: 1, search_mode: 1, cabin_class: 'ALL_CABIN', has_child: false, has_infant: false,
+    trip_type: 1, search_mode: 0, cabin_class: 'ALL_CABIN', has_child: false, has_infant: false,
     external_agent_name: partner.channelName,
     search_od_info_list: [{ dep_city_code: search.origin, arr_city_code: search.destination, dep_date: search.departureDate }],
   }, signal);
   const list = z.object({ flight_group_item_list: z.object({ flight_group_item: z.array(z.unknown()).max(500) }) }).parse(body);
-  const quotes = new Map<string, z.infer<typeof partnerFlightQuote>>();
+  const quotes = new Map<string, {quote: z.infer<typeof partnerFlightQuote>; restrictions: unknown}>();
   for (const value of list.flight_group_item_list.flight_group_item) {
     const decoded = offer.safeParse(value);
     if (!decoded.success) continue;
@@ -100,11 +102,24 @@ async function readQuotes(partner: Partner, search: Search, signal: AbortSignal)
       fareYuan: sell_price, constructionYuan: build_price, fuelYuan: oil_price, taxYuan: tax,
       amountMinor: yuanToFen(sell_price + tax), currency: 'CNY', refundTerms: item.refund_change_details,
     });
+    const listed = { quote, restrictions: item.passenger_restrict ?? null };
     const previous = quotes.get(quote.itemId);
-    if (previous && digest(previous) !== digest(quote)) throw new Conflict('Jinghang returned conflicting identities for a fare');
-    quotes.set(quote.itemId, quote);
+    if (previous && digest(previous) !== digest(listed)) throw new Conflict('Jinghang returned conflicting identities for a fare');
+    quotes.set(quote.itemId, listed);
   }
   return [...quotes.values()];
+}
+
+async function selectedFare(partner: Partner, search: Search, itemId: string, profileId: string, signal: AbortSignal) {
+  const [quotes, profile] = await Promise.all([readQuotes(partner, search, signal), loadProfile(partner, profileId, search.departureDate)]);
+  const listed = quotes.find(item => item.quote.itemId === itemId);
+  if (!listed) throw new Conflict('The selected Jinghang offer was not returned by the current search');
+  requireEligiblePassenger(listed.restrictions, profile.passenger, search.departureDate);
+  const profileDigest = digest(profile), { quote } = listed;
+  // Unrestricted previews retain their existing identity. A change of restrictions requires fresh review.
+  const fields: unknown[] = [search, quote, profileDigest, partner.authority];
+  if (listed.restrictions != null) fields.push(listed.restrictions);
+  return { quote, profile, profileDigest, approvalDigest: digest(fields) };
 }
 
 function stage(ctx: FunctionContext) {
@@ -207,16 +222,13 @@ export function fliggyFlightBookingFunctions(db: Database, resolve: FliggyFlight
   return new Map<string, FunctionHandler>([
     ['readFliggyFlightQuotes', async (raw, ctx) => {
       const partner = await resolve(ctx.principal.owner);
-      return { quotes: (await readQuotes(partner, partnerFlightSearch.parse(raw), ctx.signal)).slice(0, 20), complete: false };
+      return { quotes: (await readQuotes(partner, partnerFlightSearch.parse(raw), ctx.signal)).slice(0, 20).map(item => item.quote), complete: false };
     }],
     ['prepareFliggyFlightBooking', async (raw, ctx) => {
       const edit = stage(ctx), { bookingKey, search, itemId, profileId } = prepareFlightBookingInput.parse(raw);
       const partner = await resolve(ctx.principal.owner);
-      const [quotes, profile] = await Promise.all([readQuotes(partner, search, ctx.signal), loadProfile(partner, profileId, search.departureDate)]);
-      const quote = quotes.find(item => item.itemId === itemId);
-      if (!quote) throw new Conflict('The selected Jinghang offer was not returned by the current search');
+      const { quote, profileDigest, approvalDigest } = await selectedFare(partner, search, itemId, profileId, ctx.signal);
       const ref = { type: fliggyFlightBookingType, id: digest([ctx.principal.owner, partner.authority, bookingKey]) };
-      const profileDigest = digest(profile), approvalDigest = digest([search, quote, profileDigest, partner.authority]);
       return edit(ref, async graph => {
         await partner.assertCurrent();
         const prior = await graph.read(ref).catch(error => { if (!(error instanceof NotFound)) throw error; });
@@ -244,11 +256,8 @@ export function fliggyFlightBookingFunctions(db: Database, resolve: FliggyFlight
       let receipt = await operations.recover<{ merchantOrderId: string }>(ctx.principal.owner, operation.key, operation.scope, ctx.objects);
       if (!receipt) {
         if (Date.parse(booking.expiresAt) <= Date.now() || booking.merchantOrderId) throw new Conflict('Obtain a fresh flight preview');
-        const [quotes, profile] = await Promise.all([
-          readQuotes(partner, booking.search, ctx.signal), loadProfile(partner, booking.profileId, booking.search.departureDate),
-        ]);
-        const quote = quotes.find(item => item.itemId === booking.quote.itemId);
-        if (!quote || digest([booking.search, quote, digest(profile), partner.authority]) !== booking.approvalDigest)
+        const { quote, profile, approvalDigest } = await selectedFare(partner, booking.search, booking.quote.itemId, booking.profileId, ctx.signal);
+        if (approvalDigest !== booking.approvalDigest)
           throw new Conflict('Jinghang changed the fare, flight, terms or passenger');
         receipt = await operations.run(ctx.principal.owner, operation.key, operation.scope, guard, async () => {
           const result = z.object({ order_id: topIdentifier, out_order_no: z.string() }).parse(await partner.call('create', {
