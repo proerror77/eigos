@@ -11,10 +11,11 @@ import { seal, unseal } from './sealed-cookie.js';
 
 /**
  * One sign-in of the portal. `link` is set on the login that verifies the original account for a login that Auth0 paused for
- * linking. Its `first` is the portal sign-in that Auth0 paused, when the browser still held it.
+ * linking. Its `first` is the portal sign-in that Auth0 paused, when the browser still held it. A finished merge hands `first` back
+ * with `expect`, the account it merged into, which is the only user that sign-in may come back as.
  */
 export type LoginAttempt = {
-  state: string; nonce: string; verifier: string;
+  state: string; nonce: string; verifier: string; expect?: string;
   link?: { auth0State: string; subject: string; primary: string; first?: { state: string; nonce: string; verifier: string } };
 };
 export type LoginResult =
@@ -25,12 +26,13 @@ export type LoginResult =
 const attemptFields = { state: z.string().min(1), nonce: z.string().min(1), verifier: z.string().min(1) };
 const attemptSchema: z.ZodType<LoginAttempt> = z.strictObject({
   ...attemptFields,
+  expect: z.string().min(1).optional(),
   link: z.strictObject({ auth0State: z.string().min(1), subject: z.string().min(1), primary: z.string().min(1),
     first: z.strictObject(attemptFields).optional() }).optional(),
 });
 // What the Auth0 Action sends to the link page and what the link cookie keeps. The length bounds keep the sealed cookies within
 // the 4096 characters `unseal` reads: the longest ASCII values seal to 3842 characters (link cookie) and 3944 (the login cookie of
-// a merge, with the paused sign-in inside it).
+// a merge, with the paused sign-in inside it). The paused sign-in that a finished merge hands back, with its primary, is far shorter.
 const linkText = z.string().min(1).max(256);
 const linkClaims = z.object({ sub: linkText, primary: linkText, connection: linkText });
 const linkQuery = z.object({ session_token: z.string().min(1).max(4096), state: z.string().min(1).max(2000) });
@@ -107,15 +109,21 @@ function pausedSignIn(held: LoginAttempt | undefined, auth0State: string) {
   return held.link.auth0State === auth0State ? held.link.first : undefined;
 }
 
-/** Where Auth0 resumes the paused login: its original state and a five-minute token that names the merged user and the verified account. */
-async function resumeUrl(issuer: string, key: Uint8Array, link: NonNullable<LoginAttempt['link']>) {
+/**
+ * How Auth0 resumes the paused login: its continue address with the original state, and a five-minute token that names the merged
+ * user and the verified account. Auth0 takes the token in the body of a POST to that address.
+ */
+async function resumeLogin(issuer: string, key: Uint8Array, link: NonNullable<LoginAttempt['link']>) {
   const now = Math.floor(Date.now() / 1000);
   const token = await new SignJWT({ state: link.auth0State, primary: link.primary }).setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
     .setSubject(link.subject).setIssuedAt(now).setExpirationTime(now + resumeSeconds).sign(key);
-  const url = new URL('continue', issuer);
-  url.search = new URLSearchParams({ state: link.auth0State, session_token: token }).toString();
-  return url;
+  const action = new URL('continue', issuer);
+  action.search = new URLSearchParams({ state: link.auth0State }).toString();
+  return { action, token };
 }
+
+/** Text for an HTML attribute in double quotes. */
+const attribute = (text: string) => text.replace(/[&"'<>]/g, character => `&#${character.charCodeAt(0)};`);
 
 export function auth0AccountLogin(config: Config, exchange: typeof fetch = fetch,
   keys: JWTVerifyGetKey = createRemoteJWKSet(new URL(config.OAUTH_JWKS_URL!))) {
@@ -248,15 +256,31 @@ export function mountAccountPortal(app: express.Express, config: Config, account
       // This login only proves the original account to Auth0. Anything but that account's verified sign-in turns back, and
       // neither outcome opens a session or an account here.
       if (result.kind !== 'verified' || result.subject !== attempt.link.primary) { redirect(res, 'link'); return; }
-      const next = await resumeUrl(config.OAUTH_ISSUER!, linkKey, attempt.link);
+      // Whoever just proved they own the account authorizes its agents again: an agent that someone connected before the merge, for
+      // example to an address they registered first, loses its access here. The account page then offers to authorize again.
+      await accounts.revoke(result.owner);
+      const { action, token } = await resumeLogin(config.OAUTH_ISSUER!, linkKey, attempt.link);
       // Auth0 now resumes the sign-in it paused and sends the browser back to this callback with that sign-in's own state, so the
-      // first attempt goes back into the login cookie. A browser keeps the last Set-Cookie of a name, which replaces the drop above.
-      // Only a finished merge gets here: a failed one leaves the paused sign-in dropped and the link cookie in place.
-      if (attempt.link.first) res.cookie(loginCookie, seal(secret, 'login', attempt.link.first, ttl), { ...cookieOptions, maxAge: ttl });
+      // first attempt goes back into the login cookie, bound to the account it merges into. A browser keeps the last Set-Cookie of a
+      // name, which replaces the drop above. Only a finished merge gets here: a failed one leaves the paused sign-in dropped and the
+      // link cookie in place.
+      if (attempt.link.first) {
+        res.cookie(loginCookie, seal(secret, 'login', { ...attempt.link.first, expect: attempt.link.primary }, ttl), { ...cookieOptions, maxAge: ttl });
+      }
       res.clearCookie(linkCookie, cookieOptions);
-      res.redirect(303, next.href);
+      // Auth0 takes the token in a POST, and no script may send one under this policy, so the user presses the button. The form may go
+      // to Auth0, and to this origin too, because browsers check the redirect that answers the POST, back to this callback, as well.
+      // This address carries the code, so the POST tells Auth0 only the origin it comes from.
+      res.set({
+        'Content-Security-Policy': `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' ${new URL(config.OAUTH_ISSUER!).origin}; frame-ancestors 'none'; base-uri 'none'`,
+        'Referrer-Policy': 'strict-origin',
+      }).type('html').send(page('合并账号', `<p>已确认是你原来的账号。点「继续」完成合并，回到刚才的登录。</p>
+      <form method="post" action="${attribute(action.href)}"><input type="hidden" name="session_token" value="${attribute(token)}"><button>继续</button></form>`));
       return;
     }
+    // The sign-in that a merge handed back has to return as the account it merged into. Anything else, such as the merged user on
+    // its own because Auth0 did not switch the login, turns back with no session and no account.
+    if (attempt.expect !== undefined && (result.kind !== 'verified' || result.subject !== attempt.expect)) { redirect(res, 'link'); return; }
     if (result.kind === 'tenant_missing') { redirect(res, 'tenant'); return; }
     const previous = cookie(req, sessionCookie, sessionShape);
     if (result.kind === 'unverified') {

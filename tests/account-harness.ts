@@ -13,9 +13,13 @@ import { portalEnv } from './account-env.js';
 import type { fixture } from './fixture.js';
 
 export type Fixture = Awaited<ReturnType<typeof fixture>>;
-export type CallbackOutcome = { location: string | null; cookie: string; response: Response; replay: Response };
+/** The form that hands a finished merge back to Auth0: its target and its hidden fields. */
+export type ResumeForm = { action: URL; fields: Record<string, string> };
+export type CallbackOutcome = { location: string | null; cookie: string; response: Response; replay: Response; resume?: ResumeForm };
 export interface AccountGateway {
   url: string; config: Config; accounts: Accounts;
+  /** The fake Auth0 of this Gateway. Pass it to another Gateway as `identity` to make the two instances of one deployment. */
+  identity: FakeIdentityProvider;
   owner(sub: string): string;
   token(sub: string, options?: { azp?: string; aud?: string; scope?: string; issuedAt?: number }): Promise<string>;
   login(sub: string, email: string, options?: { verified?: boolean; tenant?: boolean; wrongState?: boolean; start?: string; startCookie?: string }):
@@ -36,26 +40,28 @@ export interface AccountGateway {
 type Identity = { sub: string; email: string; verified: boolean; tenant: boolean; nonce: string; challenge: string };
 const responseCookie = (response: Response, name: string) =>
   response.headers.getSetCookie().find(value => value.startsWith(name + '='))?.split(';')[0] ?? '';
+const unescape = (text: string) => text.replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)));
+
+/** The form of a page that posts back to an absolute address, as the finished merge does, or undefined. */
+export function resumeForm(html: string): ResumeForm | undefined {
+  const form = /<form method="post" action="(https:[^"]*)">([\s\S]*?)<\/form>/.exec(html);
+  if (!form) return undefined;
+  const fields = [...form[2]!.matchAll(/<input type="hidden" name="([^"]*)" value="([^"]*)">/g)].map(([, name, value]) => [unescape(name!), unescape(value!)]);
+  return { action: new URL(unescape(form[1]!)), fields: Object.fromEntries(fields) };
+}
 
 /**
- * The real Gateway on a loopback port, with the account portal logging in against a fake Auth0:
- * issuer https://identity.example/, PUBLIC_URL https://127.0.0.1, MCP audience https://127.0.0.1/mcp, tenant `personal`,
- * clients `portal`, `grok` and `existing-client`. `signup` sets EIGOS_SIGNUP and `env` adds or overrides variables. `management`
- * stands in for the Auth0 Management API client that resends verification emails; without it the Gateway builds its own from
- * OAUTH_MANAGEMENT_*, which `portalEnv` leaves unset. The caller closes the fixture; `close()` only stops the server.
+ * Stands in for Auth0: one RS256 signing key and a token endpoint for the portal client. Every login gets its own code, and like
+ * Auth0 the fake honours a code once. The portal answers any failed exchange with ?status=login, so the first failed assertion is
+ * kept for `mismatch` to show. Gateways that share one fake are instances of the same deployment.
  */
-export async function accountGateway(f: Fixture, options: { signup?: SignupMode; env?: Record<string, string>; management?: Auth0Management } = {}):
-  Promise<AccountGateway> {
-  const config = readConfig({ ...portalEnv, ...(options.signup ? { EIGOS_SIGNUP: options.signup } : {}), ...options.env });
-  const issuer = config.OAUTH_ISSUER!, publicUrl = config.PUBLIC_URL, audience = publicUrl + '/mcp', tenant = 'personal';
-  const owner = (sub: string) => digest([issuer, tenant, sub]);
+export async function fakeIdentityProvider(config: Config) {
+  const issuer = config.OAUTH_ISSUER!, publicUrl = config.PUBLIC_URL, tenant = 'personal';
   const key = await generateKeyPair('RS256'), jwks = createLocalJWKSet({ keys: [{ ...await exportJWK(key.publicKey), kid: 'test' }] });
   const sign = (claims: Record<string, unknown>, sub: string, aud: string, issuedAt = Math.floor(Date.now() / 1000)) =>
     new SignJWT(claims).setProtectedHeader({ alg: 'RS256', kid: 'test' })
       .setIssuer(issuer).setSubject(sub).setAudience(aud).setIssuedAt(issuedAt).setExpirationTime('15m').sign(key.privateKey);
-  // Every login gets its own code, and like Auth0 the fake honours a code once.
   const codes = new Map<string, Identity>();
-  // The portal answers any failed exchange with ?status=login. Keep the first failed assertion so `login` can show it.
   let mismatch: unknown;
   const exchange: typeof fetch = async (input, init) => {
     try {
@@ -73,9 +79,27 @@ export async function accountGateway(f: Fixture, options: { signup?: SignupMode;
       return Response.json({ id_token: await sign(claims, identity.sub, 'portal') });
     } catch (error) { mismatch ??= error; throw error; }
   };
+  return { tenant, jwks, sign, codes, exchange, mismatch: () => mismatch };
+}
+export type FakeIdentityProvider = Awaited<ReturnType<typeof fakeIdentityProvider>>;
+
+/**
+ * The real Gateway on a loopback port, with the account portal logging in against a fake Auth0:
+ * issuer https://identity.example/, PUBLIC_URL https://127.0.0.1, MCP audience https://127.0.0.1/mcp, tenant `personal`,
+ * clients `portal`, `grok` and `existing-client`. `signup` sets EIGOS_SIGNUP and `env` adds or overrides variables. `management`
+ * stands in for the Auth0 Management API client that resends verification emails; without it the Gateway builds its own from
+ * OAUTH_MANAGEMENT_*, which `portalEnv` leaves unset. `identity` is the fake Auth0 to use, by default a new one. The caller closes
+ * the fixture; `close()` only stops the server.
+ */
+export async function accountGateway(f: Fixture, options: { signup?: SignupMode; env?: Record<string, string>; management?: Auth0Management;
+  identity?: FakeIdentityProvider } = {}): Promise<AccountGateway> {
+  const config = readConfig({ ...portalEnv, ...(options.signup ? { EIGOS_SIGNUP: options.signup } : {}), ...options.env });
+  const issuer = config.OAUTH_ISSUER!, publicUrl = config.PUBLIC_URL, audience = publicUrl + '/mcp';
+  const identity = options.identity ?? await fakeIdentityProvider(config), { tenant, jwks, sign, codes } = identity;
+  const owner = (sub: string) => digest([issuer, tenant, sub]);
   const accounts = new Accounts(f.db, config.EIGOS_SIGNUP);
   const gateway = createApp(config, f.db, f.source, jwtVerifier(issuer, publicUrl, jwks, config.OAUTH_TENANT_CLAIM, audience), {},
-    { accountLogin: auth0AccountLogin(config, exchange, jwks), management: options.management });
+    { accountLogin: auth0AccountLogin(config, identity.exchange, jwks), management: options.management });
   const server = gateway.app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
   const address = server.address();
@@ -87,16 +111,20 @@ export async function accountGateway(f: Fixture, options: { signup?: SignupMode;
       nonce: authorize.searchParams.get('nonce')!, challenge: authorize.searchParams.get('code_challenge')! });
     const target = url + '/account/callback?code=' + code + '&state=' + (o.wrongState ? 'wrong' : authorize.searchParams.get('state'));
     const response = await fetch(target, { redirect: 'manual', headers: { Cookie: loginCookie } });
+    // A finished merge answers with a page whose form hands the paused login back to Auth0.
+    const resume = response.status === 200 ? resumeForm(await response.clone().text()) : undefined;
     // The replay fails on purpose, and the portal logs every failed sign-in. These logins are not about that line, so it is dropped.
     const quiet = mock.method(console, 'error', () => {});
     const replay = await fetch(target, { redirect: 'manual', headers: { Cookie: loginCookie } }).finally(() => quiet.mock.restore());
+    const mismatch = identity.mismatch();
     if (mismatch) throw mismatch;
     if (o.wrongState) assert(codes.has(code), 'a callback with the wrong state must not exchange the code');
     assert.equal(replay.headers.get('location'), '/account?status=login');
-    return { location: response.headers.get('location'), cookie: responseCookie(response, '__Host-eigos-account'), response, replay };
+    return { location: response.headers.get('location'), cookie: responseCookie(response, '__Host-eigos-account'), response, replay,
+      ...(resume && { resume }) };
   };
   return {
-    url, config, accounts, owner, callback,
+    url, config, accounts, identity, owner, callback,
     token: (sub, o = {}) => sign({ [config.OAUTH_TENANT_CLAIM]: tenant, azp: o.azp ?? 'grok', scope: o.scope ?? 'tasks:read tasks:write ontology:write' },
       sub, o.aud ?? audience, o.issuedAt),
     async login(sub, email, o = {}) {

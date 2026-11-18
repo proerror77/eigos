@@ -565,10 +565,10 @@ test('the link page continues the Auth0 login only after the original account si
     const wrong = await g.login('someone-else', 'amy@example.test', { start: '/account/link/continue', startCookie: linkCookie });
     assert.equal(wrong.location, '/account?status=link');
     const right = await g.login('google-oauth2|old', 'amy@example.test', { start: '/account/link/continue', startCookie: linkCookie });
-    const resumed = new URL(right.location!);
+    const resumed = right.resume!.action;
     assert.equal(resumed.origin + resumed.pathname, 'https://identity.example/continue');
     assert.equal(resumed.searchParams.get('state'), 'orig');
-    const { payload } = await jwtVerify(resumed.searchParams.get('session_token')!, secret, { algorithms: ['HS256'] });
+    const { payload } = await jwtVerify(right.resume!.fields.session_token!, secret, { algorithms: ['HS256'] });
     assert.deepEqual([payload.sub, payload.state, payload.primary], ['auth0|new', 'orig', 'google-oauth2|old']);
   } finally { await g.close(); await f.close(); }
 });
@@ -720,6 +720,8 @@ const cookieAfter = (response: Awaited<ReturnType<typeof fetch>>, name: string) 
   response.headers.getSetCookie().filter(value => value.startsWith(name)).at(-1);
 const pairOf = (setCookie: string) => setCookie.split(';')[0]!;
 const firstShape = z.strictObject({ state: z.string(), nonce: z.string(), verifier: z.string() });
+// The first sign-in as a finished merge hands it back: bound to the account it merged into.
+const restoredShape = z.strictObject({ ...firstShape.shape, expect: z.string() });
 const pausedShape = z.strictObject({ ...firstShape.shape,
   link: z.strictObject({ auth0State: z.string(), subject: z.string(), primary: z.string(), first: firstShape.optional() }) });
 const spent = /^__Host-eigos-account-link=; .*Path=\/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax$/;
@@ -744,25 +746,79 @@ test('a login that started on the link page turns back unless it is the verified
   } finally { await g.close(); await f.close(); }
 });
 
-test('the original account signing in resumes the paused Auth0 login with a five-minute token and still opens no session or account', async () => {
+test('the original account signing in gets a page that posts a five-minute token back to Auth0, and still no session or account', async () => {
   const f = await fixture(), g = await accountGateway(f, { signup: 'open' });
   try {
     const right = await verifyAs(g, 'google-oauth2|old');
-    const resumed = new URL(right.location!);
-    assert.equal(resumed.origin + resumed.pathname, 'https://identity.example/continue');
+    assert.equal(right.response.status, 200);
+    assert.equal(right.location, null, 'no redirect: Auth0 takes the token back in a POST');
+    assert.match(right.response.headers.get('content-type')!, /^text\/html/);
+    assert.equal(right.response.headers.get('cache-control'), 'no-store');
+    const policy = right.response.headers.get('content-security-policy')!;
+    assert.match(policy, /default-src 'none'/, 'no script runs, so the user presses the button');
+    assert.match(policy, /form-action 'self' https:\/\/identity\.example;/, 'the form goes to Auth0, and Auth0 answers with a redirect back here');
+    assert.equal(right.response.headers.get('referrer-policy'), 'strict-origin', 'Auth0 learns where the post comes from, never the address with the code');
+    const html = await right.response.text();
+    assert.match(html, /<button>继续<\/button>/);
+    assert.doesNotMatch(html, /<script/i);
+    const { action, fields } = right.resume!;
+    assert.equal(action.origin + action.pathname, 'https://identity.example/continue');
+    assert.deepEqual([...action.searchParams.keys()], ['state'], 'the token goes in the body, not in the address');
+    assert.equal(action.searchParams.get('state'), 'orig');
+    assert.deepEqual(Object.keys(fields), ['session_token']);
     opensNoSession(right, 'the original account');
     assert.match(cookieAfter(right.response, linkCookieName)!, spent, 'the link cookie is spent');
     assert.match(cookieAfter(right.response, loginCookieName)!, /^__Host-eigos-account-login=; /, 'the browser held no first sign-in, so none comes back');
     for (const sub of ['google-oauth2|old', 'auth0|new']) assert.equal(await g.accounts.account(g.owner(sub)), undefined, sub + ' gets no account');
 
-    assert.deepEqual([...resumed.searchParams.keys()].sort(), ['session_token', 'state']);
-    const { payload, protectedHeader } = await jwtVerify(resumed.searchParams.get('session_token')!, linkSecret, { algorithms: ['HS256'] });
+    const { payload, protectedHeader } = await jwtVerify(fields.session_token!, linkSecret, { algorithms: ['HS256'] });
     assert.deepEqual(protectedHeader, { alg: 'HS256', typ: 'JWT' });
     assert.deepEqual([payload.sub, payload.state, payload.primary], ['auth0|new', 'orig', 'google-oauth2|old']);
     assert.equal(payload.exp! - payload.iat!, 300, 'valid for five minutes');
     assert.ok(Math.abs(payload.iat! - Date.now() / 1000) < 60);
-    await assert.rejects(jwtVerify(resumed.searchParams.get('session_token')!, new TextEncoder().encode('p'.repeat(32)), { algorithms: ['HS256'] }),
+    await assert.rejects(jwtVerify(fields.session_token!, new TextEncoder().encode('p'.repeat(32)), { algorithms: ['HS256'] }),
       'signed with the account link secret, not the portal secret');
+
+    // The paused state comes from the link address, so the page escapes it.
+    const odd = 'x"><b>&\'y z', link = { auth0State: odd, subject: 'auth0|new', primary: 'google-oauth2|old', connection: 'google-oauth2' };
+    const escaped = await verifyAs(g, 'google-oauth2|old', { startCookie: linkCookieName + seal(g.config.EIGOS_PORTAL_SECRET!, 'link', link, 300_000) });
+    assert.equal(escaped.resume!.action.searchParams.get('state'), odd, 'the address reads back whole');
+    const raw = await escaped.response.text();
+    assert.equal(raw.includes(odd), false);
+    assert.doesNotMatch(raw, /<b>/);
+  } finally { await g.close(); await f.close(); }
+});
+
+test('a finished merge withdraws the agent access of the account it merges into, and a failed one leaves it alone', async () => {
+  const f = await fixture(), g = await accountGateway(f, { signup: 'open' });
+  const primary = 'google-oauth2|old', email = 'amy@example.test';
+  try {
+    // The original account is open and has authorized Grok, and an agent holds a token for it.
+    const original = await g.login(primary, email);
+    await g.form('approve', original.cookie);
+    const connected = await g.token(primary, { issuedAt: Math.floor(Date.now() / 1000) + 5 });
+    assert.equal((await g.call('/identity', connected)).status, 200);
+
+    // A merge that does not finish changes nothing.
+    for (const sub of ['someone-else', 'auth0|new']) assert.equal((await verifyAs(g, sub)).location, '/account?status=link', sub);
+    assert.equal((await g.accounts.account(g.owner(primary)))?.revoked_at, null);
+    assert.equal((await g.call('/identity', connected)).status, 200);
+
+    // Whoever just proved they own the account authorizes its agents again, so an agent that someone connected before the merge,
+    // for example to an address they registered first, loses its access.
+    const started = await fetch(g.url + '/account/login', { redirect: 'manual' });
+    const authorize = new URL(started.headers.get('location')!);
+    const merged = await verifyAs(g, primary, { startCookie: pausedCookie(g) + '; ' + pairOf(cookieAfter(started, loginCookieName)!) });
+    assert.ok(merged.resume, 'the merge finished');
+    assert.ok((await g.accounts.account(g.owner(primary)))?.revoked_at, 'the authorization is withdrawn');
+    const refused = await g.call('/identity', connected);
+    assert.equal(refused.status, 403);
+    assert.equal((await refused.json()).reason, 'client_not_authorized');
+
+    // The resumed sign-in lands on the account page in its usual re-authorize state.
+    const resumed = await g.callback(authorize, pairOf(cookieAfter(merged.response, loginCookieName)!), primary, email);
+    assert.equal(resumed.location, '/account');
+    assert.match(await g.page(resumed.cookie), /已撤销 Grok 的访问，需要时可以重新授权。<\/p><form method="post" action="\/account\/approve"><button>重新授权 Grok<\/button>/);
   } finally { await g.close(); await f.close(); }
 });
 
@@ -785,13 +841,16 @@ test('the longest accepted link values still fit the sealed cookies from the fir
     assert.ok(sealedLength(attempt, loginCookieName) <= 4096, 'the login cookie is within the sealed cookie limit');
     assert.ok(unseal(g.config.EIGOS_PORTAL_SECRET!, 'login', pairOf(attempt).slice(loginCookieName.length), pausedShape)?.link.first, 'and it still reads back');
     const merged = await g.callback(new URL(continued.headers.get('location')!), pairOf(attempt), claims.primary, email);
-    const resumed = new URL(merged.location!);
+    const resumed = merged.resume!.action;
     assert.equal(resumed.origin + resumed.pathname, 'https://identity.example/continue');
     assert.equal(resumed.searchParams.get('state'), state);
-    const { payload } = await jwtVerify(resumed.searchParams.get('session_token')!, linkSecret, { algorithms: ['HS256'] });
+    const { payload } = await jwtVerify(merged.resume!.fields.session_token!, linkSecret, { algorithms: ['HS256'] });
     assert.deepEqual([payload.sub, payload.state, payload.primary], ['n'.repeat(256), state, claims.primary]);
 
-    const done = await g.callback(first, pairOf(cookieAfter(merged.response, loginCookieName)!), claims.primary, email);
+    // The first sign-in comes back bound to the longest primary, and still fits.
+    const restored = cookieAfter(merged.response, loginCookieName)!;
+    assert.ok(sealedLength(restored, loginCookieName) <= 4096, 'the restored login cookie is within the sealed cookie limit');
+    const done = await g.callback(first, pairOf(restored), claims.primary, email);
     assert.equal(done.location, '/account');
     assert.ok(done.cookie);
   } finally { await g.close(); await f.close(); }
@@ -822,7 +881,7 @@ test('a portal sign-in that Auth0 pauses for linking ends in a session once the 
 
     // The user presses the button while the browser still holds the first sign-in, and signs in as the original account.
     const merged = await g.login('google-oauth2|old', email, { start: '/account/link/continue', startCookie: linkCookie + '; ' + firstCookie });
-    assert.match(merged.location!, /^https:\/\/identity\.example\/continue\?/);
+    assert.equal(merged.resume!.action.origin + merged.resume!.action.pathname, 'https://identity.example/continue');
     opensNoSession(merged, 'the merge itself');
 
     // The link cookie is spent. The first sign-in comes back as the login cookie, with a fresh five minutes and the usual flags.
@@ -833,7 +892,8 @@ test('a portal sign-in that Auth0 pauses for linking ends in a session once the 
     const first = unseal(secret, 'login', firstCookie.slice(loginCookieName.length), firstShape);
     assert.ok(first);
     assert.equal(first.state, authorize.searchParams.get('state'));
-    assert.deepEqual(unseal(secret, 'login', pairOf(restored).slice(loginCookieName.length), firstShape), first, 'exactly the first sign-in, nothing from the merge');
+    assert.deepEqual(unseal(secret, 'login', pairOf(restored).slice(loginCookieName.length), restoredShape), { ...first, expect: 'google-oauth2|old' },
+      'the first sign-in and nothing else from the merge, bound to the account it merges into');
     assert.match(cookieAfter(merged.replay, loginCookieName)!, /^__Host-eigos-account-login=; /, 'a replayed merge hands nothing back');
 
     // The merge is done. Auth0 signs the paused login in as the primary and calls back with the first state.
@@ -844,6 +904,64 @@ test('a portal sign-in that Auth0 pauses for linking ends in a session once the 
     assert.equal((await g.accounts.account(g.owner('google-oauth2|old')))?.status, 'active');
     assert.equal(await g.accounts.account(g.owner('auth0|new')), undefined, 'one account, the original one');
   } finally { await g.close(); await f.close(); }
+});
+
+test('a resumed sign-in that does not come back as the account it merged into opens no session and no account', async () => {
+  const f = await fixture(), g = await accountGateway(f, { signup: 'open' });
+  const email = 'amy@example.test';
+  try {
+    const started = await fetch(g.url + '/account/login', { redirect: 'manual' });
+    const authorize = new URL(started.headers.get('location')!);
+    const page = await fetch(g.url + '/account/link?' + new URLSearchParams({ state: 'orig', session_token: await linkToken() }), { redirect: 'manual' });
+    const merged = await g.login('google-oauth2|old', email, { start: '/account/link/continue',
+      startCookie: pairOf(cookieAfter(page, linkCookieName)!) + '; ' + pairOf(cookieAfter(started, loginCookieName)!) });
+    assert.ok(merged.resume, 'the merge finished');
+    const restored = pairOf(cookieAfter(merged.response, loginCookieName)!);
+    // Auth0 resumed the sign-in without switching it to the primary, so the merged user comes back on its own. Nor does any other
+    // outcome stand in for the primary's verified sign-in.
+    const outcomes: Array<[string, string, Parameters<AccountGateway['callback']>[4]]> = [
+      ['the merged user', 'auth0|new', {}],
+      ['another account', 'someone-else', {}],
+      ['the primary with an unverified email', 'google-oauth2|old', { verified: false }],
+      ['the primary without a tenant claim', 'google-oauth2|old', { tenant: false }],
+    ];
+    for (const [name, sub, options] of outcomes) {
+      const back = await g.callback(authorize, restored, sub, email, options);
+      assert.equal(back.location, '/account?status=link', name);
+      opensNoSession(back, name);
+      assert.equal(back.response.headers.getSetCookie().some(value => value.startsWith(verifyCookieName)), false, 'no verify cookie: ' + name);
+    }
+    for (const sub of ['auth0|new', 'someone-else', 'google-oauth2|old']) assert.equal(await g.accounts.account(g.owner(sub)), undefined, sub + ' gets no account');
+    // The primary itself still finishes the same sign-in.
+    assert.equal((await g.callback(authorize, restored, 'google-oauth2|old', email)).location, '/account');
+  } finally { await g.close(); await f.close(); }
+});
+
+test('a sign-in started on one Gateway instance finishes on another that has the same secrets and database', async () => {
+  const f = await fixture(), a = await accountGateway(f, { signup: 'open' }), b = await accountGateway(f, { signup: 'open', identity: a.identity });
+  const email = 'amy@example.test';
+  try {
+    // A plain sign-in: started on A, called back on B, and the session works on both.
+    const started = await fetch(a.url + '/account/login?signup=1', { redirect: 'manual' });
+    const nina = await b.callback(new URL(started.headers.get('location')!), pairOf(cookieAfter(started, loginCookieName)!), 'nina', 'nina@example.test');
+    assert.equal(nina.location, '/account');
+    for (const g of [a, b]) assert.match(await g.page(nina.cookie), /授权 Grok/);
+    assert.equal((await a.accounts.account(a.owner('nina')))?.status, 'active');
+
+    // A merge that changes instance at every step: the first sign-in starts on A, the link page is on B, the original login starts
+    // on A and comes back to B, and the resumed sign-in comes back to A.
+    const first = await fetch(a.url + '/account/login', { redirect: 'manual' });
+    const authorize = new URL(first.headers.get('location')!);
+    const page = await fetch(b.url + '/account/link?' + new URLSearchParams({ state: 'orig', session_token: await linkToken() }), { redirect: 'manual' });
+    const continued = await fetch(a.url + '/account/link/continue', { redirect: 'manual',
+      headers: { Cookie: pairOf(cookieAfter(page, linkCookieName)!) + '; ' + pairOf(cookieAfter(first, loginCookieName)!) } });
+    const merged = await b.callback(new URL(continued.headers.get('location')!), pairOf(cookieAfter(continued, loginCookieName)!), 'google-oauth2|old', email);
+    assert.ok(merged.resume, 'B hands the merge back to Auth0');
+    const resumed = await a.callback(authorize, pairOf(cookieAfter(merged.response, loginCookieName)!), 'google-oauth2|old', email);
+    assert.equal(resumed.location, '/account');
+    assert.match(await b.page(resumed.cookie), /账号已开通/);
+    assert.equal(await a.accounts.account(a.owner('auth0|new')), undefined, 'one account, the original one');
+  } finally { await a.close(); await b.close(); await f.close(); }
 });
 
 test('the first sign-in also survives a second visit to the continue address, as after going back from the original login', async () => {
