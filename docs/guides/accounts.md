@@ -11,7 +11,13 @@ Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的
 - 账号页的「注册」链接是 `/account/login?signup=1`，「登录」链接是 `/account/login`。
 - 可用两种方式：Google（`google-oauth2` 连接）和邮箱密码（`auth0` 数据库连接）。
 - 邮箱密码注册后，Auth0 发验证邮件。验证之前，账号页只提示先验证邮箱，不开通账号。用户验证后重新登录。配置了 `OAUTH_MANAGEMENT_CLIENT_ID` 和 `OAUTH_MANAGEMENT_CLIENT_SECRET` 时，页面上还有「重新发送验证邮件」按钮，见「重发验证邮件」。
-- 同一个已验证邮箱只对应一个账号。用另一种方式再登录时，Auth0 Action 暂停这次登录，把用户带到合并页 `/account/link`。用户点「用原来的方式登录」（`/account/link/continue`），用原来的方式再登录一次。原账号登录通过后，Auth0 继续被暂停的登录，两种方式合并成一个用户，对应同一个 owner。从账号页发起的登录，合并后回到账号页。登录的不是原账号，或登录没有完成时，账号页显示「合并没有完成，请用原来的方式重新登录。」，用户重新登录。没验证过邮箱的用户不合并。
+- 同一个已验证邮箱只对应一个账号。没验证过邮箱的用户不合并。
+- 用另一种方式再登录同一个邮箱时，要先合并，顺序是：
+  1. Auth0 Action 暂停这次登录，把浏览器送到合并页 `/account/link`。
+  2. 用户点「用原来的方式登录」（`/account/link/continue`），用原来的方式再登录一次。
+  3. 账号页确认这次登录是原来的那个账号，Auth0 才继续被暂停的登录。
+  4. 两种方式合并成一个用户，对应同一个 owner。从账号页发起的登录，合并后回到账号页。
+- 登录的不是原账号，或登录没有完成时，账号页显示「合并没有完成，请用原来的方式重新登录。」，用户重新登录。
 
 ### 开户模式
 
@@ -64,8 +70,10 @@ Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的
 切换：
 
 9. 部署 Action 并放进登录流程，见「Post-Login Action」。要在新 Gateway 运行之后部署，因为 Action 会把有重复用户的登录转到 `/account/link`。
-10. 按「账号组」一节确认 `group:eigos-accounts` 已同步到当前定义。
+10. 确认 `group:eigos-accounts` 已同步到当前定义。先用 `SELECT release FROM <schema>.ontology WHERE id='Eigos'` 查出业务 Ontology 的 release，运行 `npm run ontology:activate -- <release>`，运行前后各用 `SELECT count(*) FROM <schema>.resource_grants WHERE subject='group:eigos-accounts'` 查一次这个组的授权条数。怎么读结果，见「账号组」。
 11. 按「验收」验证。通过后，从门户应用删除原回调。
+
+可选加固：启动日志在 Gateway 开始监听之后才输出，邀请制部署漏设 `EIGOS_SIGNUP` 时，读到日志之前就已经按 `open` 对外了。要避免这种情况，第 8 步先用 `EIGOS_SIGNUP=closed` 启动：已有账号照常使用，不开新户。第 9 步部署 Action、确认已有账号能正常登录和使用 Grok 之后，把 `EIGOS_SIGNUP` 改成 `invite` 或 `open`（这两种模式要求 `EIGOS_ENFORCE_OWNER_RLS=true`），重启 Gateway，再做验收里需要新用户注册的几项。
 
 ## Auth0
 
@@ -87,7 +95,7 @@ Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的
 
 - 配置了 `OAUTH_MANAGEMENT_CLIENT_ID` 和 `OAUTH_MANAGEMENT_CLIENT_SECRET` 才有这个按钮，也才有路由 `POST /account/resend-verification`。不配置时，用户只能自己找验证邮件。
 - 这个路由不需要会话，靠 Cookie `__Host-eigos-account-verify` 找到用户。Cookie 在未验证的登录之后写入，10 分钟有效。过期后点按钮不会发信，页面回到 `verify`，用户重新登录一次。
-- 同一地址每小时最多 5 次。
+- 同一客户端地址（IP）每小时最多 5 次。限流按 IP 计数，不按邮箱或用户：换一个 IP，就能对同一个邮箱再次触发。没设置 `EIGOS_TRUST_PROXY` 时，代理后面的所有用户共用这每小时 5 次。
 - Gateway 的 Management 客户端需要 `update:users`。可以填 Action 用的同一个应用（`read:users`、`update:users`）的凭据，也可以另建一个只授予 `update:users` 的应用。
 - 设置了 `OAUTH_MANAGEMENT_DOMAIN` 时，Management 令牌请求、audience（`https://<域名>/api/v2/`）和验证邮件任务都发往这个域名。没设置时发往 `OAUTH_ISSUER`。`OAUTH_ISSUER` 是 Auth0 自定义域名时，Management API 和它的 audience 仍在租户的默认域名上，所以这样的部署必须设置 `OAUTH_MANAGEMENT_DOMAIN`，否则重发验证邮件会失败。
 - 失败时用户只会回到 `verify` 页，原因记在 Gateway 日志里，见「Gateway 日志」。
@@ -98,6 +106,7 @@ Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的
    - 较新用户没有要保留的 EIGOS 数据：不用处理，交给 Action。
    - 较新用户有要保留的数据：上线前手动合并，并让它做主用户。调用 Management API 的 `POST /api/v2/users/{主用户的 user_id}/identities`，请求体是被并入用户的 `provider` 和 `user_id`（不带 provider 前缀）。
    - 两个用户都有要保留的数据：由运营者决定保留哪一个，另一个的数据合并后访问不到。
+   - 邮箱只有大小写不同的重复用户：Action 用 `users-by-email` 查重，它区分大小写，查不到这样的用户，所以不会合并它们（见「已知限制」）。要合并只能手动，做法同第二条。
 2. **现有 tenant 映射。** 找到现有 Post-Login Actions 里写 tenant claim 的那一个，记下三个值：claim 名、读取的 `app_metadata` 键，以及用户没有这个键时得到的值。它们分别对应 Action 的 `TENANT_CLAIM`、`TENANT_METADATA_KEY` 和 `DEFAULT_TENANT`。
 3. **保留现有的 Post-Login Actions。** 不要删除或改动其他应用的 Actions 和客户端授权。tenant 只从受管理的 `app_metadata` 取，不从邮箱、用户提交的内容或用户可编辑的 `user_metadata` 取。
 
@@ -124,9 +133,17 @@ Action 的源码是 `deploy/auth0/post-login.cjs`，CommonJS，不依赖 npm 包
 
 Action 的行为：
 
-- 对登录流程里所有应用的每次登录都运行，不区分应用。租户里有 EIGOS 以外的应用时，先确认影响。
-- 邮箱已验证、只有一个身份的用户，每次登录都调用一次 `users-by-email`，受 Management API 速率限制约束。Management API 不可用或被限流时，Action 让登录失败，不会跳过重复检查。刷新令牌换新不检查重复用户。
-- 找到较早创建的已验证用户时，Action 暂停登录，转到 `LINK_URL`，这时不写 tenant claim。用户在合并页用原来的方式再登录。账号页确认这次登录是原来的那个已验证账号，才把浏览器送回 `<OAUTH_ISSUER>continue`，带上暂停登录的 `state` 和一个 `session_token`。`session_token` 是用 `EIGOS_ACCOUNT_LINK_SECRET` 签名的 HS256 JWT，claims 是 `sub`（被合并的用户）、`state` 和 `primary`（原来的用户），5 分钟有效。Auth0 随后继续登录，Action 合并两个身份，把登录切换到原来的用户，再写 claim。合并没完成时登录被拒绝，用户看到提示「合并没有完成，请用原来的方式重新登录。」
+- 它对登录流程里所有应用的每次登录都运行，不看是哪个应用。租户里有 EIGOS 以外的应用时，这些应用的登录会受到下面四点影响，授权前要让用户知情：
+  1. 用户没有受管理的 tenant 时，Action 把 `DEFAULT_TENANT` 写进该用户的 `app_metadata`。
+  2. 没有被转去合并的登录，都往 ID Token 里写 tenant claim。
+  3. 邮箱已验证、只有一个身份的用户，每次交互登录都调用一次 Management API 的 `users-by-email`，受速率限制约束。Management API 不可用或被限流时，Action 让登录失败，不会跳过检查。刷新令牌换新不做这个检查。
+  4. 同一邮箱已有较早创建的已验证用户时，这次登录被转到 EIGOS 的 `/account/link`，用户要用原来的方式再登录一次才能继续，合并没完成登录就被拒绝。
+- 合并时 Action 和账号页的分工：
+  1. 找到较早创建的已验证用户时，Action 暂停登录，转到 `LINK_URL`，这时不写 tenant claim。
+  2. 用户在合并页用原来的方式再登录。
+  3. 账号页确认这次登录是原来的那个已验证账号，才把浏览器送回 `<OAUTH_ISSUER>continue`，带上暂停登录的 `state` 和一个 `session_token`。`session_token` 是用 `EIGOS_ACCOUNT_LINK_SECRET` 签名的 HS256 JWT，claims 是 `sub`（被合并的用户）、`state` 和 `primary`（原来的用户），5 分钟有效。
+  4. Auth0 继续登录，Action 合并两个身份，把登录切换到原来的用户，再写 claim。
+  5. 合并没完成时登录被拒绝，用户看到提示「合并没有完成，请用原来的方式重新登录。」
 
 Action 出问题时，先把它从登录流程里移走，其他 Actions 不受影响。已经写回的 `app_metadata` 和已经合并的用户不会撤销。
 
@@ -168,7 +185,7 @@ Gateway 在 `.env` 或部署环境里配置，示例见 `.env.example`。secret 
 
 `EIGOS_TRUST_PROXY` 只在 Gateway 前面有可信的反向代理，并且这个代理会覆盖客户端发来的 `X-Forwarded-*` 头时设置。
 
-- 合法的值有三类：代理的跳数（例如 `1`）、预设名 `loopback`，或用逗号分隔的代理地址或 CIDR 列表。不能写 `true`，Gateway 会在启动时报错退出。
+- 只接受三类值：代理的跳数（例如 `1`）、预设名（例如 `loopback`），或用逗号分隔的代理地址或 CIDR 列表。其他写法，包括 `true`、`false`、`yes`，都会让 Gateway 启动失败。
 - 设置后，Express 不只从 `X-Forwarded-For` 取客户端地址，也从 `X-Forwarded-Host` 和 `X-Forwarded-Proto` 取 `req.hostname` 和 `req.protocol`。Gateway 的 Host 检查用的就是 `req.hostname`。代理没有覆盖这些头时，客户端可以伪造地址绕过限流，也可以伪造主机名。
 - 账号页的限流按真实客户端地址分别计数。不设置时，限流按连接地址计数，代理后面的所有用户共用一个额度。
 - Gateway 直接暴露在公网时不要设置。
@@ -220,7 +237,7 @@ Gateway 角色不授予 `status`、`suspended_at` 和 `suspended_reason` 的 UPD
 | `npm run account -- suspend <owner\|email> <理由…>` | 停用账号。理由 1 至 200 个字符，可以写多个词。 |
 | `npm run account -- restore <owner\|email>` | 恢复停用的账号。 |
 | `npm run account:invite -- <email> [小时]` | 生成邀请码，默认 48 小时，可设 1 至 168 小时。 |
-| `npm run access:grant-business -- <owner>` | 一次性给指定 owner 当前定义里的全部业务授权，以后新增的能力不会自动加上。 |
+| `npm run access:grant-business -- <owner>` | 把指定 owner 名下的全部授权，整体替换成当前定义的业务授权，不是追加。以后新增的能力不会自动加上。只对不走账号路径的 owner 有意义，例如运营者或本地开发身份 `local-developer`；账号的授权由 `group:eigos-accounts` 决定。对持有 `manage_definition` 的运营者或发布者（默认是 `deployment`，可用 `EIGOS_PUBLISHER_SUBJECT` 改）执行，会撤掉它的 `manage_definition`。 |
 
 - `<owner|email>`：64 位十六进制按 owner 查找，否则当作邮箱，不区分大小写。按邮箱查找要求账号已经记录邮箱摘要，升级前开通的账号在升级后第一次登录账号页时补上。同一邮箱有多个账号时取最近开通的一个，要精确就用 owner。
 - 停用后，Gateway 立即拒绝这个账号的令牌。用这个账号身份加载的授权不再包含 `group:eigos-accounts`，已排队的任务在 Worker 执行时也会被拒绝。账号页显示「这个账号已停用，请联系 EIGOS 支持。」，也不能再授权 Grok。恢复后一切照旧，Grok 授权状态不变。
@@ -229,13 +246,23 @@ Gateway 角色不授予 `status`、`suspended_at` 和 `suspended_reason` 的 UPD
 
 ### 账号组
 
-开通且未停用、已授权 Grok 的账号，通过组 `group:eigos-accounts` 获得 Ontology 授权。
+开通且未停用、已授权 Grok 的账号，通过组 `group:eigos-accounts` 获得 Ontology 授权。**账号能做什么，只由这个组决定。** 账号令牌，以及它提交后排队、由 Worker 执行的任务，只加载这个组的授权，不加载 owner 自己名下的授权行。所以用 `access:configure` 或 `access:grant-business` 给账号 owner 单独写的资源授权，对它的 Grok 访问不起作用，目前也没有只对某一个账号增减资源授权的办法。`access:configure` 里的 `memberships`（对象策略用的组和标记）仍然按 owner 生效。
 
 - 只有运营者命令会同步这个组。`npm run ontology:publish` 和 `npm run ontology:activate -- <release>` 成功后，如果激活的是业务 Ontology（`Eigos`），这个组的授权被整组替换为当前定义的业务授权。其他 Ontology（例如公共地点）的发布和激活不改动这个组，`ontology:prepare` 也不同步。
 - 业务授权包括：`Eigos` 的 `view_definition`，业务对象的 `view_objects`，业务 Function 的 `execute_function`，业务 Action 的 `apply_action`，以及这些 Function 用到的来源的 `read_source`。不含 `edit_definition` 和 `manage_definition`。沙箱资源只在 `EIGOS_AGENT_SANDBOX_ENABLED=true` 的本地开发环境里包含。
-- 整组替换意味着手工写在这个组上的授权，会在下一次发布或激活时被覆盖。不要再用 `access:configure` 配置 `group:eigos-accounts`。旧组 `group:eigos-member-queries` 不再使用，`db:upgrade` 把它的授权移到新组。给单个 owner 的授权仍可用 `access:configure`，不受同步影响。
-- 升级后，新组先保留从旧组迁来的授权，直到下一次发布或激活才换成业务授权。要马上同步，对当前生效的 release 再运行一次 `npm run ontology:activate -- <release>`。release 在发布命令的输出里，也可以查表 `<schema>.ontology` 的 `release` 列。
+- 整组替换意味着手工写在这个组上的授权，会在下一次发布或激活时被覆盖。不要再用 `access:configure` 配置 `group:eigos-accounts`。旧组 `group:eigos-member-queries` 不再使用，`db:upgrade` 把它的授权移到新组。
+- 升级后，新组先保留从旧组迁来的授权，直到下一次发布或激活才换成业务授权。要马上同步，对当前生效的 release 再运行一次 `npm run ontology:activate -- <release>`。
 - **分支提案合并之后，运营者要再同步一次。** 提案的 `merge` 在运行角色下激活新版本，运行角色不能写授权表，所以 `merge` 不同步这个组，也不改任何授权行。合并之后，用管理角色运行 `npm run ontology:activate -- <release>`，`<release>` 是 `merge` 返回的 `release`。对已经生效的 release 再激活是允许的。合并到这次激活之间，账号拿不到新版本新增的业务能力的授权。
+
+确认同步，用两条查询，`<schema>` 是 `EIGOS_PG_SCHEMA`：
+
+```sql
+SELECT release FROM <schema>.ontology WHERE id='Eigos';
+SELECT count(*) FROM <schema>.resource_grants WHERE subject='group:eigos-accounts';
+```
+
+- 第一条给出业务 Ontology 当前的 release，就是 `ontology:activate` 要用的 `<release>`。`ontology` 表里每个 Ontology 各有一行，必须带 `WHERE id='Eigos'`。拿别的 Ontology（例如公共地点）的 release 运行 `ontology:activate`，命令照常成功，但会静默跳过这个组的同步。
+- 第二条是这个组现有的授权条数，0 表示还没同步过。运行 `ontology:activate` 之后，它应当等于当前定义的业务授权条数。分支合并新增了能力，或升级换掉了旧组的授权时，同步前后的条数通常不同，可以用它看同步有没有发生。`ontology:activate` 的输出里没有同步结果，只能这样查。
 
 账号需要读取某个来源时，仍要给该 owner 配置有效期明确的来源绑定，见 [供应商连接](service-planning.md#供应商连接)。账号无需提供供应商账号凭据。授权范围延续现有 Ontology 权限实现，参考 [Palantir 应用权限](https://www.palantir.com/docs/foundry/developer-console/permissions)。
 
@@ -246,9 +273,9 @@ Gateway 角色不授予 `status`、`suspended_at` 和 `suspended_reason` 的 UPD
 | 路由 | 说明 |
 | --- | --- |
 | GET `/account` | 账号页，没有限流。 |
-| GET `/account/login`、`/account/callback`、`/account/link`、`/account/link/continue` | 登录、回调和合并页。同一地址每分钟合计最多 20 次。 |
-| POST `/account/activate`、`/account/approve`、`/account/revoke`、`/account/logout` | 账号页的表单。需要会话，没有会话返回 401。同一地址每分钟合计最多 30 次。 |
-| POST `/account/resend-verification` | 重发验证邮件，只在配置了 `OAUTH_MANAGEMENT_CLIENT_ID` 和 `OAUTH_MANAGEMENT_CLIENT_SECRET` 时存在。不需要会话。同一地址每小时最多 5 次。 |
+| GET `/account/login`、`/account/callback`、`/account/link`、`/account/link/continue` | 登录、回调和合并页。同一客户端地址（IP）每分钟合计最多 20 次。 |
+| POST `/account/activate`、`/account/approve`、`/account/revoke`、`/account/logout` | 账号页的表单。需要会话，没有会话返回 401。同一客户端地址（IP）每分钟合计最多 30 次。 |
+| POST `/account/resend-verification` | 重发验证邮件，只在配置了 `OAUTH_MANAGEMENT_CLIENT_ID` 和 `OAUTH_MANAGEMENT_CLIENT_SECRET` 时存在。不需要会话。同一客户端地址（IP）每小时最多 5 次，见「重发验证邮件」。 |
 
 超过限制返回 429 和 `Retry-After`。三组限流各算各的，互不占用额度。
 
@@ -309,7 +336,7 @@ Gateway 按下表的顺序检查，第一个不通过的就是返回的 `reason`
 - 重发：`Auth0 token request failed with status <HTTP 状态>`、`Auth0 verification email request failed with status <HTTP 状态>`、`Auth0 token answer is not usable`。
 - 两种都可能出现：`fetch failed`（连不上 Auth0）、`TimeoutError`（10 秒内没有回答）。
 
-日志里没有授权码、令牌、用户标识和邮箱。一行最长 200 个字符，没有换行。
+日志里没有授权码、令牌、用户标识和邮箱。`<原因>` 最长 200 个字符，没有换行，整行比这多出固定的前缀。
 
 下面这些不是故障：
 
