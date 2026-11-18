@@ -1,3 +1,5 @@
+import { withoutExternalDispatch } from './external-operations.js';
+import { ObservationInterests } from './observation-interests.js';
 import { randomUUID } from 'node:crypto';
 import { Conflict, digest, type Principal } from '../core/identity.js';
 import { objectRefSchema } from '../ontology/schema.js';
@@ -16,6 +18,7 @@ export type ScheduledCall = {
   arguments: Record<string, unknown>;
   deadline: string;
   contract: string;
+  observationInterestId?: string;
 };
 export class DeferredExecution extends Error {
   constructor(readonly until: string) {
@@ -47,6 +50,7 @@ export class ScheduledActions {
       runAt: string;
       deadline: string;
       sourceTaskId?: string;
+      observationInterestId?: string;
     },
   ) {
     if (graph.model.scenario) throw new Conflict('Scenarios cannot schedule external execution');
@@ -76,6 +80,7 @@ export class ScheduledActions {
       contract: actionContract(graph.model, job.action),
       sourceTaskId: job.sourceTaskId ?? null,
       plannedRelease: graph.model.release,
+      ...(job.observationInterestId?{observationInterestId:job.observationInterestId}:{}),
     };
     const prior = (
       await this.db.query(
@@ -158,6 +163,7 @@ export class ScheduledActions {
           arguments: row.body.arguments,
           deadline: new Date(row.deadline).toISOString(),
           contract: row.body.contract,
+          ...(row.body.observationInterestId?{observationInterestId:row.body.observationInterestId}:{}),
         },
       };
       await this.db.query(
@@ -266,12 +272,16 @@ export class ScheduledActionRunner {
     const guard = async (client: Sql) => {
       await this.tasks.current(task, client);
       await schedules.current(task, client);
+      if(call.observationInterestId){
+        const graph=new Objects(this.db,model,access,client);
+        const interest=await new ObservationInterests(this.db,this.metadata).assertScheduled(graph,task);
+        if(interest.id!==call.observationInterestId)throw new Conflict('Observation interest changed');
+      }
     };
     await guard(this.db.pool);
     let ref;
     try {
-      ref = objectRefSchema.parse(
-        await this.actions.apply(
+      const apply = () => this.actions.apply(
           access,
           model,
           call.action,
@@ -281,8 +291,8 @@ export class ScheduledActionRunner {
           { task, tasks: this.tasks },
           signal,
           { kind: 'scheduled', id: call.scheduleId },
-        ),
-      );
+        );
+      ref = objectRefSchema.parse(await (call.observationInterestId ? withoutExternalDispatch(apply) : apply()));
     } catch (error) {
       if (error instanceof Clarification)
         throw new Clarification(error.message, error.choices, access.dataRequirements());

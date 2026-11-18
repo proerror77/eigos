@@ -2812,7 +2812,9 @@ async function renderProcesses(reviewPage = 1) {
   const machinery = element('div', { class: 'section' });
   const loadMachinery = async () => {
     const { renderMachinery } = await import('./machinery.js');
-    await renderMachinery(machinery, { element, button, field, select, table, modal, jsonInput, service, proposalDialog,
+    await renderMachinery(machinery, { actions:state.model?.actionTypes ?? [], functions:state.model?.functionTypes ?? [],
+      objectTypes:state.model?.objectTypes ?? [], scopes:state.identity?.scopes ?? [], evaluate:(name,input)=>request('/ontology/functions',{ontology:state.ontology,function:name,input}),
+      element, button, field, select, table, modal, jsonInput, service, proposalDialog,
       openActions: (ref, actions) => actionDialog({ ref }, { actions, live: true }),
       openEvaluation: (id) => openScenarioEvaluation('trial', [], id),
       inspectTask: async (id) => {

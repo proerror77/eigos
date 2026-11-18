@@ -94,7 +94,7 @@ export function listMachineryProcesses(access: Access, model: PublishedOntology)
     access.read(model, target.type);
     access.read(model, target.objectType);
     return [{ type: target.type, objectType: target.objectType, property: target.property,
-      name: model.object(target.objectType).displayName,
+      name: model.object(target.objectType).displayName, states:model.object(target.objectType).properties[target.property]!.schema.enum,
       reference: readableModel(access, model, target, definition.machinery) }];
   }) };
 }
@@ -241,7 +241,7 @@ function distribution(values: number[]) {
 function summarize(cases: ProcessCase[], reference: ReturnType<typeof readableModel>) {
   const states = new Map<string, { ever: number; current: number; closed: number[]; open: number[]; unknown: number; clipped: number; breaches: number; target?: number; terminal: boolean }>();
   const transitions = new Map<string, { from: string | null; to: string | null; count: number; cases: number;
-    expected: boolean | null; action?: string; observedActions: Record<string, number> }>();
+    expected: boolean | null; action?: string; observedActions: Record<string, number>; observedSources: Record<string, number> }>();
   const paths = new Map<string, { id: string; states: string[]; partial: boolean; count: number }>();
   const stateFor = (name: string) => {
     const existing = states.get(name);
@@ -254,7 +254,7 @@ function summarize(cases: ProcessCase[], reference: ReturnType<typeof readableMo
   };
   for (const state of reference?.states ?? []) stateFor(state.name);
   for (const edge of reference?.transitions ?? []) transitions.set(edgeKey(edge.from, edge.to), {
-    ...edge, count: 0, cases: 0, expected: true, observedActions: Object.create(null),
+    ...edge, count: 0, cases: 0, expected: true, observedActions: Object.create(null), observedSources: Object.create(null),
   });
   for (const item of cases) {
     if (item.events.length) {
@@ -275,10 +275,11 @@ function summarize(cases: ProcessCase[], reference: ReturnType<typeof readableMo
       const key = edgeKey(event.from, event.to);
       if (!transitions.has(key)) transitions.set(key, {
         from: event.from, to: event.to, count: 0, cases: 0, expected: reference ? false : null,
-        observedActions: Object.create(null),
+        observedActions: Object.create(null), observedSources: Object.create(null),
       });
       const row = transitions.get(key)!;
       row.count++;
+      if (event.source) row.observedSources[event.source] = (row.observedSources[event.source] ?? 0) + 1;
       if (event.action) row.observedActions[event.action] = (row.observedActions[event.action] ?? 0) + 1;
       distinctEdges.add(key);
     }

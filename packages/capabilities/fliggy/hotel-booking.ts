@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Conflict, NotFound, digest } from '../../core/identity.js';
+import { Conflict, NotFound, SourceReadFailure, digest } from '../../core/identity.js';
 import { readPrivateSourceFile } from '../../core/private-source.js';
 import {
   fliggyHotelBooking, fliggyHotelBookingApproval, fliggyHotelBookingInput, fliggyHotelBookingRef,
@@ -9,6 +9,7 @@ import type { ObjectRef } from '../../ontology/schema.js';
 import type { Database, Sql } from '../../runtime/database.js';
 import { ExternalOperations } from '../../runtime/external-operations.js';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
+import { OrderObservation } from './order-observation.js';
 import { topIdentifier, topNumber, type FliggyHotelResolver } from './top.js';
 
 type Hotel = Awaited<ReturnType<FliggyHotelResolver>>;
@@ -146,6 +147,11 @@ function stage(ctx: FunctionContext) {
 
 export function fliggyHotelFunctions(db: Database, resolve: FliggyHotelResolver): ReadonlyMap<string, FunctionHandler> {
   const operations = new ExternalOperations(db);
+  const observation = new OrderObservation(db, 'RefreshFliggyHotelBooking');
+  const supportsObservation = (ctx: FunctionContext) =>
+    Boolean(ctx.objects.model.object(fliggyHotelBookingType).properties.cancellationObservation);
+  const cancellationTerminal = (state: Booking['state']) =>
+    ['cancelled', 'closed', 'refund_rejected', 'completed'].includes(state);
   const current = async (ctx: FunctionContext, ref: ObjectRef) => {
     if (ref.type !== fliggyHotelBookingType) throw new Conflict('Reference the original Fliggy hotel booking');
     const hotel = await resolve(ctx.principal.owner), row = await ctx.objects.read(ref);
@@ -165,7 +171,11 @@ export function fliggyHotelFunctions(db: Database, resolve: FliggyHotelResolver)
       || !stay.check_in.startsWith(booking.selection.checkIn) || !stay.check_out.startsWith(booking.selection.checkOut)
       || stay.room_number !== booking.selection.rooms)
       throw new Conflict('Fliggy order details differ from the approved original booking');
-    return { merchantOrderId: base.fliggy_order_id, state: states[base.order_status] ?? 'unknown',
+    const state = states[base.order_status] ?? 'unknown';
+    const earlierFulfilmentState = ['awaiting_payment', 'pending_confirmation', 'confirmed'].includes(state);
+    if (booking.independentRead && earlierFulfilmentState && ['refund_pending', 'cancelled', 'closed'].includes(booking.state))
+      throw new Conflict('Fliggy detail contradicts the previously observed order state');
+    return { merchantOrderId: base.fliggy_order_id, state,
       checkedIn: base.is_checked_in, observedAt: new Date().toISOString() };
   };
   const project = (ctx: FunctionContext, ref: ObjectRef, row: { revision: number }, hotel: Hotel,
@@ -274,7 +284,35 @@ export function fliggyHotelFunctions(db: Database, resolve: FliggyHotelResolver)
       const key = operationKey(booking, 'create');
       if (!booking.merchantOrderId && !await operations.inspect(ctx.principal.owner, key))
         throw new Conflict('The hotel preview has no submitted order');
-      const provider = await readProvider(hotel, booking, ctx.signal);
+      const task = observation.task(ctx, ref);
+      const read = () => readProvider(hotel, booking, ctx.signal);
+      let provider: Awaited<ReturnType<typeof read>>;
+      try {
+        provider = task
+          ? await ctx.execution!.tasks.readSource(task, 'hotel-order-detail:' + (task.execution_step ?? 0),
+            { booking: ref, authority: booking.authority, outOrderId: booking.outOrderId }, async () => {
+              try { return await read(); }
+              catch (cause) {
+                ctx.signal.throwIfAborted();
+                await hotel.assertCurrent();
+                throw new SourceReadFailure('Original hotel order could not be verified', { cause });
+              }
+            })
+          : await read();
+      } catch (error) {
+        if (!task || !(error instanceof SourceReadFailure)) throw error;
+        ctx.signal.throwIfAborted();
+        await hotel.assertCurrent();
+        return stage(ctx)(ref, async graph => {
+          await hotel.assertCurrent();
+          const latest = await graph.read(ref);
+          const value = fliggyHotelBooking.parse(latest.properties);
+          const outcome = value.independentRead && cancellationTerminal(value.state) ? 'terminal' : 'unavailable';
+          const status = await observation.advance(graph, task, outcome);
+          if (latest.properties.cancellationObservation !== status)
+            await graph.edit(ref, latest.revision, { cancellationObservation: status });
+        });
+      }
       const reconcileGuard = async (client: Sql) => { await ctx.assertCurrent?.(client); await hotel.assertCurrent(); };
       await operations.reconcile(ctx.principal.owner, key, scope(booking, 'create'),
         reconcileGuard, async () => ({ merchantOrderId: provider.merchantOrderId }), ctx.objects);
@@ -284,7 +322,22 @@ export function fliggyHotelFunctions(db: Database, resolve: FliggyHotelResolver)
       if (provider.state === 'cancelled')
         await operations.reconcile(ctx.principal.owner, operationKey(booking, 'cancel'), scope(booking, 'cancel'),
           reconcileGuard, async () => ({ acknowledged: true }), ctx.objects);
-      return project(ctx, ref, row, hotel, provider);
+      if (!task) return project(ctx, ref, row, hotel, provider);
+      return stage(ctx)(ref, async graph => {
+        await hotel.assertCurrent();
+        const latest = await graph.read(ref);
+        const last = fliggyHotelBooking.parse(latest.properties);
+        // Another refresh may have committed since this read (or while its Worker lease was being recovered).
+        const useReceipt = latest.revision === row.revision && Date.parse(provider.observedAt) >= Date.parse(last.observedAt)
+          && !(last.independentRead && cancellationTerminal(last.state));
+        const state = useReceipt ? provider.state : last.state;
+        const status = await observation.advance(graph, task, cancellationTerminal(state) ? 'terminal' : 'pending');
+        const { checkedIn: _checkedIn, ...facts } = provider;
+        if (useReceipt || latest.properties.cancellationObservation !== status)
+          await graph.edit(ref, latest.revision, {
+            ...(useReceipt ? { ...facts, independentRead: true } : {}), cancellationObservation: status,
+          });
+      });
     }],
     ['readFliggyHotelBooking', async (raw, ctx) => {
       const { booking: ref } = fliggyHotelBookingRef.parse(raw);
@@ -317,7 +370,12 @@ export function fliggyHotelFunctions(db: Database, resolve: FliggyHotelResolver)
           // Pay and cancellation of an unpaid order must not race. Paid
           // cancellations may proceed once the supplier confirms payment.
           const opposing = action === 'pay' ? 'cancel' : original.state === 'awaiting_payment' ? 'pay' : undefined;
-          const guard = dispatchGuard(ctx, booking, ref, row.revision, hotel, approval, opposing);
+          const verify = dispatchGuard(ctx, booking, ref, row.revision, hotel, approval, opposing);
+          const guard = async (client: Sql) => {
+            await verify(client);
+            if (action === 'cancel' && supportsObservation(ctx))
+              await observation.enqueue(ctx, ref, client);
+          };
           await operations.run(ctx.principal.owner, key, approved, guard, async () => {
             const result = await hotel.call(action, { distributor: hotel.distributor, dis_order_id: booking.outOrderId }, ctx.signal);
             if (action === 'pay') z.literal(true).parse(result);
