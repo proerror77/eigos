@@ -167,6 +167,32 @@ test('rate limit bounds its table: expired windows go first, then the oldest add
   assert.equal(await status('198.51.100.2'), 200, '.2 was forgotten and starts a fresh window');
 });
 
+test('rate limit counts an IPv6 client by its /64 and an IPv4 client by its full address', async t => {
+  // A limited request is answered through calls on the response, and any chain of them is accepted here. Only `next` matters.
+  const limit = rateLimit({ windowMs: 60_000, max: 1 });
+  const response: Response = new Proxy({}, { get: () => () => response }) as Response;
+  const allowed = (ip: string) => {
+    let passed = false;
+    limit({ ip } as Request, response, () => { passed = true; });
+    return passed;
+  };
+  assert.equal(allowed('2001:db8:1:2:3:4:5:6'), true);
+  // An IPv6 client usually holds a whole /64, so every address in it shares one budget, however it is written.
+  for (const ip of ['2001:db8:1:2::1', '2001:0DB8:0001:0002:ffff::', '2001:db8:1:2::192.0.2.1', '2001:db8:1:2::1%eth0'])
+    assert.equal(allowed(ip), false, ip);
+  for (const ip of ['2001:db8:1:3::1', '2001:db8::1', '2001:db8:1::2', '::1']) assert.equal(allowed(ip), true, 'a /64 of its own: ' + ip);
+  // IPv4 addresses are counted one by one, and an IPv4-mapped IPv6 address is the IPv4 client it maps.
+  assert.equal(allowed('198.51.100.1'), true);
+  assert.equal(allowed('198.51.100.2'), true);
+  assert.equal(allowed('::ffff:198.51.100.1'), false);
+
+  // The same holds for the forwarded address behind a trusted proxy.
+  const from = await serveLimited(t, { windowMs: 60_000, max: 1 });
+  assert.equal((await from('2001:db8:5:6::1')).status, 200);
+  assert.equal((await from('2001:db8:5:6:a:b:c:d')).status, 429);
+  assert.equal((await from('2001:db8:5:7::1')).status, 200);
+});
+
 test('rate limit remembers 10 000 addresses by default', () => {
   const limit = rateLimit({ windowMs: 60_000, max: 1 });
   // Ten thousand real requests would take seconds, so call the middleware directly. Only `next` matters: a

@@ -47,6 +47,17 @@ test('the Management API domain is a bare lowercase hostname', () => {
     assert.throws(() => readConfig({ ...portalEnv, OAUTH_MANAGEMENT_DOMAIN: domain }), /OAUTH_MANAGEMENT_DOMAIN/, JSON.stringify(domain));
 });
 
+test('EIGOS_TRUST_PROXY takes a hop count, or a list of proxy presets, addresses and CIDRs, and nothing else', () => {
+  assert.equal(readConfig(portalEnv).EIGOS_TRUST_PROXY, undefined);
+  for (const value of ['0', '1', '2', 'loopback', 'linklocal', 'uniquelocal', 'loopback,linklocal,uniquelocal', '10.0.0.1', '10.0.0.0/8',
+    '192.168.0.0/16, loopback', '10.0.0.1/32', '::1', 'fd00::/8', '2001:db8::/128', '2001:db8::/32,10.1.2.3', '::ffff:10.0.0.0/104'])
+    assert.equal(readConfig({ ...portalEnv, EIGOS_TRUST_PROXY: value }).EIGOS_TRUST_PROXY, value, value);
+  // Express would take `true` as "trust every hop" or fail at startup on the others. A hop count goes alone, and a /0 trusts everyone.
+  for (const value of ['true', 'false', 'yes', 'TRUE', 'Loopback', '', ' ', '-1', '1.5', ' 1', '1,loopback', 'loopback,', ',loopback',
+    'loopback,,10.0.0.1', 'example.com', '10.0.0.256', '10.1', '10.0.0.0/', '/8', '10.0.0.0/33', '10.0.0.0/0', '::/0', '::/129', '10.0.0.0/8/8', '10.0.0.0/x'])
+    assert.throws(() => readConfig({ ...portalEnv, EIGOS_TRUST_PROXY: value }), /EIGOS_TRUST_PROXY[\s\S]*hop count/, JSON.stringify(value));
+});
+
 test('accounts provision by sign-up mode and keep operators out', async () => {
   const f = await fixture();
   try {

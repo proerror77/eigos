@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { isIP } from 'node:net';
 import { isAbsolute } from 'node:path';
 import { z } from 'zod';
 import { DidiMcpConnector } from '../capabilities/didi/connector.js';
@@ -10,6 +11,21 @@ import { DidiOperations } from '../capabilities/didi/operations.js';
 
 // A bare lowercase DNS hostname of at least two labels: no scheme, port, path or trailing dot.
 const hostname = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const proxyPresets = ['loopback', 'linklocal', 'uniquelocal'];
+/**
+ * A value for Express's `trust proxy` that names the proxies: a hop count on its own, or a comma-separated list of preset names,
+ * addresses and CIDRs. A CIDR prefix of 0 would trust every address. Anything else, such as `true`, never reaches Express.
+ */
+function trustedProxies(value: string) {
+  if (/^\d+$/.test(value)) return true;
+  return value.split(',').every(entry => {
+    const item = entry.trim();
+    if (proxyPresets.includes(item)) return true;
+    const [address = '', prefix, ...rest] = item.split('/'), family = isIP(address);
+    if (!family || rest.length) return false;
+    return prefix === undefined || /^\d{1,3}$/.test(prefix) && Number(prefix) >= 1 && Number(prefix) <= (family === 4 ? 32 : 128);
+  });
+}
 
 export const configSchema = z.object({
   DATABASE_URL: z.string().min(1), QUERY_DATABASE_URL: z.string().min(1).optional(), EIGOS_PG_SCHEMA: z.string().default('eigos'),
@@ -30,7 +46,8 @@ export const configSchema = z.object({
   EIGOS_SIGNUP: z.enum(['open', 'invite', 'closed']).default('open'),
   EIGOS_ENFORCE_OWNER_RLS: z.enum(['true', 'false']).optional(),
   EIGOS_PORTAL_SECRET: z.string().min(32).optional(), EIGOS_ACCOUNT_LINK_SECRET: z.string().min(32).optional(),
-  EIGOS_TRUST_PROXY: z.string().optional(),
+  EIGOS_TRUST_PROXY: z.string().refine(trustedProxies,
+    'Use a hop count such as 1, or a comma-separated list of proxy addresses, CIDRs and the presets loopback, linklocal and uniquelocal').optional(),
   EIGOS_EXTENSION_MODULE: z.string().optional(),
   EIGOS_SOURCE_COMMIT: z.string().regex(/^[a-f0-9]{40}$/).optional(),
   EIGOS_DIDI_CONNECTION_FILE: z.string().optional(),
