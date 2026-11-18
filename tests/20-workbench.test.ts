@@ -443,3 +443,42 @@ test('workbench pages large relationships through the authorized Link query', as
   assert(!requests.some(item => item.path === '/ontology/services/follow_links'));
   assert.equal(tables.at(-1)!.rows.length, 180);
 });
+
+test('workbench explains blocked historical drafts and creates an empty recovery proposal through the normal lifecycle',async()=>{
+  const buttons=new Map<string,()=>Promise<void>>(),tables:{headers:string[];rows:any[][]}[]=[],requests:{path:string;input:any}[]=[];
+  const node=()=>({append(){},replaceChildren(){},close(){}});
+  const source=await readFile(new URL('../apps/workbench/app.js',import.meta.url),'utf8');
+  const context={document:{querySelector:node,querySelectorAll:()=>[]},sessionStorage:{getItem:()=>null},window:{addEventListener(){}},
+    crypto:{randomUUID:()=>'recovery-request'},uiNode:node,
+    uiElement:()=>node(),uiButton:(label:string,action:()=>Promise<void>)=>{buttons.set(label,action);return {label};},
+    uiTable:(headers:string[],rows:any[][])=>{tables.push({headers,rows});return node();},
+    uiRequest:async(path:string,input:any)=>{
+      requests.push({path,input});
+      if(path==='/ontology/services/scenario_continuation_sources')return {items:[
+        {id:'legacy',name:'Legacy',release:'old-release',revision:4,continuation:{status:'blocked',reason:'incomplete-action-journal'}},
+        {id:'ready',name:'Ready',release:'old-release',revision:3,continuation:{status:'ready',reason:null}},
+      ]};
+      if(path==='/ontology/services/inspect_scenario_continuation')return {id:'legacy',name:'Legacy',revision:4,
+        objects:[{ref:{type:'Route',id:'route'},before:{name:null},after:{name:null}}],links:[]};
+      if(path==='/ontology/scenarios')return {id:'new-proposal'};
+      return {items:[]};
+    }};
+  const workbench=runInNewContext(source+`
+    element=uiElement;button=uiButton;table=uiTable;surface=heading=field=empty=modal=uiNode;
+    notice=()=>{};request=uiRequest;({state,renderScenarios});`,context);
+  workbench.state.model={objectTypes:[],actionTypes:[]};
+  await workbench.renderScenarios();await buttons.get('接续方案')!();
+  const choices=tables.find(table=>table.headers[0]==='草稿')!;
+  assert.match(choices.rows[0]![2],/记录不完整/);
+  assert.equal(choices.rows[0]![3].label,'查看差异并重新提案');
+  assert.equal(choices.rows[1]![3].label,'复制为持久方案');
+  await buttons.get('查看差异并重新提案')!();
+  assert.equal(requests.at(-1)!.path,'/ontology/services/inspect_scenario_continuation');
+  assert.equal(requests.some(request=>request.path==='/ontology/services/continue_scenario'),false);
+  await buttons.get('新建方案重新提案')!();
+  const created=requests.find(request=>request.path==='/ontology/scenarios')!;
+  assert.equal(created.input.kind,'persisted');assert.equal(created.input.name,'Legacy（重新提案）');
+  assert.equal(created.input.requestId,'recovery-request');
+  assert.equal(Object.hasOwn(created.input,'objects'),false);assert.equal(Object.hasOwn(created.input,'reviewers'),false);
+  assert.equal(workbench.state.scenario,'new-proposal');
+});

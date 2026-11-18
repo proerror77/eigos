@@ -15,16 +15,33 @@ export type AgentProfile = NonNullable<OntologyDocument['agentProfiles']>[number
 export const businessAgentProfiles: AgentProfile[] = [
   {
     apiName: 'RideQuote',
-    terms: ['打车', '滴滴', '估价', '车费', '车价', '询价', '出租车', 'didi', 'taxi', 'ride quote', 'fare only', 'fare estimate',
+    terms: ['打车', '滴滴', '估价', '车费', '车价', '询价', '出租车', 'didi', 'taxi', 'ride quote', 'fare only', 'fare estimate', '打车链接', '滴滴跳转', '滴滴小程序', 'ride link',
       '叫车', '叫个车', '叫辆车', '打个车', '打辆车', '网约车', '专车', '快车', '用车'],
     objects: ['RideRequest', 'Route', 'Place', 'RideEstimate'],
     interfaces: ['RideInquiry', 'RideInquiryWithPlaceClues', 'RideEstimatable'],
     actions: ['EstimateRide', 'EstimateRideWithPlaceClues'],
-    functions: ['readRideEstimates', 'readInteractiveRideEstimate'],
+    functions: ['readRideEstimates', 'readInteractiveRideEstimate', 'generateDidiRideAppLink'],
     instructions: [
+      { function: 'generateDidiRideAppLink', text: 'When asked for an App or mini-program link, use complete_with_action with the ride estimate Interface Action and generateDidiRideAppLink as the result Function (resultParameter: request). Pass serviceClass only for a vehicle the user selected. For an existing quote, pass its RideRequest reference and, when applicable, the selected RideEstimate. The user completes the booking on DiDi.' },
       { action: 'EstimateRide', function: 'readRideEstimates', text: 'When the user provides the city, pickup and destination for a fare-only inquiry, use complete_with_action with RideInquiry.estimate on RideRequest and readRideEstimates (resultParameter: request). Include serviceClass only for a specified vehicle class.' },
       { action: 'EstimateRideWithPlaceClues', function: 'readInteractiveRideEstimate', text: 'Use RideInquiryWithPlaceClues.estimate on RideRequest with readInteractiveRideEstimate when the user also requests driving time, provides landmark clues, or the named ride inquiry cannot be used. Pass a given pickup or itinerary point as origin. With authorized device location, omit origin to ask the original PA for fresh phone location and verify its coordinate system. Omit a missing destination so the Action asks for it. Pass only a city established by the user. Keep nearby landmarks separate and preserve ambiguous names for the Action to resolve.' },
     ],
+  },
+  {
+    apiName: 'DidiOrderManagement',
+    terms: ['取消滴滴', '取消订单', '取消打车', '取消叫车', '滴滴订单', '滴滴司机', 'cancel ride', 'cancel taxi', 'didi order'],
+    objects: ['DidiRideOrder', 'DidiRideWatch', 'EventTrip'],
+    interfaces: ['RideOrder', 'CancelableRideOrder'],
+    actions: ['CancelDidiRideOrder', 'RefreshDidiRideOrder', 'StartDidiRideWatch', 'StopDidiRideWatch'],
+    functions: ['readDidiRideOrder', 'readDidiRideWatch', 'readDidiDriverPosition'],
+    instructions: [
+      { action: 'CancelDidiRideOrder', function: 'readDidiRideOrder', text: 'Identify the exact linked original DiDi order. Cancellation is submitted directly by the authenticated PA through CancelableRideOrder.cancel with confirmCancellation=true after user approval. Read the original cancellation outcome before reporting success. An unresolved attempt permits readback only.' },
+    ],
+  },
+  {
+    apiName: 'DidiMaps',
+    terms: ['滴滴地图', '滴滴路线', '滴滴周边', '滴滴地址', '滴滴公交', '滴滴步行', '滴滴骑行', 'didi maps'],
+    functions: ['reverseGeocodeDidi', 'searchDidiNearbyPlaces', 'estimateDidiMapRoute'],
   },
   {
     apiName: 'PetRideTrial',

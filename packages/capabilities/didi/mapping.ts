@@ -11,13 +11,43 @@ export function estimatedMoney(price: string) {
 
 export function mapDidiResult(tool: DidiTool, value: unknown): DidiData {
   const result = z.object({ isError: z.boolean().optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional() })).max(100).optional(), structuredContent: z.unknown().optional() }).parse(value);
+  if (result.isError) throw new Error('Rejected MCP result');
+  const mapJson = () => result.structuredContent ?? JSON.parse(result.content?.find(item => item.type === 'text')?.text ?? 'null');
+  if (tool === 'taxi_generate_ride_app_link') {
+    const { appLink, miniprogramLink, browserLink } = z.object({
+      appLink: z.string(), miniprogramLink: z.string().optional(), browserLink: z.string().optional(),
+    }).parse(result.structuredContent);
+    return didiDataSchema.parse({ kind: 'app_links', links: { appLink, miniprogramLink, browserLink } });
+  }
+  if (tool === 'maps_regeocode') {
+    const address = z.object({
+      status: z.literal('success'), formatted_address: z.string().optional(), address_all: z.string().optional(),
+      address: z.string().optional(), city: z.string().optional(), county: z.string().optional(),
+    }).parse(mapJson());
+    return didiDataSchema.parse({ kind: 'address', address: {
+      address: address.formatted_address || address.address_all || address.address,
+      city: address.city, district: address.county,
+    } });
+  }
+  if (tool === 'maps_direction_walking' || tool === 'maps_direction_bicycling' || tool === 'maps_direction_transit') {
+    const scalar = z.number().int().nonnegative();
+    const route = z.object({
+      status: z.literal('success'),
+      duration: z.object({ value: scalar }).optional(),
+      distance: z.object({ value: scalar }).optional(),
+      summary: z.string().optional(),
+      paths: z.array(z.object({ duration: scalar, distance: scalar, summary: z.string().optional() })).optional(),
+    }).parse(mapJson());
+    const routes = route.paths?.length
+      ? route.paths.slice(0, 5).map(path => ({ durationSeconds: path.duration, distanceMeters: path.distance, summary: path.summary }))
+      : [{ durationSeconds: route.duration?.value, distanceMeters: route.distance?.value, summary: route.summary }];
+    return didiDataSchema.parse({ kind: 'map_routes', routes });
+  }
   if (tool === 'maps_direction_driving') {
-    if (result.isError) throw new Error('Driving route rejected');
-    const raw = result.structuredContent ?? JSON.parse(result.content?.find(item=>item.type==='text')?.text ?? 'null');
+    const raw = mapJson();
     const route = z.object({ status:z.literal('success'),duration:z.object({value:z.number().int().positive()}),distance:z.object({value:z.number().int().nonnegative()}) }).parse(raw);
     return didiDataSchema.parse({kind:'driving',durationSeconds:route.duration.value,distanceMeters:route.distance.value});
   }
-  if (result.isError) throw new Error('Rejected MCP result');
   if (tool === 'maps_textsearch' || tool === 'maps_place_around') {
     let map = tool === 'maps_place_around' ? result.structuredContent : undefined;
     if (map === undefined) {

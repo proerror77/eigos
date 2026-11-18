@@ -2,13 +2,14 @@ import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { OntologyDocument } from '../../ontology/schema.js';
-import { digest } from '../../core/identity.js';
+import { Conflict, digest } from '../../core/identity.js';
 import { objectRefSchema, type ObjectData } from '../../ontology/schema.js';
 import { Functions, type FunctionContext, type FunctionHandler, type VersionedFunction } from '../../runtime/functions.js';
 import type { DidiConnector, DidiCallContext, DidiReadResult } from './connector.js';
 import { didiDataSchema, didiReceiptSchema } from './contracts.js';
 import type { RideOrders } from './operations.js';
 import type { DidiTool } from './contracts.js';
+import { didiAppLinkInput, didiMapRouteInput, didiNearbyInput, didiReverseInput } from '../../ontology/didi-reads.js';
 
 export interface DidiSource { bindingId: string; authorityId?:string; connector: DidiConnector; orders?:RideOrders; assertCurrent(): Promise<void> }
 export type SourceResolver = (owner: string, order?: { bindingId: string; orderId: string }) => Promise<DidiSource>;
@@ -39,7 +40,7 @@ async function locationsReady(context: FunctionContext, places: ObjectData[]) {
   return true;
 }
 export async function verifiedDidiRead(source: DidiSource, context: FunctionContext, tool: DidiTool,
-  input: Record<string, string>, guard?: () => Promise<void>): Promise<SourceResult> {
+  input: Record<string, unknown>, guard?: () => Promise<void>): Promise<SourceResult> {
   await source.assertCurrent();
   const call: DidiCallContext = { requestId: context.taskId ?? randomUUID(), requestRevision: 1 };
   const result: DidiReadResult = await source.connector.invoke(call, tool, input, context.signal, async () => {
@@ -85,7 +86,81 @@ export function rideFunctions(resolveSource: SourceResolver, additional: Readonl
       route: { origin: origin.properties, destination: destination.properties, ...(pickup ? { pickup } : {}),
         ...(drivingEstimate !== undefined ? { drivingEstimate: currentDrive ? drivingEstimate : null } : {}) } };
   };
+  const stamp = (result: SourceResult) => ({
+    provider: 'Didi', evidence: result.evidence, observedAt: result.receipt.receivedAt, receiptDigest: digest(result.receipt),
+  });
+  const coordinatePair = (point: { longitude: number; latitude: number }) => `${point.longitude},${point.latitude}`;
+  const providerMaps = {
+    walking: 'maps_direction_walking', bicycling: 'maps_direction_bicycling', transit: 'maps_direction_transit',
+  } as const;
   return new Functions(new Map<string, FunctionHandler>([
+    ['generateDidiRideAppLink', async (input, context) => {
+      const { request, estimate } = didiAppLinkInput.parse(input);
+      if (request.type !== 'RideRequest') throw new Conflict('Use the resolved ride inquiry');
+      const requestRow = await context.objects.read(request);
+      const routes = await context.objects.follow(request, 'route');
+      if (requestRow.properties.status !== 'quoted' || routes.length !== 1)
+        throw new Conflict('Resolve and quote the ride first');
+      const source = await resolveSource(context.principal.owner);
+      const places = await endpoints(context, routes[0]!.ref);
+      if (places.some(place => place.properties.sourceBinding !== source.bindingId) || !await locationsReady(context, places))
+        throw new Conflict('Refresh the DiDi quote endpoints');
+      const [from, to] = places.map(place => place.properties.coordinates as { lng: number; lat: number });
+      const args: Record<string, string> = {
+        from_lng: String(from!.lng), from_lat: String(from!.lat), to_lng: String(to!.lng), to_lat: String(to!.lat),
+      };
+      const serviceClass = requestRow.properties.serviceClass;
+      if (estimate || serviceClass) {
+        if (estimate && estimate.type !== 'RideEstimate') throw new Conflict('Use the selected quote from this ride');
+        const rows = await context.objects.follow(request, 'estimates');
+        const matches = rows.filter(row => estimate ? row.ref.id === estimate.id && row.ref.type === estimate.type
+          : row.properties.name === serviceClass);
+        if (matches.length !== 1) throw new Conflict('Use a current quote from this ride');
+        const selected = matches[0]!;
+        if (serviceClass && selected.properties.name !== serviceClass) throw new Conflict('The quote differs from the requested vehicle');
+        const category = selected?.properties.productCategory;
+        if (typeof category !== 'string' || !category ||
+            !isCurrentDidiObservation(selected?.properties.observedAt) || Date.parse(String(selected?.properties.expiresAt)) <= Date.now())
+          throw new Conflict('Use a current quote from this ride');
+        const receipts = await context.objects.follow(selected.ref, 'source', 'PriceEstimate');
+        if (receipts.length !== 1 || receipts[0]!.properties.bindingId !== source.bindingId)
+          throw new Conflict('Selected quote source does not match the DiDi connection');
+        args.product_category = category;
+      }
+      const result = await verifiedDidiRead(source, context, 'taxi_generate_ride_app_link', args);
+      if (result.data.kind !== 'app_links') throw new Conflict('DiDi ride link evidence is unavailable');
+      return { ...stamp(result), ...result.data.links };
+    }],
+    ['reverseGeocodeDidi', async (input, context) => {
+      const { point } = didiReverseInput.parse(input);
+      const source = await resolveSource(context.principal.owner);
+      const result = await verifiedDidiRead(source, context, 'maps_regeocode', { location: coordinatePair(point) });
+      if (result.data.kind !== 'address') throw new Conflict('DiDi address evidence is unavailable');
+      return { ...stamp(result), ...result.data.address, point };
+    }],
+    ['searchDidiNearbyPlaces', async (input, context) => {
+      const { point, query, radiusMeters } = didiNearbyInput.parse(input);
+      const source = await resolveSource(context.principal.owner);
+      const result = await verifiedDidiRead(source, context, 'maps_place_around', {
+        location: coordinatePair(point), keywords: query, max_distance: String(radiusMeters),
+      });
+      if (result.data.kind !== 'places') throw new Conflict('DiDi place evidence is unavailable');
+      return { ...stamp(result), places: result.data.places.map(place => ({
+        name: place.name, address: place.addressAll || place.address, city: place.city,
+        point: { latitude: place.lat, longitude: place.lng, coordinateSystem: place.coordinateSystem },
+      })) };
+    }],
+    ['estimateDidiMapRoute', async (input, context) => {
+      const { origin, destination, mode, ...options } = didiMapRouteInput.parse(input);
+      if (origin.coordinateSystem !== destination.coordinateSystem) throw new Conflict('Use the same coordinate system for both endpoints');
+      const source = await resolveSource(context.principal.owner);
+      const result = await verifiedDidiRead(source, context, providerMaps[mode], {
+        origin: coordinatePair(origin), destination: coordinatePair(destination),
+        ...('city' in options ? { city: options.city } : { need_geo: false }),
+      });
+      if (result.data.kind !== 'map_routes') throw new Conflict('DiDi route evidence is unavailable');
+      return { ...stamp(result), mode, routes: result.data.routes };
+    }],
     ['searchPlaces', async (input, context) => read(context, 'maps_textsearch', { city: String(input.city), keywords: String(input.keywords) })],
     ['estimateRoute', async (input, context) => {
       const request = objectRefSchema.parse(input.request);

@@ -21,6 +21,9 @@ type ScenarioObjectEdit = {
 };
 type LiveObject = { revision: string; properties: Properties };
 type ReviewableScenario = { id: string; owner: string; name: string; revision: string; reviewers: string[]; journal_steps: number; workflow_run_id: string | null };
+type ContinuationRow = ReviewableScenario & {
+  release: string; kind: string; expires_at: Date; action_count: number; complete_actions: number; has_changes: boolean;
+};
 type ScenarioStep = {
   action: string; request_id: string; digest: string; result: ObjectRef; input: Properties | null;
   requirements: Requirement[]; step_revision: string | null; edits: ScenarioMutation[] | null;
@@ -421,17 +424,90 @@ export class Scenarios {
     else if ((await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [model.document.id], client)).rows[0]?.release !== model.release) throw new Conflict('Scenario publication changed; create a new scenario');
     return view;
   }
-  async continuationSources(access:Access,model:PublishedOntology) {
-    access.require(model.document.id,'view_definition',model.document.id);
-    const rows=(await this.db.query(`WITH RECURSIVE releases AS (
+  private async continuationRows(access: Access, model: PublishedOntology, client: Sql, id?: string, lock = false) {
+    return (await this.db.query<ContinuationRow>(`WITH RECURSIVE releases AS (
       SELECT digest,prepared_from FROM ${this.db.schema}.releases WHERE digest=$1
       UNION ALL SELECT r.digest,r.prepared_from FROM ${this.db.schema}.releases r JOIN releases parent ON r.digest=parent.prepared_from
-    ) SELECT s.id,s.name,s.kind,s.release,s.revision,s.expires_at FROM ${this.db.schema}.scenarios s JOIN releases r ON r.digest=s.release
+    ) SELECT s.*,
+      (SELECT count(*)::int FROM ${this.db.schema}.scenario_actions a WHERE a.scenario_id=s.id AND a.owner=s.owner) AS action_count,
+      (SELECT count(*)::int FROM ${this.db.schema}.scenario_actions a WHERE a.scenario_id=s.id AND a.owner=s.owner
+        AND a.step_revision IS NOT NULL AND jsonb_typeof(a.input)='object' AND jsonb_typeof(a.edits)='array') AS complete_actions,
+      (EXISTS(SELECT 1 FROM ${this.db.schema}.scenario_objects d WHERE d.scenario_id=s.id AND d.owner=s.owner
+        AND (d.properties IS DISTINCT FROM d.base_properties OR (d.properties IS NOT NULL AND jsonb_array_length(d.edited_fields)>0)))
+       OR EXISTS(SELECT 1 FROM ${this.db.schema}.scenario_links d WHERE d.scenario_id=s.id AND d.owner=s.owner
+        AND (NOT d.removed) IS DISTINCT FROM d.base_present)) AS has_changes
+      FROM ${this.db.schema}.scenarios s JOIN releases r ON r.digest=s.release
       LEFT JOIN ${this.db.schema}.scenario_sessions session ON session.id=s.session_id
-      WHERE s.owner=$2 AND s.state='open' AND s.workflow_run_id IS NULL AND (s.release<>$1 OR s.kind='temporary')
-      AND s.expires_at>now() AND (s.session_id IS NULL OR (session.closed_at IS NULL AND session.expires_at>now()))
-      ORDER BY s.expires_at DESC,s.id LIMIT 100`,[model.release,access.principal.owner])).rows;
-    return {items:rows.map(row=>({id:String(row.id),name:String(row.name),kind:String(row.kind),release:String(row.release),revision:Number(row.revision),expiresAt:row.expires_at as Date}))};
+      WHERE s.owner=$2 AND ($3::uuid IS NULL OR s.id=$3) AND s.state='open' AND s.workflow_run_id IS NULL
+        AND (s.release<>$1 OR s.kind='temporary') AND s.expires_at>now()
+        AND (s.session_id IS NULL OR (session.closed_at IS NULL AND session.expires_at>now()))
+      ORDER BY s.expires_at DESC,s.id LIMIT 100 ${lock ? 'FOR UPDATE OF s' : ''}`,
+      [model.release,access.principal.owner,id??null],client)).rows;
+  }
+
+  private continuationStatus(row: {journal_steps: number; action_count: number; complete_actions: number; has_changes: boolean}) {
+    return row.action_count === row.journal_steps && row.complete_actions === row.action_count
+      && (row.action_count > 0 || !row.has_changes)
+      ? { status: 'ready' as const, reason: null }
+      : { status: 'blocked' as const, reason: 'incomplete-action-journal' as const };
+  }
+
+  async continuationSources(access: Access, model: PublishedOntology) {
+    return this.db.withOwner(access.principal.owner, async () => {
+      await access.refresh(); access.require(model.document.id,'view_definition',model.document.id);
+      const rows = await this.continuationRows(access,model,this.db.pool);
+      await access.refresh();
+      return {items:rows.map(row=>({id:String(row.id),name:String(row.name),kind:String(row.kind),release:String(row.release),
+        revision:Number(row.revision),expiresAt:row.expires_at as Date,continuation:this.continuationStatus(row)}))};
+    });
+  }
+
+  /** Recovery displays historical differences using today's schema and permissions; it performs no edits. */
+  async inspectContinuation(access: Access, model: PublishedOntology, id: string, revision: number) {
+    z.uuid().parse(id); z.number().int().positive().parse(revision);
+    return this.db.withOwner(access.principal.owner,()=>this.db.transaction(async client=>{
+      await access.refresh(); access.require(model.document.id,'view_definition',model.document.id);
+      await lockEdits(this.db,model,access.principal.owner,client);
+      const [row]=await this.continuationRows(access,model,client,id,true);
+      if(!row || Number(row.revision)!==revision)throw new Conflict('Continuation source changed or is unavailable');
+      const changes=await this.changes(access.principal.owner,id,client),graph=new Objects(this.db,model,access,client);
+      const mask=(ref:ObjectRef,values:Properties|null)=>{
+        if(!values)return null;
+        const visible=access.maskHistoricalSnapshot(model,ref.type,values);
+        if(!visible)throw new NotFound('Scenario recovery data is unavailable');
+        return visible;
+      };
+      const current=async(ref:ObjectRef)=>{
+        access.read(model,ref.type);
+        const live=(await this.db.query<LiveObject>(`SELECT revision,properties FROM ${this.db.schema}.objects
+          WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`,[model.projection,access.principal.owner,ref.type,ref.id],client)).rows[0];
+        if(live&&!graph.maskSnapshot(ref,live.properties))throw new NotFound('Scenario recovery data is unavailable');
+        return live;
+      };
+      const objects=[];
+      for(const item of changes.objects){
+        const ref={type:item.type,id:item.id}; await current(ref);
+        objects.push({ref,before:mask(ref,item.base_properties),after:mask(ref,item.properties)});
+      }
+      const endpoint=async(ref:ObjectRef)=>{
+        if(await current(ref))return;
+        const edit=changes.objects.find(item=>item.type===ref.type&&item.id===ref.id);
+        if(!edit||!mask(ref,edit.properties??edit.base_properties))throw new NotFound('Scenario recovery endpoint is unavailable');
+      };
+      const links=[];
+      for(const item of changes.links){
+        access.definition(model,'link',item.type);
+        const definition=model.links.get(item.type);
+        if(!definition||definition.from.type!==item.from_type||definition.to.type!==item.to_type)
+          throw new Conflict('Scenario recovery relationship is no longer published');
+        const from={type:item.from_type,id:item.from_id},to={type:item.to_type,id:item.to_id};
+        await endpoint(from);await endpoint(to);
+        links.push({type:item.type,from,to,removed:item.removed});
+      }
+      await access.refresh(client);
+      return {id:String(row.id),revision:Number(row.revision),name:String(row.name),release:String(row.release),
+        continuation:this.continuationStatus(row),objects,links};
+    }));
   }
 
   async continueScenario(access:Access,model:PublishedOntology,raw:unknown) {
@@ -440,20 +516,11 @@ export class Scenarios {
       await access.refresh(client);
       access.require(model.document.id,'view_definition',model.document.id);
       await lockEdits(this.db,model,owner,client);
-      const source=(await this.db.query(`WITH RECURSIVE releases AS (
-        SELECT digest,prepared_from FROM ${this.db.schema}.releases WHERE digest=$1
-        UNION ALL SELECT r.digest,r.prepared_from FROM ${this.db.schema}.releases r JOIN releases parent ON r.digest=parent.prepared_from
-      ) SELECT s.* FROM ${this.db.schema}.scenarios s JOIN releases r ON r.digest=s.release
-        LEFT JOIN ${this.db.schema}.scenario_sessions session ON session.id=s.session_id
-        WHERE s.owner=$2 AND s.id=$3 AND s.state='open' AND s.workflow_run_id IS NULL
-        AND (s.release<>$1 OR s.kind='temporary') AND s.expires_at>now()
-        AND (s.session_id IS NULL OR (session.closed_at IS NULL AND session.expires_at>now()))
-        FOR UPDATE OF s`,[model.release,owner,input.id],client)).rows[0];
+      const [source]=await this.continuationRows(access,model,client,input.id,true);
       if(!source||Number(source.revision)!==input.revision)throw new Conflict('Continuation source changed or is unavailable');
       const previous=await new Metadata(this.db).get(source.release,client);
       const changes=await this.changes(owner,source.id,client), steps=await this.steps(owner,source.id,client);
-      if(steps.length!==source.journal_steps||steps.some(step=>step.step_revision===null||!step.input||!Array.isArray(step.edits))
-        ||(!steps.length&&(changes.objects.length||changes.links.length)))
+      if(this.continuationStatus(source).status==='blocked')
         throw new Conflict('Scenario continuation requires a complete Action journal');
       const name=source.name.slice(0,190)+' (continued)';
       const next=await this.create(access,model,{requestId:input.requestId,name,

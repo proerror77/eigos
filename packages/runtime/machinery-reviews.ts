@@ -28,7 +28,7 @@ const checkpointSchema = z.strictObject({
 type Checkpoint = z.output<typeof checkpointSchema>;
 type RuleRow = {
   id: string; owner: string; ontology: string; revision: number; enabled: boolean;
-  body: { machineryReview: unknown; checkpoint?: unknown }; scopes: unknown;
+  body: { machineryReview: unknown; checkpoint?: unknown; attemptedRelease?: string }; scopes: unknown;
   last_scan: Date | null; error: string | null;
 };
 
@@ -78,7 +78,8 @@ export class MachineryReviews {
     return { items: rows.slice(0, 100).map(row => ({
       ...reviewDefinition.parse(row.body.machineryReview), id: row.id, revision: row.revision, enabled: row.enabled,
       lastScan: row.last_scan, checkpoint: row.body.checkpoint ? checkpointSchema.parse(row.body.checkpoint) : null,
-      error: row.error,
+      error: row.error, status: row.error ? 'failed' : !row.body.checkpoint ? 'pending'
+        : checkpointSchema.parse(row.body.checkpoint).release !== model.release ? 'stale' : 'ready',
     })), hasMore: rows.length > 100 };
   }
 
@@ -92,17 +93,22 @@ export class MachineryReviews {
       })));
   }
 
-  private async compute(access: Access, model: PublishedOntology, row: RuleRow, client: Sql) {
+  private async compute(access: Access, model: PublishedOntology, row: RuleRow, client: Sql, refreshOnly = false) {
+    await this.db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',
+      [this.db.lockKey('publication', model.document.id)], client);
+    if ((await this.metadata.active(model.document.id, client)).release !== model.release)
+      throw new Conflict('The process publication changed');
     const definition = this.definition(access, model, row);
     const to = (await this.db.query<{ at: Date }>('SELECT clock_timestamp() AS at', [], client)).rows[0]!.at;
-    const checkpoint: Checkpoint = { release: model.release, to: to.toISOString(),
-      from: new Date(to.getTime() - definition.periodDays * day).toISOString() };
+    const previous = refreshOnly ? checkpointSchema.parse(row.body.checkpoint) : undefined;
+    const checkpoint: Checkpoint = { release: model.release, to: previous?.to ?? to.toISOString(),
+      from: previous?.from ?? new Date(to.getTime() - definition.periodDays * day).toISOString() };
     const report = await this.report(access, model, row, checkpoint);
     await this.db.withOwner(access.principal.owner, async () => {
       if (!await access.canReturn(access.dataRequirements()))
         throw new Conflict('Machinery review permissions changed');
     });
-    if (definition.evaluation) {
+    if (definition.evaluation && !refreshOnly) {
       requireScope(access.principal, 'ontology:write');
       if (!this.evaluations) throw new Conflict('Scheduled evaluation is unavailable');
       const evaluated = await this.evaluations.runSuite(access, model, definition.evaluation, client);
@@ -114,7 +120,7 @@ export class MachineryReviews {
     }
     // Persist the authorized analysis window, not a cache of protected object data.
     await this.db.query(`UPDATE ${this.db.schema}.object_rules SET last_scan=$2,error=NULL,body=$3 WHERE id=$1`,
-      [row.id, to, { machineryReview: definition, checkpoint }], client);
+      [row.id, refreshOnly ? row.last_scan : to, { machineryReview: definition, checkpoint, attemptedRelease: model.release }], client);
     return report;
   }
 
@@ -133,11 +139,16 @@ export class MachineryReviews {
 
   async scanOne(): Promise<boolean> {
     return this.db.transaction(async client => {
-      const result = await this.db.query<RuleRow>(`SELECT * FROM ${this.db.schema}.object_rules
-        WHERE enabled AND body ? 'machineryReview'
-          AND (last_scan IS NULL OR last_scan <= clock_timestamp() -
-            (body->'machineryReview'->>'periodDays')::integer * interval '24 hours')
-        ORDER BY last_scan NULLS FIRST,id FOR UPDATE SKIP LOCKED LIMIT 1`, [], client);
+      const due = `(rule.last_scan IS NULL OR rule.last_scan <= clock_timestamp() -
+        (rule.body->'machineryReview'->>'periodDays')::integer * interval '24 hours')`;
+      const result = await this.db.query<RuleRow & { current_release: string; periodic_due: boolean }>(
+        `SELECT rule.*,ontology.release AS current_release,${due} AS periodic_due
+        FROM ${this.db.schema}.object_rules rule JOIN ${this.db.schema}.ontology ontology ON ontology.id=rule.ontology
+        WHERE rule.enabled AND rule.body ? 'machineryReview'
+          AND (${due} OR (rule.body ? 'checkpoint'
+            AND rule.body->'checkpoint'->>'release' IS DISTINCT FROM ontology.release
+            AND rule.body->>'attemptedRelease' IS DISTINCT FROM ontology.release))
+        ORDER BY rule.last_scan NULLS FIRST,rule.id FOR UPDATE OF rule SKIP LOCKED LIMIT 1`, [], client);
       const row = result.rows[0];
       if (!row) return false;
       await this.db.query('SAVEPOINT run_periodic_review', [], client);
@@ -146,7 +157,7 @@ export class MachineryReviews {
         requireScope(principal, 'ontology:read');
         const model = await this.metadata.active(row.ontology);
         const access = await Access.load(this.db, principal);
-        await this.compute(access, model, row, client);
+        await this.compute(access, model, row, client, !row.periodic_due);
         await this.db.query('RELEASE SAVEPOINT run_periodic_review', [], client);
       } catch (error) {
         await this.db.query('ROLLBACK TO SAVEPOINT run_periodic_review', [], client);
@@ -155,8 +166,11 @@ export class MachineryReviews {
         if (code === '55P03' || code === '40001' || code === '40P01') return true;
         if (!(error instanceof NotFound || error instanceof Conflict || error instanceof z.ZodError) && !code)
           process.stderr.write('Machinery review scan failed\n');
-        await this.db.query(`UPDATE ${this.db.schema}.object_rules SET last_scan=clock_timestamp(),
-          error='Review failed; verify process permissions, publication and analysis window' WHERE id=$1`, [row.id], client);
+        await this.db.query(`UPDATE ${this.db.schema}.object_rules
+          SET last_scan=CASE WHEN $2 THEN clock_timestamp() ELSE last_scan END,
+          body=jsonb_set(body,'{attemptedRelease}',to_jsonb($3::text)),
+          error='Review failed; verify process permissions, publication and analysis window' WHERE id=$1`,
+          [row.id,row.periodic_due,row.current_release], client);
       }
       return true;
     });

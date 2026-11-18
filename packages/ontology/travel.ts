@@ -12,6 +12,26 @@ export const tripInput = z.strictObject({
   entryMinutes: z.number().int().min(0).max(120).default(10),
 });
 export const tripRef = z.strictObject({ trip: ref });
+export const didiOrderRef = z.strictObject({ order: ref });
+export const cancelRideInput = didiOrderRef.extend({
+  confirmCancellation: z.literal(true),
+  reason: z.string().trim().min(1).max(500).optional(),
+});
+export const rideCancellationReceipt = z.strictObject({
+  confirmedAt: time,
+  evidence: z.enum(['provider_response', 'original_order_readback']),
+  receiptDigest: z.string().length(64),
+});
+export const didiOrderRead = z.strictObject({
+  order: ref,
+  orderId: z.string().min(1).max(500),
+  status: z.string(),
+  independentRead: z.boolean(),
+  evidence: z.enum(['live', 'provider_mock', 'synthetic']),
+  observedAt: time,
+  cancellation: z.enum(['unrequested', 'unresolved', 'confirmed']),
+  cancellationReceipt: rideCancellationReceipt.nullable(),
+});
 export const permitSchema = z.strictObject({
   category: shortText,
   maxEstimateMinor: z.string().regex(/^(0|[1-9]\d{0,11})$/),
@@ -183,6 +203,7 @@ export const travelDefinition: OntologyDocument = {
         observedAt: time,
         contentDigest: z.string(),
         bindingId: z.string(),
+        cancellationReceipt: rideCancellationReceipt.optional(),
       },
       'The exact original ride order and latest independent status report. Creation does not mean arrival or completion.',
     ),
@@ -331,4 +352,56 @@ travelDefinition.objectTypes.find((type) => type.apiName === 'DidiRideOrder')!.i
   ),
   links: {},
   actions: {},
+};
+
+const didiRideOrder = travelDefinition.objectTypes.find(type => type.apiName === 'DidiRideOrder')!;
+const rideOrderInterface = travelDefinition.interfaceTypes.find(type => type.apiName === 'RideOrder')!;
+didiRideOrder.interfaces.CancelableRideOrder = {
+  ...structuredClone(didiRideOrder.interfaces.RideOrder!),
+  actions: {
+    cancel: { action: 'CancelDidiRideOrder', parameters: {
+      order: 'order', confirmCancellation: 'confirmCancellation', reason: 'reason',
+    } },
+  },
+};
+
+const originalDidiOrderDependencies = {
+  objectTypes: ['DidiRideOrder', 'EventTrip'], linkTypes: ['TripOrder'], interfaceTypes: ['RideOrder'],
+};
+const cancelDidiRideOrder = {
+  apiName: 'cancelDidiRideOrder',
+  description: 'Cancel the exact linked DiDi order after explicit PA confirmation. Recover the original attempt if its outcome is uncertain.',
+  parameters: json(cancelRideInput),
+  returns: json(ref),
+  edits: true,
+  source: 'Didi',
+  dependencies: originalDidiOrderDependencies,
+};
+export const didiOrderDefinitions: Pick<OntologyDocument, 'interfaceTypes' | 'functionTypes' | 'actionTypes'> = {
+  interfaceTypes: [{
+    ...structuredClone(rideOrderInterface),
+    apiName: 'CancelableRideOrder',
+    description: 'Original ride order that the PA can explicitly ask its supplier to cancel.',
+    actions: {
+      cancel: { parameters: json(cancelRideInput), objectParameters: { order: 'CancelableRideOrder' }, required: true },
+    },
+  }],
+  functionTypes: [
+    cancelDidiRideOrder,
+    {
+      apiName: 'readDidiRideOrder',
+      description: 'Read the linked original order and the verified or unresolved cancellation outcome.',
+      parameters: json(didiOrderRef),
+      returns: json(didiOrderRead),
+      dependencies: originalDidiOrderDependencies,
+    },
+  ],
+  actionTypes: [{
+    apiName: 'CancelDidiRideOrder',
+    description: cancelDidiRideOrder.description,
+    parameters: cancelDidiRideOrder.parameters,
+    objectParameters: { order: 'DidiRideOrder' },
+    submissionCriteria: [],
+    function: cancelDidiRideOrder.apiName,
+  }],
 };

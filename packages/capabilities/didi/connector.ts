@@ -113,13 +113,12 @@ export class DidiMcpConnector implements DidiConnector {
       for (const tool of result.tools) {
         if (!DIDI_TOOLS.includes(tool.name as DidiTool)) continue;
         if (found.has(tool.name)) throw new DidiReadError('DUPLICATE_TOOL');
-        const expected = z.toJSONSchema(didiToolInputs[tool.name as DidiTool]) as {properties:Record<string,{type?:string}>};
+        const expected = z.toJSONSchema(didiToolInputs[tool.name as DidiTool], { io: 'input' }) as { properties: Record<string, { type?: string }>; required?: string[] };
         const schema = tool.inputSchema;
         const required = [...(schema.required ?? [])].sort();
-        const mandatory = tool.name === 'maps_direction_driving' ? ['destination','origin']
-          : tool.name === 'maps_place_around' ? ['keywords', 'location'] : Object.keys(expected.properties).sort();
+        const mandatory = [...(expected.required ?? [])].sort();
         if (schema.type !== 'object' || digest(required) !== digest(mandatory) || Object.keys(expected.properties).some(k => (schema.properties?.[k] as { type?: unknown } | undefined)?.type !== expected.properties[k]!.type)) {
-          if (tool.name === 'maps_place_around') continue;
+          if (!DIDI_REQUIRED_TOOLS.some(name => name === tool.name)) continue;
           throw new DidiReadError('TOOL_SCHEMA_CHANGED');
         }
         // Do not send upstream descriptions, annotations or instructions to models.

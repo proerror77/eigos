@@ -1,8 +1,12 @@
+import { z } from 'zod';
 import { readDidiDriving } from '../didi/driving.js';
 import { Conflict, digest } from '../../core/identity.js';
 import { objectRefSchema, type ObjectData, type ObjectRef } from '../../ontology/schema.js';
 import {
   driveInput,
+  cancelRideInput,
+  didiOrderRef,
+  rideCancellationReceipt,
   tripInput,
   tripRef,
   authorizeTripInput,
@@ -14,10 +18,10 @@ import {
 } from '../../ontology/travel.js';
 import { eventFacts, json, type ServiceName } from '../../ontology/service-contracts.js';
 import { Objects } from '../../runtime/objects.js';
-import { ExternalOperations } from '../../runtime/external-operations.js';
+import { ExternalOperations, UnknownExternalOperation } from '../../runtime/external-operations.js';
 import { ScheduledActions } from '../../runtime/scheduled-actions.js';
 import { PARequests } from '../../runtime/pa.js';
-import type { Database } from '../../runtime/database.js';
+import type { Database, Sql } from '../../runtime/database.js';
 import { withScenarioEvaluation, type FunctionContext, type FunctionHandler } from '../../runtime/functions.js';
 import type { Sources } from '../../runtime/sources.js';
 import type { SourceResolver } from '../didi/functions.js';
@@ -346,6 +350,122 @@ export function travelFunctions(
       throw new Conflict('Independent original-order readback is required');
     return context.edit(ref, async (graph) => {
       await projectOrder(graph, ref, result, source.bindingId);
+    });
+  });
+  const cancellationKey = (bindingId: string, orderId: string) => digest(['cancel-didi-original-order', bindingId, orderId]);
+  const readOriginal = async (objects: Reader, ref: ObjectRef) => {
+    if (ref.type !== 'DidiRideOrder') throw new Conflict('Use the original DiDi order');
+    const order = await objects.read(ref);
+    const { orderId, bindingId } = order.properties;
+    if (typeof orderId !== 'string' || !orderId || typeof bindingId !== 'string' || !bindingId)
+      throw new Conflict('Original DiDi order identity is unavailable');
+    const trip = await one(objects, ref, 'trips');
+    return { order, orderId, bindingId, trip };
+  };
+  const canceledStatuses = new Set(['canceled', 'cancelled', '已取消', '订单已取消', '乘客已取消', '司机已取消', '系统已取消']);
+  const isCanceled = (order: RideOrder) => canceledStatuses.has(order.status.trim().toLowerCase().replace(/[。.!！]+$/, ''));
+  const cancellationResult = z.strictObject({ order: rideOrderSchema, receipt: rideCancellationReceipt });
+
+  handlers.set('readDidiRideOrder', async (raw, context) => {
+    const { order: ref } = didiOrderRef.parse(raw);
+    const { order, orderId, bindingId } = await readOriginal(context.objects, ref);
+    const receipt = rideCancellationReceipt.nullable().parse(order.properties.cancellationReceipt ?? null);
+    const operation = receipt ? null : await effects.inspect(context.principal.owner, cancellationKey(bindingId, orderId));
+    return {
+      order: ref, orderId, status: order.properties.status, evidence: order.properties.evidence,
+      observedAt: order.properties.observedAt, independentRead: order.properties.independentRead,
+      cancellation: receipt ? 'confirmed' : operation ? 'unresolved' : 'unrequested',
+      cancellationReceipt: receipt,
+    };
+  });
+  handlers.set('cancelDidiRideOrder', async (raw, context) => {
+    const { order: ref, reason } = cancelRideInput.parse(raw);
+    const edit = context.edit, assertDispatch = context.assertDispatch;
+    if (!edit || !assertDispatch || !context.directAction || context.objects.model.scenario)
+      throw new Conflict('The PA must explicitly submit cancellation of the original ride');
+    const original = await readOriginal(context.objects, ref);
+    if (rideCancellationReceipt.safeParse(original.order.properties.cancellationReceipt).success) {
+      return edit(ref, async graph => {
+        const current = await readOriginal(graph, ref);
+        if (current.bindingId !== original.bindingId || current.orderId !== original.orderId ||
+            !rideCancellationReceipt.safeParse(current.order.properties.cancellationReceipt).success)
+          throw new Conflict('The original cancellation receipt changed');
+      });
+    }
+    const { bindingId, orderId } = original, owner = context.principal.owner;
+    const source = await resolve(owner, { bindingId, orderId });
+    const orders = source.orders;
+    const scope = { order: ref, orderId, bindingId, trip: original.trip.ref };
+    const key = cancellationKey(bindingId, orderId);
+    const assertOriginal = async (objects: Reader) => {
+      const current = await readOriginal(objects, ref);
+      if (current.bindingId !== bindingId || current.orderId !== orderId || !same(current.trip.ref, original.trip.ref) ||
+          source.bindingId !== bindingId ||
+          current.trip.properties.sourceAuthority !== (source.authorityId ?? digest(bindingId)))
+        throw new Conflict('Original ride authority changed');
+    };
+    if (!orders) throw new Conflict('Original DiDi order connection is unavailable');
+    await source.assertCurrent();
+    await assertOriginal(context.objects);
+    const readback = (result: unknown) => {
+      const order = rideOrderSchema.parse(result);
+      if (order.orderId !== orderId || !order.independentRead || order.state !== 'reported' ||
+          (orders.environment === 'production' && order.evidence !== 'live'))
+        throw new Conflict('Independent original-order readback is required');
+      return order;
+    };
+    const proof = (
+      order: RideOrder, evidence: 'provider_response' | 'original_order_readback',
+      receiptDigest = order.contentDigest,
+    ) => ({ order, receipt: { confirmedAt: order.observedAt, evidence, receiptDigest } });
+    const inspect = async () => {
+      const status = rideOrderSchema.parse(await orders.query(orderId, context.signal));
+      await source.assertCurrent();
+      // The mock can omit the identity/status fields on ordinary lookups.
+      // It confirms cancellation only through the acknowledged mutation path.
+      if (orders.environment === 'mock' && status.state === 'unknown' && status.orderId === orderId) return;
+      return isCanceled(readback(status)) ? proof(status, 'original_order_readback') : undefined;
+    };
+    const guard = async (client: Sql) => {
+      await assertDispatch(client);
+      await source.assertCurrent();
+      await assertOriginal(new Objects(db, context.objects.model, context.objects.access, client));
+    };
+    let result: unknown;
+    try {
+      result = await effects.recover(owner, key, scope, context.objects);
+      if (result === undefined) {
+        result = await inspect();
+        if (result === undefined) {
+          if (orders.assertCancellationAvailable) await orders.assertCancellationAvailable();
+          else await orders.assertAvailable();
+          result = await effects.run(owner, key, scope, guard, async () => {
+            const receipt = await orders.cancel(orderId, reason, context.signal, async () => {
+              await context.assertCurrent?.();
+              context.objects.access.action(context.objects.model, 'CancelDidiRideOrder');
+              context.objects.access.source(context.objects.model, 'Didi');
+              await source.assertCurrent();
+              await assertOriginal(context.objects);
+            });
+            return cancellationResult.parse(proof(readback(receipt.order), 'provider_response', receipt.acknowledgementDigest));
+          }, context.objects, { requestId: context.operationId, taskId: context.taskId });
+        }
+      }
+    } catch (error) {
+      if (!(error instanceof UnknownExternalOperation)) throw error;
+      result = await effects.reconcile(owner, key, scope, guard, inspect, context.objects);
+      if (result === undefined) throw error;
+    }
+    const { order, receipt } = cancellationResult.parse(result);
+    return edit(ref, async graph => {
+      await assertOriginal(graph);
+      const current = await graph.read(ref);
+      if (ms(current.properties.observedAt) <= ms(order.observedAt))
+        await graph.ingestBatch([{ ref, properties: { id: ref.id, name: current.properties.name, ...order, bindingId } }],
+          'DidiRideOrders', order.observedAt);
+      const latest = await graph.read(ref);
+      if (!latest.properties.cancellationReceipt)
+        await graph.edit(ref, latest.revision, { cancellationReceipt: receipt });
     });
   });
   handlers.set('executeEventTrip', async (raw, context) => {

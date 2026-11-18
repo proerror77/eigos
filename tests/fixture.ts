@@ -48,7 +48,7 @@ export async function provider() {
     if (request.method.startsWith('notifications/')) return new Response(null, { status: 202 });
     let result;
     if (request.method === 'initialize') result = { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'synthetic-didi', version: '1' } };
-    else if (request.method === 'tools/list') result = { tools: Object.entries(didiToolInputs).map(([name, schema]) => ({ name, inputSchema: {...z.toJSONSchema(schema),...(name==='maps_direction_driving'?{required:['origin','destination']}:{})} })) };
+    else if (request.method === 'tools/list') result = { tools: Object.entries(didiToolInputs).map(([name, schema]) => ({ name, inputSchema: z.toJSONSchema(schema, { io: 'input' }) })) };
     else if (request.method === 'tools/call') {
       const name = request.params.name, args = request.params.arguments;
       calls.push(name); inputs.push(args); await flags.before?.();
@@ -65,6 +65,18 @@ export async function provider() {
         const matches = flags.emptyPlaces(args.keywords) ? [] : places;
         result = { content: [{ type: 'text', text: JSON.stringify(name === 'maps_place_around' ? { pois: matches } : matches) }] };
       } else if (name === 'taxi_estimate') result = { structuredContent: { traceId: 'PRIVATE_ORDER_TOKEN', items: [{ productName: '快车', productCategory: 'fast', priceText: '73.05' }, { productName: '专车', productCategory: 'premium', priceText: '100-120元' }] } };
+      else if (name === 'taxi_generate_ride_app_link') result = { structuredContent: {
+        appLink: 'https://v.didi.cn/TestABC', miniprogramLink: 'https://v.didi.cn/p/TestDEF',
+        browserLink: 'https://v.didi.cn/TestGHI', deepLink: 'fixture-app://opaque',
+      } };
+      else if (name === 'maps_regeocode') result = { content: [{ type: 'text', text: JSON.stringify({
+        status: 'success', formatted_address: '上海市浦东新区测试站', city: '上海市', county: '浦东新区',
+      }) }] };
+      else if (['maps_direction_walking', 'maps_direction_bicycling', 'maps_direction_transit'].includes(name)) result = {
+        content: [{ type: 'text', text: JSON.stringify({
+          status: 'success', paths: [{ duration: flags.durationSeconds, distance: 850, summary: 'Synthetic route' }],
+        }) }],
+      };
       else if(name==='maps_direction_driving')result={structuredContent:{status:'success',duration:{value:flags.durationSeconds},distance:{value:1951}}};
       else throw new Error('Unexpected provider tool');
     }
