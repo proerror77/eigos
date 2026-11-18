@@ -1,3 +1,4 @@
+import { ObservationInterests,startInterestSchema,listInterestsSchema,cancelInterestSchema } from './observation-interests.js';
 import {digest} from '../core/identity.js';
 import {resourceGroups} from '../ontology/resource-mapping.js';
 import { PublicPlaceCatalogue } from '../capabilities/public-places/catalogue.js';
@@ -636,6 +637,13 @@ export function ontologyServices(
   );
   register('machinery_rule_bindings','Read this owner’s process conditions, direct Action or Workflow effects, and latest visible run for each current revision.',
     processBindingsSchema,false,async(a,input)=>automation.processBindings(a,await active(),input));
+  const interests=new ObservationInterests(db,metadata);
+  register('start_observation_interest','Authorize an ordered, bounded observation of one original business object.',
+    startInterestSchema,true,async(a,input)=>interests.start(a,await active(),input));
+  register('observation_interests','Read owned observation progress, its next original-object check and continuity gaps.',
+    listInterestsSchema,false,async(a,input)=>interests.list(a,await active(),input));
+  register('cancel_observation_interest','Withdraw an owned observation interest and stop its outstanding checks.',
+    cancelInterestSchema,true,async(a,input)=>interests.cancel(a,await active(),input));
   register('machinery_processes', 'Discover authorized Ontology processes and their published reference models.',
     z.strictObject({}), false, async a => listMachineryProcesses(a, await active()));
   register('machinery_analysis', 'Mine authorized process paths, compare observed transitions with a reference, and analyze dwell time.',

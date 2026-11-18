@@ -1,3 +1,5 @@
+import { renderInterestList, showObjectInterests } from './observation-interests.js';
+
 const duration = value => value == null ? '—' : new Intl.NumberFormat('zh-CN', {
   maximumFractionDigits: 1, style: 'unit', unit: value < 60000 ? 'second' : value < 3600000 ? 'minute' : 'hour',
 }).format(value / (value < 60000 ? 1000 : value < 3600000 ? 60000 : 3600000));
@@ -54,8 +56,10 @@ export async function renderMachinery(body, ui) {
     const [processes, reviews, sets] = await Promise.all([
       service('machinery_processes'), service('machinery_reviews'), service('list_sets'),
     ]);
+    const interests=element('div',{class:'section'});
+    await renderInterestList(ui,interests);
     if (!processes.items.length) {
-      body.replaceChildren(element('p', {}, '当前身份没有可读的过程日志。'));
+      body.replaceChildren(element('h3',{},'我的后台跟进'), interests, element('p', {}, '当前身份没有可读的过程日志。'));
       return;
     }
     const type = select(processes.items.map(item => [item.type, item.name]),
@@ -126,6 +130,8 @@ export async function renderMachinery(body, ui) {
                   openActions(item.object, actions);
                 })),
 
+              current && button('查看或登记跟进', () => showObjectInterests(ui,
+                processes.items.find(process => process.type === input.type), item.object)),
               current?.schedules?.length > 0 && element('section', {}, element('h4', {}, '该对象的后台操作'),
                 table(['Action', '执行状态', '下次检查', '截止时间'], current.schedules.map(schedule => [
                   schedule.action, schedule.status, schedule.nextCheckAt ? localTime(schedule.nextCheckAt) : '—',
@@ -341,7 +347,17 @@ export async function renderMachinery(body, ui) {
         }, 'primary')));
     }
     showReviews();
-    body.replaceChildren(element('div', { class: 'toolbar' },
+    const liveProcess=select(processes.items.map(process=>[process.type,process.name]),type.value);
+    const originalId=element('input',{placeholder:'输入原对象 ID'});
+    const inspectInterest=button('查看或登记跟进',async()=>{
+      const process=processes.items.find(item=>item.type===liveProcess.value);
+      const id=originalId.value.trim();
+      if(!id)throw new Error('请输入原对象 ID。');
+      await showObjectInterests(ui,process,{type:process.objectType,id});
+    });
+    body.replaceChildren(element('h3',{},'我的后台跟进'), interests,
+      element('div',{class:'toolbar'},field('原对象流程',liveProcess),field('原对象 ID',originalId),inspectInterest),
+      element('div', { class: 'toolbar' },
       field('流程', type), field('对象集', set), field('外部历史来源',externalSource), field('起始日期', from), field('结束日期', to),
       field('挖掘所需最少实例', minCases), field('挖掘覆盖率（%）', coverage),
       field('耗时依据', durationClock), field('包含窗口内无转换的实例', includeIdle), button('分析流程', () => render(), 'primary')),

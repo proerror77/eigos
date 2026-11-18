@@ -236,3 +236,7 @@ Machinery 过程日志以普通 Object Type 实现共同 `ProcessLog` Interface�
 执行追踪使用原任务和 Action 身份关联来源证据、模型授权、方案审阅、编辑历史、outbox 和实际供应商回执。读取追踪时复核权限，业务结果以各原始记录为准。 [EIGOS 执行追踪](../guides/execution-trace.md) · [Palantir 执行追踪](https://www.palantir.com/docs/foundry/aip-observability/trace-view)
 
 Gateway 的只读查询池可连接已有只读副本，通过身份与 WAL 追赶检查保持当前读取。部署可分别扩展 Gateway、任务 Worker 和 Indexer。参数、表授权、边界及运行命令见 [Ontology 运行服务](../guides/ontology-services.md)。
+
+## 跨阶段持续关注
+
+关注绑定原对象、发起身份、授权期限和有序阶段。阶段以已发布 ProcessLog 的状态为条件，选择等待业务事件或调度一个标记为 observation/readback 的 Action。需要交接到另一个业务对象时，阶段声明已发布的 Link、目标过程与终止状态。业务事实仍在原对象、来源证据和编辑历史中；observation_interests 保存授权、阶段游标和关联排程。Indexer 从数据库恢复进度，Worker 沿原 Action 通道提交观察。Machinery 读回已授权的关注和中断原因。[Palantir 过程和关联对象](https://www.palantir.com/docs/foundry/machinery/core-concepts) · [基于时间与对象的自动化](https://www.palantir.com/docs/foundry/automate/overview) · [使用与验收](../guides/continuous-observation.md)

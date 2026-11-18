@@ -68,6 +68,17 @@ export const businessAgentProfiles: AgentProfile[] = [
     ],
   },
   {
+    apiName: 'BookedFlightMonitoring',
+    terms: ['行程监测','跟踪我的航班','关注航变','航班变动提醒','monitor my booked flight','flight change alert'],
+    objects: ['FliggyFlightBooking','FlightWatch'], links: ['FliggyFlightBookingWatch'],
+    functions: ['prepareBookedFlightWatch','readFliggyFlightBooking','readFlightWatch'],
+    actions: ['StartBookedFlightWatch','CancelFlightWatch'],
+    instructions: [
+      { function:'prepareBookedFlightWatch', text:'Use the original booking to prepare a monitoring proposal. Present the chosen sources, maximum checks and deadline to the owner. A booking or payment approval applies only to that transaction.' },
+      { action:'StartBookedFlightWatch', text:'Use monitoring settings explicitly authorized for this booking and leg. Read the linked watch for the latest provider evidence and changes.' },
+    ],
+  },
+  {
     apiName: 'TravelOrderProgress',
     terms: ['酒店取消进度', '酒店退款进度', '机票出票', '出票了吗', 'hotel cancellation status', 'ticket issuance'],
     objects: ['FliggyHotelBooking','FliggyFlightBooking'],

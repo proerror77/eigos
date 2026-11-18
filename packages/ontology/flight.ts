@@ -39,6 +39,18 @@ const watchState = z.enum(['pending', 'monitoring', 'unavailable', 'cancelled', 
 const watchReason = z.enum(['waiting', 'checked', 'no_match', 'source_unavailable', 'source_changed', 'check_failed', 'flight_finished', 'check_limit', 'deadline', 'user_cancelled']);
 const nullableLabel = label.nullable();
 const authorityId = z.string().regex(/^[a-f0-9]{64}$/);
+export const bookedFlightWatchRequest = z.strictObject({
+  booking: objectRefSchema, monitorUntil: time,
+  maxChecks: z.number().int().min(2).max(24),
+  sources: flightWatchSettings.shape.sources,
+});
+export const bookedFlightWatchConsent = bookedFlightWatchRequest.extend({
+  bookingDigest: authorityId,
+  sourceAuthorities: z.strictObject({ VariFlight: authorityId, Flightradar24: authorityId.optional() }),
+});
+const bookedLeg = z.strictObject({
+  booking: objectRefSchema, digest: authorityId, departure: time, arrival: time, interestId: z.string().optional(),
+});
 const liveTracking = z.strictObject({
   provider: z.literal(flightPositionSource),
   state: z.enum(['pending', 'tracked', 'no_match', 'ambiguous', 'source_unavailable', 'source_changed']),
@@ -52,6 +64,7 @@ export const flightWatch = z.strictObject({
   knownGate: nullableLabel, knownTerminal: nullableLabel, alert: flightAlert.nullable(),
   alertVersion: z.number().int().nonnegative(),
   liveTracking: liveTracking.extend({ authorityId }).nullable().optional(),
+  bookedLeg: bookedLeg.optional(),
 });
 export const flightWatchRead = flightWatch.pick({
   state: true, reason: true, checks: true, nextCheckAt: true, checkedAt: true,
@@ -73,14 +86,22 @@ const actions = [
     description: 'Stop future supplier checks and withdraw any outstanding flight alert.' },
 ] as const;
 
-export const flightDefinition: Pick<OntologyDocument, 'objectTypes' | 'functionTypes' | 'actionTypes'> = {
+export const flightDefinition: Pick<OntologyDocument, 'objectTypes' | 'functionTypes' | 'actionTypes' | 'linkTypes'> = {
   objectTypes: [{
     apiName: flightWatchType, displayName: 'Flight watch', primaryKey: 'id', titleProperty: 'name', interfaces: {},
     description: 'A user-authorized bounded watch on a selected flight leg with supplier-backed state and versioned changes.',
     properties: Object.fromEntries(Object.entries(flightWatch.shape)
-      .map(([name, schema]) => [name, { description: name, required: name !== 'liveTracking', schema: json(schema) }])),
+      .map(([name, schema]) => [name, { description: name, required: name !== 'liveTracking' && name !== 'bookedLeg', schema: json(schema) }])),
   }],
+  linkTypes: [{apiName:'FliggyFlightBookingWatch', description:'Operational watch authorized for this original ticketed booking and segment',
+    from:{type:'FliggyFlightBooking',name:'itineraryWatches',cardinality:'many'},
+    to:{type:flightWatchType,name:'booking',cardinality:'one'}}],
   functionTypes: [
+    {apiName:'prepareBookedFlightWatch',description:'Prepare the exact original Jinghang segment, read budget, monitoring deadline and current supplier authority pins for a later approved operational watch.',
+      parameters:json(bookedFlightWatchRequest),returns:json(bookedFlightWatchConsent),dependencies:{objectTypes:['FliggyFlightBooking'],functions:['readFliggyFlightBooking','readFlightStatus','readLiveFlightPosition']}},
+    {apiName:'startBookedFlightWatch',description:'Start an explicitly approved operational watch for a confirmed ticket on the original Jinghang booking.',
+      parameters:json(bookedFlightWatchConsent),returns:json(objectRefSchema),edits:true,
+      dependencies:{objectTypes:['FliggyFlightBooking',flightWatchType],linkTypes:['FliggyFlightBookingWatch'],functions:['readFliggyFlightBooking','readFlightStatus','readLiveFlightPosition']}},
     { apiName: 'readFlightStatus', description: 'Read VariFlight operational status for a flight number on a departure-local date. Filter by the IATA airport codes to disambiguate. Each query uses provider credits.',
       parameters: json(searchFlight), returns: json(flightStatusRead), source: flightSource, dependencies: {} },
     ...actions.map(({ fn, input, description }) => ({
@@ -95,8 +116,9 @@ export const flightDefinition: Pick<OntologyDocument, 'objectTypes' | 'functionT
     { apiName: 'readFlightWatch', description: 'Read authorized flight status, the latest live-tracking check and the versioned alert for a flight watch.',
       parameters: json(flightWatchInput), returns: json(flightWatchRead), dependencies: { objectTypes: [flightWatchType] } },
   ],
-  actionTypes: actions.map(({ name, fn, input, existing, description }) => {
+  actionTypes: [{apiName:'StartBookedFlightWatch',function:'startBookedFlightWatch',description:'Observe the original ticketed segment under the approved source bindings, deadline and maximum check count.',
+    typeClasses:[{kind:'observation',name:'readback'}],parameters:json(bookedFlightWatchConsent),objectParameters:{booking:'FliggyFlightBooking'},submissionCriteria:[]}, ...actions.map(({ name, fn, input, existing, description }) => {
     const objectParameters: Record<string, string> = existing ? { watch: flightWatchType } : {};
     return { apiName: name, function: fn, parameters: json(input), description, objectParameters, submissionCriteria: [] };
-  }),
+  })],
 };

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { Conflict, digest } from '../core/identity.js';
 import { Database, type Sql } from './database.js';
 import { PermissionDenied, type Requirement } from './access.js';
@@ -5,6 +6,11 @@ import type { Objects } from './objects.js';
 
 type Reader = Pick<Objects, 'access' | 'read'>;
 
+const observing = new AsyncLocalStorage<boolean>();
+/** Observation Actions may reconcile an existing operation, but cannot claim a new supplier mutation. */
+export function withoutExternalDispatch<T>(operation:()=>Promise<T>):Promise<T>{
+  return observing.run(true,operation);
+}
 export class UnknownExternalOperation extends Conflict {}
 /** Provider mutations are recorded before dispatch. A lost response is an
  * unresolved original operation, never permission to submit another order. */
@@ -132,6 +138,7 @@ export class ExternalOperations {
     client: Sql, owner: string, key: string, scope: unknown,
     reader?: Reader, origin?: { requestId?: string; taskId?: string },
   ) {
+    if(observing.getStore())throw new PermissionDenied('An observation cannot dispatch a supplier mutation');
     const claimed = await this.db.query(
       `INSERT INTO ${this.db.schema}.external_operations(owner,operation_key,scope_digest,state,requirements,request_id,task_id)
         VALUES($1,$2,$3,'dispatched',$4,$5,$6) ON CONFLICT DO NOTHING RETURNING operation_key`,

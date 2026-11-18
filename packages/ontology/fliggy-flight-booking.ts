@@ -83,6 +83,7 @@ export const fliggyFlightBookingDefinition: Pick<OntologyDocument, 'objectTypes'
   ],
   actionTypes: actions.map(([apiName, fn, input, description]) => ({
     apiName, description, parameters: json(input), function: fn,
+    ...(apiName === 'RefreshFliggyFlightBooking' ? {typeClasses:[{kind:'observation',name:'readback'}]} : {}),
     objectParameters: ('booking' in input.shape ? { booking: fliggyFlightBookingType } : {}) as Record<string, string>,
     submissionCriteria: [],
   })),
