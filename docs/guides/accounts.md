@@ -51,7 +51,7 @@ Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的
 
 1. 备份正式 schema。
 2. 完成「Auth0」一节里部署 Action 之前的准备：新建 Management 应用，给门户应用加上新回调（原回调先保留），确认两个连接已启用，处理重复用户，记下现有的 tenant 映射。
-3. 生成 `EIGOS_PORTAL_SECRET` 和 `EIGOS_ACCOUNT_LINK_SECRET`，写好新版本的环境变量。邀请制部署在这里加上 `EIGOS_SIGNUP=invite`。
+3. 生成 `EIGOS_PORTAL_SECRET` 和 `EIGOS_ACCOUNT_LINK_SECRET`，写好新版本的环境变量。邀请制部署在这里加上 `EIGOS_SIGNUP=invite`。`OAUTH_ISSUER` 是 Auth0 自定义域名，又要用重发验证邮件时，再加上 `OAUTH_MANAGEMENT_DOMAIN`。
 
 停机窗口：
 
@@ -89,8 +89,8 @@ Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的
 - 这个路由不需要会话，靠 Cookie `__Host-eigos-account-verify` 找到用户。Cookie 在未验证的登录之后写入，10 分钟有效。过期后点按钮不会发信，页面回到 `verify`，用户重新登录一次。
 - 同一地址每小时最多 5 次。
 - Gateway 的 Management 客户端需要 `update:users`。可以填 Action 用的同一个应用（`read:users`、`update:users`）的凭据，也可以另建一个只授予 `update:users` 的应用。
-- 失败时用户只会回到 `verify` 页，原因要到 Auth0 租户日志里查。
-- 已知限制：Management API 的 audience 由 `OAUTH_ISSUER` 推出，是 `<OAUTH_ISSUER>api/v2/`，所以 `OAUTH_ISSUER` 必须是租户自己的 Auth0 域名（`https://<tenant>.<region>.auth0.com/`）。租户用 Auth0 自定义域名时，重发验证邮件还不能用。
+- 设置了 `OAUTH_MANAGEMENT_DOMAIN` 时，Management 令牌请求、audience（`https://<域名>/api/v2/`）和验证邮件任务都发往这个域名。没设置时发往 `OAUTH_ISSUER`。`OAUTH_ISSUER` 是 Auth0 自定义域名时，Management API 和它的 audience 仍在租户的默认域名上，所以这样的部署必须设置 `OAUTH_MANAGEMENT_DOMAIN`，否则重发验证邮件会失败。
+- 失败时用户只会回到 `verify` 页，原因记在 Gateway 日志里，见「Gateway 日志」。
 
 ### 部署前先检查
 
@@ -117,7 +117,7 @@ Action 的源码是 `deploy/auth0/post-login.cjs`，CommonJS，不依赖 npm 包
 | `DEFAULT_TENANT` | 用户没有受管理的 tenant 时得到的值，Action 同时把它写回该用户的 `app_metadata`。新注册的用户也得到这个值。 |
 | `LINK_URL` | `https://<gateway>/account/link`。 |
 | `LINK_SECRET` | 必须和 Gateway 的 `EIGOS_ACCOUNT_LINK_SECRET` 相同。 |
-| `MANAGEMENT_DOMAIN` | Auth0 租户域名，不带 `https://`，例如 `<tenant>.<region>.auth0.com`。 |
+| `MANAGEMENT_DOMAIN` | 租户的默认 Auth0 域名，不带 `https://`，例如 `<tenant>.<region>.auth0.com`。租户用自定义域名时，Management API 也在默认域名上。和 Gateway 的 `OAUTH_MANAGEMENT_DOMAIN` 指同一个域名。 |
 | `MANAGEMENT_CLIENT_ID`、`MANAGEMENT_CLIENT_SECRET` | Management 应用的凭据。 |
 
 `DEFAULT_TENANT` 必须等于现有用户（没有受管理 tenant 字段的）现在得到的 tenant 值，否则这些用户的 owner 会变，找不到原来的数据。用「部署前先检查」第 2 步记下的值。值写回用户之后，再改 `DEFAULT_TENANT` 只影响还没写回的用户。上线前后，用同一个现有用户的令牌调用 `GET /identity`，owner 应当不变。
@@ -136,7 +136,6 @@ Action 出问题时，先把它从登录流程里移走，其他 Actions 不受�
 
 - 重复用户检查调用 Auth0 的 `users-by-email`，它区分邮箱大小写。邮箱只有大小写不同的两个用户查不到对方，Action 不会自动合并它们。
 - 合并请求不带 `connection_id`，只在租户只有一个 `auth0` 数据库连接时可靠。
-- 租户用 Auth0 自定义域名时，重发验证邮件还不能用，见「重发验证邮件」。
 
 ## Gateway 环境变量
 
@@ -152,7 +151,8 @@ Gateway 在 `.env` 或部署环境里配置，示例见 `.env.example`。secret 
 | `EIGOS_ENFORCE_OWNER_RLS` | 设为 `true` 开启 owner 隔离。`EIGOS_SIGNUP` 不是 `closed` 时必须设置。Gateway、Worker 和 Indexer 都要设置。 |
 | `EIGOS_PORTAL_SECRET` | 至少 32 个字符，加密登录过程中的 Cookie。 |
 | `EIGOS_ACCOUNT_LINK_SECRET` | 至少 32 个字符，必须和 Action 的 `LINK_SECRET` 相同，且不能和 `EIGOS_PORTAL_SECRET` 相同。 |
-| `OAUTH_MANAGEMENT_CLIENT_ID`、`OAUTH_MANAGEMENT_CLIENT_SECRET` | 可选，要么都配，要么都不配。配了，账号页才有重发验证邮件的按钮。`OAUTH_ISSUER` 必须是租户自己的 Auth0 域名，见「重发验证邮件」。 |
+| `OAUTH_MANAGEMENT_CLIENT_ID`、`OAUTH_MANAGEMENT_CLIENT_SECRET` | 可选，要么都配，要么都不配。配了，账号页才有重发验证邮件的按钮。`OAUTH_ISSUER` 是 Auth0 自定义域名时，还要设置 `OAUTH_MANAGEMENT_DOMAIN`。 |
+| `OAUTH_MANAGEMENT_DOMAIN` | 可选。租户的默认 Auth0 域名，写成小写的纯主机名，例如 `dev-abc.us.auth0.com`，不带 `https://`、端口、路径和结尾的点，格式不对时 Gateway 拒绝启动。设置后，Management 令牌请求、audience 和验证邮件任务都发往它，不设置时发往 `OAUTH_ISSUER`。`OAUTH_ISSUER` 是 Auth0 自定义域名的部署必须设置，否则重发验证邮件失败。没有配置 `OAUTH_MANAGEMENT_CLIENT_ID` 和 `OAUTH_MANAGEMENT_CLIENT_SECRET` 时，这个变量被忽略。 |
 | `EIGOS_TRUST_PROXY` | 只在可信的反向代理后面设置，见下。 |
 
 `OAUTH_MEMBER_CLIENT_ID`、`OAUTH_MEMBER_CLIENT_SECRET`、`OAUTH_MEMBER_MCP_CLIENT_ID` 和 `OAUTH_EXISTING_CLIENT_IDS` 只要配了一个，Gateway 就要求这四个都配置。同时 `EIGOS_PORTAL_SECRET` 和 `EIGOS_ACCOUNT_LINK_SECRET` 也必须配置，即使 `EIGOS_SIGNUP=closed`。此外要求：
@@ -269,7 +269,7 @@ Cookie 都带 `__Host-` 前缀，只能通过 HTTPS 使用。
 
 | `status` | 含义和处理 |
 | --- | --- |
-| `login` | 登录没有完成：登录 Cookie 过期、被改动或已用过，`state` 对不上，或 code、ID Token 校验失败。用户重新登录。 |
+| `login` | 登录没有完成：登录 Cookie 过期、被改动或已用过，`state` 对不上，或 code、ID Token 校验失败。用户重新登录。到了 Auth0 那一步才失败的，Gateway 日志里有一行原因，见「Gateway 日志」。 |
 | `verify` | 邮箱还没验证。用户验证后重新登录。 |
 | `tenant` | ID Token 没有 tenant claim。检查 Action 是否已部署并放进登录流程，`TENANT_CLAIM` 是否等于 `OAUTH_TENANT_CLAIM`，`DEFAULT_TENANT` 是否已设置。 |
 | `closed` | `EIGOS_SIGNUP=closed`，目前暂停注册新账号。 |
@@ -294,6 +294,31 @@ Gateway 按下表的顺序检查，第一个不通过的就是返回的 `reason`
 | `client_not_authorized` | `Authorize this client on the EIGOS account page` | 账号还没授权 Grok，授权已撤销，或令牌签发在最近一次授权之前。用户先在账号页授权，再在 Grok 里（重新）连接，用重新签发的令牌。 |
 | `insufficient_scope` | `The token is missing tasks:read or tasks:write` | 令牌缺 `tasks:read` 或 `tasks:write`。响应头 `WWW-Authenticate` 是 `Bearer error="insufficient_scope", scope="tasks:read tasks:write", resource_metadata="<PUBLIC_URL>/.well-known/oauth-protected-resource/mcp"`。检查 Auth0 API 的 scopes 和 Grok 客户端的授权。 |
 
+### Gateway 日志
+
+账号门户把两种失败写到 Gateway 的标准错误输出，每次一行：
+
+| 日志行 | 什么时候出现 |
+| --- | --- |
+| `EIGOS account: sign-in could not be completed: <原因>` | 登录回调已经到了和 Auth0 交换授权码这一步，没有成功。用户看到 `?status=login`。 |
+| `EIGOS account: verification email resend failed: <原因>` | 重发验证邮件失败。用户回到 `verify` 页，看不到原因。 |
+
+`<原因>` 是固定的短句，或者错误的类名。常见的有：
+
+- 登录：`Identity provider rejected the authorization code`（Auth0 不认这个授权码）、`Identity token did not match this login`、`unexpected "aud" claim value`、`signature verification failed`、`"exp" claim timestamp check failed`、`ZodError`（Auth0 的回答里没有 ID Token，或邮箱格式不对）、`SyntaxError`（回答不是 JSON）。
+- 重发：`Auth0 token request failed with status <HTTP 状态>`、`Auth0 verification email request failed with status <HTTP 状态>`、`Auth0 token answer is not usable`。
+- 两种都可能出现：`fetch failed`（连不上 Auth0）、`TimeoutError`（10 秒内没有回答）。
+
+日志里没有授权码、令牌、用户标识和邮箱。一行最长 200 个字符，没有换行。
+
+下面这些不是故障：
+
+- 授权码只能用一次，也有有效期。回调被重放（例如浏览器重复发出同一个请求），或者 code 已过期时，Auth0 拒绝它，Gateway 记一行 `sign-in could not be completed: Identity provider rejected the authorization code`。用户重新登录即可。
+- 登录 Cookie 缺失或过期、`state` 对不上、没有 code 的请求，在到达 Auth0 之前就被拒绝。用户同样看到 `?status=login`，但 Gateway 不记日志。
+- 邮箱没验证（`?status=verify`）是登录的结果，不是失败，不记日志。
+
+如果每次登录都是 `Identity provider rejected the authorization code`，常见原因是门户应用的 client secret（`OAUTH_MEMBER_CLIENT_SECRET`）、令牌端点认证方式（`client_secret_post`）或回调地址不对。如果重发总是失败，常见原因是 Management 应用的凭据不对、没有被授权使用 Auth0 Management API 或缺少 `update:users`，以及自定义域名的部署没有设置 `OAUTH_MANAGEMENT_DOMAIN`。
+
 ## 验收
 
 验收只做真实查询和 synthetic 执行，不写外部日历，不真实报名、下单或付款。验收前给测试 owner 配置有效期明确的 [FlyAI trial 来源绑定](service-planning.md#供应商连接)。每一项记录结果和标识，不记录令牌、邮箱、验证链接或任何凭据。
@@ -301,7 +326,7 @@ Gateway 按下表的顺序检查，第一个不通过的就是返回的 `reason`
 下面按 `open` 模式写。`invite` 模式下，第 1、2 项的新用户登录后看到邀请码表单，输入 `npm run account:invite` 发的邀请码后开通。`closed` 模式下，新用户登录后看到暂停注册的提示。
 
 1. 用新的 Google 账号注册，自动开通，`npm run account -- show <owner|email>` 返回的 `status` 是 `active`。
-2. 用新邮箱加密码注册。验证邮箱之前看到 `verify` 提示，`show` 查不到账号。验证之后重新登录，自动开通。
+2. 用新邮箱加密码注册。验证邮箱之前看到 `verify` 提示，`show` 查不到账号。配置了 `OAUTH_MANAGEMENT_CLIENT_ID` 和 `OAUTH_MANAGEMENT_CLIENT_SECRET` 时，点「重新发送验证邮件」，确认收到新邮件，并且 Gateway 日志里没有 `verification email resend failed`。验证之后重新登录，自动开通。
 3. 用同一个邮箱换另一种方式登录，进入合并页。用原来的方式登录后合并完成，两种方式的 `show` 返回同一个 owner。从账号页发起的登录，合并后回到账号页并开通会话。
 4. 先在账号页授权 Grok，再在 Grok Bot 里添加连接并问一次只读航班查询。用原 `taskId` 读回结果，结果带来源证据，并在同一对话交付。
 5. 撤销 Grok 授权后，请求被 Gateway 拒绝，返回 403，`reason` 是 `client_not_authorized`。重新授权后，在 Grok 里重新连接，新签发的令牌可用，重新授权之前签发的令牌仍被拒绝。
