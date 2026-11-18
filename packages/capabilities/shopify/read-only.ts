@@ -6,6 +6,22 @@ export const SHOPIFY_UCP_VERSION = '2026-08-25';
 export const SHOPIFY_CATALOG_ORIGIN = 'https://catalog.shopify.com';
 export const SHOPIFY_TEST_PROFILE = `https://shopify.dev/ucp/agent-profiles/examples/${SHOPIFY_UCP_VERSION}/valid-with-capabilities.json`;
 export const SHOPIFY_CATALOG_READS = ['search_catalog', 'get_product', 'lookup_catalog'] as const;
+export const SHOPIFY_AGENT_PROFILE_PATH = '/.well-known/shopify-catalog-agent.json';
+
+export function shopifyCatalogProfile() {
+  const version = SHOPIFY_UCP_VERSION, ucpDocs = 'https://ucp.dev/' + version;
+  const capabilities = Object.fromEntries(['search','lookup'].map(operation => [
+    'dev.ucp.shopping.catalog.' + operation, [{ version, spec: ucpDocs + '/specification/shopping/catalog/',
+      schema: ucpDocs + '/schemas/shopping/catalog_' + operation + '.json' }],
+  ]));
+  return { ucp: { version, services: { 'dev.ucp.shopping': [{ version, transport: 'mcp',
+    spec: ucpDocs + '/specification/overview/', schema: ucpDocs + '/services/shopping/mcp.openrpc.json' }] },
+    capabilities: { ...capabilities, 'dev.shopify.catalog.global': [{ version,
+      spec: 'https://shopify.dev/docs/agents/catalog/global-catalog',
+      schema: 'https://shopify.dev/ucp/schemas/' + version + '/shopify_catalog_global.json',
+      extends: Object.keys(capabilities) }] }, payment_handlers: {} } };
+}
+
 type CatalogRead = (typeof SHOPIFY_CATALOG_READS)[number];
 type Fetch = typeof globalThis.fetch;
 const sha256 = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex');
@@ -270,6 +286,7 @@ export class ShopifyCatalogAccess {
 
 interface Connection {
   merchantDomain?: string;
+  agentProfile?: string;
   access?: ShopifyCatalogAccess;
   buyerIp?: { address: string; source: 'explicit-operator-input' };
   timeoutMs?: number;
@@ -338,7 +355,7 @@ export class ShopifyReadOnlyClient {
         jsonrpc: '2.0',
         id,
         method: 'tools/list',
-        params: { arguments: { meta: { 'ucp-agent': { profile: SHOPIFY_TEST_PROFILE } } } },
+        params: { arguments: { meta: { 'ucp-agent': { profile: this.#connection.agentProfile ?? SHOPIFY_TEST_PROFILE } } } },
       },
       signal,
     );
@@ -368,7 +385,7 @@ export class ShopifyReadOnlyClient {
         jsonrpc: '2.0',
         id,
         method: 'tools/call',
-        params: { name: operation, arguments: { meta: { 'ucp-agent': { profile: SHOPIFY_TEST_PROFILE } }, catalog } },
+        params: { name: operation, arguments: { meta: { 'ucp-agent': { profile: this.#connection.agentProfile ?? SHOPIFY_TEST_PROFILE } }, catalog } },
       };
     const response = await this.#request(operation, body, signal),
       result = this.#rpcResult(response.value, id);

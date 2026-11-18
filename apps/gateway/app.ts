@@ -1,3 +1,4 @@
+import { SHOPIFY_AGENT_PROFILE_PATH, shopifyCatalogProfile } from '../../packages/capabilities/shopify/read-only.js';
 import {mountWorkbench} from './workbench.js';
 import {Applications} from '../../packages/runtime/applications.js';
 import type { RuntimeExtensions } from '../../packages/runtime/extensions.js';
@@ -51,7 +52,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   if (db.sandboxEnabled && !developmentSandboxEnabled({ ...config, NODE_ENV: process.env.NODE_ENV }))
     throw new Error('Gateway sandbox requires explicit loopback development configuration');
   const { marketplaceFetch, memberLogin, ...sourceFetch } = providerFetch;
-  const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE, undefined, marketplaceFetch), configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
+  const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE, undefined, marketplaceFetch, config), configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
     fliggyFlight: config.EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE,
     fliggyHotel: config.EIGOS_FLIGGY_HOTEL_CONNECTION_FILE,
     paotui: config.EIGOS_PAOTUI_CONNECTION_FILE, waimai: config.EIGOS_WAIMAI_CONNECTION_FILE,
@@ -88,6 +89,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const model = await metadata.active(); metadata.checkBindings(model, capabilities);
     res.json({ status: 'ok', backend: 'postgres', sourceCommit: config.EIGOS_SOURCE_COMMIT, ontologyRelease: model.release, definitionDigest: model.digest, implementationDigest: db.runtimeId });
   });
+  app.get(SHOPIFY_AGENT_PROFILE_PATH, (_req, res) => res.json(shopifyCatalogProfile()));
   const card = agentCard(config.PUBLIC_URL);
   app.get('/.well-known/agent-card.json', (_req, res) => res.json(AgentCard.toJSON(card)));
   app.get('/.well-known/oauth-protected-resource', (_req, res) => res.json({ resource: config.PUBLIC_URL, authorization_servers: config.OAUTH_ISSUER ? [config.OAUTH_ISSUER] : [], bearer_methods_supported: ['header'] }));

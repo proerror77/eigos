@@ -203,3 +203,15 @@ RollingGo 凭据是原 API Key 文件。Shopify 凭据文件是 `{ "clientId": "
 | DidiRideOrder | 沿 watches 读取 DidiRideWatch.state | 由现有跟单记录提供接驾和行程阶段、来源观察时间及观察终止原因。 |
 
 在工作台的 Machinery 里打开流程实例，查看正式状态转换及其来源。具备任务读取权限的用户还可查看自己针对该对象的单对象后台 Action、状态、下一次检查和截止时间。授权撤回、超过期限或供应商详情无法确认时，保留最后可验证的业务状态。历史定义沿用原有人工刷新方式；发布新定义并给实际执行身份授予新增 ProcessLog 的读取权限后才能从 Machinery 查看。合成订单覆盖此路径；生产供应商接入和履约验收另行进行。
+
+### Shopify 匿名商品搜索
+
+Shopify [Global Catalog](https://shopify.dev/docs/agents/catalog/global-catalog) 支持携带 UCP Agent profile 的匿名跨店搜索。已有 `SearchShopifyProducts` Action 使用绑定用户自己的来源授权，将供应商返回的商品、变体、卖家、价格与可售状态写入对象。来源标识包含配置摘要，过期、撤销或 profile 变更会使原绑定失效。配送时效仍为未知。
+
+部署 Gateway 后，可公开读取 `/.well-known/shopify-catalog-agent.json`。公开模式从 Gateway 的 HTTPS `PUBLIC_URL` 生成自身的 profile URL。在现有 `EIGOS_SERVICE_CONNECTION_FILE` 中为已授权用户添加条目：
+
+```json
+{"owner":"<已验证的用户身份>","provider":"Shopify","mode":"public_catalog","bindingId":"shopify-global","active":true,"expiresAt":"<授权到期的 ISO 时间>"}
+```
+
+此模式使用 Shopify 的固定 Global Catalog 地址，无需商家店铺、API 密钥或用户登录。仅本机 loopback 开发模式使用 Shopify 官方示例 profile；生产绑定始终使用本方 Gateway 发布的 profile。现有客户端凭据绑定继续使用原有 token 交换路径。
