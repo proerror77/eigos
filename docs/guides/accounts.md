@@ -33,10 +33,11 @@ Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的
 
 `open` 和 `invite` 要求 `EIGOS_ENFORCE_OWNER_RLS=true`。任何模式下，已有的账号都照常使用。
 
-**`open` 就是公开注册，正式环境先不要用。** 下面两件事落地之前，正式环境保持 `invite` 或 `closed`：
+**`open` 就是公开注册，正式环境先不要用。** 下面三件事落地之前，正式环境保持 `invite` 或 `closed`：
 
 1. Worker 改用按量计费的模型凭据。现在所有账号的任务共用一个 ChatGPT 订阅的登录凭据，公开注册可能违反这个订阅的使用条款，也很快会被限流（设计文档第 4 节第 5 条）。
 2. 每个账号的配额：每天的任务数、同时进行的任务数，以及每个连接每分钟的调用次数（设计文档第 6.9 节）。第 1 步没有做配额。
+3. 撤销 Agent 连接，或者完成合并时，同时撤销这个用户在 Auth0 里的授权记录和 refresh token，设计文档的第 4 步会做（第 6.4 节）。在这之前，合并之前连接到这个账号的 Agent，合并之后仍然拿着 refresh token，`invite` 模式也挡不住这一点：refresh token 由 Auth0 发，和 Gateway 开不开户无关。见「已知限制」。
 
 在这之前，`open` 只用在开发环境，以及有明确起止时间的验收窗口里，见「验收」。默认值是 `open`，所以正式环境要显式设置 `EIGOS_SIGNUP`。
 
@@ -92,7 +93,7 @@ Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的
 - **Auth0：**
   - 给门户应用加上回调 `https://<gateway>/account/callback`，验收通过后删除原回调；
   - 新建 Management 应用，授予 `read:users` 和 `update:users`；
-  - 处理「部署前先检查」查出的重复用户，包括手动合并；
+  - 处理「部署前先检查」查出的重复用户：给有数据的用户写 `app_metadata.eigos_since`，删除没验证的较早用户，手动合并邮箱只有大小写不同的用户；
   - 部署 Action，配置全部 secrets（包括 `EIGOS_CLIENT_IDS` 和 `EIGOS_CONNECTIONS`），放进登录流程。
 - **正式环境的环境变量**，Gateway 和 Worker 都要改。
 - **数据库：**`db:upgrade`，给运行角色授予新权限，`db:enable-owner-isolation`，以及用 `ontology:activate` 同步账号组。
@@ -103,7 +104,7 @@ Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的
 
 - **账号组的授权会扩大。** `db:upgrade` 把旧组 `group:eigos-member-queries` 的授权原样移到 `group:eigos-accounts`。上面第 10 步的 `ontology:activate`，以及以后每一次发布或激活业务 Ontology，都把这个组整组替换成全部业务授权：所有业务 Function 的 `execute_function`，所有业务 Action 的 `apply_action`，以及这些 Function 用到的全部来源的 `read_source`。旧组原来只给了一部分能力时，所有账号会多出其余的能力。
 - **合并不能撤销，而且对整个租户生效**，见「Action 的行为」。
-- **部署前没处理的重复用户**，较新用户名下的 EIGOS 数据在合并后访问不到。
+- **部署前没处理的重复用户**，较新用户名下的 EIGOS 数据在合并后访问不到。会员同邮箱下还有一个较早创建、没验证的用户时也一样：那个用户一验证，会员就可能被并入它。
 - **合并之后要重新授权 Grok。** 账号页确认原来那个账号时撤销它的 Grok 授权，用户在账号页重新授权，再在 Grok 里重新连接。
 - **正式环境不开放注册。** 开户模式是 `invite` 或 `closed`，见「开户模式」。
 
@@ -136,11 +137,30 @@ Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的
 
 1. **重复用户。** 导出 Auth0 的全部用户，按小写邮箱分组，找出同一邮箱下有两个或更多 `email_verified` 为 `true` 的用户。部署时还没有用户带 `eigos_since`，所以这些用户按创建时间排：较新的用户下次登录 EIGOS（刷新令牌换新除外）时，被并入最早创建、门户能登录的那个用户，之后 owner 由那个用户决定。owner 按 `digest([issuer, tenant, sub])` 计算，已有数据不迁移，所以较新用户名下的 EIGOS 数据在合并后不能再访问。没处理的用户里，谁先拿到 EIGOS 的 claim（包括用刷新令牌换新），谁就先记上 `eigos_since`，排到前面。逐组处理：
    - 较新用户没有要保留的 EIGOS 数据：不用处理，交给 Action。
-   - 较新用户有要保留的数据：上线前手动合并，并让它做主用户。调用 Management API 的 `POST /api/v2/users/{主用户的 user_id}/identities`，请求体是被并入用户的 `provider` 和 `user_id`（不带 provider 前缀）。
-   - 两个用户都有要保留的数据：由运营者决定保留哪一个，另一个的数据合并后访问不到。
-   - 邮箱只有大小写不同的重复用户：Action 用 `users-by-email` 查重，它区分大小写，查不到这样的用户，所以不会合并它们（见「已知限制」）。要合并只能手动，做法同第二条。
+   - 较新用户有要保留的数据：部署 Action 之前，给它写上 `eigos_since`，做法见「写 `eigos_since`」。带 `eigos_since` 的用户排在没有的前面，所以较早创建的那个用户下次登录 EIGOS 时，是它并入较新的这个用户，较新用户的数据不动。
+   - 两个用户都有要保留的数据：由运营者决定保留哪一个，给它写上 `eigos_since`。另一个的数据合并后访问不到。
+   - 有 EIGOS 数据的会员（升级前是 `member_accounts` 里的 owner），同邮箱下还有一个创建得比它早、邮箱没验证、门户能登录的用户，通常是密码用户。这样的组要另外查，因为同邮箱已验证的用户只有会员一个，上面的分组找不到它。部署 Action 之前二选一：给这个会员写上 `eigos_since`（做法见「写 `eigos_since`」），或者删掉那个没验证的用户（删之前先确认没有人在用它）。不处理的话，那个用户一验证邮箱，就因为创建得早，排到还没有 `eigos_since` 的会员前面，它先登录 EIGOS 的话还先拿到 `eigos_since`。会员下次登录 EIGOS 时被并入它，会员名下的 EIGOS 数据在合并后不能再访问。
+   - 邮箱只有大小写不同的重复用户：Action 用 `users-by-email` 查重，它区分大小写，查不到这样的用户，所以不会合并它们（见「已知限制」）。要合并只能手动：调用 Management API 的 `POST /api/v2/users/{主用户的 user_id}/identities`，请求体是被并入用户的 `provider` 和 `user_id`（不带 provider 前缀），让有数据的那个做主用户。
 2. **现有 tenant 映射。** 找到现有 Post-Login Actions 里写 tenant claim 的那一个，记下三个值：claim 名、读取的 `app_metadata` 键，以及用户没有这个键时得到的值。它们分别对应 Action 的 `TENANT_CLAIM`、`TENANT_METADATA_KEY` 和 `DEFAULT_TENANT`。
 3. **保留现有的 Post-Login Actions。** 不要删除或改动其他应用的 Actions 和客户端授权。tenant 只从受管理的 `app_metadata` 取，不从邮箱、用户提交的内容或用户可编辑的 `user_metadata` 取。
+
+### 写 `eigos_since`
+
+给有 EIGOS 数据的用户写 `app_metadata.eigos_since`，用 Management API 的一个 PATCH。令牌用 Management 应用的 client credentials 换，audience 是 `https://<域名>/api/v2/`。`<域名>` 是租户的默认 Auth0 域名，和 Action 的 `MANAGEMENT_DOMAIN` 相同。
+
+```http
+PATCH https://<域名>/api/v2/users/<user_id>
+Authorization: Bearer <Management API 令牌>
+Content-Type: application/json
+
+{ "app_metadata": { "eigos_since": "2026-11-18T09:00:00.000Z" } }
+```
+
+- `<user_id>` 是要保留数据的那个 Auth0 用户，例如 `auth0|abc123`。放进地址时，`|` 要编码成 `%7C`。
+- 时间写做这件事时的当前时间，ISO 8601、UTC，格式同上。Action 读不出时间的值，等于没有写。
+- PATCH 只合并 `app_metadata` 的顶层键，其他键（例如 tenant）不动。
+- 写了以后，这个用户排在所有没有 `eigos_since` 的用户前面。之后才拿到 EIGOS claim 的用户，时间都晚于它。
+- 这是 Auth0 租户上的改动，要先取得授权，见「需要授权的操作」。
 
 ### Post-Login Action
 
@@ -193,7 +213,7 @@ Action 出问题时，先把它从登录流程里移走，其他 Actions 不受�
 
 - 重复用户检查调用 Auth0 的 `users-by-email`，它区分邮箱大小写。邮箱只有大小写不同的两个用户查不到对方，Action 不会自动合并它们。
 - 合并请求不带 `connection_id`，只在租户只有一个 `auth0` 数据库连接时可靠。
-- 合并时撤销的只是 EIGOS 这边的 Grok 授权。合并之前连接到这个账号的 Agent，在 Auth0 那里还有 refresh token：用户重新授权 Grok 之后，它换来的新令牌也会被 Gateway 接受。撤销 Auth0 的授权记录和 refresh token 留到第 4 步再定（设计文档第 9 节）。
+- 合并时撤销的只是 EIGOS 这边的 Grok 授权。合并之前连接到这个账号的 Agent，在 Auth0 那里还有 refresh token：用户重新授权 Grok 之后，它换来的新令牌也会被 Gateway 接受。`invite` 模式也挡不住这一点，因为 refresh token 由 Auth0 发，和 Gateway 开不开户无关。撤销连接或完成合并时，一并撤销 Auth0 里这个用户的授权记录和 refresh token，是设计文档第 4 步的必做项（第 6.4 节），也是开放注册的前提之一，见「开户模式」。
 
 ## Gateway 环境变量
 
