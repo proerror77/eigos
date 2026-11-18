@@ -8,6 +8,9 @@ import { Conflict, digest, SourceReadFailure } from './identity.js';
 import { readPrivateSourceFile } from './private-source.js';
 import { DidiOperations } from '../capabilities/didi/operations.js';
 
+// A bare lowercase DNS hostname of at least two labels: no scheme, port, path or trailing dot.
+const hostname = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
 export const configSchema = z.object({
   DATABASE_URL: z.string().min(1), QUERY_DATABASE_URL: z.string().min(1).optional(), EIGOS_PG_SCHEMA: z.string().default('eigos'),
   HOST: z.string().default('127.0.0.1'), PORT: z.coerce.number().int().default(3000),
@@ -20,6 +23,8 @@ export const configSchema = z.object({
   OAUTH_EXISTING_CLIENT_IDS: z.string().regex(/^[a-zA-Z0-9_-]+(?:,[a-zA-Z0-9_-]+)*$/).optional(),
   OAUTH_MANAGEMENT_CLIENT_ID: z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/).optional(),
   OAUTH_MANAGEMENT_CLIENT_SECRET: z.string().min(1).optional(),
+  // The tenant's own domain. Under an Auth0 custom domain OAUTH_ISSUER is the custom one, but the Management API stays on this one.
+  OAUTH_MANAGEMENT_DOMAIN: z.string().regex(hostname, 'Use a bare lowercase hostname such as dev-abc.us.auth0.com, with no scheme, port or path').optional(),
   OAUTH_ISSUER: z.url().optional(), OAUTH_AUDIENCE: z.string().optional(), OAUTH_JWKS_URL: z.url().optional(),
   OAUTH_TENANT_CLAIM: z.string().min(1).default('tenant_id'),
   EIGOS_SIGNUP: z.enum(['open', 'invite', 'closed']).default('open'),

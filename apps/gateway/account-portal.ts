@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import express, { type Request, type RequestHandler, type Response } from 'express';
-import { createRemoteJWKSet, jwtVerify, SignJWT, type JWTVerifyGetKey } from 'jose';
+import { createRemoteJWKSet, errors, jwtVerify, SignJWT, type JWTVerifyGetKey } from 'jose';
 import { z } from 'zod';
 import type { Config } from '../../packages/core/config.js';
 import { digest } from '../../packages/core/identity.js';
@@ -57,6 +57,19 @@ const statuses = {
   link: '合并没有完成，请用原来的方式重新登录。',
   resent: '验证邮件已重新发送，请查收后重新登录。',
 } as const;
+
+/**
+ * What a log line says about a failed step. An error message can quote what could not be read: a JSON error shows the start of the
+ * answer, a schema error lists its issues, a URL error repeats the address. So a message is kept only when its wording is fixed, which
+ * holds for the plain errors of this portal and of the Management client, for jose's errors and for fetch's "fetch failed". Any other
+ * error is named by its class. The result is short and has no line break.
+ */
+function reason(error: unknown) {
+  if (!(error instanceof Error)) return 'unknown error';
+  const fixed = error.constructor === Error || error instanceof errors.JOSEError || error.message === 'fetch failed';
+  return (fixed ? error.message : error.name).replace(/\s+/g, ' ').slice(0, 200);
+}
+const logFailure = (what: string, error: unknown) => console.error(`EIGOS account: ${what}: ${reason(error)}`);
 
 function cookie(req: Request, key: string, shape: RegExp) {
   const value = req.headers.cookie?.split(';').map(item => item.trim()).find(item => item.startsWith(key + '='))?.slice(key.length + 1);
@@ -227,7 +240,10 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     if (!attempt || req.query.state !== attempt.state || !code.success) { redirect(res, 'login'); return; }
     let result: LoginResult;
     // The authorization code works once, so a replayed callback fails here as well.
-    try { result = await login.finish(code.data, attempt); } catch { redirect(res, 'login'); return; }
+    try { result = await login.finish(code.data, attempt); } catch (error) {
+      logFailure('sign-in could not be completed', error);
+      redirect(res, 'login'); return;
+    }
     if (attempt.link) {
       // This login only proves the original account to Auth0. Anything but that account's verified sign-in turns back, and
       // neither outcome opens a session or an account here.
@@ -262,8 +278,11 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     app.post('/account/resend-verification', sameOrigin, resendLimit, async (req, res) => {
       const held = unseal(secret, 'verify', cookie(req, verifyCookie, sealedShape), verifySchema);
       if (!held) { redirect(res, 'verify'); return; }
-      // Whatever went wrong at Auth0 stays on the server: the page the browser lands on is the same.
-      try { await management.resendVerification(held.subject); } catch { redirect(res, 'verify'); return; }
+      // Whatever went wrong at Auth0 goes to the log and not to the browser, which lands on the same page as without a cookie.
+      try { await management.resendVerification(held.subject); } catch (error) {
+        logFailure('verification email resend failed', error);
+        redirect(res, 'verify'); return;
+      }
       redirect(res, 'resent');
     });
   }

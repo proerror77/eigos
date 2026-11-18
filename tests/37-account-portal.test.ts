@@ -266,7 +266,7 @@ test('the login attempt travels in a sealed five-minute cookie, and authorize re
   } finally { await g.close(); await f.close(); }
 });
 
-test('an expired, foreign or incomplete login cookie ends in the login status, and the callback always drops it', async () => {
+test('an expired, foreign or incomplete login cookie ends in the login status, and the callback always drops it', async t => {
   const f = await fixture(), g = await accountGateway(f, { signup: 'open' });
   const secret = g.config.EIGOS_PORTAL_SECRET!, attempt = { state: 'state-1', nonce: 'nonce-1', verifier: 'v'.repeat(43) };
   const callback = (cookie: string | undefined, query = 'code=c&state=state-1') => fetch(g.url + '/account/callback?' + query,
@@ -289,13 +289,15 @@ test('an expired, foreign or incomplete login cookie ends in the login status, a
       assert.ok(response.headers.getSetCookie().some(value => value.startsWith('__Host-eigos-account-login=;')), name);
     }
     // An intact cookie still needs the matching state and one usable code. The last query is a code Auth0 does not know.
-    const intact = seal(secret, 'login', attempt, 300_000);
+    const intact = seal(secret, 'login', attempt, 300_000), lines = captureErrors(t);
     for (const query of ['code=c&state=other', 'code=c', 'state=state-1', 'code=&state=state-1', 'code=' + 'c'.repeat(3001) + '&state=state-1',
       'code=c&code=d&state=state-1', 'code=c&state=state-1&state=state-1', 'code=c&state=state-1']) {
       const response = await callback(intact, query);
       assert.equal(response.headers.get('location'), '/account?status=login', query);
       assert.equal(response.headers.getSetCookie().some(value => value.startsWith('__Host-eigos-account=')), false, 'no session: ' + query);
     }
+    assert.deepEqual(lines, ['EIGOS account: sign-in could not be completed: Identity provider rejected the authorization code'],
+      'only the last query got as far as Auth0, and only that failure is logged');
     // A login can start from any earlier cookie state: the new attempt replaces whatever was there.
     const restarted = await g.login('hana', 'hana@example.test', { start: '/account/login', startCookie: '__Host-eigos-account-login=' + intact });
     assert.equal(restarted.location, '/account');
@@ -947,7 +949,8 @@ function fakeAuth0(answers: { token?: Answer; job?: Answer } = {}) {
     header: (index: number, name: string) => new Headers(calls[index]!.init.headers).get(name),
     body: (index: number): unknown => JSON.parse(String(calls[index]!.init.body)) };
 }
-const managementConfig = readConfig({ ...portalEnv, OAUTH_MANAGEMENT_CLIENT_ID: 'management', OAUTH_MANAGEMENT_CLIENT_SECRET: 'synthetic-management-secret' });
+const managementEnv = { ...portalEnv, OAUTH_MANAGEMENT_CLIENT_ID: 'management', OAUTH_MANAGEMENT_CLIENT_SECRET: 'synthetic-management-secret' };
+const managementConfig = readConfig(managementEnv);
 const managementFor = (auth0: ReturnType<typeof fakeAuth0>) => auth0Management(managementConfig, auth0.fetcher)!;
 const tokenUrl = 'https://identity.example/oauth/token', jobUrl = 'https://identity.example/api/v2/jobs/verification-email';
 
@@ -981,6 +984,27 @@ test('the Auth0 management client caches its token and sends the job request', a
   await management.resendVerification('auth0|dan');
   assert.deepEqual(auth0.urls().slice(4), [tokenUrl, jobUrl]);
   assert.equal(auth0.header(5, 'authorization'), 'Bearer token-2');
+});
+
+test('the Auth0 management client goes to the management domain when one is set, and to the issuer otherwise', async () => {
+  // Under an Auth0 custom domain the logins use the custom domain, while the Management API stays on the tenant's own domain.
+  const custom = { ...managementEnv, OAUTH_ISSUER: 'https://login.example/', OAUTH_JWKS_URL: 'https://login.example/.well-known/jwks.json' };
+  const tenant = 'https://dev-abc.us.auth0.com/';
+  const named = fakeAuth0();
+  await auth0Management(readConfig({ ...custom, OAUTH_MANAGEMENT_DOMAIN: 'dev-abc.us.auth0.com' }), named.fetcher)!.resendVerification('auth0|dan');
+  assert.deepEqual(named.urls(), [tenant + 'oauth/token', tenant + 'api/v2/jobs/verification-email'], 'the token and the job both go to the domain');
+  assert.deepEqual(named.body(0), { grant_type: 'client_credentials', client_id: 'management',
+    client_secret: 'synthetic-management-secret', audience: tenant + 'api/v2/' }, 'and so does the audience');
+  assert.equal(named.header(1, 'authorization'), 'Bearer token-1');
+  assert.deepEqual(named.body(1), { user_id: 'auth0|dan', client_id: 'portal' }, 'the email still goes out for the portal client');
+
+  // Without the setting everything comes from the issuer, as it did before the setting existed.
+  const derived = fakeAuth0();
+  await auth0Management(readConfig(custom), derived.fetcher)!.resendVerification('auth0|dan');
+  assert.deepEqual(derived.urls(), ['https://login.example/oauth/token', 'https://login.example/api/v2/jobs/verification-email']);
+  assert.deepEqual(derived.body(0), { grant_type: 'client_credentials', client_id: 'management',
+    client_secret: 'synthetic-management-secret', audience: 'https://login.example/api/v2/' });
+  assert.equal(readConfig(custom).OAUTH_MANAGEMENT_DOMAIN, undefined);
 });
 
 test('the Auth0 management client exists only when both management settings are present', () => {
@@ -1058,6 +1082,19 @@ function recorder() {
   const management: Auth0Management = { async resendVerification(subject) { sent.push(subject); } };
   return { sent, management };
 }
+// Everything the Gateway writes with console.error while the test runs, one string per call. Empty `lines` to start over.
+function captureErrors(t: TestContext) {
+  const lines: string[] = [];
+  t.mock.method(console, 'error', (...args: unknown[]) => { lines.push(args.map(String).join(' ')); });
+  return lines;
+}
+// Serves `app` on a loopback port until the test ends, and resolves to its address.
+async function listen(t: TestContext, app: express.Express) {
+  const server = app.listen(0, '127.0.0.1');
+  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+}
 // A resend request as the account page's form sends it. `cookie` is the sealed verify cookie without its name.
 const resend = (g: AccountGateway, cookie?: string, headers: Record<string, string> = {}) => fetch(g.url + '/account/resend-verification',
   { method: 'POST', redirect: 'manual', headers: { Origin: g.config.PUBLIC_URL, ...(cookie === undefined ? {} : { Cookie: verifyCookieName + cookie }), ...headers } });
@@ -1086,10 +1123,10 @@ test('an unverified login leaves a sealed ten-minute cookie that names only the 
   } finally { await g.close(); await f.close(); }
 });
 
-test('the resend route acts only on an intact verify cookie and answers a failed call like a missing cookie', async () => {
+test('the resend route acts only on an intact verify cookie and answers a failed call like a missing cookie', async t => {
   const f = await fixture(), { sent, management } = recorder();
   const g = await accountGateway(f, { management, env: { EIGOS_TRUST_PROXY: '1' } });
-  const failing = await accountGateway(f, { management: { async resendVerification() { throw new Error('token-1 for dan@example.test was refused'); } } });
+  const failing = await accountGateway(f, { management: { async resendVerification() { throw new TypeError('token-1 for dan@example.test was refused'); } } });
   const secret = g.config.EIGOS_PORTAL_SECRET!, user = { subject: 'auth0|dan' };
   // Every request comes from an address of its own, so that the hourly budget does not get in the way.
   let hop = 0;
@@ -1120,10 +1157,12 @@ test('the resend route acts only on an intact verify cookie and answers a failed
     assert.deepEqual(sent, ['auth0|dan']);
 
     // Auth0 refusing, or not answering, is the same as having no cookie. Nothing of the failure reaches the browser.
+    const lines = captureErrors(t);
     const failed = await resend(failing, verifySeal(failing));
     assert.equal(failed.status, 303);
     assert.equal(failed.headers.get('location'), '/account?status=verify');
     assert.doesNotMatch(await failed.text(), /token-1|dan@example\.test/);
+    assert.equal(lines.length, 1, 'the failure goes to the log instead');
   } finally { await g.close(); await failing.close(); await f.close(); }
 });
 
@@ -1131,12 +1170,9 @@ test('the resend route checks the Origin itself, needs no session and keeps refu
   const f = await fixture(), config = readConfig(portalEnv), app = express(), { sent, management } = recorder();
   t.after(() => f.close());
   mountAccountPortal(app, config, new Accounts(f.db, 'open'), undefined, management);
-  const server = app.listen(0, '127.0.0.1');
-  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
-  await new Promise<void>(resolve => server.once('listening', resolve));
-  const { port } = server.address() as AddressInfo;
+  const base = await listen(t, app);
   const cookie = verifyCookieName + seal(config.EIGOS_PORTAL_SECRET!, 'verify', { subject: 'auth0|dan' }, 600_000);
-  const post = (headers: Record<string, string>) => fetch(`http://127.0.0.1:${port}/account/resend-verification`,
+  const post = (headers: Record<string, string>) => fetch(base + '/account/resend-verification',
     { method: 'POST', redirect: 'manual', headers: { Cookie: cookie, ...headers } });
   const refused = await post({});
   assert.equal(refused.status, 403, 'no Origin');
@@ -1197,4 +1233,81 @@ test('the account page offers to resend the email only on the verify status and 
     assert.match(await page(configured, '?status=verify'), resendForm);
     assert.doesNotMatch(await page(configured, '?status=login'), noButton);
   } finally { await withClient.close(); await without.close(); await configured.close(); await f.close(); }
+});
+
+test('a failed resend is logged once, with a status or a class and nothing of the request or the answer', async t => {
+  const f = await fixture();
+  const echo = { message: 'no user auth0|dan dan@example.test', access_token: 'token-1', client_secret: 'synthetic-management-secret' };
+  // The Gateway under test hands every resend to whichever client the case sets.
+  let current: Auth0Management = recorder().management;
+  const g = await accountGateway(f, { management: { resendVerification: subject => current.resendVerification(subject) }, env: { EIGOS_TRUST_PROXY: '1' } });
+  const cases: Record<string, [Auth0Management, string]> = {
+    'a refused job': [managementFor(fakeAuth0({ job: () => Response.json(echo, { status: 404 }) })), 'Auth0 verification email request failed with status 404'],
+    'a refused token request': [managementFor(fakeAuth0({ token: () => Response.json(echo, { status: 403 }) })), 'Auth0 token request failed with status 403'],
+    'a token answer that is not JSON': [managementFor(fakeAuth0({ token: () => new Response('token-1 auth0|dan {') })), 'Auth0 token answer is not usable'],
+    'no answer from Auth0': [auth0Management(managementConfig, async () => { throw new TypeError('fetch failed', { cause: new Error('connect ECONNREFUSED') }); })!, 'fetch failed'],
+    'a client that quotes the user in an error of its own': [{ async resendVerification() { throw new SyntaxError('Unexpected token, "auth0|dan"... is not valid JSON'); } }, 'SyntaxError'],
+    'a failure that is not an error': [{ async resendVerification() { throw 'dan@example.test'; } }, 'unknown error'],
+    'a message with line breaks and no end': [{ async resendVerification() { throw new Error('first\nsecond ' + 'x'.repeat(300)); } }, 'first second ' + 'x'.repeat(187)],
+  };
+  try {
+    const lines = captureErrors(t);
+    let hop = 0;
+    const post = (cookie?: string) => resend(g, cookie, { 'X-Forwarded-For': '198.51.100.' + String(++hop) });
+    for (const [name, [management, reason]] of Object.entries(cases)) {
+      current = management;
+      lines.length = 0;
+      assert.equal((await post(verifySeal(g))).headers.get('location'), '/account?status=verify', name);
+      assert.deepEqual(lines, ['EIGOS account: verification email resend failed: ' + reason], name);
+      assert.doesNotMatch(lines.join('\n'), /token-1|synthetic-management-secret|auth0\|dan|dan@example\.test/, name);
+    }
+    // A resend that works and a request that has no cookie to act on are not failures.
+    current = recorder().management;
+    lines.length = 0;
+    assert.equal((await post(verifySeal(g))).headers.get('location'), '/account?status=resent');
+    assert.equal((await post()).headers.get('location'), '/account?status=verify');
+    assert.deepEqual(lines, []);
+  } finally { await g.close(); await f.close(); }
+});
+
+test('a sign-in that cannot be completed is logged once, without the code, the tokens or the user', async t => {
+  const f = await fixture(), config = readConfig(portalEnv), app = express();
+  t.after(() => f.close());
+  const key = await generateKeyPair('RS256'), other = await generateKeyPair('RS256');
+  const keys = createLocalJWKSet({ keys: [{ ...await exportJWK(key.publicKey), kid: 'test' }] });
+  const attempt = { state: 'state-1', nonce: 'nonce-1', verifier: 'v'.repeat(43) };
+  const idToken = (claims: Record<string, unknown> = {}, o: { audience?: string; expires?: string; signer?: CryptoKey } = {}) =>
+    new SignJWT({ tenant_id: 'personal', email: 'dan@example.test', email_verified: true, nonce: attempt.nonce, ...claims })
+      .setProtectedHeader({ alg: 'RS256', kid: 'test' }).setIssuer('https://identity.example/').setSubject('auth0|dan').setAudience(o.audience ?? 'portal')
+      .setIssuedAt().setExpirationTime(o.expires ?? '5m').sign(o.signer ?? key.privateKey);
+  // What Auth0's token endpoint answers to the next code exchange.
+  const auth0 = { answer: (): globalThis.Response | Promise<globalThis.Response> => { throw new Error('no answer prepared'); } };
+  mountAccountPortal(app, config, new Accounts(f.db, 'open'), auth0AccountLogin(config, async () => auth0.answer(), keys));
+  const base = await listen(t, app);
+  const callback = () => fetch(base + '/account/callback?code=code-secret-1&state=state-1',
+    { redirect: 'manual', headers: { Cookie: loginCookieName + seal(config.EIGOS_PORTAL_SECRET!, 'login', attempt, 300_000) } });
+  const lines = captureErrors(t);
+  const failures: Record<string, [typeof auth0.answer, string]> = {
+    'a refused code': [() => Response.json({ error: 'invalid_grant', error_description: 'code-secret-1 is not valid' }, { status: 400 }), 'Identity provider rejected the authorization code'],
+    'an answer that is not JSON': [() => new Response('code-secret-1 access_token=access-secret-1'), 'SyntaxError'],
+    'an answer without an ID token': [() => Response.json({ access_token: 'access-secret-1', note: 'dan@example.test' }), 'ZodError'],
+    'an ID token for another client': [async () => Response.json({ id_token: await idToken({}, { audience: 'grok' }) }), 'unexpected "aud" claim value'],
+    'an ID token signed by another key': [async () => Response.json({ id_token: await idToken({}, { signer: other.privateKey }) }), 'signature verification failed'],
+    'an expired ID token': [async () => Response.json({ id_token: await idToken({}, { expires: '-1m' }) }), '"exp" claim timestamp check failed'],
+    'an ID token of another sign-in': [async () => Response.json({ id_token: await idToken({ nonce: 'nonce-2' }) }), 'Identity token did not match this login'],
+    'an email that is not an email': [async () => Response.json({ id_token: await idToken({ email: 'dan at example' }) }), 'ZodError'],
+    'no answer from Auth0': [() => { throw new TypeError('fetch failed'); }, 'fetch failed'],
+  };
+  for (const [name, [answer, reason]] of Object.entries(failures)) {
+    auth0.answer = answer;
+    lines.length = 0;
+    assert.equal((await callback()).headers.get('location'), '/account?status=login', name);
+    assert.deepEqual(lines, ['EIGOS account: sign-in could not be completed: ' + reason], name);
+    assert.doesNotMatch(lines.join('\n'), /code-secret-1|access-secret-1|eyJ|auth0\|dan|dan@example\.test|dan at example|v{43}|state-1|nonce-[12]/, name);
+  }
+  // A sign-in that finishes with an unverified email is an outcome, not a failure.
+  auth0.answer = async () => Response.json({ id_token: await idToken({ email_verified: false }) });
+  lines.length = 0;
+  assert.equal((await callback()).headers.get('location'), '/account?status=verify');
+  assert.deepEqual(lines, []);
 });

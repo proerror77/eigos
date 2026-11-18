@@ -33,6 +33,20 @@ test('account portal configuration requires secrets and owner isolation for sign
   assert.throws(() => readConfig({ ...portalEnv, EIGOS_SIGNUP: 'closed', EIGOS_ENFORCE_OWNER_RLS: undefined, EIGOS_ACCOUNT_LINK_SECRET: undefined }), /EIGOS_PORTAL_SECRET and EIGOS_ACCOUNT_LINK_SECRET/);
 });
 
+test('the Management API domain is a bare lowercase hostname', () => {
+  assert.equal(readConfig(portalEnv).OAUTH_MANAGEMENT_DOMAIN, undefined);
+  const longest = [63, 63, 63, 61].map(length => 'a'.repeat(length)).join('.');
+  assert.equal(longest.length, 253);
+  for (const domain of ['dev-abc.us.auth0.com', 'tenant.auth0.com', 'a.b', 'xn--bcher-kva.example', 'a'.repeat(63) + '.example', longest])
+    assert.equal(readConfig({ ...portalEnv, OAUTH_MANAGEMENT_DOMAIN: domain }).OAUTH_MANAGEMENT_DOMAIN, domain, domain);
+  const tooLong = [63, 63, 63, 62].map(length => 'a'.repeat(length)).join('.');
+  for (const domain of ['https://dev-abc.us.auth0.com', 'https://dev-abc.us.auth0.com/', 'dev-abc.us.auth0.com/', 'dev-abc.us.auth0.com/api/v2/',
+    'dev-abc.us.auth0.com:443', 'user@dev-abc.us.auth0.com', 'dev-abc.us.auth0.com?x=1', 'dev-abc.us.auth0.com#x', 'Dev-Abc.us.auth0.com',
+    ' dev-abc.us.auth0.com', 'dev-abc.us.auth0.com ', 'dev_abc.us.auth0.com', '-abc.auth0.com', 'abc-.auth0.com', 'abc..auth0.com', '.auth0.com',
+    'abc.auth0.com.', 'localhost', '', 'a'.repeat(64) + '.example', tooLong])
+    assert.throws(() => readConfig({ ...portalEnv, OAUTH_MANAGEMENT_DOMAIN: domain }), /OAUTH_MANAGEMENT_DOMAIN/, JSON.stringify(domain));
+});
+
 test('accounts provision by sign-up mode and keep operators out', async () => {
   const f = await fixture();
   try {

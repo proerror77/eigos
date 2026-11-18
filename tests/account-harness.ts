@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
+import { mock } from 'node:test';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { auth0AccountLogin } from '../apps/gateway/account-portal.js';
 import { createApp } from '../apps/gateway/app.js';
@@ -86,7 +87,9 @@ export async function accountGateway(f: Fixture, options: { signup?: SignupMode;
       nonce: authorize.searchParams.get('nonce')!, challenge: authorize.searchParams.get('code_challenge')! });
     const target = url + '/account/callback?code=' + code + '&state=' + (o.wrongState ? 'wrong' : authorize.searchParams.get('state'));
     const response = await fetch(target, { redirect: 'manual', headers: { Cookie: loginCookie } });
-    const replay = await fetch(target, { redirect: 'manual', headers: { Cookie: loginCookie } });
+    // The replay fails on purpose, and the portal logs every failed sign-in. These logins are not about that line, so it is dropped.
+    const quiet = mock.method(console, 'error', () => {});
+    const replay = await fetch(target, { redirect: 'manual', headers: { Cookie: loginCookie } }).finally(() => quiet.mock.restore());
     if (mismatch) throw mismatch;
     if (o.wrongState) assert(codes.has(code), 'a callback with the wrong state must not exchange the code');
     assert.equal(replay.headers.get('location'), '/account?status=login');
