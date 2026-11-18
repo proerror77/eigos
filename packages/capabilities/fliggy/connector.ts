@@ -71,7 +71,7 @@ const sourcePage = z.object({
   data: z.object({ itemList: z.array(z.unknown()).max(100) }).nullable(),
 });
 
-function providerLink(raw: string | null | undefined) {
+export function providerLink(raw: string | null | undefined) {
   if (!raw || raw.length > 2000) return;
   const url = URL.parse(raw);
   if (url?.protocol === 'https:' && !url.username && !url.password

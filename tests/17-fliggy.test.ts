@@ -9,6 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { searchFliggy, type FlyAIRead } from '../packages/capabilities/fliggy/connector.js';
 import { FLIGGY_CLI_GUARD } from '../packages/capabilities/fliggy/cli-guard.js';
 import { configuredServices } from '../packages/capabilities/services/sources.js';
+import { travelHandoffResult } from '../packages/ontology/travel-handoff.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
 import { Objects } from '../packages/runtime/objects.js';
@@ -93,7 +94,7 @@ test('a PA task queries flights and both hotel sources concurrently and retains 
     await f.worker.runOne();
     const finished = await f.tasks.get(principal, task.id);
     assert.equal(finished.state, 'completed', finished.error ?? '');
-    type Page = { search: { ref: ObjectRef; properties: Record<string, unknown> }; items: Array<{ properties: Record<string, unknown> }>; complete: boolean };
+    type Page = { search: { ref: ObjectRef; properties: Record<string, unknown> }; items: Array<{ ref:ObjectRef; properties: Record<string, unknown> }>; complete: boolean };
     const { search, outcomes, pages } = finished.result as {
       search: ObjectRef; outcomes: Array<{ source: string; status: string }>; pages: Page[];
     };
@@ -115,6 +116,25 @@ test('a PA task queries flights and both hotel sources concurrently and retains 
     assert.equal((flights.items[0]!.properties.journeys as unknown[]).length, 2);
     assert.deepEqual(new Set(hotels.items.map(item => item.properties.priceDisplay)), new Set(['¥2xx', '¥500起']));
     assert(hotels.items.every(item => item.properties.amount === null && item.properties.occupancyVerified === false));
+    const prepareHandoff = (offer: ObjectRef, search: ObjectRef, requestId = 'handoff-'+offer.id) =>
+      f.capabilities.actions.apply(f.access, f.model, 'PrepareFliggyTravelHandoff', { offer, search }, requestId);
+    const readHandoff = async (handoff: ObjectRef) => travelHandoffResult.parse(await f.capabilities.functions.invoke(
+      f.model, 'readFliggyTravelHandoff', { handoff }, { principal, objects: new Objects(f.db, f.model, await Access.load(f.db,principal)), signal: AbortSignal.timeout(5000) }));
+    const picks = [];
+    for(const [kind, page] of [['hotel',hotels],['flight',flights]] as const) {
+      const chosen=page.items[1]!;
+      const handoff=await prepareHandoff(chosen.ref,page.search.ref);
+      assert.deepEqual(await prepareHandoff(chosen.ref,page.search.ref),handoff);
+      const result=await readHandoff(handoff);
+      assert.equal(result.status,'ready_for_review');assert.equal(result.selection.kind,kind);
+      assert.equal(result.accessMode,'trial');assert.equal(result.evidence,'provider_mock');
+      assert.equal(result.url,chosen.properties.url);assert.deepEqual(result.offer,chosen.ref);
+      assert.deepEqual(result.search,page.search.ref);assert.equal(result.selection.details.name,chosen.properties.name);
+      assert.equal(result.selection.details.priceDisplay,chosen.properties.priceDisplay);
+      picks.push(handoff);
+    }
+    await assert.rejects(prepareHandoff(flights.items[0]!.ref,hotels.search.ref,'wrong-kind'),/matching search page/);
+    await assert.rejects(prepareHandoff(flights.items[0]!.ref,{...flights.search.ref,id:'different-receipt'},'wrong-page'),/superseded|unavailable/);
     const graph = new Objects(f.db, f.model, f.access);
     assert.equal((await graph.query({ type: 'HotelOffer' })).items.length, 3);
     assert.equal((await graph.query({ type: 'FlightOffer' })).items.length, 2);
@@ -126,6 +146,7 @@ test('a PA task queries flights and both hotel sources concurrently and retains 
     const readTravel = async (search: ObjectRef) => f.capabilities.functions.invoke(f.model, 'readTravelOfferSearch', { search },
       { principal, objects: new Objects(f.db, f.model, await Access.load(f.db, principal)), signal: AbortSignal.timeout(5000) });
     await assert.rejects(readTravel(search), /Permission required/);
+    await assert.rejects(readHandoff(picks[0]!), /Permission required/);
     const searchHotels = async (id: string) => f.capabilities.actions.apply(
       await Access.load(f.db, principal), f.model, 'SearchTravelOffers', { hotel }, id,
     );
@@ -139,6 +160,7 @@ test('a PA task queries flights and both hotel sources concurrently and retains 
     await setGrants(f.db, principal.owner, memberGrants(f.model));
     await setConnection({ ...binding, expiresAt: new Date(Date.now() + 600000).toISOString() });
     await assert.rejects(read, /account changed/);
+    await assert.rejects(readHandoff(picks[0]!), /account changed/);
     await assert.rejects(flyai('other-owner', 'Fliggy'), /no owner connection/);
 
     rollingFails = true;
@@ -212,4 +234,38 @@ test('the official CLI guard allows one matching read and blocks other tools, ac
     assert.deepEqual(attempt({ STATUS: '302' }), { result: 'blocked', calls: 1 });
     assert.deepEqual(attempt({ REPEAT: 'yes' }), { result: 'blocked', calls: 1 });
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('a FlyAI handoff requires a supplier link, its exact current receipt and unmodified offer facts', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'fliggy-handoff-'));
+  const file = join(directory,'trial.json');
+  await writeFile(file, JSON.stringify([{owner:principal.owner,provider:'Fliggy',bindingId:'handoff-fixture',mode:'trial',
+    active:true,expiresAt:new Date(Date.now()+300000).toISOString()}]),{mode:0o600});
+  const service=configuredServices(file,async()=>sourcePage([
+    hotelItem('with-link','¥3xx'), {...hotelItem('without-link','¥1xx'),detailUrl:null},
+    {...hotelItem('untrusted','¥2xx'),detailUrl:'https://untrusted.example.invalid/hotel'},
+  ]));
+  const f=await fixture(undefined,service);
+  try {
+    const act=(name:string,input:Record<string,unknown>,id:string)=>f.capabilities.actions.apply(f.access,f.model,name,input,id);
+    const graph=new Objects(f.db,f.model,f.access);
+    const first=await act('SearchFliggyHotels',hotel,'first-page');
+    const offers=await graph.follow(first,'results');
+    assert.equal(offers.length,3);
+    for(const offer of offers.filter(item=>item.properties.nativeId!=='with-link'))
+      await assert.rejects(act('PrepareFliggyTravelHandoff',{offer:offer.ref,search:first},'bad-'+offer.ref.id),/no supported supplier detail link/);
+    const chosen=offers.find(x=>x.properties.nativeId==='with-link')!;
+    const handoff=await act('PrepareFliggyTravelHandoff',{offer:chosen.ref,search:first},'chosen');
+    const read=()=>f.capabilities.functions.invoke(f.model,'readFliggyTravelHandoff',{handoff},
+      {principal,objects:graph,signal:AbortSignal.timeout(5000)});
+    assert.equal(travelHandoffResult.parse(await read()).selection.details.priceDisplay,'¥3xx');
+    const second=await act('SearchFliggyHotels',hotel,'second-page');
+    assert.notDeepEqual(first,second);
+    await assert.rejects(read(),/superseded|selection changed/i);
+    await graph.edit(chosen.ref,(await graph.read(chosen.ref)).revision,{url:'https://router.feizhu.com/overridden'});
+    await assert.rejects(act('PrepareFliggyTravelHandoff',{offer:chosen.ref,search:second},'override'),/locally overridden/);
+    assert.equal((await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.external_operations`)).rows[0]!.n,0);
+  } finally {
+    await f.close();await rm(directory,{recursive:true,force:true});
+  }
 });
