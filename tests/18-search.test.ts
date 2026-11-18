@@ -371,7 +371,7 @@ async function publicationSearchFixture() {
     const capabilities=createCapabilities(f.db,f.source,{functions:[embedding]});
     const document=structuredClone(f.model.document);document.functionTypes.push(embedding.definition);
     const model=await f.metadata.publish(document,capabilities,f.publisher);
-    await setGrants(f.db,principal.owner,memberGrants(model));
+    await setGrants(f.db,principal.owner,businessGrants(model));
     const access=await Access.load(f.db,principal),graph=new Objects(f.db,model,access);
     const semantic=new SemanticSearch(f.db,capabilities.functions),ref={type:'Route',id:'publication-route'};
     await graph.create(ref,{id:ref.id,name:'Original searchable route'});
@@ -384,7 +384,7 @@ async function publicationSearchFixture() {
 
 test('unchanged publications retain semantic indexes and vectors without sharing owners or bypassing current permissions',async()=>{
   const f=await publicationSearchFixture();try{
-    await setGrants(f.db,'semantic-peer',memberGrants(f.model));
+    await setGrants(f.db,'semantic-peer',businessGrants(f.model));
     const peer=await Access.load(f.db,{...principal,owner:'semantic-peer'});
     await new Objects(f.db,f.model,peer).create(f.ref,{id:f.ref.id,name:'Private peer route'});
     await f.semantic.index(peer,f.model,{name:'Routes',objects:[f.ref]});

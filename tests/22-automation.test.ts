@@ -494,11 +494,11 @@ test('Machinery publication refresh honors pause and revocation without retrying
     const paused=await reviews.save(f.access,f.model,machineryReviewSchema.parse({name:'Paused',type:'RouteStateLog',enabled:false}));
     await reviews.scanOne();await reviews.read(f.access,f.model,paused.id,true);
     const next=await f.metadata.publish(f.model.document,f.capabilities,f.publisher);
-    await setGrants(f.db,principal.owner,memberGrants(next).filter(grant=>grant.resource!=='Eigos/object/Route'));
+    await setGrants(f.db,principal.owner,businessGrants(next).filter(grant=>grant.resource!=='Eigos/object/Route'));
     assert.equal(await reviews.scanOne(),true);assert.equal(await reviews.scanOne(),false);
     const failed=(await f.db.query(`SELECT error,body FROM ${f.db.schema}.object_rules WHERE id=$1`,[active.id])).rows[0]!;
     assert.match(failed.error,/Review failed/);assert.equal(failed.body.attemptedRelease,next.release);
-    await setGrants(f.db,principal.owner,memberGrants(next));const access=await Access.load(f.db,principal);
+    await setGrants(f.db,principal.owner,businessGrants(next));const access=await Access.load(f.db,principal);
     const list=await reviews.list(access,next);
     assert.equal(list.items.find(row=>row.id===active.id)!.status,'failed');
     assert.equal(list.items.find(row=>row.id===paused.id)!.status,'stale');
@@ -1404,9 +1404,9 @@ test('legacy drafts expose blocked continuation and an authorized recovery diffe
     await f.db.query(`INSERT INTO ${f.db.schema}.property_security VALUES('Eigos','Route','name')`);
     const masked=await scenarios.inspectContinuation(await Access.load(f.db,principal),next,draft.id,revision);
     assert.equal(masked.objects[0]!.before!.name,null);assert.equal(masked.objects[0]!.after!.name,null);
-    await setGrants(f.db,principal.owner,memberGrants(next).filter(grant=>grant.resource!=='Eigos/object/Place'));
+    await setGrants(f.db,principal.owner,businessGrants(next).filter(grant=>grant.resource!=='Eigos/object/Place'));
     await assert.rejects(scenarios.inspectContinuation(await Access.load(f.db,principal),next,draft.id,revision),/permission|denied|Place/i);
-    await setGrants(f.db,principal.owner,memberGrants(next));
+    await setGrants(f.db,principal.owner,businessGrants(next));
     await f.db.query(`INSERT INTO ${f.db.schema}.object_policies VALUES('Eigos','Route',$1)`,
       [objectPolicySchema.parse({read:{all:[{op:'equals',property:'id',value:'unavailable'}]}})]);
     await assert.rejects(scenarios.inspectContinuation(await Access.load(f.db,principal),next,draft.id,revision),/unavailable/);
@@ -1420,14 +1420,14 @@ test('continuation recovery enforces owner, revision, session expiry and current
     await new Objects(f.db,await scenarios.view(f.access,f.model,draft.id),f.access).edit(f.source,1,{name:'Unjournaled'});
     const revision=(await scenarios.inspect(f.access,f.model,draft.id)).revision;
     const next=await f.metadata.publish(f.model.document,f.capabilities,f.publisher);
-    await setGrants(f.db,'different-owner',memberGrants(next));
+    await setGrants(f.db,'different-owner',businessGrants(next));
     const other=await Access.load(f.db,{...principal,owner:'different-owner'});
     assert.equal((await scenarios.continuationSources(other,next)).items.length,0);
     await assert.rejects(scenarios.inspectContinuation(other,next,draft.id,revision),/unavailable/);
     await assert.rejects(scenarios.inspectContinuation(f.access,next,draft.id,revision+1),/changed/);
-    await setGrants(f.db,principal.owner,memberGrants(next).filter(grant=>grant.resource!=='Eigos/object/Route'));
+    await setGrants(f.db,principal.owner,businessGrants(next).filter(grant=>grant.resource!=='Eigos/object/Route'));
     await assert.rejects(scenarios.inspectContinuation(await Access.load(f.db,principal),next,draft.id,revision),/permission|denied|Route/i);
-    await setGrants(f.db,principal.owner,memberGrants(next));
+    await setGrants(f.db,principal.owner,businessGrants(next));
     await f.db.query(`UPDATE ${f.db.schema}.scenario_sessions SET closed_at=now() WHERE id=$1`,[session.id]);
     assert.equal((await scenarios.continuationSources(f.access,next)).items.length,0);
     await assert.rejects(scenarios.inspectContinuation(f.access,next,draft.id,revision),/unavailable/);
