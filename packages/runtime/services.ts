@@ -9,7 +9,7 @@ import {
   entityHistorySchema,
 } from './entity-resolution.js';
 import { Applications, objectViewSchema, graphSchema, mapSchema } from './applications.js';
-import { Automation, workflowSchema, saveRuleSchema, runWorkflowSchema, automationPreviewSchema, publishWorkflowSchema, withdrawWorkflowSchema, runPublishedWorkflowSchema } from './automation.js';
+import { Automation, processBindingsSchema, workflowSchema, saveRuleSchema, runWorkflowSchema, automationPreviewSchema, publishWorkflowSchema, withdrawWorkflowSchema, runPublishedWorkflowSchema } from './automation.js';
 import { analyzeMachinery, listMachineryProcesses, machineryAnalysisSchema } from './machinery-analysis.js';
 import { ingestMachineryHistory, machineryHistorySchema } from './machinery-history.js';
 import { MachineryReviews, machineryReviewSchema } from './machinery-reviews.js';
@@ -634,6 +634,8 @@ export function ontologyServices(
     false,
     async (a, input) => automation.processStatus(a, await active(), input),
   );
+  register('machinery_rule_bindings','Read this owner’s process conditions, direct Action or Workflow effects, and latest visible run for each current revision.',
+    processBindingsSchema,false,async(a,input)=>automation.processBindings(a,await active(),input));
   register('machinery_processes', 'Discover authorized Ontology processes and their published reference models.',
     z.strictObject({}), false, async a => listMachineryProcesses(a, await active()));
   register('machinery_analysis', 'Mine authorized process paths, compare observed transitions with a reference, and analyze dwell time.',

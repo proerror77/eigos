@@ -215,6 +215,12 @@ Action 检查自身应用权限，以及实际访问的对象、关系和来源�
 数据库事务保证本体编辑的原子性，不能回滚已经发生的供应商变更。`external_operations` 因此先持久化原操作，再发请求，保存供应商回执；结果未知时禁止自动重发。独立订单查询使用原订单身份，创建订单不被升级成到达或履约成功。账号、业务授权、执行配置和最终供应商结果分别校验，见 [服务接口与定时出行](../guides/service-planning.md)。
 
 
+### 供应商订单的状态与后续执行
+
+酒店预订的 `state` 与机票订单的 `issuanceState` 是业务对象的可枚举属性。Machinery 从同一属性的正式编辑历史投影 ProcessLog。滴滴跟单则沿原订单的 `watches` 关系读取 `DidiRideWatch`。参考图列出预期路径；实际状态由原订单的供应商详情和可验证回执更新。历史订单缺少出票证据时，下一次有效回查才填入出票状态。[Machinery 过程与日志](https://www.palantir.com/docs/foundry/machinery/core-concepts) · [输入状态、输出状态与自动化](https://www.palantir.com/docs/foundry/machinery/draw-a-graph)
+
+用户发起的取消和付款仍由 PA 确认原订单与金额。连接器在派发记录的事务内登记有截止时间的原单回查，由 Worker 执行已发布的刷新 Action。平台通过原任务身份和授权持续工作，Agent 可从对象和过程日志读取进度。用户配置的状态规则也可直接绑定单个 Action；需要多步执行时再引用已保存的 Workflow。规则、排程和直接请求最终都通过原 Action 执行入口。[Automate 条件与效果](https://www.palantir.com/docs/foundry/automate/overview) · [执行与验收边界](../guides/service-planning.md#订单后台观察)
+
 ## 完整运行服务
 
 Ontology 分支与项目归属提供定义提案、三方 rebase、精确候选审阅和原子合并。候选数据可增量追赶，投影身份保留，数据变更使原审阅失效。来源基线、用户编辑状态和冲突策略纳入发布指纹。

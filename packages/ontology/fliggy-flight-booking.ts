@@ -37,8 +37,12 @@ const facts = {
   evidence: z.enum(['synthetic', 'provider']), independentRead: z.boolean(),
 };
 export const fliggyFlightPublic = z.object(facts);
+export const flightIssuanceState = z.enum(['unpaid', 'payment_unverified', 'awaiting_issuance', 'issued', 'closed']);
+const observationStatus = z.enum(['watching', 'finished', 'source_unavailable', 'timed_out']);
 const storedFacts = { ...facts, authority: z.string(), profileDigest: z.string() };
-export const fliggyFlightBooking = z.object(storedFacts);
+export const fliggyFlightBooking = z.object(storedFacts).extend({
+  issuanceState: flightIssuanceState.optional(), issuanceObservation: observationStatus.optional(),
+});
 const actions = [
   ['PrepareFliggyFlightBooking', 'prepareFliggyFlightBooking', prepareFlightBookingInput,
     'Verify a dated adult domestic nonstop Jinghang offer and prepare exact review terms.'],
@@ -56,8 +60,14 @@ export const fliggyFlightBookingDefinition: Pick<OntologyDocument, 'objectTypes'
     apiName: fliggyFlightBookingType, displayName: 'Fliggy domestic flight booking',
     description: 'An approved Jinghang fare with independently read order, payment and issuance evidence.',
     primaryKey: 'id', titleProperty: 'name', interfaces: {},
-    properties: Object.fromEntries(Object.entries(storedFacts).map(([name, schema]) =>
-      [name, { description: name, required: true, schema: json(schema) }])),
+    properties: {
+      ...Object.fromEntries(Object.entries(storedFacts).map(([name, schema]) =>
+        [name, { description: name, required: true, schema: json(schema) }])),
+      issuanceState: { description: 'Issuance progress of the original Jinghang order based on verified payment and ticket evidence',
+        required: false, schema: json(flightIssuanceState) },
+      issuanceObservation: { description: 'Status of bounded, read-only checks following the original payment dispatch',
+        required: false, schema: json(observationStatus) },
+    },
   }],
   functionTypes: [
     ...actions.map(([, apiName, input, description]) => ({

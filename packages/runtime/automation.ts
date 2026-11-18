@@ -24,6 +24,10 @@ const binding = z.union([
   z.strictObject({ object: z.literal(true) }),
   z.strictObject({ step: z.string().min(1).max(80) }),
 ]);
+const singleAction = z.strictObject({
+  action: ontologyName,
+  input: z.record(z.string(), binding.refine(value => !('step' in value), 'A direct Action has no previous step')),
+});
 const step = z.strictObject({
   name: z.string().min(1).max(80),
   action: z.string().min(1).max(80),
@@ -64,12 +68,21 @@ const baseRule = z.strictObject({
 });
 const ruleQuerySchema = querySchema.omit({ cursor: true, limit: true, select: true });
 const objectRule = baseRule.extend({ query: ruleQuerySchema });
-const processRule = baseRule.extend({ process: processRuleSchema });
+const processRule = z.union([
+  baseRule.extend({ process: processRuleSchema }),
+  baseRule.omit({ workflow:true }).extend({ process:processRuleSchema, effect:singleAction }),
+]);
 const ruleSchema = z.union([objectRule, processRule]);
 export const saveRuleSchema = baseRule.extend({
+  workflow: z.uuid().optional(), effect: singleAction.optional(),
   query: ruleQuerySchema.optional(),
   process: processRuleSchema.optional(),
-}).refine(rule => Boolean(rule.query) !== Boolean(rule.process), 'Select one object query or process transition condition');
+}).refine(rule => Boolean(rule.query) !== Boolean(rule.process), 'Select one object query or process transition condition')
+  .refine(rule => Boolean(rule.workflow) !== Boolean(rule.effect) && (!rule.effect || !!rule.process),
+    'Select a saved workflow or a single Action for a process trigger');
+export const processBindingsSchema = z.strictObject({
+  type: ontologyName, cursor: z.uuid().optional(),
+});
 export const runWorkflowSchema = z.strictObject({
   workflow: z.uuid(),
   object: objectRefSchema,
@@ -112,10 +125,12 @@ export async function initializeAutomation(db: Database) {
     CREATE TABLE IF NOT EXISTS ${db.schema}.object_rules(id uuid PRIMARY KEY,owner text NOT NULL,ontology text NOT NULL,name text NOT NULL,body jsonb NOT NULL,revision integer NOT NULL,enabled boolean NOT NULL DEFAULT false,last_scan timestamptz,error text);
     ALTER TABLE ${db.schema}.object_rules ADD COLUMN IF NOT EXISTS scopes jsonb;
     ALTER TABLE ${db.schema}.object_rules ADD COLUMN IF NOT EXISTS process_cursor bigint;
+    ALTER TABLE ${db.schema}.object_rules ADD COLUMN IF NOT EXISTS effect_release text REFERENCES ${db.schema}.releases(digest);
     UPDATE ${db.schema}.object_rules SET enabled=false,error='Re-save the rule to record its original authorization scopes' WHERE scopes IS NULL AND enabled;
     CREATE TABLE IF NOT EXISTS ${db.schema}.rule_matches(rule_id uuid NOT NULL REFERENCES ${db.schema}.object_rules(id),type text NOT NULL,id text NOT NULL,matched boolean NOT NULL,revision bigint NOT NULL,PRIMARY KEY(rule_id,type,id));
     ALTER TABLE ${db.schema}.rule_matches ADD COLUMN IF NOT EXISTS generation bigint NOT NULL DEFAULT 0;
     CREATE TABLE IF NOT EXISTS ${db.schema}.workflow_runs(id uuid PRIMARY KEY,owner text NOT NULL,ontology text NOT NULL,release text NOT NULL REFERENCES ${db.schema}.releases(digest),request_id text NOT NULL,digest text NOT NULL,workflow_id uuid NOT NULL REFERENCES ${db.schema}.workflows(id),body jsonb NOT NULL,object_ref jsonb NOT NULL,scopes jsonb NOT NULL,step integer NOT NULL DEFAULT 0,state text NOT NULL DEFAULT 'pending',error text,token uuid,lease_until timestamptz,results jsonb NOT NULL DEFAULT '[]',created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),UNIQUE(owner,request_id));
+    ALTER TABLE ${db.schema}.workflow_runs ALTER COLUMN workflow_id DROP NOT NULL;
     ALTER TABLE ${db.schema}.workflow_runs ADD COLUMN IF NOT EXISTS available_at timestamptz NOT NULL DEFAULT now();
     ALTER TABLE ${db.schema}.workflow_runs ADD COLUMN IF NOT EXISTS process_trigger jsonb;
     ALTER TABLE ${db.schema}.workflow_runs ADD COLUMN IF NOT EXISTS proposal_task uuid;
@@ -129,6 +144,9 @@ export async function initializeAutomation(db: Database) {
       PRIMARY KEY(run_id,position));
     ALTER TABLE ${db.schema}.workflow_steps ADD COLUMN IF NOT EXISTS read_markings jsonb;
     CREATE INDEX IF NOT EXISTS workflow_runs_queue ON ${db.schema}.workflow_runs(state,created_at);
+    CREATE INDEX IF NOT EXISTS workflow_runs_process_rule ON ${db.schema}.workflow_runs
+      (owner,ontology,(process_trigger->>'ruleId'),(process_trigger->>'revision'),created_at DESC,id DESC)
+      WHERE process_trigger IS NOT NULL;
     CREATE INDEX IF NOT EXISTS workflow_runs_due ON ${db.schema}.workflow_runs(available_at) WHERE state='pending';`);
 }
 const failureMessage =
@@ -188,6 +206,22 @@ export class Automation {
       return { ...input, id, revision: Number(result.rows[0]!.revision) };
     });
   }
+  private async ruleDefinition(rule: z.output<typeof ruleSchema>, owner: string, ontology: string, client: Sql, lock = false) {
+    if ('effect' in rule) {
+      const definition = workflowSchema.parse({ name:rule.name, steps:[{ name:'Action', ...rule.effect }] });
+      return { definition, revision:null };
+    }
+    const record = await readWorkflowRecord(this.db, { id:rule.workflow, owner, ontology }, client, null, lock);
+    if (!record) throw new NotFound('Rule workflow is unavailable');
+    return { definition:workflowSchema.parse(record.body), revision:Number(record.revision) };
+  }
+  private async checkDirectEffect(model: PublishedOntology, rule: Extract<z.output<typeof ruleSchema>,{effect:unknown}>,
+    release: string | null, client: Sql) {
+    if (!release) throw new Conflict('Re-save the process rule to confirm its Action contract');
+    if (release === model.release) return;
+    checkWorkflowDependencies(await this.metadata.get(release,client),model,
+      {actions:[rule.effect.action],objectTypes:[rule.process.type]},new Set());
+  }
   async rule(access: Access, model: PublishedOntology, raw: unknown) {
     requireScope(access.principal, 'ontology:write');
     const input = ruleSchema.parse(raw);
@@ -201,15 +235,21 @@ export class Automation {
         [id, access.principal.owner, input.revision, model.document.id], client)).rowCount)
         throw new Conflict('Rule changed or is unavailable');
       await this.active(model, client);
-      const workflow = await readWorkflowRecord(this.db, {
-        id: input.workflow, owner: access.principal.owner, ontology: model.document.id,
-      }, client);
-      if (!workflow) throw new NotFound('Workflow is unavailable');
-      const definition = workflowSchema.parse(workflow.body);
+      const { definition } = await this.ruleDefinition(input, access.principal.owner, model.document.id, client);
       this.authorize(access, model, definition.steps);
       if (definition.proposal) authorizeCognitive(access, model, definition.proposal);
       const graph = new Objects(this.db, model, access, client);
       const target = 'process' in input ? processTarget(graph, input.process) : undefined;
+      if ('effect' in input && target) {
+        const action = model.action(input.effect.action);
+        const required = (action.parameters.required ?? []) as string[];
+        if (required.some(key => !Object.hasOwn(input.effect.input,key))) throw new Conflict('The rule is missing a required Action parameter');
+        for (const [key,binding] of Object.entries(input.effect.input)) {
+          const type = action.objectParameters[key];
+          if ('object' in binding && type && !model.concreteTypes(type).includes(target.objectType))
+            throw new Conflict('The process object cannot bind to '+input.effect.action+'/'+key);
+        }
+      }
       if ('query' in input)
         for (const type of model.concreteTypes(input.query.type)) access.read(model, type);
       const result = input.id
@@ -243,6 +283,8 @@ export class Automation {
       if (!result.rowCount) throw new Conflict('Rule changed or is unavailable');
       if (input.id)
         await this.db.query(`DELETE FROM ${this.db.schema}.rule_matches WHERE rule_id=$1`, [id], client);
+      if ('effect' in input) await this.db.query(`UPDATE ${this.db.schema}.object_rules SET effect_release=$2 WHERE id=$1`,
+        [id,model.release],client);
       if (target) {
         await this.db.setOwner(client, graph.owner);
         await graph.lockWrites();
@@ -253,6 +295,44 @@ export class Automation {
       await access.refresh(client);
       return { ...input, id, revision: Number(result.rows[0]!.revision) };
     });
+  }
+  async processBindings(access: Access, model: PublishedOntology, raw: unknown) {
+    const {type,cursor} = processBindingsSchema.parse(raw);
+    requireScope(access.principal,'ontology:read');
+    access.require(model.document.id,'view_definition',model.document.id);
+    return this.db.withOwner(access.principal.owner,()=>this.db.transaction(async client=>{
+      await this.active(model,client);
+      await access.refresh(client);
+      const graph = new Objects(this.db,model,access,client);
+      const target = processTarget(graph,{type});
+      if (!access.property(model,target.objectType,target.property)
+          || !access.canSeeModelData(model.object(target.objectType).properties[target.property]?.classification))
+        throw new PermissionDenied('Process state is unavailable');
+      const rows = (await this.db.query(`SELECT rule.id,rule.name,rule.body,rule.revision,rule.enabled,rule.error,rule.last_scan,
+          latest.id AS run_id,latest.process_trigger,latest.state,latest.updated_at
+        FROM ${this.db.schema}.object_rules rule LEFT JOIN LATERAL (
+          SELECT id,state,updated_at,process_trigger FROM ${this.db.schema}.workflow_runs run
+          WHERE run.process_trigger IS NOT NULL AND run.owner=rule.owner AND run.ontology=rule.ontology AND run.process_trigger->>'ruleId'=rule.id::text
+            AND run.process_trigger->>'revision'=rule.revision::text
+          ORDER BY created_at DESC,id DESC LIMIT 1
+        ) latest ON true
+        WHERE rule.owner=$1 AND rule.ontology=$2 AND rule.body->'process'->>'type'=$3 AND ($4::uuid IS NULL OR rule.id>$4)
+        ORDER BY rule.id LIMIT 51`,[graph.owner,model.document.id,type,cursor??null],client)).rows;
+      const items=[];
+      for(const row of rows.slice(0,50)){
+        const rule=processRule.parse(row.body);
+        if('effect' in rule && (!model.actions.has(rule.effect.action) || !access.canDefine(model,'action',rule.effect.action)
+            || !access.canSeeModelData(model.action(rule.effect.action).classification)))continue;
+        const trigger=row.process_trigger && processTriggerSchema.parse(row.process_trigger);
+        const visibleRun=trigger && await matchingTransition(graph,trigger.process,trigger.sequence);
+        items.push({id:String(row.id),revision:Number(row.revision),name:String(row.name),process:rule.process,
+          enabled:Boolean(row.enabled),error:row.error,lastScan:row.last_scan,
+          effect:'effect' in rule ? {action:rule.effect.action} : {workflow:rule.workflow},
+          latestRun:visibleRun ? {id:String(row.run_id),state:String(row.state),updatedAt:row.updated_at} : null});
+      }
+      await access.refresh(client);
+      return {owner:graph.owner,release:model.release,items,cursor:rows.length>50?String(rows[49]!.id):null};
+    }));
   }
   async processStatus(access: Access, model: PublishedOntology, raw: unknown) {
     requireScope(access.principal, 'ontology:read');
@@ -349,17 +429,14 @@ export class Automation {
     requireScope(access.principal,'ontology:read');
     requireScope(access.principal,'ontology:write');
     return this.db.withOwner(owner,()=>this.db.transaction(async client=>{
-      const rule=(await this.db.query(`SELECT body,scopes,enabled,revision FROM ${this.db.schema}.object_rules
+      const rule=(await this.db.query(`SELECT body,scopes,enabled,revision,effect_release FROM ${this.db.schema}.object_rules
         WHERE id=$1 AND owner=$2 AND ontology=$3 FOR SHARE`,[input.rule,owner,model.document.id],client)).rows[0];
       if(!rule||Number(rule.revision)!==input.revision)throw new Conflict('Automation revision changed or is unavailable');
       const savedScopes = z.array(z.string()).parse(rule.scopes??[]);
       if(!savedScopes.includes('ontology:write'))throw new PermissionDenied('Save the rule with current write permission before previewing');
       const configuration=ruleSchema.parse(rule.body);
-      const workflow = await readWorkflowRecord(this.db, {
-        id: configuration.workflow, owner, ontology: model.document.id,
-      }, client, null, true);
-      if(!workflow)throw new NotFound('Automation workflow is unavailable');
-      const definition=workflowSchema.parse(workflow.body);
+      if ('effect' in configuration) await this.checkDirectEffect(model,configuration,rule.effect_release,client);
+      const { definition, revision:workflowRevision } = await this.ruleDefinition(configuration, owner, model.document.id, client, true);
       await lockEdits(this.db,model,owner,client);
       await access.refresh(client);
       this.authorize(access,model,definition.steps);
@@ -430,7 +507,7 @@ export class Automation {
         reports.push({id:selected.id,revision:selected.revision,name:diff.name,waiting,results});
       }
       await access.refresh(client);
-      return {rule:input.rule,revision:input.revision,enabled:rule.enabled,workflowRevision:Number(workflow.revision),
+      return {rule:input.rule,revision:input.revision,enabled:rule.enabled,workflowRevision,
         release:model.release,mode:'scenario_preview',scenarios:reports};
     }));
   }
@@ -615,12 +692,9 @@ export class Automation {
         requireScope(principal, 'ontology:write');
         const model = await this.metadata.active(rule.ontology, client, true),
           access = await Access.load(this.db, principal, client);
-        const input = ruleSchema.parse(rule.body),
-          workflow = await readWorkflowRecord(this.db, {
-            id: input.workflow, owner: String(rule.owner), ontology: String(rule.ontology),
-          }, client);
-        if (!workflow) throw new NotFound('Rule workflow is unavailable');
-        const body = workflowSchema.parse(workflow.body);
+        const input = ruleSchema.parse(rule.body);
+        if ('effect' in input) await this.checkDirectEffect(model,input,rule.effect_release,client);
+        const { definition:body } = await this.ruleDefinition(input, principal.owner, model.document.id, client);
         this.authorize(access, model, body.steps);
         const graph = new Objects(this.db, model, access, client);
         if ('process' in input) {
@@ -719,7 +793,7 @@ export class Automation {
       await this.db.query(
         `INSERT INTO ${this.db.schema}.workflow_runs(id,owner,ontology,release,request_id,digest,workflow_id,body,object_ref,scopes,available_at,process_trigger)
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(owner,request_id) DO NOTHING`,
-        [randomUUID(), owner, model.document.id, model.release, 'process-rule:' + fingerprint, fingerprint, input.workflow,
+        [randomUUID(), owner, model.document.id, model.release, 'process-rule:' + fingerprint, fingerprint, 'workflow' in input ? input.workflow : null,
           body, object, JSON.stringify(access.principal.scopes), availableAt, trigger], client);
     }
     if (page.length) await this.db.query(`UPDATE ${this.db.schema}.object_rules SET process_cursor=$2 WHERE id=$1`,

@@ -243,6 +243,9 @@ test('the original DiDi order is followed to arrival and completion without post
     assert.equal(ended.state,'completed');
     assert.equal(ended.nextCheckAt,null);
     assert.equal(ended.settlement,'unverified');
+    const tracking = await graph.follow(order,'watches');
+    assert.deepEqual(tracking.map(item=>item.ref),[watch]);
+    assert.equal(tracking[0]!.properties.observedAt,ended.observedAt);
     assert.equal(await f.worker.runOne('scheduled'),false);
     assert.equal(seen.length,8);
     const logs=await graph.follow(watch,'stateLogs');
