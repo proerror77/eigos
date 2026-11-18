@@ -1,3 +1,4 @@
+import { ObservationInterests } from '../../packages/runtime/observation-interests.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Database } from '../../packages/runtime/database.js';
 import { assertOwnerIsolation } from '../../packages/runtime/owner-isolation.js';
@@ -28,6 +29,7 @@ const indexing = new Indexing(db, metadata);
 const { effects } = capabilities;
 const automation = new Automation(db, metadata, capabilities.actions);
 const scenarios = new Scenarios(db);
+const observations = new ObservationInterests(db,metadata);
 const machinery = new MachineryReviews(db, metadata, new ScenarioEvaluations(db, capabilities.actions, capabilities.functions));
 const controller = new AbortController();
 process.on('SIGTERM', () => controller.abort());
@@ -45,7 +47,8 @@ async function dispatch() {
       const cleaned = await scenarios.cleanup();
       nextCleanup = Date.now() + (cleaned.more ? 1000 : 60000);
     }
-    let worked = await automation.scanOne();
+    let worked = await observations.scanOne();
+    worked = await automation.scanOne() || worked;
     worked = await automation.runOne(controller.signal) || worked;
     if (!worked) await idle();
   }

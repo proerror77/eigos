@@ -35,6 +35,7 @@ export const businessAgentProfiles: AgentProfile[] = [
     actions: ['CancelDidiRideOrder', 'RefreshDidiRideOrder', 'StartDidiRideWatch', 'StopDidiRideWatch'],
     functions: ['readDidiRideOrder', 'readDidiRideWatch', 'readDidiDriverPosition'],
     instructions: [
+      { function: 'readDidiRideWatch', text: 'For pickup and journey progress follow the original DidiRideOrder.watches link and read the matching watch. Report its observedAt and reason. Stopped or expired tracking does not establish ride completion or settlement.' },
       { action: 'CancelDidiRideOrder', function: 'readDidiRideOrder', text: 'Identify the exact linked original DiDi order. Cancellation is submitted directly by the authenticated PA through CancelableRideOrder.cancel with confirmCancellation=true after user approval. Read the original cancellation outcome before reporting success. An unresolved attempt permits readback only.' },
     ],
   },
@@ -64,6 +65,27 @@ export const businessAgentProfiles: AgentProfile[] = [
     functions: ['findScheduleSlots', 'readSchedulePlan', 'validateSchedule', 'recommendSchedule'],
     instructions: [
       { action: 'PrepareSchedulePlan', text: 'Obtain calendar availability through the published planning capability. It requests authorized data from the original PA and resumes this same task. For replanning an existing SchedulePlan, create a Scenario first, call its live PrepareSchedulePlan Action with input.plan and input.scenarioId, then read and edit that same Scenario. Keep proposed fields staged and validate the returned plan. The PA explicitly applies a reviewed merge.' },
+    ],
+  },
+  {
+    apiName: 'BookedFlightMonitoring',
+    terms: ['行程监测','跟踪我的航班','关注航变','航班变动提醒','monitor my booked flight','flight change alert'],
+    objects: ['FliggyFlightBooking','FlightWatch'], links: ['FliggyFlightBookingWatch'],
+    functions: ['prepareBookedFlightWatch','readFliggyFlightBooking','readFlightWatch'],
+    actions: ['StartBookedFlightWatch','CancelFlightWatch'],
+    instructions: [
+      { function:'prepareBookedFlightWatch', text:'Use the original booking to prepare a monitoring proposal. Present the chosen sources, maximum checks and deadline to the owner. A booking or payment approval applies only to that transaction.' },
+      { action:'StartBookedFlightWatch', text:'Use monitoring settings explicitly authorized for this booking and leg. Read the linked watch for the latest provider evidence and changes.' },
+    ],
+  },
+  {
+    apiName: 'TravelOrderProgress',
+    terms: ['酒店取消进度', '酒店退款进度', '机票出票', '出票了吗', 'hotel cancellation status', 'ticket issuance'],
+    objects: ['FliggyHotelBooking','FliggyFlightBooking'],
+    functions: ['readFliggyHotelBooking','readFliggyFlightBooking'],
+    instructions: [
+      { function: 'readFliggyHotelBooking', text: 'Identify the original booking and read its last verified supplier state and observation time. Distinguish cancellation from refund settlement. Query the booking for cancellationObservation when present.' },
+      { function: 'readFliggyFlightBooking', text: 'Identify the original flight order. Report payment and ticket issuance separately using independent supplier evidence. Query issuanceState and issuanceObservation when present.' },
     ],
   },
   {

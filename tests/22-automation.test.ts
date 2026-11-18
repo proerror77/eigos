@@ -686,6 +686,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   v9Definition.linkTypes = v9Definition.linkTypes.filter(type =>
     !addedLogs.some(log => log.link === type.apiName) && !documentDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !rideWatchDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    !flightDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !calendarJourneyDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !fliggyServicesDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !marketplaceDefinition.linkTypes.some(link => link.apiName === type.apiName));
@@ -1455,5 +1456,78 @@ test('the recovery service validates draft-only rows against current policies wi
     await f.db.query(`UPDATE ${f.db.schema}.object_policies SET policy=$1 WHERE type='Route'`,
       [objectPolicySchema.parse({read:{all:[{op:'equals',property:'id',value:'different-row'}]}})]);
     await assert.rejects(read(),/unavailable|denied/);
+  }finally{await f.close();}
+});
+
+test('a process rule invokes one Action with no saved workflow and reports only the owner’s visible execution', async () => {
+  const f=await processSetup();
+  try {
+    const base={name:'Resolve stalls',enabled:true,process:{type:'RouteStateLog',from:'open',to:'stalled'}};
+    const effect={action:'ChangeRouteState',input:{route:{object:true},revision:{property:'$revision'},state:{literal:'done'}}};
+    await assert.rejects(f.automation.rule(f.access,f.model,{...base,workflow:f.workflow.id,effect}));
+    await assert.rejects(f.automation.rule(f.access,f.model,{...base,effect:{...effect,input:{}}}),/missing a required Action parameter/);
+    const before=(await f.automation.list(f.access,f.model,'workflows')).items.length;
+    const rule=await f.automation.rule(f.access,f.model,{...base,effect});
+    assert.equal((await f.automation.list(f.access,f.model,'workflows')).items.length,before);
+    const services=ontologyServices(f.db,f.metadata,f.capabilities,f.capabilities.functions,f.capabilities.effects,f.actions);
+    const read=(caller=principal)=>services.get('machinery_rule_bindings')!.invoke(caller,{type:'RouteStateLog'}) as ReturnType<Automation['processBindings']>;
+    const binding=(await read()).items[0]!;
+    assert.deepEqual(binding.effect,{action:'ChangeRouteState'}); assert.equal(binding.enabled,true);
+    assert.equal(binding.id,rule.id); assert.equal(binding.latestRun,null);
+    await setGrants(f.db,'other-rule-owner',businessGrants(f.model));
+    assert.deepEqual((await read({...principal,owner:'other-rule-owner'})).items,[]);
+    await f.change('open');await f.change('stalled');
+    await f.automation.scanOne();
+    assert.equal((await read()).items[0]!.latestRun?.state,'pending');
+    await f.automation.runOne();
+    assert.equal((await f.graph.read(f.source)).properties.state,'done');
+    assert.equal((await read()).items[0]!.latestRun?.state,'completed');
+    await f.automation.scanOne();assert.equal(await f.automation.runOne(),false);
+    assert.equal((await f.runs()).length,1);
+    await f.db.query(`INSERT INTO ${f.db.schema}.object_policies VALUES('Eigos','Route',$1)`,
+      [objectPolicySchema.parse({read:{all:[{op:'equals',property:'id',value:'other'}]}})]);
+    assert.equal((await read()).items[0]!.latestRun,null);
+  } finally {await f.close();}
+});
+
+test('revocation and disabling a direct process effect prevent a queued Action from committing',async()=>{
+  const f=await processSetup();
+  try{
+    const effect={action:'ChangeRouteState',input:{route:{object:true},revision:{property:'$revision'},state:{literal:'done'}}};
+    const input={name:'Resolve route',enabled:true,process:{type:'RouteStateLog',to:'stalled'},effect};
+    const rule=await f.automation.rule(f.access,f.model,input);
+    await f.change('open');await f.change('stalled');await f.automation.scanOne();
+    await setGrants(f.db,principal.owner,businessGrants(f.model).filter(g=>g.resource!=='Eigos/action/ChangeRouteState'));
+    await f.automation.runOne();
+    assert.equal((await f.runs())[0]!.state,'failed');
+    assert.equal((await f.graph.read(f.source)).properties.state,'stalled');
+    await setGrants(f.db,principal.owner,businessGrants(f.model));
+    await f.automation.rule(await Access.load(f.db,principal),f.model,{...input,id:rule.id,revision:rule.revision,enabled:false});
+    const row=(await f.runs())[0]!;
+    try {await f.automation.retry(await Access.load(f.db,principal),f.model,row.id);await f.automation.runOne();}
+    catch(error){assert.match(String(error),/rule|workflow/i);}
+    assert.equal((await f.graph.read(f.source)).properties.state,'stalled');
+  }finally{await f.close();}
+});
+
+test('a process effect checks its published Action contract before admitting later transitions',async()=>{
+  const f=await processSetup();
+  try{
+    const rule=await f.automation.rule(f.access,f.model,{name:'Review stale routes',enabled:true,
+      process:{type:'RouteStateLog',to:'stalled'},
+      effect:{action:'ChangeRouteState',input:{route:{object:true},revision:{property:'$revision'},state:{literal:'done'}}}});
+    const changed=structuredClone(f.model.document);
+    changed.actionTypes.find(action=>action.apiName==='ChangeRouteState')!.parameters={
+      type:'object',properties:{route:{type:'object'},revision:{type:'integer'},state:{type:'string'},reason:{type:'string'}},
+      required:['route','revision','state','reason'],additionalProperties:false,
+    };
+    const live=await f.metadata.publish(changed,f.capabilities,f.publisher);
+    const editor=await Access.load(f.db,principal);
+    await f.actions.apply(editor,live,'ChangeRouteState',{route:f.source,revision:(await new Objects(f.db,live,editor).read(f.source)).revision,
+      state:'stalled',reason:'Maintenance'},randomUUID());
+    assert.equal(await f.automation.scanOne(),true);
+    const current=(await f.automation.processBindings(editor,live,{type:'RouteStateLog'})).items.find(entry=>entry.id===rule.id)!;
+    assert.equal(current.enabled,false);assert.match(current.error,/scan failed/i);
+    assert.equal(current.latestRun,null);assert.equal((await f.runs()).length,0);
   }finally{await f.close();}
 });

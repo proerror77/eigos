@@ -215,6 +215,12 @@ Action 检查自身应用权限，以及实际访问的对象、关系和来源�
 数据库事务保证本体编辑的原子性，不能回滚已经发生的供应商变更。`external_operations` 因此先持久化原操作，再发请求，保存供应商回执；结果未知时禁止自动重发。独立订单查询使用原订单身份，创建订单不被升级成到达或履约成功。账号、业务授权、执行配置和最终供应商结果分别校验，见 [服务接口与定时出行](../guides/service-planning.md)。
 
 
+### 供应商订单的状态与后续执行
+
+酒店预订的 `state` 与机票订单的 `issuanceState` 是业务对象的可枚举属性。Machinery 从同一属性的正式编辑历史投影 ProcessLog。滴滴跟单则沿原订单的 `watches` 关系读取 `DidiRideWatch`。参考图列出预期路径；实际状态由原订单的供应商详情和可验证回执更新。历史订单缺少出票证据时，下一次有效回查才填入出票状态。[Machinery 过程与日志](https://www.palantir.com/docs/foundry/machinery/core-concepts) · [输入状态、输出状态与自动化](https://www.palantir.com/docs/foundry/machinery/draw-a-graph)
+
+用户发起的取消和付款仍由 PA 确认原订单与金额。连接器在派发记录的事务内登记有截止时间的原单回查，由 Worker 执行已发布的刷新 Action。平台通过原任务身份和授权持续工作，Agent 可从对象和过程日志读取进度。用户配置的状态规则也可直接绑定单个 Action；需要多步执行时再引用已保存的 Workflow。规则、排程和直接请求最终都通过原 Action 执行入口。[Automate 条件与效果](https://www.palantir.com/docs/foundry/automate/overview) · [执行与验收边界](../guides/service-planning.md#订单后台观察)
+
 ## 完整运行服务
 
 Ontology 分支与项目归属提供定义提案、三方 rebase、精确候选审阅和原子合并。候选数据可增量追赶，投影身份保留，数据变更使原审阅失效。来源基线、用户编辑状态和冲突策略纳入发布指纹。
@@ -230,3 +236,7 @@ Machinery 过程日志以普通 Object Type 实现共同 `ProcessLog` Interface�
 执行追踪使用原任务和 Action 身份关联来源证据、模型授权、方案审阅、编辑历史、outbox 和实际供应商回执。读取追踪时复核权限，业务结果以各原始记录为准。 [EIGOS 执行追踪](../guides/execution-trace.md) · [Palantir 执行追踪](https://www.palantir.com/docs/foundry/aip-observability/trace-view)
 
 Gateway 的只读查询池可连接已有只读副本，通过身份与 WAL 追赶检查保持当前读取。部署可分别扩展 Gateway、任务 Worker 和 Indexer。参数、表授权、边界及运行命令见 [Ontology 运行服务](../guides/ontology-services.md)。
+
+## 跨阶段持续关注
+
+关注绑定原对象、发起身份、授权期限和有序阶段。阶段以已发布 ProcessLog 的状态为条件，选择等待业务事件或调度一个标记为 observation/readback 的 Action。需要交接到另一个业务对象时，阶段声明已发布的 Link、目标过程与终止状态。业务事实仍在原对象、来源证据和编辑历史中；observation_interests 保存授权、阶段游标和关联排程。Indexer 从数据库恢复进度，Worker 沿原 Action 通道提交观察。Machinery 读回已授权的关注和中断原因。[Palantir 过程和关联对象](https://www.palantir.com/docs/foundry/machinery/core-concepts) · [基于时间与对象的自动化](https://www.palantir.com/docs/foundry/automate/overview) · [使用与验收](../guides/continuous-observation.md)

@@ -25,3 +25,9 @@ Agent 通过 EIGOS 的 Ontology MCP 调用 `evaluate_ontology` 与 `readFlightSt
 在运行环境离线预装 `@flightradar24/fr24api-mcp@1.0.2`，用 `EIGOS_FR24_MCP_ENTRYPOINT` 指定官方包的 `build/index.js` 绝对路径。`EIGOS_FR24_CONNECTION_FILE` 使用与飞常准相同的私有连接文件字段，Key 由 Flightradar24 提供并绑定该用户。生产数据需要有效订阅。通过原 Ontology 来源权限独立授权 `Flightradar24` 和 `readLiveFlightPosition`。
 
 使用 Flightradar24 跟踪的调用者还需具备 `RefreshFlightWatch` Action 的应用权限和 `refreshFlightWatch` Function 的执行权限。它与飞常准单源跟踪的 `CheckFlightWatch` 共用 Worker 和 `FlightWatch`，按各自已发布的契约调度。两家数据继续通过各自的只读 Function 获取，Action 提交业务状态，过程状态记录在 `ProcessLog`。参考 [Palantir External Functions](https://www.palantir.com/docs/foundry/data-connection/external-functions)、[Actions](https://www.palantir.com/docs/foundry/action-types/overview) 和 [Automate](https://www.palantir.com/docs/foundry/automate/overview)。
+
+## 订票后跟进同一航段
+
+京杭订单可在出票前通过 `prepareBookedFlightWatch` 准备长期监测设置。明确同意原订单、航段、数据来源、检查预算与截止时间后，可用[持续关注](continuous-observation.md)先跟进出票，再在独立确认出票后启动 `StartBookedFlightWatch`。已出票的订单也可直接发起这个 Action。付款授权与航班监测授权分别记录。
+
+原订单通过 `itineraryWatches` 关联 FlightWatch。远期低频检查，接近出发时缩短间隔，并为后续阶段保留剩余查询预算。当前绑定限国内单程直飞原航段，期限最多 31 天，且不超过原计划到达后一天。运行时复核原票和来源绑定；停用、额度用尽、到期或不匹配会反映在跟进状态中。航班运行变化来自所选数据源在检查时返回的事实，客票退改签和航空公司对个人行程的通知需要独立供应商证据。

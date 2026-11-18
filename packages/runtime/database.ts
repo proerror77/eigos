@@ -1,3 +1,4 @@
+import {initializeObservationInterests} from './observation-interests.js';
 import { developmentSandboxEnabled } from '../core/sandbox-mode.js';
 import { initializeReleaseEvaluation } from './release-evaluation.js';
 import {initializeOntologyDataMigrations} from './ontology-migrations.js';
@@ -217,6 +218,7 @@ export class Database {
     await initializeSemantic(this);
     await initializeApplications(this);
     await initializeAutomation(this);
+    await initializeObservationInterests(this);
     await initializeMachineryHistory(this);
     await initializeScenarioEvaluations(this);
     await initializeReleaseEvaluation(this);

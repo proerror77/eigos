@@ -39,10 +39,10 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '36',
+  id: ride.id, version: '37',
   agentProfiles: businessAgentProfiles,
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
-  linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...journey.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
+  linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...journey.linkTypes, ...flight.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
   actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes, ...journey.actionTypes, ...flight.actionTypes, ...payments.actionTypes,...luckin.actionTypes,...applications.actionTypes,...documents.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
 };
 businessDefinition.functionTypes.push(
@@ -210,6 +210,8 @@ businessDefinition.functionTypes.push(...rideWatchDefinition.functionTypes);
 businessDefinition.actionTypes.push(...rideWatchDefinition.actionTypes);
 addProcessLogs(businessDefinition, [
   { type: rideWatchType, property: 'state' },
+  { type: 'FliggyHotelBooking', property: 'state' },
+  { type: 'FliggyFlightBooking', property: 'issuanceState' },
   { type: petRideType, property: 'state' },
   { type: 'ActionConfirmation', property: 'state' },
   { type: 'EventRegistration', property: 'state' }, { type: 'EventTrip', property: 'state' },
@@ -231,5 +233,40 @@ businessDefinition.objectTypes.find(type => type.apiName === 'EventTripStateLog'
   subprocesses: [
     { link: 'plan', process: 'SchedulePlanStateLog' },
     { link: 'registration', process: 'EventRegistrationStateLog' },
+  ],
+};
+
+// Reference paths describe expected observations. Supplier status and independent readbacks
+// determine the recorded state; a graph edge does not authorize a supplier mutation.
+businessDefinition.objectTypes.find(type => type.apiName === 'FliggyHotelBookingStateLog')!.machinery = {
+  states: [
+    { name: 'previewed' }, { name: 'awaiting_payment' }, { name: 'pending_confirmation' },
+    { name: 'confirmed' }, { name: 'completed', terminal: true }, { name: 'refund_pending' },
+    { name: 'refund_rejected' }, { name: 'closed', terminal: true }, { name: 'cancelled', terminal: true },
+    { name: 'unknown' },
+  ],
+  transitions: [
+    { from: null, to: 'previewed', action: 'PrepareFliggyHotelBooking' },
+    { from: 'previewed', to: 'awaiting_payment', action: 'CreateFliggyHotelBooking' },
+    { from: 'awaiting_payment', to: 'pending_confirmation', action: 'ConfirmFliggyHotelPayment' },
+    { from: 'pending_confirmation', to: 'confirmed' }, { from: 'confirmed', to: 'completed' },
+    ...['awaiting_payment','pending_confirmation','confirmed'].flatMap(from =>
+      ['refund_pending','cancelled','closed'].map(to => ({from,to,action:'CancelFliggyHotelBooking'}))),
+    ...['cancelled','closed','refund_rejected'].map(to => ({from:'refund_pending',to})),
+  ],
+};
+
+businessDefinition.objectTypes.find(type => type.apiName === 'FliggyFlightBookingIssuanceStateLog')!.machinery = {
+  states: [{name:'unpaid'}, {name:'payment_unverified'}, {name:'awaiting_issuance'},
+    {name:'issued',terminal:true}, {name:'closed',terminal:true}],
+  transitions: [
+    {from:null,to:'unpaid',action:'CreateFliggyFlightBooking'},
+    {from:'unpaid',to:'closed',action:'CloseFliggyFlightBooking'},
+    {from:'unpaid',to:'payment_unverified',action:'PayFliggyFlightBooking'},
+    {from:'unpaid',to:'awaiting_issuance',action:'PayFliggyFlightBooking'},
+    {from:'unpaid',to:'issued',action:'PayFliggyFlightBooking'},
+    {from:'payment_unverified',to:'awaiting_issuance'},
+    {from:'payment_unverified',to:'issued'}, {from:'payment_unverified',to:'closed'},
+    {from:'awaiting_issuance',to:'issued'},
   ],
 };
