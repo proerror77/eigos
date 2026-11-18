@@ -120,7 +120,7 @@ Action 的源码是 `deploy/auth0/post-login.cjs`，CommonJS，不依赖 npm 包
 
 | Secret | 填什么 |
 | --- | --- |
-| `EIGOS_AUDIENCES` | 逗号分隔的 EIGOS API identifier，填 `https://<gateway>/mcp`。邮箱未验证的用户拿不到这些 API 的令牌，它们的 access token 由这个 Action 写入 tenant claim。不要列出原有的 `OAUTH_AUDIENCE`，除非要对原有客户端的用户同样要求已验证的邮箱。 |
+| `EIGOS_AUDIENCES` | 逗号分隔的 EIGOS API identifier，现在只填给自助账号用的 MCP audience `https://<gateway>/mcp`。邮箱未验证的用户拿不到它的令牌，它的 access token 由这个 Action 写入 tenant claim。主 audience（`OAUTH_AUDIENCE`）不列：这个 Action 不会对它拒绝邮箱未验证的用户，也不会往它的 access token 写 tenant claim。它的 tenant 映射仍由现有的 Post-Login Action 负责，所以要保留（见「部署前先检查」第 3 步）。以后接入 A2A 时，会再加上它自己的 audience。 |
 | `TENANT_CLAIM` | 令牌里的 tenant claim 名，默认 `tenant_id`。必须和 Gateway 的 `OAUTH_TENANT_CLAIM` 完全相同。 |
 | `TENANT_METADATA_KEY` | 用户 `app_metadata` 里保存 tenant 的键，默认 `tenant_id`。必须和现有 tenant 映射读取的键相同。 |
 | `DEFAULT_TENANT` | 用户没有受管理的 tenant 时得到的值，Action 同时把它写回该用户的 `app_metadata`。新注册的用户也得到这个值。 |
@@ -246,7 +246,10 @@ Gateway 角色不授予 `status`、`suspended_at` 和 `suspended_reason` 的 UPD
 
 ### 账号组
 
-开通且未停用、已授权 Grok 的账号，通过组 `group:eigos-accounts` 获得 Ontology 授权。**账号能做什么，只由这个组决定。** 账号令牌，以及它提交后排队、由 Worker 执行的任务，只加载这个组的授权，不加载 owner 自己名下的授权行。所以用 `access:configure` 或 `access:grant-business` 给账号 owner 单独写的资源授权，对它的 Grok 访问不起作用，目前也没有只对某一个账号增减资源授权的办法。`access:configure` 里的 `memberships`（对象策略用的组和标记）仍然按 owner 生效。
+开通且未停用、已授权 Grok 的账号，通过组 `group:eigos-accounts` 获得 Ontology 授权。**账号能做什么，只由这个组决定。** 账号令牌，以及它提交后排队、由 Worker 执行的任务，都只加载这个组的资源授权，不加载 owner 自己名下的授权行。对 owner 单独配置的东西，分两半：
+
+- **资源授权没有作用。** `access:configure` 的 JSON 里 `subjects[].grants` 给账号 owner 写的资源授权，以及 `access:grant-business` 写给它的业务授权，对它的 Grok 访问都不起作用。目前没有只对某一个账号增减资源授权的办法。
+- **`memberships` 照常按 owner 生效。** `access:configure` 的 JSON 里 `memberships`（给 owner 配的组和标记，对象策略用）仍然按 owner 读取，对账号同样有效。
 
 - 只有运营者命令会同步这个组。`npm run ontology:publish` 和 `npm run ontology:activate -- <release>` 成功后，如果激活的是业务 Ontology（`Eigos`），这个组的授权被整组替换为当前定义的业务授权。其他 Ontology（例如公共地点）的发布和激活不改动这个组，`ontology:prepare` 也不同步。
 - 业务授权包括：`Eigos` 的 `view_definition`，业务对象的 `view_objects`，业务 Function 的 `execute_function`，业务 Action 的 `apply_action`，以及这些 Function 用到的来源的 `read_source`。不含 `edit_definition` 和 `manage_definition`。沙箱资源只在 `EIGOS_AGENT_SANDBOX_ENABLED=true` 的本地开发环境里包含。
