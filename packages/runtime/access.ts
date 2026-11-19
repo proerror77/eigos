@@ -1,4 +1,4 @@
-import { memberQueryGroup } from './members.js';
+import { accountGroup } from './accounts.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { digest, PermissionDenied, type Principal } from '../core/identity.js';
@@ -115,9 +115,9 @@ export class Access {
   }
   async refresh(client?: Sql) {
     const grantSubject = this.principal.memberAccess
-      ? `subject=$2 AND EXISTS (SELECT 1 FROM ${this.db.schema}.member_accounts WHERE owner=$1 AND approved_at IS NOT NULL AND revoked_at IS NULL)`
+      ? `subject=$2 AND EXISTS (SELECT 1 FROM ${this.db.schema}.accounts WHERE owner=$1 AND status='active' AND approved_at IS NOT NULL AND revoked_at IS NULL)`
       : `(subject=$1 OR subject IN (SELECT 'group:'||name FROM ${this.db.schema}.security_memberships WHERE subject=$1 AND kind='group'))`;
-    const subjects = this.principal.memberAccess ? [this.principal.owner, 'group:' + memberQueryGroup] : [this.principal.owner];
+    const subjects = this.principal.memberAccess ? [this.principal.owner, 'group:' + accountGroup] : [this.principal.owner];
     const result = await this.db.query(`SELECT
       (SELECT coalesce(jsonb_agg(jsonb_build_object('resource',resource,'permission',permission)),'[]')
         FROM ${this.db.schema}.resource_grants WHERE ${grantSubject}) AS grants,
@@ -541,7 +541,7 @@ export async function setGrants(db: Database, subject: string, grants: Grant[], 
   };
   if (client) await write(client); else await db.transaction(write);
 }
-export function memberGrants(model: Ontology, sandboxEnabled = false): Grant[] {
+export function businessGrants(model: Ontology, sandboxEnabled = false): Grant[] {
   const available = (kind: string) => (item: { apiName: string }) => sandboxEnabled || !isSandboxResource(model, kind, item.apiName);
   const functions = model.resolvedDocument.functionTypes.filter(available('function'));
   return [{ resource: model.document.id, permission: 'view_definition' },
@@ -550,4 +550,18 @@ export function memberGrants(model: Ontology, sandboxEnabled = false): Grant[] {
     ...model.resolvedDocument.actionTypes.filter(available('action')).map(action => ({ resource: resource(model.document.id, 'action', action.apiName), permission: 'apply_action' as const })),
     ...[...new Set(functions.flatMap(fn => fn.source ? [fn.source] : []))].map(name => ({ resource: resource(model.document.id, 'source', name), permission: 'read_source' as const })),
   ];
+}
+/** Makes the account group hold exactly the business grants of `model`, replacing whatever the group held. Pass the business Ontology only; the operator commands call `syncAccountGrantsAfterActivation`. */
+export async function syncAccountGrants(db: Database, model: Ontology, client?: Sql): Promise<void> {
+  await setGrants(db, 'group:' + accountGroup, businessGrants(model, db.sandboxEnabled), client);
+}
+const businessOntology = 'Eigos';
+/**
+ * Keeps the account group in step with the business Ontology. The operator commands sync after publish/activate.
+ * After a branch merge activates a new business release, the operator re-runs `npm run ontology:activate <release>`,
+ * because the runtime role cannot write authorization tables. Any other Ontology is ignored: its resources must never
+ * replace the business grants of every account.
+ */
+export async function syncAccountGrantsAfterActivation(db: Database, activated: Ontology): Promise<void> {
+  if (activated.document.id === businessOntology) await syncAccountGrants(db, activated);
 }

@@ -13,7 +13,7 @@ import { aviationEndpoint } from '../packages/capabilities/flight/variflight.js'
 import { readConfig } from '../packages/core/config.js';
 import { flightPositionResult } from '../packages/ontology/flight-position.js';
 import { flightWatchRead } from '../packages/ontology/flight.js';
-import { memberGrants, setGrants } from '../packages/runtime/access.js';
+import { businessGrants, setGrants } from '../packages/runtime/access.js';
 import { ScheduledActions, ScheduledActionRunner } from '../packages/runtime/scheduled-actions.js';
 import { fixture, principal } from './fixture.js';
 
@@ -132,7 +132,7 @@ test('Ontology MCP queries FR24 and schedules flight watches with either or both
     };
     const apply = (action: string, requestId: string, input: Record<string, unknown>) =>
       call('apply_ontology_action', { action, requestId, input });
-    const grants = memberGrants(f.model);
+    const grants = businessGrants(f.model);
     const revokeSource = async (provider: string) => setGrants(f.db, principal.owner,
       grants.filter(grant => grant.resource !== 'Eigos/source/' + provider));
     const settings = { ...flight, monitorUntil: new Date(Date.now() + 60 * 60000).toISOString(), maxChecks: 3 };

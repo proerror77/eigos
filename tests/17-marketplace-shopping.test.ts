@@ -10,7 +10,7 @@ import { createApp } from '../apps/gateway/app.js';
 import { readConfig } from '../packages/core/config.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import { configuredServices } from '../packages/capabilities/services/sources.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { fixture, principal } from './fixture.js';
 
@@ -119,7 +119,7 @@ test('Taobao and JD search, comparison and buyer handoff work on the published G
     const graph = new Objects(f.db, f.model, f.access);
     const query = { query: '折叠雨伞', country: 'CN' };
     await assert.rejects(services('other-owner', 'Taobao'), /no owner connection/);
-    const grants = memberGrants(f.model);
+    const grants = businessGrants(f.model);
     await setGrants(f.db, principal.owner, grants.filter(g => g.resource !== 'Eigos/source/JD'));
     const limited = await Access.load(f.db, principal);
     await assert.rejects(f.capabilities.actions.apply(limited, f.model, 'SearchJdProducts', query, 'no-source'), /Permission/);

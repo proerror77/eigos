@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { readProcessStatus } from '../packages/runtime/process-automation.js';
 import { Worker } from '../apps/worker/worker.js';
 import { ScheduledActions, ScheduledActionRunner } from '../packages/runtime/scheduled-actions.js';
@@ -193,15 +193,15 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
     const reviewed = await view(second);
     const secondApproval = { booking: second, approvedDigest: reviewed.approvalDigest, amountMinor: reviewed.amountMinor };
     await act('CreateFliggyHotelBooking', secondApproval);
-    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant => grant.resource !== 'Eigos/action/RefreshFliggyHotelBooking'));
+    await setGrants(f.db, principal.owner, businessGrants(f.model).filter(grant => grant.resource !== 'Eigos/action/RefreshFliggyHotelBooking'));
     await assert.rejects(act('CancelFliggyHotelBooking', secondApproval), /Permission required/);
     assert.equal(calls.filter(operation => operation === 'cancel').length, 1);
-    await setGrants(f.db, principal.owner, memberGrants(f.model));
+    await setGrants(f.db, principal.owner, businessGrants(f.model));
     await act('CancelFliggyHotelBooking', secondApproval);
     assert.equal((await view(second)).state, 'cancelled');
     assert.equal((await view(second)).independentRead, true);
     assert.equal(calls.filter(operation => operation === 'cancel').length, 2);
-    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant => grant.resource !== 'Eigos/source/FliggyHotelDistribution'));
+    await setGrants(f.db, principal.owner, businessGrants(f.model).filter(grant => grant.resource !== 'Eigos/source/FliggyHotelDistribution'));
     await assert.rejects(view(booking), /Permission required/);
   } finally {
     await f.close();

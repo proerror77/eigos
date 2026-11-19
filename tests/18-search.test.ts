@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fixture, principal } from './fixture.js';
 import { Objects } from '../packages/runtime/objects.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { Scenarios } from '../packages/runtime/scenarios.js';
 import { ObjectSets } from '../packages/runtime/object-sets.js';
 import { enablePgvector, pgvectorNamespace } from '../packages/runtime/semantic-pgvector.js';
@@ -76,7 +76,7 @@ test('semantic search invokes the published embedding Function and filters permi
     const calls:string[]=[];
     const embedding:VersionedFunction={definition:{apiName:'EmbedText',description:'Explicit synthetic embedding fixture',version:'fixture-v1',parameters:{type:'object',properties:{text:{type:'string'}},required:['text'],additionalProperties:false},returns:{type:'array',items:{type:'number'},minItems:2,maxItems:2}},implementationId:'synthetic-semantic-fixture-v1',handler:async input=>{const text=String(input.text);calls.push(text);return /train|rail/.test(text)?[1,0]:[0,1];}};
     const capabilities=createCapabilities(f.db,f.source,{functions:[embedding]}),document=structuredClone(f.model.document);document.functionTypes.push(embedding.definition);
-    const model=await f.metadata.publish(document,capabilities,f.publisher);await setGrants(f.db,principal.owner,memberGrants(model));
+    const model=await f.metadata.publish(document,capabilities,f.publisher);await setGrants(f.db,principal.owner,businessGrants(model));
     const access=await Access.load(f.db,principal),graph=new Objects(f.db,model,access),semantic=new SemanticSearch(f.db,capabilities.functions);
     await semantic.configure(f.publisher,model,{name:'Routes',type:'Route',property:'name',embeddingFunction:'EmbedText',dimensions:2});
     await graph.create({type:'Route',id:'secret'},{id:'secret',name:'train station'});await graph.create({type:'Route',id:'public'},{id:'public',name:'road trip'});
@@ -159,7 +159,7 @@ test('registers immutable PDF or SOP editions and queries their content through 
       filter: { op: 'contains', property: 'extractedText', value: 'check the alarm' } as const };
     assert.deepEqual((await graph.query(query)).items.map(item => item.ref), [second]);
     const other = { owner: 'outside-docs', scopes: principal.scopes };
-    await setGrants(f.db, other.owner, memberGrants(f.model));
+    await setGrants(f.db, other.owner, businessGrants(f.model));
     const outside = new Objects(f.db, f.model, await Access.load(f.db, other));
     await assert.rejects(outside.read(first), /unavailable/);
     assert.deepEqual((await outside.query({ type: 'OperationalDocumentVersion' })).items, []);
@@ -183,7 +183,7 @@ test('document chunks preserve Unicode offsets and version citations while inher
     const capabilities = createCapabilities(f.db, f.source, { functions: [embedding] }), definition = structuredClone(f.model.document);
     definition.functionTypes.push(embedding.definition);
     const model = await f.metadata.publish(definition, capabilities, f.publisher);
-    await setGrants(f.db, principal.owner, memberGrants(model));
+    await setGrants(f.db, principal.owner, businessGrants(model));
     const access = await Access.load(f.db, principal), graph = new Objects(f.db, model, access);
     const plan = { type: 'SchedulePlan', id: 'paged-document-plan' };
     await graph.create(plan, planFields(plan.id, 30));
@@ -233,7 +233,7 @@ async function vectorFixture() {
     const capabilities = createCapabilities(f.db, f.source, { functions: [embedding] }), definition = structuredClone(f.model.document);
     definition.functionTypes.push(embedding.definition);
     const model = await f.metadata.publish(definition, capabilities, f.publisher);
-    await setGrants(f.db, principal.owner, memberGrants(model));
+    await setGrants(f.db, principal.owner, businessGrants(model));
     const access = await Access.load(f.db, principal);
     return { ...f, capabilities, model, access, graph: new Objects(f.db, model, access),
       semantic: new SemanticSearch(f.db, capabilities.functions), embeddingFunction: embedding.definition.apiName };
@@ -272,7 +272,7 @@ test('pgvector opt-in is atomic and ranks only fresh, same-owner vectors in the 
 
     // Same type, ID, text digest, revision and embedding binding, different owner.
     const other = { owner: 'other-vector-owner', scopes: principal.scopes };
-    await setGrants(db, other.owner, memberGrants(model));
+    await setGrants(db, other.owner, businessGrants(model));
     const otherAccess = await Access.load(db, other);
     await new Objects(db, model, otherAccess).create(first, { id: first.id, name: 'north avenue' });
     await semantic.index(otherAccess, model, { name, objects: [first] });
@@ -371,7 +371,7 @@ async function publicationSearchFixture() {
     const capabilities=createCapabilities(f.db,f.source,{functions:[embedding]});
     const document=structuredClone(f.model.document);document.functionTypes.push(embedding.definition);
     const model=await f.metadata.publish(document,capabilities,f.publisher);
-    await setGrants(f.db,principal.owner,memberGrants(model));
+    await setGrants(f.db,principal.owner,businessGrants(model));
     const access=await Access.load(f.db,principal),graph=new Objects(f.db,model,access);
     const semantic=new SemanticSearch(f.db,capabilities.functions),ref={type:'Route',id:'publication-route'};
     await graph.create(ref,{id:ref.id,name:'Original searchable route'});
@@ -384,7 +384,7 @@ async function publicationSearchFixture() {
 
 test('unchanged publications retain semantic indexes and vectors without sharing owners or bypassing current permissions',async()=>{
   const f=await publicationSearchFixture();try{
-    await setGrants(f.db,'semantic-peer',memberGrants(f.model));
+    await setGrants(f.db,'semantic-peer',businessGrants(f.model));
     const peer=await Access.load(f.db,{...principal,owner:'semantic-peer'});
     await new Objects(f.db,f.model,peer).create(f.ref,{id:f.ref.id,name:'Private peer route'});
     await f.semantic.index(peer,f.model,{name:'Routes',objects:[f.ref]});

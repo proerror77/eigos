@@ -4,7 +4,7 @@ import { fixture, principal } from './fixture.js';
 import { serviceProvider } from './service-fixture.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { PARequests } from '../packages/runtime/pa.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import type { AgentDriver, AgentTool } from '../packages/runtime/agent.js';
 import { digest } from '../packages/core/identity.js';
 import { OntologyAgent } from '../packages/runtime/agent.js';
@@ -63,7 +63,7 @@ test('service permissions and revocation are checked before reads and source err
     await setGrants(
       f.db,
       principal.owner,
-      memberGrants(f.model).filter((g) => g.resource !== 'Eigos/source/Shopify'),
+      businessGrants(f.model).filter((g) => g.resource !== 'Eigos/source/Shopify'),
     );
     const access = await Access.load(f.db, principal);
     await assert.rejects(

@@ -25,8 +25,9 @@ import { configuredServices } from '../../packages/capabilities/services/sources
 import { configuredStripeSandbox } from '../../packages/capabilities/payments/stripe-sandbox.js';
 import type { SourceResolver } from '../../packages/capabilities/didi/functions.js';
 import { verifier, type VerifyToken } from './auth.js';
-import { mountMembers, type auth0MemberLogin } from './member-login.js';
-import { Members, memberTaskScopes } from '../../packages/runtime/members.js';
+import { mountAccountPortal, type auth0AccountLogin } from './account-portal.js';
+import { auth0Management, type Auth0Management } from './auth0-management.js';
+import { Accounts, accountTaskScopes, type Denial } from '../../packages/runtime/accounts.js';
 import { A2A, AgentUser, agentCard } from './a2a.js';
 import { publicError } from './public-error.js';
 import { developmentSandboxEnabled } from '../../packages/core/sandbox-mode.js';
@@ -44,13 +45,24 @@ const paTravelInstructions = [
   'Report notification delivery only after your PA channel confirms it.',
 ].join(' ');
 
+/** What an agent is told when an account token is refused. English, for machine clients; the reason code is the stable part. */
+const refusal: Record<Denial, string> = {
+  signup_closed: 'EIGOS sign-up is closed',
+  invite_required: 'Redeem an EIGOS invitation on the account page first',
+  operator_account: 'Operator accounts use their existing client',
+  account_suspended: 'This EIGOS account is suspended',
+  client_not_allowed: 'This client is not allowed for EIGOS accounts',
+  client_not_authorized: 'Authorize this client on the EIGOS account page',
+  insufficient_scope: 'The token is missing tasks:read or tasks:write',
+};
+
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {},
   providerFetch: { amapFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch;
     dianpingFetch?: typeof fetch; marketplaceFetch?: typeof fetch;
-    memberLogin?: ReturnType<typeof auth0MemberLogin> } = {}) {
+    accountLogin?: ReturnType<typeof auth0AccountLogin>; management?: Auth0Management } = {}) {
   if (db.sandboxEnabled && !developmentSandboxEnabled({ ...config, NODE_ENV: process.env.NODE_ENV }))
     throw new Error('Gateway sandbox requires explicit loopback development configuration');
-  const { marketplaceFetch, memberLogin, ...sourceFetch } = providerFetch;
+  const { marketplaceFetch, accountLogin, management, ...sourceFetch } = providerFetch;
   const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE, undefined, marketplaceFetch), configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
     fliggyFlight: config.EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE,
     fliggyHotel: config.EIGOS_FLIGGY_HOTEL_CONNECTION_FILE,
@@ -68,14 +80,17 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   const principals = new WeakMap<Request, Principal>();
   const memberRequests = new WeakSet<Request>();
   const memberClient = config.OAUTH_MEMBER_MCP_CLIENT_ID;
-  const members = memberClient ? new Members(db) : undefined;
+  const members = memberClient ? new Accounts(db, config.EIGOS_SIGNUP) : undefined;
   const existingClients = config.OAUTH_EXISTING_CLIENT_IDS?.split(',') ?? [];
   const mcpResource = config.PUBLIC_URL + '/mcp';
   const mcpMetadataPath = '/.well-known/oauth-protected-resource/mcp';
   const challenge = members
-    ? `Bearer resource_metadata="${config.PUBLIC_URL + mcpMetadataPath}", scope="${memberTaskScopes.join(' ')}"`
+    ? `Bearer resource_metadata="${config.PUBLIC_URL + mcpMetadataPath}", scope="${accountTaskScopes.join(' ')}"`
     : `Bearer resource_metadata="${config.PUBLIC_URL}/.well-known/oauth-protected-resource"`;
+  const insufficientScope = `Bearer error="insufficient_scope", scope="${accountTaskScopes.join(' ')}", resource_metadata="${config.PUBLIC_URL + mcpMetadataPath}"`;
   app.disable('x-powered-by');
+  // Behind a reverse proxy, `req.ip` (the per-address rate limits) is the forwarded client only if the proxy is trusted.
+  if (config.EIGOS_TRUST_PROXY) app.set('trust proxy', /^\d+$/.test(config.EIGOS_TRUST_PROXY) ? Number(config.EIGOS_TRUST_PROXY) : config.EIGOS_TRUST_PROXY);
   // Published domain definitions can exceed the ordinary task/query body bound.
   app.use(['/mcp','/ontology/services'],express.json({limit:'2mb'}));
   app.use(express.json({ limit: '256kb' }));
@@ -93,11 +108,11 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   app.get('/.well-known/oauth-protected-resource', (_req, res) => res.json({ resource: config.PUBLIC_URL, authorization_servers: config.OAUTH_ISSUER ? [config.OAUTH_ISSUER] : [], bearer_methods_supported: ['header'] }));
   if (members) app.get(mcpMetadataPath, (_req, res) => res.json({
     resource: mcpResource, authorization_servers: [config.OAUTH_ISSUER],
-    scopes_supported: memberTaskScopes, bearer_methods_supported: ['header'],
+    scopes_supported: accountTaskScopes, bearer_methods_supported: ['header'],
   }));
   if (members) {
-    mountMembers(app, config, members, memberLogin);
-    app.get('/', (_req, res) => res.redirect(302, '/members'));
+    mountAccountPortal(app, config, members, accountLogin, management ?? auth0Management(config));
+    app.get('/', (_req, res) => res.redirect(302, '/account'));
   }
   mountWorkbench(app, config, verify);
   app.use(async (req, res, next) => {
@@ -112,12 +127,15 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       res.status(401).json({ error: 'Authentication required' }); return;
     }
     if (members && memberClient) {
-      const access = await members.authorize(verified, memberClient, existingClients);
-      if (access === 'member' && (req.path === '/mcp' || req.path === '/identity')) {
-        verified = { ...verified, scopes: memberTaskScopes, memberAccess: true };
+      const result = await members.authorize(verified, memberClient, existingClients);
+      if (result.kind === 'account' && (req.path === '/mcp' || req.path === '/identity')) {
+        verified = { ...verified, scopes: accountTaskScopes, memberAccess: true };
         memberRequests.add(req);
-      } else if (access !== 'existing') {
-        res.status(403).json({ error: 'Active EIGOS membership and client authorization required', membership: '/members' }); return;
+      } else if (result.kind !== 'existing') {
+        // An account token that passed every check still reaches only /mcp and /identity: any other path is a client accounts may not use.
+        const reason: Denial = result.kind === 'denied' ? result.reason : 'client_not_allowed';
+        if (reason === 'insufficient_scope') res.setHeader('WWW-Authenticate', insufficientScope);
+        res.status(403).json({ error: refusal[reason], reason, account: '/account' }); return;
       }
     }
     principals.set(req, verified);
@@ -257,7 +275,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
         inputSchema: memberSubmit,
       }, input => response(async () => publicTask(await tasks.submit(p, input, {
         authorize: async client => {
-          if (!await members!.active(p.owner, client)) throw new PermissionDenied('EIGOS authorization was revoked');
+          if (!await members!.active(p.owner, client)) throw new PermissionDenied('This EIGOS account is suspended or its client authorization was revoked');
         },
       }))));
       server.registerTool('get_task', {

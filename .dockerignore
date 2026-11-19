@@ -11,3 +11,4 @@
 !packages/**
 !scripts/build.mjs
 !scripts/ontology.ts
+!scripts/account-command.ts

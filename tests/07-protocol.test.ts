@@ -7,7 +7,7 @@ import { ServiceUnavailable, SourceReadFailure } from '../packages/core/identity
 import { yuanToFen } from '../packages/core/private-source.js';
 import { publicError } from '../apps/gateway/public-error.js';
 import { fixture, route, principal } from './fixture.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { Ontology } from '../packages/ontology/model.js';
 import { OntologyClient } from '../packages/sdk/client.js';
 import { generateKeyPair, SignJWT, createLocalJWKSet, exportJWK } from 'jose';
@@ -54,7 +54,7 @@ test('MCP completes a published Interface Action and verifies its result in one 
       requestInit: { headers: { Authorization: 'Bearer ' + token } },
     }));
     const invoke = (args: typeof input) => client.callTool({ name: 'complete_with_action', arguments: args });
-    const grants = memberGrants(f.model);
+    const grants = businessGrants(f.model);
     const withoutResult = grants.filter(grant => !grant.resource.endsWith('/readRideEstimates'));
     await setGrants(f.db, principal.owner, withoutResult);
     assert((await invoke(input)).isError);
@@ -144,7 +144,7 @@ test('MCP publishes a model proposal and executes isolated, revision-checked sce
         create: { action: 'CreateRoute', parameters: { id: 'id', name: 'name' } },
         rename: { action: 'RenameRoute', parameters: { route: 'route', revision: 'revision', name: 'name' } },
       } };
-    await setGrants(f.db, principal.owner, [...memberGrants(f.model), ...memberGrants(new Ontology(document)), { resource: ontology, permission: 'manage_definition' }]);
+    await setGrants(f.db, principal.owner, [...businessGrants(f.model), ...businessGrants(new Ontology(document)), { resource: ontology, permission: 'manage_definition' }]);
     await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`), { requestInit: { headers: { Authorization: 'Bearer ' + token } } }));
     const call = async (name: string, args: Record<string, unknown>) => {
       const response = await client.callTool({ name, arguments: args });
@@ -203,7 +203,7 @@ test('MCP publishes a model proposal and executes isolated, revision-checked sce
     const discarded = await call('create_scenario', { ontology, requestId: 'discard-model-scenario', name: 'Discarded alternative' });
     await call('discard_scenario', { ontology, scenarioId: discarded.id, revision: discarded.revision });
     assert.deepEqual((await call('list_scenarios', { ontology })).items, []);
-    await setGrants(f.db, principal.owner, [...memberGrants(f.model), ...memberGrants(active)
+    await setGrants(f.db, principal.owner, [...businessGrants(f.model), ...businessGrants(active)
       .filter(grant => !(grant.resource === ontology && grant.permission === 'view_definition')),
       { resource: `${ontology}/object/Route`, permission: 'view_definition' },
       { resource: `${ontology}/action/CreateRoute`, permission: 'view_definition' }]);

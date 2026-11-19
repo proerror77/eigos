@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fixture, principal } from './fixture.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { Actions } from '../packages/runtime/actions.js';
 import { ExternalOperations } from '../packages/runtime/external-operations.js';
 import { Objects } from '../packages/runtime/objects.js';
@@ -54,7 +54,7 @@ async function setup() {
       });
     }
     const model = await f.metadata.publish(definition, f.capabilities, f.publisher);
-    await setGrants(f.db, principal.owner, memberGrants(model));
+    await setGrants(f.db, principal.owner, businessGrants(model));
     const a = await Access.load(f.db, principal),
       graph = new Objects(f.db, model, a),
       object = { type: 'Route', id: 'observation-route' };
@@ -153,7 +153,7 @@ test('late or missing checks remain visible even without an outstanding task, an
     assert.equal(missing.reason, 'schedule_missing');
     await f.scan();
     assert.equal((await f.read()).items[0]!.status, 'stranded');
-    await setGrants(f.db, 'observation-peer', memberGrants(f.model));
+    await setGrants(f.db, 'observation-peer', businessGrants(f.model));
     const peer = { ...principal, owner: 'observation-peer' };
     assert.equal((await f.read(peer)).items.length, 0);
     await assert.rejects(f.services.get('cancel_observation_interest')!.invoke(peer, { id: item.id }), /unavailable/);
@@ -175,7 +175,7 @@ test('revocation stops a claimed interest before Action dispatch and preserves t
     await setGrants(
       f.db,
       principal.owner,
-      memberGrants(f.model).filter((grant) => grant.resource !== 'Eigos/action/ObserveArrival'),
+      businessGrants(f.model).filter((grant) => grant.resource !== 'Eigos/action/ObserveArrival'),
     );
     await assert.rejects(
       new ScheduledActionRunner(f.db, f.metadata, f.tasks, f.capabilities.actions).run(

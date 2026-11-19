@@ -13,7 +13,7 @@ import { decideJourney } from '../packages/capabilities/journey/decision.js';
 import { readConfig } from '../packages/core/config.js';
 import { calendarJourney, journeyReadResult } from '../packages/ontology/calendar-journey.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { ScheduledActions, ScheduledActionRunner } from '../packages/runtime/scheduled-actions.js';
 import { CalendarJourneyPA, googleCalendarJourneyReader } from '../packages/sdk/calendar-journey-pa.js';
@@ -37,7 +37,7 @@ async function setup() {
   const paToken = 'original-pa-eigos-journey-'.repeat(3), otherToken = 'other-fixture-eigos-journey-'.repeat(3);
   const taskScoped = { owner: principal.owner, scopes: ['tasks:read', 'tasks:write'] };
   const other = { ...taskScoped, owner: 'other-pa' };
-  await setGrants(f.db, other.owner, memberGrants(f.model));
+  await setGrants(f.db, other.owner, businessGrants(f.model));
   const server = createApp(config, f.db, f.source, async requested => {
     if (requested === token) return principal;
     if (requested === paToken) return taskScoped;
@@ -222,14 +222,14 @@ test('the journey withdraws an expired reminder and refuses calendar responses a
 
     await f.makeDue(first.taskId);
     const pending = await f.pending();
-    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(g => g.resource !== 'Eigos/source/PACalendar'));
+    await setGrants(f.db, principal.owner, businessGrants(f.model).filter(g => g.resource !== 'Eigos/source/PACalendar'));
     await assert.rejects(f.call('respond_to_task', {
       taskId: pending.taskId, requestId: pending.request.requestId, response: {status: 'denied'},
     }), /no longer authorized/i);
     assert.equal((await f.db.query(`SELECT response FROM ${f.db.schema}.pa_requests WHERE id=$1`,
       [pending.request.requestId])).rows[0]?.response, null);
 
-    await setGrants(f.db, principal.owner, memberGrants(f.model));
+    await setGrants(f.db, principal.owner, businessGrants(f.model));
     const history = calendarJourney.parse((await graph.read(ref)).properties);
     await f.call('apply_ontology_action', { action: 'CancelCalendarJourney', requestId: 'stop-trip', input: {journey: ref} });
     const stopped = await f.read(ref);

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fixture, principal } from './fixture.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { OntologyDataMigrations, initializeOntologyDataMigrations } from '../packages/runtime/ontology-migrations.js';
 
@@ -14,7 +14,7 @@ async function setup(){
   const body={id:'Eigos',version:'copy-source',objectTypes:[type('Item'),type('Group')],interfaceTypes:[],linkTypes:[{apiName:'Membership',description:'Group membership',from:{type:'Item',name:'group',cardinality:'one'},to:{type:'Group',name:'items',cardinality:'many'}}],functionTypes:[],actionTypes:[],dataSources:[]};
   const source=await f.metadata.publish(body,bindings,f.publisher);
   const target=await f.metadata.publish({...body,id:'Consumer',objectTypes:[type('ImportedItem'),type('ImportedGroup')],linkTypes:[{...body.linkTypes[0]!,apiName:'ImportedMembership',from:{type:'ImportedItem',name:'group',cardinality:'one'},to:{type:'ImportedGroup',name:'items',cardinality:'many'}}]},bindings,f.publisher);
-  await setGrants(f.db,principal.owner,[...memberGrants(source),...memberGrants(target)]);
+  await setGrants(f.db,principal.owner,[...businessGrants(source),...businessGrants(target)]);
   // Administrative fixture grant exercises the explicit permission introduced by the root integration.
   for(const name of ['ImportedItem','ImportedGroup'])await f.db.query(`INSERT INTO ${f.db.schema}.resource_grants(subject,resource,permission) VALUES($1,$2,'migrate_objects')`,[principal.owner,'Consumer/object/'+name]);
   const access=await Access.load(f.db,principal),original=new Objects(f.db,source,access),destination=new Objects(f.db,target,access);
@@ -54,7 +54,7 @@ test('migration rejects hidden fields, absent explicit grants and cross-owner ob
     await f.db.query(`DELETE FROM ${f.db.schema}.property_security`);
     await f.db.query(`DELETE FROM ${f.db.schema}.resource_grants WHERE permission='migrate_objects'`);
     await assert.rejects(f.migrations.copy(await Access.load(f.db,principal),f.input),/Permission/);
-    await setGrants(f.db,'other',[...memberGrants(f.source),...memberGrants(f.target)]);
+    await setGrants(f.db,'other',[...businessGrants(f.source),...businessGrants(f.target)]);
     for(const name of ['ImportedItem','ImportedGroup'])await f.db.query(`INSERT INTO ${f.db.schema}.resource_grants VALUES('other',$1,'migrate_objects')`,['Consumer/object/'+name]);
     await assert.rejects(f.migrations.copy(await Access.load(f.db,{...principal,owner:'other'}),{...f.input,objects:[{type:'Item',id:'a'}],links:{}}),/unavailable/);
   }finally{await f.close();}
@@ -125,7 +125,7 @@ async function geometrySetup(){
   const geometry={...type('GeometryAsset'),properties:{id:property(),name:property(),format:property(),contentHash:property(),byteLength:{description:'File size',schema:{type:'integer',minimum:1},required:true},units:property()}};
   const sourceBody={id:'Eigos',version:'geometry-source',objectTypes:[geometry,{...geometry,apiName:'GeometryAlias'}],interfaceTypes:[],linkTypes:[],functionTypes:[],actionTypes:[],dataSources:[]};
   const source=await f.metadata.publish(sourceBody,bindings,f.publisher),target=await f.metadata.publish({...sourceBody,id:'Consumer',objectTypes:[geometry]},bindings,f.publisher);
-  await setGrants(f.db,principal.owner,[...memberGrants(source),...memberGrants(target)]);
+  await setGrants(f.db,principal.owner,[...businessGrants(source),...businessGrants(target)]);
   await f.db.query(`INSERT INTO ${f.db.schema}.resource_grants VALUES($1,'Consumer/object/GeometryAsset','migrate_objects')`,[principal.owner]);
   const bytes=Buffer.from('v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n');
   const {createHash}=await import('node:crypto');const hash=createHash('sha256').update(bytes).digest('hex');

@@ -1,4 +1,4 @@
-import { Access, setGrants, memberGrants } from '../packages/runtime/access.js';
+import { Access, setGrants, businessGrants } from '../packages/runtime/access.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Objects } from '../packages/runtime/objects.js';
@@ -20,7 +20,7 @@ test('edit Functions require an Action and source permissions are checked before
   try {
     const objects = new Objects(f.db, f.model, f.access), context = { principal, objects, signal: AbortSignal.timeout(5000) };
     await assert.rejects(f.capabilities.functions.invoke(f.model, 'prepareRideInquiry', route, context), /through an Action/);
-    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant => grant.permission !== 'read_source'));
+    await setGrants(f.db, principal.owner, businessGrants(f.model).filter(grant => grant.permission !== 'read_source'));
     const caller = await Access.load(f.db, principal);
     await assert.rejects(f.capabilities.actions.apply(caller, f.model, 'EstimateRide', route, 'request'), /Permission/);
     assert.equal(f.provider.calls.length, 0);
@@ -55,7 +55,7 @@ test('an invalid edit Function return cannot commit its staged writes', async ()
     const ref = { type: 'Route', id: 'must-not-exist' };
     const functions = new Functions(new Map([['BrokenEdit', (_input, context) => context.edit!(ref, async objects => { await objects.create(ref, { id: ref.id, name: 'invalid edit' }); })]]), definition.document.functionTypes);
     const model = await f.metadata.publish(definition.document, { describe: m => ({ functions: functions.bindings(m), sources: {} }) }, f.publisher);
-    await setGrants(f.db, principal.owner, memberGrants(model)); await f.access.refresh();
+    await setGrants(f.db, principal.owner, businessGrants(model)); await f.access.refresh();
     await assert.rejects(new Actions(f.db, functions).apply(f.access, model, 'BrokenAction', {}, 'invalid-return'));
     await assert.rejects(new Objects(f.db, model, f.access).read(ref));
   } finally { await f.close(); }
@@ -103,7 +103,7 @@ test('function Actions check admission before preparation and dispatch intents o
       ],
     });
     const model = await f.metadata.publish(document, capabilities, f.publisher);
-    await setGrants(f.db, principal.owner, memberGrants(model));
+    await setGrants(f.db, principal.owner, businessGrants(model));
     const access = await Access.load(f.db, principal), graph = new Objects(f.db, model, access);
     const apply = (id: string, beforeCommit?: Parameters<Actions['apply']>[5]) =>
       capabilities.actions.apply(access, model, 'CommitNotice', { id }, id, beforeCommit);
@@ -178,8 +178,8 @@ test('the SDK validates and atomically batches Actions, and lists only visible c
       result: { type: 'Route', id: { parameter: 'id' } },
     });
     const model = await f.metadata.publish(document, f.capabilities, f.publisher);
-    await setGrants(f.db, principal.owner, memberGrants(model));
-    await setGrants(f.db, other.owner, memberGrants(model));
+    await setGrants(f.db, principal.owner, businessGrants(model));
+    await setGrants(f.db, other.owner, businessGrants(model));
     const typed = new TypedOntologyClient<{
       objects: { Route: { name: string } }; functions: {};
       actions: { CreateBatchRoute: { id: string; name: string } };
@@ -235,7 +235,7 @@ test('generic action rules commit once, detect changed retries and roll back a f
       parameters: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } }, required: ['id', 'name'], additionalProperties: false },
       objectParameters: {}, submissionCriteria: [], rules: [{ op: 'createObject', object: { type: 'Route', id: { parameter: 'id' } }, properties: { id: { parameter: 'id' }, name: { parameter: 'name' } } }], result: { type: 'Route', id: { parameter: 'id' } } };
     const model = await f.metadata.publish({ ...document, actionTypes: [...document.actionTypes, action] }, f.capabilities, f.publisher);
-    await setGrants(f.db, principal.owner, memberGrants(model)); await f.access.refresh();
+    await setGrants(f.db, principal.owner, businessGrants(model)); await f.access.refresh();
     const args = { id: 'new-route', name: 'Route created by a generic rule' };
     const [first, repeated] = await Promise.all([f.capabilities.actions.apply(f.access, model, 'CreateRoute', args, 'atomic'), f.capabilities.actions.apply(f.access, model, 'CreateRoute', args, 'atomic')]);
     assert.deepEqual(first, repeated);

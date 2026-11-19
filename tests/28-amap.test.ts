@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { createApp } from '../apps/gateway/app.js';
 import { readConfig } from '../packages/core/config.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { amapFunctions } from '../packages/capabilities/amap/functions.js';
 import { configuredAmap } from '../packages/capabilities/amap/client.js';
 import { Functions } from '../packages/runtime/functions.js';
@@ -167,7 +167,7 @@ test('Ontology exposes read-only Amap and weather together and enforces owner an
     assert.equal((await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.scenarios`)).rows[0]?.n, 0);
 
     const other = { ...principal, owner: 'unbound-amap-user' };
-    await setGrants(f.db, other.owner, memberGrants(f.model));
+    await setGrants(f.db, other.owner, businessGrants(f.model));
     const otherAccess = await Access.load(f.db, other);
     const beforeRejected = calls.length;
     await assert.rejects(functions.invoke(f.model, 'readWeather', { city: '上海' },
