@@ -1,3 +1,4 @@
+import { configuredSource, type ConnectionConfig } from '../core/config.js';
 import { evaluateCalendarJourneyRelease } from './journey/release-checks.js';
 import { registerDocumentFunction } from '../ontology/documents.js';
 import { registerSchedulePlanDocument } from './documents.js';
@@ -34,11 +35,40 @@ import { petRideFunctions } from './didi/pet-ride.js';
 import { rideCapabilities } from './didi/pipeline.js';
 import { schedulingFunctions } from './scheduling/functions.js';
 import { serviceFunctions, serviceProjections } from './services/functions.js';
-import { unavailableServices, type ServiceResolver } from './services/sources.js';
+import { configuredServices, unavailableServices, type ServiceResolver } from './services/sources.js';
 import type { Sources } from '../runtime/sources.js';
 import { travelFunctions } from './travel/functions.js';
 import { stripePaymentFunctions } from './payments/functions.js';
 import { configuredStripeSandbox, type StripeSandboxResolver } from './payments/stripe-sandbox.js';
+
+type ProviderFetch = {
+  amapFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch;
+  dianpingFetch?: typeof fetch; marketplaceFetch?: typeof fetch;
+};
+
+export function configuredCapabilities(db: Database, config: ConnectionConfig, extensions: RuntimeExtensions,
+  source = configuredSource(config.EIGOS_DIDI_CONNECTION_FILE, config.EIGOS_DIDI_WATCH_SANDBOX_CONNECTION_FILE),
+  { marketplaceFetch, ...fetchers }: ProviderFetch = {}) {
+  return createCapabilities(db, source, extensions,
+    configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE, undefined, marketplaceFetch),
+    configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
+      fliggyFlight: config.EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE,
+      fliggyHotel: config.EIGOS_FLIGGY_HOTEL_CONNECTION_FILE,
+      paotui: config.EIGOS_PAOTUI_CONNECTION_FILE,
+      waimai: config.EIGOS_WAIMAI_CONNECTION_FILE,
+      amap: config.EIGOS_AMAP_CONNECTION_FILE,
+      xiaohongshu: config.EIGOS_XIAOHONGSHU_CONNECTION_FILE,
+      variFlight: config.EIGOS_VARIFLIGHT_CONNECTION_FILE,
+      dianping: config.EIGOS_DIANPING_CONNECTION_FILE,
+      diningWeb: config.EIGOS_DINING_WEB_CONNECTION_FILE,
+      diningMiniProgram: config.EIGOS_DINING_MINIPROGRAM_CONNECTION_FILE,
+      fr24: config.EIGOS_FR24_CONNECTION_FILE,
+      fr24Entrypoint: config.EIGOS_FR24_MCP_ENTRYPOINT,
+      calendar: config.EIGOS_JOURNEY_CALENDAR_CONNECTION_FILE,
+      travelPA: config.EIGOS_TRAVEL_PA_CONNECTION_FILE,
+      ...fetchers,
+    });
+}
 
 export function createCapabilities(
   db: Database,
