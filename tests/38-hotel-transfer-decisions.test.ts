@@ -7,7 +7,8 @@ import {
   transferDecisionType, transferObservationSource, transferObservationType,
 } from '../packages/ontology/hotel-transfer-decisions.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
-import { businessGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
+import { Database } from '../packages/runtime/database.js';
 import { Indexing } from '../packages/runtime/indexing.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { Scenarios } from '../packages/runtime/scenarios.js';
@@ -166,6 +167,11 @@ test('a second dated hotel Scenario review shows the first approved reason, inde
     assert.deepEqual(supplier.flags.calls, ['RollingGo', 'RollingGo']);
     assert.equal(f.provider.flags.orderCreates, 0);
     assert.equal((await f.db.query('SELECT count(*)::int AS count FROM ' + f.db.schema + '.external_operations')).rows[0]?.count, 0);
+    const regularDb = new Database(process.env.EIGOS_TEST_DATABASE_URL!, f.schema, f.db.runtimeId, undefined, false, false);
+    try {
+      const regular = new Objects(regularDb, f.model, await Access.load(regularDb, principal));
+      await assert.rejects(regular.remove(first.plan, (await regular.read(first.plan)).revision), /inaccessible relationships/);
+    } finally { await regularDb.close(); }
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     await f.close();
