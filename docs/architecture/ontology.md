@@ -204,6 +204,19 @@ Action 检查自身应用权限，以及实际访问的对象、关系和来源�
 
 活动和资源是业务对象，Worker 租约和 PA 请求记录留在运行层。Functions 在 Scenario 中读取拟议状态；合并 Action 在同一事务中重检权限、版本、关系和业务约束。真实日历写入尚未接入。协议及边界见 [Scenario 与 PA 日历排程](../guides/scenarios-scheduling.md)。
 
+## 决策闭环
+
+对需要审阅和事后检验的业务决策，在批准时保存当时的判断，在验证窗口结束后用实际证据回顾，并在下次同类决策的审阅前呈现已确认的经验。决策记录用业务 Object Type 表达，通过 Link 关联原业务对象、证据和结果，沿用现有 Ontology、Action 和权限。执行追踪继续回答执行了什么，Agent 评估测量模型行为，决策记录保存决策者确认的理由、假设和复盘。普通查询和单项操作继续直接调用能力。[Action Log](https://www.palantir.com/docs/foundry/action-types/action-log/index.html) · [Submission Criteria](https://www.palantir.com/docs/foundry/action-types/submission-criteria) · [Ontology Scenario](https://www.palantir.com/docs/foundry/ontology/overview-ontology-scenario)
+
+以酒店行程 Scenario 的接驳时段选择做第一个隔离验收。沿用已有方案比较、Workbench 审阅和 PA 回执。验收使用 `synthetic` 的日历、路线和到达观察。后续观察沿原对象并受原授权及期限约束。[方案比较](../guides/scenario-evaluation.md) · [Workflow 认知提案](../guides/automation.md#workflow-认知提案) · [持续关注](../guides/continuous-observation.md)
+
+1. **批准时记录。** 在指定的 Scenario 审阅中确认选择、未选方案及原因、关键假设、预期指标和验证窗口。助手可以起草，审阅人确认。保存发布、方案修订、证据引用和审阅者，理由与该修订的审批一起提交。方案变更需要重新确认。例子中选择较晚的接驳时段，假设车程为 25 分钟，预计行程开始前至少 15 分钟抵达。备选是提前出发，放弃原因是较长的等候时间。
+2. **到期核对。** 在原行程上接收来自独立合成来源的出发和到达观察。用原定开始时间减去观察到的到达时间计算余量，例子中实际为 5 分钟。将原预期、实际值和来源回执关联到同一决策。缺少观察时保持待验证，审批结果或重算路线只作为各自类型的证据。
+3. **确认教训。** 授权审阅人核对原假设与实测证据，明确各假设得到支持、被推翻或证据不足。例子中依据独立的出发与到达观察计算实际车程为 35 分钟。记录适用条件，例如相同区域和时段的接驳应重新估算并留出更长余量。保留审批时的原判断，复盘另写结果。
+4. **下次审阅前呈现。** 在另一个日期创建同类行程 Scenario。按决策类型、业务约束和当前数据权限筛选历史案例，在审批前展示原取舍、预期、实测值和已确认教训。审阅人判断条件是否适用，当前方案仍用新证据和原提交条件验证。[Action 执行因果](../guides/execution-trace.md)
+
+验收从正常审阅入口走两次。第一次应能沿决策读回准确的方案修订、批准人、原预期、独立观察和复盘。第二次在没有人手动指定历史记录 ID 时应在审阅前看到那条经验。验证无独立观察时保持待验证，旧审阅无法覆盖新修订，当前无权读取的案例无法出现在建议里。该原则描述试点要交付的能力，工程回归与真实业务效果分别验收。
+
 ## 服务组合和时间触发
 
 `LumaEvent`、`RollingGoHotelOffer`、`ShopifyProductOffer` 通过 `ServiceOffering` 共享来源与有效期，通过 `AttendableEvent`、`HotelOffer`、`ProductOffer` 保留报名、住宿日期、商家变体等业务语义。Interface 不使用供应商品牌命名，具体实现和来源绑定明确供应商。后续携程、飞猪的酒店实现可共用 `HotelOffer`，机票需独立的航班业务契约；Uber、Grab 也需自己的出行来源和执行实现，不能把滴滴的参数或币种直接当作通用规则。
