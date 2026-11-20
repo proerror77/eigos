@@ -211,9 +211,11 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
       [principal.owner, createRequest]);
     assert.deepEqual(createReceipts, [{ state: 'confirmed', result: { merchantOrderId: order.merchantOrderId } }]);
     orderStatus = 3;
+    const effectiveAt = new Date().toISOString();
     await act('RefreshFliggyHotelBooking', { booking: second });
     const confirmation = await view(second);
     assert.equal(confirmation.state, 'confirmed');
+    assert(Date.parse(effectiveAt) <= Date.parse(String(confirmation.observedAt)));
     await setGrants(f.db, principal.owner, businessGrants(f.model).filter(grant => grant.resource !== 'Eigos/action/RefreshFliggyHotelBooking'));
     await assert.rejects(act('CancelFliggyHotelBooking', secondApproval), /Permission required/);
     assert.equal(calls.filter(operation => operation === 'cancel').length, 1);
@@ -237,7 +239,6 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
 
     // The PA can submit an old assertion through its fixture Action. The booking only takes state from independent detail.
     const pa = { ...principal, clientId: 'synthetic-hotel-pa' };
-    const effectiveAt = new Date(Date.parse(String(confirmation.observedAt)) - 60_000).toISOString();
     const report = { booking: second, reportId: randomUUID(), reportedState: 'confirmed', effectiveAt };
     const submitReport = async () => actions.apply(await Access.load(f.db, pa), f.model, recordPAReport, report, report.reportId);
     const reportRef = await submitReport();
