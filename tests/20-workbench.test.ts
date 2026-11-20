@@ -21,8 +21,10 @@ test('workbench renders relationship conflicts, manages Scenario reviews and sco
   const controls: { value: string; placeholder?: string }[] = [];
   const tables: { headers: string[]; rows: unknown[][]; click?: (index: number) => Promise<void> }[] = [];
   const requests: { path: string; input: Record<string, unknown> }[] = [];
+  const rendered: string[] = [];
   const node = () => ({ append() {}, replaceChildren() {}, close() {} });
   const scenarioId = 'scenario-ui-fixture';
+  let decisionMemory: unknown;
   let scenarioRevision = 2;
   let reviewers: string[] = [];
   const processRule = { id: 'process-rule-fixture', revision: 2, name: 'Late trip', enabled: true,
@@ -31,7 +33,8 @@ test('workbench renders relationship conflicts, manages Scenario reviews and sco
     document: { querySelector: node, querySelectorAll: () => [] },
     sessionStorage: { getItem: () => null },
     window: { addEventListener() {} },
-    uiElement: (_tag: string, attributes: Record<string, unknown> = {}) => {
+    uiElement: (_tag: string, attributes: Record<string, unknown> = {}, ...children: unknown[]) => {
+      for (const child of children) if (typeof child === 'string') rendered.push(child);
       const control = { ...node(), value: '', ...attributes };
       controls.push(control);
       return control;
@@ -69,7 +72,7 @@ test('workbench renders relationship conflicts, manages Scenario reviews and sco
         id: scenarioId, name: 'Hotel replan', revision: 3, snapshot: 'review-snapshot', objects: [{
           ref: { type: 'SchedulePlan', id: 'plan' }, editedFields: ['state'],
           before: { state: 'prepared' }, after: { state: 'confirmed' },
-        }], links: [], evidence: [],
+        }], links: [], evidence: [], decisionMemory,
       };
       if (path === '/ontology/services/rules') return {
         items: [{id:'object-rule-fixture', name:'Open trip', query:{type:'EventTrip'}, enabled:false}, processRule],
@@ -139,6 +142,24 @@ test('workbench renders relationship conflicts, manages Scenario reviews and sco
   await buttons.get('批准此版本')!();
   assert.deepEqual(requests.find(item => item.path === '/ontology/services/approve_scenario_review')?.input,
     { id: scenarioId, revision: 3, snapshot: 'review-snapshot', _ontology: 'Eigos' });
+
+  const judgment = { reason: 'Take the later transfer', alternative: 'Leave earlier',
+    rejectedBecause: 'Extra waiting', assumption: 'A 25 minute journey', expectedTravelMinutes: 25 };
+  decisionMemory = { departure: '2027-03-02T06:00:00Z', arriveBy: '2027-03-02T06:40:00Z', prior: [{
+    date: '2027-03-01', judgment, expectedBufferMinutes: 15, actualBufferMinutes: 5, actualTravelMinutes: 35,
+    assessment: 'refuted', lesson: 'Allow more travel time', appliesWhen: 'The same departure hour',
+  }] };
+  const approvalCount = requests.filter(item => item.path.endsWith('/approve_scenario_review')).length;
+  const controlStart = controls.length;
+  await tables.find(table => table.headers[0] === '方案')!.click!(0);
+  assert.ok(rendered.includes('当时的理由 Take the later transfer'));
+  assert.ok(rendered.includes('预计提前 15 分钟，实测提前 5 分钟（车程 35 分钟）'));
+  assert.ok(rendered.includes('教训 Allow more travel time'));
+  assert.equal(requests.filter(item => item.path.endsWith('/approve_scenario_review')).length, approvalCount);
+  const newJudgment = { ...judgment, reason: 'Use the observed time', expectedTravelMinutes: 35 };
+  Object.values(newJudgment).forEach((value, index) => { controls[controlStart + index]!.value = String(value); });
+  await buttons.get('批准此版本')!();
+  assert.deepEqual(requests.filter(item => item.path.endsWith('/approve_scenario_review')).at(-1)?.input.decision, newJudgment);
 });
 
 test('workbench serves guarded assets and normal HTTP model, media and SDK scenario operations',async()=>{

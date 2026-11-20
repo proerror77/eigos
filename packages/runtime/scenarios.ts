@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Conflict, NotFound, digest } from '../core/identity.js';
 import { objectRefSchema, type LinkData, type ObjectRef } from '../ontology/schema.js';
+import type { ScenarioDecision, ScenarioDecisionMemory } from '../ontology/scenario-decision.js';
 import { Access, PermissionDenied, type Requirement } from './access.js';
 import { Database, type Sql } from './database.js';
 import { Metadata, PublishedOntology } from './metadata.js';
@@ -30,6 +31,22 @@ type ScenarioStep = {
 };
 type ValidateAction = (prefix: Objects, action: string, input: Properties) => Promise<void>;
 type DecisionCheckpoint = (prefix: Objects, step: number, offset: number) => Promise<void>;
+
+export interface ScenarioDecisionContext {
+  model: PublishedOntology;
+  owner: string;
+  reviewer: Access;
+  client: Sql;
+  review: {
+    id: string; revision: number; snapshot: string;
+    objects: { ref: ObjectRef; after: Properties | null }[];
+    links: { type: string; from: ObjectRef; to: ObjectRef; removed: boolean }[];
+  };
+}
+export interface ScenarioDecisionSupport {
+  inspect(context: ScenarioDecisionContext): Promise<ScenarioDecisionMemory | undefined>;
+  capture(context: ScenarioDecisionContext, decision: ScenarioDecision, approvedAt?: Date): Promise<void>;
+}
 
 function recordedDecisionEvidence(raw: unknown) {
   const result = decisionEvidenceSchema.safeParse(raw);
@@ -102,7 +119,7 @@ export async function initializeScenarioLifecycle(db: Database) {
   }
 }
 export class Scenarios {
-  constructor(private readonly db: Database) {}
+  constructor(private readonly db: Database, private readonly decisions?: ScenarioDecisionSupport) {}
   async openSession(access: Access, ttlSeconds=3600, client?: Sql) {
     z.number().int().min(1).max(86400).parse(ttlSeconds);
     const id=randomUUID();
@@ -213,10 +230,15 @@ export class Scenarios {
   async inspectReview(access: Access, model: PublishedOntology, id: string) {
     return this.db.transaction(async client => {
       const row = await this.lockReview(access, model, id, client);
-      return this.reviewDiff(model, row, access.principal.owner, client);
+      const review = await this.reviewDiff(model, row, access.principal.owner, client);
+      if (!this.decisions) return review;
+      const decisionMemory = await this.db.withTransactionOwner(client, row.owner, async () =>
+        this.decisions?.inspect({ model, owner: row.owner, reviewer: access, client, review }));
+      await access.refresh(client);
+      return { ...review, ...(decisionMemory ? { decisionMemory } : {}) };
     });
   }
-  async approveReview(access: Access, model: PublishedOntology, id: string, revision: number, snapshot: string) {
+  async approveReview(access: Access, model: PublishedOntology, id: string, revision: number, snapshot: string, decision?: ScenarioDecision) {
     return this.db.transaction(async client => {
       const row = await this.lockReview(access, model, id, client);
       const review = await this.reviewDiff(model, row, access.principal.owner, client);
@@ -224,12 +246,18 @@ export class Scenarios {
         throw new Conflict('Scenario review changed or has conflicts');
       }
       const reviewer = access.principal.owner;
-      const inserted = await this.db.withTransactionOwner(client, row.owner, () => this.db.query(
+      const inserted = await this.db.withTransactionOwner(client, row.owner, () => this.db.query<{ approved_at: Date }>(
         `INSERT INTO ${this.db.schema}.scenario_approvals(scenario_id,owner,revision,reviewer,snapshot) VALUES($1,$2,$3,$4,$5)
         ON CONFLICT(scenario_id,revision,reviewer) DO UPDATE SET snapshot=excluded.snapshot,approved_at=clock_timestamp()
-          WHERE scenario_approvals.snapshot IS DISTINCT FROM excluded.snapshot RETURNING reviewer`,
+          WHERE scenario_approvals.snapshot IS DISTINCT FROM excluded.snapshot RETURNING approved_at`,
         [id, row.owner, revision, reviewer, snapshot], client,
       ));
+      if (decision) {
+        if (!this.decisions) throw new Conflict('Decision capture is unavailable for this review');
+        const support = this.decisions;
+        await this.db.withTransactionOwner(client, row.owner, () => support.capture(
+          { model, owner: row.owner, reviewer: access, client, review }, decision, inserted.rows[0]?.approved_at));
+      }
       if (inserted.rowCount) await appendTrace(this.db, {
         owner: row.owner, release: model.release, projection: model.projection, scenarioId: id,
       }, { kind: 'approval', revision, snapshot, reviewer }, client);
