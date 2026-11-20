@@ -25,6 +25,18 @@ Interface 通过实现映射引用具体 Object Type 的属性、关系与 Actio
 
 关系带有日期、角色或状态等业务信息时，用独立对象保存这些信息，并通过 Link 连接两端。来源时间和证据类型保存在 `SourceReceipt` 及实现 `ServiceSearchResult` 的供应商结果对象中。[Object-backed links](https://www.palantir.com/docs/foundry/object-link-types/create-link-type)
 
+## 对象生命周期原则
+
+新增或变更业务对象的写入路径时，在同一个 Ontology 发布版本下定义身份、字段裁决、状态和下游触发规则。来源接入、Indexer 和 Action 提交正式对象时遵守同一组规则。规则随受影响的业务对象验收，现有支持范围见下文。
+
+1. **对象身份。** 对同一个业务实体，各入口使用足以核验身份的证据绑定同一个稳定对象 ID。外部 ID 应按来源及需要的账户范围解释，并保留可审计的绑定。发布定义允许单来源直接映射时可以沿用来源主键。证据不足或存在冲突时，保留来源观察并等待核实后再合并。[Object Type 主键](https://www.palantir.com/docs/foundry/object-link-types/create-object-type)
+2. **来源裁决。** 对订单确认、付款、取消等关键字段，发布规则须声明哪些来源和证据可以更新正式值。先验证证据及来源资格，再在合格输入之间使用该字段允许的优先级或时间策略。提交权限与字段权威分别校验。PA 可以提交用户意图和转交证据，转交的供应商回执须核验出处并满足字段规则后才能确认供应商事实。[Foundry 编辑与来源冲突策略](https://www.palantir.com/docs/foundry/object-edits/how-edits-applied)
+3. **Schema 治理。** 评估对象身份、字段裁决、状态含义及下游触发条件的变更对现有 PA、应用和自动化的影响。会破坏消费者契约的发布须记录受影响范围、兼容窗口或迁移方案，并在切换前验证。分支和管理 CLI 对此类发布执行同一要求。保留任务版本锁定、候选投影校验和原子切换，向后兼容的改动可走轻量审核。[分支与资源保护](https://www.palantir.com/docs/foundry/ontologies/branching-ontology) · [Schema 迁移](https://www.palantir.com/docs/foundry/object-edits/schema-migrations)
+4. **状态与时间。** 分别记录业务事实的生效时间、来源观察时间和系统记录时间。缺少业务生效时间时保留未知。需要历史验收的关键状态应支持查询指定时点 EIGOS 当时知道的状态，以及根据当前证据判断该时点成立的状态。迟到的旧观察保留在历史中，当前状态按已发布的证据及转换规则更新。经核验的更正可以修订历史判断，并保留更正的获知时间。[Machinery 状态与过程日志](https://www.palantir.com/docs/foundry/machinery/core-concepts) · [EIGOS 过程日志](../guides/process-history.md#日志来源与因果)
+5. **变化传播。** 在发布定义中声明哪些已提交的对象和关系变化供下游消费，以及哪些变化满足触发条件。复用现有 Indexer 和持久化历史，状态转换沿 ProcessLog 消费。消费方按持久游标续读和重放，并以稳定的变化标识保证重试幂等。下游有外部副作用时，沿用 Action 的幂等提交与原操作读回边界。重复回执和迟到观察只有造成符合规则的正式变化时才触发处理。[Automate 条件与效果](https://www.palantir.com/docs/foundry/automate/overview) · [EIGOS 过程规则](../guides/automation.md#过程规则)
+
+飞猪酒店订单可作为隔离验收用例。下单回执、供应商回读和 PA 回报引用同一个订单，供应商证据确认取消并保留各时间，迟到的旧确认回报进入历史且当前状态保持已取消。重复投递并从持久游标恢复后，下游对同一次取消只产生一次业务效果。按同一发布版本验收身份绑定、状态回看和实际消费结果。工程验收使用 `synthetic` 数据，生产消费和供应商履约分别验收。
+
 ## 模块边界
 
 ```mermaid
