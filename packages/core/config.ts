@@ -27,6 +27,27 @@ function trustedProxies(value: string) {
   });
 }
 
+export const connectionConfigSchema = z.object({
+  EIGOS_DIDI_CONNECTION_FILE: z.string().optional(),
+  EIGOS_DIDI_WATCH_SANDBOX_CONNECTION_FILE: z.string().optional(),
+  EIGOS_SERVICE_CONNECTION_FILE: z.string().optional(),
+  EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE: z.string().optional(),
+  EIGOS_FLIGGY_HOTEL_CONNECTION_FILE: z.string().optional(),
+  EIGOS_PAOTUI_CONNECTION_FILE: z.string().optional(),
+  EIGOS_WAIMAI_CONNECTION_FILE: z.string().optional(),
+  EIGOS_AMAP_CONNECTION_FILE: z.string().optional(),
+  EIGOS_XIAOHONGSHU_CONNECTION_FILE: z.string().optional(),
+  EIGOS_DIANPING_CONNECTION_FILE: z.string().optional(),
+  EIGOS_DINING_WEB_CONNECTION_FILE: z.string().optional(),
+  EIGOS_DINING_MINIPROGRAM_CONNECTION_FILE: z.string().optional(),
+  EIGOS_JOURNEY_CALENDAR_CONNECTION_FILE: z.string().optional(),
+  EIGOS_TRAVEL_PA_CONNECTION_FILE: z.string().optional(),
+  EIGOS_VARIFLIGHT_CONNECTION_FILE: z.string().optional(),
+  EIGOS_FR24_CONNECTION_FILE: z.string().optional(), EIGOS_FR24_MCP_ENTRYPOINT: z.string().optional(),
+  EIGOS_STRIPE_SANDBOX_CONNECTION_FILE: z.string().optional(),
+});
+export type ConnectionConfig = z.infer<typeof connectionConfigSchema>;
+
 export const configSchema = z.object({
   DATABASE_URL: z.string().min(1), QUERY_DATABASE_URL: z.string().min(1).optional(), EIGOS_PG_SCHEMA: z.string().default('eigos'),
   HOST: z.string().default('127.0.0.1'), PORT: z.coerce.number().int().default(3000),
@@ -50,23 +71,7 @@ export const configSchema = z.object({
     'Use a hop count such as 1, or a comma-separated list of proxy addresses, CIDRs and the presets loopback, linklocal and uniquelocal').optional(),
   EIGOS_EXTENSION_MODULE: z.string().optional(),
   EIGOS_SOURCE_COMMIT: z.string().regex(/^[a-f0-9]{40}$/).optional(),
-  EIGOS_DIDI_CONNECTION_FILE: z.string().optional(),
-  EIGOS_DIDI_WATCH_SANDBOX_CONNECTION_FILE: z.string().optional(),
-  EIGOS_SERVICE_CONNECTION_FILE: z.string().optional(),
-  EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE: z.string().optional(),
-  EIGOS_FLIGGY_HOTEL_CONNECTION_FILE: z.string().optional(),
-  EIGOS_PAOTUI_CONNECTION_FILE: z.string().optional(),
-  EIGOS_WAIMAI_CONNECTION_FILE: z.string().optional(),
-  EIGOS_AMAP_CONNECTION_FILE: z.string().optional(),
-  EIGOS_XIAOHONGSHU_CONNECTION_FILE: z.string().optional(),
-  EIGOS_DIANPING_CONNECTION_FILE: z.string().optional(),
-  EIGOS_DINING_WEB_CONNECTION_FILE: z.string().optional(),
-  EIGOS_DINING_MINIPROGRAM_CONNECTION_FILE: z.string().optional(),
-  EIGOS_JOURNEY_CALENDAR_CONNECTION_FILE: z.string().optional(),
-  EIGOS_TRAVEL_PA_CONNECTION_FILE: z.string().optional(),
-  EIGOS_VARIFLIGHT_CONNECTION_FILE: z.string().optional(),
-  EIGOS_FR24_CONNECTION_FILE: z.string().optional(), EIGOS_FR24_MCP_ENTRYPOINT: z.string().optional(),
-  EIGOS_STRIPE_SANDBOX_CONNECTION_FILE: z.string().optional(),
+  ...connectionConfigSchema.shape,
   EIGOS_HARNESS_BIN: z.string().optional(), EIGOS_HARNESS_CREDENTIAL_FILE: z.string().optional(),
   EIGOS_AGENT_SANDBOX_ENABLED: z.enum(['true', 'false']).optional(),
   EIGOS_HARNESS_MODEL: z.string().default('gpt-6.1-sol'), EIGOS_HARNESS_REASONING_EFFORT: z.string().default('low'),

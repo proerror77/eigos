@@ -16,6 +16,7 @@ import { actionEffects, changeDigest, evaluate } from './action-values.js';
 import { validateCognitive } from './cognitive-workflow.js';
 import { ActionPARequestRequired, Clarification, CityConfirmationRequired, PlaceConfirmationRequired, RideEndpointRequired, SourceRetryRequired, placeContinuationSchema } from './clarification.js';
 import { assertActionConfirmed } from './action-confirmation.js';
+import { appendTrace } from './execution-trace.js';
 
 type TaskExecution = NonNullable<FunctionContext['execution']>;
 
@@ -297,7 +298,19 @@ export class Actions {
       principal: access.principal, objects: new Objects(this.db, model, access), signal, taskId: execution?.task.id, execution,
     });
     signal.throwIfAborted();
-    if (execution) await execution.tasks.current(execution.task);
+    if (model.scenario) {
+      if (execution) await execution.tasks.current(execution.task);
+    } else {
+      await this.db.transaction(async client => {
+        await guard?.(client);
+        await access.refresh(client);
+        await appendTrace(this.db, {
+          owner: access.principal.owner, release: model.release, projection: model.projection,
+          taskId: execution?.task.id, requestId,
+        }, { kind: 'action-read', function: read.function }, client, access.requirements());
+        signal.throwIfAborted();
+      });
+    }
     return result;
   }
 

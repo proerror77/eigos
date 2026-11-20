@@ -20,9 +20,7 @@ import { PARequests, paResponseSchema,paInboxSchema } from '../../packages/runti
 import { HotelWorkflows, hotelApprovalSchema } from '../../packages/capabilities/services/hotel-workflows.js';
 import { amendMapPlace } from '../../packages/capabilities/amap/task-correction.js';
 import { Tasks, submitSchema, publicTask as projectTask, taskPlaceAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema, type Task } from '../../packages/runtime/tasks.js';
-import { createCapabilities } from '../../packages/capabilities/index.js';
-import { configuredServices } from '../../packages/capabilities/services/sources.js';
-import { configuredStripeSandbox } from '../../packages/capabilities/payments/stripe-sandbox.js';
+import { configuredCapabilities } from '../../packages/capabilities/index.js';
 import type { SourceResolver } from '../../packages/capabilities/didi/functions.js';
 import { verifier, type VerifyToken } from './auth.js';
 import { mountAccountPortal, type auth0AccountLogin } from './account-portal.js';
@@ -62,18 +60,9 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     accountLogin?: ReturnType<typeof auth0AccountLogin>; management?: Auth0Management } = {}) {
   if (db.sandboxEnabled && !developmentSandboxEnabled({ ...config, NODE_ENV: process.env.NODE_ENV }))
     throw new Error('Gateway sandbox requires explicit loopback development configuration');
-  const { marketplaceFetch, accountLogin, management, ...sourceFetch } = providerFetch;
-  const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata), capabilities = createCapabilities(db, source, extensions, configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE, undefined, marketplaceFetch), configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
-    fliggyFlight: config.EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE,
-    fliggyHotel: config.EIGOS_FLIGGY_HOTEL_CONNECTION_FILE,
-    paotui: config.EIGOS_PAOTUI_CONNECTION_FILE, waimai: config.EIGOS_WAIMAI_CONNECTION_FILE,
-    amap: config.EIGOS_AMAP_CONNECTION_FILE, xiaohongshu: config.EIGOS_XIAOHONGSHU_CONNECTION_FILE, variFlight: config.EIGOS_VARIFLIGHT_CONNECTION_FILE,
-    dianping: config.EIGOS_DIANPING_CONNECTION_FILE,
-    diningWeb: config.EIGOS_DINING_WEB_CONNECTION_FILE,
-    diningMiniProgram: config.EIGOS_DINING_MINIPROGRAM_CONNECTION_FILE,
-    fr24: config.EIGOS_FR24_CONNECTION_FILE, fr24Entrypoint: config.EIGOS_FR24_MCP_ENTRYPOINT,
-    calendar: config.EIGOS_JOURNEY_CALENDAR_CONNECTION_FILE, travelPA: config.EIGOS_TRAVEL_PA_CONNECTION_FILE, ...sourceFetch,
-  });
+  const { accountLogin, management, ...sourceFetch } = providerFetch;
+  const app = express(), metadata = new Metadata(db), tasks = new Tasks(db, metadata);
+  const capabilities = configuredCapabilities(db, config, extensions, source, sourceFetch);
   const publicTask = (task: Task) => projectTask(task, capabilities.projectTaskResult);
   const scenarios = new Scenarios(db), pa = new PARequests(tasks);
   const hotelWorkflows = new HotelWorkflows(db, metadata, capabilities.functions);

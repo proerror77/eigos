@@ -9,7 +9,7 @@ import { ExternalOperations } from '../packages/runtime/external-operations.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { Scenarios } from '../packages/runtime/scenarios.js';
 import { ontologyServices } from '../packages/runtime/services.js';
-import { fixture, principal } from './fixture.js';
+import { fixture, principal, route } from './fixture.js';
 
 test('execution trace joins authoritative rows and filters cross-owner or revoked evidence', async () => {
   const f = await fixture();
@@ -26,12 +26,21 @@ test('execution trace joins authoritative rows and filters cross-owner or revoke
     const quoteTrace = await trace.read(f.access, 'Eigos', { taskId: task.id });
     const quote = quoteTrace.actions.find(row => row.action === 'EstimateRide')!;
     assert(quote.journaled);
+    assert.equal(quote.taskId, task.id);
+    assert.deepEqual(quote.resultRef, { type: 'RideRequest', id: quote.requestId });
+    assert(quoteTrace.events.some(event => event.kind === 'action-read' && event.function === 'readRideEstimates'
+      && event.requestId === quote.requestId && event.taskId === task.id && event.release === model.release));
     assert.equal(quote.executorKind, 'agent');
     assert(quote.executorId?.startsWith('eigos-ontology:'));
     assert(quoteTrace.editHistory.some(row => row.requestId === quote.requestId));
     const source = quoteTrace.events.find(row => row.kind === 'source' && row.source === 'DidiEstimates');
     assert(source && source.kind === 'source' && source.callId);
     assert(quoteTrace.sourceCalls.some(call => call.callId === source.callId && call.state === 'completed'));
+    assert.equal(source.evidence, 'fixture');
+    assert.equal(source.requestId, quote.requestId);
+    // Older Action rows kept the task on the associated edits only.
+    await db.query(`UPDATE ${db.schema}.actions SET task_id=NULL WHERE request_id=$1`, [quote.requestId]);
+    assert.equal((await trace.read(f.access, 'Eigos', { taskId: task.id })).actions[0]?.taskId, task.id);
 
     const start = new Date(Date.now() + 3600000), end = new Date(start.getTime() + 3600000);
     const plan = { type: 'SchedulePlan', id: 'trace-plan' };
@@ -133,5 +142,35 @@ test('trace rollback, canceled task, and bounded event cursor preserve original 
     assert.equal(second.events.length, 1);
     assert(second.events.some(event => event.kind === 'model' && event.attempt === 'retry'));
     assert.equal(second.next, undefined);
+  } finally { await f.close(); }
+});
+
+test('a direct Action links its projected receipt and each result read to one committed request', async () => {
+  const f = await fixture();
+  try {
+    const trace = new ExecutionTrace(f.db, f.metadata);
+    const requestId = 'direct-trace-quote';
+    const action = { action: 'EstimateRide', input: route };
+    const read = { function: 'readRideEstimates', resultParameter: 'request' };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await f.capabilities.actions.complete(await Access.load(f.db, principal), f.model, action, requestId, read, undefined, AbortSignal.timeout(5000));
+    }
+    const result = await trace.read(await Access.load(f.db, principal), 'Eigos', { requestId });
+    assert.deepEqual(result.actions.map(action => action.resultRef), [{ type: 'RideRequest', id: requestId }]);
+    assert.equal(result.actions[0]?.executorKind, 'client');
+    assert.equal(result.actions[0]?.taskId, null);
+    assert.deepEqual(result.events.map(event => [event.kind, event.requestId]), [
+      ['source', requestId], ['action-read', requestId], ['action-read', requestId],
+    ]);
+    assert(result.events.some(event => event.kind === 'source' && event.source === 'DidiEstimates' && event.evidence === 'fixture'));
+    assert.deepEqual(result.external, []);
+    assert.deepEqual(result.effects, []);
+    assert.equal(f.provider.calls.filter(call => call === 'taxi_estimate').length, 1);
+
+    await setGrants(f.db, principal.owner, businessGrants(f.model).filter(grant =>
+      grant.resource !== 'Eigos/function/readRideEstimates' && grant.resource !== 'Eigos/object/RideRequest'));
+    const revoked = await trace.read(await Access.load(f.db, principal), 'Eigos', { requestId });
+    assert.equal(revoked.actions[0]?.resultRef, undefined);
+    assert(!revoked.events.some(event => event.kind === 'action-read'));
   } finally { await f.close(); }
 });
