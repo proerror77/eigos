@@ -13,7 +13,7 @@ import { locationFunctions, taskLocationValueType } from './location.js';
 import { luckinDefinition as luckin } from './luckin.js';
 import { deliveryFunctions } from './delivery.js';
 import { localDeliveryDefinition } from './local-delivery.js';
-import { localDeliveryTradeDefinition } from './local-delivery-trade.js';
+import { deliveryCheckoutType, deliveryOrderType, localDeliveryTradeDefinition } from './local-delivery-trade.js';
 import {localEmbeddingDefinition} from './embedding-definition.js';
 import { applicationDefinition as applications, geometryUploadCriterion } from './applications.js';
 import {scenarioObjectType} from './scenario-definition.js';
@@ -81,6 +81,7 @@ businessDefinition.functionTypes.push(...marketplace.functionTypes);
 businessDefinition.actionTypes.push(...marketplace.actionTypes);
 businessDefinition.dataSources.push(...marketplace.dataSources);
 businessDefinition.objectTypes.push(...localDeliveryDefinition.objectTypes, ...localDeliveryTradeDefinition.objectTypes);
+businessDefinition.linkTypes.push(...localDeliveryTradeDefinition.linkTypes);
 businessDefinition.interfaceTypes.push(...localDeliveryDefinition.interfaceTypes, ...localDeliveryTradeDefinition.interfaceTypes);
 businessDefinition.functionTypes.push(...localDeliveryDefinition.functionTypes, ...localDeliveryTradeDefinition.functionTypes);
 businessDefinition.actionTypes.push(...localDeliveryDefinition.actionTypes, ...localDeliveryTradeDefinition.actionTypes);
@@ -267,7 +268,37 @@ addProcessLogs(businessDefinition, [
   { type: 'EventRegistration', property: 'state' }, { type: 'EventTrip', property: 'state' },
   { type: 'StripeLinkPaymentRequest', property: 'status' }, { type: 'SchedulePlan', property: 'state' }, { type: journeyType, property: 'state' }, { type: flightWatchType, property: 'state' },
   { type: diningReservationType, property: 'state' },
+  { type: deliveryCheckoutType, property: 'state' },
+  { type: deliveryOrderType, property: 'fulfillment' },
 ]);
+
+businessDefinition.objectTypes.find(type => type.apiName === 'LocalDeliveryCheckoutStateLog')!.machinery = {
+  states: ['quoted', 'declined', 'order_unknown', 'awaiting_payment', 'payment_handoff', 'payment_unknown',
+    'payment_verification', 'payment_failed', 'paid'].map(name => ({ name })),
+  transitions: [
+    { from: null, to: 'quoted', action: 'PreviewLocalDeliveryCheckout' },
+    { from: 'quoted', to: 'declined', action: 'SubmitLocalDeliveryOrder' },
+    { from: 'quoted', to: 'order_unknown', action: 'SubmitLocalDeliveryOrder' },
+    { from: 'quoted', to: 'awaiting_payment', action: 'SubmitLocalDeliveryOrder' },
+    { from: 'order_unknown', to: 'awaiting_payment', action: 'RefreshLocalDeliveryOrder' },
+    { from: 'awaiting_payment', to: 'payment_handoff', action: 'PrepareLocalDeliveryPayment' },
+    ...['awaiting_payment', 'payment_handoff'].flatMap(from => ['payment_unknown', 'payment_verification', 'payment_failed']
+      .map(to => ({ from, to, action: 'PayTaobaoInstantDeliveryOrder' }))),
+    ...['awaiting_payment', 'payment_handoff', 'payment_unknown', 'payment_verification', 'payment_failed', 'order_unknown']
+      .map(from => ({ from, to: 'paid', action: 'RefreshLocalDeliveryOrder' })),
+  ],
+  subprocesses: [{ link: 'orders', process: 'LocalDeliverySupplierOrderFulfillmentLog' }],
+};
+businessDefinition.objectTypes.find(type => type.apiName === 'LocalDeliverySupplierOrderFulfillmentLog')!.machinery = {
+  states: ['unknown', 'in_progress', 'completed', 'canceled'].map(name => ({ name,
+    ...(name === 'completed' || name === 'canceled' ? { terminal: true } : {}) })),
+  transitions: [
+    { from: null, to: 'unknown', action: 'SubmitLocalDeliveryOrder' },
+    ...[null, 'unknown'].flatMap(from => ['in_progress', 'completed', 'canceled']
+      .map(to => ({ from, to, action: 'RefreshLocalDeliveryOrder' }))),
+    ...['completed', 'canceled'].map(to => ({ from: 'in_progress', to, action: 'RefreshLocalDeliveryOrder' })),
+  ],
+};
 
 businessDefinition.objectTypes.find(type => type.apiName === 'ItineraryContinuityStateLog')!.machinery = {
   states: [{ name: 'watching' }, { name: 'attention' }, { name: 'expired', terminal: true }, { name: 'stopped', terminal: true }],

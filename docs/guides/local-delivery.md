@@ -87,3 +87,21 @@
 6. `RefreshLocalDeliveryOrder` 使用原报价对应的供应商下单记录及官方订单做匹配。网络中断后，EIGOS 保留原操作并禁止自动重发。供应商无法给出唯一的原单证据时，由用户查看原平台订单。
 
 扫码、短信验证码、收货地址选择、Alipay 登录、支付密码、收银台链接和资金来源设置均在 dsh-waimai 私有页面使用。上游 0.9.1 提供订单和支付回读，取消订单、退款与独立运单轨迹没有可调用接口。闪购支付验证类接口通过私有收银台继续原付款，EIGOS 只保存其状态。
+
+## 业务关系和自动回查
+
+```mermaid
+flowchart LR
+  Search["闪购或盒马搜索"] -->|"原商品的 search 引用"| Cart["购物车变更"]
+  Cart -->|"原 revision 的 cartChange 引用"| Checkout["结算及付款阶段"]
+  Checkout -->|"供应商已确认的订单 ID"| Order["原供应商订单"]
+  Checkout --> PaymentLog["付款阶段过程日志"]
+  Order --> DeliveryLog["履约过程日志"]
+```
+
+- 在 `ChangeLocalDeliveryCart` 传入原搜索 `search`，Action 按来源账号、商品和店铺验证后建立 Link。在 `PreviewLocalDeliveryCheckout` 传入 `cartChange`，Action 会比对来源绑定和原购物车版本。已经在 dsh-waimai 里建好的购物车可以直接预览结算。
+- 确认的供应商订单通过 `LocalDeliveryCheckoutOrder` 关联到原结算。订单未确认时不创建供应商订单对象。来源回读确认身份后再补建 Link。结算的 `stateLogs` 是实付与确认阶段记录，供应商原单的 `fulfillmentLogs` 是配送阶段记录。付款成功和配送完成分别判断。
+- 下单 Action 在记录原派发的同一事务登记 `RefreshLocalDeliveryOrder`。首次约一分钟后回查，正常每五分钟继续，临时读不到时退避。默认最长四小时，原单明确送达、关闭或取消后结束。查询使用原账号与原订单。用户可以用 `StopLocalDeliveryOrderObservation` 停止默认回查。
+- `RefreshLocalDeliveryOrder` 已标记为 `observation/readback`。Workbench 可用 `LocalDeliveryCheckoutStateLog` 分析结算状态，或用 `LocalDeliverySupplierOrderFulfillmentLog` 按履约阶段建立 [过程规则](automation.md#过程规则)。短期后台回查之外的关注需要显式设定期限，参见 [持续关注](continuous-observation.md)。
+
+这些关系、状态投影与时间条件分别沿用 Palantir 的 [Link types](https://www.palantir.com/docs/foundry/object-link-types/create-link-type)、[Machinery](https://www.palantir.com/docs/foundry/machinery/core-concepts) 和 [Automate](https://www.palantir.com/docs/foundry/automate/overview)。

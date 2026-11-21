@@ -1,10 +1,10 @@
-import { digest } from '../../core/identity.js';
-import type { ObjectRef } from '../../ontology/schema.js';
-import type { Database, Sql } from '../../runtime/database.js';
-import type { FunctionContext } from '../../runtime/functions.js';
-import { Objects } from '../../runtime/objects.js';
-import { ScheduledActions } from '../../runtime/scheduled-actions.js';
-import type { Task } from '../../runtime/tasks.js';
+import { digest } from '../core/identity.js';
+import type { ObjectRef } from '../ontology/schema.js';
+import type { Database, Sql } from './database.js';
+import type { FunctionContext } from './functions.js';
+import { Objects } from './objects.js';
+import { ScheduledActions } from './scheduled-actions.js';
+import type { Task } from './tasks.js';
 
 const minute = 60_000;
 const observationWindow = 4 * 60 * minute;
@@ -13,23 +13,33 @@ const observationWindow = 4 * 60 * minute;
 export class OrderObservation {
   private readonly schedules: ScheduledActions;
 
-  constructor(private readonly db: Database, private readonly refreshAction: string) {
+  constructor(
+    private readonly db: Database,
+    private readonly refreshAction: string,
+    private readonly targetParameter = 'booking',
+  ) {
     this.schedules = new ScheduledActions(db);
   }
 
   private scheduleId(booking: ObjectRef) {
-    return digest(['fliggy-original-order-observation', this.refreshAction, booking]);
+    // Preserve existing Fliggy schedules when moving this helper to the shared runtime.
+    const namespace = this.targetParameter === 'booking' ? 'fliggy-original-order-observation' : 'original-order-observation';
+    return digest([namespace, this.refreshAction, booking]);
   }
 
   async enqueue(ctx: FunctionContext, booking: ObjectRef, client: Sql) {
     const graph = new Objects(this.db, ctx.objects.model, ctx.objects.access, client);
     const now = Date.now();
     await this.schedules.enqueue(graph, {
-      id: this.scheduleId(booking), action: this.refreshAction, arguments: { booking },
+      id: this.scheduleId(booking), action: this.refreshAction, arguments: { [this.targetParameter]: booking },
       runAt: new Date(now + minute).toISOString(),
       deadline: new Date(now + observationWindow).toISOString(),
       sourceTaskId: ctx.taskId,
     });
+  }
+
+  cancel(graph: Objects, original: ObjectRef) {
+    return this.schedules.cancel(graph, this.scheduleId(original));
   }
 
   task(ctx: FunctionContext, booking: ObjectRef) {

@@ -20,7 +20,7 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
   const orderIds = { taobao: '90071992547400001', hema: '90071992547400002' };
   const original = { taobao: false, hema: false };
   const mutations: string[] = [];
-  let independentlyPaid = false, cartChanged = false, hemaCartChanged = false, retailCartChanged = false, windowSelected = false;
+  let readbackUnavailable = false, delivered = false, independentlyPaid = false, cartChanged = false, hemaCartChanged = false, retailCartChanged = false, windowSelected = false;
   let retailVersion = 'f'.repeat(64);
   const hemaProduct = randomUUID(), retailProduct = randomUUID();
   await writeFile(tokenFile, token, { mode: 0o600 });
@@ -48,8 +48,15 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
     assert.equal(request.method, 'tools/call');
     const { name, arguments: args } = request.params;
     const platformId = args.platformId as 'taobao' | 'hema';
-    assert.equal(args.accountRef, refs[platformId]);
+    if (name !== 'account_cross_search') assert.equal(args.accountRef, refs[platformId]);
     const data = (value: unknown) => reply({ content: [{ type: 'text', text: JSON.stringify({ success: true, data: value }) }] });
+    if (name === 'account_cross_search') return data({
+      keyword: args.keyword, platforms: [{ ...args.accounts[0], scope: 'platform', state: 'ready', groups: [
+        { shopId: 'platform', shopName: '', addressRef, state: 'ready', hasMore: false, items: [
+          { id: 'meal1', name: '测试汉堡', price: '15.00', availability: 'available', shopId, shopName: '测试商家', shopIsRetail: false },
+        ] },
+      ] }],
+    });
     if (name === 'account_addresses') return data({ platformId, selectedRef: addressRef,
       addresses: [{ address: 'PRIVATE_TEST_ADDRESS', phone: 'PRIVATE_TEST_PHONE' }] });
     if (name === 'account_cart') return data(cart(platformId));
@@ -149,10 +156,11 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
     }
     assert(['get_order_status', 'request_payment'].includes(name));
     assert(original[platformId]);
+    if (readbackUnavailable) throw new TypeError('synthetic readback unavailable');
     const paid = independentlyPaid && platformId === 'taobao';
     return data({ platformId, accountRef: refs[platformId], attempts: [{
       orderRef: quoteRef[platformId], amountCents: 1500, status: 'created', paymentStatus: paid ? 'paid' : 'unconfirmed',
-      orderIds: [orderIds[platformId]], officialOrders: [{ id: orderIds[platformId], merchantName: '测试商家', status: paid ? '派送中' : '待支付', amount: '15.00' }],
+      orderIds: [orderIds[platformId]], officialOrders: [{ id: orderIds[platformId], merchantName: '测试商家', status: paid ? (delivered ? '已送达' : '派送中') : '待支付', amount: '15.00' }],
     }] });
   };
 
@@ -201,8 +209,10 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
     return done.result as Record<string, unknown>;
   };
   try {
+    const graph = new Objects(f.db, f.model, f.access);
     const scope = { channel: 'taobao_meal', merchantId: shopId };
-    const cartChange = { ...scope, itemId: 'meal1', variantRef: variants.meal, quantity: 1, cartRevision: cartVersion.taobao };
+    const search = await execute('SearchTaobaoInstantDelivery', { query: '汉堡' });
+    const cartChange = { ...scope, itemId: 'meal1', variantRef: variants.meal, quantity: 1, cartRevision: cartVersion.taobao, search };
     await assert.rejects(execute('ChangeLocalDeliveryCart', cartChange), /interactive PA task/);
     const declined = await interactive({ alias: 'change', input: cartChange }, 'local_delivery.cart_approval', 'decline');
     assert.equal(declined.state, 'declined');
@@ -210,16 +220,48 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
     const changed = await interactive({ alias: 'change', input: cartChange }, 'local_delivery.cart_approval');
     assert.equal(changed.state, 'changed');
 
-    const order = await execute('PreviewLocalDeliveryCheckout', { ...scope, cartRevision: cartVersion.taobao, maxAmountMinor: 1900 });
+    const change = changed.change as ObjectRef;
+    assert((await graph.follow(search, 'cartChanges')).some(row => row.ref.id === change.id));
+    const order = await execute('PreviewLocalDeliveryCheckout', {
+      ...scope, cartRevision: cartVersion.taobao, maxAmountMinor: 1900, cartChange: change,
+    });
+    assert.deepEqual((await graph.follow(order, 'cartChange')).map(row => row.ref), [change]);
     assert.equal((await checkoutView(order)).totalMinor, 1500);
     const submitted = await interactive({ alias: 'submit', target: order, input: { checkout: order } }, 'local_delivery.order_approval');
     assert.equal(submitted.state, 'awaiting_payment');
     assert.deepEqual(submitted.orderIds, [orderIds.taobao]);
+    const [supplier] = await graph.follow(order, 'orders');
+    assert.equal(supplier?.properties.nativeOrderId, orderIds.taobao);
+    assert.equal(supplier?.properties.state, 'submitted');
+    const job = (await f.db.query(`SELECT id,body FROM ${f.db.schema}.scheduled_actions WHERE body->'arguments'->'checkout'->>'id'=$1`,
+      [order.id])).rows[0]!;
+    assert.equal(job.body.action, 'RefreshLocalDeliveryOrder');
+    assert.deepEqual(job.body.arguments, { checkout: order });
+    assert.equal(typeof job.body.sourceTaskId, 'string');
     const paidAck = await interactive({ alias: 'pay', target: order, input: { checkout: order } }, 'local_delivery.payment_approval');
     assert.equal(paidAck.state, 'payment_unknown', 'the dispatch is not independent settlement evidence');
+    readbackUnavailable = true;
+    await f.db.query(`UPDATE ${f.db.schema}.scheduled_actions SET run_at=now() WHERE id=$1`, [job.id]);
+    assert(await f.worker.runOne('scheduled'));
+    assert.equal((await checkoutView(order)).observation, 'watching');
+    assert.equal((await checkoutView(order)).supplierObservedAt, null);
+    const advance = async () => {
+      await f.db.query(`UPDATE ${f.db.schema}.tasks SET available_at=now() WHERE state='submitted'`);
+      assert(await f.worker.runOne('scheduled'));
+    };
+    readbackUnavailable = false;
     independentlyPaid = true;
-    await execute('RefreshLocalDeliveryOrder', { checkout: order });
+    await advance();
     assert.equal((await checkoutView(order)).state, 'paid');
+    assert.equal((await checkoutView(order)).observation, 'watching');
+    assert.equal((await graph.read(supplier!.ref)).properties.fulfillment, 'in_progress');
+    delivered = true;
+    await advance();
+    assert.equal((await checkoutView(order)).observation, 'finished');
+    assert.equal((await graph.read(supplier!.ref)).properties.fulfillment, 'completed');
+    assert((await graph.follow(order, 'stateLogs')).some(log => log.properties.newState === 'paid'));
+    assert((await graph.follow(supplier!.ref, 'fulfillmentLogs')).some(log => log.properties.newState === 'completed'));
+    assert.equal(await f.worker.runOne('scheduled'), false);
 
     const retail = { channel: 'taobao_retail', merchantId: shopId };
     const retailAdded = await interactive({ alias: 'change', input: { ...retail, itemId: '66', query: '牛奶',
@@ -244,6 +286,10 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
     assert.deepEqual((await checkoutView(hema)).orderIds, [orderIds.hema]);
     await execute('PrepareLocalDeliveryPayment', { checkout: hema });
     assert.equal((await checkoutView(hema)).paymentEntry, 'hema_official_app');
+    await execute('StopLocalDeliveryOrderObservation', { checkout: hema });
+    assert.equal((await checkoutView(hema)).observation, 'stopped');
+    assert.equal((await graph.follow(hema, 'orders')).length, 1);
+    assert.equal(await f.worker.runOne('scheduled'), false);
     assert.deepEqual(mutations, [
       'account_cart_change', 'account_submit:taobao', 'pay_order', 'account_retail_add', 'account_cart_add', 'account_submit:hema',
     ]);

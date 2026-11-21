@@ -12,7 +12,7 @@ import type { FunctionContext, FunctionHandler } from '../../runtime/functions.j
 import type { Objects } from '../../runtime/objects.js';
 import type { Task } from '../../runtime/tasks.js';
 import { requireEligiblePassenger } from './passenger-restrictions.js';
-import { OrderObservation } from './order-observation.js';
+import { OrderObservation } from '../../runtime/order-observation.js';
 import { topIdentifier, topNumber, type FliggyFlightResolver } from './top.js';
 
 type Partner = Awaited<ReturnType<FliggyFlightResolver>>;

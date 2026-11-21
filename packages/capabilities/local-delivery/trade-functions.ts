@@ -1,10 +1,12 @@
 import { z } from 'zod';
-import { Conflict, InvalidInput, digest } from '../../core/identity.js';
+import { Conflict, InvalidInput, NotFound, digest } from '../../core/identity.js';
 import {
   deliveryApproval, deliveryCartChange, deliveryCartChangeRecord, deliveryCartChangeType, deliveryCartReport,
   deliveryChannelInput, deliveryCheckoutInput, deliveryCheckoutRecord, deliveryCheckoutType, deliveryHistoryReport,
   deliveryItemInput, deliveryPreviewInput, deliveryScope, deliveryWindowInput,
+  cartDeliveryLink, checkoutDeliveryLink, deliveryFulfillment, deliveryOrderRecord, deliveryOrderType, deliveryRefreshAction, deliverySearchLinks,
 } from '../../ontology/local-delivery-trade.js';
+import { deliveryRecord, localDeliveryServices } from '../../ontology/local-delivery.js';
 import { json } from '../../ontology/service-contracts.js';
 import { type ObjectRef } from '../../ontology/schema.js';
 import { ActionPARequestRequired, PARequestRequired } from '../../runtime/clarification.js';
@@ -12,8 +14,9 @@ import type { Database, Sql } from '../../runtime/database.js';
 import { ExternalOperations, UnknownExternalOperation } from '../../runtime/external-operations.js';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import { Objects } from '../../runtime/objects.js';
+import { OrderObservation } from '../../runtime/order-observation.js';
 import { PARequests } from '../../runtime/pa.js';
-import { configuredDelivery, deliveryMcp, type DeliveryCall, type DeliveryMutation } from './mcp.js';
+import { configuredDelivery, DeliveryReadFailure, deliveryMcp, type DeliveryCall, type DeliveryMutation } from './mcp.js';
 import {
   type Channel, historyFromSource, itemOptions, lineFromSource, ownerScope, readCart, selectedDeliveryAddress,
   sourceAttempt, sourceOrder, sourceQuote, type SourceCart, validCart,
@@ -23,6 +26,18 @@ type Checkout = z.infer<typeof deliveryCheckoutRecord>;
 type CartChange = z.infer<typeof deliveryCartChange>;
 type Binding = Awaited<ReturnType<typeof configuredDelivery>>;
 const now = () => new Date().toISOString();
+const fulfillmentLabels = new Map<string, z.infer<typeof deliveryFulfillment>>([
+  ['已送达', 'completed'], ['已完成', 'completed'], ['订单完成', 'completed'], ['交易成功', 'completed'],
+  ['配送完成', 'completed'], ['已收货', 'completed'],
+  ['已取消', 'canceled'], ['订单已取消', 'canceled'], ['交易关闭', 'canceled'],
+  ['商家已接单', 'in_progress'], ['商家备餐中', 'in_progress'], ['等待骑手取餐', 'in_progress'],
+  ['待发货', 'in_progress'], ['待收货', 'in_progress'], ['配送中', 'in_progress'], ['派送中', 'in_progress'],
+]);
+const fulfillment = (status: string | null | undefined) => fulfillmentLabels.get(status?.trim() ?? '') ?? 'unknown';
+const terminal = (orders: Checkout['supplierOrders'], ids: Checkout['orderIds']) =>
+  ids.length > 0 && ids.every(id => orders.some(order => order.id === id &&
+    ['completed', 'canceled'].includes(fulfillment(order.status))));
+
 const providerFor = (channel: Channel) => channel === 'hema' ? 'Hema' : 'TaobaoInstantDelivery';
 const attemptStatuses = { paid: 'paid', failed: 'payment_failed', unknown: 'payment_unknown',
   'requires-verification': 'payment_verification', unpaid: 'awaiting_payment', unconfirmed: 'awaiting_payment' } as const;
@@ -58,6 +73,7 @@ async function approve(ctx: FunctionContext, capability: string, terms: Record<s
 
 export function localDeliveryTradeFunctions(db: Database, path?: string, mockFetch?: typeof fetch): ReadonlyMap<string, FunctionHandler> {
   const ops = new ExternalOperations(db);
+  const watch = new OrderObservation(db, deliveryRefreshAction, 'checkout');
   const fetcher = mockFetch ?? fetch;
   const evidence = mockFetch ? 'provider_mock' : 'provider';
   const readEvidence = mockFetch ? 'provider_mock' : 'live_readonly';
@@ -80,17 +96,18 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
       throw new Conflict('Enable this transaction capability for the bound delivery account first');
   }
 
-  const guard = (ctx: FunctionContext, conn: Connection, original?: { ref: ObjectRef; revision: number }) => async (client: Sql) => {
+  const guard = (ctx: FunctionContext, conn: Connection, original?: { ref: ObjectRef; revision: number; observe?: boolean }) => async (client: Sql) => {
     await ctx.assertDispatch!(client);
     ctx.objects.access.source(ctx.objects.model, conn.owner.platformId === 'hema' ? 'Hema' : 'TaobaoInstantDelivery');
     await conn.assertBinding();
     if (original) {
       const row = await new Objects(db, ctx.objects.model, ctx.objects.access, client).read(original.ref);
       if (row.revision !== original.revision) throw new Conflict('The original delivery record changed before dispatch');
+      if (original.observe) await watch.enqueue(ctx, original.ref, client);
     }
   };
   function dispatch<T>(ctx: FunctionContext, conn: Connection, key: string, scope: unknown, invoke: () => Promise<T>,
-    original?: { ref: ObjectRef; revision: number }) {
+    original?: { ref: ObjectRef; revision: number; observe?: boolean }) {
     return ops.run(ctx.principal.owner, key, scope, guard(ctx, conn, original), invoke, ctx.objects,
       { requestId: ctx.operationId, taskId: ctx.taskId });
   }
@@ -108,6 +125,51 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
       await conn.assertBinding();
       await graph.edit(ref, revision, { ...fields, observedAt: now() });
     });
+  }
+  async function preserveSupplierOrders(graph: Objects, ref: ObjectRef, quote: Checkout, ids: Checkout['orderIds'],
+    entries: Checkout['supplierOrders'] = [], observedAt = now()) {
+    for (const nativeOrderId of ids) {
+      const order = { type: deliveryOrderType, id: digest([quote.bindingId, nativeOrderId]) };
+      const existing = await graph.read(order).catch(error => {
+        if (!(error instanceof NotFound)) throw error;
+      });
+      const supplier = entries.find(entry => entry.id === nativeOrderId);
+      const previous = existing && deliveryOrderRecord.parse(existing.properties);
+      const oldState = previous?.fulfillment;
+      const nextState = fulfillment(supplier?.status);
+      // A partial or lagging upstream row does not erase independently seen fulfillment.
+      const stale = oldState === 'completed' || oldState === 'canceled';
+      const fields = {
+        state: supplier ? 'observed' : 'submitted', supplierStatus: supplier?.status ?? null,
+        fulfillment: nextState, amountMinor: supplier?.amountMinor ?? (ids.length === 1 ? quote.totalMinor : null), observedAt,
+      };
+      if (!previous) {
+        await graph.create(order, deliveryOrderRecord.parse({ ...fields, id: order.id, name: quote.name, channel: quote.channel,
+          bindingId: quote.bindingId, evidence: quote.evidence, nativeOrderId }));
+      } else if (supplier && !stale) {
+        await graph.edit(order, existing.revision, { ...fields, fulfillment: nextState === 'unknown' ? oldState : nextState });
+      }
+      await graph.link({ type: checkoutDeliveryLink, from: ref, to: order });
+    }
+  }
+  async function assertSearch(input: CartChange, conn: Connection, graph: Pick<Objects, 'read'>) {
+    if (!input.search) return;
+    const provider = providerFor(input.channel);
+    if (input.search.type !== localDeliveryServices[provider].object || !input.itemId || input.removeLine)
+      throw new Conflict('Use the search for the same provider and a selected product');
+    const search = deliveryRecord.parse((await graph.read(input.search)).properties);
+    if (search.bindingId !== conn.id || search.provider !== provider || input.query && search.query !== input.query ||
+        !search.items.some(item => item.itemId === input.itemId && item.merchantId === input.merchantId))
+      throw new Conflict('The original delivery search does not contain the selected item for this account');
+  }
+  async function assertCartChange(cartChange: ObjectRef | undefined, scope: z.infer<typeof deliveryScope>, cartRevision: string,
+    conn: Connection, graph: Pick<Objects, 'read'>) {
+    if (!cartChange) return;
+    if (cartChange.type !== deliveryCartChangeType) throw new Conflict('Use the original cart change');
+    const prior = deliveryCartChangeRecord.parse((await graph.read(cartChange)).properties);
+    if (prior.state !== 'changed' || prior.bindingId !== conn.id || prior.channel !== scope.channel ||
+        prior.cart?.revision !== cartRevision || scope.merchantId && prior.cart.merchantId !== scope.merchantId)
+      throw new Conflict('The original cart change does not match this checkout revision');
   }
   const quoteTerms = (ref: ObjectRef, quote: Checkout) => ({
     checkout: ref, merchant: quote.name, channel: quote.channel, amountMinor: quote.totalMinor, currency: 'CNY',
@@ -234,6 +296,7 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
       interactive(ctx);
       const input = deliveryCartChange.parse(raw), conn = await connection(input.channel, ctx);
       if (!conn.allowOrders) throw new Conflict('Cart changes are disabled for this delivery account');
+      await assertSearch(input, conn, ctx.objects);
       const ref = { type: deliveryCartChangeType, id: digest([ctx.principal.owner, ctx.operationId, 'cart-change']) };
       const operationRef = stableOperationRef(ref.id), key = 'dsh-cart:' + ref.id, scope = { input, bindingId: conn.id };
       type Cart = z.infer<typeof deliveryCartReport>;
@@ -242,6 +305,10 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
           await conn.assertBinding();
           await graph.create(ref, deliveryCartChangeRecord.parse({ id: ref.id, name: '配送购物车变更', channel: input.channel,
             bindingId: conn.id, observedAt: now(), evidence, operationRef, state, cart }));
+          if (input.search) {
+            await assertSearch(input, conn, graph);
+            await graph.link({ type: deliverySearchLinks[providerFor(input.channel)], from: input.search, to: ref });
+          }
         });
       try {
         const previous = await ops.recover<Cart>(ctx.principal.owner, key, scope, ctx.objects);
@@ -294,6 +361,7 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
         throw new InvalidInput('Choose this checkout channel’s valid lines and delivery preference');
       const scope = deliveryScope.parse({ channel: input.channel, merchantId: input.merchantId });
       const conn = await connection(input.channel, ctx);
+      await assertCartChange(input.cartChange, scope, input.cartRevision, conn, ctx.objects);
       const receipt = await call(conn, ctx, async rpc => {
         const addressRef = await selectedDeliveryAddress(rpc, conn.owner);
         const cart = await readCart(rpc, conn.owner, scope, addressRef);
@@ -313,9 +381,16 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
         sourceTaskId: ctx.taskId ?? null, scope: { ...scope, merchantId: receipt.quote.shopId },
         addressDigest: addressFingerprint(conn, receipt.addressRef), version: input.cartRevision,
         maxAmountMinor: Math.min(input.maxAmountMinor, receipt.quote.maxOrderCents), currency: 'CNY',
-        state: 'quoted', orderIds: [], supplierOrders: [], observedAt: now(), evidence,
+        state: 'quoted', orderIds: [], supplierOrders: [], observation: 'idle', supplierObservedAt: null, observedAt: now(), evidence,
       });
-      return stage(ref, async graph => { await conn.assertBinding(); await graph.create(ref, row); });
+      return stage(ref, async graph => {
+        await conn.assertBinding();
+        await graph.create(ref, row);
+        if (input.cartChange) {
+          await assertCartChange(input.cartChange, scope, input.cartRevision, conn, graph);
+          await graph.link({ type: cartDeliveryLink, from: input.cartChange, to: ref });
+        }
+      });
     }],
     ['selectLocalDeliveryWindow', async (raw, ctx) => {
       liveAction(ctx);
@@ -345,11 +420,11 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
       try { result = await ops.recover(ctx.principal.owner, key, scope, ctx.objects); }
       catch (error) {
         if (!(error instanceof UnknownExternalOperation)) throw error;
-        return editQuote(ctx, checkout, row.revision, conn, { state: 'order_unknown' });
+        return editQuote(ctx, checkout, row.revision, conn, { state: 'order_unknown', observation: 'watching' });
       }
       if (!result) {
         if (Date.parse(quote.expiresAt) <= Date.now()) throw new Conflict('The checkout quote expired; obtain a new quote');
-        if (!await approve(ctx, 'local_delivery.order_approval', quoteTerms(checkout, quote)))
+        if (!await approve(ctx, 'local_delivery.order_approval', { ...quoteTerms(checkout, quote), readbackWindowMinutes: 240 }))
           return editQuote(ctx, checkout, row.revision, conn, { state: 'declined' });
         if (Date.parse(quote.expiresAt) <= Date.now()) throw new Conflict('The approved checkout quote expired');
         await call(conn, ctx, async rpc => {
@@ -367,14 +442,19 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
                 addressFingerprint(conn, order.addressRef) !== quote.addressDigest ||
                 new Set(order.orderIds).size !== order.orderIds.length) throw new Conflict('Order receipt differs from the approved checkout');
             return sourceOrder.parse(order);
-          }, 'account_submit'), { ref: checkout, revision: row.revision });
+          }, 'account_submit'), { ref: checkout, revision: row.revision, observe: true });
         } catch (error) {
           if (!(error instanceof UnknownExternalOperation)) throw error;
-          return editQuote(ctx, checkout, row.revision, conn, { state: 'order_unknown' });
+          return editQuote(ctx, checkout, row.revision, conn, { state: 'order_unknown', observation: 'watching' });
         }
       }
       await conn.check();
-      return editQuote(ctx, checkout, row.revision, conn, { state: 'awaiting_payment', orderIds: sourceOrder.parse(result).orderIds });
+      const ids = sourceOrder.parse(result).orderIds;
+      return liveAction(ctx)(checkout, async graph => {
+        await conn.assertBinding();
+        await graph.edit(checkout, row.revision, { state: 'awaiting_payment', observation: 'watching', orderIds: ids, observedAt: now() });
+        await preserveSupplierOrders(graph, checkout, quote, ids);
+      });
     }],
     ['prepareLocalDeliveryPayment', async (raw, ctx) => {
       const { checkout } = deliveryCheckoutInput.parse(raw), { quote, row, conn } = await checkoutFor(ctx, checkout);
@@ -428,35 +508,92 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
       }
       return editQuote(ctx, checkout, row.revision, conn, { state });
     }],
+    ['stopLocalDeliveryOrderObservation', async (raw, ctx) => {
+      const stage = liveAction(ctx);
+      const { checkout } = deliveryCheckoutInput.parse(raw);
+      const row = await ctx.objects.read(checkout), quote = deliveryCheckoutRecord.parse(row.properties);
+      if (quote.observation !== 'watching') throw new Conflict('The original order is not being watched');
+      return stage(checkout, async graph => {
+        const current = await graph.read(checkout);
+        if (current.revision !== row.revision) throw new Conflict('Read the current observation state before stopping');
+        await watch.cancel(graph, checkout);
+        await graph.edit(checkout, row.revision, { observation: 'stopped', observedAt: now() });
+      });
+    }],
     ['refreshLocalDeliveryOrder', async (raw, ctx) => {
+      const stage = liveAction(ctx);
       const { checkout } = deliveryCheckoutInput.parse(raw), { quote, row, conn } = await checkoutFor(ctx, checkout);
-      if (quote.state === 'quoted' || quote.state === 'declined') throw new Conflict('There is no original order to observe');
-      const result = await call(conn, ctx, rpc => status(conn, rpc, quote));
+      const task = watch.task(ctx, checkout), operationKey = 'dsh-order:' + checkout.id;
+      if (quote.state === 'declined' || quote.state === 'quoted' && !await ops.inspect(ctx.principal.owner, operationKey))
+        throw new Conflict('There is no original order to observe');
+      const advance = (graph: Objects, outcome: Parameters<typeof watch.advance>[2]) =>
+        task ? watch.advance(graph, task, outcome) : undefined;
+      if (task && terminal(quote.supplierOrders, quote.orderIds)) {
+        return stage(checkout, async graph => {
+          await conn.assertBinding();
+          await graph.edit(checkout, row.revision, { observation: await advance(graph, 'terminal') });
+        });
+      }
+
+      let result;
+      try {
+        result = await call(conn, ctx, rpc => status(conn, rpc, quote));
+      } catch (error) {
+        if (!task || !(error instanceof DeliveryReadFailure || error instanceof z.ZodError)) throw error;
+        ctx.signal.throwIfAborted();
+        return stage(checkout, async graph => {
+          await conn.assertBinding();
+          const latest = await graph.read(checkout), current = deliveryCheckoutRecord.parse(latest.properties);
+          const observation = await advance(graph, terminal(current.supplierOrders, current.orderIds) ? 'terminal' : 'unavailable');
+          await graph.edit(checkout, latest.revision, {
+            observation, ...(current.state === 'quoted' ? { state: 'order_unknown' } : {}),
+          });
+        });
+      }
       await conn.check();
       const supplierOrders = (result.officialOrders ?? []).map(historyFromSource);
       const confirmed = result.status === 'created' && result.orderIds.length > 0;
       const independent = confirmed && result.orderIds.every(id => supplierOrders.some(order => order.id === id));
-      if (quote.state === 'order_unknown' && independent) {
+      const unknownOrder = quote.state === 'order_unknown' || quote.state === 'quoted';
+      const reconcileGuard = async (client: Sql) => {
+        await ctx.assertCurrent?.(client);
+        await conn.assertBinding();
+      };
+      if (unknownOrder && independent) {
         const scope = { checkout, quoteRef: quote.quoteRef, bindingId: conn.id, totalMinor: quote.totalMinor };
-        await ops.reconcile(ctx.principal.owner, 'dsh-order:' + checkout.id, scope, async client => {
-          await ctx.assertCurrent?.(client);
-          await conn.assertBinding();
-        }, async () => sourceOrder.parse({ ...result, platformId: conn.owner.platformId }), ctx.objects);
+        await ops.reconcile(ctx.principal.owner, operationKey, scope, reconcileGuard,
+          async () => sourceOrder.parse({ ...result, platformId: conn.owner.platformId }), ctx.objects);
       }
       const payment = result.paymentStatus && attemptStatuses[result.paymentStatus];
       if (quote.channel !== 'hema' && payment === 'paid' && independent && quote.orderIds.length === 1) {
         const scope = { checkout, orderId: quote.orderIds[0], amount: quote.totalMinor, binding: conn.id };
-        await ops.reconcile(ctx.principal.owner, 'dsh-payment:' + checkout.id, scope, async client => {
-          await ctx.assertCurrent?.(client);
-          await conn.assertBinding();
-        }, async () => ({ state: 'paid' }), ctx.objects);
+        await ops.reconcile(ctx.principal.owner, 'dsh-payment:' + checkout.id, scope, reconcileGuard,
+          async () => ({ state: 'paid' }), ctx.objects);
       }
       const state = quote.state === 'paid' ? 'paid'
         : confirmed && quote.channel !== 'hema' && payment === 'paid' && independent ? 'paid'
           : confirmed && ['payment_verification', 'payment_failed', 'payment_unknown'].includes(payment ?? '') ? payment!
-            : independent && quote.state === 'order_unknown' ? 'awaiting_payment' : quote.state;
-      return editQuote(ctx, checkout, row.revision, conn, {
-        state, orderIds: confirmed ? result.orderIds : quote.orderIds, supplierOrders,
+            : independent && unknownOrder ? 'awaiting_payment' : unknownOrder ? 'order_unknown' : quote.state;
+      return stage(checkout, async graph => {
+        await conn.assertBinding();
+        const latest = await graph.read(checkout), current = deliveryCheckoutRecord.parse(latest.properties);
+        if (latest.revision !== row.revision) {
+          if (!task) throw new Conflict('The order changed during readback; refresh the current order');
+          const observation = await advance(graph, terminal(current.supplierOrders, current.orderIds) ? 'terminal' : 'pending');
+          await graph.edit(checkout, latest.revision, { observation });
+          return;
+        }
+        const readAt = now(), ids = confirmed && (!unknownOrder || independent) ? result.orderIds : quote.orderIds;
+        const merged = new Map(current.supplierOrders.map(order => [order.id, order]));
+        for (const order of supplierOrders) {
+          const previous = merged.get(order.id);
+          if (!previous || !['completed', 'canceled'].includes(fulfillment(previous.status))) merged.set(order.id, order);
+        }
+        const orders = [...merged.values()].filter(order => ids.includes(order.id));
+        const observation = await advance(graph, terminal(orders, ids) ? 'terminal' : 'pending');
+        await graph.edit(checkout, latest.revision, { state, orderIds: ids, supplierOrders: orders, observedAt: readAt,
+          ...(supplierOrders.length ? { supplierObservedAt: readAt } : {}), ...(observation ? { observation } : {}) });
+        if (ids.length) await preserveSupplierOrders(graph, checkout, quote, ids, supplierOrders, readAt);
       });
     }],
     ['readLocalDeliveryCheckout', async (raw, ctx) => {
@@ -465,7 +602,13 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
       await conn.check();
       const paymentEntry = ['awaiting_payment', 'payment_handoff', 'payment_verification'].includes(view.state)
         ? view.channel === 'hema' ? 'hema_official_app' : 'taobao_private_checkout' : null;
-      return { ...view, checkout, paymentEntry, windows: windows.map(({ source: _source, ...window }, index) => ({ ...window, index })) };
+      const orders = (await ctx.objects.follow(checkout, 'orders')).map(row => {
+        const { bindingId, ...order } = deliveryOrderRecord.parse(row.properties);
+        if (bindingId !== conn.id || !quote.orderIds.includes(order.nativeOrderId))
+          throw new Conflict('Linked order does not match the original account or operation');
+        return { ...order, order: row.ref };
+      });
+      return { ...view, checkout, paymentEntry, orders, windows: windows.map(({ source: _source, ...window }, index) => ({ ...window, index })) };
     }],
   ]);
 }

@@ -762,7 +762,8 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     !itineraryDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !scheduleJourneyDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !fliggyServicesDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
-    !marketplaceDefinition.linkTypes.some(link => link.apiName === type.apiName));
+    !marketplaceDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    !localDeliveryTradeDefinition.linkTypes.some(link => link.apiName === type.apiName));
   v9Definition.dataSources = v9Definition.dataSources.filter(source =>
     !fliggyServicesDefinition.dataSources.some(item => item.apiName === source.apiName) &&
     !hotelTransferDefinition.dataSources.some(item => item.apiName === source.apiName) &&

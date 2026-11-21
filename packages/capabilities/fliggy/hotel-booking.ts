@@ -9,7 +9,7 @@ import type { ObjectRef } from '../../ontology/schema.js';
 import type { Database, Sql } from '../../runtime/database.js';
 import { ExternalOperations } from '../../runtime/external-operations.js';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
-import { OrderObservation } from './order-observation.js';
+import { OrderObservation } from '../../runtime/order-observation.js';
 import { topIdentifier, topNumber, type FliggyHotelResolver } from './top.js';
 
 type Hotel = Awaited<ReturnType<FliggyHotelResolver>>;

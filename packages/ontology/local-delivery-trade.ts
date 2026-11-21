@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { deliveryMerchantId } from './local-delivery.js';
+import { deliveryMerchantId, localDeliveryServices } from './local-delivery.js';
 import { objectRefSchema, type OntologyDocument } from './schema.js';
 import { json, time } from './service-contracts.js';
 
@@ -25,6 +25,7 @@ export const deliveryCartChange = deliveryScope.extend({
   variantRef: z.string().max(80).optional(),
   choiceRefs: z.array(digest).max(30).optional(),
   removeLine: digest.optional(),
+  search: objectRefSchema.optional(),
   cartRevision: digest,
 });
 export const deliveryPreviewInput = deliveryScope.extend({
@@ -32,6 +33,7 @@ export const deliveryPreviewInput = deliveryScope.extend({
   maxAmountMinor: positiveCents,
   lineIds: z.array(nativeId).min(1).max(50).optional(),
   retailDelivery: z.enum(['platform', 'earliest']).optional(),
+  cartChange: objectRefSchema.optional(),
 });
 export const deliveryCheckoutInput = z.strictObject({ checkout: objectRefSchema });
 export const deliveryWindowInput = deliveryCheckoutInput.extend({ optionIndex: z.number().int().nonnegative().max(49) });
@@ -82,6 +84,17 @@ const cartChangeRead = deliveryCartChangeRecord.omit({ bindingId: true, operatio
 const readCartChange = z.strictObject({ change: objectRefSchema });
 
 export const deliveryCheckoutType = 'LocalDeliveryCheckout';
+export const deliveryOrderType = 'LocalDeliverySupplierOrder';
+export const deliveryFulfillment = z.enum(['unknown', 'in_progress', 'completed', 'canceled']);
+export const deliveryOrderRecord = z.strictObject({
+  ...identity, nativeOrderId: nativeId, state: z.enum(['submitted', 'observed']),
+  supplierStatus: text.nullable(), amountMinor: cents.nullable(),
+  fulfillment: deliveryFulfillment,
+});
+export const checkoutDeliveryLink = 'LocalDeliveryCheckoutOrder';
+export const cartDeliveryLink = 'LocalDeliveryCartCheckout';
+export const deliverySearchLinks = { TaobaoInstantDelivery: 'TaobaoInstantDeliverySearchCart', Hema: 'HemaProductSearchCart' } as const;
+export const deliveryRefreshAction = 'RefreshLocalDeliveryOrder';
 export const deliveryCheckoutRecord = z.strictObject({
   ...identity,
   sourceTaskId: z.uuid().nullable(),
@@ -103,19 +116,22 @@ export const deliveryCheckoutRecord = z.strictObject({
     'payment_unknown', 'payment_verification', 'payment_failed', 'paid']),
   orderIds: z.array(nativeId).max(50),
   supplierOrders: z.array(deliveryHistoryEntry).max(50),
+  supplierObservedAt: time.nullable().optional(),
+  observation: z.enum(['idle', 'watching', 'finished', 'timed_out', 'source_unavailable', 'stopped']).optional(),
 });
 const checkoutRead = deliveryCheckoutRecord.omit({ bindingId: true, sourceTaskId: true, addressDigest: true, version: true,
   quoteRef: true, windows: true }).extend({
   checkout: objectRefSchema,
   windows: z.array(z.strictObject({ index: z.number().int().nonnegative(), label: text, feeMinor: cents, selected: z.boolean() })).max(50),
   paymentEntry: z.enum(['taobao_private_checkout', 'hema_official_app']).nullable(),
+  orders: z.array(deliveryOrderRecord.omit({ bindingId: true }).extend({ order: objectRefSchema })).max(50),
 });
 
 export const deliveryApproval = z.strictObject({ decision: z.enum(['approve', 'decline']), termsDigest: digest });
-type Definition = Pick<OntologyDocument, 'objectTypes' | 'interfaceTypes' | 'functionTypes' | 'actionTypes'>;
+type Definition = Pick<OntologyDocument, 'objectTypes' | 'interfaceTypes' | 'linkTypes' | 'functionTypes' | 'actionTypes'>;
 function object(apiName: string, description: string, shape: Record<string, z.ZodType>): Definition['objectTypes'][number] {
   return { apiName, displayName: apiName, description, primaryKey: 'id', titleProperty: 'name', interfaces: {},
-    properties: Object.fromEntries(Object.entries(shape).map(([name, schema]) => [name, { description: name, required: true, schema: json(schema) }])),
+    properties: Object.fromEntries(Object.entries(shape).map(([name, schema]) => [name, { description: name, required: !schema.isOptional(), schema: json(schema) }])),
   };
 }
 
@@ -132,8 +148,11 @@ const operations = [
     description: 'Verify the original order and direct the buyer to its official or private payment interface.' },
   { alias: 'pay', action: 'PayTaobaoInstantDeliveryOrder', fn: 'payTaobaoInstantDeliveryOrder', input: deliveryCheckoutInput, type: deliveryCheckoutType,
     description: 'Submit the exact Taobao order amount once after independent PA payment approval and provider payment readiness.' },
-  { alias: 'refresh', action: 'RefreshLocalDeliveryOrder', fn: 'refreshLocalDeliveryOrder', input: deliveryCheckoutInput, type: deliveryCheckoutType,
+  { alias: 'refresh', action: deliveryRefreshAction, fn: 'refreshLocalDeliveryOrder', input: deliveryCheckoutInput, type: deliveryCheckoutType,
     description: 'Reconcile the original order and payment from provider evidence without dispatching a new transaction.' },
+  { alias: 'stopObservation', action: 'StopLocalDeliveryOrderObservation', fn: 'stopLocalDeliveryOrderObservation',
+    input: deliveryCheckoutInput, type: deliveryCheckoutType,
+    description: 'Stop automatic readback of the original delivery order, without changing the supplier order.' },
 ] as const;
 
 const tradeTypes = [
@@ -144,7 +163,8 @@ const tradeTypes = [
 ] as const;
 
 export const localDeliveryTradeDefinition: Definition = {
-  objectTypes: tradeTypes.map(({ type, contract, fields, description }) => ({
+  objectTypes: [object(deliveryOrderType, 'An original supplier order and its independently observed fulfillment.', deliveryOrderRecord.shape),
+    ...tradeTypes.map(({ type, contract, fields, description }) => ({
     ...object(type, description, fields),
     interfaces: { [contract]: {
       properties: { name: 'name' }, links: {},
@@ -152,7 +172,21 @@ export const localDeliveryTradeDefinition: Definition = {
         action: op.action, parameters: Object.fromEntries(Object.keys(op.input.shape).map(name => [name, name])),
       }])),
     } },
-  })),
+  }))],
+  linkTypes: [
+    { apiName: deliverySearchLinks.TaobaoInstantDelivery, description: 'A cart change from a verified Taobao Instant Delivery search item.',
+      from: { type: localDeliveryServices.TaobaoInstantDelivery.object, name: 'cartChanges', cardinality: 'many' },
+      to: { type: deliveryCartChangeType, name: 'taobaoSearch', cardinality: 'one' } },
+    { apiName: deliverySearchLinks.Hema, description: 'A cart change from a verified Hema search item.',
+      from: { type: localDeliveryServices.Hema.object, name: 'cartChanges', cardinality: 'many' },
+      to: { type: deliveryCartChangeType, name: 'hemaSearch', cardinality: 'one' } },
+    { apiName: cartDeliveryLink, description: 'A checkout that used the exact cart revision produced by the original change.',
+      from: { type: deliveryCartChangeType, name: 'checkouts', cardinality: 'many' },
+      to: { type: deliveryCheckoutType, name: 'cartChange', cardinality: 'one' } },
+    { apiName: checkoutDeliveryLink, description: 'The supplier orders produced by this approved checkout.',
+      from: { type: deliveryCheckoutType, name: 'orders', cardinality: 'many' },
+      to: { type: deliveryOrderType, name: 'checkout', cardinality: 'one' } },
+  ],
   interfaceTypes: tradeTypes.map(({ type, contract, description }) => ({
     apiName: contract, description, properties: { name: { description: 'Delivery record name', required: true, schema: json(text) } },
     optionalProperties: [], links: {},
@@ -165,6 +199,7 @@ export const localDeliveryTradeDefinition: Definition = {
     apiName: op.action, description: op.description, parameters: json(op.input),
     objectParameters: 'checkout' in op.input.shape ? { checkout: deliveryCheckoutType } : {},
     function: op.fn, submissionCriteria: [],
+    ...(op.action === deliveryRefreshAction ? { typeClasses: [{ kind: 'observation', name: 'readback' }] } : {}),
   })),
   functionTypes: [
     { apiName: 'readLocalDeliveryCart', description: 'Read the bound cart revision, selection and prices.', parameters: json(deliveryScope),
@@ -176,10 +211,17 @@ export const localDeliveryTradeDefinition: Definition = {
     { apiName: 'readLocalDeliveryCartChange', description: 'Read the result of an approved or unresolved cart change.',
       parameters: json(readCartChange), returns: json(cartChangeRead), dependencies: { objectTypes: [deliveryCartChangeType] } },
     { apiName: 'readLocalDeliveryCheckout', description: 'Read the quote, original order and independent payment status kept in the Ontology.',
-      parameters: json(deliveryCheckoutInput), returns: json(checkoutRead), dependencies: { objectTypes: [deliveryCheckoutType] } },
+      parameters: json(deliveryCheckoutInput), returns: json(checkoutRead), dependencies: {
+        objectTypes: [deliveryCheckoutType, deliveryOrderType], linkTypes: [checkoutDeliveryLink],
+      } },
     ...operations.map(op => ({
       apiName: op.fn, description: op.description, parameters: json(op.input), returns: json(objectRefSchema),
-      edits: true, dependencies: { objectTypes: [op.type] },
+      edits: true, dependencies: op.alias === 'change'
+        ? { objectTypes: [op.type, ...Object.values(localDeliveryServices).map(service => service.object)], linkTypes: Object.values(deliverySearchLinks) }
+        : op.alias === 'preview' ? { objectTypes: [op.type, deliveryCartChangeType], linkTypes: [cartDeliveryLink] }
+          : op.alias === 'submit' || op.alias === 'refresh'
+            ? { objectTypes: [op.type, deliveryOrderType], linkTypes: [checkoutDeliveryLink] }
+            : { objectTypes: [op.type] },
     })),
   ],
 };
