@@ -540,6 +540,7 @@ test('a committed cancellation finds only its dependent trips and suspends dispa
       return ref;
     };
     const booked = await addTrip('booked', 'dispatched', 'previous-known-schedule', true);
+    const stale = await addTrip('stale', 'dispatched', 'previous-stale-schedule', true);
     const unresolved = await addTrip('unresolved', 'authorized', 'previous-unknown-schedule', true);
     const unrelated = await addTrip('unrelated', 'proposed', null, false);
     const orderId = 'previous-didi-order', orderRef = { type: 'DidiRideOrder', id: digest(['synthetic', orderId]) };
@@ -550,6 +551,21 @@ test('a committed cancellation finds only its dependent trips and suspends dispa
       contentDigest: digest(orderId), bindingId: 'synthetic',
     } }], 'DidiRideOrders', observedAt);
     await graph.link({ type: 'TripOrder', from: booked, to: orderRef });
+    const staleOrderId = 'stale-didi-order', staleOrder = { type: 'DidiRideOrder', id: digest(['synthetic', staleOrderId]) };
+    const staleAt = new Date(Date.now() - 60000).toISOString();
+    await graph.ingestBatch([{ ref: staleOrder, properties: {
+      id: staleOrder.id, name: 'Previously verified original order', orderId: staleOrderId, status: 'Reported',
+      state: 'reported', independentRead: true, evidence: 'synthetic', observedAt: staleAt,
+      contentDigest: digest(staleOrderId), bindingId: 'synthetic',
+    } }], 'DidiRideOrders', staleAt);
+    await graph.link({ type: 'TripOrder', from: stale, to: staleOrder });
+    const query = f.provider.source.orders!.query.bind(f.provider.source.orders!);
+    let unavailableReadbacks = 0;
+    f.provider.source.orders!.query = async (id, signal) => {
+      if (id !== staleOrderId) return query(id, signal);
+      unavailableReadbacks++;
+      throw new Error('The original ride source is temporarily unavailable');
+    };
     await new ExternalOperations(f.db).run(principal.owner, 'previous-unknown-schedule', {}, async () => {},
       async () => { throw new Error('Lost the original synthetic supplier response'); }).catch(error => {
         assert.match(String(error), /unresolved result/);
@@ -588,10 +604,10 @@ test('a committed cancellation finds only its dependent trips and suspends dispa
 
     assert.equal(await automation.scanOne(), true);
     const resumedIndexer = new Automation(f.db, f.metadata, f.capabilities.actions);
-    for (let i = 0; i < 3; i++) assert.equal(await resumedIndexer.runOne(), true);
+    for (let i = 0; i < 4; i++) assert.equal(await resumedIndexer.runOne(), true);
     assert.equal(await resumedIndexer.runOne(), false);
     const results = await graph.follow(p.p.plan, 'hotelDependencyReviews');
-    assert.equal(results.length, 3, JSON.stringify(await resumedIndexer.list(f.access, f.model, 'workflow_runs')));
+    assert.equal(results.length, 4, JSON.stringify(await resumedIndexer.list(f.access, f.model, 'workflow_runs')));
     const outcomes = new Map<string, [unknown, unknown]>();
     const transitions = (await graph.follow(booking, 'stateLogs')).filter(item => item.properties.newState === 'cancelled');
     assert.equal(transitions.length, 1);
@@ -604,6 +620,8 @@ test('a committed cancellation finds only its dependent trips and suspends dispa
     }
     assert.deepEqual(outcomes.get(trip.id), ['not_submitted', 'not_needed']);
     assert.deepEqual(outcomes.get(booked.id), ['original_order', 'verified']);
+    assert.deepEqual(outcomes.get(stale.id), ['original_order', 'unavailable']);
+    assert.equal((await graph.read(staleOrder)).properties.observedAt, staleAt);
     assert.deepEqual(outcomes.get(unresolved.id), ['dispatch_unresolved', 'original_identity_required']);
     assert.equal(outcomes.has(unrelated.id), false);
     assert.equal((await graph.read(trip)).properties.state, 'proposed');
@@ -614,10 +632,11 @@ test('a committed cancellation finds only its dependent trips and suspends dispa
 
     await resumedIndexer.rule(f.access, f.model, { ...rule, id: saved.id, revision: saved.revision, replayFrom: '0' });
     assert.equal(await resumedIndexer.scanOne(), true);
-    for (let i = 0; i < 3; i++) assert.equal(await resumedIndexer.runOne(), true);
+    for (let i = 0; i < 4; i++) assert.equal(await resumedIndexer.runOne(), true);
     assert.deepEqual((await graph.follow(p.p.plan, 'hotelDependencyReviews')).map(item => item.ref), results.map(item => item.ref));
     assert.equal(f.provider.flags.orderCreates, 0);
     assert.equal(f.provider.flags.orderQueries, 1);
+    assert.equal(unavailableReadbacks, 1);
     assert.equal((await graph.follow(booked, 'order'))[0]!.properties.independentRead, true);
     assert.equal(await new ExternalOperations(f.db).inspect(principal.owner, p.scheduleId), null);
 
