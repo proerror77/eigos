@@ -3,7 +3,7 @@ import { NotFound, requireScope } from '../core/identity.js';
 import { objectRefSchema, type ObjectRef } from '../ontology/schema.js';
 import { Access, PermissionDenied, resource, type Requirement } from './access.js';
 import type { Database, Sql } from './database.js';
-import type { Metadata, PublishedOntology } from './metadata.js';
+import type { Metadata } from './metadata.js';
 import { Objects } from './objects.js';
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
@@ -12,6 +12,7 @@ const revision = z.number().int().positive();
 const ownerId = z.string().min(1).max(200);
 const events = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('source'), source: name, callId: sha256.optional(), receipt: objectRefSchema }),
+  z.strictObject({ kind: z.literal('action-read'), function: name }),
   z.strictObject({ kind: z.literal('document'), ref: objectRefSchema, revision }),
   z.strictObject({ kind: z.literal('model'), state: z.enum(['started', 'completed', 'paused', 'failed', 'canceled']),
     model: name, attempt: name.optional(), durationMs: z.number().int().nonnegative().optional() }),
@@ -88,7 +89,7 @@ type TraceRow = {
 };
 type ActionRow = {
   request_id: string; action: string; release: string; projection: string; task_id: string | null;
-  applied_at: Date; executor_kind: string | null; executor_id: string | null; changes: boolean;
+  applied_at: Date; executor_kind: string | null; executor_id: string | null; changes: boolean; result: unknown;
 };
 type Root = { taskId: string | null; release: string; projection: string; state?: string };
 
@@ -116,18 +117,30 @@ export class ExecutionTrace {
       const model = await this.metadata.active(ontology);
       const visibleActions = await this.actions(access, ontology, root, input.requestId ?? null, scenarios);
       const actionIds = visibleActions.map(row => row.request_id);
+      const graph = new Objects(db, model, access);
+      const actions = [];
+      for (const row of visibleActions) {
+        const ref = objectRefSchema.safeParse(row.result);
+        const resultRef = ref.success && await this.visibleObject(graph, ref.data) ? ref.data : undefined;
+        actions.push({ requestId: row.request_id, taskId: row.task_id, action: row.action, release: row.release,
+          projection: row.projection, executorKind: row.executor_kind, executorId: row.executor_id, appliedAt: row.applied_at, journaled: row.changes,
+          ...(resultRef ? { resultRef } : {}) });
+      }
       const visibleEvents = [];
       for (const row of rows.slice(0, input.limit)) {
         const parsed = events.safeParse(row.event);
         if (!parsed.success || !Array.isArray(row.requirements) || !await access.canReturn(row.requirements)) continue;
         const event = parsed.data;
-        if (event.kind === 'merge' && (!row.request_id || !actionIds.includes(row.request_id))) continue;
-        const refs = event.kind === 'document' ? [event.ref] : event.kind === 'source' ? [event.receipt]
-          : event.kind === 'egress' ? event.documentRefs ?? [] : [];
-        if (!await this.referencesVisible(access, model, refs)) continue;
+        const requestId = row.request_id && actionIds.includes(row.request_id) ? row.request_id : null;
+        if ((event.kind === 'merge' || event.kind === 'action-read') && !requestId) continue;
+        const receipt = event.kind === 'source' ? await this.visibleObject(graph, event.receipt) : undefined;
+        if (event.kind === 'source' && !receipt) continue;
+        const refs = event.kind === 'document' ? [event.ref] : event.kind === 'egress' ? event.documentRefs ?? [] : [];
+        if (!await this.referencesVisible(graph, refs)) continue;
+        const evidence = receipt?.properties.evidence;
         visibleEvents.push({ sequence: row.sequence, at: row.occurred_at, release: row.release, projection: row.projection,
-          taskId: row.task_id, scenarioId: row.scenario_id,
-          requestId: row.request_id && actionIds.includes(row.request_id) ? row.request_id : null, ...event });
+          taskId: row.task_id, scenarioId: row.scenario_id, requestId, ...event,
+          ...(typeof evidence === 'string' ? { evidence } : {}) });
       }
       const { effects, external } = await this.outcomes(access, root, actionIds);
       const history = (await db.query<{ request_id: string; sequence: string; type: string; id: string }>(`SELECT request_id,sequence::text,type,id
@@ -135,7 +148,7 @@ export class ExecutionTrace {
         [owner, actionIds])).rows;
       const visibleHistory = [];
       for (const row of history)
-        if (await this.referencesVisible(access, model, [row])) visibleHistory.push({ requestId: row.request_id, sequence: row.sequence });
+        if (await this.visibleObject(graph, row)) visibleHistory.push({ requestId: row.request_id, sequence: row.sequence });
 
       const sources = root.taskId ? (await db.query<{ name: string; state: string }>(`SELECT name,state FROM ${schema}.source_calls
         WHERE task_id=$1 AND name=ANY($2::text[]) ORDER BY name`, [root.taskId, visibleEvents.flatMap(event => event.kind === 'source' && event.callId ? [event.callId] : [])])).rows : [];
@@ -143,8 +156,7 @@ export class ExecutionTrace {
       return {
         taskId: root.taskId, state: root.state, release: root.release, projection: root.projection,
         events: visibleEvents,
-        actions: visibleActions.map(row => ({ requestId: row.request_id, taskId: row.task_id, action: row.action, release: row.release,
-          projection: row.projection, executorKind: row.executor_kind, executorId: row.executor_id, appliedAt: row.applied_at, journaled: row.changes })),
+        actions,
         editHistory: visibleHistory,
         sourceCalls: sources.map(row => ({ callId: row.name, state: row.state })),
         effects, external,
@@ -172,11 +184,17 @@ export class ExecutionTrace {
 
   private async actions(access: Access, ontology: string, root: Root, requestId: string | null, scenarios: string[]) {
     const { db } = this, schema = db.schema;
-    const rows = (await db.query<ActionRow>(`SELECT a.request_id,a.action,a.release,p.projection,a.task_id,a.applied_at,a.executor_kind,a.executor_id,
+    const rows = (await db.query<ActionRow>(`SELECT a.request_id,a.action,a.release,p.projection,
+      coalesce(a.task_id,history.task_id) AS task_id,a.applied_at,a.executor_kind,a.executor_id,a.result,
       EXISTS(SELECT 1 FROM ${schema}.action_changes j WHERE j.owner=a.owner AND j.request_id=a.request_id) AS changes
-      FROM ${schema}.actions a JOIN ${schema}.releases p ON p.digest=a.release WHERE a.owner=$1 AND a.release=$2
-        AND (a.task_id=$3 OR a.request_id=$4 OR EXISTS(SELECT 1 FROM ${schema}.edit_history h
-          WHERE h.owner=a.owner AND h.release=a.release AND h.request_id=a.request_id AND h.task_id=$3::uuid::text)
+      FROM ${schema}.actions a JOIN ${schema}.releases p ON p.digest=a.release
+      LEFT JOIN LATERAL (
+        SELECT $3::uuid AS task_id FROM ${schema}.edit_history h
+        WHERE a.task_id IS NULL AND h.owner=a.owner AND h.release=a.release AND h.request_id=a.request_id
+          AND h.task_id=$3::uuid::text LIMIT 1
+      ) history ON true
+      WHERE a.owner=$1 AND a.release=$2
+        AND (a.task_id=$3 OR a.request_id=$4 OR history.task_id IS NOT NULL
           OR EXISTS(SELECT 1 FROM ${schema}.execution_trace trace
           WHERE trace.owner=a.owner AND trace.release=a.release AND trace.request_id=a.request_id AND trace.scenario_id=ANY($5::uuid[])
             AND trace.event->>'kind'='merge'))
@@ -214,18 +232,20 @@ export class ExecutionTrace {
     return { effects, external };
   }
 
-  private async referencesVisible(access: Access, model: PublishedOntology, refs: ObjectRef[]) {
-    const graph = new Objects(this.db, model, access);
-    for (const ref of refs) {
-      if (!model.objects.has(ref.type) || !access.canRead(model, ref.type)) return false;
-      try {
-        const item = await graph.read({ type: ref.type, id: ref.id });
-        if (item.properties[model.object(ref.type).primaryKey] !== ref.id) return false;
-      } catch (error) {
-        if (error instanceof PermissionDenied || error instanceof NotFound) return false;
-        throw error;
-      }
-    }
+  private async referencesVisible(graph: Objects, refs: ObjectRef[]) {
+    for (const ref of refs)
+      if (!await this.visibleObject(graph, ref)) return false;
     return true;
+  }
+
+  private async visibleObject(graph: Objects, ref: ObjectRef) {
+    const { model, access } = graph;
+    if (!model.objects.has(ref.type) || !access.canRead(model, ref.type)) return;
+    try {
+      const item = await graph.read({ type: ref.type, id: ref.id });
+      if (item.properties[model.object(ref.type).primaryKey] === ref.id) return item;
+    } catch (error) {
+      if (!(error instanceof PermissionDenied || error instanceof NotFound)) throw error;
+    }
   }
 }

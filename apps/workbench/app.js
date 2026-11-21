@@ -2572,6 +2572,44 @@ async function renderRules() {
     ),
   );
 }
+function transferDecisionReview(memory) {
+  const fields = [
+    ['reason', '选择这个接驳时段的理由'],
+    ['alternative', '考虑过的备选'],
+    ['rejectedBecause', '放弃备选的原因'],
+    ['assumption', '需要实测核对的假设'],
+  ].map(([key, label]) => ({ key, label, input: element('textarea', { rows: '2', maxlength: '1000' }) }));
+  const travel = element('input', { type: 'number', min: '1', max: '240', step: '1' });
+  const assessment = { supported: '得到支持', refuted: '被推翻', insufficient: '证据不足' };
+  const arrival = (minutes) => (minutes < 0 ? '晚到 ' : '提前 ') + Math.abs(minutes) + ' 分钟';
+  return {
+    node: element('section', { class: 'section' },
+      element('h3', {}, '酒店接驳决策（合成）'),
+      element('p', {}, '出发 ' + memory.departure + '，最晚抵达 ' + memory.arriveBy),
+      ...memory.prior.map((item) => element('section', { class: 'surface' },
+        element('h4', {}, item.date + ' 的接驳复盘（合成）'),
+        element('p', {}, '当时的理由 ' + item.judgment.reason),
+        element('p', {}, '备选与取舍 ' + item.judgment.alternative + '，' + item.judgment.rejectedBecause),
+        element('p', {}, '假设 ' + item.judgment.assumption + '（' + assessment[item.assessment] + '）'),
+        element('p', {}, '预计' + arrival(item.expectedBufferMinutes) + '，实测' +
+          arrival(item.actualBufferMinutes) + '（车程 ' + item.actualTravelMinutes + ' 分钟）'),
+        element('p', {}, '教训 ' + item.lesson),
+        element('p', {}, '适用条件 ' + item.appliesWhen),
+      )),
+      ...fields.map(({ label, input }) => field(label, input)),
+      field('预计车程（分钟）', travel),
+    ),
+    read() {
+      const expectedTravelMinutes = Number(travel.value);
+      if (!Number.isInteger(expectedTravelMinutes) || expectedTravelMinutes < 1 || expectedTravelMinutes > 240 ||
+          fields.some(({ input }) => !input.value.trim())) {
+        throw new Error('请填写本次理由、备选、假设和预计车程。');
+      }
+      return { ...Object.fromEntries(fields.map(({ key, input }) => [key, input.value.trim()])), expectedTravelMinutes };
+    },
+  };
+}
+
 function scenarioReviews(reviews, page, refresh) {
   const inspectReview = async (item) => {
     const review = await service('inspect_scenario_review', { id: item.id });
@@ -2584,6 +2622,7 @@ function scenarioReviews(reviews, page, refresh) {
     const blocked = review.evidenceChanged
       ? '决策证据已变化。需要重新生成提案。'
       : review.conflicts ? '方案存在冲突。需要处理冲突后重新审阅。' : '';
+    const decision = review.decisionMemory && transferDecisionReview(review.decisionMemory);
     modal(review.name, element('div', {},
       element('p', {}, '方案第 ' + review.revision + ' 版'),
       blocked && element('p', {}, blocked),
@@ -2597,8 +2636,12 @@ function scenarioReviews(reviews, page, refresh) {
         element('h3', {}, '合并 Action 与外发内容'),
         element('pre', { class: 'code' }, JSON.stringify(review.commit, null, 2)),
       ),
+      decision && decision.node,
       !review.conflicts && button('批准此版本', async () => {
-        await service('approve_scenario_review', { id: review.id, revision: review.revision, snapshot: review.snapshot });
+        await service('approve_scenario_review', {
+          id: review.id, revision: review.revision, snapshot: review.snapshot,
+          ...(decision && !item.approved ? { decision: decision.read() } : {}),
+        });
         $('#editor').close();
         await refresh(page);
         notice('已批准此修订。');
