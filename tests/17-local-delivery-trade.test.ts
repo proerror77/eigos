@@ -50,13 +50,19 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
     const platformId = args.platformId as 'taobao' | 'hema';
     if (name !== 'account_cross_search') assert.equal(args.accountRef, refs[platformId]);
     const data = (value: unknown) => reply({ content: [{ type: 'text', text: JSON.stringify({ success: true, data: value }) }] });
-    if (name === 'account_cross_search') return data({
-      keyword: args.keyword, platforms: [{ ...args.accounts[0], scope: 'platform', state: 'ready', groups: [
-        { shopId: 'platform', shopName: '', addressRef, state: 'ready', hasMore: false, items: [
-          { id: 'meal1', name: '测试汉堡', price: '15.00', availability: 'available', shopId, shopName: '测试商家', shopIsRetail: false },
-        ] },
-      ] }],
-    });
+    if (name === 'account_cross_search') {
+      const owner = args.accounts[0], hema = owner.platformId === 'hema';
+      assert.equal(owner.accountRef, refs[hema ? 'hema' : 'taobao']);
+      return data({
+        keyword: args.keyword, platforms: [{ ...owner, scope: hema ? 'delivery-stores' : 'platform', state: 'ready', groups: [
+          { shopId: hema ? shopId : 'platform', shopName: hema ? '盒马测试店' : '', addressRef, state: 'ready', hasMore: false,
+            items: [hema
+              ? { id: '55', name: milk.name, price: '15.00', availability: 'available', productRef: hemaProduct }
+              : { id: 'meal1', name: hamburger.name, price: '15.00', availability: 'available', shopId, shopName: '测试商家', shopIsRetail: false }],
+          },
+        ] }],
+      });
+    }
     if (name === 'account_addresses') return data({ platformId, selectedRef: addressRef,
       addresses: [{ address: 'PRIVATE_TEST_ADDRESS', phone: 'PRIVATE_TEST_PHONE' }] });
     if (name === 'account_cart') return data(cart(platformId));
@@ -70,7 +76,7 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
     if (name === 'account_product_detail') {
       assert.equal(args.productRef, hemaProduct);
       return data({ ...bound('hema'), productRef: hemaProduct, product: { id: '55', name: '测试牛奶', price: '15.00',
-        available: true, variants: [{ id: variants.hema, name: '950ml', minimumQuantity: 1, stockQuantity: 5, quantityStep: 1 }] } });
+        available: true, variants: [{ id: variants.hema, name: '950ml', minimumQuantity: 1, stockQuantity: 5, quantityStep: 1, saleUnit: '瓶' }] } });
     }
     if (name === 'account_retail_resolve_search') {
       assert.equal(args.itemId, '66');
@@ -271,9 +277,11 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
       retailDelivery: 'earliest', maxAmountMinor: 1900 });
     assert.equal((await checkoutView(retailCheckout)).totalMinor, 1500);
 
+    const hemaSearch = await execute('SearchHemaProducts', { query: '牛奶' });
     const hemaAdded = await interactive({ alias: 'change', input: { channel: 'hema', merchantId: shopId, itemId: '55',
-      variantRef: variants.hema, query: '牛奶', quantity: 1, cartRevision: cartVersion.hema } }, 'local_delivery.cart_approval');
+      variantRef: variants.hema, query: '牛奶', quantity: 1, cartRevision: cartVersion.hema, search: hemaSearch } }, 'local_delivery.cart_approval');
     assert.equal(hemaAdded.state, 'changed');
+    assert.deepEqual((await graph.follow(hemaSearch, 'cartChanges')).map(row => row.ref), [hemaAdded.change]);
     const hema = await execute('PreviewLocalDeliveryCheckout', {
       channel: 'hema', cartRevision: cartVersion.hema, maxAmountMinor: 1900, lineIds: ['129'],
     });
