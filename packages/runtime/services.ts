@@ -618,7 +618,7 @@ export function ontologyServices(
   );
   register(
     'save_rule',
-    'Configure an object-set rule or a committed process transition rule with an optional dwell time.',
+    'Configure an object-set rule or a committed process transition rule with optional dwell time and related-object Action inputs.',
     saveRuleSchema,
     true,
     async (a, input) => automation.rule(a, await define(a), input),

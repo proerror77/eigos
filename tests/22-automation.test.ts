@@ -1,3 +1,4 @@
+import { executeHotelDependentTrip, tripHotelDependencyDefinition } from '../packages/ontology/trip-hotel-dependency.js';
 import { travelHandoffDefinition } from '../packages/ontology/travel-handoff.js';
 import { ingestMachineryHistory } from '../packages/runtime/machinery-history.js';
 import { ontologyServices } from '../packages/runtime/services.js';
@@ -269,7 +270,7 @@ test('a failing rule scan disables the rule and does not leave partial workflow 
   }finally{await f.close();}
 });
 
-async function processSetup() {
+async function processSetup(withDependentRoute = false) {
   const f = await setup();
   try {
     const definition = structuredClone(f.model.document);
@@ -286,6 +287,21 @@ async function processSetup() {
       rules:[{op:'editObject',object:{parameter:'route'},expectedRevision:{parameter:'revision'},properties:{state:{parameter:'state'}}}],
       result:{type:'Route',id:{parameter:'route',path:['id']}},
     });
+    if (withDependentRoute) {
+      definition.linkTypes.push({
+        apiName: 'SyntheticRouteDependency', description: 'Fixture route dependency',
+        from: { type: 'Route', name: 'impactedRoutes', cardinality: 'many' },
+        to: { type: 'Route', name: 'upstreamRoutes', cardinality: 'many' },
+      });
+      const rename = structuredClone(definition.actionTypes.find(action => action.apiName === 'RenameRoute')!);
+      rename.apiName = 'ReviewDependentRoute';
+      rename.parameters = {
+        type: 'object', additionalProperties: false, required: ['route', 'revision', 'name', 'upstream', 'transition'],
+        properties: { ...(rename.parameters.properties as object), upstream: object, transition: object },
+      };
+      rename.objectParameters = { ...rename.objectParameters, upstream: 'Route', transition: 'RouteStateLog' };
+      definition.actionTypes.push(rename);
+    }
     const model = await f.metadata.publish(definition, f.capabilities, f.publisher);
     await setGrants(f.db, principal.owner, businessGrants(model));
     const access = await Access.load(f.db, principal);
@@ -299,6 +315,38 @@ async function processSetup() {
     throw error;
   }
 }
+
+test('a second published process and Action reuse related dispatch and invalidate an unlinked run', async () => {
+  const f = await processSetup(true);
+  try {
+    const target = { type: 'Route', id: 'dependent' };
+    await f.graph.create(target, { id: target.id, name: 'To review' });
+    const dependency = { type: 'SyntheticRouteDependency', from: f.source, to: target };
+    await f.graph.link(dependency);
+    const related = { path: ['impactedRoutes'], sourceParameter: 'upstream', transitionParameter: 'transition', targetParameter: 'route' };
+    const rule = await f.automation.rule(f.access, f.model, {
+      name: 'Review dependent route', enabled: true,
+      process: { type: 'RouteStateLog', to: 'stalled' },
+      effect: { action: 'ReviewDependentRoute', related, input: {
+        revision: { property: '$revision' }, name: { literal: 'Reviewed from a route transition' },
+      } },
+    });
+    await f.change('stalled');
+    assert.equal(await f.automation.scanOne(), true);
+    await f.graph.unlink(dependency);
+    assert.equal(await f.automation.runOne(), true);
+    assert.equal((await f.graph.read(target)).properties.name, 'To review');
+    assert.equal((await f.runs())[0]!.state, 'canceled');
+    await f.graph.link(dependency);
+    await f.automation.rule(f.access, f.model, { ...rule, replayFrom: '0' });
+    assert.equal(await f.automation.scanOne(), true);
+    assert.equal(await f.automation.runOne(), true);
+    assert.equal((await f.graph.read(target)).properties.name, 'Reviewed from a route transition');
+    assert.equal((await f.graph.read(f.source)).properties.name, 'original');
+  } finally {
+    await f.close();
+  }
+});
 
 test('process rules deliver each committed matching transition between polls and replay checkpoints without duplicates',async()=>{
   const f = await processSetup();
@@ -631,7 +679,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const laterDomains = [
     calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition, fliggyServicesDefinition,
     fliggyFlightBookingDefinition, fliggyHotelDefinition, diningReservations, marketplaceDefinition, petRideDefinition,
-    travelHandoffDefinition, hotelTransferDefinition,
+    travelHandoffDefinition, hotelTransferDefinition, tripHotelDependencyDefinition,
   ];
   const addedTypes = new Set([
     ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType, immediateRideType,
@@ -642,6 +690,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const addedActions = new Set(laterDomains.flatMap(domain => domain.actionTypes.map(action => action.apiName)));
   for (const action of didiOrderDefinitions.actionTypes) addedActions.add(action.apiName);
   addedActions.add(bookImmediateRideAction);
+  addedActions.add(executeHotelDependentTrip);
   addedActions.add('StageDiningActivity');
   addedActions.add('StageScheduleRecommendation');
   const addedFunctions = new Set([
@@ -688,6 +737,10 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   v9Definition.objectTypes = v9Definition.objectTypes.filter(type => !addedTypes.has(type.apiName) && !addedLogs.some(log => log.type === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'ScheduledActivity')!.properties.dining;
   delete v9Definition.objectTypes.find(type => type.apiName === 'EventTripStateLog')!.machinery;
+  const tripProperties = v9Definition.objectTypes.find(type => type.apiName === 'EventTrip')!.properties;
+  delete tripProperties.hotelBooking;
+  delete tripProperties.pendingHotelDependencyReview;
+  v9Definition.actionTypes.find(action => action.apiName === 'AuthorizeEventTrip')!.submissionCriteria = [];
   const routeProperties = v9Definition.objectTypes.find(type => type.apiName === 'Route')!.properties;
   delete routeProperties.pickup;
   delete routeProperties.drivingEstimate;
@@ -698,6 +751,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     !calendarJourneyDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !travelHandoffDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !hotelTransferDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    !tripHotelDependencyDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !fliggyServicesDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !marketplaceDefinition.linkTypes.some(link => link.apiName === type.apiName));
   v9Definition.dataSources = v9Definition.dataSources.filter(source =>

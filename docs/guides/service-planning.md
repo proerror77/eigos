@@ -221,3 +221,31 @@ Shopify [Global Catalog](https://shopify.dev/docs/agents/catalog/global-catalog)
 ```
 
 此模式使用 Shopify 的固定 Global Catalog 地址，无需商家店铺、API 密钥或用户登录。仅本机 loopback 开发模式使用 Shopify 官方示例 profile；生产绑定始终使用本方 Gateway 发布的 profile。现有客户端凭据绑定继续使用原有 token 交换路径。
+
+## 酒店订单取消后的接送复核
+
+正式行程确定依赖后，由原身份调用 `BindTripHotelBooking`，传入 `trip`、`plan`、`booking` 和接送的当前 `revision`。绑定针对原订单和具体接送，原计划同时归集接送和复核结果。同程的其他接送仍按各自条件执行。已有行程只有在能核验原始关系时才补绑定；当前入口接受尚未授权的行程。绑定已取消的原订单后，回放它的正式取消转换可生成复核结果。
+
+由具有原单、关系和回读 Action 权限的身份使用现有 `save_rule` 登记一次规则。之后供应商回读提交的取消转换由 Indexer 消费。
+
+```json
+{
+  "name": "Review trips after confirmed hotel cancellation",
+  "enabled": true,
+  "process": { "type": "FliggyHotelBookingStateLog", "to": "cancelled" },
+  "effect": {
+    "action": "ReviewTripHotelDependency",
+    "input": {},
+    "related": {
+      "path": ["dependentTrips"],
+      "sourceParameter": "booking",
+      "transitionParameter": "transition",
+      "targetParameter": "trip"
+    }
+  }
+}
+```
+
+接送和行程都可沿 `hotelDependencyReviews` 读回处置。复核保留正式转换引用、原酒店订单、能定位的原车单以及需要重新授权的状态。已有车单只回查原单，仍待确认的原操作进入 `awaiting_original_order`。未发单时撤销旧的计划执行许可，并停止仍待执行的原排程。绑定核验后的新酒店订单后，`ReplanTripHotelDependency` 使用新查或仍有效的路线，重新校验并更新原接送的时段和活动。原 PA 使用 `AuthorizeEventTrip`，传入调整后接送的当前修订和许可。批准校验该修订对应的待审复核，并在同一事务中更新复核及建立新的内部排程。
+
+授权和 `ExecuteHotelDependentTrip` 提交供应商发单意图前都会重读已绑定酒店订单，所以前序取消已经提交、Indexer 暂未处理时，旧接送也会停止在供应商写入之前。若原供应商操作意图先提交，则保留其回执并回查原操作。初次启用前或消费后才补的关系，需要从对应转换前显式重放。过程规则、读取权限、来源连接和真实履约各自校验。

@@ -16,6 +16,7 @@ import { ScheduledActions, ScheduledActionRunner } from '../packages/runtime/sch
 import { Objects } from '../packages/runtime/objects.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import { fixture, principal } from './fixture.js';
+import { seedPlan } from './service-fixture.js';
 import {
   deliveryType, hotelLifecycleDefinition, paReportType, recordDelivery, recordPAReport, startHotelLifecycleIndexer,
 } from './fliggy-hotel-lifecycle-fixture.js';
@@ -232,6 +233,22 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
       process: { type: 'FliggyHotelBookingStateLog', from: 'confirmed', to: 'cancelled' },
       effect: { action: recordDelivery, input: { booking: { object: true } } },
     });
+    const { plan } = await seedPlan(f);
+    const trip = { type: 'EventTrip', id: 'hotel-transfer' };
+    const now = new Date().toISOString();
+    await graph.create(trip, {
+      id: trip.id, name: 'Synthetic hotel transfer', state: 'proposed', eventStart: now, eventEnd: now,
+      callAt: now, departAt: now, arriveAt: now, waitMinutes: 0, entryMinutes: 0, permit: null, scheduleId: null,
+      sourceTaskId: null, eventIdentity: 'fixture-event', eventBindingId: 'fixture-event-source',
+      sourceAuthority: 'synthetic-didi', venueAddress: 'Synthetic hotel', nextCheckAt: null,
+    });
+    await graph.link({ type: 'TripPlan', from: trip, to: plan });
+    await act('BindTripHotelBooking', { trip, plan, booking: second, revision: (await graph.read(trip)).revision });
+    await automation.rule(await Access.load(f.db, principal), f.model, {
+      name: 'Review dependent trips', enabled: true, process: { type: 'FliggyHotelBookingStateLog', to: 'cancelled' },
+      effect: { action: 'ReviewTripHotelDependency', input: {},
+        related: { path: ['dependentTrips'], sourceParameter: 'booking', transitionParameter: 'transition', targetParameter: 'trip' } },
+    });
     indexer = startHotelLifecycleIndexer(f.schema);
 
     const cancelRequest = randomUUID();
@@ -293,6 +310,18 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
     const delivery = { type: deliveryType, id: second.id };
     assert.deepEqual(deliveries, [{ result: delivery }]);
     assert.deepEqual((await graph.follow(delivery, 'booking')).map(row => row.ref), [second]);
+    await indexer.waitFor('dependent trip review', async () => {
+      const reviews = await graph.follow(plan, 'hotelDependencyReviews');
+      if (!reviews.length) return;
+      assert.equal(reviews.length, 1);
+      const [review] = reviews;
+      assert.deepEqual(review!.properties.transition, transition.ref);
+      assert.equal(review!.properties.authorizationState, 'awaiting_authorization');
+      assert.deepEqual((await graph.follow(review!.ref, 'trip')).map(item => item.ref), [trip]);
+      return true;
+    });
+    assert.equal(f.provider.flags.orderCreates, 0);
+    assert.equal(f.provider.flags.orderQueries, 0);
 
     await indexer.stop();
     indexer = undefined;

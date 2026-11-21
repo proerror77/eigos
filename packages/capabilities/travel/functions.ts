@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { readDidiDriving } from '../didi/driving.js';
-import { Conflict, digest } from '../../core/identity.js';
-import { objectRefSchema, type ObjectData, type ObjectRef } from '../../ontology/schema.js';
+import { Conflict, NotFound, digest } from '../../core/identity.js';
+import { objectRefSchema, type LinkData, type ObjectData, type ObjectRef } from '../../ontology/schema.js';
 import {
   driveInput,
   cancelRideInput,
@@ -16,6 +16,11 @@ import {
   registrationAuthorization,
   registrationReply,
 } from '../../ontology/travel.js';
+import {
+  bindTripHotelInput, executeHotelDependentTrip, hotelBookingType, hotelCancellationLog, hotelDependencyLink, replanTripHotelInput, reviewTripHotelInput, tripHotelCurrent, tripHotelReviewType,
+} from '../../ontology/trip-hotel-dependency.js';
+import { readProcessTransitions } from '../../runtime/process-logs.js';
+import { processLogTarget } from '../../ontology/process-definition.js';
 import { eventFacts, json, type ServiceName } from '../../ontology/service-contracts.js';
 import { Objects } from '../../runtime/objects.js';
 import { ExternalOperations, UnknownExternalOperation } from '../../runtime/external-operations.js';
@@ -66,7 +71,9 @@ function timing(start: string, end: string, duration: number, wait: number, entr
 async function route(objects: Reader, travel: ObjectRef) {
   return [await one(objects, travel, 'origin'), await one(objects, travel, 'destination')];
 }
-async function updateActivities(graph: Objects, trip: ObjectData, times: ReturnType<typeof timing>) {
+async function updateActivities(
+  graph: Objects, trip: ObjectData, times: ReturnType<typeof timing>, fields: Record<string, unknown> = {},
+) {
   const activities = await graph.follow(trip.ref, 'activities');
   if (activities.length !== 2) throw new Conflict('Trip activity allocation changed');
   const travel = activities.find((a) => a.ref.id === digest([trip.ref.id, 'travel'])),
@@ -74,7 +81,7 @@ async function updateActivities(graph: Objects, trip: ObjectData, times: ReturnT
   if (!travel || !event) throw new Conflict('Trip activities are not the original allocation');
   await graph.edit(travel.ref, travel.revision, { start: times.callAt, end: times.eventStart });
   await graph.edit(event.ref, event.revision, { start: times.eventStart, end: times.eventEnd });
-  await graph.edit(trip.ref, trip.revision, times);
+  await graph.edit(trip.ref, trip.revision, { ...times, ...fields });
 }
 export function travelFunctions(
   db: Database,
@@ -214,6 +221,79 @@ export function travelFunctions(
         throw new Conflict('Trip conflicts with the current schedule');
     });
   }));
+  handlers.set(tripHotelCurrent, async (raw, { objects }) => {
+    const { trip } = tripRef.parse(raw);
+    const current = await objects.read(trip);
+    const booking = current.properties.hotelBooking;
+    // A stored reference distinguishes an unbound trip from a link hidden by current permissions.
+    if (booking === undefined) return true;
+    const expected = objectRefSchema.safeParse(booking);
+    if (!expected.success) return false;
+    const links = await objects.follow(trip, 'hotelBooking');
+    return links.length === 1 && same(expected.data, links[0]!.ref) &&
+      links[0]!.properties.state === 'confirmed' && links[0]!.properties.independentRead === true;
+  });
+  handlers.set('bindTripHotelBooking', async (raw, context) => {
+    const input = bindTripHotelInput.parse(raw);
+    if (!context.edit || !context.directAction || context.objects.model.scenario)
+      throw new Conflict('Submit the hotel dependency on the live trip explicitly');
+    return context.edit(input.trip, async graph => {
+      const trip = await graph.read(input.trip);
+      const plan = await one(graph, input.trip, 'plan');
+      const booking = await graph.read(input.booking);
+      if (trip.revision !== input.revision || trip.properties.state !== 'proposed' || !same(plan.ref, input.plan))
+        throw new Conflict('Use the current proposed trip and its original plan');
+      if (booking.properties.independentRead !== true || !['confirmed', 'cancelled'].includes(String(booking.properties.state)))
+        throw new Conflict('Verify the original hotel booking before binding it to this trip');
+      if (!await graph.propertyVisible(trip.ref, 'hotelBooking'))
+        throw new Conflict('Trip hotel dependency is unavailable');
+      const previous = await graph.follow(trip.ref, 'hotelBooking');
+      const recorded = objectRefSchema.safeParse(trip.properties.hotelBooking);
+      if (trip.properties.hotelBooking !== undefined && (!recorded.success || previous.length !== 1 || !same(previous[0]!.ref, recorded.data)))
+        throw new Conflict('Trip hotel dependency is unavailable');
+      for (const prior of previous) {
+        if (!same(prior.ref, input.booking))
+          await graph.unlink({ type: hotelDependencyLink, from: trip.ref, to: prior.ref });
+      }
+      await graph.link({ type: hotelDependencyLink, from: trip.ref, to: booking.ref });
+      await graph.edit(trip.ref, trip.revision, { hotelBooking: booking.ref });
+    });
+  });
+  handlers.set('replanTripHotelDependency', async (raw, context) => {
+    const input = replanTripHotelInput.parse(raw);
+    if (!context.edit || context.objects.model.scenario)
+      throw new Conflict('Replan the original live trip');
+    return context.edit(input.trip, async graph => {
+      const trip = await graph.read(input.trip), review = await graph.read(input.dependencyReview);
+      const pending = objectRefSchema.safeParse(trip.properties.pendingHotelDependencyReview);
+      if (trip.revision !== input.revision || trip.properties.state !== 'proposed' || !pending.success ||
+          !same(pending.data, review.ref) || review.properties.authorizationState !== 'awaiting_authorization')
+        throw new Conflict('Use the current trip and its pending dependency review');
+      const plan = await one(graph, trip.ref, 'plan');
+      const event = await currentService(graph, (await one(graph, trip.ref, 'event')).ref);
+      const travel = await graph.read(input.travel);
+      fresh(travel);
+      if (!graph.model.implements(travel.ref.type, 'DrivingEstimate') || event.properties.status !== 'active' ||
+          event.properties.locationPrecision !== 'exact')
+        throw new Conflict('A current route and active exact venue are required');
+      const times = timing(String(event.properties.start), String(event.properties.end),
+        requiredNumber(travel.properties.durationSeconds), requiredNumber(trip.properties.waitMinutes),
+        requiredNumber(trip.properties.entryMinutes));
+      if (ms(times.callAt) <= Date.now()) throw new Conflict('There is insufficient time for this trip');
+      const oldTravel = await one(graph, trip.ref, 'travel');
+      if (!same(oldTravel.ref, travel.ref)) {
+        await graph.unlink({ type: 'TripTravel', from: trip.ref, to: oldTravel.ref });
+        await graph.link({ type: 'TripTravel', from: trip.ref, to: travel.ref });
+      }
+      await updateActivities(graph, trip, times, {
+        eventBindingId: event.properties.bindingId, sourceAuthority: travel.properties.authorityId,
+        venueAddress: event.properties.address,
+      });
+      if (!(await validate(graph, plan.ref, trip.ref)).valid)
+        throw new Conflict('The new route conflicts with the current plan');
+      await graph.edit(review.ref, review.revision, { plannedTripRevision: (await graph.read(trip.ref)).revision });
+    });
+  });
   handlers.set('authorizeEventTrip', async (raw, context) => {
     const input = authorizeTripInput.parse(raw);
     if (!context.edit || context.execution || context.objects.model.scenario)
@@ -231,6 +311,22 @@ export function travelFunctions(
         registration = await graph.read(input.permit.registration);
       if (trip.ref.type !== 'EventTrip' || trip.revision !== input.revision || trip.properties.state !== 'proposed')
         throw new Conflict('Trip changed after review');
+      if (trip.properties.hotelBooking !== undefined && !context.directAction)
+        throw new Conflict('The PA must explicitly authorize the reviewed hotel trip');
+      const pending = trip.properties.pendingHotelDependencyReview;
+      if (pending !== undefined && !await graph.propertyVisible(trip.ref, 'pendingHotelDependencyReview'))
+        throw new Conflict('The current trip dependency review is unavailable');
+      let dependencyReview: ObjectData | undefined;
+      if (pending !== undefined && pending !== null) {
+        const expected = objectRefSchema.safeParse(pending);
+        if (!expected.success) throw new Conflict('The current trip dependency review is unavailable');
+        dependencyReview = await graph.read(expected.data);
+        if (dependencyReview.properties.authorizationState !== 'awaiting_authorization' ||
+            !same((await one(graph, dependencyReview.ref, 'trip')).ref, trip.ref))
+          throw new Conflict('Trip dependency review is no longer awaiting authorization');
+        if (dependencyReview.properties.plannedTripRevision !== trip.revision)
+          throw new Conflict('Revalidate the current trip revision before approving the dependency review');
+      }
       if (trip.properties.sourceAuthority !== (source.authorityId ?? digest(source.bindingId)))
         throw new Conflict('Ride source authority changed after planning');
       await currentService(graph, event.ref);
@@ -254,11 +350,19 @@ export function travelFunctions(
         throw new Conflict('Trip schedule is no longer feasible');
       const id = digest(['ride', graph.owner, input.trip.id, input.revision]),
         runAt = iso(Math.max(Date.now(), ms(trip.properties.callAt) - 10 * 60000));
-      await graph.edit(input.trip, trip.revision, { state: 'authorized', permit: input.permit, scheduleId: id });
+      await graph.edit(input.trip, trip.revision, {
+        state: 'authorized', permit: input.permit, scheduleId: id,
+        ...(dependencyReview ? { pendingHotelDependencyReview: null } : {}),
+      });
+      if (dependencyReview) {
+        await graph.edit(dependencyReview.ref, dependencyReview.revision, {
+          authorizationState: 'authorized', authorizationRequestId: context.operationId,
+        });
+      }
       await graph.link({ type: 'TripRegistration', from: input.trip, to: input.permit.registration });
       await schedules.enqueue(graph, {
         id,
-        action: 'ExecuteEventTrip',
+        action: trip.properties.hotelBooking === undefined ? 'ExecuteEventTrip' : executeHotelDependentTrip,
         arguments: { trip: input.trip },
         runAt,
         deadline: input.permit.latestCall,
@@ -293,6 +397,8 @@ export function travelFunctions(
       externalOperation: trip.properties.scheduleId
         ? await effects.inspect(context.principal.owner, String(trip.properties.scheduleId))
         : null,
+      ...(context.objects.model.links.has('TripHotelReviewTrip')
+        ? { hotelDependencyReviews: await context.objects.follow(ref, 'hotelDependencyReviews') } : {}),
       externalCalendarUpdated: false,
     };
   });
@@ -320,37 +426,130 @@ export function travelFunctions(
       await graph.edit(trip, current.revision, { state: 'dispatched', nextCheckAt: null });
     return ref;
   };
-  handlers.set('refreshDidiRideOrder', async (raw, context) => {
-    const { trip: ref } = tripRef.parse(raw);
-    if (!context.edit) throw new Conflict('Use an Action');
-    const trip = await context.objects.read(ref),
-      source = await resolve(context.principal.owner);
+  const readRideOrder = async (context: FunctionContext, trip: ObjectData) => {
+    const ref = trip.ref, source = await resolve(context.principal.owner);
     await source.assertCurrent();
-    if (!source.orders || trip.ref.type !== 'EventTrip' || !trip.properties.scheduleId)
+    if (!source.orders || ref.type !== 'EventTrip' || !trip.properties.scheduleId)
       throw new Conflict('No original ride operation');
     if (trip.properties.sourceAuthority !== (source.authorityId ?? digest(source.bindingId)))
       throw new Conflict('Original ride source authority is unavailable');
     const stored = await context.objects.follow(ref, 'order');
-    if (stored.length > 1 || stored.some((item) => item.properties.bindingId !== source.bindingId))
+    if (stored.length > 1 || stored.some(item => item.properties.bindingId !== source.bindingId))
       throw new Conflict('Original ride identity is ambiguous');
     const original = stored.length
-      ? { orderId: String(stored[0]!.properties.orderId) }
-      : rideOrderSchema.parse(
-          await effects.recover(
-            context.principal.owner,
-            String(trip.properties.scheduleId),
-            effectScope(trip),
-            context.objects,
-          ),
-        );
-    if (stored.length && typeof stored[0]!.properties.orderId !== 'string')
+      ? { orderId: stored[0]!.properties.orderId }
+      : rideOrderSchema.parse(await effects.recover(
+          context.principal.owner, String(trip.properties.scheduleId), effectScope(trip), context.objects,
+        ));
+    if (typeof original.orderId !== 'string')
       throw new Conflict('Original provider order identity is unavailable');
-    const result = rideOrderSchema.parse(await source.orders.query(original.orderId, context.signal));
+    const order = rideOrderSchema.parse(await source.orders.query(original.orderId, context.signal));
     await source.assertCurrent();
-    if (result.orderId !== original.orderId || !result.independentRead)
+    if (order.orderId !== original.orderId || !order.independentRead)
       throw new Conflict('Independent original-order readback is required');
-    return context.edit(ref, async (graph) => {
-      await projectOrder(graph, ref, result, source.bindingId);
+    return { order, source, originalRevision: stored[0]?.revision };
+  };
+  handlers.set('refreshDidiRideOrder', async (raw, context) => {
+    const { trip: ref } = tripRef.parse(raw);
+    if (!context.edit) throw new Conflict('Use an Action');
+    const { order, source } = await readRideOrder(context, await context.objects.read(ref));
+    return context.edit(ref, async graph => {
+      await projectOrder(graph, ref, order, source.bindingId);
+    });
+  });
+  handlers.set('reviewTripHotelDependency', async (raw, context) => {
+    const input = reviewTripHotelInput.parse(raw);
+    if (!context.edit || context.objects.model.scenario)
+      throw new Conflict('Review the dependency of the live trip');
+    const ref = { type: tripHotelReviewType, id: digest([input.transition, input.trip]) };
+    const original = await context.objects.read(input.trip);
+    const checkCancellation = async (objects: Reader, trip: ObjectData) => {
+      const booking = await one(objects, trip.ref, 'hotelBooking');
+      const log = await objects.read(input.transition);
+      const expected = objectRefSchema.safeParse(trip.properties.hotelBooking);
+      if (!expected.success || !same(expected.data, input.booking) || !same(booking.ref, input.booking) ||
+          booking.ref.type !== hotelBookingType || log.ref.type !== hotelCancellationLog ||
+          booking.properties.state !== 'cancelled' || booking.properties.independentRead !== true ||
+          log.properties.processId !== booking.ref.id || log.properties.newState !== 'cancelled')
+        throw new Conflict('The original confirmed cancellation no longer applies to this trip');
+      return log;
+    };
+    await checkCancellation(context.objects, original);
+    const existing = await context.objects.read(ref).catch(error => {
+      if (!(error instanceof NotFound)) throw error;
+    });
+    let readback: Awaited<ReturnType<typeof readRideOrder>> | undefined;
+    if (!existing && original.properties.scheduleId) {
+      const order = await context.objects.follow(input.trip, 'order');
+      const effect = await effects.inspect(context.principal.owner, String(original.properties.scheduleId));
+      if (order.length || effect?.state === 'confirmed') {
+        context.objects.access.source(context.objects.model, 'Didi');
+        try {
+          readback = await readRideOrder(context, original);
+        } catch (error) {
+          context.signal.throwIfAborted();
+          if (error instanceof UnknownExternalOperation) throw error;
+          // The cancellation is still actionable when the original ride cannot be refreshed.
+        }
+      }
+    }
+    return context.edit(ref, async graph => {
+      if (await graph.read(ref).catch(error => {
+        if (!(error instanceof NotFound)) throw error;
+      })) return;
+      const trip = await graph.read(input.trip);
+      const log = await checkCancellation(graph, trip);
+      const target = processLogTarget(graph.model, hotelCancellationLog)!;
+      const [latest] = await readProcessTransitions(db, graph.model, graph.owner, target, graph.client, { latestFor: input.booking.id });
+      if (latest?.sequence !== log.properties.sequence)
+        throw new Conflict('The original confirmed cancellation no longer applies to this trip');
+      const plan = await one(graph, trip.ref, 'plan');
+      const scheduleId = typeof trip.properties.scheduleId === 'string' ? trip.properties.scheduleId : undefined;
+      const effect = scheduleId ? await effects.inspect(graph.owner, scheduleId, graph.client) : null;
+      let [order] = await graph.follow(trip.ref, 'order');
+      if (readback && original.properties.scheduleId === scheduleId &&
+          order?.revision === readback.originalRevision) {
+        await readback.source.assertCurrent();
+        const orderRef = await projectOrder(graph, trip.ref, readback.order, readback.source.bindingId);
+        order = await graph.read(orderRef);
+      }
+      const orderState = order || effect?.state === 'confirmed' || trip.properties.state === 'dispatched'
+        ? 'original_order' : effect ? 'dispatch_unresolved' : 'not_submitted';
+      const requiresAuthorization = trip.properties.state !== 'canceled' || orderState !== 'not_submitted';
+      let suspendedScheduleId: string | undefined;
+      if (scheduleId && trip.properties.state === 'authorized' && orderState === 'not_submitted') {
+        const scheduled = await schedules.inspect(context.principal, scheduleId, graph.client);
+        if (['scheduled', 'submitted', 'working', 'input-required', 'blocked'].includes(scheduled.state)) await schedules.cancel(graph, scheduleId);
+        suspendedScheduleId = scheduleId;
+      }
+      if (requiresAuthorization && orderState === 'not_submitted') {
+        const previous = objectRefSchema.safeParse(trip.properties.pendingHotelDependencyReview);
+        if (previous.success) {
+          const older = await graph.read(previous.data);
+          if (older.properties.authorizationState === 'awaiting_authorization')
+            await graph.edit(older.ref, older.revision, { authorizationState: 'superseded' });
+        }
+        await graph.edit(trip.ref, trip.revision, {
+          state: 'proposed', permit: null, scheduleId: null, nextCheckAt: null, pendingHotelDependencyReview: ref,
+        });
+      }
+      await graph.create(ref, {
+        id: ref.id, name: 'Hotel cancellation trip review', reviewedAt: new Date().toISOString(),
+        orderState, requiresAuthorization, transition: log.ref,
+        authorizationState: !requiresAuthorization ? 'not_required'
+          : orderState === 'not_submitted' ? 'awaiting_authorization' : 'awaiting_original_order',
+        readback: order?.properties.independentRead === true ? 'verified'
+          : orderState === 'original_order' ? 'unavailable'
+            : orderState === 'dispatch_unresolved' ? 'original_identity_required' : 'not_needed',
+        ...(suspendedScheduleId ? { suspendedScheduleId } : {}),
+      });
+      const links: LinkData[] = [
+        { type: 'TripHotelReviewPlan', from: ref, to: plan.ref },
+        { type: 'TripHotelReviewTrip', from: ref, to: trip.ref },
+        { type: 'TripHotelReviewBooking', from: ref, to: input.booking },
+      ];
+      if (order) links.push({ type: 'TripHotelReviewOrder', from: ref, to: order.ref });
+      await graph.linkBatch(links);
     });
   });
   const cancellationKey = (bindingId: string, orderId: string) => digest(['cancel-didi-original-order', bindingId, orderId]);
@@ -482,7 +681,8 @@ export function travelFunctions(
     if (
       ref.type !== 'EventTrip' ||
       trip.properties.state !== 'authorized' ||
-      trip.properties.scheduleId !== call.scheduleId
+      trip.properties.scheduleId !== call.scheduleId ||
+      (trip.properties.hotelBooking !== undefined) !== (call.action === executeHotelDependentTrip)
     )
       throw new Conflict('Trip authorization is unavailable');
     const source = await resolve(context.principal.owner);

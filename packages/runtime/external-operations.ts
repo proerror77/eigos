@@ -16,11 +16,11 @@ export class UnknownExternalOperation extends Conflict {}
  * unresolved original operation, never permission to submit another order. */
 export class ExternalOperations {
   constructor(private readonly db: Database) {}
-  async inspect(owner: string, key: string) {
+  async inspect(owner: string, key: string, client?: Sql) {
     const row = (
       await this.db.query(
         `SELECT state,created_at,updated_at FROM ${this.db.schema}.external_operations WHERE owner=$1 AND operation_key=$2`,
-        [owner, key],
+        [owner, key], client,
       )
     ).rows[0];
     return row ? { state: row.state, createdAt: row.created_at, updatedAt: row.updated_at } : null;

@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { Conflict, NotFound } from '../core/identity.js';
+import { Conflict, NotFound, digest } from '../core/identity.js';
 import { processLogTarget } from '../ontology/process-definition.js';
-import { objectRefSchema } from '../ontology/schema.js';
+import { objectRefSchema, ontologyName, type ObjectRef } from '../ontology/schema.js';
 import { PermissionDenied } from './access.js';
 import type { Objects } from './objects.js';
 import { readProcessTransitions } from './process-logs.js';
@@ -18,11 +18,14 @@ export const processStatusSchema = z.strictObject({
   object: objectRefSchema,
 });
 
+export const processRelatedPath = z.array(ontologyName).min(1).max(3);
+
 export const processTriggerSchema = z.strictObject({
   ruleId: z.uuid(),
   revision: z.number().int().positive(),
   sequence: z.string().regex(/^\d{1,19}$/),
   process: processRuleSchema,
+  relatedPath: processRelatedPath.optional(),
 });
 
 export function processTarget(graph: Objects, rule: z.output<typeof processRuleSchema>) {
@@ -57,6 +60,21 @@ export async function matchingTransition(graph: Objects, rule: z.output<typeof p
   if (rule.from === null && !await graph.propertyVisible(log.ref, 'oldState'))
     return undefined;
   return log;
+}
+
+export async function relatedProcessObjects(graph: Objects, source: ObjectRef, path: string[]) {
+  let layer = [source];
+  for (const link of path) {
+    const targets = new Map<string, ObjectRef>();
+    for (const ref of layer) {
+      for (const item of await graph.follow(ref, link, ref.type, 100)) {
+        targets.set(digest(item.ref), item.ref);
+        if (targets.size > 100) throw new Conflict('A process rule can bind at most 100 related objects');
+      }
+    }
+    layer = [...targets.values()];
+  }
+  return layer;
 }
 
 /** Only show schedules whose entire argument is the authorized process object. */
