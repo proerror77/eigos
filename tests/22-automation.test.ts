@@ -40,6 +40,8 @@ import type { ObjectRef } from '../packages/ontology/schema.js';
 import { Ontology } from '../packages/ontology/model.js';
 import { addProcessLogs, processLogTarget } from '../packages/ontology/process-definition.js';
 import { bookImmediateRideAction, immediateOrderLink, immediateRideInterface, immediateRideType } from '../packages/ontology/didi-immediate-ride.js';
+import { partnerRideLifecycle } from '../packages/ontology/partner-ride-lifecycle.js';
+import { partnerRideDefinitions } from '../packages/ontology/partner-rides.js';
 import { didiReadDefinitions } from '../packages/ontology/didi-reads.js';
 import { didiOrderDefinitions } from '../packages/ontology/travel.js';
 import { calendarJourneyDefinition } from '../packages/ontology/calendar-journey.js';
@@ -684,7 +686,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const laterDomains = [
     calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition, fliggyServicesDefinition,
     fliggyFlightBookingDefinition, fliggyHotelDefinition, diningReservations, marketplaceDefinition, petRideDefinition,
-    travelHandoffDefinition, hotelTransferDefinition, tripHotelDependencyDefinition, itineraryDefinition, localDeliveryDefinition, localDeliveryTradeDefinition,
+    travelHandoffDefinition, hotelTransferDefinition, tripHotelDependencyDefinition, itineraryDefinition, localDeliveryDefinition, localDeliveryTradeDefinition, partnerRideLifecycle,
   ];
   const addedTypes = new Set([
     ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType, immediateRideType,
@@ -700,7 +702,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   addedActions.add('StageDiningActivity');
   addedActions.add('StageScheduleRecommendation');
   const addedFunctions = new Set([
-    ...laterDomains.flatMap(domain => domain.functionTypes), ...scheduleJourneyDefinition.functionTypes, ...didiOrderDefinitions.functionTypes, ...didiReadDefinitions,
+    ...laterDomains.flatMap(domain => domain.functionTypes), ...scheduleJourneyDefinition.functionTypes, ...didiOrderDefinitions.functionTypes, ...didiReadDefinitions, ...partnerRideDefinitions,
     ...deliveryFunctions, ...locationFunctions, ...mapFunctions, ...dianpingResearchFunctions, flightPositionFunction,
   ].map(fn => fn.apiName));
   for (const name of ['stageDiningActivity', 'searchRestaurantNotes', 'readWeatherHistory', 'readDiningAvailability']) addedFunctions.add(name);
@@ -735,7 +737,8 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     !marketplaceDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
     !localDeliveryDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
     !localDeliveryTradeDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
-    !petRideDefinition.interfaceTypes.some(item => item.apiName === type.apiName));
+    !petRideDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
+    !partnerRideLifecycle.interfaceTypes.some(item => item.apiName === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;
   const didiOrder = v9Definition.objectTypes.find(type => type.apiName === 'DidiRideOrder')!;
   delete didiOrder.properties.cancellationReceipt;
@@ -764,7 +767,8 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     !scheduleJourneyDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !fliggyServicesDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !marketplaceDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
-    !localDeliveryTradeDefinition.linkTypes.some(link => link.apiName === type.apiName));
+    !localDeliveryTradeDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    !partnerRideLifecycle.linkTypes.some(link => link.apiName === type.apiName));
   v9Definition.dataSources = v9Definition.dataSources.filter(source =>
     !fliggyServicesDefinition.dataSources.some(item => item.apiName === source.apiName) &&
     !hotelTransferDefinition.dataSources.some(item => item.apiName === source.apiName) &&

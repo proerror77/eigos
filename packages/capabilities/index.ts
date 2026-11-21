@@ -38,6 +38,8 @@ import { businessDefinition } from '../ontology/definition.js';
 import type { SourceResolver } from './didi/functions.js';
 import { didiRideWatchFunctions } from './didi/ride-watch.js';
 import { petRideFunctions } from './didi/pet-ride.js';
+import { partnerRideLifecycleFunctions } from './partner-rides/lifecycle.js';
+import { partnerRideFunctions } from './partner-rides/functions.js';
 import { rideCapabilities } from './didi/pipeline.js';
 import { schedulingFunctions } from './scheduling/functions.js';
 import { transferDecisionFunctions, transferDecisionSupport, transferObservationProjection } from './scheduling/transfer-decisions.js';
@@ -60,6 +62,7 @@ export function configuredCapabilities(db: Database, config: ConnectionConfig, e
   return createCapabilities(db, source, extensions,
     configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE, undefined, marketplaceFetch, config),
     configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
+      partnerRides: config.EIGOS_PARTNER_RIDE_CONNECTION_FILE,
       fliggyFlight: config.EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE,
       fliggyHotel: config.EIGOS_FLIGGY_HOTEL_CONNECTION_FILE,
       paotui: config.EIGOS_PAOTUI_CONNECTION_FILE,
@@ -88,7 +91,7 @@ export function createCapabilities(
   extensions: RuntimeExtensions = {},
   services: ServiceResolver = unavailableServices,
   stripe: StripeSandboxResolver = configuredStripeSandbox(),
-  connections: { paotui?: string; waimai?: string; localDelivery?: DeliveryConnectionPaths; localDeliveryFetch?: typeof fetch; amap?: string; amapFetch?: typeof fetch; variFlight?: string; variFlightFetch?: typeof fetch;
+  connections: { partnerRides?: string; paotui?: string; waimai?: string; localDelivery?: DeliveryConnectionPaths; localDeliveryFetch?: typeof fetch; amap?: string; amapFetch?: typeof fetch; variFlight?: string; variFlightFetch?: typeof fetch;
     fr24?: string; fr24Entrypoint?: string; calendar?: string; calendarFetch?: typeof fetch; travelPA?: string; travelPAFetch?: typeof fetch;
     xiaohongshu?: string; xiaohongshuFetch?: typeof fetch; dianping?: string; dianpingFetch?: typeof fetch; diningWeb?: string; diningMiniProgram?: string;
     fliggyHotel?: string; fliggyHotelFetch?: typeof fetch; fliggyFlight?: string; fliggyFlightFetch?: typeof fetch } = {},
@@ -116,6 +119,8 @@ export function createCapabilities(
     ...fliggyHotelFunctions(db, configuredFliggyHotel(connections.fliggyHotel, connections.fliggyHotelFetch)),
     ...travelFunctions(db, source, services, () => sources),
     ...didiRideWatchFunctions(db, source),
+    ...partnerRideFunctions(connections.partnerRides),
+    ...partnerRideLifecycleFunctions(db, getFunctions),
     ...petRideFunctions(db),
     ...calendarJourneyFunctions(db, getFunctions, amap, configuredJourneyCalendar(connections.calendar, connections.calendarFetch)),
     ...flightFunctions(db, getFunctions, configuredVariFlight(connections.variFlight, connections.variFlightFetch),

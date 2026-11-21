@@ -30,6 +30,7 @@ function trustedProxies(value: string) {
 export const connectionConfigSchema = z.object({
   PUBLIC_URL: z.url().optional(),
   EIGOS_AUTH_MODE: z.enum(['jwt', 'development']).optional(),
+  EIGOS_PARTNER_RIDE_CONNECTION_FILE: z.string().optional(),
   EIGOS_DIDI_CONNECTION_FILE: z.string().optional(),
   EIGOS_DIDI_WATCH_SANDBOX_CONNECTION_FILE: z.string().optional(),
   EIGOS_SERVICE_CONNECTION_FILE: z.string().optional(),

@@ -26,6 +26,8 @@ import { fliggyServicesDefinition as fliggy, marketplaceDefinition as marketplac
 import { fliggyFlightBookingDefinition } from './fliggy-flight-booking.js';
 import { fliggyHotelDefinition } from './fliggy-hotel.js';
 import { didiImmediateRideDefinition } from './didi-immediate-ride.js';
+import { partnerRideLifecycle, partnerRideTypes, syntheticPartnerRideProcesses } from './partner-ride-lifecycle.js';
+import { partnerRideDefinitions } from './partner-rides.js';
 import { didiReadDefinitions } from './didi-reads.js';
 import { didiOrderDefinitions, travelDefinition as travel } from './travel.js';
 import { paymentsDefinition as payments } from './payments.js';
@@ -34,7 +36,7 @@ import { dianpingResearchFunctions } from './dianping.js';
 import { diningReservations, diningReservationType } from './dining-reservations.js';
 import { diningActivityInputSchema, jsonSchema, recommendScheduleSchema, scheduleRecommendationSchema, stageScheduleSchema } from '../capabilities/scheduling/contracts.js';
 import { objectRefSchema } from './schema.js';
-import { businessAgentProfiles } from './agent-profiles.js';
+import { businessAgentProfiles, sandboxAgentCapability } from './agent-profiles.js';
 
 const ride = JSON.parse(readFileSync(new URL('./definitions/ride.json', import.meta.url), 'utf8')) as OntologyDocument;
 const scheduling = JSON.parse(readFileSync(new URL('./definitions/scheduling.json', import.meta.url), 'utf8')) as OntologyDocument;
@@ -47,7 +49,7 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '45',
+  id: ride.id, version: '46',
   agentProfiles: businessAgentProfiles,
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...journey.linkTypes, ...flight.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
@@ -176,7 +178,11 @@ businessDefinition.linkTypes.push(...hotelTransferDefinition.linkTypes);
 businessDefinition.functionTypes.push(...hotelTransferDefinition.functionTypes);
 businessDefinition.actionTypes.push(...hotelTransferDefinition.actionTypes);
 businessDefinition.dataSources.push(...hotelTransferDefinition.dataSources);
-businessDefinition.functionTypes.push(...didiOrderDefinitions.functionTypes, ...didiReadDefinitions);
+businessDefinition.functionTypes.push(...didiOrderDefinitions.functionTypes, ...didiReadDefinitions, ...partnerRideDefinitions, ...partnerRideLifecycle.functionTypes);
+businessDefinition.objectTypes.push(...partnerRideLifecycle.objectTypes);
+businessDefinition.interfaceTypes.push(...partnerRideLifecycle.interfaceTypes);
+businessDefinition.linkTypes.push(...partnerRideLifecycle.linkTypes);
+businessDefinition.actionTypes.push(...partnerRideLifecycle.actionTypes);
 businessDefinition.actionTypes.push(...didiOrderDefinitions.actionTypes);
 businessDefinition.interfaceTypes.push(...didiOrderDefinitions.interfaceTypes);
 businessDefinition.objectTypes.find(type=>type.apiName==='LumaEvent')!.interfaces.AttendableEvent={properties:Object.fromEntries(['name','start','end','timeZone','status','locationPrecision','registrationOpen','approvalRequired'].map(name=>[name,name])),links:{registrations:'registrations',trips:'trips'},actions:{register:{action:'PrepareEventRegistration',parameters:{event:'event',ticketId:'ticketId',sourceTaskId:'sourceTaskId'}}}};
@@ -264,6 +270,7 @@ businessDefinition.linkTypes.push(...rideWatchDefinition.linkTypes);
 businessDefinition.functionTypes.push(...rideWatchDefinition.functionTypes);
 businessDefinition.actionTypes.push(...rideWatchDefinition.actionTypes);
 addProcessLogs(businessDefinition, [
+  ...[partnerRideTypes.trialQuote, partnerRideTypes.order, partnerRideTypes.payment].map(type => ({ type, property: 'state' })),
   { type: itineraryType, property: 'state' },
   { type: rideWatchType, property: 'state' },
   { type: 'FliggyHotelBooking', property: 'state' },
@@ -278,6 +285,29 @@ addProcessLogs(businessDefinition, [
     return [{ type: service.checkoutType, property: 'state' }, { type: service.orderType, property: 'fulfillment' }];
   }),
 ]);
+
+for (const name of Object.values(syntheticPartnerRideProcesses))
+  businessDefinition.objectTypes.find(type => type.apiName === name)!.typeClasses!.push(sandboxAgentCapability);
+businessDefinition.objectTypes.find(type => type.apiName === syntheticPartnerRideProcesses.quote)!.machinery = {
+  states: [{ name: 'available' }, { name: 'expired', terminal: true }],
+  transitions: [
+    { from: null, to: 'available', action: 'CreateSyntheticPartnerRideQuote' },
+    { from: 'available', to: 'expired', action: 'ExpireSyntheticPartnerRideQuote' },
+  ],
+  subprocesses: [{ link: 'order', process: syntheticPartnerRideProcesses.order }],
+};
+businessDefinition.objectTypes.find(type => type.apiName === syntheticPartnerRideProcesses.order)!.machinery = {
+  states: [{ name: 'ordered' }, { name: 'canceled', terminal: true }],
+  transitions: [
+    { from: null, to: 'ordered', action: 'BookSyntheticPartnerRide' },
+    { from: 'ordered', to: 'canceled', action: 'CancelSyntheticPartnerRide' },
+  ],
+  subprocesses: [{ link: 'payment', process: syntheticPartnerRideProcesses.payment }],
+};
+businessDefinition.objectTypes.find(type => type.apiName === syntheticPartnerRideProcesses.payment)!.machinery = {
+  states: [{ name: 'paid', terminal: true }],
+  transitions: [{ from: null, to: 'paid', action: 'PaySyntheticPartnerRide' }],
+};
 
 for (const provider of localDeliveryProviders) {
   const service = deliveryTradeServices[provider], actions = service.names;

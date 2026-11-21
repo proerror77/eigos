@@ -1,6 +1,7 @@
 import { localDeliveryProviders } from './local-delivery.js';
 import { deliveryTradeServices } from './local-delivery-trade.js';
 import { bookImmediateRideAction, immediateRideInterface, immediateRideType } from './didi-immediate-ride.js';
+import { partnerRideServices } from './partner-rides.js';
 import type { OntologyDocument } from './schema.js';
 
 export const sandboxAgentCapability = { kind: 'agent-capability', name: 'sandbox' } as const;
@@ -26,8 +27,22 @@ export const businessAgentProfiles: AgentProfile[] = [
     functions: ['readRideEstimates', 'readInteractiveRideEstimate', 'generateDidiRideAppLink'],
     instructions: [
       { function: 'generateDidiRideAppLink', text: 'When asked for an App or mini-program link, use complete_with_action with the ride estimate Interface Action and generateDidiRideAppLink as the result Function (resultParameter: request). Pass serviceClass only for a vehicle the user selected. For an existing quote, pass its RideRequest reference and, when applicable, the selected RideEstimate. The user completes the booking on DiDi.' },
-      { action: 'EstimateRide', function: 'readRideEstimates', text: 'When the user provides the city, pickup and destination for a fare-only inquiry, use complete_with_action with RideInquiry.estimate on RideRequest and readRideEstimates (resultParameter: request). Include serviceClass only for a specified vehicle class.' },
-      { action: 'EstimateRideWithPlaceClues', function: 'readInteractiveRideEstimate', text: 'For read-only inquiries, use RideInquiryWithPlaceClues.estimate on RideRequest with readInteractiveRideEstimate when the user also requests driving time, provides landmark clues, or the named ride inquiry cannot be used. Pass a given pickup or itinerary point as origin. With authorized device location, omit origin to ask the original PA for fresh phone location and verify its coordinate system. Omit a missing destination so the Action asks for it. Pass only a city established by the user. Keep nearby landmarks separate and preserve ambiguous names for the Action to resolve.' },
+      { action: 'EstimateRide', function: 'readRideEstimates', text: 'When the user provides the city, pickup and destination for a DiDi or provider-unspecified fare inquiry, use complete_with_action with RideInquiry.estimate on RideRequest and readRideEstimates (resultParameter: request). Include serviceClass only for a specified vehicle class.' },
+      { action: 'EstimateRideWithPlaceClues', function: 'readInteractiveRideEstimate', text: 'For DiDi or provider-unspecified read-only inquiries, use RideInquiryWithPlaceClues.estimate on RideRequest with readInteractiveRideEstimate when the user also requests driving time, provides landmark clues, or the named ride inquiry cannot be used. Pass a given pickup or itinerary point as origin. With authorized device location, omit origin to ask the original PA for fresh phone location and verify its coordinate system. Omit a missing destination so the Action asks for it. Pass only a city established by the user. Keep nearby landmarks separate and preserve ambiguous names for the Action to resolve.' },
+    ],
+  },
+  {
+    apiName: 'PartnerRideQuote',
+    terms: ['Uber', '优步', 'Grab'],
+    objects: ['PartnerRideQuote', 'PartnerRideHandoff'],
+    interfaces: ['PartnerRideQuoting'],
+    actions: ['PreparePartnerRideQuote', 'PreparePartnerRideHandoff'],
+    functions: [...Object.values(partnerRideServices).map(service => service.function), 'readPartnerRideQuote', 'readPartnerRideHandoff'],
+    instructions: [
+      { function: partnerRideServices.Uber.function, text: 'For an explicit Uber request use estimateUberRide. Use only confirmed WGS84 endpoints and addresses. Ask for missing or ambiguous locations. Return the Uber handoff for the user to confirm in the App.' },
+      { function: partnerRideServices.Grab.function, text: 'For an explicit Grab request use estimateGrabRide. Use only confirmed WGS84 endpoints and addresses. Ask for missing or ambiguous locations. Return the Grab handoff for the user to confirm in the App.' },
+      { action: 'PreparePartnerRideQuote', function: 'readPartnerRideQuote', text: 'When a user requests a recorded partner ride quote, call complete_with_action with PartnerRideQuoting.estimate using implementation PartnerRideQuote and bind its returned quote to readPartnerRideQuote. Confirm WGS84 endpoints first.' },
+      { action: 'PreparePartnerRideHandoff', function: 'readPartnerRideHandoff', text: 'For a user-selected vehicle from a recorded partner quote, call PartnerRideQuoting.handoff with the original quote reference as both the target and quote input, plus the exact vehicle id. The user confirms the order in the App.' },
     ],
   },
   {
@@ -39,7 +54,7 @@ export const businessAgentProfiles: AgentProfile[] = [
     functions: ['readDidiImmediateRide'],
     instructions: [{
       action: bookImmediateRideAction, function: 'readDidiImmediateRide',
-      text: 'For an explicit request to book a ride now, such as 帮我叫辆车, use complete_with_action with ImmediateRideBooking.book on DidiImmediateRide and readDidiImmediateRide (resultParameter: ride). Pass only known endpoints and an explicitly requested vehicle and let the Action ask for missing inputs and obtain authenticated PA approval. If the request is only a quote, an App link or a future ride, use the corresponding inquiry or planning capability.',
+      text: 'For an explicit request to book a ride now on DiDi or with no named provider, such as 帮我叫辆车, use complete_with_action with ImmediateRideBooking.book on DidiImmediateRide and readDidiImmediateRide (resultParameter: ride). Pass only known endpoints and an explicitly requested vehicle and let the Action ask for missing inputs and obtain authenticated PA approval. If the request is only a quote, an App link or a future ride, use the corresponding inquiry or planning capability.',
     }],
   },
   {
