@@ -33,6 +33,7 @@ import { createCapabilities } from '../packages/capabilities/index.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import { Ontology } from '../packages/ontology/model.js';
 import { addProcessLogs, processLogTarget } from '../packages/ontology/process-definition.js';
+import { bookImmediateRideAction, immediateOrderLink, immediateRideInterface, immediateRideType } from '../packages/ontology/didi-immediate-ride.js';
 import { didiReadDefinitions } from '../packages/ontology/didi-reads.js';
 import { didiOrderDefinitions } from '../packages/ontology/travel.js';
 import { calendarJourneyDefinition } from '../packages/ontology/calendar-journey.js';
@@ -633,13 +634,14 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     travelHandoffDefinition, hotelTransferDefinition,
   ];
   const addedTypes = new Set([
-    ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType,
+    ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType, immediateRideType,
   ]);
   const model = new Ontology(document);
   const logs = document.objectTypes.flatMap(type => processLogTarget(model, type.apiName) ?? []);
   const addedLogs = logs.filter(log => addedTypes.has(log.objectType));
   const addedActions = new Set(laterDomains.flatMap(domain => domain.actionTypes.map(action => action.apiName)));
   for (const action of didiOrderDefinitions.actionTypes) addedActions.add(action.apiName);
+  addedActions.add(bookImmediateRideAction);
   addedActions.add('StageDiningActivity');
   addedActions.add('StageScheduleRecommendation');
   const addedFunctions = new Set([
@@ -650,6 +652,8 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   addedActions.add('EstimateRideWithPlaceClues');
   for (const action of rideWatchDefinition.actionTypes) addedActions.add(action.apiName);
   for (const fn of rideWatchDefinition.functionTypes) addedFunctions.add(fn.apiName);
+  addedFunctions.add('bookDidiImmediateRide');
+  addedFunctions.add('readDidiImmediateRide');
   addedFunctions.add('prepareRideInquiryWithPlaceClues');
   addedFunctions.add('readInteractiveRideEstimate');
   addedFunctions.add('recommendSchedule');
@@ -670,7 +674,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   delete geometry.result;
   geometry.submissionCriteria = [];
   geometry.function = 'registerGeometry';
-  v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type => type.apiName !== 'RideInquiryWithPlaceClues' &&
+  v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type => type.apiName !== 'RideInquiryWithPlaceClues' && type.apiName !== immediateRideInterface &&
     !travelHandoffDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
     !fliggyServicesDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
     !marketplaceDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
@@ -688,7 +692,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   delete routeProperties.pickup;
   delete routeProperties.drivingEstimate;
   v9Definition.linkTypes = v9Definition.linkTypes.filter(type =>
-    !addedLogs.some(log => log.link === type.apiName) && !documentDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    type.apiName !== immediateOrderLink && !addedLogs.some(log => log.link === type.apiName) && !documentDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !rideWatchDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !flightDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !calendarJourneyDefinition.linkTypes.some(link => link.apiName === type.apiName) &&

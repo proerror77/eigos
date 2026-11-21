@@ -9,6 +9,7 @@ import type { Database } from '../../runtime/database.js';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import type { Objects } from '../../runtime/objects.js';
 import { ScheduledActions } from '../../runtime/scheduled-actions.js';
+import { originalDidiRide } from './original-order.js';
 import type { SourceResolver } from './functions.js';
 import type { z } from 'zod';
 
@@ -89,15 +90,14 @@ export function didiRideWatchFunctions(db: Database, resolveSource: SourceResolv
   async function sourceFor(order: ObjectRef, ctx: FunctionContext) {
     if (order.type !== 'DidiRideOrder') throw new Conflict('Use a linked DiDi order');
     const row = await ctx.objects.read(order);
-    const trips = await ctx.objects.follow(order, 'trips');
-    if (trips.length !== 1) throw new Conflict('Original ride authority is unavailable');
+    const original = await originalDidiRide(ctx.objects, order);
     const { bindingId, orderId } = row.properties;
     if (typeof bindingId !== 'string' || !bindingId || typeof orderId !== 'string' || !orderId)
       throw new Conflict('Original ride authority is unavailable');
     const source = await resolveSource(ctx.principal.owner, { bindingId, orderId });
     const authority = source.authorityId ?? digest(source.bindingId);
     await source.assertCurrent();
-    if (bindingId !== source.bindingId || trips[0]!.properties.sourceAuthority !== authority || !source.orders?.observe) {
+    if (bindingId !== source.bindingId || original.properties.sourceAuthority !== authority || !source.orders?.observe) {
       throw new Conflict('Original ride source authority is unavailable');
     }
     return { source, orders: source.orders, authority, orderId };

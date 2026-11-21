@@ -25,6 +25,7 @@ import type { Database, Sql } from '../../runtime/database.js';
 import { withScenarioEvaluation, type FunctionContext, type FunctionHandler } from '../../runtime/functions.js';
 import type { Sources } from '../../runtime/sources.js';
 import type { SourceResolver } from '../didi/functions.js';
+import { originalDidiRide } from '../didi/original-order.js';
 import { rideOrderSchema, type RideOrder } from '../didi/operations.js';
 import type { ServiceResolver } from '../services/sources.js';
 import { currentService, assertServiceAuthority } from '../services/functions.js';
@@ -359,8 +360,8 @@ export function travelFunctions(
     const { orderId, bindingId } = order.properties;
     if (typeof orderId !== 'string' || !orderId || typeof bindingId !== 'string' || !bindingId)
       throw new Conflict('Original DiDi order identity is unavailable');
-    const trip = await one(objects, ref, 'trips');
-    return { order, orderId, bindingId, trip };
+    const original = await originalDidiRide(objects, ref);
+    return { order, orderId, bindingId, original };
   };
   const canceledStatuses = new Set(['canceled', 'cancelled', '已取消', '订单已取消', '乘客已取消', '司机已取消', '系统已取消']);
   const isCanceled = (order: RideOrder) => canceledStatuses.has(order.status.trim().toLowerCase().replace(/[。.!！]+$/, ''));
@@ -395,13 +396,15 @@ export function travelFunctions(
     const { bindingId, orderId } = original, owner = context.principal.owner;
     const source = await resolve(owner, { bindingId, orderId });
     const orders = source.orders;
-    const scope = { order: ref, orderId, bindingId, trip: original.trip.ref };
+    const scope = { order: ref, orderId, bindingId,
+      ...(original.original.ref.type === 'EventTrip' ? { trip: original.original.ref } : { immediateRide: original.original.ref }),
+    };
     const key = cancellationKey(bindingId, orderId);
     const assertOriginal = async (objects: Reader) => {
       const current = await readOriginal(objects, ref);
-      if (current.bindingId !== bindingId || current.orderId !== orderId || !same(current.trip.ref, original.trip.ref) ||
+      if (current.bindingId !== bindingId || current.orderId !== orderId || !same(current.original.ref, original.original.ref) ||
           source.bindingId !== bindingId ||
-          current.trip.properties.sourceAuthority !== (source.authorityId ?? digest(bindingId)))
+          current.original.properties.sourceAuthority !== (source.authorityId ?? digest(bindingId)))
         throw new Conflict('Original ride authority changed');
     };
     if (!orders) throw new Conflict('Original DiDi order connection is unavailable');

@@ -12,6 +12,16 @@
 | 订单状态暂时读不到 | 保留最新已知进度，按 60、120 秒退避。第三次失败或超出期限时终止，注明来源不可用。 |
 | 最终费用、支付、退款和发票 | 行程完成只验证运输状态，结算继续标为未核验。这些后续服务需要独立、可授权的账单来源。 |
 
+## 即时叫车
+
+用户明确要求现在叫车时，Agent 使用 `ImmediateRideBooking.book`（`BookDidiImmediateRide`），按原任务补全城市、上车点和目的地。PA 在原任务的 `ride.confirm_immediate_order` 请求中展示已解析的起终点、可确认的车型、人民币预估价和有效期。价格区间或无法核对的报价不进入可发单清单。
+
+只有用户明确选择车型并确认对应预估价后，原 PA 才通过 `respond_to_task` 回传该请求的 `quoteDigest`、`category`、`amountMinor`、`currency` 和 `acceptVariableFinalFare: true`。实际车费可能随行程变化。用户也可以通过 `decision: cancel` 拒绝报价。
+
+Action 发单前按原起终点和所选车型向滴滴重新估价。价格变化或报价过期时结束本次确认，重新报价后才能发单。每个原任务最多发出一次下单操作。回包丢失时保留 `unknown`，先核对滴滴原单。收到订单号但暂时无法独立回查时保留 `submitted`，已回查原单才报告 `ordered`。结果附原单引用，可用既有的跟单和取消 Action。发单仍检查滴滴绑定和 `ordersEnabled`。
+
+该 Action 复用原 Task、PA 请求、来源读回和外部操作回执。即时叫车不需要创建定时行程。[Palantir Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) · [Interface Action 约束](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints) · [滴滴 MCP](https://mcp.didichuxing.com/api)
+
 ## 取消已发订单
 
 `CancelableRideOrder.cancel` 映射到 `CancelDidiRideOrder`。PA 在用户确认确切订单后提交 Action，传入原 `DidiRideOrder` 引用、`confirmCancellation: true`，可选取消原因。Action 沿 `TripOrder` 核对订单、所属用户和原滴滴绑定。连接的 `cancellationsEnabled` 可以单独开放取消，省略时沿用 `ordersEnabled`。滴滴根据当时的订单状态决定能否取消。

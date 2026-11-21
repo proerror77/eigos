@@ -20,6 +20,7 @@ import type { OntologyDocument } from './schema.js';
 import { fliggyServicesDefinition as fliggy, marketplaceDefinition as marketplace, servicesDefinition as services } from './services.js';
 import { fliggyFlightBookingDefinition } from './fliggy-flight-booking.js';
 import { fliggyHotelDefinition } from './fliggy-hotel.js';
+import { didiImmediateRideDefinition } from './didi-immediate-ride.js';
 import { didiReadDefinitions } from './didi-reads.js';
 import { didiOrderDefinitions, travelDefinition as travel } from './travel.js';
 import { paymentsDefinition as payments } from './payments.js';
@@ -41,7 +42,7 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '39',
+  id: ride.id, version: '40',
   agentProfiles: businessAgentProfiles,
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...journey.linkTypes, ...flight.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
@@ -194,6 +195,12 @@ clueInquiry.apiName = 'RideInquiryWithPlaceClues';
 clueInquiry.description = quoteWithClues.description;
 clueInquiry.actions.estimate!.parameters = quoteParameters;
 businessDefinition.interfaceTypes.push(clueInquiry);
+const immediateRide = didiImmediateRideDefinition(quoteParameters);
+businessDefinition.objectTypes.push(...immediateRide.objectTypes);
+businessDefinition.interfaceTypes.push(...immediateRide.interfaceTypes);
+businessDefinition.linkTypes.push(...immediateRide.linkTypes);
+businessDefinition.functionTypes.push(...immediateRide.functionTypes);
+businessDefinition.actionTypes.push(...immediateRide.actionTypes);
 const inquiryMappings = businessDefinition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces;
 const clueMapping = structuredClone(inquiryMappings.RideInquiry!);
 clueMapping.actions.estimate!.action = quoteWithClues.apiName;

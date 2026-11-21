@@ -5,7 +5,7 @@ import { ridePickupResult } from '../../ontology/maps.js';
 import type { Functions, FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import { PermissionDenied } from '../../runtime/access.js';
 import type { Sources } from '../../runtime/sources.js';
-import { isCurrentDidiObservation, sourceResultSchema, verifiedDidiRead, type SourceResolver } from './functions.js';
+import { isCurrentDidiObservation, sourceResultSchema, verifiedDidiRead, type SourceResult, type SourceResolver } from './functions.js';
 import { DidiReadError } from './connector.js';
 import { readDidiDriving } from './driving.js';
 
@@ -206,9 +206,12 @@ async function refreshNearbyQuotePlace(sources: Sources, resolveSource: SourceRe
     access, execution?.task, execution?.tasks, context.signal)).receipt;
 }
 
+type ResolvedRideHandler = (input: Record<string, unknown>, context: FunctionContext,
+  resolved: { origin: ObjectData; destination: ObjectData; quote: SourceResult }) => Promise<ObjectRef>;
+
 /** Implementation of the published edit Function backing the RideInquiry Action. */
 export function prepareRideInquiry(getSources: () => Sources, getFunctions: () => Functions, resolveSource: SourceResolver,
-  interactivePickup = false): FunctionHandler {
+  interactivePickup = false, onResolved?: ResolvedRideHandler): FunctionHandler {
   return async (input, context) => {
     if (!context.edit || !context.operationId) throw new Error('Ride inquiry requires an Action edit context');
     const model = context.objects.model, sources = getSources(), functions = getFunctions(), execution = context.execution;
@@ -335,6 +338,7 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
     const quote = await sources.read(model, 'DidiEstimates', quoteInput, context.objects.access,
       execution?.task, execution?.tasks, context.signal).catch(error => sourceFailed(error, 'estimate', receipts));
     const [origin, destination] = await Promise.all([context.objects.read(resolution.origin), context.objects.read(resolution.destination)]);
+    if (onResolved) return onResolved(input, context, { origin, destination, quote: sourceResultSchema.parse(quote) });
     const drivingEstimate = interactivePickup && model.objects.get('Route')?.properties.drivingEstimate
       ? await readDidiDriving(resolveSource, origin, destination, context).catch(error => {
         if (!(error instanceof SourceReadFailure)) throw error;
