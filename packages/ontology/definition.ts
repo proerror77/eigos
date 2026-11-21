@@ -26,7 +26,7 @@ import { fliggyServicesDefinition as fliggy, marketplaceDefinition as marketplac
 import { fliggyFlightBookingDefinition } from './fliggy-flight-booking.js';
 import { fliggyHotelDefinition } from './fliggy-hotel.js';
 import { didiImmediateRideDefinition } from './didi-immediate-ride.js';
-import { partnerRideLifecycle } from './partner-ride-lifecycle.js';
+import { partnerRideLifecycle, partnerRideTypes, syntheticPartnerRideProcesses } from './partner-ride-lifecycle.js';
 import { partnerRideDefinitions } from './partner-rides.js';
 import { didiReadDefinitions } from './didi-reads.js';
 import { didiOrderDefinitions, travelDefinition as travel } from './travel.js';
@@ -36,7 +36,7 @@ import { dianpingResearchFunctions } from './dianping.js';
 import { diningReservations, diningReservationType } from './dining-reservations.js';
 import { diningActivityInputSchema, jsonSchema, recommendScheduleSchema, scheduleRecommendationSchema, stageScheduleSchema } from '../capabilities/scheduling/contracts.js';
 import { objectRefSchema } from './schema.js';
-import { businessAgentProfiles } from './agent-profiles.js';
+import { businessAgentProfiles, sandboxAgentCapability } from './agent-profiles.js';
 
 const ride = JSON.parse(readFileSync(new URL('./definitions/ride.json', import.meta.url), 'utf8')) as OntologyDocument;
 const scheduling = JSON.parse(readFileSync(new URL('./definitions/scheduling.json', import.meta.url), 'utf8')) as OntologyDocument;
@@ -270,6 +270,7 @@ businessDefinition.linkTypes.push(...rideWatchDefinition.linkTypes);
 businessDefinition.functionTypes.push(...rideWatchDefinition.functionTypes);
 businessDefinition.actionTypes.push(...rideWatchDefinition.actionTypes);
 addProcessLogs(businessDefinition, [
+  ...[partnerRideTypes.trialQuote, partnerRideTypes.order, partnerRideTypes.payment].map(type => ({ type, property: 'state' })),
   { type: itineraryType, property: 'state' },
   { type: rideWatchType, property: 'state' },
   { type: 'FliggyHotelBooking', property: 'state' },
@@ -284,6 +285,29 @@ addProcessLogs(businessDefinition, [
     return [{ type: service.checkoutType, property: 'state' }, { type: service.orderType, property: 'fulfillment' }];
   }),
 ]);
+
+for (const name of Object.values(syntheticPartnerRideProcesses))
+  businessDefinition.objectTypes.find(type => type.apiName === name)!.typeClasses!.push(sandboxAgentCapability);
+businessDefinition.objectTypes.find(type => type.apiName === syntheticPartnerRideProcesses.quote)!.machinery = {
+  states: [{ name: 'available' }, { name: 'expired', terminal: true }],
+  transitions: [
+    { from: null, to: 'available', action: 'CreateSyntheticPartnerRideQuote' },
+    { from: 'available', to: 'expired', action: 'ExpireSyntheticPartnerRideQuote' },
+  ],
+  subprocesses: [{ link: 'order', process: syntheticPartnerRideProcesses.order }],
+};
+businessDefinition.objectTypes.find(type => type.apiName === syntheticPartnerRideProcesses.order)!.machinery = {
+  states: [{ name: 'ordered' }, { name: 'canceled', terminal: true }],
+  transitions: [
+    { from: null, to: 'ordered', action: 'BookSyntheticPartnerRide' },
+    { from: 'ordered', to: 'canceled', action: 'CancelSyntheticPartnerRide' },
+  ],
+  subprocesses: [{ link: 'payment', process: syntheticPartnerRideProcesses.payment }],
+};
+businessDefinition.objectTypes.find(type => type.apiName === syntheticPartnerRideProcesses.payment)!.machinery = {
+  states: [{ name: 'paid', terminal: true }],
+  transitions: [{ from: null, to: 'paid', action: 'PaySyntheticPartnerRide' }],
+};
 
 for (const provider of localDeliveryProviders) {
   const service = deliveryTradeServices[provider], actions = service.names;

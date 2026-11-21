@@ -12,6 +12,10 @@ const evidence = z.literal('synthetic');
 const currency = z.literal('SGD');
 const name = z.string().min(1).max(100);
 const approval = { confirm: z.literal(true) };
+export const partnerRideQuoteLifetimeSeconds = 300;
+const orderState = z.enum(['ordered', 'canceled']);
+const observation = z.strictObject({ orderId: id, state: orderState, observedAt: time, evidence });
+
 
 export const partnerRideTypes = {
   quote: 'PartnerRideQuote', handoff: 'PartnerRideHandoff', trialQuote: 'SyntheticPartnerRideQuote',
@@ -27,6 +31,8 @@ export const partnerRideInputs = {
   createSyntheticPartnerRideQuote: z.strictObject({ trialId: z.uuid(), provider: partnerRideProvider, route: partnerRideRoute }),
   bookSyntheticPartnerRide: z.strictObject({ quote: ref, amountMinor, currency, ...approval }),
   cancelSyntheticPartnerRide: cancelRideInput,
+  expireSyntheticPartnerRideQuote: z.strictObject({ quote: ref }),
+  observeSyntheticPartnerRide: z.strictObject({ order: ref }),
   paySyntheticPartnerRide: z.strictObject({ order: ref, amountMinor, currency, ...approval }),
 };
 const schemas = {
@@ -34,12 +40,12 @@ const schemas = {
   [handoff]: z.strictObject({ id, name, provider: partnerRideProvider, appLink: z.url().max(8192), expiresAt: time,
     orderCreated: z.literal(false), paymentInitiated: z.literal(false) }),
   [trialQuote]: z.strictObject({ id, name, evidence, provider: partnerRideProvider, route: partnerRideRoute,
-    amountMinor, currency, expiresAt: time }),
+    amountMinor, currency, expiresAt: time, state: z.enum(['available', 'expired']) }),
   [order]: z.strictObject({ id, name, evidence, provider: partnerRideProvider, amountMinor, currency,
-    orderId: id, status: z.string(), state: z.enum(['ordered', 'canceled']), independentRead: z.literal(false),
-    observedAt: time, createdAt: time, canceledAt: time.nullable() }),
+    orderId: id, status: z.string(), state: orderState, independentRead: z.literal(false),
+    observedAt: time, createdAt: time, canceledAt: time.nullable(), latestObservation: observation.nullable() }),
   [payment]: z.strictObject({ id, name, evidence, provider: partnerRideProvider, amountMinor, currency,
-    state: z.literal('paid'), observedAt: time }),
+    state: z.enum(['paid']), observedAt: time }),
 };
 
 type Operation = {
@@ -56,6 +62,10 @@ const operations: Operation[] = [
     description: 'Submit a synthetic order for the exact confirmed quote and fare.' },
   { fn: 'cancelSyntheticPartnerRide', action: 'CancelSyntheticPartnerRide', objects: { order }, synthetic: true,
     description: 'Cancel the exact synthetic order. Existing synthetic payment evidence is preserved.' },
+  { fn: 'expireSyntheticPartnerRideQuote', action: 'ExpireSyntheticPartnerRideQuote', objects: { quote: trialQuote }, synthetic: true,
+    description: 'Mark the original synthetic quote expired once its deadline has passed.' },
+  { fn: 'observeSyntheticPartnerRide', action: 'ObserveSyntheticPartnerRide', objects: { order }, synthetic: true,
+    description: 'Read back the original local synthetic order, retaining the latest state observation for the PA.' },
   { fn: 'paySyntheticPartnerRide', action: 'PaySyntheticPartnerRide', objects: { order }, synthetic: true,
     description: 'Record a synthetic payment for the exact confirmed fare on the original order.' },
 ];
@@ -124,3 +134,23 @@ export const partnerRideLifecycle: Pick<OntologyDocument, 'objectTypes' | 'inter
     function: fn, submissionCriteria: [], ...(synthetic ? developmentOnly : {}),
   })),
 };
+
+export const syntheticPartnerRideProcesses = {
+  quote: trialQuote + 'StateLog',
+  order: order + 'StateLog',
+  payment: payment + 'StateLog',
+} as const;
+
+/** Save with the existing Automate save_rule operation before the synthetic trial starts. */
+export const syntheticPartnerRideRules = [
+  {
+    name: 'Expire synthetic partner ride quotes', enabled: true,
+    process: { type: syntheticPartnerRideProcesses.quote, from: null, to: 'available', dwellSeconds: partnerRideQuoteLifetimeSeconds },
+    effect: { action: 'ExpireSyntheticPartnerRideQuote', input: { quote: { object: true } } },
+  },
+  {
+    name: 'Observe synthetic partner ride order transitions', enabled: true,
+    process: { type: syntheticPartnerRideProcesses.order },
+    effect: { action: 'ObserveSyntheticPartnerRide', input: { order: { object: true } } },
+  },
+] as const;

@@ -1,13 +1,13 @@
 import { Conflict, NotFound, digest } from '../../core/identity.js';
 import { partnerRideEstimateResult, partnerRideServices } from '../../ontology/partner-rides.js';
-import { partnerRideInputs as inputs, partnerRideLinks as links, partnerRideTypes as types, partnerRideReadbacks as reads } from '../../ontology/partner-ride-lifecycle.js';
+import { partnerRideInputs as inputs, partnerRideLinks as links, partnerRideTypes as types, partnerRideReadbacks as reads, partnerRideQuoteLifetimeSeconds } from '../../ontology/partner-ride-lifecycle.js';
 import type { ObjectRef } from '../../ontology/schema.js';
 import { ActionPARequestRequired, PARequestRequired } from '../../runtime/clarification.js';
 import type { Database } from '../../runtime/database.js';
 import type { FunctionContext, FunctionHandler, Functions } from '../../runtime/functions.js';
 import type { Objects } from '../../runtime/objects.js';
 
-const quoteLifetime = 5 * 60_000;
+const quoteLifetime = partnerRideQuoteLifetimeSeconds * 1000;
 const timestamp = () => new Date().toISOString();
 const ownedRef = (type: string, owner: string, key: unknown): ObjectRef => ({ type, id: digest([type, owner, key]) });
 async function existing(graph: Pick<Objects, 'read'>, ref: ObjectRef) {
@@ -101,7 +101,7 @@ export function partnerRideLifecycleFunctions(db: Database, getFunctions: () => 
           return;
         }
         await graph.create(quote, { id: quote.id, name: provider + ' synthetic quote', provider, route,
-          evidence: 'synthetic', amountMinor: provider === 'Uber' ? 1250 : 1380, currency: 'SGD',
+          evidence: 'synthetic', state: 'available', amountMinor: provider === 'Uber' ? 1250 : 1380, currency: 'SGD',
           expiresAt: new Date(Date.now() + quoteLifetime).toISOString() });
       });
     }],
@@ -113,11 +113,11 @@ export function partnerRideLifecycleFunctions(db: Database, getFunctions: () => 
         const { properties } = await graph.read(quote);
         validateAmount(properties, amountMinor, currency);
         if (await existing(graph, order)) return;
-        if (Date.parse(String(properties.expiresAt)) <= Date.now()) throw new Conflict('The synthetic quote expired');
+        if (properties.state !== 'available' || Date.parse(String(properties.expiresAt)) <= Date.now()) throw new Conflict('The synthetic quote expired');
         await graph.create(order, { id: order.id, name: properties.provider + ' synthetic order',
           provider: properties.provider, evidence: 'synthetic', amountMinor, currency, state: 'ordered',
           orderId: order.id, status: 'synthetic order created', independentRead: false,
-          observedAt: timestamp(), createdAt: timestamp(), canceledAt: null });
+          observedAt: timestamp(), createdAt: timestamp(), canceledAt: null, latestObservation: null });
         await graph.link({ type: links.order, from: quote, to: order });
       });
     }],
@@ -127,6 +127,26 @@ export function partnerRideLifecycleFunctions(db: Database, getFunctions: () => 
       return syntheticEdit(db, context)(order, async graph => {
         const { properties, revision } = await graph.read(order);
         if (properties.state !== 'canceled') await graph.edit(order, revision, { state: 'canceled', status: 'synthetic order canceled', observedAt: timestamp(), canceledAt: timestamp() });
+      });
+    }],
+    ['expireSyntheticPartnerRideQuote', async (input, context) => {
+      const { quote } = inputs.expireSyntheticPartnerRideQuote.parse(input);
+      readRef(quote, types.trialQuote);
+      return syntheticEdit(db, context)(quote, async graph => {
+        const { properties, revision } = await graph.read(quote);
+        if (properties.state === 'available' && Date.parse(String(properties.expiresAt)) <= Date.now())
+          await graph.edit(quote, revision, { state: 'expired' });
+      });
+    }],
+    ['observeSyntheticPartnerRide', async (input, context) => {
+      const { order } = inputs.observeSyntheticPartnerRide.parse(input);
+      readRef(order, types.order);
+      return syntheticEdit(db, context)(order, async graph => {
+        const { properties, revision } = await graph.read(order);
+        const observation = { orderId: properties.orderId, state: properties.state,
+          observedAt: properties.observedAt, evidence: 'synthetic' };
+        if (digest(properties.latestObservation) !== digest(observation))
+          await graph.edit(order, revision, { latestObservation: observation });
       });
     }],
     ['paySyntheticPartnerRide', async (input, context) => {

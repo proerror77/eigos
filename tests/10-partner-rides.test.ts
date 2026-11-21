@@ -7,8 +7,9 @@ import { test } from 'node:test';
 import { PartnerRidesPA, type PartnerRideGrant } from '../packages/sdk/partner-rides-pa.js';
 import type { OntologyClient } from '../packages/sdk/client.js';
 import { partnerRideRequest, partnerRideServices } from '../packages/ontology/partner-rides.js';
+import { Automation } from '../packages/runtime/automation.js';
 import { Objects } from '../packages/runtime/objects.js';
-import { partnerRideTypes } from '../packages/ontology/partner-ride-lifecycle.js';
+import { partnerRideTypes, syntheticPartnerRideRules } from '../packages/ontology/partner-ride-lifecycle.js';
 import { PARequests } from '../packages/runtime/pa.js';
 import { fixture, principal } from './fixture.js';
 
@@ -192,6 +193,66 @@ test('Uber and Grab synthetic orders and payments are linked, confirmed and idem
       assert.equal(paid.properties.state, 'paid');
       assert.equal(paid.properties.evidence, 'synthetic');
     }
+    assert.deepEqual(f.provider.calls, []);
+  } finally { await f.close(); }
+});
+
+test('Automate expires quotes and reads back original order transitions for Uber and Grab', async () => {
+  const f = await fixture(undefined, undefined, undefined, undefined, undefined, undefined, { sandbox: true });
+  try {
+    const graph = new Objects(f.db, f.model, f.access);
+    const automate = new Automation(f.db, f.metadata, f.capabilities.actions);
+    for (const rule of syntheticPartnerRideRules) await automate.rule(f.access, f.model, rule);
+    const apply = (name: string, input: Record<string, unknown>) =>
+      f.capabilities.actions.apply(f.access, f.model, name, input, randomUUID());
+    const trials = [];
+    for (const provider of ['Uber', 'Grab']) {
+      const quote = await apply('CreateSyntheticPartnerRideQuote', { trialId: randomUUID(), provider, route });
+      const { amountMinor, currency } = (await graph.read(quote)).properties;
+      const terms = { amountMinor, currency, confirm: true };
+      const order = await apply('BookSyntheticPartnerRide', { quote, ...terms });
+      const payment = await apply('PaySyntheticPartnerRide', { order, ...terms });
+      trials.push({ quote, order, payment });
+    }
+    const scan = async () => {
+      await f.db.query(`UPDATE ${f.db.schema}.object_rules SET last_scan=NULL`);
+      for (const _rule of syntheticPartnerRideRules) assert(await automate.scanOne());
+    };
+    const drain = async () => {
+      while (await automate.runOne()) { /* Execute due runs only. */ }
+    };
+    await scan();
+    await drain();
+    for (const { quote, order, payment } of trials) {
+      const original = (await graph.read(order)).properties;
+      assert.deepEqual(original.latestObservation, { orderId: order.id, state: 'ordered',
+        observedAt: original.observedAt, evidence: 'synthetic' });
+      assert.equal((await graph.read(quote)).properties.state, 'available');
+      assert.deepEqual((await graph.follow(payment, 'stateLogs')).map(row => row.properties.newState), ['paid']);
+      await apply('CancelSyntheticPartnerRide', { order, confirmCancellation: true });
+    }
+    // Advance the persisted deadlines in the isolated fixture, without waiting five minutes.
+    await f.db.query(`UPDATE ${f.db.schema}.objects
+      SET properties=jsonb_set(properties,'{expiresAt}',to_jsonb('2000-01-01T00:00:00.000Z'::text))
+      WHERE type=$1`, [partnerRideTypes.trialQuote]);
+    await f.db.query(`UPDATE ${f.db.schema}.workflow_runs SET available_at=now() WHERE state='pending'`);
+    await scan();
+    await drain();
+    for (const { quote, order, payment } of trials) {
+      const original = (await graph.read(order)).properties;
+      assert.deepEqual(original.latestObservation, { orderId: order.id, state: 'canceled',
+        observedAt: original.observedAt, evidence: 'synthetic' });
+      const modes = new Map((await graph.follow(order, 'stateLogs')).map(row => [row.properties.newState, row.properties.action]));
+      assert.deepEqual(modes, new Map([['ordered', 'BookSyntheticPartnerRide'], ['canceled', 'CancelSyntheticPartnerRide']]));
+      assert.equal((await graph.read(quote)).properties.state, 'expired');
+      assert((await graph.follow(quote, 'stateLogs')).some(row => row.properties.action === 'ExpireSyntheticPartnerRideQuote'));
+      assert.deepEqual((await graph.follow(order, 'payment')).map(row => row.ref), [payment]);
+    }
+    const states = () => f.db.query(`SELECT state FROM ${f.db.schema}.workflow_runs`).then(({ rows }) => rows.map(row => row.state));
+    assert.deepEqual(await states(), Array(6).fill('completed'));
+    await scan();
+    await drain();
+    assert.deepEqual(await states(), Array(6).fill('completed'));
     assert.deepEqual(f.provider.calls, []);
   } finally { await f.close(); }
 });
