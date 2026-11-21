@@ -1,4 +1,4 @@
-import { tripHotelCurrent, tripHotelDependencyDefinition } from './trip-hotel-dependency.js';
+import { executeHotelDependentTrip, hotelDependencyCriterion, tripHotelDependencyDefinition } from './trip-hotel-dependency.js';
 import { travelHandoffDefinition } from './travel-handoff.js';
 import { calendarJourneyDefinition as journey, journeyType } from './calendar-journey.js';
 import { hotelTransferDefinition } from './hotel-transfer-decisions.js';
@@ -81,12 +81,15 @@ businessDefinition.objectTypes.push(...tripHotelDependencyDefinition.objectTypes
 businessDefinition.linkTypes.push(...tripHotelDependencyDefinition.linkTypes);
 businessDefinition.functionTypes.push(...tripHotelDependencyDefinition.functionTypes);
 businessDefinition.actionTypes.push(...tripHotelDependencyDefinition.actionTypes);
-for (const name of ['AuthorizeEventTrip', 'ExecuteEventTrip']) {
-  businessDefinition.actionTypes.find(action => action.apiName === name)!.submissionCriteria.push({
-    function: tripHotelCurrent, arguments: { trip: { parameter: 'trip' } },
-    message: 'The linked hotel booking requires trip review and renewed authorization',
-  });
-}
+businessDefinition.actionTypes.find(action => action.apiName === 'AuthorizeEventTrip')!.submissionCriteria.push(hotelDependencyCriterion);
+// Preserve the stored contract of ordinary timed rides planned before this publication.
+const executeEventTrip = businessDefinition.actionTypes.find(action => action.apiName === 'ExecuteEventTrip')!;
+businessDefinition.actionTypes.push({
+  ...executeEventTrip,
+  apiName: executeHotelDependentTrip,
+  description: 'Execute a timed trip only while its original hotel dependency is current.',
+  submissionCriteria: [hotelDependencyCriterion],
+});
 businessDefinition.objectTypes.push(...fliggyFlightBookingDefinition.objectTypes);
 businessDefinition.functionTypes.push(...fliggyFlightBookingDefinition.functionTypes);
 businessDefinition.actionTypes.push(...fliggyFlightBookingDefinition.actionTypes);

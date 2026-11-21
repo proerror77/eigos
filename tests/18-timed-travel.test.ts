@@ -1,8 +1,9 @@
+import { executeHotelDependentTrip, tripHotelDependencyDefinition } from '../packages/ontology/trip-hotel-dependency.js';
 import { Automation, saveRuleSchema } from '../packages/runtime/automation.js';
 import { analyzeMachinery, machineryAnalysisSchema } from '../packages/runtime/machinery-analysis.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { fixture, principal, route as inquiry } from './fixture.js';
+import { document, fixture, principal, route as inquiry } from './fixture.js';
 import { serviceProvider, seedPlan } from './service-fixture.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { Scenarios } from '../packages/runtime/scenarios.js';
@@ -14,9 +15,9 @@ import { Access, businessGrants, setGrants } from '../packages/runtime/access.js
 import { Worker } from '../apps/worker/worker.js';
 import { ScheduledActionRunner } from '../packages/runtime/scheduled-actions.js';
 
-async function prepare(withHotel = false) {
+async function prepare(withHotel = false, definition = document) {
   const provider = serviceProvider(),
-    f = await fixture(undefined, provider.resolve),
+    f = await fixture(undefined, provider.resolve, undefined, definition),
     p = await seedPlan(f),
     graph = new Objects(f.db, f.model, f.access);
   const apply = (name: string, args: Record<string, unknown>, id = name) =>
@@ -476,6 +477,41 @@ test('the PA inbox exposes the correlated scheduled request only to its owner wi
     );
     assert.equal((await pa.pending(principal)).items.length, 0);
     assert.equal((await p.f.tasks.get(principal, execution.taskId)).result, null);
+  } finally {
+    await p.f.close();
+  }
+});
+
+test('an ordinary scheduled trip authorized before hotel dependency publication keeps its contract', async () => {
+  const previous = structuredClone(document);
+  previous.version = '40';
+  const tripType = previous.objectTypes.find(type => type.apiName === 'EventTrip')!;
+  delete tripType.properties.hotelBooking;
+  delete tripType.properties.pendingHotelDependencyReview;
+  const transition = previous.objectTypes.find(type => type.apiName === 'EventTripStateLog')!.machinery!;
+  transition.transitions = transition.transitions.filter(item => item.action !== 'ReviewTripHotelDependency');
+  previous.objectTypes = previous.objectTypes.filter(type => !tripHotelDependencyDefinition.objectTypes.some(item => item.apiName === type.apiName));
+  previous.linkTypes = previous.linkTypes.filter(link => !tripHotelDependencyDefinition.linkTypes.some(item => item.apiName === link.apiName));
+  previous.functionTypes = previous.functionTypes.filter(fn => !tripHotelDependencyDefinition.functionTypes.some(item => item.apiName === fn.apiName));
+  previous.actionTypes = previous.actionTypes.filter(action =>
+    action.apiName !== executeHotelDependentTrip && !tripHotelDependencyDefinition.actionTypes.some(item => item.apiName === action.apiName));
+  previous.actionTypes.find(action => action.apiName === 'AuthorizeEventTrip')!.submissionCriteria = [];
+  const p = await prepare(false, previous);
+  try {
+    const model = await p.f.metadata.publish(document, p.f.capabilities, p.f.publisher);
+    const access = await Access.load(p.f.db, principal);
+    assert.notEqual(model.release, p.f.model.release);
+    p.provider.flags.start = new Date(Date.now() + p.f.provider.flags.durationSeconds * 1000).toISOString();
+    const execution = await wake(p);
+    assert(execution.taskId);
+    await replyCalendar(p, execution.taskId);
+    await p.f.worker.runOne();
+    const result = await p.f.tasks.get(principal, execution.taskId);
+    assert.equal(result.release, model.release);
+    assert.equal(result.state, 'completed', JSON.stringify(result));
+    assert.equal(p.f.provider.flags.orderCreates, 1);
+    const graph = new Objects(p.f.db, model, access);
+    assert.equal((await graph.follow(p.trip, 'order')).length, 1);
   } finally {
     await p.f.close();
   }

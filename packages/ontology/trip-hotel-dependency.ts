@@ -7,6 +7,11 @@ export const hotelCancellationLog = 'FliggyHotelBookingStateLog';
 export const hotelDependencyLink = 'TripHotelBooking';
 export const tripHotelReviewType = 'TripHotelDependencyReview';
 export const tripHotelCurrent = 'tripHotelDependencyIsCurrent';
+export const executeHotelDependentTrip = 'ExecuteHotelDependentTrip';
+export const hotelDependencyCriterion = {
+  function: tripHotelCurrent, arguments: { trip: { parameter: 'trip' } },
+  message: 'The linked hotel booking requires trip review and renewed authorization',
+};
 
 export const bindTripHotelInput = z.strictObject({
   trip: objectRefSchema, plan: objectRefSchema, booking: objectRefSchema, revision: z.number().int().positive(),
@@ -97,10 +102,7 @@ export const tripHotelDependencyDefinition: Pick<OntologyDocument, 'objectTypes'
     apiName: 'ReplanTripHotelDependency', description: 'Update the original trip using a fresh route and the current schedule constraints.',
     parameters: json(replanTripHotelInput),
     objectParameters: { trip: 'EventTrip', travel: 'DrivingEstimate', dependencyReview: tripHotelReviewType },
-    submissionCriteria: [{
-      function: tripHotelCurrent, arguments: { trip: { parameter: 'trip' } },
-      message: 'Bind a currently confirmed hotel booking before replanning',
-    }], function: 'replanTripHotelDependency',
+    submissionCriteria: [hotelDependencyCriterion], function: 'replanTripHotelDependency',
   }, {
     apiName: 'ReviewTripHotelDependency', description: 'Record the impact of a confirmed hotel cancellation on this trip.',
     parameters: json(reviewTripHotelInput),

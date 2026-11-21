@@ -17,7 +17,7 @@ import {
   registrationReply,
 } from '../../ontology/travel.js';
 import {
-  bindTripHotelInput, hotelBookingType, hotelCancellationLog, hotelDependencyLink, replanTripHotelInput, reviewTripHotelInput, tripHotelCurrent, tripHotelReviewType,
+  bindTripHotelInput, executeHotelDependentTrip, hotelBookingType, hotelCancellationLog, hotelDependencyLink, replanTripHotelInput, reviewTripHotelInput, tripHotelCurrent, tripHotelReviewType,
 } from '../../ontology/trip-hotel-dependency.js';
 import { readProcessTransitions } from '../../runtime/process-logs.js';
 import { processLogTarget } from '../../ontology/process-definition.js';
@@ -362,7 +362,7 @@ export function travelFunctions(
       await graph.link({ type: 'TripRegistration', from: input.trip, to: input.permit.registration });
       await schedules.enqueue(graph, {
         id,
-        action: 'ExecuteEventTrip',
+        action: trip.properties.hotelBooking === undefined ? 'ExecuteEventTrip' : executeHotelDependentTrip,
         arguments: { trip: input.trip },
         runAt,
         deadline: input.permit.latestCall,
@@ -681,7 +681,8 @@ export function travelFunctions(
     if (
       ref.type !== 'EventTrip' ||
       trip.properties.state !== 'authorized' ||
-      trip.properties.scheduleId !== call.scheduleId
+      trip.properties.scheduleId !== call.scheduleId ||
+      (trip.properties.hotelBooking !== undefined) !== (call.action === executeHotelDependentTrip)
     )
       throw new Conflict('Trip authorization is unavailable');
     const source = await resolve(context.principal.owner);

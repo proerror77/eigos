@@ -1,4 +1,4 @@
-import { tripHotelDependencyDefinition } from '../packages/ontology/trip-hotel-dependency.js';
+import { executeHotelDependentTrip, tripHotelDependencyDefinition } from '../packages/ontology/trip-hotel-dependency.js';
 import { travelHandoffDefinition } from '../packages/ontology/travel-handoff.js';
 import { ingestMachineryHistory } from '../packages/runtime/machinery-history.js';
 import { ontologyServices } from '../packages/runtime/services.js';
@@ -690,6 +690,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const addedActions = new Set(laterDomains.flatMap(domain => domain.actionTypes.map(action => action.apiName)));
   for (const action of didiOrderDefinitions.actionTypes) addedActions.add(action.apiName);
   addedActions.add(bookImmediateRideAction);
+  addedActions.add(executeHotelDependentTrip);
   addedActions.add('StageDiningActivity');
   addedActions.add('StageScheduleRecommendation');
   const addedFunctions = new Set([
@@ -739,8 +740,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const tripProperties = v9Definition.objectTypes.find(type => type.apiName === 'EventTrip')!.properties;
   delete tripProperties.hotelBooking;
   delete tripProperties.pendingHotelDependencyReview;
-  for (const name of ['AuthorizeEventTrip', 'ExecuteEventTrip'])
-    v9Definition.actionTypes.find(action => action.apiName === name)!.submissionCriteria = [];
+  v9Definition.actionTypes.find(action => action.apiName === 'AuthorizeEventTrip')!.submissionCriteria = [];
   const routeProperties = v9Definition.objectTypes.find(type => type.apiName === 'Route')!.properties;
   delete routeProperties.pickup;
   delete routeProperties.drivingEstimate;
