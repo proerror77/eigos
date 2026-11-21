@@ -9,20 +9,24 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { Automation } from '../packages/runtime/automation.js';
+import { EditHistory } from '../packages/runtime/edit-history.js';
 import { readProcessStatus } from '../packages/runtime/process-automation.js';
 import { Worker } from '../apps/worker/worker.js';
 import { ScheduledActions, ScheduledActionRunner } from '../packages/runtime/scheduled-actions.js';
 import { Objects } from '../packages/runtime/objects.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import { fixture, principal } from './fixture.js';
+import {
+  deliveryType, hotelLifecycleDefinition, paReportType, recordDelivery, recordPAReport, startHotelLifecycleIndexer,
+} from './fliggy-hotel-lifecycle-fixture.js';
 
-test('the hotel distribution Actions verify rated terms, approve exact orders and reconcile supplier results', async () => {
+test('the hotel distribution Actions verify rated terms, approve exact orders and reconcile supplier results and deliver one cancellation', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'fliggy-hotel-booking-'));
   const connection = join(directory, 'connection.json');
   const profile = join(directory, 'guests.json');
   const payments = join(directory, 'payments.json');
   const secret = 'synthetic-distribution-key';
-  const providerId = '3035909269095214604';
+  let providerId = '3035909269095214604';
   const expiresAt = new Date(Date.now() + 300000).toISOString();
   const config = { owner: principal.owner, account: 'test-account', appKey: '12345', appSecret: secret,
     distributor: 'fixture', expiresAt, enabled: true, hotelProfilesFile: profile, hotelPaymentsFile: payments };
@@ -103,7 +107,9 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
     detailResponse = await detail.clone().text();
     return detail;
   };
-  const f = await fixture(undefined, undefined, undefined, undefined, { fliggyHotel: connection, fliggyHotelFetch: fetcher });
+  const f = await fixture(undefined, undefined, undefined, hotelLifecycleDefinition(),
+    { fliggyHotel: connection, fliggyHotelFetch: fetcher });
+  let indexer: ReturnType<typeof startHotelLifecycleIndexer> | undefined;
   try {
     const actions = f.capabilities.actions;
     const act = async (action: string, input: Record<string, unknown>, key = randomUUID()) =>
@@ -196,18 +202,100 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
     assert.equal(calls.filter(operation => operation === 'cancel').length, 1);
     // A synchronous cancellation still returns its independent provider confirmation immediately.
     loseCancelReply = false;
+    providerId = '3035909269095214605';
     const second = await act('PrepareFliggyHotelBooking', { selection, bookingKey: randomUUID() });
     const reviewed = await view(second);
     const secondApproval = { booking: second, approvedDigest: reviewed.approvalDigest, amountMinor: reviewed.amountMinor };
-    await act('CreateFliggyHotelBooking', secondApproval);
+    const createRequest = randomUUID();
+    assert.deepEqual(await act('CreateFliggyHotelBooking', secondApproval, createRequest), second);
+    const order = await view(second);
+    assert.equal(order.outOrderId, orderNumber);
+    assert.equal(order.merchantOrderId, providerId);
+    assert.equal(order.independentRead, true);
+    const { rows: createReceipts } = await f.db.query(
+      `SELECT state, result FROM ${f.db.schema}.external_operations WHERE owner=$1 AND request_id=$2`,
+      [principal.owner, createRequest]);
+    assert.deepEqual(createReceipts, [{ state: 'confirmed', result: { merchantOrderId: order.merchantOrderId } }]);
+    orderStatus = 3;
+    const effectiveAt = new Date().toISOString();
+    await act('RefreshFliggyHotelBooking', { booking: second });
+    const confirmation = await view(second);
+    assert.equal(confirmation.state, 'confirmed');
+    assert(Date.parse(effectiveAt) <= Date.parse(String(confirmation.observedAt)));
     await setGrants(f.db, principal.owner, businessGrants(f.model).filter(grant => grant.resource !== 'Eigos/action/RefreshFliggyHotelBooking'));
     await assert.rejects(act('CancelFliggyHotelBooking', secondApproval), /Permission required/);
     assert.equal(calls.filter(operation => operation === 'cancel').length, 1);
     await setGrants(f.db, principal.owner, businessGrants(f.model));
-    await act('CancelFliggyHotelBooking', secondApproval);
-    assert.equal((await view(second)).state, 'cancelled');
-    assert.equal((await view(second)).independentRead, true);
+    const automation = new Automation(f.db, f.metadata, actions);
+    const rule = await automation.rule(await Access.load(f.db, principal), f.model, {
+      name: 'Deliver synthetic hotel cancellation', enabled: true,
+      process: { type: 'FliggyHotelBookingStateLog', from: 'confirmed', to: 'cancelled' },
+      effect: { action: recordDelivery, input: { booking: { object: true } } },
+    });
+    indexer = startHotelLifecycleIndexer(f.schema);
+
+    const cancelRequest = randomUUID();
+    assert.deepEqual(await act('CancelFliggyHotelBooking', secondApproval, cancelRequest), second);
+    const cancelledDetailResponse = detailResponse;
+    const cancelled = await view(second);
+    assert.equal(cancelled.state, 'cancelled');
+    assert.equal(cancelled.independentRead, true);
+    const transition = (await graph.follow(second, 'stateLogs')).find(log => log.properties.newState === 'cancelled');
+    assert(transition);
+    assert.equal(transition.properties.requestId, cancelRequest);
+
+    // The PA can submit an old assertion through its fixture Action. The booking only takes state from independent detail.
+    const pa = { ...principal, clientId: 'synthetic-hotel-pa' };
+    const report = { booking: second, reportId: randomUUID(), reportedState: 'confirmed', effectiveAt };
+    const submitReport = async () => actions.apply(await Access.load(f.db, pa), f.model, recordPAReport, report, report.reportId);
+    const reportRef = await submitReport();
+    assert.deepEqual(reportRef, { type: paReportType, id: report.reportId });
+    assert.deepEqual((await graph.follow(reportRef, 'booking')).map(row => row.ref), [second]);
+    const history = await new EditHistory(f.db).read(graph, reportRef);
+    assert.equal(history.items.length, 1);
+    const evidence = history.items[0]!;
+    assert.equal(evidence.after?.evidence, 'synthetic');
+    assert.equal(evidence.after?.reportedState, 'confirmed');
+    assert.equal(evidence.after?.effectiveAt, effectiveAt);
+    assert.deepEqual(evidence.executor, { kind: 'client', id: pa.clientId });
+    assert(evidence.at.getTime() >= Date.parse(String(transition.properties.recordedAt)));
+    assert(evidence.at.getTime() > Date.parse(effectiveAt));
+
+    orderStatus = 3;
+    const detailCalls = calls.filter(operation => operation === 'detail').length;
+    for (let replay = 0; replay < 2; replay++) {
+      assert.deepEqual(await submitReport(), reportRef);
+      assert.deepEqual(await act('CancelFliggyHotelBooking', secondApproval, cancelRequest), second);
+      await assert.rejects(act('RefreshFliggyHotelBooking', { booking: second }), /contradicts the previously observed order state/);
+    }
+    assert.equal(calls.filter(operation => operation === 'detail').length, detailCalls + 2);
     assert.equal(calls.filter(operation => operation === 'cancel').length, 2);
+    assert.deepEqual(await view(second), cancelled);
+    assert.deepEqual((await graph.follow(second, 'syntheticPAReports')).map(row => row.ref), [reportRef]);
+    assert.equal((await graph.follow(second, 'stateLogs')).filter(log => log.properties.newState === 'cancelled').length, 1);
+
+    // Wait for a scan after the replays and read back the committed downstream Action for this transition.
+    const { rows: [clock] } = await f.db.query<{ now: Date }>('SELECT clock_timestamp() AS now');
+    await indexer.waitFor('cancellation delivery', async () => {
+      const { rows: [progress] } = await f.db.query(
+        `SELECT enabled,error,last_scan,process_cursor FROM ${f.db.schema}.object_rules WHERE id=$1`, [rule.id]);
+      assert.equal(progress!.enabled, true, progress!.error);
+      const { rows: runs } = await f.db.query(
+        `SELECT state,object_ref,process_trigger->>'sequence' AS sequence FROM ${f.db.schema}.workflow_runs
+          WHERE process_trigger->>'ruleId'=$1`, [rule.id]);
+      if (progress!.last_scan > clock!.now && runs.some(run => run.state === 'completed')) {
+        assert.equal(progress!.process_cursor, transition.properties.sequence);
+        assert.deepEqual(runs, [{ state: 'completed', object_ref: second, sequence: transition.properties.sequence }]);
+        return true;
+      }
+    });
+    const { rows: deliveries } = await f.db.query(`SELECT result FROM ${f.db.schema}.actions WHERE action=$1`, [recordDelivery]);
+    const delivery = { type: deliveryType, id: second.id };
+    assert.deepEqual(deliveries, [{ result: delivery }]);
+    assert.deepEqual((await graph.follow(delivery, 'booking')).map(row => row.ref), [second]);
+
+    await indexer.stop();
+    indexer = undefined;
 
     // Run a published readback through the standalone Indexer. Its connection
     // file is the same one used by the direct and scheduled Actions above.
@@ -215,7 +303,6 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
     // though the child substitutes a local response for every fetch.
     const indexerBooking = await graph.read(second);
     await graph.edit(second, indexerBooking.revision, { evidence: 'provider' });
-    const automation = new Automation(f.db, f.metadata, actions);
     const access = await Access.load(f.db, principal);
     const workflow = await automation.workflow(access, f.model, { name: 'Refresh the original hotel order',
       steps: [{ name: 'Readback', action: 'RefreshFliggyHotelBooking', input: { booking: { object: true } } }] });
@@ -228,20 +315,20 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
           body.get('method') !== 'taobao.xhotel.order.distribution.detail' ||
           JSON.parse(body.get('order_base_req')).dis_order_id !== ${JSON.stringify(orderNumber)})
           throw new Error('Unexpected Indexer request');
-        return new Response(${JSON.stringify(detailResponse)});
+        return new Response(${JSON.stringify(cancelledDetailResponse)});
       };
     `);
-    const indexer = fork(new URL('../apps/indexer/main.ts', import.meta.url), [], {
+    const readbackIndexer = fork(new URL('../apps/indexer/main.ts', import.meta.url), [], {
       execArgv: ['--import', 'tsx', '--import', preload],
       env: { DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_PG_SCHEMA: f.schema,
         EIGOS_FLIGGY_HOTEL_CONNECTION_FILE: connection, PATH: process.env.PATH },
     });
-    const exited = once(indexer, 'exit');
+    const exited = once(readbackIndexer, 'exit');
     try {
       const deadline = Date.now() + 15000;
       let state;
       do {
-        assert.equal(indexer.exitCode, null);
+        assert.equal(readbackIndexer.exitCode, null);
         state = (await f.db.query(`SELECT state FROM ${f.db.schema}.workflow_runs WHERE id=$1`, [run.id])).rows[0]!.state;
         if (state === 'completed' || state === 'failed') break;
         await delay(50);
@@ -250,14 +337,15 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
       const committed = (await f.db.query(`SELECT action,result,executor_kind FROM ${f.db.schema}.actions WHERE executor_id=$1`, [run.id])).rows;
       assert.deepEqual(committed, [{ action: 'RefreshFliggyHotelBooking', result: second, executor_kind: 'workflow' }]);
     } finally {
-      indexer.kill('SIGTERM');
-      const timer = setTimeout(() => indexer.kill('SIGKILL'), 5000);
+      readbackIndexer.kill('SIGTERM');
+      const timer = setTimeout(() => readbackIndexer.kill('SIGKILL'), 5000);
       try { await exited; } finally { clearTimeout(timer); }
     }
 
     await setGrants(f.db, principal.owner, businessGrants(f.model).filter(grant => grant.resource !== 'Eigos/source/FliggyHotelDistribution'));
     await assert.rejects(view(booking), /Permission required/);
   } finally {
+    await indexer?.stop();
     await f.close();
     await rm(directory, { recursive: true, force: true });
   }
