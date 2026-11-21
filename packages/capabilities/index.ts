@@ -34,6 +34,8 @@ import { didiRideWatchFunctions } from './didi/ride-watch.js';
 import { petRideFunctions } from './didi/pet-ride.js';
 import { rideCapabilities } from './didi/pipeline.js';
 import { schedulingFunctions } from './scheduling/functions.js';
+import { transferDecisionFunctions, transferDecisionSupport, transferObservationProjection } from './scheduling/transfer-decisions.js';
+import { transferObservationSource } from '../ontology/hotel-transfer-decisions.js';
 import { serviceFunctions, serviceProjections } from './services/functions.js';
 import { configuredServices, unavailableServices, type ServiceResolver } from './services/sources.js';
 import type { Sources } from '../runtime/sources.js';
@@ -87,6 +89,7 @@ export function createCapabilities(
   const notifications = configuredTravelNotifications(db, getFunctions, connections.travelPA, connections.travelPAFetch);
   const handlers = new Map([
     ...schedulingFunctions(db),
+    ...transferDecisionFunctions(),
     ...diningResearch(connections.xiaohongshu, connections.xiaohongshuFetch),
     ...dianpingFunctions(connections.dianping, connections.dianpingFetch),
     ...diningReservationFunctions(db, connections.diningWeb, connections.diningMiniProgram),
@@ -112,9 +115,10 @@ export function createCapabilities(
   const capabilities = rideCapabilities(db, source, handlers, new Ontology(businessDefinition).resolvedDocument.functionTypes,
     { functions: [localEmbeddingVersion, ...(extensions.functions ?? [])],
       effects: new Map([...(extensions.effects ?? []), ...notifications.handlers]) },
-    serviceProjections(services), notifications.committed);
+    new Map([...serviceProjections(services), [transferObservationSource, transferObservationProjection]]), notifications.committed);
   sources = capabilities.sources;
   return { ...capabilities, evaluateRelease: evaluateCalendarJourneyRelease,
+    scenarioDecisions: db.sandboxEnabled ? transferDecisionSupport(db) : undefined,
     taskWorkflow: hotelTaskWorkflow(capabilities.functions), taskPrompt: prepareMapCorrectionPrompt,
     projectTaskResult: publicHotelTaskResult };
 }

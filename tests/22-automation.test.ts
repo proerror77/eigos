@@ -42,6 +42,7 @@ import { petRideDefinition } from '../packages/ontology/pet-ride.js';
 import { documentDefinition } from '../packages/ontology/documents.js';
 import { fliggyFlightBookingDefinition } from '../packages/ontology/fliggy-flight-booking.js';
 import { fliggyHotelDefinition } from '../packages/ontology/fliggy-hotel.js';
+import { hotelTransferDefinition } from '../packages/ontology/hotel-transfer-decisions.js';
 import { flightDefinition } from '../packages/ontology/flight.js';
 import { flightPositionFunction } from '../packages/ontology/flight-position.js';
 import { locationFunctions, taskLocationValueType } from '../packages/ontology/location.js';
@@ -628,6 +629,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const laterDomains = [
     calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition, fliggyServicesDefinition,
     fliggyFlightBookingDefinition, fliggyHotelDefinition, diningReservations, marketplaceDefinition, petRideDefinition,
+    hotelTransferDefinition,
   ];
   const addedTypes = new Set([
     ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType,
@@ -688,10 +690,12 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     !rideWatchDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !flightDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !calendarJourneyDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    !hotelTransferDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !fliggyServicesDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !marketplaceDefinition.linkTypes.some(link => link.apiName === type.apiName));
   v9Definition.dataSources = v9Definition.dataSources.filter(source =>
     !fliggyServicesDefinition.dataSources.some(item => item.apiName === source.apiName) &&
+    !hotelTransferDefinition.dataSources.some(item => item.apiName === source.apiName) &&
     !marketplaceDefinition.dataSources.some(item => item.apiName === source.apiName));
   v9Definition.actionTypes = v9Definition.actionTypes.filter(action => !addedActions.has(action.apiName));
   v9Definition.functionTypes = v9Definition.functionTypes.filter(fn => !addedFunctions.has(fn.apiName));
