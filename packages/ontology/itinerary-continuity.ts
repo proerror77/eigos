@@ -26,15 +26,27 @@ export const reportItineraryInput = itineraryInput.extend({
 export const itineraryFlightReport = flightItineraryObservation.extend({ evidence });
 export const itineraryHotelReport = hotelItineraryObservation.extend({ evidence });
 export const bindItinerarySourceInput = itineraryInput.extend({ source: ref, revision: z.number().int().positive() });
+export const itineraryAutomation = z.strictObject({
+  ruleId: z.uuid(), ruleRevision: z.number().int().positive(), workflowId: z.uuid(),
+});
+export const itineraryRevisionInput = itineraryInput.extend({ revision: z.number().int().positive() });
+export const applyItineraryProposalInput = itineraryRevisionInput.extend({
+  assessmentDigest: z.string().regex(/^[a-f0-9]{64}$/), confirmNoActiveRide: z.literal(true),
+});
+export const itineraryProposalCriterion = 'itineraryTransferProposalIsCurrent';
+export const itineraryPlanEdit = z.strictObject({
+  assessmentDigest: z.string(), transfer: ref, revision: z.number().int().positive(), appliedAt: time,
+  pickup: place, destination: place,
+});
 export const itineraryRouteInput = itineraryInput.extend({ travel: ref });
 export const itinerarySources = z.strictObject({
-  flightWatch: ref.optional(), hotelBooking: ref.optional(), rideOrder: ref.optional(), routeEstimate: ref.optional(),
+  flightWatch: ref.optional(), flightBooking: ref.optional(), hotelBooking: ref.optional(), rideOrder: ref.optional(), routeEstimate: ref.optional(),
   originalHotelCheckIn: z.iso.date().optional(),
 });
 export const acknowledgeItineraryInput = itineraryInput.extend({
   assessmentDigest: z.string().regex(/^[a-f0-9]{64}$/), note: z.string().trim().min(1).max(1000), evidence,
 });
-const assessment = z.strictObject({
+export const itineraryAssessment = z.strictObject({
   digest: z.string(), pickupAt: time.nullable(), arrivalAt: time.nullable(),
   pickup: place, destination: place, latestHotelArrival: time.nullable(), orderLinked: z.boolean(),
   flightEvidence: z.enum(['planned', 'pa_reported', 'synthetic', 'provider']),
@@ -53,7 +65,8 @@ const fields = {
   sources: itinerarySources, scheduleId: z.string(), nextCheckAt: time.nullable(), checkedAt: time.nullable(),
   flightObservation: itineraryFlightReport.optional(),
   hotelObservation: itineraryHotelReport.optional(),
-  assessment: assessment.optional(), handoff: itineraryManualHandoff.optional(),
+  assessment: itineraryAssessment.optional(), handoff: itineraryManualHandoff.optional(),
+  automation: itineraryAutomation.optional(), planEdit: itineraryPlanEdit.optional(),
 };
 const targets = [
   ['ItineraryContinuityPlan', 'plan', 'SchedulePlan', 'itineraryContinuity'],
@@ -74,6 +87,8 @@ const operations = [
   }],
   [itineraryCheckAction, itineraryInput, 'Reassess the original itinerary and its next deadline using current evidence.'],
   ['ReportItineraryObservations', reportItineraryInput, 'Record PA evidence on an existing flight or hotel activity.'],
+  ['EnableItineraryAutomation', itineraryRevisionInput, 'Authorize field-change monitoring on an existing itinerary.'],
+  ['ApplyItineraryTransferProposal', applyItineraryProposalInput, 'Approve and update the original internal transfer activity without placing an order.'],
   ['BindItinerarySource', bindItinerarySourceInput, 'Bind original service evidence to the existing itinerary activity.'],
   ['SetItineraryTransferRoute', itineraryRouteInput, 'Bind a fresh route estimate to the exact current pickup and destination.'],
   ['AcknowledgeItineraryHandoff', acknowledgeItineraryInput, 'Record a manual handoff against the exact current assessment.'],
@@ -86,12 +101,16 @@ export const itineraryDefinition: Pick<OntologyDocument, 'objectTypes' | 'linkTy
     properties: Object.fromEntries(Object.entries(fields).map(([name, schema]) =>
       [name, { description: name, required: !schema.isOptional(), schema: json(schema) }])),
   }],
-  linkTypes: targets.map(([apiName, name, type, reverse]) => ({
+  linkTypes: [...targets.map<OntologyDocument['linkTypes'][number]>(([apiName, name, type, reverse]) => ({
     apiName, description: 'Itinerary continuity ' + name,
     from: { type: itineraryType, name, cardinality: 'one' },
     to: { type, name: reverse, cardinality: 'many' },
-  })),
-  functionTypes: operations.map(([action, input, description]) => ({
+  })), {
+    apiName: 'ItineraryContinuityFlightBooking', description: 'Original flight order linked to the same itinerary.',
+    from: { type: itineraryType, name: 'flightBooking', cardinality: 'one' as const },
+    to: { type: 'FliggyFlightBooking', name: 'itineraryContinuity', cardinality: 'many' as const },
+  }],
+  functionTypes: [...operations.map(([action, input, description]) => ({
     apiName: action[0]!.toLowerCase() + action.slice(1), description,
     parameters: json(input), returns: json(ref), edits: true,
     dependencies: {
@@ -99,10 +118,18 @@ export const itineraryDefinition: Pick<OntologyDocument, 'objectTypes' | 'linkTy
       linkTypes: ['DrivingOrigin', 'DrivingDestination', 'ActivityPlan', 'ActivityDependency', 'PlanResource', 'PlanAvailability', 'ResourceAvailability', 'ActivityResource',
         ...targets.map(([name]) => name)],
     },
-  })),
+  })), {
+    apiName: itineraryProposalCriterion, description: 'Check whether the reviewed transfer proposal is still current.',
+    parameters: json(applyItineraryProposalInput), returns: json(z.boolean()), dependencies: { objectTypes: [itineraryType] },
+  }],
   actionTypes: operations.map(([apiName, input, description, parameters]) => ({
     apiName, description, parameters: json(input), function: apiName[0]!.toLowerCase() + apiName.slice(1),
     objectParameters: (parameters ?? { continuity: itineraryType }) as Record<string, string>,
-    submissionCriteria: [],
+    submissionCriteria: apiName === 'ApplyItineraryTransferProposal' ? [{
+      function: itineraryProposalCriterion,
+      arguments: { continuity: { parameter: 'continuity' }, revision: { parameter: 'revision' },
+        assessmentDigest: { parameter: 'assessmentDigest' }, confirmNoActiveRide: { parameter: 'confirmNoActiveRide' } },
+      message: 'Approve the latest evaluated itinerary revision',
+    }] : [],
   })),
 };
