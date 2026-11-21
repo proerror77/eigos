@@ -84,9 +84,10 @@ PA 从一次飞猪酒店或航班搜索结果中取得用户选定的 `offer` �
 
 用 `readFliggyHotelBooking` 或 `readFliggyFlightBooking` 呈现已记录的预览与原订单状态。确认由已认证且有对应 Action 权限的 PA 直接调用，提交预览的 `approvalDigest` 和 `amountMinor`。建单前重新验证原标的、日期、金额及条款。供应商响应丢失后通过 `Refresh…` 按原外部订单号回查。已确认的供应商操作沿用原回执。此处支持国内机票未支付关单和通用分销无罚金退订。已出票退改签、国际机票、国际酒店分销、酒店促销及罚金退订需要单独适配各自合同。
 
-配置部署用户拥有的绝对路径 `0600` JSON 文件。两份文件都需要 `owner`、`account`、`appKey`、`appSecret`、`enabled` 和 `expiresAt`。Gateway 与 Worker 用同一连接，为目标 owner 独立授予 `FliggyHotelDistribution` 或 `FliggyFlightJinghang` 的源权限和对应的对象、Function、Action 权限。
+配置部署用户拥有的绝对路径 `0600` JSON 文件。两份文件都需要 `owner`、`account`、`appKey`、`appSecret`、`enabled` 和 `expiresAt`。Gateway、Worker 与 Indexer 用同一连接，为目标 owner 独立授予 `FliggyHotelDistribution` 或 `FliggyFlightJinghang` 的源权限和对应的对象、Function、Action 权限。
 
-- `EIGOS_FLIGGY_HOTEL_CONNECTION_FILE` 另需 `distributor` 和 `hotelProfilesFile`。入住人文件为数组，每条包含 `id`、`expiresAt`、`contact: {name,phone,email?}` 和按房分组的成人姓名数组 `rooms`。用标准酒店 ID 查询合作方房型报价，再提交 `standardHotelId`、`itemId`、`ratePlanId`，配合实际入住离店日期、到店离店时间和人数创建预览。酒店支付确认需要由已核对买家入账的分销商写入 `hotelPaymentsFile`，记录 `orderId`、`outOrderId`、`receiptId`、`amountMinor`、`currency`、`receivedAt`。
+- `EIGOS_FLIGGY_HOTEL_CONNECTION_FILE` 另需 `distributor`。只跟踪原单时设置 `"readOnly": true`，省略 `hotelProfilesFile` 和 `hotelPaymentsFile`。此模式只向飞猪发送订单详情请求，允许 `RefreshFliggyHotelBooking` 更新同一账号下的既有原单。报价、验价、建单、付款和取消在调用飞猪之前被拒绝。接入需要应用已开通对应的分销渠道及订单详情权限。[飞猪订单详情](https://open.fliggy.com/docs/api.htm?apiId=65082)
+- 交易模式沿用 `hotelProfilesFile`。入住人文件为数组，每条包含 `id`、`expiresAt`、`contact: {name,phone,email?}` 和按房分组的成人姓名数组 `rooms`。用标准酒店 ID 查询合作方房型报价，再提交 `standardHotelId`、`itemId`、`ratePlanId`，配合实际入住离店日期、到店离店时间和人数创建预览。酒店支付确认需要由已核对买家入账的分销商写入 `hotelPaymentsFile`，记录 `orderId`、`outOrderId`、`receiptId`、`amountMinor`、`currency`、`receivedAt`。
 - `EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE` 另需 `session`、`channelName` 和 `flightProfilesFile`。乘机人文件为数组，每条包含 `id`、`expiresAt`、`contact` 和一位成人 `passenger`，两者包含 `name`、`mobile_phone_number`、`mobile_country_code`。乘机人还包含 `birthday`、`credential_type: 0` 和 `credential_no`。京杭交易方还需满足飞猪的聚石塔调用条件。
 
 联系人、证件、建单密钥和票号留在供应商请求边界。Action 只写入业务标的、订单标识和经过核对的状态。测试走签名与 PostgreSQL Action 记录，供应商传输由隔离夹具提供，证据为 `synthetic`。正式供应商履约须独立验证。

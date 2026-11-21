@@ -15,6 +15,7 @@ import { Worker } from '../apps/worker/worker.js';
 import { ScheduledActions, ScheduledActionRunner } from '../packages/runtime/scheduled-actions.js';
 import { Objects } from '../packages/runtime/objects.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
+import { configuredFliggyHotel } from '../packages/capabilities/fliggy/top.js';
 import { fixture, principal } from './fixture.js';
 import { seedPlan } from './service-fixture.js';
 import {
@@ -159,6 +160,26 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
     assert.equal(scheduled!.status, 'scheduled');
     assert(new Date(scheduled!.nextCheckAt).getTime() > Date.now());
     assert.deepEqual(job!.body.arguments, { booking });
+
+    const { hotelProfilesFile: _profiles, hotelPaymentsFile: _payments, ...identity } = config;
+    await write(connection, { ...identity, readOnly: true });
+    const callCount = calls.length;
+    const hotel = await configuredFliggyHotel(connection, fetcher)(principal.owner);
+    for (const operation of ['rates', 'validate', 'create', 'pay', 'cancel'] as const) {
+      await assert.rejects(hotel.call(operation, {}, AbortSignal.timeout(5000)), /read-only/);
+    }
+    const operationsBefore = (await f.db.query(
+      `SELECT count(*) FROM ${f.db.schema}.external_operations WHERE owner=$1`, [principal.owner],
+    )).rows;
+    await assert.rejects(act('PrepareFliggyHotelBooking', { selection, bookingKey: randomUUID() }), /read-only/);
+    for (const action of ['CreateFliggyHotelBooking', 'ConfirmFliggyHotelPayment', 'CancelFliggyHotelBooking']) {
+      await assert.rejects(act(action, approval), /read-only/);
+    }
+    assert.equal(calls.length, callCount);
+    assert.deepEqual((await f.db.query(
+      `SELECT count(*) FROM ${f.db.schema}.external_operations WHERE owner=$1`, [principal.owner],
+    )).rows, operationsBefore);
+
     // Simulate a new Worker after the original caller has disconnected.
     const worker = new Worker(f.tasks, f.agent, new ScheduledActions(f.db, f.metadata),
       new ScheduledActionRunner(f.db, f.metadata, f.tasks, actions));
@@ -188,6 +209,7 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
     orderStatus = 8;
     await due();
     const ended = await view(booking);
+    assert.equal(ended.merchantOrderId, placed.merchantOrderId);
     assert.equal(ended.state, 'cancelled');
     assert.equal(ended.independentRead, true);
     assert.equal((await graph.read(booking)).properties.cancellationObservation, 'finished');
@@ -200,7 +222,9 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
       Number(a.properties.sequence)-Number(b.properties.sequence));
     assert.deepEqual(transitions.slice(-2).map(x => x.properties.newState), ['refund_pending','cancelled']);
     assert.equal((await f.db.query(`SELECT 1 FROM ${f.db.schema}.external_operations WHERE state='unknown'`)).rowCount, 0);
-    assert.equal(calls.filter(operation => operation === 'cancel').length, 1);
+    assert.deepEqual(calls.slice(callCount), ['detail', 'detail', 'detail', 'detail']);
+
+    await write(connection, config);
     // A synchronous cancellation still returns its independent provider confirmation immediately.
     loseCancelReply = false;
     providerId = '3035909269095214605';
