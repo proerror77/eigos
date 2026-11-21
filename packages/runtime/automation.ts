@@ -76,7 +76,14 @@ const baseRule = z.strictObject({
   enabled: z.boolean().default(false),
 });
 const ruleQuerySchema = querySchema.omit({ cursor: true, limit: true, select: true });
-const objectRule = baseRule.extend({ query: ruleQuerySchema });
+const onModified = z.strictObject({
+  watch: z.array(z.strictObject({
+    path: z.array(ontologyName).max(3).default([]),
+    properties: z.array(ontologyName).min(1).max(12),
+  })).min(1).max(12),
+  includeAdded: z.boolean().default(false),
+});
+const objectRule = baseRule.extend({ query: ruleQuerySchema, onModified: onModified.optional() });
 const processRule = z.union([
   baseRule.extend({ process: processRuleSchema }),
   baseRule.omit({ workflow:true }).extend({ process:processRuleSchema, effect:singleAction, replayFrom: z.string().regex(/^\d{1,19}$/).optional() }),
@@ -84,12 +91,13 @@ const processRule = z.union([
 const ruleSchema = z.union([objectRule, processRule]);
 export const saveRuleSchema = baseRule.extend({
   workflow: z.uuid().optional(), effect: singleAction.optional(),
-  query: ruleQuerySchema.optional(), replayFrom: z.string().regex(/^\d{1,19}$/).optional(),
+  query: ruleQuerySchema.optional(), onModified: onModified.optional(), replayFrom: z.string().regex(/^\d{1,19}$/).optional(),
   process: processRuleSchema.optional(),
 }).refine(rule => Boolean(rule.query) !== Boolean(rule.process), 'Select one object query or process transition condition')
   .refine(rule => Boolean(rule.workflow) !== Boolean(rule.effect) && (!rule.effect || !!rule.process),
     'Select a saved workflow or a single Action for a process trigger')
-  .refine(rule => rule.replayFrom === undefined || !!rule.effect?.related, 'Replay requires a related-object Action');
+  .refine(rule => rule.replayFrom === undefined || !!rule.effect?.related, 'Replay requires a related-object Action')
+  .refine(rule => rule.onModified === undefined || !!rule.query, 'Field changes require an object-set rule');
 export const processBindingsSchema = z.strictObject({
   type: ontologyName, cursor: z.uuid().optional(),
 });
@@ -126,6 +134,43 @@ function bindWorkflowInput(item: z.output<typeof step>, object: ObjectData, prev
   }));
 }
 
+type FieldWatch = z.output<typeof onModified>['watch'];
+
+function validateFieldWatch(graph: Objects, type: string, watches?: FieldWatch) {
+  for (const watch of watches ?? []) {
+    const target = watch.path.reduce((current, link) => {
+      const navigation = graph.model.navigation(current, link);
+      graph.access.definition(graph.model, 'link', navigation.link);
+      graph.access.read(graph.model, navigation.target);
+      return navigation.target;
+    }, type);
+    const properties = graph.model.object(target).properties;
+    if (watch.properties.some(field => !properties[field] || properties[field]!.derived))
+      throw new Conflict('Watch stored ontology properties on the selected relationship path');
+    if (watch.properties.some(field => !graph.access.property(graph.model, target, field)))
+      throw new PermissionDenied('A watched field is unavailable');
+  }
+}
+
+async function fieldWatchDigest(graph: Objects, root: ObjectData, watches: FieldWatch) {
+  const snapshots = [];
+  for (const watch of watches) {
+    const entries = [];
+    const targets = watch.path.length ? await relatedProcessObjects(graph, root.ref, watch.path) : [root.ref];
+    for (const target of targets) {
+      const item = watch.path.length ? await graph.read(target) : root;
+      const values = [];
+      for (const field of watch.properties) {
+        if (!await graph.propertyVisible(item.ref, field)) throw new PermissionDenied('A watched field is unavailable');
+        values.push(Object.hasOwn(item.properties, field) ? { value: item.properties[field] } : {});
+      }
+      entries.push({ ref: item.ref, values });
+    }
+    snapshots.push(entries.sort((a, b) => digest(a.ref).localeCompare(digest(b.ref))));
+  }
+  return digest(snapshots);
+}
+
 export async function initializeAutomation(db: Database) {
   await db.query(`CREATE TABLE IF NOT EXISTS ${db.schema}.workflows(id uuid PRIMARY KEY,owner text NOT NULL,ontology text NOT NULL,name text NOT NULL,body jsonb NOT NULL,revision integer NOT NULL);
     ALTER TABLE ${db.schema}.workflows ADD COLUMN IF NOT EXISTS published_body jsonb,
@@ -139,6 +184,7 @@ export async function initializeAutomation(db: Database) {
     UPDATE ${db.schema}.object_rules SET enabled=false,error='Re-save the rule to record its original authorization scopes' WHERE scopes IS NULL AND enabled;
     CREATE TABLE IF NOT EXISTS ${db.schema}.rule_matches(rule_id uuid NOT NULL REFERENCES ${db.schema}.object_rules(id),type text NOT NULL,id text NOT NULL,matched boolean NOT NULL,revision bigint NOT NULL,PRIMARY KEY(rule_id,type,id));
     ALTER TABLE ${db.schema}.rule_matches ADD COLUMN IF NOT EXISTS generation bigint NOT NULL DEFAULT 0;
+    ALTER TABLE ${db.schema}.rule_matches ADD COLUMN IF NOT EXISTS observed_digest text;
     CREATE TABLE IF NOT EXISTS ${db.schema}.workflow_runs(id uuid PRIMARY KEY,owner text NOT NULL,ontology text NOT NULL,release text NOT NULL REFERENCES ${db.schema}.releases(digest),request_id text NOT NULL,digest text NOT NULL,workflow_id uuid NOT NULL REFERENCES ${db.schema}.workflows(id),body jsonb NOT NULL,object_ref jsonb NOT NULL,scopes jsonb NOT NULL,step integer NOT NULL DEFAULT 0,state text NOT NULL DEFAULT 'pending',error text,token uuid,lease_until timestamptz,results jsonb NOT NULL DEFAULT '[]',created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),UNIQUE(owner,request_id));
     ALTER TABLE ${db.schema}.workflow_runs ALTER COLUMN workflow_id DROP NOT NULL;
     ALTER TABLE ${db.schema}.workflow_runs ADD COLUMN IF NOT EXISTS available_at timestamptz NOT NULL DEFAULT now();
@@ -297,8 +343,12 @@ export class Automation {
             throw new Conflict('The process object cannot bind to '+input.effect.action+'/'+key);
         }
       }
-      if ('query' in input)
-        for (const type of model.concreteTypes(input.query.type)) access.read(model, type);
+      if ('query' in input) {
+        for (const type of model.concreteTypes(input.query.type)) {
+          access.read(model, type);
+          validateFieldWatch(graph, type, input.onModified?.watch);
+        }
+      }
       const result = input.id
         ? await this.db.query(
             `UPDATE ${this.db.schema}.object_rules SET name=$3,body=$4,enabled=$5,revision=revision+1,error=NULL,scopes=$8,last_scan=NULL,process_cursor=NULL WHERE id=$1 AND owner=$2 AND revision=$6 AND ontology=$7 AND NOT (body ? 'machineryReview') RETURNING revision`,
@@ -498,7 +548,13 @@ export class Automation {
         if(page.cursor||page.items.length>100)throw new Conflict('Narrow conditions to at most 100 matching objects before previewing');
         return page.items;
       };
-      const baseline='query' in configuration?new Set((await match(live,configuration.query)).map(item=>digest(item.ref))):undefined;
+      const baseline = new Map<string, string | undefined>();
+      if ('query' in configuration) {
+        for (const item of await match(live, configuration.query)) {
+          baseline.set(digest(item.ref), configuration.onModified
+            ? await fieldWatchDigest(live, item, configuration.onModified.watch) : undefined);
+        }
+      }
       for(const selected of input.scenarios){
         signal.throwIfAborted();
         const view=await scenarios.view(access,model,selected.id,client);
@@ -509,7 +565,15 @@ export class Automation {
         const waiting:ObjectRef[]=[];
         let entered:ObjectRef[];
         if('query' in configuration){
-          entered=(await match(graph,configuration.query)).filter(item=>!baseline!.has(digest(item.ref))).map(item=>item.ref);
+          entered = [];
+          for (const item of await match(graph, configuration.query)) {
+            const key = digest(item.ref);
+            const watched = configuration.onModified;
+            if (!baseline.has(key) ? !watched || watched.includeAdded
+              : watched && baseline.get(key) !== await fieldWatchDigest(graph, item, watched.watch)) {
+              entered.push(item.ref);
+            }
+          }
         }else{
           const target=processTarget(graph,configuration.process);
           entered=diff.objects.filter(item=>{
@@ -722,7 +786,7 @@ export class Automation {
       const rule = (
         await this.db.query(
           `SELECT * FROM ${this.db.schema}.object_rules WHERE enabled AND NOT (body ? 'machineryReview') AND (process_cursor IS NOT NULL)=$1
-            AND (last_scan IS NULL OR last_scan<=now()-$2*interval '1 second') ORDER BY last_scan NULLS FIRST FOR UPDATE SKIP LOCKED LIMIT 1`,
+            AND (last_scan IS NULL OR last_scan<=now()-(CASE WHEN body ? 'onModified' THEN 5 ELSE $2 END)*interval '1 second') ORDER BY last_scan NULLS FIRST FOR UPDATE SKIP LOCKED LIMIT 1`,
           [process, process ? 1 : 30],
           client,
         )
@@ -769,15 +833,19 @@ export class Automation {
   private async scanMatches(graph: Objects, ruleId: string, revision: number,
     input: z.output<typeof objectRule>, body: z.output<typeof workflowSchema>) {
     const { access, client, model, owner } = graph;
-    for (const type of model.concreteTypes(input.query.type)) access.read(model, type);
-    const matched = new Map<string, { ref: ObjectRef; revision: number }>();
+    for (const type of model.concreteTypes(input.query.type)) {
+      access.read(model, type);
+      validateFieldWatch(graph, type, input.onModified?.watch);
+    }
+    const matched = new Map<string, ObjectData>();
+    const limit = input.onModified ? 100 : 10000;
     let cursor: string | undefined;
     do {
       const page = await graph.query({ ...input.query, limit: 100, cursor });
       cursor = page.cursor;
       for (const item of page.items) {
         matched.set(digest(item.ref), item);
-        if (matched.size > 10000) throw new Conflict('Rule matches more than 10000 objects');
+        if (matched.size > limit) throw new Conflict('Rule matches more than ' + limit + ' objects');
       }
     } while (cursor);
     const previous = (
@@ -789,10 +857,12 @@ export class Automation {
     ).rows;
     const prior = new Map(previous.map((item) => [digest({ type: item.type, id: item.id }), item]));
     for (const [key, item] of matched) {
-      const before = prior.get(key),
-        entered = !before?.matched,
-        generation = Number(before?.generation ?? 0) + (entered ? 1 : 0);
-      if (entered) {
+      const before = prior.get(key);
+      const observed = input.onModified ? await fieldWatchDigest(graph, item, input.onModified.watch) : null;
+      const triggered = !before?.matched ? !input.onModified || input.onModified.includeAdded
+        : Boolean(input.onModified && before.observed_digest !== observed);
+      const generation = Number(before?.generation ?? 0) + (triggered ? 1 : 0);
+      if (triggered) {
         const fingerprint = digest([ruleId, revision, item.ref, generation]);
         const requestId = 'rule:' + fingerprint;
         await this.db.query(
@@ -813,8 +883,10 @@ export class Automation {
         );
       }
       await this.db.query(
-        `INSERT INTO ${this.db.schema}.rule_matches(rule_id,type,id,matched,revision,generation) VALUES($1,$2,$3,true,$4,$5) ON CONFLICT(rule_id,type,id) DO UPDATE SET matched=true,revision=excluded.revision,generation=excluded.generation`,
-        [ruleId, item.ref.type, item.ref.id, item.revision, generation],
+        `INSERT INTO ${this.db.schema}.rule_matches(rule_id,type,id,matched,revision,generation,observed_digest)
+          VALUES($1,$2,$3,true,$4,$5,$6) ON CONFLICT(rule_id,type,id)
+          DO UPDATE SET matched=true,revision=excluded.revision,generation=excluded.generation,observed_digest=excluded.observed_digest`,
+        [ruleId, item.ref.type, item.ref.id, item.revision, generation, observed],
         client,
       );
     }

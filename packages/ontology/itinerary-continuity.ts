@@ -25,6 +25,7 @@ export const reportItineraryInput = itineraryInput.extend({
 }).refine(input => input.flight || input.hotel, 'Provide at least one itinerary observation');
 export const itineraryFlightReport = flightItineraryObservation.extend({ evidence });
 export const itineraryHotelReport = hotelItineraryObservation.extend({ evidence });
+export const bindItinerarySourceInput = itineraryInput.extend({ source: ref, revision: z.number().int().positive() });
 export const itineraryRouteInput = itineraryInput.extend({ travel: ref });
 export const itinerarySources = z.strictObject({
   flightWatch: ref.optional(), hotelBooking: ref.optional(), rideOrder: ref.optional(), routeEstimate: ref.optional(),
@@ -73,6 +74,7 @@ const operations = [
   }],
   [itineraryCheckAction, itineraryInput, 'Reassess the original itinerary and its next deadline using current evidence.'],
   ['ReportItineraryObservations', reportItineraryInput, 'Record PA evidence on an existing flight or hotel activity.'],
+  ['BindItinerarySource', bindItinerarySourceInput, 'Bind original service evidence to the existing itinerary activity.'],
   ['SetItineraryTransferRoute', itineraryRouteInput, 'Bind a fresh route estimate to the exact current pickup and destination.'],
   ['AcknowledgeItineraryHandoff', acknowledgeItineraryInput, 'Record a manual handoff against the exact current assessment.'],
   ['StopItineraryContinuity', itineraryInput, 'Stop future checks on the same itinerary.'],

@@ -5,6 +5,7 @@ import { digest } from '../packages/core/identity.js';
 import { objectRefSchema, type ObjectRef } from '../packages/ontology/schema.js';
 import { rideCancellationReceipt } from '../packages/ontology/travel.js';
 import { json } from '../packages/ontology/service-contracts.js';
+import { Automation, saveRuleSchema } from '../packages/runtime/automation.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { ScheduledActions } from '../packages/runtime/scheduled-actions.js';
 import { document, fixture, principal } from './fixture.js';
@@ -17,16 +18,6 @@ const iso = (n: number) => new Date(n).toISOString();
 async function setup(booked: boolean, connected = false, sandbox = true) {
   const definition = structuredClone(document);
   const watchType = 'FlightWatch';
-  if (connected) {
-    const input = z.strictObject({ watch: objectRefSchema, revision: z.number(), status: z.record(z.string(), z.unknown()), observedAt: z.iso.datetime() });
-    definition.actionTypes.push({
-      apiName: 'RecordSyntheticFlightFields', description: 'Preserve the state and update operational timing in the fixture',
-      parameters: json(input), objectParameters: { watch: watchType }, submissionCriteria: [],
-      rules: [{ op: 'editObject', object: { parameter: 'watch' }, expectedRevision: { parameter: 'revision' },
-        properties: { status: { parameter: 'status' }, observedAt: { parameter: 'observedAt' } } }],
-      result: { type: watchType, id: { parameter: 'watch', path: ['id'] } },
-    });
-  }
   if (booked) {
     const input = z.strictObject({ order: objectRefSchema, revision: z.number(), receipt: rideCancellationReceipt });
     definition.actionTypes.push({
@@ -53,7 +44,7 @@ async function setup(booked: boolean, connected = false, sandbox = true) {
     const addresses = [];
     for (const name of ['Synthetic airport', 'Synthetic hotel', 'Different synthetic hotel']) {
       const result = await f.capabilities.sources.refresh(f.model, 'DidiPlaces', { city: '上海市', keywords: name },
-        f.access, undefined, undefined, AbortSignal.timeout(5000));
+        f.access, undefined, undefined, AbortSignal.timeout(15000));
       addresses.push((await graph.follow(result.receipt, 'places')).find(point => point.properties.name === name)!.ref);
     }
     const [pickup, destination, newHotel] = addresses as [ObjectRef, ObjectRef, ObjectRef];
@@ -71,18 +62,36 @@ async function setup(booked: boolean, connected = false, sandbox = true) {
       destinationName: null, departureTerminal: null, arrivalTerminal: null, gate: null, scheduledDeparture: at(10),
       estimatedDeparture: null, actualDeparture: null, scheduledArrival: at(45), estimatedArrival: null, actualArrival: null,
     };
-    if (connected) await graph.create(flightWatch, {
+    const flightProjection = {
       id: flightWatch.id, name: 'Synthetic connected flight', settings, scheduleId: 'external-flight-watch',
       sourceAuthority: null, checks: 1, state: 'monitoring', reason: 'checked', checkedAt: at(0),
       nextCheckAt: at(5), status, observedAt: at(0), knownGate: null, knownTerminal: null, alert: null, alertVersion: 0,
-    });
+    };
+    if (connected) await graph.ingestBatch([{ ref: flightWatch, properties: flightProjection }], 'SyntheticFlightProjection', at(0));
     const continuity = await apply('StartItineraryContinuity', {
       plan, flight, transfer, hotel, pickup, destination, airportExitMinutes: 30, latestHotelArrival: at(132),
       deadline: at(170), checkEveryMinutes: 7,
-      ...(booked ? { rideOrder } : {}), ...(connected ? { flightWatch } : {}),
+      ...(booked ? { rideOrder } : {}),
     });
+    const automation = new Automation(f.db, f.metadata, f.capabilities.actions);
+    const workflow = await automation.workflow(f.access, f.model, {
+      name: 'Check linked itinerary', steps: [{ name: 'Review', action: 'CheckItineraryContinuity', input: { continuity: { object: true } } }],
+    });
+    const ruleInput = saveRuleSchema.parse({
+      name: 'Observe itinerary inputs', enabled: true, workflow: workflow.id, query: { type: 'ItineraryContinuity' },
+      onModified: { watch: [
+        { properties: ['flightObservation', 'hotelObservation', 'sources'] },
+        { path: ['flightWatch'], properties: ['status', 'state'] },
+        { path: ['hotelBooking'], properties: ['state', 'selection'] },
+        { path: ['rideOrder'], properties: ['state', 'cancellationReceipt'] },
+        { path: ['plan','availability'], properties: ['windows', 'busy', 'sourceVersion'] },
+      ] },
+    });
+    const rule = await automation.rule(f.access, f.model, ruleInput);
+    assert.equal(await automation.scanOne(), true);
+    assert.equal(await automation.runOne(), false);
     return { f, graph, plan, availability, apply, continuity, at, flight, transfer, hotel, unrelated,
-      pickup, destination, newHotel, rideOrder, flightWatch, status };
+      pickup, destination, newHotel, rideOrder, flightWatch, status, flightProjection, rule };
   } catch (error) {
     await f.close();
     throw error;
@@ -117,7 +126,7 @@ test('one Sandbox plan follows simultaneous and subsequent changes even without 
       hotel: { state: 'available', observedAt, validUntil, latestArrival: at(140), destination: p.destination },
     };
     await apply('ReportItineraryObservations', observation, 'simultaneous-update');
-    const first = await indexer.waitFor('itinerary effect', async () => {
+    const first = await indexer.waitFor('itinerary modification', async () => {
       const current = await result();
       return current.issues.includes('misses_hotel_checkin') ? current : undefined;
     });
@@ -125,6 +134,8 @@ test('one Sandbox plan follows simultaneous and subsequent changes even without 
     assert.equal(first.arrivalAt, at(150));
     assert.equal(first.transferDisposition, 'review_original_order');
     assert.equal(first.hotelDisposition, 'confirm_late_arrival');
+    const [firstRun] = (await f.db.query(`SELECT count(*)::int AS n FROM ${f.db.schema}.workflow_runs`)).rows;
+    assert.equal(firstRun!.n, 1);
     assert.deepEqual((await graph.follow(plan, 'itineraryContinuity')).map(item => item.ref), [continuity]);
     assert.deepEqual((await graph.follow(continuity, 'rideOrder')).map(item => item.ref), [p.rideOrder]);
     await apply('AcknowledgeItineraryHandoff', {
@@ -177,7 +188,7 @@ test('one Sandbox plan follows simultaneous and subsequent changes even without 
     assert.equal(f.provider.flags.orderCreates, 0);
     assert.equal(f.provider.flags.orderQueries, 0);
     assert.equal((await f.db.query(`SELECT count(*)::int AS n FROM ${f.db.schema}.external_operations`)).rows[0]?.n, 0);
-    assert.equal((await f.db.query(`SELECT count(*)::int AS n FROM ${f.db.schema}.action_effects WHERE action='ReportItineraryObservations'`)).rows[0]?.n, 2);
+    assert.equal((await f.db.query(`SELECT count(*)::int AS n FROM ${f.db.schema}.workflow_runs`)).rows[0]?.n, 4);
   } finally {
     await indexer.stop();
     await f.close();
@@ -189,9 +200,15 @@ test('the Indexer consumes a field-only flight change and a due check uses newer
   const indexer = startHotelLifecycleIndexer(f.schema);
   try {
     await apply('CheckItineraryContinuity', { continuity });
-    const flight = await graph.read(p.flightWatch);
-    await apply('RecordSyntheticFlightFields', { watch: p.flightWatch, revision: flight.revision,
-      status: { ...p.status, estimatedArrival: at(60) }, observedAt: iso(Date.now()) });
+    assert.deepEqual(await graph.follow(continuity, 'flightWatch'), []);
+    await apply('BindItinerarySource', {
+      continuity, source: p.flightWatch, revision: (await graph.read(continuity)).revision,
+    });
+    assert.deepEqual((await graph.follow(continuity, 'flightWatch')).map(item => item.ref), [p.flightWatch]);
+    const observedAt = iso(Date.now());
+    await graph.ingestBatch([{ ref: p.flightWatch, properties: {
+      ...p.flightProjection, status: { ...p.status, estimatedArrival: at(60) }, observedAt,
+    } }], 'SyntheticFlightProjection', observedAt);
     const report = await indexer.waitFor('field-only change', async () => {
       const current = resultSchema.parse((await graph.read(continuity)).properties.assessment);
       return current.pickupAt === at(90) ? current : undefined;
@@ -212,15 +229,16 @@ test('the Indexer consumes a field-only flight change and a due check uses newer
     assert.equal((await graph.follow(continuity, 'hotel'))[0]?.ref.id, p.hotel.id);
     const scheduled = await new ScheduledActions(f.db).inspect(principal, scheduleId);
     const prior = (await graph.read(continuity)).properties.nextCheckAt as string;
-    assert(Date.parse(prior) > Date.parse(at(2)));
+    const now = Date.now(), earlier = iso(now + minute);
+    assert(Date.parse(prior) > Date.parse(earlier));
     await apply('ReportItineraryObservations', {
       continuity, evidence: 'synthetic',
-      hotel: { state: 'available', observedAt: iso(Date.now()), validUntil: at(10), latestArrival: at(2), destination: p.destination },
+      hotel: { state: 'available', observedAt: iso(now), validUntil: iso(now + 10 * minute), latestArrival: earlier, destination: p.destination },
     }, 'new-earlier-deadline');
     await indexer.waitFor('check advanced to the new hotel deadline', async () =>
-      (await graph.read(continuity)).properties.nextCheckAt === at(2) ? true : undefined);
+      (await graph.read(continuity)).properties.nextCheckAt === earlier ? true : undefined);
     const [task] = (await f.db.query(`SELECT available_at FROM ${f.db.schema}.tasks WHERE id=$1`, [scheduled.taskId])).rows;
-    assert.equal(task!.available_at.toISOString(), at(2));
+    assert.equal(task!.available_at.toISOString(), earlier);
     await apply('StopItineraryContinuity', { continuity });
     assert.equal((await graph.read(continuity)).properties.nextCheckAt, null);
     assert.equal((await new ScheduledActions(f.db).inspect(principal, scheduleId)).state, 'canceled');

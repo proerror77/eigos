@@ -1,17 +1,13 @@
 import { z } from 'zod';
-import { Conflict, NotFound, digest } from '../../core/identity.js';
+import { Conflict, digest } from '../../core/identity.js';
 import { objectRefSchema, type LinkData, type ObjectData, type ObjectRef } from '../../ontology/schema.js';
 import {
-  acknowledgeItineraryInput, itineraryCheckAction, itineraryInput, itineraryType, itinerarySources, itineraryRouteInput, itineraryFlightReport, itineraryHotelReport, reportItineraryInput, startItineraryInput,
+  acknowledgeItineraryInput, bindItinerarySourceInput, itineraryCheckAction, itineraryInput, itineraryType, itinerarySources, itineraryRouteInput, itineraryFlightReport, itineraryHotelReport, reportItineraryInput, startItineraryInput,
 } from '../../ontology/itinerary-continuity.js';
 import { rideCancellationReceipt } from '../../ontology/travel.js';
-import { Access } from '../../runtime/access.js';
-import type { Actions, CommittedEffects } from '../../runtime/actions.js';
 import type { Database } from '../../runtime/database.js';
-import type { EffectHandler } from '../../runtime/effects.js';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
-import { Metadata } from '../../runtime/metadata.js';
-import { Objects } from '../../runtime/objects.js';
+import type { Objects } from '../../runtime/objects.js';
 import { ScheduledActions } from '../../runtime/scheduled-actions.js';
 import { readPlan, freePlanWindows } from './functions.js';
 
@@ -33,7 +29,6 @@ const links = {
   rideOrder: ['ItineraryContinuityRideOrder', 'DidiRideOrder'],
   routeEstimate: ['ItineraryContinuityRoute', 'DidiDrivingEstimate'],
 } as const;
-const effectName = 'itineraryContinuityCheck';
 
 async function optional(objects: Reader, object: ObjectRef, link: keyof typeof links) {
   const targets = await objects.follow(object, link);
@@ -308,6 +303,31 @@ export function itineraryContinuityFunctions(db: Database): ReadonlyMap<string, 
           await graph.edit(ref, watch.revision, { assessment, state, nextCheckAt: next, checkedAt: iso(now) });
       });
     }],
+    ['bindItinerarySource', async (raw, context) => {
+      const input = bindItinerarySourceInput.parse(raw);
+      if (!context.edit || !context.directAction || context.objects.model.scenario) throw new Conflict('Bind original itinerary evidence through the PA');
+      const binding = input.source.type === 'FlightWatch' ? 'flightWatch'
+        : input.source.type === 'FliggyHotelBooking' ? 'hotelBooking' : input.source.type === 'DidiRideOrder' ? 'rideOrder' : undefined;
+      if (!binding) throw new Conflict('Use an original flight watch, hotel booking, or ride order');
+      return context.edit(input.continuity, async graph => {
+        const watch = await graph.read(input.continuity), source = await graph.read(input.source);
+        if (watch.revision !== input.revision || watch.properties.state === 'stopped' || ms(watch.properties.deadline) <= Date.now())
+          throw new Conflict('Review the current itinerary before binding a source');
+        const sources = itinerarySources.parse(watch.properties.sources);
+        if (sources[binding]) {
+          const current = await bound(graph, watch.ref, binding, sources[binding]);
+          if (!current || !same(current.ref, source.ref)) throw new Conflict('The existing original source must be resolved separately');
+          return;
+        }
+        if (binding === 'hotelBooking') {
+          const selection = z.object({ checkIn: z.iso.date() }).safeParse(source.properties.selection);
+          if (!selection.success) throw new Conflict('Verify the hotel booking before following changes');
+          sources.originalHotelCheckIn = selection.data.checkIn;
+        }
+        await graph.link({ type: links[binding][0], from: watch.ref, to: source.ref });
+        await graph.edit(watch.ref, watch.revision, { sources: { ...sources, [binding]: source.ref } });
+      });
+    }],
     ['setItineraryTransferRoute', async (raw, context) => {
       const input = itineraryRouteInput.parse(raw);
       if (!context.edit || !context.directAction || context.objects.model.scenario) throw new Conflict('Confirm itinerary route evidence through the PA');
@@ -331,8 +351,9 @@ export function itineraryContinuityFunctions(db: Database): ReadonlyMap<string, 
       evidenceAllowed(db, context, input.evidence);
       return context.edit!(input.continuity, async graph => {
         const watch = await graph.read(input.continuity), now = Date.now();
+        const lastAssessment = z.object({ digest: z.string() }).safeParse(watch.properties.assessment).data;
         if (watch.properties.state !== 'attention' || ms(watch.properties.deadline) <= now ||
-          (await assess(graph, watch, now)).digest !== input.assessmentDigest)
+          lastAssessment?.digest !== input.assessmentDigest || (await assess(graph, watch, now)).digest !== input.assessmentDigest)
           throw new Conflict('Acknowledge the latest observed itinerary assessment');
         await graph.edit(watch.ref, watch.revision, {
           handoff: { assessmentDigest: input.assessmentDigest, note: input.note, evidence: input.evidence, recordedAt: iso(now) },
@@ -352,43 +373,4 @@ export function itineraryContinuityFunctions(db: Database): ReadonlyMap<string, 
       });
     }],
   ]);
-}
-
-const fieldsBySource: Record<string, string[]> = {
-  [itineraryType]: ['flightObservation', 'hotelObservation', 'sources'],
-  FlightWatch: ['status', 'state'],
-  FliggyHotelBooking: ['state', 'selection', 'independentRead'],
-  DidiRideOrder: ['state', 'cancellationReceipt'],
-};
-const sourceJob = z.strictObject({ source: objectRefSchema });
-export function itineraryContinuityEffects(db: Database, actions: () => Actions) {
-  const metadata = new Metadata(db);
-  const committed: CommittedEffects = async (model, _owner, changes) => model.objects.has(itineraryType)
-    ? changes.flatMap(({ ref, before, after, afterLinks }) => {
-      const fields = fieldsBySource[ref.type];
-      if (!fields || !after || !before || !fields.some(field =>
-        digest(before.properties[field] ?? null) !== digest(after.properties[field] ?? null))) return [];
-      if (ref.type !== itineraryType && !afterLinks.some(link =>
-        (link as { from_type?: string }).from_type === itineraryType)) return [];
-      return [{ name: 'Itinerary' + digest(ref), handler: effectName, payload: { source: ref } }];
-    }) : [];
-  const handler: EffectHandler = async (raw, { principal, idempotencyKey, signal }) => {
-    const { source } = sourceJob.parse(raw);
-    const model = await metadata.active(), access = await Access.load(db, principal);
-    if (!model.objects.has(itineraryType)) return 'canceled';
-    const graph = new Objects(db, model, access);
-    let targets: ObjectRef[];
-    try {
-      targets = source.type === itineraryType ? [source]
-        : (await graph.follow(source, 'itineraryContinuity', source.type, 100)).map(watch => watch.ref);
-    } catch (error) {
-      if (error instanceof NotFound) return 'canceled';
-      throw error;
-    }
-    for (const continuity of new Map(targets.map(target => [target.id, target])).values()) {
-      await actions().apply(access, model, itineraryCheckAction, { continuity },
-        digest([idempotencyKey, continuity]), undefined, undefined, signal, { kind: 'workflow', id: idempotencyKey });
-    }
-  };
-  return { committed, handlers: new Map([[effectName, handler]]) };
 }

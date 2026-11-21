@@ -252,10 +252,10 @@ Shopify [Global Catalog](https://shopify.dev/docs/agents/catalog/global-catalog)
 
 ### 行程连续跟进
 
-用 `StartItineraryContinuity` 为同一 `SchedulePlan` 下的航班、接送和酒店活动登记一次跟进，传入三个 `ScheduledActivity` 引用、已确认的接送地点、出站缓冲、最晚到店时间、检查间隔及截止时间。接送活动的原始时长作为初始车程。可选择关联已获权的 `FlightWatch`、酒店原单或滴滴原车单。已有供应商状态、PA 观察和排程候选保留各自的证据。没有原车单引用时，评估表示当前图谱没有登记原单，供应商侧仍可由原 PA 核对。
+用 `StartItineraryContinuity` 为同一 `SchedulePlan` 下的航班、接送和酒店活动登记一次跟进，传入三个 `ScheduledActivity` 引用、已确认的接送地点、出站缓冲、最晚到店时间、检查间隔及截止时间。接送活动的原始时长作为初始车程。可选择关联已获权的 `FlightWatch`、酒店原单或滴滴原车单。原来没有来源时可用 `BindItinerarySource` 在同一个跟进对象上补齐关联。已有供应商状态、PA 观察和排程候选保留各自的证据。没有原车单引用时，评估表示当前图谱没有登记原单，供应商侧仍可由原 PA 核对。
 
 - `ReportItineraryObservations` 接受原 PA 的航班预计到达、酒店最晚到店时间及精确地点。一次提交可以更新两侧。隔离 Sandbox 接受 `synthetic` 报告。同一证据重放不重复登记，迟到或冲突的旧观察会被拒绝。
-- Action 日志中的已提交字段变化进入现有 Indexer 效果队列。按关联查找跟进对象，再读取计划、最新证据和完整的日历约束。供应商回查可复用现有航班和订单的监测。航班监测状态即使没变，关联的预计到达时间变化也会触发复核。
+- 创建一次执行 `CheckItineraryContinuity` 的 Workflow，并用 `save_rule` 在 `ItineraryContinuity` 对象集上登记 `onModified`。可沿航班、酒店、原车单和日历关系声明要关注的字段。Indexer 从相同的正式图谱读取来源投影和 PA 提交的数据，触发后按最新留存证据和完整日历约束复核。供应商回查可复用现有航班和订单的监测。航班监测状态即使没变，关联的预计到达时间变化也会触发复核。
 - Worker 在同一个持久排程上主动检查，并在接送时点或最晚到店时间接近时提前复核。读不到来源或日历时保留待核实原因。接送地点变化时，`SetItineraryTransferRoute` 只接受端点完全吻合且仍有效的路线估计。
 - 原计划沿 `itineraryContinuity` 查询候选时段、冲突、原单和下一次检查。已有车单时保留原单与待退改状态。取得原车单取消回执后，复核可以给出新候选，原单仍可追溯。`AcknowledgeItineraryHandoff` 在人工处理时保存与当前评估摘要绑定的交接说明。后续变化会产生新的评估摘要。`StopItineraryContinuity` 停止后续检查并保留历史。
 
