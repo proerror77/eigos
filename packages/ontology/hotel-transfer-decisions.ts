@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { sandboxAgentCapability } from './agent-profiles.js';
-import { decisionAssessment, scenarioDecisionSchema } from './scenario-decision.js';
+import { decisionAssessment, scenarioDecisionSchema, transferLessonReference } from './scenario-decision.js';
 import { objectRefSchema, type OntologyDocument } from './schema.js';
 import { json, time } from './service-contracts.js';
 
@@ -57,6 +57,7 @@ export const hotelTransferDefinition: Pick<OntologyDocument, 'objectTypes' | 'li
       snapshot: z.string(), reviewer: z.string(), approvedAt: time, departure: time,
       arriveBy: time, verifyBy: time, evidence: z.literal('synthetic'),
       judgment: transferJudgmentSchema, result: transferResultSchema.optional(),
+      adoptedLesson: transferLessonReference.optional(),
     }),
   }, {
     ...tag, apiName: transferObservationType, displayName: '合成接驳回执',

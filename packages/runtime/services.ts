@@ -41,7 +41,7 @@ import { Database } from './database.js';
 import { Metadata } from './metadata.js';
 import { ScenarioEvaluations, compareScenariosSchema, trialScenariosSchema, saveEvaluationSuiteSchema, runEvaluationSuiteSchema, promoteEvaluationSchema, evaluationCasesFromSetSchema } from './scenario-evaluation.js';
 import { Scenarios, continueScenarioSchema, type ScenarioDecisionSupport } from './scenarios.js';
-import { scenarioDecisionSchema } from '../ontology/scenario-decision.js';
+import { scenarioDecisionApprovalSchema } from '../ontology/scenario-decision.js';
 import { Objects } from './objects.js';
 import {
   ObjectSets,
@@ -605,7 +605,7 @@ export function ontologyServices(
   register(
     'approve_scenario_review',
     'Approve the revision and snapshot returned by the invited reviewer inspection.',
-    scenarioRevision.extend({ snapshot: z.string().regex(/^[a-f0-9]{64}$/), decision: scenarioDecisionSchema.optional() }),
+    scenarioRevision.extend({ snapshot: z.string().regex(/^[a-f0-9]{64}$/), decision: scenarioDecisionApprovalSchema.optional() }),
     true,
     async (a, input) => new Scenarios(db, bindings.scenarioDecisions).approveReview(a, await active(), input.id, input.revision, input.snapshot, input.decision),
   );

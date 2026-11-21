@@ -229,7 +229,7 @@ Action 检查自身应用权限，以及实际访问的对象、关系和来源�
 
 验收从正常审阅入口走两次。第一次应能沿决策读回准确的方案修订、批准人、原预期、独立观察和复盘。第二次在没有人手动指定历史记录 ID 时应在审阅前看到那条经验。验证无独立观察时保持待验证，旧审阅无法覆盖新修订，当前无权读取的案例无法出现在建议里。该原则描述试点要交付的能力，工程回归与真实业务效果分别验收。
 
-当前试点在显式启用沙箱的本机开发环境中使用已有 `SchedulePlan`、一个合成 RollingGo 酒店选项与一个拟议接驳时段。Workbench 受邀审阅随原审批提交理由，现有 `approve_scenario_review` 可携带同样的 `decision` 参数。审批事务保存 `HotelTransferDecision` 并关联原计划和酒店选项。已授权生产者走 `submit_index` 提交 `SyntheticHotelTransferObservations`，`ReviewHotelTransferOutcome` 将独立时间回执、实测余量和确认的教训写回。验证窗口截至接驳时段结束后一小时，试点以合成来源时间推进。下一次审阅按同一审阅者、酒店身份和当地出发小时筛选更早日期的案例，并复核当前权限与回执修订。运行 `npm test -- --suite=38` 验证两日期与撤权路径。
+当前试点在显式启用沙箱的本机开发环境中使用已有 `SchedulePlan`、一个合成 RollingGo 酒店选项与一个拟议接驳时段。Workbench 受邀审阅随原审批提交理由，现有 `approve_scenario_review` 可携带同样的 `decision` 参数。审批事务保存 `HotelTransferDecision` 并关联原计划和酒店选项。已授权生产者走 `submit_index` 提交 `SyntheticHotelTransferObservations`，`ReviewHotelTransferOutcome` 将独立时间回执、实测余量和确认的教训写回。验证窗口截至接驳时段结束后一小时，试点以合成来源时间推进。下一次审阅按同一审阅者、酒店身份和当地出发小时筛选更早日期的案例，并复核当前权限与回执修订。审阅接口返回历史决策引用和复盘摘要。采用经验时，审批可用 `decision.adoptedLesson` 把这两个值记录在本次决策上。合并重检复盘、原始观察和当前审阅者权限。回归使用同一份第二天的日历与到达截止时间，对比 18:20 的基线与采用复盘后的 18:10，合并后读回正式计划，再沿审批引用和观察关系查到第一次复盘及原始回执。运行 `npm test -- --suite=38` 验证。
 
 ## 服务组合和时间触发
 

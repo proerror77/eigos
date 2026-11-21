@@ -11,6 +11,7 @@ import { Objects } from '../../runtime/objects.js';
 import { optimizeSchedule, type OptimizationActivity } from './optimizer.js';
 import { recordScenarioAction } from '../../runtime/scenario-store.js';
 import { currentService } from '../services/functions.js';
+import { transferDecisionSupport } from './transfer-decisions.js';
 import { activityInputSchema, calendarResponseSchema, commitPlanSchema, diningActivityInputSchema, jsonSchema, planInputSchema, planRefSchema, removeActivitySchema, searchSlotsSchema, recommendScheduleSchema, stageScheduleSchema } from './contracts.js';
 
 type Reader = FunctionContext['objects'];
@@ -126,6 +127,7 @@ export async function validate(objects: Reader, plan: ObjectRef, sourceTrip?:Obj
 }
 
 export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionHandler> {
+  const scenarios = new Scenarios(db, db.sandboxEnabled ? transferDecisionSupport(db) : undefined);
   const proposedTimes=async(objects:Reader)=>{
     if(!objects.model.scenario)return new Set<string>();
     const rows=(await db.query(`SELECT id FROM ${db.schema}.scenario_objects WHERE scenario_id=$1 AND owner=$2 AND type='ScheduledActivity' AND properties IS NOT NULL
@@ -347,7 +349,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       if (!context.edit || context.execution) throw new Conflict('The PA must apply the reviewed merge Action explicitly');
       return context.edit(input.plan,async graph=>{
         const serviceLinks=[...graph.model.objects.keys()].filter(type=>graph.model.implements(type,'ServiceOffering')).map(type=>graph.model.navigation(type,'plans','ServiceOffering').link);
-        await new Scenarios(db).mergeInto(graph,input.scenarioId,input.revision,{objects:['ScheduledActivity','SchedulePlan','ScheduleResource','CalendarAvailability','EventTrip'],links:['ActivityPlan','ActivityResource','ActivityDependency','PlanResource','PlanAvailability','ResourceAvailability','TripPlan','TripEvent','TripTravel','TripActivities',...serviceLinks],validateAction:context.validateScenarioAction,validate:async(view,touched,links)=>{
+        await scenarios.mergeInto(graph,input.scenarioId,input.revision,{objects:['ScheduledActivity','SchedulePlan','ScheduleResource','CalendarAvailability','EventTrip'],links:['ActivityPlan','ActivityResource','ActivityDependency','PlanResource','PlanAvailability','ResourceAvailability','TripPlan','TripEvent','TripTravel','TripActivities',...serviceLinks],validateAction:context.validateScenarioAction,validate:async(view,touched,links)=>{
           if(links.some(link=>link.to.type==='SchedulePlan'&&!same(link.to,input.plan)))throw new Conflict('Scenario contains service links outside the selected plan');
           for(const item of touched){
             if(view.model.implements(item.ref.type,'ServiceOffering')){await currentService(view,item.ref);continue;}
