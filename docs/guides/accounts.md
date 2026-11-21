@@ -2,7 +2,7 @@
 
 用户用 Google 或邮箱密码在 Auth0 自助注册，登录 `https://<gateway>/account` 后开通 EIGOS 账号。账号页只接受带 `email_verified: true` 的签名 ID Token。账号开通后，用户在账号页授权 Grok，再从 Grok Bot 的「连接应用 → 添加自定义连接器 → 远程 HTTPS」添加页面给出的 MCP URL 和 OAuth Client ID，完成 Auth0 用户同意。
 
-Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的访问令牌。账号会话 Cookie 只用于账号页。MCP 使用 `submit_task` 提交只读查询，使用返回的任务 ID 调用 `get_task`，在同一 Grok 对话交付。旧地址 `/members` 和它下面的所有路径（包括旧的门户回调 `/members/callback`），以及 `/`，都会 302 跳到 `/account`。
+Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的访问令牌。账号会话 Cookie 只用于账号页。城市和起终点明确的滴滴估价通过 `complete_with_action` 直接返回报价。其他旅行查询使用 `submit_task`，再用返回的任务 ID 调用 `get_task`，在同一 Grok 对话交付。旧地址 `/members` 和它下面的所有路径（包括旧的门户回调 `/members/callback`），以及 `/`，都会 302 跳到 `/account`。
 
 ## 注册、开户和授权
 
@@ -53,6 +53,23 @@ Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的
 - 撤销后可以点「重新授权 Grok」。重新授权之前签发的令牌，包括撤销之前和撤销期间签发的，继续被拒绝。所以撤销或重新授权之后，用户都要在 Grok 里重新连接，拿重新授权之后签发的令牌。
 - 停用账号同样立即拒绝它的令牌，见「运营者命令」。
 - 同一个邮箱的另一个用户要并入这个账号，账号页确认了这个账号时，Grok 授权也被撤销，见「注册方式」。
+
+### 明确路线的滴滴估价
+
+用户提供城市及已确认的上、下车地点时，Grok 在当前对话调用 `complete_with_action` 并直接返回报价。
+
+```json
+{
+  "requestId": "ride-quote-001",
+  "action": {
+    "interface": { "type": "RideInquiry", "action": "estimate", "implementation": "RideRequest" },
+    "input": { "city": "上海市", "origin": "上海博物馆", "destination": "上海图书馆" }
+  },
+  "read": { "function": "readRideEstimates", "resultParameter": "request" }
+}
+```
+
+此调用需要 `tasks:read`、`tasks:write` 和现有的估价 Action、来源及结果读取授权。相同 `requestId` 和参数读回原报价，仍核对来源及有效期。地点无法唯一匹配时返回 `409`，Grok 补充确认后再询价。需要 PA 提供定位或组合其他旅行能力时使用 `submit_task`。
 
 ## 上线顺序
 
