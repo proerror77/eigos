@@ -1,3 +1,4 @@
+import { Automation, saveRuleSchema } from '../packages/runtime/automation.js';
 import { analyzeMachinery, machineryAnalysisSchema } from '../packages/runtime/machinery-analysis.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -13,7 +14,7 @@ import { Access, businessGrants, setGrants } from '../packages/runtime/access.js
 import { Worker } from '../apps/worker/worker.js';
 import { ScheduledActionRunner } from '../packages/runtime/scheduled-actions.js';
 
-async function prepare() {
+async function prepare(withHotel = false) {
   const provider = serviceProvider(),
     f = await fixture(undefined, provider.resolve),
     p = await seedPlan(f),
@@ -85,6 +86,20 @@ async function prepare() {
   );
   const difference = await scenarios.inspect(f.access, f.model, scenario.id);
   await apply('CommitSchedulePlan', { plan: p.plan, scenarioId: scenario.id, revision: difference.revision });
+  const booking = { type: 'FliggyHotelBooking', id: 'original-hotel' };
+  if (withHotel) {
+    const at = new Date().toISOString();
+    await graph.create(booking, {
+      id: booking.id, name: 'Verified fixture hotel', state: 'confirmed', evidence: 'synthetic', independentRead: true,
+      outOrderId: '101', merchantOrderId: '102', merchantHotelId: '103', totalRoomPrice: 80000, amountMinor: 80000,
+      currency: 'CNY', cancellation: { cancel_policy_type: 1 }, approvalDigest: digest('fixture-room'),
+      expiresAt: at, observedAt: at, authority: 'synthetic-hotel', profileDigest: digest('fixture-guests'),
+      selection: { standardHotelId: '103', itemId: '104', ratePlanId: '105', checkIn: '2030-01-02',
+        checkOut: '2030-01-03', arrivalTime: '15:00', checkOutTime: '12:00', rooms: 1,
+        adultsPerRoom: 1, profileId: 'synthetic-profile' },
+    });
+    await apply('BindTripHotelBooking', { plan: p.plan, trip, booking, revision: (await graph.read(trip)).revision });
+  }
   const planned = await graph.read(trip);
   const permit = {
     category: 'fast',
@@ -98,7 +113,7 @@ async function prepare() {
   };
   await apply('AuthorizeEventTrip', { trip, revision: planned.revision, permit });
   const scheduleId = String((await graph.read(trip)).properties.scheduleId);
-  return { f, provider, p, graph, trip, registration, scheduleId, apply };
+  return { f, provider, p, graph, trip, registration, scheduleId, apply, booking, permit };
 }
 async function wake(p: Awaited<ReturnType<typeof prepare>>) {
   await p.f.db.query(
@@ -463,5 +478,133 @@ test('the PA inbox exposes the correlated scheduled request only to its owner wi
     assert.equal((await p.f.tasks.get(principal, execution.taskId)).result, null);
   } finally {
     await p.f.close();
+  }
+});
+
+test('a committed cancellation finds only its dependent trips and suspends dispatch before Indexer catch-up', async () => {
+  const p = await prepare(true);
+  const { f, graph, trip, booking, apply } = p;
+  const automation = new Automation(f.db, f.metadata, f.capabilities.actions);
+  const rule = {
+    name: 'Review cancelled booking dependencies', enabled: true,
+    process: { type: 'FliggyHotelBookingStateLog', to: 'cancelled' },
+    effect: { action: 'ReviewTripHotelDependency', input: {},
+      related: { path: ['dependentTrips'], sourceParameter: 'booking', transitionParameter: 'transition', targetParameter: 'trip' } },
+  };
+  try {
+    const baseline = (await graph.read(trip)).properties;
+    const addTrip = async (id: string, state: string, scheduleId: string | null, depends: boolean) => {
+      const ref = { type: 'EventTrip', id };
+      const { hotelBooking: _binding, ...properties } = baseline;
+      await graph.create(ref, { ...properties, id, state: 'proposed', scheduleId: null, permit: null });
+      await graph.link({ type: 'TripPlan', from: ref, to: p.p.plan });
+      if (depends) await apply('BindTripHotelBooking',
+        { plan: p.p.plan, trip: ref, booking, revision: (await graph.read(ref)).revision }, 'bind-' + id);
+      if (state !== 'proposed') await graph.edit(ref, (await graph.read(ref)).revision, { state, scheduleId, permit: p.permit });
+      return ref;
+    };
+    const booked = await addTrip('booked', 'dispatched', 'previous-known-schedule', true);
+    const unresolved = await addTrip('unresolved', 'authorized', 'previous-unknown-schedule', true);
+    const unrelated = await addTrip('unrelated', 'proposed', null, false);
+    const orderId = 'previous-didi-order', orderRef = { type: 'DidiRideOrder', id: digest(['synthetic', orderId]) };
+    const observedAt = new Date().toISOString();
+    await graph.ingestBatch([{ ref: orderRef, properties: {
+      id: orderRef.id, name: 'Original order', orderId, status: 'Created',
+      state: 'created', independentRead: false, evidence: 'synthetic', observedAt,
+      contentDigest: digest(orderId), bindingId: 'synthetic',
+    } }], 'DidiRideOrders', observedAt);
+    await graph.link({ type: 'TripOrder', from: booked, to: orderRef });
+    await new ExternalOperations(f.db).run(principal.owner, 'previous-unknown-schedule', {}, async () => {},
+      async () => { throw new Error('Lost the original synthetic supplier response'); }).catch(error => {
+        assert.match(String(error), /unresolved result/);
+      });
+
+    const ruleInput = saveRuleSchema.parse(rule);
+    for (const bad of [
+      { ...rule.effect.related, path: ['stateLogs'] },
+      { ...rule.effect.related, targetParameter: 'booking' },
+    ]) {
+      await assert.rejects(automation.rule(f.access, f.model, { ...ruleInput, effect: { ...rule.effect, related: bad } }),
+        /Related object cannot bind|must be distinct/);
+    }
+    const saved = await automation.rule(f.access, f.model, ruleInput);
+    p.provider.flags.start = new Date(Date.now() + p.f.provider.flags.durationSeconds * 1000).toISOString();
+    const scheduled = await wake(p);
+    await replyCalendar(p, scheduled.taskId);
+    const hotel = await graph.read(booking);
+    const orders = f.provider.source.orders!;
+    const quote = orders.quote.bind(orders);
+    let lastReadReached = false;
+    orders.quote = async (...args) => {
+      const value = await quote(...args);
+      lastReadReached = true;
+      await graph.edit(booking, hotel.revision, { state: 'cancelled' });
+      return value;
+    };
+    await f.worker.runOne();
+    assert.equal(lastReadReached, true);
+    const task = await f.tasks.get(principal, scheduled.taskId);
+    assert.equal(task.state, 'failed');
+    assert.match(JSON.stringify(task.error), /requires trip review/);
+    assert.equal(f.provider.flags.orderCreates, 0);
+    assert.equal(await new ExternalOperations(f.db).inspect(principal.owner, p.scheduleId), null);
+    assert.deepEqual(await graph.follow(p.p.plan, 'hotelDependencyReviews'), []);
+
+    assert.equal(await automation.scanOne(), true);
+    const resumedIndexer = new Automation(f.db, f.metadata, f.capabilities.actions);
+    for (let i = 0; i < 3; i++) assert.equal(await resumedIndexer.runOne(), true);
+    assert.equal(await resumedIndexer.runOne(), false);
+    const results = await graph.follow(p.p.plan, 'hotelDependencyReviews');
+    assert.equal(results.length, 3, JSON.stringify(await resumedIndexer.list(f.access, f.model, 'workflow_runs')));
+    const outcomes = new Map<string, [unknown, unknown]>();
+    const transitions = (await graph.follow(booking, 'stateLogs')).filter(item => item.properties.newState === 'cancelled');
+    assert.equal(transitions.length, 1);
+    for (const result of results) {
+      const [target] = await graph.follow(result.ref, 'trip');
+      outcomes.set(target!.ref.id, [result.properties.orderState, result.properties.readback]);
+      assert.equal(result.properties.requiresAuthorization, true);
+      assert.deepEqual(result.properties.transition, transitions[0]!.ref);
+      assert.deepEqual((await graph.follow(result.ref, 'booking'))[0]!.ref, booking);
+    }
+    assert.deepEqual(outcomes.get(trip.id), ['not_submitted', 'not_needed']);
+    assert.deepEqual(outcomes.get(booked.id), ['original_order', 'verified']);
+    assert.deepEqual(outcomes.get(unresolved.id), ['dispatch_unresolved', 'original_identity_required']);
+    assert.equal(outcomes.has(unrelated.id), false);
+    assert.equal((await graph.read(trip)).properties.state, 'proposed');
+    assert.equal((await graph.read(trip)).properties.permit, null);
+    await assert.rejects(apply('AuthorizeEventTrip', {
+      trip, permit: p.permit, revision: (await graph.read(trip)).revision,
+    }, 'reauthorize-cancelled-trip'), /requires trip review/);
+
+    await resumedIndexer.rule(f.access, f.model, { ...rule, id: saved.id, revision: saved.revision, replayFrom: '0' });
+    assert.equal(await resumedIndexer.scanOne(), true);
+    for (let i = 0; i < 3; i++) assert.equal(await resumedIndexer.runOne(), true);
+    assert.deepEqual((await graph.follow(p.p.plan, 'hotelDependencyReviews')).map(item => item.ref), results.map(item => item.ref));
+    assert.equal(f.provider.flags.orderCreates, 0);
+    assert.equal(f.provider.flags.orderQueries, 1);
+    assert.equal((await graph.follow(booked, 'order'))[0]!.properties.independentRead, true);
+    assert.equal(await new ExternalOperations(f.db).inspect(principal.owner, p.scheduleId), null);
+
+    const replacement = { type: booking.type, id: 'verified-replacement' };
+    await graph.create(replacement, { ...hotel.properties, id: replacement.id, outOrderId: '201', merchantOrderId: '202' });
+    await apply('BindTripHotelBooking', { plan: p.p.plan, trip, booking: replacement,
+      revision: (await graph.read(trip)).revision }, 'bind-reviewed-replacement');
+    const dependencyReview = (await graph.follow(trip, 'hotelDependencyReviews'))[0]!.ref;
+    const revision = (await graph.read(trip)).revision;
+    await assert.rejects(apply('AuthorizeEventTrip', { trip, permit: p.permit, revision }, 'unplanned-review'),
+      /Revalidate the current trip revision/);
+    p.provider.flags.start = new Date(Date.now() + 1800000).toISOString();
+    await apply('SearchLumaEvents', {}, 'refresh-replacement-event');
+    const travel = (await graph.follow(trip, 'travel'))[0]!.ref;
+    await apply('ReplanTripHotelDependency', { trip, travel, dependencyReview, revision }, 'replan-replacement-trip');
+    const replanned = await graph.read(trip);
+    const permit = { ...p.permit, latestCall: new Date(Date.parse(String(replanned.properties.callAt)) + 120000).toISOString() };
+    await apply('AuthorizeEventTrip', { trip, permit, revision: replanned.revision }, 'approve-replacement-trip');
+    assert.notEqual((await graph.read(trip)).properties.scheduleId, p.scheduleId);
+    assert.equal((await graph.read(dependencyReview)).properties.authorizationState, 'authorized');
+    assert.equal((await graph.read(dependencyReview)).properties.authorizationRequestId, 'approve-replacement-trip');
+    assert.equal(f.provider.flags.orderCreates, 0);
+  } finally {
+    await f.close();
   }
 });

@@ -1,3 +1,4 @@
+import { tripHotelCurrent, tripHotelDependencyDefinition } from './trip-hotel-dependency.js';
 import { travelHandoffDefinition } from './travel-handoff.js';
 import { calendarJourneyDefinition as journey, journeyType } from './calendar-journey.js';
 import { hotelTransferDefinition } from './hotel-transfer-decisions.js';
@@ -42,7 +43,7 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '40',
+  id: ride.id, version: '41',
   agentProfiles: businessAgentProfiles,
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...journey.linkTypes, ...flight.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
@@ -76,6 +77,16 @@ businessDefinition.actionTypes.push(...travelHandoffDefinition.actionTypes);
 businessDefinition.objectTypes.push(...fliggyHotelDefinition.objectTypes);
 businessDefinition.functionTypes.push(...fliggyHotelDefinition.functionTypes);
 businessDefinition.actionTypes.push(...fliggyHotelDefinition.actionTypes);
+businessDefinition.objectTypes.push(...tripHotelDependencyDefinition.objectTypes);
+businessDefinition.linkTypes.push(...tripHotelDependencyDefinition.linkTypes);
+businessDefinition.functionTypes.push(...tripHotelDependencyDefinition.functionTypes);
+businessDefinition.actionTypes.push(...tripHotelDependencyDefinition.actionTypes);
+for (const name of ['AuthorizeEventTrip', 'ExecuteEventTrip']) {
+  businessDefinition.actionTypes.find(action => action.apiName === name)!.submissionCriteria.push({
+    function: tripHotelCurrent, arguments: { trip: { parameter: 'trip' } },
+    message: 'The linked hotel booking requires trip review and renewed authorization',
+  });
+}
 businessDefinition.objectTypes.push(...fliggyFlightBookingDefinition.objectTypes);
 businessDefinition.functionTypes.push(...fliggyFlightBookingDefinition.functionTypes);
 businessDefinition.actionTypes.push(...fliggyFlightBookingDefinition.actionTypes);
@@ -249,6 +260,7 @@ businessDefinition.objectTypes.find(type => type.apiName === 'EventTripStateLog'
     { from: 'proposed', to: 'authorized', action: 'AuthorizeEventTrip' },
     { from: 'authorized', to: 'dispatched', action: 'ExecuteEventTrip' },
     { from: 'authorized', to: 'canceled', action: 'CancelEventTrip' },
+    { from: 'authorized', to: 'proposed', action: 'ReviewTripHotelDependency' },
   ],
   subprocesses: [
     { link: 'plan', process: 'SchedulePlanStateLog' },

@@ -10,7 +10,9 @@ import { Database, type Sql } from './database.js';
 import { Metadata, type PublishedOntology } from './metadata.js';
 import type { Actions } from './actions.js';
 import { Objects, querySchema } from './objects.js';
-import { matchingTransition, processRuleSchema, processStatusSchema, processTarget, processTriggerSchema, readProcessStatus } from './process-automation.js';
+import { matchingTransition, processRelatedPath, relatedProcessObjects, processRuleSchema, processStatusSchema, processTarget, processTriggerSchema, readProcessStatus } from './process-automation.js';
+import { processLogTarget } from '../ontology/process-definition.js';
+import { withoutExternalDispatch } from './external-operations.js';
 import { readProcessTransitions } from './process-logs.js';
 import { authorizeCognitive, cognitiveContextSchema, cognitiveResultSchema, cognitiveStepSchema, workflowMerge, type CognitiveStep } from './cognitive-workflow.js';
 import { lockEdits } from './scenario-store.js';
@@ -24,9 +26,16 @@ const binding = z.union([
   z.strictObject({ object: z.literal(true) }),
   z.strictObject({ step: z.string().min(1).max(80) }),
 ]);
+const relatedEffect = z.strictObject({
+  path: processRelatedPath,
+  sourceParameter: ontologyName,
+  transitionParameter: ontologyName,
+  targetParameter: ontologyName,
+});
 const singleAction = z.strictObject({
   action: ontologyName,
   input: z.record(z.string(), binding.refine(value => !('step' in value), 'A direct Action has no previous step')),
+  related: relatedEffect.optional(),
 });
 const step = z.strictObject({
   name: z.string().min(1).max(80),
@@ -70,16 +79,17 @@ const ruleQuerySchema = querySchema.omit({ cursor: true, limit: true, select: tr
 const objectRule = baseRule.extend({ query: ruleQuerySchema });
 const processRule = z.union([
   baseRule.extend({ process: processRuleSchema }),
-  baseRule.omit({ workflow:true }).extend({ process:processRuleSchema, effect:singleAction }),
+  baseRule.omit({ workflow:true }).extend({ process:processRuleSchema, effect:singleAction, replayFrom: z.string().regex(/^\d{1,19}$/).optional() }),
 ]);
 const ruleSchema = z.union([objectRule, processRule]);
 export const saveRuleSchema = baseRule.extend({
   workflow: z.uuid().optional(), effect: singleAction.optional(),
-  query: ruleQuerySchema.optional(),
+  query: ruleQuerySchema.optional(), replayFrom: z.string().regex(/^\d{1,19}$/).optional(),
   process: processRuleSchema.optional(),
 }).refine(rule => Boolean(rule.query) !== Boolean(rule.process), 'Select one object query or process transition condition')
   .refine(rule => Boolean(rule.workflow) !== Boolean(rule.effect) && (!rule.effect || !!rule.process),
-    'Select a saved workflow or a single Action for a process trigger');
+    'Select a saved workflow or a single Action for a process trigger')
+  .refine(rule => rule.replayFrom === undefined || !!rule.effect?.related, 'Replay requires a related-object Action');
 export const processBindingsSchema = z.strictObject({
   type: ontologyName, cursor: z.uuid().optional(),
 });
@@ -208,19 +218,52 @@ export class Automation {
   }
   private async ruleDefinition(rule: z.output<typeof ruleSchema>, owner: string, ontology: string, client: Sql, lock = false) {
     if ('effect' in rule) {
-      const definition = workflowSchema.parse({ name:rule.name, steps:[{ name:'Action', ...rule.effect }] });
+      const definition = workflowSchema.parse({ name:rule.name, steps:[{ name:'Action', action:rule.effect.action, input:rule.effect.input }] });
       return { definition, revision:null };
     }
     const record = await readWorkflowRecord(this.db, { id:rule.workflow, owner, ontology }, client, null, lock);
     if (!record) throw new NotFound('Rule workflow is unavailable');
     return { definition:workflowSchema.parse(record.body), revision:Number(record.revision) };
   }
+  private relatedContract(graph: Objects, source: string, process: string, actionName: string,
+    related: z.output<typeof relatedEffect>, input: Record<string, unknown>) {
+    const { access, model } = graph;
+    const action = model.action(actionName);
+    const fn = action.function && model.functions.get(action.function);
+    if (action.effects?.length || (fn && fn.source && !action.typeClasses?.some(tag => tag.kind === 'observation' && tag.name === 'readback')))
+      throw new Conflict('Related-object rules require an internal Action or a published observation Action');
+    const target = related.path.reduce((type, link) => {
+      const nav = model.navigation(type, link);
+      access.definition(model, 'link', nav.link);
+      access.read(model, nav.target);
+      return nav.target;
+    }, source);
+    const bindings = [[related.sourceParameter, source], [related.transitionParameter, process], [related.targetParameter, target]] as const;
+    if (new Set(bindings.map(([key]) => key)).size !== bindings.length)
+      throw new Conflict('Related Action parameters must be distinct');
+    for (const [key, type] of bindings) {
+      const parameter = action.objectParameters[key];
+      if (Object.hasOwn(input, key) || !parameter || !model.concreteTypes(parameter).includes(type))
+        throw new Conflict('Related object cannot bind to ' + actionName + '/' + key);
+    }
+    return bindings.map(([key]) => key);
+  }
   private async checkDirectEffect(model: PublishedOntology, rule: Extract<z.output<typeof ruleSchema>,{effect:unknown}>,
     release: string | null, client: Sql) {
     if (!release) throw new Conflict('Re-save the process rule to confirm its Action contract');
     if (release === model.release) return;
-    checkWorkflowDependencies(await this.metadata.get(release,client),model,
-      {actions:[rule.effect.action],objectTypes:[rule.process.type]},new Set());
+    const previous = await this.metadata.get(release, client);
+    let sourceType = processLogTarget(previous, rule.process.type)?.objectType;
+    const linkTypes = [];
+    for (const link of rule.effect.related?.path ?? []) {
+      if (!sourceType) throw new Conflict('Original process source type is unavailable');
+      const nav = previous.navigation(sourceType, link);
+      linkTypes.push(nav.link);
+      sourceType = nav.target;
+    }
+    checkWorkflowDependencies(previous, model, {
+      actions: [rule.effect.action], objectTypes: [rule.process.type], linkTypes,
+    }, new Set());
   }
   async rule(access: Access, model: PublishedOntology, raw: unknown) {
     requireScope(access.principal, 'ontology:write');
@@ -242,11 +285,15 @@ export class Automation {
       const target = 'process' in input ? processTarget(graph, input.process) : undefined;
       if ('effect' in input && target) {
         const action = model.action(input.effect.action);
+        const related = input.effect.related;
+        if (input.replayFrom !== undefined && (!related || BigInt(input.replayFrom) > 9223372036854775807n))
+          throw new Conflict('Invalid related process replay cursor');
+        const bound = related ? this.relatedContract(graph, target.objectType, target.type, action.apiName, related, input.effect.input) : [];
         const required = (action.parameters.required ?? []) as string[];
-        if (required.some(key => !Object.hasOwn(input.effect.input,key))) throw new Conflict('The rule is missing a required Action parameter');
+        if (required.some(key => !Object.hasOwn(input.effect.input,key) && !bound.includes(key))) throw new Conflict('The rule is missing a required Action parameter');
         for (const [key,binding] of Object.entries(input.effect.input)) {
           const type = action.objectParameters[key];
-          if ('object' in binding && type && !model.concreteTypes(type).includes(target.objectType))
+          if ('object' in binding && type && (related || !model.concreteTypes(type).includes(target.objectType)))
             throw new Conflict('The process object cannot bind to '+input.effect.action+'/'+key);
         }
       }
@@ -290,7 +337,7 @@ export class Automation {
         await graph.lockWrites();
         const [latest] = await readProcessTransitions(this.db, model, graph.owner, target, client, {});
         await this.db.query(`UPDATE ${this.db.schema}.object_rules SET process_cursor=$2 WHERE id=$1`,
-          [id, latest?.sequence ?? '0'], client);
+          [id, ('replayFrom' in input ? input.replayFrom : undefined) ?? latest?.sequence ?? '0'], client);
       }
       await access.refresh(client);
       return { ...input, id, revision: Number(result.rows[0]!.revision) };
@@ -309,9 +356,9 @@ export class Automation {
           || !access.canSeeModelData(model.object(target.objectType).properties[target.property]?.classification))
         throw new PermissionDenied('Process state is unavailable');
       const rows = (await this.db.query(`SELECT rule.id,rule.name,rule.body,rule.revision,rule.enabled,rule.error,rule.last_scan,
-          latest.id AS run_id,latest.process_trigger,latest.state,latest.updated_at
+          latest.id AS run_id,latest.process_trigger,latest.object_ref,latest.state,latest.updated_at
         FROM ${this.db.schema}.object_rules rule LEFT JOIN LATERAL (
-          SELECT id,state,updated_at,process_trigger FROM ${this.db.schema}.workflow_runs run
+          SELECT id,state,updated_at,process_trigger,object_ref FROM ${this.db.schema}.workflow_runs run
           WHERE run.process_trigger IS NOT NULL AND run.owner=rule.owner AND run.ontology=rule.ontology AND run.process_trigger->>'ruleId'=rule.id::text
             AND run.process_trigger->>'revision'=rule.revision::text
           ORDER BY created_at DESC,id DESC LIMIT 1
@@ -324,7 +371,7 @@ export class Automation {
         if('effect' in rule && (!model.actions.has(rule.effect.action) || !access.canDefine(model,'action',rule.effect.action)
             || !access.canSeeModelData(model.action(rule.effect.action).classification)))continue;
         const trigger=row.process_trigger && processTriggerSchema.parse(row.process_trigger);
-        const visibleRun=trigger && await matchingTransition(graph,trigger.process,trigger.sequence);
+        const visibleRun = trigger && await this.visibleProcessRun(graph, objectRefSchema.parse(row.object_ref), trigger);
         items.push({id:String(row.id),revision:Number(row.revision),name:String(row.name),process:rule.process,
           enabled:Boolean(row.enabled),error:row.error,lastScan:row.last_scan,
           effect:'effect' in rule ? {action:rule.effect.action} : {workflow:rule.workflow},
@@ -372,7 +419,7 @@ export class Automation {
       if (kind === 'workflow_runs') {
         const trigger = row.process_trigger && processTriggerSchema.parse(row.process_trigger);
         if (trigger && (!model.objects.has(trigger.process.type) ||
-            !await matchingTransition(graph, trigger.process, trigger.sequence))) continue;
+            !await this.visibleProcessRun(graph, objectRefSchema.parse(row.object_ref), trigger))) continue;
         const object = await visible(row.object_ref),
           results = [];
         const receipts = (
@@ -435,6 +482,8 @@ export class Automation {
       const savedScopes = z.array(z.string()).parse(rule.scopes??[]);
       if(!savedScopes.includes('ontology:write'))throw new PermissionDenied('Save the rule with current write permission before previewing');
       const configuration=ruleSchema.parse(rule.body);
+      if ('effect' in configuration && configuration.effect.related)
+        throw new Conflict('Preview a related rule with a committed synthetic ProcessLog in an isolated database');
       if ('effect' in configuration) await this.checkDirectEffect(model,configuration,rule.effect_release,client);
       const { definition, revision:workflowRevision } = await this.ruleDefinition(configuration, owner, model.document.id, client, true);
       await lockEdits(this.db,model,owner,client);
@@ -777,6 +826,20 @@ export class Automation {
           client,
         );
   }
+  private async visibleProcessRun(graph: Objects, object: ObjectRef, trigger: ProcessTrigger) {
+    const log = await matchingTransition(graph, trigger.process, trigger.sequence);
+    if (!log) return false;
+    if (!trigger.relatedPath) return true;
+    const type = processLogTarget(graph.model, trigger.process.type)?.objectType;
+    if (!type || typeof log.properties.processId !== 'string') return false;
+    try {
+      const targets = await relatedProcessObjects(graph, { type, id: log.properties.processId }, trigger.relatedPath);
+      return targets.some(ref => ref.type === object.type && ref.id === object.id);
+    } catch (error) {
+      if (error instanceof NotFound || error instanceof PermissionDenied) return false;
+      throw error;
+    }
+  }
   private async scanProcess(graph: Objects, ruleId: string, revision: number, cursor: string,
     input: z.output<typeof processRule>, body: z.output<typeof workflowSchema>) {
     const { access, client, model, owner } = graph;
@@ -784,17 +847,45 @@ export class Automation {
     // A writer cannot allocate a journal sequence for this owner/release until the checkpoint commits.
     await graph.lockWrites();
     const page = await readProcessTransitions(this.db, model, owner, target, client, { after: cursor, limit: 100 });
+    const related = 'effect' in input ? input.effect.related : undefined;
+    if ('effect' in input && related)
+      this.relatedContract(graph, target.objectType, target.type, input.effect.action, related, input.effect.input);
     for (const item of page) {
-      if (!await matchingTransition(graph, input.process, item.sequence)) continue;
-      const trigger: ProcessTrigger = { ruleId, revision, sequence: item.sequence, process: input.process };
-      const fingerprint = digest(trigger);
-      const object = { type: target.objectType, id: item.objectId };
+      const log = await matchingTransition(graph, input.process, item.sequence);
+      if (!log) continue;
+      const source = { type: target.objectType, id: item.objectId };
+      const trigger: ProcessTrigger = {
+        ruleId, revision, sequence: item.sequence, process: input.process,
+        ...(related ? { relatedPath: related.path } : {}),
+      };
+      let targets = [source];
+      if (related) {
+        try {
+          targets = await relatedProcessObjects(graph, source, related.path);
+        } catch (error) {
+          if (error instanceof NotFound) continue;
+          throw error;
+        }
+      }
       const availableAt = new Date(item.recordedAt.getTime() + (input.process.dwellSeconds ?? 0) * 1000);
-      await this.db.query(
-        `INSERT INTO ${this.db.schema}.workflow_runs(id,owner,ontology,release,request_id,digest,workflow_id,body,object_ref,scopes,available_at,process_trigger)
-          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(owner,request_id) DO NOTHING`,
-        [randomUUID(), owner, model.document.id, model.release, 'process-rule:' + fingerprint, fingerprint, 'workflow' in input ? input.workflow : null,
-          body, object, JSON.stringify(access.principal.scopes), availableAt, trigger], client);
+      for (const object of targets) {
+        const fingerprint = digest(related ? [trigger, object] : trigger);
+        const bound = related ? {
+          ...body, steps: [{
+            ...body.steps[0]!, input: {
+              ...body.steps[0]!.input,
+              [related.sourceParameter]: { literal: source },
+              [related.transitionParameter]: { literal: log.ref },
+              [related.targetParameter]: { literal: object },
+            },
+          }],
+        } : body;
+        await this.db.query(
+          `INSERT INTO ${this.db.schema}.workflow_runs(id,owner,ontology,release,request_id,digest,workflow_id,body,object_ref,scopes,available_at,process_trigger)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(owner,request_id) DO NOTHING`,
+          [randomUUID(), owner, model.document.id, model.release, 'process-rule:' + fingerprint, fingerprint, 'workflow' in input ? input.workflow : null,
+            bound, object, JSON.stringify(access.principal.scopes), availableAt, trigger], client);
+      }
     }
     if (page.length) await this.db.query(`UPDATE ${this.db.schema}.object_rules SET process_cursor=$2 WHERE id=$1`,
       [ruleId, page.at(-1)!.sequence], client);
@@ -810,20 +901,28 @@ export class Automation {
     // Acquire the rule lock before the owner write lock, as in scanProcess and rule updates.
     await graph.lockWrites();
     const log = await matchingTransition(graph, trigger.process, trigger.sequence);
-    if (!log || target.objectType !== object.type || log.properties.processId !== object.id)
+    if (!log || typeof log.properties.processId !== 'string')
       throw new PermissionDenied('The triggering process transition is unavailable');
-    if (firstStep && trigger.process.dwellSeconds) {
-      const [latest] = await readProcessTransitions(this.db, model, owner, target, client, { latestFor: object.id });
-      const current = await graph.read(object);
-      if (latest?.sequence !== trigger.sequence || current.properties[target.property] !== trigger.process.to)
+    const source = { type: target.objectType, id: log.properties.processId };
+    if (trigger.relatedPath) {
+      const targets = await relatedProcessObjects(graph, source, trigger.relatedPath);
+      if (!targets.some(ref => ref.type === object.type && ref.id === object.id))
+        throw new ProcessTriggerInactive('Related object no longer matches this process rule');
+    } else if (source.type !== object.type || source.id !== object.id) {
+      throw new PermissionDenied('The triggering process transition is unavailable');
+    }
+    if (firstStep && (trigger.relatedPath || trigger.process.dwellSeconds)) {
+      const [latest] = await readProcessTransitions(this.db, model, owner, target, client, { latestFor: source.id });
+      const current = await graph.read(source);
+      if (latest?.sequence !== trigger.sequence || current.properties[target.property] !== log.properties.newState)
         throw new ProcessTriggerInactive('A later transition ended the state before the workflow could start');
     }
     // A trigger can depend on a historically marked state even after the live object has been cleared.
     const history = (await this.db.query(
       `SELECT before_values,after_values FROM ${this.db.schema}.edit_history WHERE owner=$1 AND sequence=$2 AND type=$3 AND id=$4`,
-      [owner, trigger.sequence, object.type, object.id], client)).rows[0]!;
+      [owner, trigger.sequence, source.type, source.id], client)).rows[0]!;
     for (const snapshot of [history.before_values, history.after_values])
-      if (snapshot) access.readRow(model, object.type, snapshot);
+      if (snapshot) access.readRow(model, source.type, snapshot);
   }
   async runOne(signal = AbortSignal.timeout(120000)): Promise<boolean> {
     signal.throwIfAborted();
@@ -997,7 +1096,7 @@ export class Automation {
           };
           const commitGuard = (client: Sql) =>
             trigger && client === this.db.pool ? this.db.transaction(checkCommit) : checkCommit(client);
-          result = await this.actions.apply(
+          const apply = () => this.actions.apply(
             access,
             model,
             frozen.action,
@@ -1008,6 +1107,7 @@ export class Automation {
             executionSignal,
             { kind: 'workflow', id: String(row.id) },
           );
+          result = await (trigger?.relatedPath ? withoutExternalDispatch(apply) : apply());
         }
         await this.db.transaction(async (client) => {
           await guard(client);

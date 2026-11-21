@@ -170,6 +170,8 @@ export const travelDefinition: OntologyDocument = {
         eventBindingId: z.string(),
         sourceAuthority: z.string(),
         venueAddress: z.string(),
+        hotelBooking: ref.optional(),
+        pendingHotelDependencyReview: ref.nullable().optional(),
         nextCheckAt: time.nullable(),
       },
       'A plan linking an event, calendar allocation, travel estimate and authorized timed ride.',
