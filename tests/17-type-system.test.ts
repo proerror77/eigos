@@ -7,7 +7,7 @@ import { document as businessDefinition, fixture, principal } from './fixture.js
 import { Functions } from '../packages/runtime/functions.js';
 import { Actions } from '../packages/runtime/actions.js';
 import { Objects } from '../packages/runtime/objects.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { OntologyPackages } from '../packages/runtime/ontology-packages.js';
 import { z } from 'zod';
 import { objectRefSchema, type OntologyDocument } from '../packages/ontology/schema.js';
@@ -100,7 +100,7 @@ test('Value Types apply through Action parameters and source object ingestion',a
     const body={...basic(),valueTypes:[{apiName:'Label',version:'1',description:'Uppercase labels',schema:{type:'string',pattern:'^[A-Z]+$'}}],actionTypes:[{apiName:'CreateItem',description:'Create item',parameters:{type:'object',properties:{label:{valueType:{name:'Label',version:'1'}}},required:['label'],additionalProperties:false},objectParameters:{},submissionCriteria:[],rules:[{op:'createObject',object:{type:'Item',id:{parameter:'label'}},properties:{id:{parameter:'label'},name:{parameter:'label'}}}],result:{type:'Item',id:{parameter:'label'}}}]};
     body.objectTypes[0]!.properties.name={...property({},true),valueType:{name:'Label',version:'1'}} as never;
     const model=await f.metadata.publish(body,noBindings,f.publisher);
-    await setGrants(f.db,principal.owner,memberGrants(model));await f.access.refresh();
+    await setGrants(f.db,principal.owner,businessGrants(model));await f.access.refresh();
     const actions=new Actions(f.db,new Functions(new Map(),[]));
     await assert.rejects(actions.apply(f.access,model,'CreateItem',{label:'bad'},'bad'));
     await actions.apply(f.access,model,'CreateItem',{label:'GOOD'},'good');
@@ -177,7 +177,7 @@ test('function-backed Action packages include executable code resource dependenc
     assert.deepEqual(packet.document.dataSources.map(source=>source.apiName),['ItemFeed']);
     assert.equal(packet.document.functionTypes.length,3);
     const publication=await f.metadata.publish(packet.document,bindings,f.publisher);
-    await setGrants(f.db,principal.owner,memberGrants(publication));
+    await setGrants(f.db,principal.owner,businessGrants(publication));
     const access=await Access.load(f.db,principal);
     const ref=await new Actions(f.db,functions).apply(access,publication,'CreateItem',{name:'usable package'},'packaged-create');
     assert.equal((await new Objects(f.db,publication,access).read(ref)).properties.name,'USABLE PACKAGE');
@@ -258,7 +258,7 @@ test('packages include shared derived links and target types using each concrete
     await setGrants(f.db,'limited-derived',[{resource:'Eigos/object/Item',permission:'view_definition'},{resource:'Eigos/sharedProperty/ChildCount',permission:'view_definition'}]);
     await assert.rejects(packages.export(await Access.load(f.db,{owner:'limited-derived',scopes:[]}),{ontology:'Eigos',resources:[{kind:'object',name:'Item'}]}),/Permission/);
     const publication=await f.metadata.publish(packet.document,noBindings,f.publisher);
-    await setGrants(f.db,principal.owner,memberGrants(publication));
+    await setGrants(f.db,principal.owner,businessGrants(publication));
     const graph=new Objects(f.db,publication,await Access.load(f.db,principal)),parent={type:'Item',id:'parent'},child={type:'Child',id:'child'};
     await graph.create(parent,{id:'parent',name:'Parent'});await graph.create(child,{id:'child',name:'Child'});
     await graph.link({type:'ItemChildren',from:parent,to:child});
@@ -366,7 +366,7 @@ test('Interface Action object parameters that cannot be the selected object stil
 test('Interface Actions run the selected implementation and execution rejects an object of another implementation', async () => {
   const f = await fixture(); try {
     const model = await f.metadata.publish(tagged(), noBindings, f.publisher);
-    await setGrants(f.db, principal.owner, memberGrants(model)); await f.access.refresh();
+    await setGrants(f.db, principal.owner, businessGrants(model)); await f.access.refresh();
     const card = { type: 'Card', id: 'c1' }, graph = new Objects(f.db, model, f.access);
     await graph.ingestBatch([{ ref: { type: 'Note', id: 'n1' }, properties: { id: 'n1', name: 'Note' } }, { ref: card, properties: { id: 'c1', name: 'Card' } }]);
     const actions = new Actions(f.db, new Functions(new Map(), []));

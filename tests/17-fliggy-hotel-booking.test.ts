@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
+import { fork } from 'node:child_process';
+import { once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
 import { createHmac, randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
+import { Automation } from '../packages/runtime/automation.js';
 import { readProcessStatus } from '../packages/runtime/process-automation.js';
 import { Worker } from '../apps/worker/worker.js';
 import { ScheduledActions, ScheduledActionRunner } from '../packages/runtime/scheduled-actions.js';
@@ -34,6 +38,7 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
   };
   let orderStatus = 0, orderNumber = '', amount = 80000, loseCreateReply = true, loseCancelReply = true, unavailable = false;
   const calls: string[] = [];
+  let detailResponse = '';
   const fetcher: typeof fetch = async (url, init) => {
     assert.equal(String(url), 'https://eco.taobao.com/router/rest');
     assert.equal(init?.redirect, 'error');
@@ -89,12 +94,14 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
       return response({ cancel_success: true, forfeit_fee: 0 });
     }
     if (unavailable) throw new Error('Synthetic status temporarily unavailable');
-    return response({ order_base_info: {
+    const detail = response({ order_base_info: {
       fliggy_order_id: 'LARGE_ID', dis_order_id: orderNumber, order_status: orderStatus, total_room_price: 80000,
       total_actual_price: 80000, settle_currency_code: 'CNY', is_checked_in: false,
     }, hotel_info: { hid: selection.standardHotelId }, order_fulfill_info: {
       check_in: '2030-01-02 15:00:00', check_out: '2030-01-03 12:00:00', room_number: 1,
     } });
+    detailResponse = await detail.clone().text();
+    return detail;
   };
   const f = await fixture(undefined, undefined, undefined, undefined, { fliggyHotel: connection, fliggyHotelFetch: fetcher });
   try {
@@ -193,15 +200,62 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
     const reviewed = await view(second);
     const secondApproval = { booking: second, approvedDigest: reviewed.approvalDigest, amountMinor: reviewed.amountMinor };
     await act('CreateFliggyHotelBooking', secondApproval);
-    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant => grant.resource !== 'Eigos/action/RefreshFliggyHotelBooking'));
+    await setGrants(f.db, principal.owner, businessGrants(f.model).filter(grant => grant.resource !== 'Eigos/action/RefreshFliggyHotelBooking'));
     await assert.rejects(act('CancelFliggyHotelBooking', secondApproval), /Permission required/);
     assert.equal(calls.filter(operation => operation === 'cancel').length, 1);
-    await setGrants(f.db, principal.owner, memberGrants(f.model));
+    await setGrants(f.db, principal.owner, businessGrants(f.model));
     await act('CancelFliggyHotelBooking', secondApproval);
     assert.equal((await view(second)).state, 'cancelled');
     assert.equal((await view(second)).independentRead, true);
     assert.equal(calls.filter(operation => operation === 'cancel').length, 2);
-    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant => grant.resource !== 'Eigos/source/FliggyHotelDistribution'));
+
+    // Run a published readback through the standalone Indexer. Its connection
+    // file is the same one used by the direct and scheduled Actions above.
+    // The production-shaped resolver labels this transport as provider even
+    // though the child substitutes a local response for every fetch.
+    const indexerBooking = await graph.read(second);
+    await graph.edit(second, indexerBooking.revision, { evidence: 'provider' });
+    const automation = new Automation(f.db, f.metadata, actions);
+    const access = await Access.load(f.db, principal);
+    const workflow = await automation.workflow(access, f.model, { name: 'Refresh the original hotel order',
+      steps: [{ name: 'Readback', action: 'RefreshFliggyHotelBooking', input: { booking: { object: true } } }] });
+    const run = await automation.run(access, f.model, { workflow: workflow.id, object: second, requestId: 'indexer-fliggy-readback' });
+    const preload = join(directory, 'provider.mjs');
+    await writeFile(preload, `
+      globalThis.fetch = async (url, init) => {
+        const body = new URLSearchParams(init?.body);
+        if (String(url) !== 'https://eco.taobao.com/router/rest' ||
+          body.get('method') !== 'taobao.xhotel.order.distribution.detail' ||
+          JSON.parse(body.get('order_base_req')).dis_order_id !== ${JSON.stringify(orderNumber)})
+          throw new Error('Unexpected Indexer request');
+        return new Response(${JSON.stringify(detailResponse)});
+      };
+    `);
+    const indexer = fork(new URL('../apps/indexer/main.ts', import.meta.url), [], {
+      execArgv: ['--import', 'tsx', '--import', preload],
+      env: { DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_PG_SCHEMA: f.schema,
+        EIGOS_FLIGGY_HOTEL_CONNECTION_FILE: connection, PATH: process.env.PATH },
+    });
+    const exited = once(indexer, 'exit');
+    try {
+      const deadline = Date.now() + 15000;
+      let state;
+      do {
+        assert.equal(indexer.exitCode, null);
+        state = (await f.db.query(`SELECT state FROM ${f.db.schema}.workflow_runs WHERE id=$1`, [run.id])).rows[0]!.state;
+        if (state === 'completed' || state === 'failed') break;
+        await delay(50);
+      } while (Date.now() < deadline);
+      assert.equal(state, 'completed');
+      const committed = (await f.db.query(`SELECT action,result,executor_kind FROM ${f.db.schema}.actions WHERE executor_id=$1`, [run.id])).rows;
+      assert.deepEqual(committed, [{ action: 'RefreshFliggyHotelBooking', result: second, executor_kind: 'workflow' }]);
+    } finally {
+      indexer.kill('SIGTERM');
+      const timer = setTimeout(() => indexer.kill('SIGKILL'), 5000);
+      try { await exited; } finally { clearTimeout(timer); }
+    }
+
+    await setGrants(f.db, principal.owner, businessGrants(f.model).filter(grant => grant.resource !== 'Eigos/source/FliggyHotelDistribution'));
     await assert.rejects(view(booking), /Permission required/);
   } finally {
     await f.close();

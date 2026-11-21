@@ -10,7 +10,7 @@ import { searchFliggy, type FlyAIRead } from '../packages/capabilities/fliggy/co
 import { FLIGGY_CLI_GUARD } from '../packages/capabilities/fliggy/cli-guard.js';
 import { configuredServices } from '../packages/capabilities/services/sources.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { fixture, principal } from './fixture.js';
 import { serviceProvider } from './service-fixture.js';
@@ -119,7 +119,7 @@ test('a PA task queries flights and both hotel sources concurrently and retains 
     assert.equal((await graph.query({ type: 'HotelOffer' })).items.length, 3);
     assert.equal((await graph.query({ type: 'FlightOffer' })).items.length, 2);
 
-    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant => grant.resource !== 'Eigos/source/Fliggy'));
+    await setGrants(f.db, principal.owner, businessGrants(f.model).filter(grant => grant.resource !== 'Eigos/source/Fliggy'));
     const read = async () => f.capabilities.functions.invoke(f.model, 'readServiceSearchPages', { searches: [flights.search.ref] },
       { principal, objects: new Objects(f.db, f.model, await Access.load(f.db, principal)), signal: AbortSignal.timeout(5000) });
     await assert.rejects(read, /Permission required/);
@@ -136,7 +136,7 @@ test('a PA task queries flights and both hotel sources concurrently and retains 
     ]);
     assert.deepEqual(rollingOnly.pages.map(page => page.search.ref.type), ['RollingGoHotelSearch']);
 
-    await setGrants(f.db, principal.owner, memberGrants(f.model));
+    await setGrants(f.db, principal.owner, businessGrants(f.model));
     await setConnection({ ...binding, expiresAt: new Date(Date.now() + 600000).toISOString() });
     await assert.rejects(read, /account changed/);
     await assert.rejects(flyai('other-owner', 'Fliggy'), /no owner connection/);

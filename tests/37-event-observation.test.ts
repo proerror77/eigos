@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { eventObservation } from '../packages/runtime/event-observation.js';
 import { fixture, principal } from './fixture.js';
-import { memberGrants, setGrants, Access } from '../packages/runtime/access.js';
+import { businessGrants, setGrants, Access } from '../packages/runtime/access.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { ontologyServices } from '../packages/runtime/services.js';
 import { ObservationInterests } from '../packages/runtime/observation-interests.js';
@@ -42,7 +42,7 @@ test('an authorized event-only interest survives a new reconciler and advances o
     };
     addProcessLogs(definition, [{ type: 'Route', property: 'phase' }]);
     const model = await f.metadata.publish(definition, f.capabilities, f.publisher);
-    await setGrants(f.db, principal.owner, memberGrants(model));
+    await setGrants(f.db, principal.owner, businessGrants(model));
     const graph = new Objects(f.db, model, await Access.load(f.db, principal));
     const object = { type: 'Route', id: 'event-observation' };
     await graph.create(object, { id: object.id, name: 'Synthetic route', phase: 'planned' });

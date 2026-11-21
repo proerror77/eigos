@@ -6,7 +6,7 @@ import {PARequests} from '../packages/runtime/pa.js';
 import {Objects} from '../packages/runtime/objects.js';
 import {Conflict, InvalidInput, PermissionDenied} from '../packages/core/identity.js';
 import {Scenarios} from '../packages/runtime/scenarios.js';
-import {Access,setGrants,memberGrants} from '../packages/runtime/access.js';
+import {Access,setGrants,businessGrants} from '../packages/runtime/access.js';
 import { ScenarioEvaluations, trialScenariosSchema } from '../packages/runtime/scenario-evaluation.js';
 import {seedPlan} from './service-fixture.js';
 import {harnessFixture} from './harness-fixture.js';
@@ -111,7 +111,7 @@ test('merge requires the reviewed revision and current source and action permiss
   const p=await proposed(f),s=new Scenarios(f.db),d=await s.inspect(f.access,f.model,p.result.scenarioId);
   const args={plan:p.result.plan.ref,scenarioId:p.result.scenarioId,revision:Number(d.revision)-1};
   await assert.rejects(f.capabilities.actions.apply(f.access,f.model,'CommitSchedulePlan',args,'old-review'),/changed after review/);
-  await setGrants(f.db,principal.owner,memberGrants(f.model).filter(g=>g.resource!=='Eigos/source/PACalendar'));
+  await setGrants(f.db,principal.owner,businessGrants(f.model).filter(g=>g.resource!=='Eigos/source/PACalendar'));
   await assert.rejects(f.capabilities.actions.apply(await Access.load(f.db,principal),f.model,'CommitSchedulePlan',{...args,revision:Number(d.revision)},'revoked-source'),/Permission/);
   assert.equal((await f.tasks.get(principal,p.task.id)).result,null);
  }finally{await f.close();}

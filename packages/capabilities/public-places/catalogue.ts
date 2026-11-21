@@ -13,7 +13,7 @@ import {
   withdrawPublicPlaceSchema,
 } from '../../ontology/public-places.js';
 import { ontologyName } from '../../ontology/schema.js';
-import { Access, memberGrants, resource, setGrants } from '../../runtime/access.js';
+import { Access, businessGrants, resource, setGrants } from '../../runtime/access.js';
 import type { Actions } from '../../runtime/actions.js';
 import type { Database, Sql } from '../../runtime/database.js';
 import type { Bindings, Metadata } from '../../runtime/metadata.js';
@@ -99,6 +99,6 @@ export async function provisionPublicPlaceCatalogue(db: Database, metadata: Meta
   const current = record && await metadata.get(record.release);
   if (current && current.digest !== model.digest) throw new Conflict('An unrelated definition owns the public place Ontology');
   const publication = current?.runtimeId === db.runtimeId ? current : await metadata.publish(publicPlacesDefinition, bindings, publisher);
-  await setGrants(db, storageOwner(project), memberGrants(publication));
+  await setGrants(db, storageOwner(project), businessGrants(publication));
   return { project, release: publication.release };
 }

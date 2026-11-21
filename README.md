@@ -19,7 +19,7 @@ cp .env.example .env
 
 ```sh
 npm run db:init
-npm run access:grant-member -- local-developer
+npm run access:grant-business -- local-developer
 npm run ontology:publish
 npm run dev:gateway
 npm run dev:worker
@@ -62,7 +62,7 @@ Key 文件由运行用户拥有，权限为 `0600`。查询连接器调用滴滴
 
 ## Agent 入口
 
-邀请制用户入口和 Grok OAuth 配置见 [会员与 Grok MCP](docs/guides/member-mcp.md)。
+账号注册（Google 或邮箱密码）、开户模式、Auth0 Action、Grok OAuth 配置和运营者命令见 [账号注册与 Grok MCP](docs/guides/accounts.md)。
 
 MCP 位于 `/mcp`，提供 `describe_ontology`、`query_ontology`、`evaluate_ontology`、`apply_ontology_action`、`submit_task`、`get_task`、`select_task_places`，以及 PA 的 `list_pa_requests`、`respond_to_task` 和 Scenario 生命周期工具。
 
@@ -134,7 +134,7 @@ npm run test:e2e:run
 }
 ```
 
-省略 properties 保持当前属性限制；提供该数组则完整替换限制。`access:grant-member` 只授予指定账号当前定义中的业务能力，未来新能力不会自动获得执行授权。受限属性权限需明确配置。沙箱能力仅在显式设置 `EIGOS_AGENT_SANDBOX_ENABLED=true` 的本地开发环境授予并执行，Gateway、Worker 和索引进程沿用同一环境限制。对象内容策略、属性策略、组织组和标记规则的配置见 [Ontology 运行服务](docs/guides/ontology-services.md)，实例仍按 owner 隔离。
+省略 properties 保持当前属性限制；提供该数组则完整替换限制。`access:grant-business` 把指定 owner 的授权整体替换成当前定义中的业务能力，未来新能力不会自动获得执行授权。它只用于运营者或本地开发身份（例如 `local-developer`）这类不走账号路径的 owner；自助注册的账号由 `group:eigos-accounts` 授权，对它们执行不起作用。受限属性权限需明确配置。沙箱能力仅在显式设置 `EIGOS_AGENT_SANDBOX_ENABLED=true` 的本地开发环境授予并执行，Gateway、Worker 和索引进程沿用同一环境限制。对象内容策略、属性策略、组织组和标记规则的配置见 [Ontology 运行服务](docs/guides/ontology-services.md)，实例仍按 owner 隔离。
 
 ## Scenario 与日历排程
 
