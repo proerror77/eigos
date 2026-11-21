@@ -29,6 +29,7 @@ import { auth0Management, type Auth0Management } from './auth0-management.js';
 import { Accounts, accountTaskScopes, type Denial } from '../../packages/runtime/accounts.js';
 import { A2A, AgentUser, agentCard } from './a2a.js';
 import { publicError } from './public-error.js';
+import { startMcpTiming } from './mcp-timing.js';
 import { developmentSandboxEnabled } from '../../packages/core/sandbox-mode.js';
 
 const queryInput = z.strictObject({ ontology:z.string().optional(), taskId: z.uuid().optional(), scenarioId: z.uuid().optional(), query: querySchema });
@@ -69,6 +70,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   const hotelWorkflows = new HotelWorkflows(db, metadata, capabilities.functions);
   const principals = new WeakMap<Request, Principal>();
   const memberRequests = new WeakSet<Request>();
+  const mcpTiming = new WeakMap<Request, ReturnType<typeof startMcpTiming>>();
   const memberClient = config.OAUTH_MEMBER_MCP_CLIENT_ID;
   const members = memberClient ? new Accounts(db, config.EIGOS_SIGNUP) : undefined;
   const existingClients = config.OAUTH_EXISTING_CLIENT_IDS?.split(',') ?? [];
@@ -81,6 +83,10 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   app.disable('x-powered-by');
   // Behind a reverse proxy, `req.ip` (the per-address rate limits) is the forwarded client only if the proxy is trusted.
   if (config.EIGOS_TRUST_PROXY) app.set('trust proxy', /^\d+$/.test(config.EIGOS_TRUST_PROXY) ? Number(config.EIGOS_TRUST_PROXY) : config.EIGOS_TRUST_PROXY);
+  app.post('/mcp', (req, res, next) => {
+    mcpTiming.set(req, startMcpTiming(res));
+    next();
+  });
   // Published domain definitions can exceed the ordinary task/query body bound.
   app.use(['/mcp','/ontology/services'],express.json({limit:'2mb'}));
   app.use(express.json({ limit: '256kb' }));
@@ -243,10 +249,17 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const p = principal(req), member = memberRequests.has(req);
     const instructions = member ? 'Submit the user’s read-only travel query once. Poll get_task with the original returned ID and deliver the result in the same conversation.' : paTravelInstructions;
     const server = new McpServer({ name: 'eigos', version: '0.2.0' }, { instructions });
+    const timing = mcpTiming.get(req)?.(req.body, p.clientId);
     const response = async (operation: () => Promise<unknown>) => {
-      try { const result = await operation(); return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] }; }
+      timing?.start();
+      try {
+        const result = await operation(), text = JSON.stringify(result);
+        timing?.succeed(result);
+        return { content: [{ type: 'text' as const, text }] };
+      }
       catch (error) {
         const { status, message, requestId } = publicError(error);
+        timing?.fail(status);
         return { isError: true,
           content: [{ type: 'text' as const, text: requestId ? `${message} (request ID: ${requestId})` : message }],
           structuredContent: { status, error: message, ...(requestId ? { requestId } : {}) },

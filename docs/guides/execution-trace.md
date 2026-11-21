@@ -11,3 +11,25 @@
 `after` 是上一页返回的 `next`，`limit` 为 1 至 100。每页读取同一关联系统记录，编辑、Actions、回执和投递分别有 100 条读回上限。历史任务与已有提交日志仍可读取，关联来自原运行时已经记录的证据。
 
 上线前执行现有 `db:upgrade`。Gateway、Worker 和执行 Action 的 Indexer 角色需要按职责配置 `execution_trace` 的 SELECT、INSERT 和对应 identity sequence 的 USAGE。所有这些主体继续沿用既有 Action、编辑历史、来源和投递表权限。启用 PostgreSQL owner 隔离的环境应重新安装策略，覆盖新表。
+
+## MCP 返回计时
+
+Gateway 将 `submit_task`、`get_task` 和 `complete_with_action` 的 HTTP 返回计时以 `mcp_request` JSON 行写入服务日志。每次调用独立记录，适用于 Grok 和其他 MCP 客户端的正常问法。计时从 Gateway 收到 HTTP 请求开始，包含请求解析、认证和响应发送，不增加数据库查询。
+
+| 字段 | 含义 |
+| --- | --- |
+| `mcpRequestId`、`clientId`、`tool` | 单次请求标识、已验证的 OAuth 客户端和 MCP 工具。客户端可用 HTTP 响应头 `X-EIGOS-MCP-Request-Id` 对齐自己的记录 |
+| `receivedAt`、`toolStartedAt`、`finishedAt` | Gateway 收到请求、开始工具回调和响应结束的 UTC 时间。`durationMs` 使用单调时钟计算整次 Gateway 请求耗时 |
+| `transport`、`httpStatus`、`toolStatus` | `sent` 表示服务端将响应交给传输层，`closed` 表示在此之前连接关闭。HTTP 状态与工具状态分别记录 |
+| `taskId`、`taskState`、`resultIncluded`、`taskCompletedAt` | 任务型工具返回的已授权快照，包含当时任务状态和是否有结果。完成时间取自任务记录 |
+
+从 Gateway 日志按任务 ID 查看轮询。`gateway_container` 填运行中的 Gateway 容器名，`task_id` 填查询返回的 ID。
+
+```sh
+docker logs "$gateway_container" 2>&1 | jq -Rc --arg id "$task_id" \
+  'fromjson? | select(.event == "mcp_request" and .taskId == $id)'
+```
+
+找第一次 `get_task` 同时返回 `taskState=completed`、`resultIncluded=true` 和 `transport=sent` 的记录。用 `taskCompletedAt`、`receivedAt` 和 `finishedAt` 对齐任务完成、取回请求和 Gateway 发送。`finishedAt` 到客户收到结果之间还经过网络和客户端传输。Grok 收到工具结果、开始生成回复及显示报价的时间需要由客户端侧记录。
+
+日志只保存调用元数据。凭据、提示词、入参与报价内容留在原调用的权限边界内。
