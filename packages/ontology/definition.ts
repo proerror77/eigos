@@ -1,4 +1,6 @@
+import { travelHandoffDefinition } from './travel-handoff.js';
 import { calendarJourneyDefinition as journey, journeyType } from './calendar-journey.js';
+import { hotelTransferDefinition } from './hotel-transfer-decisions.js';
 import { documentDefinition as documents } from './documents.js';
 import { flightPositionFunction } from './flight-position.js';
 import { flightDefinition as flight, flightWatchType } from './flight.js';
@@ -40,10 +42,10 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '37',
+  id: ride.id, version: '40',
   agentProfiles: businessAgentProfiles,
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
-  linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...journey.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
+  linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...journey.linkTypes, ...flight.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
   actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes, ...journey.actionTypes, ...flight.actionTypes, ...payments.actionTypes,...luckin.actionTypes,...applications.actionTypes,...documents.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
 };
 businessDefinition.functionTypes.push(
@@ -66,6 +68,11 @@ businessDefinition.linkTypes.push(...marketplace.linkTypes);
 businessDefinition.functionTypes.push(...marketplace.functionTypes);
 businessDefinition.actionTypes.push(...marketplace.actionTypes);
 businessDefinition.dataSources.push(...marketplace.dataSources);
+businessDefinition.objectTypes.push(...travelHandoffDefinition.objectTypes);
+businessDefinition.interfaceTypes.push(...travelHandoffDefinition.interfaceTypes);
+businessDefinition.linkTypes.push(...travelHandoffDefinition.linkTypes);
+businessDefinition.functionTypes.push(...travelHandoffDefinition.functionTypes);
+businessDefinition.actionTypes.push(...travelHandoffDefinition.actionTypes);
 businessDefinition.objectTypes.push(...fliggyHotelDefinition.objectTypes);
 businessDefinition.functionTypes.push(...fliggyHotelDefinition.functionTypes);
 businessDefinition.actionTypes.push(...fliggyHotelDefinition.actionTypes);
@@ -105,7 +112,7 @@ businessDefinition.objectTypes.find(type=>type.apiName==='RideRequest')!.propert
 businessDefinition.typeGroups=[
   {apiName:'Travel',displayName:'出行',description:'Places, routes and source-backed price estimates',objectTypes:[...ride.objectTypes.map(type=>type.apiName),petRideType]},
   {apiName:'Scheduling',displayName:'排程',description:'Resources, calendar availability and schedule plans',objectTypes:scheduling.objectTypes.map(type=>type.apiName)},
-  {apiName:'Services',displayName:'服务',description:'Provider-neutral service offerings',objectTypes:[...services.objectTypes,...luckin.objectTypes,...fliggy.objectTypes,...marketplace.objectTypes,...fliggyHotelDefinition.objectTypes,...fliggyFlightBookingDefinition.objectTypes,...diningReservations.objectTypes].map(type=>type.apiName)},
+  {apiName:'Services',displayName:'服务',description:'Provider-neutral service offerings',objectTypes:[...services.objectTypes,...luckin.objectTypes,...fliggy.objectTypes,...marketplace.objectTypes,...travelHandoffDefinition.objectTypes,...fliggyHotelDefinition.objectTypes,...fliggyFlightBookingDefinition.objectTypes,...diningReservations.objectTypes].map(type=>type.apiName)},
   {apiName:'TimedTravel',displayName:'定时出行',description:'Authorized event and travel planning',objectTypes:[...travel.objectTypes,...journey.objectTypes,...flight.objectTypes].map(type=>type.apiName)},
   {apiName:'Payments',displayName:'付款',description:'Merchant order handoff and independently read payment status',objectTypes:payments.objectTypes.map(type=>type.apiName)},
   {apiName:'Models',displayName:'三维模型',description:'Model assets and annotations',objectTypes:applications.objectTypes.map(type=>type.apiName)},
@@ -116,6 +123,7 @@ for(const group of businessDefinition.typeGroups)for(const name of group.objectT
 
 for(const fn of businessDefinition.functionTypes){
   if(fn.apiName==='embedTextLocal' || fn.apiName===geometryUploadCriterion){fn.dependencies={};continue;}
+  if(travelHandoffDefinition.functionTypes.includes(fn))continue;
   if(documents.functionTypes.includes(fn)||fliggy.functionTypes.includes(fn)||marketplace.functionTypes.includes(fn)||fliggyHotelDefinition.functionTypes.includes(fn)||fliggyFlightBookingDefinition.functionTypes.includes(fn)||diningResearchFunctions.includes(fn)||dianpingResearchFunctions.includes(fn)||diningReservations.functionTypes.includes(fn)||petRideDefinition.functionTypes.includes(fn)||fn===diningActivityFunction)continue;
   if(fn === flightPositionFunction || journey.functionTypes.includes(fn) || flight.functionTypes.includes(fn) || payments.functionTypes.includes(fn) || deliveryFunctions.includes(fn) || locationFunctions.includes(fn) || mapFunctions.includes(fn) || luckin.functionTypes.includes(fn))continue;
   if(ride.functionTypes.some(item=>item.apiName===fn.apiName)){
@@ -128,6 +136,11 @@ for(const fn of businessDefinition.functionTypes){
   }
 }
 // These Functions declare their own dependencies so historical workflow bindings stay compatible.
+businessDefinition.objectTypes.push(...hotelTransferDefinition.objectTypes);
+businessDefinition.linkTypes.push(...hotelTransferDefinition.linkTypes);
+businessDefinition.functionTypes.push(...hotelTransferDefinition.functionTypes);
+businessDefinition.actionTypes.push(...hotelTransferDefinition.actionTypes);
+businessDefinition.dataSources.push(...hotelTransferDefinition.dataSources);
 businessDefinition.functionTypes.push(...didiOrderDefinitions.functionTypes, ...didiReadDefinitions);
 businessDefinition.actionTypes.push(...didiOrderDefinitions.actionTypes);
 businessDefinition.interfaceTypes.push(...didiOrderDefinitions.interfaceTypes);
@@ -217,6 +230,8 @@ businessDefinition.functionTypes.push(...rideWatchDefinition.functionTypes);
 businessDefinition.actionTypes.push(...rideWatchDefinition.actionTypes);
 addProcessLogs(businessDefinition, [
   { type: rideWatchType, property: 'state' },
+  { type: 'FliggyHotelBooking', property: 'state' },
+  { type: 'FliggyFlightBooking', property: 'issuanceState' },
   { type: petRideType, property: 'state' },
   { type: 'ActionConfirmation', property: 'state' },
   { type: 'EventRegistration', property: 'state' }, { type: 'EventTrip', property: 'state' },
@@ -238,5 +253,40 @@ businessDefinition.objectTypes.find(type => type.apiName === 'EventTripStateLog'
   subprocesses: [
     { link: 'plan', process: 'SchedulePlanStateLog' },
     { link: 'registration', process: 'EventRegistrationStateLog' },
+  ],
+};
+
+// Reference paths describe expected observations. Supplier status and independent readbacks
+// determine the recorded state; a graph edge does not authorize a supplier mutation.
+businessDefinition.objectTypes.find(type => type.apiName === 'FliggyHotelBookingStateLog')!.machinery = {
+  states: [
+    { name: 'previewed' }, { name: 'awaiting_payment' }, { name: 'pending_confirmation' },
+    { name: 'confirmed' }, { name: 'completed', terminal: true }, { name: 'refund_pending' },
+    { name: 'refund_rejected' }, { name: 'closed', terminal: true }, { name: 'cancelled', terminal: true },
+    { name: 'unknown' },
+  ],
+  transitions: [
+    { from: null, to: 'previewed', action: 'PrepareFliggyHotelBooking' },
+    { from: 'previewed', to: 'awaiting_payment', action: 'CreateFliggyHotelBooking' },
+    { from: 'awaiting_payment', to: 'pending_confirmation', action: 'ConfirmFliggyHotelPayment' },
+    { from: 'pending_confirmation', to: 'confirmed' }, { from: 'confirmed', to: 'completed' },
+    ...['awaiting_payment','pending_confirmation','confirmed'].flatMap(from =>
+      ['refund_pending','cancelled','closed'].map(to => ({from,to,action:'CancelFliggyHotelBooking'}))),
+    ...['cancelled','closed','refund_rejected'].map(to => ({from:'refund_pending',to})),
+  ],
+};
+
+businessDefinition.objectTypes.find(type => type.apiName === 'FliggyFlightBookingIssuanceStateLog')!.machinery = {
+  states: [{name:'unpaid'}, {name:'payment_unverified'}, {name:'awaiting_issuance'},
+    {name:'issued',terminal:true}, {name:'closed',terminal:true}],
+  transitions: [
+    {from:null,to:'unpaid',action:'CreateFliggyFlightBooking'},
+    {from:'unpaid',to:'closed',action:'CloseFliggyFlightBooking'},
+    {from:'unpaid',to:'payment_unverified',action:'PayFliggyFlightBooking'},
+    {from:'unpaid',to:'awaiting_issuance',action:'PayFliggyFlightBooking'},
+    {from:'unpaid',to:'issued',action:'PayFliggyFlightBooking'},
+    {from:'payment_unverified',to:'awaiting_issuance'},
+    {from:'payment_unverified',to:'issued'}, {from:'payment_unverified',to:'closed'},
+    {from:'awaiting_issuance',to:'issued'},
   ],
 };

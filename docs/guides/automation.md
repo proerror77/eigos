@@ -162,3 +162,11 @@ Grok 可用 `list_learned_hotel_workflows` 查找当前账号的已保存行程�
 本体定义管理员（`manage_definition`）在工作台的「规则与监测」中选择一个工作流草稿的准确修订和运行对象类型，发布后才进入「已发布流程」。`ontology_publish_workflow` 和 `ontology_withdraw_workflow` 提供同一管理入口。修改草稿保留正在使用的发布副本，直到管理员发布新修订。切换 Ontology 发布后，运行前检查原发布谱系及 Action、Function 和对象契约。
 
 服务团队维护本体和流程草稿，普通已准入账号登录后进入「已发布流程」。目录仅显示当前用户有权执行、兼容当前本体的公开修订，不包含步骤配置或绑定。运行使用用户自己的身份、授权对象和当前 Action 权限，保留现有审批和幂等机制。下架阻止新的运行，已经提交的运行保留其冻结输入。管理员和编辑者继续通过既有 `manage_definition`、`edit_definition` 授权，发布流程不会转授任何业务或来源权限。参考 [Palantir Action 权限](https://www.palantir.com/docs/foundry/action-types/permissions) 与 [Ontology 权限](https://www.palantir.com/docs/foundry/object-permissioning/ontology-permissions)。
+
+### 单个 Action 作为状态规则的效果
+
+过程规则可在 `workflow` 与 `effect: {action, input}` 中选择一项。例如进入某个已发布状态后执行一次检查，可以通过 `{object:true}` 绑定当前对象，并沿用 Workflow 步骤的属性与常量参数绑定。后台继续使用原有运行记录、租约、去重和恢复机制，并在执行时检查发布契约、当前权限和 Action 的提交条件。机器人的自动执行身份不能代替 PA 对具体交易的直接确认。
+
+工作台「我的状态触发规则」按当前账号与过程类型显示已配置的条件、效果、启用状态和本修订最近可见运行。转换统计分别展示模型预期和日志中观察到的来源或 Action。某条预期转换出现并不意味着已启用一条规则。
+
+升级数据库时运行 `npm run db:upgrade`。直接效果的运行无需关联已保存 Workflow，因此 `workflow_runs.workflow_id` 允许为空；`object_rules.effect_release` 记录效果绑定时的发布。已使用列级授权的管理服务需核对该列的读写权限。

@@ -25,6 +25,18 @@ Interface 通过实现映射引用具体 Object Type 的属性、关系与 Actio
 
 关系带有日期、角色或状态等业务信息时，用独立对象保存这些信息，并通过 Link 连接两端。来源时间和证据类型保存在 `SourceReceipt` 及实现 `ServiceSearchResult` 的供应商结果对象中。[Object-backed links](https://www.palantir.com/docs/foundry/object-link-types/create-link-type)
 
+## 对象生命周期原则
+
+新增或变更业务对象的写入路径时，随 Ontology 发布版本审阅身份映射、字段裁决、状态转换和下游触发规则。身份映射归到 Object Type 的主键。来源映射和 Action 绑定的实现应用业务裁决，过程日志和自动化使用已提交的变化。各入口按同一组业务约束验收，现有支持范围见下文。
+
+1. **对象身份。** 对同一个业务实体，各入口使用足以核验身份的证据绑定同一个稳定对象 ID。外部 ID 应按来源及需要的账户范围解释，并保留可审计的绑定。发布定义允许单来源直接映射时可以沿用来源主键。证据不足或存在冲突时，保留来源观察并等待核实后再合并。[Object Type 主键](https://www.palantir.com/docs/foundry/object-link-types/create-object-type)
+2. **来源裁决。** 关键字段声明允许的来源和证据。按 Foundry 多来源对象的映射方式，除共同主键外，每个由来源填充的字段映射到一个正式来源输出。多方回报涉及同一字段时，在来源投影前裁决，或由已发布的 Function-backed Action 在提交前裁决。先核验来源资格和证据，再对合格输入应用业务优先级或时间规则。提交权限单独检查。酒店订单的取消状态由可核验的供应商证据确认。PA 提交的用户意图和回报保留为独立记录，转交的回执按其可验证出处判断。[多来源对象](https://www.palantir.com/docs/foundry/object-permissioning/multi-datasource-objects) · [编辑冲突策略](https://www.palantir.com/docs/foundry/object-edits/how-edits-applied) · [Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview)
+3. **Schema 治理。** 评估对象身份、字段裁决、状态含义及下游触发条件的变更对现有 PA、应用和自动化的影响。会破坏消费者契约的发布须记录受影响范围、兼容窗口或迁移方案，并在切换前验证。分支和管理 CLI 对此类发布执行同一要求。保留任务版本锁定、候选投影校验和原子切换，向后兼容的改动可走轻量审核。[分支与资源保护](https://www.palantir.com/docs/foundry/ontologies/branching-ontology) · [Schema 迁移](https://www.palantir.com/docs/foundry/object-edits/schema-migrations)
+4. **状态与时间。** 按 Machinery 模型，业务对象保存当前状态，关联的 ProcessLog 记录已提交的前后状态及转换时间。对需要历史验收的关键状态，EIGOS 扩展记录业务生效时间、来源观察时间和系统记录时间。生效时间缺失时保留未知。查询应能区分指定时点 EIGOS 当时知道的状态，以及根据当前证据判断该时点成立的状态。迟到的旧观察保留在证据历史中，经核验的更正可修订历史判断并保留获知时间。当前状态仍按已发布的证据及转换规则更新。[Machinery 日志对象](https://www.palantir.com/docs/foundry/machinery/connect-data) · [EIGOS 过程日志](../guides/process-history.md#日志来源与因果)
+5. **变化传播。** 在发布定义与自动化规则中声明消费哪些已提交的对象和关系变化，以及什么条件触发处理。状态转换复用现有 Indexer 和 ProcessLog。沿用 Automate 的至少一次执行语义，按稳定变化标识保证业务效果幂等。按持久游标恢复、重放及处理结果未知的外部副作用是 EIGOS 的验收要求。外部副作用复用 Action 的幂等提交与原操作读回。收到回执或观察后，仅当产生符合规则的正式变化才触发处理。[Automate 对象集条件](https://www.palantir.com/docs/foundry/automate/condition-objects) · [执行保证](https://www.palantir.com/docs/foundry/automate/effect-settings#execution-guarantees) · [EIGOS 过程规则](../guides/automation.md#过程规则)
+
+飞猪酒店订单可作为隔离验收用例。下单回执、供应商回读和 PA 回报引用同一个订单，供应商证据确认取消并保留各时间，迟到的旧确认回报进入历史且当前状态保持已取消。重复投递并从持久游标恢复后，下游对同一次取消只产生一次业务效果。按同一发布版本验收身份绑定、状态回看和实际消费结果。工程验收使用 `synthetic` 数据，生产消费和供应商履约分别验收。
+
 ## 模块边界
 
 ```mermaid
@@ -204,6 +216,21 @@ Action 检查自身应用权限，以及实际访问的对象、关系和来源�
 
 活动和资源是业务对象，Worker 租约和 PA 请求记录留在运行层。Functions 在 Scenario 中读取拟议状态；合并 Action 在同一事务中重检权限、版本、关系和业务约束。真实日历写入尚未接入。协议及边界见 [Scenario 与 PA 日历排程](../guides/scenarios-scheduling.md)。
 
+## 决策闭环
+
+对需要审阅和事后检验的业务决策，在批准时保存当时的判断，在验证窗口结束后用实际证据回顾，并在下次同类决策的审阅前呈现已确认的经验。决策记录用业务 Object Type 表达，通过 Link 关联原业务对象、证据和结果，沿用现有 Ontology、Action 和权限。执行追踪继续回答执行了什么，Agent 评估测量模型行为，决策记录保存决策者确认的理由、假设和复盘。普通查询和单项操作继续直接调用能力。[Action Log](https://www.palantir.com/docs/foundry/action-types/action-log/index.html) · [Submission Criteria](https://www.palantir.com/docs/foundry/action-types/submission-criteria) · [Ontology Scenario](https://www.palantir.com/docs/foundry/ontology/overview-ontology-scenario)
+
+以酒店行程 Scenario 的接驳时段选择做第一个隔离验收。沿用已有方案比较、Workbench 审阅和 PA 回执。验收使用 `synthetic` 的日历、路线和到达观察。后续观察沿原对象并受原授权及期限约束。[方案比较](../guides/scenario-evaluation.md) · [Workflow 认知提案](../guides/automation.md#workflow-认知提案) · [持续关注](../guides/continuous-observation.md)
+
+1. **批准时记录。** 在指定的 Scenario 审阅中确认选择、未选方案及原因、关键假设、预期指标和验证窗口。助手可以起草，审阅人确认。保存发布、方案修订、证据引用和审阅者，理由与该修订的审批一起提交。方案变更需要重新确认。例子中选择较晚的接驳时段，假设车程为 25 分钟，预计行程开始前至少 15 分钟抵达。备选是提前出发，放弃原因是较长的等候时间。
+2. **到期核对。** 在原行程上接收来自独立合成来源的出发和到达观察。用原定开始时间减去观察到的到达时间计算余量，例子中实际为 5 分钟。将原预期、实际值和来源回执关联到同一决策。缺少观察时保持待验证，审批结果或重算路线只作为各自类型的证据。
+3. **确认教训。** 授权审阅人核对原假设与实测证据，明确各假设得到支持、被推翻或证据不足。例子中依据独立的出发与到达观察计算实际车程为 35 分钟。记录适用条件，例如相同区域和时段的接驳应重新估算并留出更长余量。保留审批时的原判断，复盘另写结果。
+4. **下次审阅前呈现。** 在另一个日期创建同类行程 Scenario。按决策类型、业务约束和当前数据权限筛选历史案例，在审批前展示原取舍、预期、实测值和已确认教训。审阅人判断条件是否适用，当前方案仍用新证据和原提交条件验证。[Action 执行因果](../guides/execution-trace.md)
+
+验收从正常审阅入口走两次。第一次应能沿决策读回准确的方案修订、批准人、原预期、独立观察和复盘。第二次在没有人手动指定历史记录 ID 时应在审阅前看到那条经验。验证无独立观察时保持待验证，旧审阅无法覆盖新修订，当前无权读取的案例无法出现在建议里。该原则描述试点要交付的能力，工程回归与真实业务效果分别验收。
+
+当前试点在显式启用沙箱的本机开发环境中使用已有 `SchedulePlan`、一个合成 RollingGo 酒店选项与一个拟议接驳时段。Workbench 受邀审阅随原审批提交理由，现有 `approve_scenario_review` 可携带同样的 `decision` 参数。审批事务保存 `HotelTransferDecision` 并关联原计划和酒店选项。已授权生产者走 `submit_index` 提交 `SyntheticHotelTransferObservations`，`ReviewHotelTransferOutcome` 将独立时间回执、实测余量和确认的教训写回。验证窗口截至接驳时段结束后一小时，试点以合成来源时间推进。下一次审阅按同一审阅者、酒店身份和当地出发小时筛选更早日期的案例，并复核当前权限与回执修订。运行 `npm test -- --suite=38` 验证两日期与撤权路径。
+
 ## 服务组合和时间触发
 
 `LumaEvent`、`RollingGoHotelOffer`、`ShopifyProductOffer` 通过 `ServiceOffering` 共享来源与有效期，通过 `AttendableEvent`、`HotelOffer`、`ProductOffer` 保留报名、住宿日期、商家变体等业务语义。Interface 不使用供应商品牌命名，具体实现和来源绑定明确供应商。后续携程、飞猪的酒店实现可共用 `HotelOffer`，机票需独立的航班业务契约；Uber、Grab 也需自己的出行来源和执行实现，不能把滴滴的参数或币种直接当作通用规则。
@@ -214,6 +241,12 @@ Action 检查自身应用权限，以及实际访问的对象、关系和来源�
 
 数据库事务保证本体编辑的原子性，不能回滚已经发生的供应商变更。`external_operations` 因此先持久化原操作，再发请求，保存供应商回执；结果未知时禁止自动重发。独立订单查询使用原订单身份，创建订单不被升级成到达或履约成功。账号、业务授权、执行配置和最终供应商结果分别校验，见 [服务接口与定时出行](../guides/service-planning.md)。
 
+
+### 供应商订单的状态与后续执行
+
+酒店预订的 `state` 与机票订单的 `issuanceState` 是业务对象的可枚举属性。Machinery 从同一属性的正式编辑历史投影 ProcessLog。滴滴跟单则沿原订单的 `watches` 关系读取 `DidiRideWatch`。参考图列出预期路径；实际状态由原订单的供应商详情和可验证回执更新。历史订单缺少出票证据时，下一次有效回查才填入出票状态。[Machinery 过程与日志](https://www.palantir.com/docs/foundry/machinery/core-concepts) · [输入状态、输出状态与自动化](https://www.palantir.com/docs/foundry/machinery/draw-a-graph)
+
+用户发起的取消和付款仍由 PA 确认原订单与金额。连接器在派发记录的事务内登记有截止时间的原单回查，由 Worker 执行已发布的刷新 Action。平台通过原任务身份和授权持续工作，Agent 可从对象和过程日志读取进度。用户配置的状态规则也可直接绑定单个 Action；需要多步执行时再引用已保存的 Workflow。规则、排程和直接请求最终都通过原 Action 执行入口。[Automate 条件与效果](https://www.palantir.com/docs/foundry/automate/overview) · [执行与验收边界](../guides/service-planning.md#订单后台观察)
 
 ## 完整运行服务
 
@@ -230,3 +263,7 @@ Machinery 过程日志以普通 Object Type 实现共同 `ProcessLog` Interface�
 执行追踪使用原任务和 Action 身份关联来源证据、模型授权、方案审阅、编辑历史、outbox 和实际供应商回执。读取追踪时复核权限，业务结果以各原始记录为准。 [EIGOS 执行追踪](../guides/execution-trace.md) · [Palantir 执行追踪](https://www.palantir.com/docs/foundry/aip-observability/trace-view)
 
 Gateway 的只读查询池可连接已有只读副本，通过身份与 WAL 追赶检查保持当前读取。部署可分别扩展 Gateway、任务 Worker 和 Indexer。参数、表授权、边界及运行命令见 [Ontology 运行服务](../guides/ontology-services.md)。
+
+## 跨阶段持续关注
+
+关注绑定原对象、发起身份、授权期限和有序阶段。阶段以已发布 ProcessLog 的状态为条件，选择等待业务事件或调度一个标记为 observation/readback 的 Action。需要交接到另一个业务对象时，阶段声明已发布的 Link、目标过程与终止状态。业务事实仍在原对象、来源证据和编辑历史中；observation_interests 保存授权、阶段游标和关联排程。Indexer 从数据库恢复进度，Worker 沿原 Action 通道提交观察。Machinery 读回已授权的关注和中断原因。[Palantir 过程和关联对象](https://www.palantir.com/docs/foundry/machinery/core-concepts) · [基于时间与对象的自动化](https://www.palantir.com/docs/foundry/automate/overview) · [使用与验收](../guides/continuous-observation.md)

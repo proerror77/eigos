@@ -59,6 +59,33 @@ export async function matchingTransition(graph: Objects, rule: z.output<typeof p
   return log;
 }
 
+/** Only show schedules whose entire argument is the authorized process object. */
+async function objectSchedules(graph: Objects, object: z.output<typeof objectRefSchema>) {
+  if (!graph.access.principal.scopes.includes('tasks:read')) return [];
+  const candidates = [...graph.model.actions.values()].flatMap(action => {
+    const entries = Object.entries(action.objectParameters);
+    if (entries.length !== 1 || entries[0]![1] !== object.type ||
+        !graph.access.canDefine(graph.model, 'action', action.apiName) ||
+        !graph.access.canSeeModelData(action.classification)) return [];
+    return [{action:action.apiName, arguments:{[entries[0]![0]]:object}}];
+  });
+  if (!candidates.length) return [];
+  const { rows } = await graph.db.query(`SELECT s.body->>'action' AS action,
+      CASE WHEN s.state='started' THEN t.state ELSE s.state END AS status,
+      CASE WHEN s.state='scheduled' THEN s.run_at
+        WHEN s.state='started' AND t.state='submitted' THEN coalesce(t.available_at,s.run_at) END AS "nextCheckAt",
+      s.deadline
+    FROM ${graph.db.schema}.scheduled_actions s
+    JOIN ${graph.db.schema}.releases release ON release.digest=s.body->>'plannedRelease'
+    JOIN jsonb_to_recordset($3::jsonb) binding(action text,arguments jsonb)
+      ON binding.action=s.body->>'action' AND binding.arguments=s.body->'arguments'
+    LEFT JOIN ${graph.db.schema}.tasks t ON t.id=s.task_id AND t.owner=s.owner
+    WHERE s.owner=$1 AND release.body->>'id'=$2 ORDER BY s.run_at DESC,s.id LIMIT 20`,
+    [graph.owner,graph.model.document.id,JSON.stringify(candidates)],graph.client);
+  for (const row of rows) graph.access.definition(graph.model,'action',row.action);
+  return rows;
+}
+
 export async function readProcessStatus(graph: Objects, input: z.output<typeof processStatusSchema>) {
   const target = processTarget(graph, { type: input.type });
   if (target.objectType !== input.object.type) throw new Conflict('Object type differs from the published process');
@@ -72,6 +99,7 @@ export async function readProcessStatus(graph: Objects, input: z.output<typeof p
   return {
     object: input.object,
     property: target.property,
+    schedules: state === null ? [] : await objectSchedules(graph,input.object),
     state,
     transition: visible ? log.ref : null,
     observedAt: visible ? log.properties.timestamp : null,

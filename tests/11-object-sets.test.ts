@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fixture, principal } from './fixture.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { ObjectSets, initializeObjectSets, type SetExpression } from '../packages/runtime/object-sets.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { Scenarios } from '../packages/runtime/scenarios.js';
@@ -86,7 +86,7 @@ test('saved static membership stays fixed while dynamic membership changes and s
     await f.objects.create({ type: 'Route', id: 'new' }, { id: 'new', name: 'New route' });
     assert.equal((await f.sets.evaluate(f.access, f.model, { set: { op: 'saved', id: staticSet.id } })).total, 1);
     assert.equal((await f.sets.evaluate(f.access, f.model, { set: { op: 'saved', id: dynamicSet.id } })).total, 2);
-    await setGrants(f.db, 'reader', memberGrants(f.model));
+    await setGrants(f.db, 'reader', businessGrants(f.model));
     const reader = await Access.load(f.db, { owner: 'reader', scopes: [] });
     assert.equal((await f.sets.list(reader, f.model)).items.length, 2);
     assert.equal((await f.sets.get(reader, f.model, staticSet.id)).set, undefined);
@@ -253,7 +253,7 @@ test('saved high-risk order sets aggregate and follow two deduplicated links in 
         to: { type: depot, name: 'couriers', cardinality: 'many' } },
     );
     const model = await f.metadata.publish(body, f.capabilities, f.publisher);
-    await setGrants(f.db, principal.owner, memberGrants(model));
+    await setGrants(f.db, principal.owner, businessGrants(model));
     const access = await Access.load(f.db, principal), graph = new Objects(f.db, model, access);
     await f.db.query(`INSERT INTO ${f.db.schema}.objects(projection,owner,type,id,properties)
       SELECT $1,$2,$3,'order-'||i,jsonb_build_object('id','order-'||i,

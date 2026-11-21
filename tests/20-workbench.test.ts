@@ -6,7 +6,7 @@ import {readConfig} from '../packages/core/config.js';
 import {Applications} from '../packages/runtime/applications.js';
 import {Objects} from '../packages/runtime/objects.js';
 import {Scenarios} from '../packages/runtime/scenarios.js';
-import {setGrants,memberGrants,Access} from '../packages/runtime/access.js';
+import {setGrants,businessGrants,Access} from '../packages/runtime/access.js';
 import {OntologyClient} from '../packages/sdk/client.js';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
@@ -21,8 +21,10 @@ test('workbench renders relationship conflicts, manages Scenario reviews and sco
   const controls: { value: string; placeholder?: string }[] = [];
   const tables: { headers: string[]; rows: unknown[][]; click?: (index: number) => Promise<void> }[] = [];
   const requests: { path: string; input: Record<string, unknown> }[] = [];
+  const rendered: string[] = [];
   const node = () => ({ append() {}, replaceChildren() {}, close() {} });
   const scenarioId = 'scenario-ui-fixture';
+  let decisionMemory: unknown;
   let scenarioRevision = 2;
   let reviewers: string[] = [];
   const processRule = { id: 'process-rule-fixture', revision: 2, name: 'Late trip', enabled: true,
@@ -31,7 +33,8 @@ test('workbench renders relationship conflicts, manages Scenario reviews and sco
     document: { querySelector: node, querySelectorAll: () => [] },
     sessionStorage: { getItem: () => null },
     window: { addEventListener() {} },
-    uiElement: (_tag: string, attributes: Record<string, unknown> = {}) => {
+    uiElement: (_tag: string, attributes: Record<string, unknown> = {}, ...children: unknown[]) => {
+      for (const child of children) if (typeof child === 'string') rendered.push(child);
       const control = { ...node(), value: '', ...attributes };
       controls.push(control);
       return control;
@@ -69,7 +72,7 @@ test('workbench renders relationship conflicts, manages Scenario reviews and sco
         id: scenarioId, name: 'Hotel replan', revision: 3, snapshot: 'review-snapshot', objects: [{
           ref: { type: 'SchedulePlan', id: 'plan' }, editedFields: ['state'],
           before: { state: 'prepared' }, after: { state: 'confirmed' },
-        }], links: [], evidence: [],
+        }], links: [], evidence: [], decisionMemory,
       };
       if (path === '/ontology/services/rules') return {
         items: [{id:'object-rule-fixture', name:'Open trip', query:{type:'EventTrip'}, enabled:false}, processRule],
@@ -139,6 +142,24 @@ test('workbench renders relationship conflicts, manages Scenario reviews and sco
   await buttons.get('批准此版本')!();
   assert.deepEqual(requests.find(item => item.path === '/ontology/services/approve_scenario_review')?.input,
     { id: scenarioId, revision: 3, snapshot: 'review-snapshot', _ontology: 'Eigos' });
+
+  const judgment = { reason: 'Take the later transfer', alternative: 'Leave earlier',
+    rejectedBecause: 'Extra waiting', assumption: 'A 25 minute journey', expectedTravelMinutes: 25 };
+  decisionMemory = { departure: '2027-03-02T06:00:00Z', arriveBy: '2027-03-02T06:40:00Z', prior: [{
+    date: '2027-03-01', judgment, expectedBufferMinutes: 15, actualBufferMinutes: 5, actualTravelMinutes: 35,
+    assessment: 'refuted', lesson: 'Allow more travel time', appliesWhen: 'The same departure hour',
+  }] };
+  const approvalCount = requests.filter(item => item.path.endsWith('/approve_scenario_review')).length;
+  const controlStart = controls.length;
+  await tables.find(table => table.headers[0] === '方案')!.click!(0);
+  assert.ok(rendered.includes('当时的理由 Take the later transfer'));
+  assert.ok(rendered.includes('预计提前 15 分钟，实测提前 5 分钟（车程 35 分钟）'));
+  assert.ok(rendered.includes('教训 Allow more travel time'));
+  assert.equal(requests.filter(item => item.path.endsWith('/approve_scenario_review')).length, approvalCount);
+  const newJudgment = { ...judgment, reason: 'Use the observed time', expectedTravelMinutes: 35 };
+  Object.values(newJudgment).forEach((value, index) => { controls[controlStart + index]!.value = String(value); });
+  await buttons.get('批准此版本')!();
+  assert.deepEqual(requests.filter(item => item.path.endsWith('/approve_scenario_review')).at(-1)?.input.decision, newJudgment);
 });
 
 test('workbench serves guarded assets and normal HTTP model, media and SDK scenario operations',async()=>{
@@ -186,7 +207,7 @@ test('media registration rejects invalid formats and incomplete measurements',as
     await assert.rejects(app.upload(f.access,f.model,f.capabilities.actions,Buffer.from('not a model'),{name:'bad',format:'glb'}),/GLB/);
     const ref=await app.upload(f.access,f.model,f.capabilities.actions,modelFile,{name:'triangle',format:'stl',units:'m'});
     await assert.rejects(f.capabilities.actions.apply(f.access,f.model,'AnnotateGeometry',{id:'bad',asset:ref,name:'Bad',note:'',kind:'measurement',points:[[0,0,0]]},'bad-measure'),/two positions/);
-    await setGrants(f.db,'another',memberGrants(f.model));
+    await setGrants(f.db,'another',businessGrants(f.model));
     await assert.rejects(app.download(await Access.load(f.db,{owner:'another',scopes:principal.scopes}),f.model,ref.id),/unavailable/);
   }finally{await f.close();}
 });
@@ -209,7 +230,7 @@ test('media bytes and registration are isolated by Ontology after source access 
     await setGrants(f.db,'deployment',[{resource:'Eigos',permission:'manage_definition'},{resource:'Other',permission:'manage_definition'}]);
     const body=structuredClone(f.model.document);body.id='Other';
     const other=await f.metadata.publish(body,f.capabilities,await Access.load(f.db,{owner:'deployment',scopes:[]}));
-    await setGrants(f.db,principal.owner,[...memberGrants(f.model),...memberGrants(other)]);
+    await setGrants(f.db,principal.owner,[...businessGrants(f.model),...businessGrants(other)]);
     await f.db.query(`INSERT INTO ${f.db.schema}.object_policies VALUES('Eigos','GeometryAsset',$1)`,[{read:{all:[{op:'equals',property:'name',value:'Allowed'}],any:[]},properties:{}}]);
     const access=await Access.load(f.db,principal);
     await assert.rejects(app.download(access,f.model,asset.id),/policy/);
@@ -353,7 +374,7 @@ test('workbench account login preserves separate modeler and reviewer permission
   };
   const builder = await who(builderToken), reviewer = await who(reviewerToken);
   assert.notEqual(builder, reviewer);
-  const common = memberGrants(f.model);
+  const common = businessGrants(f.model);
   await setGrants(f.db, builder, [...common, { resource: 'Eigos', permission: 'edit_definition' }]);
   await setGrants(f.db, reviewer, [...common, { resource: 'Eigos', permission: 'manage_definition' }]);
   const builderClient = new OntologyClient({ baseUrl: base, token: builderToken });
@@ -442,4 +463,43 @@ test('workbench pages large relationships through the authorized Link query', as
     [link, { ...link, cursor: 'page-2' }, { ...link, cursor: 'page-3' }]);
   assert(!requests.some(item => item.path === '/ontology/services/follow_links'));
   assert.equal(tables.at(-1)!.rows.length, 180);
+});
+
+test('workbench explains blocked historical drafts and creates an empty recovery proposal through the normal lifecycle',async()=>{
+  const buttons=new Map<string,()=>Promise<void>>(),tables:{headers:string[];rows:any[][]}[]=[],requests:{path:string;input:any}[]=[];
+  const node=()=>({append(){},replaceChildren(){},close(){}});
+  const source=await readFile(new URL('../apps/workbench/app.js',import.meta.url),'utf8');
+  const context={document:{querySelector:node,querySelectorAll:()=>[]},sessionStorage:{getItem:()=>null},window:{addEventListener(){}},
+    crypto:{randomUUID:()=>'recovery-request'},uiNode:node,
+    uiElement:()=>node(),uiButton:(label:string,action:()=>Promise<void>)=>{buttons.set(label,action);return {label};},
+    uiTable:(headers:string[],rows:any[][])=>{tables.push({headers,rows});return node();},
+    uiRequest:async(path:string,input:any)=>{
+      requests.push({path,input});
+      if(path==='/ontology/services/scenario_continuation_sources')return {items:[
+        {id:'legacy',name:'Legacy',release:'old-release',revision:4,continuation:{status:'blocked',reason:'incomplete-action-journal'}},
+        {id:'ready',name:'Ready',release:'old-release',revision:3,continuation:{status:'ready',reason:null}},
+      ]};
+      if(path==='/ontology/services/inspect_scenario_continuation')return {id:'legacy',name:'Legacy',revision:4,
+        objects:[{ref:{type:'Route',id:'route'},before:{name:null},after:{name:null}}],links:[]};
+      if(path==='/ontology/scenarios')return {id:'new-proposal'};
+      return {items:[]};
+    }};
+  const workbench=runInNewContext(source+`
+    element=uiElement;button=uiButton;table=uiTable;surface=heading=field=empty=modal=uiNode;
+    notice=()=>{};request=uiRequest;({state,renderScenarios});`,context);
+  workbench.state.model={objectTypes:[],actionTypes:[]};
+  await workbench.renderScenarios();await buttons.get('接续方案')!();
+  const choices=tables.find(table=>table.headers[0]==='草稿')!;
+  assert.match(choices.rows[0]![2],/记录不完整/);
+  assert.equal(choices.rows[0]![3].label,'查看差异并重新提案');
+  assert.equal(choices.rows[1]![3].label,'复制为持久方案');
+  await buttons.get('查看差异并重新提案')!();
+  assert.equal(requests.at(-1)!.path,'/ontology/services/inspect_scenario_continuation');
+  assert.equal(requests.some(request=>request.path==='/ontology/services/continue_scenario'),false);
+  await buttons.get('新建方案重新提案')!();
+  const created=requests.find(request=>request.path==='/ontology/scenarios')!;
+  assert.equal(created.input.kind,'persisted');assert.equal(created.input.name,'Legacy（重新提案）');
+  assert.equal(created.input.requestId,'recovery-request');
+  assert.equal(Object.hasOwn(created.input,'objects'),false);assert.equal(Object.hasOwn(created.input,'reviewers'),false);
+  assert.equal(workbench.state.scenario,'new-proposal');
 });

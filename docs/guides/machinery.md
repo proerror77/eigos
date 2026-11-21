@@ -1,5 +1,9 @@
 # Machinery 流程挖掘与瓶颈分析
 
+定期复盘绑定发布和分析时间窗。发布变化后，已启用规则由原 Indexer 刷新上次分析，不等待整个周期；暂停规则保持暂停。刷新保留原时间窗和定期执行时间，不重复运行附带的评估，也不把旧发布的评估回执当作新发布结果。到达原定期执行时间或用户选择「立即复盘」时，才按配置重新评估。该职责仍基于 [Machinery 的状态、过程日志与 Action](https://www.palantir.com/docs/foundry/machinery/core-concepts)。
+
+`machinery_reviews` 返回 `status`：`pending`（未完成）、`stale`（发布已变化）、`ready`（可读取）或 `failed`。工作台只为当前可用结果显示「查看上次复盘」，失效时提示等待刷新或立即复盘。刷新重新检查当前权限并与发布切换互斥；失败记录原因，同一发布不会紧密循环重试，可修正权限或配置后手动重跑，原定期执行仍保留。
+
 Workbench 的「流程运行 → Machinery」和 Ontology MCP 使用同一份分析结果。选择已发布的具体 ProcessLog 类型和时间范围，可以查看流程图、实际路径、状态存量、停留时长分布和偏离实例，再打开原业务对象的时间线或有权限的原任务。选择节点、转换、路径、分布区间或一致性类别可以筛选实例。已连接的子流程可以通过发布的 Link 从父实例下钻。
 
 实现对应 [Palantir 的流程模型与 Action](https://www.palantir.com/docs/foundry/machinery/draw-a-graph)、[从历史挖掘流程](https://www.palantir.com/docs/foundry/machinery/process-mining)、[数据接入](https://www.palantir.com/docs/foundry/machinery/connect-data) 和 [路径、耗时及一致性监控](https://www.palantir.com/docs/foundry/machinery/analyze-and-monitor)。业务状态、Action 和数据来源继续由现有 Ontology、索引和 Action 引擎执行。分析根据提交后的 ProcessLog 计算，Scenario 中尚待合并的编辑不会成为实际路径。

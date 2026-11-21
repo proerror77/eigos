@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Conflict, NotFound, digest } from '../../core/identity.js';
+import { Conflict, NotFound, SourceReadFailure, digest } from '../../core/identity.js';
 import { readPrivateSourceFile, yuanToFen } from '../../core/private-source.js';
 import {
   approveFlightBookingInput, fliggyFlightBooking, fliggyFlightBookingType, fliggyFlightPublic,
@@ -9,6 +9,9 @@ import type { ObjectRef } from '../../ontology/schema.js';
 import type { Database, Sql } from '../../runtime/database.js';
 import { ExternalOperations } from '../../runtime/external-operations.js';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
+import type { Objects } from '../../runtime/objects.js';
+import type { Task } from '../../runtime/tasks.js';
+import { OrderObservation } from './order-observation.js';
 import { topIdentifier, topNumber, type FliggyFlightResolver } from './top.js';
 
 type Partner = Awaited<ReturnType<FliggyFlightResolver>>;
@@ -110,6 +113,9 @@ function stage(ctx: FunctionContext) {
 }
 export function fliggyFlightBookingFunctions(db: Database, resolve: FliggyFlightResolver): ReadonlyMap<string, FunctionHandler> {
   const operations = new ExternalOperations(db);
+  const followup = new OrderObservation(db, 'RefreshFliggyFlightBooking');
+  const tracksIssuance = (ctx: FunctionContext) =>
+    Boolean(ctx.objects.model.object(fliggyFlightBookingType).properties.issuanceState);
   const current = async (ctx: FunctionContext, ref: ObjectRef) => {
     if (ref.type !== fliggyFlightBookingType) throw new Conflict('Reference the original Fliggy flight booking');
     const partner = await resolve(ctx.principal.owner), row = await ctx.objects.read(ref);
@@ -134,18 +140,47 @@ export function fliggyFlightBookingFunctions(db: Database, resolve: FliggyFlight
     const closed = ['CLOSED', 'ORDER_CLOSED', '订单关闭', '已关闭'].includes(facts.order_status);
     const paymentStarted = !!(facts.pay_time || facts.trade_no || facts.alipay_trade_no ||
       facts.pay_status && facts.pay_status !== 'UNPAID');
+    const issued = paid && !closed && Boolean(tickets?.length);
+    if ((booking.paid && !paid) || (booking.issued && !issued) || (booking.closed && !closed))
+      throw new Conflict('Jinghang readback contradicts previously confirmed booking evidence');
     return {
       merchantOrderId: facts.order_id, supplierStatus: facts.order_status, paid,
-      issued: paid && !closed && Boolean(tickets?.length), closed, paymentStarted,
+      issued, closed, paymentStarted,
       observedAt: new Date().toISOString(), independentRead: true,
     };
   };
-  const project = (ctx: FunctionContext, ref: ObjectRef, revision: number, partner: Partner, facts: Awaited<ReturnType<typeof readProvider>>) =>
-    stage(ctx)(ref, async graph => {
-      await partner.assertCurrent();
-      const { paymentStarted: _paymentStarted, ...publicFacts } = facts;
-      await graph.edit(ref, revision, publicFacts);
-    });
+  // A manual refresh can commit while the Worker waits for Jinghang. Keep that newer
+  // observation and decide continuation under the same booking lock as the Action edit.
+  const advancedConcurrently = async (graph: Objects, ref: ObjectRef, revision: number, task?: Task) => {
+    if (!task) return false;
+    const currentRow = await graph.read(ref);
+    if (currentRow.revision === revision) return false;
+    const latest = fliggyFlightBooking.parse(currentRow.properties);
+    const terminal = latest.independentRead && (latest.issued || latest.closed);
+    const status = await followup.advance(graph, task, terminal ? 'terminal' : 'pending');
+    await graph.edit(ref, currentRow.revision, { issuanceObservation: status });
+    return true;
+  };
+  type ProviderFacts = Awaited<ReturnType<typeof readProvider>>;
+  const project = (ctx: FunctionContext, ref: ObjectRef, revision: number, partner: Partner, facts: ProviderFacts,
+    paymentClaimed = false, observationTask?: Task) => stage(ctx)(ref, async graph => {
+    await partner.assertCurrent();
+    if (await advancedConcurrently(graph, ref, revision, observationTask)) return;
+    const { paymentStarted, ...publicFacts } = facts;
+    const progress: Partial<Booking> = {};
+    if (tracksIssuance(ctx)) {
+      if (facts.closed) progress.issuanceState = 'closed';
+      else if (facts.issued) progress.issuanceState = 'issued';
+      else if (facts.paid) progress.issuanceState = 'awaiting_issuance';
+      else if (!paymentClaimed && !paymentStarted && ['BOOK_SUCCEEDED', '生单预定成功'].includes(facts.supplierStatus))
+        progress.issuanceState = 'unpaid';
+      else progress.issuanceState = 'payment_unverified';
+
+      if (observationTask) progress.issuanceObservation = await followup.advance(graph, observationTask,
+        facts.issued || facts.closed ? 'terminal' : 'pending');
+    }
+    await graph.edit(ref, revision, { ...publicFacts, ...progress });
+  });
   const settlement = (booking: Booking, action: string) => ({
     key: digest(['fliggy-flight', booking.outOrderNo, action]),
     scope: { approval: booking.approvalDigest, authority: booking.authority, order: booking.outOrderNo, action },
@@ -236,7 +271,11 @@ export function fliggyFlightBookingFunctions(db: Database, resolve: FliggyFlight
         const input = approveFlightBookingInput.parse(raw), ref = input.booking;
         const { row, partner, booking } = await current(ctx, ref);
         if (!booking.merchantOrderId) throw new Conflict('Read the original Jinghang order first');
-        const guard = approve(ctx, input, ref, partner, booking, row.revision, action === 'pay' ? 'close' : 'pay');
+        const verify = approve(ctx, input, ref, partner, booking, row.revision, action === 'pay' ? 'close' : 'pay');
+        const guard = async (client: Sql) => {
+          await verify(client);
+          if (action === 'pay' && tracksIssuance(ctx)) await followup.enqueue(ctx, ref, client);
+        };
         const operation = settlement(booking, action), original = await readProvider(partner, booking, ctx.signal);
         if (!await operations.recover(ctx.principal.owner, operation.key, operation.scope, ctx.objects)) {
           if (original.paymentStarted || original.closed || !['BOOK_SUCCEEDED', '生单预定成功'].includes(original.supplierStatus))
@@ -249,7 +288,7 @@ export function fliggyFlightBookingFunctions(db: Database, resolve: FliggyFlight
             return { acknowledged: true };
           }, ctx.objects, { requestId: ctx.operationId, taskId: ctx.taskId });
         }
-        return project(ctx, ref, row.revision, partner, await readProvider(partner, booking, ctx.signal));
+        return project(ctx, ref, row.revision, partner, await readProvider(partner, booking, ctx.signal), action === 'pay');
       },
     ]),
     ['refreshFliggyFlightBooking', async (raw, ctx) => {
@@ -259,7 +298,44 @@ export function fliggyFlightBookingFunctions(db: Database, resolve: FliggyFlight
       const created = settlement(booking, 'create'), payment = settlement(booking, 'pay');
       if (!booking.merchantOrderId && !await operations.inspect(ctx.principal.owner, created.key))
         throw new Conflict('The flight preview has no submitted order');
-      const facts = await readProvider(partner, booking, ctx.signal);
+      const observationTask = tracksIssuance(ctx) ? followup.task(ctx, ref) : undefined;
+      if (observationTask && booking.independentRead && (booking.issued || booking.closed)) {
+        // Pay or a manual read may have confirmed the terminal state before this check was due.
+        return stage(ctx)(ref, async graph => {
+          await partner.assertCurrent();
+          if (await advancedConcurrently(graph, ref, row.revision, observationTask)) return;
+          await graph.edit(ref, row.revision, { issuanceState: booking.closed ? 'closed' : 'issued',
+            issuanceObservation: await followup.advance(graph, observationTask, 'terminal') });
+        });
+      }
+      const execution = ctx.execution;
+      const paymentClaimed = Boolean(await operations.inspect(ctx.principal.owner, payment.key));
+      const read = () => readProvider(partner, booking, ctx.signal);
+      let facts: ProviderFacts;
+      let readRevision = row.revision;
+      try {
+        if (observationTask && execution) {
+          const receipt = await execution.tasks.readSource(observationTask,
+            'flight-issuance:' + (observationTask.execution_step ?? 0),
+            { outOrderNo: booking.outOrderNo, authority: booking.authority }, async () => {
+              try { return { revision: row.revision, facts: await read() }; }
+              catch (cause) { throw new SourceReadFailure('Original Jinghang order readback unavailable', { cause }); }
+            });
+          facts = receipt.facts;
+          readRevision = receipt.revision;
+        } else {
+          facts = await read();
+        }
+      } catch (error) {
+        if (!observationTask || !(error instanceof SourceReadFailure)) throw error;
+        return stage(ctx)(ref, async graph => {
+          await partner.assertCurrent();
+          if (await advancedConcurrently(graph, ref, row.revision, observationTask)) return;
+          const status = await followup.advance(graph, observationTask, 'unavailable');
+          await graph.edit(ref, row.revision, { issuanceObservation: status,
+            ...(paymentClaimed && !booking.paid && !booking.closed ? { issuanceState: 'payment_unverified' } : {}) });
+        });
+      }
       const guard = async (client: Sql) => { await ctx.assertCurrent?.(client); await partner.assertCurrent(); };
       await operations.reconcile(ctx.principal.owner, created.key, created.scope,
         guard, async () => ({ merchantOrderId: facts.merchantOrderId }), ctx.objects);
@@ -270,7 +346,7 @@ export function fliggyFlightBookingFunctions(db: Database, resolve: FliggyFlight
         await operations.reconcile(ctx.principal.owner, closed.key, closed.scope,
           guard, async () => ({ acknowledged: true }), ctx.objects);
       }
-      return project(ctx, ref, row.revision, partner, facts);
+      return project(ctx, ref, readRevision, partner, facts, paymentClaimed, observationTask);
     }],
     ['readFliggyFlightBooking', async (raw, ctx) => {
       const { booking: ref } = flightBookingRef.parse(raw);

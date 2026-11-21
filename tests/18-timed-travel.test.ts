@@ -9,7 +9,7 @@ import { PARequests } from '../packages/runtime/pa.js';
 import { ScheduledActions } from '../packages/runtime/scheduled-actions.js';
 import { ExternalOperations } from '../packages/runtime/external-operations.js';
 import { digest } from '../packages/core/identity.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { Worker } from '../apps/worker/worker.js';
 import { ScheduledActionRunner } from '../packages/runtime/scheduled-actions.js';
 
@@ -308,7 +308,7 @@ test('changed source authority, canceled events and revoked grants never reach a
         await setGrants(
           p.f.db,
           principal.owner,
-          memberGrants(p.f.model).filter((g) => g.resource !== 'Eigos/source/Didi'),
+          businessGrants(p.f.model).filter((g) => g.resource !== 'Eigos/source/Didi'),
         );
       const execution = await wake(p);
       assert.equal(execution.state, 'failed');
@@ -432,7 +432,7 @@ test('recovering a provider receipt rechecks its original data permissions and s
     await setGrants(
       f.db,
       principal.owner,
-      memberGrants(f.model).filter((g) => g.resource !== 'Eigos/source/Didi'),
+      businessGrants(f.model).filter((g) => g.resource !== 'Eigos/source/Didi'),
     );
     const revoked = new Objects(f.db, f.model, await Access.load(f.db, principal));
     await assert.rejects(
@@ -457,7 +457,7 @@ test('the PA inbox exposes the correlated scheduled request only to its owner wi
     await setGrants(
       p.f.db,
       principal.owner,
-      memberGrants(p.f.model).filter((g) => g.resource !== 'Eigos/source/Luma'),
+      businessGrants(p.f.model).filter((g) => g.resource !== 'Eigos/source/Luma'),
     );
     assert.equal((await pa.pending(principal)).items.length, 0);
     assert.equal((await p.f.tasks.get(principal, execution.taskId)).result, null);

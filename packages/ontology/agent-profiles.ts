@@ -48,6 +48,7 @@ export const businessAgentProfiles: AgentProfile[] = [
     actions: ['CancelDidiRideOrder', 'RefreshDidiRideOrder', 'StartDidiRideWatch', 'StopDidiRideWatch'],
     functions: ['readDidiRideOrder', 'readDidiRideWatch', 'readDidiDriverPosition'],
     instructions: [
+      { function: 'readDidiRideWatch', text: 'For pickup and journey progress follow the original DidiRideOrder.watches link and read the matching watch. Report its observedAt and reason. Stopped or expired tracking does not establish ride completion or settlement.' },
       { action: 'CancelDidiRideOrder', function: 'readDidiRideOrder', text: 'Identify the exact linked original DiDi order. Cancellation is submitted directly by the authenticated PA through CancelableRideOrder.cancel with confirmCancellation=true after user approval. Read the original cancellation outcome before reporting success. An unresolved attempt permits readback only.' },
     ],
   },
@@ -80,14 +81,36 @@ export const businessAgentProfiles: AgentProfile[] = [
     ],
   },
   {
+    apiName: 'BookedFlightMonitoring',
+    terms: ['行程监测','跟踪我的航班','关注航变','航班变动提醒','monitor my booked flight','flight change alert'],
+    objects: ['FliggyFlightBooking','FlightWatch'], links: ['FliggyFlightBookingWatch'],
+    functions: ['prepareBookedFlightWatch','readFliggyFlightBooking','readFlightWatch'],
+    actions: ['StartBookedFlightWatch','CancelFlightWatch'],
+    instructions: [
+      { function:'prepareBookedFlightWatch', text:'Use the original booking to prepare a monitoring proposal. Present the chosen sources, maximum checks and deadline to the owner. A booking or payment approval applies only to that transaction.' },
+      { action:'StartBookedFlightWatch', text:'Use monitoring settings explicitly authorized for this booking and leg. Read the linked watch for the latest provider evidence and changes.' },
+    ],
+  },
+  {
+    apiName: 'TravelOrderProgress',
+    terms: ['酒店取消进度', '酒店退款进度', '机票出票', '出票了吗', 'hotel cancellation status', 'ticket issuance'],
+    objects: ['FliggyHotelBooking','FliggyFlightBooking'],
+    functions: ['readFliggyHotelBooking','readFliggyFlightBooking'],
+    instructions: [
+      { function: 'readFliggyHotelBooking', text: 'Identify the original booking and read its last verified supplier state and observation time. Distinguish cancellation from refund settlement. Query the booking for cancellationObservation when present.' },
+      { function: 'readFliggyFlightBooking', text: 'Identify the original flight order. Report payment and ticket issuance separately using independent supplier evidence. Query issuanceState and issuanceObservation when present.' },
+    ],
+  },
+  {
     apiName: 'TravelOffers',
     terms: ['酒店', '机票', '航班', 'hotel', 'flight', 'travel offer', 'rollinggo', 'fliggy', '飞猪',
       '住哪', '住宿', '订房', '宾馆', '民宿', '飞机'],
-    objects: ['TravelOfferSearch'],
-    interfaces: ['TravelOfferInquiry', 'FlightSearch', 'HotelSearch', 'HotelOffer'],
-    actions: ['SearchTravelOffers', 'SearchRollingGoHotels', 'PrepareFliggyHotelBooking', 'PrepareFliggyFlightBooking'],
-    functions: ['readTravelOfferSearch', 'readServiceSearchPages', 'readServiceSearch', 'readServiceOffering'],
+    objects: ['TravelOfferSearch','FliggyTravelOfferHandoff'],
+    interfaces: ['TravelOfferSelection','TravelOfferInquiry', 'FlightSearch', 'HotelSearch', 'HotelOffer'],
+    actions: ['PrepareFliggyTravelHandoff','SearchTravelOffers', 'SearchRollingGoHotels', 'PrepareFliggyHotelBooking', 'PrepareFliggyFlightBooking'],
+    functions: ['readFliggyTravelHandoff','readTravelOfferSearch', 'readServiceSearchPages', 'readServiceSearch', 'readServiceOffering'],
     instructions: [
+      { action: 'PrepareFliggyTravelHandoff', function:'readFliggyTravelHandoff', text:'When the user selects a FlyAI trial or keyed hotel or flight offer, call TravelOfferSelection.prepare on FliggyTravelOfferHandoff with the selected offer and its search page references. Return the verified supplier review link using readFliggyTravelHandoff bound to handoff. Keep the displayed fare and access mode. A handoff creates no supplier order.' },
       { action: 'SearchTravelOffers', function: 'readTravelOfferSearch', text: 'Use the TravelOfferInquiry.search Interface Action on TravelOfferSearch so the supplier reads run concurrently. Use the same user criteria for participating suppliers. For direct results use complete_with_action and bind readTravelOfferSearch to search. For a coordinated itinerary search before opening a Scenario. Preserve supplier outcomes, access mode and display prices.' },
       { action: 'PrepareFliggyHotelBooking', text: 'For a booking proposal use the installed partner hotel rate and a private profile reference supplied by the owner. Present the preview terms and digest. Report payment and hotel confirmation only with independent evidence.' },
       { action: 'PrepareFliggyFlightBooking', text: 'For a booking proposal use the installed partner fare and a private profile reference supplied by the owner. Present the preview terms and digest. Report payment and ticket issuance only with independent evidence.' },

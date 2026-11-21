@@ -1,3 +1,5 @@
+import { renderInterestList, showObjectInterests } from './observation-interests.js';
+
 const duration = value => value == null ? '—' : new Intl.NumberFormat('zh-CN', {
   maximumFractionDigits: 1, style: 'unit', unit: value < 60000 ? 'second' : value < 3600000 ? 'minute' : 'hour',
 }).format(value / (value < 60000 ? 1000 : value < 3600000 ? 60000 : 3600000));
@@ -54,8 +56,10 @@ export async function renderMachinery(body, ui) {
     const [processes, reviews, sets] = await Promise.all([
       service('machinery_processes'), service('machinery_reviews'), service('list_sets'),
     ]);
+    const interests=element('div',{class:'section'});
+    await renderInterestList(ui,interests);
     if (!processes.items.length) {
-      body.replaceChildren(element('p', {}, '当前身份没有可读的过程日志。'));
+      body.replaceChildren(element('h3',{},'我的后台跟进'), interests, element('p', {}, '当前身份没有可读的过程日志。'));
       return;
     }
     const type = select(processes.items.map(item => [item.type, item.name]),
@@ -87,7 +91,9 @@ export async function renderMachinery(body, ui) {
       const id = ++generation;
       progress.textContent = '正在读取过程日志…';
       try {
-        const result = loaded ?? await service('machinery_analysis', input);
+        const [result, bindings] = await Promise.all([
+          loaded ?? service('machinery_analysis', input), service('machinery_rule_bindings', {type:input.type}),
+        ]);
         const fixed = { ...input, to: result.to };
         if (id !== generation) return;
         function detail(item) {
@@ -98,6 +104,8 @@ export async function renderMachinery(body, ui) {
             });
             const entry = data.cases[0];
             if (!entry) throw new Error('当前查询范围内没有可读的完整记录。');
+            const current = input.externalSource ? null :
+              await service('process_status', { type: input.type, object: item.object });
             const timeline = entry.timeline;
             const rows = timeline.map(event => [
               localTime(event.recordedAt), edgeText(event), event.action ?? '—', event.source ?? '—',
@@ -122,6 +130,13 @@ export async function renderMachinery(body, ui) {
                   openActions(item.object, actions);
                 })),
 
+              current && button('查看或登记跟进', () => showObjectInterests(ui,
+                processes.items.find(process => process.type === input.type), item.object)),
+              current?.schedules?.length > 0 && element('section', {}, element('h4', {}, '该对象的后台操作'),
+                table(['Action', '执行状态', '下次检查', '截止时间'], current.schedules.map(schedule => [
+                  schedule.action, schedule.status, schedule.nextCheckAt ? localTime(schedule.nextCheckAt) : '—',
+                  localTime(schedule.deadline),
+                ]))),
               table(['记录时间', '状态变化', 'Action', '来源', '证据'], rows),
             ));
           })();
@@ -130,10 +145,10 @@ export async function renderMachinery(body, ui) {
         const pathTable = table(['实际路径', '流程实例', '样本覆盖'],
           result.paths.map(path => [path.states.join(' → ') || '无状态', path.count, path.partial ? '窗口内片段' : '自首次记录起']),
           index => render({ ...fixed, offset: 0, filter: { path: result.paths[index].id } }));
-        const transitions = table(['状态转换', '次数', '流程实例', '预期流程', '关联 Action'],
+        const transitions = table(['状态转换', '次数', '流程实例', '预期流程', '模型关联操作', '实际操作', '观察来源'],
           result.transitions.map(edge => [edgeText(edge), edge.count, edge.cases,
             edge.expected === true ? '已定义' : edge.expected === false ? '新发现' : '未配置参考模型',
-            edge.action ?? Object.keys(edge.observedActions).join('、')]),
+            edge.action ?? '—', Object.keys(edge.observedActions).join('、') || '—', Object.keys(edge.observedSources).join('、') || '—']),
           index => {
             const { from, to } = result.transitions[index];
             return render({ ...fixed, offset: 0, filter: { edge: { from, to } } });
@@ -190,26 +205,63 @@ export async function renderMachinery(body, ui) {
             ),
           ));
         });
+        const processStates = processes.items.find(process=>process.type===input.type)?.states ?? [];
         const configureRule = button('配置状态规则', async () => {
           const { items } = await service('workflows');
           const workflows = items.filter(item => !item.kind);
-          if (!workflows.length) throw new Error('请先在规则页面保存一个 Workflow。');
           const name = element('input', { value: '状态规则 ' + input.type });
-          const trigger = select(result.states.map(row => row.name), result.findings.bottlenecks[0]?.state ?? result.states[0].name);
+          const trigger = select(processStates, result.findings.bottlenecks[0]?.state ?? processStates[0]);
           const dwellSeconds = element('input', { type: 'number', min: 1, placeholder: '进入状态后立即触发' });
-          const workflow = select(workflows.map(item => [item.id, item.name]), workflows[0].id);
+          const actionNames = ui.actions.map(action => [action.apiName, action.displayName ?? action.apiName]);
+          const workflow = select(workflows.map(item => [item.id, item.name]), workflows[0]?.id);
+          const action = select(actionNames, actionNames[0]?.[0]);
+          const parameters = jsonInput({});
+          const setDefaults = () => {
+            const selected = ui.actions.find(item => item.apiName === action.value);
+            const process = processes.items.find(item => item.type === input.type);
+            parameters.value = JSON.stringify(Object.fromEntries(Object.entries(selected?.objectParameters ?? {})
+              .filter(([,target]) => target === process?.objectType).map(([key]) => [key,{object:true}])), null, 2);
+          };
+          action.onchange = setDefaults;
+          setDefaults();
+          const editor = element('div');
+          const mode = select([...(actionNames.length ? [['action','Action']] : []),
+            ...(workflows.length ? [['workflow','Workflow']] : [])], actionNames.length ? 'action' : 'workflow');
+          if (!actionNames.length && !workflows.length) throw new Error('当前身份没有可绑定的操作或流程。');
+          const showEffect = () => editor.replaceChildren(...(mode.value === 'action'
+            ? [field('触发操作',action),field('参数绑定',parameters,'用 {"object":true} 引用当前实例，或用 {"property":"属性名"}、{"literal":值} 提供参数。')]
+            : [field('触发流程',workflow)]));
+          mode.onchange=showEffect;
+          showEffect();
           const enabled = element('input', { type: 'checkbox' });
           modal('状态触发规则', element('div', { class: 'section' },
             field('名称', name), field('进入状态', trigger), field('停留秒数', dwellSeconds),
-            field('Workflow', workflow), field('启用规则', enabled),
+            field('执行方式', mode), editor, field('启用规则', enabled),
             button('保存规则', async () => {
-              await service('save_rule', { name: name.value, workflow: workflow.value, enabled: enabled.checked,
+              await service('save_rule', { name: name.value, enabled: enabled.checked,
+                ...(mode.value === 'action' ? {effect:{action:action.value,input:JSON.parse(parameters.value)}} : {workflow:workflow.value}),
                 process: { type: input.type, to: trigger.value,
                   ...(dwellSeconds.value ? { dwellSeconds: Number(dwellSeconds.value) } : {}) } });
               document.querySelector('#editor').close();
+              await render(input);
             }, 'primary'),
           ));
         });
+        const rulePanel = element('div');
+        function renderBindings(page) {
+          const rows = page.items.map(rule => [
+            rule.name, (rule.process.from === null ? '开始' : rule.process.from ?? '任意') + ' → ' + (rule.process.to ?? '任意'),
+            rule.process.dwellSeconds ? rule.process.dwellSeconds+' 秒后' : '进入时',
+            rule.effect.action ?? ('Workflow '+rule.effect.workflow),
+            rule.enabled ? '已启用' : '已停用',
+            rule.error || (rule.latestRun ? rule.latestRun.state+' · '+localTime(rule.latestRun.updatedAt) : '无可见运行'),
+          ]);
+          rulePanel.replaceChildren(
+            rows.length ? table(['规则','触发转换','时机','执行效果','状态','本修订最近运行'],rows) : element('p',{},'当前页没有可见的状态规则。'),
+            ...(page.cursor ? [button('下一页规则',async()=>renderBindings(await service('machinery_rule_bindings',{type:input.type,cursor:page.cursor})))] : []),
+          );
+        }
+        renderBindings(bindings);
         progress.textContent = result.casesTotal + ' 个流程实例 · 耗时按'
           + (result.durationClock === 'observedAt' ? '来源观察时间' : '记录时间');
         const setName=element('input',{placeholder:'待复用实例名称'});
@@ -224,7 +276,7 @@ export async function renderMachinery(body, ui) {
             (input.filter || input.focus) && button('清除筛选', () => render()),
             ...Object.entries(result.conformance).map(([key, count]) =>
               button(status[key] + ' ' + count, () => render({ ...fixed, offset: 0, filter: { conformance: key } }))),
-            author, result.states.length > 0 && configureRule,
+            author, processStates.length > 0 && configureRule,
           ),
           element('h3', {}, '流程图'),
           processGraph(result, element, button, name => render({ ...fixed, offset: 0, filter: { state: name, current: true } })),
@@ -232,6 +284,7 @@ export async function renderMachinery(body, ui) {
           element('h3', {}, '瓶颈排名'), bottlenecks,
           element('h3', {}, '状态停留'), dwell, distribution,
           element('h3', {}, '转换与预期流程'), transitions,
+          element('h3', {}, '我的状态触发规则'), rulePanel,
           element('h3', {}, '流程实例'), cases,
           element('div', { class: 'toolbar' },
             !!input.offset && button('上一页', () => render({ ...fixed, offset: Math.max(input.offset - 25, 0) })),
@@ -250,7 +303,10 @@ export async function renderMachinery(body, ui) {
         ...reviews.items.map(review => element('div', { class: 'toolbar' },
           element('span', {}, review.name + ' · 每 ' + review.periodDays + ' 天'),
           element('span', {}, review.enabled ? '已启用' : '已暂停'),
-          review.checkpoint && button('查看上次复盘', async () => {
+          review.status === 'stale' && element('span', {}, review.enabled ? '发布已更新，等待刷新分析' : '发布已更新，请立即复盘'),
+          review.status === 'failed' && element('span', {}, '复盘失败，请检查权限和配置后重试'),
+          review.status === 'pending' && element('span', {}, '尚未完成复盘'),
+          review.checkpoint && review.status === 'ready' && button('查看上次复盘', async () => {
             const report = await service('machinery_review', { id: review.id });
             await render({ type: review.type, from: report.from, to: report.to, includeIdle: false,
               mining: { minCases: review.minCases }, durationClock: review.durationClock }, report);
@@ -258,6 +314,7 @@ export async function renderMachinery(body, ui) {
           button('立即复盘', async () => {
             const report = await service('run_machinery_review', { id: review.id });
             review.checkpoint = { from: report.from, to: report.to };
+            review.status = 'ready';
             review.error = null;
             showReviews();
             await render({ type: review.type, from: report.from, to: report.to, includeIdle: false,
@@ -290,7 +347,17 @@ export async function renderMachinery(body, ui) {
         }, 'primary')));
     }
     showReviews();
-    body.replaceChildren(element('div', { class: 'toolbar' },
+    const liveProcess=select(processes.items.map(process=>[process.type,process.name]),type.value);
+    const originalId=element('input',{placeholder:'输入原对象 ID'});
+    const inspectInterest=button('查看或登记跟进',async()=>{
+      const process=processes.items.find(item=>item.type===liveProcess.value);
+      const id=originalId.value.trim();
+      if(!id)throw new Error('请输入原对象 ID。');
+      await showObjectInterests(ui,process,{type:process.objectType,id});
+    });
+    body.replaceChildren(element('h3',{},'我的后台跟进'), interests,
+      element('div',{class:'toolbar'},field('原对象流程',liveProcess),field('原对象 ID',originalId),inspectInterest),
+      element('div', { class: 'toolbar' },
       field('流程', type), field('对象集', set), field('外部历史来源',externalSource), field('起始日期', from), field('结束日期', to),
       field('挖掘所需最少实例', minCases), field('挖掘覆盖率（%）', coverage),
       field('耗时依据', durationClock), field('包含窗口内无转换的实例', includeIdle), button('分析流程', () => render(), 'primary')),

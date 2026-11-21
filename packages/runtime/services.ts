@@ -1,3 +1,4 @@
+import { ObservationInterests,startInterestSchema,listInterestsSchema,cancelInterestSchema } from './observation-interests.js';
 import {digest} from '../core/identity.js';
 import {resourceGroups} from '../ontology/resource-mapping.js';
 import { PublicPlaceCatalogue } from '../capabilities/public-places/catalogue.js';
@@ -9,7 +10,7 @@ import {
   entityHistorySchema,
 } from './entity-resolution.js';
 import { Applications, objectViewSchema, graphSchema, mapSchema } from './applications.js';
-import { Automation, workflowSchema, saveRuleSchema, runWorkflowSchema, automationPreviewSchema, publishWorkflowSchema, withdrawWorkflowSchema, runPublishedWorkflowSchema } from './automation.js';
+import { Automation, processBindingsSchema, workflowSchema, saveRuleSchema, runWorkflowSchema, automationPreviewSchema, publishWorkflowSchema, withdrawWorkflowSchema, runPublishedWorkflowSchema } from './automation.js';
 import { analyzeMachinery, listMachineryProcesses, machineryAnalysisSchema } from './machinery-analysis.js';
 import { ingestMachineryHistory, machineryHistorySchema } from './machinery-history.js';
 import { MachineryReviews, machineryReviewSchema } from './machinery-reviews.js';
@@ -39,7 +40,8 @@ import { Access } from './access.js';
 import { Database } from './database.js';
 import { Metadata } from './metadata.js';
 import { ScenarioEvaluations, compareScenariosSchema, trialScenariosSchema, saveEvaluationSuiteSchema, runEvaluationSuiteSchema, promoteEvaluationSchema, evaluationCasesFromSetSchema } from './scenario-evaluation.js';
-import { Scenarios, continueScenarioSchema } from './scenarios.js';
+import { Scenarios, continueScenarioSchema, type ScenarioDecisionSupport } from './scenarios.js';
+import { scenarioDecisionSchema } from '../ontology/scenario-decision.js';
 import { Objects } from './objects.js';
 import {
   ObjectSets,
@@ -70,7 +72,7 @@ import type { Bindings } from './metadata.js';
 export function ontologyServices(
   db: Database,
   metadata: Metadata,
-  bindings: Bindings & { projectTaskResult: TaskResultProjection },
+  bindings: Bindings & { projectTaskResult: TaskResultProjection; scenarioDecisions?: ScenarioDecisionSupport },
   functions: Functions,
   effects: Effects,
   actions: Actions,
@@ -520,8 +522,11 @@ export function ontologyServices(
       requireScope(a.principal,'ontology:read');
       return evaluations.promote(a,await active(),input);
     });
-  register('scenario_continuation_sources','List owned temporary or previous-release drafts eligible for a continuation attempt.',
+  register('scenario_continuation_sources','List owned temporary or previous-release drafts with Action-journal readiness and recovery reasons.',
     z.strictObject({}),false,async a=>new Scenarios(db).continuationSources(a,await active()));
+  register('inspect_scenario_continuation','Read an owned historical draft difference under current permissions before re-proposing its business edits.',
+    z.strictObject({id:z.uuid(),revision:z.number().int().positive()}),false,
+    async(a,input)=>new Scenarios(db).inspectContinuation(a,await active(),input.id,input.revision));
   register('continue_scenario','Replay a compatible Scenario journal into a new persisted draft with fresh review.',
     continueScenarioSchema,true,async (a,input)=>new Scenarios(db).continueScenario(a,await active(),input));
   register('preview_automation', 'Evaluate a saved automation against Scenario revisions and preview its Actions without enqueuing a live run.',
@@ -595,14 +600,14 @@ export function ontologyServices(
     'Read the proposed edits as an invited reviewer under current object and property permissions.',
     idSchema,
     false,
-    async (a, input) => new Scenarios(db).inspectReview(a, await active(), input.id),
+    async (a, input) => new Scenarios(db, bindings.scenarioDecisions).inspectReview(a, await active(), input.id),
   );
   register(
     'approve_scenario_review',
     'Approve the revision and snapshot returned by the invited reviewer inspection.',
-    scenarioRevision.extend({ snapshot: z.string().regex(/^[a-f0-9]{64}$/) }),
+    scenarioRevision.extend({ snapshot: z.string().regex(/^[a-f0-9]{64}$/), decision: scenarioDecisionSchema.optional() }),
     true,
-    async (a, input) => new Scenarios(db).approveReview(a, await active(), input.id, input.revision, input.snapshot),
+    async (a, input) => new Scenarios(db, bindings.scenarioDecisions).approveReview(a, await active(), input.id, input.revision, input.snapshot, input.decision),
   );
   register(
     'save_workflow',
@@ -631,6 +636,15 @@ export function ontologyServices(
     false,
     async (a, input) => automation.processStatus(a, await active(), input),
   );
+  register('machinery_rule_bindings','Read this owner’s process conditions, direct Action or Workflow effects, and latest visible run for each current revision.',
+    processBindingsSchema,false,async(a,input)=>automation.processBindings(a,await active(),input));
+  const interests=new ObservationInterests(db,metadata);
+  register('start_observation_interest','Authorize an ordered, bounded observation of one original business object.',
+    startInterestSchema,true,async(a,input)=>interests.start(a,await active(),input));
+  register('observation_interests','Read owned observation progress, its next original-object check and continuity gaps.',
+    listInterestsSchema,false,async(a,input)=>interests.list(a,await active(),input));
+  register('cancel_observation_interest','Withdraw an owned observation interest and stop its outstanding checks.',
+    cancelInterestSchema,true,async(a,input)=>interests.cancel(a,await active(),input));
   register('machinery_processes', 'Discover authorized Ontology processes and their published reference models.',
     z.strictObject({}), false, async a => listMachineryProcesses(a, await active()));
   register('machinery_analysis', 'Mine authorized process paths, compare observed transitions with a reference, and analyze dwell time.',

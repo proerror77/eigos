@@ -65,6 +65,12 @@ Interface 按业务语义命名，供应商名称放在具体 Object Type、来�
 
 已有滴滴原订单后的状态轮询、按需司机位置和接驾提醒见 [滴滴原订单追踪](didi-ride-followup.md)。
 
+#### 选中飞猪报价后打开供应商详情
+
+PA 从一次飞猪酒店或航班搜索结果中取得用户选定的 `offer` 和对应的 `search` 对象引用。通过 `complete_with_action` 调用 `TravelOfferSelection.prepare`，实现类型为 `FliggyTravelOfferHandoff`，把返回引用绑定给 `readFliggyTravelHandoff.handoff`。
+
+返回值保留来源提供的 HTTPS 详情链接、日期／航段、原始展示价、`accessMode`、证据类型及有效期。试用连接可用，酒店的掩码价和起价按原文返回。没有受支持链接、来源账号变化、搜索页被替代、报价过期或本地价格／链接被编辑时，需要重新选择有效报价。交接状态 `ready_for_review` 表示买家可以打开供应商页面核对；后续预订另行授权。EIGOS 只写入选中记录及其关联，沿用 [Function 支持的 Action](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) 与 [对象支持的关联](https://www.palantir.com/docs/foundry/object-link-types/create-link-type)。
+
 ## 飞猪合作方机酒交易
 
 机酒搜索继续使用 FlyAI 和 RollingGo 并行查询。进入交易时使用飞猪 TOP 的可交易库存标识。FlyAI 展示价、酒店卡片 ID、航班号和跳转链接无法代替分销商品、政策 ID 或京杭报价 `itemId`。
@@ -191,3 +197,15 @@ RollingGo 凭据是原 API Key 文件。Shopify 凭据文件是 `{ "clientId": "
 2026-11-13 的只读现场检查确认：滴滴 MCP 暴露驾驶路线、创建订单、原订单查询等工具，驾驶路线读取成功；Shopify 当前 Global Catalog 暴露三个读取工具；RollingGo 当前 API Key 暴露四个酒店读取工具。Shopify 和 RollingGo 均通过本版 Action → 来源投影 → Interface 结果读取，在隔离 PostgreSQL 中取得 `live_readonly` 结果，没有真实报名、下单或付款。
 
 真实 Grok Luma 账户的参与者操作，以及真实叫车后的接驾、到达和最终履约仍须独立验收。查询响应、工具目录、合成订单或绿色 CI 都不代替这项验收。
+
+## 订单后台观察
+
+启用 v37 对应的业务定义后，取消飞猪酒店订单或支付京杭机票时，系统同时登记一次对原单的有界观察。调用方需拥有相应刷新 Action、业务对象与原连接的访问权限。供应商写请求的回复即使丢失，后台仍能沿原订单号核查。新的观察通过已持久化的 ScheduledActions 运行。首次回查在一分钟后，正常等待时每五分钟检查，读取失败会退避，观察期限为四小时。
+
+| 业务对象 | Machinery 跟踪的属性 | 结果依据 |
+| --- | --- | --- |
+| FliggyHotelBooking | state | 原订房详情确认取消、关闭或退款处理状态。取消成功和退款到账需要分别举证。 |
+| FliggyFlightBooking | issuanceState | 区分未付、付款待核实、已付待出票、已出票、已关闭。付款与出票使用各自证据。 |
+| DidiRideOrder | 沿 watches 读取 DidiRideWatch.state | 由现有跟单记录提供接驾和行程阶段、来源观察时间及观察终止原因。 |
+
+在工作台的 Machinery 里打开流程实例，查看正式状态转换及其来源。具备任务读取权限的用户还可查看自己针对该对象的单对象后台 Action、状态、下一次检查和截止时间。授权撤回、超过期限或供应商详情无法确认时，保留最后可验证的业务状态。历史定义沿用原有人工刷新方式；发布新定义并给实际执行身份授予新增 ProcessLog 的读取权限后才能从 Machinery 查看。合成订单覆盖此路径；生产供应商接入和履约验收另行进行。

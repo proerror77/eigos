@@ -4,7 +4,7 @@ import { digest } from '../packages/core/identity.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import { documentChunkType, registerDocument } from '../packages/ontology/documents.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { OntologyAgent, type AgentDriver } from '../packages/runtime/agent.js';
 import { ExternalOperations } from '../packages/runtime/external-operations.js';
 import { ExecutionTrace } from '../packages/runtime/execution-trace.js';
@@ -70,7 +70,7 @@ test('authorized SOP and supplier evidence lead through model proposal, independ
       }]]),
     });
     const model = await f.metadata.publish(document, capabilities, f.publisher);
-    await setGrants(f.db, principal.owner, memberGrants(model));
+    await setGrants(f.db, principal.owner, businessGrants(model));
     const access = () => Access.load(f.db, principal);
     const author = await access(), graph = new Objects(f.db, model, author);
     const plan = { type: 'SchedulePlan', id: 'trace-staffed-entrance-plan' };
@@ -111,7 +111,7 @@ test('authorized SOP and supplier evidence lead through model proposal, independ
     await assert.rejects(graph.read(draft), /unavailable/);
 
     const scenarios = new Scenarios(f.db), reviewerOwner = 'synthetic-separate-reviewer';
-    await setGrants(f.db, reviewerOwner, memberGrants(model));
+    await setGrants(f.db, reviewerOwner, businessGrants(model));
     const reviewer = await Access.load(f.db, { ...principal, owner: reviewerOwner });
     const proposal = await scenarios.inspect(await access(), model, scenarioId);
     await scenarios.inviteReviewers(await access(), model, scenarioId, proposal.revision, [reviewerOwner]);

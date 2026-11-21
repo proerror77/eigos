@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fixture, principal } from './fixture.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { EntityResolution, initializeEntityResolution } from '../packages/runtime/entity-resolution.js';
 import { Objects } from '../packages/runtime/objects.js';
 
@@ -12,7 +12,7 @@ async function setup() {
   document.dataSources.push({ apiName: 'OtherPlaces', objectType: 'Place', function: 'searchPlaces', properties: { ...document.dataSources.find(source => source.apiName === 'DidiPlaces')!.properties } });
   const bindings = { describe: (model: Parameters<typeof f.capabilities.describe>[0]) => ({ functions: f.capabilities.functions.bindings(model), sources: Object.fromEntries([...model.sources.keys()].map(name => [name, name])) }) };
   const model = await f.metadata.publish(document, bindings, f.publisher);
-  await setGrants(f.db, principal.owner, [...memberGrants(model), ...['DidiPlaces', 'OtherPlaces'].map(source => ({ resource: 'Eigos/datasource/' + source, permission: 'ingest_source' as const }))]);
+  await setGrants(f.db, principal.owner, [...businessGrants(model), ...['DidiPlaces', 'OtherPlaces'].map(source => ({ resource: 'Eigos/datasource/' + source, permission: 'ingest_source' as const }))]);
   const access = await Access.load(f.db, principal), graph = new Objects(f.db, model, access), resolution = new EntityResolution(f.db);
   const ref = { type: 'Place', id: 'canonical-place' };
   const fields = { id: ref.id, name: 'Place', city: '上海', address: 'Address', coordinates: { lat: 31, lng: 121 }, coordinateSystem: 'GCJ-02', sourceBinding: 'fixture', observedAt: new Date().toISOString() };
@@ -47,17 +47,17 @@ test('binding revisions prevent stale or concurrent reassignment and provider lo
 test('source authority, owner isolation and target type are enforced', async () => {
   const f = await setup(); try {
     const input = { source: 'DidiPlaces', externalId: 'place', target: f.ref, expectedRevision: 0, reason: 'Verified match' };
-    await setGrants(f.db, 'reader', memberGrants(f.model));
+    await setGrants(f.db, 'reader', businessGrants(f.model));
     const reader = await Access.load(f.db, { ...principal, owner: 'reader' });
     await assert.rejects(f.resolution.bind(reader, f.model, input), /Permission/);
-    await setGrants(f.db, 'reader', [...memberGrants(f.model), { resource: 'Eigos/datasource/DidiPlaces', permission: 'ingest_source' }]);
+    await setGrants(f.db, 'reader', [...businessGrants(f.model), { resource: 'Eigos/datasource/DidiPlaces', permission: 'ingest_source' }]);
     const other = await Access.load(f.db, { ...principal, owner: 'reader' });
     await assert.rejects(f.resolution.bind(other, f.model, input), /unavailable/);
     await assert.rejects(f.resolution.bind(f.access, f.model, { ...input, target: { type: 'Route', id: 'route' } }), /type must match/);
     await f.resolution.bind(f.access, f.model, input);
     const hidden = await f.resolution.lookup(other, f.model, { source: input.source, externalId: input.externalId });
     assert.equal(hidden.bound, false); assert.notDeepEqual(hidden.ref, f.ref);
-    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant => grant.permission !== 'read_source'));
+    await setGrants(f.db, principal.owner, businessGrants(f.model).filter(grant => grant.permission !== 'read_source'));
     await assert.rejects(f.resolution.lookup(await Access.load(f.db, principal), f.model, { source: input.source, externalId: input.externalId }), /Permission/);
   } finally { await f.close(); }
 });
