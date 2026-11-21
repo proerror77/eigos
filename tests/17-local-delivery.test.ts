@@ -13,27 +13,28 @@ import { fixture, principal } from './fixture.js';
 
 test('local delivery Actions retain only owner-bound search results and report listing and inventory evidence separately', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eigos-local-delivery-'));
-  const path = join(directory, 'bindings.json'), tokenFile = join(directory, 'host.token');
-  const token = randomBytes(32).toString('base64url'), bearer = 'delivery-local-fixture-token-at-least-32';
-  const port = 43815, addressRef = 'f'.repeat(64);
+  const bearer = 'delivery-local-fixture-token-at-least-32', addressRef = 'f'.repeat(64);
   const accounts = { taobao: '4ee50433-6d87-4adb-9775-9cda669c00d1', hema: 'e4da3d57-9284-4737-99e5-92299854ab37' };
   const productRef = '56f48383-6a87-4adb-9775-9cda669c00d1';
-  const bindings = (['TaobaoInstantDelivery', 'Hema'] as const).map(provider => ({
-    owner: principal.owner, provider, active: true, accountRef: accounts[localDeliveryServices[provider].platformId],
-    port, tokenFile, tokenSha256: createHash('sha256').update(token).digest('hex'),
-    expiresAt: new Date(Date.now() + 3600000).toISOString(),
+  const paths = { TaobaoInstantDelivery: join(directory, 'taobao.json'), Hema: join(directory, 'hema.json') };
+  const tokens = { TaobaoInstantDelivery: randomBytes(32).toString('base64url'), Hema: randomBytes(32).toString('base64url') };
+  const [, hemaBinding] = await Promise.all((['TaobaoInstantDelivery', 'Hema'] as const).map(async provider => {
+    const tokenFile = join(directory, provider + '.token'), token = tokens[provider], port = provider === 'Hema' ? 43816 : 43815;
+    await writeFile(tokenFile, token, { mode: 0o600 });
+    const binding = { owner: principal.owner, provider, active: true, accountRef: accounts[localDeliveryServices[provider].platformId],
+      port, tokenFile, tokenSha256: createHash('sha256').update(token).digest('hex'), expiresAt: new Date(Date.now() + 3600000).toISOString() };
+    await writeFile(paths[provider], JSON.stringify([binding]), { mode: 0o600 });
+    return binding;
   }));
-  await writeFile(tokenFile, token, { mode: 0o600 });
-  const save = () => writeFile(path, JSON.stringify(bindings), { mode: 0o600 });
-  await save();
 
   let hemaBlocked = false;
   const calls: string[] = [];
   const listed = { id: 'sku1', name: '鲜牛奶 950ml', price: '7.90', availability: 'unknown' };
   const provider = async (url: URL | RequestInfo, init?: RequestInit) => {
-    assert.equal(String(url), 'http://127.0.0.1:43815/host');
+    assert.match(String(url), /^http:\/\/127\.0\.0\.1:4381[56]\/host$/);
+    const source = String(url).includes(':43816/') ? 'Hema' : 'TaobaoInstantDelivery';
     assert.equal(init?.redirect, 'error');
-    assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer ' + token);
+    assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer ' + tokens[source]);
     const request = JSON.parse(String(init?.body));
     if (request.method === 'notifications/initialized') return new Response(null, { status: 202 });
     const reply = (result: unknown) => Response.json({ jsonrpc: '2.0', id: request.id, result });
@@ -43,6 +44,8 @@ test('local delivery Actions retain only owner-bound search results and report l
     assert.equal(request.method, 'tools/call');
     const { name, arguments: args } = request.params;
     calls.push(name);
+    const platformId = name === 'account_cross_search' ? args.accounts[0].platformId : args.platformId;
+    assert.equal(platformId, localDeliveryServices[source].platformId);
     const data = (value: unknown) => reply({ content: [{ type: 'text', text: JSON.stringify({ success: true, data: value }) }] });
     if (name === 'account_cross_search') {
       const { keyword, accounts: [owner] } = args;
@@ -53,7 +56,7 @@ test('local delivery Actions retain only owner-bound search results and report l
       return data({ keyword, platforms: [{ ...owner, scope: hema ? 'delivery-stores' : 'platform', state: hema ? 'ready' : 'partial', groups: [
         { shopId: hema ? 'store1' : 'platform', shopName: hema ? '盒马测试店' : '', addressRef, state: 'ready', hasMore: !hema,
           items: [hema ? { ...listed, priceUnit: '瓶', productRef, availability: 'available' }
-            : { ...listed, shopId: 'store1', shopName: '闪购测试店', shopIsRetail: true }],
+            : { ...listed, shopId: 'store1', shopName: '盒马鲜生（闪购店铺）', shopIsRetail: true }],
         },
       ] }] });
     }
@@ -79,7 +82,8 @@ test('local delivery Actions retain only owner-bound search results and report l
   const f = await fixture();
   const config = readConfig({
     DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_AUTH_MODE: 'development',
-    EIGOS_DEV_TOKEN: bearer, EIGOS_DSH_WAIMAI_CONNECTION_FILE: path,
+    EIGOS_DEV_TOKEN: bearer, EIGOS_TAOBAO_INSTANT_DELIVERY_CONNECTION_FILE: paths.TaobaoInstantDelivery,
+    EIGOS_HEMA_CONNECTION_FILE: paths.Hema,
   });
   const gateway = createApp(config, f.db, f.source, undefined, {}, { localDeliveryFetch: provider });
   const server = gateway.app.listen(0, '127.0.0.1');
@@ -105,15 +109,16 @@ test('local delivery Actions retain only owner-bound search results and report l
       assert.notEqual(result.isError, true, result.content?.[0]?.text);
       const value = result.structuredContent ?? JSON.parse(result.content[0].text);
       const serialized = JSON.stringify(value);
-      for (const secret of [token, addressRef, productRef, accounts.hema, accounts.taobao])
+      for (const secret of [...Object.values(tokens), addressRef, productRef, accounts.hema, accounts.taobao])
         assert.equal(serialized.includes(secret), false);
       return value;
     };
     const instant = await complete('TaobaoInstantDelivery', { query: '牛奶' }, 'instant');
     assert.deepEqual(instant.items[0], {
-      merchantId: 'store1', itemId: 'sku1', merchantName: '闪购测试店', listedPriceMinor: 790, priceUnit: null, name: listed.name,
+      merchantId: 'store1', itemId: 'sku1', merchantName: '盒马鲜生（闪购店铺）', listedPriceMinor: 790, priceUnit: null, name: listed.name,
       stockQuantity: null, stockEvidence: 'verification_required', variants: [], availability: 'unknown',
     });
+    assert.equal(instant.provider, 'TaobaoInstantDelivery');
     assert.equal(instant.evidence, 'provider_mock');
     assert.equal(instant.complete, false);
     assert.deepEqual(await complete('TaobaoInstantDelivery', { query: '牛奶' }, 'instant'), instant);
@@ -136,11 +141,15 @@ test('local delivery Actions retain only owner-bound search results and report l
     assert.equal(menu.items[0].stockQuantity, null);
 
     const action = instant.search as ObjectRef;
-    bindings[0]!.active = false;
-    await save();
+    // An inactive or misconfigured Taobao file cannot switch the request to the Hema account.
+    const before = calls.length;
+    await writeFile(paths.TaobaoInstantDelivery, JSON.stringify([hemaBinding]), { mode: 0o600 });
     const revoked = await invoke('evaluate_ontology', { function: 'readTaobaoInstantDeliverySearch', input: { search: action } });
     assert.equal(revoked.isError, true);
-    assert.match(revoked.content[0].text, /active owner-bound/);
+    assert.match(revoked.content[0].text, /active owner-bound.*TaobaoInstantDelivery/);
+    assert.equal(calls.length, before);
+    hemaBlocked = false;
+    assert.equal((await complete('Hema', { query: '牛奶' }, 'hema-after-taobao-revocation')).items[0].stockQuantity, 4);
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     await f.close();

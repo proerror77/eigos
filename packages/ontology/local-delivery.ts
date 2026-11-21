@@ -75,6 +75,7 @@ export const localDeliveryServices = {
   },
 } as const;
 export type LocalDeliveryProvider = keyof typeof localDeliveryServices;
+export const localDeliveryProviders = ['TaobaoInstantDelivery', 'Hema'] as const;
 
 const services = Object.entries(localDeliveryServices) as [LocalDeliveryProvider, typeof localDeliveryServices[LocalDeliveryProvider]][];
 const properties = Object.fromEntries(Object.entries(deliveryRecord.shape).map(([name, schema]) =>

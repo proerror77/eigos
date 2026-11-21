@@ -6,6 +6,8 @@ import { readPrivateSourceFile } from '../../core/private-source.js';
 import type { LocalDeliveryProvider } from '../../ontology/local-delivery.js';
 import type { FunctionContext } from '../../runtime/functions.js';
 
+export type DeliveryConnectionPaths = Partial<Record<LocalDeliveryProvider, string | undefined>>;
+
 const bindingSchema = z.strictObject({
   owner: z.string().min(1),
   provider: z.enum(['TaobaoInstantDelivery', 'Hema']),
@@ -65,14 +67,16 @@ export async function configuredDelivery(path: string | undefined, provider: Loc
     try {
       if (!path) throw new Error('No binding file');
       const entries = z.array(bindingSchema).max(100).parse(JSON.parse(await readPrivateSourceFile(path)));
-      const matches = entries.filter(row => row.owner === ctx.principal.owner && row.provider === provider);
+      if (entries.some(row => row.provider !== provider || provider === 'Hema' && row.allowPayment))
+        throw new Error('The delivery binding file contains an incompatible provider or capability');
+      const matches = entries.filter(row => row.owner === ctx.principal.owner);
       if (matches.length !== 1 || !matches[0]!.active || Date.parse(matches[0]!.expiresAt) <= Date.now()) throw new Error('Invalid binding');
       const binding = matches[0]!;
       const token = (await readPrivateSourceFile(binding.tokenFile)).trim();
       if (!/^[A-Za-z0-9_-]{43}$/.test(token) ||
           createHash('sha256').update(token).digest('hex') !== binding.tokenSha256) throw new Error('Invalid token');
       return { port: binding.port, accountRef: binding.accountRef, token, id: digest(binding),
-        allowOrders: binding.allowOrders === true, allowPayment: binding.allowPayment === true };
+        allowOrders: binding.allowOrders === true, allowPayment: provider === 'TaobaoInstantDelivery' && binding.allowPayment === true };
     } catch {
       throw new Conflict('Configure an active owner-bound dsh-waimai connection for ' + provider);
     }

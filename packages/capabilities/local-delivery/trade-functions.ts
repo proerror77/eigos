@@ -1,12 +1,12 @@
 import { z } from 'zod';
 import { Conflict, InvalidInput, NotFound, digest } from '../../core/identity.js';
 import {
-  deliveryApproval, deliveryCartChange, deliveryCartChangeRecord, deliveryCartChangeType, deliveryCartReport,
-  deliveryChannelInput, deliveryCheckoutInput, deliveryCheckoutRecord, deliveryCheckoutType, deliveryHistoryReport,
+  deliveryApproval, deliveryCartChange, deliveryCartChangeRecord, deliveryCartReport,
+  deliveryCheckoutInput, deliveryCheckoutRecord, deliveryHistoryReport,
   deliveryItemInput, deliveryPreviewInput, deliveryScope, deliveryWindowInput,
-  cartDeliveryLink, checkoutDeliveryLink, deliveryFulfillment, deliveryOrderRecord, deliveryOrderType, deliveryRefreshAction, deliverySearchLinks,
+  deliveryEditFunction, deliveryFulfillment, deliveryOrderRecord, deliveryTradeServices,
 } from '../../ontology/local-delivery-trade.js';
-import { deliveryRecord, localDeliveryServices } from '../../ontology/local-delivery.js';
+import { deliveryRecord, localDeliveryProviders, type LocalDeliveryProvider } from '../../ontology/local-delivery.js';
 import { json } from '../../ontology/service-contracts.js';
 import { type ObjectRef } from '../../ontology/schema.js';
 import { ActionPARequestRequired, PARequestRequired } from '../../runtime/clarification.js';
@@ -16,7 +16,7 @@ import type { FunctionContext, FunctionHandler } from '../../runtime/functions.j
 import { Objects } from '../../runtime/objects.js';
 import { OrderObservation } from '../../runtime/order-observation.js';
 import { PARequests } from '../../runtime/pa.js';
-import { configuredDelivery, DeliveryReadFailure, deliveryMcp, type DeliveryCall, type DeliveryMutation } from './mcp.js';
+import { configuredDelivery, DeliveryReadFailure, deliveryMcp, type DeliveryCall, type DeliveryConnectionPaths, type DeliveryMutation } from './mcp.js';
 import {
   type Channel, historyFromSource, itemOptions, lineFromSource, ownerScope, readCart, selectedDeliveryAddress,
   sourceAttempt, sourceOrder, sourceQuote, type SourceCart, validCart,
@@ -38,7 +38,6 @@ const terminal = (orders: Checkout['supplierOrders'], ids: Checkout['orderIds'])
   ids.length > 0 && ids.every(id => orders.some(order => order.id === id &&
     ['completed', 'canceled'].includes(fulfillment(order.status))));
 
-const providerFor = (channel: Channel) => channel === 'hema' ? 'Hema' : 'TaobaoInstantDelivery';
 const attemptStatuses = { paid: 'paid', failed: 'payment_failed', unknown: 'payment_unknown',
   'requires-verification': 'payment_verification', unpaid: 'awaiting_payment', unconfirmed: 'awaiting_payment' } as const;
 
@@ -71,16 +70,25 @@ async function approve(ctx: FunctionContext, capability: string, terms: Record<s
   }
 }
 
-export function localDeliveryTradeFunctions(db: Database, path?: string, mockFetch?: typeof fetch): ReadonlyMap<string, FunctionHandler> {
+export function localDeliveryTradeFunctions(db: Database, paths: DeliveryConnectionPaths, mockFetch?: typeof fetch): ReadonlyMap<string, FunctionHandler> {
+  return new Map(localDeliveryProviders.flatMap(provider => [...providerTradeFunctions(db, provider, paths[provider], mockFetch)]));
+}
+
+function providerTradeFunctions(db: Database, provider: LocalDeliveryProvider, path?: string, mockFetch?: typeof fetch) {
+  const service = deliveryTradeServices[provider];
+  const { cartChangeType, checkoutType, orderType, searchCartLink, cartCheckoutLink, checkoutOrderLink, read, names, approvals } = service;
+  const taobao = provider === 'TaobaoInstantDelivery';
+  const normalizeInput = (value: Record<string, unknown>) => taobao ? value : { ...value, channel: 'hema' };
   const ops = new ExternalOperations(db);
-  const watch = new OrderObservation(db, deliveryRefreshAction, 'checkout');
+  const watch = new OrderObservation(db, names.refresh, 'checkout', provider + '-original-order-observation');
   const fetcher = mockFetch ?? fetch;
   const evidence = mockFetch ? 'provider_mock' : 'provider';
   const readEvidence = mockFetch ? 'provider_mock' : 'live_readonly';
   const connection = async (channel: Channel, ctx: FunctionContext) => {
     if (ctx.objects.model.scenario) throw new Conflict('Use the live Ontology for delivery provider operations');
-    const binding = await configuredDelivery(path, providerFor(channel), ctx);
-    const owner = { platformId: channel === 'hema' ? 'hema' as const : 'taobao' as const, accountRef: binding.accountRef };
+    if (!service.channel.safeParse(channel).success) throw new InvalidInput('Use the selected supplier’s delivery service');
+    const binding = await configuredDelivery(path, provider, ctx);
+    const owner = { platformId: service.search.platformId, accountRef: binding.accountRef };
     return { ...binding, owner };
   };
   type Connection = Awaited<ReturnType<typeof connection>>;
@@ -98,7 +106,7 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
 
   const guard = (ctx: FunctionContext, conn: Connection, original?: { ref: ObjectRef; revision: number; observe?: boolean }) => async (client: Sql) => {
     await ctx.assertDispatch!(client);
-    ctx.objects.access.source(ctx.objects.model, conn.owner.platformId === 'hema' ? 'Hema' : 'TaobaoInstantDelivery');
+    ctx.objects.access.source(ctx.objects.model, provider);
     await conn.assertBinding();
     if (original) {
       const row = await new Objects(db, ctx.objects.model, ctx.objects.access, client).read(original.ref);
@@ -113,7 +121,7 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
   }
 
   async function checkoutFor(ctx: FunctionContext, ref: ObjectRef) {
-    if (ref.type !== deliveryCheckoutType) throw new InvalidInput('Reference the original delivery checkout');
+    if (ref.type !== checkoutType) throw new InvalidInput('Reference the original delivery checkout');
     const row = await ctx.objects.read(ref), quote = deliveryCheckoutRecord.parse(row.properties);
     if (quote.scope.channel !== quote.channel) throw new Conflict('The delivery channel changed');
     const conn = await connection(quote.channel, ctx);
@@ -129,7 +137,7 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
   async function preserveSupplierOrders(graph: Objects, ref: ObjectRef, quote: Checkout, ids: Checkout['orderIds'],
     entries: Checkout['supplierOrders'] = [], observedAt = now()) {
     for (const nativeOrderId of ids) {
-      const order = { type: deliveryOrderType, id: digest([quote.bindingId, nativeOrderId]) };
+      const order = { type: orderType, id: digest([quote.bindingId, nativeOrderId]) };
       const existing = await graph.read(order).catch(error => {
         if (!(error instanceof NotFound)) throw error;
       });
@@ -149,13 +157,12 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
       } else if (supplier && !stale) {
         await graph.edit(order, existing.revision, { ...fields, fulfillment: nextState === 'unknown' ? oldState : nextState });
       }
-      await graph.link({ type: checkoutDeliveryLink, from: ref, to: order });
+      await graph.link({ type: checkoutOrderLink, from: ref, to: order });
     }
   }
   async function assertSearch(input: CartChange, conn: Connection, graph: Pick<Objects, 'read'>) {
     if (!input.search) return;
-    const provider = providerFor(input.channel);
-    if (input.search.type !== localDeliveryServices[provider].object || !input.itemId || input.removeLine)
+    if (input.search.type !== service.search.object || !input.itemId || input.removeLine)
       throw new Conflict('Use the search for the same provider and a selected product');
     const search = deliveryRecord.parse((await graph.read(input.search)).properties);
     if (search.bindingId !== conn.id || search.provider !== provider || input.query && search.query !== input.query ||
@@ -165,7 +172,7 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
   async function assertCartChange(cartChange: ObjectRef | undefined, scope: z.infer<typeof deliveryScope>, cartRevision: string,
     conn: Connection, graph: Pick<Objects, 'read'>) {
     if (!cartChange) return;
-    if (cartChange.type !== deliveryCartChangeType) throw new Conflict('Use the original cart change');
+    if (cartChange.type !== cartChangeType) throw new Conflict('Use the original cart change');
     const prior = deliveryCartChangeRecord.parse((await graph.read(cartChange)).properties);
     if (prior.state !== 'changed' || prior.bindingId !== conn.id || prior.channel !== scope.channel ||
         prior.cart?.revision !== cartRevision || scope.merchantId && prior.cart.merchantId !== scope.merchantId)
@@ -259,45 +266,45 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
     }, terms };
   }
 
-  return new Map<string, FunctionHandler>([
-    ['readLocalDeliveryCart', async (raw, ctx) => {
-      const input = deliveryScope.parse(raw), conn = await connection(input.channel, ctx);
+  const handlers = new Map<string, FunctionHandler>([
+    [read.cart, async (raw, ctx) => {
+      const input = deliveryScope.parse(normalizeInput(service.input.cart.parse(raw))), conn = await connection(input.channel, ctx);
       const data = await call(conn, ctx, async rpc => readCart(rpc, conn.owner, input, await selectedDeliveryAddress(rpc, conn.owner)));
       await conn.check();
       return cartReport(input, data);
     }],
-    ['readLocalDeliveryItemOptions', async (raw, ctx) => {
-      const input = deliveryItemInput.parse(raw), conn = await connection(input.channel, ctx);
+    [read.item, async (raw, ctx) => {
+      const input = deliveryItemInput.parse(normalizeInput(service.input.item.parse(raw))), conn = await connection(input.channel, ctx);
       const { report } = await call(conn, ctx, async rpc => itemOptions(rpc, conn.owner, input, await selectedDeliveryAddress(rpc, conn.owner)));
       await conn.check();
       return report;
     }],
-    ['readLocalDeliveryRecentOrders', async (raw, ctx) => {
-      const { channel } = deliveryChannelInput.parse(raw), conn = await connection(channel, ctx);
+    [read.recentOrders, async (_raw, ctx) => {
+      const conn = await connection(taobao ? 'taobao_meal' : 'hema', ctx);
       const orders = await call(conn, ctx, async rpc => z.object({
         orders: z.array(z.object({ id: deliveryHistoryReport.shape.orders.element.shape.id, status: z.string(), merchantName: z.string(),
           amount: z.union([z.number(), z.string()]).nullish() })).max(20),
         nextCursor: z.unknown().optional(), hasMore: z.boolean().optional(),
       }).parse(await rpc('account_orders', conn.owner)));
       await conn.check();
-      return deliveryHistoryReport.parse({ channel, orders: orders.orders.map(historyFromSource), complete: orders.hasMore !== true && orders.nextCursor == null,
+      return deliveryHistoryReport.parse({ provider, orders: orders.orders.map(historyFromSource), complete: orders.hasMore !== true && orders.nextCursor == null,
         observedAt: now(), evidence: readEvidence });
     }],
-    ['readLocalDeliveryCartChange', async (raw, ctx) => {
-      const { change } = z.strictObject({ change: z.object({ type: z.literal(deliveryCartChangeType), id: z.string() }) }).parse(raw);
+    [read.cartChange, async (raw, ctx) => {
+      const { change } = z.strictObject({ change: z.object({ type: z.literal(cartChangeType), id: z.string() }) }).parse(raw);
       const { bindingId, operationRef: _op, ...row } = deliveryCartChangeRecord.parse((await ctx.objects.read(change)).properties);
       const conn = await connection(row.channel, ctx);
       if (conn.id !== bindingId) throw new Conflict('Cart change belongs to a previous account binding');
       await conn.check();
       return { ...row, change };
     }],
-    ['changeLocalDeliveryCart', async (raw, ctx) => {
+    [deliveryEditFunction(names.change), async (raw, ctx) => {
       const stage = liveAction(ctx);
       interactive(ctx);
-      const input = deliveryCartChange.parse(raw), conn = await connection(input.channel, ctx);
+      const input = deliveryCartChange.parse(normalizeInput(service.input.change.parse(raw))), conn = await connection(input.channel, ctx);
       if (!conn.allowOrders) throw new Conflict('Cart changes are disabled for this delivery account');
       await assertSearch(input, conn, ctx.objects);
-      const ref = { type: deliveryCartChangeType, id: digest([ctx.principal.owner, ctx.operationId, 'cart-change']) };
+      const ref = { type: cartChangeType, id: digest([ctx.principal.owner, provider, ctx.operationId, 'cart-change']) };
       const operationRef = stableOperationRef(ref.id), key = 'dsh-cart:' + ref.id, scope = { input, bindingId: conn.id };
       type Cart = z.infer<typeof deliveryCartReport>;
       const save = (state: 'changed' | 'declined' | 'unknown', cart: Cart | null = null) =>
@@ -307,7 +314,7 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
             bindingId: conn.id, observedAt: now(), evidence, operationRef, state, cart }));
           if (input.search) {
             await assertSearch(input, conn, graph);
-            await graph.link({ type: deliverySearchLinks[providerFor(input.channel)], from: input.search, to: ref });
+            await graph.link({ type: searchCartLink, from: input.search, to: ref });
           }
         });
       try {
@@ -323,7 +330,7 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
       });
       const approvedTerms = { channel: input.channel, merchantId: input.merchantId ?? null, cartRevision: input.cartRevision,
         deliverySelection: addressFingerprint(conn, prepared.addressRef), ...prepared.change.terms };
-      const approved = await approve(ctx, 'local_delivery.cart_approval', approvedTerms);
+      const approved = await approve(ctx, approvals.cart, approvedTerms);
       let state: 'changed' | 'declined' | 'unknown' = approved ? 'changed' : 'declined';
       let cart: z.infer<typeof deliveryCartReport> | null = null;
       if (approved) {
@@ -353,9 +360,9 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
       await conn.check();
       return save(state, cart);
     }],
-    ['previewLocalDeliveryCheckout', async (raw, ctx) => {
+    [deliveryEditFunction(names.preview), async (raw, ctx) => {
       const stage = liveAction(ctx);
-      const input = deliveryPreviewInput.parse(raw);
+      const input = deliveryPreviewInput.parse(normalizeInput(service.input.preview.parse(raw)));
       if ((input.channel === 'hema') !== Boolean(input.lineIds) || input.channel !== 'taobao_retail' && input.retailDelivery ||
           input.lineIds && new Set(input.lineIds).size !== input.lineIds.length)
         throw new InvalidInput('Choose this checkout channel’s valid lines and delivery preference');
@@ -375,7 +382,7 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
         return { quote, addressRef };
       });
       await conn.check();
-      const ref = { type: deliveryCheckoutType, id: digest([ctx.principal.owner, ctx.operationId, 'delivery-checkout']) };
+      const ref = { type: checkoutType, id: digest([ctx.principal.owner, provider, ctx.operationId, 'delivery-checkout']) };
       const row = deliveryCheckoutRecord.parse({
         ...quoteFields(receipt.quote), id: ref.id, channel: input.channel, bindingId: conn.id,
         sourceTaskId: ctx.taskId ?? null, scope: { ...scope, merchantId: receipt.quote.shopId },
@@ -388,11 +395,11 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
         await graph.create(ref, row);
         if (input.cartChange) {
           await assertCartChange(input.cartChange, scope, input.cartRevision, conn, graph);
-          await graph.link({ type: cartDeliveryLink, from: input.cartChange, to: ref });
+          await graph.link({ type: cartCheckoutLink, from: input.cartChange, to: ref });
         }
       });
     }],
-    ['selectLocalDeliveryWindow', async (raw, ctx) => {
+    [deliveryEditFunction(names.selectWindow), async (raw, ctx) => {
       liveAction(ctx);
       const { checkout, optionIndex } = deliveryWindowInput.parse(raw), { quote, row, conn } = await checkoutFor(ctx, checkout);
       const window = quote.windows[optionIndex];
@@ -408,7 +415,7 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
       await conn.check();
       return editQuote(ctx, checkout, row.revision, conn, updated);
     }],
-    ['submitLocalDeliveryOrder', async (raw, ctx) => {
+    [deliveryEditFunction(names.submit), async (raw, ctx) => {
       liveAction(ctx);
       const { checkout } = deliveryCheckoutInput.parse(raw), { quote, row, conn } = await checkoutFor(ctx, checkout);
       verifyCheckoutTask(quote, ctx);
@@ -424,7 +431,7 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
       }
       if (!result) {
         if (Date.parse(quote.expiresAt) <= Date.now()) throw new Conflict('The checkout quote expired; obtain a new quote');
-        if (!await approve(ctx, 'local_delivery.order_approval', { ...quoteTerms(checkout, quote), readbackWindowMinutes: 240 }))
+        if (!await approve(ctx, approvals.order, { ...quoteTerms(checkout, quote), readbackWindowMinutes: 240 }))
           return editQuote(ctx, checkout, row.revision, conn, { state: 'declined' });
         if (Date.parse(quote.expiresAt) <= Date.now()) throw new Conflict('The approved checkout quote expired');
         await call(conn, ctx, async rpc => {
@@ -456,7 +463,7 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
         await preserveSupplierOrders(graph, checkout, quote, ids);
       });
     }],
-    ['prepareLocalDeliveryPayment', async (raw, ctx) => {
+    [deliveryEditFunction(names.preparePayment), async (raw, ctx) => {
       const { checkout } = deliveryCheckoutInput.parse(raw), { quote, row, conn } = await checkoutFor(ctx, checkout);
       if (!['awaiting_payment', 'payment_handoff'].includes(quote.state) || !quote.orderIds.length)
         throw new Conflict('Reconcile the original order before opening payment');
@@ -466,7 +473,7 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
         throw new Conflict('The original supplier order is not independently confirmed as payable');
       return editQuote(ctx, checkout, row.revision, conn, { state: 'payment_handoff' });
     }],
-    ['payTaobaoInstantDeliveryOrder', async (raw, ctx) => {
+    [deliveryEditFunction(names.pay), async (raw, ctx) => {
       liveAction(ctx);
       const { checkout } = deliveryCheckoutInput.parse(raw), { quote, row, conn } = await checkoutFor(ctx, checkout);
       interactive(ctx);
@@ -483,7 +490,7 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
         if (!(error instanceof UnknownExternalOperation)) throw error;
         return editQuote(ctx, checkout, row.revision, conn, { state: 'payment_unknown' });
       }
-      if (!await approve(ctx, 'local_delivery.payment_approval', { ...quoteTerms(checkout, quote), orderIds: quote.orderIds }))
+      if (!await approve(ctx, approvals.payment, { ...quoteTerms(checkout, quote), orderIds: quote.orderIds }))
         return editQuote(ctx, checkout, row.revision, conn, {});
       const payment = await call(conn, ctx, async rpc => z.object({ platformId: z.literal('taobao'), orderRef: z.literal(quote.quoteRef),
         paymentRef: z.uuid(), amountCents: z.literal(quote.totalMinor), state: z.enum(['ready', 'h5-ready']), paymentStatus: z.literal('unpaid'),
@@ -508,7 +515,7 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
       }
       return editQuote(ctx, checkout, row.revision, conn, { state });
     }],
-    ['stopLocalDeliveryOrderObservation', async (raw, ctx) => {
+    [deliveryEditFunction(names.stopObservation), async (raw, ctx) => {
       const stage = liveAction(ctx);
       const { checkout } = deliveryCheckoutInput.parse(raw);
       const row = await ctx.objects.read(checkout), quote = deliveryCheckoutRecord.parse(row.properties);
@@ -520,7 +527,7 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
         await graph.edit(checkout, row.revision, { observation: 'stopped', observedAt: now() });
       });
     }],
-    ['refreshLocalDeliveryOrder', async (raw, ctx) => {
+    [deliveryEditFunction(names.refresh), async (raw, ctx) => {
       const stage = liveAction(ctx);
       const { checkout } = deliveryCheckoutInput.parse(raw), { quote, row, conn } = await checkoutFor(ctx, checkout);
       const task = watch.task(ctx, checkout), operationKey = 'dsh-order:' + checkout.id;
@@ -572,7 +579,7 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
       }
       const state = quote.state === 'paid' ? 'paid'
         : confirmed && quote.channel !== 'hema' && payment === 'paid' && independent ? 'paid'
-          : confirmed && ['payment_verification', 'payment_failed', 'payment_unknown'].includes(payment ?? '') ? payment!
+          : taobao && confirmed && ['payment_verification', 'payment_failed', 'payment_unknown'].includes(payment ?? '') ? payment!
             : independent && unknownOrder ? 'awaiting_payment' : unknownOrder ? 'order_unknown' : quote.state;
       return stage(checkout, async graph => {
         await conn.assertBinding();
@@ -596,7 +603,7 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
         if (ids.length) await preserveSupplierOrders(graph, checkout, quote, ids, supplierOrders, readAt);
       });
     }],
-    ['readLocalDeliveryCheckout', async (raw, ctx) => {
+    [read.checkout, async (raw, ctx) => {
       const { checkout } = deliveryCheckoutInput.parse(raw), { quote, conn } = await checkoutFor(ctx, checkout);
       const { bindingId: _binding, sourceTaskId: _task, addressDigest: _address, version: _version, quoteRef: _ref, windows, ...view } = quote;
       await conn.check();
@@ -611,4 +618,6 @@ export function localDeliveryTradeFunctions(db: Database, path?: string, mockFet
       return { ...view, checkout, paymentEntry, orders, windows: windows.map(({ source: _source, ...window }, index) => ({ ...window, index })) };
     }],
   ]);
+  handlers.delete(deliveryEditFunction(taobao ? names.selectWindow : names.pay));
+  return handlers;
 }

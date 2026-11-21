@@ -4,6 +4,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { type LocalDeliveryProvider } from '../packages/ontology/local-delivery.js';
+import { deliveryTradeServices } from '../packages/ontology/local-delivery-trade.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { PARequests } from '../packages/runtime/pa.js';
@@ -11,8 +13,8 @@ import { fixture, principal } from './fixture.js';
 
 test('buyer transactions require separate PA approvals, preserve unknown attempts and reconcile the original orders', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eigos-delivery-trade-'));
-  const path = join(directory, 'bindings'), tokenFile = join(directory, 'host.token');
-  const token = randomBytes(32).toString('base64url'), port = 43815;
+  const paths = { TaobaoInstantDelivery: join(directory, 'taobao.json'), Hema: join(directory, 'hema.json') };
+  const tokens = { taobao: randomBytes(32).toString('base64url'), hema: randomBytes(32).toString('base64url') };
   const refs = { taobao: randomUUID(), hema: randomUUID() };
   const variants = { meal: 'b'.repeat(64), hema: '821' }, addressRef = 'c'.repeat(64), shopId = 'store1';
   const cartVersion = { taobao: 'd'.repeat(64), hema: 'e'.repeat(64) };
@@ -23,12 +25,16 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
   let readbackUnavailable = false, delivered = false, independentlyPaid = false, cartChanged = false, hemaCartChanged = false, retailCartChanged = false, windowSelected = false;
   let retailVersion = 'f'.repeat(64);
   const hemaProduct = randomUUID(), retailProduct = randomUUID();
-  await writeFile(tokenFile, token, { mode: 0o600 });
-  await writeFile(path, JSON.stringify((['TaobaoInstantDelivery', 'Hema'] as const).map(provider => ({
-    owner: principal.owner, provider, active: true, allowOrders: true, allowPayment: provider === 'TaobaoInstantDelivery',
-    tokenFile, tokenSha256: createHash('sha256').update(token).digest('hex'), port,
-    accountRef: refs[provider === 'Hema' ? 'hema' : 'taobao'], expiresAt: new Date(Date.now() + 3600000).toISOString(),
-  }))), { mode: 0o600 });
+  for (const provider of ['TaobaoInstantDelivery', 'Hema'] as const) {
+    const platform = provider === 'Hema' ? 'hema' : 'taobao';
+    const tokenFile = join(directory, platform + '.token'), token = tokens[platform], port = platform === 'hema' ? 43816 : 43815;
+    await writeFile(tokenFile, token, { mode: 0o600 });
+    await writeFile(paths[provider], JSON.stringify([{
+      owner: principal.owner, provider, active: true, allowOrders: true, allowPayment: provider === 'TaobaoInstantDelivery',
+      tokenFile, tokenSha256: createHash('sha256').update(token).digest('hex'), port,
+      accountRef: refs[platform], expiresAt: new Date(Date.now() + 3600000).toISOString(),
+    }]), { mode: 0o600 });
+  }
 
   const milk = { id: '129', name: '测试牛奶', quantity: '1', price: '15.00', selected: true, available: true };
   const hamburger = { ref: '1'.repeat(64), name: '测试汉堡', quantity: 1, priceCents: 1500, selected: true, available: true };
@@ -37,8 +43,9 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
     ...bound(platformId), items: platformId === 'hema' ? (hemaCartChanged ? [milk] : []) : cartChanged ? [hamburger] : [],
   });
   const fetcher: typeof fetch = async (url, init) => {
-    assert.equal(String(url), 'http://127.0.0.1:43815/host');
-    assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer ' + token);
+    assert.match(String(url), /^http:\/\/127\.0\.0\.1:4381[56]\/host$/);
+    const sourcePlatform = String(url).includes(':43816/') ? 'hema' : 'taobao';
+    assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer ' + tokens[sourcePlatform]);
     const request = JSON.parse(String(init?.body));
     const reply = (result: unknown) => Response.json({ jsonrpc: '2.0', id: request.id, result });
     if (request.method === 'notifications/initialized') return new Response(null, { status: 202 });
@@ -48,6 +55,7 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
     assert.equal(request.method, 'tools/call');
     const { name, arguments: args } = request.params;
     const platformId = args.platformId as 'taobao' | 'hema';
+    assert.equal(name === 'account_cross_search' ? args.accounts[0].platformId : platformId, sourcePlatform);
     if (name !== 'account_cross_search') assert.equal(args.accountRef, refs[platformId]);
     const data = (value: unknown) => reply({ content: [{ type: 'text', text: JSON.stringify({ success: true, data: value }) }] });
     if (name === 'account_cross_search') {
@@ -170,25 +178,26 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
     }] });
   };
 
-  type Job = { alias: string; input: Record<string, unknown>; target?: ObjectRef };
+  type Job = { alias: string; input: Record<string, unknown>; target?: ObjectRef; provider?: LocalDeliveryProvider };
   const jobs = new Map<string, Job>();
   const f = await fixture({
     model: 'delivery-trade-fixture',
     async run(prompt, tools) {
       const { userRequest } = JSON.parse(prompt.split('\n').at(-1)!);
       const job = jobs.get(userRequest.message)!;
-      const cart = job.alias === 'change';
+      const cart = job.alias === 'change', service = deliveryTradeServices[job.provider ?? 'TaobaoInstantDelivery'];
       await tools.get('complete_with_action')!.invoke({
-        action: { interface: { type: cart ? 'DeliveryCartEditing' : 'DeliveryOrdering',
-          ...(job.target ? { object: job.target } : { implementation: 'LocalDeliveryCartChange' }), action: job.alias }, input: job.input },
-        read: { function: cart ? 'readLocalDeliveryCartChange' : 'readLocalDeliveryCheckout', resultParameter: cart ? 'change' : 'checkout' },
+        action: { interface: { type: cart ? service.cartContract : service.orderContract,
+          ...(job.target ? { object: job.target } : { implementation: service.cartChangeType }), action: job.alias }, input: job.input },
+        read: { function: cart ? service.read.cartChange : service.read.checkout, resultParameter: cart ? 'change' : 'checkout' },
       });
     },
-  }, undefined, undefined, undefined, { localDelivery: path, localDeliveryFetch: fetcher });
+  }, undefined, undefined, undefined, { localDelivery: paths, localDeliveryFetch: fetcher });
   const execute = (action: string, input: Record<string, unknown>) =>
     f.capabilities.actions.apply(f.access, f.model, action, input, randomUUID());
   const checkoutView = async (checkout: ObjectRef) => {
-    const result = await f.capabilities.functions.invoke(f.model, 'readLocalDeliveryCheckout', { checkout }, {
+    const service = checkout.type === deliveryTradeServices.Hema.checkoutType ? deliveryTradeServices.Hema : deliveryTradeServices.TaobaoInstantDelivery;
+    const result = await f.capabilities.functions.invoke(f.model, service.read.checkout, { checkout }, {
       principal, objects: new Objects(f.db, f.model, f.access), signal: new AbortController().signal,
     }) as Record<string, unknown>;
     assert.doesNotMatch(JSON.stringify(result), /PRIVATE_TEST|private\.example/);
@@ -219,21 +228,21 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
     const scope = { channel: 'taobao_meal', merchantId: shopId };
     const search = await execute('SearchTaobaoInstantDelivery', { query: '汉堡' });
     const cartChange = { ...scope, itemId: 'meal1', variantRef: variants.meal, quantity: 1, cartRevision: cartVersion.taobao, search };
-    await assert.rejects(execute('ChangeLocalDeliveryCart', cartChange), /interactive PA task/);
-    const declined = await interactive({ alias: 'change', input: cartChange }, 'local_delivery.cart_approval', 'decline');
+    await assert.rejects(execute('ChangeTaobaoInstantDeliveryCart', cartChange), /interactive PA task/);
+    const declined = await interactive({ alias: 'change', input: cartChange }, 'taobao_instant_delivery.cart_approval', 'decline');
     assert.equal(declined.state, 'declined');
     assert.deepEqual(mutations, []);
-    const changed = await interactive({ alias: 'change', input: cartChange }, 'local_delivery.cart_approval');
+    const changed = await interactive({ alias: 'change', input: cartChange }, 'taobao_instant_delivery.cart_approval');
     assert.equal(changed.state, 'changed');
 
     const change = changed.change as ObjectRef;
     assert((await graph.follow(search, 'cartChanges')).some(row => row.ref.id === change.id));
-    const order = await execute('PreviewLocalDeliveryCheckout', {
+    const order = await execute('PreviewTaobaoInstantDeliveryCheckout', {
       ...scope, cartRevision: cartVersion.taobao, maxAmountMinor: 1900, cartChange: change,
     });
     assert.deepEqual((await graph.follow(order, 'cartChange')).map(row => row.ref), [change]);
     assert.equal((await checkoutView(order)).totalMinor, 1500);
-    const submitted = await interactive({ alias: 'submit', target: order, input: { checkout: order } }, 'local_delivery.order_approval');
+    const submitted = await interactive({ alias: 'submit', target: order, input: { checkout: order } }, 'taobao_instant_delivery.order_approval');
     assert.equal(submitted.state, 'awaiting_payment');
     assert.deepEqual(submitted.orderIds, [orderIds.taobao]);
     const [supplier] = await graph.follow(order, 'orders');
@@ -241,10 +250,10 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
     assert.equal(supplier?.properties.state, 'submitted');
     const job = (await f.db.query(`SELECT id,body FROM ${f.db.schema}.scheduled_actions WHERE body->'arguments'->'checkout'->>'id'=$1`,
       [order.id])).rows[0]!;
-    assert.equal(job.body.action, 'RefreshLocalDeliveryOrder');
+    assert.equal(job.body.action, 'RefreshTaobaoInstantDeliveryOrder');
     assert.deepEqual(job.body.arguments, { checkout: order });
     assert.equal(typeof job.body.sourceTaskId, 'string');
-    const paidAck = await interactive({ alias: 'pay', target: order, input: { checkout: order } }, 'local_delivery.payment_approval');
+    const paidAck = await interactive({ alias: 'pay', target: order, input: { checkout: order } }, 'taobao_instant_delivery.payment_approval');
     assert.equal(paidAck.state, 'payment_unknown', 'the dispatch is not independent settlement evidence');
     readbackUnavailable = true;
     await f.db.query(`UPDATE ${f.db.schema}.scheduled_actions SET run_at=now() WHERE id=$1`, [job.id]);
@@ -271,32 +280,44 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
 
     const retail = { channel: 'taobao_retail', merchantId: shopId };
     const retailAdded = await interactive({ alias: 'change', input: { ...retail, itemId: '66', query: '牛奶',
-      quantity: 1, cartRevision: retailVersion } }, 'local_delivery.cart_approval');
+      quantity: 1, cartRevision: retailVersion } }, 'taobao_instant_delivery.cart_approval');
     assert.equal(retailAdded.state, 'changed');
-    const retailCheckout = await execute('PreviewLocalDeliveryCheckout', { ...retail, cartRevision: retailVersion,
+    const retailCheckout = await execute('PreviewTaobaoInstantDeliveryCheckout', { ...retail, cartRevision: retailVersion,
       retailDelivery: 'earliest', maxAmountMinor: 1900 });
     assert.equal((await checkoutView(retailCheckout)).totalMinor, 1500);
 
     const hemaSearch = await execute('SearchHemaProducts', { query: '牛奶' });
-    const hemaAdded = await interactive({ alias: 'change', input: { channel: 'hema', merchantId: shopId, itemId: '55',
-      variantRef: variants.hema, query: '牛奶', quantity: 1, cartRevision: cartVersion.hema, search: hemaSearch } }, 'local_delivery.cart_approval');
+    const hemaAdded = await interactive({ provider: 'Hema', alias: 'change', input: { merchantId: shopId, itemId: '55',
+      variantRef: variants.hema, query: '牛奶', quantity: 1, cartRevision: cartVersion.hema, search: hemaSearch } }, 'hema.cart_approval');
     assert.equal(hemaAdded.state, 'changed');
     assert.deepEqual((await graph.follow(hemaSearch, 'cartChanges')).map(row => row.ref), [hemaAdded.change]);
-    const hema = await execute('PreviewLocalDeliveryCheckout', {
-      channel: 'hema', cartRevision: cartVersion.hema, maxAmountMinor: 1900, lineIds: ['129'],
-    });
+    const hema = await execute('PreviewHemaCheckout', { cartRevision: cartVersion.hema, maxAmountMinor: 1900, lineIds: ['129'] });
+    assert.equal(hema.type, 'HemaCheckout');
+    assert.equal(order.type, 'TaobaoInstantDeliveryCheckout');
+    assert(!f.model.actions.has('PreviewLocalDeliveryCheckout'));
+    assert(!f.model.actions.has('PayHemaOrder'));
+    assert.equal((await graph.follow(hema, 'stateLogs'))[0]?.ref.type, 'HemaCheckoutStateLog');
+    assert.equal((await graph.follow(order, 'stateLogs'))[0]?.ref.type, 'TaobaoInstantDeliveryCheckoutStateLog');
+    await assert.rejects(f.capabilities.functions.invoke(f.model, 'readHemaCheckout', { checkout: order }, {
+      principal, objects: graph, signal: new AbortController().signal,
+    }), /Reference the original delivery checkout/);
+    await assert.rejects(execute('RefreshTaobaoInstantDeliveryOrder', { checkout: hema }), /type does not satisfy/);
+    await assert.rejects(execute('RefreshHemaOrder', { checkout: order }), /type does not satisfy/);
+    await assert.rejects(execute('PayTaobaoInstantDeliveryOrder', { checkout: hema }), /type does not satisfy/);
     assert.equal((await checkoutView(hema)).requiresDeliveryChoice, true);
-    await execute('SelectLocalDeliveryWindow', { checkout: hema, optionIndex: 0 });
+    await execute('SelectHemaDeliveryWindow', { checkout: hema, optionIndex: 0 });
     assert.equal((await checkoutView(hema)).requiresDeliveryChoice, false);
-    const unknown = await interactive({ alias: 'submit', target: hema, input: { checkout: hema } }, 'local_delivery.order_approval');
+    const unknown = await interactive({ provider: 'Hema', alias: 'submit', target: hema, input: { checkout: hema } }, 'hema.order_approval');
     assert.equal(unknown.state, 'order_unknown');
-    await execute('RefreshLocalDeliveryOrder', { checkout: hema });
+    await execute('RefreshHemaOrder', { checkout: hema });
     assert.deepEqual((await checkoutView(hema)).orderIds, [orderIds.hema]);
-    await execute('PrepareLocalDeliveryPayment', { checkout: hema });
+    await execute('PrepareHemaPayment', { checkout: hema });
     assert.equal((await checkoutView(hema)).paymentEntry, 'hema_official_app');
-    await execute('StopLocalDeliveryOrderObservation', { checkout: hema });
+    await execute('StopHemaOrderObservation', { checkout: hema });
     assert.equal((await checkoutView(hema)).observation, 'stopped');
-    assert.equal((await graph.follow(hema, 'orders')).length, 1);
+    assert.deepEqual((await graph.follow(hema, 'orders')).map(row => row.ref.type), ['HemaOrder']);
+    const jobsByProvider = (await f.db.query(`SELECT body->>'action' AS action FROM ${f.db.schema}.scheduled_actions ORDER BY action`)).rows;
+    assert.deepEqual(jobsByProvider.map(row => row.action), ['RefreshHemaOrder', 'RefreshTaobaoInstantDeliveryOrder']);
     assert.equal(await f.worker.runOne('scheduled'), false);
     assert.deepEqual(mutations, [
       'account_cart_change', 'account_submit:taobao', 'pay_order', 'account_retail_add', 'account_cart_add', 'account_submit:hema',

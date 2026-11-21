@@ -3,10 +3,10 @@ import { Conflict, InvalidInput, digest } from '../../core/identity.js';
 import { yuanToFen } from '../../core/private-source.js';
 import {
   deliveryMerchantId, deliveryRecord, deliveryReportRef, deliverySearchReport,
-  hemaSearchInput, instantDeliveryInput, localDeliveryServices, type LocalDeliveryProvider,
+  hemaSearchInput, instantDeliveryInput, localDeliveryProviders, localDeliveryServices, type LocalDeliveryProvider,
 } from '../../ontology/local-delivery.js';
 import type { FunctionHandler } from '../../runtime/functions.js';
-import { configuredDelivery, deliveryFailure, DeliveryReadFailure, deliveryMcp, type DeliveryCall } from './mcp.js';
+import { configuredDelivery, deliveryFailure, DeliveryReadFailure, deliveryMcp, type DeliveryCall, type DeliveryConnectionPaths } from './mcp.js';
 
 type Report = z.infer<typeof deliverySearchReport>;
 type Item = Report['items'][number];
@@ -147,14 +147,14 @@ async function catalogData(call: DeliveryCall, owner: Owner, query: string, limi
   };
 }
 
-export function localDeliveryFunctions(path?: string, mockFetch?: typeof fetch): ReadonlyMap<string, FunctionHandler> {
+export function localDeliveryFunctions(paths: DeliveryConnectionPaths, mockFetch?: typeof fetch): ReadonlyMap<string, FunctionHandler> {
   const handlers = new Map<string, FunctionHandler>();
-  for (const provider of ['TaobaoInstantDelivery', 'Hema'] as const) {
+  for (const provider of localDeliveryProviders) {
     const service = localDeliveryServices[provider];
     handlers.set(service.edit, async (raw, ctx) => {
       if (!ctx.edit || !ctx.operationId || ctx.objects.model.scenario) throw new Conflict('Use a live delivery search Action');
       const input: Search = provider === 'Hema' ? hemaSearchInput.parse(raw) : instantDeliveryInput.parse(raw);
-      const connection = await configuredDelivery(path, provider, ctx);
+      const connection = await configuredDelivery(paths[provider], provider, ctx);
       const owner = { platformId: service.platformId, accountRef: connection.accountRef };
       let data: Data;
       try {
@@ -184,7 +184,7 @@ export function localDeliveryFunctions(path?: string, mockFetch?: typeof fetch):
     handlers.set(service.read, async (raw, ctx) => {
       const { search } = deliveryReportRef.parse(raw);
       if (search.type !== service.object) throw new Conflict('Use the matching delivery search result');
-      const connection = await configuredDelivery(path, provider, ctx);
+      const connection = await configuredDelivery(paths[provider], provider, ctx);
       const { id: _id, name: _name, bindingId, ...report } = deliveryRecord.parse((await ctx.objects.read(search)).properties);
       if (bindingId !== connection.id || report.provider !== provider || Date.parse(report.expiresAt) <= Date.now())
         throw new Conflict('The delivery search has expired or its account binding changed; run a new search');

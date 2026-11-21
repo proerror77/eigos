@@ -1,3 +1,4 @@
+import { localDeliveryProviders } from '../packages/ontology/local-delivery.js';
 import { localDeliveryTradeDefinition } from '../packages/ontology/local-delivery-trade.js';
 import { localDeliveryDefinition } from '../packages/ontology/local-delivery.js';
 import { scheduleJourneyDefinition } from '../packages/ontology/schedule-journey.js';
@@ -773,7 +774,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   v9Definition.functionTypes.find(fn => fn.apiName === 'resolveRideLocations')!.description =
     'Resolve each venue by querying exact Location.name within its source receipt. One exact match resolves even when other entrances or nearby shops were returned. Multiple exact matches or no exact match require clarification. Explicit selections must belong to the corresponding source response.';
   v9Definition.valueTypes = v9Definition.valueTypes?.filter(type => type.apiName !== taskLocationValueType.apiName);
-  v9Definition.typeGroups = v9Definition.typeGroups?.filter(group => group.apiName !== 'Documents');
+  v9Definition.typeGroups = v9Definition.typeGroups?.filter(group => group.apiName !== 'Documents' && !localDeliveryProviders.some(provider => provider === group.apiName));
   for (const group of v9Definition.typeGroups ?? []) group.objectTypes = group.objectTypes.filter(type => !addedTypes.has(type));
   assert.equal(new Ontology(v9Definition).digest, 'ab7a4e8a4c6d6c0e56eaef294ae849911f78da535e9cef2fb213bdfaa39c4d8a');
 
