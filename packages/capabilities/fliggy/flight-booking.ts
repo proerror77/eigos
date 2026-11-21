@@ -128,7 +128,7 @@ function stage(ctx: FunctionContext) {
 }
 export function fliggyFlightBookingFunctions(db: Database, resolve: FliggyFlightResolver): ReadonlyMap<string, FunctionHandler> {
   const operations = new ExternalOperations(db);
-  const followup = new OrderObservation(db, 'RefreshFliggyFlightBooking');
+  const followup = new OrderObservation(db, 'RefreshFliggyFlightBooking', 'booking', 'fliggy-original-order-observation');
   const tracksIssuance = (ctx: FunctionContext) =>
     Boolean(ctx.objects.model.object(fliggyFlightBookingType).properties.issuanceState);
   const current = async (ctx: FunctionContext, ref: ObjectRef) => {

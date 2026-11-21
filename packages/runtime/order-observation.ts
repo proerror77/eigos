@@ -16,22 +16,21 @@ export class OrderObservation {
   constructor(
     private readonly db: Database,
     private readonly refreshAction: string,
-    private readonly targetParameter = 'booking',
+    private readonly targetParameter: string,
+    private readonly namespace = 'original-order-observation',
   ) {
     this.schedules = new ScheduledActions(db);
   }
 
-  private scheduleId(booking: ObjectRef) {
-    // Preserve existing Fliggy schedules when moving this helper to the shared runtime.
-    const namespace = this.targetParameter === 'booking' ? 'fliggy-original-order-observation' : 'original-order-observation';
-    return digest([namespace, this.refreshAction, booking]);
+  private scheduleId(original: ObjectRef) {
+    return digest([this.namespace, this.refreshAction, original]);
   }
 
-  async enqueue(ctx: FunctionContext, booking: ObjectRef, client: Sql) {
+  async enqueue(ctx: FunctionContext, original: ObjectRef, client: Sql) {
     const graph = new Objects(this.db, ctx.objects.model, ctx.objects.access, client);
     const now = Date.now();
     await this.schedules.enqueue(graph, {
-      id: this.scheduleId(booking), action: this.refreshAction, arguments: { [this.targetParameter]: booking },
+      id: this.scheduleId(original), action: this.refreshAction, arguments: { [this.targetParameter]: original },
       runAt: new Date(now + minute).toISOString(),
       deadline: new Date(now + observationWindow).toISOString(),
       sourceTaskId: ctx.taskId,
@@ -42,10 +41,10 @@ export class OrderObservation {
     return this.schedules.cancel(graph, this.scheduleId(original));
   }
 
-  task(ctx: FunctionContext, booking: ObjectRef) {
+  task(ctx: FunctionContext, original: ObjectRef) {
     const task = ctx.execution?.task;
     const call = task?.input.scheduledAction;
-    return call?.action === this.refreshAction && call.scheduleId === this.scheduleId(booking) ? task : undefined;
+    return call?.action === this.refreshAction && call.scheduleId === this.scheduleId(original) ? task : undefined;
   }
 
   async advance(graph: Objects, task: Task, outcome: 'pending' | 'unavailable' | 'terminal') {

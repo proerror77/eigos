@@ -147,7 +147,7 @@ function stage(ctx: FunctionContext) {
 
 export function fliggyHotelFunctions(db: Database, resolve: FliggyHotelResolver): ReadonlyMap<string, FunctionHandler> {
   const operations = new ExternalOperations(db);
-  const observation = new OrderObservation(db, 'RefreshFliggyHotelBooking');
+  const observation = new OrderObservation(db, 'RefreshFliggyHotelBooking', 'booking', 'fliggy-original-order-observation');
   const supportsObservation = (ctx: FunctionContext) =>
     Boolean(ctx.objects.model.object(fliggyHotelBookingType).properties.cancellationObservation);
   const cancellationTerminal = (state: Booking['state']) =>
