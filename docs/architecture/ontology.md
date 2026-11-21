@@ -23,6 +23,8 @@ Interface 通过实现映射引用具体 Object Type 的属性、关系与 Actio
 
 单项能力能完成目标时，直接执行 Function 或 Action 并读取结果；Task 的等待与恢复不要求创建 SchedulePlan、Scenario 或 Workflow。跨服务依赖由 Agent 或已发布逻辑协调，时间与资源取舍使用排程，拟议编辑的比较或审阅才使用 Scenario。Scenario 复用同一调用契约与业务逻辑；过程状态及历史由现有业务对象和编辑记录提供给后续 Machinery 视图，不建立第二个操作入口。[Action 跨应用复用](https://www.palantir.com/docs/foundry/action-types/overview)、[Scenario 执行上下文](https://www.palantir.com/docs/foundry/ontology/overview-ontology-scenario)
 
+多个已授权供应商覆盖同一个查询时，由已发布逻辑使用同一组条件发起并发查询。按来源保留结果、时间和失败原因。一家缺授权、无结果或暂不可用时，返回其他来源可验证的结果。纯读取用 Function，需保留结果对象及来源关系时用 Function-backed Action。天气、酒店、商品比价各自遵循这一规则。 [外部查询 Function](https://www.palantir.com/docs/foundry/data-connection/external-functions) · [Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview)
+
 关系带有日期、角色或状态等业务信息时，用独立对象保存这些信息，并通过 Link 连接两端。来源时间和证据类型保存在 `SourceReceipt` 及实现 `ServiceSearchResult` 的供应商结果对象中。[Object-backed links](https://www.palantir.com/docs/foundry/object-link-types/create-link-type)
 
 ## 对象生命周期原则

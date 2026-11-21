@@ -56,6 +56,7 @@ import { flightPositionFunction } from '../packages/ontology/flight-position.js'
 import { locationFunctions, taskLocationValueType } from '../packages/ontology/location.js';
 import { luckinDefinition } from '../packages/ontology/luckin.js';
 import { mapFunctions } from '../packages/ontology/maps.js';
+import { weatherFunctions } from '../packages/ontology/weather.js';
 import { rideWatchDefinition, rideWatchType } from '../packages/ontology/ride-watch.js';
 import { fliggyServicesDefinition, marketplaceDefinition } from '../packages/ontology/services.js';
 import { checkWorkflowDependencies } from '../packages/runtime/workflow-compatibility.js';
@@ -701,7 +702,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   addedActions.add('StageScheduleRecommendation');
   const addedFunctions = new Set([
     ...laterDomains.flatMap(domain => domain.functionTypes), ...scheduleJourneyDefinition.functionTypes, ...didiOrderDefinitions.functionTypes, ...didiReadDefinitions,
-    ...deliveryFunctions, ...locationFunctions, ...mapFunctions, ...dianpingResearchFunctions, flightPositionFunction,
+    ...deliveryFunctions, ...locationFunctions, ...mapFunctions, ...weatherFunctions, ...dianpingResearchFunctions, flightPositionFunction,
   ].map(fn => fn.apiName));
   for (const name of ['stageDiningActivity', 'searchRestaurantNotes', 'readWeatherHistory', 'readDiningAvailability']) addedFunctions.add(name);
   addedActions.add('EstimateRideWithPlaceClues');

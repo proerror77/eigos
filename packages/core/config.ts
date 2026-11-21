@@ -40,6 +40,7 @@ export const connectionConfigSchema = z.object({
   EIGOS_TAOBAO_INSTANT_DELIVERY_CONNECTION_FILE: z.string().optional(),
   EIGOS_HEMA_CONNECTION_FILE: z.string().optional(),
   EIGOS_AMAP_CONNECTION_FILE: z.string().optional(),
+  EIGOS_QWEATHER_CONNECTION_FILE: z.string().optional(),
   EIGOS_XIAOHONGSHU_CONNECTION_FILE: z.string().optional(),
   EIGOS_DIANPING_CONNECTION_FILE: z.string().optional(),
   EIGOS_DINING_WEB_CONNECTION_FILE: z.string().optional(),
