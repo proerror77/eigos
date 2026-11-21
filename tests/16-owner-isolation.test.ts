@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 import { createApp } from '../apps/gateway/app.js';
 import { readConfig } from '../packages/core/config.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { Database } from '../packages/runtime/database.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { assertOwnerIsolation, installOwnerIsolation } from '../packages/runtime/owner-isolation.js';
@@ -18,7 +18,7 @@ test('owner RLS isolates a restricted role and cross-account approval exposes on
   let limited: Database | undefined;
   let server: ReturnType<ReturnType<typeof createApp>['app']['listen']> | undefined;
   try {
-    await setGrants(f.db, reviewer.owner, memberGrants(f.model));
+    await setGrants(f.db, reviewer.owner, businessGrants(f.model));
     const authorRoute = { type: 'Route', id: 'author-private-route' };
     const peerRoute = { type: 'Route', id: 'reviewer-private-route' };
     await new Objects(f.db, f.model, f.access).create(authorRoute, { id: authorRoute.id, name: 'Original' });
@@ -82,9 +82,9 @@ test('owner RLS isolates a restricted role and cross-account approval exposes on
     await assert.rejects(merge(), /requires approval/);
     await assert.rejects(peerScene.approveReview(review.revision, '0'.repeat(64)), /review changed/);
     await peerScene.approveReview(review.revision, review.snapshot);
-    await setGrants(f.db, reviewer.owner, memberGrants(f.model).filter(grant => grant.resource !== 'Eigos/object/Route'));
+    await setGrants(f.db, reviewer.owner, businessGrants(f.model).filter(grant => grant.resource !== 'Eigos/object/Route'));
     await assert.rejects(merge(), /requires approval/);
-    await setGrants(f.db, reviewer.owner, memberGrants(f.model));
+    await setGrants(f.db, reviewer.owner, businessGrants(f.model));
     await merge();
     assert.equal((await author.query({ type: 'Route' })).items[0]?.properties.name, 'Reviewed correction');
     assert.equal((await peer.query({ type: 'Route' })).items[0]?.properties.name, 'Other owner');

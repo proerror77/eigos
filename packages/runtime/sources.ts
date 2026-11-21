@@ -50,15 +50,16 @@ export class Sources {
     signal.throwIfAborted(); await projection.assertCurrent(graph.owner);
     const output = await projection.apply(graph, name, input, result);
     signal.throwIfAborted(); await projection.assertCurrent(graph.owner);
-    if (graph.change?.taskId) {
-      const taskId = graph.change.taskId;
-      const linked = (await this.db.query<{ name: string }>(
+    const taskId = graph.change?.taskId;
+    const requestId = graph.change?.action ? graph.change.requestId : undefined;
+    if (taskId || requestId) {
+      const linked = taskId && (await this.db.query<{ name: string }>(
         `SELECT name FROM ${this.db.schema}.source_calls
           WHERE task_id=$1 AND state='completed' AND result->'receipt'->>'id'=$2 ORDER BY name LIMIT 1`,
         [taskId, output.receipt.id], graph.client)).rows[0]?.name;
       const callId = linked && /^[a-f0-9]{64}$/.test(linked) ? linked : undefined;
       await appendTrace(this.db, { owner: graph.owner, release: graph.model.release, projection: graph.model.projection,
-        taskId, requestId: graph.change.requestId, scenarioId: graph.model.scenario },
+        taskId, requestId, scenarioId: graph.model.scenario },
         { kind: 'source', source: name, receipt: output.receipt, callId }, graph.client, graph.access.dataRequirements());
     }
     return output;

@@ -5,7 +5,7 @@ import { createApp } from '../apps/gateway/app.js';
 import { provisionPublicPlaceCatalogue } from '../packages/capabilities/public-places/catalogue.js';
 import { readConfig } from '../packages/core/config.js';
 import { publicPlacesOntology } from '../packages/ontology/public-places.js';
-import { Access, memberGrants, setGrants, type Grant } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants, type Grant } from '../packages/runtime/access.js';
 import { Database } from '../packages/runtime/database.js';
 import { Governance } from '../packages/runtime/governance.js';
 import { Objects } from '../packages/runtime/objects.js';
@@ -41,7 +41,7 @@ test('only explicitly published places are shared within a project and access fo
     await setGrants(f.db, 'group:beta-publishers', permission('Beta', true));
     await f.db.query(`INSERT INTO ${f.db.schema}.security_memberships(subject,kind,name) VALUES
       ('reader','group','alpha-members'),($1,'group','alpha-publishers'),('beta','group','beta-publishers')`, [principal.owner]);
-    await setGrants(f.db, 'reader', memberGrants(f.model));
+    await setGrants(f.db, 'reader', businessGrants(f.model));
     const graph = new Objects(f.db, f.model, f.access);
     const privatePlace = { type: 'Place', id: 'private-place' };
     await graph.create(privatePlace, {

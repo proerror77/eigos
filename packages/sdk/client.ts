@@ -1,4 +1,5 @@
 import type { ObjectData, ObjectRef, OntologyDocument } from '../ontology/schema.js';
+import type { ScenarioDecision, ScenarioDecisionMemory } from '../ontology/scenario-decision.js';
 import type { ActionBatchInput, ActionCall, ActionInput } from '../ontology/invocation.js';
 import type { ActionLogInput, ActionLogEntry } from '../runtime/action-log.js';
 import type { Query } from '../runtime/objects.js';
@@ -61,6 +62,7 @@ export interface ScenarioReview extends Pick<ScenarioInspection, 'id' | 'name' |
   evidence?: { ref: ObjectRef; revision: number }[];
   evidenceVersion?: string;
   evidenceChanged?: boolean;
+  decisionMemory?: ScenarioDecisionMemory;
 }
 export interface ScenarioReviewItem {
   id: string;
@@ -265,9 +267,11 @@ export class ScenarioClient {
   inspectReview(signal?: AbortSignal) {
     return this.client.service<ScenarioReview>('inspect_scenario_review', { id: this.id }, signal);
   }
-  approveReview(revision: number, snapshot: string, signal?: AbortSignal) {
+  approveReview(revision: number, snapshot: string, options?: AbortSignal | { signal?: AbortSignal; decision: ScenarioDecision }) {
+    const review: { signal?: AbortSignal; decision?: ScenarioDecision } =
+      options && 'decision' in options ? options : { signal: options };
     return this.client.service<{ id: string; revision: number; reviewer: string; approved: true }>(
-      'approve_scenario_review', { id: this.id, revision, snapshot }, signal,
+      'approve_scenario_review', { id: this.id, revision, snapshot, decision: review.decision }, review.signal,
     );
   }
   /** Merge Actions conventionally bind scenarioId and the explicitly reviewed revision. */

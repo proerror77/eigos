@@ -5,7 +5,7 @@ import { Database } from '../packages/runtime/database.js';
 import { Metadata } from '../packages/runtime/metadata.js';
 import { Ontology } from '../packages/ontology/model.js';
 import { Objects } from '../packages/runtime/objects.js';
-import { Access, setGrants, memberGrants } from '../packages/runtime/access.js';
+import { Access, setGrants, businessGrants } from '../packages/runtime/access.js';
 import { upgradePublicationStorage } from '../packages/runtime/upgrade.js';
 
 test('concurrent submissions retain one task and cancellation fences late results', async () => {
@@ -40,7 +40,7 @@ test('the existing PostgreSQL data upgrades in place with old definitions and ta
     await db.query(`INSERT INTO ${s}.objects(owner,type,id,properties) VALUES($1,'Route','kept',$2)`, [principal.owner, { id: 'kept', name: 'Original data' }]);
     await db.query(`INSERT INTO ${s}.tasks(id,owner,release,state,result) VALUES('00000000-0000-4000-8000-000000000001',$1,$2,'completed','{"kept":true}')`, [principal.owner, model.digest]);
     await upgradePublicationStorage(db); await upgradePublicationStorage(db);
-    await setGrants(db, principal.owner, memberGrants(model));
+    await setGrants(db, principal.owner, businessGrants(model));
     const access = await Access.load(db, principal), historical = await new Metadata(db).get(model.digest);
     assert.equal(historical.runtimeId, 'legacy-readonly');
     assert.equal((await new Objects(db, historical, access).read({ type: 'Route', id: 'kept' })).properties.name, 'Original data');

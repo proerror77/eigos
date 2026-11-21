@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fixture, principal } from './fixture.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { Governance, initializeGovernance } from '../packages/runtime/governance.js';
 import { Effects, initializeEffects } from '../packages/runtime/effects.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
@@ -82,7 +82,7 @@ test('registered Function versions remain selectable and bind to immutable imple
     const body={id:'Eigos',version:'rate',objectTypes:[],interfaceTypes:[],linkTypes:[],actionTypes:[],dataSources:[],functionTypes:[definition]};
     const bindings={describe:(model:Parameters<Functions['bindings']>[0])=>({functions:functions.bindings(model),sources:{}})};
     const one=await f.metadata.publish(body,bindings,f.publisher);
-    await setGrants(f.db,principal.owner,memberGrants(one));await f.access.refresh();
+    await setGrants(f.db,principal.owner,businessGrants(one));await f.access.refresh();
     const two=await f.metadata.publish({...body,functionTypes:[{...definition,version:'2'}]},bindings,f.publisher);
     const read=(model:PublishedOntology)=>functions.invoke(model,'Rate',{}, {principal,objects:new Objects(f.db,model,f.access),signal:AbortSignal.timeout(5000)});
     assert.equal(await read(one),1);assert.equal(await read(two),2);
@@ -102,7 +102,7 @@ test('Action effects commit atomically, dispatch once on retry, and recheck auth
     await assert.rejects(f.metadata.prepare(body,f.capabilities,f.publisher),/handler is unavailable/);
     const capabilities=createCapabilities(f.db,f.source,{effects:handlers});
     const model=await f.metadata.publish(body,capabilities,f.publisher);
-    await setGrants(f.db,principal.owner,memberGrants(model));await f.access.refresh();
+    await setGrants(f.db,principal.owner,businessGrants(model));await f.access.refresh();
     const effects=new Effects(f.db,handlers);
     const actions=new Actions(f.db,f.capabilities.functions,effects);
     let guards=0;
@@ -113,7 +113,7 @@ test('Action effects commit atomically, dispatch once on retry, and recheck auth
     assert.equal(calls.length,0);assert.equal((await effects.status(f.access,'created')).length,1);
     await effects.runOne();assert.equal(delivered.size,1);assert.equal(await effects.runOne(),false);
     await actions.apply(f.access,model,action.apiName,{id:'revoked',name:'Revoked'},'revoked');
-    await setGrants(f.db,principal.owner,memberGrants(model).filter(g=>g.resource!=='Eigos/action/'+action.apiName));
+    await setGrants(f.db,principal.owner,businessGrants(model).filter(g=>g.resource!=='Eigos/action/'+action.apiName));
     await effects.runOne();assert.equal(calls.length,1);
     assert.equal((await f.db.query(`SELECT state FROM ${f.db.schema}.action_effects WHERE request_id='revoked'`)).rows[0]!.state,'failed');
   }finally{await f.close();}

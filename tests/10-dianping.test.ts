@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { createApp } from '../apps/gateway/app.js';
 import { readConfig } from '../packages/core/config.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { fixture, principal } from './fixture.js';
 
@@ -157,7 +157,7 @@ test('authorized Dianping search and shop details work through the published MCP
       assert(!JSON.stringify(result).includes('private-upstream-error'));
     }
     const requests = calls.length;
-    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant => grant.resource !== 'Eigos/source/Dianping'));
+    await setGrants(f.db, principal.owner, businessGrants(f.model).filter(grant => grant.resource !== 'Eigos/source/Dianping'));
     await assert.rejects(read('readDianpingRestaurant', selected), /Permission required/);
     assert.equal(calls.length, requests);
     assert.equal((await f.db.query(`SELECT count(*)::int AS n FROM ${f.db.schema}.external_operations`)).rows[0]!.n, 0);

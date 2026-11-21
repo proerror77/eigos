@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fixture, principal } from './fixture.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { objectPolicySchema } from '../packages/runtime/security.js';
 
@@ -31,7 +31,7 @@ test('all edit paths require instance readability', async () => {
   try {
     const ref={type:'Route',id:'private'};
     await new Objects(f.db,f.model,f.access).create(ref,{id:ref.id,name:'private'});
-    await setGrants(f.db,principal.owner,memberGrants(f.model).filter(g=>g.permission!=='view_objects'));
+    await setGrants(f.db,principal.owner,businessGrants(f.model).filter(g=>g.permission!=='view_objects'));
     const graph=new Objects(f.db,f.model,await Access.load(f.db,principal));
     await assert.rejects(graph.edit(ref,1,{name:'changed'}),/Permission/);
     await assert.rejects(graph.remove(ref,1),/Permission/);

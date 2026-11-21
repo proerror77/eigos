@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fixture, principal } from './fixture.js';
-import { Access, memberGrants, setGrants, type Permission } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants, type Permission } from '../packages/runtime/access.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { Indexing, initializeIndexing } from '../packages/runtime/indexing.js';
 import { EditHistory, initializeEditHistory, setConflictPolicy } from '../packages/runtime/edit-history.js';
@@ -16,7 +16,7 @@ import { Scenarios } from '../packages/runtime/scenarios.js';
 async function indexedFixture() {
   const f=await fixture();
   await initializeEditHistory(f.db);await initializeIndexing(f.db);await initializeMaterializations(f.db);
-  const grants=[...memberGrants(f.model),{resource:'Eigos/datasource/DidiPlaces',permission:'ingest_source' as Permission}];
+  const grants=[...businessGrants(f.model),{resource:'Eigos/datasource/DidiPlaces',permission:'ingest_source' as Permission}];
   await setGrants(f.db,principal.owner,grants);
   return {...f,access:await Access.load(f.db,principal),grants,indexing:new Indexing(f.db,f.metadata)};
 }
@@ -41,7 +41,7 @@ async function processFixture() {
   const edit={op:'editObject' as const,object:{parameter:'item'},expectedRevision:{parameter:'revision'},properties:{state:{parameter:'state'}}};
   document.actionTypes.push({apiName:'ChangeCase',description:'Change the case state',parameters,objectParameters:{item:'ProcessCase'},submissionCriteria:[],rules:[edit],result:{type:'ProcessCase',id:{parameter:'item',path:['id']}}},
     {apiName:'FailCase',description:'Rollback a state change',parameters,objectParameters:{item:'ProcessCase'},submissionCriteria:[],rules:[edit,edit],result:{type:'ProcessCase',id:{parameter:'item',path:['id']}}});
-  const model=await f.metadata.publish(document,f.capabilities,f.publisher),grants=memberGrants(model);
+  const model=await f.metadata.publish(document,f.capabilities,f.publisher),grants=businessGrants(model);
   await setGrants(f.db,principal.owner,grants);
   return {...f,model,grants,graph:new Objects(f.db,model,await Access.load(f.db,principal))};
 }
@@ -254,7 +254,7 @@ test('process definitions and native relationships survive resource remapping',a
     });
     await setGrants(f.db,'deployment',[{resource:'Eigos',permission:'manage_definition'},{resource:'Renamed',permission:'manage_definition'}]);
     const model=await f.metadata.publish(body,f.capabilities,await Access.load(f.db,{owner:'deployment',scopes:[]}));
-    await setGrants(f.db,principal.owner,memberGrants(model));
+    await setGrants(f.db,principal.owner,businessGrants(model));
     const graph=new Objects(f.db,model,await Access.load(f.db,principal)),ref={type:'RenamedCase',id:'mapped'};
     await graph.create(ref,{id:ref.id,name:'Mapped',state:'open'});
     const log=(await graph.follow(ref,'stateLogs'))[0]!;assert.equal(log.ref.type,'RenamedLog');
@@ -313,7 +313,7 @@ test('index transactions enforce source grants, ordered offsets and exact retrie
     assert.equal(await f.indexing.runOne(),true);assert.equal(await f.indexing.runOne(),true);assert.equal(await f.indexing.runOne(),false);
     assert.equal((await f.indexing.inspect(f.access,f.model,second.id)).applied_offset,'2');
     const graph=new Objects(f.db,f.model,f.access);assert.equal((await graph.query({type:'Place'})).items.length,2);
-    await setGrants(f.db,principal.owner,memberGrants(f.model));
+    await setGrants(f.db,principal.owner,businessGrants(f.model));
     await assert.rejects(f.indexing.submit(await Access.load(f.db,principal),f.model,transaction(3,[])),/Permission/);
   }finally{await f.close();}
 });
@@ -321,7 +321,7 @@ test('index transactions enforce source grants, ordered offsets and exact retrie
 test('failed indexing rolls back its objects and offset and resumes after permissions are restored',async()=>{
   const f=await indexedFixture();try{
     const job=await f.indexing.submit(f.access,f.model,transaction(1,[sourceRow('a','original')]));
-    await setGrants(f.db,principal.owner,memberGrants(f.model));
+    await setGrants(f.db,principal.owner,businessGrants(f.model));
     assert.equal(await f.indexing.runOne(),true);
     assert.equal((await f.db.query(`SELECT state FROM ${f.db.schema}.index_transactions WHERE id=$1`,[job.id])).rows[0]!.state,'failed');
     assert.equal((await new Objects(f.db,f.model,await Access.load(f.db,principal)).query({type:'Place'})).items.length,0);
