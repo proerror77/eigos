@@ -46,6 +46,7 @@ export interface ScenarioDecisionContext {
 export interface ScenarioDecisionSupport {
   inspect(context: ScenarioDecisionContext): Promise<ScenarioDecisionMemory | undefined>;
   capture(context: ScenarioDecisionContext, decision: ScenarioDecision, approvedAt?: Date): Promise<void>;
+  validateApproval(context: ScenarioDecisionContext): Promise<boolean>;
 }
 
 function recordedDecisionEvidence(raw: unknown) {
@@ -987,6 +988,10 @@ export class Scenarios {
         try {
           const review = await this.reviewDiff(model, row, approval.reviewer, client, !evidenceCheck);
           if (!review.conflicts && approval.snapshot === review.snapshot) {
+            if (this.decisions) {
+              const reviewer = await Access.load(this.db, { owner: approval.reviewer, scopes: [] }, client);
+              if (!await this.decisions.validateApproval({ model, owner, reviewer, client, review })) continue;
+            }
             approvalSnapshot = approval.snapshot;
             if (proposalTask && graph.change) {
               graph.change.reviewedChangeDigest = changeDigest(review.objects,

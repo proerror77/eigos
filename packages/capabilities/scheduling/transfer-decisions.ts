@@ -4,7 +4,7 @@ import {
   transferObservationFunction, transferObservationInput, transferObservationSource, transferObservationType,
   transferOfferLink, transferPlanLink, transferResultSchema,
 } from '../../ontology/hotel-transfer-decisions.js';
-import { scenarioDecisionSchema, type ScenarioDecisionMemory } from '../../ontology/scenario-decision.js';
+import { transferLessonReference, type ScenarioDecisionMemory } from '../../ontology/scenario-decision.js';
 import type { ObjectData, ObjectRef } from '../../ontology/schema.js';
 import { Access, PermissionDenied } from '../../runtime/access.js';
 import type { Database } from '../../runtime/database.js';
@@ -83,13 +83,31 @@ async function priorLesson(graph: Objects, reviewer: Access, item: ObjectData): 
     if (digest(transferObservation.parse(observation.properties)) !== result.observationDigest) return;
     const { expectedBufferMinutes, ...decisionJudgment } = judgment;
     return {
-      decision: item.ref, date: String(item.properties.date), judgment: decisionJudgment, expectedBufferMinutes,
+      decision: item.ref, version: digest(result), date: String(item.properties.date),
+      judgment: decisionJudgment, expectedBufferMinutes,
       actualTravelMinutes: result.actualTravelMinutes, actualBufferMinutes: result.actualBufferMinutes,
       assessment: result.assessment, lesson: result.lesson, appliesWhen: result.appliesWhen,
     };
   } catch (error) {
     if (!denied(error)) throw error;
   }
+}
+
+function decisionRef({ review, reviewer }: ScenarioDecisionContext) {
+  return { type: transferDecisionType, id: digest([review.id, review.revision, review.snapshot, reviewer.principal.owner]) };
+}
+
+async function adoptedLessonIsCurrent(
+  { graph, date, matchKey }: NonNullable<Awaited<ReturnType<typeof reviewTarget>>>,
+  reviewer: Access, reference: z.output<typeof transferLessonReference>,
+) {
+  if (reference.decision.type !== transferDecisionType) return false;
+  const decision = await graph.read(reference.decision);
+  visible(graph, reviewer, decision, ['date', 'matchKey', 'reviewer']);
+  if (decision.properties.matchKey !== matchKey || String(decision.properties.date) >= date ||
+      decision.properties.reviewer !== reviewer.principal.owner) return false;
+  const lesson = await priorLesson(graph, reviewer, decision);
+  return Boolean(lesson && lesson.assessment !== 'insufficient' && lesson.version === reference.version);
 }
 
 export function transferDecisionSupport(db: Database): ScenarioDecisionSupport {
@@ -120,17 +138,21 @@ export function transferDecisionSupport(db: Database): ScenarioDecisionSupport {
       const target = await reviewTarget(db, context);
       if (!target) throw new Conflict('This Scenario has no eligible synthetic hotel transfer');
       const { graph, planRef, offerRef, date, matchKey, departure, arriveBy } = target;
-      const judgment = scenarioDecisionSchema.parse(raw);
+      const { adoptedLesson, ...judgment } = raw;
+      if (adoptedLesson && !await adoptedLessonIsCurrent(target, context.reviewer, adoptedLesson)) {
+        throw new Conflict('The adopted transfer lesson is no longer applicable or verified');
+      }
       const expectedBufferMinutes = (Date.parse(arriveBy) - Date.parse(departure)) / minute - judgment.expectedTravelMinutes;
       if (expectedBufferMinutes < 0) throw new Conflict('The expected travel time does not fit the reviewed slot');
       const { review, reviewer } = context;
-      const id = digest([review.id, review.revision, review.snapshot, reviewer.principal.owner]);
-      const decision = { type: transferDecisionType, id };
+      const decision = decisionRef(context);
+      const recorded = { judgment: { ...judgment, expectedBufferMinutes }, ...(adoptedLesson ? { adoptedLesson } : {}) };
       if (!approvedAt) {
         const existing = await graph.read(decision).catch(error => {
           if (!(error instanceof NotFound)) throw error;
         });
-        if (digest(existing?.properties.judgment ?? null) !== digest({ ...judgment, expectedBufferMinutes })) {
+        const prior = { judgment: existing?.properties.judgment, adoptedLesson: existing?.properties.adoptedLesson };
+        if (digest(prior) !== digest(recorded)) {
           throw new Conflict('The decision must match the reason captured at the original approval');
         }
         return;
@@ -140,17 +162,34 @@ export function transferDecisionSupport(db: Database): ScenarioDecisionSupport {
         executor: { kind: 'client', id: reviewer.principal.owner },
       });
       await writer.create(decision, {
-        id, name: 'Hotel transfer ' + date, date, matchKey, scenarioId: review.id, scenarioRevision: review.revision,
+        id: decision.id, name: 'Hotel transfer ' + date, date, matchKey, scenarioId: review.id, scenarioRevision: review.revision,
         release: graph.model.release, snapshot: review.snapshot, reviewer: reviewer.principal.owner,
         approvedAt: approvedAt.toISOString(), departure, arriveBy,
         verifyBy: new Date(Date.parse(arriveBy) + 60 * minute).toISOString(),
-        evidence: 'synthetic', judgment: { ...judgment, expectedBufferMinutes },
+        evidence: 'synthetic', ...recorded,
       });
       await writer.linkBatch([
         { type: transferPlanLink, from: decision, to: planRef },
         { type: transferOfferLink, from: decision, to: offerRef },
       ]);
       await graph.access.refresh(context.client);
+    },
+    async validateApproval(context) {
+      const { model, owner, client, reviewer } = context;
+      if (!model.objects.get(transferDecisionType)?.properties.adoptedLesson) return true;
+      const ref = decisionRef(context);
+      // Approvals that did not cite a lesson do not require access to the transfer pilot.
+      const recorded = await db.query(
+        `SELECT 1 FROM ${db.schema}.objects
+          WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND properties ? 'adoptedLesson'`,
+        [model.projection, owner, ref.type, ref.id], client,
+      );
+      if (!recorded.rowCount) return true;
+      const target = await reviewTarget(db, context);
+      if (!target) return false;
+      const source = await target.graph.read(ref);
+      const adoption = transferLessonReference.safeParse(source.properties.adoptedLesson);
+      return adoption.success && await adoptedLessonIsCurrent(target, reviewer, adoption.data);
     },
   };
 }

@@ -9,7 +9,14 @@ export const scenarioDecisionSchema = z.strictObject({
   assumption: explanation,
   expectedTravelMinutes: z.number().int().min(1).max(240),
 });
-export type ScenarioDecision = z.output<typeof scenarioDecisionSchema>;
+export const transferLessonReference = z.strictObject({
+  decision: objectRefSchema,
+  version: z.string().regex(/^[a-f0-9]{64}$/),
+});
+export const scenarioDecisionApprovalSchema = scenarioDecisionSchema.extend({
+  adoptedLesson: transferLessonReference.optional(),
+});
+export type ScenarioDecision = z.output<typeof scenarioDecisionApprovalSchema>;
 
 export const decisionAssessment = z.enum(['supported', 'refuted', 'insufficient']);
 export interface ScenarioDecisionMemory {
@@ -17,8 +24,9 @@ export interface ScenarioDecisionMemory {
   arriveBy: string;
   prior: {
     decision: z.output<typeof objectRefSchema>;
+    version: string;
     date: string;
-    judgment: ScenarioDecision;
+    judgment: z.output<typeof scenarioDecisionSchema>;
     expectedBufferMinutes: number;
     actualTravelMinutes: number;
     actualBufferMinutes: number;
