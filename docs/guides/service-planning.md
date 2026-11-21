@@ -249,3 +249,14 @@ Shopify [Global Catalog](https://shopify.dev/docs/agents/catalog/global-catalog)
 接送和行程都可沿 `hotelDependencyReviews` 读回处置。复核保留正式转换引用、原酒店订单、能定位的原车单以及需要重新授权的状态。已有车单只回查原单，仍待确认的原操作进入 `awaiting_original_order`。未发单时撤销旧的计划执行许可，并停止仍待执行的原排程。绑定核验后的新酒店订单后，`ReplanTripHotelDependency` 使用新查或仍有效的路线，重新校验并更新原接送的时段和活动。原 PA 使用 `AuthorizeEventTrip`，传入调整后接送的当前修订和许可。批准校验该修订对应的待审复核，并在同一事务中更新复核及建立新的内部排程。
 
 授权和 `ExecuteHotelDependentTrip` 提交供应商发单意图前都会重读已绑定酒店订单，所以前序取消已经提交、Indexer 暂未处理时，旧接送也会停止在供应商写入之前。若原供应商操作意图先提交，则保留其回执并回查原操作。初次启用前或消费后才补的关系，需要从对应转换前显式重放。过程规则、读取权限、来源连接和真实履约各自校验。
+
+### 行程连续跟进
+
+用 `StartItineraryContinuity` 为同一 `SchedulePlan` 下的航班、接送和酒店活动登记一次跟进，传入三个 `ScheduledActivity` 引用、已确认的接送地点、出站缓冲、最晚到店时间、检查间隔及截止时间。接送活动的原始时长作为初始车程。可选择关联已获权的 `FlightWatch`、酒店原单或滴滴原车单。已有供应商状态、PA 观察和排程候选保留各自的证据。没有原车单引用时，评估表示当前图谱没有登记原单，供应商侧仍可由原 PA 核对。
+
+- `ReportItineraryObservations` 接受原 PA 的航班预计到达、酒店最晚到店时间及精确地点。一次提交可以更新两侧。隔离 Sandbox 接受 `synthetic` 报告。同一证据重放不重复登记，迟到或冲突的旧观察会被拒绝。
+- Action 日志中的已提交字段变化进入现有 Indexer 效果队列。按关联查找跟进对象，再读取计划、最新证据和完整的日历约束。供应商回查可复用现有航班和订单的监测。航班监测状态即使没变，关联的预计到达时间变化也会触发复核。
+- Worker 在同一个持久排程上主动检查，并在接送时点或最晚到店时间接近时提前复核。读不到来源或日历时保留待核实原因。接送地点变化时，`SetItineraryTransferRoute` 只接受端点完全吻合且仍有效的路线估计。
+- 原计划沿 `itineraryContinuity` 查询候选时段、冲突、原单和下一次检查。已有车单时保留原单与待退改状态。取得原车单取消回执后，复核可以给出新候选，原单仍可追溯。`AcknowledgeItineraryHandoff` 在人工处理时保存与当前评估摘要绑定的交接说明。后续变化会产生新的评估摘要。`StopItineraryContinuity` 停止后续检查并保留历史。
+
+该版本覆盖到达航班、接送和到店的一条行程。复核写入本体内的候选和处置状态。供应商订单的修改与取消继续由原供应商 Action 和单独的用户授权完成。[关系承载约束](https://www.palantir.com/docs/foundry/object-link-types/create-link-type#object-backed-links) · [对象变化触发](https://www.palantir.com/docs/foundry/automate/condition-objects#objects-modified-in-set) · [到期检查](https://www.palantir.com/docs/foundry/automate/condition-time)

@@ -1,3 +1,4 @@
+import { itineraryDefinition } from '../packages/ontology/itinerary-continuity.js';
 import { executeHotelDependentTrip, tripHotelDependencyDefinition } from '../packages/ontology/trip-hotel-dependency.js';
 import { travelHandoffDefinition } from '../packages/ontology/travel-handoff.js';
 import { ingestMachineryHistory } from '../packages/runtime/machinery-history.js';
@@ -679,7 +680,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const laterDomains = [
     calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition, fliggyServicesDefinition,
     fliggyFlightBookingDefinition, fliggyHotelDefinition, diningReservations, marketplaceDefinition, petRideDefinition,
-    travelHandoffDefinition, hotelTransferDefinition, tripHotelDependencyDefinition,
+    travelHandoffDefinition, hotelTransferDefinition, tripHotelDependencyDefinition, itineraryDefinition,
   ];
   const addedTypes = new Set([
     ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType, immediateRideType,
@@ -752,6 +753,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     !travelHandoffDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !hotelTransferDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !tripHotelDependencyDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    !itineraryDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !fliggyServicesDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !marketplaceDefinition.linkTypes.some(link => link.apiName === type.apiName));
   v9Definition.dataSources = v9Definition.dataSources.filter(source =>

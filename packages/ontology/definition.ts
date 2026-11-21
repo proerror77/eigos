@@ -1,3 +1,4 @@
+import { itineraryDefinition, itineraryType } from './itinerary-continuity.js';
 import { executeHotelDependentTrip, hotelDependencyCriterion, tripHotelDependencyDefinition } from './trip-hotel-dependency.js';
 import { travelHandoffDefinition } from './travel-handoff.js';
 import { calendarJourneyDefinition as journey, journeyType } from './calendar-journey.js';
@@ -43,12 +44,16 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '41',
+  id: ride.id, version: '42',
   agentProfiles: businessAgentProfiles,
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...journey.linkTypes, ...flight.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
   actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes, ...journey.actionTypes, ...flight.actionTypes, ...payments.actionTypes,...luckin.actionTypes,...applications.actionTypes,...documents.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
 };
+businessDefinition.objectTypes.push(...itineraryDefinition.objectTypes);
+businessDefinition.linkTypes.push(...itineraryDefinition.linkTypes);
+businessDefinition.functionTypes.push(...itineraryDefinition.functionTypes);
+businessDefinition.actionTypes.push(...itineraryDefinition.actionTypes);
 businessDefinition.functionTypes.push(
   {apiName:'recommendSchedule',description:'Search jointly for feasible activity times across the plan resources and dependencies.',
     parameters:jsonSchema(recommendScheduleSchema),returns:jsonSchema(scheduleRecommendationSchema)},
@@ -243,6 +248,7 @@ businessDefinition.linkTypes.push(...rideWatchDefinition.linkTypes);
 businessDefinition.functionTypes.push(...rideWatchDefinition.functionTypes);
 businessDefinition.actionTypes.push(...rideWatchDefinition.actionTypes);
 addProcessLogs(businessDefinition, [
+  { type: itineraryType, property: 'state' },
   { type: rideWatchType, property: 'state' },
   { type: 'FliggyHotelBooking', property: 'state' },
   { type: 'FliggyFlightBooking', property: 'issuanceState' },

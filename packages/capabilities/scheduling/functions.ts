@@ -73,6 +73,16 @@ export async function readPlan(objects: Reader, raw: ObjectRef, now = Date.now()
   return { plan, range, calendars, activities };
 }
 
+export function freePlanWindows(state: Awaited<ReturnType<typeof readPlan>>, ignore: readonly ObjectRef[]) {
+  let free = [state.range];
+  for (const calendar of state.calendars) {
+    const occupied = calendar.assignments.filter(a => !ignore.some(ref => same(a.ref, ref)))
+      .map(a => interval(a.properties.start, a.properties.end));
+    free = intersects(free, subtract(calendar.windows, normalize([...calendar.busy, ...occupied])));
+  }
+  return free;
+}
+
 export async function validate(objects: Reader, plan: ObjectRef, sourceTrip?:ObjectRef, proposedTimes:ReadonlySet<string>=new Set(), now = Date.now()) {
   const state = await readPlan(objects, plan, now), violations: { severity: 'hard'; code: string; activity: ObjectRef; related: ObjectRef[] }[] = [];
   const add = (code: string, activity: ObjectRef, related: ObjectRef[] = []) => violations.push({ severity: 'hard', code, activity, related });
@@ -286,11 +296,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       const now = context.scenarioEvaluation?.evaluatedAt ?? Date.now();
       const input = searchSlotsSchema.parse(raw), state = await readPlan(context.objects,input.plan,now);
       if (input.ignoreActivity && !state.activities.some(a => same(a.ref,input.ignoreActivity!))) throw new Conflict('Only an activity in this plan can be excluded for rescheduling');
-      let free = [state.range];
-      for (const calendar of state.calendars) {
-        const occupied = calendar.assignments.filter(a => !input.ignoreActivity || !same(a.ref,input.ignoreActivity)).map(a => interval(a.properties.start,a.properties.end));
-        free = intersects(free,subtract(calendar.windows,normalize([...calendar.busy,...occupied])));
-      }
+      let free = freePlanWindows(state, input.ignoreActivity ? [input.ignoreActivity] : []);
       if (input.ignoreActivity) {
         const predecessors=await context.objects.follow(input.ignoreActivity,'predecessors'),successors=await context.objects.follow(input.ignoreActivity,'successors');
         const start=Math.max(ms(state.range.start),...predecessors.map(p=>ms(p.properties.end)));

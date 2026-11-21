@@ -1,3 +1,4 @@
+import { itineraryContinuityFunctions, itineraryContinuityEffects } from './scheduling/itinerary-continuity.js';
 import { fliggyHandoffFunctions } from './fliggy/travel-handoff.js';
 import { configuredSource, type ConnectionConfig } from '../core/config.js';
 import { evaluateCalendarJourneyRelease } from './journey/release-checks.js';
@@ -88,8 +89,10 @@ export function createCapabilities(
   const amap = configuredAmap(connections.amap, connections.amapFetch);
   const getFunctions = () => capabilities.functions;
   const notifications = configuredTravelNotifications(db, getFunctions, connections.travelPA, connections.travelPAFetch);
+  const itinerary = itineraryContinuityEffects(db, () => capabilities.actions);
   const handlers = new Map([
     ...schedulingFunctions(db),
+    ...itineraryContinuityFunctions(db),
     ...transferDecisionFunctions(),
     ...diningResearch(connections.xiaohongshu, connections.xiaohongshuFetch),
     ...dianpingFunctions(connections.dianping, connections.dianpingFetch),
@@ -116,8 +119,9 @@ export function createCapabilities(
   ]);
   const capabilities = rideCapabilities(db, source, handlers, new Ontology(businessDefinition).resolvedDocument.functionTypes,
     { functions: [localEmbeddingVersion, ...(extensions.functions ?? [])],
-      effects: new Map([...(extensions.effects ?? []), ...notifications.handlers]) },
-    new Map([...serviceProjections(services), [transferObservationSource, transferObservationProjection]]), notifications.committed);
+      effects: new Map([...(extensions.effects ?? []), ...notifications.handlers, ...itinerary.handlers]) },
+    new Map([...serviceProjections(services), [transferObservationSource, transferObservationProjection]]), async (model, owner, changes) =>
+      [...await itinerary.committed(model, owner, changes), ...(await notifications.committed?.(model, owner, changes) ?? [])]);
   sources = capabilities.sources;
   return { ...capabilities, evaluateRelease: evaluateCalendarJourneyRelease,
     scenarioDecisions: db.sandboxEnabled ? transferDecisionSupport(db) : undefined,
