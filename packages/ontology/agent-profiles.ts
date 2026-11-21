@@ -123,6 +123,18 @@ export const businessAgentProfiles: AgentProfile[] = [
     ],
   },
   {
+    apiName: 'LocalDelivery',
+    terms: ['闪购', '外卖', '盒马', '到家库存', 'instant delivery', 'hema', 'takeout'],
+    objects: ['TaobaoInstantDeliverySearch', 'HemaProductSearch'],
+    interfaces: ['InstantDeliveryInquiry', 'GroceryDeliveryInquiry'],
+    actions: ['SearchTaobaoInstantDelivery', 'SearchHemaProducts'],
+    functions: ['readTaobaoInstantDeliverySearch', 'readHemaProductSearch'],
+    instructions: [
+      { action: 'SearchTaobaoInstantDelivery', function: 'readTaobaoInstantDeliverySearch', text: 'Use InstantDeliveryInquiry.search on TaobaoInstantDeliverySearch and bind the result to search. Find dishes or products in products mode. Use stores for nearby recommendations and menu for a selected merchantId. Use the connected account’s already selected delivery address.' },
+      { action: 'SearchHemaProducts', function: 'readHemaProductSearch', text: 'Use GroceryDeliveryInquiry.search on HemaProductSearch and bind the result to search. Report displayed CNY prices, checked SKU stock, unknown quantities, and provider verification separately. A Taobao Instant Delivery result for a Hema merchant is a different observation.' },
+    ],
+  },
+  {
     apiName: 'Dining',
     terms: ['餐厅', '订位', '约饭', '吃饭', '菜单', '大众点评', 'dianping', 'restaurant', 'dining', 'table availability',
       '订座', '位子', '好吃', '餐馆', '吃什么', '订餐', '午饭', '晚饭'],

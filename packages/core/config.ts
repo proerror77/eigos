@@ -37,6 +37,7 @@ export const connectionConfigSchema = z.object({
   EIGOS_FLIGGY_HOTEL_CONNECTION_FILE: z.string().optional(),
   EIGOS_PAOTUI_CONNECTION_FILE: z.string().optional(),
   EIGOS_WAIMAI_CONNECTION_FILE: z.string().optional(),
+  EIGOS_DSH_WAIMAI_CONNECTION_FILE: z.string().optional(),
   EIGOS_AMAP_CONNECTION_FILE: z.string().optional(),
   EIGOS_XIAOHONGSHU_CONNECTION_FILE: z.string().optional(),
   EIGOS_DIANPING_CONNECTION_FILE: z.string().optional(),
