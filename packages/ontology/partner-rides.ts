@@ -51,7 +51,7 @@ export const partnerRideResponse = z.discriminatedUnion('status', [
   }),
 ]);
 const handoffLink = z.string().url().max(8192);
-const result = z.discriminatedUnion('status', [
+export const partnerRideEstimateResult = z.discriminatedUnion('status', [
   partnerRideResponse.options[0],
   z.strictObject({
     status: z.literal('quoted'), provider: partnerRideProvider, route: partnerRideRoute,
@@ -65,6 +65,6 @@ const result = z.discriminatedUnion('status', [
 
 export const partnerRideDefinitions: OntologyDocument['functionTypes'] = partnerRideProvider.options.map(provider => ({
   apiName: partnerRideServices[provider].function, source: provider, dependencies: {},
-  parameters: json(partnerRideRoute), returns: json(result),
+  parameters: json(partnerRideRoute), returns: json(partnerRideEstimateResult),
   description: `Ask the original Personal Agent for a read-only ${provider} estimate for confirmed WGS84 endpoints. Return an App handoff requiring user confirmation. Use only on the original task and only when the user requests this provider. Never claim a booking or payment.`,
 }));

@@ -7,6 +7,8 @@ import { test } from 'node:test';
 import { PartnerRidesPA, type PartnerRideGrant } from '../packages/sdk/partner-rides-pa.js';
 import type { OntologyClient } from '../packages/sdk/client.js';
 import { partnerRideRequest, partnerRideServices } from '../packages/ontology/partner-rides.js';
+import { Objects } from '../packages/runtime/objects.js';
+import { partnerRideTypes } from '../packages/ontology/partner-ride-lifecycle.js';
 import { PARequests } from '../packages/runtime/pa.js';
 import { fixture, principal } from './fixture.js';
 
@@ -35,7 +37,7 @@ function providerResponse(provider: 'Uber' | 'Grab', longitude = route.dropoff.l
     fare: { minFare: 10, maxFare: 20, currency: 'SGD' }, deepLink: link.href }] });
 }
 
-test('both partner ride Functions resume the original task using a PA-owned quote', async () => {
+test('both partner ride suppliers resume the original PA task and link the selected App handoff', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eigos-partner-rides-'));
   const path = join(directory, 'connections.json');
   const providers = ['Uber', 'Grab'] as const;
@@ -51,7 +53,10 @@ test('both partner ride Functions resume the original task using a PA-owned quot
         const provider = userRequest.message as typeof providers[number];
         const name = partnerRideServices[provider].function;
         assert(ontology.functions.some((fn: { apiName: string }) => fn.apiName === name));
-        await tools.get('complete_with_function')!.invoke({ function: name, input: route });
+        await tools.get('complete_with_action')!.invoke({
+          action: { action: 'PreparePartnerRideQuote', input: { provider, route } },
+          read: { function: 'readPartnerRideQuote', resultParameter: 'quote' },
+        });
       },
     }, undefined, undefined, undefined, { partnerRides: path });
     try {
@@ -94,8 +99,16 @@ test('both partner ride Functions resume the original task using a PA-owned quot
         assert(await f.worker.runOne('interactive'));
         const done = await f.tasks.get(principal, task.id);
         assert.equal(done.state, 'completed', done.error ?? JSON.stringify(done.result));
-        const result = done.result as { evidence: string; orderCreated: boolean; paymentInitiated: boolean;
-          quotes: { etaSeconds: number; appLink: string; fare?: { expiresAt: string } }[] };
+        const { estimate: result, id } = done.result as { id: string; estimate: {
+          evidence: string; orderCreated: boolean; paymentInitiated: boolean;
+          quotes: { id: string | number; etaSeconds: number; appLink: string; fare?: { expiresAt: string } }[];
+        } };
+        const quote = { type: partnerRideTypes.quote, id };
+        const handoff = await f.capabilities.actions.apply(f.access, f.model, 'PreparePartnerRideHandoff',
+          { quote, vehicleId: result.quotes[0]!.id }, randomUUID());
+        const graph = new Objects(f.db, f.model, f.access);
+        assert.deepEqual((await graph.follow(quote, 'handoff')).map(row => row.ref), [handoff]);
+        assert.equal((await graph.read(handoff)).properties.appLink, result.quotes[0]!.appLink);
         assert.equal(result.evidence, 'pa_reported');
         assert.equal(result.orderCreated, false);
         assert.equal(result.paymentInitiated, false);
@@ -145,4 +158,36 @@ test('the PA rejects a mismatched binding and never forwards a mismatched Grab l
     { requestId, response: { status: 'unavailable', reason: 'authorization-required' } },
     { requestId, response: { status: 'unavailable', reason: 'source-unavailable' } },
   ]);
+});
+
+test('Uber and Grab synthetic orders and payments are linked, confirmed and idempotent', async () => {
+  const f = await fixture(undefined, undefined, undefined, undefined, undefined, undefined, { sandbox: true });
+  try {
+    const graph = new Objects(f.db, f.model, f.access);
+    const apply = (name: string, input: Record<string, unknown>) =>
+      f.capabilities.actions.apply(f.access, f.model, name, input, randomUUID());
+    for (const provider of ['Uber', 'Grab']) {
+      const quote = await apply('CreateSyntheticPartnerRideQuote', { trialId: randomUUID(), provider, route });
+      const { amountMinor, currency } = (await graph.read(quote)).properties;
+      const terms = { amountMinor, currency, confirm: true };
+      await assert.rejects(apply('BookSyntheticPartnerRide', { quote, ...terms, amountMinor: 1 }));
+      const order = await apply('BookSyntheticPartnerRide', { quote, ...terms });
+      assert.deepEqual(await apply('BookSyntheticPartnerRide', { quote, ...terms }), order);
+      assert.deepEqual((await graph.follow(quote, 'order')).map(row => row.ref), [order]);
+      const payment = await apply('PaySyntheticPartnerRide', { order, ...terms });
+      assert.deepEqual(await apply('PaySyntheticPartnerRide', { order, ...terms }), payment);
+      assert.deepEqual((await graph.follow(order, 'payment')).map(row => row.ref), [payment]);
+      const selected = f.capabilities.actions.resolve(f.access, f.model, {
+        interface: { type: 'CancelableRideOrder', action: 'cancel', object: order },
+        input: { confirmCancellation: true },
+      });
+      assert.equal(selected.action, 'CancelSyntheticPartnerRide');
+      assert.deepEqual(await apply(selected.action, selected.input), order);
+      assert.equal((await graph.read(order)).properties.state, 'canceled');
+      const paid = await graph.read(payment);
+      assert.equal(paid.properties.state, 'paid');
+      assert.equal(paid.properties.evidence, 'synthetic');
+    }
+    assert.deepEqual(f.provider.calls, []);
+  } finally { await f.close(); }
 });

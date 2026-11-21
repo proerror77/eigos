@@ -38,6 +38,7 @@ import { businessDefinition } from '../ontology/definition.js';
 import type { SourceResolver } from './didi/functions.js';
 import { didiRideWatchFunctions } from './didi/ride-watch.js';
 import { petRideFunctions } from './didi/pet-ride.js';
+import { partnerRideLifecycleFunctions } from './partner-rides/lifecycle.js';
 import { partnerRideFunctions } from './partner-rides/functions.js';
 import { rideCapabilities } from './didi/pipeline.js';
 import { schedulingFunctions } from './scheduling/functions.js';
@@ -119,6 +120,7 @@ export function createCapabilities(
     ...travelFunctions(db, source, services, () => sources),
     ...didiRideWatchFunctions(db, source),
     ...partnerRideFunctions(connections.partnerRides),
+    ...partnerRideLifecycleFunctions(db, getFunctions),
     ...petRideFunctions(db),
     ...calendarJourneyFunctions(db, getFunctions, amap, configuredJourneyCalendar(connections.calendar, connections.calendarFetch)),
     ...flightFunctions(db, getFunctions, configuredVariFlight(connections.variFlight, connections.variFlightFetch),
