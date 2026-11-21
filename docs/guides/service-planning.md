@@ -252,11 +252,14 @@ Shopify [Global Catalog](https://shopify.dev/docs/agents/catalog/global-catalog)
 
 ### 行程连续跟进
 
-用 `StartItineraryContinuity` 为同一 `SchedulePlan` 下的航班、接送和酒店活动登记一次跟进，传入三个 `ScheduledActivity` 引用、已确认的接送地点、出站缓冲、最晚到店时间、检查间隔及截止时间。接送活动的原始时长作为初始车程。可选择关联已获权的 `FlightWatch`、酒店原单或滴滴原车单。原来没有来源时可用 `BindItinerarySource` 在同一个跟进对象上补齐关联。已有供应商状态、PA 观察和排程候选保留各自的证据。没有原车单引用时，评估表示当前图谱没有登记原单，供应商侧仍可由原 PA 核对。
+同一趟行程使用原 `SchedulePlan`。PA 可以通过 `AttachCalendarJourneyToPlan` 关联同一趟行程的日历监测，并用 `readScheduleJourney` 回读活动、日历监测、已关联原单、复核结果、人工交接和状态历史。
+
+用 `StartItineraryContinuity` 在该计划下登记一条航班、接送和酒店的跟进。传入三个 `ScheduledActivity` 引用、已确认的接送地点、出站缓冲、最晚到店时间、检查间隔及截止时间。接送活动的原始时长作为初始车程。可以关联获权的 `FlightWatch`、酒店原单或滴滴原车单。飞猪原机票和后续找到的原单可通过 `BindItinerarySource` 绑定到同一跟进。缺少原车单链接时，PA 仍需要核对是否存在有效车单。
 
 - `ReportItineraryObservations` 接受原 PA 的航班预计到达、酒店最晚到店时间及精确地点。一次提交可以更新两侧。隔离 Sandbox 接受 `synthetic` 报告。同一证据重放不重复登记，迟到或冲突的旧观察会被拒绝。
-- 创建一次执行 `CheckItineraryContinuity` 的 Workflow，并用 `save_rule` 在 `ItineraryContinuity` 对象集上登记 `onModified`。可沿航班、酒店、原车单和日历关系声明要关注的字段。Indexer 从相同的正式图谱读取来源投影和 PA 提交的数据，触发后按最新留存证据和完整日历约束复核。供应商回查可复用现有航班和订单的监测。航班监测状态即使没变，关联的预计到达时间变化也会触发复核。
+- `StartItineraryContinuity` 在同一事务中登记 `onModified` 规则和执行 `CheckItineraryContinuity` 的 Workflow。已有跟进可以用 `EnableItineraryAutomation` 授权启用。Indexer 按原跟进对象及其已绑定的关系监听来源字段、计划时间和日历快照。航班监测仍为进行中时，预计到达时间的更新也会触发复核。同一授权身份的本体读取和 Action 权限适用于自动执行。
 - Worker 在同一个持久排程上主动检查，并在接送时点或最晚到店时间接近时提前复核。读不到来源或日历时保留待核实原因。接送地点变化时，`SetItineraryTransferRoute` 只接受端点完全吻合且仍有效的路线估计。
-- 原计划沿 `itineraryContinuity` 查询候选时段、冲突、原单和下一次检查。已有车单时保留原单与待退改状态。取得原车单取消回执后，复核可以给出新候选，原单仍可追溯。`AcknowledgeItineraryHandoff` 在人工处理时保存与当前评估摘要绑定的交接说明。后续变化会产生新的评估摘要。`StopItineraryContinuity` 停止后续检查并保留历史。
+- 已有有效车单时，复核把原单列为待处理。取得原车单取消回执后，继续保留原单供回查。PA 可用 `AcknowledgeItineraryHandoff` 保存与当前评估绑定的处理说明。确认没有有效车单且候选通过当前排程约束后，`ApplyItineraryTransferProposal` 按复核摘要和对象版本修改原内部接送活动。属于已登记 `EventTrip` 的接送继续使用该行程原有的 Action。
+- Machinery 的 `ItineraryContinuityStateLog` 记录跟进中、待处理、到期和已停止的转换及触发 Action。停止或到期会停用该跟进的自动规则。主动停止也会取消定时检查，保留处置和转换历史。
 
-该版本覆盖到达航班、接送和到店的一条行程。复核写入本体内的候选和处置状态。供应商订单的修改与取消继续由原供应商 Action 和单独的用户授权完成。[关系承载约束](https://www.palantir.com/docs/foundry/object-link-types/create-link-type#object-backed-links) · [对象变化触发](https://www.palantir.com/docs/foundry/automate/condition-objects#objects-modified-in-set) · [到期检查](https://www.palantir.com/docs/foundry/automate/condition-time)
+这条链路覆盖到达航班、接送和到店。供应商预订、改期、取消和外部日历写入由原 Action 和单独的用户授权完成。[Machinery 状态与 Action](https://www.palantir.com/docs/foundry/machinery/core-concepts) · [对象变化触发](https://www.palantir.com/docs/foundry/automate/condition-objects#objects-modified-in-set) · [Action 提交条件](https://www.palantir.com/docs/foundry/action-types/submission-criteria)

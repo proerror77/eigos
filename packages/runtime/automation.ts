@@ -235,18 +235,18 @@ export class Automation {
     )
       throw new Conflict('Automation requires the current live publication');
   }
-  async workflow(access: Access, model: PublishedOntology, raw: unknown) {
+  async workflow(access: Access, model: PublishedOntology, raw: unknown, transaction?: Sql) {
     requireScope(access.principal, 'ontology:write');
     const input = workflowSchema.parse(raw);
     revisionMatches(input.id, input.revision);
-    await access.refresh();
+    await access.refresh(transaction);
     access.require(model.document.id, 'view_definition', model.document.id);
     this.authorize(access, model, input.steps);
     if (input.proposal) authorizeCognitive(access, model, input.proposal);
     if (new Set(input.steps.map((item) => item.name)).size !== input.steps.length)
       throw new Conflict('Workflow step names must be unique');
     const id = input.id ?? randomUUID();
-    return this.db.transaction(async (client) => {
+    const save = async (client: Sql) => {
       await this.active(model, client);
       const result = input.id
         ? await this.db.query(
@@ -260,7 +260,8 @@ export class Automation {
       if (!result.rowCount) throw new Conflict('Workflow changed or is unavailable');
       await access.refresh(client);
       return { ...input, id, revision: Number(result.rows[0]!.revision) };
-    });
+    };
+    return transaction ? save(transaction) : this.db.transaction(save);
   }
   private async ruleDefinition(rule: z.output<typeof ruleSchema>, owner: string, ontology: string, client: Sql, lock = false) {
     if ('effect' in rule) {
@@ -311,14 +312,14 @@ export class Automation {
       actions: [rule.effect.action], objectTypes: [rule.process.type], linkTypes,
     }, new Set());
   }
-  async rule(access: Access, model: PublishedOntology, raw: unknown) {
+  async rule(access: Access, model: PublishedOntology, raw: unknown, transaction?: Sql) {
     requireScope(access.principal, 'ontology:write');
     const input = ruleSchema.parse(raw);
     revisionMatches(input.id, input.revision);
-    await access.refresh();
+    await access.refresh(transaction);
     access.require(model.document.id, 'view_definition', model.document.id);
     const id = input.id ?? randomUUID();
-    return this.db.transaction(async (client) => {
+    const save = async (client: Sql) => {
       if (input.id && !(await this.db.query(
         `SELECT 1 FROM ${this.db.schema}.object_rules WHERE id=$1 AND owner=$2 AND revision=$3 AND ontology=$4 FOR UPDATE`,
         [id, access.principal.owner, input.revision, model.document.id], client)).rowCount)
@@ -391,7 +392,15 @@ export class Automation {
       }
       await access.refresh(client);
       return { ...input, id, revision: Number(result.rows[0]!.revision) };
-    });
+    };
+    return transaction ? save(transaction) : this.db.transaction(save);
+  }
+  async disableObjectRule(graph: Objects, id: string) {
+    requireScope(graph.access.principal, 'ontology:write');
+    await this.active(graph.model, graph.client);
+    await this.db.query(`UPDATE ${this.db.schema}.object_rules SET enabled=false,revision=revision+1
+      WHERE id=$1 AND owner=$2 AND ontology=$3 AND enabled AND body ? 'query'`,
+    [id, graph.owner, graph.model.document.id], graph.client);
   }
   async processBindings(access: Access, model: PublishedOntology, raw: unknown) {
     const {type,cursor} = processBindingsSchema.parse(raw);

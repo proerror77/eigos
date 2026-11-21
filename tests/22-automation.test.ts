@@ -1,3 +1,4 @@
+import { scheduleJourneyDefinition } from '../packages/ontology/schedule-journey.js';
 import { itineraryDefinition } from '../packages/ontology/itinerary-continuity.js';
 import { executeHotelDependentTrip, tripHotelDependencyDefinition } from '../packages/ontology/trip-hotel-dependency.js';
 import { travelHandoffDefinition } from '../packages/ontology/travel-handoff.js';
@@ -688,14 +689,15 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const model = new Ontology(document);
   const logs = document.objectTypes.flatMap(type => processLogTarget(model, type.apiName) ?? []);
   const addedLogs = logs.filter(log => addedTypes.has(log.objectType));
-  const addedActions = new Set(laterDomains.flatMap(domain => domain.actionTypes.map(action => action.apiName)));
+  const addedActions = new Set([...laterDomains.flatMap(domain => domain.actionTypes.map(action => action.apiName)),
+    ...scheduleJourneyDefinition.actionTypes.map(action => action.apiName)]);
   for (const action of didiOrderDefinitions.actionTypes) addedActions.add(action.apiName);
   addedActions.add(bookImmediateRideAction);
   addedActions.add(executeHotelDependentTrip);
   addedActions.add('StageDiningActivity');
   addedActions.add('StageScheduleRecommendation');
   const addedFunctions = new Set([
-    ...laterDomains.flatMap(domain => domain.functionTypes), ...didiOrderDefinitions.functionTypes, ...didiReadDefinitions,
+    ...laterDomains.flatMap(domain => domain.functionTypes), ...scheduleJourneyDefinition.functionTypes, ...didiOrderDefinitions.functionTypes, ...didiReadDefinitions,
     ...deliveryFunctions, ...locationFunctions, ...mapFunctions, ...dianpingResearchFunctions, flightPositionFunction,
   ].map(fn => fn.apiName));
   for (const name of ['stageDiningActivity', 'searchRestaurantNotes', 'readWeatherHistory', 'readDiningAvailability']) addedFunctions.add(name);
@@ -754,6 +756,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     !hotelTransferDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !tripHotelDependencyDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !itineraryDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    !scheduleJourneyDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !fliggyServicesDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !marketplaceDefinition.linkTypes.some(link => link.apiName === type.apiName));
   v9Definition.dataSources = v9Definition.dataSources.filter(source =>

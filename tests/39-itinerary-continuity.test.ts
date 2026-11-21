@@ -4,8 +4,11 @@ import { z } from 'zod';
 import { digest } from '../packages/core/identity.js';
 import { objectRefSchema, type ObjectRef } from '../packages/ontology/schema.js';
 import { rideCancellationReceipt } from '../packages/ontology/travel.js';
+import { itineraryAutomation } from '../packages/ontology/itinerary-continuity.js';
 import { json } from '../packages/ontology/service-contracts.js';
-import { Automation, saveRuleSchema } from '../packages/runtime/automation.js';
+import { Access } from '../packages/runtime/access.js';
+import { Automation } from '../packages/runtime/automation.js';
+import { analyzeMachinery, machineryAnalysisSchema } from '../packages/runtime/machinery-analysis.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { ScheduledActions } from '../packages/runtime/scheduled-actions.js';
 import { document, fixture, principal } from './fixture.js';
@@ -74,24 +77,11 @@ async function setup(booked: boolean, connected = false, sandbox = true) {
       ...(booked ? { rideOrder } : {}),
     });
     const automation = new Automation(f.db, f.metadata, f.capabilities.actions);
-    const workflow = await automation.workflow(f.access, f.model, {
-      name: 'Check linked itinerary', steps: [{ name: 'Review', action: 'CheckItineraryContinuity', input: { continuity: { object: true } } }],
-    });
-    const ruleInput = saveRuleSchema.parse({
-      name: 'Observe itinerary inputs', enabled: true, workflow: workflow.id, query: { type: 'ItineraryContinuity' },
-      onModified: { watch: [
-        { properties: ['flightObservation', 'hotelObservation', 'sources'] },
-        { path: ['flightWatch'], properties: ['status', 'state'] },
-        { path: ['hotelBooking'], properties: ['state', 'selection'] },
-        { path: ['rideOrder'], properties: ['state', 'cancellationReceipt'] },
-        { path: ['plan','availability'], properties: ['windows', 'busy', 'sourceVersion'] },
-      ] },
-    });
-    const rule = await automation.rule(f.access, f.model, ruleInput);
+    const registration = itineraryAutomation.parse((await graph.read(continuity)).properties.automation);
     assert.equal(await automation.scanOne(), true);
-    assert.equal(await automation.runOne(), false);
+    assert.equal(await automation.runOne(), true);
     return { f, graph, plan, availability, apply, continuity, at, flight, transfer, hotel, unrelated,
-      pickup, destination, newHotel, rideOrder, flightWatch, status, flightProjection, rule };
+      pickup, destination, newHotel, rideOrder, flightWatch, status, flightProjection, registration };
   } catch (error) {
     await f.close();
     throw error;
@@ -135,7 +125,7 @@ test('one Sandbox plan follows simultaneous and subsequent changes even without 
     assert.equal(first.transferDisposition, 'review_original_order');
     assert.equal(first.hotelDisposition, 'confirm_late_arrival');
     const [firstRun] = (await f.db.query(`SELECT count(*)::int AS n FROM ${f.db.schema}.workflow_runs`)).rows;
-    assert.equal(firstRun!.n, 1);
+    assert.equal(firstRun!.n, 2);
     assert.deepEqual((await graph.follow(plan, 'itineraryContinuity')).map(item => item.ref), [continuity]);
     assert.deepEqual((await graph.follow(continuity, 'rideOrder')).map(item => item.ref), [p.rideOrder]);
     await apply('AcknowledgeItineraryHandoff', {
@@ -188,7 +178,7 @@ test('one Sandbox plan follows simultaneous and subsequent changes even without 
     assert.equal(f.provider.flags.orderCreates, 0);
     assert.equal(f.provider.flags.orderQueries, 0);
     assert.equal((await f.db.query(`SELECT count(*)::int AS n FROM ${f.db.schema}.external_operations`)).rows[0]?.n, 0);
-    assert.equal((await f.db.query(`SELECT count(*)::int AS n FROM ${f.db.schema}.workflow_runs`)).rows[0]?.n, 4);
+    assert.equal((await f.db.query(`SELECT count(*)::int AS n FROM ${f.db.schema}.workflow_runs`)).rows[0]?.n, 5);
   } finally {
     await indexer.stop();
     await f.close();
@@ -216,6 +206,15 @@ test('the Indexer consumes a field-only flight change and a due check uses newer
     assert.equal(report.transferDisposition, 'propose');
     assert.equal(report.orderLinked, false);
     assert.equal((await graph.read(p.flightWatch)).properties.state, 'monitoring');
+    const previous = await graph.read(continuity);
+    await assert.rejects(apply('ApplyItineraryTransferProposal', {
+      continuity, revision: previous.revision, assessmentDigest: '0'.repeat(64), confirmNoActiveRide: true,
+    }, 'stale-proposal'), /latest evaluated/);
+    await apply('ApplyItineraryTransferProposal', {
+      continuity, revision: previous.revision, assessmentDigest: report.digest, confirmNoActiveRide: true,
+    });
+    assert.equal((await graph.read(p.transfer)).properties.start, at(90));
+    assert.equal((await graph.read(p.transfer)).properties.end, at(130));
 
     const calendar = await graph.read(p.availability);
     await graph.edit(p.availability, calendar.revision, { busy: [{ start: at(90), end: at(155) }] });
@@ -242,6 +241,9 @@ test('the Indexer consumes a field-only flight change and a due check uses newer
     await apply('StopItineraryContinuity', { continuity });
     assert.equal((await graph.read(continuity)).properties.nextCheckAt, null);
     assert.equal((await new ScheduledActions(f.db).inspect(principal, scheduleId)).state, 'canceled');
+    const [rule] = (await f.db.query(`SELECT enabled,revision FROM ${f.db.schema}.object_rules WHERE id=$1`, [p.registration.ruleId])).rows;
+    assert.equal(rule!.enabled, false);
+    assert(Number(rule!.revision) > p.registration.ruleRevision);
     assert.equal(f.provider.flags.orderCreates, 0);
     assert.equal((await f.db.query(`SELECT count(*)::int AS n FROM ${f.db.schema}.external_operations`)).rows[0]?.n, 0);
   } finally {
@@ -259,5 +261,95 @@ test('synthetic itinerary observations require the explicit Sandbox', async () =
     }), /use sandbox/);
   } finally {
     await p.f.close();
+  }
+});
+
+test('the original plan exposes the linked calendar, supplier orders and Machinery case', async () => {
+  const p = await setup(true), { f, graph, at, plan, continuity, apply } = p;
+  try {
+    const journey = { type: 'CalendarJourney', id: 'synthetic-calendar-journey' };
+    await graph.create(journey, {
+      id: journey.id, name: 'Synthetic arrival calendar',
+      settings: {
+        origin: { calendarId: 'calendar', eventId: 'flight' }, destination: { calendarId: 'calendar', eventId: 'hotel' },
+        monitorUntil: at(170), mode: 'driving', preparationMinutes: 5, entryMinutes: 10, rainBufferMinutes: 5,
+      },
+      scheduleId: 'fixture-calendar-journey', mapAuthority: digest('synthetic-map'),
+      state: 'scheduled', reason: 'route_checked', checkedAt: at(0), validUntil: at(150), nextCheckAt: at(40),
+      calendar: null, route: null, weather: null, timing: null, reminder: null, reminderVersion: 0,
+    });
+    await apply('AttachCalendarJourneyToPlan', { plan, journey, revision: 1 });
+    const flightBooking = { type: 'FliggyFlightBooking', id: 'synthetic-ticket' };
+    const date = at(0).slice(0, 10);
+    const orderFacts = {
+      profileDigest: digest('synthetic-profile'), approvalDigest: digest('synthetic-approval'), authority: 'synthetic',
+      merchantOrderId: '122', independentRead: true, evidence: 'synthetic', expiresAt: at(150), observedAt: at(0),
+    };
+    await graph.create(flightBooking, {
+      ...orderFacts, id: flightBooking.id, name: 'Original synthetic ticket',
+      search: { origin: 'PEK', destination: 'SHA', departureDate: date },
+      quote: {
+        itemId: 'synthetic-offer', segment: { dep_airport: 'PEK', arr_airport: 'SHA', marketing_flight_no: 'MU5102',
+          dep_time: date + ' 10:00:00', arr_time: date + ' 12:00:00' },
+        cabin: 'Y', fareYuan: 100, fuelYuan: 0, constructionYuan: 0, taxYuan: 0,
+        amountMinor: 10000, refundTerms: 'Synthetic', currency: 'CNY',
+      },
+      profileId: 'synthetic', outOrderNo: 'synthetic-air', supplierStatus: 'ISSUED',
+      paid: true, issued: true, closed: false, issuanceState: 'issued',
+    });
+    const hotelBooking = { type: 'FliggyHotelBooking', id: 'synthetic-stay' };
+    await graph.create(hotelBooking, {
+      ...orderFacts, id: hotelBooking.id, name: 'Original synthetic stay',
+      selection: {
+        standardHotelId: '1', checkIn: date, checkOut: iso(Date.parse(date) + 86_400_000).slice(0, 10),
+        itemId: '1', ratePlanId: '1', arrivalTime: '18:00', checkOutTime: '12:00', rooms: 1,
+        adultsPerRoom: 1, profileId: 'synthetic',
+      },
+      outOrderId: 'synthetic-hotel', merchantHotelId: '1', totalRoomPrice: 10000, amountMinor: 10000,
+      currency: 'CNY', cancellation: { cancel_policy_type: 1 }, state: 'confirmed',
+    });
+    for (const source of [flightBooking, hotelBooking]) await apply('BindItinerarySource', {
+      continuity, source, revision: (await graph.read(continuity)).revision,
+    }, 'bind-' + source.type);
+    const indexer = startHotelLifecycleIndexer(f.schema);
+    try {
+      const canceled = await graph.read(hotelBooking);
+      await graph.edit(hotelBooking, canceled.revision, { state: 'cancelled', observedAt: iso(Date.now()) });
+      await graph.edit(journey, 1, { state: 'risk', reason: 'calendar_conflict' });
+      await indexer.waitFor('linked hotel and calendar changes', async () => {
+        const item = resultSchema.parse((await graph.read(continuity)).properties.assessment);
+        return item.issues.includes('hotel_booking_cancelled') && item.issues.includes('calendar_journey_requires_review')
+          ? item : undefined;
+      });
+    } finally {
+      await indexer.stop();
+    }
+    await apply('StopItineraryContinuity', { continuity });
+    const overview = z.object({
+      plan: z.object({ ref: objectRefSchema }),
+      calendarJourneys: z.array(z.object({ ref: objectRefSchema, state: z.string() })),
+      originalOrders: z.array(z.object({ ref: objectRefSchema, state: z.string().nullable() })),
+      followups: z.array(z.object({ ref: objectRefSchema, history: z.array(z.object({
+        properties: z.object({ newState: z.string() }),
+      })) })),
+      restricted: z.array(z.string()),
+    }).parse(await f.capabilities.functions.invoke(f.model, 'readScheduleJourney', { plan }, {
+      principal, objects: graph, signal: AbortSignal.timeout(10_000),
+    }));
+    assert.deepEqual(overview.plan.ref, plan);
+    assert.deepEqual(overview.calendarJourneys, [{ ref: journey, state: 'risk' }]);
+    assert.deepEqual(overview.originalOrders.map(order => order.ref), [p.rideOrder, flightBooking, hotelBooking]);
+    assert.equal(overview.originalOrders.find(order => order.ref.id === hotelBooking.id)?.state, 'cancelled');
+    assert.deepEqual(overview.restricted, []);
+    assert.deepEqual(overview.followups.map(item => item.ref), [continuity]);
+    assert.deepEqual(overview.followups[0]!.history.map(item => item.properties.newState), ['watching', 'attention', 'stopped']);
+    const analysis = await analyzeMachinery(f.db, await Access.load(f.db, principal), f.model, machineryAnalysisSchema.parse({
+      type: 'ItineraryContinuityStateLog', object: continuity, from: at(-10), to: at(10),
+    }));
+    assert.deepEqual(analysis.cases[0]?.states, ['watching', 'attention', 'stopped']);
+    assert.equal(analysis.conformance.conforming, 1);
+    assert.equal((await f.db.query(`SELECT count(*)::int AS n FROM ${f.db.schema}.external_operations`)).rows[0]?.n, 0);
+  } finally {
+    await f.close();
   }
 });
