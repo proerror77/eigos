@@ -52,7 +52,7 @@ export function configuredCapabilities(db: Database, config: ConnectionConfig, e
   source = configuredSource(config.EIGOS_DIDI_CONNECTION_FILE, config.EIGOS_DIDI_WATCH_SANDBOX_CONNECTION_FILE),
   { marketplaceFetch, ...fetchers }: ProviderFetch = {}) {
   return createCapabilities(db, source, extensions,
-    configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE, undefined, marketplaceFetch),
+    configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE, undefined, marketplaceFetch, config),
     configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
       fliggyFlight: config.EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE,
       fliggyHotel: config.EIGOS_FLIGGY_HOTEL_CONNECTION_FILE,

@@ -18,7 +18,7 @@ import { searchFliggy, type FlyAIRead } from '../fliggy/connector.js';
 import { LumaReadClient } from '../luma/client.js';
 import { searchMarketplace } from '../marketplace/connector.js';
 import { RollingGoSearchConnector } from '../rollinggo/connector.js';
-import { ShopifyCatalogAccess, ShopifyReadOnlyClient } from '../shopify/read-only.js';
+import { SHOPIFY_AGENT_PROFILE_PATH, SHOPIFY_TEST_PROFILE, ShopifyCatalogAccess, ShopifyReadOnlyClient } from '../shopify/read-only.js';
 
 export interface ServiceSource {
   bindingId: string;
@@ -48,6 +48,7 @@ const credentialFields = {
 };
 const connection = z.union([
   connectionBase.extend({ provider: z.enum(['Luma', 'RollingGo', 'Shopify', 'Taobao', 'JD']), ...credentialFields }),
+  connectionBase.extend({ provider: z.literal('Shopify'), mode: z.literal('public_catalog') }),
   connectionBase.extend({ provider: z.literal('Fliggy'), mode: z.literal('trial') }),
   connectionBase.extend({ provider: z.literal('Fliggy'), mode: z.literal('key'), ...credentialFields }),
 ]);
@@ -69,9 +70,32 @@ export async function privateFile(path: string) {
     await file.close();
   }
 }
+async function shopifyAccess(credential: () => Promise<string>, signal: AbortSignal) {
+  let secret: { clientId: string; clientSecret: string };
+  try {
+    secret = z.strictObject({ clientId: z.string(), clientSecret: z.string() }).parse(JSON.parse(await credential()));
+  } catch {
+    throw new SourceReadFailure('Private Shopify credential configuration is invalid', { unavailable: true });
+  }
+  return ShopifyCatalogAccess.exchange(secret.clientId, secret.clientSecret, signal);
+}
+type CatalogHost = { PUBLIC_URL?: string; EIGOS_AUTH_MODE?: string };
+
+function catalogAgentProfile(host: CatalogHost) {
+  const url = z.url().safeParse(host.PUBLIC_URL);
+  if (!url.success) throw new SourceReadFailure('Shopify public catalog requires the Gateway public URL', { unavailable:true });
+  const base = new URL(url.data);
+  if (host.EIGOS_AUTH_MODE === 'development' && process.env.NODE_ENV !== 'production' &&
+      base.protocol === 'http:' && ['127.0.0.1','localhost'].includes(base.hostname))
+    return SHOPIFY_TEST_PROFILE;
+  if (base.protocol !== 'https:' || base.origin !== url.data)
+    throw new SourceReadFailure('Shopify public catalog requires the HTTPS Gateway origin', { unavailable:true });
+  return new URL(SHOPIFY_AGENT_PROFILE_PATH,base).href;
+}
+
 /** Configuration grants source access to one owner; it never grants booking or
  * payment authority. Secrets and raw provider responses are not Ontology rows. */
-export function configuredServices(path?: string, flyAIRead?: FlyAIRead, marketplaceFetch?: typeof fetch): ServiceResolver {
+export function configuredServices(path?: string, flyAIRead?: FlyAIRead, catalogFetch?: typeof fetch, host: CatalogHost = { PUBLIC_URL:process.env.PUBLIC_URL, EIGOS_AUTH_MODE:process.env.EIGOS_AUTH_MODE }): ServiceResolver {
   if (!path) return unavailableServices;
   const load = async () => {
     try { return z.array(connection).max(100).parse(JSON.parse(await privateFile(path))); }
@@ -86,7 +110,9 @@ export function configuredServices(path?: string, flyAIRead?: FlyAIRead, marketp
     if (entries.length !== 1) throw new SourceReadFailure('Ambiguous service connection', { unavailable: true });
     const binding = entries[0]!, fingerprint = digest(binding);
     const marketplace = binding.provider === 'Taobao' || binding.provider === 'JD';
-    const bindingId = binding.provider === 'Fliggy' || marketplace ? binding.bindingId + ':' + fingerprint : binding.bindingId;
+    const publicCatalog = binding.provider === 'Shopify' && 'mode' in binding;
+    const agentProfile = publicCatalog ? catalogAgentProfile(host) : undefined;
+    const bindingId = publicCatalog ? binding.bindingId + ':' + digest({ binding, agentProfile }) : binding.provider === 'Fliggy' || marketplace ? binding.bindingId + ':' + fingerprint : binding.bindingId;
     const credential = async () => {
       if (!('credentialFile' in binding))
         throw new SourceReadFailure('Service connection has no private credential', { unavailable: true });
@@ -153,21 +179,14 @@ export function configuredServices(path?: string, flyAIRead?: FlyAIRead, marketp
             })),
           };
         } else if (binding.provider === 'Taobao' || binding.provider === 'JD') {
-          const items = await searchMarketplace(binding.provider, input, await credential(), signal, marketplaceFetch);
+          const items = await searchMarketplace(binding.provider, input, await credential(), signal, catalogFetch);
           result = { items, complete: false, cursor: null };
           resultSchema = marketplaceObservation;
         } else {
           const q = productSearchInput.parse(input);
-          let secret: { clientId: string; clientSecret: string };
-          try {
-            secret = z
-              .strictObject({ clientId: z.string(), clientSecret: z.string() })
-              .parse(JSON.parse(await credential()));
-          } catch {
-            throw new SourceReadFailure('Private Shopify credential configuration is invalid', { unavailable: true });
-          }
-          const access = await ShopifyCatalogAccess.exchange(secret.clientId, secret.clientSecret, signal),
-            client = new ShopifyReadOnlyClient({ access });
+          const client = publicCatalog
+            ? new ShopifyReadOnlyClient({ agentProfile }, catalogFetch)
+            : new ShopifyReadOnlyClient({ access: await shopifyAccess(credential, signal) });
           const response = await client.read(
             'search_catalog',
             { query: q.query, context: { address_country: q.country }, pagination: { limit: q.limit } },
@@ -202,7 +221,7 @@ export function configuredServices(path?: string, flyAIRead?: FlyAIRead, marketp
           ...(accessMode ? { accessMode } : {}),
           observedAt: new Date(observedAt).toISOString(),
           expiresAt: new Date(Math.min(observedAt + 300000, Date.parse(binding.expiresAt))).toISOString(),
-          evidence: (binding.provider === 'Fliggy' && flyAIRead || marketplace && marketplaceFetch) ? 'provider_mock' : 'live_readonly',
+          evidence: (binding.provider === 'Fliggy' && flyAIRead || (marketplace || publicCatalog) && catalogFetch) ? 'provider_mock' : 'live_readonly',
           ...result,
           inputDigest: digest(input),
           contentDigest: digest(result),

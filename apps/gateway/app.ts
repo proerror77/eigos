@@ -1,3 +1,4 @@
+import { SHOPIFY_AGENT_PROFILE_PATH, shopifyCatalogProfile } from '../../packages/capabilities/shopify/read-only.js';
 import {mountWorkbench} from './workbench.js';
 import {Applications} from '../../packages/runtime/applications.js';
 import type { RuntimeExtensions } from '../../packages/runtime/extensions.js';
@@ -92,6 +93,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const model = await metadata.active(); metadata.checkBindings(model, capabilities);
     res.json({ status: 'ok', backend: 'postgres', sourceCommit: config.EIGOS_SOURCE_COMMIT, ontologyRelease: model.release, definitionDigest: model.digest, implementationDigest: db.runtimeId });
   });
+  app.get(SHOPIFY_AGENT_PROFILE_PATH, (_req, res) => res.json(shopifyCatalogProfile()));
   const card = agentCard(config.PUBLIC_URL);
   app.get('/.well-known/agent-card.json', (_req, res) => res.json(AgentCard.toJSON(card)));
   app.get('/.well-known/oauth-protected-resource', (_req, res) => res.json({ resource: config.PUBLIC_URL, authorization_servers: config.OAUTH_ISSUER ? [config.OAUTH_ISSUER] : [], bearer_methods_supported: ['header'] }));
