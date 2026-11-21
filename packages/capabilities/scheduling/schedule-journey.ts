@@ -3,19 +3,23 @@ import { attachCalendarJourneyInput, calendarJourneyPlanLink, scheduleJourneyInp
 import type { ObjectData, ObjectRef } from '../../ontology/schema.js';
 import { PermissionDenied } from '../../runtime/access.js';
 import type { FunctionHandler } from '../../runtime/functions.js';
+import type { Objects } from '../../runtime/objects.js';
+
+export async function attachCalendarJourney(graph: Objects, plan: ObjectRef, journeyRef: ObjectRef, revision: number) {
+  if (journeyRef.type !== 'CalendarJourney') throw new Conflict('Use the original calendar journey');
+  const journey = await graph.read(journeyRef);
+  if (journey.revision !== revision) throw new Conflict('Calendar journey changed before attachment');
+  const [current] = await graph.follow(journeyRef, 'plan');
+  if (current && current.ref.id !== plan.id) throw new Conflict('Calendar journey already belongs to another plan');
+  await graph.link({ type: calendarJourneyPlanLink, from: journeyRef, to: plan });
+}
 
 export const scheduleJourneyFunctions = new Map<string, FunctionHandler>([
   ['attachCalendarJourneyToPlan', async (raw, context) => {
     const input = attachCalendarJourneyInput.parse(raw);
     if (!context.directAction || !context.edit || context.objects.model.scenario)
       throw new Conflict('Confirm the original plan and calendar journey through the PA');
-    return context.edit(input.plan, async graph => {
-      const journey = await graph.read(input.journey);
-      if (journey.revision !== input.revision) throw new Conflict('Calendar journey changed before attachment');
-      const [current] = await graph.follow(input.journey, 'plan');
-      if (current && current.ref.id !== input.plan.id) throw new Conflict('Calendar journey already belongs to another plan');
-      await graph.link({ type: calendarJourneyPlanLink, from: input.journey, to: input.plan });
-    });
+    return context.edit(input.plan, graph => attachCalendarJourney(graph, input.plan, input.journey, input.revision));
   }],
   ['readScheduleJourney', async (raw, { objects }) => {
     const { plan } = scheduleJourneyInput.parse(raw);
@@ -31,11 +35,21 @@ export const scheduleJourneyFunctions = new Map<string, FunctionHandler>([
         return [];
       }
     };
-    const [activities, calendar, trips, continuities, hotelReviews] = await Promise.all([
+    const [activities, calendar, trips, continuities, hotelReviews, availability] = await Promise.all([
       follow(plan, 'activities'), follow(plan, 'calendarJourneys'), follow(plan, 'trips'),
-      follow(plan, 'itineraryContinuity'), follow(plan, 'hotelDependencyReviews'),
+      follow(plan, 'itineraryContinuity'), follow(plan, 'hotelDependencyReviews'), follow(plan, 'availability'),
     ]);
+    let calendarAvailability = availability;
+    if (availability.length) {
+      try { objects.access.source(objects.model, 'PACalendar'); }
+      catch (error) {
+        if (!(error instanceof PermissionDenied)) throw error;
+        restricted.add('SchedulePlan.availability');
+        calendarAvailability = [];
+      }
+    }
     const orders = new Map<string, ObjectData>();
+    const flightWatches = new Map<string, ObjectData>();
     const collect = async (from: ObjectRef, link: string) => {
       for (const order of await follow(from, link)) orders.set(JSON.stringify(order.ref), order);
     };
@@ -44,7 +58,10 @@ export const scheduleJourneyFunctions = new Map<string, FunctionHandler>([
         follow(item.ref, 'flightWatch'), follow(item.ref, 'stateLogs'),
         collect(item.ref, 'hotelBooking'), collect(item.ref, 'rideOrder'), collect(item.ref, 'flightBooking'),
       ]);
-      await Promise.all(watches.map(watch => collect(watch.ref, 'booking')));
+      await Promise.all(watches.map(watch => {
+        flightWatches.set(watch.ref.id, watch);
+        return collect(watch.ref, 'booking');
+      }));
       return {
         ref: item.ref, revision: item.revision, state: item.properties.state,
         nextCheckAt: item.properties.nextCheckAt, automation: item.properties.automation ?? null,
@@ -56,9 +73,13 @@ export const scheduleJourneyFunctions = new Map<string, FunctionHandler>([
     await Promise.all(trips.flatMap(item => ['order', 'registration', 'hotelBooking'].map(link => collect(item.ref, link))));
     return {
       plan: { ref: original.ref, revision: original.revision, name: original.properties.name },
-      activities, calendarJourneys: calendar.map(item => ({
+      activities, calendarAvailability: calendarAvailability.map(({ ref, properties }) => ({
+        ref, evidence: properties.evidence, complete: properties.complete, observedAt: properties.observedAt, expiresAt: properties.expiresAt,
+      })),
+      calendarJourneys: calendar.map(item => ({
         ref: item.ref, name: item.properties.name, state: item.properties.state, nextCheckAt: item.properties.nextCheckAt,
       })),
+      flightWatches: [...flightWatches.values()].map(({ ref, properties }) => ({ ref, name: properties.name, state: properties.state })),
       trips: trips.map(item => ({ ref: item.ref, state: item.properties.state })),
       originalOrders: [...orders.values()].sort((a,b) => JSON.stringify(a.ref).localeCompare(JSON.stringify(b.ref))).map(item => ({
         ref: item.ref, name: item.properties.name, state: item.properties.state ?? item.properties.issuanceState ?? null,

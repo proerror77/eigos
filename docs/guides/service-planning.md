@@ -252,9 +252,9 @@ Shopify [Global Catalog](https://shopify.dev/docs/agents/catalog/global-catalog)
 
 ### 行程连续跟进
 
-同一趟行程使用原 `SchedulePlan`。PA 可以通过 `AttachCalendarJourneyToPlan` 关联同一趟行程的日历监测，并用 `readScheduleJourney` 回读活动、日历监测、已关联原单、复核结果、人工交接和状态历史。
+同一趟行程使用原 `SchedulePlan`。在同一个任务内，`PrepareSchedulePlan` 复用已提交的计划及其日历快照身份。原任务留下多条计划时，明确选定原计划，按既有 Scenario 入口审阅重排。PA 可以通过 `AttachCalendarJourneyToPlan` 关联同一趟行程的日历监测，并用 `readScheduleJourney` 回读活动、日历快照及其有效期、日历监测、航班监测、已关联原单、复核结果、人工交接和状态历史。
 
-用 `StartItineraryContinuity` 在该计划下登记一条航班、接送和酒店的跟进。传入三个 `ScheduledActivity` 引用、已确认的接送地点、出站缓冲、最晚到店时间、检查间隔及截止时间。接送活动的原始时长作为初始车程。可以关联获权的 `FlightWatch`、酒店原单或滴滴原车单。飞猪原机票和后续找到的原单可通过 `BindItinerarySource` 绑定到同一跟进。缺少原车单链接时，PA 仍需要核对是否存在有效车单。
+用 `StartItineraryContinuity` 在该计划下登记一条航班、接送和酒店的跟进。传入三个 `ScheduledActivity` 引用、已确认的接送地点、出站缓冲、最晚到店时间、检查间隔及截止时间。接送活动的原始时长作为初始车程。启动时可在同一事务关联获权的 `FlightWatch`、飞猪原机票、酒店原单、滴滴原车单及带修订号的日历监测。后续找到的原单可通过 `BindItinerarySource` 绑定到同一跟进。缺少原车单链接时，PA 仍需要核对是否存在有效车单。
 
 - `ReportItineraryObservations` 接受原 PA 的航班预计到达、酒店最晚到店时间及精确地点。一次提交可以更新两侧。隔离 Sandbox 接受 `synthetic` 报告。同一证据重放不重复登记，迟到或冲突的旧观察会被拒绝。
 - `StartItineraryContinuity` 在同一事务中登记 `onModified` 规则和执行 `CheckItineraryContinuity` 的 Workflow。已有跟进可以用 `EnableItineraryAutomation` 授权启用。Indexer 按原跟进对象及其已绑定的关系监听来源字段、计划时间和日历快照。航班监测仍为进行中时，预计到达时间的更新也会触发复核。同一授权身份的本体读取和 Action 权限适用于自动执行。

@@ -14,6 +14,7 @@ import type { FunctionContext, FunctionHandler } from '../../runtime/functions.j
 import type { Objects } from '../../runtime/objects.js';
 import { ScheduledActions } from '../../runtime/scheduled-actions.js';
 import { readPlan, freePlanWindows, validate } from './functions.js';
+import { attachCalendarJourney } from './schedule-journey.js';
 
 type Reader = FunctionContext['objects'];
 const same = (a: ObjectRef, b: ObjectRef) => a.type === b.type && a.id === b.id;
@@ -157,7 +158,7 @@ async function assess(graph: Objects, watch: ObjectData, now: number) {
     if (!verified || bookingState !== 'confirmed') {
       issues.push(verified && ['cancelled', 'closed'].includes(String(bookingState))
         ? 'hotel_booking_cancelled' : 'hotel_booking_needs_verification');
-      if (verified) hotelEvidence = 'provider';
+      if (verified) hotelEvidence = booking.properties.evidence === 'synthetic' ? 'synthetic' : 'provider';
     }
     // A provider date change can invalidate a previously recorded latest arrival time.
     const selection = z.object({ checkIn: z.iso.date() }).safeParse(booking.properties.selection).data;
@@ -237,7 +238,7 @@ function automationWatches(sources: z.output<typeof itinerarySources>) {
   return [
     { properties: ['flightObservation', 'hotelObservation', 'sources'] },
     { path: ['plan', 'activities'], properties: ['start', 'end'] },
-    { path: ['plan', 'availability'], properties: ['windows', 'busy', 'sourceVersion'] },
+    { path: ['plan', 'availability'], properties: ['windows', 'busy', 'sourceVersion', 'observedAt', 'expiresAt', 'complete'] },
     { path: ['plan', 'calendarJourneys'], properties: ['state', 'calendar', 'timing'] },
     ...(sources.flightWatch ? [{ path: ['flightWatch'], properties: ['status', 'state', 'observedAt'] }] : []),
     ...(sources.flightBooking ? [{ path: ['flightBooking'], properties: ['issued', 'closed', 'independentRead'] }] : []),
@@ -290,11 +291,11 @@ export function itineraryContinuityFunctions(db: Database, actions: () => Action
         }
         const edges: LinkData[] = [];
         const sources: z.output<typeof itinerarySources> = {
-          flightWatch: input.flightWatch, hotelBooking: input.hotelBooking, rideOrder: input.rideOrder,
+          flightWatch: input.flightWatch, flightBooking: input.flightBooking, hotelBooking: input.hotelBooking, rideOrder: input.rideOrder,
         };
         for (const [key, [type, targetType]] of Object.entries(links)) {
-          if (key === 'routeEstimate' || key === 'flightBooking') continue;
-          const to = input[key as Exclude<keyof typeof links, 'routeEstimate' | 'flightBooking'>];
+          if (key === 'routeEstimate') continue;
+          const to = input[key as Exclude<keyof typeof links, 'routeEstimate'>];
           if (!to) continue;
           if (to.type !== targetType) throw new Conflict('The itinerary source has a different object type');
           const target = await graph.read(to);
@@ -304,6 +305,12 @@ export function itineraryContinuityFunctions(db: Database, actions: () => Action
             sources.originalHotelCheckIn = selection.data.checkIn;
           }
           edges.push({ type, from: ref, to });
+        }
+        await verifyFlightSourcePair(graph, sources);
+        if (input.calendarJourney) {
+          graph.access.action(graph.model, 'AttachCalendarJourneyToPlan');
+          graph.access.function(graph.model, 'attachCalendarJourneyToPlan');
+          await attachCalendarJourney(graph, input.plan, input.calendarJourney.journey, input.calendarJourney.revision);
         }
         const runAt = iso(Math.min(now + 1000, deadline));
         const scheduleId = digest([ref, context.operationId]);

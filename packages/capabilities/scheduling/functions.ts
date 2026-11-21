@@ -236,7 +236,16 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       const range = interval(input.start,input.end);
       if (ms(range.end)-ms(range.start) > 31*86400000 || ms(range.end) <= Date.now()) throw new Conflict('Use a future planning window of at most 31 days');
       if (!context.execution || !context.operationId || !context.edit) throw new Conflict('Request calendar information through the original PA task');
-      const requests = new PARequests(context.execution.tasks);
+      const { task, tasks } = context.execution;
+      const priorPlans = input.plan ? [] : (await db.query<{ id: string }>(`
+        SELECT DISTINCT result->>'id' AS id FROM ${db.schema}.actions
+        WHERE task_id=$1 AND owner=$2 AND action='PrepareSchedulePlan' AND result->>'type'='SchedulePlan' LIMIT 2`,
+      [task.id, context.principal.owner])).rows;
+      if (priorPlans.length > 1) throw new Conflict('Select the original SchedulePlan and open a Scenario before replanning this task');
+      const plan = input.plan ?? { type: 'SchedulePlan', id: priorPlans[0]?.id ?? digest(['SchedulePlan', task.id]) };
+      if (plan.type !== 'SchedulePlan') throw new Conflict('Expected a SchedulePlan');
+      if (input.plan || priorPlans.length) await context.objects.read(plan);
+      const requests = new PARequests(tasks);
       const scope = { start: new Date(ms(input.start)).toISOString(), end: new Date(ms(input.end)).toISOString(), timeZone: input.timeZone };
       const request = { start: input.start, end: input.end, timeZone: input.timeZone, fields: ['busy', 'windows'], purpose: input.title };
       const schema = jsonSchema(calendarResponseSchema);
@@ -244,7 +253,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
       let response: z.infer<typeof calendarResponseSchema>;
       for (;;) {
         context.signal.throwIfAborted();
-        const receipt = await requests.requestWithId(context.execution.task, context.operationId, 'calendar.freebusy',
+        const receipt = await requests.requestWithId(task, context.operationId, 'calendar.freebusy',
           request, schema, replaces ? { ...scope, replaces } : scope);
         response = calendarResponseSchema.parse(receipt.response);
         if (response.status !== 'available') throw new Conflict(`PA calendar response is ${response.status}`);
@@ -264,15 +273,21 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
         replaces = receipt.requestId;
       }
       const resource = { type: 'ScheduleResource', id: digest([context.principal.owner,'personal-calendar']) };
-      const plan = input.plan ?? { type: 'SchedulePlan', id: context.operationId };
       const availability = { type:'CalendarAvailability',id:digest([resource.id,plan.id]) };
-      if (plan.type !== 'SchedulePlan') throw new Conflict('Expected a SchedulePlan');
-      if (input.plan) await context.objects.read(plan);
       return context.edit(plan, async live => {
         if (input.scenarioId && live.model.scenario && input.scenarioId !== live.model.scenario)
           throw new Conflict('Calendar preparation must stay within the selected scenario');
         const view=input.scenarioId&&!live.model.scenario?await new Scenarios(db).view(live.access,live.model,input.scenarioId,live.client):undefined;
         const graph=view?new Objects(db,view,live.access,live.client,{...live.change,scenarioEdits:[]}):live;
+        const current = await graph.read(plan).catch(error => {
+          if (error instanceof NotFound && !input.plan && !priorPlans.length) return undefined;
+          throw error;
+        });
+        const preservePlan = current && !input.plan &&
+          (current.properties.state === 'confirmed' || (await graph.follow(plan, 'activities')).length > 0);
+        if (preservePlan && (ms(current.properties.start)!==ms(input.start) || ms(current.properties.end)!==ms(input.end) ||
+          current.properties.timeZone!==input.timeZone || current.properties.durationMinutes!==input.durationMinutes))
+          throw new Conflict('Replanning the existing SchedulePlan with scheduled activities requires a Scenario');
         await graph.create(resource,{ id: resource.id, name: 'User calendar' });
         const { status: _status, ...facts } = response;
         const properties = { id: availability.id, name: 'PA calendar availability', ...facts };
@@ -282,12 +297,12 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
           if(digest(old.properties)!==digest(properties))await graph.edit(availability,old.revision,properties);
         } else await graph.create(availability,properties);
         const fields = { id: plan.id, name: input.title, start: input.start, end: input.end, timeZone: input.timeZone, durationMinutes: input.durationMinutes };
-        if (input.plan) {
-          const current = await graph.read(plan);
+        if (!current) await graph.create(plan,{...fields,...(graph.model.object('SchedulePlan').properties.state?{state:'prepared'}:{})});
+        else if (!preservePlan) {
           // The Workflow's reviewed delta must include the final confirmation.
-          const confirm = context.execution?.task.cognitive_context && graph.model.object('SchedulePlan').properties.state;
+          const confirm = task.cognitive_context && graph.model.object('SchedulePlan').properties.state;
           await graph.edit(plan, current.revision, { ...fields, ...(confirm ? { state: 'confirmed' } : {}) });
-        } else await graph.create(plan,{...fields,...(graph.model.object('SchedulePlan').properties.state?{state:'prepared'}:{})});
+        }
         await graph.linkBatch([{ type:'ResourceAvailability',from:resource,to:availability },{ type:'PlanResource',from:plan,to:resource },{ type:'PlanAvailability',from:plan,to:availability }]);
         if(view)await recordScenarioAction(graph,'PrepareSchedulePlan',raw,plan,context.operationId!);
       });
