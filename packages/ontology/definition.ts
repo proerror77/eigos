@@ -26,6 +26,7 @@ import { fliggyServicesDefinition as fliggy, marketplaceDefinition as marketplac
 import { fliggyFlightBookingDefinition } from './fliggy-flight-booking.js';
 import { fliggyHotelDefinition } from './fliggy-hotel.js';
 import { didiImmediateRideDefinition } from './didi-immediate-ride.js';
+import { partnerRideDefinitions } from './partner-rides.js';
 import { didiReadDefinitions } from './didi-reads.js';
 import { didiOrderDefinitions, travelDefinition as travel } from './travel.js';
 import { paymentsDefinition as payments } from './payments.js';
@@ -47,7 +48,7 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '45',
+  id: ride.id, version: '46',
   agentProfiles: businessAgentProfiles,
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...journey.linkTypes, ...flight.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
@@ -176,7 +177,7 @@ businessDefinition.linkTypes.push(...hotelTransferDefinition.linkTypes);
 businessDefinition.functionTypes.push(...hotelTransferDefinition.functionTypes);
 businessDefinition.actionTypes.push(...hotelTransferDefinition.actionTypes);
 businessDefinition.dataSources.push(...hotelTransferDefinition.dataSources);
-businessDefinition.functionTypes.push(...didiOrderDefinitions.functionTypes, ...didiReadDefinitions);
+businessDefinition.functionTypes.push(...didiOrderDefinitions.functionTypes, ...didiReadDefinitions, ...partnerRideDefinitions);
 businessDefinition.actionTypes.push(...didiOrderDefinitions.actionTypes);
 businessDefinition.interfaceTypes.push(...didiOrderDefinitions.interfaceTypes);
 businessDefinition.objectTypes.find(type=>type.apiName==='LumaEvent')!.interfaces.AttendableEvent={properties:Object.fromEntries(['name','start','end','timeZone','status','locationPrecision','registrationOpen','approvalRequired'].map(name=>[name,name])),links:{registrations:'registrations',trips:'trips'},actions:{register:{action:'PrepareEventRegistration',parameters:{event:'event',ticketId:'ticketId',sourceTaskId:'sourceTaskId'}}}};

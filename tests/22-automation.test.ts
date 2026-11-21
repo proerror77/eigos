@@ -40,6 +40,7 @@ import type { ObjectRef } from '../packages/ontology/schema.js';
 import { Ontology } from '../packages/ontology/model.js';
 import { addProcessLogs, processLogTarget } from '../packages/ontology/process-definition.js';
 import { bookImmediateRideAction, immediateOrderLink, immediateRideInterface, immediateRideType } from '../packages/ontology/didi-immediate-ride.js';
+import { partnerRideDefinitions } from '../packages/ontology/partner-rides.js';
 import { didiReadDefinitions } from '../packages/ontology/didi-reads.js';
 import { didiOrderDefinitions } from '../packages/ontology/travel.js';
 import { calendarJourneyDefinition } from '../packages/ontology/calendar-journey.js';
@@ -700,7 +701,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   addedActions.add('StageDiningActivity');
   addedActions.add('StageScheduleRecommendation');
   const addedFunctions = new Set([
-    ...laterDomains.flatMap(domain => domain.functionTypes), ...scheduleJourneyDefinition.functionTypes, ...didiOrderDefinitions.functionTypes, ...didiReadDefinitions,
+    ...laterDomains.flatMap(domain => domain.functionTypes), ...scheduleJourneyDefinition.functionTypes, ...didiOrderDefinitions.functionTypes, ...didiReadDefinitions, ...partnerRideDefinitions,
     ...deliveryFunctions, ...locationFunctions, ...mapFunctions, ...dianpingResearchFunctions, flightPositionFunction,
   ].map(fn => fn.apiName));
   for (const name of ['stageDiningActivity', 'searchRestaurantNotes', 'readWeatherHistory', 'readDiningAvailability']) addedFunctions.add(name);

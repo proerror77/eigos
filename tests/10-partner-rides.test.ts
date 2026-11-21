@@ -1,0 +1,144 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test } from 'node:test';
+import { PartnerRidesPA, type PartnerRideGrant } from '../packages/sdk/partner-rides-pa.js';
+import type { OntologyClient } from '../packages/sdk/client.js';
+import { partnerRideRequest, partnerRideServices } from '../packages/ontology/partner-rides.js';
+import { PARequests } from '../packages/runtime/pa.js';
+import { fixture, principal } from './fixture.js';
+
+const route = {
+  coordinateSystem: 'WGS84',
+  pickup: { latitude: 1.28, longitude: 103.85, address: 'Synthetic pickup' },
+  dropoff: { latitude: 1.36, longitude: 103.99, address: 'Synthetic destination' },
+};
+const expiresAt = () => new Date(Date.now() + 120_000).toISOString();
+
+function providerResponse(provider: 'Uber' | 'Grab', longitude = route.dropoff.longitude) {
+  if (provider === 'Uber') return Response.json({
+    ride_estimate: { product_estimates: [{
+      product: { product_id: 'synthetic-product', display_name: 'Synthetic Uber' },
+      fare: { currency_code: 'SGD', point_fare: '12.50' }, eta: { eta_in_seconds: 90 },
+    }] },
+  });
+  const direct = new URL('grab://open');
+  for (const [key, value] of Object.entries({ screenType: 'BOOKING', taxiTypeId: 302,
+    pickUpLatitude: route.pickup.latitude, pickUpLongitude: route.pickup.longitude,
+    dropOffLatitude: route.dropoff.latitude, dropOffLongitude: longitude })) direct.searchParams.set(key, String(value));
+  const link = new URL('https://grab.onelink.me/2695613898');
+  link.searchParams.set('af_dp', direct.href);
+  return Response.json({ services: [{ serviceID: 302, serviceName: 'Synthetic Grab', eta: 2,
+    fare: { minFare: 10, maxFare: 20, currency: 'SGD' }, deepLink: link.href }] });
+}
+
+test('both partner ride Functions resume the original task using a PA-owned quote', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eigos-partner-rides-'));
+  const path = join(directory, 'connections.json');
+  const providers = ['Uber', 'Grab'] as const;
+  const connections = providers.map(provider => ({
+    provider, owner: principal.owner, bindingId: randomUUID(), active: true, expiresAt: expiresAt(), environment: 'sandbox' as const,
+  }));
+  await writeFile(path, JSON.stringify(connections), { mode: 0o600 });
+  try {
+    const f = await fixture({
+      model: 'partner-ride-test',
+      async run(prompt, tools) {
+        const { ontology, userRequest } = JSON.parse(prompt.split('\n').at(-1)!);
+        const provider = userRequest.message as typeof providers[number];
+        const name = partnerRideServices[provider].function;
+        assert(ontology.functions.some((fn: { apiName: string }) => fn.apiName === name));
+        await tools.get('complete_with_function')!.invoke({ function: name, input: route });
+      },
+    }, undefined, undefined, undefined, { partnerRides: path });
+    try {
+      const requests = new PARequests(f.tasks), token = 'synthetic-private-provider-token';
+      for (const connection of connections) {
+        const { provider, bindingId, environment } = connection;
+        const task = await f.tasks.submit(principal, { requestId: randomUUID(), message: provider });
+        const taskPath = 'tasks/' + task.id;
+        assert(await f.worker.runOne('interactive'));
+        const paused = await f.tasks.get(principal, task.id);
+        assert.equal(paused.state, 'input-required', paused.error ?? JSON.stringify(paused.result));
+        assert.deepEqual(partnerRideRequest.parse((paused.result as { input: unknown }).input), { provider, bindingId, environment, route });
+        assert(!JSON.stringify(paused.result).includes(token));
+        let providerCalls = 0;
+        const ontology: Pick<OntologyClient, 'request'> = {
+          async request<T>(resource: string, input?: unknown) {
+            assert([taskPath, taskPath + '/pa-response'].includes(resource));
+            if (!input) return await f.tasks.get(principal, task.id) as T;
+            assert(!JSON.stringify(input).includes(token));
+            return await requests.respond(principal, task.id, input) as T;
+          },
+        };
+        const pa = new PartnerRidesPA({
+          ontology,
+          async loadGrant(input) {
+            assert.equal(input.bindingId, bindingId);
+            const grant = { bindingId, environment, accessToken: token, expiresAt: connection.expiresAt };
+            return provider === 'Uber' ? { ...grant, provider, riderId: 'synthetic-rider' } : { ...grant, provider };
+          },
+          fetch: async (url, request) => {
+            providerCalls++;
+            const host = provider === 'Uber' ? 'sandbox-api.uber.com' : 'partner-api.stg-myteksi.com';
+            assert.equal(new URL(String(url)).hostname, host);
+            assert.equal(request?.redirect, 'error');
+            assert.equal(new Headers(request?.headers).get('Authorization'), 'Bearer ' + token);
+            return providerResponse(provider);
+          },
+        });
+        await pa.answer(task.id);
+        assert(await f.worker.runOne('interactive'));
+        const done = await f.tasks.get(principal, task.id);
+        assert.equal(done.state, 'completed', done.error ?? JSON.stringify(done.result));
+        const result = done.result as { evidence: string; orderCreated: boolean; paymentInitiated: boolean;
+          quotes: { etaSeconds: number; appLink: string }[] };
+        assert.equal(result.evidence, 'pa_reported');
+        assert.equal(result.orderCreated, false);
+        assert.equal(result.paymentInitiated, false);
+        assert.equal(result.quotes[0]?.etaSeconds, provider === 'Uber' ? 90 : 120);
+        const link = new URL(result.quotes[0]!.appLink);
+        assert.equal(link.hostname, provider === 'Uber' ? 'm.uber.com' : 'grab.onelink.me');
+        if (provider === 'Uber') assert.deepEqual(JSON.parse(link.searchParams.get('drop[0]')!),
+          { latitude: route.dropoff.latitude, longitude: route.dropoff.longitude, addressLine1: route.dropoff.address });
+        assert.equal(providerCalls, 1);
+      }
+      assert.deepEqual(f.provider.calls, []);
+    } finally { await f.close(); }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('the PA rejects a mismatched binding and never forwards a mismatched Grab link', async () => {
+  const taskId = randomUUID(), requestId = randomUUID(), bindingId = randomUUID();
+  const input = partnerRideRequest.parse({ provider: 'Grab', bindingId, environment: 'sandbox', route });
+  const task = { id: taskId, state: 'input-required', result: {
+    kind: 'pa-request', capability: partnerRideServices.Grab.capability, taskId, requestId, input,
+  } };
+  const responses: unknown[] = [];
+  const ontology: Pick<OntologyClient, 'request'> = {
+    async request<T>(_path: string, input?: unknown) {
+      if (input) responses.push(input);
+      return task as T;
+    },
+  };
+  const grant: PartnerRideGrant = {
+    bindingId, environment: input.environment, provider: 'Grab', accessToken: 'synthetic-local-grab-token', expiresAt: expiresAt(),
+  };
+  let fetched = 0, currentBinding = randomUUID();
+  const pa = new PartnerRidesPA({
+    ontology,
+    async loadGrant() { return { ...grant, bindingId: currentBinding }; },
+    async fetch() { fetched++; return providerResponse('Grab', route.dropoff.longitude + 0.01); },
+  });
+  await pa.answer(taskId);
+  assert.equal(fetched, 0);
+  currentBinding = bindingId;
+  await pa.answer(taskId);
+  assert.equal(fetched, 1);
+  assert.deepEqual(responses, [
+    { requestId, response: { status: 'unavailable', reason: 'authorization-required' } },
+    { requestId, response: { status: 'unavailable', reason: 'source-unavailable' } },
+  ]);
+});

@@ -154,6 +154,8 @@ Luma 默认沿用原 PA 已连接的 MCP。未来执行需要 PA 持续处理 `l
 
 淘宝闪购与盒马支持按已选配送地址查询外卖和商超商品。接入、权限与库存证据见 [淘宝闪购与盒马](docs/guides/local-delivery.md)。
 
+Uber 与 Grab 的 PA 只读估价及 App 交接配置见 [Uber 和 Grab 估价](docs/guides/partner-rides.md)。
+
 ## Ontology 运行服务
 
 对象集、发布提案、来源索引、编辑历史、物化、策略和独立进程的入口见 [Ontology 运行服务](docs/guides/ontology-services.md)。构建后用 `npm run start:indexer` 运行来源消费与已配置的 Action 副作用。可用 `QUERY_DATABASE_URL` 配置只读查询节点，`EIGOS_EXTENSION_MODULE` 注册受信任的 Function 版本与副作用处理函数。
