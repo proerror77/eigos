@@ -38,7 +38,7 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
       await delay(50);
     }
     const started = performance.now();
-    const input = { requestId: 'e2e-route', message: '上海从中企云翠森林到前滩太古里，只询价', route };
+    const input = { requestId: 'e2e-route', message: '上海从青禾虚构园区到前滩太古里，只询价', route };
     const submitted = await fetch(url + '/tasks', { method: 'POST', headers, body: JSON.stringify(input) });
     assert.equal(submitted.status, 200);
     let task = await submitted.json() as { id: string; state: string; result: { accepted: boolean; estimates: unknown[] } };
@@ -223,7 +223,7 @@ test('a killed Worker is replaced and finishes the same batched task and interru
   interrupted.on('message', message => { if (message === 'source-read-started') sourceReadStarted = true; });
   try {
     await waitFor(async () => await fetch(url + '/health').then(response => response.ok).catch(() => false) || undefined);
-    const first = await send('从中企云翠森林到前滩太古里');
+    const first = await send('从青禾虚构园区到前滩太古里');
     const second = await send('只询价', first.contextId);
     assert.deepEqual(second, first);
     await waitFor(async () => sourceReadStarted || undefined);
@@ -246,7 +246,7 @@ test('a killed Worker is replaced and finishes the same batched task and interru
     }, 40000);
     assert.equal(result.state, 'completed', result.error ?? undefined);
     assert.equal((result.result as { estimates: unknown[] }).estimates.length, 2);
-    assert.deepEqual(await send('从中企云翠森林到前滩太古里'), first);
+    assert.deepEqual(await send('从青禾虚构园区到前滩太古里'), first);
     assert.deepEqual(await send('只询价', first.contextId), first);
     const rows = (await f.db.query(`SELECT name,state,lease_token FROM ${f.db.schema}.source_calls WHERE task_id=$1`, [first.id])).rows;
     assert(rows.every(row => row.state === 'completed'));

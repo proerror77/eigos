@@ -24,7 +24,7 @@ import type { RuntimeExtensions } from '../packages/runtime/extensions.js';
 import { digest } from '../packages/core/identity.js';
 
 export const document = businessDefinition;
-export const route = { city: '上海市', origin: '中企云翠森林', destination: '前滩太古里' };
+export const route = { city: '上海市', origin: '青禾虚构园区', destination: '前滩太古里' };
 export const principal = developmentPrincipal;
 type FixturePlace = { display_name: string; address: string; address_all: string; city: string;
   location: { lat: number; lng: number } };
@@ -102,7 +102,7 @@ export async function fixture(driver: AgentDriver = new FixtureAgent(),services?
   const source = async (owner: string) => { if (owner !== principal.owner) throw new Error('Wrong source owner'); return p.source; };
   const capabilities = createCapabilities(db, source, extensions, services, stripe, connections), model = await metadata.publish(definition, capabilities, publisher), agent = new OntologyAgent(db, metadata, tasks, capabilities, driver, agentOptions), worker = new Worker(tasks, agent,new ScheduledActions(db,metadata),new ScheduledActionRunner(db,metadata,tasks,capabilities.actions));
   return { db, schema, model, metadata, tasks, capabilities, access, publisher, agent, worker, source, provider: p,
-    submit: () => tasks.submit(principal, { requestId: randomUUID(), message: '从中企云翠森林到前滩太古里，只询价', route }),
+    submit: () => tasks.submit(principal, { requestId: randomUUID(), message: '从青禾虚构园区到前滩太古里，只询价', route }),
     async close() { worker.stop(); await db.query(`DROP SCHEMA ${db.schema} CASCADE`); await db.close(); await p.close(); },
   };
 }

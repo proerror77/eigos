@@ -30,7 +30,7 @@ async function setup() {
     const { elapsedMs: _elapsed, execution: _execution, ...result } = raw;
     return immediateRideResult.parse(result);
   };
-  const submit = (message = '从中企云翠森林到前滩太古里，帮我叫辆车') =>
+  const submit = (message = '从青禾虚构园区到前滩太古里，帮我叫辆车') =>
     f.tasks.submit(principal, { requestId: randomUUID(), message });
   const next = async (id: string) => {
     assert(await f.worker.runOne('interactive'));
@@ -81,7 +81,7 @@ test('the PA confirms the exact vehicle and fare on the original MCP task before
     assert.equal(f.provider.flags.orderCreates, 0);
     await f.tasks.cancel(principal, short.id);
 
-    const request = { requestId: 'immediate-ride-mcp', message: '从中企云翠森林到前滩太古里，帮我叫辆车' };
+    const request = { requestId: 'immediate-ride-mcp', message: '从青禾虚构园区到前滩太古里，帮我叫辆车' };
     const task = await tool('submit_task', request);
     const approval = await f.paused(task.id);
     assert.equal(approval.input.pickup.name, route.origin);

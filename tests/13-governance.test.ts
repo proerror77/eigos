@@ -123,7 +123,7 @@ test('failed deliveries retain a stable idempotency key across explicit retries'
     const keys:string[]=[];
     const effects=new Effects(f.db,new Map([['Flaky',async(_payload,context)=>{keys.push(context.idempotencyKey);if(keys.length===1)throw Error('connection closed');}]]));
     await f.capabilities.actions.apply(f.access, f.model, 'EstimateRide',
-      { city: '上海市', origin: '中企云翠森林', destination: '前滩太古里' }, 'flaky');
+      { city: '上海市', origin: '青禾虚构园区', destination: '前滩太古里' }, 'flaky');
     await f.db.transaction(client=>effects.enqueue(client,f.access,f.model,'EstimateRide','flaky',[{name:'Notice',handler:'Flaky',payload:{}}]));
     await effects.runOne();
     const failed=(await effects.status(f.access,'flaky'))[0]!;assert.equal(failed.state,'failed');
