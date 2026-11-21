@@ -54,7 +54,8 @@ test('both partner ride suppliers resume the original PA task and link the selec
         const name = partnerRideServices[provider].function;
         assert(ontology.functions.some((fn: { apiName: string }) => fn.apiName === name));
         await tools.get('complete_with_action')!.invoke({
-          action: { action: 'PreparePartnerRideQuote', input: { provider, route } },
+          action: { interface: { type: 'PartnerRideQuoting', action: 'estimate', implementation: 'PartnerRideQuote' },
+            input: { provider, route } },
           read: { function: 'readPartnerRideQuote', resultParameter: 'quote' },
         });
       },
@@ -104,8 +105,11 @@ test('both partner ride suppliers resume the original PA task and link the selec
           quotes: { id: string | number; etaSeconds: number; appLink: string; fare?: { expiresAt: string } }[];
         } };
         const quote = { type: partnerRideTypes.quote, id };
-        const handoff = await f.capabilities.actions.apply(f.access, f.model, 'PreparePartnerRideHandoff',
-          { quote, vehicleId: result.quotes[0]!.id }, randomUUID());
+        const selected = f.capabilities.actions.resolve(f.access, f.model, {
+          interface: { type: 'PartnerRideQuoting', action: 'handoff', object: quote },
+          input: { quote, vehicleId: result.quotes[0]!.id },
+        });
+        const handoff = await f.capabilities.actions.apply(f.access, f.model, selected.action, selected.input, randomUUID());
         const graph = new Objects(f.db, f.model, f.access);
         assert.deepEqual((await graph.follow(quote, 'handoff')).map(row => row.ref), [handoff]);
         assert.equal((await graph.read(handoff)).properties.appLink, result.quotes[0]!.appLink);
@@ -179,7 +183,7 @@ test('Uber and Grab synthetic orders and payments are linked, confirmed and idem
       assert.deepEqual((await graph.follow(order, 'payment')).map(row => row.ref), [payment]);
       const selected = f.capabilities.actions.resolve(f.access, f.model, {
         interface: { type: 'CancelableRideOrder', action: 'cancel', object: order },
-        input: { confirmCancellation: true },
+        input: { order, confirmCancellation: true },
       });
       assert.equal(selected.action, 'CancelSyntheticPartnerRide');
       assert.deepEqual(await apply(selected.action, selected.input), order);

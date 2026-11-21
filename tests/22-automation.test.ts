@@ -737,7 +737,8 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     !marketplaceDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
     !localDeliveryDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
     !localDeliveryTradeDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
-    !petRideDefinition.interfaceTypes.some(item => item.apiName === type.apiName));
+    !petRideDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
+    !partnerRideLifecycle.interfaceTypes.some(item => item.apiName === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;
   const didiOrder = v9Definition.objectTypes.find(type => type.apiName === 'DidiRideOrder')!;
   delete didiOrder.properties.cancellationReceipt;

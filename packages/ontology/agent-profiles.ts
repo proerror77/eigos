@@ -35,13 +35,14 @@ export const businessAgentProfiles: AgentProfile[] = [
     apiName: 'PartnerRideQuote',
     terms: ['Uber', '优步', 'Grab'],
     objects: ['PartnerRideQuote', 'PartnerRideHandoff'],
+    interfaces: ['PartnerRideQuoting'],
     actions: ['PreparePartnerRideQuote', 'PreparePartnerRideHandoff'],
     functions: [...Object.values(partnerRideServices).map(service => service.function), 'readPartnerRideQuote', 'readPartnerRideHandoff'],
     instructions: [
       { function: partnerRideServices.Uber.function, text: 'For an explicit Uber request use estimateUberRide. Use only confirmed WGS84 endpoints and addresses. Ask for missing or ambiguous locations. Return the Uber handoff for the user to confirm in the App.' },
       { function: partnerRideServices.Grab.function, text: 'For an explicit Grab request use estimateGrabRide. Use only confirmed WGS84 endpoints and addresses. Ask for missing or ambiguous locations. Return the Grab handoff for the user to confirm in the App.' },
-      { action: 'PreparePartnerRideQuote', function: 'readPartnerRideQuote', text: 'When a user requests a recorded partner ride quote, call complete_with_action with this Action and bind its returned quote to readPartnerRideQuote. Confirm WGS84 endpoints first.' },
-      { action: 'PreparePartnerRideHandoff', function: 'readPartnerRideHandoff', text: 'For a user-selected vehicle from a recorded partner quote, prepare its App handoff using the original quote and exact vehicle id. The user confirms the order in the App.' },
+      { action: 'PreparePartnerRideQuote', function: 'readPartnerRideQuote', text: 'When a user requests a recorded partner ride quote, call complete_with_action with PartnerRideQuoting.estimate using implementation PartnerRideQuote and bind its returned quote to readPartnerRideQuote. Confirm WGS84 endpoints first.' },
+      { action: 'PreparePartnerRideHandoff', function: 'readPartnerRideHandoff', text: 'For a user-selected vehicle from a recorded partner quote, call PartnerRideQuoting.handoff with the original quote reference as both the target and quote input, plus the exact vehicle id. The user confirms the order in the App.' },
     ],
   },
   {

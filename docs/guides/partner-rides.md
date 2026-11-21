@@ -18,8 +18,8 @@ EIGOS 发布 `estimateUberRide` 和 `estimateGrabRide` 两个只读 Function。�
 
 | 链路 | Action 与关系 |
 |---|---|
-| 原任务询价 | `PreparePartnerRideQuote` 复用对应供应商的估价 Function。通过 `complete_with_action` 将结果绑定到 `readPartnerRideQuote` 的 `quote` 参数，PA 可以在原任务回传结果。 |
-| App 交接 | `PreparePartnerRideHandoff` 接受原报价引用和车型 ID。通过 `PartnerRideQuoteHandoff` 保留报价与交接记录的关系，使用 `readPartnerRideHandoff` 查看尚未到期的跳转链接。 |
+| 原任务询价 | `PreparePartnerRideQuote` 复用对应供应商的估价 Function。通过 `complete_with_action` 调用 `PartnerRideQuoting.estimate`，实现类型为 `PartnerRideQuote`，将结果绑定到 `readPartnerRideQuote` 的 `quote` 参数，PA 可以在原任务回传结果。 |
+| App 交接 | `PartnerRideQuoting.handoff` 映射到 `PreparePartnerRideHandoff`，接受原报价引用和车型 ID。通过 `PartnerRideQuoteHandoff` 保留报价与交接记录的关系，使用 `readPartnerRideHandoff` 查看尚未到期的跳转链接。 |
 | 合成叫车 | `CreateSyntheticPartnerRideQuote` 接受显式试验 ID、供应商和路线。 `BookSyntheticPartnerRide` 要求确认原价与币种，通过 `SyntheticPartnerRideQuoteOrder` 关联原报价。 |
 | 合成取消 | `CancelableRideOrder.cancel` 在合成订单上映射到 `CancelSyntheticPartnerRide`。取消更新原订单，已记录的付款继续保留。 |
 | 合成付款 | `PaySyntheticPartnerRide` 要求确认原价与币种，通过 `SyntheticPartnerRideOrderPayment` 关联原订单。每个原订单最多保留一条付款记录。 |

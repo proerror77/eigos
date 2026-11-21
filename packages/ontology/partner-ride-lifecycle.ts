@@ -79,17 +79,31 @@ const orderInterfaces: OntologyDocument['objectTypes'][number]['interfaces'] = {
         cancel: { action: 'CancelSyntheticPartnerRide', parameters: { order: 'order', confirmCancellation: 'confirmCancellation', reason: 'reason' } },
       } },
     };
+const quoteInterface = 'PartnerRideQuoting';
+const quoteInterfaces: OntologyDocument['objectTypes'][number]['interfaces'] = {
+  [quoteInterface]: { properties: {}, links: {}, actions: {
+    estimate: { action: 'PreparePartnerRideQuote', parameters: { provider: 'provider', route: 'route' } },
+    handoff: { action: 'PreparePartnerRideHandoff', parameters: { quote: 'quote', vehicleId: 'vehicleId' } },
+  } },
+};
 const readScope = { objectTypes: [quote, handoff], linkTypes: [partnerRideLinks.handoff] };
 const syntheticScope = { objectTypes: [trialQuote, order, payment], linkTypes: [partnerRideLinks.order, partnerRideLinks.payment] };
 
-export const partnerRideLifecycle: Pick<OntologyDocument, 'objectTypes' | 'linkTypes' | 'functionTypes' | 'actionTypes'> = {
+export const partnerRideLifecycle: Pick<OntologyDocument, 'objectTypes' | 'interfaceTypes' | 'linkTypes' | 'functionTypes' | 'actionTypes'> = {
   objectTypes: Object.entries(schemas).map<OntologyDocument['objectTypes'][number]>(([apiName, schema]) => ({
     apiName, displayName: apiName, description: 'Provider-specific ride evidence and its lifecycle records.',
     ...(synthetic.has(apiName) ? developmentOnly : {}),
-    primaryKey: 'id', titleProperty: 'name', interfaces: apiName === order ? orderInterfaces : {},
+    primaryKey: 'id', titleProperty: 'name', interfaces: apiName === quote ? quoteInterfaces : apiName === order ? orderInterfaces : {},
     properties: Object.fromEntries(Object.entries(schema.shape).map(([key, value]) => [key,
       { description: key, required: true, schema: json(value) }])),
   })),
+  interfaceTypes: [{
+    apiName: quoteInterface, description: 'Quote a partner ride and prepare the selected provider App handoff.',
+    properties: {}, optionalProperties: [], links: {}, actions: {
+      estimate: { parameters: json(partnerRideInputs.preparePartnerRideQuote), objectParameters: {}, required: true },
+      handoff: { parameters: json(partnerRideInputs.preparePartnerRideHandoff), objectParameters: { quote: quoteInterface }, required: true },
+    },
+  }],
   linkTypes: [
     link(partnerRideLinks.handoff, quote, 'handoff', handoff, 'quote'),
     link(partnerRideLinks.order, trialQuote, 'order', order, 'quote'),

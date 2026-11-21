@@ -180,6 +180,7 @@ businessDefinition.actionTypes.push(...hotelTransferDefinition.actionTypes);
 businessDefinition.dataSources.push(...hotelTransferDefinition.dataSources);
 businessDefinition.functionTypes.push(...didiOrderDefinitions.functionTypes, ...didiReadDefinitions, ...partnerRideDefinitions, ...partnerRideLifecycle.functionTypes);
 businessDefinition.objectTypes.push(...partnerRideLifecycle.objectTypes);
+businessDefinition.interfaceTypes.push(...partnerRideLifecycle.interfaceTypes);
 businessDefinition.linkTypes.push(...partnerRideLifecycle.linkTypes);
 businessDefinition.actionTypes.push(...partnerRideLifecycle.actionTypes);
 businessDefinition.actionTypes.push(...didiOrderDefinitions.actionTypes);
