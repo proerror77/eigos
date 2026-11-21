@@ -1,3 +1,4 @@
+import { itineraryContinuityFunctions } from './scheduling/itinerary-continuity.js';
 import { fliggyHandoffFunctions } from './fliggy/travel-handoff.js';
 import { configuredSource, type ConnectionConfig } from '../core/config.js';
 import { evaluateCalendarJourneyRelease } from './journey/release-checks.js';
@@ -90,6 +91,7 @@ export function createCapabilities(
   const notifications = configuredTravelNotifications(db, getFunctions, connections.travelPA, connections.travelPAFetch);
   const handlers = new Map([
     ...schedulingFunctions(db),
+    ...itineraryContinuityFunctions(db),
     ...transferDecisionFunctions(),
     ...diningResearch(connections.xiaohongshu, connections.xiaohongshuFetch),
     ...dianpingFunctions(connections.dianping, connections.dianpingFetch),

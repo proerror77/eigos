@@ -75,6 +75,30 @@ Action 的对象写入和执行记录使用现有原子事务。Workflow 在 Act
 
 默认从保存时的最新转换开始。使用 `replayFrom` 可指定排他的历史序号，`"0"` 从头读。启用规则之前已有取消、转换消费后才补链，或修改规则导致先前运行失效时，可从需要复核的转换之前重放。同一变化与目标的业务写回使用稳定标识。关系增删本身由对象规则检测，相关过程规则在消费和执行时读取关系。
 
+### 对象集字段变化
+
+`save_rule` 的 `query` 规则可选 `onModified`。每项 `watch` 声明一个关系路径和一组存储字段，路径为空时监视对象本身。Indexer 每五秒可扫描一次，在当前权限下比较正式图谱的字段快照，并把发生变化的对象用普通 Workflow 输入绑定。来源投影和 Action 编辑共用这条路径。多个来源在同一轮内变化时，按这一轮可见的最新快照计算。需要消费每条独立状态转换的规则继续用 ProcessLog。
+
+```json
+{
+  "name": "Refresh itinerary continuity",
+  "enabled": true,
+  "query": {"type":"ItineraryContinuity"},
+  "workflow": "WORKFLOW_ID",
+  "onModified": {
+    "watch": [
+      {"properties":["flightObservation","hotelObservation","sources"]},
+      {"path":["flightWatch"],"properties":["status","state"]},
+      {"path":["hotelBooking"],"properties":["state","selection"]},
+      {"path":["rideOrder"],"properties":["state","cancellationReceipt"]},
+      {"path":["plan","availability"],"properties":["windows","busy","sourceVersion"]}
+    ]
+  }
+}
+```
+
+示例 Workflow 只提交 `CheckItineraryContinuity`，输入 `continuity: { "object": true }`。首次匹配建立基线，可用 `includeAdded: true` 同时处理新加入对象。快照摘要和 Workflow 运行在同一事务提交，规则扫描重试复用现有运行去重。每条规则最多匹配 100 个根对象，路径最多三步且每一层至多 100 个可见对象。升级已有运行库时先运行 `db:upgrade`，为现有规则匹配表增设快照摘要。[Foundry 对象集条件](https://www.palantir.com/docs/foundry/automate/condition-objects#objects-modified-in-set)
+
 ## 查看与权限
 
 写操作需要 `ontology:write`，列表需要 `ontology:read`。Workflow 和规则检查本体定义可见性及 Action 资源权限。输入属性经过当前行和属性策略遮罩。

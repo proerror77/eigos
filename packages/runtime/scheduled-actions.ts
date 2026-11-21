@@ -204,6 +204,22 @@ export class ScheduledActions {
       graph.client,
     );
   }
+  /** Move an authorized pending check forward while preserving its action, scopes and deadline. */
+  async advance(graph: Objects, id: string, at: string) {
+    if (graph.model.scenario || !(Date.parse(at) > Date.now())) return false;
+    const [schedule] = (await this.db.query(`SELECT state,task_id FROM ${this.db.schema}.scheduled_actions
+      WHERE id=$1 AND owner=$2 AND deadline>$3 AND state IN ('scheduled','started') FOR UPDATE`,
+      [id, graph.owner, at], graph.client)).rows;
+    if (!schedule) return false;
+    const updated = schedule.state === 'scheduled'
+      ? await this.db.query(`UPDATE ${this.db.schema}.scheduled_actions SET run_at=$3
+          WHERE id=$1 AND owner=$2 AND run_at>$3`, [id, graph.owner, at], graph.client)
+      : await this.db.query(`UPDATE ${this.db.schema}.tasks SET available_at=$3
+          WHERE id=$1 AND owner=$2 AND state='submitted' AND available_at>$3`, [schedule.task_id, graph.owner, at], graph.client);
+    if (!updated.rowCount) return false;
+    await this.db.query("SELECT pg_notify('eigos_tasks','scheduled')", [], graph.client);
+    return true;
+  }
   async inspect(principal: Principal, id: string, client: Sql = this.db.pool) {
     const row = (
       await this.db.query(
