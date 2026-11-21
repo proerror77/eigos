@@ -152,6 +152,8 @@ Luma 活动、RollingGo 酒店和 Shopify 商品实现各自的 Interface，并�
 
 Luma 默认沿用原 PA 已连接的 MCP。未来执行需要 PA 持续处理 `list_pa_requests`；只有一个已登录但离线的聊天会话不足以保证无人值守。连接配置、调用契约、价格边界和当前验收范围见 [服务接口与定时出行](docs/guides/service-planning.md)。
 
+淘宝闪购与盒马支持按已选配送地址查询外卖和商超商品。接入、权限与库存证据见 [淘宝闪购与盒马](docs/guides/local-delivery.md)。
+
 ## Ontology 运行服务
 
 对象集、发布提案、来源索引、编辑历史、物化、策略和独立进程的入口见 [Ontology 运行服务](docs/guides/ontology-services.md)。构建后用 `npm run start:indexer` 运行来源消费与已配置的 Action 副作用。可用 `QUERY_DATABASE_URL` 配置只读查询节点，`EIGOS_EXTENSION_MODULE` 注册受信任的 Function 版本与副作用处理函数。

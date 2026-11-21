@@ -1,3 +1,6 @@
+import { localDeliveryProviders } from '../packages/ontology/local-delivery.js';
+import { localDeliveryTradeDefinition } from '../packages/ontology/local-delivery-trade.js';
+import { localDeliveryDefinition } from '../packages/ontology/local-delivery.js';
 import { scheduleJourneyDefinition } from '../packages/ontology/schedule-journey.js';
 import { itineraryDefinition } from '../packages/ontology/itinerary-continuity.js';
 import { executeHotelDependentTrip, tripHotelDependencyDefinition } from '../packages/ontology/trip-hotel-dependency.js';
@@ -681,7 +684,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const laterDomains = [
     calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition, fliggyServicesDefinition,
     fliggyFlightBookingDefinition, fliggyHotelDefinition, diningReservations, marketplaceDefinition, petRideDefinition,
-    travelHandoffDefinition, hotelTransferDefinition, tripHotelDependencyDefinition, itineraryDefinition,
+    travelHandoffDefinition, hotelTransferDefinition, tripHotelDependencyDefinition, itineraryDefinition, localDeliveryDefinition, localDeliveryTradeDefinition,
   ];
   const addedTypes = new Set([
     ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType, immediateRideType,
@@ -730,6 +733,8 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     !travelHandoffDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
     !fliggyServicesDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
     !marketplaceDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
+    !localDeliveryDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
+    !localDeliveryTradeDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
     !petRideDefinition.interfaceTypes.some(item => item.apiName === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;
   const didiOrder = v9Definition.objectTypes.find(type => type.apiName === 'DidiRideOrder')!;
@@ -758,7 +763,8 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     !itineraryDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !scheduleJourneyDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !fliggyServicesDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
-    !marketplaceDefinition.linkTypes.some(link => link.apiName === type.apiName));
+    !marketplaceDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    !localDeliveryTradeDefinition.linkTypes.some(link => link.apiName === type.apiName));
   v9Definition.dataSources = v9Definition.dataSources.filter(source =>
     !fliggyServicesDefinition.dataSources.some(item => item.apiName === source.apiName) &&
     !hotelTransferDefinition.dataSources.some(item => item.apiName === source.apiName) &&
@@ -768,7 +774,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   v9Definition.functionTypes.find(fn => fn.apiName === 'resolveRideLocations')!.description =
     'Resolve each venue by querying exact Location.name within its source receipt. One exact match resolves even when other entrances or nearby shops were returned. Multiple exact matches or no exact match require clarification. Explicit selections must belong to the corresponding source response.';
   v9Definition.valueTypes = v9Definition.valueTypes?.filter(type => type.apiName !== taskLocationValueType.apiName);
-  v9Definition.typeGroups = v9Definition.typeGroups?.filter(group => group.apiName !== 'Documents');
+  v9Definition.typeGroups = v9Definition.typeGroups?.filter(group => group.apiName !== 'Documents' && !localDeliveryProviders.some(provider => provider === group.apiName));
   for (const group of v9Definition.typeGroups ?? []) group.objectTypes = group.objectTypes.filter(type => !addedTypes.has(type));
   assert.equal(new Ontology(v9Definition).digest, 'ab7a4e8a4c6d6c0e56eaef294ae849911f78da535e9cef2fb213bdfaa39c4d8a');
 

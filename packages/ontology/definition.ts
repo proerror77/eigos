@@ -12,6 +12,8 @@ import { mapFunctions, pickupCoordinateEvidence } from './maps.js';
 import { locationFunctions, taskLocationValueType } from './location.js';
 import { luckinDefinition as luckin } from './luckin.js';
 import { deliveryFunctions } from './delivery.js';
+import { localDeliveryDefinition, localDeliveryProviders } from './local-delivery.js';
+import { deliveryTradeServices, hemaCheckoutStates, localDeliveryTradeDefinition, taobaoCheckoutStates } from './local-delivery-trade.js';
 import {localEmbeddingDefinition} from './embedding-definition.js';
 import { applicationDefinition as applications, geometryUploadCriterion } from './applications.js';
 import {scenarioObjectType} from './scenario-definition.js';
@@ -78,6 +80,11 @@ businessDefinition.linkTypes.push(...marketplace.linkTypes);
 businessDefinition.functionTypes.push(...marketplace.functionTypes);
 businessDefinition.actionTypes.push(...marketplace.actionTypes);
 businessDefinition.dataSources.push(...marketplace.dataSources);
+businessDefinition.objectTypes.push(...localDeliveryDefinition.objectTypes, ...localDeliveryTradeDefinition.objectTypes);
+businessDefinition.linkTypes.push(...localDeliveryTradeDefinition.linkTypes);
+businessDefinition.interfaceTypes.push(...localDeliveryDefinition.interfaceTypes, ...localDeliveryTradeDefinition.interfaceTypes);
+businessDefinition.functionTypes.push(...localDeliveryDefinition.functionTypes, ...localDeliveryTradeDefinition.functionTypes);
+businessDefinition.actionTypes.push(...localDeliveryDefinition.actionTypes, ...localDeliveryTradeDefinition.actionTypes);
 businessDefinition.objectTypes.push(...travelHandoffDefinition.objectTypes);
 businessDefinition.interfaceTypes.push(...travelHandoffDefinition.interfaceTypes);
 businessDefinition.linkTypes.push(...travelHandoffDefinition.linkTypes);
@@ -136,6 +143,11 @@ businessDefinition.typeGroups=[
   {apiName:'Travel',displayName:'出行',description:'Places, routes and source-backed price estimates',objectTypes:[...ride.objectTypes.map(type=>type.apiName),petRideType]},
   {apiName:'Scheduling',displayName:'排程',description:'Resources, calendar availability and schedule plans',objectTypes:scheduling.objectTypes.map(type=>type.apiName)},
   {apiName:'Services',displayName:'服务',description:'Provider-neutral service offerings',objectTypes:[...services.objectTypes,...luckin.objectTypes,...fliggy.objectTypes,...marketplace.objectTypes,...travelHandoffDefinition.objectTypes,...fliggyHotelDefinition.objectTypes,...fliggyFlightBookingDefinition.objectTypes,...diningReservations.objectTypes].map(type=>type.apiName)},
+  ...localDeliveryProviders.map(provider => {
+    const service = deliveryTradeServices[provider];
+    return { apiName: provider, displayName: service.search.displayName, description: 'Account-scoped supplier transactions',
+      objectTypes: [service.search.object, service.cartChangeType, service.checkoutType, service.orderType] };
+  }),
   {apiName:'TimedTravel',displayName:'定时出行',description:'Authorized event and travel planning',objectTypes:[...travel.objectTypes,...journey.objectTypes,...flight.objectTypes].map(type=>type.apiName)},
   {apiName:'Payments',displayName:'付款',description:'Merchant order handoff and independently read payment status',objectTypes:payments.objectTypes.map(type=>type.apiName)},
   {apiName:'Models',displayName:'三维模型',description:'Model assets and annotations',objectTypes:applications.objectTypes.map(type=>type.apiName)},
@@ -147,7 +159,7 @@ for(const group of businessDefinition.typeGroups)for(const name of group.objectT
 for(const fn of businessDefinition.functionTypes){
   if(fn.apiName==='embedTextLocal' || fn.apiName===geometryUploadCriterion){fn.dependencies={};continue;}
   if(travelHandoffDefinition.functionTypes.includes(fn))continue;
-  if(documents.functionTypes.includes(fn)||fliggy.functionTypes.includes(fn)||marketplace.functionTypes.includes(fn)||fliggyHotelDefinition.functionTypes.includes(fn)||fliggyFlightBookingDefinition.functionTypes.includes(fn)||diningResearchFunctions.includes(fn)||dianpingResearchFunctions.includes(fn)||diningReservations.functionTypes.includes(fn)||petRideDefinition.functionTypes.includes(fn)||fn===diningActivityFunction)continue;
+  if(documents.functionTypes.includes(fn)||fliggy.functionTypes.includes(fn)||marketplace.functionTypes.includes(fn)||localDeliveryDefinition.functionTypes.includes(fn)||localDeliveryTradeDefinition.functionTypes.includes(fn)||fliggyHotelDefinition.functionTypes.includes(fn)||fliggyFlightBookingDefinition.functionTypes.includes(fn)||diningResearchFunctions.includes(fn)||dianpingResearchFunctions.includes(fn)||diningReservations.functionTypes.includes(fn)||petRideDefinition.functionTypes.includes(fn)||fn===diningActivityFunction)continue;
   if(fn === flightPositionFunction || journey.functionTypes.includes(fn) || flight.functionTypes.includes(fn) || payments.functionTypes.includes(fn) || deliveryFunctions.includes(fn) || locationFunctions.includes(fn) || mapFunctions.includes(fn) || luckin.functionTypes.includes(fn))continue;
   if(ride.functionTypes.some(item=>item.apiName===fn.apiName)){
     fn.dependencies={objectTypes:ride.objectTypes.map(type=>type.apiName),interfaceTypes:ride.interfaceTypes.map(type=>type.apiName),linkTypes:ride.linkTypes.map(link=>link.apiName),dataSources:ride.dataSources.map(source=>source.apiName),functions:ride.functionTypes.filter(item=>item.apiName!==fn.apiName).map(item=>item.apiName)};
@@ -261,7 +273,44 @@ addProcessLogs(businessDefinition, [
   { type: 'EventRegistration', property: 'state' }, { type: 'EventTrip', property: 'state' },
   { type: 'StripeLinkPaymentRequest', property: 'status' }, { type: 'SchedulePlan', property: 'state' }, { type: journeyType, property: 'state' }, { type: flightWatchType, property: 'state' },
   { type: diningReservationType, property: 'state' },
+  ...localDeliveryProviders.flatMap(provider => {
+    const service = deliveryTradeServices[provider];
+    return [{ type: service.checkoutType, property: 'state' }, { type: service.orderType, property: 'fulfillment' }];
+  }),
 ]);
+
+for (const provider of localDeliveryProviders) {
+  const service = deliveryTradeServices[provider], actions = service.names;
+  const taobao = provider === 'TaobaoInstantDelivery';
+  businessDefinition.objectTypes.find(type => type.apiName === service.checkoutProcess)!.machinery = {
+    states: (taobao ? taobaoCheckoutStates : hemaCheckoutStates).map(name => ({ name })),
+    transitions: [
+      { from: null, to: 'quoted', action: actions.preview },
+      { from: 'quoted', to: 'declined', action: actions.submit },
+      { from: 'quoted', to: 'order_unknown', action: actions.submit },
+      { from: 'quoted', to: 'awaiting_payment', action: actions.submit },
+      { from: 'order_unknown', to: 'awaiting_payment', action: actions.refresh },
+      { from: 'awaiting_payment', to: 'payment_handoff', action: actions.preparePayment },
+      ...(taobao ? [
+        ...['awaiting_payment', 'payment_handoff'].flatMap(from => ['payment_unknown', 'payment_verification', 'payment_failed']
+          .map(to => ({ from, to, action: actions.pay }))),
+        ...['awaiting_payment', 'payment_handoff', 'payment_unknown', 'payment_verification', 'payment_failed', 'order_unknown']
+          .map(from => ({ from, to: 'paid', action: actions.refresh })),
+      ] : []),
+    ],
+    subprocesses: [{ link: 'orders', process: service.orderProcess }],
+  };
+  businessDefinition.objectTypes.find(type => type.apiName === service.orderProcess)!.machinery = {
+    states: ['unknown', 'in_progress', 'completed', 'canceled'].map(name => ({ name,
+      ...(name === 'completed' || name === 'canceled' ? { terminal: true } : {}) })),
+    transitions: [
+      { from: null, to: 'unknown', action: actions.submit },
+      ...[null, 'unknown'].flatMap(from => ['in_progress', 'completed', 'canceled']
+        .map(to => ({ from, to, action: actions.refresh }))),
+      ...['completed', 'canceled'].map(to => ({ from: 'in_progress', to, action: actions.refresh })),
+    ],
+  };
+}
 
 businessDefinition.objectTypes.find(type => type.apiName === 'ItineraryContinuityStateLog')!.machinery = {
   states: [{ name: 'watching' }, { name: 'attention' }, { name: 'expired', terminal: true }, { name: 'stopped', terminal: true }],

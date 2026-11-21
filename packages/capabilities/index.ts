@@ -23,6 +23,9 @@ import { prepareMapCorrectionPrompt } from './amap/task-correction.js';
 import { hotelTaskWorkflow, publicHotelTaskResult } from './services/hotel-workflows.js';
 import { resolveTaskLocation } from './location.js';
 import { luckinFunctions } from './luckin/functions.js';
+import type { DeliveryConnectionPaths } from './local-delivery/mcp.js';
+import { localDeliveryFunctions } from './local-delivery/functions.js';
+import { localDeliveryTradeFunctions } from './local-delivery/trade-functions.js';
 import { marketplaceFunctions } from './marketplace/functions.js';
 import { paotuiFunctions } from './meituan/paotui.js';
 import { waimaiFunctions } from './meituan/waimai.js';
@@ -48,7 +51,7 @@ import { configuredStripeSandbox, type StripeSandboxResolver } from './payments/
 
 type ProviderFetch = {
   amapFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch;
-  dianpingFetch?: typeof fetch; marketplaceFetch?: typeof fetch;
+  dianpingFetch?: typeof fetch; marketplaceFetch?: typeof fetch; localDeliveryFetch?: typeof fetch;
 };
 
 export function configuredCapabilities(db: Database, config: ConnectionConfig, extensions: RuntimeExtensions,
@@ -61,6 +64,10 @@ export function configuredCapabilities(db: Database, config: ConnectionConfig, e
       fliggyHotel: config.EIGOS_FLIGGY_HOTEL_CONNECTION_FILE,
       paotui: config.EIGOS_PAOTUI_CONNECTION_FILE,
       waimai: config.EIGOS_WAIMAI_CONNECTION_FILE,
+      localDelivery: {
+        TaobaoInstantDelivery: config.EIGOS_TAOBAO_INSTANT_DELIVERY_CONNECTION_FILE,
+        Hema: config.EIGOS_HEMA_CONNECTION_FILE,
+      },
       amap: config.EIGOS_AMAP_CONNECTION_FILE,
       xiaohongshu: config.EIGOS_XIAOHONGSHU_CONNECTION_FILE,
       variFlight: config.EIGOS_VARIFLIGHT_CONNECTION_FILE,
@@ -81,7 +88,7 @@ export function createCapabilities(
   extensions: RuntimeExtensions = {},
   services: ServiceResolver = unavailableServices,
   stripe: StripeSandboxResolver = configuredStripeSandbox(),
-  connections: { paotui?: string; waimai?: string; amap?: string; amapFetch?: typeof fetch; variFlight?: string; variFlightFetch?: typeof fetch;
+  connections: { paotui?: string; waimai?: string; localDelivery?: DeliveryConnectionPaths; localDeliveryFetch?: typeof fetch; amap?: string; amapFetch?: typeof fetch; variFlight?: string; variFlightFetch?: typeof fetch;
     fr24?: string; fr24Entrypoint?: string; calendar?: string; calendarFetch?: typeof fetch; travelPA?: string; travelPAFetch?: typeof fetch;
     xiaohongshu?: string; xiaohongshuFetch?: typeof fetch; dianping?: string; dianpingFetch?: typeof fetch; diningWeb?: string; diningMiniProgram?: string;
     fliggyHotel?: string; fliggyHotelFetch?: typeof fetch; fliggyFlight?: string; fliggyFlightFetch?: typeof fetch } = {},
@@ -102,6 +109,8 @@ export function createCapabilities(
     [registerDocumentFunction, registerSchedulePlanDocument],
     ...serviceFunctions(db, services, () => sources),
     ...marketplaceFunctions(services),
+    ...localDeliveryFunctions(connections.localDelivery ?? {}, connections.localDeliveryFetch),
+    ...localDeliveryTradeFunctions(db, connections.localDelivery ?? {}, connections.localDeliveryFetch),
     ...fliggyHandoffFunctions(services),
     ...fliggyFlightBookingFunctions(db, configuredFliggyFlight(connections.fliggyFlight, connections.fliggyFlightFetch)),
     ...fliggyHotelFunctions(db, configuredFliggyHotel(connections.fliggyHotel, connections.fliggyHotelFetch)),

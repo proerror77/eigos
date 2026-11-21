@@ -12,7 +12,7 @@ import type { FunctionContext, FunctionHandler } from '../../runtime/functions.j
 import type { Objects } from '../../runtime/objects.js';
 import type { Task } from '../../runtime/tasks.js';
 import { requireEligiblePassenger } from './passenger-restrictions.js';
-import { OrderObservation } from './order-observation.js';
+import { OrderObservation } from '../../runtime/order-observation.js';
 import { topIdentifier, topNumber, type FliggyFlightResolver } from './top.js';
 
 type Partner = Awaited<ReturnType<FliggyFlightResolver>>;
@@ -128,7 +128,7 @@ function stage(ctx: FunctionContext) {
 }
 export function fliggyFlightBookingFunctions(db: Database, resolve: FliggyFlightResolver): ReadonlyMap<string, FunctionHandler> {
   const operations = new ExternalOperations(db);
-  const followup = new OrderObservation(db, 'RefreshFliggyFlightBooking');
+  const followup = new OrderObservation(db, 'RefreshFliggyFlightBooking', 'booking', 'fliggy-original-order-observation');
   const tracksIssuance = (ctx: FunctionContext) =>
     Boolean(ctx.objects.model.object(fliggyFlightBookingType).properties.issuanceState);
   const current = async (ctx: FunctionContext, ref: ObjectRef) => {

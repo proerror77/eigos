@@ -1,3 +1,5 @@
+import { localDeliveryProviders } from './local-delivery.js';
+import { deliveryTradeServices } from './local-delivery-trade.js';
 import { bookImmediateRideAction, immediateRideInterface, immediateRideType } from './didi-immediate-ride.js';
 import type { OntologyDocument } from './schema.js';
 
@@ -122,6 +124,31 @@ export const businessAgentProfiles: AgentProfile[] = [
       { action: 'PrepareFliggyFlightBooking', text: 'For a booking proposal use the installed partner fare and a private profile reference supplied by the owner. Present the preview terms and digest. Report payment and ticket issuance only with independent evidence.' },
     ],
   },
+  ...localDeliveryProviders.map(provider => {
+    const service = deliveryTradeServices[provider], { search, names, read } = service;
+    const taobao = provider === 'TaobaoInstantDelivery';
+    return {
+      apiName: provider,
+      terms: taobao ? ['淘宝闪购', '闪购', '淘宝外卖', 'taobao instant delivery'] : ['盒马', '盒马鲜生', 'hema', 'freshippo'],
+      objects: [search.object, service.cartChangeType, service.checkoutType, service.orderType],
+      interfaces: [search.inquiry, service.cartContract, service.orderContract],
+      actions: [search.action, names.change, names.preview, names.submit, names.preparePayment, names.refresh,
+        names.stopObservation, taobao ? names.pay : names.selectWindow],
+      links: [service.searchCartLink, service.cartCheckoutLink, service.checkoutOrderLink],
+      functions: [search.read, ...Object.values(read)],
+      instructions: [
+        { action: search.action, function: search.read, text: taobao
+          ? 'Use the Taobao Instant Delivery account and chosen delivery address for dishes, nearby stores or menus. A Hema merchant returned by this source is a Taobao Instant Delivery observation.'
+          : 'Use the direct Hema account and its selected delivery groups. Report listed prices, checked SKU stock, unknown quantities and verification requirements.' },
+        { action: names.submit, function: read.checkout,
+          text: 'Use ' + service.cartContract + '.change and ' + service.orderContract +
+            '.submit with complete_with_action. Preserve the original search, checkout and PA approval from this service.' },
+        taobao
+          ? { action: names.pay, text: 'Obtain separate approval for the original Taobao Instant Delivery amount, then refresh its independent payment state.' }
+          : { action: names.preparePayment, text: 'Hand off only the original Hema order to the Hema official app for payment.' },
+      ],
+    };
+  }),
   {
     apiName: 'Dining',
     terms: ['餐厅', '订位', '约饭', '吃饭', '菜单', '大众点评', 'dianping', 'restaurant', 'dining', 'table availability',
