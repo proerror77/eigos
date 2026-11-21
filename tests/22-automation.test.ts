@@ -1,3 +1,4 @@
+import { localDeliveryTradeDefinition } from '../packages/ontology/local-delivery-trade.js';
 import { localDeliveryDefinition } from '../packages/ontology/local-delivery.js';
 import { scheduleJourneyDefinition } from '../packages/ontology/schedule-journey.js';
 import { itineraryDefinition } from '../packages/ontology/itinerary-continuity.js';
@@ -682,7 +683,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const laterDomains = [
     calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition, fliggyServicesDefinition,
     fliggyFlightBookingDefinition, fliggyHotelDefinition, diningReservations, marketplaceDefinition, petRideDefinition,
-    travelHandoffDefinition, hotelTransferDefinition, tripHotelDependencyDefinition, itineraryDefinition, localDeliveryDefinition,
+    travelHandoffDefinition, hotelTransferDefinition, tripHotelDependencyDefinition, itineraryDefinition, localDeliveryDefinition, localDeliveryTradeDefinition,
   ];
   const addedTypes = new Set([
     ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType, immediateRideType,
@@ -732,6 +733,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     !fliggyServicesDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
     !marketplaceDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
     !localDeliveryDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
+    !localDeliveryTradeDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
     !petRideDefinition.interfaceTypes.some(item => item.apiName === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;
   const didiOrder = v9Definition.objectTypes.find(type => type.apiName === 'DidiRideOrder')!;

@@ -27,6 +27,7 @@ const quantity = z.number().nonnegative().finite();
 const store = z.strictObject({ merchantId: deliveryMerchantId, name: text.nullable() });
 const item = z.strictObject({
   merchantId: deliveryMerchantId,
+  itemId: deliveryMerchantId,
   name: text,
   merchantName: text.nullable(),
   listedPriceMinor: amount.nullable(),

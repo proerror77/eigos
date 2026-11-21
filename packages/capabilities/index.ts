@@ -24,6 +24,7 @@ import { hotelTaskWorkflow, publicHotelTaskResult } from './services/hotel-workf
 import { resolveTaskLocation } from './location.js';
 import { luckinFunctions } from './luckin/functions.js';
 import { localDeliveryFunctions } from './local-delivery/functions.js';
+import { localDeliveryTradeFunctions } from './local-delivery/trade-functions.js';
 import { marketplaceFunctions } from './marketplace/functions.js';
 import { paotuiFunctions } from './meituan/paotui.js';
 import { waimaiFunctions } from './meituan/waimai.js';
@@ -105,6 +106,7 @@ export function createCapabilities(
     ...serviceFunctions(db, services, () => sources),
     ...marketplaceFunctions(services),
     ...localDeliveryFunctions(connections.localDelivery, connections.localDeliveryFetch),
+    ...localDeliveryTradeFunctions(db, connections.localDelivery, connections.localDeliveryFetch),
     ...fliggyHandoffFunctions(services),
     ...fliggyFlightBookingFunctions(db, configuredFliggyFlight(connections.fliggyFlight, connections.fliggyFlightFetch)),
     ...fliggyHotelFunctions(db, configuredFliggyHotel(connections.fliggyHotel, connections.fliggyHotelFetch)),

@@ -14,14 +14,19 @@ const bindingSchema = z.strictObject({
   port: z.number().int().min(1).max(65535),
   accountRef: z.uuid(),
   tokenFile: z.string().min(1),
+  allowOrders: z.boolean().optional(),
+  allowPayment: z.boolean().optional(),
   tokenSha256: z.string().regex(/^[a-f0-9]{64}$/),
 });
 
-export type DeliveryReadTool = 'account_cross_search' | 'account_nearby_shops' | 'account_probe_menu'
-  | 'account_product_detail' | 'account_retail_resolve_search';
-const readTools = new Set<DeliveryReadTool>([
+const reads = [
   'account_cross_search', 'account_nearby_shops', 'account_probe_menu', 'account_product_detail', 'account_retail_resolve_search',
-]);
+  'account_addresses', 'account_cart', 'account_retail_cart', 'account_item_options', 'account_orders',
+  'account_checkout', 'account_retail_checkout', 'account_select_delivery', 'get_order_status', 'request_payment', 'get_payment_options',
+] as const;
+const readTools = new Set<string>(reads);
+export type DeliveryMutation = 'account_cart_change' | 'account_cart_add' | 'account_retail_add' | 'account_submit' | 'pay_order';
+type DeliveryTool = typeof reads[number] | DeliveryMutation;
 const protocol = new Set(['initialize', 'notifications/initialized', 'notifications/cancelled', 'ping']);
 const envelope = z.discriminatedUnion('success', [
   z.object({ success: z.literal(true), data: z.unknown() }),
@@ -38,9 +43,14 @@ export function deliveryFailure(code: string | undefined, message?: string) {
   return 'unavailable';
 }
 
-export class DeliveryReadFailure extends Error {
+export class DeliveryReadFailure extends Conflict {
   constructor(readonly state: ReturnType<typeof deliveryFailure>) {
-    super('Delivery provider read did not complete');
+    super({
+      verification_required: 'The delivery provider requires verification in its official interface',
+      address_required: 'Select the original delivery address in dsh-waimai',
+      authorization_required: 'Renew the original account’s authorization in dsh-waimai',
+      unavailable: 'The delivery provider did not return a usable result',
+    }[state]);
   }
 }
 
@@ -61,7 +71,8 @@ export async function configuredDelivery(path: string | undefined, provider: Loc
       const token = (await readPrivateSourceFile(binding.tokenFile)).trim();
       if (!/^[A-Za-z0-9_-]{43}$/.test(token) ||
           createHash('sha256').update(token).digest('hex') !== binding.tokenSha256) throw new Error('Invalid token');
-      return { port: binding.port, accountRef: binding.accountRef, token, id: digest(binding) };
+      return { port: binding.port, accountRef: binding.accountRef, token, id: digest(binding),
+        allowOrders: binding.allowOrders === true, allowPayment: binding.allowPayment === true };
     } catch {
       throw new Conflict('Configure an active owner-bound dsh-waimai connection for ' + provider);
     }
@@ -75,7 +86,7 @@ export async function configuredDelivery(path: string | undefined, provider: Loc
 }
 
 type DeliveryBinding = Awaited<ReturnType<typeof configuredDelivery>>;
-export type DeliveryCall = (name: DeliveryReadTool, args: Record<string, unknown>) => Promise<unknown>;
+export type DeliveryCall = (name: DeliveryTool, args: Record<string, unknown>) => Promise<unknown>;
 
 function bounded(response: Response) {
   if (!response.body) return response;
@@ -96,11 +107,15 @@ export async function deliveryMcp<T>(
   outer: AbortSignal,
   read: (call: DeliveryCall) => Promise<T>,
   fetcher: typeof fetch,
+  mutation?: DeliveryMutation,
 ): Promise<T> {
   const endpoint = new URL('http://127.0.0.1:' + connection.port + '/host');
   const signal = AbortSignal.any([outer, AbortSignal.timeout(30000)]);
   const client = new Client({ name: 'eigos-local-delivery', version: '1' });
-  let permitted: { name: DeliveryReadTool; args: string; sent: boolean } | undefined;
+  let permitted: { name: DeliveryTool; args: string; sent: boolean } | undefined;
+  let mutationSent = false;
+  if (mutation && (mutation === 'pay_order' ? !connection.allowPayment : !connection.allowOrders))
+    throw new Conflict('This supplier mutation is disabled for the delivery account');
   const transport = new StreamableHTTPClientTransport(endpoint, {
     requestInit: { headers: { Authorization: 'Bearer ' + connection.token } },
     reconnectionOptions: { maxRetries: 0, initialReconnectionDelay: 1000, maxReconnectionDelay: 1000, reconnectionDelayGrowFactor: 1 },
@@ -120,7 +135,9 @@ export async function deliveryMcp<T>(
   });
 
   const call: DeliveryCall = async (name, args) => {
-    if (!readTools.has(name) || permitted) throw new Error('Unsupported delivery tool');
+    if (permitted || (!readTools.has(name) && (name !== mutation || mutationSent)))
+      throw new Error('Unsupported delivery tool');
+    if (name === mutation) mutationSent = true;
     await connection.check();
     permitted = { name, args: digest(args), sent: false };
     try {

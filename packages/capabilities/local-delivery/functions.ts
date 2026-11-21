@@ -31,7 +31,7 @@ const scope = (provider: LocalDeliveryProvider, input: Search): Report['scope'] 
 
 function listing(item: z.infer<typeof catalogItem>, merchantId: string, merchantName: string | null): Item {
   return {
-    merchantId, merchantName, name: item.name, listedPriceMinor: item.price == null ? null : yuanToFen(item.price),
+    merchantId, merchantName, itemId: item.id, name: item.name, listedPriceMinor: item.price == null ? null : yuanToFen(item.price),
     priceUnit: item.priceUnit?.trim() || null,
     availability: item.availability === 'sold-out' ? 'sold_out'
       : item.availability === 'outside-sale-time' ? 'outside_sale_time' : item.availability,
@@ -133,7 +133,7 @@ async function catalogData(call: DeliveryCall, owner: Owner, query: string, limi
     if (++checks > stockChecks) break;
     try { await row.stock(); }
     catch (error) {
-      if (error instanceof Conflict) throw error;
+      if (error instanceof Conflict && !(error instanceof DeliveryReadFailure)) throw error;
       row.item.stockEvidence = error instanceof DeliveryReadFailure && error.state === 'verification_required'
         ? 'verification_required' : 'unavailable';
       // Avoid repeating a challenged provider read with another item.

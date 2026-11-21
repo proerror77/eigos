@@ -5,7 +5,7 @@
 | 淘宝闪购 | `SearchTaobaoInstantDelivery` | `readTaobaoInstantDeliverySearch` |
 | 盒马 | `SearchHemaProducts` | `readHemaProductSearch` |
 
-两项服务使用 dsh-waimai 中对应账号已选的配送地址。闪购可以按菜品或商品名称查当前配送范围的搜索结果，也可以读取附近推荐店铺或指定店铺菜单。盒马按已分配的配送组查商品，并读取样本商品的 SKU 数量。Action 将查询快照提交到调用者自己的 Ontology，供应商调用只读取数据。
+两项服务使用 dsh-waimai 中对应账号已选的配送地址。闪购可以按菜品或商品名称查当前配送范围的搜索结果，也可以读取附近推荐店铺或指定店铺菜单。盒马按已分配的配送组查商品，并读取样本商品的 SKU 数量。查询 Action 将只读快照提交到调用者自己的 Ontology。交易 Action 的能力范围和授权见下文。
 
 ## 在同一台机器上配置来源
 
@@ -64,4 +64,26 @@
 - `complete: false` 表示查询受分页、数量上限、配送组或来源失败限制。结果按观察时间保存，五分钟内可通过返回的 `search` 引用读回。绑定被撤销、改换或过期时需恢复对应授权并发起新查询。
 - 闪购搜索里的盒马门店是闪购渠道的观察。只有 `Hema` Action 代表盒马直连。闪购和盒马可能分别要求人工验证，请在官方渠道处理。
 
-接入沿用 [External Functions](https://www.palantir.com/docs/foundry/data-connection/external-functions)、[Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) 和 [Ontology MCP](https://www.palantir.com/docs/foundry/ontology-mcp)。本机 Host 令牌只由连接器使用，连接器只接受固定查询工具与回环端点。结果对象保留经校验的商品事实和状态，不包含地址、账号引用、会话或供应商原文。
+接入沿用 [External Functions](https://www.palantir.com/docs/foundry/data-connection/external-functions)、[Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) 和 [Ontology MCP](https://www.palantir.com/docs/foundry/ontology-mcp)。本机 Host 令牌只由连接器使用，连接器只接受固定白名单与回环端点。每次已批准的交易至多调用一个供应商写入工具。结果对象保留经校验的商品事实和状态，不包含地址、账号引用、会话或供应商原文。
+
+## 购物车、下单和支付
+
+购物车和下单需要在对应来源绑定里设置 `allowOrders: true`。闪购调用 dsh-waimai 付款接口还需要单独设置 `allowPayment: true`，并在 dsh-waimai 私有界面完成付款方式配置。两个开关默认关闭。来源开通、账号登录和每次交易授权分别检查。开发验收用合成供应商。
+
+| 能力 | EIGOS 入口 | dsh-waimai 接口 |
+| --- | --- | --- |
+| 购物车、商品规格和配料 | `readLocalDeliveryCart`、`readLocalDeliveryItemOptions` | `account_cart`、`account_retail_cart`、`account_item_options`、`account_retail_resolve_search`、`account_probe_menu`、`account_product_detail` |
+| 购物车变更 | `ChangeLocalDeliveryCart` | `account_cart_change`、`account_retail_add`、`account_cart_add` |
+| 结算报价和盒马配送时段 | `PreviewLocalDeliveryCheckout`、`SelectLocalDeliveryWindow` | `account_checkout`、`account_retail_checkout`、`account_select_delivery` |
+| 创建订单 | `SubmitLocalDeliveryOrder` | `account_submit` |
+| 付款交接和闪购付款 | `PrepareLocalDeliveryPayment`、`PayTaobaoInstantDeliveryOrder` | `request_payment`、`get_payment_options`、`pay_order` |
+| 原单和付款回读 | `RefreshLocalDeliveryOrder`、`readLocalDeliveryRecentOrders` | `get_order_status`、`account_orders` |
+
+1. 闪购餐饮使用 `taobao_meal`，闪购商超用 `taobao_retail`，盒马用 `hema`。搜索结果提供 `merchantId` 和 `itemId`。读取商品规格时传这两个标识。盒马与闪购商超还需要原关键词。读取购物车取得 `revision`，仅闪购餐饮支持从一个现有行减一件。闪购商超支持单规格加购，盒马支持当前在售 SKU 加购。
+2. 在原 PA 交互任务中用 `DeliveryCartEditing.change`，将结果绑定到 `readLocalDeliveryCartChange` 的 `change` 参数。用户确认商品、规格和数量后，使用原购物车版本执行一次。供应商结果未知时重新读取购物车，核对数量。
+3. 用 `PreviewLocalDeliveryCheckout` 传入当前 `cartRevision` 和人民币分预算 `maxAmountMinor`。盒马必须显式选择购物车 `lineIds`，来源当前要求每行数量为 1。盒马若要求选配送时段，用 `SelectLocalDeliveryWindow` 重报价，再核对新金额及费用。
+4. 通过 `DeliveryOrdering.submit` 对当前 `LocalDeliveryCheckout` 对象执行 `complete_with_action`，将返回值绑定到 `readLocalDeliveryCheckout` 的 `checkout` 参数。Action 会等待 `local_delivery.order_approval`。PA 只有在用户确认商品、地址、时段和最终金额后，才通过 `respond_to_task` 回传 `{ "decision": "approve", "termsDigest": "原请求摘要" }`。
+5. `PrepareLocalDeliveryPayment` 返回原订单的支付入口类型。盒马使用官方 App。闪购可从私有界面完成付款，也可在开通付款能力后用 `DeliveryOrdering.pay`。付款请求需要用户单独确认原订单和金额。若供应商要求二次验证，在原私有收银台完成。付款提交反馈需经 `RefreshLocalDeliveryOrder` 独立确认才显示已支付。
+6. `RefreshLocalDeliveryOrder` 使用原报价对应的供应商下单记录及官方订单做匹配。网络中断后，EIGOS 保留原操作并禁止自动重发。供应商无法给出唯一的原单证据时，由用户查看原平台订单。
+
+扫码、短信验证码、收货地址选择、Alipay 登录、支付密码、收银台链接和资金来源设置均在 dsh-waimai 私有页面使用。上游 0.9.1 提供订单和支付回读，取消订单、退款与独立运单轨迹没有可调用接口。闪购支付验证类接口通过私有收银台继续原付款，EIGOS 只保存其状态。

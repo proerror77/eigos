@@ -111,7 +111,7 @@ test('local delivery Actions retain only owner-bound search results and report l
     };
     const instant = await complete('TaobaoInstantDelivery', { query: '牛奶' }, 'instant');
     assert.deepEqual(instant.items[0], {
-      merchantId: 'store1', merchantName: '闪购测试店', listedPriceMinor: 790, priceUnit: null, name: listed.name,
+      merchantId: 'store1', itemId: 'sku1', merchantName: '闪购测试店', listedPriceMinor: 790, priceUnit: null, name: listed.name,
       stockQuantity: null, stockEvidence: 'verification_required', variants: [], availability: 'unknown',
     });
     assert.equal(instant.evidence, 'provider_mock');
