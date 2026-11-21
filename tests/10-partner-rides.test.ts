@@ -21,7 +21,8 @@ function providerResponse(provider: 'Uber' | 'Grab', longitude = route.dropoff.l
   if (provider === 'Uber') return Response.json({
     ride_estimate: { product_estimates: [{
       product: { product_id: 'synthetic-product', display_name: 'Synthetic Uber' },
-      fare: { currency_code: 'SGD', point_fare: '12.50' }, eta: { eta_in_seconds: 90 },
+      fare: { currency_code: 'SGD', point_fare: '12.50', expires_at: String(Math.floor(Date.now() / 1000) + 120) },
+      eta: { eta_in_seconds: 90 },
     }] },
   });
   const direct = new URL('grab://open');
@@ -94,15 +95,18 @@ test('both partner ride Functions resume the original task using a PA-owned quot
         const done = await f.tasks.get(principal, task.id);
         assert.equal(done.state, 'completed', done.error ?? JSON.stringify(done.result));
         const result = done.result as { evidence: string; orderCreated: boolean; paymentInitiated: boolean;
-          quotes: { etaSeconds: number; appLink: string }[] };
+          quotes: { etaSeconds: number; appLink: string; fare?: { expiresAt: string } }[] };
         assert.equal(result.evidence, 'pa_reported');
         assert.equal(result.orderCreated, false);
         assert.equal(result.paymentInitiated, false);
         assert.equal(result.quotes[0]?.etaSeconds, provider === 'Uber' ? 90 : 120);
         const link = new URL(result.quotes[0]!.appLink);
         assert.equal(link.hostname, provider === 'Uber' ? 'm.uber.com' : 'grab.onelink.me');
-        if (provider === 'Uber') assert.deepEqual(JSON.parse(link.searchParams.get('drop[0]')!),
-          { latitude: route.dropoff.latitude, longitude: route.dropoff.longitude, addressLine1: route.dropoff.address });
+        if (provider === 'Uber') {
+          assert.deepEqual(JSON.parse(link.searchParams.get('drop[0]')!),
+            { latitude: route.dropoff.latitude, longitude: route.dropoff.longitude, addressLine1: route.dropoff.address });
+          assert(Date.parse(result.quotes[0]!.fare!.expiresAt) > Date.now());
+        }
         assert.equal(providerCalls, 1);
       }
       assert.deepEqual(f.provider.calls, []);

@@ -40,7 +40,7 @@ const uberReply = z.object({
     eta: z.object({ eta_in_seconds: z.number().int().nonnegative().optional() }).optional(),
     fare: z.object({
       currency_code: z.string().optional(), point_fare: z.string().optional(), range_fare: uberFareRange.optional(),
-      expires_at: z.iso.datetime({ offset: true }).optional(), no_fare: z.record(z.string(), z.unknown()).optional(),
+      expires_at: z.string().regex(/^\d{10}(?:\d{3})?$/).optional(), no_fare: z.record(z.string(), z.unknown()).optional(),
     }).optional(),
   })).max(100).optional() }).optional(),
 });
@@ -64,11 +64,12 @@ function quoteData(request: Request, raw: unknown) {
   }
   const products = uberReply.parse(raw).ride_estimate?.product_estimates ?? [];
   const quotes = products.flatMap(({ product, fare, eta }) => {
-    if (!fare || fare.no_fare || !validUberFare({ point: fare.point_fare, range: fare.range_fare, expiresAt: fare.expires_at }))
-      return [];
-    return [{ id: product.product_id, name: product.display_name, etaSeconds: eta?.eta_in_seconds, fare: {
-      currency: fare.currency_code, point: fare.point_fare, range: fare.range_fare, expiresAt: fare.expires_at,
-    } }];
+    if (!fare || fare.no_fare) return [];
+    const expiry = fare.expires_at;
+    const expiresAt = expiry && new Date(Number(expiry) * (expiry.length === 10 ? 1000 : 1)).toISOString();
+    const quote = { currency: fare.currency_code, point: fare.point_fare, range: fare.range_fare, expiresAt };
+    if (!validUberFare(quote)) return [];
+    return [{ id: product.product_id, name: product.display_name, etaSeconds: eta?.eta_in_seconds, fare: quote }];
   });
   if (quotes.length) return partnerRideQuotes.parse({ provider: 'Uber', amountUnit: 'provider_wire_unverified', quotes });
 }
