@@ -1,3 +1,4 @@
+import { fliggyHandoffFunctions } from './fliggy/travel-handoff.js';
 import { configuredSource, type ConnectionConfig } from '../core/config.js';
 import { evaluateCalendarJourneyRelease } from './journey/release-checks.js';
 import { registerDocumentFunction } from '../ontology/documents.js';
@@ -97,6 +98,7 @@ export function createCapabilities(
     [registerDocumentFunction, registerSchedulePlanDocument],
     ...serviceFunctions(db, services, () => sources),
     ...marketplaceFunctions(services),
+    ...fliggyHandoffFunctions(services),
     ...fliggyFlightBookingFunctions(db, configuredFliggyFlight(connections.fliggyFlight, connections.fliggyFlightFetch)),
     ...fliggyHotelFunctions(db, configuredFliggyHotel(connections.fliggyHotel, connections.fliggyHotelFetch)),
     ...travelFunctions(db, source, services, () => sources),

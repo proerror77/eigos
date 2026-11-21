@@ -65,6 +65,12 @@ Interface 按业务语义命名，供应商名称放在具体 Object Type、来�
 
 已有滴滴原订单后的状态轮询、按需司机位置和接驾提醒见 [滴滴原订单追踪](didi-ride-followup.md)。
 
+#### 选中飞猪报价后打开供应商详情
+
+PA 从一次飞猪酒店或航班搜索结果中取得用户选定的 `offer` 和对应的 `search` 对象引用。通过 `complete_with_action` 调用 `TravelOfferSelection.prepare`，实现类型为 `FliggyTravelOfferHandoff`，把返回引用绑定给 `readFliggyTravelHandoff.handoff`。
+
+返回值保留来源提供的 HTTPS 详情链接、日期／航段、原始展示价、`accessMode`、证据类型及有效期。试用连接可用，酒店的掩码价和起价按原文返回。没有受支持链接、来源账号变化、搜索页被替代、报价过期或本地价格／链接被编辑时，需要重新选择有效报价。交接状态 `ready_for_review` 表示买家可以打开供应商页面核对；后续预订另行授权。EIGOS 只写入选中记录及其关联，沿用 [Function 支持的 Action](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) 与 [对象支持的关联](https://www.palantir.com/docs/foundry/object-link-types/create-link-type)。
+
 ## 飞猪合作方机酒交易
 
 机酒搜索继续使用 FlyAI 和 RollingGo 并行查询。进入交易时使用飞猪 TOP 的可交易库存标识。FlyAI 展示价、酒店卡片 ID、航班号和跳转链接无法代替分销商品、政策 ID 或京杭报价 `itemId`。
