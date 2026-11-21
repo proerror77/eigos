@@ -1,4 +1,4 @@
-import { Access, setGrants, memberGrants } from '../packages/runtime/access.js';
+import { Access, setGrants, businessGrants } from '../packages/runtime/access.js';
 import { Ontology } from '../packages/ontology/model.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import assert from 'node:assert/strict';
@@ -173,7 +173,7 @@ test('the same Agent runtime discovers and completes a different published Funct
     const definition = new Ontology(definitions), functions = new Functions(new Map([['countAvailableItems', () => 7]]), definition.document.functionTypes);
     const bindings = { describe: (model: Ontology) => ({ functions: functions.bindings(model), sources: {} }) };
     const published = await f.metadata.publish(definitions, bindings, f.publisher);
-    await setGrants(f.db, principal.owner, memberGrants(published));
+    await setGrants(f.db, principal.owner, businessGrants(published));
     const agent = new OntologyAgent(f.db, f.metadata, f.tasks,
       { ...bindings, functions, actions: new Actions(f.db, functions), sources: new Sources(f.db, functions, new Map()) }, {
         model: 'fixture-unrelated-domain', async run(prompt, tools) {
@@ -234,7 +234,7 @@ test('one confirmation resumes the original Action using current supplier receip
     await assert.rejects(f.tasks.selectPlaces(principal, task.id, { ...places, origin: places.destination }), /current candidates/);
     assert.equal((await graph.read(process)).properties.state, 'awaiting-input');
     // Existing operators need no new grant to drive the same authorized Action.
-    const grants = memberGrants(f.model);
+    const grants = businessGrants(f.model);
     await setGrants(f.db, principal.owner, grants.filter(grant => !grant.resource.includes('/ActionConfirmation')));
     const unprivileged = new Objects(f.db, f.model, await Access.load(f.db, principal));
     await assert.rejects(unprivileged.read(process), /Permission/);
@@ -508,7 +508,7 @@ test('revoking all access after place confirmation closes the process without a 
     await f.worker.runOne();
     assert.equal((await f.tasks.get(principal, task.id)).state, 'failed');
     assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch']);
-    await setGrants(f.db, principal.owner, memberGrants(f.model));
+    await setGrants(f.db, principal.owner, businessGrants(f.model));
     const graph = new Objects(f.db, f.model, await Access.load(f.db, principal));
     const process = { type: 'ActionConfirmation', id: paused.input.placeContinuation!.requestId };
     assert.equal((await graph.read(process)).properties.state, 'failed');
@@ -532,7 +532,7 @@ test('task-only PA permission executes the inquiry through the source-bound Work
     const task = await f.tasks.submit(caller, { requestId: 'task-permission', message: '上海只询价', route });
     await f.worker.runOne();
     assert.equal((await f.tasks.get(caller, task.id)).state, 'completed');
-    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant => grant.permission !== 'apply_action'));
+    await setGrants(f.db, principal.owner, businessGrants(f.model).filter(grant => grant.permission !== 'apply_action'));
     await assert.rejects(f.capabilities.actions.apply(await Access.load(f.db, caller), f.model, 'EstimateRide', route, 'direct-write'), /Permission/);
   } finally { await f.close(); }
 });
@@ -553,7 +553,7 @@ test('the fare-only prompt uses the named inquiry when the interactive result Fu
     },
   });
   try {
-    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant =>
+    await setGrants(f.db, principal.owner, businessGrants(f.model).filter(grant =>
       grant.permission !== 'execute_function' || !grant.resource.endsWith('/readInteractiveRideEstimate')));
     const task = await f.tasks.submit(principal, { requestId: 'scoped-ride-quote', message: '上海从中企云翠森林到前滩太古里，只查专车估价。' });
     assert(await f.worker.runOne());
@@ -580,7 +580,7 @@ test('a missing tool grant fails before supplier calls and is distinct from mode
     },
   });
   try {
-    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant =>
+    await setGrants(f.db, principal.owner, businessGrants(f.model).filter(grant =>
       grant.permission !== 'execute_function' || !grant.resource.endsWith('/readInteractiveRideEstimate')));
     const task = await f.submit();
     assert(await f.worker.runOne());
@@ -631,7 +631,7 @@ test('revoked data rights also remove access to a cached task result', async () 
   try {
     const task = await f.submit(); await f.worker.runOne();
     assert((await f.tasks.get(principal, task.id)).result);
-    await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant => grant.resource !== 'Eigos/object/Place' || grant.permission !== 'view_objects'));
+    await setGrants(f.db, principal.owner, businessGrants(f.model).filter(grant => grant.resource !== 'Eigos/object/Place' || grant.permission !== 'view_objects'));
     const hidden = await f.tasks.get(principal, task.id);
     assert.equal(hidden.state, 'completed'); assert.equal(hidden.result, null);
     const retry = await f.tasks.submit(principal, task.input);
@@ -642,7 +642,7 @@ test('revoked data rights also remove access to a cached task result', async () 
 test('permission revocation during a source response blocks late business edits', async () => {
   const f = await fixture();
   try {
-    f.provider.flags.before = async () => { await setGrants(f.db, principal.owner, memberGrants(f.model).filter(grant => grant.permission !== 'read_source')); };
+    f.provider.flags.before = async () => { await setGrants(f.db, principal.owner, businessGrants(f.model).filter(grant => grant.permission !== 'read_source')); };
     const task = await f.submit(); await f.worker.runOne();
     assert.equal((await f.tasks.get(principal, task.id)).state, 'failed');
     assert.equal((await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.objects WHERE projection=$1 AND type='RideRequest'`, [f.model.projection])).rows[0]!.n, 0);
@@ -883,7 +883,7 @@ test('linked derived values retain their classification through grant downgrade 
       },
     }] });
     const model = await f.metadata.publish(definition, capabilities, f.publisher);
-    await setGrants(f.db, principal.owner, memberGrants(model));
+    await setGrants(f.db, principal.owner, businessGrants(model));
     const graph = new Objects(f.db, model, await Access.load(f.db, principal));
     await graph.create(resource, { id: resource.id, name: 'Review calendar' });
     await graph.create(activity, {

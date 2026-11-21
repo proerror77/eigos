@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { StripeSandbox } from '../packages/capabilities/payments/stripe-sandbox.js';
-import { Access, memberGrants, setGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import type { AgentDriver } from '../packages/runtime/agent.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { PARequests } from '../packages/runtime/pa.js';
@@ -101,7 +101,7 @@ test('published payment Interface Actions deliver only to the original PA owner 
     assert.equal(request.input.checkoutUrl, checkoutUrl);
     assert.equal(request.input.merchantOrderId, order.id);
     const other = { ...principal, owner: 'another-sandbox-pa' };
-    await setGrants(f.db, other.owner, memberGrants(f.model));
+    await setGrants(f.db, other.owner, businessGrants(f.model));
     assert.equal((await pa.pending(other)).items.length, 0);
     assert.equal((await new Objects(f.db, f.model, await Access.load(f.db, other)).query({ type: 'ManualPayment' })).items.length, 0);
     await assert.rejects(pa.respond(other, task.id, { requestId: request.requestId, response: { decision: 'check_status' } }), /unavailable/);

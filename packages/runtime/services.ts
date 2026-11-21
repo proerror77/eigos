@@ -40,7 +40,8 @@ import { Access } from './access.js';
 import { Database } from './database.js';
 import { Metadata } from './metadata.js';
 import { ScenarioEvaluations, compareScenariosSchema, trialScenariosSchema, saveEvaluationSuiteSchema, runEvaluationSuiteSchema, promoteEvaluationSchema, evaluationCasesFromSetSchema } from './scenario-evaluation.js';
-import { Scenarios, continueScenarioSchema } from './scenarios.js';
+import { Scenarios, continueScenarioSchema, type ScenarioDecisionSupport } from './scenarios.js';
+import { scenarioDecisionSchema } from '../ontology/scenario-decision.js';
 import { Objects } from './objects.js';
 import {
   ObjectSets,
@@ -71,7 +72,7 @@ import type { Bindings } from './metadata.js';
 export function ontologyServices(
   db: Database,
   metadata: Metadata,
-  bindings: Bindings & { projectTaskResult: TaskResultProjection },
+  bindings: Bindings & { projectTaskResult: TaskResultProjection; scenarioDecisions?: ScenarioDecisionSupport },
   functions: Functions,
   effects: Effects,
   actions: Actions,
@@ -599,14 +600,14 @@ export function ontologyServices(
     'Read the proposed edits as an invited reviewer under current object and property permissions.',
     idSchema,
     false,
-    async (a, input) => new Scenarios(db).inspectReview(a, await active(), input.id),
+    async (a, input) => new Scenarios(db, bindings.scenarioDecisions).inspectReview(a, await active(), input.id),
   );
   register(
     'approve_scenario_review',
     'Approve the revision and snapshot returned by the invited reviewer inspection.',
-    scenarioRevision.extend({ snapshot: z.string().regex(/^[a-f0-9]{64}$/) }),
+    scenarioRevision.extend({ snapshot: z.string().regex(/^[a-f0-9]{64}$/), decision: scenarioDecisionSchema.optional() }),
     true,
-    async (a, input) => new Scenarios(db).approveReview(a, await active(), input.id, input.revision, input.snapshot),
+    async (a, input) => new Scenarios(db, bindings.scenarioDecisions).approveReview(a, await active(), input.id, input.revision, input.snapshot, input.decision),
   );
   register(
     'save_workflow',

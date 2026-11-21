@@ -7,7 +7,7 @@ import { createServer } from 'node:net';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { memberGrants, setGrants } from '../../packages/runtime/access.js';
+import { businessGrants, setGrants } from '../../packages/runtime/access.js';
 import { principal } from '../fixture.js';
 import { fixture, route } from '../fixture.js';
 import { planningInput, calendarAnswer } from '../planning-fixture.js';
@@ -22,7 +22,7 @@ async function stop(child: ChildProcess) {
 }
 test('separate Gateway and Worker complete inquiries and PA calendar scenarios on the original PostgreSQL tasks', async t => {
   const f = await fixture(), token = 'process-test-token-'.repeat(3);
-  await setGrants(f.db,principal.owner,[...memberGrants(f.model),{resource:'Eigos',permission:'edit_definition'},{resource:'Eigos/datasource/DidiPlaces',permission:'ingest_source'}]);
+  await setGrants(f.db,principal.owner,[...businessGrants(f.model),{resource:'Eigos',permission:'edit_definition'},{resource:'Eigos/datasource/DidiPlaces',permission:'ingest_source'}]);
   const portServer = createServer().listen(0, '127.0.0.1'); await once(portServer, 'listening');
   const address = portServer.address(); assert(address && typeof address !== 'string'); const port = address.port;
   await new Promise<void>(resolve => portServer.close(() => resolve()));

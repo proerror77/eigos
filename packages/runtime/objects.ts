@@ -11,6 +11,7 @@ import { Access } from './access.js';
 import { objectRefSchema, type ObjectData, type ObjectRef, type LinkData } from '../ontology/schema.js';
 import { documentChunkType, documentType } from '../ontology/documents.js';
 import { processLogTarget } from '../ontology/process-definition.js';
+import { isSandboxResource } from '../ontology/sandbox.js';
 import { Database, type Sql } from './database.js';
 import { checkScenario, lockEdits, viewTables, stageObject, stageLink, type ScenarioMutation } from './scenario-store.js';
 import { isNumeric, storedPredicate, supportsStoredOrder, supportsStoredPredicate, type Metric } from './stored-query.js';
@@ -706,6 +707,8 @@ export class Objects {
     const edges = new Map<string, LinkData>();
     for (const link of this.model.links.values()) {
       if (processLogTarget(this.model, link.from.type) || processLogTarget(this.model, link.to.type)) continue;
+      // Unavailable sandbox relationships are still counted by the physical-edge check below.
+      if (!this.db.sandboxEnabled && [link.from.type, link.to.type].some(type => isSandboxResource(this.model, 'object', type))) continue;
       for (const side of ['from', 'to'] as const) if (link[side].type === ref.type) {
         for (const other of await this.follow(ref, link[side].name)) {
           const edge = { type: link.apiName, from: side === 'from' ? ref : other.ref, to: side === 'to' ? ref : other.ref };

@@ -48,7 +48,7 @@ flowchart LR
   Outbox --> Dispatcher[配置的处理函数]
 ```
 
-构建后使用 `npm run start:indexer` 启动独立索引与副作用进程。多个实例通过 PostgreSQL 行锁和租约分配工作。Gateway、任务 Worker 和 Indexer 可分别增加实例数。索引数据和源 offset 原子提交，Action 编辑、历史及副作用入队也共用事务。
+构建后使用 `npm run start:indexer` 启动独立索引与副作用进程。多个实例通过 PostgreSQL 行锁和租约分配工作。Gateway、任务 Worker 和 Indexer 可分别增加实例数。 三个进程使用相同的连接配置字段。Indexer 执行依赖供应商读取的规则或 Workflow 时，也需要相应的连接与授权。索引数据和源 offset 原子提交，Action 编辑、历史及副作用入队也共用事务。
 
 Gateway 可配置 `QUERY_DATABASE_URL` 使用独立只读连接池，包括已有的物理复制只读节点。每次分离查询显式开启只读事务，并核对数据库身份及主库 WAL 位置，副本延迟、身份不符或不可用时在主库只读事务中读取。Action 内部读取保持原事务连接，确保提交前校验与编辑一致。数据库复制、容量和网络由部署环境配置。
 
