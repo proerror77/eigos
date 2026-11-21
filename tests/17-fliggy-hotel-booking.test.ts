@@ -318,17 +318,17 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
         return new Response(${JSON.stringify(cancelledDetailResponse)});
       };
     `);
-    const indexer = fork(new URL('../apps/indexer/main.ts', import.meta.url), [], {
+    const readbackIndexer = fork(new URL('../apps/indexer/main.ts', import.meta.url), [], {
       execArgv: ['--import', 'tsx', '--import', preload],
       env: { DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_PG_SCHEMA: f.schema,
         EIGOS_FLIGGY_HOTEL_CONNECTION_FILE: connection, PATH: process.env.PATH },
     });
-    const exited = once(indexer, 'exit');
+    const exited = once(readbackIndexer, 'exit');
     try {
       const deadline = Date.now() + 15000;
       let state;
       do {
-        assert.equal(indexer.exitCode, null);
+        assert.equal(readbackIndexer.exitCode, null);
         state = (await f.db.query(`SELECT state FROM ${f.db.schema}.workflow_runs WHERE id=$1`, [run.id])).rows[0]!.state;
         if (state === 'completed' || state === 'failed') break;
         await delay(50);
@@ -337,8 +337,8 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
       const committed = (await f.db.query(`SELECT action,result,executor_kind FROM ${f.db.schema}.actions WHERE executor_id=$1`, [run.id])).rows;
       assert.deepEqual(committed, [{ action: 'RefreshFliggyHotelBooking', result: second, executor_kind: 'workflow' }]);
     } finally {
-      indexer.kill('SIGTERM');
-      const timer = setTimeout(() => indexer.kill('SIGKILL'), 5000);
+      readbackIndexer.kill('SIGTERM');
+      const timer = setTimeout(() => readbackIndexer.kill('SIGKILL'), 5000);
       try { await exited; } finally { clearTimeout(timer); }
     }
 
