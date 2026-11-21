@@ -5,7 +5,7 @@ export class FixtureAgent implements AgentDriver {
   readonly model = 'fixture-tool-decisions';
   async run(prompt: string, tools: ReadonlyMap<string, AgentTool>, signal: AbortSignal) {
     const task = JSON.parse(prompt.split('\n').at(-1)!);
-    const route = task.userRequest.route ?? { city: '上海市', origin: '中企云翠森林', destination: '前滩太古里' };
+    const route = task.userRequest.route ?? { city: '上海市', origin: '青禾虚构园区', destination: '前滩太古里' };
     signal.throwIfAborted();
     await tools.get('complete_with_action')!.invoke({
       action: { interface: { type: 'RideInquiry', implementation: 'RideRequest', action: 'estimate' }, input: route },

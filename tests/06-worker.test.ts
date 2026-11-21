@@ -73,7 +73,7 @@ test('one Agent capability choice resolves unique supplier names despite differe
   try {
     const graph = new Objects(f.db, f.model, f.access);
     assert.equal((await graph.query({ type: 'Location' })).items.length, 0);
-    f.provider.flags.placeName = name => name === route.origin ? '中企·云翠森林' : name;
+    f.provider.flags.placeName = name => name === route.origin ? '青禾·虚构园区' : name;
     const task = await f.submit(), before = f.db.queries;
     assert(await f.worker.runOne());
     const done = await f.tasks.get(principal, task.id);
@@ -88,7 +88,7 @@ test('one Agent capability choice resolves unique supplier names despite differe
     assert(!JSON.stringify(done.result).includes('PRIVATE_ORDER_TOKEN'));
     const objects = new Objects(f.db, f.model, f.access);
     const routes = await objects.query({ type: 'RideEstimatable' }); assert.equal(routes.items.length, 1);
-    assert.equal((await objects.follow(routes.items[0]!.ref, 'origin', 'RideEstimatable'))[0]!.properties.name, '中企·云翠森林');
+    assert.equal((await objects.follow(routes.items[0]!.ref, 'origin', 'RideEstimatable'))[0]!.properties.name, '青禾·虚构园区');
     assert.deepEqual((await f.db.query(`SELECT owner,executor_kind,executor_id,task_id FROM ${f.db.schema}.actions`)).rows, [{
       owner: principal.owner, executor_kind: 'agent', executor_id: 'eigos-ontology:fixture-tool-decisions', task_id: task.id,
     }]);
@@ -105,7 +105,7 @@ test('one Agent capability choice resolves unique supplier names despite differe
 test('fare Actions preserve the submitted venue name and use a submitted address to break ties', async () => {
   const origin = '東發道茶冰廰·甄选(前滩店)', address = '浦东新区园照路193号';
   const decorated = `${origin}（${address}）`;
-  const itinerary = { city: '上海', origin, destination: '中企·云萃森林257弄20号地下车库' };
+  const itinerary = { city: '上海', origin, destination: '虚构北苑99弄9号地下车库' };
   const f = await fixture({ model: 'fixture-decorated-venue', async run(_prompt, tools) {
     await tools.get('complete_with_action')!.invoke({
       action: { interface: { type: 'RideInquiry', implementation: 'RideRequest', action: 'estimate' },
@@ -271,7 +271,7 @@ test('an exact short building name cannot hide a formal building candidate from 
         location: { lat: 31.235, lng: 121.506 } },
     ] : [];
     const initial = await f.tasks.submit(principal, {
-      requestId: 'shanghai-center-quote', message: '从中企云翠森林到上海中心，只查实时价格。',
+      requestId: 'shanghai-center-quote', message: '从青禾虚构园区到上海中心，只查实时价格。',
       route: { ...route, destination: '上海中心' },
     });
     await f.worker.runOne();
@@ -440,7 +440,7 @@ test('a paused supplier retry releases the next chat batch and resumes the origi
   try {
     f.provider.flags.failPlaceSearch = true;
     const submit = (requestId: string) => f.tasks.submit(principal, {
-      requestId, conversationId: 'ride-estimate-chat', message: '从中企云翠森林到前滩太古里，只询价', route,
+      requestId, conversationId: 'ride-estimate-chat', message: '从青禾虚构园区到前滩太古里，只询价', route,
     });
     const makeAvailable = (id: string) => f.db.query(
       `UPDATE ${f.db.schema}.tasks SET available_at=now() WHERE id=$1`, [id]);
@@ -555,7 +555,7 @@ test('the fare-only prompt uses the named inquiry when the interactive result Fu
   try {
     await setGrants(f.db, principal.owner, businessGrants(f.model).filter(grant =>
       grant.permission !== 'execute_function' || !grant.resource.endsWith('/readInteractiveRideEstimate')));
-    const task = await f.tasks.submit(principal, { requestId: 'scoped-ride-quote', message: '上海从中企云翠森林到前滩太古里，只查专车估价。' });
+    const task = await f.tasks.submit(principal, { requestId: 'scoped-ride-quote', message: '上海从青禾虚构园区到前滩太古里，只查专车估价。' });
     assert(await f.worker.runOne());
     const done = await f.tasks.get(principal, task.id);
     assert.equal(done.state, 'completed', done.error ?? undefined);
