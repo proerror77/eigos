@@ -25,6 +25,18 @@ Interface 通过实现映射引用具体 Object Type 的属性、关系与 Actio
 
 关系带有日期、角色或状态等业务信息时，用独立对象保存这些信息，并通过 Link 连接两端。来源时间和证据类型保存在 `SourceReceipt` 及实现 `ServiceSearchResult` 的供应商结果对象中。[Object-backed links](https://www.palantir.com/docs/foundry/object-link-types/create-link-type)
 
+## 对象生命周期原则
+
+新增或变更业务对象的写入路径时，随 Ontology 发布版本审阅身份映射、字段裁决、状态转换和下游触发规则。身份映射归到 Object Type 的主键。来源映射和 Action 绑定的实现应用业务裁决，过程日志和自动化使用已提交的变化。各入口按同一组业务约束验收，现有支持范围见下文。
+
+1. **对象身份。** 对同一个业务实体，各入口使用足以核验身份的证据绑定同一个稳定对象 ID。外部 ID 应按来源及需要的账户范围解释，并保留可审计的绑定。发布定义允许单来源直接映射时可以沿用来源主键。证据不足或存在冲突时，保留来源观察并等待核实后再合并。[Object Type 主键](https://www.palantir.com/docs/foundry/object-link-types/create-object-type)
+2. **来源裁决。** 关键字段声明允许的来源和证据。按 Foundry 多来源对象的映射方式，除共同主键外，每个由来源填充的字段映射到一个正式来源输出。多方回报涉及同一字段时，在来源投影前裁决，或由已发布的 Function-backed Action 在提交前裁决。先核验来源资格和证据，再对合格输入应用业务优先级或时间规则。提交权限单独检查。酒店订单的取消状态由可核验的供应商证据确认。PA 提交的用户意图和回报保留为独立记录，转交的回执按其可验证出处判断。[多来源对象](https://www.palantir.com/docs/foundry/object-permissioning/multi-datasource-objects) · [编辑冲突策略](https://www.palantir.com/docs/foundry/object-edits/how-edits-applied) · [Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview)
+3. **Schema 治理。** 评估对象身份、字段裁决、状态含义及下游触发条件的变更对现有 PA、应用和自动化的影响。会破坏消费者契约的发布须记录受影响范围、兼容窗口或迁移方案，并在切换前验证。分支和管理 CLI 对此类发布执行同一要求。保留任务版本锁定、候选投影校验和原子切换，向后兼容的改动可走轻量审核。[分支与资源保护](https://www.palantir.com/docs/foundry/ontologies/branching-ontology) · [Schema 迁移](https://www.palantir.com/docs/foundry/object-edits/schema-migrations)
+4. **状态与时间。** 按 Machinery 模型，业务对象保存当前状态，关联的 ProcessLog 记录已提交的前后状态及转换时间。对需要历史验收的关键状态，EIGOS 扩展记录业务生效时间、来源观察时间和系统记录时间。生效时间缺失时保留未知。查询应能区分指定时点 EIGOS 当时知道的状态，以及根据当前证据判断该时点成立的状态。迟到的旧观察保留在证据历史中，经核验的更正可修订历史判断并保留获知时间。当前状态仍按已发布的证据及转换规则更新。[Machinery 日志对象](https://www.palantir.com/docs/foundry/machinery/connect-data) · [EIGOS 过程日志](../guides/process-history.md#日志来源与因果)
+5. **变化传播。** 在发布定义与自动化规则中声明消费哪些已提交的对象和关系变化，以及什么条件触发处理。状态转换复用现有 Indexer 和 ProcessLog。沿用 Automate 的至少一次执行语义，按稳定变化标识保证业务效果幂等。按持久游标恢复、重放及处理结果未知的外部副作用是 EIGOS 的验收要求。外部副作用复用 Action 的幂等提交与原操作读回。收到回执或观察后，仅当产生符合规则的正式变化才触发处理。[Automate 对象集条件](https://www.palantir.com/docs/foundry/automate/condition-objects) · [执行保证](https://www.palantir.com/docs/foundry/automate/effect-settings#execution-guarantees) · [EIGOS 过程规则](../guides/automation.md#过程规则)
+
+飞猪酒店订单可作为隔离验收用例。下单回执、供应商回读和 PA 回报引用同一个订单，供应商证据确认取消并保留各时间，迟到的旧确认回报进入历史且当前状态保持已取消。重复投递并从持久游标恢复后，下游对同一次取消只产生一次业务效果。按同一发布版本验收身份绑定、状态回看和实际消费结果。工程验收使用 `synthetic` 数据，生产消费和供应商履约分别验收。
+
 ## 模块边界
 
 ```mermaid
