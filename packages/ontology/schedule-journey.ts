@@ -13,7 +13,12 @@ const namedRef = z.object({ ref, name: z.string().optional() });
 const overview = z.object({
   plan: namedRef.extend({ revision: z.number().int().positive() }),
   activities: z.array(linkedObject),
+  calendarAvailability: z.array(z.object({
+    ref, evidence: z.string().optional(), complete: z.boolean().optional(),
+    observedAt: time.optional(), expiresAt: time.optional(),
+  })),
   calendarJourneys: z.array(namedRef.extend({ state: z.string().optional(), nextCheckAt: time.nullable().optional() })),
+  flightWatches: z.array(namedRef.extend({ state: z.string().optional() })),
   trips: z.array(z.object({ ref, state: z.string().optional() })),
   originalOrders: z.array(namedRef.extend({ state: z.string().nullable(), evidence: z.string().nullable(),
     independentRead: z.boolean().nullable(), canceled: z.boolean() })),
@@ -37,13 +42,13 @@ export const scheduleJourneyDefinition: Pick<OntologyDocument, 'linkTypes' | 'ac
     parameters: json(attachCalendarJourneyInput), returns: json(ref), edits: true,
     dependencies: { objectTypes: ['SchedulePlan', 'CalendarJourney'], linkTypes: [calendarJourneyPlanLink] },
   }, {
-    apiName: 'readScheduleJourney', description: 'Read the linked activities, calendar journeys, original orders and itinerary follow-up from one plan.',
+    apiName: 'readScheduleJourney', description: 'Read the linked activities, calendar evidence, original orders and itinerary follow-up from one plan.',
     parameters: json(scheduleJourneyInput), returns: json(overview),
     dependencies: {
       objectTypes: ['SchedulePlan', 'CalendarJourney', 'ScheduledActivity', 'EventTrip', 'ItineraryContinuity',
         'FliggyHotelBooking', 'FliggyFlightBooking', 'DidiRideOrder', 'EventRegistration', 'FlightWatch',
-        'TripHotelDependencyReview', 'ItineraryContinuityStateLog'],
-      linkTypes: [calendarJourneyPlanLink, 'ActivityPlan', 'TripPlan', 'TripOrder', 'TripRegistration', 'TripHotelBooking',
+        'TripHotelDependencyReview', 'ItineraryContinuityStateLog', 'CalendarAvailability'],
+      linkTypes: [calendarJourneyPlanLink, 'PlanAvailability', 'ActivityPlan', 'TripPlan', 'TripOrder', 'TripRegistration', 'TripHotelBooking',
         'ItineraryContinuityPlan', 'ItineraryContinuityRideOrder', 'ItineraryContinuityHotelBooking', 'ItineraryContinuityFlightBooking',
         'ItineraryContinuityFlightWatch', 'FliggyFlightBookingWatch', 'TripHotelReviewPlan', 'ItineraryContinuityStateLogProcess'],
     },

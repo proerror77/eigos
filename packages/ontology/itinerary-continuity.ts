@@ -16,7 +16,8 @@ export const hotelItineraryObservation = z.strictObject({
 });
 export const startItineraryInput = z.strictObject({
   plan: ref, flight: ref, transfer: ref, hotel: ref, pickup: place, destination: place,
-  flightWatch: ref.optional(), hotelBooking: ref.optional(), rideOrder: ref.optional(),
+  flightWatch: ref.optional(), flightBooking: ref.optional(), hotelBooking: ref.optional(), rideOrder: ref.optional(),
+  calendarJourney: z.strictObject({ journey: ref, revision: z.number().int().positive() }).optional(),
   airportExitMinutes: z.number().int().min(0).max(360),
   latestHotelArrival: time, deadline: time, checkEveryMinutes: z.number().int().min(1).max(1440),
 });
@@ -114,9 +115,11 @@ export const itineraryDefinition: Pick<OntologyDocument, 'objectTypes' | 'linkTy
     apiName: action[0]!.toLowerCase() + action.slice(1), description,
     parameters: json(input), returns: json(ref), edits: true,
     dependencies: {
-      objectTypes: [itineraryType, ...new Set(targets.map(([, , type]) => type)), 'ScheduleResource', 'CalendarAvailability'],
+      objectTypes: [itineraryType, ...new Set(targets.map(([, , type]) => type)), 'ScheduleResource', 'CalendarAvailability',
+        ...(action === 'StartItineraryContinuity' ? ['CalendarJourney', 'FliggyFlightBooking'] : [])],
       linkTypes: ['DrivingOrigin', 'DrivingDestination', 'ActivityPlan', 'ActivityDependency', 'PlanResource', 'PlanAvailability', 'ResourceAvailability', 'ActivityResource',
-        ...targets.map(([name]) => name)],
+        ...targets.map(([name]) => name),
+        ...(action === 'StartItineraryContinuity' ? ['CalendarJourneyPlan', 'ItineraryContinuityFlightBooking'] : [])],
     },
   })), {
     apiName: itineraryProposalCriterion, description: 'Check whether the reviewed transfer proposal is still current.',
