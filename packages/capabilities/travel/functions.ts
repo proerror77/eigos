@@ -507,11 +507,15 @@ export function travelFunctions(
       const scheduleId = typeof trip.properties.scheduleId === 'string' ? trip.properties.scheduleId : undefined;
       const effect = scheduleId ? await effects.inspect(graph.owner, scheduleId, graph.client) : null;
       let [order] = await graph.follow(trip.ref, 'order');
+      let verifiedReadback = false;
       if (readback && original.properties.scheduleId === scheduleId &&
           order?.revision === readback.originalRevision) {
         await readback.source.assertCurrent();
         const orderRef = await projectOrder(graph, trip.ref, readback.order, readback.source.bindingId);
         order = await graph.read(orderRef);
+        verifiedReadback = order.properties.independentRead === true &&
+          order.properties.observedAt === readback.order.observedAt &&
+          order.properties.contentDigest === readback.order.contentDigest;
       }
       const orderState = order || effect?.state === 'confirmed' || trip.properties.state === 'dispatched'
         ? 'original_order' : effect ? 'dispatch_unresolved' : 'not_submitted';
@@ -538,7 +542,7 @@ export function travelFunctions(
         orderState, requiresAuthorization, transition: log.ref,
         authorizationState: !requiresAuthorization ? 'not_required'
           : orderState === 'not_submitted' ? 'awaiting_authorization' : 'awaiting_original_order',
-        readback: order?.properties.independentRead === true ? 'verified'
+        readback: verifiedReadback ? 'verified'
           : orderState === 'original_order' ? 'unavailable'
             : orderState === 'dispatch_unresolved' ? 'original_identity_required' : 'not_needed',
         ...(suspendedScheduleId ? { suspendedScheduleId } : {}),
