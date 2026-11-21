@@ -60,8 +60,8 @@ const states: Partial<Record<number, Booking['state']>> = {
   5: 'refund_pending', 6: 'refund_rejected', 7: 'closed', 8: 'cancelled',
 };
 
-async function profile(hotel: Hotel, selection: Selection) {
-  const matches = guestProfiles.parse(JSON.parse(await readPrivateSourceFile(hotel.profilesFile)))
+async function profile(path: string, selection: Selection) {
+  const matches = guestProfiles.parse(JSON.parse(await readPrivateSourceFile(path)))
     .filter(guest => guest.id === selection.profileId && Date.parse(guest.expiresAt) > Date.now());
   const [guest] = matches;
   if (matches.length !== 1 || !guest || guest.rooms.length !== selection.rooms
@@ -217,8 +217,9 @@ export function fliggyHotelFunctions(db: Database, resolve: FliggyHotelResolver)
     ['prepareFliggyHotelBooking', async (raw, ctx) => {
       const edit = stage(ctx), { bookingKey, selection } = fliggyHotelBookingInput.parse(raw);
       const hotel = await resolve(ctx.principal.owner);
+      const { profilesFile } = hotel.requireTrade();
       const [guests, rates, quoteResult] = await Promise.all([
-        profile(hotel, selection), readRates(hotel, selection, ctx.signal), quote(selection, hotel, ctx.signal),
+        profile(profilesFile, selection), readRates(hotel, selection, ctx.signal), quote(selection, hotel, ctx.signal),
       ]);
       if (!rates.some(rate => rate.itemId === selection.itemId && rate.ratePlanId === selection.ratePlanId))
         throw new Conflict('This distribution rate is unavailable for the selected standard hotel and dates');
@@ -246,6 +247,7 @@ export function fliggyHotelFunctions(db: Database, resolve: FliggyHotelResolver)
       stage(ctx);
       const input = fliggyHotelBookingApproval.parse(raw), { booking: ref } = input;
       const { booking, row, hotel } = await current(ctx, ref);
+      const { profilesFile } = hotel.requireTrade();
       const verify = dispatchGuard(ctx, booking, ref, row.revision, hotel, approve(ctx, input, booking));
       const guard = async (client: Sql) => {
         await verify(client);
@@ -255,7 +257,7 @@ export function fliggyHotelFunctions(db: Database, resolve: FliggyHotelResolver)
       if (!await operations.recover(ctx.principal.owner, key, approved, ctx.objects)) {
         if (booking.state !== 'previewed' || Date.parse(booking.expiresAt) <= Date.now())
           throw new Conflict('Obtain a fresh hotel rate preview before creating this order');
-        const guests = await profile(hotel, booking.selection);
+        const guests = await profile(profilesFile, booking.selection);
         const { createKey, ...fresh } = await quote(booking.selection, hotel, ctx.signal);
         if (digest([booking.selection, fresh, digest(guests), hotel.authority]) !== booking.approvalDigest)
           throw new Conflict('Fliggy hotel price, terms or guests changed after review');
@@ -349,15 +351,16 @@ export function fliggyHotelFunctions(db: Database, resolve: FliggyHotelResolver)
         stage(ctx);
         const input = fliggyHotelBookingApproval.parse(raw), { booking: ref } = input;
         const { booking, row, hotel } = await current(ctx, ref);
+        const { paymentsFile } = hotel.requireTrade();
         const approval = approve(ctx, input, booking);
         if (!booking.merchantOrderId) throw new Conflict('Read the original Fliggy order before payment or cancellation');
         const key = operationKey(booking, action), approved = scope(booking, action);
         const original = await readProvider(hotel, booking, ctx.signal);
         if (!await operations.recover(ctx.principal.owner, key, approved, ctx.objects)) {
           if (action === 'pay') {
-            if (original.state !== 'awaiting_payment' || !hotel.paymentsFile)
+            if (original.state !== 'awaiting_payment' || !paymentsFile)
               throw new Conflict('The original order must be payable and have verified buyer-payment evidence');
-            const payments = receivedPayments.parse(JSON.parse(await readPrivateSourceFile(hotel.paymentsFile)));
+            const payments = receivedPayments.parse(JSON.parse(await readPrivateSourceFile(paymentsFile)));
             const matched = payments.filter(payment => payment.orderId === booking.merchantOrderId &&
               payment.outOrderId === booking.outOrderId && payment.amountMinor === booking.amountMinor &&
               Date.parse(payment.receivedAt) <= Date.now());
