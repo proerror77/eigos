@@ -9,6 +9,7 @@ import { flightPositionFunction } from './flight-position.js';
 import { flightDefinition as flight, flightWatchType } from './flight.js';
 import { z } from 'zod';
 import { mapFunctions, pickupCoordinateEvidence } from './maps.js';
+import { weatherFunctions } from './weather.js';
 import { locationFunctions, taskLocationValueType } from './location.js';
 import { luckinDefinition as luckin } from './luckin.js';
 import { deliveryFunctions } from './delivery.js';
@@ -47,14 +48,14 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '45',
+  id: ride.id, version: '46',
   agentProfiles: businessAgentProfiles,
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...journey.linkTypes, ...flight.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
   actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes, ...journey.actionTypes, ...flight.actionTypes, ...payments.actionTypes,...luckin.actionTypes,...applications.actionTypes,...documents.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
 };
 businessDefinition.linkTypes.push(...scheduleJourneyDefinition.linkTypes);
-businessDefinition.functionTypes.push(...scheduleJourneyDefinition.functionTypes);
+businessDefinition.functionTypes.push(...scheduleJourneyDefinition.functionTypes, ...weatherFunctions);
 businessDefinition.actionTypes.push(...scheduleJourneyDefinition.actionTypes);
 businessDefinition.objectTypes.push(...itineraryDefinition.objectTypes);
 businessDefinition.linkTypes.push(...itineraryDefinition.linkTypes);

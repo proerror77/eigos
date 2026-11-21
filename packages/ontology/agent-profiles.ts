@@ -119,10 +119,22 @@ export const businessAgentProfiles: AgentProfile[] = [
     functions: ['readFliggyTravelHandoff','readTravelOfferSearch', 'readServiceSearchPages', 'readServiceSearch', 'readServiceOffering'],
     instructions: [
       { action: 'PrepareFliggyTravelHandoff', function:'readFliggyTravelHandoff', text:'When the user selects a FlyAI trial or keyed hotel or flight offer, call TravelOfferSelection.prepare on FliggyTravelOfferHandoff with the selected offer and its search page references. Return the verified supplier review link using readFliggyTravelHandoff bound to handoff. Keep the displayed fare and access mode. A handoff creates no supplier order.' },
-      { action: 'SearchTravelOffers', function: 'readTravelOfferSearch', text: 'Use the TravelOfferInquiry.search Interface Action on TravelOfferSearch so the supplier reads run concurrently. Use the same user criteria for participating suppliers. For direct results use complete_with_action and bind readTravelOfferSearch to search. For a coordinated itinerary search before opening a Scenario. Preserve supplier outcomes, access mode and display prices.' },
+      { action: 'SearchTravelOffers', function: 'readTravelOfferSearch', text: 'For a multi-supplier query, use the TravelOfferInquiry.search Interface Action on TravelOfferSearch so the supplier reads run concurrently. Default to it for hotel searches unless the user explicitly chooses one provider. Apply it once for RollingGo and Fliggy. Use the same user criteria for participating suppliers. For direct results use complete_with_action and bind readTravelOfferSearch to search. For a coordinated itinerary search before opening a Scenario. Preserve supplier outcomes, access mode and display prices.' },
       { action: 'PrepareFliggyHotelBooking', text: 'For a booking proposal use the installed partner hotel rate and a private profile reference supplied by the owner. Present the preview terms and digest. Report payment and hotel confirmation only with independent evidence.' },
       { action: 'PrepareFliggyFlightBooking', text: 'For a booking proposal use the installed partner fare and a private profile reference supplied by the owner. Present the preview terms and digest. Report payment and ticket issuance only with independent evidence.' },
     ],
+  },
+  {
+    apiName: 'MarketplaceSearch',
+    terms: ['淘宝', '京东', '比价', '商品价格', '网购', '哪里买', '哪里便宜', '搜商品', 'taobao', 'jd.com', 'product search', 'price comparison'],
+    objects: ['MarketplaceProductComparison'],
+    interfaces: ['MarketplaceComparisonInquiry'],
+    actions: ['CompareMarketplaceProducts'],
+    functions: ['readMarketplaceProductComparison'],
+    instructions: [{
+      action: 'CompareMarketplaceProducts', function: 'readMarketplaceProductComparison',
+      text: 'For marketplace catalogue searches across stores, use complete_with_action with MarketplaceComparisonInquiry.search on MarketplaceProductComparison, binding the result to search. The Action queries Taobao and JD concurrently with the same criteria. Preserve each source outcome and unmatched offers. If the user explicitly requests only one platform, use its dedicated search.',
+    }],
   },
   ...localDeliveryProviders.map(provider => {
     const service = deliveryTradeServices[provider], { search, names, read } = service;
@@ -164,9 +176,10 @@ export const businessAgentProfiles: AgentProfile[] = [
     apiName: 'MapsAndWeather',
     terms: ['高德', '地图', '天气', '驾车', '导航', '路线', 'weather', 'forecast', 'map', 'driving',
       '下雨', '下雪', '气温', '温度', '刮风', '怎么走', '多远', '堵车'],
-    functions: ['readMapPlace', 'geocodeAddress', 'reverseGeocode', 'searchMapPlaces', 'searchNearbyPlaces', 'estimateMapRoute', 'readWeather'],
+    functions: ['readMapPlace', 'geocodeAddress', 'reverseGeocode', 'searchMapPlaces', 'searchNearbyPlaces', 'estimateMapRoute', 'readComparedWeather', 'readWeather'],
     instructions: [
-      { function: 'readWeather', text: 'Use the requested city or place first. Select current for measured conditions and forecast for a future date. Preserve whether the supplier reported current conditions or a daily forecast.' },
+      { function: 'readComparedWeather', text: 'For weather in a named city or district in China, make one readComparedWeather call. For an answer consisting only of the weather, use complete_with_function. Select current for conditions now and forecast for a future date. Report both sources and their available dates, preserve disagreements and source failures, and retain QWeather attribution. Compare comparable fields when locationAgreement is same. If it is different or unconfirmed, report the locations separately. Do not average conditions or temperatures.' },
+      { function: 'readWeather', text: 'Use the single Amap source when specifically requested, or for exact coordinates, a planned place or the original PA location when a named city is unavailable. Do not use it to silently replace a multi-source result.' },
     ],
   },
   {

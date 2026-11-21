@@ -41,7 +41,7 @@ test('colloquial Chinese requests preload their published Agent profile', () => 
     '帮我叫个车去机场多少钱': 'RideQuote', '从公司到机场打个车要多久': 'RideQuote',
     '明天下午我有空吗': 'SchedulePlanning', '帮我订个周五晚上的位子': 'Dining', '附近有什么好吃的': 'Dining',
     '下周去上海住哪里好': 'TravelOffers', '来杯拿铁': 'CoffeePickup', '我的航班延误了吗': 'TravelMonitoring',
-    '外面会下雨吗': 'MapsAndWeather', '帮我报名这个周末的活动': 'Events',
+    '外面会下雨吗': 'MapsAndWeather', '京东淘宝耳机比价': 'MarketplaceSearch', '帮我报名这个周末的活动': 'Events',
   };
   for (const [message, profile] of Object.entries(expected)) {
     const scope = taskCatalogueScope(model, { canDefine }, { requestId: 'colloquial', message });
