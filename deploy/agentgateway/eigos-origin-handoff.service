@@ -1,0 +1,25 @@
+[Unit]
+Description=EIGOS origin handoff
+After=network.target
+
+[Service]
+Type=exec
+DynamicUser=yes
+RuntimeDirectory=eigos-origin-handoff
+RuntimeDirectoryMode=0700
+UMask=0077
+ExecStart=/usr/local/bin/node /opt/eigos-agentgateway/origin-handoff.mjs /run/eigos-origin-handoff/control.sock
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=multi-user.target
