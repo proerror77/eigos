@@ -204,7 +204,7 @@ async function weather(client: AmapClient, input: z.infer<typeof weatherInput>, 
     reportedAt: reportTime(location.reporttime), days });
 }
 
-export function amapFunctions(resolve: AmapResolver): ReadonlyMap<string, FunctionHandler> {
+export function amapFunctions(resolve: AmapResolver, publicReads = resolve): ReadonlyMap<string, FunctionHandler> {
   const handlers = new Map<string, FunctionHandler>([
     ['resolveRidePickup', async (_raw, ctx) => {
       const client = await resolve(ctx);
@@ -234,20 +234,20 @@ export function amapFunctions(resolve: AmapResolver): ReadonlyMap<string, Functi
       }, ctx.signal)));
     }],
     ['searchMapPlaces', async (raw, ctx) => {
-      const client = await resolve(ctx), { query: keywords, city } = mapSearch.parse(raw);
+      const client = await publicReads(ctx), { query: keywords, city } = mapSearch.parse(raw);
       const result = source.parse(await client.mcp('maps_text_search', { keywords, ...(city ? { city } : {}) }, ctx.signal));
       const places = z.array(z.unknown()).max(100).parse(result.pois).slice(0, 20).map(mapPlace);
       return mapPlaceResult.parse({ ...fetchTime(), places });
     }],
     ['readMapPlace', async (raw, ctx) => {
-      const client = await resolve(ctx), args = placeDetailInput.parse(raw);
+      const client = await publicReads(ctx), args = placeDetailInput.parse(raw);
       const result = source.parse(await client.mcp('maps_search_detail', args, ctx.signal));
       const place = mapPlace(result.poi ?? result);
       if (place.id !== args.id) throw new Conflict('高德返回了不同的地点。');
       return placeDetailResult.parse({ ...fetchTime(), place });
     }],
     ['searchNearbyPlaces', async (raw, ctx) => {
-      const client = await resolve(ctx), input = nearbySearch.parse(raw);
+      const client = await publicReads(ctx), input = nearbySearch.parse(raw);
       const point = await pointFor(client, input, ctx, 'nearby_search');
       const result = source.parse(await client.mcp('maps_around_search', {
         keywords: input.query, radius: String(input.radiusMeters ?? 1000), location: pointText(point),
@@ -271,7 +271,7 @@ export function amapFunctions(resolve: AmapResolver): ReadonlyMap<string, Functi
         distanceMeters: Math.round(path.distance), durationSeconds: Math.round(path.duration),
       })) });
     }],
-    ['readWeather', async (raw, ctx) => weather(await resolve(ctx), weatherInput.parse(raw), ctx)],
+    ['readWeather', async (raw, ctx) => weather(await publicReads(ctx), weatherInput.parse(raw), ctx)],
   ]);
   return new Map([...handlers].map(([name, run]) => [name, handler(run)]));
 }

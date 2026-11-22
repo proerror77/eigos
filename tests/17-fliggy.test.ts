@@ -11,6 +11,7 @@ import { FLIGGY_CLI_GUARD } from '../packages/capabilities/fliggy/cli-guard.js';
 import { configuredServices } from '../packages/capabilities/services/sources.js';
 import { travelHandoffResult } from '../packages/ontology/travel-handoff.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
+import { Accounts, emailDigest, hasBetaReadAccess } from '../packages/runtime/accounts.js';
 import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { fixture, principal } from './fixture.js';
@@ -31,6 +32,46 @@ const flightItem = (flightNumber: string) => ({
 });
 const hotelItem = (id: string, price: string) => ({
   shId: id, name: 'Fixture ' + id, address: 'Synthetic address', price, detailUrl: 'https://router.feizhu.com/hotel',
+});
+
+test('only an active invited account without an override receives the default FlyAI trial', async () => {
+  const f = await fixture(), directory = await mkdtemp(join(tmpdir(), 'eigos-beta-flyai-'));
+  const file = join(directory, 'services.json');
+  const owner = 'b'.repeat(64), email = 'flyai-beta@example.test';
+  const until = new Date(Date.now() + 300000).toISOString();
+  const accounts = new Accounts(f.db, 'invite');
+  const session = { owner, email_hash: emailDigest(email) };
+  const calls: string[] = [];
+  const trial: FlyAIRead = async (command, _, key) => {
+    assert.equal(key, undefined);
+    calls.push(command);
+    return sourcePage(command === 'search-flight' ? [flightItem('T0001')] : [hotelItem('example-a', '¥500起')]);
+  };
+  try {
+    await writeFile(file, '[]', { mode: 0o600 });
+    const resolve = configuredServices(file, trial, undefined, {}, { trialUntil: until, eligible: id => hasBetaReadAccess(f.db, id) });
+    await assert.rejects(resolve(owner, 'Fliggy'), /no owner connection/);
+    assert.equal(await accounts.apply(session, email, 'Read-only trial'), true);
+    assert.equal(await accounts.activate(session, await accounts.invite(email, 1)), 'activated');
+    await assert.rejects(resolve(owner, 'Fliggy'), /no owner connection/);
+    assert.equal(await accounts.approve(owner), true);
+    const source = await resolve(owner, 'Fliggy');
+    for (const input of [flight, hotel]) {
+      const result = await source.read(input, AbortSignal.timeout(2000));
+      assert(result.provider === 'Fliggy');
+      assert.equal(result.accessMode, 'trial');
+    }
+    assert.deepEqual(calls, ['search-flight', 'search-hotel']);
+    await assert.rejects(resolve(owner, 'RollingGo'), /no owner connection/);
+    await writeFile(file, JSON.stringify([{ owner, provider: 'Fliggy', mode: 'trial', bindingId: 'disabled', active: false, expiresAt: until }]));
+    await assert.rejects(resolve(owner, 'Fliggy'), /expired or was revoked/);
+    await writeFile(file, '[]');
+    await accounts.revoke(owner);
+    await assert.rejects(source.assertCurrent(), /no owner connection/);
+  } finally {
+    await f.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('a PA task queries flights and both hotel sources concurrently and retains independent outcomes', async () => {

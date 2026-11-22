@@ -16,6 +16,8 @@ const setup = z.strictObject({
   owner: z.string().min(1), active: z.boolean(), expiresAt: z.iso.datetime(),
   keyFile: z.string().min(1), keySha256: z.string().regex(/^[a-f0-9]{64}$/),
 });
+const sharedSetup = setup.omit({ owner: true });
+type BetaAmap = { path: string; eligible(owner: string): Promise<boolean> };
 const protocolMethods = new Set(['initialize', 'notifications/initialized', 'notifications/cancelled', 'ping']);
 const status = z.object({ status: z.literal('1') }).passthrough();
 
@@ -124,20 +126,23 @@ export class AmapClient {
   }
 }
 
-export function configuredAmap(path?: string, fetcher: typeof fetch = fetch) {
+export function configuredAmap(path?: string, fetcher: typeof fetch = fetch, beta?: BetaAmap) {
   return async (ctx: FunctionContext) => {
     const { access, model } = ctx.objects;
+    const { owner, memberAccess } = ctx.principal;
     await access.refresh();
     access.source(model, 'Amap');
     const connection = async () => {
-      if (!path) throw new Error('Missing connection');
-      const config = setup.parse(JSON.parse(await readPrivateSourceFile(path)));
-      if (!config.active || config.owner !== ctx.principal.owner || Date.parse(config.expiresAt) <= Date.now())
-        throw new Error('Invalid owner binding');
+      const own = path ? setup.parse(JSON.parse(await readPrivateSourceFile(path))) : undefined;
+      const config = own?.owner === owner ? own
+        : beta && memberAccess && await beta.eligible(owner)
+          ? sharedSetup.parse(JSON.parse(await readPrivateSourceFile(beta.path)))
+          : undefined;
+      if (!config?.active || Date.parse(config.expiresAt) <= Date.now()) throw new Error('Invalid Amap binding');
       const key = (await readPrivateSourceFile(config.keyFile)).trim();
       if (!/^[A-Za-z0-9_-]{16,128}$/.test(key) || createHash('sha256').update(key).digest('hex') !== config.keySha256)
         throw new Error('Amap key missing or changed');
-      return { key, binding: digest(config) };
+      return { key, binding: config === own ? digest(config) : digest([owner, config]) };
     };
     const read = () => connection().catch(() => {
       throw new SourceReadFailure('此账号尚未配置有效的高德 Web 服务连接。', { unavailable: true });
