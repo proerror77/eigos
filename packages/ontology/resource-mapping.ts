@@ -18,10 +18,12 @@ export type ResourceKind = keyof typeof resourceGroups;
 export type ResourceNameMap = Partial<Record<ResourceKind, Record<string, string>>>;
 
 export function remapResources(
-  input: OntologyDocument,
+  definition: OntologyDocument,
   ontology: string,
   names: ResourceNameMap,
 ): OntologyDocument {
+  // Resolve namespaced targets before renaming resources into a standalone definition.
+  const input = definition.imports?.length ? expandImports(definition) : definition;
   const document = structuredClone(input);
   document.id = ontologyName.parse(ontology);
   const rename = (kind: ResourceKind, name: string) => ontologyName.parse(names[kind]?.[name] ?? name);

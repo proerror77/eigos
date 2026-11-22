@@ -1,3 +1,6 @@
+import { Ontology } from './model.js';
+import { networkContract } from './network-contract.js';
+import { tableCheckReservations } from './tablecheck-reservations.js';
 import { scheduleJourneyDefinition } from './schedule-journey.js';
 import { itineraryDefinition, itineraryType } from './itinerary-continuity.js';
 import { executeHotelDependentTrip, hotelDependencyCriterion, tripHotelDependencyDefinition } from './trip-hotel-dependency.js';
@@ -31,6 +34,7 @@ import { didiOrderDefinitions, travelDefinition as travel } from './travel.js';
 import { paymentsDefinition as payments } from './payments.js';
 import { diningEvidence, diningResearchFunctions } from './dining.js';
 import { dianpingResearchFunctions } from './dianping.js';
+import { restaurantServices } from './restaurant-services.js';
 import { diningReservations, diningReservationType } from './dining-reservations.js';
 import { diningActivityInputSchema, jsonSchema, recommendScheduleSchema, scheduleRecommendationSchema, stageScheduleSchema } from '../capabilities/scheduling/contracts.js';
 import { objectRefSchema } from './schema.js';
@@ -47,7 +51,7 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '45',
+  id: ride.id, version: '46',
   agentProfiles: businessAgentProfiles,
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...journey.linkTypes, ...flight.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
@@ -113,6 +117,22 @@ businessDefinition.functionTypes.push(diningActivityFunction, ...diningResearchF
 businessDefinition.objectTypes.push(...diningReservations.objectTypes);
 businessDefinition.functionTypes.push(...diningReservations.functionTypes);
 businessDefinition.actionTypes.push(...diningReservations.actionTypes);
+businessDefinition.objectTypes.push(...restaurantServices.objectTypes);
+businessDefinition.interfaceTypes.push(...restaurantServices.interfaceTypes);
+businessDefinition.linkTypes.push(...restaurantServices.linkTypes);
+businessDefinition.functionTypes.push(...restaurantServices.functionTypes);
+businessDefinition.actionTypes.push(...restaurantServices.actionTypes);
+
+businessDefinition.imports = [{
+  ontology: networkContract.id, version: networkContract.version, digest: new Ontology(networkContract).digest,
+  namespace: 'Net', document: networkContract,
+}];
+businessDefinition.objectTypes.push(...tableCheckReservations.objectTypes);
+businessDefinition.linkTypes.push(...tableCheckReservations.linkTypes);
+businessDefinition.interfaceTypes.push(...tableCheckReservations.interfaceTypes);
+businessDefinition.functionTypes.push(...tableCheckReservations.functionTypes);
+businessDefinition.actionTypes.push(...tableCheckReservations.actionTypes);
+
 businessDefinition.objectTypes.push(...petRideDefinition.objectTypes);
 businessDefinition.interfaceTypes.push(...petRideDefinition.interfaceTypes);
 businessDefinition.functionTypes.push(...petRideDefinition.functionTypes);
@@ -142,7 +162,7 @@ businessDefinition.objectTypes.find(type=>type.apiName==='RideRequest')!.propert
 businessDefinition.typeGroups=[
   {apiName:'Travel',displayName:'出行',description:'Places, routes and source-backed price estimates',objectTypes:[...ride.objectTypes.map(type=>type.apiName),petRideType]},
   {apiName:'Scheduling',displayName:'排程',description:'Resources, calendar availability and schedule plans',objectTypes:scheduling.objectTypes.map(type=>type.apiName)},
-  {apiName:'Services',displayName:'服务',description:'Provider-neutral service offerings',objectTypes:[...services.objectTypes,...luckin.objectTypes,...fliggy.objectTypes,...marketplace.objectTypes,...travelHandoffDefinition.objectTypes,...fliggyHotelDefinition.objectTypes,...fliggyFlightBookingDefinition.objectTypes,...diningReservations.objectTypes].map(type=>type.apiName)},
+  {apiName:'Services',displayName:'服务',description:'Provider-neutral service offerings',objectTypes:[...services.objectTypes,...luckin.objectTypes,...fliggy.objectTypes,...marketplace.objectTypes,...travelHandoffDefinition.objectTypes,...fliggyHotelDefinition.objectTypes,...fliggyFlightBookingDefinition.objectTypes,...diningReservations.objectTypes,...restaurantServices.objectTypes,...tableCheckReservations.objectTypes].map(type=>type.apiName)},
   ...localDeliveryProviders.map(provider => {
     const service = deliveryTradeServices[provider];
     return { apiName: provider, displayName: service.search.displayName, description: 'Account-scoped supplier transactions',
@@ -158,7 +178,8 @@ for(const group of businessDefinition.typeGroups)for(const name of group.objectT
 
 for(const fn of businessDefinition.functionTypes){
   if(fn.apiName==='embedTextLocal' || fn.apiName===geometryUploadCriterion){fn.dependencies={};continue;}
-  if(travelHandoffDefinition.functionTypes.includes(fn))continue;
+  if(travelHandoffDefinition.functionTypes.includes(fn) || restaurantServices.functionTypes.includes(fn) ||
+    tableCheckReservations.functionTypes.includes(fn))continue;
   if(documents.functionTypes.includes(fn)||fliggy.functionTypes.includes(fn)||marketplace.functionTypes.includes(fn)||localDeliveryDefinition.functionTypes.includes(fn)||localDeliveryTradeDefinition.functionTypes.includes(fn)||fliggyHotelDefinition.functionTypes.includes(fn)||fliggyFlightBookingDefinition.functionTypes.includes(fn)||diningResearchFunctions.includes(fn)||dianpingResearchFunctions.includes(fn)||diningReservations.functionTypes.includes(fn)||petRideDefinition.functionTypes.includes(fn)||fn===diningActivityFunction)continue;
   if(fn === flightPositionFunction || journey.functionTypes.includes(fn) || flight.functionTypes.includes(fn) || payments.functionTypes.includes(fn) || deliveryFunctions.includes(fn) || locationFunctions.includes(fn) || mapFunctions.includes(fn) || luckin.functionTypes.includes(fn))continue;
   if(ride.functionTypes.some(item=>item.apiName===fn.apiName)){
@@ -380,3 +401,16 @@ businessDefinition.objectTypes.find(type => type.apiName === 'FliggyFlightBookin
     {from:'awaiting_issuance',to:'issued'},
   ],
 };
+
+const diningProfile = businessDefinition.agentProfiles!.find(profile => profile.apiName === 'Dining')!;
+diningProfile.actions = [...(diningProfile.actions ?? []), 'FindRestaurants', 'ReviewRestaurantVisit', 'PrepareTableCheckReservation',
+  'ConfirmTableCheckReservation', 'ReconcileTableCheckReservation', 'CancelTableCheckReservation'];
+diningProfile.functions = [...(diningProfile.functions ?? []), 'readRestaurantSearch', 'readRestaurantVisit', 'readTableCheckReservation'];
+diningProfile.instructions = [...(diningProfile.instructions ?? []),
+  { action: 'FindRestaurants', function: 'readRestaurantSearch',
+    text: 'Choose an exact venue from an authorized source. Keep distinct branch identities across suppliers. For Resy, specify the source explicitly and request the original PA’s official connector. For enterprise Meituan, supply a verified GCJ-02 point.' },
+  { action: 'ReviewRestaurantVisit', function: 'readRestaurantVisit',
+    text: 'Review current options for the exact date and party size. A link or booking-support flag is a handoff, never an available slot, held table or confirmed reservation.' },
+  { action: 'ConfirmTableCheckReservation', function: 'readTableCheckReservation',
+    text: 'Show exact offered terms and obtain the user’s approval on the original task. Read back the original reservation. If the supplier outcome is unknown, use reconciliation without resubmission.' },
+];

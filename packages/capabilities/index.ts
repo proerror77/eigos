@@ -1,3 +1,5 @@
+import { tableCheckReservationFunctions } from './dining/tablecheck-reservations.js';
+import { restaurantFunctions } from './dining/restaurant-services.js';
 import { scheduleJourneyFunctions } from './scheduling/schedule-journey.js';
 import { itineraryContinuityFunctions } from './scheduling/itinerary-continuity.js';
 import { fliggyHandoffFunctions } from './fliggy/travel-handoff.js';
@@ -51,7 +53,7 @@ import { configuredStripeSandbox, type StripeSandboxResolver } from './payments/
 
 type ProviderFetch = {
   amapFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch;
-  dianpingFetch?: typeof fetch; marketplaceFetch?: typeof fetch; localDeliveryFetch?: typeof fetch;
+  dianpingFetch?: typeof fetch; tableCheckFetch?: typeof fetch; meituanDiningFetch?: typeof fetch; marketplaceFetch?: typeof fetch; localDeliveryFetch?: typeof fetch;
 };
 
 export function configuredCapabilities(db: Database, config: ConnectionConfig, extensions: RuntimeExtensions,
@@ -72,6 +74,8 @@ export function configuredCapabilities(db: Database, config: ConnectionConfig, e
       xiaohongshu: config.EIGOS_XIAOHONGSHU_CONNECTION_FILE,
       variFlight: config.EIGOS_VARIFLIGHT_CONNECTION_FILE,
       dianping: config.EIGOS_DIANPING_CONNECTION_FILE,
+      tableCheck: config.EIGOS_TABLECHECK_CONNECTION_FILE,
+      meituanDining: config.EIGOS_MEITUAN_DINING_CONNECTION_FILE,
       diningWeb: config.EIGOS_DINING_WEB_CONNECTION_FILE,
       diningMiniProgram: config.EIGOS_DINING_MINIPROGRAM_CONNECTION_FILE,
       fr24: config.EIGOS_FR24_CONNECTION_FILE,
@@ -91,6 +95,7 @@ export function createCapabilities(
   connections: { paotui?: string; waimai?: string; localDelivery?: DeliveryConnectionPaths; localDeliveryFetch?: typeof fetch; amap?: string; amapFetch?: typeof fetch; variFlight?: string; variFlightFetch?: typeof fetch;
     fr24?: string; fr24Entrypoint?: string; calendar?: string; calendarFetch?: typeof fetch; travelPA?: string; travelPAFetch?: typeof fetch;
     xiaohongshu?: string; xiaohongshuFetch?: typeof fetch; dianping?: string; dianpingFetch?: typeof fetch; diningWeb?: string; diningMiniProgram?: string;
+    tableCheck?: string; meituanDining?: string; tableCheckFetch?: typeof fetch; meituanDiningFetch?: typeof fetch;
     fliggyHotel?: string; fliggyHotelFetch?: typeof fetch; fliggyFlight?: string; fliggyFlightFetch?: typeof fetch } = {},
 ) {
   let sources: Sources;
@@ -104,6 +109,12 @@ export function createCapabilities(
     ...transferDecisionFunctions(),
     ...diningResearch(connections.xiaohongshu, connections.xiaohongshuFetch),
     ...dianpingFunctions(connections.dianping, connections.dianpingFetch),
+    ...restaurantFunctions(getFunctions, {
+      tableCheck: connections.tableCheck, meituan: connections.meituanDining,
+      tableCheckFetch: connections.tableCheckFetch, meituanFetch: connections.meituanDiningFetch,
+      amapMock: Boolean(connections.amapFetch),
+    }),
+    ...tableCheckReservationFunctions(db, connections.tableCheck, connections.tableCheckFetch),
     ...diningReservationFunctions(db, connections.diningWeb, connections.diningMiniProgram),
     ...applicationFunctions(db),
     [registerDocumentFunction, registerSchedulePlanDocument],

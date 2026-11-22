@@ -1,3 +1,5 @@
+import { restaurantServices } from '../packages/ontology/restaurant-services.js';
+import { tableCheckReservations } from '../packages/ontology/tablecheck-reservations.js';
 import { localDeliveryProviders } from '../packages/ontology/local-delivery.js';
 import { localDeliveryTradeDefinition } from '../packages/ontology/local-delivery-trade.js';
 import { localDeliveryDefinition } from '../packages/ontology/local-delivery.js';
@@ -683,7 +685,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   // Reconstruct the historical documents on the same runtime and check both published identities.
   const laterDomains = [
     calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition, fliggyServicesDefinition,
-    fliggyFlightBookingDefinition, fliggyHotelDefinition, diningReservations, marketplaceDefinition, petRideDefinition,
+    fliggyFlightBookingDefinition, fliggyHotelDefinition, diningReservations, restaurantServices, tableCheckReservations, marketplaceDefinition, petRideDefinition,
     travelHandoffDefinition, hotelTransferDefinition, tripHotelDependencyDefinition, itineraryDefinition, localDeliveryDefinition, localDeliveryTradeDefinition,
   ];
   const addedTypes = new Set([
@@ -716,6 +718,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const v9Definition = structuredClone(document);
   v9Definition.version = '9';
   delete v9Definition.agentProfiles;
+  delete v9Definition.imports;
   for (const resource of [...v9Definition.objectTypes, ...v9Definition.functionTypes, ...v9Definition.actionTypes]) {
     if (resource.typeClasses?.some(tag => tag.kind === 'agent-capability')) {
       const tags = resource.typeClasses.filter(tag => tag.kind !== 'agent-capability');
@@ -735,6 +738,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     !marketplaceDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
     !localDeliveryDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
     !localDeliveryTradeDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
+    ![...restaurantServices.interfaceTypes, ...tableCheckReservations.interfaceTypes].some(item => item.apiName === type.apiName) &&
     !petRideDefinition.interfaceTypes.some(item => item.apiName === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;
   const didiOrder = v9Definition.objectTypes.find(type => type.apiName === 'DidiRideOrder')!;
@@ -764,6 +768,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     !scheduleJourneyDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !fliggyServicesDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !marketplaceDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    ![...restaurantServices.linkTypes, ...tableCheckReservations.linkTypes].some(item => item.apiName === type.apiName) &&
     !localDeliveryTradeDefinition.linkTypes.some(link => link.apiName === type.apiName));
   v9Definition.dataSources = v9Definition.dataSources.filter(source =>
     !fliggyServicesDefinition.dataSources.some(item => item.apiName === source.apiName) &&

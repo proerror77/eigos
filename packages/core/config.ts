@@ -42,6 +42,8 @@ export const connectionConfigSchema = z.object({
   EIGOS_AMAP_CONNECTION_FILE: z.string().optional(),
   EIGOS_XIAOHONGSHU_CONNECTION_FILE: z.string().optional(),
   EIGOS_DIANPING_CONNECTION_FILE: z.string().optional(),
+  EIGOS_TABLECHECK_CONNECTION_FILE: z.string().optional(),
+  EIGOS_MEITUAN_DINING_CONNECTION_FILE: z.string().optional(),
   EIGOS_DINING_WEB_CONNECTION_FILE: z.string().optional(),
   EIGOS_DINING_MINIPROGRAM_CONNECTION_FILE: z.string().optional(),
   EIGOS_JOURNEY_CALENDAR_CONNECTION_FILE: z.string().optional(),

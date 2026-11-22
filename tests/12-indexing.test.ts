@@ -254,6 +254,7 @@ test('process definitions and native relationships survive resource remapping',a
     });
     await setGrants(f.db,'deployment',[{resource:'Eigos',permission:'manage_definition'},{resource:'Renamed',permission:'manage_definition'}]);
     const model=await f.metadata.publish(body,f.capabilities,await Access.load(f.db,{owner:'deployment',scopes:[]}));
+    assert.equal(model.implements('TableCheckReservation', 'NetTableReservation'), true);
     await setGrants(f.db,principal.owner,businessGrants(model));
     const graph=new Objects(f.db,model,await Access.load(f.db,principal)),ref={type:'RenamedCase',id:'mapped'};
     await graph.create(ref,{id:ref.id,name:'Mapped',state:'open'});
