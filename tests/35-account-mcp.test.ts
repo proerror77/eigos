@@ -245,6 +245,7 @@ test('member restaurant search uses the original account source and exposes no g
     await syncAccountGrants(f.db, f.model);
     const approved = async (sub: string) => {
       const email = sub + '@example.test', session = await g.login(sub, email);
+      assert.equal((await g.form('apply', session.cookie, new URLSearchParams({ email, purpose: 'Search restaurant listings' }))).status, 303);
       const code = await g.accounts.invite(email, 24);
       assert.equal((await g.form('activate', session.cookie, new URLSearchParams({ code }))).headers.get('location'), '/account');
       assert.equal((await g.form('approve', session.cookie)).status, 303);
