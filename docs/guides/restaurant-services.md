@@ -13,9 +13,13 @@
 
 ## 会员 MCP 查店
 
-`search_restaurants` 接受城市 `city`、餐厅名或菜系 `query`、可选的 `limit` 和稳定的 `requestId`。它固定通过 `RestaurantDiscovery.search` 查询高德，并立即读回原搜索结果。会员 OAuth 和账号连接令牌沿用 `tasks:read`、`tasks:write`。调用者还需要其原账号的高德连接、来源和搜索授权。重复请求用同一个 `requestId` 读取结果。
+`search_restaurants` 接受城市 `city`、餐厅名或菜系 `query`、可选的 `limit` 和稳定的 `requestId`。它通过 `RestaurantDiscovery.search` 并立即读回原搜索结果。`provider` 默认 `Amap`，也可以显式选 `TableCheck`。会员 OAuth 和账号连接令牌沿用 `tasks:read`、`tasks:write`。调用者还需要其原账号的高德连接、来源和搜索授权。重复请求用同一个 `requestId` 读取结果。
 
 工具的输入只包含查店条件。通用本体工具、订座和付款使用各自的入口与权限。高德返回门店和地址。
+
+`check_restaurant_availability` 接受 TableCheck 搜索返回的 `venueId`、门店当地日期 `date`、人数 `partySize` 和 `requestId`。它固定调用 `RestaurantVisitReview.review`，读回来源状态、当地时区和可选时段。这个入口使用 Availability v1 的读取请求。空的 `availableTimes` 只在 `observed` 状态表示该次没有返回时段。
+
+运维需要给某一条现有运营者连接只开放目录查询时，可设置 `EIGOS_MCP_OPERATOR_CATALOG=<OAuth client ID>:<运营者 owner digest>`。Client ID 必须取自 `OAUTH_EXISTING_CLIENT_IDS`，owner 必须来自该连接的验证结果。对应令牌保留已有 scope，并通过 `tasks:read` 和账号级 `Eigos/view_definition` 检查后使用 `describe_ontology`。该配置只覆盖 Eigos 的目录读取。会员和通用 Function、Action 的 scope 检查照常执行。
 
 ## 供应商与授权
 

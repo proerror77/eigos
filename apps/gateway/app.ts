@@ -11,12 +11,12 @@ import { AgentCard } from '@a2a-js/sdk';
 import { z } from 'zod';
 import { Conflict, digest, InvalidInput, NotFound, PermissionDenied, requireScope, type Principal } from '../../packages/core/identity.js';
 import type { Config } from '../../packages/core/config.js';
-import { restaurantSearchInput } from '../../packages/ontology/restaurant-services.js';
+import { restaurantSearchInput, restaurantVenueType, restaurantVenueRecord, visitInput } from '../../packages/ontology/restaurant-services.js';
 import { actionRequestSchema as actionInput, functionRequestSchema as functionInput, completeWithActionRequestSchema } from '../../packages/ontology/invocation.js';
 import { withoutExternalDispatch } from '../../packages/runtime/external-operations.js';
 import { Access } from '../../packages/runtime/access.js';
 import { Database, type Sql } from '../../packages/runtime/database.js';
-import { Metadata } from '../../packages/runtime/metadata.js';
+import { Metadata, type PublishedOntology } from '../../packages/runtime/metadata.js';
 import { Objects, querySchema } from '../../packages/runtime/objects.js';
 import { Scenarios, createScenarioSchema } from '../../packages/runtime/scenarios.js';
 import { PARequests, paResponseSchema,paInboxSchema } from '../../packages/runtime/pa.js';
@@ -59,7 +59,7 @@ const refusal: Record<Denial, string> = {
 
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {},
   providerFetch: { amapFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch;
-    dianpingFetch?: typeof fetch; marketplaceFetch?: typeof fetch; localDeliveryFetch?: typeof fetch;
+    dianpingFetch?: typeof fetch; tableCheckFetch?: typeof fetch; marketplaceFetch?: typeof fetch; localDeliveryFetch?: typeof fetch;
     accountLogin?: ReturnType<typeof auth0AccountLogin>; management?: Auth0Management } = {}) {
   if (db.sandboxEnabled && !developmentSandboxEnabled({ ...config, NODE_ENV: process.env.NODE_ENV }))
     throw new Error('Gateway sandbox requires explicit loopback development configuration');
@@ -278,28 +278,51 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       res.on('close', () => { void server.close(); });
       await transport.handleRequest(req, res, req.body);
     };
-    server.registerTool('search_restaurants', {
-      description: 'Search public Amap restaurant listings for a specified city and keyword. Returns the observed venues and addresses. Use the same requestId to read the original search again.',
-      inputSchema: restaurantSearchInput.pick({ city: true, query: true, limit: true })
-        .extend({ requestId: submitSchema.shape.requestId }),
-    }, ({ requestId, ...input }) => response(async () => {
+    const restaurantAccess = async (provider: 'Amap' | 'TableCheck') => {
       requireScope(p, 'tasks:read');
       requireScope(p, 'tasks:write');
       const access = await Access.load(db, p), model = await metadata.active('Eigos');
-      access.source(model, 'Amap');
-      access.function(model, 'searchMapPlaces');
-      const selected = capabilities.actions.resolve(access, model, {
-        interface: { type: 'RestaurantDiscovery', action: 'search', implementation: 'RestaurantSearchResult' },
-        input: { ...input, providers: ['Amap'] },
-      });
-      const action = model.action(selected.action);
-      if (selected.action !== 'FindRestaurants' || action.function !== 'findRestaurants' || action.effects?.length)
-        throw new Conflict('The published restaurant search is unavailable');
+      access.source(model, provider);
+      return { access, model };
+    };
+    const completeRestaurantRead = async (access: Access, model: PublishedOntology, requestId: string,
+      operation: 'search' | 'availability', input: Record<string, unknown>) => {
+      const contract = operation === 'search'
+        ? { type: 'RestaurantDiscovery', action: 'search', implementation: 'RestaurantSearchResult',
+            actionName: 'FindRestaurants', function: 'findRestaurants', read: 'readRestaurantSearch', resultParameter: 'search' }
+        : { type: 'RestaurantVisitReview', action: 'review', implementation: 'RestaurantVisitOption',
+            actionName: 'ReviewRestaurantVisit', function: 'reviewRestaurantVisit', read: 'readRestaurantVisit', resultParameter: 'visit' };
+      const { type, action, implementation } = contract;
+      const selected = capabilities.actions.resolve(access, model, { interface: { type, action, implementation }, input });
+      const definition = model.action(selected.action);
+      if (selected.action !== contract.actionName || definition.function !== contract.function || definition.effects?.length)
+        throw new Conflict('The published restaurant query is unavailable');
       const result = await withoutExternalDispatch(() => capabilities.actions.complete(access, model, selected, requestId,
-        { function: 'readRestaurantSearch', resultParameter: 'search' }, undefined, AbortSignal.timeout(30000),
+        { function: contract.read, resultParameter: contract.resultParameter }, undefined, AbortSignal.timeout(30000),
         member ? { authorize: authorizeMemberSubmission(req) } : {}));
       if (!await access.canReturn(access.dataRequirements())) throw new PermissionDenied('Result permissions changed');
       return result;
+    };
+    server.registerTool('search_restaurants', {
+      description: 'Find Amap restaurant listings or TableCheck venues by city and keyword. Amap is the default. Preserve the returned TableCheck venue ID for an availability query.',
+      inputSchema: restaurantSearchInput.pick({ city: true, query: true, limit: true })
+        .extend({ requestId: submitSchema.shape.requestId, provider: z.enum(['Amap', 'TableCheck']).optional() }),
+    }, ({ requestId, provider = 'Amap', ...input }) => response(async () => {
+      const { access, model } = await restaurantAccess(provider);
+      if (provider === 'Amap') access.function(model, 'searchMapPlaces');
+      return completeRestaurantRead(access, model, requestId, 'search', { ...input, providers: [provider] });
+    }));
+    server.registerTool('check_restaurant_availability', {
+      description: 'Read TableCheck availability for a venue returned by search_restaurants, on an exact local date and for a specified party size. Reuse the same request ID to read the original result.',
+      inputSchema: visitInput.pick({ date: true, partySize: true })
+        .extend({ venueId: z.string().regex(/^[a-f0-9]{64}$/), requestId: submitSchema.shape.requestId }),
+    }, ({ requestId, venueId, ...input }) => response(async () => {
+      const { access, model } = await restaurantAccess('TableCheck');
+      const venue = { type: restaurantVenueType, id: venueId };
+      const snapshot = await new Objects(db, model, access).read(venue);
+      if (restaurantVenueRecord.parse(snapshot.properties).provider !== 'TableCheck')
+        throw new InvalidInput('Use the venue ID returned from a TableCheck search');
+      return completeRestaurantRead(access, model, requestId, 'availability', { ...input, venue, channel: 'provider' });
     }));
     if (member) {
       const memberSubmit = submitSchema.pick({ requestId: true, message: true, conversationId: true });
@@ -354,7 +377,18 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       description: 'Execute a published Interface Action and return its result through a published read Function. Bind the committed reference to read.resultParameter. Retry with the same requestId to read the result afresh. Use submit_task for requests that require clarification.',
       inputSchema: completeWithActionRequestSchema,
     }, input => response(() => completeWithAction(p, input)));
-    server.registerTool('describe_ontology', { description: 'Read published types, properties, interfaces, links, functions and actions.', inputSchema: z.strictObject({ontology:z.string().optional()}) }, input => response(async () => { requireScope(p, 'ontology:read'); return (await Access.load(db, p)).describe(await metadata.active(input.ontology)); }));
+    server.registerTool('describe_ontology', {
+      description: 'Read published types, properties, interfaces, links, functions and actions.',
+      inputSchema: z.strictObject({ ontology: z.string().optional() }),
+    }, input => response(async () => {
+      const readScope = p.scopes.includes('ontology:read');
+      const operatorCatalog = !p.memberAudience && p.clientId && (input.ontology ?? 'Eigos') === 'Eigos' &&
+        config.EIGOS_MCP_OPERATOR_CATALOG === `${p.clientId}:${p.owner}` && p.scopes.includes('tasks:read');
+      if (!readScope && !operatorCatalog) requireScope(p, 'ontology:read');
+      const access = await Access.load(db, p), model = await metadata.active(input.ontology);
+      if (!readScope) access.require('Eigos', 'view_definition', 'Eigos');
+      return access.describe(model);
+    }));
     await serve();
   });
   app.use('/a2a', jsonRpcHandler({ requestHandler: new A2A(tasks, card, capabilities.projectTaskResult), userBuilder: async req => new AgentUser(principal(req), agentTokenHashes.has(req) ? authorizeMemberSubmission(req) : undefined) }));
