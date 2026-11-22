@@ -146,6 +146,10 @@ Machinery 使用已发布对象的枚举状态和原有编辑历史；Action Eng
 
 请求、任务调度和技术调用分别保存在专用运行表。地点和路线具有业务身份，费用估计是一次来源观察，来源凭据保存在运行配置中。标准化过程保留供应商坐标系声明及价格范围。[结构指导](https://www.palantir.com/docs/foundry/ontology/ontology-structural-guidance)
 
+## 餐厅搜索与订座
+
+`RestaurantDiscovery.search` 保存各来源的结果，并用 Link 连接返回的门店。每个门店保留供应商身份。 `RestaurantVisitReview.review` 连接被选门店与该日期和人数的观察，包括真实空位、官方预订交接或来源不可用。 `RestaurantReservationOffer.prepare` 连接 TableCheck 原门店、当次观察和待批准的订座条款，确认、取消和对账通过 `NetTableReservation` 调用。详见[餐厅服务指南](../guides/restaurant-services.md)。 [Interface 实现](https://www.palantir.com/docs/foundry/interfaces/implement-interface) · [Link Types](https://www.palantir.com/docs/foundry/object-link-types/link-types-overview) · [Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview)
+
 ## 网页订位试点
 
 `readDiningWebAvailability` 接收餐厅、城市、当地日期和人数。从指定餐厅官网跟随订位链接，核对 SevenRooms 页面上的门店、日期和人数，从页面主结果区提取可选时段。连接配置只保存官网起点。浏览器使用独立会话，只向官网和订位页面发出读取请求。

@@ -22,7 +22,7 @@ type Gap = 'terms' | 'state' | 'cancel' | 'approval';
 /** The synthetic dining pilot with every gap to the contract closed except `open`. */
 function diningConsumer(open?: Gap): OntologyDocument {
   const body = structuredClone(businessDefinition);
-  body.imports = [...(body.imports ?? []), structuredClone(pinned)];
+  if (!body.imports?.some(item => item.namespace === pinned.namespace)) body.imports = [...(body.imports ?? []), structuredClone(pinned)];
   const type = body.objectTypes.find(object => object.apiName === diningReservationType)!;
   const terms = diningReservationTerms.shape;
   if (open !== 'terms') Object.assign(type.properties, {

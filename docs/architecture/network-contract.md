@@ -1,6 +1,6 @@
 # 网络契约草案
 
-二期让用户的 PA、EIGOS 和商户 agent 用同一套 Ontology 契约协作。对话可以用自然语言，承诺必须是 Interface Action，带类型化参数并返回回执。第一版草案定义在 `packages/ontology/network-contract.ts`，作为独立的 `EigosNetwork` v1 文档发布。业务定义尚未导入它，当前发布的定义和运行行为不变。
+二期让用户的 PA、EIGOS 和商户 agent 用同一套 Ontology 契约协作。对话可以用自然语言，承诺必须是 Interface Action，带类型化参数并返回回执。第一版草案定义在 `packages/ontology/network-contract.ts`，作为独立的 `EigosNetwork` v1 文档发布。业务定义从 v46 起固定导入 v1 为 `Net`，由 `TableCheckReservation` 实现 `NetTableReservation`。
 
 ## 依据
 
@@ -42,7 +42,7 @@ imports: [{ ontology: 'EigosNetwork', version: '1', digest, namespace: 'Net', do
 | 供给方 | 实现类型 | `confirm` 执行什么 | 回执 |
 | --- | --- | --- | --- |
 | 商户有自己的 agent | 新增类型，例如 `MerchantAgentBooking` | 经 A2A 发给商户 agent | `merchant_signed` |
-| 只有官网订位页或小程序 | 现有的 `DiningReservation` | `SubmitDiningTestReservation` | 试点为 `synthetic`；上线后为 `connector_receipt` 或 `pa_reported` |
+| TableCheck Distribution | `TableCheckReservation` | `ConfirmTableCheckReservation` | `connector_receipt`，测试为 `synthetic` |
 | 都没有 | 指向 EIGOS 托管 agent 的预订类型 | 店员在托管后台确认 | `merchant_confirmed` |
 
 为此，发布校验调整了一条规则。
@@ -51,6 +51,10 @@ imports: [{ ontology: 'EigosNetwork', version: '1', digest, namespace: 'Net', do
 - **新规则**：约束中如果只有一个参数能放入实现对象本身，这个参数只需接受该实现类型；其他对象参数仍须接受全部实现。如果有两个这样的参数，无法判断哪个是选中的对象，仍按原规则检查。
 
 执行时，`Actions.checkInput` 仍会核对每个对象引用的类型。通过实现类型调用时，如果传入其他类型的对象，调用会被拒绝。
+
+## TableCheck 实现
+
+`TableCheckReservation` 关联原 `RestaurantVisitOption` 和 `RestaurantSourceVenue`。准备操作记录确切供应商门店、当地日期、时间、人数和时段对应的绝对时间。确认 Action 用原条款摘要校验授权，使用 Distribution 在已批准门店锁位并提交。确认和取消分别记录外部操作，独立回查同一供应商预订。回执不完整时保留 `unknown`，用 `reconcile` 查原单。见[餐厅服务](../guides/restaurant-services.md)。
 
 ## 订位试点的差距
 
