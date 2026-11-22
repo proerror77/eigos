@@ -92,14 +92,14 @@ export type FakeIdentityProvider = Awaited<ReturnType<typeof fakeIdentityProvide
  * the fixture; `close()` only stops the server.
  */
 export async function accountGateway(f: Fixture, options: { signup?: SignupMode; env?: Record<string, string>; management?: Auth0Management;
-  identity?: FakeIdentityProvider } = {}): Promise<AccountGateway> {
+  identity?: FakeIdentityProvider; amapFetch?: typeof fetch } = {}): Promise<AccountGateway> {
   const config = readConfig({ ...portalEnv, ...(options.signup ? { EIGOS_SIGNUP: options.signup } : {}), ...options.env });
   const issuer = config.OAUTH_ISSUER!, publicUrl = config.PUBLIC_URL, audience = publicUrl + '/mcp';
   const identity = options.identity ?? await fakeIdentityProvider(config), { tenant, jwks, sign, codes } = identity;
   const owner = (sub: string) => digest([issuer, tenant, sub]);
   const accounts = new Accounts(f.db, config.EIGOS_SIGNUP);
   const gateway = createApp(config, f.db, f.source, jwtVerifier(issuer, publicUrl, jwks, config.OAUTH_TENANT_CLAIM, audience), {},
-    { accountLogin: auth0AccountLogin(config, identity.exchange, jwks), management: options.management });
+    { accountLogin: auth0AccountLogin(config, identity.exchange, jwks), management: options.management, amapFetch: options.amapFetch });
   const server = gateway.app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
   const address = server.address();

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { provisionPublicPlaceCatalogue } from '../packages/capabilities/public-places/catalogue.js';
 import { readConfig } from '../packages/core/config.js';
-import type { Principal } from '../packages/core/identity.js';
+import { digest, type Principal } from '../packages/core/identity.js';
 import { publicPlacesOntology } from '../packages/ontology/public-places.js';
 import { Access, businessGrants, setGrants, syncAccountGrants, syncAccountGrantsAfterActivation } from '../packages/runtime/access.js';
 import { Accounts, accountGroup, emailDigest, initializeAccounts } from '../packages/runtime/accounts.js';
@@ -17,7 +17,7 @@ const accountGroupGrants = async (db: Database) => new Set((await db.query(
   `SELECT permission||':'||resource AS entry FROM ${db.schema}.resource_grants WHERE subject=$1`, ['group:' + accountGroup])).rows.map(row => row.entry as string));
 
 test('account portal configuration requires secrets and owner isolation for sign-up', () => {
-  assert.equal(readConfig(portalEnv).EIGOS_SIGNUP, 'open');
+  assert.equal(readConfig(portalEnv).EIGOS_SIGNUP, 'invite');
   assert.throws(() => readConfig({ ...portalEnv, EIGOS_ENFORCE_OWNER_RLS: undefined }), /Self sign-up requires EIGOS_ENFORCE_OWNER_RLS=true/);
   assert.throws(() => readConfig({ ...portalEnv, EIGOS_SIGNUP: 'invite', EIGOS_ENFORCE_OWNER_RLS: 'false' }), /Self sign-up requires/);
   assert.equal(readConfig({ ...portalEnv, EIGOS_SIGNUP: 'closed', EIGOS_ENFORCE_OWNER_RLS: undefined }).EIGOS_SIGNUP, 'closed');
@@ -139,13 +139,25 @@ test('activation, suspension, lookup and concurrent provisioning follow the stor
   try {
     const open = new Accounts(f.db, 'open'), invite = new Accounts(f.db, 'invite'), closed = new Accounts(f.db, 'closed');
     const owner = '4'.repeat(64), email = emailDigest('dave@example.test'), session = { owner, email_hash: email };
-    const code = await invite.invite('Dave@example.test', 1);
+    await assert.rejects(invite.invite('Dave@example.test', 1), /No pending application/);
+    assert.equal(await invite.apply(session, 'other@example.test', 'Look up flights'), false);
+    assert.equal(await invite.apply(session, 'Dave@example.test', 'Look up flights'), true);
+    assert.deepEqual((await invite.applications()).map(({ owner, email, purpose }) => [owner, email, purpose]),
+      [[owner, 'Dave@example.test', 'Look up flights']]);
+    const earlier = await invite.invite('Dave@example.test', 1);
+    const code = await invite.invite(owner, 1);
+    assert.equal(await invite.applicationStatus(session), 'invited');
+    assert.equal(await invite.activate(session, earlier), 'invalid');
+    assert.equal(await invite.activate({ owner: '6'.repeat(64), email_hash: email }, code), 'invalid');
     assert.equal(await closed.activate(session, code), 'invalid');
     assert.equal(await invite.activate({ owner, email_hash: emailDigest('other@example.test') }, code), 'invalid');
     assert.equal(await invite.activate(session, 'x'.repeat(43)), 'invalid');
     assert.equal(await invite.account(owner), undefined);
     assert.equal(await invite.activate(session, code), 'activated');
     assert.equal((await invite.account(owner))?.email_hash, email);
+    assert.deepEqual(await invite.applications(), []);
+    await invite.apply({ owner: '6'.repeat(64), email_hash: email }, 'Dave@example.test', 'Use as a separate identity');
+    await assert.rejects(invite.invite('Dave@example.test', 1), /Multiple identities match this email/);
     assert.equal(await invite.activate({ owner: '6'.repeat(64), email_hash: email }, code), 'invalid');
     assert.equal(await invite.activate(session, 'x'.repeat(43)), 'activated');
     await setGrants(f.db, '5'.repeat(64), [{ resource: 'Eigos', permission: 'view_definition' }]);
@@ -245,11 +257,15 @@ test('upgrading the legacy member schema keeps accounts and invitations, and can
     await f.db.query(`INSERT INTO ${s}.member_accounts(owner,approved_at) VALUES($1,now())`, [owner]);
     await f.db.query(`INSERT INTO ${s}.member_invitations(code_hash,email_hash,expires_at,redeemed_by)
       VALUES('legacy-code','legacy-email',now()+interval '1 hour',$1)`, [owner]);
+    const unredeemedCode = 'a'.repeat(43), recipient = { owner: 'b'.repeat(64), email_hash: emailDigest('legacy@example.test') };
+    await f.db.query(`INSERT INTO ${s}.member_invitations(code_hash,email_hash,expires_at)
+      VALUES($1,$2,now()+interval '1 hour')`, [digest(unredeemedCode), recipient.email_hash]);
     await initializeAccounts(f.db);
     await initializeAccounts(f.db);
     const account = await new Accounts(f.db, 'open').account(owner);
     assert.deepEqual([account?.status, account?.suspended_at, account?.suspended_reason, account?.email_hash], ['active', null, null, null]);
     assert.ok(account?.approved_at);
+    assert.equal(await new Accounts(f.db, 'invite').activate(recipient, unredeemedCode), 'activated');
     assert.equal((await f.db.query(`SELECT to_regclass($1) AS legacy`, [s + '.member_accounts'])).rows[0]?.legacy, null);
     await assert.rejects(f.db.query(`UPDATE ${s}.accounts SET status='deleted' WHERE owner=$1`, [owner]), /accounts_status_check/);
     await assert.rejects(f.db.query(`UPDATE ${s}.accounts SET status=NULL WHERE owner=$1`, [owner]), /not-null constraint/);

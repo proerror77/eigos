@@ -13,7 +13,7 @@ export { placeAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema, task
 import { parseSubmission, storedInputSchema, taskOptions } from './task-input.js';
 export { routeInputSchema, submitSchema, type RouteInput } from './task-input.js';
 
-export interface Task { id: string; owner: string; request_id: string; input: z.infer<typeof storedInputSchema> & {scheduledAction?:ScheduledCall}; release: string; scopes: string[]; state: string; token: string | null; result: unknown; result_permissions?: Requirement[] | null; error: string | null; created_at: Date; updated_at: Date; execution_step?:number; conversation_id?: string | null; cognitive_context?: CognitiveContext | null }
+export interface Task { id: string; owner: string; request_id: string; input: z.infer<typeof storedInputSchema> & {scheduledAction?:ScheduledCall}; release: string; scopes: string[]; state: string; token: string | null; result: unknown; result_permissions?: Requirement[] | null; error: string | null; created_at: Date; available_at?: Date; updated_at: Date; execution_step?:number; conversation_id?: string | null; cognitive_context?: CognitiveContext | null }
 type InboxTask = Task & { conversation_batch: string; message_count: number; collecting: boolean };
 const batchWindowMs = 2000;
 const maxBatchMessages = 16;

@@ -19,9 +19,9 @@ Gateway 将 `submit_task`、`get_task` 和 `complete_with_action` 的 HTTP 返�
 | 字段 | 含义 |
 | --- | --- |
 | `mcpRequestId`、`clientId`、`tool` | 单次请求标识、已验证的 OAuth 客户端和 MCP 工具。客户端可用 HTTP 响应头 `X-EIGOS-MCP-Request-Id` 对齐自己的记录 |
-| `receivedAt`、`toolStartedAt`、`finishedAt` | Gateway 收到请求、开始工具回调和响应结束的 UTC 时间。`durationMs` 使用单调时钟计算整次 Gateway 请求耗时 |
+| `receivedAt`、`toolStartedAt`、`toolFinishedAt`、`finishedAt` | Gateway 收到请求、开始工具回调、结果序列化或错误处理完成、HTTP 响应结束的 UTC 时间。`durationMs` 使用单调时钟计算整次 Gateway 请求耗时 |
 | `transport`、`httpStatus`、`toolStatus` | `sent` 表示服务端将响应交给传输层，`closed` 表示在此之前连接关闭。HTTP 状态与工具状态分别记录 |
-| `taskId`、`taskState`、`resultIncluded`、`taskCompletedAt` | 任务型工具返回的已授权快照，包含当时任务状态和是否有结果。完成时间取自任务记录 |
+| `taskId`、`taskState`、`taskCreatedAt`、`resultIncluded`、`taskCompletedAt` | 任务型工具返回的已授权快照。创建和完成时间取自任务记录。单次 Action 调用也记录是否返回结果 |
 
 从 Gateway 日志按任务 ID 查看轮询。`gateway_container` 填运行中的 Gateway 容器名，`task_id` 填查询返回的 ID。
 
@@ -31,5 +31,27 @@ docker logs "$gateway_container" 2>&1 | jq -Rc --arg id "$task_id" \
 ```
 
 找第一次 `get_task` 同时返回 `taskState=completed`、`resultIncluded=true` 和 `transport=sent` 的记录。用 `taskCompletedAt`、`receivedAt` 和 `finishedAt` 对齐任务完成、取回请求和 Gateway 发送。`finishedAt` 到客户收到结果之间还经过网络和客户端传输。Grok 收到工具结果、开始生成回复及显示报价的时间需要由客户端侧记录。
+
+## 执行阶段计时
+
+Worker 领到任务时写 `worker_claim`，运行结束时写 `worker_finish`。两行和执行阶段的 `stage_timing` 共用 `taskId` 和本次领取的 `workerRunId`。`taskCreatedAt`、`taskAvailableAt` 和 `taskClaimedAt` 来自 PostgreSQL，同一笔任务首次领取时可以分别算出合批等待与进入可执行状态后的排队时间。恢复和重试各有独立的 `workerRunId`。`worker_finish.taskState` 表示本次的已提交结果，`uncommitted` 表示未能提交状态。
+
+| `stage_timing.stage` | 时间范围 |
+| --- | --- |
+| `model_session`、`agent_tool` | EIGOS 驱动模型会话和各工具的时间。模型会话包含等工具的时间，可以用首个 `agent_tool.startedAt` 看模型启动到第一次选择工具经过多久 |
+| `action_apply`、`result_read` | 发布的 Action 提交与结果 Function 的读回 |
+| `didi_read`、`didi_rpc` | 每个滴滴工具的连接器执行耗时，以及其中的 MCP 工具调用耗时。两次地点读取可能并行 |
+
+在 Worker 容器里用同一个任务 ID 查看阶段。单次 `complete_with_action` 的阶段在 Gateway 日志里，用同一个 `mcpRequestId` 查询。
+
+```sh
+docker logs "$worker_container" 2>&1 | jq -Rc --arg id "$task_id" \
+  'fromjson? | select(.taskId == $id and (.event == "worker_claim" or .event == "worker_finish" or .event == "stage_timing"))'
+
+docker logs "$gateway_container" 2>&1 | jq -Rc --arg id "$mcp_request_id" \
+  'fromjson? | select(.mcpRequestId == $id and (.event == "mcp_request" or .event == "stage_timing"))'
+```
+
+阶段记录包含 UTC 起止时间和单调时钟计算的 `durationMs`，可按 `startedAt` 排列。同一调用内会有嵌套和并行阶段，按起止时间读取关键路径。用 Grok 的消息发送和报价显示时间对齐首条和末条 Gateway 记录，可量出 EIGOS 边界外的时间；Grok 内部阶段仍需客户端日志。
 
 日志只保存调用元数据。凭据、提示词、入参与报价内容留在原调用的权限边界内。

@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { z } from 'zod';
 import { Conflict, digest, PermissionDenied, SourceReadFailure } from '../../core/identity.js';
+import { timeOperation } from '../../core/operation-timing.js';
 import { didiBindingSchema, didiEndpoint, didiReceiptSchema, didiToolInputs, DIDI_REQUIRED_TOOLS, DIDI_TOOLS, type DidiBinding, type DidiData, type DidiEvidenceKind, type DidiReceipt, type DidiTool } from './contracts.js';
 import { mapDidiResult } from './mapping.js';
 
@@ -159,7 +160,8 @@ export class DidiMcpConnector implements DidiConnector {
       const descriptor = directory.find(t => t.name === tool);
       if (!descriptor) throw new DidiReadError('READ_TOOLS_UNAVAILABLE');
       signal.throwIfAborted();
-      const raw = await client.callTool({ name: tool, arguments: parsed.data }, { signal, timeout: 20000 });
+      const raw = await timeOperation('didi_rpc',
+        () => client.callTool({ name: tool, arguments: parsed.data }, { signal, timeout: 20000 }), tool);
       await this.verifyCredential();
       const receivedAt = new Date().toISOString(), serialized = JSON.stringify(raw);
       if (serialized.includes(secret)) throw new DidiReadError('CREDENTIAL_ECHO_BLOCKED');

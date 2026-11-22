@@ -9,11 +9,13 @@ import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
 import { jsonRpcHandler } from '@a2a-js/sdk/server/express';
 import { AgentCard } from '@a2a-js/sdk';
 import { z } from 'zod';
-import { Conflict, InvalidInput, NotFound, PermissionDenied, requireScope, type Principal } from '../../packages/core/identity.js';
+import { Conflict, digest, InvalidInput, NotFound, PermissionDenied, requireScope, type Principal } from '../../packages/core/identity.js';
 import type { Config } from '../../packages/core/config.js';
+import { restaurantSearchInput } from '../../packages/ontology/restaurant-services.js';
 import { actionRequestSchema as actionInput, functionRequestSchema as functionInput, completeWithActionRequestSchema } from '../../packages/ontology/invocation.js';
+import { withoutExternalDispatch } from '../../packages/runtime/external-operations.js';
 import { Access } from '../../packages/runtime/access.js';
-import { Database } from '../../packages/runtime/database.js';
+import { Database, type Sql } from '../../packages/runtime/database.js';
 import { Metadata } from '../../packages/runtime/metadata.js';
 import { Objects, querySchema } from '../../packages/runtime/objects.js';
 import { Scenarios, createScenarioSchema } from '../../packages/runtime/scenarios.js';
@@ -26,7 +28,7 @@ import type { SourceResolver } from '../../packages/capabilities/didi/functions.
 import { verifier, type VerifyToken } from './auth.js';
 import { mountAccountPortal, type auth0AccountLogin } from './account-portal.js';
 import { auth0Management, type Auth0Management } from './auth0-management.js';
-import { Accounts, accountTaskScopes, type Denial } from '../../packages/runtime/accounts.js';
+import { Accounts, accountTaskScopes, agentTokenPattern, type Denial } from '../../packages/runtime/accounts.js';
 import { A2A, AgentUser, agentCard } from './a2a.js';
 import { publicError } from './public-error.js';
 import { startMcpTiming } from './mcp-timing.js';
@@ -70,6 +72,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   const hotelWorkflows = new HotelWorkflows(db, metadata, capabilities.functions);
   const principals = new WeakMap<Request, Principal>();
   const memberRequests = new WeakSet<Request>();
+  const agentTokenHashes = new WeakMap<Request, string>();
   const mcpTiming = new WeakMap<Request, ReturnType<typeof startMcpTiming>>();
   const memberClient = config.OAUTH_MEMBER_MCP_CLIENT_ID;
   const members = memberClient ? new Accounts(db, config.EIGOS_SIGNUP) : undefined;
@@ -114,22 +117,33 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   mountWorkbench(app, config, verify);
   app.use(async (req, res, next) => {
     const token = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1];
-    let verified: Principal;
-    try {
-      if (!token) throw new Error();
-      verified = await verify(token);
-    } catch {
+    let verified: Principal | undefined;
+    const agentTokenHash = members && token && agentTokenPattern.test(token) ? digest(token) : undefined;
+    if (agentTokenHash) {
+      const owner = await members?.agentTokenOwner(agentTokenHash);
+      if (owner) {
+        if (!['/mcp', '/a2a', '/a2a/', '/identity'].includes(req.path)) {
+          res.status(403).json({ error: refusal.client_not_allowed, reason: 'client_not_allowed', account: '/account' });
+          return;
+        }
+        verified = { owner, clientId: 'account-token', scopes: accountTaskScopes, memberAccess: true };
+        memberRequests.add(req);
+        agentTokenHashes.set(req, agentTokenHash);
+      }
+    } else if (token) {
+      try { verified = await verify(token); } catch { /* Return the transport challenge below. */ }
+    }
+    if (!verified) {
       const auth = req.path === '/mcp' && config.OAUTH_ISSUER ? challenge : 'Bearer';
       res.setHeader('WWW-Authenticate', token ? auth + (auth === 'Bearer' ? ' ' : ', ') + 'error="invalid_token"' : auth);
       res.status(401).json({ error: 'Authentication required' }); return;
     }
-    if (members && memberClient) {
+    if (!agentTokenHash && members && memberClient) {
       const result = await members.authorize(verified, memberClient, existingClients);
       if (result.kind === 'account' && (req.path === '/mcp' || req.path === '/identity')) {
         verified = { ...verified, scopes: accountTaskScopes, memberAccess: true };
         memberRequests.add(req);
       } else if (result.kind !== 'existing') {
-        // An account token that passed every check still reaches only /mcp and /identity: any other path is a client accounts may not use.
         const reason: Denial = result.kind === 'denied' ? result.reason : 'client_not_allowed';
         if (reason === 'insufficient_scope') res.setHeader('WWW-Authenticate', insufficientScope);
         res.status(403).json({ error: refusal[reason], reason, account: '/account' }); return;
@@ -139,6 +153,11 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     db.withOwner(verified.owner, next);
   });
   const principal = (req: Request) => principals.get(req)!;
+  const authorizeMemberSubmission = (req: Request) =>
+    async (client: Sql) => {
+      if (!await members!.active(principal(req).owner, client, agentTokenHashes.get(req)))
+        throw new PermissionDenied('This EIGOS account is suspended or its client authorization was revoked');
+    };
   const services=ontologyServices(db,metadata,capabilities,capabilities.functions,capabilities.effects,capabilities.actions);
   app.post('/ontology/services/:operation',async(req,res)=>{
     const {_ontology,...input}=z.record(z.string(),z.unknown()).parse(req.body);
@@ -253,7 +272,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const response = async (operation: () => Promise<unknown>) => {
       timing?.start();
       try {
-        const result = await operation(), text = JSON.stringify(result);
+        const result = await (timing ? timing.run(operation) : operation()), text = JSON.stringify(result);
         timing?.succeed(result);
         return { content: [{ type: 'text' as const, text }] };
       }
@@ -272,15 +291,36 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       res.on('close', () => { void server.close(); });
       await transport.handleRequest(req, res, req.body);
     };
+    server.registerTool('search_restaurants', {
+      description: 'Search public Amap restaurant listings for a specified city and keyword. Returns the observed venues and addresses. Use the same requestId to read the original search again.',
+      inputSchema: restaurantSearchInput.pick({ city: true, query: true, limit: true })
+        .extend({ requestId: submitSchema.shape.requestId }),
+    }, ({ requestId, ...input }) => response(async () => {
+      requireScope(p, 'tasks:read');
+      requireScope(p, 'tasks:write');
+      const access = await Access.load(db, p), model = await metadata.active('Eigos');
+      access.source(model, 'Amap');
+      access.function(model, 'searchMapPlaces');
+      const selected = capabilities.actions.resolve(access, model, {
+        interface: { type: 'RestaurantDiscovery', action: 'search', implementation: 'RestaurantSearchResult' },
+        input: { ...input, providers: ['Amap'] },
+      });
+      const action = model.action(selected.action);
+      if (selected.action !== 'FindRestaurants' || action.function !== 'findRestaurants' || action.effects?.length)
+        throw new Conflict('The published restaurant search is unavailable');
+      const result = await withoutExternalDispatch(() => capabilities.actions.complete(access, model, selected, requestId,
+        { function: 'readRestaurantSearch', resultParameter: 'search' }, undefined, AbortSignal.timeout(30000),
+        member ? { authorize: authorizeMemberSubmission(req) } : {}));
+      if (!await access.canReturn(access.dataRequirements())) throw new PermissionDenied('Result permissions changed');
+      return result;
+    }));
     if (member) {
       const memberSubmit = submitSchema.pick({ requestId: true, message: true, conversationId: true });
       server.registerTool('submit_task', {
         description: 'Submit a read-only travel inquiry. Send the natural-language request once and preserve the returned task ID.',
         inputSchema: memberSubmit,
       }, input => response(async () => publicTask(await tasks.submit(p, input, {
-        authorize: async client => {
-          if (!await members!.active(p.owner, client)) throw new PermissionDenied('This EIGOS account is suspended or its client authorization was revoked');
-        },
+        authorize: authorizeMemberSubmission(req),
       }))));
       server.registerTool('get_task', {
         description: 'Poll the same task ID for the completed result.', inputSchema: z.strictObject({ taskId: z.uuid() }),
@@ -330,7 +370,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     server.registerTool('describe_ontology', { description: 'Read published types, properties, interfaces, links, functions and actions.', inputSchema: z.strictObject({ontology:z.string().optional()}) }, input => response(async () => { requireScope(p, 'ontology:read'); return (await Access.load(db, p)).describe(await metadata.active(input.ontology)); }));
     await serve();
   });
-  app.use('/a2a', jsonRpcHandler({ requestHandler: new A2A(tasks, card, capabilities.projectTaskResult), userBuilder: async req => new AgentUser(principal(req)) }));
+  app.use('/a2a', jsonRpcHandler({ requestHandler: new A2A(tasks, card, capabilities.projectTaskResult), userBuilder: async req => new AgentUser(principal(req), agentTokenHashes.has(req) ? authorizeMemberSubmission(req) : undefined) }));
   app.use((error: unknown, _req: Request, res: express.Response, next: express.NextFunction) => {
     if (res.headersSent) return next(error);
     const { status, message, requestId } = publicError(error);

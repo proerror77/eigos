@@ -25,7 +25,7 @@ import { accountCommand } from './account-command.js';
 const command = process.argv[2];
 const document = businessDefinition;
 const model = new Ontology(document);
-const signupMode = () => z.enum(['open', 'invite', 'closed']).default('open').parse(process.env.EIGOS_SIGNUP);
+const signupMode = () => z.enum(['open', 'invite', 'closed']).default('invite').parse(process.env.EIGOS_SIGNUP);
 if (command === 'check') console.log(JSON.stringify({ id: model.document.id, version: model.document.version, digest: model.digest, objects: model.objects.size, interfaces: model.interfaces.size, links: model.links.size, actions: model.actions.size, functions: model.functions.size }));
 else {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
@@ -40,11 +40,15 @@ else {
     } else if (command === 'enable-pgvector') {
       console.log(JSON.stringify(await enablePgvector(db)));
     } else if (command === 'invite') {
-      const email = z.email().parse(process.argv[3]);
+      const target = z.union([z.email(), z.string().regex(/^[a-f0-9]{64}$/)]).parse(process.argv[3]);
       const hours = z.coerce.number().int().min(1).max(168).parse(process.argv[4] ?? 48);
-      console.log(await new Accounts(db, signupMode()).invite(email, hours));
+      console.log(await new Accounts(db, signupMode()).invite(target, hours));
     } else if (command === 'account') {
-      console.log(JSON.stringify(await accountCommand(db, signupMode(), process.argv.slice(3))));
+      const args = process.argv.slice(3);
+      if (args[0] === 'applications') {
+        const offset = z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(args[1] ?? 0);
+        console.log(JSON.stringify(await new Accounts(db, signupMode()).applications(offset)));
+      } else console.log(JSON.stringify(await accountCommand(db, signupMode(), args)));
     } else if (command === 'provision-public-places') {
       const project = ontologyName.parse(process.argv[3]);
       await db.query(`INSERT INTO ${db.schema}.resource_grants(subject,resource,permission) VALUES($1,$2,'manage_definition')

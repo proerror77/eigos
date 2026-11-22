@@ -14,7 +14,8 @@ import { generateKeyPair, SignJWT, createLocalJWKSet, exportJWK } from 'jose';
 import { jwtVerifier } from '../apps/gateway/auth.js';
 
 test('MCP and A2A share the same authenticated PostgreSQL task and ontology', async () => {
-  const f = await fixture(), token = 'synthetic-token-'.repeat(3);
+  // Development keeps its configured token even if it has the format used by the account portal.
+  const f = await fixture(), token = 'eigos_agent_' + 'a'.repeat(43);
   const config = readConfig({ DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token });
   const gateway = createApp(config, f.db, f.source), server = gateway.app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));

@@ -1,5 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import { TaskResult,PermissionDenied } from '../../packages/runtime/access.js';
 import { Conflict } from '../../packages/core/identity.js';
+import { withOperationTiming } from '../../packages/core/operation-timing.js';
 import { Clarification } from '../../packages/runtime/agent.js';
 import { Tasks, type Task } from '../../packages/runtime/tasks.js';
 import { DeferredExecution } from '../../packages/runtime/scheduled-actions.js';
@@ -15,7 +17,21 @@ export class Worker {
     if (lane !== 'interactive') await this.schedules?.promoteOne();
     const task = await this.tasks.claim(lane);
     if (!task) return false;
-    await this.tasks.db.withOwner(task.owner, () => this.execute(task));
+    const correlation = { taskId: task.id, workerRunId: randomUUID() };
+    const startedAt = new Date().toISOString(), started = performance.now();
+    console.info(JSON.stringify({
+      event: 'worker_claim', ...correlation, startedAt, taskCreatedAt: task.created_at.toISOString(),
+      taskAvailableAt: task.available_at?.toISOString(), taskClaimedAt: task.updated_at.toISOString(),
+    }));
+    let taskState = 'uncommitted';
+    try {
+      taskState = await this.tasks.db.withOwner(task.owner, () => withOperationTiming(correlation, () => this.execute(task)));
+    } finally {
+      console.info(JSON.stringify({
+        event: 'worker_finish', ...correlation, taskState, finishedAt: new Date().toISOString(),
+        durationMs: Math.round(performance.now() - started),
+      }));
+    }
     return true;
   }
   private async execute(task: Task) {
@@ -30,14 +46,16 @@ export class Worker {
       const result = await (task.input.scheduledAction?this.scheduledRunner!:this.agent).run(task, signal);
       signal.throwIfAborted();
       await this.tasks.finish(task, 'completed', result instanceof TaskResult ? result.value : result, undefined, result instanceof TaskResult ? result.permissions : []);
+      return 'completed';
     } catch (error) {
-      if(error instanceof DeferredExecution){await this.tasks.defer(task,error.until).catch(()=>{});return;}
+      if (error instanceof DeferredExecution) return await this.tasks.defer(task, error.until).then(() => 'deferred', () => 'uncommitted');
       const clarification = error instanceof Clarification;
+      const state = clarification ? 'input-required' : 'failed';
       if (!clarification) console.error('Inquiry execution failed', error instanceof Error ? error.message : 'Unknown error');
       const safeError=error instanceof Conflict||error instanceof PermissionDenied?error.message:'Execution failed. Check the original operation and configured source before retrying.';
-      await this.tasks.finish(task, clarification ? 'input-required' : 'failed', clarification ? error.choices ?? null : null,
+      return await this.tasks.finish(task, state, clarification ? error.choices ?? null : null,
         clarification ? error.message : safeError, clarification ? error.permissions : [],
-        clarification ? error.continuation : undefined).catch(() => {});
+        clarification ? error.continuation : undefined).then(() => state, () => 'uncommitted');
     } finally { clearInterval(timer); await renewing; }
   }
   async run() {

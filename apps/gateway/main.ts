@@ -10,7 +10,6 @@ const gateway = createApp(config, db, configuredSource(config.EIGOS_DIDI_CONNECT
 gateway.metadata.checkBindings(await gateway.metadata.active(), gateway.capabilities);
 const server = gateway.app.listen(config.PORT, config.HOST, () => {
   console.log(`EIGOS listening on ${config.HOST}:${config.PORT}`);
-  // The mode defaults to open, so a deployment meant to be invite-only can see here that it did not get that setting.
   if (config.OAUTH_MEMBER_MCP_CLIENT_ID) console.log(`EIGOS account sign-up mode: ${config.EIGOS_SIGNUP}`);
 });
 const close = () => server.close(() => { void db.close(); });
