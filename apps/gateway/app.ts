@@ -110,7 +110,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   app.use(async (req, res, next) => {
     const token = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1];
     let verified: Principal | undefined;
-    const agentTokenHash = token && agentTokenPattern.test(token) ? digest(token) : undefined;
+    const agentTokenHash = members && token && agentTokenPattern.test(token) ? digest(token) : undefined;
     if (agentTokenHash) {
       const owner = await members?.agentTokenOwner(agentTokenHash);
       if (owner) {
