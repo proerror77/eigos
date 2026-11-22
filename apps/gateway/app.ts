@@ -53,7 +53,6 @@ const refusal: Record<Denial, string> = {
   client_not_allowed: 'This client is not allowed for EIGOS accounts',
   client_not_authorized: 'Authorize this client on the EIGOS account page',
   insufficient_scope: 'The token is missing tasks:read or tasks:write',
-  account_access_pending: 'This EIGOS account has no Agent capabilities assigned',
 };
 
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {},
@@ -268,7 +267,6 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       }, input => response(async () => publicTask(await tasks.submit(p, input, {
         authorize: async client => {
           if (!await members!.active(p.owner, client)) throw new PermissionDenied('This EIGOS account is suspended or its client authorization was revoked');
-          if (!await members!.hasAgentAccess(p.owner, client)) throw new PermissionDenied(refusal.account_access_pending);
         },
       }))));
       server.registerTool('get_task', {

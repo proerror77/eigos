@@ -2,23 +2,24 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { digest } from '../packages/core/identity.js';
-import { setGrants } from '../packages/runtime/access.js';
-import { accountGrantSubject, Accounts } from '../packages/runtime/accounts.js';
+import { setGrants, syncAccountGrants } from '../packages/runtime/access.js';
+import { Accounts } from '../packages/runtime/accounts.js';
 import { accountGateway, type AccountGateway } from './account-harness.js';
 import { fixture } from './fixture.js';
 
-test('verified invitation, separate Grok consent, owner isolation and revocation on the actual MCP gateway', async () => {
+test('invited accounts use the shared Beta capabilities with separate consent, task isolation and revocation', async () => {
   const departureDate = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
   const flight = { origin: 'SHA', destination: 'PEK', departureDate, limit: 1 };
-  let sourceReads = 0, g: AccountGateway;
+  const sourceReaders: string[] = [];
+  let g: AccountGateway;
   const f = await fixture({ model: 'synthetic-flight-agent', async run(_prompt, tools) {
     await tools.get('complete_with_function')!.invoke({ function: 'readFliggyFlights', input: flight });
   } }, async (actor, provider) => {
-    assert.equal(actor, g.owner('alice'));
+    assert([g.owner('alice'), g.owner('bob')].includes(actor));
     assert.equal(provider, 'Fliggy');
     return { provider, bindingId: 'synthetic-fliggy', async assertCurrent() {}, async read(input) {
       assert.deepEqual(input, flight);
-      sourceReads++;
+      sourceReaders.push(actor);
       const items = [{
         nativeId: 'synthetic-flight', name: 'MU5101', url: 'https://example.test/synthetic-flight', priceDisplay: '500 CNY', adultFareDisplay: null,
         journeys: [{ kind: 'outbound', segments: [{ flightNumber: 'MU5101', departureAirport: 'SHA',
@@ -42,6 +43,7 @@ test('verified invitation, separate Grok consent, owner isolation and revocation
     return client;
   };
   try {
+    await syncAccountGrants(f.db, f.model);
     const anonymous = await g.call('/mcp');
     assert.equal(anonymous.status, 401);
     assert.match(anonymous.headers.get('www-authenticate')!, /oauth-protected-resource\/mcp/);
@@ -74,20 +76,8 @@ test('verified invitation, separate Grok consent, owner isolation and revocation
     assert.equal((await g.call('/mcp', await g.token('alice', { scope: 'tasks:read' }))).status, 403);
 
     const bobCode = await g.accounts.invite('bob@example.test', 24);
-    await g.form('activate', bob.cookie, new URLSearchParams({ code: bobCode }));
-    await g.form('approve', bob.cookie);
-    const unopened = await g.call('/mcp', await g.token('alice', { issuedAt: Math.ceil(Date.now() / 1000) }));
-    assert.equal(unopened.status, 403);
-    assert.equal((await unopened.json()).reason, 'account_access_pending');
-    await setGrants(f.db, accountGrantSubject(g.owner('alice')), [
-      { resource: 'Eigos', permission: 'view_definition' },
-      { resource: 'Eigos/function/readFliggyFlights', permission: 'execute_function' },
-      { resource: 'Eigos/source/Fliggy', permission: 'read_source' },
-    ]);
-    await setGrants(f.db, accountGrantSubject(g.owner('bob')), [
-      { resource: 'Eigos', permission: 'view_definition' },
-      { resource: 'Eigos/function/readWeather', permission: 'execute_function' },
-    ]);
+    assert.equal((await g.form('activate', bob.cookie, new URLSearchParams({ code: bobCode }))).headers.get('location'), '/account');
+    assert.equal((await g.form('approve', bob.cookie)).status, 303);
     const issuedAt = Math.ceil(Date.now() / 1000), aliceToken = await g.token('alice', { issuedAt });
     const aliceMcp = await makeClient(aliceToken);
     const bobMcp = await makeClient(await g.token('bob', { issuedAt }));
@@ -111,25 +101,17 @@ test('verified invitation, separate Grok consent, owner isolation and revocation
     assert.equal(result.state, 'completed', JSON.stringify(result));
     assert.equal(result.result.evidence, 'synthetic');
     assert.equal(result.result.items[0].name, 'MU5101');
-    assert.equal(sourceReads, 1);
-    assert.equal(f.provider.flags.orderCreates, 0);
+    assert.deepEqual(sourceReaders, [g.owner('alice')]);
     const bobSubmission = await bobMcp.callTool({ name: 'submit_task', arguments: args });
     assert(!bobSubmission.isError, JSON.stringify(bobSubmission));
     const bobTaskId = readResult(bobSubmission).id;
     await f.worker.runOne();
-    assert.equal(readResult(await bobMcp.callTool({ name: 'get_task', arguments: { taskId: bobTaskId } })).state, 'failed');
-    assert.equal(sourceReads, 1);
-    const queued = readResult(await bobMcp.callTool({ name: 'submit_task', arguments: { ...args, requestId: 'queued-before-revocation' } })).id;
-    const bobGrants = [{ resource: 'Eigos', permission: 'view_definition' }] as const;
-    await setGrants(f.db, accountGrantSubject(g.owner('bob')), []);
-    const deniedBob = await g.call('/mcp', await g.token('bob', { issuedAt }));
-    assert.equal(deniedBob.status, 403);
-    await f.worker.runOne();
-    await setGrants(f.db, accountGrantSubject(g.owner('bob')), [...bobGrants]);
-    const revokedTask = readResult(await bobMcp.callTool({ name: 'get_task', arguments: { taskId: queued } }));
-    assert.equal(revokedTask.state, 'failed');
-    assert.match(revokedTask.error, /no Agent capabilities assigned/);
-    assert.equal(sourceReads, 1);
+    const bobResult = readResult(await bobMcp.callTool({ name: 'get_task', arguments: { taskId: bobTaskId } }));
+    assert.equal(bobResult.state, 'completed', JSON.stringify(bobResult));
+    assert.equal(bobResult.result.items[0].name, 'MU5101');
+    assert.deepEqual(sourceReaders, [g.owner('alice'), g.owner('bob')]);
+    assert.equal((await aliceMcp.callTool({ name: 'get_task', arguments: { taskId: bobTaskId } })).isError, true);
+    assert.equal(f.provider.flags.orderCreates, 0);
     assert.equal((await g.form('revoke', alice.cookie)).status, 303);
     for (const [name, args] of [['get_task', { taskId: id }], ['submit_task', { requestId: 'after-revoke', message: '只查航班' }]] as const) {
       const denied = await fetch(g.url + '/mcp', { method: 'POST', headers: {
@@ -164,7 +146,6 @@ test('a task submitted while its account is being suspended is refused with the 
   try {
     const { cookie } = await g.login('ivy', 'ivy@example.test');
     assert.equal((await g.form('approve', cookie)).status, 303);
-    await setGrants(f.db, accountGrantSubject(g.owner('ivy')), [{ resource: 'Eigos', permission: 'view_definition' }]);
     const active = Accounts.prototype.active;
     let checks = 0;
     // The token passes the Gateway's own check. The suspension lands before the submission checks the account again inside its transaction.

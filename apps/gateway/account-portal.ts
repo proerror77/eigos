@@ -206,7 +206,7 @@ export function mountAccountPortal(app: express.Express, config: Config, account
           : `<form method="post" action="/account/apply">
               <p><label>已验证的登录邮箱 <input type="email" name="email" autocomplete="email" maxlength="254" required></label></p>
               <p><label>你计划用 Agent 做什么？<br><textarea name="purpose" maxlength="300" rows="3" required></textarea></label></p>
-              <p>运营将根据申请用途审核并配置账号权限。</p><button>申请使用 Agent</button>
+              <p>运营审核后会单独提供邀请码。</p><button>申请使用 Agent</button>
             </form>`;
         content = apply + '<form method="post" action="/account/activate"><label>邀请码 <input name="code" autocomplete="off" maxlength="43" required></label> <button>开通账号</button></form>';
       } else if (config.EIGOS_SIGNUP === 'closed') { explains = 'closed'; content = `<p>${statuses.closed}</p>`; }
@@ -216,9 +216,7 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     else if (account.approved_at) content = `<p>已允许 Grok 请求访问。请在 Grok 添加远程 HTTPS MCP，使用 EIGOS 账号完成 OAuth。</p>
       <dl><dt>服务地址</dt><dd><code>${new URL('/mcp', config.PUBLIC_URL).href}</code></dd><dt>OAuth Client ID</dt><dd><code>${config.OAUTH_MEMBER_MCP_CLIENT_ID}</code></dd></dl>
       <form method="post" action="/account/revoke"><button>撤销 Grok 授权</button></form>`;
-    else content = '<p>账号已开通。授权后，Grok 可以提交和读取你自己的查询任务。</p><form method="post" action="/account/approve"><button>授权 Grok</button></form>';
-    if (account?.status === 'active' && !await accounts.hasAgentAccess(account.owner))
-      content = '<p>当前没有已分配的 Agent 能力，请联系 EIGOS 运营开通。</p>' + content;
+    else content = '<p>Beta 账号已开通。授权 Grok 后即可使用 EIGOS Agent。</p><form method="post" action="/account/approve"><button>授权 Grok</button></form>';
     // A status the page body already spells out is not repeated as a banner.
     const banner = status && status !== explains ? `<p role="status">${statuses[status]}</p>` : '';
     // The verify status offers a new verification email when there is a Management API client to ask for it.

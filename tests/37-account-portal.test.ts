@@ -12,7 +12,7 @@ import { seal, unseal } from '../apps/gateway/sealed-cookie.js';
 import { readConfig } from '../packages/core/config.js';
 import { digest } from '../packages/core/identity.js';
 import { setGrants } from '../packages/runtime/access.js';
-import { Accounts, accountGrantSubject } from '../packages/runtime/accounts.js';
+import { Accounts } from '../packages/runtime/accounts.js';
 import { portalEnv } from './account-env.js';
 import { accountGateway, type AccountGateway } from './account-harness.js';
 import { fixture } from './fixture.js';
@@ -350,7 +350,7 @@ test('the account page shows where each account stands', async () => {
     for (const flag of [/; Max-Age=28800(;|$)/, /; Path=\/(;|$)/, /; HttpOnly/, /; Secure/, /; SameSite=Lax/]) assert.match(session, flag);
     assert.doesNotMatch(session, /Domain=/i);
     const fresh = await open.page(erin.cookie);
-    assert.match(fresh, /账号已开通。授权后，Grok 可以提交和读取你自己的查询任务。/);
+    assert.match(fresh, /Beta 账号已开通。授权 Grok 后即可使用 EIGOS Agent。/);
     assert.match(fresh, /<button>授权 Grok<\/button>/);
     assert.match(fresh, /<button>退出登录<\/button>/);
     await open.form('approve', erin.cookie);
@@ -424,7 +424,7 @@ test('form posts need the portal origin and a session, and activation reports op
     assert.match(await accountPage(), /申请已通过/);
     assert.equal((await invite.form('activate', carol.cookie, new URLSearchParams({ code: mine }))).headers.get('location'), '/account');
     assert.equal((await invite.accounts.account(invite.owner('carol')))?.status, 'active');
-    assert.match(await accountPage(), /没有已分配的 Agent 能力/);
+    assert.match(await accountPage(), /Beta 账号已开通/);
   } finally { await invite.close(); await closed.close(); await f.close(); }
 });
 
@@ -575,9 +575,6 @@ test('every refusal names its reason and only a missing scope adds a challenge',
     assert.equal((await open.call('/mcp', await open.token('quinn'))).status, 403);
     await open.accounts.approve(open.owner('quinn'));
     const issuedAt = Math.floor(Date.now() / 1000) + 5, ready = await open.token('quinn', { issuedAt });
-    assert.deepEqual(await answer(open, '/mcp', ready),
-      refusedAs('This EIGOS account has no Agent capabilities assigned', 'account_access_pending'));
-    await setGrants(f.db, accountGrantSubject(open.owner('quinn')), [{ resource: 'Eigos', permission: 'view_definition' }]);
     assert.equal((await open.call('/identity', ready)).status, 200);
     assert.deepEqual(await answer(open, '/ontology', ready), notAllowed, 'an account token reaches only /mcp and /identity');
     assert.deepEqual(await answer(open, '/mcp', await open.token('quinn', { scope: 'tasks:write', issuedAt })), {
@@ -838,7 +835,6 @@ test('a finished merge withdraws the agent access of the account it merges into,
     // The original account is open and has authorized Grok, and an agent holds a token for it.
     const original = await g.login(primary, email);
     await g.form('approve', original.cookie);
-    await setGrants(f.db, accountGrantSubject(g.owner(primary)), [{ resource: 'Eigos', permission: 'view_definition' }]);
     const connected = await g.token(primary, { issuedAt: Math.floor(Date.now() / 1000) + 5 });
     assert.equal((await g.call('/identity', connected)).status, 200);
 

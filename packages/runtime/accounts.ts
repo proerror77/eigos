@@ -2,7 +2,9 @@ import { randomBytes } from 'node:crypto';
 import { digest, InvalidInput, type Principal } from '../core/identity.js';
 import type { Database, Sql } from './database.js';
 
-export const accountGrantSubject = (owner: string) => 'account:' + owner;
+export const accountGroup = 'eigos-accounts';
+/** Group that held the same grants before member accounts became self-service accounts. */
+const legacyMemberGroup = 'eigos-member-queries';
 export const accountTaskScopes = ['tasks:read', 'tasks:write'] as const;
 export type SignupMode = 'open' | 'invite' | 'closed';
 export interface Account {
@@ -12,7 +14,7 @@ export interface Account {
 type VerifiedSession = { owner: string; email_hash: string };
 export interface AccountApplication { owner: string; email: string; purpose: string; applied_at: Date; invited_until: Date | null }
 export type ProvisionRefusal = 'signup_closed' | 'invite_required' | 'operator_account';
-export type Denial = ProvisionRefusal | 'account_suspended' | 'client_not_allowed' | 'client_not_authorized' | 'insufficient_scope' | 'account_access_pending';
+export type Denial = ProvisionRefusal | 'account_suspended' | 'client_not_allowed' | 'client_not_authorized' | 'insufficient_scope';
 export type Authorization = { kind: 'account' } | { kind: 'existing' } | { kind: 'denied'; reason: Denial };
 export const newAccountSecret = () => randomBytes(32).toString('base64url');
 export const emailDigest = (email: string) => digest(email.trim().toLowerCase());
@@ -52,11 +54,9 @@ export async function initializeAccounts(db: Database) {
       expires_at timestamptz NOT NULL);
     CREATE INDEX IF NOT EXISTS member_sessions_expiry ON ${s}.member_sessions(expires_at);
     INSERT INTO ${s}.resource_grants(subject,resource,permission)
-      SELECT 'account:'||a.owner,g.resource,g.permission
-      FROM ${s}.accounts a CROSS JOIN ${s}.resource_grants g
-      WHERE g.subject IN ('group:eigos-accounts','group:eigos-member-queries')
+      SELECT 'group:${accountGroup}',resource,permission FROM ${s}.resource_grants WHERE subject='group:${legacyMemberGroup}'
       ON CONFLICT DO NOTHING;
-    DELETE FROM ${s}.resource_grants WHERE subject IN ('group:eigos-accounts','group:eigos-member-queries');
+    DELETE FROM ${s}.resource_grants WHERE subject='group:${legacyMemberGroup}';
   `);
 }
 
@@ -97,7 +97,7 @@ export class Accounts {
       ORDER BY a.applied_at,a.owner LIMIT 100 OFFSET $1`, [offset])).rows;
   }
 
-  async operatorTarget(target: string) {
+  private async invitationOwner(target: string) {
     const byOwner = /^[a-f0-9]{64}$/.test(target), column = byOwner ? 'owner' : 'email_hash', s = this.db.schema;
     const { rows } = await this.db.query<{ owner: string }>(`SELECT owner FROM ${s}.accounts WHERE ${column}=$1
       UNION SELECT owner FROM ${s}.account_applications WHERE ${column}=$1 AND NOT EXISTS (
@@ -109,7 +109,7 @@ export class Accounts {
 
   async invite(target: string, hours: number) {
     if (this.signup !== 'invite') throw new InvalidInput('Invitations require invite sign-up mode');
-    const owner = await this.operatorTarget(target), s = this.db.schema;
+    const owner = await this.invitationOwner(target), s = this.db.schema;
     if (!owner) throw new InvalidInput('No pending application for this email or owner');
     return this.db.transaction(async client => {
       await this.lockApplication(owner, client);
@@ -130,11 +130,6 @@ export class Accounts {
 
   private async lockApplication(owner: string, client: Sql) {
     await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [this.db.lockKey('account-application', owner)], client);
-  }
-
-  async hasAgentAccess(owner: string, client?: Sql) {
-    return Boolean((await this.db.query(`SELECT 1 FROM ${this.db.schema}.resource_grants WHERE subject=$1 LIMIT 1`,
-      [accountGrantSubject(owner)], client)).rowCount);
   }
 
   async startSession(owner: string, email: string, previousToken: string) {
@@ -260,7 +255,6 @@ export class Accounts {
       if (!account?.approved_at || account.revoked_at || principal.issuedAt === undefined ||
           principal.issuedAt < Math.floor(account.approved_at.getTime() / 1000)) return denied('client_not_authorized');
       if (!accountTaskScopes.every(scope => principal.scopes.includes(scope))) return denied('insufficient_scope');
-      if (!await this.hasAgentAccess(principal.owner)) return denied('account_access_pending');
       return { kind: 'account' };
     }
     // Existing operator identities retain their grants. Unprovisioned subjects cannot use a legacy client to bypass onboarding.

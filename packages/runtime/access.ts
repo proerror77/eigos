@@ -1,4 +1,4 @@
-import { accountGrantSubject } from './accounts.js';
+import { accountGroup } from './accounts.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { digest, PermissionDenied, type Principal } from '../core/identity.js';
@@ -117,7 +117,7 @@ export class Access {
     const grantSubject = this.principal.memberAccess
       ? `subject=$2 AND EXISTS (SELECT 1 FROM ${this.db.schema}.accounts WHERE owner=$1 AND status='active' AND approved_at IS NOT NULL AND revoked_at IS NULL)`
       : `(subject=$1 OR subject IN (SELECT 'group:'||name FROM ${this.db.schema}.security_memberships WHERE subject=$1 AND kind='group'))`;
-    const subjects = this.principal.memberAccess ? [this.principal.owner, accountGrantSubject(this.principal.owner)] : [this.principal.owner];
+    const subjects = this.principal.memberAccess ? [this.principal.owner, 'group:' + accountGroup] : [this.principal.owner];
     const result = await this.db.query(`SELECT
       (SELECT coalesce(jsonb_agg(jsonb_build_object('resource',resource,'permission',permission)),'[]')
         FROM ${this.db.schema}.resource_grants WHERE ${grantSubject}) AS grants,
@@ -137,9 +137,6 @@ export class Access {
     this.security = { subject: this.principal.owner, groups: memberships.filter(m=>m.kind==='group').map(m=>m.name).sort(), markings: memberships.filter(m=>m.kind==='marking').map(m=>m.name).sort() };
     this.securityDigest = digest({ policies: [...this.policies].sort(), security: this.security });
     for (const requirement of this.required.values()) if (!this.allows(requirement)) throw new PermissionDenied('Permission changed during execution');
-  }
-  requireAccountAccess() {
-    if (this.principal.memberAccess && !this.grants.size) throw new PermissionDenied('This EIGOS account has no Agent capabilities assigned');
   }
   allows({ permission, resource: target, ontology, security }: Requirement): boolean {
     if (security && security !== this.securityDigest) return false;
@@ -553,4 +550,18 @@ export function businessGrants(model: Ontology, sandboxEnabled = false): Grant[]
     ...model.resolvedDocument.actionTypes.filter(available('action')).map(action => ({ resource: resource(model.document.id, 'action', action.apiName), permission: 'apply_action' as const })),
     ...[...new Set(functions.flatMap(fn => fn.source ? [fn.source] : []))].map(name => ({ resource: resource(model.document.id, 'source', name), permission: 'read_source' as const })),
   ];
+}
+/** Makes the account group hold exactly the business grants of `model`, replacing whatever the group held. Pass the business Ontology only; the operator commands call `syncAccountGrantsAfterActivation`. */
+export async function syncAccountGrants(db: Database, model: Ontology, client?: Sql): Promise<void> {
+  await setGrants(db, 'group:' + accountGroup, businessGrants(model, db.sandboxEnabled), client);
+}
+const businessOntology = 'Eigos';
+/**
+ * Keeps the account group in step with the business Ontology. The operator commands sync after publish/activate.
+ * After a branch merge activates a new business release, the operator re-runs `npm run ontology:activate <release>`,
+ * because the runtime role cannot write authorization tables. Any other Ontology is ignored: its resources must never
+ * replace the business grants of every account.
+ */
+export async function syncAccountGrantsAfterActivation(db: Database, activated: Ontology): Promise<void> {
+  if (activated.document.id === businessOntology) await syncAccountGrants(db, activated);
 }

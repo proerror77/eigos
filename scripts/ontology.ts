@@ -5,7 +5,7 @@ import { Ontology } from '../packages/ontology/model.js';
 import { Database } from '../packages/runtime/database.js';
 import { Metadata } from '../packages/runtime/metadata.js';
 import { objectPolicySchema } from '../packages/runtime/security.js';
-import { Access, setGrants, businessGrants, grantSchema } from '../packages/runtime/access.js';
+import { Access, setGrants, businessGrants, syncAccountGrantsAfterActivation, grantSchema } from '../packages/runtime/access.js';
 import { upgradePublicationStorage } from '../packages/runtime/upgrade.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import { configuredSource } from '../packages/core/config.js';
@@ -20,7 +20,7 @@ import { installOwnerIsolation } from '../packages/runtime/owner-isolation.js';
 import { provisionPublicPlaceCatalogue } from '../packages/capabilities/public-places/catalogue.js';
 import { publicPlacesOntology } from '../packages/ontology/public-places.js';
 import { ontologyName } from '../packages/ontology/schema.js';
-import { accountAccessCommand, accountCommand } from './account-command.js';
+import { accountCommand } from './account-command.js';
 
 const command = process.argv[2];
 const document = businessDefinition;
@@ -45,8 +45,10 @@ else {
       console.log(await new Accounts(db, signupMode()).invite(target, hours));
     } else if (command === 'account') {
       const args = process.argv.slice(3);
-      const run = ['applications', 'grant-catalog', 'grants', 'set-grants'].includes(args[0] ?? '') ? accountAccessCommand : accountCommand;
-      console.log(JSON.stringify(await run(db, signupMode(), args)));
+      if (args[0] === 'applications') {
+        const offset = z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(args[1] ?? 0);
+        console.log(JSON.stringify(await new Accounts(db, signupMode()).applications(offset)));
+      } else console.log(JSON.stringify(await accountCommand(db, signupMode(), args)));
     } else if (command === 'provision-public-places') {
       const project = ontologyName.parse(process.argv[3]);
       await db.query(`INSERT INTO ${db.schema}.resource_grants(subject,resource,permission) VALUES($1,$2,'manage_definition')
@@ -96,6 +98,7 @@ else {
         : command === 'activate' ? await metadata.activate(process.argv[3]!, bindings, access)
         : command === 'publish' ? await metadata.publish(document, bindings, access, transform) : undefined;
       if (!published) throw new Error('Use check, initialize, upgrade, enable-owner-isolation, enable-pgvector, permissions, invite, account, grant-business, provision-public-places, prepare, activate or publish');
+      if (command === 'activate' || command === 'publish') await syncAccountGrantsAfterActivation(db, published);
       console.log(JSON.stringify({ release: published.release, definition: published.digest, projection: published.projection, runtime: published.runtimeId }));
     }
   } finally { await db.close(); }
