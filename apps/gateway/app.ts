@@ -29,6 +29,7 @@ import { auth0Management, type Auth0Management } from './auth0-management.js';
 import { Accounts, accountTaskScopes, type Denial } from '../../packages/runtime/accounts.js';
 import { A2A, AgentUser, agentCard } from './a2a.js';
 import { publicError } from './public-error.js';
+import { registerRideCard, rideCardInstructions } from './ride-card.js';
 import { developmentSandboxEnabled } from '../../packages/core/sandbox-mode.js';
 
 const queryInput = z.strictObject({ ontology:z.string().optional(), taskId: z.uuid().optional(), scenarioId: z.uuid().optional(), query: querySchema });
@@ -152,13 +153,13 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     if(!await access.canReturn(access.dataRequirements()))throw new PermissionDenied('Result permissions changed');
     return result;
   };
-  const evaluate = async (p: Principal, raw: unknown) => {
+  const evaluate = async (p: Principal, raw: unknown, allowTaskScopedFareRead = false) => {
     const input = functionInput.parse(raw);
-    const liveTravelReminder = (input.function === 'readCalendarJourney' || input.function === 'readFlightWatch' || input.function === 'readDidiRideWatch') &&
+    const taskScopedTravelRead = (input.function === 'readCalendarJourney' || input.function === 'readFlightWatch' || input.function === 'readDidiRideWatch' ||
+      (allowTaskScopedFareRead && input.function === 'readRideEstimates')) &&
       !input.taskId && !input.scenarioId && (input.ontology === undefined || input.ontology === 'Eigos');
-    // Existing PA clients carry task scopes. These two reads still use the published Function,
-    // source, object, and row permissions of the authenticated owner.
-    if (!liveTravelReminder || !p.scopes.includes('tasks:read')) requireScope(p, 'ontology:read');
+    // PA reads still use the published Function and the authenticated owner’s source and object permissions.
+    if (!taskScopedTravelRead || !p.scopes.includes('tasks:read')) requireScope(p, 'ontology:read');
     const model = await modelFor(p, input.taskId, input.scenarioId,undefined,input.ontology), access = await Access.load(db, p);
     const result = await capabilities.functions.invoke(model, input.function, input.input, { principal: p, objects: new Objects(db, model, access), signal: AbortSignal.timeout(30000) });
     if(!await access.canReturn(access.dataRequirements()))throw new PermissionDenied('Result permissions changed');
@@ -242,7 +243,12 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   app.post('/mcp', async (req, res) => {
     const p = principal(req), member = memberRequests.has(req);
     const instructions = member ? 'Submit the user’s read-only travel query once. Poll get_task with the original returned ID and deliver the result in the same conversation.' : paTravelInstructions;
-    const server = new McpServer({ name: 'eigos', version: '0.2.0' }, { instructions });
+    const server = new McpServer({ name: 'eigos', version: '0.2.0' }, { instructions: instructions + ' ' + rideCardInstructions });
+    registerRideCard(server, {
+      task: async id => publicTask(await tasks.get(p, id)),
+      quote: request => evaluate(p, { function: 'readRideEstimates', input: { request } }, true),
+      watch: watch => evaluate(p, { function: 'readDidiRideWatch', input: { watch } }),
+    });
     const response = async (operation: () => Promise<unknown>) => {
       try { const result = await operation(); return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] }; }
       catch (error) {

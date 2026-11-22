@@ -38,3 +38,11 @@ EIGOS 先保存原单取消尝试，再调用 `taxi_cancel_order`。收到明确
 - [Machinery](https://www.palantir.com/docs/foundry/machinery/core-concepts/) 沿 `stateLogs` 观察可枚举状态的已提交转换。现有可选通知队列按观察版本发送和撤回，发送前重新复核原对象、归属和许可。Webhook 接收确认表示通知进入 PA 通道，用户端已读需要独立证据。
 
 开发测试使用合成订单、文档状态和替代的通知接收方。生产下单开关保持关闭。本能力未通过真实订单或用户端通知的验收。
+
+## 在个人助理对话显示行程
+
+PA 拿到滴滴报价后调用 `show_didi_ride`，传原任务的 `taskId`，或传已返回的 `quote: { type: "RideRequest", id }`。支持 MCP Apps 的客户端在当前会话显示上车点、目的地、各车型和报价有效期。能绘制自有组件的 PA 可以读取同次调用的 `structuredContent`，用 `kind` 区分 `quote` 和 `watch`，用行程的 `state` 和 `observedAt` 呈现最新状态。只支持文字的客户端展示 `content`。卡片中的历史价格在到期时标记为已过期。
+
+已有跟单时传原 `watch: { type: "DidiRideWatch", id }`。卡片显示最近记录的接驾或行程状态、可用的车辆信息和预计到达时间。点击「刷新进度」读取同一观察记录。超过两分钟的观察会隐藏距离和 ETA，观察到期后卡片显示已到期。状态更新由现有跟单排程产生。
+
+卡片使用已授权的任务结果或已发布的 `readRideEstimates`、`readDidiRideWatch`。卡片自身只读，继续使用原有对象、来源和发布权限。 [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) · [Grok Bot 更新日志](https://x.ai/changelog/bot)

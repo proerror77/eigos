@@ -81,7 +81,7 @@ test('verified invitation, separate Grok consent, owner isolation and revocation
     const issuedAt = Math.ceil(Date.now() / 1000), aliceToken = await g.token('alice', { issuedAt });
     const aliceMcp = await makeClient(aliceToken);
     const bobMcp = await makeClient(await g.token('bob', { issuedAt }));
-    assert.deepEqual((await aliceMcp.listTools()).tools.map(tool => tool.name).sort(), ['get_task', 'submit_task']);
+    assert.deepEqual((await aliceMcp.listTools()).tools.map(tool => tool.name).sort(), ['get_task', 'show_didi_ride', 'submit_task']);
     assert.deepEqual((await (await g.call('/identity', aliceToken)).json()).scopes, ['tasks:read', 'tasks:write']);
     assert.equal((await g.call('/ontology', aliceToken)).status, 403);
     assert.equal((await g.call('/a2a', aliceToken)).status, 403);
@@ -95,11 +95,17 @@ test('verified invitation, separate Grok consent, owner isolation and revocation
     const id = readResult(submission).id;
     assert.equal(readResult(await aliceMcp.callTool({ name: 'submit_task', arguments: args })).id, id);
     assert.equal((await bobMcp.callTool({ name: 'get_task', arguments: { taskId: id } })).isError, true);
+    const deniedCard = await bobMcp.callTool({ name: 'show_didi_ride', arguments: { taskId: id } });
+    assert.equal(deniedCard.isError, true);
+    assert.deepEqual(deniedCard.structuredContent, { status: 404, error: 'Task is unavailable' });
     await f.worker.runOne();
     const result = readResult(await aliceMcp.callTool({ name: 'get_task', arguments: { taskId: id } }));
     assert.equal(result.id, id);
     assert.equal(result.state, 'completed', JSON.stringify(result));
     assert.equal(result.result.evidence, 'synthetic');
+    const unrelatedCard = await aliceMcp.callTool({ name: 'show_didi_ride', arguments: { taskId: id } });
+    assert.equal(unrelatedCard.isError, true);
+    assert.deepEqual(unrelatedCard.structuredContent, { status: 409, error: 'The original ride quote is unavailable' });
     assert.equal(result.result.items[0].name, 'MU5101');
     assert.equal(sourceReads, 1);
     assert.equal(f.provider.flags.orderCreates, 0);
@@ -123,8 +129,8 @@ test('verified invitation, separate Grok consent, owner isolation and revocation
     const renewedToken = await g.token('alice', { issuedAt: Math.ceil(Date.now() / 1000) });
     assert.equal((await g.call('/identity', renewedToken)).status, 200);
     const renewed = await makeClient(renewedToken);
-    assert.equal((await renewed.listTools()).tools.length, 2);
-    assert.equal((await bobMcp.listTools()).tools.length, 2);
+    assert.equal((await renewed.listTools()).tools.length, 3);
+    assert.equal((await bobMcp.listTools()).tools.length, 3);
   } finally {
     for (const client of clients) await client.close();
     await g.close();

@@ -3,10 +3,13 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { once } from 'node:events';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { createApp } from '../apps/gateway/app.js';
 import { DidiOperations } from '../packages/capabilities/didi/operations.js';
 import { digest } from '../packages/core/identity.js';
-import { configuredSource } from '../packages/core/config.js';
+import { configuredSource, readConfig } from '../packages/core/config.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import { rideWatchRead, rideWatchType } from '../packages/ontology/ride-watch.js';
 import { Objects } from '../packages/runtime/objects.js';
@@ -172,7 +175,7 @@ test('only the tracked order can select the separate read-only sandbox binding',
   } finally { await rm(dir,{recursive:true,force:true}); }
 });
 
-test('the original DiDi order is followed to arrival and completion without posting orders or collecting payment', async () => {
+test('the original DiDi order is followed to arrival and completion without posting orders or collecting payment', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'eigos-ride-watch-'));
   const keyFile = join(dir, 'key'), travelPA = join(dir, 'target.json');
   await writeFile(keyFile, 'test-credential-00000000', { mode: 0o600 });
@@ -189,6 +192,19 @@ test('the original DiDi order is followed to arrival and completion without post
   } });
   try {
     const { graph, order } = await originalOrder(f,'provider_mock'), seen: string[] = [];
+    const token = randomUUID() + randomUUID();
+    const config = readConfig({ DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL,
+      EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token, EIGOS_PG_SCHEMA: f.schema });
+    const server = createApp(config, f.db, f.source).app.listen(0, '127.0.0.1');
+    t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
+    await once(server, 'listening');
+    const address = server.address();
+    assert(address && typeof address !== 'string');
+    const client = new Client({ name: 'synthetic-ride-card-pa', version: '1' });
+    t.after(() => client.close());
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`), {
+      requestInit: { headers: { Authorization: 'Bearer ' + token } },
+    }));
     let locationReads = 0;
     const codes = [-1, 0, 1, 2, 2, 1, 4, 5];
     f.provider.source.orders!.observe = async orderId => {
@@ -210,6 +226,14 @@ test('the original DiDi order is followed to arrival and completion without post
     const call = (name: string, input: Record<string, unknown>) => f.capabilities.functions.invoke(f.model,name,input,
       {principal,objects:graph,signal:AbortSignal.timeout(4000)});
     const read = async () => rideWatchRead.parse(await call('readDidiRideWatch',{watch}));
+    const card = async () => {
+      const previouslyObserved = seen.length;
+      const result = await client.callTool({ name: 'show_didi_ride', arguments: { watch } });
+      assert(!result.isError, JSON.stringify(result));
+      assert.equal(seen.length, previouslyObserved);
+      assert(!JSON.stringify(result).includes('provider-test-order'));
+      return result.structuredContent;
+    };
     assert.equal((await read()).state, 'watching');
     await due(f, watch);
     assert.equal((await read()).reason,'source_retry');
@@ -219,6 +243,11 @@ test('the original DiDi order is followed to arrival and completion without post
     await due(f, watch);
     assert.equal((await read()).state,'driver_assigned');
     assert.equal((await read()).etaMinutes,5);
+    assert.deepEqual(await card(), {
+      kind: 'watch', state: 'driver_assigned', status: '司机正在来接你', driver: { carModel: 'Black car', carPlate: 'TEST-123' },
+      etaMinutes: 5, distanceKm: 1.5, observedAt: (await read()).observedAt,
+      expiresAt: (await read()).expiresAt, nextCheckAt: (await read()).nextCheckAt, refresh: { watch },
+    });
     assert.equal(locationReads,0);
     await call('readDidiDriverPosition',{watch});
     assert.equal(locationReads,1);
@@ -243,6 +272,10 @@ test('the original DiDi order is followed to arrival and completion without post
     assert.equal(ended.state,'completed');
     assert.equal(ended.nextCheckAt,null);
     assert.equal(ended.settlement,'unverified');
+    assert.deepEqual(await card(), {
+      kind: 'watch', state: 'completed', status: '行程已完成', driver: null, etaMinutes: null, distanceKm: null,
+      observedAt: ended.observedAt, expiresAt: ended.expiresAt, nextCheckAt: null, refresh: { watch },
+    });
     const tracking = await graph.follow(order,'watches');
     assert.deepEqual(tracking.map(item=>item.ref),[watch]);
     assert.equal(tracking[0]!.properties.observedAt,ended.observedAt);

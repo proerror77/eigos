@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { z } from 'zod';
 import { fork, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -58,6 +59,23 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
         const response=await client.callTool({name,arguments:args});assert(!response.isError,JSON.stringify(response));
         return JSON.parse((response.content as {text:string}[])[0]!.text);
       };
+      const rideCardTool = (await client.listTools()).tools.find(tool => tool.name === 'show_didi_ride');
+      assert.deepEqual(rideCardTool?._meta?.ui, { resourceUri: 'ui://eigos/didi-ride-card.html' });
+      const resource = await client.readResource({ uri: 'ui://eigos/didi-ride-card.html' });
+      const view = resource.contents[0];
+      assert(view && 'text' in view);
+      assert.equal(view.mimeType, 'text/html;profile=mcp-app');
+      assert.match(view.text, /ui\/notifications\/tool-result/);
+      const card = await client.callTool({ name: 'show_didi_ride', arguments: { taskId: task.id } });
+      assert(!card.isError, JSON.stringify(card));
+      const { prices } = z.object({
+        kind: z.literal('quote'), simulated: z.literal(true), origin: z.literal(route.origin), destination: z.literal(route.destination),
+        prices: z.array(z.object({ name: z.string(), fare: z.string(), expiresAt: z.iso.datetime() })),
+      }).parse(card.structuredContent);
+      assert.deepEqual(prices.map(({ name, fare }) => [name, fare]).sort(), [['专车', '100-120元'], ['快车', '¥73.05']]);
+      assert(prices.every(price => Date.parse(price.expiresAt) > Date.now()));
+      assert.match((card.content as { text: string }[])[0]!.text, /模拟报价/);
+      assert(!JSON.stringify(card).includes('PRIVATE_ORDER_TOKEN'));
       const definition = await call('ontology_raw_definition', {});
       assert(definition.sharedProperties.some((item: {apiName:string}) => item.apiName === 'BusinessName'));
       assert(definition.valueTypes.some((item: {apiName:string}) => item.apiName === 'Timestamp'));

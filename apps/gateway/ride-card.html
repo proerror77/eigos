@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>滴滴报价与行程</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --paper: #fcf9f5;
+    --ink: #262420;
+    --muted: #6c5d52;
+    --line: #dfd4c8;
+    --accent: #ae3e16;
+    --wash: #f5e4d8;
+    font: 14px/1.5 system-ui, "PingFang SC", sans-serif;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --paper: #292520;
+    --ink: #fcf2e8;
+    --muted: #c9b8aa;
+    --line: #584c41;
+    --accent: #ffa482;
+    --wash: #412f25;
+  }
+  body { margin: 0; }
+  main { background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+  header, footer, .fare { display: flex; align-items: baseline; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; }
+  h1, p, ol, ul { margin: 0; }
+  h1 { font-size: 19px; font-weight: 680; line-height: 1.35; }
+  p, li, strong { overflow-wrap: anywhere; }
+  ol, ul { padding: 0; list-style: none; }
+  header { margin-bottom: 12px; }
+  .status { background: var(--wash); color: var(--accent); border-radius: 6px; padding: 2px 7px; font-weight: 650; }
+  .route { display: grid; gap: 7px; padding-bottom: 12px; }
+  .route li { display: grid; grid-template-columns: 10px auto 1fr; gap: 9px; align-items: baseline; position: relative; }
+  .route li::before { content: ""; background: var(--accent); width: 7px; height: 7px; border-radius: 50%; align-self: center; }
+  .route li:first-child::after { content: ""; position: absolute; top: calc(50% + 4px); bottom: -14px; left: 3px; border-left: 1px solid var(--line); }
+  .fare { padding: 8px 0; border-top: 1px solid var(--line); }
+  .amount { font: 650 17px/1.2 ui-monospace, SFMono-Regular, monospace; }
+  small, .quiet, footer { color: var(--muted); font-size: 12px; }
+  footer { margin-top: 10px; }
+  .stages { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin-bottom: 12px; }
+  .stages li { border-top: 3px solid var(--line); color: var(--muted); padding-top: 4px; font-size: 11px; }
+  .stages .reached { border-color: var(--accent); }
+  .stages [aria-current] { color: var(--accent); font-weight: 700; }
+  .facts { font-size: 16px; font-weight: 620; }
+  button { font: inherit; font-weight: 650; background: transparent; color: var(--accent); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:disabled { opacity: .6; cursor: wait; }
+</style>
+</head>
+<body>
+<main aria-live="polite"><p>正在读取滴滴行程</p></main>
+<script>
+  const main = document.querySelector('main');
+  const terminal = new Set(['completed', 'provider_terminal', 'unavailable', 'stopped', 'expired']);
+  const stages = [
+    ['matching', '匹配'], ['driver_assigned', '来接你'], ['driver_arrived', '已到达'],
+    ['in_trip', '行程中'], ['completed', '已完成'],
+  ];
+  const time = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+  let data, renderTimer, refreshTimer, refreshId, refreshButton;
+  let ready = false, canRefresh = false, lastHeight = 0, sequence = 1;
+
+  function node(tag, text, className) {
+    const element = document.createElement(tag);
+    if (text) element.textContent = text;
+    if (className) element.className = className;
+    return element;
+  }
+
+  function send(method, params, id) {
+    window.parent.postMessage({ jsonrpc: '2.0', method, params, ...(id === undefined ? {} : { id }) }, '*');
+  }
+
+  function header(title, status) {
+    const head = node('header');
+    head.append(node('h1', title), node('span', status, 'status'));
+    return head;
+  }
+
+  function renderQuote(now) {
+    const active = data.prices.filter(price => Date.parse(price.expiresAt) > now);
+    const head = header('滴滴参考价', active.length ? (data.simulated ? '模拟报价' : '可参考') : '报价已过期');
+    const route = node('ol', '', 'route');
+    for (const [label, name] of [['上车', data.origin], ['下车', data.destination]]) {
+      const item = node('li');
+      item.append(node('span', label, 'quiet'), node('strong', name));
+      route.append(item);
+    }
+    const list = node('ul');
+    for (const price of data.prices) {
+      const row = node('li', '', 'fare');
+      const priceBlock = node('div');
+      priceBlock.append(node('div', price.fare, 'amount'), node('small',
+        Date.parse(price.expiresAt) <= now ? '已过期' : `${time.format(new Date(price.expiresAt))} 到期`));
+      row.append(node('strong', price.name), priceBlock);
+      list.append(row);
+    }
+    main.replaceChildren(head, route, list, node('footer', '北京时间 · 实际车费以滴滴结算为准'));
+    return Math.min(...active.map(price => Date.parse(price.expiresAt)));
+  }
+
+  function renderWatch(now) {
+    const expiresAt = Date.parse(data.expiresAt);
+    const ended = terminal.has(data.state) || expiresAt <= now;
+    const staleAt = data.observedAt ? Date.parse(data.observedAt) + 120000 : 0;
+    const recent = staleAt > now && !ended;
+    const status = !terminal.has(data.state) && ended ? '跟踪已到期' : data.status;
+    const details = [
+      !ended && data.driver?.carModel, !ended && data.driver?.carPlate,
+      recent && data.etaMinutes != null ? `预计 ${data.etaMinutes} 分钟` : '',
+      recent && data.distanceKm != null ? `约 ${data.distanceKm} 公里` : '',
+      data.state === 'completed' ? '车费结算待核实' : '',
+    ].filter(Boolean).join(' · ');
+    const summary = data.observedAt
+      ? `${!recent && !ended ? '上次记录 · ' : '滴滴更新 · '}${time.format(new Date(data.observedAt))}（北京时间）`
+      : '正在等待首次状态记录';
+    const foot = node('footer');
+    foot.append(node('span', summary));
+    refreshButton = null;
+    if (!ended && canRefresh) {
+      refreshButton = node('button', refreshId ? '正在刷新' : '刷新进度');
+      refreshButton.type = 'button';
+      refreshButton.disabled = Boolean(refreshId);
+      refreshButton.addEventListener('click', refresh);
+      foot.append(refreshButton);
+    }
+    main.replaceChildren(header('滴滴行程', status));
+    const index = stages.findIndex(([state]) => state === data.state);
+    if (index >= 0 && (!ended || data.state === 'completed')) {
+      const steps = node('ol', '', 'stages');
+      steps.setAttribute('aria-label', '行程进度');
+      for (const [position, [, label]] of stages.entries()) {
+        const step = node('li', label, position <= index ? 'reached' : '');
+        if (position === index) step.setAttribute('aria-current', 'step');
+        steps.append(step);
+      }
+      main.append(steps);
+    }
+    if (details) main.append(node('p', details, 'facts'));
+    main.append(foot);
+    return ended ? Infinity : Math.min(expiresAt, recent ? staleAt : Infinity);
+  }
+
+  function render() {
+    clearTimeout(renderTimer);
+    const now = Date.now();
+    if (data?.kind !== 'quote' && data?.kind !== 'watch') return;
+    const updateAt = data.kind === 'quote' ? renderQuote(now) : renderWatch(now);
+    if (Number.isFinite(updateAt)) renderTimer = setTimeout(render, Math.min(2147483647, Math.max(1, updateAt - now + 1)));
+  }
+
+  function failure(text) {
+    clearTimeout(renderTimer);
+    data = undefined;
+    main.replaceChildren(node('p', text));
+  }
+
+  function show(result) {
+    const next = result?.structuredContent;
+    if (result?.isError || !['quote', 'watch'].includes(next?.kind)) {
+      failure('无法读取此行程，请在对话中重试。');
+      return;
+    }
+    data = next;
+    render();
+  }
+
+  function refresh() {
+    if (!ready || !data?.refresh || refreshId) return;
+    refreshId = ++sequence;
+    refreshButton.disabled = true;
+    refreshButton.textContent = '正在刷新';
+    send('tools/call', { name: 'show_didi_ride', arguments: data.refresh }, refreshId);
+    refreshTimer = setTimeout(() => {
+      refreshId = null;
+      failure('刷新超时，请在对话中重试。');
+    }, 20000);
+  }
+
+  function resize() {
+    const height = Math.ceil(main.getBoundingClientRect().height);
+    if (ready && height !== lastHeight) {
+      lastHeight = height;
+      send('ui/notifications/size-changed', { height });
+    }
+  }
+
+  const observer = new ResizeObserver(resize);
+  window.addEventListener('message', event => {
+    const message = event.data;
+    if (event.source !== window.parent || message?.jsonrpc !== '2.0') return;
+    if (!ready) {
+      if (message.id !== 1 || !message.result?.protocolVersion) return;
+      ready = true;
+      canRefresh = Boolean(message.result.hostCapabilities?.serverTools);
+      document.documentElement.dataset.theme = message.result.hostContext?.theme ?? '';
+      send('ui/notifications/initialized', {});
+      observer.observe(main);
+      return;
+    }
+    if (message.method === 'ui/notifications/host-context-changed' && message.params?.theme) {
+      document.documentElement.dataset.theme = message.params.theme;
+    } else if (message.method === 'ui/notifications/tool-result') {
+      show(message.params);
+    } else if (refreshId && message.id === refreshId && !message.method) {
+      clearTimeout(refreshTimer);
+      refreshId = null;
+      show(message.result);
+    } else if (message.method === 'ui/resource-teardown' && message.id !== undefined) {
+      clearTimeout(renderTimer);
+      clearTimeout(refreshTimer);
+      observer.disconnect();
+      window.parent.postMessage({ jsonrpc: '2.0', id: message.id, result: {} }, '*');
+    }
+  });
+
+  if (window.parent !== window) send('ui/initialize', {
+    appInfo: { name: 'EIGOS DiDi Ride', version: '1.0.0' },
+    appCapabilities: {},
+    protocolVersion: '2026-01-26',
+  }, 1);
+</script>
+</body>
+</html>
