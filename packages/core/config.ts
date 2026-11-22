@@ -67,6 +67,7 @@ export const configSchema = z.object({
   OAUTH_MEMBER_CLIENT_SECRET: z.string().min(1).optional(),
   OAUTH_MEMBER_MCP_CLIENT_ID: z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/).optional(),
   OAUTH_EXISTING_CLIENT_IDS: z.string().regex(/^[a-zA-Z0-9_-]+(?:,[a-zA-Z0-9_-]+)*$/).optional(),
+  EIGOS_MCP_OPERATOR_CATALOG: z.string().regex(/^[a-zA-Z0-9_-]{1,200}:[a-f0-9]{64}$/).optional(),
   OAUTH_MANAGEMENT_CLIENT_ID: z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/).optional(),
   OAUTH_MANAGEMENT_CLIENT_SECRET: z.string().min(1).optional(),
   // The tenant's own domain. Under an Auth0 custom domain OAUTH_ISSUER is the custom one, but the Management API stays on this one.
@@ -109,6 +110,10 @@ export function readConfig(env = process.env): Config {
     if (Boolean(config.OAUTH_MANAGEMENT_CLIENT_ID) !== Boolean(config.OAUTH_MANAGEMENT_CLIENT_SECRET))
       throw new Error('Configure both OAUTH_MANAGEMENT_CLIENT_ID and OAUTH_MANAGEMENT_CLIENT_SECRET');
   }
+  if (config.EIGOS_MCP_OPERATOR_CATALOG &&
+      (!config.OAUTH_MEMBER_MCP_CLIENT_ID ||
+        !config.OAUTH_EXISTING_CLIENT_IDS?.split(',').includes(config.EIGOS_MCP_OPERATOR_CATALOG.split(':')[0]!)))
+    throw new Error('The MCP catalog exception requires an existing operator OAuth client');
   if (config.EIGOS_AGENT_SANDBOX_ENABLED === 'true' && config.EIGOS_AUTH_MODE !== 'development')
     throw new Error('Agent sandbox capabilities require development authentication');
   return config;

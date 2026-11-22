@@ -108,7 +108,7 @@ test('invited accounts use OAuth and portable MCP/A2A access with shared Beta ca
     assert.equal((await g.call('/ontology', bobToken)).status, 403);
     assert.equal((await g.call('/tasks', bobToken)).status, 403);
     assert.equal((await a2a('GetTask', { id: 'unused' }, 'eigos_agent_' + 'x'.repeat(43))).status, 401);
-    assert.deepEqual((await aliceMcp.listTools()).tools.map(tool => tool.name).sort(), ['get_task', 'search_restaurants', 'submit_task']);
+    assert.deepEqual((await aliceMcp.listTools()).tools.map(tool => tool.name).sort(), ['check_restaurant_availability', 'get_task', 'search_restaurants', 'submit_task']);
     assert.deepEqual((await (await g.call('/identity', aliceToken)).json()).scopes, ['tasks:read', 'tasks:write']);
     assert.equal((await g.call('/ontology', aliceToken)).status, 403);
     assert.equal((await g.call('/a2a', aliceToken)).status, 403);
@@ -178,7 +178,7 @@ test('invited accounts use OAuth and portable MCP/A2A access with shared Beta ca
     assert.equal((await g.call('/identity', renewedToken)).status, 200);
     const renewed = await makeClient(renewedToken);
     for (const client of [renewed, bobMcp])
-      assert.deepEqual((await client.listTools()).tools.map(tool => tool.name).sort(), ['get_task', 'search_restaurants', 'submit_task']);
+      assert.deepEqual((await client.listTools()).tools.map(tool => tool.name).sort(), ['check_restaurant_availability', 'get_task', 'search_restaurants', 'submit_task']);
     const replacement = await issue();
     assert.equal((await a2a('GetTask', { id: a2aId })).status, 401);
     assert.equal((await a2a('GetTask', { id: a2aId }, replacement)).body.result.id, a2aId);
