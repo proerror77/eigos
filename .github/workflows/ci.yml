@@ -76,6 +76,16 @@ jobs:
           node-version: 22.22.3
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - if: matrix.suite == '40'
+        name: Install checksum-pinned agentgateway for the cutover rehearsal
+        run: |
+          curl --fail --silent --show-error --location --max-time 120 \
+            -o "$RUNNER_TEMP/agentgateway" \
+            https://github.com/agentgateway/agentgateway/releases/download/v1.7.0/agentgateway-linux-amd64
+          printf '%s  %s\n' 1b2fc01a2de29ca113bbb6258b5cae7b1eb3c724071c09d687a449132f2f42f8 \
+            "$RUNNER_TEMP/agentgateway" | sha256sum --check
+          chmod 0755 "$RUNNER_TEMP/agentgateway"
+          echo "EIGOS_TEST_CUTOVER_AGENTGATEWAY=$RUNNER_TEMP/agentgateway" >> "$GITHUB_ENV"
       - if: matrix.suite != 'vector'
         run: npm test -- --suite=${{ matrix.suite }}
       - if: matrix.suite == 'vector'
