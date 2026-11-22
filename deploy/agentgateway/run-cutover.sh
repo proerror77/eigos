@@ -16,8 +16,19 @@ health() {
   curl -fsS --noproxy '*' --max-time 2 -H 'Host: eigos.mandonothing.com' "http://127.0.0.1:$1/health" |
     jq -er 'select(.status == "ok") | .sourceCommit'
 }
-connector_id() {
-  runuser -u eigos-primary -- env XDG_RUNTIME_DIR=/run/user/501 systemctl --user show "$connector" -p InvocationID --value
+connector_ctl() { runuser -u eigos-primary -- env XDG_RUNTIME_DIR=/run/user/501 systemctl --user "$@"; }
+connector_id() { connector_ctl show "$connector" -p InvocationID --value; }
+verify_connector_dependencies() {
+  local property dependencies unit
+  for property in Requires BindsTo PartOf Requisite StopPropagatedFrom; do
+    dependencies=$(connector_ctl show "$connector" -p "$property" --value)
+    for unit in com.eigos.primary.service com.eigos.primary.worker.service com.eigos.primary.indexer.service; do
+      if [[ " $dependencies " == *" $unit "* ]]; then
+        printf 'Cutover blocked: %s has %s=%s, which can stop ingress with the application.\n' "$connector" "$property" "$unit" >&2
+        return 1
+      fi
+    done
+  done
 }
 proxy_id() { systemctl show eigos-agentgateway.service -p InvocationID --value; }
 
@@ -25,6 +36,8 @@ exec 9<>"$base/deployment.lock"
 flock -n 9
 systemctl is-active --quiet eigos-agentgateway.service
 systemctl is-active --quiet eigos-origin-handoff.service
+connector_ctl is-active --quiet "$connector"
+verify_connector_dependencies
 before=$(control http://localhost/status)
 jq -e '.holding == false' <<<"$before" >/dev/null
 # Confirm the running ingress forwards through the handoff before pausing it.
