@@ -279,8 +279,8 @@ test('member restaurant search uses the original account source and exposes no g
     assert.deepEqual(providerCalls.map(entry => entry.name), ['maps_text_search']);
     assert.deepEqual((await (await g.call('/identity', alice.token)).json()).scopes, ['tasks:read', 'tasks:write']);
     assert.equal((await g.call('/ontology', alice.token)).status, 403);
-    assert.equal((await alice.client.callTool({ name: 'describe_ontology', arguments: {} })).isError, true);
-    assert.equal((await alice.client.callTool({ name: 'apply_ontology_action', arguments: {} })).isError, true);
+    await assert.rejects(alice.client.callTool({ name: 'describe_ontology', arguments: {} }), /Tool .* not found/);
+    await assert.rejects(alice.client.callTool({ name: 'apply_ontology_action', arguments: {} }), /Tool .* not found/);
     const rows = await f.db.query(`SELECT action FROM ${f.schema}.action_changes WHERE request_id=$1`, [input.requestId]);
     assert.deepEqual(rows.rows.map(row => row.action), ['FindRestaurants', 'FindRestaurants']);
     assert.equal((await f.db.query(`SELECT 1 FROM ${f.schema}.external_operations`)).rowCount, 0);
