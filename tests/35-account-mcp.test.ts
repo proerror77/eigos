@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { digest } from '../packages/core/identity.js';
 import { setGrants, syncAccountGrants } from '../packages/runtime/access.js';
@@ -7,7 +8,7 @@ import { Accounts } from '../packages/runtime/accounts.js';
 import { accountGateway, type AccountGateway } from './account-harness.js';
 import { fixture } from './fixture.js';
 
-test('invited accounts use the shared Beta capabilities with separate consent, task isolation and revocation', async () => {
+test('invited accounts use OAuth and portable MCP/A2A access with shared Beta capabilities and owner isolation', async () => {
   const departureDate = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
   const flight = { origin: 'SHA', destination: 'PEK', departureDate, limit: 1 };
   const sourceReaders: string[] = [];
@@ -76,11 +77,33 @@ test('invited accounts use the shared Beta capabilities with separate consent, t
     assert.equal((await g.call('/mcp', await g.token('alice', { scope: 'tasks:read' }))).status, 403);
 
     const bobCode = await g.accounts.invite('bob@example.test', 24);
+    assert.equal((await g.form('agent-token', bob.cookie)).status, 403);
     assert.equal((await g.form('activate', bob.cookie, new URLSearchParams({ code: bobCode }))).headers.get('location'), '/account');
-    assert.equal((await g.form('approve', bob.cookie)).status, 303);
+    assert.equal((await g.form('agent-token', bob.cookie, new URLSearchParams(), 'https://other.example')).status, 403);
+    const issue = async () => {
+      const response = await g.form('agent-token', bob.cookie);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+      const html = await response.text();
+      assert.match(html, /<code>https:\/\/127\.0\.0\.1\/a2a<\/code>/);
+      const match = html.match(/Bearer (eigos_agent_[A-Za-z0-9_-]{43})/);
+      assert(match?.[1], 'a Beta account receives its credential once');
+      assert(!(await g.page(bob.cookie)).includes(match[1]));
+      return match[1];
+    };
+    const bobToken = await issue();
+    const a2a = async (method: string, params: unknown, token = bobToken) => {
+      const response = await fetch(g.url + '/a2a', { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'A2A-Version': '1.0', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+      return { status: response.status, body: await response.json() };
+    };
     const issuedAt = Math.ceil(Date.now() / 1000), aliceToken = await g.token('alice', { issuedAt });
     const aliceMcp = await makeClient(aliceToken);
-    const bobMcp = await makeClient(await g.token('bob', { issuedAt }));
+    const bobMcp = await makeClient(bobToken);
+    assert.equal((await g.call('/ontology', bobToken)).status, 403);
+    assert.equal((await g.call('/tasks', bobToken)).status, 403);
+    assert.equal((await a2a('GetTask', { id: 'unused' }, 'eigos_agent_' + 'x'.repeat(43))).status, 401);
     assert.deepEqual((await aliceMcp.listTools()).tools.map(tool => tool.name).sort(), ['get_task', 'submit_task']);
     assert.deepEqual((await (await g.call('/identity', aliceToken)).json()).scopes, ['tasks:read', 'tasks:write']);
     assert.equal((await g.call('/ontology', aliceToken)).status, 403);
@@ -111,6 +134,24 @@ test('invited accounts use the shared Beta capabilities with separate consent, t
     assert.equal(bobResult.result.items[0].name, 'MU5101');
     assert.deepEqual(sourceReaders, [g.owner('alice'), g.owner('bob')]);
     assert.equal((await aliceMcp.callTool({ name: 'get_task', arguments: { taskId: bobTaskId } })).isError, true);
+    const readThroughA2A = await a2a('GetTask', { id: bobTaskId });
+    assert.equal(readThroughA2A.body.result.id, bobTaskId);
+    assert((await a2a('GetTask', { id })).body.error, 'A2A cannot read another owner’s task');
+    const send = { message: { messageId: 'portable-a2a', role: 'ROLE_USER', parts: [{ text: args.message }] } };
+    const a2aSubmission = await a2a('SendMessage', send);
+    assert.equal(a2aSubmission.status, 200, JSON.stringify(a2aSubmission.body));
+    const a2aId = a2aSubmission.body.result.task.id;
+    assert.equal((await a2a('SendMessage', send)).body.result.task.id, a2aId);
+    assert((await a2a('SendMessage', { message: { ...send.message, taskId: a2aId } })).body.error);
+    const retryAfter = Date.now() + 3000;
+    while (!await f.worker.runOne()) {
+      assert(Date.now() < retryAfter, 'A2A task did not become eligible for its Worker');
+      await delay(25);
+    }
+    const a2aResult = readResult(await bobMcp.callTool({ name: 'get_task', arguments: { taskId: a2aId } }));
+    assert.equal(a2aResult.state, 'completed');
+    assert.equal(a2aResult.result.items[0].name, 'MU5101');
+    assert.deepEqual(sourceReaders, [g.owner('alice'), g.owner('bob'), g.owner('bob')]);
     assert.equal(f.provider.flags.orderCreates, 0);
     assert.equal((await g.form('revoke', alice.cookie)).status, 303);
     for (const [name, args] of [['get_task', { taskId: id }], ['submit_task', { requestId: 'after-revoke', message: '只查航班' }]] as const) {
@@ -134,6 +175,16 @@ test('invited accounts use the shared Beta capabilities with separate consent, t
     const renewed = await makeClient(renewedToken);
     assert.equal((await renewed.listTools()).tools.length, 2);
     assert.equal((await bobMcp.listTools()).tools.length, 2);
+    const replacement = await issue();
+    assert.equal((await a2a('GetTask', { id: a2aId })).status, 401);
+    assert.equal((await a2a('GetTask', { id: a2aId }, replacement)).body.result.id, a2aId);
+    await g.accounts.suspend(g.owner('bob'), 'synthetic');
+    assert.equal((await a2a('GetTask', { id: a2aId }, replacement)).status, 401);
+    assert.equal((await g.form('agent-token', bob.cookie)).status, 403);
+    await g.accounts.restore(g.owner('bob'));
+    assert.equal((await g.form('revoke', bob.cookie)).status, 303);
+    assert.equal((await g.call('/mcp', replacement)).status, 401);
+    assert.equal((await a2a('GetTask', { id: a2aId }, replacement)).status, 401);
   } finally {
     for (const client of clients) await client.close();
     await g.close();

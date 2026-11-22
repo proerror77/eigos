@@ -6,10 +6,11 @@ export const accountGroup = 'eigos-accounts';
 /** Group that held the same grants before member accounts became self-service accounts. */
 const legacyMemberGroup = 'eigos-member-queries';
 export const accountTaskScopes = ['tasks:read', 'tasks:write'] as const;
+export const agentTokenPattern = /^eigos_agent_[A-Za-z0-9_-]{43}$/;
 export type SignupMode = 'open' | 'invite' | 'closed';
 export interface Account {
   owner: string; status: 'active' | 'suspended'; activated_at: Date; approved_at: Date | null; revoked_at: Date | null;
-  suspended_at: Date | null; suspended_reason: string | null; email_hash: string | null;
+  suspended_at: Date | null; suspended_reason: string | null; email_hash: string | null; has_agent_token: boolean;
 }
 type VerifiedSession = { owner: string; email_hash: string };
 export interface AccountApplication { owner: string; email: string; purpose: string; applied_at: Date; invited_until: Date | null }
@@ -18,7 +19,7 @@ export type Denial = ProvisionRefusal | 'account_suspended' | 'client_not_allowe
 export type Authorization = { kind: 'account' } | { kind: 'existing' } | { kind: 'denied'; reason: Denial };
 export const newAccountSecret = () => randomBytes(32).toString('base64url');
 export const emailDigest = (email: string) => digest(email.trim().toLowerCase());
-const accountColumns = 'owner,status,activated_at,approved_at,revoked_at,suspended_at,suspended_reason,email_hash';
+const accountColumns = 'owner,status,activated_at,approved_at,revoked_at,suspended_at,suspended_reason,email_hash,(agent_token_hash IS NOT NULL) AS has_agent_token';
 const denied = (reason: Denial): Authorization => ({ kind: 'denied', reason });
 
 export async function initializeAccounts(db: Database) {
@@ -33,7 +34,8 @@ export async function initializeAccounts(db: Database) {
       owner text PRIMARY KEY, activated_at timestamptz NOT NULL DEFAULT now(), approved_at timestamptz, revoked_at timestamptz);
     ALTER TABLE ${s}.accounts ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active',
       ADD COLUMN IF NOT EXISTS suspended_at timestamptz, ADD COLUMN IF NOT EXISTS suspended_reason text,
-      ADD COLUMN IF NOT EXISTS email_hash text;
+      ADD COLUMN IF NOT EXISTS email_hash text, ADD COLUMN IF NOT EXISTS agent_token_hash text;
+    CREATE UNIQUE INDEX IF NOT EXISTS accounts_agent_token ON ${s}.accounts(agent_token_hash) WHERE agent_token_hash IS NOT NULL;
     DO $$ BEGIN
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='accounts_status_check' AND conrelid='${s}.accounts'::regclass) THEN
         ALTER TABLE ${s}.accounts ADD CONSTRAINT accounts_status_check CHECK (status IN ('active','suspended'));
@@ -219,13 +221,29 @@ export class Accounts {
       WHERE owner=$1 AND status='active'`, [owner])).rowCount);
   }
 
-  async active(owner: string, client: Sql) {
+  /** Creates or replaces the private Agent credential after the account holder consents in the portal. */
+  async issueAgentToken(owner: string) {
+    const token = 'eigos_agent_' + newAccountSecret();
+    const issued = await this.db.query(`UPDATE ${this.db.schema}.accounts
+      SET agent_token_hash=$2, approved_at=CASE WHEN approved_at IS NOT NULL AND revoked_at IS NULL THEN approved_at ELSE now() END,
+        revoked_at=NULL WHERE owner=$1 AND status='active'`, [owner, digest(token)]);
+    return issued.rowCount ? token : undefined;
+  }
+
+  async agentTokenOwner(tokenHash: string) {
+    const result = await this.db.query<{ owner: string }>(`SELECT owner FROM ${this.db.schema}.accounts
+      WHERE agent_token_hash=$1 AND status='active' AND approved_at IS NOT NULL AND revoked_at IS NULL`, [tokenHash]);
+    return result.rows[0]?.owner;
+  }
+
+  async active(owner: string, client: Sql, tokenHash?: string) {
     return Boolean((await this.db.query(`SELECT 1 FROM ${this.db.schema}.accounts
-      WHERE owner=$1 AND status='active' AND approved_at IS NOT NULL AND revoked_at IS NULL FOR SHARE`, [owner], client)).rowCount);
+      WHERE owner=$1 AND status='active' AND approved_at IS NOT NULL AND revoked_at IS NULL
+        AND ($2::text IS NULL OR agent_token_hash=$2) FOR SHARE`, [owner, tokenHash ?? null], client)).rowCount);
   }
 
   async revoke(owner: string) {
-    await this.db.query(`UPDATE ${this.db.schema}.accounts SET revoked_at=COALESCE(revoked_at,now())
+    await this.db.query(`UPDATE ${this.db.schema}.accounts SET revoked_at=COALESCE(revoked_at,now()), agent_token_hash=NULL
       WHERE owner=$1 AND approved_at IS NOT NULL`, [owner]);
   }
 

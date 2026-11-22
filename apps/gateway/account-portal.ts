@@ -212,11 +212,21 @@ export function mountAccountPortal(app: express.Express, config: Config, account
       } else if (config.EIGOS_SIGNUP === 'closed') { explains = 'closed'; content = `<p>${statuses.closed}</p>`; }
       else content = '<p>账号还没有开通，请重新登录。</p>';
     } else if (account.status === 'suspended') content = '<p>这个账号已停用，请联系 EIGOS 支持。</p>';
-    else if (account.revoked_at) content = '<p>已撤销 Grok 的访问，需要时可以重新授权。</p><form method="post" action="/account/approve"><button>重新授权 Grok</button></form>';
-    else if (account.approved_at) content = `<p>已允许 Grok 请求访问。请在 Grok 添加远程 HTTPS MCP，使用 EIGOS 账号完成 OAuth。</p>
-      <dl><dt>服务地址</dt><dd><code>${new URL('/mcp', config.PUBLIC_URL).href}</code></dd><dt>OAuth Client ID</dt><dd><code>${config.OAUTH_MEMBER_MCP_CLIENT_ID}</code></dd></dl>
-      <form method="post" action="/account/revoke"><button>撤销 Grok 授权</button></form>`;
-    else content = '<p>Beta 账号已开通。授权 Grok 后即可使用 EIGOS Agent。</p><form method="post" action="/account/approve"><button>授权 Grok</button></form>';
+    else {
+      const connection = account.has_agent_token
+        ? '<p>重新生成后，旧的接入令牌立即失效。</p><button>重新生成接入令牌</button>'
+        : '<button>生成接入令牌</button>';
+      const direct = `<h2>MCP 或 A2A</h2><p>把接入令牌配置到客户端。每次请求由客户端自动携带，无需重复登录。</p>
+        <form method="post" action="/account/agent-token">${connection}</form>`;
+      const oauth = account.revoked_at
+        ? '<p>已撤销 Agent 接入。</p><form method="post" action="/account/approve"><button>重新授权 Grok</button></form>'
+        : account.approved_at ? `<p>在支持的客户端添加远程 HTTPS MCP，使用 EIGOS 账号完成 OAuth。</p>
+          <dl><dt>MCP 地址</dt><dd><code>${new URL('/mcp', config.PUBLIC_URL).href}</code></dd><dt>OAuth Client ID</dt><dd><code>${config.OAUTH_MEMBER_MCP_CLIENT_ID}</code></dd></dl>`
+          : '<form method="post" action="/account/approve"><button>授权 Grok</button></form>';
+      const revoke = account.approved_at && !account.revoked_at
+        ? '<form method="post" action="/account/revoke"><button>撤销 Agent 接入</button></form>' : '';
+      content = `<p>Beta 账号已开通。</p>${direct}<h2>Grok OAuth</h2>${oauth}${revoke}`;
+    }
     // A status the page body already spells out is not repeated as a banner.
     const banner = status && status !== explains ? `<p role="status">${statuses[status]}</p>` : '';
     // The verify status offers a new verification email when there is a Management API client to ask for it.
@@ -321,7 +331,7 @@ export function mountAccountPortal(app: express.Express, config: Config, account
       redirect(res, 'resent');
     });
   }
-  app.post(['/account/apply', '/account/activate', '/account/approve', '/account/revoke', '/account/logout'], postLimit, sameOrigin, async (req, res) => {
+  app.post(['/account/apply', '/account/activate', '/account/agent-token', '/account/approve', '/account/revoke', '/account/logout'], postLimit, sameOrigin, async (req, res) => {
     const token = cookie(req, sessionCookie, sessionShape), session = await accounts.session(token);
     if (!session) { res.sendStatus(401); return; }
     if (req.path === '/account/apply') {
@@ -334,6 +344,16 @@ export function mountAccountPortal(app: express.Express, config: Config, account
       const outcome = code.success ? await accounts.activate(session, code.data) : 'invalid';
       redirect(res, outcome === 'activated' ? undefined : outcome === 'operator_account' ? 'operator'
         : config.EIGOS_SIGNUP === 'closed' ? 'closed' : 'invite'); return;
+    }
+    if (req.path === '/account/agent-token') {
+      const credential = await accounts.issueAgentToken(session.owner);
+      if (!credential) { res.sendStatus(403); return; }
+      res.type('html').send(page('Agent 接入令牌', `<p>令牌只显示一次，请保存到客户端的凭据配置。</p>
+        <dl><dt>MCP</dt><dd><code>${new URL('/mcp', config.PUBLIC_URL).href}</code></dd>
+        <dt>A2A</dt><dd><code>${new URL('/a2a', config.PUBLIC_URL).href}</code></dd>
+        <dt>请求头</dt><dd><code>Authorization: Bearer ${credential}</code></dd></dl>
+        <p><a href="/account">返回账号页</a></p>`));
+      return;
     }
     if (req.path === '/account/approve') await accounts.approve(session.owner);
     else if (req.path === '/account/revoke') await accounts.revoke(session.owner);
