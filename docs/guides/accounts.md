@@ -1,8 +1,16 @@
-# 账号注册与 Grok MCP
+# Beta 账号申请与 Agent 接入
 
-用户用 Google 或邮箱密码在 Auth0 自助注册，登录 `https://<gateway>/account` 后开通 EIGOS 账号。账号页只接受带 `email_verified: true` 的签名 ID Token。账号开通后，用户在账号页授权 Grok，再从 Grok Bot 的「连接应用 → 添加自定义连接器 → 远程 HTTPS」添加页面给出的 MCP URL 和 OAuth Client ID，完成 Auth0 用户同意。
+用户用 Google 或邮箱密码在 Auth0 注册。账号页只接受带 `email_verified: true` 的签名 ID Token。用户在 `https://<gateway>/account` 提交申请，运营审核后单独提供邀请码。用户兑换邀请码开通 Beta 账号，随后在账号页接入自己的 Agent。开通后的账号共用已发布的 Beta 业务能力。
 
-Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的访问令牌。账号会话 Cookie 只用于账号页。MCP 使用 `submit_task` 提交只读查询，使用返回的任务 ID 调用 `get_task`，在同一 Grok 对话交付。旧地址 `/members` 和它下面的所有路径（包括旧的门户回调 `/members/callback`），以及 `/`，都会 302 跳到 `/account`。
+## 连接 MCP 或 A2A
+
+1. 登录账号页，点「生成接入令牌」。页面仅这一次显示完整令牌。把它保存到客户端的凭据配置。
+2. 支持自定义 HTTP 请求头的客户端使用 `Authorization: Bearer <接入令牌>`。MCP 地址为 `https://<gateway>/mcp`，A2A 地址为 `https://<gateway>/a2a`，A2A Agent Card 位于 `/.well-known/agent-card.json`。客户端在每次请求自动带上令牌。
+3. MCP 使用 `submit_task` 和 `get_task`。A2A 使用 `SendMessage` 提交新的文本任务，用 `GetTask` 读取原任务。两个入口共用账号下的任务。账号页的「重新生成接入令牌」会替换原令牌，「撤销 Agent 接入」会收回账号的连接授权。停用账号会阻止调用。令牌持续有效，无需定期登录。停用后恢复账号时，未撤销的令牌可以继续使用。客户端可用 `GET /identity` 核对接入身份。
+
+Grok 等支持现有 Auth0 OAuth 客户端配置的 MCP 客户端仍可使用 OAuth。账号会话 Cookie 用于账号页。供应商授权和需要用户确认的业务操作沿用原有流程。
+
+旧地址 `/members`、其子路径和已配置账号页的站点根路径会转到 `/account`。
 
 ## 注册、开户和授权
 
@@ -23,12 +31,12 @@ Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的
 
 ### 开户模式
 
-用 `EIGOS_SIGNUP` 选择，默认 `open`。
+用 `EIGOS_SIGNUP` 选择，默认 `invite`。
 
 | 值 | 新用户 |
 | --- | --- |
 | `open` | 第一次登录账号页，或第一次带着有效的 Grok 令牌访问 Gateway（例如 `/mcp`）时，自动开通账号。 |
-| `invite` | 不自动开户。账号页显示邀请码表单，用户输入运营者用 `npm run account:invite` 发的邀请码开通。邀请码只能用一次，也只能由 Auth0 验证过的同一邮箱兑换。 |
+| `invite` | 用户用已验证邮箱提交申请，运营审核并逐个发码。新邀请码绑定申请身份和已验证的邮箱，只能兑换一次。 |
 | `closed` | 不开新户。 |
 
 `open` 和 `invite` 要求 `EIGOS_ENFORCE_OWNER_RLS=true`。任何模式下，已有的账号都照常使用。
@@ -39,17 +47,17 @@ Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的
 2. 每个账号的配额：每天的任务数、同时进行的任务数，以及每个连接每分钟的调用次数（设计文档第 6.9 节）。第 1 步没有做配额。
 3. 撤销 Agent 连接，或者完成合并时，同时撤销这个用户在 Auth0 里的授权记录和 refresh token，设计文档的第 4 步会做（第 6.4 节）。在这之前，合并之前连接到这个账号的 Agent，合并之后仍然拿着 refresh token，`invite` 模式也挡不住这一点：refresh token 由 Auth0 发，和 Gateway 开不开户无关。见「已知限制」。
 
-在这之前，`open` 只用在开发环境，以及有明确起止时间的验收窗口里，见「验收」。默认值是 `open`，所以正式环境要显式设置 `EIGOS_SIGNUP`。
+在这之前，`open` 用于开发环境。正式 Beta 环境显式设置 `EIGOS_SIGNUP=invite`。
 
 配置了门户（`OAUTH_MEMBER_MCP_CLIENT_ID`）的 Gateway，启动时输出一行 `EIGOS account sign-up mode: <mode>`。升级后用它确认生效的模式。
 
 有 `Eigos` 定义授权（`view_definition`、`edit_definition` 或 `manage_definition`）的 owner 是运营者。运营者不会被开户，也不能兑换邀请码。账号页提示他继续使用原来的客户端。
 
-### 授权 Grok
+### Grok OAuth
 
-账号开通时还没有授权 Grok。用户先在账号页点「授权 Grok」，页面随后显示 MCP 地址 `https://<gateway>/mcp` 和 OAuth Client ID，再到 Grok 里添加连接。顺序不能反：授权之前签发的令牌，一直被 Gateway 拒绝（403 `client_not_authorized`）。
+账号开通后可选用 Grok OAuth。Grok 使用授权码流程和 S256 PKCE 取得 `https://<gateway>/mcp` 的访问令牌。用户先在账号页点「授权 Grok」，页面随后显示 MCP 地址 `https://<gateway>/mcp` 和 OAuth Client ID，再到 Grok 里添加连接。顺序不能反：授权之前签发的令牌，一直被 Gateway 拒绝（403 `client_not_authorized`）。
 
-- 点「撤销 Grok 授权」后，Gateway 立即拒绝这个账号的 Grok 令牌，包括撤销之后续发的令牌。
+- 点「撤销 Agent 接入」后，Gateway 立即拒绝通用接入令牌和 Grok 令牌。
 - 撤销后可以点「重新授权 Grok」。重新授权之前签发的令牌，包括撤销之前和撤销期间签发的，继续被拒绝。所以撤销或重新授权之后，用户都要在 Grok 里重新连接，拿重新授权之后签发的令牌。
 - 停用账号同样立即拒绝它的令牌，见「运营者命令」。
 - 同一个邮箱的另一个用户要并入这个账号，账号页确认了这个账号时，Grok 授权也被撤销，见「注册方式」。
@@ -58,9 +66,11 @@ Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的
 
 第 2 步起的每一项，都会改动 Auth0 租户、数据库或线上服务，须先取得授权，见「需要授权的操作」。
 
-**正式环境设置 `EIGOS_SIGNUP=invite` 或 `closed`。** 新版本的默认值是 `open`。不设置的话，升级后任何人登录账号页都会自动开户。`open` 要等「开户模式」里的两个前提落地。
+正式环境设置 `EIGOS_SIGNUP=invite` 或 `closed`。
 
 邀请制和开放注册都要求开启 owner 隔离。暂时不能开启的部署设置 `EIGOS_SIGNUP=closed`：已有账号照常使用，不开新户。
+
+已有 `/account` 的部署沿用现有 Auth0 应用、回调和密钥。备份 schema 后停掉运行进程，再执行 `npm run db:upgrade` 和下文的 Gateway 运行角色授权。保留既有账号组权限以及仍有效的旧邀请码。重启后核对 `invite` 模式，并验证申请、发码和相互隔离的任务。以下完整步骤用于首次配置账号页或从早期 `/members` 版本升级。
 
 全新部署没有旧版本：跳过第 4 步，第 5 步用 `npm run db:init`，其余相同。
 
@@ -73,8 +83,8 @@ Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的
 停机窗口：
 
 4. 停止旧版本的 Gateway 和 Worker，运行了 Indexer 的也一起停。旧版本还在读 `member_accounts`，下一步会把它改名。升级之后旧版本不能直接启动。要退回旧版本，见「回退」：可以用反向 SQL，也可以用第 1 步的备份。
-5. 用管理角色执行 `npm run db:upgrade`。它把 `member_accounts` 改名为 `accounts` 并补上新列，把 `group:eigos-member-queries` 的授权移到 `group:eigos-accounts`。已有的账号、Grok 授权和邀请记录原样保留，Grok 连接不用重做。
-6. 给运行角色授予新权限，包括 `accounts.email_hash`，见「PostgreSQL」。这一列到第 5 步才存在，所以权限只能在升级之后授予。
+5. 用管理角色执行 `npm run db:upgrade`，创建申请表并增加邀请码的身份绑定列和 Agent 令牌摘要列。对于早期版本，本步骤也把 `member_accounts` 改名为 `accounts`，把 `group:eigos-member-queries` 的授权移到 `group:eigos-accounts`。已有账号、Grok 授权及未过期的邀请码继续可用。
+6. 给运行角色授予所需权限，包括 Gateway 的申请表权限，见「PostgreSQL」。
 7. 用管理角色执行 `npm run db:enable-owner-isolation`。
 8. 启动新版本的 Gateway 和 Worker，运行了 Indexer 的也一起启动。`/health` 返回 `ok`，`/account` 能打开。确认 Gateway 启动日志里的 `EIGOS account sign-up mode: <mode>` 是预期的模式。正式环境看到 `open` 时，先停掉 Gateway，改好 `EIGOS_SIGNUP` 再启动。用户需要重新登录一次账号页，因为会话 Cookie 换了名字。
 
@@ -83,8 +93,6 @@ Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的
 9. 部署 Action 并放进登录流程，见「Post-Login Action」。要在新 Gateway 运行之后部署，因为 Action 会把有重复用户的登录转到 `/account/link`。
 10. 确认 `group:eigos-accounts` 已同步到当前定义。先用 `SELECT release FROM <schema>.ontology WHERE id='Eigos'` 查出业务 Ontology 的 release，运行 `npm run ontology:activate -- <release>`，运行前后各用 `SELECT count(*) FROM <schema>.resource_grants WHERE subject='group:eigos-accounts'` 查一次这个组的授权条数。怎么读结果，见「账号组」。
 11. 按「验收」验证。通过后，从门户应用删除原回调。
-
-可选加固：启动日志在 Gateway 开始监听之后才输出，漏设 `EIGOS_SIGNUP` 时，读到日志之前就已经按 `open` 对外了。要避免这种情况，第 8 步先用 `EIGOS_SIGNUP=closed` 启动：已有账号照常使用，不开新户。第 9 步部署 Action、确认已有账号能正常登录和使用 Grok 之后，需要邀请制的部署把 `EIGOS_SIGNUP` 改成 `invite`（要求 `EIGOS_ENFORCE_OWNER_RLS=true`），重启 Gateway，再做验收里需要新用户注册的几项。
 
 ### 需要授权的操作
 
@@ -98,7 +106,6 @@ Grok 使用授权码流程和 S256 PKCE 取得针对 `https://<gateway>/mcp` 的
 - **正式环境的环境变量**，Gateway 和 Worker 都要改。
 - **数据库：**`db:upgrade`，给运行角色授予新权限，`db:enable-owner-isolation`，以及用 `ontology:activate` 同步账号组。
 - **部署**新版本的 Gateway 和 Worker，运行了 Indexer 的也一起部署。
-- **验收窗口里临时设 `EIGOS_SIGNUP=open`**，写明起止时间，结束后改回。
 
 同时让用户确认这些后果：
 
@@ -225,7 +232,7 @@ Gateway 在 `.env` 或部署环境里配置，示例见 `.env.example`。secret 
 | `OAUTH_MEMBER_MCP_CLIENT_ID` | Grok 公共客户端。 |
 | `OAUTH_EXISTING_CLIENT_IDS` | 逗号分隔的现有运营和 PA 客户端。先核对所有仍在使用的客户端 ID。启用后，既有客户端须持原 audience 的有效令牌，且 owner 仍须有既有 Eigos 定义授权。 |
 | `OAUTH_TENANT_CLAIM` | tenant claim 名，默认 `tenant_id`，必须和 Action 的 `TENANT_CLAIM` 相同。 |
-| `EIGOS_SIGNUP` | 开户模式：`open`（默认）、`invite` 或 `closed`。正式环境显式设为 `invite` 或 `closed`，见「开户模式」。 |
+| `EIGOS_SIGNUP` | 开户模式为 `invite`（默认）、`closed` 或 `open`。正式环境显式设为 `invite` 或 `closed`。 |
 | `EIGOS_ENFORCE_OWNER_RLS` | 设为 `true` 开启 owner 隔离。`EIGOS_SIGNUP` 不是 `closed` 时必须设置。Gateway、Worker 和 Indexer 都要设置。 |
 | `EIGOS_PORTAL_SECRET` | 至少 32 个字符，加密登录过程中的 Cookie。 |
 | `EIGOS_ACCOUNT_LINK_SECRET` | 至少 32 个字符，必须和 Action 的 `LINK_SECRET` 相同，且不能和 `EIGOS_PORTAL_SECRET` 相同。 |
@@ -276,26 +283,31 @@ Gateway、Worker 和 Indexer 设置 `EIGOS_ENFORCE_OWNER_RLS=true` 后，启动�
 
 | 表 | Gateway 角色 | Worker 角色 |
 | --- | --- | --- |
-| `accounts` | SELECT；INSERT(`owner`, `email_hash`)；UPDATE(`approved_at`, `revoked_at`, `email_hash`) | SELECT |
+| `accounts` | SELECT；INSERT(`owner`, `email_hash`)；UPDATE(`approved_at`, `revoked_at`, `email_hash`, `agent_token_hash`) | SELECT |
 | `member_invitations` | SELECT；UPDATE(`redeemed_by`) | 无 |
 | `member_sessions` | SELECT、INSERT、DELETE | 无 |
+| `account_applications` | SELECT、INSERT、UPDATE（邮箱、用途和申请时间） | 无 |
 
 对应的语句如下，`<schema>` 是 `EIGOS_PG_SCHEMA`：
 
 ```sql
 GRANT SELECT ON <schema>.accounts TO <gateway_role>, <worker_role>;
-GRANT INSERT (owner, email_hash), UPDATE (approved_at, revoked_at, email_hash)
+GRANT INSERT (owner, email_hash), UPDATE (approved_at, revoked_at, email_hash, agent_token_hash)
   ON <schema>.accounts TO <gateway_role>;
 GRANT SELECT ON <schema>.member_invitations TO <gateway_role>;
 GRANT UPDATE (redeemed_by) ON <schema>.member_invitations TO <gateway_role>;
 GRANT SELECT, INSERT, DELETE ON <schema>.member_sessions TO <gateway_role>;
+GRANT SELECT, INSERT ON <schema>.account_applications TO <gateway_role>;
+GRANT UPDATE (email_hash, email, purpose, applied_at) ON <schema>.account_applications TO <gateway_role>;
 ```
 
 升级已有部署时，`member_invitations` 和 `member_sessions` 的权限和以前一样。`accounts` 沿用 `member_accounts` 原有的权限，新增的只有 `email_hash` 的 INSERT 和 UPDATE。重复授予无害。
 
-Gateway 角色不授予 `status`、`suspended_at` 和 `suspended_reason` 的 UPDATE。停用和恢复账号用管理角色执行运营者命令。邀请码也只由管理角色写入。数据库里只存会话令牌、邀请码和邮箱的摘要。
+Gateway 角色不授予 `status`、`suspended_at` 和 `suspended_reason` 的 UPDATE。停用和恢复账号用管理角色执行运营者命令。邀请码也只由管理角色写入。会话令牌、接入令牌和邀请码只保存摘要。用户提交申请时，申请表保存用于审核和发码的邮箱及用途，运营通过私有终端读取。
 
 ### 回退
+
+回退到已有 `/account` 的版本时，暂停开户，核对升级以来的申请和发码。旧版仅按邮箱验证邀请码。先让新增且尚未兑换的邀请失效，再按需要重新发码。回退前清除接入令牌的摘要，用户在支持接入令牌的版本恢复后可重新签发。已激活账号的 Grok 授权和共享能力仍由原表提供。下面是回退到早期 `/members` 版本的步骤。
 
 旧版本读 `member_accounts` 和旧组 `group:eigos-member-queries` 的授权，这两样 `db:upgrade` 都改了，所以升级之后旧版本不能直接启动。从第 1 步的备份恢复，会丢掉升级之后写入的数据。要保留这些数据，用反向 SQL 退回：
 
@@ -334,24 +346,25 @@ Gateway 角色不授予 `status`、`suspended_at` 和 `suspended_reason` 的 UPD
 | `npm run account -- show <owner\|email>` | 查看账号，输出 JSON：`owner`、`status`、`activatedAt`、`approvedAt`、`revokedAt`、`suspendedAt`、`suspendedReason`。 |
 | `npm run account -- suspend <owner\|email> <理由…>` | 停用账号。理由 1 至 200 个字符，可以写多个词。 |
 | `npm run account -- restore <owner\|email>` | 恢复停用的账号。 |
-| `npm run account:invite -- <email> [小时]` | 生成邀请码，默认 48 小时，可设 1 至 168 小时。 |
+| `npm run account -- applications [offset]` | 查看申请的邮箱、用途、owner 和邀请有效期，每次最多 100 条。 |
+| `npm run account:invite -- <owner\|email> [小时]` | 为该申请签发一次性邀请码，默认 48 小时，可设 1 至 168 小时。 |
 | `npm run access:grant-business -- <owner>` | 把指定 owner 名下的全部授权，整体替换成当前定义的业务授权，不是追加。以后新增的能力不会自动加上。只对不走账号路径的 owner 有意义，例如运营者或本地开发身份 `local-developer`；账号的授权由 `group:eigos-accounts` 决定。对持有 `manage_definition` 的运营者或发布者（默认是 `deployment`，可用 `EIGOS_PUBLISHER_SUBJECT` 改）执行，会撤掉它的 `manage_definition`。 |
 
 - `<owner|email>`：64 位十六进制按 owner 查找，否则当作邮箱，不区分大小写。按邮箱查找要求账号已经记录邮箱摘要，升级前开通的账号在升级后第一次登录账号页时补上。同一邮箱有多个账号时取最近开通的一个，要精确就用 owner。
 - 停用后，Gateway 立即拒绝这个账号的令牌。用这个账号身份加载的授权不再包含 `group:eigos-accounts`，已排队的任务在 Worker 执行时也会被拒绝。账号页显示「这个账号已停用，请联系 EIGOS 支持。」，也不能再授权 Grok。恢复后一切照旧，Grok 授权状态不变。
 - 重复运行同一条 `suspend` 或 `restore` 不报错，输出当前状态。
-- `account:invite` 输出的邀请码是一次性的私有材料，按凭据保管，不要写进日志。邀请码只能由 Auth0 验证过的同一邮箱兑换。
+- `account:invite` 输出的邀请码由运营逐个交给申请人。匹配到多个身份时用申请的 owner 发码。重发会让该申请之前未兑换的码失效。
 
 旧命令已经删除，没有保留别名：
 
 | 旧命令 | 现在用 |
 | --- | --- |
-| `npm run access:invite-member -- <email> [小时]` | `npm run account:invite -- <email> [小时]` |
+| `npm run access:invite-member -- <email> [小时]` | `npm run account:invite -- <owner\|email> [小时]` |
 | `npm run access:grant-member -- <owner>` | `npm run access:grant-business -- <owner>` |
 
 ### 账号组
 
-开通且未停用、已授权 Grok 的账号，通过组 `group:eigos-accounts` 获得 Ontology 授权。**账号能做什么，只由这个组决定。** 账号令牌，以及它提交后排队、由 Worker 执行的任务，都只加载这个组的资源授权，不加载 owner 自己名下的授权行。对 owner 单独配置的东西，分两半：
+Beta 账号开通并授权 Grok 后，自动使用 `group:eigos-accounts` 的统一业务能力。账号令牌和 Worker 任务加载这个组的资源授权。
 
 - **资源授权没有作用。** `access:configure` 的 JSON 里 `subjects[].grants` 给账号 owner 写的资源授权，以及 `access:grant-business` 写给它的业务授权，对它的 Grok 访问都不起作用。目前没有只对某一个账号增减资源授权的办法。
 - **`memberships` 照常按 owner 生效。** `access:configure` 的 JSON 里 `memberships`（给 owner 配的组和标记，对象策略用）仍然按 owner 读取，对账号同样有效。memberships 里的组只影响对象策略，账号不会因加入某个组而得到该组的资源授权。
@@ -384,7 +397,7 @@ SELECT count(*) FROM <schema>.resource_grants WHERE subject='group:eigos-account
 | --- | --- |
 | GET `/account` | 账号页，没有限流。 |
 | GET `/account/login`、`/account/callback`、`/account/link`、`/account/link/continue` | 登录、回调和合并页。同一客户端地址（IP）每分钟合计最多 20 次。 |
-| POST `/account/activate`、`/account/approve`、`/account/revoke`、`/account/logout` | 账号页的表单。需要会话，没有会话返回 401。同一客户端地址（IP）每分钟合计最多 30 次。 |
+| POST `/account/apply`、`/account/activate`、`/account/agent-token`、`/account/approve`、`/account/revoke`、`/account/logout` | 账号页的表单。需要会话，没有会话返回 401。同一客户端地址（IP）每分钟合计最多 30 次。 |
 | POST `/account/resend-verification` | 重发验证邮件，只在配置了 `OAUTH_MANAGEMENT_CLIENT_ID` 和 `OAUTH_MANAGEMENT_CLIENT_SECRET` 时存在。不需要会话。同一客户端地址（IP）每小时最多 5 次，见「重发验证邮件」。 |
 
 超过限制返回 429 和 `Retry-After`。三组限流各算各的，互不占用额度。「同一客户端地址」对 IPv6 指同一个 /64 前缀，见「Gateway 环境变量」。
@@ -413,6 +426,7 @@ Cookie 都带 `__Host-` 前缀，只能通过 HTTPS 使用。
 | `tenant` | ID Token 没有 tenant claim。检查 Action 是否已部署并放进登录流程，`TENANT_CLAIM` 是否等于 `OAUTH_TENANT_CLAIM`，`DEFAULT_TENANT` 是否已设置。 |
 | `closed` | `EIGOS_SIGNUP=closed`，目前暂停注册新账号。 |
 | `invite` | 邀请码无效、已过期，或和已验证的邮箱不一致。重新发一个邀请码。 |
+| `application` | 申请未提交。核对申请使用的邮箱和用途。 |
 | `operator` | 这是运营者账号，不需要开通，继续使用原来的客户端。 |
 | `link` | 合并没有完成：`session_token` 无效或已过期，合并 Cookie 过期，第二次登录的不是原来的账号，或者 Auth0 继续登录之后回来的不是原来的账号。用户用原来的方式重新登录。仍失败时检查 Action 日志，以及 `LINK_SECRET` 和 `EIGOS_ACCOUNT_LINK_SECRET` 是否相同。 |
 | `resent` | 验证邮件已重新发送。 |
@@ -429,7 +443,7 @@ Gateway 按下表的顺序检查，第一个不通过的就是返回的 `reason`
 | `invite_required` | `Redeem an EIGOS invitation on the account page first` | `invite` 模式，账号还没开通。发邀请码。 |
 | `operator_account` | `Operator accounts use their existing client` | 这个 owner 有 `Eigos` 定义授权，是运营者。继续使用原来的客户端令牌。 |
 | `account_suspended` | `This EIGOS account is suspended` | 账号已停用。运营者确认后 `npm run account -- restore`。 |
-| `client_not_allowed` | `This client is not allowed for EIGOS accounts` | 令牌不是 Grok 公共客户端（`OAUTH_MEMBER_MCP_CLIENT_ID`）为 MCP audience 签发的，也不是运营者用原有客户端签发的。令牌本身合格时，访问 `/mcp` 和 `/identity` 以外的路径也是这个原因：账号令牌只能用这两个路径。 |
+| `client_not_allowed` | `This client is not allowed for EIGOS accounts` | 令牌不是 Grok 公共客户端（`OAUTH_MEMBER_MCP_CLIENT_ID`）为 MCP audience 签发的，也不是运营者用原有客户端签发的。令牌本身合格时，访问 `/mcp` 和 `/identity` 以外的路径也是这个原因：Grok OAuth 令牌只能用这两个路径。通用接入令牌只可使用 `/mcp`、`/a2a` 和 `/identity`。 |
 | `client_not_authorized` | `Authorize this client on the EIGOS account page` | 账号还没授权 Grok，授权已撤销，或令牌签发在最近一次授权之前。用户先在账号页授权，再在 Grok 里（重新）连接，用重新签发的令牌。 |
 | `insufficient_scope` | `The token is missing tasks:read or tasks:write` | 令牌缺 `tasks:read` 或 `tasks:write`。响应头 `WWW-Authenticate` 是 `Bearer error="insufficient_scope", scope="tasks:read tasks:write", resource_metadata="<PUBLIC_URL>/.well-known/oauth-protected-resource/mcp"`。检查 Auth0 API 的 scopes 和 Grok 客户端的授权。 |
 
@@ -462,15 +476,15 @@ Gateway 按下表的顺序检查，第一个不通过的就是返回的 `reason`
 
 验收只做真实查询和 synthetic 执行，不写外部日历，不真实报名、下单或付款。验收前给测试 owner 配置有效期明确的 [FlyAI trial 来源绑定](service-planning.md#供应商连接)。每一项记录结果和标识，不记录令牌、邮箱、验证链接或任何凭据。
 
-第 1 至 3 项和下面合并的几项要注册新用户，按 `open` 模式写。正式环境在「开户模式」的两个前提落地之前不开放注册，所以这几项放在一个限定时长的窗口里做：先定好起止时间，临时设 `EIGOS_SIGNUP=open` 并重启 Gateway，做完立刻改回 `invite` 或 `closed` 再重启，并在验收记录里写下这段时间。也可以全程用 `invite`：第 1、2 项的新用户登录后看到邀请码表单，输入 `npm run account:invite` 发的邀请码后开通。`closed` 模式下，新用户登录后看到暂停注册的提示。
+全程使用 `invite`。每个测试账号独立申请、兑换邀请码和授权 Grok。
 
-1. 用新的 Google 账号注册，自动开通，`npm run account -- show <owner|email>` 返回的 `status` 是 `active`。
-2. 用新邮箱加密码注册。验证邮箱之前看到 `verify` 提示，`show` 查不到账号。配置了 `OAUTH_MANAGEMENT_CLIENT_ID` 和 `OAUTH_MANAGEMENT_CLIENT_SECRET` 时，点「重新发送验证邮件」，确认收到新邮件，并且 Gateway 日志里没有 `verification email resend failed`。验证之后重新登录，自动开通。
-3. 用同一个邮箱换另一种方式登录，进入合并页。用原来的方式登录后点「继续」，合并完成，两种方式的 `show` 返回同一个 owner。从账号页发起的登录，合并后回到账号页并开通会话。原来那个账号授权过 Grok 的，合并后账号页显示「重新授权 Grok」。
+1. 用新 Google 账号注册并提交申请。运营在 `applications` 查到申请后单独发码。兑换后 `account show` 返回 `active`。
+2. 用新邮箱加密码注册。验证前只看到验证提示。验证后，使用其他邮箱的申请应被拒绝。使用已验证邮箱申请后，另一个账号无法兑换该申请的码，重发后旧码失效。
+3. 用同一个邮箱换另一种方式登录，按合并页提示用原来的方式登录。合并后仍使用原 owner，原来授权过 Grok 的账号显示「重新授权 Grok」。
 4. 先在账号页授权 Grok，再在 Grok Bot 里添加连接并问一次只读航班查询。用原 `taskId` 读回结果，结果带来源证据，并在同一对话交付。
-5. 撤销 Grok 授权后，请求被 Gateway 拒绝，返回 403，`reason` 是 `client_not_authorized`。重新授权后，在 Grok 里重新连接，新签发的令牌可用，重新授权之前签发的令牌仍被拒绝。
+5. 撤销 Agent 接入后，Grok 请求被 Gateway 拒绝，返回 403，`reason` 是 `client_not_authorized`。重新授权后，在 Grok 里重新连接，新签发的令牌可用，重新授权之前签发的令牌仍被拒绝。
 6. 停用账号后请求返回 403，`reason` 是 `account_suspended`。恢复后可用。
-7. 从第二个账号读取第一个账号的任务，应返回不可访问。
+7. 用另一受邀账号在账号页生成接入令牌。用 MCP 和 A2A 分别提交查询，并用另一个入口读回同一个任务。交叉读取对方账号的任务时应被拒绝。重新生成令牌后验证旧令牌失效，再检查撤销和停用。
 
 合并要在真实租户上多核对下面几点，结果写进验收记录：
 

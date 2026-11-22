@@ -251,7 +251,7 @@ test('revoked Grok access can be authorized again and old addresses redirect', a
     await g.form('revoke', cookie);
     assert.match(await g.page(cookie), /重新授权 Grok/);
     await g.form('approve', cookie);
-    assert.match(await g.page(cookie), /撤销 Grok 授权/);
+    assert.match(await g.page(cookie), /撤销 Agent 接入/);
     for (const path of ['/members', '/members/login', '/'])
       assert.equal((await fetch(g.url + path, { redirect: 'manual' })).headers.get('location'), '/account');
     const statuses = [];
@@ -350,19 +350,20 @@ test('the account page shows where each account stands', async () => {
     for (const flag of [/; Max-Age=28800(;|$)/, /; Path=\/(;|$)/, /; HttpOnly/, /; Secure/, /; SameSite=Lax/]) assert.match(session, flag);
     assert.doesNotMatch(session, /Domain=/i);
     const fresh = await open.page(erin.cookie);
-    assert.match(fresh, /账号已开通。授权后，Grok 可以提交和读取你自己的查询任务。/);
+    assert.match(fresh, /Beta 账号已开通。/);
+    assert.match(fresh, /<button>生成接入令牌<\/button>/);
     assert.match(fresh, /<button>授权 Grok<\/button>/);
     assert.match(fresh, /<button>退出登录<\/button>/);
     await open.form('approve', erin.cookie);
     const approved = await open.page(erin.cookie);
     assert.match(approved, /<code>https:\/\/127\.0\.0\.1\/mcp<\/code>/);
     assert.match(approved, /<code>grok<\/code>/);
-    assert.match(approved, /<button>撤销 Grok 授权<\/button>/);
+    assert.match(approved, /<button>撤销 Agent 接入<\/button>/);
     await open.form('revoke', erin.cookie);
     const revoked = await open.page(erin.cookie);
-    assert.match(revoked, /已撤销 Grok 的访问，需要时可以重新授权。/);
+    assert.match(revoked, /已撤销 Agent 接入。/);
     assert.match(revoked, /<button>重新授权 Grok<\/button>/);
-    assert.doesNotMatch(revoked, /撤销 Grok 授权/);
+    assert.doesNotMatch(revoked, /<button>撤销 Agent 接入<\/button>/);
     await open.accounts.suspend(open.owner('erin'), 'synthetic');
     const suspended = await open.page(erin.cookie);
     assert.match(suspended, /这个账号已停用，请联系 EIGOS 支持。/);
@@ -409,9 +410,22 @@ test('form posts need the portal origin and a session, and activation reports op
     const olivia = await invite.login('olivia', 'olivia@example.test');
     assert.equal((await invite.form('activate', olivia.cookie, code)).headers.get('location'), '/account?status=operator');
     assert.equal(await invite.accounts.account(invite.owner('olivia')), undefined);
+    const application = new URLSearchParams({ email: 'carol@example.test', purpose: 'Compare travel options' });
+    assert.equal((await invite.form('apply', '', application)).status, 401);
+    assert.equal((await invite.form('apply', carol.cookie, application, 'https://other.example')).status, 403);
+    assert.equal((await closed.form('apply', carol.cookie, application)).headers.get('location'), '/account?status=application');
+    assert.equal((await invite.form('apply', carol.cookie, new URLSearchParams({ email: 'other@example.test', purpose: 'Try Agent' })))
+      .headers.get('location'), '/account?status=application');
+    assert.equal((await invite.form('apply', carol.cookie, application)).headers.get('location'), '/account');
+    assert.equal((await invite.form('apply', carol.cookie, application)).headers.get('location'), '/account');
+    assert.equal((await invite.accounts.applications()).length, 1);
+    const accountPage = () => fetch(invite.url + '/account', { headers: { Cookie: carol.cookie } }).then(res => res.text());
+    assert.match(await accountPage(), /等待运营审核/);
     const mine = await invite.accounts.invite('carol@example.test', 1);
+    assert.match(await accountPage(), /申请已通过/);
     assert.equal((await invite.form('activate', carol.cookie, new URLSearchParams({ code: mine }))).headers.get('location'), '/account');
     assert.equal((await invite.accounts.account(invite.owner('carol')))?.status, 'active');
+    assert.match(await accountPage(), /Beta 账号已开通/);
   } finally { await invite.close(); await closed.close(); await f.close(); }
 });
 
@@ -458,7 +472,7 @@ test('old member addresses redirect to the account page without capturing other 
 });
 
 test('the tenant comes from the configured claim of the ID token', async () => {
-  const f = await fixture(), g = await accountGateway(f, { env: { OAUTH_TENANT_CLAIM: 'https://eigos.example/tenant' } });
+  const f = await fixture(), g = await accountGateway(f, { signup: 'open', env: { OAUTH_TENANT_CLAIM: 'https://eigos.example/tenant' } });
   try {
     assert.equal((await g.login('ivan', 'ivan@example.test')).location, '/account');
     assert.equal((await g.accounts.account(g.owner('ivan')))?.status, 'active');
@@ -844,7 +858,7 @@ test('a finished merge withdraws the agent access of the account it merges into,
     // The resumed sign-in lands on the account page in its usual re-authorize state.
     const resumed = await g.callback(authorize, pairOf(cookieAfter(merged.response, loginCookieName)!), primary, email);
     assert.equal(resumed.location, '/account');
-    assert.match(await g.page(resumed.cookie), /已撤销 Grok 的访问，需要时可以重新授权。<\/p><form method="post" action="\/account\/approve"><button>重新授权 Grok<\/button>/);
+    assert.match(await g.page(resumed.cookie), /已撤销 Agent 接入。<\/p><form method="post" action="\/account\/approve"><button>重新授权 Grok<\/button>/);
   } finally { await g.close(); await f.close(); }
 });
 

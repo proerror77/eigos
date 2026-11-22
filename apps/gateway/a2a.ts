@@ -2,13 +2,14 @@ import { AgentCard, Task as A2ATask, type SendMessageRequest, type GetTaskReques
 import type { A2ARequestHandler, ServerCallContext, User } from '@a2a-js/sdk/server';
 import { UnsupportedOperationError, PushNotificationNotSupportedError, ExtendedAgentCardNotConfiguredError, RequestMalformedError, TaskNotFoundError, TaskNotCancelableError, A2AError } from '@a2a-js/sdk/errors';
 import type { Principal } from '../../packages/core/identity.js';
+import type { Sql } from '../../packages/runtime/database.js';
 import { PARequests } from '../../packages/runtime/pa.js';
 import { Tasks, type Task, type TaskResultProjection } from '../../packages/runtime/tasks.js';
 import { publicError } from './public-error.js';
 
 export class AgentUser implements User {
   readonly isAuthenticated = true;
-  constructor(readonly principal: Principal) {}
+  constructor(readonly principal: Principal, readonly authorizeSubmission?: (client: Sql) => Promise<void>) {}
   get userName() { return this.principal.owner; }
 }
 const states: Record<string, string> = { submitted: 'TASK_STATE_SUBMITTED', working: 'TASK_STATE_WORKING', completed: 'TASK_STATE_COMPLETED', failed: 'TASK_STATE_FAILED', canceled: 'TASK_STATE_CANCELED', 'input-required': 'TASK_STATE_INPUT_REQUIRED' };
@@ -26,9 +27,9 @@ export function agentCard(url: string) {
 }
 export class A2A implements A2ARequestHandler {
   constructor(private readonly tasks: Tasks, private readonly card: AgentCard, private readonly projectResult: TaskResultProjection) {}
-  private principal(context: ServerCallContext) {
+  private user(context: ServerCallContext) {
     if (!(context.user instanceof AgentUser)) throw new RequestMalformedError('Authenticated user required');
-    return context.user.principal;
+    return context.user;
   }
   async getAgentCard() { return this.card; }
   private async task(operation: () => Promise<Task>, cancel = false) {
@@ -48,23 +49,30 @@ export class A2A implements A2ARequestHandler {
       const message = params.message;
       if (!message?.messageId) throw new RequestMalformedError('Message ID is required');
       const text = message.parts.flatMap(part => part.content?.$case === 'text' ? [part.content.value] : []).join('\n');
+      const { principal, authorizeSubmission } = this.user(context);
+      if (principal.memberAccess) {
+        if (message.taskId || !text.trim() || message.parts.some(part => part.content?.$case !== 'text'))
+          throw new RequestMalformedError('Send a new text request or use GetTask for an existing task');
+        return this.tasks.submit(principal, { requestId: message.messageId, message: text,
+          conversationId: message.contextId || undefined }, { assignConversation: true, authorize: authorizeSubmission });
+      }
       const dataPart = message.parts.find(part => part.content?.$case === 'data')?.content;
       const data = dataPart?.$case === 'data' ? dataPart.value as Record<string, unknown> : undefined;
       if (message.taskId) {
         if (!data?.paResponse) throw new RequestMalformedError('Continuation requires the PA response for the original task');
-        return new PARequests(this.tasks).respond(this.principal(context), message.taskId, data.paResponse, message.contextId || undefined);
+        return new PARequests(this.tasks).respond(principal, message.taskId, data.paResponse, message.contextId || undefined);
       }
       if (data?.paResponse) throw new RequestMalformedError('PA response requires the original taskId');
-      return this.tasks.submit(this.principal(context), { requestId: message.messageId, message: text || data?.message,
+      return this.tasks.submit(principal, { requestId: message.messageId, message: text || data?.message,
         route: data?.route, classification: data?.classification, conversationId: message.contextId || undefined },
         { assignConversation: true });
     });
   }
   async getTask(params: GetTaskRequest, context: ServerCallContext) {
-    return this.task(() => this.tasks.get(this.principal(context), params.id));
+    return this.task(() => this.tasks.get(this.user(context).principal, params.id));
   }
   async cancelTask(params: CancelTaskRequest, context: ServerCallContext) {
-    return this.task(() => this.tasks.cancel(this.principal(context), params.id), true);
+    return this.task(() => this.tasks.cancel(this.user(context).principal, params.id), true);
   }
   async listTasks(_params: ListTasksRequest): Promise<never> { throw new UnsupportedOperationError('Use GetTask with the submitted task ID'); }
   async getAuthenticatedExtendedAgentCard(): Promise<never> { throw new ExtendedAgentCardNotConfiguredError(); }
