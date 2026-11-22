@@ -11,6 +11,12 @@
 
 搜索接受 `query`、`city`、可选的 `providers`、`center`（GCJ-02）、`radiusMeters` 和每个来源的 `limit`。默认查高德、点评、TableCheck 和美团企业版。每路返回状态，同名门店按各供应商的原始标识分别保留。用搜索结果里的门店引用提交 `review`，输入 `venue`、当地 `date`、`partySize` 和可选的 `channel`。读回中的 `handoff` 表示有可打开的订座页。只有状态为 `observed` 的 `availableTimes` 是指定日期和人数的空位观察。
 
+## 会员 MCP 查店
+
+`search_restaurants` 接受城市 `city`、餐厅名或菜系 `query`、可选的 `limit` 和稳定的 `requestId`。它固定通过 `RestaurantDiscovery.search` 查询高德，并立即读回原搜索结果。会员 OAuth 和账号连接令牌沿用 `tasks:read`、`tasks:write`。调用者还需要其原账号的高德连接、来源和搜索授权。重复请求用同一个 `requestId` 读取结果。
+
+工具的输入只包含查店条件。通用本体工具、订座和付款使用各自的入口与权限。高德返回门店和地址。
+
 ## 供应商与授权
 
 | 供应商 | 数据及连接 |

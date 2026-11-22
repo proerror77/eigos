@@ -11,7 +11,9 @@ import { AgentCard } from '@a2a-js/sdk';
 import { z } from 'zod';
 import { Conflict, digest, InvalidInput, NotFound, PermissionDenied, requireScope, type Principal } from '../../packages/core/identity.js';
 import type { Config } from '../../packages/core/config.js';
+import { restaurantSearchInput } from '../../packages/ontology/restaurant-services.js';
 import { actionRequestSchema as actionInput, functionRequestSchema as functionInput, completeWithActionRequestSchema } from '../../packages/ontology/invocation.js';
+import { withoutExternalDispatch } from '../../packages/runtime/external-operations.js';
 import { Access } from '../../packages/runtime/access.js';
 import { Database, type Sql } from '../../packages/runtime/database.js';
 import { Metadata } from '../../packages/runtime/metadata.js';
@@ -276,6 +278,29 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       res.on('close', () => { void server.close(); });
       await transport.handleRequest(req, res, req.body);
     };
+    server.registerTool('search_restaurants', {
+      description: 'Search public Amap restaurant listings for a specified city and keyword. Returns the observed venues and addresses. Use the same requestId to read the original search again.',
+      inputSchema: restaurantSearchInput.pick({ city: true, query: true, limit: true })
+        .extend({ requestId: submitSchema.shape.requestId }),
+    }, ({ requestId, ...input }) => response(async () => {
+      requireScope(p, 'tasks:read');
+      requireScope(p, 'tasks:write');
+      const access = await Access.load(db, p), model = await metadata.active('Eigos');
+      access.source(model, 'Amap');
+      access.function(model, 'searchMapPlaces');
+      const selected = capabilities.actions.resolve(access, model, {
+        interface: { type: 'RestaurantDiscovery', action: 'search', implementation: 'RestaurantSearchResult' },
+        input: { ...input, providers: ['Amap'] },
+      });
+      const action = model.action(selected.action);
+      if (selected.action !== 'FindRestaurants' || action.function !== 'findRestaurants' || action.effects?.length)
+        throw new Conflict('The published restaurant search is unavailable');
+      const result = await withoutExternalDispatch(() => capabilities.actions.complete(access, model, selected, requestId,
+        { function: 'readRestaurantSearch', resultParameter: 'search' }, undefined, AbortSignal.timeout(30000),
+        member ? { authorize: authorizeMemberSubmission(req) } : {}));
+      if (!await access.canReturn(access.dataRequirements())) throw new PermissionDenied('Result permissions changed');
+      return result;
+    }));
     if (member) {
       const memberSubmit = submitSchema.pick({ requestId: true, message: true, conversationId: true });
       server.registerTool('submit_task', {
