@@ -163,6 +163,8 @@ test('MCP and A2A complete through the origin handoff during a 33-second applica
       return state.queued >= 2 ? state : undefined;
     });
     assert.equal(waiting.inflight, 0);
+    const publication = await f.metadata.publish(f.model.document, f.capabilities, f.publisher);
+    assert.notEqual(publication.release, f.model.release);
     await delay(Math.max(0, 33000 - (performance.now() - outageStarted)));
     await eventually(async () => (await control<State>()).queued === 66 ? true : undefined);
     const beforeResume = (await control<State>()).forwarded;
