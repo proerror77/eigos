@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+config:
+  adminAddr: "off"
+  readinessAddr: 127.0.0.1:15121
+  statsAddr: 127.0.0.1:15120
+frontendPolicies:
+  accessLog:
+    filter: "false"
+gateways:
+  eigos:
+    bindAddress: 127.0.0.1
+    port: 13212
+    protocol: HTTP
+routes:
+  - name: eigos-gateway
+    gateways: [eigos]
+    hostnames: [eigos.mandonothing.com]
+    backends:
+      - host: 127.0.0.1:3212
