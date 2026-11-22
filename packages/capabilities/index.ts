@@ -36,6 +36,7 @@ import {Ontology} from '../ontology/model.js';
 import {applicationFunctions} from '../runtime/applications.js';
 import type { RuntimeExtensions } from '../runtime/extensions.js';
 import type { Database } from '../runtime/database.js';
+import { hasBetaReadAccess } from '../runtime/accounts.js';
 import { businessDefinition } from '../ontology/definition.js';
 import type { SourceResolver } from './didi/functions.js';
 import { didiRideWatchFunctions } from './didi/ride-watch.js';
@@ -59,8 +60,11 @@ type ProviderFetch = {
 export function configuredCapabilities(db: Database, config: ConnectionConfig, extensions: RuntimeExtensions,
   source = configuredSource(config.EIGOS_DIDI_CONNECTION_FILE, config.EIGOS_DIDI_WATCH_SANDBOX_CONNECTION_FILE),
   { marketplaceFetch, ...fetchers }: ProviderFetch = {}) {
+  const eligible = (owner: string) => hasBetaReadAccess(db, owner);
+  const trialUntil = config.EIGOS_BETA_FLYAI_TRIAL_UNTIL;
   return createCapabilities(db, source, extensions,
-    configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE, undefined, marketplaceFetch, config),
+    configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE, undefined, marketplaceFetch, config,
+      trialUntil ? { eligible, trialUntil } : undefined),
     configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
       fliggyFlight: config.EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE,
       fliggyHotel: config.EIGOS_FLIGGY_HOTEL_CONNECTION_FILE,
@@ -71,6 +75,7 @@ export function configuredCapabilities(db: Database, config: ConnectionConfig, e
         Hema: config.EIGOS_HEMA_CONNECTION_FILE,
       },
       amap: config.EIGOS_AMAP_CONNECTION_FILE,
+      betaAmap: config.EIGOS_BETA_AMAP_CONNECTION_FILE ? { path: config.EIGOS_BETA_AMAP_CONNECTION_FILE, eligible } : undefined,
       xiaohongshu: config.EIGOS_XIAOHONGSHU_CONNECTION_FILE,
       variFlight: config.EIGOS_VARIFLIGHT_CONNECTION_FILE,
       dianping: config.EIGOS_DIANPING_CONNECTION_FILE,
@@ -92,7 +97,7 @@ export function createCapabilities(
   extensions: RuntimeExtensions = {},
   services: ServiceResolver = unavailableServices,
   stripe: StripeSandboxResolver = configuredStripeSandbox(),
-  connections: { paotui?: string; waimai?: string; localDelivery?: DeliveryConnectionPaths; localDeliveryFetch?: typeof fetch; amap?: string; amapFetch?: typeof fetch; variFlight?: string; variFlightFetch?: typeof fetch;
+  connections: { paotui?: string; waimai?: string; localDelivery?: DeliveryConnectionPaths; localDeliveryFetch?: typeof fetch; amap?: string; amapFetch?: typeof fetch; betaAmap?: Parameters<typeof configuredAmap>[2]; variFlight?: string; variFlightFetch?: typeof fetch;
     fr24?: string; fr24Entrypoint?: string; calendar?: string; calendarFetch?: typeof fetch; travelPA?: string; travelPAFetch?: typeof fetch;
     xiaohongshu?: string; xiaohongshuFetch?: typeof fetch; dianping?: string; dianpingFetch?: typeof fetch; diningWeb?: string; diningMiniProgram?: string;
     tableCheck?: string; meituanDining?: string; tableCheckFetch?: typeof fetch; meituanDiningFetch?: typeof fetch;
@@ -134,7 +139,7 @@ export function createCapabilities(
     ...stripePaymentFunctions(db, stripe),
     ...paotuiFunctions(connections.paotui),
     ...waimaiFunctions(connections.waimai, fetch, connections.amap ? amap : undefined),
-    ...amapFunctions(amap),
+    ...amapFunctions(amap, configuredAmap(connections.amap, connections.amapFetch, connections.betaAmap)),
     ...luckinFunctions(),
     ['resolveTaskLocation', resolveTaskLocation],
   ]);

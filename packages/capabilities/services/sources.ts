@@ -95,20 +95,28 @@ function catalogAgentProfile(host: CatalogHost) {
 
 /** Configuration grants source access to one owner; it never grants booking or
  * payment authority. Secrets and raw provider responses are not Ontology rows. */
-export function configuredServices(path?: string, flyAIRead?: FlyAIRead, catalogFetch?: typeof fetch, host: CatalogHost = { PUBLIC_URL:process.env.PUBLIC_URL, EIGOS_AUTH_MODE:process.env.EIGOS_AUTH_MODE }): ServiceResolver {
-  if (!path) return unavailableServices;
+export function configuredServices(path?: string, flyAIRead?: FlyAIRead, catalogFetch?: typeof fetch,
+  host: CatalogHost = { PUBLIC_URL:process.env.PUBLIC_URL, EIGOS_AUTH_MODE:process.env.EIGOS_AUTH_MODE },
+  beta?: { trialUntil: string; eligible(owner: string): Promise<boolean> }): ServiceResolver {
+  if (!path && !beta) return unavailableServices;
   const load = async () => {
+    if (!path) return [];
     try { return z.array(connection).max(100).parse(JSON.parse(await privateFile(path))); }
     catch {
       throw new SourceReadFailure('Private service configuration is unavailable', { unavailable: true });
     }
   };
-  return async (owner, provider) => {
+  const select = async (owner: string, provider: ServiceName): Promise<z.infer<typeof connection>> => {
     const entries = (await load()).filter((c) => c.owner === owner && c.provider === provider);
-    if (entries.length === 0)
-      throw new ServiceAuthorizationRequired('SERVICE_AUTHORIZATION_REQUIRED: no owner connection');
-    if (entries.length !== 1) throw new SourceReadFailure('Ambiguous service connection', { unavailable: true });
-    const binding = entries[0]!, fingerprint = digest(binding);
+    if (entries.length > 1) throw new SourceReadFailure('Ambiguous service connection', { unavailable: true });
+    if (entries[0]) return entries[0];
+    if (provider === 'Fliggy' && beta && Date.parse(beta.trialUntil) > Date.now() && await beta.eligible(owner)) {
+      return { owner, provider, mode: 'trial', bindingId: 'beta-flyai-trial', active: true, expiresAt: beta.trialUntil };
+    }
+    throw new ServiceAuthorizationRequired('SERVICE_AUTHORIZATION_REQUIRED: no owner connection');
+  };
+  return async (owner, provider) => {
+    const binding = await select(owner, provider), fingerprint = digest(binding);
     const marketplace = binding.provider === 'Taobao' || binding.provider === 'JD';
     const publicCatalog = binding.provider === 'Shopify' && 'mode' in binding;
     const agentProfile = publicCatalog ? catalogAgentProfile(host) : undefined;
@@ -124,13 +132,8 @@ export function configuredServices(path?: string, flyAIRead?: FlyAIRead, catalog
       return text.trim();
     };
     const assertCurrent = async () => {
-      const now = (await load()).filter((c) => c.owner === owner && c.provider === provider);
-      if (
-        !binding.active ||
-        Date.parse(binding.expiresAt) <= Date.now() ||
-        now.length !== 1 ||
-        digest(now[0]) !== fingerprint
-      )
+      const now = await select(owner, provider);
+      if (!binding.active || Date.parse(binding.expiresAt) <= Date.now() || digest(now) !== fingerprint)
         throw new SourceReadFailure('Service connection expired or was revoked', { unavailable: true });
       if ('credentialFile' in binding) await credential();
     };

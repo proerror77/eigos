@@ -551,6 +551,23 @@ export function businessGrants(model: Ontology, sandboxEnabled = false): Grant[]
     ...[...new Set(functions.flatMap(fn => fn.source ? [fn.source] : []))].map(name => ({ resource: resource(model.document.id, 'source', name), permission: 'read_source' as const })),
   ];
 }
+/** Grants only the restaurant search and its readback to the existing Beta group. */
+export async function grantBetaRestaurantSearch(db: Database, model: Ontology, client?: Sql) {
+  if (model.document.id !== 'Eigos') throw new Error('Expected the published business Ontology');
+  const paths = new Set([
+    'Eigos/action/FindRestaurants',
+    'Eigos/function/findRestaurants',
+    'Eigos/function/readRestaurantSearch',
+    'Eigos/object/RestaurantSearchResult',
+    'Eigos/object/RestaurantSourceVenue',
+  ]);
+  const grants = businessGrants(model).filter(grant => paths.has(grant.resource));
+  if (grants.length !== paths.size) throw new Error('The restaurant search contract is incomplete');
+  const result = await db.query(`INSERT INTO ${db.schema}.resource_grants(subject,resource,permission)
+    SELECT $1,resource,permission FROM jsonb_to_recordset($2::jsonb) AS g(resource text,permission text)
+    ON CONFLICT DO NOTHING RETURNING resource`, ['group:' + accountGroup, JSON.stringify(grants)], client);
+  return (result.rows as { resource: string }[]).map(row => row.resource);
+}
 /** Makes the account group hold exactly the business grants of `model`, replacing whatever the group held. Pass the business Ontology only; the operator commands call `syncAccountGrantsAfterActivation`. */
 export async function syncAccountGrants(db: Database, model: Ontology, client?: Sql): Promise<void> {
   await setGrants(db, 'group:' + accountGroup, businessGrants(model, db.sandboxEnabled), client);

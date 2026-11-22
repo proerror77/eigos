@@ -7,7 +7,7 @@ import { fakeAmap, testConnection, type Recorded } from './amap-fixture.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { digest } from '../packages/core/identity.js';
-import { setGrants, syncAccountGrants } from '../packages/runtime/access.js';
+import { businessGrants, grantBetaRestaurantSearch, setGrants, syncAccountGrants } from '../packages/runtime/access.js';
 import { Accounts } from '../packages/runtime/accounts.js';
 import { accountGateway, type AccountGateway } from './account-harness.js';
 import { fixture } from './fixture.js';
@@ -228,6 +228,9 @@ test('member restaurant search uses the original account source and exposes no g
   let gateway: AccountGateway | undefined;
   try {
     const connection = await testConnection(folder);
+    const betaConnection = join(folder, 'beta.json');
+    const { owner: _owner, ...shared } = JSON.parse(await readFile(connection, 'utf8'));
+    await writeFile(betaConnection, JSON.stringify({ ...shared, active: false }), { mode: 0o600 });
     const providerCalls: Recorded[] = [];
     const supply = fakeAmap(providerCalls);
     let revokeDuringSearch = false;
@@ -238,11 +241,14 @@ test('member restaurant search uses the original account source and exposes no g
       return result;
     };
     const g = gateway = await accountGateway(f, {
-      signup: 'invite', env: { EIGOS_AMAP_CONNECTION_FILE: connection }, amapFetch,
+      signup: 'invite', env: { EIGOS_AMAP_CONNECTION_FILE: connection, EIGOS_BETA_AMAP_CONNECTION_FILE: betaConnection }, amapFetch,
     });
     const binding = JSON.parse(await readFile(connection, 'utf8'));
     await writeFile(connection, JSON.stringify({ ...binding, owner: g.owner('alice') }), { mode: 0o600 });
-    await syncAccountGrants(f.db, f.model);
+    await setGrants(f.db, 'group:eigos-accounts', businessGrants(f.model)
+      .filter(grant => ['Eigos', 'Eigos/source/Amap', 'Eigos/function/searchMapPlaces'].includes(grant.resource)));
+    assert.equal((await grantBetaRestaurantSearch(f.db, f.model)).length, 5);
+    assert.deepEqual(await grantBetaRestaurantSearch(f.db, f.model), []);
     const approved = async (sub: string) => {
       const email = sub + '@example.test', session = await g.login(sub, email);
       assert.equal((await g.form('apply', session.cookie, new URLSearchParams({ email, purpose: 'Search restaurant listings' }))).status, 303);
@@ -283,6 +289,12 @@ test('member restaurant search uses the original account source and exposes no g
     await assert.rejects(alice.client.callTool({ name: 'apply_ontology_action', arguments: {} }), /Tool .* not found/);
     const rows = await f.db.query(`SELECT action FROM ${f.schema}.action_changes WHERE request_id=$1`, [input.requestId]);
     assert.deepEqual(rows.rows.map(row => row.action), ['FindRestaurants', 'FindRestaurants']);
+    assert.equal((await f.db.query(`SELECT 1 FROM ${f.schema}.external_operations`)).rowCount, 0);
+    await writeFile(betaConnection, JSON.stringify(shared), { mode: 0o600 });
+    const beta = await search(bob.client, { ...input, requestId: 'beta-amap-default-search' });
+    assert(!beta.isError, JSON.stringify(beta));
+    assert.deepEqual(body(beta).outcomes, [{ provider: 'Amap', status: 'observed', count: 1 }]);
+    assert.deepEqual(providerCalls.map(entry => entry.name), ['maps_text_search', 'maps_text_search']);
     assert.equal((await f.db.query(`SELECT 1 FROM ${f.schema}.external_operations`)).rowCount, 0);
     revokeDuringSearch = true;
     const revokedRequest = 'amap-revoked-during-search';

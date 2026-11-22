@@ -62,6 +62,15 @@ export async function initializeAccounts(db: Database) {
   `);
 }
 
+/** Default supplier reads are available to verified, currently authorized invite recipients. */
+export async function hasBetaReadAccess(db: Database, owner: string) {
+  const result = await db.query(`SELECT 1 FROM ${db.schema}.accounts a
+    WHERE a.owner=$1 AND a.status='active' AND a.email_hash IS NOT NULL
+      AND a.approved_at IS NOT NULL AND a.revoked_at IS NULL
+      AND EXISTS (SELECT 1 FROM ${db.schema}.member_invitations i WHERE i.redeemed_by=a.owner)`, [owner]);
+  return Boolean(result.rowCount);
+}
+
 export class Accounts {
   constructor(private readonly db: Database, private readonly signup: SignupMode) {}
 

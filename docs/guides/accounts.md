@@ -387,7 +387,20 @@ SELECT count(*) FROM <schema>.resource_grants WHERE subject='group:eigos-account
 - 第一条给出业务 Ontology 当前的 release，就是 `ontology:activate` 要用的 `<release>`。`ontology` 表里每个 Ontology 各有一行，必须带 `WHERE id='Eigos'`。拿别的 Ontology（例如公共地点）的 release 运行 `ontology:activate`，命令照常成功，但会静默跳过这个组的同步。
 - 第二条是这个组现有的授权条数，0 表示还没同步过。运行 `ontology:activate` 之后，它应当等于当前定义的业务授权条数。分支合并新增了能力，或升级换掉了旧组的授权时，同步前后的条数通常不同，可以用它看同步有没有发生。`ontology:activate` 的输出里没有同步结果，只能这样查。
 
-账号需要读取某个来源时，仍要给该 owner 配置有效期明确的来源绑定，见 [供应商连接](service-planning.md#供应商连接)。账号无需提供供应商账号凭据。授权范围延续现有 Ontology 权限实现，参考 [Palantir 应用权限](https://www.palantir.com/docs/foundry/developer-console/permissions)。
+账号读取没有 Beta 默认连接的来源时，仍需给该 owner 配置有效期明确的来源绑定，见 [供应商连接](service-planning.md#供应商连接)。账号无需提供供应商账号凭据。授权范围延续现有 Ontology 权限实现，参考 [Palantir 应用权限](https://www.palantir.com/docs/foundry/developer-console/permissions)。
+
+### Beta 默认只读服务
+
+兑换邀请码、验证邮箱并启用 Agent 接入后，账号可使用平台启用的默认查询。飞猪默认模式是 FlyAI trial，支持航班和酒店查询。高德应用凭据仅用于天气、地点和餐厅搜索涉及的只读地图接口。已配置给该账号的专属连接优先，专属连接失效时要求恢复该连接。停用账号或撤销 Agent 接入会关闭默认查询。
+
+Gateway 和 Worker 由运营统一配置：
+
+- `EIGOS_BETA_FLYAI_TRIAL_UNTIL` 填写 UTC ISO 截止时间。到期后试用查询关闭。
+- `EIGOS_BETA_AMAP_CONNECTION_FILE` 指向平台的私有高德查询配置，字段为 `active`、`expiresAt`、`keyFile` 和 `keySha256`。该配置由服务端持有。
+- 运行角色需读取 `accounts`（现有权限）及 `member_invitations.redeemed_by`。由管理角色授予最小范围的 `GRANT SELECT (redeemed_by) ON <schema>.member_invitations TO <gateway_role>, <worker_role>;`。
+- 用管理角色运行 `npm run account -- grant-restaurant-search`，向 Beta 组补充已发布的餐厅搜索和读回权限。
+
+MCP 的 `search_restaurants` 用高德查询门店和地址。A2A 用户也可以用文本任务查询。交易操作继续使用对应的专属连接和逐次批准。
 
 ## 账号页和 Gateway 的提示
 
