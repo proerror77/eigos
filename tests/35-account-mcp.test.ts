@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fakeAmap, testConnection, type Recorded } from './amap-fixture.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { digest } from '../packages/core/identity.js';
@@ -104,7 +108,7 @@ test('invited accounts use OAuth and portable MCP/A2A access with shared Beta ca
     assert.equal((await g.call('/ontology', bobToken)).status, 403);
     assert.equal((await g.call('/tasks', bobToken)).status, 403);
     assert.equal((await a2a('GetTask', { id: 'unused' }, 'eigos_agent_' + 'x'.repeat(43))).status, 401);
-    assert.deepEqual((await aliceMcp.listTools()).tools.map(tool => tool.name).sort(), ['get_task', 'submit_task']);
+    assert.deepEqual((await aliceMcp.listTools()).tools.map(tool => tool.name).sort(), ['get_task', 'search_restaurants', 'submit_task']);
     assert.deepEqual((await (await g.call('/identity', aliceToken)).json()).scopes, ['tasks:read', 'tasks:write']);
     assert.equal((await g.call('/ontology', aliceToken)).status, 403);
     assert.equal((await g.call('/a2a', aliceToken)).status, 403);
@@ -173,8 +177,8 @@ test('invited accounts use OAuth and portable MCP/A2A access with shared Beta ca
     const renewedToken = await g.token('alice', { issuedAt: Math.ceil(Date.now() / 1000) });
     assert.equal((await g.call('/identity', renewedToken)).status, 200);
     const renewed = await makeClient(renewedToken);
-    assert.equal((await renewed.listTools()).tools.length, 2);
-    assert.equal((await bobMcp.listTools()).tools.length, 2);
+    for (const client of [renewed, bobMcp])
+      assert.deepEqual((await client.listTools()).tools.map(tool => tool.name).sort(), ['get_task', 'search_restaurants', 'submit_task']);
     const replacement = await issue();
     assert.equal((await a2a('GetTask', { id: a2aId })).status, 401);
     assert.equal((await a2a('GetTask', { id: a2aId }, replacement)).body.result.id, a2aId);
@@ -214,4 +218,81 @@ test('a task submitted while its account is being suspended is refused with the 
     assert.deepEqual(refused.structuredContent, { status: 403, error: 'This EIGOS account is suspended or its client authorization was revoked' });
     assert.equal((await g.accounts.account(g.owner('ivy')))?.status, 'suspended');
   } finally { await client.close(); await g.close(); await f.close(); }
+});
+
+
+test('member restaurant search uses the original account source and exposes no generic Ontology permissions', async () => {
+  const f = await fixture();
+  const folder = await mkdtemp(join(tmpdir(), 'eigos-member-restaurant-'));
+  const clients: Client[] = [];
+  let gateway: AccountGateway | undefined;
+  try {
+    const connection = await testConnection(folder);
+    const providerCalls: Recorded[] = [];
+    const supply = fakeAmap(providerCalls);
+    let revokeDuringSearch = false;
+    const amapFetch: typeof fetch = async (target, init) => {
+      const result = await supply(target, init);
+      if (revokeDuringSearch && init?.body && JSON.parse(String(init.body)).method === 'tools/call')
+        await g.accounts.revoke(g.owner('alice'));
+      return result;
+    };
+    const g = gateway = await accountGateway(f, {
+      signup: 'invite', env: { EIGOS_AMAP_CONNECTION_FILE: connection }, amapFetch,
+    });
+    const binding = JSON.parse(await readFile(connection, 'utf8'));
+    await writeFile(connection, JSON.stringify({ ...binding, owner: g.owner('alice') }), { mode: 0o600 });
+    await syncAccountGrants(f.db, f.model);
+    const approved = async (sub: string) => {
+      const email = sub + '@example.test', session = await g.login(sub, email);
+      assert.equal((await g.form('apply', session.cookie, new URLSearchParams({ email, purpose: 'Search restaurant listings' }))).status, 303);
+      const code = await g.accounts.invite(email, 24);
+      assert.equal((await g.form('activate', session.cookie, new URLSearchParams({ code }))).headers.get('location'), '/account');
+      assert.equal((await g.form('approve', session.cookie)).status, 303);
+      const token = await g.token(sub, { issuedAt: Math.ceil(Date.now() / 1000) });
+      const client = new Client({ name: 'codex-fixture', version: '1' });
+      clients.push(client);
+      await client.connect(new StreamableHTTPClientTransport(new URL(g.url + '/mcp'), {
+        requestInit: { headers: { Authorization: 'Bearer ' + token } },
+      }));
+      return { client, token };
+    };
+    const alice = await approved('alice'), bob = await approved('bob');
+    const input = { requestId: 'amap-member-search', query: '咖啡店', city: '上海市', limit: 1 };
+    const search = (client: Client, args: Record<string, unknown> = input) =>
+      client.callTool({ name: 'search_restaurants', arguments: args });
+    const body = (res: { content?: unknown }) => JSON.parse((res.content as { text: string }[])[0]!.text);
+    const first = await search(alice.client);
+    assert(!first.isError, JSON.stringify(first));
+    const result = body(first);
+    assert.deepEqual(result.outcomes, [{ provider: 'Amap', status: 'observed', count: 1 }]);
+    assert.equal(result.venues[0].name, '咖啡店');
+    assert.equal(result.venues[0].evidence, 'provider_mock');
+    assert.deepEqual(body(await search(alice.client)), result);
+    assert.equal((await search(alice.client, { ...input, query: '烧烤' })).isError, true);
+    assert.equal((await search(alice.client, { ...input, providers: ['TableCheck'] })).isError, true);
+    assert.equal((await search(alice.client, { ...input, action: 'ConfirmTableCheckReservation' })).isError, true);
+    const otherOwner = await search(bob.client);
+    assert(!otherOwner.isError, JSON.stringify(otherOwner));
+    assert.deepEqual(body(otherOwner).outcomes, [{ provider: 'Amap', status: 'authorization_required', count: 0 }]);
+    assert.deepEqual(body(otherOwner).venues, []);
+    assert.deepEqual(providerCalls.map(entry => entry.name), ['maps_text_search']);
+    assert.deepEqual((await (await g.call('/identity', alice.token)).json()).scopes, ['tasks:read', 'tasks:write']);
+    assert.equal((await g.call('/ontology', alice.token)).status, 403);
+    await assert.rejects(alice.client.callTool({ name: 'describe_ontology', arguments: {} }), /Tool .* not found/);
+    await assert.rejects(alice.client.callTool({ name: 'apply_ontology_action', arguments: {} }), /Tool .* not found/);
+    const rows = await f.db.query(`SELECT action FROM ${f.schema}.action_changes WHERE request_id=$1`, [input.requestId]);
+    assert.deepEqual(rows.rows.map(row => row.action), ['FindRestaurants', 'FindRestaurants']);
+    assert.equal((await f.db.query(`SELECT 1 FROM ${f.schema}.external_operations`)).rowCount, 0);
+    revokeDuringSearch = true;
+    const revokedRequest = 'amap-revoked-during-search';
+    assert.equal((await search(alice.client, { ...input, requestId: revokedRequest })).isError, true);
+    assert.equal((await f.db.query(`SELECT 1 FROM ${f.schema}.action_changes WHERE request_id=$1`, [revokedRequest])).rowCount, 0);
+    assert.equal((await g.call('/mcp', alice.token)).status, 403);
+  } finally {
+    await Promise.allSettled(clients.map(client => client.close()));
+    await gateway?.close();
+    await f.close();
+    await rm(folder, { recursive: true, force: true });
+  }
 });
