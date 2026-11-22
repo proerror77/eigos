@@ -1,23 +1,19 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { provisionPublicPlaceCatalogue } from '../packages/capabilities/public-places/catalogue.js';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { readConfig } from '../packages/core/config.js';
 import type { Principal } from '../packages/core/identity.js';
-import { publicPlacesOntology } from '../packages/ontology/public-places.js';
-import { Access, businessGrants, setGrants, syncAccountGrants, syncAccountGrantsAfterActivation } from '../packages/runtime/access.js';
-import { Accounts, accountGroup, emailDigest, initializeAccounts } from '../packages/runtime/accounts.js';
-import type { Database } from '../packages/runtime/database.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
+import { Accounts, accountGrantSubject, emailDigest, initializeAccounts } from '../packages/runtime/accounts.js';
 import { Governance } from '../packages/runtime/governance.js';
-import { accountCommand } from '../scripts/account-command.js';
+import { accountAccessCommand, accountCommand } from '../scripts/account-command.js';
 import { portalEnv } from './account-env.js';
 import { fixture } from './fixture.js';
 
-const grantKey = (grant: { resource: string; permission: string }) => grant.permission + ':' + grant.resource;
-const accountGroupGrants = async (db: Database) => new Set((await db.query(
-  `SELECT permission||':'||resource AS entry FROM ${db.schema}.resource_grants WHERE subject=$1`, ['group:' + accountGroup])).rows.map(row => row.entry as string));
-
 test('account portal configuration requires secrets and owner isolation for sign-up', () => {
-  assert.equal(readConfig(portalEnv).EIGOS_SIGNUP, 'open');
+  assert.equal(readConfig(portalEnv).EIGOS_SIGNUP, 'invite');
   assert.throws(() => readConfig({ ...portalEnv, EIGOS_ENFORCE_OWNER_RLS: undefined }), /Self sign-up requires EIGOS_ENFORCE_OWNER_RLS=true/);
   assert.throws(() => readConfig({ ...portalEnv, EIGOS_SIGNUP: 'invite', EIGOS_ENFORCE_OWNER_RLS: 'false' }), /Self sign-up requires/);
   assert.equal(readConfig({ ...portalEnv, EIGOS_SIGNUP: 'closed', EIGOS_ENFORCE_OWNER_RLS: undefined }).EIGOS_SIGNUP, 'closed');
@@ -76,7 +72,7 @@ test('accounts provision by sign-up mode and keep operators out', async () => {
   } finally { await f.close(); }
 });
 
-test('authorization gives a reason, revocation can be undone and suspension removes group grants', async () => {
+test('authorization gives a reason, revocation can be undone and suspension removes individual grants', async () => {
   const f = await fixture();
   try {
     const accounts = new Accounts(f.db, 'open'), owner = 'e'.repeat(64), now = Math.floor(Date.now() / 1000);
@@ -85,6 +81,8 @@ test('authorization gives a reason, revocation can be undone and suspension remo
     assert.deepEqual(await accounts.authorize(grok(), 'grok', []), { kind: 'denied', reason: 'client_not_authorized' });
     assert.equal((await accounts.account(owner))?.status, 'active');
     assert.equal(await accounts.approve(owner), true);
+    assert.deepEqual(await accounts.authorize(grok({ issuedAt: now + 5 }), 'grok', []), { kind: 'denied', reason: 'account_access_pending' });
+    await setGrants(f.db, accountGrantSubject(owner), [{ resource: 'Eigos', permission: 'view_definition' }]);
     // Kept as text with its microseconds: read as a JS Date it is cut to milliseconds, and an unchanged approval time would still compare as later.
     const first = (await f.db.query<{ at: string }>(`SELECT approved_at::text AS at FROM ${f.db.schema}.accounts WHERE owner=$1`, [owner])).rows[0]!.at;
     assert.deepEqual(await accounts.authorize(grok({ issuedAt: now + 5 }), 'grok', []), { kind: 'account' });
@@ -101,7 +99,6 @@ test('authorization gives a reason, revocation can be undone and suspension remo
     const approvedSecond = Math.floor(again.approved_at!.getTime() / 1000);
     assert.deepEqual(await accounts.authorize(grok({ issuedAt: approvedSecond }), 'grok', []), { kind: 'account' });
     assert.deepEqual(await accounts.authorize(grok({ issuedAt: approvedSecond - 1 }), 'grok', []), { kind: 'denied', reason: 'client_not_authorized' });
-    await setGrants(f.db, 'group:' + accountGroup, [{ resource: 'Eigos', permission: 'view_definition' }]);
     const asAccount = { owner, scopes: ['tasks:read'], memberAccess: true as const };
     const canView = async () => (await Access.load(f.db, asAccount)).allows({ ontology: 'Eigos', permission: 'view_definition', resource: 'Eigos' });
     assert.equal(await canView(), true);
@@ -118,7 +115,7 @@ test('authorization gives a reason, revocation can be undone and suspension remo
   } finally { await f.close(); }
 });
 
-test('initialization renames member accounts and moves member group grants', async () => {
+test('initialization copies existing group grants exactly once to existing accounts', async () => {
   const f = await fixture();
   try {
     const s = f.db.schema;
@@ -129,8 +126,15 @@ test('initialization renames member accounts and moves member group grants', asy
     const account = await new Accounts(f.db, 'open').account('f'.repeat(64));
     assert.equal(account?.status, 'active');
     assert.ok(account?.approved_at);
-    const subjects = (await f.db.query(`SELECT DISTINCT subject FROM ${s}.resource_grants WHERE subject LIKE 'group:eigos-%'`)).rows.map(r => r.subject);
-    assert.deepEqual(subjects, ['group:' + accountGroup]);
+    const owner = 'f'.repeat(64), newcomer = 'a'.repeat(64), accounts = new Accounts(f.db, 'open');
+    const grants = async () => (await f.db.query(`SELECT subject FROM ${s}.resource_grants
+      WHERE subject LIKE 'group:eigos-%' OR subject LIKE 'account:%'`)).rows.map(r => r.subject);
+    assert.deepEqual(await grants(), [accountGrantSubject(owner)]);
+    await accounts.provision(newcomer);
+    assert.equal(await accounts.hasAgentAccess(newcomer), false);
+    await setGrants(f.db, accountGrantSubject(owner), []);
+    await initializeAccounts(f.db);
+    assert.deepEqual(await grants(), []);
   } finally { await f.close(); }
 });
 
@@ -139,13 +143,22 @@ test('activation, suspension, lookup and concurrent provisioning follow the stor
   try {
     const open = new Accounts(f.db, 'open'), invite = new Accounts(f.db, 'invite'), closed = new Accounts(f.db, 'closed');
     const owner = '4'.repeat(64), email = emailDigest('dave@example.test'), session = { owner, email_hash: email };
-    const code = await invite.invite('Dave@example.test', 1);
+    await assert.rejects(invite.invite('Dave@example.test', 1), /No pending application/);
+    assert.equal(await invite.apply(session, 'other@example.test', 'read-only'), false);
+    assert.equal(await invite.apply(session, 'Dave@example.test', 'read-only'), true);
+    const earlier = await invite.invite('Dave@example.test', 1);
+    const code = await invite.invite(owner, 1);
+    assert.equal(await invite.activate(session, earlier), 'invalid');
+    assert.equal(await invite.activate({ owner: '6'.repeat(64), email_hash: email }, code), 'invalid');
+    assert.equal(await invite.applicationStatus(session), 'invited');
     assert.equal(await closed.activate(session, code), 'invalid');
     assert.equal(await invite.activate({ owner, email_hash: emailDigest('other@example.test') }, code), 'invalid');
     assert.equal(await invite.activate(session, 'x'.repeat(43)), 'invalid');
     assert.equal(await invite.account(owner), undefined);
     assert.equal(await invite.activate(session, code), 'activated');
     assert.equal((await invite.account(owner))?.email_hash, email);
+    assert.deepEqual(await invite.applications(), []);
+    assert.equal(await invite.hasAgentAccess(owner), false);
     assert.equal(await invite.activate({ owner: '6'.repeat(64), email_hash: email }, code), 'invalid');
     assert.equal(await invite.activate(session, 'x'.repeat(43)), 'activated');
     await setGrants(f.db, '5'.repeat(64), [{ resource: 'Eigos', permission: 'view_definition' }]);
@@ -259,67 +272,52 @@ test('upgrading the legacy member schema keeps accounts and invitations, and can
   } finally { await f.close(); }
 });
 
-test('account grants follow the published business resources', async () => {
-  const f = await fixture();
+test('operators assign only selected active business grants and can clear them', async () => {
+  const f = await fixture(), directory = await mkdtemp(join(tmpdir(), 'eigos-account-grants-'));
   try {
-    await syncAccountGrants(f.db, f.model);
-    const rows = (await f.db.query(`SELECT resource,permission FROM ${f.db.schema}.resource_grants WHERE subject=$1`, ['group:' + accountGroup])).rows;
-    assert.deepEqual(new Set(rows.map(r => r.permission + ':' + r.resource)),
-      new Set(businessGrants(f.model, f.db.sandboxEnabled).map(g => g.permission + ':' + g.resource)));
-    assert.ok(rows.every(r => !['edit_definition', 'manage_definition'].includes(r.permission)));
-  } finally { await f.close(); }
+    const file = join(directory, 'grants.json'), accounts = new Accounts(f.db, 'invite');
+    const owner = 'b'.repeat(64), email = 'applicant@example.test';
+    await accounts.apply({ owner, email_hash: emailDigest(email) }, email, 'Read flight details');
+    assert.deepEqual((await accounts.applications()).map(row => [row.owner, row.email, row.purpose]), [[owner, email, 'Read flight details']]);
+    const run = (...args: string[]) => accountAccessCommand(f.db, 'invite', args);
+    assert.deepEqual(await run('grant-catalog'), businessGrants(f.model).slice(1));
+    assert.deepEqual(await run('grants', email), { owner, grants: [] });
+    const weather = { resource: 'Eigos/function/readWeather', permission: 'execute_function' };
+    await writeFile(file, JSON.stringify([weather]));
+    const selected = [weather, { resource: 'Eigos', permission: 'view_definition' }];
+    assert.deepEqual(await run('set-grants', email, file), { owner, grants: selected });
+    await writeFile(file, JSON.stringify([{ resource: 'Eigos', permission: 'manage_definition' }]));
+    await assert.rejects(run('set-grants', owner, file), /Grant is not available/);
+    assert.deepEqual(await run('grants', owner), { owner, grants: selected });
+
+    const code = await accounts.invite(owner, 1);
+    await accounts.activate({ owner, email_hash: emailDigest(email) }, code);
+    await accounts.approve(owner);
+    const access = () => Access.load(f.db, { owner, scopes: ['tasks:read'], memberAccess: true });
+    assert.equal((await access()).allows({ ...weather, ontology: 'Eigos', permission: 'execute_function' }), true);
+    assert.equal((await access()).allows({ ontology: 'Eigos', resource: 'Eigos/source/Amap', permission: 'read_source' }), false);
+    await writeFile(file, '[]');
+    assert.deepEqual(await run('set-grants', owner, file), { owner, grants: [] });
+    assert.equal(await accounts.hasAgentAccess(owner), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    await f.close();
+  }
 });
 
-test('syncing the account group replaces its grants, follows the sandbox switch and joins a caller transaction', async () => {
-  const f = await fixture(undefined, undefined, undefined, undefined, undefined, {}, { sandbox: true });
-  try {
-    const retired = { resource: 'Eigos/object/Retired', permission: 'view_objects' } as const;
-    await setGrants(f.db, 'group:' + accountGroup, [retired]);
-    // Inside a caller's transaction the sync is committed or rolled back with it.
-    await assert.rejects(f.db.transaction(async client => { await syncAccountGrants(f.db, f.model, client); throw new Error('roll back'); }), /roll back/);
-    assert.deepEqual(await accountGroupGrants(f.db), new Set([grantKey(retired)]));
-    await syncAccountGrants(f.db, f.model);
-    // The sync replaces what the group held, and the database's sandbox switch decides which resources count as business grants.
-    assert.ok(businessGrants(f.model, true).length > businessGrants(f.model, false).length);
-    assert.deepEqual(await accountGroupGrants(f.db), new Set(businessGrants(f.model, true).map(grantKey)));
-  } finally { await f.close(); }
-});
-
-test('after an activation only the business Ontology feeds the account group', async () => {
+test('publishing and activating an Ontology does not broaden individual account permissions', async () => {
   const f = await fixture();
   try {
-    const retired = { resource: 'Eigos/object/Retired', permission: 'view_objects' } as const;
-    await setGrants(f.db, 'group:' + accountGroup, [retired]);
-    await setGrants(f.db, 'deployment', [{ resource: 'Eigos', permission: 'manage_definition' }, { resource: publicPlacesOntology, permission: 'manage_definition' }]);
-    const deployer = await Access.load(f.db, { owner: 'deployment', scopes: [] });
-    await new Governance(f.db, f.metadata, f.capabilities).project(deployer, { ontology: 'Eigos', id: 'Alpha', name: 'Alpha' });
-    // Activating the public places Ontology, even its current release again, must not replace the business grants of every account.
-    const { release } = await provisionPublicPlaceCatalogue(f.db, f.metadata, f.capabilities, deployer, 'Alpha');
-    const places = await f.metadata.activate(release, f.capabilities, deployer);
-    assert.equal(places.document.id, publicPlacesOntology);
-    await syncAccountGrantsAfterActivation(f.db, places);
-    assert.deepEqual(await accountGroupGrants(f.db), new Set([grantKey(retired)]));
-    // The business Ontology does sync.
-    await syncAccountGrantsAfterActivation(f.db, await f.metadata.activate(f.model.release, f.capabilities, deployer));
-    assert.deepEqual(await accountGroupGrants(f.db), new Set(businessGrants(f.model).map(grantKey)));
-  } finally { await f.close(); }
-});
-
-test('a branch merge leaves every authorization row alone, so the operator syncs the account group by activating again', async () => {
-  const f = await fixture();
-  try {
-    const retired = { resource: 'Eigos/object/Retired', permission: 'view_objects' } as const, governance = new Governance(f.db, f.metadata, f.capabilities);
-    // Only the merged release has this object type, so the account group can only hold it after a sync from the merged release.
+    const owner = '2'.repeat(64), accounts = new Accounts(f.db, 'open'), governance = new Governance(f.db, f.metadata, f.capabilities);
+    await accounts.provision(owner);
+    await setGrants(f.db, accountGrantSubject(owner), [{ resource: 'Eigos', permission: 'view_definition' }]);
     const body = structuredClone(f.model.document);
-    body.version = 'account-sync';
-    body.objectTypes.push({ apiName: 'AccountProbe', displayName: 'Account probe', description: 'Synthetic type for the account group sync',
+    body.version = 'individual-account-grants';
+    body.objectTypes.push({ apiName: 'AccountProbe', displayName: 'Account probe', description: 'Synthetic type for account permissions',
       primaryKey: 'id', titleProperty: 'id', interfaces: {}, properties: { id: { description: 'Identity', schema: { type: 'string' }, required: true } } });
-    const branch = await governance.create(f.publisher, { ontology: 'Eigos', name: 'Account sync', body });
+    const branch = await governance.create(f.publisher, { ontology: 'Eigos', name: 'Account permissions', body });
     const prepared = await governance.prepare(f.publisher, { id: branch.id, revision: branch.revision });
     const approved = await governance.review(f.publisher, { id: prepared.id, revision: prepared.revision, release: prepared.release });
-    await setGrants(f.db, 'group:' + accountGroup, [retired]);
-    // The runtime role cannot write authorization tables, so a merge must not write resource_grants at all.
-    // xmin also exposes a row that was rewritten with the same values.
     const grantRows = async () => (await f.db.query(`SELECT xmin::text AS written_by,subject,resource,permission
       FROM ${f.db.schema}.resource_grants ORDER BY subject,resource,permission`)).rows;
     const before = await grantRows();
@@ -327,11 +325,8 @@ test('a branch merge leaves every authorization row alone, so the operator syncs
     const merged = await f.metadata.active();
     assert.equal(merged.release, prepared.release);
     assert.ok(businessGrants(merged).some(grant => grant.resource === 'Eigos/object/AccountProbe'));
+    await f.metadata.activate(merged.release, f.capabilities, f.publisher);
     assert.deepEqual(await grantRows(), before);
-    assert.deepEqual(await accountGroupGrants(f.db), new Set([grantKey(retired)]));
-    // The operator activates the merged release again with the admin role, which is what `npm run ontology:activate <release>` does.
-    await syncAccountGrantsAfterActivation(f.db, await f.metadata.activate(merged.release, f.capabilities, f.publisher));
-    assert.deepEqual(await accountGroupGrants(f.db), new Set(businessGrants(merged).map(grantKey)));
   } finally { await f.close(); }
 });
 

@@ -69,7 +69,7 @@ export const configSchema = z.object({
   OAUTH_MANAGEMENT_DOMAIN: z.string().regex(hostname, 'Use a bare lowercase hostname such as dev-abc.us.auth0.com, with no scheme, port or path').optional(),
   OAUTH_ISSUER: z.url().optional(), OAUTH_AUDIENCE: z.string().optional(), OAUTH_JWKS_URL: z.url().optional(),
   OAUTH_TENANT_CLAIM: z.string().min(1).default('tenant_id'),
-  EIGOS_SIGNUP: z.enum(['open', 'invite', 'closed']).default('open'),
+  EIGOS_SIGNUP: z.enum(['open', 'invite', 'closed']).default('invite'),
   EIGOS_ENFORCE_OWNER_RLS: z.enum(['true', 'false']).optional(),
   EIGOS_PORTAL_SECRET: z.string().min(32).optional(), EIGOS_ACCOUNT_LINK_SECRET: z.string().min(32).optional(),
   EIGOS_TRUST_PROXY: z.string().refine(trustedProxies,

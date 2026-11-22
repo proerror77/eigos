@@ -53,7 +53,8 @@ const statuses = {
   verify: '请先打开 Auth0 发到你邮箱的验证邮件，验证后再重新登录。',
   tenant: '登录服务的配置不完整，缺少租户信息，请联系 EIGOS 支持。',
   closed: '目前暂停注册新账号。',
-  invite: '邀请码无效、已过期，或者和已验证的邮箱不一致。',
+  invite: '邀请码无效、已过期，或与你的账号不匹配。',
+  application: '请填写已验证的登录邮箱和申请用途。',
   operator: '这是运营者账号，不需要开通，请继续使用原来的客户端。',
   origin: '请回到账号页重新提交。',
   link: '合并没有完成，请用原来的方式重新登录。',
@@ -79,7 +80,7 @@ function cookie(req: Request, key: string, shape: RegExp) {
 }
 
 const page = (heading: string, body: string) => `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EIGOS 账号</title>
-      <style>body{font:1rem system-ui;max-width:42rem;margin:7vh auto;padding:0 1.5rem;line-height:1.6}button,input,.button{font:inherit;padding:.35rem .6rem}.button{display:inline-block;border:1px solid;border-radius:.25rem;color:inherit;text-decoration:none}form{margin-block:1.3rem}dd{margin:0 0 .75rem;overflow-wrap:anywhere}</style>
+      <style>body{font:1rem system-ui;max-width:42rem;margin:7vh auto;padding:0 1.5rem;line-height:1.6}button,input,textarea,.button{font:inherit;padding:.35rem .6rem}.button{display:inline-block;border:1px solid;border-radius:.25rem;color:inherit;text-decoration:none}form{margin-block:1.3rem}dd{margin:0 0 .75rem;overflow-wrap:anywhere}</style>
       <main><h1>${heading}</h1>${body}</main></html>`;
 
 /**
@@ -180,7 +181,7 @@ export function mountAccountPortal(app: express.Express, config: Config, account
   };
   const redirect = (res: Response, status?: keyof typeof statuses) =>
     res.redirect(303, '/account' + (status ? '?status=' + status : ''));
-  app.use('/account', express.urlencoded({ extended: false, limit: '2kb' }), (_req, res, next) => {
+  app.use('/account', express.urlencoded({ extended: false, limit: '5kb' }), (_req, res, next) => {
     res.set({
       'Cache-Control': 'no-store',
       'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
@@ -194,11 +195,21 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     const status = typeof req.query.status === 'string' && Object.hasOwn(statuses, req.query.status)
       ? req.query.status as keyof typeof statuses : undefined;
     let content: string, explains: keyof typeof statuses | undefined;
-    if (!session) content = '<p><a href="/account/login?signup=1">注册</a> · <a href="/account/login">登录</a></p>';
+    if (!session) content = `${config.EIGOS_SIGNUP === 'invite' ? '<p>注册并验证邮箱后，即可申请使用 EIGOS Agent。</p>' : ''}
+      <p><a href="/account/login?signup=1">注册</a> · <a href="/account/login">登录</a></p>`;
     else if (!account) {
       if (await accounts.isOperator(session.owner)) { explains = 'operator'; content = `<p>${statuses.operator}</p>`; }
-      else if (config.EIGOS_SIGNUP === 'invite') content = '<form method="post" action="/account/activate"><label>邀请码 <input name="code" autocomplete="off" maxlength="43" required></label> <button>开通账号</button></form>';
-      else if (config.EIGOS_SIGNUP === 'closed') { explains = 'closed'; content = `<p>${statuses.closed}</p>`; }
+      else if (config.EIGOS_SIGNUP === 'invite') {
+        const application = await accounts.applicationStatus(session);
+        const apply = application === 'invited' ? '<p>申请已通过。收到运营提供的邀请码后，请填写下方表单。</p>'
+          : application === 'pending' ? '<p>已收到申请，等待运营审核。</p>'
+          : `<form method="post" action="/account/apply">
+              <p><label>已验证的登录邮箱 <input type="email" name="email" autocomplete="email" maxlength="254" required></label></p>
+              <p><label>你计划用 Agent 做什么？<br><textarea name="purpose" maxlength="300" rows="3" required></textarea></label></p>
+              <p>运营将根据申请用途审核并配置账号权限。</p><button>申请使用 Agent</button>
+            </form>`;
+        content = apply + '<form method="post" action="/account/activate"><label>邀请码 <input name="code" autocomplete="off" maxlength="43" required></label> <button>开通账号</button></form>';
+      } else if (config.EIGOS_SIGNUP === 'closed') { explains = 'closed'; content = `<p>${statuses.closed}</p>`; }
       else content = '<p>账号还没有开通，请重新登录。</p>';
     } else if (account.status === 'suspended') content = '<p>这个账号已停用，请联系 EIGOS 支持。</p>';
     else if (account.revoked_at) content = '<p>已撤销 Grok 的访问，需要时可以重新授权。</p><form method="post" action="/account/approve"><button>重新授权 Grok</button></form>';
@@ -206,6 +217,8 @@ export function mountAccountPortal(app: express.Express, config: Config, account
       <dl><dt>服务地址</dt><dd><code>${new URL('/mcp', config.PUBLIC_URL).href}</code></dd><dt>OAuth Client ID</dt><dd><code>${config.OAUTH_MEMBER_MCP_CLIENT_ID}</code></dd></dl>
       <form method="post" action="/account/revoke"><button>撤销 Grok 授权</button></form>`;
     else content = '<p>账号已开通。授权后，Grok 可以提交和读取你自己的查询任务。</p><form method="post" action="/account/approve"><button>授权 Grok</button></form>';
+    if (account?.status === 'active' && !await accounts.hasAgentAccess(account.owner))
+      content = '<p>当前没有已分配的 Agent 能力，请联系 EIGOS 运营开通。</p>' + content;
     // A status the page body already spells out is not repeated as a banner.
     const banner = status && status !== explains ? `<p role="status">${statuses[status]}</p>` : '';
     // The verify status offers a new verification email when there is a Management API client to ask for it.
@@ -310,9 +323,14 @@ export function mountAccountPortal(app: express.Express, config: Config, account
       redirect(res, 'resent');
     });
   }
-  app.post(['/account/activate', '/account/approve', '/account/revoke', '/account/logout'], postLimit, sameOrigin, async (req, res) => {
+  app.post(['/account/apply', '/account/activate', '/account/approve', '/account/revoke', '/account/logout'], postLimit, sameOrigin, async (req, res) => {
     const token = cookie(req, sessionCookie, sessionShape), session = await accounts.session(token);
     if (!session) { res.sendStatus(401); return; }
+    if (req.path === '/account/apply') {
+      const application = z.object({ email: z.string().trim().max(254).pipe(z.email()), purpose: z.string().trim().min(1).max(300) }).safeParse(req.body);
+      const submitted = application.success && await accounts.apply(session, application.data.email, application.data.purpose);
+      redirect(res, submitted ? undefined : 'application'); return;
+    }
     if (req.path === '/account/activate') {
       const code = z.string().regex(/^[A-Za-z0-9_-]{43}$/).safeParse(req.body?.code);
       const outcome = code.success ? await accounts.activate(session, code.data) : 'invalid';

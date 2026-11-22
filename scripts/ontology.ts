@@ -5,7 +5,7 @@ import { Ontology } from '../packages/ontology/model.js';
 import { Database } from '../packages/runtime/database.js';
 import { Metadata } from '../packages/runtime/metadata.js';
 import { objectPolicySchema } from '../packages/runtime/security.js';
-import { Access, setGrants, businessGrants, syncAccountGrantsAfterActivation, grantSchema } from '../packages/runtime/access.js';
+import { Access, setGrants, businessGrants, grantSchema } from '../packages/runtime/access.js';
 import { upgradePublicationStorage } from '../packages/runtime/upgrade.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import { configuredSource } from '../packages/core/config.js';
@@ -20,12 +20,12 @@ import { installOwnerIsolation } from '../packages/runtime/owner-isolation.js';
 import { provisionPublicPlaceCatalogue } from '../packages/capabilities/public-places/catalogue.js';
 import { publicPlacesOntology } from '../packages/ontology/public-places.js';
 import { ontologyName } from '../packages/ontology/schema.js';
-import { accountCommand } from './account-command.js';
+import { accountAccessCommand, accountCommand } from './account-command.js';
 
 const command = process.argv[2];
 const document = businessDefinition;
 const model = new Ontology(document);
-const signupMode = () => z.enum(['open', 'invite', 'closed']).default('open').parse(process.env.EIGOS_SIGNUP);
+const signupMode = () => z.enum(['open', 'invite', 'closed']).default('invite').parse(process.env.EIGOS_SIGNUP);
 if (command === 'check') console.log(JSON.stringify({ id: model.document.id, version: model.document.version, digest: model.digest, objects: model.objects.size, interfaces: model.interfaces.size, links: model.links.size, actions: model.actions.size, functions: model.functions.size }));
 else {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
@@ -40,11 +40,13 @@ else {
     } else if (command === 'enable-pgvector') {
       console.log(JSON.stringify(await enablePgvector(db)));
     } else if (command === 'invite') {
-      const email = z.email().parse(process.argv[3]);
+      const target = z.union([z.email(), z.string().regex(/^[a-f0-9]{64}$/)]).parse(process.argv[3]);
       const hours = z.coerce.number().int().min(1).max(168).parse(process.argv[4] ?? 48);
-      console.log(await new Accounts(db, signupMode()).invite(email, hours));
+      console.log(await new Accounts(db, signupMode()).invite(target, hours));
     } else if (command === 'account') {
-      console.log(JSON.stringify(await accountCommand(db, signupMode(), process.argv.slice(3))));
+      const args = process.argv.slice(3);
+      const run = ['applications', 'grant-catalog', 'grants', 'set-grants'].includes(args[0] ?? '') ? accountAccessCommand : accountCommand;
+      console.log(JSON.stringify(await run(db, signupMode(), args)));
     } else if (command === 'provision-public-places') {
       const project = ontologyName.parse(process.argv[3]);
       await db.query(`INSERT INTO ${db.schema}.resource_grants(subject,resource,permission) VALUES($1,$2,'manage_definition')
@@ -94,7 +96,6 @@ else {
         : command === 'activate' ? await metadata.activate(process.argv[3]!, bindings, access)
         : command === 'publish' ? await metadata.publish(document, bindings, access, transform) : undefined;
       if (!published) throw new Error('Use check, initialize, upgrade, enable-owner-isolation, enable-pgvector, permissions, invite, account, grant-business, provision-public-places, prepare, activate or publish');
-      if (command === 'activate' || command === 'publish') await syncAccountGrantsAfterActivation(db, published);
       console.log(JSON.stringify({ release: published.release, definition: published.digest, projection: published.projection, runtime: published.runtimeId }));
     }
   } finally { await db.close(); }

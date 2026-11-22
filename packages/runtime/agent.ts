@@ -84,6 +84,7 @@ export class OntologyAgent {
     const signal = AbortSignal.any([outerSignal, stopped.signal, AbortSignal.timeout(120000)]);
     this.metadata.checkBindings(model, this.capabilities);
     const access = await Access.load(this.db, principal);
+    access.requireAccountAccess();
     const sandbox = this.options.sandbox === true;
     const requireCapability = (kind: 'action' | 'function', name: string) =>
       checkAgentCapability(model, sandbox, kind, name);
@@ -172,6 +173,7 @@ export class OntologyAgent {
             [task.id, task.owner, task.token, cognitive.maxToolCalls],
           )).rowCount) throw new Conflict('Workflow tool budget exhausted or execution lease ended');
           await access.refresh();
+          access.requireAccountAccess();
           await this.tasks.current(task);
           await checkLegacyEvidence();
           const check = await egress.decide(disclosed);

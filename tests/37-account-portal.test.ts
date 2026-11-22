@@ -12,7 +12,7 @@ import { seal, unseal } from '../apps/gateway/sealed-cookie.js';
 import { readConfig } from '../packages/core/config.js';
 import { digest } from '../packages/core/identity.js';
 import { setGrants } from '../packages/runtime/access.js';
-import { Accounts } from '../packages/runtime/accounts.js';
+import { Accounts, accountGrantSubject } from '../packages/runtime/accounts.js';
 import { portalEnv } from './account-env.js';
 import { accountGateway, type AccountGateway } from './account-harness.js';
 import { fixture } from './fixture.js';
@@ -409,9 +409,22 @@ test('form posts need the portal origin and a session, and activation reports op
     const olivia = await invite.login('olivia', 'olivia@example.test');
     assert.equal((await invite.form('activate', olivia.cookie, code)).headers.get('location'), '/account?status=operator');
     assert.equal(await invite.accounts.account(invite.owner('olivia')), undefined);
+    const application = new URLSearchParams({ email: 'carol@example.test', purpose: 'Compare travel options' });
+    assert.equal((await invite.form('apply', '', application)).status, 401);
+    assert.equal((await invite.form('apply', carol.cookie, application, 'https://other.example')).status, 403);
+    assert.equal((await closed.form('apply', carol.cookie, application)).headers.get('location'), '/account?status=application');
+    assert.equal((await invite.form('apply', carol.cookie, new URLSearchParams({ email: 'other@example.test', purpose: 'Try Agent' })))
+      .headers.get('location'), '/account?status=application');
+    assert.equal((await invite.form('apply', carol.cookie, application)).headers.get('location'), '/account');
+    assert.equal((await invite.form('apply', carol.cookie, application)).headers.get('location'), '/account');
+    assert.equal((await invite.accounts.applications()).length, 1);
+    const accountPage = () => fetch(invite.url + '/account', { headers: { Cookie: carol.cookie } }).then(res => res.text());
+    assert.match(await accountPage(), /等待运营审核/);
     const mine = await invite.accounts.invite('carol@example.test', 1);
+    assert.match(await accountPage(), /申请已通过/);
     assert.equal((await invite.form('activate', carol.cookie, new URLSearchParams({ code: mine }))).headers.get('location'), '/account');
     assert.equal((await invite.accounts.account(invite.owner('carol')))?.status, 'active');
+    assert.match(await accountPage(), /没有已分配的 Agent 能力/);
   } finally { await invite.close(); await closed.close(); await f.close(); }
 });
 
@@ -458,7 +471,7 @@ test('old member addresses redirect to the account page without capturing other 
 });
 
 test('the tenant comes from the configured claim of the ID token', async () => {
-  const f = await fixture(), g = await accountGateway(f, { env: { OAUTH_TENANT_CLAIM: 'https://eigos.example/tenant' } });
+  const f = await fixture(), g = await accountGateway(f, { signup: 'open', env: { OAUTH_TENANT_CLAIM: 'https://eigos.example/tenant' } });
   try {
     assert.equal((await g.login('ivan', 'ivan@example.test')).location, '/account');
     assert.equal((await g.accounts.account(g.owner('ivan')))?.status, 'active');
@@ -562,6 +575,9 @@ test('every refusal names its reason and only a missing scope adds a challenge',
     assert.equal((await open.call('/mcp', await open.token('quinn'))).status, 403);
     await open.accounts.approve(open.owner('quinn'));
     const issuedAt = Math.floor(Date.now() / 1000) + 5, ready = await open.token('quinn', { issuedAt });
+    assert.deepEqual(await answer(open, '/mcp', ready),
+      refusedAs('This EIGOS account has no Agent capabilities assigned', 'account_access_pending'));
+    await setGrants(f.db, accountGrantSubject(open.owner('quinn')), [{ resource: 'Eigos', permission: 'view_definition' }]);
     assert.equal((await open.call('/identity', ready)).status, 200);
     assert.deepEqual(await answer(open, '/ontology', ready), notAllowed, 'an account token reaches only /mcp and /identity');
     assert.deepEqual(await answer(open, '/mcp', await open.token('quinn', { scope: 'tasks:write', issuedAt })), {
@@ -822,6 +838,7 @@ test('a finished merge withdraws the agent access of the account it merges into,
     // The original account is open and has authorized Grok, and an agent holds a token for it.
     const original = await g.login(primary, email);
     await g.form('approve', original.cookie);
+    await setGrants(f.db, accountGrantSubject(g.owner(primary)), [{ resource: 'Eigos', permission: 'view_definition' }]);
     const connected = await g.token(primary, { issuedAt: Math.floor(Date.now() / 1000) + 5 });
     assert.equal((await g.call('/identity', connected)).status, 200);
 

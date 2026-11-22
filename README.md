@@ -134,7 +134,7 @@ npm run test:e2e:run
 }
 ```
 
-省略 properties 保持当前属性限制；提供该数组则完整替换限制。`access:grant-business` 把指定 owner 的授权整体替换成当前定义中的业务能力，未来新能力不会自动获得执行授权。它只用于运营者或本地开发身份（例如 `local-developer`）这类不走账号路径的 owner；自助注册的账号由 `group:eigos-accounts` 授权，对它们执行不起作用。受限属性权限需明确配置。沙箱能力仅在显式设置 `EIGOS_AGENT_SANDBOX_ENABLED=true` 的本地开发环境授予并执行，Gateway、Worker 和索引进程沿用同一环境限制。对象内容策略、属性策略、组织组和标记规则的配置见 [Ontology 运行服务](docs/guides/ontology-services.md)，实例仍按 owner 隔离。
+省略 properties 保持当前属性限制；提供该数组则完整替换限制。`access:grant-business` 把指定 owner 的授权整体替换成当前定义中的业务能力，未来新能力不会自动获得执行授权。它只用于运营者或本地开发身份（例如 `local-developer`）这类不走账号路径的 owner；普通账号的 Agent 权限由 `npm run account -- set-grants` 逐个配置，详见[账号申请与授权](docs/guides/accounts.md#逐账号授权)。受限属性权限需明确配置。沙箱能力仅在显式设置 `EIGOS_AGENT_SANDBOX_ENABLED=true` 的本地开发环境授予并执行，Gateway、Worker 和索引进程沿用同一环境限制。对象内容策略、属性策略、组织组和标记规则的配置见 [Ontology 运行服务](docs/guides/ontology-services.md)，实例仍按 owner 隔离。
 
 ## Scenario 与日历排程
 
