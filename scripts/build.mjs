@@ -5,5 +5,6 @@ execFileSync('node_modules/.bin/tsc', [], { stdio: 'inherit' });
 mkdirSync('dist/packages/ontology/definitions', { recursive: true });
 for (const name of ['ride', 'scheduling']) copyFileSync(`packages/ontology/definitions/${name}.json`, `dist/packages/ontology/definitions/${name}.json`);
 cpSync('apps/workbench','dist/apps/workbench',{recursive:true});
+copyFileSync('apps/gateway/ride-card.html', 'dist/apps/gateway/ride-card.html');
 const { implementationDigest } = await import('../dist/packages/runtime/implementation.js');
 writeFileSync('dist/implementation.json', JSON.stringify({ digest: implementationDigest() }) + '\n');
